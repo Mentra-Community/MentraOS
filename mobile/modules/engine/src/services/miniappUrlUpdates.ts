@@ -116,7 +116,7 @@ export class MiniappUrlUpdater {
   private readonly manifests = new Map<string, CachedManifest>()
   private readonly backoff = new Map<string, Backoff>()
   private readonly lastCheckedAt = new Map<string, number>()
-  private readonly inFlight = new Map<string, Promise<void>>()
+  private readonly inFlight = new Map<string, {session: number; check: Promise<void>}>()
 
   constructor(private readonly deps: MiniappUrlUpdaterDependencies) {}
 
@@ -135,10 +135,14 @@ export class MiniappUrlUpdater {
     return undefined
   }
 
-  /** Check every installed miniapp, one at a time. */
+  /** Check every installed miniapp, one at a time. A pass ends with its engine session. */
   async checkAll(): Promise<void> {
+    const session = this.deps.installSession()
     const packages = await this.deps.installedPackages()
-    for (const packageName of packages) await this.check(packageName)
+    for (const packageName of packages) {
+      if (this.deps.installSession() !== session) return
+      await this.check(packageName, session)
+    }
   }
 
   /** Check a miniapp the user just opened, unless it was checked moments ago. */
@@ -148,15 +152,22 @@ export class MiniappUrlUpdater {
     return this.check(packageName)
   }
 
-  check(packageName: string): Promise<void> {
+  /** Check one miniapp. Checks of it during the same engine session share one request. */
+  check(packageName: string, session = this.deps.installSession()): Promise<void> {
     const running = this.inFlight.get(packageName)
-    if (running) return running
-    const check = this.run(packageName).finally(() => this.inFlight.delete(packageName))
-    this.inFlight.set(packageName, check)
-    return check
+    if (running?.session === session) return running.check
+    const entry = {session, check: Promise.resolve()}
+    entry.check = this.run(packageName, session).finally(() => {
+      if (this.inFlight.get(packageName) === entry) this.inFlight.delete(packageName)
+    })
+    this.inFlight.set(packageName, entry)
+    return entry.check
   }
 
-  private async run(packageName: string): Promise<void> {
+  private async run(packageName: string, session: number): Promise<void> {
+    // An install started in an ended session must not activate.
+    const isCancelled = () => this.deps.installSession() !== session
+    if (isCancelled()) return
     const now = this.deps.now()
     const waiting = this.backoff.get(packageName)
     if (waiting && waiting.nextAttemptAt > now) return
@@ -168,8 +179,6 @@ export class MiniappUrlUpdater {
     if (!sourceUrl || !isPackageNameAllowedForUrl(packageName, sourceUrl)) return
 
     this.lastCheckedAt.set(packageName, now)
-    const session = this.deps.installSession()
-    const isCancelled = () => this.deps.installSession() !== session
     const manifestUrl = new URL("miniapp.json", sourceUrl).href
     const cached = this.manifests.get(manifestUrl)
     let result: ManifestFetchResult
@@ -202,15 +211,19 @@ export class MiniappUrlUpdater {
       if (result.etag) this.manifests.set(manifestUrl, {etag: result.etag, ...served})
       else this.manifests.delete(manifestUrl)
     }
-    this.backoff.delete(packageName)
     const {manifest} = served
-    if (!semver.gt(manifest.version, version)) return
+    // Failures stay counted until there is nothing left to install.
+    if (!semver.gt(manifest.version, version)) {
+      this.backoff.delete(packageName)
+      return
+    }
 
     const policy = this.deps.compatibilityPolicy()
     if (!policy) return
     const compatibility = checkMiniappInstallCompatibility(manifest, policy)
     if (!compatibility.compatible) {
       this.deps.log(`${packageName}@${manifest.version} is not compatible with this phone: ${compatibility.reason}`)
+      this.backoff.delete(packageName)
       return
     }
 
@@ -248,6 +261,7 @@ export class MiniappUrlUpdater {
       this.fail(packageName, `could not install ${packageName}@${manifest.version}`, error)
       return
     }
+    this.backoff.delete(packageName)
     this.deps.log(`Updated ${packageName} from ${version} to ${manifest.version}`)
     await this.deps.keepVersions(packageName, [manifest.version, version]).catch((error) => {
       this.deps.warn(`Could not remove older releases of ${packageName}`, error)

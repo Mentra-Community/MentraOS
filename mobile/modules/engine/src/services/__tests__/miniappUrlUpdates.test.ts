@@ -234,6 +234,44 @@ describe("updates from a miniapp's own URL", () => {
     expect(warnings).toHaveLength(0)
   })
 
+  test("a pass stops when its session ends, before the next miniapp", async () => {
+    active = {[pkg]: "1.0.0", "com.mentra.notes": "1.0.0"}
+    identities = {[pkg]: {source: "bundled_asset"}, "com.mentra.notes": {source: "bundled_asset"}}
+    responses = [served(manifest("1.1.0")), served(manifest("1.1.0", {packageName: "com.mentra.notes"}))]
+    duringInstall = () => {
+      session += 1
+    }
+    await updater().checkAll()
+    expect(fetched.map((call) => call.url)).toEqual([`${sourceUrl}miniapp.json`])
+    expect(active).toEqual({[pkg]: "1.0.0", "com.mentra.notes": "1.0.0"})
+  })
+
+  test("a check from an ended session isn't shared with the next session", async () => {
+    responses = [served(manifest("1.1.0")), served(manifest("1.1.0"))]
+    const u = updater()
+    const first = u.check(pkg)
+    session += 1
+    await Promise.all([first, u.check(pkg)])
+    // The first check's install is cancelled; the new session's own check installs.
+    expect(installs.map((install) => install.options.isCancelled?.()).sort()).toEqual([false, true])
+    expect(active[pkg]).toBe("1.1.0")
+  })
+
+  test("an install that keeps failing backs off further each time", async () => {
+    installError = new Error("download failed")
+    const u = updater()
+    responses = [served(manifest("1.1.0")), served(manifest("1.1.0")), served(manifest("1.1.0"))]
+    await u.check(pkg)
+    now += BASE_BACKOFF_MS
+    await u.check(pkg)
+    now += BASE_BACKOFF_MS
+    await u.check(pkg)
+    expect(installs).toHaveLength(2)
+    now += BASE_BACKOFF_MS
+    await u.check(pkg)
+    expect(installs).toHaveLength(3)
+  })
+
   test("never downgrades or reinstalls the same version", async () => {
     responses = [served(manifest("0.9.0")), served(manifest("1.0.0"))]
     const u = updater()
