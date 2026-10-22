@@ -18,7 +18,7 @@ describe("deferred miniapp updates", () => {
     onDeferredMiniappUpdateReady((packageName) => ready.push(packageName))
     miniappRunningRegistry.add("com.acme.notes")
     miniappRunningRegistry.add("com.acme.other")
-    markMiniappUpdateDeferred("com.acme.notes")
+    expect(markMiniappUpdateDeferred("com.acme.notes")).toBe(true)
 
     miniappRunningRegistry.remove("com.acme.other")
     expect(ready).toEqual([])
@@ -33,7 +33,7 @@ describe("deferred miniapp updates", () => {
   test("ignore a miniapp that is not running as user activity", () => {
     const ready: string[] = []
     onDeferredMiniappUpdateReady((packageName) => ready.push(packageName))
-    markMiniappUpdateDeferred("com.acme.hidden")
+    expect(markMiniappUpdateDeferred("com.acme.hidden")).toBe(false)
     miniappRunningRegistry.add("com.acme.hidden")
     miniappRunningRegistry.remove("com.acme.hidden")
     expect(ready).toEqual([])

@@ -29,13 +29,15 @@ function checkStopped(): void {
   }
 }
 
-/** Remember that `packageName`'s automatic update waits for it to stop. */
-export function markMiniappUpdateDeferred(packageName: string): void {
-  // A context that is not projected as user activity (a transient action wake)
-  // stops on its own; the next periodic check retries it.
-  if (!miniappRunningRegistry.has(packageName)) return
+/**
+ * Remember that `packageName`'s automatic update waits for it to stop. False when no stop will be reported: a
+ * context that is not projected as user activity (a transient action wake) stops on its own, and the caller retries.
+ */
+export function markMiniappUpdateDeferred(packageName: string): boolean {
+  if (!miniappRunningRegistry.has(packageName)) return false
   deferred.add(packageName)
   unsubscribeRegistry ??= miniappRunningRegistry.subscribe(checkStopped)
+  return true
 }
 
 /** Called with a package whose deferred update can now run. Returns an unsubscribe function. */
