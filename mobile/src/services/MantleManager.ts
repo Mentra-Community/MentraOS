@@ -11,6 +11,7 @@ import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManage
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
 import {workspaceManifestScheduler} from "@/services/deployment/workspaceManifestScheduler"
+import {installCloudWorkspaceApi} from "@/services/fleet/cloudWorkspaceApi"
 import {BUNDLED_MINIAPPS, BUNDLED_SYSTEM_MINIAPP_PACKAGES} from "@/generated/bundledMiniapps"
 import {
   BUNDLED_STORE_MINIAPP_PACKAGES,
@@ -616,6 +617,7 @@ class MantleManager {
         scanQr: (options) => requestPhoneQrScan(options),
       },
     })
+    installCloudWorkspaceApi()
     await engine.start()
     this.assertInitializationCurrent(miniappGeneration)
     this.setupIosMiniappVisibility()

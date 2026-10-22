@@ -180,6 +180,8 @@ export {useAppStatusStore, installAppStoreHooks, type AppStoreHooks} from "./sto
 export {cloudSecureStore} from "./utils/cloudClient/cloudSecureStore"
 export {cloudClientService} from "./services/CloudClientService"
 export {createCloudUdpSocket} from "./utils/cloudClient/RnUdpAdapter"
+// Fleet: the workspace screens ask the assignment reconciler to read desired state now.
+export {notifyFleetWorkspaceLeft, triggerAssignmentReconcile} from "./services/fleet/assignmentReconcilerHost"
 
 // Log ring buffer + console interception (bug-report attachments).
 export {logBuffer, type LogEntry} from "./utils/devLogging"
