@@ -430,4 +430,46 @@ describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
     expect(session.speaker.isPlaying).toBe(false)
     expect(observedStates).toEqual(["playing", "stopped"])
   })
+
+  test("8. play() state remains observable after it preempts a live stream", async () => {
+    const {transport, session} = await setupSession()
+    const observedStates: string[] = []
+    session.speaker.onStateChange((event) => observedStates.push(event.state))
+
+    const streamPromise = session.speaker.createStream()
+    const openReq = await transport.waitForRequest(MiniappRequestType.SPEAKER_STREAM_OPEN)
+    transport.deliverFromPhone({type: MiniappResponseType.SPEAKER_STATE, state: "playing"})
+    transport.deliverFromPhone(
+      {
+        type: MiniappResponseType.REQUEST_RESULT,
+        ok: true,
+        data: {streamId: "stream_preempted_by_play"},
+      },
+      openReq.requestId,
+    )
+    await streamPromise
+
+    const playPromise = session.speaker.play({audioUrl: "file://answer.wav", stopOtherAudio: true})
+    const playReq = await transport.waitForRequest(MiniappRequestType.PLAY_AUDIO)
+
+    transport.deliverFromPhone({
+      type: MiniappResponseType.SPEAKER_STATE,
+      state: "stopped",
+      streamId: "stream_preempted_by_play",
+    })
+    transport.deliverFromPhone({type: MiniappResponseType.SPEAKER_STATE, state: "loading"})
+    transport.deliverFromPhone({type: MiniappResponseType.SPEAKER_STATE, state: "playing"})
+
+    expect(session.speaker.state).toBe("playing")
+    expect(session.speaker.isPlaying).toBe(true)
+    expect(observedStates).toEqual(["playing", "stopped", "loading", "playing"])
+
+    transport.deliverFromPhone({type: MiniappResponseType.SPEAKER_STATE, state: "stopped"})
+    transport.deliverFromPhone(
+      {type: MiniappResponseType.REQUEST_RESULT, ok: true, data: undefined},
+      playReq.requestId,
+    )
+    await playPromise
+    expect(session.speaker.isPlaying).toBe(false)
+  })
 })

@@ -2368,7 +2368,7 @@ class LocalMiniappRuntime {
     }
   }
 
-  private handlePlayAudio(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+  private async handlePlayAudio(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     const audioUrl = (payload.audioUrl ?? payload.url) as string | undefined
     if (!audioUrl) {
       this.sendResult(packageName, requestId, false, undefined, {
@@ -2383,6 +2383,7 @@ class LocalMiniappRuntime {
     const stopOtherAudio = payload.stopOtherAudio !== false
 
     this.cancelSpeech(packageName)
+    if (stopOtherAudio) await this.stopActiveSpeakerStream(packageName)
     this.setSpeakerState(packageName, "loading")
     audioPlaybackService.play(
       {
@@ -2422,6 +2423,14 @@ class LocalMiniappRuntime {
     // the same constraint and uses optimistic timing. Microtask so the
     // initial "loading" envelope flushes first.
     queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+  }
+
+  private async stopActiveSpeakerStream(packageName: string): Promise<void> {
+    const streamId = this.connectedApps.get(packageName)?.activeSpeakerStreamId
+    if (!streamId) return
+    // Let the stream's tagged onEnded event settle SDK state before sending
+    // unscoped loading/playing events for its replacement playback.
+    await audioPlaybackService.abortStream(streamId)
   }
 
   private handleStopAudio(packageName: string, _payload: Record<string, unknown>, requestId?: string): void {
@@ -2678,7 +2687,6 @@ class LocalMiniappRuntime {
 
     this.cancelSpeech(packageName)
     this.speechRuns.set(packageName, run)
-    this.setSpeakerState(packageName, "loading")
 
     let terminalSent = false
     const sendPlaybackResult = (
@@ -2725,6 +2733,10 @@ class LocalMiniappRuntime {
     run.onCancelled = () => sendPlaybackResult(true, null, null, "tts playback stopped", false)
 
     try {
+      if (stopOtherAudio) await this.stopActiveSpeakerStream(packageName)
+      if (run.cancelled || this.speechRuns.get(packageName) !== run) return
+      this.setSpeakerState(packageName, "loading")
+
       const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
       const offlineSupportsVoice =
         !voiceExplicit || voice === "default" || ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
