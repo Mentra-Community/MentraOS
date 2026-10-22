@@ -93,3 +93,47 @@ test("a failed page publication can retry the same archived manifest without cha
   assert.equal(input.writes.length, 1)
   assert.equal(JSON.stringify({plan: input.plan, manifest: input.manifest}), before)
 })
+
+test("the beta page lists its OTA bundle and, once published, the example apps", () => {
+  const input = fixture()
+  const before = releaseDownloadNotes(input)
+  const bundle = input.manifest.artifacts.find((a) => a.coordinate === input.plan.artifactNames.otaBundle)
+  assert.ok(before.includes(`[Glasses OTA bundle](${bundle.url})`))
+  assert.match(before, /Example apps are added when they are published/)
+  assert.doesNotMatch(before, /Bluetooth example apps/)
+
+  const examples = {
+    schemaVersion: 1,
+    kind: "mentra-bluetooth-examples-build",
+    releaseSetId: input.plan.releaseSetId,
+    releaseIdentity: input.plan.releaseIdentity,
+    channel: input.plan.channel,
+    sourceCommit: input.plan.sourceCommit,
+    otaManifest: {url: "https://example.com/ota.json", sha256: "c".repeat(64)},
+    artifacts: [
+      ["android", "mentra-example-android", ".apk"],
+      ["ios", "mentra-example-ios", "-unsigned.ipa"],
+      ["reactNative", "mentra-example-react-native", ".apk"],
+      ["reactNativeElevenLabsAudio", "mentra-example-rn-elevenlabs-audio", ".apk"],
+    ].map(([key, prefix, suffix]) => ({
+      key,
+      name: `${prefix}-${input.plan.releaseIdentity}${suffix}`,
+      sha256: "d".repeat(64),
+      size: 1,
+      status: "published",
+      url: `https://artifactscdn.mentraglass.com/x/${prefix}-${input.plan.releaseIdentity}${suffix}`,
+    })),
+    provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/1",
+  }
+  const after = releaseDownloadNotes({...input, examples})
+  assert.match(after, /## Bluetooth example apps/)
+  assert.ok(after.includes(`[React Native example APK](${examples.artifacts[2].url})`))
+  assert.ok(after.includes(`[Native iOS example IPA (unsigned)](${examples.artifacts[1].url})`))
+  // Adding the examples replaces the managed block in place.
+  const body = updateDownloadNotes(updateDownloadNotes("Manual", before), after)
+  assert.equal(body, updateDownloadNotes("Manual", after))
+  assert.throws(
+    () => releaseDownloadNotes({...input, examples: {...examples, sourceCommit: "f".repeat(40)}}),
+    /do not match the release plan/,
+  )
+})

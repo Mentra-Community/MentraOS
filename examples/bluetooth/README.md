@@ -35,7 +35,11 @@ builds every example on changes to them or to the SDK.
 The standalone
 [Starter Kit repository](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit)
 is generated from this folder, with the SDK dependencies pinned to published
-versions so it can be cloned and built without a MentraOS checkout.
+versions so it can be cloned and built without a MentraOS checkout. Each
+completed MentraOS release pushes one `Release <version>` commit and an
+`sdk-<version>` tag to the kit branch of its channel, and records its inputs in
+`starter-kit-release.json`. This folder's `.github/workflows` is the kit's own
+CI; it builds the examples from the published packages.
 
 ## Documentation
 
@@ -56,11 +60,10 @@ Read the first-party [Mentra Live Bluetooth SDK docs](https://docs.mentraglass.c
 
 ## Install Prebuilt Example Apps
 
-Installable builds of the examples for published SDK versions are attached to
-the standalone Starter Kit's
-[GitHub Releases](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases).
-Each filename carries its SDK version, for example
-`mentra-example-react-native-<version>.apk`. Android APKs install directly from
+Installable builds of the examples for each SDK release are listed on that
+release's page in [MentraOS releases](https://github.com/Mentra-Community/MentraOS/releases)
+(`mentra-v<version>`), under **Bluetooth example apps**. Each filename carries
+its SDK version, for example `mentra-example-react-native-<version>.apk`. Android APKs install directly from
 the phone browser (enable installs from unknown sources when prompted). The iOS
 IPA is unsigned; install it with a sideloading tool such as
 [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/), which

@@ -29,7 +29,9 @@ export function examplePlayAudience(channel) {
   return channel === "beta" ? "external" : "internal"
 }
 
-export function examplePlayCoordinates(plan, starterKit, track) {
+// The example is built from examples/bluetooth at the plan's source commit, so
+// the plan alone identifies what is uploaded.
+export function examplePlayCoordinates(plan, track) {
   // The production example has its own closed track, created in Play Console
   // under exactly this name, so it never competes with the dev and beta
   // examples for the internal and open-testing tracks (a track serves one
@@ -40,16 +42,8 @@ export function examplePlayCoordinates(plan, starterKit, track) {
     production: "Mentra Bluetooth Example Production Candidates",
   }[plan.channel]
   if (!expectedTrack || track !== expectedTrack) throw new Error("Example Google Play track does not match the channel")
-  if (
-    starterKit.releaseSetId !== plan.releaseSetId ||
-    starterKit.releaseIdentity !== plan.releaseIdentity ||
-    starterKit.channel !== plan.channel ||
-    starterKit.mentraos?.sourceCommit !== plan.sourceCommit ||
-    !/^[0-9a-f]{40}$/.test(starterKit.starterKit?.baseCommit || "") ||
-    !/^[0-9a-f]{40}$/.test(starterKit.starterKit?.releaseCommit || "") ||
-    ["@mentra/bluetooth-sdk", "@mentra/engine"].some((name) => starterKit.packages?.[name] !== plan.releaseIdentity)
-  )
-    throw new Error("Example Google Play source does not match the validated Starter Kit release")
+  if (plan.releaseSetId !== `mentra-${plan.releaseIdentity}` || !/^[0-9a-f]{40}$/.test(plan.sourceCommit || ""))
+    throw new Error("Example Google Play requires a coordinated release plan")
   if (
     !Number.isSafeInteger(plan.native?.buildNumber) ||
     plan.native.buildNumber < 1 ||
@@ -60,7 +54,6 @@ export function examplePlayCoordinates(plan, starterKit, track) {
   const aabName = `mentra-example-react-native-${plan.releaseIdentity}.aab`
   return {
     release_identity: plan.releaseIdentity,
-    starter_release_commit: starterKit.starterKit.releaseCommit,
     build_number: plan.native.buildNumber,
     container_tag: plan.artifactContainerTag,
     aab_name: aabName,
@@ -70,13 +63,9 @@ export function examplePlayCoordinates(plan, starterKit, track) {
   }
 }
 
-export function configureExampleAndroid(plan, config, packageJson) {
+export function configureExampleAndroid(plan, config) {
   if (!["dev", "beta", "production"].includes(plan.channel)) {
     throw new Error("Only coordinated dev, beta, or production examples are supported")
-  }
-  for (const name of ["@mentra/bluetooth-sdk", "@mentra/engine"]) {
-    if (packageJson.dependencies?.[name] !== plan.releaseIdentity)
-      throw new Error(`Example ${name} must match the release`)
   }
   return {
     ...config,
@@ -88,15 +77,14 @@ export function configureExampleAndroid(plan, config, packageJson) {
   }
 }
 
-export function validateExampleGooglePlay(plan, starterKit, record) {
-  const coordinates = examplePlayCoordinates(plan, starterKit, record?.track)
+export function validateExampleGooglePlay(plan, record) {
+  const coordinates = examplePlayCoordinates(plan, record?.track)
   if (
-    record?.schemaVersion !== 1 ||
+    record?.schemaVersion !== 2 ||
     record.releaseSetId !== plan.releaseSetId ||
     record.releaseIdentity !== plan.releaseIdentity ||
     record.channel !== plan.channel ||
     record.mentraosSourceCommit !== plan.sourceCommit ||
-    record.starterKitReleaseCommit !== starterKit.starterKit.releaseCommit ||
     record.packageId !== EXAMPLE_PACKAGE_ID ||
     record.version?.marketingVersion !== plan.native.marketingVersion ||
     record.version?.buildNumber !== plan.native.buildNumber ||
@@ -119,27 +107,17 @@ export function validateExampleGooglePlay(plan, starterKit, record) {
   return record
 }
 
-export function createExampleGooglePlayRecord({
-  plan,
-  starterKit,
-  track,
-  codes,
-  aab,
-  artifactUrl,
-  uploadStatus,
-  provenanceUrl,
-}) {
-  examplePlayCoordinates(plan, starterKit, track)
+export function createExampleGooglePlayRecord({plan, track, codes, aab, artifactUrl, uploadStatus, provenanceUrl}) {
+  examplePlayCoordinates(plan, track)
   if (!Array.isArray(codes) || !codes.map(Number).includes(plan.native.buildNumber)) {
     throw new Error("Google Play did not retain the exact coordinated version code")
   }
-  return validateExampleGooglePlay(plan, starterKit, {
-    schemaVersion: 1,
+  return validateExampleGooglePlay(plan, {
+    schemaVersion: 2,
     releaseSetId: plan.releaseSetId,
     releaseIdentity: plan.releaseIdentity,
     channel: plan.channel,
     mentraosSourceCommit: plan.sourceCommit,
-    starterKitReleaseCommit: starterKit.starterKit.releaseCommit,
     packageId: EXAMPLE_PACKAGE_ID,
     version: {marketingVersion: plan.native.marketingVersion, buildNumber: plan.native.buildNumber},
     track,
@@ -164,13 +142,12 @@ function main() {
     return
   }
   if (command === "configure") {
-    const result = configureExampleAndroid(plan, readJson(options.app), readJson(options.package))
+    const result = configureExampleAndroid(plan, readJson(options.app))
     writeFileSync(options.app, `${JSON.stringify(result, null, 2)}\n`)
     return
   }
-  const starterKit = readJson(options["starter-kit"])
   if (command === "coordinates") {
-    const coordinates = examplePlayCoordinates(plan, starterKit, options.track)
+    const coordinates = examplePlayCoordinates(plan, options.track)
     for (const [name, value] of Object.entries(coordinates)) {
       if (/[\r\n]/.test(String(value))) throw new Error("Invalid multiline release coordinate")
       appendFileSync(options.output, `${name}=${value}\n`)
@@ -180,7 +157,6 @@ function main() {
   if (command !== "record") throw new Error(`Unknown command: ${command}`)
   const record = createExampleGooglePlayRecord({
     plan,
-    starterKit,
     track: options.track,
     codes: readJson(options.codes),
     aab: readFileSync(options.aab),

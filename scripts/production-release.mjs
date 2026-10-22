@@ -745,9 +745,10 @@ export function packagesConfirmationMessage(request) {
 }
 
 // The production Bluetooth example is keyed on the promoted beta like the
-// stable packages, and depends on them being public: it builds the Starter Kit
-// against the plain X.Y.Z npm packages and uploads candidates to the internal
-// TestFlight group and Play track. It never promotes a store listing.
+// stable packages, and runs after they are public: it builds examples/bluetooth
+// at the beta's source, stamped as the plain X.Y.Z release, and uploads
+// candidates to the internal TestFlight group and Play track. It never promotes
+// a store listing.
 export function validateExampleOptions(options) {
   if (!BETA_PATTERN.test(options.beta || "")) throw commandError("example requires --beta X.Y.Z-beta.N")
   return {beta_identity: options.beta}
@@ -755,7 +756,7 @@ export function validateExampleOptions(options) {
 
 export function exampleConfirmationMessage(request) {
   const identity = request.beta_identity.replace(/-beta\.\d+$/, "")
-  return `This builds the production Bluetooth example ${identity} from the public ${identity} packages and uploads its candidates to the internal TestFlight group and Play track. It never releases the example to a store. Run it after 'packages --phase release'.`
+  return `This builds the production Bluetooth example ${identity} from the promoted beta's source and uploads its candidates to the internal TestFlight group and Play track. It never releases the example to a store. Run it after 'packages --phase release'.`
 }
 
 export function advanceConfirmationMessage(request) {

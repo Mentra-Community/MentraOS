@@ -92,12 +92,12 @@ fi
 android_detail=$(artifact_link "$apk_url" "${APK_NAME:-Android APK}")
 ios_detail=$(artifact_link "$ipa_url" "${IPA_NAME:-iOS IPA}")
 asg_detail=$(artifact_link "${ASG_APK_URL:-}" "${ASG_APK_NAME:-ASG APK}")
-starter_detail=$(artifact_link \
-  "${STARTER_KIT_APK_URL:-}" \
-  "${STARTER_KIT_APK_NAME:-React Native example APK}" \
-  "${STARTER_KIT_RUN_URL:-$run_url}")
-if [[ -n "${STARTER_KIT_RELEASE_URL:-}" ]]; then
-  starter_detail+=" - <${STARTER_KIT_RELEASE_URL}|All example builds>"
+examples_detail=$(artifact_link \
+  "${EXAMPLE_APK_URL:-}" \
+  "${EXAMPLE_APK_NAME:-React Native example APK}" \
+  "$run_url")
+if [[ -n "${EXAMPLE_RECORD_URL:-}" ]]; then
+  examples_detail+=" - <${EXAMPLE_RECORD_URL}|All example builds>"
 fi
 example_testflight_detail="${EXAMPLE_TESTFLIGHT_DISTRIBUTION_STATUS:-unknown}"
 case "${EXAMPLE_TESTFLIGHT_DISTRIBUTION_STATUS:-}" in
@@ -161,8 +161,8 @@ if [[ -n "${TESTFLIGHT_INSTALL_URL:-}" ]]; then
   ios_line+=" - <${TESTFLIGHT_INSTALL_URL}|Join TestFlight>"
 fi
 asg_line="*$(icon "${OTA_RESULT:-unknown}") ASG + OTA* - $(label "${OTA_RESULT:-unknown}") - ${asg_detail}"
-starter_line="*$(icon "${FINALIZE_EXAMPLE_RESULT:-unknown}") Bluetooth example* - $(label "${FINALIZE_EXAMPLE_RESULT:-unknown}") - Starter Kit build: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") - ${starter_detail}${newline}React Native iOS TestFlight: ${example_testflight_icon} ${example_testflight_detail}"
-starter_line+="${newline}React Native Android Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") ${example_play_detail}"
+examples_line="*$(icon "${FINALIZE_EXAMPLE_RESULT:-unknown}") Bluetooth example* - $(label "${FINALIZE_EXAMPLE_RESULT:-unknown}") - Example builds: $(icon "${EXAMPLES_RESULT:-unknown}") $(label "${EXAMPLES_RESULT:-unknown}") - ${examples_detail}${newline}React Native iOS TestFlight: ${example_testflight_icon} ${example_testflight_detail}"
+examples_line+="${newline}React Native Android Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") ${example_play_detail}"
 docs_line="*$(icon "${DOCS_RESULT:-unknown}") Docs* - $(label "${DOCS_RESULT:-unknown}") - ${docs_detail}"
 main_app_line="*Mentra App downloads*${newline}Android phone APK: ${android_detail}${newline}iOS IPA: ${ios_detail}"
 scope="${RELEASE_SCOPE:-core}"
@@ -174,16 +174,16 @@ if [[ "$scope" == examples ]]; then
     header_icon=":warning:"
     header_text="$channel_label examples and docs incomplete"
   fi
-  checks_line="*Example checks*${newline}Inputs: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Starter Kit: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") | TestFlight: $(icon "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") $(label "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}")"
+  checks_line="*Example checks*${newline}Release: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}") | Example builds: $(icon "${EXAMPLES_RESULT:-unknown}") $(label "${EXAMPLES_RESULT:-unknown}") | TestFlight: $(icon "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") $(label "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}")"
   checks_line+=" | Example Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") $(label "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}")"
   checks_line+=" | Example finalize: $(icon "${FINALIZE_EXAMPLE_RESULT:-unknown}") $(label "${FINALIZE_EXAMPLE_RESULT:-unknown}")"
+  checks_line+=" | Starter Kit export: $(icon "${STARTER_KIT_EXPORT_RESULT:-unknown}") $(label "${STARTER_KIT_EXPORT_RESULT:-unknown}")"
 else
   checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Cloud V2: $(icon "${CLOUD_V2_RESULT:-unknown}") $(label "${CLOUD_V2_RESULT:-unknown}") | Mentra Cloud image: $(icon "${RUNTIME_IMAGE_RESULT:-unknown}") $(label "${RUNTIME_IMAGE_RESULT:-unknown}") | Private deployment: $(icon "${PRIVATE_DEPLOYMENT_RESULT:-skipped}") $(label "${PRIVATE_DEPLOYMENT_RESULT:-skipped}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
-  examples_url="https://github.com/${REPOSITORY}/actions/workflows/coordinated-example-release.yml?query=branch%3A${BRANCH}"
   if [[ -n "${RELEASE_PAGE_RESULT:-}" ]]; then
     checks_line+=" | Download page: $(icon "$RELEASE_PAGE_RESULT") $(label "$RELEASE_PAGE_RESULT")"
   fi
-  checks_line+="${newline}Examples and docs dispatch: $(icon "${EXAMPLES_DISPATCH_RESULT:-unknown}") $(label "${EXAMPLES_DISPATCH_RESULT:-unknown}") - <${examples_url}|View separate workflow>"
+  checks_line+="${newline}Examples and docs are reported separately when they complete."
 fi
 
 platforms='[]'
@@ -208,7 +208,7 @@ payload=$(jq -n \
   --arg android "$android_line" \
   --arg ios "$ios_line" \
   --arg asg "$asg_line" \
-  --arg starter "$starter_line" \
+  --arg examples "$examples_line" \
   --arg docs "$docs_line" \
   --arg main_app "$main_app_line" \
   --arg checks "$checks_line" \
@@ -221,7 +221,7 @@ payload=$(jq -n \
       {type: "divider"},
       (if $scope == "examples" then
         {type: "section", text: {type: "mrkdwn", text: $main_app}},
-        {type: "section", text: {type: "mrkdwn", text: $starter}},
+        {type: "section", text: {type: "mrkdwn", text: $examples}},
         {type: "section", text: {type: "mrkdwn", text: $docs}}
       else
         $platforms[],

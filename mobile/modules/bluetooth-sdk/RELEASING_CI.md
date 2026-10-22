@@ -54,8 +54,38 @@ protected production action. It then:
 
 Production consumes the immutable OTA pin and stable package family. It does
 not rebuild ASG/firmware artifacts, but it does rebuild the Mentra App IPA/AAB
-and Starter Kit app candidates because beta mobile configuration points at
-staging.
+and Bluetooth example app candidates because beta mobile configuration points at
+staging. The production release container also receives byte-identical copies
+of the promoted beta's OTA manifest and portable OTA bundle.
+
+## Bluetooth Examples And The Starter Kit
+
+The Bluetooth SDK examples live in `examples/bluetooth`. Each coordinated
+release builds them from that source, in parallel with the package and app
+builds and stamped with the same release metadata and OTA pin
+(`reusable-bluetooth-examples.yml`). Once the release is finalized, the example
+APKs and the unsigned iOS IPA are published to the release container and listed
+on its download page, the React Native example goes to TestFlight and Google
+Play, and `mentra-example-release-<identity>.json` records them. Examples never
+gate the release.
+
+The standalone
+[Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit)
+is exported from the completed release record by
+`bluetooth-starter-kit-export.yml`: `examples/bluetooth` at the release's source,
+with every SDK reference pinned to the published npm, Maven Central and Swift
+Package Manager packages, pushed as one `Release <identity>` commit and an
+`sdk-<identity>` tag to the channel's branch (`dev`, `staging` for beta, `main`
+for production). The export waits up to 45 minutes for the registries; a release
+that is not served by then is exported by the nightly run.
+
+## Portable OTA Bundle
+
+Beta releases publish `mentra-live-ota-bundle-<identity>.zip` for self-hosted
+updates. Development releases publish only the OTA manifest. A production
+release publishes byte-identical copies of the promoted beta's manifest and
+bundle as `mentra-live-ota-<X.Y.Z>.json` and `mentra-live-ota-bundle-<X.Y.Z>.zip`
+in `mentra-v<X.Y.Z>` and lists them in its release record and download page.
 
 ## Required Credentials
 
@@ -103,12 +133,12 @@ Before the first production promotion:
 3. Complete one `dev` and one `staging` coordinated run. Verify their release
    manifests, public package metadata, OTA manifest bytes, mobile diagnostics,
    and store destinations before selecting a beta for production. Confirm each
-   prerelease owns its manifest, selection, and bundle, while the shared ASG
-   release contains only reusable APK/provenance pairs.
+   prerelease owns its manifest and selection (and, for a beta, its bundle),
+   while the shared ASG release contains only reusable APK/provenance pairs.
 4. Confirm the automated external Engine consumer gate installs the exact
    public npm graph and builds its Android and iOS hosts. Once Maven and SwiftPM
-   are public, install the coordinated SDK into the Starter Kit examples and
-   build all three examples before production promotion.
+   are public, confirm the Starter Kit export pushed the release and its
+   registry-backed `Example App Builds` passed before production promotion.
 5. Update public docs and downloadable example links only after those registry
    and example-artifact checks pass.
 

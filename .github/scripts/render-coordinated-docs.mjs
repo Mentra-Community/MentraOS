@@ -3,6 +3,8 @@ import {cpSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync} 
 import path from "node:path"
 import {pathToFileURL} from "node:url"
 
+import {validateExamplesResult} from "./bluetooth-examples-result.mjs"
+
 const RELEASE_IDENTITY_PATTERN = /^\d+\.\d+\.\d+(?:-(?:dev|beta)\.[1-9]\d*)?$/
 
 function renderVariables(directory, variables) {
@@ -37,33 +39,23 @@ function parseArgs(args) {
   return values
 }
 
-function validateStarterKitResult(releasePlan, starterKitResult) {
-  if (!starterKitResult) throw new Error("Coordinated prerelease docs require a Starter Kit result")
-  if (
-    starterKitResult.schemaVersion !== 1 ||
-    starterKitResult.releaseSetId !== releasePlan.releaseSetId ||
-    starterKitResult.releaseIdentity !== releasePlan.releaseIdentity ||
-    starterKitResult.mentraos?.sourceCommit !== releasePlan.sourceCommit
-  ) {
-    throw new Error("Starter Kit result does not match the coordinated release plan")
-  }
-  const reactNative = starterKitResult.artifacts?.find((artifact) => artifact.key === "reactNative")
-  if (!reactNative || !/^https:\/\//.test(reactNative.url || "")) {
-    throw new Error("Starter Kit result is missing the React Native APK")
-  }
+function publishedReactNativeExample(releasePlan, examplesResult) {
+  if (!examplesResult) throw new Error("Coordinated prerelease docs require the published example builds")
+  const reactNative = validateExamplesResult(releasePlan, examplesResult).artifacts.find(
+    (artifact) => artifact.key === "reactNative",
+  )
   return reactNative
 }
 
-function validateExampleTestflightResult(releasePlan, starterKitResult, exampleTestflightResult) {
+function validateExampleTestflightResult(releasePlan, exampleTestflightResult) {
   const expectedGroup = releasePlan.channel === "dev" ? "Mentra Dev" : "Mentra Staging Public"
   const expectedAudience = releasePlan.channel === "dev" ? "internal" : "external"
   if (
-    exampleTestflightResult?.schemaVersion !== 1 ||
+    exampleTestflightResult?.schemaVersion !== 2 ||
     exampleTestflightResult.releaseSetId !== releasePlan.releaseSetId ||
     exampleTestflightResult.releaseIdentity !== releasePlan.releaseIdentity ||
     exampleTestflightResult.channel !== releasePlan.channel ||
     exampleTestflightResult.mentraosSourceCommit !== releasePlan.sourceCommit ||
-    exampleTestflightResult.starterKitReleaseCommit !== starterKitResult?.starterKit?.releaseCommit ||
     exampleTestflightResult.version?.marketingVersion !== releasePlan.native?.marketingVersion ||
     exampleTestflightResult.version?.buildNumber !== releasePlan.native?.buildNumber ||
     exampleTestflightResult.group?.name !== expectedGroup ||
@@ -84,7 +76,7 @@ export function renderCoordinatedDocs({
   sourceDir,
   outputDir,
   releasePlan,
-  starterKitResult,
+  examplesResult,
   exampleTestflightResult,
   repository,
 }) {
@@ -129,15 +121,11 @@ export function renderCoordinatedDocs({
   config.variables["release-artifacts-url"] =
     `https://github.com/${repository}/releases/tag/${releasePlan.artifactContainerTag}`
   if (releasePlan.releaseIdentity.includes("-")) {
-    const reactNative = validateStarterKitResult(releasePlan, starterKitResult)
+    const reactNative = publishedReactNativeExample(releasePlan, examplesResult)
     config.variables["example-app-download-label"] =
       `Download the React Native example APK for SDK ${releasePlan.releaseIdentity}`
     config.variables["example-app-url"] = reactNative.url
-    config.variables["example-app-ios-url"] = validateExampleTestflightResult(
-      releasePlan,
-      starterKitResult,
-      exampleTestflightResult,
-    )
+    config.variables["example-app-ios-url"] = validateExampleTestflightResult(releasePlan, exampleTestflightResult)
   }
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
   renderVariables(output, config.variables)
@@ -149,9 +137,7 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve
 if (isMain) {
   const args = parseArgs(process.argv.slice(2))
   const plan = JSON.parse(readFileSync(path.resolve(args.plan), "utf8"))
-  const starterKitResult = args["starter-kit"]
-    ? JSON.parse(readFileSync(path.resolve(args["starter-kit"]), "utf8"))
-    : undefined
+  const examplesResult = args.examples ? JSON.parse(readFileSync(path.resolve(args.examples), "utf8")) : undefined
   const exampleTestflightResult = args["example-testflight"]
     ? JSON.parse(readFileSync(path.resolve(args["example-testflight"]), "utf8"))
     : undefined
@@ -159,7 +145,7 @@ if (isMain) {
     sourceDir: path.resolve(args.source),
     outputDir: path.resolve(args.output),
     releasePlan: plan,
-    starterKitResult,
+    examplesResult,
     exampleTestflightResult,
     repository: args.repository,
   })

@@ -5,6 +5,7 @@ import {readFileSync} from "node:fs"
 import path from "node:path"
 import {pathToFileURL} from "node:url"
 
+import {validateExamplesResult} from "./bluetooth-examples-result.mjs"
 import {finalizeReleaseManifest} from "./release-family.mjs"
 import {downloadNames} from "./coordinated-install-downloads.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
@@ -31,9 +32,30 @@ export function completedReleaseDownloads(plan, manifest) {
   }
 }
 
-export function releaseDownloadNotes({plan, manifest, repository}) {
+const EXAMPLE_LABELS = Object.freeze({
+  reactNative: "React Native example APK",
+  android: "Native Android example APK",
+  reactNativeElevenLabsAudio: "React Native ElevenLabs audio example APK",
+  ios: "Native iOS example IPA (unsigned)",
+})
+
+// The Bluetooth example apps are published once the release is finalized;
+// the page lists them when they are.
+export function releaseDownloadNotes({plan, manifest, repository, examples}) {
   const {apk, aab, ipa, install, mac} = completedReleaseDownloads(plan, manifest)
   const download = (label, asset) => `- [${label}](${asset.url})`
+  const exampleLines = examples
+    ? [
+        "",
+        "## Bluetooth example apps",
+        ...Object.entries(EXAMPLE_LABELS).map(([key, label]) =>
+          download(
+            label,
+            validateExamplesResult(plan, examples).artifacts.find((artifact) => artifact.key === key),
+          ),
+        ),
+      ]
+    : []
   const asg = manifest.artifacts.find(
     (entry) => entry.coordinate.startsWith("mentra-live-asg-") && entry.coordinate.endsWith(".apk"),
   )
@@ -50,19 +72,74 @@ export function releaseDownloadNotes({plan, manifest, repository}) {
     "## Glasses and developer downloads",
     ...(asg ? [download("Mentra Live glasses APK (ASG)", asg)] : []),
     download("Glasses OTA manifest", manifest.otaManifest),
-    ...["otaBundle", "enginePackage"].map((key) => {
+    // Only beta releases publish the portable OTA bundle.
+    ...[
+      ["otaBundle", "Glasses OTA bundle"],
+      ["enginePackage", "Mentra Engine package"],
+    ].flatMap(([key, label]) => {
       const asset = manifest.artifacts.find((entry) => entry.coordinate === plan.artifactNames[key])
-      return download(key === "otaBundle" ? "Glasses OTA bundle" : "Mentra Engine package", asset)
+      return key === "otaBundle" && !plan.artifactNames[key] ? [] : [download(label, asset)]
     }),
     download("Mentra Bluetooth SDK for iOS", manifest.publications["@mentra/bluetooth-sdk"]["swift-package-manager"]),
     download("Release manifest and SHA-256 checksums", {
       url: artifactUrl(repository, plan.artifactContainerTag, plan.artifactNames.releaseManifest),
     }),
+    ...exampleLines,
     "",
     `Source: [\`${plan.sourceCommit.slice(0, 7)}\`](https://github.com/${repository}/commit/${plan.sourceCommit}).`,
-    "Downloads are hosted on Mentra's artifact CDN. Example apps are distributed separately.",
+    examples
+      ? "Downloads are hosted on Mentra's artifact CDN."
+      : "Downloads are hosted on Mentra's artifact CDN. Example apps are added when they are published.",
     END,
   ].join("\n")
+}
+
+// A production release promotes a beta: its container holds the canonical
+// production record and byte-identical copies of the beta's OTA manifest and
+// portable OTA bundle. The Mentra App ships through the stores.
+export function productionReleaseDownloadNotes({plan, manifest, repository}) {
+  if (plan.channel !== "production" || manifest.kind !== "mentra-production-release") {
+    throw new Error("Production download notes need a production plan and release record")
+  }
+  if (manifest.releaseIdentity !== plan.releaseIdentity || manifest.sourceCommit !== plan.sourceCommit) {
+    throw new Error("The production release record does not match the plan")
+  }
+  const asset = (key) => {
+    const entry = (manifest.artifacts || []).find((artifact) => artifact.coordinate === plan.artifactNames[key])
+    if (!entry) throw new Error(`The production release record does not list ${plan.artifactNames[key]}`)
+    return entry
+  }
+  const download = (label, entry) => `- [${label}](${entry.url})`
+  const beta = manifest.promotion.selectedBetaIdentity
+  return [
+    START,
+    `Mentra ${plan.releaseIdentity} — production release, promoted from beta ${beta}.`,
+    "",
+    "## Glasses and developer downloads",
+    download("Glasses OTA manifest", asset("otaManifest")),
+    download("Glasses OTA bundle", asset("otaBundle")),
+    download("Release record and SHA-256 checksums", {
+      url: artifactUrl(repository, plan.artifactContainerTag, plan.artifactNames.releaseManifest),
+    }),
+    "",
+    `The OTA manifest and bundle are byte-identical copies of beta ${beta}'s, which the Bluetooth SDK ${plan.releaseIdentity} packages pin.`,
+    `Source: [\`${plan.sourceCommit.slice(0, 7)}\`](https://github.com/${repository}/commit/${plan.sourceCommit}).`,
+    END,
+  ].join("\n")
+}
+
+// Updates the stable production release's downloads in place. That release is
+// created as a draft and published by hand after the final availability
+// checks, so this never creates, publishes or retags it.
+export function publishProductionReleasePage({plan, manifest, repository, releaseId, api = githubApi}) {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("Invalid repository")
+  const notes = productionReleaseDownloadNotes({plan, manifest, repository})
+  const release = api(`repos/${repository}/releases/${releaseId}`)
+  assert.equal(release.tag_name, plan.artifactContainerTag, "The release must be the production container")
+  assert.equal(release.prerelease, false)
+  const body = updateDownloadNotes(release.body || "", notes)
+  if (body === release.body) return release
+  return api(`repos/${repository}/releases/${release.id}`, {method: "PATCH", data: {body}})
 }
 
 export function updateDownloadNotes(body = "", notes) {
@@ -88,9 +165,9 @@ function githubApi(route, {method = "GET", data, allowMissing = false} = {}) {
   }
 }
 
-export function publishCoordinatedReleasePage({plan, manifest, repository, api = githubApi}) {
+export function publishCoordinatedReleasePage({plan, manifest, repository, examples, api = githubApi}) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("Invalid repository")
-  const notes = releaseDownloadNotes({plan, manifest, repository})
+  const notes = releaseDownloadNotes({plan, manifest, repository, examples})
   const tag = `mentra-v${plan.releaseIdentity}`
   const route = `repos/${repository}`
   // Finalization owns the source tag. Never create or move one while repairing notes.
@@ -125,10 +202,19 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     if (index < 0 || !process.argv[index + 1]) throw new Error(`Missing --${name}`)
     return process.argv[index + 1]
   }
-  const release = publishCoordinatedReleasePage({
-    plan: JSON.parse(readFileSync(option("plan"), "utf8")),
+  const optional = (name) => (process.argv.includes(`--${name}`) ? option(name) : undefined)
+  const plan = JSON.parse(readFileSync(option("plan"), "utf8"))
+  const input = {
+    plan,
     manifest: JSON.parse(readFileSync(option("manifest"), "utf8")),
     repository: option("repository"),
-  })
+  }
+  const release =
+    plan.channel === "production"
+      ? publishProductionReleasePage({...input, releaseId: option("release-id")})
+      : publishCoordinatedReleasePage({
+          ...input,
+          examples: optional("examples") ? JSON.parse(readFileSync(optional("examples"), "utf8")) : undefined,
+        })
   console.log(release.html_url)
 }

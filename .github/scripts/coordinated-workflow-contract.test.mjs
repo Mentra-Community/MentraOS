@@ -61,7 +61,7 @@ test("every internal release-asset fetch has authenticated R2 credentials in its
 })
 
 test("example finalization authenticates historical asset URL lookup", () => {
-  const finalize = jobBlock(workflow("coordinated-example-release.yml"), "finalize-example")
+  const finalize = jobBlock(workflow("coordinated-release.yml"), "finalize-example")
   const step = finalize
     .split("      - name: Assemble the example release record against the finalized beta\n")[1]
     .split("\n      - name:")[0]
@@ -149,11 +149,13 @@ test("completed releases publish a version page and example notices carry the ma
   assert.match(page, /name: coordinated-release-result-/)
   assert.match(page, /publish-coordinated-release-page.mjs/)
   assert.doesNotMatch(page, /finalize-release-manifest|publish-immutable-release-asset|date -u/)
-  assert.doesNotMatch(jobBlock(core, "dispatch-examples"), /publish-release-page/)
-  const examples = workflow("coordinated-example-release.yml")
+  // The published example apps are added to the same page afterwards.
+  const publishExamples = jobBlock(core, "publish-examples")
+  assert.match(publishExamples, /needs: \[plan, examples, finalize, publish-release-page\]/)
+  assert.match(publishExamples, /publish-coordinated-release-page\.mjs[\s\S]*--examples examples-result\/examples-result\.json/)
+  const examplesNotice = jobBlock(core, "notify-slack-examples")
   for (const kind of ["apk", "ipa"]) {
-    assert.ok(examples.includes(`mobile_${kind}_url: \${{ steps.load.outputs.mobile_${kind}_url }}`))
-    assert.ok(examples.includes(`MOBILE_${kind.toUpperCase()}_URL: \${{ needs.plan.outputs.mobile_${kind}_url }}`))
+    assert.ok(examplesNotice.includes(`MOBILE_${kind.toUpperCase()}_URL: \${{ needs.mobile.outputs.${kind}_url }}`))
   }
 })
 
@@ -787,7 +789,7 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(example, /provisioningProfiles: \{\(\$bundle_id\): \$profile\}/)
   assert.match(example, /PlistBuddy -c 'Print :com\.apple\.developer\.networking\.HotspotConfiguration'/)
   assert.equal([...example.matchAll(/--app-id "\$EXAMPLE_APP_ID"/g)].length, 5)
-  assert.match(example, /starterKit\.releaseCommit/)
+  assert.match(example, /\[\[ "\$\(git rev-parse HEAD\)" == "\$\{\{ inputs\.source_commit \}\}" \]\]/)
   assert.match(jobBlock(example, "ios"), /runs-on: macos-15/)
   assert.match(jobBlock(example, "ios"), /DEVELOPER_DIR: \/Applications\/Xcode_26\.2\.app\/Contents\/Developer/)
   assert.match(example, /app-store-connect-build\.mjs upload/)
@@ -814,7 +816,6 @@ test("mobile destinations use real TestFlight groups without changing the releas
 
 test("coordinated docs publish only after finalization to the matching channel", () => {
   const coordinator = workflow("coordinated-release.yml")
-  const examples = workflow("coordinated-example-release.yml")
   const plan = jobBlock(coordinator, "plan")
   // Store build numbers come from the family formula with the run number as
   // the sequence, for the app plan and the ASG client alike.
@@ -833,51 +834,58 @@ test("coordinated docs publish only after finalization to the matching channel",
     workflow("reusable-coordinated-ota.yml"),
     /allocate-asg-version\.mjs \\\n[\s\S]{0,300}--build-number "\$\(jq -er \.native\.buildNumber release-intent\/release-plan\.json\)"/,
   )
-  const starterKitJob = jobBlock(examples, "starter-kit")
-  // The Starter Kit request is shared with the production example: the
-  // coordinator only wires the reusable workflow.
-  const starterKit = jobBlock(workflow("reusable-coordinated-starter-kit.yml"), "starter-kit")
+  const examples = jobBlock(coordinator, "examples")
+  const publishExamples = jobBlock(coordinator, "publish-examples")
   const engineConsumer = jobBlock(coordinator, "engine-consumer")
-  const exampleTestflight = jobBlock(examples, "example-testflight")
-  const docs = jobBlock(examples, "docs")
-  const notify = jobBlock(examples, "notify-slack")
-
+  const exampleTestflight = jobBlock(coordinator, "example-testflight")
+  const exampleGooglePlay = jobBlock(coordinator, "example-google-play")
+  const docs = jobBlock(coordinator, "docs")
+  const exportKit = jobBlock(coordinator, "export-starter-kit")
+  const notify = jobBlock(coordinator, "notify-slack-examples")
   const finalize = jobBlock(coordinator, "finalize")
-  const finalizeExample = jobBlock(examples, "finalize-example")
+  const finalizeExample = jobBlock(coordinator, "finalize-example")
 
-  // The Mentra beta (Cloud V2, Mentra App, Engine, Bluetooth SDK) is complete
-  // on its own; the Bluetooth example is built against the finalized beta and
-  // finalized as a separate record, so it can never make the beta incomplete.
+  // The Mentra beta (Cloud V2, the Mentra App, Engine, Bluetooth SDK) is
+  // complete on its own; the Bluetooth examples build from the same source in
+  // the same run and are finalized as a separate record, so they can never
+  // make the beta incomplete.
   assert.match(
     finalize,
     /^    needs: \[plan, cloud-v2, runtime-image, ota, npm, sdk-native, mobile, engine-consumer\]$/m,
   )
-  assert.doesNotMatch(finalize, /starter-kit|example-testflight|example-google-play/)
-  assert.match(starterKitJob, /^    needs: plan$/m)
-  assert.match(starterKitJob, /uses: \.\/\.github\/workflows\/reusable-coordinated-starter-kit\.yml/)
-  assert.match(starterKitJob, /if: needs\.plan\.outputs\.dry_run != 'true'/)
+  assert.doesNotMatch(finalize, /examples|example-testflight|example-google-play/)
   assert.match(engineConsumer, /^    needs: \[plan, npm\]$/m)
-  assert.match(starterKit, /coordinated-example-release\.yml/)
-  assert.match(starterKit, /production\) target_branch=main ;;/)
-  assert.match(starterKit, /container_tag="sdk-\$identity"/)
-  assert.doesNotMatch(coordinator, /Freeze the Starter Kit channel source/)
-  assert.doesNotMatch(coordinator, /--starter-kit-source|starterKitSource|Starter-Kit-Source/)
-  assert.match(finalizeExample, /^    needs: \[plan, starter-kit, example-testflight, example-google-play\]$/m)
-  assert.match(finalizeExample, /needs\.plan\.outputs\.dry_run != 'true'/)
+  // The examples build from source in parallel with the packages and apps,
+  // stamped with the release's OTA pin, and publish only after finalize.
+  assert.match(examples, /^    needs: \[plan, ota\]$/m)
+  assert.match(examples, /uses: \.\/\.github\/workflows\/reusable-bluetooth-examples\.yml/)
+  assert.match(examples, /ota_manifest_sha256: \$\{\{ needs\.ota\.outputs\.manifest_sha256 \}\}/)
+  assert.match(examples, /if: needs\.plan\.outputs\.dry_run != 'true'/)
+  assert.match(publishExamples, /needs\.finalize\.result == 'success'/)
+  assert.match(publishExamples, /publish-immutable-release-asset\.mjs/)
+  assert.match(publishExamples, /bluetooth-examples-result\.mjs locate/)
+  assert.match(exampleTestflight, /^    needs: \[plan, ota, publish-examples\]$/m)
+  assert.match(exampleGooglePlay, /^    needs: \[plan, ota, publish-examples\]$/m)
+  // No cross-repository machinery remains.
+  for (const name of ["coordinated-example-release.yml", "reusable-coordinated-starter-kit.yml"]) {
+    assert.equal(existsSync(new URL(`../workflows/${name}`, import.meta.url)), false, name)
+  }
+  assert.equal(existsSync(new URL("load-coordinated-example-release.mjs", import.meta.url)), false)
+  assert.doesNotMatch(coordinator, /dispatch-examples|gh workflow run|STARTER_KIT_COORDINATOR_TOKEN|Starter-Kit-Source/)
+  // The standalone Starter Kit follows the finalized release.
+  assert.match(exportKit, /^    needs: \[plan, finalize\]$/m)
+  assert.match(exportKit, /uses: \.\/\.github\/workflows\/bluetooth-starter-kit-export\.yml/)
+  assert.match(exportKit, /identity: \$\{\{ needs\.plan\.outputs\.release_identity \}\}/)
+  assert.match(finalizeExample, /^    needs: \[plan, publish-examples, example-testflight, example-google-play\]$/m)
   assert.match(finalizeExample, /name: coordinated-release-result-\$\{\{ needs\.plan\.outputs\.release_set_id \}\}/)
   assert.match(finalizeExample, /example-release-records\.mjs/)
   assert.match(finalizeExample, /--beta-manifest "\$beta_manifest"/)
+  assert.match(finalizeExample, /--examples "\$examples"/)
   assert.match(finalizeExample, /record_name="mentra-example-release-\$identity\.json"/)
   assert.match(finalizeExample, /publish-immutable-release-asset\.mjs/)
   assert.match(finalizeExample, /verify-public-release-asset\.mjs/)
-  // Retries are idempotent: the Starter Kit head the earlier attempt used is
-  // recovered from its candidate (or release tag), and an already-published
-  // example record is reproduced byte-for-byte instead of re-minted.
-  assert.match(
-    starterKit,
-    /candidate_parent=\$\(gh api "repos\/\$STARTER_KIT_REPOSITORY\/commits\/coordinated\/\$identity" --jq '\.parents\[0\]\.sha'/,
-  )
-  assert.match(starterKit, /commits\/sdk-\$identity" --jq '\.parents\[0\]\.sha'/)
+  // Retries are idempotent: an already-published example record is reproduced
+  // byte-for-byte instead of re-minted.
   assert.match(finalizeExample, /release-assets\.mjs fetch --asset-id/)
   assert.match(finalizeExample, /example-release-records\.mjs reconcile/)
   assert.match(finalizeExample, /if: steps.results.outputs.published != 'true'/)
@@ -888,69 +896,17 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(plan, /cmp release-plan\.json "\$output"/)
   assert.equal([...plan.matchAll(/if: steps\.restore-plan\.outputs\.restored != 'true'/g)].length, 1)
   assert.doesNotMatch(plan, /source_timestamp/)
-  assert.match(
-    starterKit,
-    /expected_head=\$\(git ls-remote "https:\/\/github\.com\/\$STARTER_KIT_REPOSITORY\.git" "refs\/heads\/\$target_branch"/,
-  )
-  assert.doesNotMatch(starterKit, /expected_head=\$\(gh api/)
-  assert.doesNotMatch(starterKit, /event_type: "coordinated_example_release"/)
-  assert.doesNotMatch(starterKit, /--event repository_dispatch/)
-  assert.match(starterKit, /gh workflow run coordinated-example-release\.yml/)
-  assert.match(starterKit, /--ref "\$target_branch"/)
-  assert.match(starterKit, /--event workflow_dispatch/)
-  assert.equal([...starterKit.matchAll(/--branch "\$target_branch"/g)].length, 2)
-  assert.match(starterKit, /starter-kit-release-\$identity\.json/)
-  assert.match(starterKit, /select\(\.displayTitle == [^\n]+ and \.status != \\"completed\\"\)/)
-  assert.match(starterKit, /encoded_candidate_branch=\$\(jq -rn[^\n]+'\$value \| @uri'\)/)
-  assert.match(starterKit, /--json status,conclusion 2>\/dev\/null \|\| true/)
-  assert.doesNotMatch(starterKit, /repos\/\$STARTER_KIT_REPOSITORY\/pulls/)
-  assert.doesNotMatch(starterKit, /gh pr create/)
-  assert.doesNotMatch(starterKit, /gh pr checks/)
-  assert.doesNotMatch(starterKit, /gh pr merge/)
-  assert.match(starterKit, /Create Starter Kit request token/)
-  assert.match(starterKit, /Wait for the immutable Starter Kit result/)
-  assert.match(starterKit, /Create Starter Kit verification token/)
-  assert.match(starterKit, /--location "\$result_url" --output \/dev\/null/)
-  assert.doesNotMatch(starterKit, /--location --head "\$result_url"/)
-  assert.match(starterKit, /for _ in \{1\.\.630\}/)
-  assert.match(starterKit, /gh pr view "\$pull_request_url"[^]*--json url,state,headRefOid,baseRefName,mergeCommit/)
-  assert.match(starterKit, /git\/ref\/tags\/sdk-\$identity/)
-  assert.match(starterKit, /\.digest <<< "\$asset"/)
-  assert.match(starterKit, /actions\/create-github-app-token@v3/)
-  assert.match(starterKit, /app-id: \$\{\{ vars\.STARTER_KIT_COORDINATOR_APP_ID \}\}/)
-  assert.match(starterKit, /private-key: \$\{\{ secrets\.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY \}\}/)
-  assert.match(starterKit, /continue-on-error: true/)
-  assert.doesNotMatch(starterKit, /STARTER_KIT_APP_PRIVATE_KEY:/)
-  assert.match(starterKit, /permission-actions: write/)
-  assert.match(starterKit, /permission-contents: write/)
-  assert.doesNotMatch(starterKit, /permission-pull-requests: write/)
-  assert.match(starterKit, /permission-contents: read/)
-  assert.match(starterKit, /permission-pull-requests: read/)
-  assert.match(starterKit, /\[\[ "\$branch_sha" =~ \^\[0-9a-f\]\{40\}\$ \]\]/)
-  assert.doesNotMatch(starterKit, /candidate_sha=\$\([^\n]+\n\s+--jq \.commit\.sha 2>\/dev\/null \|\| true\)/)
-  assert.doesNotMatch(starterKit, /lookup_starter_pr|repos\/\$STARTER_KIT_REPOSITORY\/pulls/)
-  assert.match(
-    starterKit,
-    /STARTER_KIT_TOKEN: \$\{\{ steps\.starter-kit-request-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
-  )
-  assert.match(
-    starterKit,
-    /STARTER_KIT_TOKEN: \$\{\{ steps\.starter-kit-verification-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
-  )
-  assert.match(exampleTestflight, /^    needs: \[plan, starter-kit\]$/m)
   assert.match(exampleTestflight, /reusable-coordinated-example-testflight\.yml/)
   assert.match(finalize, /needs\.engine-consumer\.result == 'success'/)
-  assert.match(docs, /^    needs: \[plan, starter-kit, example-testflight\]$/m)
-  assert.match(docs, /needs\.starter-kit\.result == 'success'/)
+  assert.match(docs, /^    needs: \[plan, publish-examples, example-testflight\]$/m)
   assert.doesNotMatch(docs, /needs\.(finalize-example|example-google-play)/)
-  assert.match(docs, /!cancelled\(\)/)
-  assert.match(docs, /needs\.plan\.outputs\.dry_run != 'true'/)
+  assert.match(docs, /EXAMPLE_APK_URL: \$\{\{ needs\.publish-examples\.outputs\.react_native_url \}\}/)
   assert.match(docs, /project=mentraos-docs-dev/)
   assert.match(docs, /docs_url=https:\/\/docs-dev\.mentraglass\.com/)
   assert.match(docs, /project=mentraos-docs-beta/)
   assert.match(docs, /docs_url=https:\/\/docs-beta\.mentraglass\.com/)
   assert.match(docs, /render-coordinated-docs\.mjs/)
-  assert.match(docs, /--starter-kit/)
+  assert.match(docs, /--examples release-input\/examples\/examples-result\.json/)
   assert.match(docs, /--example-testflight/)
   assert.match(docs, /Cache-Control: public, max-age=0, must-revalidate/)
   assert.match(docs, /X-Robots-Tag: noindex/)
@@ -970,55 +926,89 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(docs, /grep --fixed-strings --quiet "href=\\"\$EXAMPLE_APK_URL\\"" "\$body"/)
   assert.match(docs, /grep --fixed-strings --quiet "href=\\"\$EXAMPLE_IOS_URL\\"" "\$body"/)
   assert.match(docs, /%7b%7b\[a-z0-9_-\]\+%7d%7d/)
-  assert.match(
-    notify,
-    /^    needs: \[plan, starter-kit, example-testflight, example-google-play, finalize-example, docs\]$/m,
-  )
+  assert.match(notify, /needs\.finalize\.result == 'success'/)
   assert.match(notify, /FINALIZE_EXAMPLE_RESULT: \$\{\{ needs\.finalize-example\.result \}\}/)
-  assert.match(notify, /STARTER_KIT_RESULT: \$\{\{ needs\.starter-kit\.result \}\}/)
+  assert.match(notify, /EXAMPLES_RESULT: /)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_RESULT: \$\{\{ needs\.example-testflight\.result \}\}/)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_INSTALL_URL: \$\{\{ needs\.example-testflight\.outputs\.install_url \}\}/)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_BUILD_NUMBER: \$\{\{ needs\.example-testflight\.outputs\.build_number \}\}/)
   assert.match(notify, /EXAMPLE_GOOGLE_PLAY_RESULT: \$\{\{ needs\.example-google-play\.result \}\}/)
-  assert.match(notify, /EXAMPLE_GOOGLE_PLAY_TRACK: \$\{\{ needs\.plan\.outputs\.example_play_track \}\}/)
+  assert.match(notify, /EXAMPLE_GOOGLE_PLAY_TRACK: \$\{\{ needs\.plan\.outputs\.play_track \}\}/)
   assert.match(notify, /EXAMPLE_GOOGLE_PLAY_INSTALL_URL: \$\{\{ needs\.example-google-play\.outputs\.install_url \}\}/)
-  assert.match(notify, /STARTER_KIT_RUN_URL: \$\{\{ needs\.starter-kit\.outputs\.run_url \}\}/)
+  assert.match(notify, /STARTER_KIT_EXPORT_RESULT: \$\{\{ needs\.export-starter-kit\.result \}\}/)
   assert.match(notify, /DOCS_RESULT: \$\{\{ needs\.docs\.result \}\}/)
-  const example = workflow("reusable-coordinated-example-testflight.yml")
-  assert.match(example, /actions\/create-github-app-token@v3/)
-  assert.match(example, /private-key: \$\{\{ secrets\.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY \}\}/)
-  assert.match(example, /continue-on-error: true/)
-  assert.doesNotMatch(example, /STARTER_KIT_APP_PRIVATE_KEY:/)
-  assert.match(example, /permission-contents: read/)
-  assert.doesNotMatch(example, /group: mentra-ios-signing-runner/)
-  assert.match(
-    example,
-    /token: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
-  )
+  // The store builds are the example at the release source, stamped like the
+  // Mentra App; no Starter Kit checkout or token remains.
+  for (const name of ["reusable-coordinated-example-testflight.yml", "reusable-coordinated-example-google-play.yml"]) {
+    const store = workflow(name)
+    assert.doesNotMatch(store, /create-github-app-token|STARTER_KIT|starter-kit|starter_kit/, name)
+    assert.match(store, /working-directory: examples\/bluetooth\/react-native/, name)
+    assert.match(store, /node \.github\/scripts\/stage-release-family\.mjs --plan "\$plan"/, name)
+    assert.match(store, /node mobile\/modules\/bluetooth-sdk\/scripts\/write-release-metadata\.mjs "\$\{metadata\[@\]\}"/, name)
+    assert.match(store, /node mobile\/modules\/engine\/scripts\/write-release-metadata\.mjs "\$\{metadata\[@\]\}"/, name)
+  }
+  assert.doesNotMatch(workflow("reusable-coordinated-example-testflight.yml"), /group: mentra-ios-signing-runner/)
 })
 
-test("release-family promotion orders both repositories and reconciles Starter Kit ancestry", () => {
+test("the release's example builds are stamped with the same release metadata as the Mentra App", () => {
+  const reusable = workflow("reusable-bluetooth-examples.yml")
+  for (const job of ["android", "react-native", "react-native-elevenlabs-audio", "ios"]) {
+    const block = jobBlock(reusable, job)
+    assert.match(block, /Stamp the release into the SDK and Engine/, job)
+    assert.match(block, /--ota-manifest-sha256 "\$OTA_MANIFEST_SHA256"/, job)
+    assert.match(block, /mobile\/modules\/engine\/scripts\/write-release-metadata\.mjs/, job)
+  }
+  // The React Native examples are stamped after the workspace install, as the app is.
+  const reactNative = jobBlock(reusable, "react-native")
+  assert.ok(reactNative.indexOf("bun install --frozen-lockfile") < reactNative.indexOf("Stamp the release"))
+  const result = jobBlock(reusable, "result")
+  assert.match(result, /needs: \[prepare, android, react-native, react-native-elevenlabs-audio, ios\]/)
+  assert.match(result, /bluetooth-examples-result\.mjs build/)
+  // Pull requests run the same jobs without a release.
+  assert.match(workflow("example-app-builds.yml"), /uses: \.\/\.github\/workflows\/reusable-bluetooth-examples\.yml/)
+})
+
+test("the Starter Kit export is idempotent, deferrable, and pushes only to the kit", () => {
+  const exporter = workflow("bluetooth-starter-kit-export.yml")
+  assert.match(exporter, /workflow_call:/)
+  assert.match(exporter, /schedule:/)
+  assert.match(exporter, /workflow_dispatch:/)
+  assert.match(exporter, /group: starter-kit-export-\$\{\{ matrix\.channel \}\}/)
+  assert.match(exporter, /cancel-in-progress: false/)
+  assert.match(exporter, /export-bluetooth-starter-kit\.mjs resolve/)
+  assert.match(exporter, /export-bluetooth-starter-kit\.mjs status/)
+  assert.match(exporter, /--timeout-minutes 45/)
+  assert.match(exporter, /export-bluetooth-starter-kit\.mjs transform/)
+  assert.match(exporter, /repositories: Mentra-Bluetooth-SDK-Starter-Kit\n/)
+  assert.match(exporter, /permission-contents: write/)
+  assert.match(exporter, /permission-workflows: write/)
+  assert.doesNotMatch(exporter, /permission-actions|MentraOS\n\s+Mentra-Bluetooth|--force|push -f/)
+  assert.match(exporter, /git push --quiet origin "HEAD:refs\/heads\/\$BRANCH"/)
+  assert.match(exporter, /git tag "sdk-\$IDENTITY"/)
+  assert.match(exporter, /Deferred/)
+  const rollout = workflow("production-release-rollout.yml")
+  const exportJob = jobBlock(rollout, "export-starter-kit")
+  assert.match(exportJob, /needs: record/)
+  assert.match(exportJob, /channel: production/)
+})
+
+test("release-family promotion advances MentraOS only; the Starter Kit is exported per release", () => {
   const script = repositoryScript("promote-release-family.mjs")
   const start = script.indexOf('if (command === "start")')
-  const starterPromotion = script.indexOf("repository: STARTER_KIT_REPOSITORY", start)
-  const mentraosPromotion = script.indexOf("repository: MENTRAOS_REPOSITORY", starterPromotion)
+  const mentraosPromotion = script.indexOf("repository: MENTRAOS_REPOSITORY", start)
   const finish = script.indexOf("requireSuccessfulBetaRun(options.run)", mentraosPromotion)
-  const starterReconciliation = script.indexOf("repository: STARTER_KIT_REPOSITORY", finish)
-  const preparation = script.indexOf("scripts/prepare-next-release-family.mjs", starterReconciliation)
+  const preparation = script.indexOf("scripts/prepare-next-release-family.mjs", finish)
 
   assert.ok(start >= 0)
-  assert.ok(starterPromotion > start)
-  assert.ok(mentraosPromotion > starterPromotion)
+  assert.ok(mentraosPromotion > start)
   assert.ok(finish > mentraosPromotion)
-  assert.ok(starterReconciliation > finish)
-  assert.ok(preparation > starterReconciliation)
+  assert.ok(preparation > finish)
+  assert.doesNotMatch(script, /STARTER_KIT_REPOSITORY|Starter-Kit-Source|starterKitStagingHead/)
   assert.match(script, /--match-head-commit", promotionHead/)
-  assert.match(script, /mergeBody: `Starter-Kit-Source: \$\{starterKitStagingHead\}`/)
   assert.match(script, /run\.path !== "\.github\/workflows\/coordinated-release\.yml"/)
   assert.match(script, /run\.head_sha !== stagingHead/)
   assert.match(script, /expectedIdentity = `\$\{plan\.familyBaseVersion\}-beta\.\$\{run\.run_number\}`/)
   assert.match(script, /plan\.sourceCommit !== stagingHead/)
-  assert.doesNotMatch(script, /plan\.starterKitSource|Starter-Kit-Source trailer/)
   assert.match(script, /createMetadataCommit\(repository, targetHead, family, mergeBody\)/)
   assert.match(script, /release\/promote-\$\{family\}-refresh-pin-\$\{marker\}/)
   assert.match(script, /promotionBranchHead\(repository, branch\) \|\|/)
@@ -1045,8 +1035,9 @@ test("external example review replacements are manual and exact-build only", () 
   assert.match(manual, /workflow_dispatch:/)
   assert.match(manual, /beta_identity:/)
   assert.match(manual, /review_notes:/)
-  assert.match(manual, /mentra-release-\$BETA_IDENTITY\.json/)
-  assert.match(manual, /\.starterKit\.testflight\.distribution\.status/)
+  assert.match(manual, /mentra-example-release-\$BETA_IDENTITY\.json/)
+  assert.match(manual, /testflight=\$\(jq -ec '\.testflight \/\/ \.starterKit\.testflight' "\$example"\)/)
+  assert.match(manual, /\.distribution\.status <<< "\$testflight"/)
   assert.match(manual, /--allow-rejected-override true/)
   assert.match(manual, /app-store-connect-build\.mjs testflight-preflight/)
   assert.match(manual, /app-store-connect-build\.mjs assign/)
@@ -1205,6 +1196,7 @@ test("the production example is keyed on the promoted beta and never promotes a 
   assert.match(load, /environment:\n      name: production-store-status/)
   assert.match(load, /git merge-base --is-ancestor "\$source_commit" origin\/main/)
   assert.match(load, /npm view "\$name@\$RELEASE_IDENTITY" version/)
+  assert.match(load, /release-source\/examples\/bluetooth/)
   assert.match(load, /production-example\.mjs plan/)
   // The example's number is the family's next sequence from the family
   // container, recorded there before any upload; stores are not consulted.
@@ -1214,11 +1206,16 @@ test("the production example is keyed on the promoted beta and never promotes a 
   assert.match(load, /Record the allocated build number in the family container/)
   assert.doesNotMatch(load, /--apple-inventory|--google-inventory|google_play_inventory/)
   assert.match(load, /production-packages\.mjs ensure-container/)
-  assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-starter-kit\.yml/)
+  // The production example builds examples/bluetooth at the promoted beta's
+  // source and publishes it to the stable container.
+  assert.match(example, /uses: \.\/\.github\/workflows\/reusable-bluetooth-examples\.yml/)
+  assert.match(jobBlock(example, "publish-examples"), /--release-id "\$\{\{ needs\.load\.outputs\.stable_release_id \}\}"/)
+  assert.doesNotMatch(example, /reusable-coordinated-starter-kit|starter_kit_result/)
   assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-example-testflight\.yml/)
   assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-example-google-play\.yml/)
   assert.match(example, /production_build_number: \$\{\{ fromJSON\(needs\.load\.outputs\.build_number\) \}\}/)
   assert.match(finalize, /example-release-records\.mjs/)
+  assert.match(finalize, /--examples "\$examples"/)
   assert.match(load, /Recover the example plan a previous run already froze/)
   assert.match(load, /--existing-plan example-input\/existing-plan\.json/)
   assert.match(load, /cp release-intent\/release-plan\.json "release-intent\/\$PLAN_ASSET"/)

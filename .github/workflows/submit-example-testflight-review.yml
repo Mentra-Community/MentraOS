@@ -50,20 +50,25 @@ jobs:
           node .github/scripts/release-assets.mjs download --tag "$tag" \
             --pattern "mentra-release-plan-$BETA_IDENTITY.json" \
             --pattern "mentra-release-$BETA_IDENTITY.json" \
+            --pattern "mentra-example-release-$BETA_IDENTITY.json" \
             --dir selected-beta
           plan="selected-beta/mentra-release-plan-$BETA_IDENTITY.json"
           manifest="selected-beta/mentra-release-$BETA_IDENTITY.json"
+          example="selected-beta/mentra-example-release-$BETA_IDENTITY.json"
           [[ "$(jq -er .releaseIdentity "$plan")" == "$BETA_IDENTITY" ]]
           [[ "$(jq -er .releaseIdentity "$manifest")" == "$BETA_IDENTITY" ]]
+          [[ "$(jq -er .releaseIdentity "$example")" == "$BETA_IDENTITY" ]]
           [[ "$(jq -er .releaseSetId "$plan")" == "$(jq -er .releaseSetId "$manifest")" ]]
-          [[ "$(jq -er .starterKit.testflight.app.id "$manifest")" == "$EXAMPLE_APP_ID" ]]
-          [[ "$(jq -er .starterKit.testflight.app.bundleId "$manifest")" == "$EXAMPLE_BUNDLE_ID" ]]
-          [[ "$(jq -er .starterKit.testflight.distribution.status "$manifest")" == "skipped" ]]
+          # Example records before schema version 2 kept TestFlight under starterKit.
+          testflight=$(jq -ec '.testflight // .starterKit.testflight' "$example")
+          [[ "$(jq -er .app.id <<< "$testflight")" == "$EXAMPLE_APP_ID" ]]
+          [[ "$(jq -er .app.bundleId <<< "$testflight")" == "$EXAMPLE_BUNDLE_ID" ]]
+          [[ "$(jq -er .distribution.status <<< "$testflight")" == "skipped" ]]
           {
             echo "beta_identity=$BETA_IDENTITY"
-            echo "marketing_version=$(jq -er .starterKit.testflight.version.marketingVersion "$manifest")"
-            echo "build_number=$(jq -er .starterKit.testflight.version.buildNumber "$manifest")"
-            echo "build_id=$(jq -er .starterKit.testflight.build.id "$manifest")"
+            echo "marketing_version=$(jq -er .version.marketingVersion <<< "$testflight")"
+            echo "build_number=$(jq -er .version.buildNumber <<< "$testflight")"
+            echo "build_id=$(jq -er .build.id <<< "$testflight")"
           } >> "$GITHUB_OUTPUT"
 
       - name: Inject App Store Connect API credential

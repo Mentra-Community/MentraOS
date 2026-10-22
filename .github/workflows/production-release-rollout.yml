@@ -185,10 +185,24 @@ jobs:
           node .github/scripts/publish-immutable-release-asset.mjs \
             --file "production-finalization/$checkpoint_name" --name "$checkpoint_name" \
             --release-id "$stable_release_id" --repository "$GITHUB_REPOSITORY"
+          # Production builds no OTA set: publish byte-identical copies of the
+          # promoted beta's OTA manifest and portable OTA bundle under the
+          # production names, for self-hosting and the download page.
+          node .github/scripts/production-ota-assets.mjs stage \
+            --plan "$plan" \
+            --repository "$GITHUB_REPOSITORY" \
+            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --output-dir production-finalization/ota
+          for name in "$(jq -er .artifactNames.otaManifest "$plan")" "$(jq -er .artifactNames.otaBundle "$plan")"; do
+            node .github/scripts/publish-immutable-release-asset.mjs \
+              --file "production-finalization/ota/$name" --name "$name" \
+              --release-id "$stable_release_id" --repository "$GITHUB_REPOSITORY"
+          done
           node .github/scripts/finalize-production-promotion.mjs \
             --plan "$plan" \
             --record "$record" \
             --checkpoint-url "$checkpoint_url" \
+            --ota-artifacts production-finalization/ota/production-ota-assets.json \
             --output "production-finalization/$manifest_name"
           node .github/scripts/publish-immutable-release-asset.mjs \
             --file "production-finalization/$manifest_name" --name "$manifest_name" \
@@ -216,7 +230,19 @@ jobs:
             echo "release_id=$stable_release_id"
             echo "tag=$tag"
             echo "manifest_name=$manifest_name"
+            echo "plan=$plan"
           } >> "$GITHUB_OUTPUT"
+
+      - name: List the production downloads on the stable release
+        if: inputs.action == 'complete'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/publish-coordinated-release-page.mjs
+          --plan "${{ steps.stable.outputs.plan }}"
+          --manifest "production-finalization/${{ steps.stable.outputs.manifest_name }}"
+          --repository "${{ github.repository }}"
+          --release-id "${{ steps.stable.outputs.release_id }}"
 
       - name: Publish the completed promotion state
         if: inputs.action == 'complete'
@@ -237,3 +263,18 @@ jobs:
             echo "The immutable promotion chain is complete and the canonical plan, finalizing checkpoint, and manifest are staged in draft release \`${{ steps.stable.outputs.tag }}\`."
             echo "Publish that stable GitHub release only after the README final public-availability checks have also passed."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The standalone Starter Kit's main branch follows the production release
+  # record: it is exported once the record exists, pinned to the plain X.Y.Z
+  # packages. A deferral never fails the rollout; the nightly export retries.
+  export-starter-kit:
+    name: Export the production Starter Kit
+    needs: record
+    if: inputs.action == 'complete'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/bluetooth-starter-kit-export.yml
+    with:
+      channel: production
+      identity: ${{ inputs.release_identity }}
+    secrets: inherit

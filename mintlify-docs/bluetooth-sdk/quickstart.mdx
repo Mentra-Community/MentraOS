@@ -39,7 +39,7 @@ Mentra Live](/bluetooth-sdk/software-update).
 ### Android
 
 ```bash
-cd examples/android
+cd android
 ./gradlew installDebug
 ```
 
@@ -49,7 +49,7 @@ The Android example is a Kotlin / Jetpack Compose app. It installs the SDK as
 ### iOS
 
 ```bash
-cd examples/ios
+cd ios
 open MentraExample.xcodeproj
 ```
 
@@ -58,15 +58,15 @@ SwiftUI app that installs the `MentraBluetoothSDK` Swift package.
 
 ### Native macOS
 
-Use the Starter Kit `dev` branch's `examples/macos` (AppKit/SwiftPM) or
-`examples/react-native-macos` for a native Mac host. See [macOS setup](/bluetooth-sdk/macos)
+Use the Starter Kit `dev` branch's `macos` (AppKit/SwiftPM) or
+`react-native-macos` for a native Mac host. See [macOS setup](/bluetooth-sdk/macos)
 for source overrides, permissions, compatible versions, and the distinction
 from running the iOS TestFlight example on Apple silicon.
 
 ### React Native / Expo
 
 ```bash
-cd examples/react-native
+cd react-native
 bun install
 bunx expo prebuild
 bunx expo run:ios
@@ -101,7 +101,7 @@ want to test an external endpoint without deploying your own media upload
 webhook or streaming server. From the repository root, run:
 
 ```bash
-python3 examples/local-demo-cloud/server.py
+python3 local-demo-cloud/server.py
 ```
 
 Paste the printed LAN `/upload`, RTMP, SRT, or WHIP URL into the corresponding

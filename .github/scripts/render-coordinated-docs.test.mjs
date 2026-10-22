@@ -5,6 +5,7 @@ import path from "node:path"
 import test from "node:test"
 import {fileURLToPath} from "node:url"
 
+import {EXAMPLE_ARTIFACTS, EXAMPLES_BUILD_KIND, exampleArtifactName} from "./bluetooth-examples-result.mjs"
 import {renderCoordinatedDocs} from "./render-coordinated-docs.mjs"
 
 function fixture() {
@@ -47,26 +48,34 @@ test("renders exact coordinated release variables without changing source", (con
     channel: "beta",
     native: {marketingVersion: "3.1.0", buildNumber: 310000057},
   }
-  const starterKitResult = {
+  const examplesResult = {
     schemaVersion: 1,
+    kind: EXAMPLES_BUILD_KIND,
     releaseSetId: plan.releaseSetId,
     releaseIdentity: plan.releaseIdentity,
-    mentraos: {sourceCommit: plan.sourceCommit},
-    starterKit: {releaseCommit: "b".repeat(40)},
-    artifacts: [
-      {
-        key: "reactNative",
-        url: "https://github.com/Mentra/Starter/releases/download/sdk-builds-v3.1.0/example.apk",
-      },
-    ],
+    channel: plan.channel,
+    sourceCommit: plan.sourceCommit,
+    otaManifest: {url: "https://example.com/ota.json", sha256: "c".repeat(64)},
+    artifacts: EXAMPLE_ARTIFACTS.map(({key}) => {
+      const name = exampleArtifactName(key, plan.releaseIdentity)
+      return {
+        key,
+        name,
+        sha256: "b".repeat(64),
+        size: 1,
+        status: "published",
+        url: `https://artifactscdn.mentraglass.com/Mentra/MentraOS/releases/mentra-builds-v3.1.0/${name}`,
+      }
+    }),
+    provenanceUrl: "https://github.com/Mentra/MentraOS/actions/runs/1",
   }
+  const reactNativeUrl = examplesResult.artifacts.find((artifact) => artifact.key === "reactNative").url
   const exampleTestflightResult = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     releaseSetId: plan.releaseSetId,
     releaseIdentity: plan.releaseIdentity,
     channel: plan.channel,
     mentraosSourceCommit: plan.sourceCommit,
-    starterKitReleaseCommit: starterKitResult.starterKit.releaseCommit,
     version: plan.native,
     group: {id: "group-public", name: "Mentra Staging Public"},
     distribution: {
@@ -80,7 +89,7 @@ test("renders exact coordinated release variables without changing source", (con
     sourceDir: source,
     outputDir: output,
     releasePlan: plan,
-    starterKitResult,
+    examplesResult,
     exampleTestflightResult,
     repository: "Mentra/MentraOS",
   })
@@ -96,7 +105,7 @@ test("renders exact coordinated release variables without changing source", (con
     rendered.variables["example-app-download-label"],
     "Download the React Native example APK for SDK 3.1.0-beta.57",
   )
-  assert.equal(rendered.variables["example-app-url"], starterKitResult.artifacts[0].url)
+  assert.equal(rendered.variables["example-app-url"], reactNativeUrl)
   assert.equal(rendered.variables["example-app-ios-url"], exampleTestflightResult.distribution.installUrl)
   assert.equal(original.variables["release-version"], "3.1.0")
   assert.equal(original.variables["example-app-download-label"], "Browse React Native example APK releases")
@@ -105,7 +114,7 @@ test("renders exact coordinated release variables without changing source", (con
     readFileSync(path.join(output, "page.mdx"), "utf8"),
     [
       "Release 3.1.0-beta.57",
-      `[Download the React Native example APK for SDK 3.1.0-beta.57](${starterKitResult.artifacts[0].url})`,
+      `[Download the React Native example APK for SDK 3.1.0-beta.57](${reactNativeUrl})`,
       `[iPhone](${exampleTestflightResult.distribution.installUrl})`,
       "[Artifacts](https://github.com/Mentra/MentraOS/releases/tag/mentra-builds-v3.1.0)",
     ].join("\n"),
@@ -124,7 +133,7 @@ test("source-only and stable docs use honest version-neutral example links", (co
   assert.equal(variables["example-app-download-label"], "Browse React Native example APK releases")
   assert.equal(
     variables["example-app-url"],
-    "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases",
+    "https://github.com/Mentra-Community/MentraOS/releases",
   )
   assert.equal(variables["example-app-version"], undefined)
 
@@ -149,7 +158,7 @@ test("source-only and stable docs use honest version-neutral example links", (co
   assert.deepEqual(rendered.variables, variables)
   assert.match(
     readFileSync(path.join(output, "software-update.mdx"), "utf8"),
-    /\[Browse React Native example APK releases\]\(https:\/\/github\.com\/Mentra-Community\/Mentra-Bluetooth-SDK-Starter-Kit\/releases\)/,
+    /\[Browse React Native example APK releases\]\(https:\/\/github\.com\/Mentra-Community\/MentraOS\/releases\)/,
   )
   assert.equal(readFileSync(path.join(source, "docs.json"), "utf8"), sourceConfig)
 })
@@ -210,7 +219,7 @@ test("rejects prerelease docs without matching example artifacts", (context) => 
         },
         repository: "Mentra/MentraOS",
       }),
-    /require a Starter Kit result/,
+    /require the published example builds/,
   )
 })
 

@@ -20,7 +20,6 @@ function notification(scope, overrides = {}) {
         RELEASE_IDENTITY: "3.2.0-dev.265",
         RELEASE_SCOPE: scope,
         FINALIZE_RESULT: "success",
-        EXAMPLES_DISPATCH_RESULT: "success",
         ...overrides,
         TEST_RUN_INGEST_TOKEN: "",
         TEST_RUN_INGEST_TOKEN_DEV: "",
@@ -33,7 +32,7 @@ test("core completion is reported without pending example and docs results", () 
   const payload = notification("core")
   assert.match(payload.blocks[0].text.text, /Dev release complete/)
   const text = JSON.stringify(payload)
-  assert.match(text, /View separate workflow/)
+  assert.match(text, /Examples and docs are reported separately/)
   assert.doesNotMatch(text, /Bluetooth example|Example checks|\*.*Docs\*/)
   assert.match(text, /Routine results for published app builds/)
   assert.match(text, /current Harness routine source inventory is unavailable/)
@@ -56,8 +55,25 @@ test("example notification reports Play failure alongside independently successf
   assert.doesNotMatch(text, /Requested tests/)
 })
 
-test("dispatch failure stays visible in the core notification", () => {
-  assert.match(JSON.stringify(notification("core", {EXAMPLES_DISPATCH_RESULT: "failure"})), /dispatch: :x: failed/)
+test("the example notification reports the in-run example builds and the Starter Kit export", (t) => {
+  const bin = mkdtempSync(path.join(tmpdir(), "notification-http-"))
+  t.after(() => rmSync(bin, {recursive: true, force: true}))
+  writeFileSync(path.join(bin, "curl"), "#!/bin/sh\nexit 0\n", {mode: 0o755})
+  const text = JSON.stringify(
+    notification("examples", {
+      PATH: `${bin}:${process.env.PATH}`,
+      EXAMPLES_RESULT: "success",
+      EXAMPLE_APK_NAME: "mentra-example-react-native-3.2.0-dev.265.apk",
+      EXAMPLE_APK_URL: "https://artifactscdn.mentraglass.com/x/mentra-example-react-native-3.2.0-dev.265.apk",
+      EXAMPLE_RECORD_URL: "https://artifactscdn.mentraglass.com/x/mentra-example-release-3.2.0-dev.265.json",
+      STARTER_KIT_EXPORT_RESULT: "success",
+    }),
+  )
+  assert.match(text, /Example builds: :white_check_mark: passed/)
+  assert.match(text, /mentra-example-react-native-3\.2\.0-dev\.265\.apk/)
+  assert.match(text, /All example builds/)
+  assert.match(text, /Starter Kit export: :white_check_mark: passed/)
+  assert.doesNotMatch(text, /Starter Kit build|dispatch/)
 })
 
 test("page publication failure preserves core success and links the artifact container", () => {

@@ -90,7 +90,7 @@ For local HTTP photo webhooks, allow local networking with
 From the Starter Kit `dev` branch:
 
 ```bash
-cd examples/macos
+cd macos
 export MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/absolute/path/to/MentraOS/mobile/modules/bluetooth-sdk
 bash run.sh
 ```
@@ -102,14 +102,14 @@ availability checking. It does not duplicate the complete phone example OTA UI.
 
 ## React Native macOS
 
-Use `examples/react-native-macos` in the Starter Kit, not `expo run:ios` and not
+Use `react-native-macos` in the Starter Kit, not `expo run:ios` and not
 the phone example's generated project. This native Mac host currently pairs
 React Native macOS 0.81 with React Native 0.81 and Expo Modules from Expo SDK 54;
 it requires macOS 14 or newer. Keep the native host, React Native, and Expo
 versions compatible when upgrading them.
 
 ```bash
-cd examples/react-native-macos
+cd react-native-macos
 bun install --frozen-lockfile
 export MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/absolute/path/to/MentraOS/mobile/modules/bluetooth-sdk
 cd macos

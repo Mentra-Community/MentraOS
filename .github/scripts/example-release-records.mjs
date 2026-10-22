@@ -3,8 +3,9 @@
 //
 // A coordinated Mentra beta (Cloud V2, the Mentra App, the Engine, and the
 // Bluetooth SDK) is complete when its own finalize step writes
-// mentra-release-<identity>.json. The Starter Kit examples are built afterwards
-// against that finalized beta, published to their own stores, and recorded here
+// mentra-release-<identity>.json. The Bluetooth examples are built from
+// examples/bluetooth at the same source commit, published to the release
+// container and their own stores once the beta is finalized, and recorded here
 // as mentra-example-release-<identity>.json. An example that fails to build or
 // publish therefore never makes the beta incomplete, and the production
 // promotion of the beta does not depend on it.
@@ -13,10 +14,10 @@ import {readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
+import {validateExamplesResult} from "./bluetooth-examples-result.mjs"
 import {validateExampleGooglePlay} from "./coordinated-example-google-play.mjs"
 import {requirePublicHttpsUrl, serializeReleaseRecord} from "./release-family.mjs"
 
-const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const SHA256_PATTERN = /^[0-9a-f]{64}$/
 export const EXAMPLE_RELEASE_KIND = "mentra-bluetooth-example"
 
@@ -42,16 +43,15 @@ export function exampleTestflightDestination(channel) {
   throw new Error(`Unsupported example release channel ${JSON.stringify(channel)}`)
 }
 
-export function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
+export function verifyExampleTestflight(plan, exampleTestflight) {
   const {group: expectedGroup, audience: expectedAudience} = exampleTestflightDestination(plan.channel)
   const distribution = exampleTestflight?.distribution
   if (
-    exampleTestflight?.schemaVersion !== 1 ||
+    exampleTestflight?.schemaVersion !== 2 ||
     exampleTestflight.releaseSetId !== plan.releaseSetId ||
     exampleTestflight.releaseIdentity !== plan.releaseIdentity ||
     exampleTestflight.channel !== plan.channel ||
     exampleTestflight.mentraosSourceCommit !== plan.sourceCommit ||
-    exampleTestflight.starterKitReleaseCommit !== starterKit.starterKit?.releaseCommit ||
     exampleTestflight.app?.id !== "6792839366" ||
     exampleTestflight.app?.bundleId !== "com.mentra.bluetoothsdkexample" ||
     exampleTestflight.version?.marketingVersion !== plan.native.marketingVersion ||
@@ -68,7 +68,7 @@ export function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
     !/^https:\/\//.test(distribution?.installUrl || "") ||
     !/^https:\/\//.test(exampleTestflight.provenanceUrl || "")
   ) {
-    throw new Error("Example TestFlight result does not match the release plan and Starter Kit source")
+    throw new Error("Example TestFlight result does not match the release plan and source")
   }
   if (
     exampleTestflight.ipa !== undefined &&
@@ -98,66 +98,17 @@ export function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
   return exampleTestflight
 }
 
-export function verifyStarterKitResult(plan, starterKit, resultUrl, exampleTestflight, exampleGooglePlay) {
-  if (
-    starterKit?.schemaVersion !== 1 ||
-    starterKit.releaseSetId !== plan.releaseSetId ||
-    starterKit.releaseIdentity !== plan.releaseIdentity ||
-    starterKit.familyBaseVersion !== plan.familyBaseVersion ||
-    starterKit.channel !== plan.channel ||
-    starterKit.mentraos?.sourceCommit !== plan.sourceCommit ||
-    !COMMIT_PATTERN.test(starterKit.starterKit?.baseCommit || "")
-  ) {
-    throw new Error("Starter Kit result does not match the release plan")
-  }
-  for (const packageName of ["@mentra/bluetooth-sdk", "@mentra/engine"]) {
-    if (starterKit.packages?.[packageName] !== plan.releaseIdentity) {
-      throw new Error(`Starter Kit ${packageName} version does not match the release plan`)
-    }
-  }
-  if (!/^https:\/\//.test(resultUrl || "")) throw new Error("Starter Kit result URL must be public HTTPS")
-  if (!/^https:\/\//.test(starterKit.starterKit?.validationRunUrl || "")) {
-    throw new Error("Starter Kit validation run URL must be public HTTPS")
-  }
-  if (!Array.isArray(starterKit.artifacts) || ![3, 4].includes(starterKit.artifacts.length)) {
-    throw new Error("Starter Kit result must contain the three required examples and optional native Android")
-  }
-  const keys = new Set()
-  const artifacts = starterKit.artifacts.map((artifact) => {
-    if (
-      !artifact?.key ||
-      keys.has(artifact.key) ||
-      typeof artifact.name !== "string" ||
-      !artifact.name.includes(plan.releaseIdentity) ||
-      !/^https:\/\//.test(artifact.url || "") ||
-      !SHA256_PATTERN.test(artifact.sha256 || "") ||
-      !Number.isSafeInteger(artifact.size) ||
-      artifact.size < 1
-    ) {
-      throw new Error("Starter Kit contains an invalid or duplicate example artifact")
-    }
-    keys.add(artifact.key)
-    return {
-      status: "published",
-      coordinate: artifact.name,
-      url: artifact.url,
-      sha256: artifact.sha256,
-      size: artifact.size,
-      provenanceUrl: starterKit.starterKit.validationRunUrl,
-    }
-  })
-  for (const key of ["ios", "reactNative", "reactNativeElevenLabsAudio"]) {
-    if (!keys.has(key)) throw new Error(`Starter Kit result is missing ${key}`)
-  }
-  return {
-    record: {
-      ...starterKit,
-      resultUrl,
-      testflight: verifyExampleTestflight(plan, starterKit, exampleTestflight),
-      googlePlay: validateExampleGooglePlay(plan, starterKit, exampleGooglePlay),
-    },
-    artifacts,
-  }
+// The example builds of the release, published to its release container.
+export function verifyExamples(plan, examples) {
+  const verified = validateExamplesResult(plan, examples)
+  return verified.artifacts.map((artifact) => ({
+    status: artifact.status,
+    coordinate: artifact.name,
+    url: artifact.url,
+    sha256: artifact.sha256,
+    size: artifact.size,
+    provenanceUrl: verified.provenanceUrl,
+  }))
 }
 
 // A dev or beta example is built against the finalized manifest of its own
@@ -217,8 +168,7 @@ export function assembleExampleReleaseResults({
   betaManifest,
   betaManifestUrl,
   betaManifestSha256,
-  starterKit,
-  starterKitResultUrl,
+  examples,
   exampleTestflight,
   exampleGooglePlay,
   completedAt,
@@ -234,9 +184,9 @@ export function assembleExampleReleaseResults({
     throw new Error("The production example plan must declare that it is never promoted to a store")
   }
   const beta = verifyBetaManifest(plan, betaManifest, betaManifestUrl, betaManifestSha256)
-  const verified = verifyStarterKitResult(plan, starterKit, starterKitResultUrl, exampleTestflight, exampleGooglePlay)
+  const artifacts = verifyExamples(plan, examples)
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: EXAMPLE_RELEASE_KIND,
     releaseSetId: plan.releaseSetId,
     releaseIdentity: plan.releaseIdentity,
@@ -248,8 +198,10 @@ export function assembleExampleReleaseResults({
     ...(plan.channel === "production"
       ? {promotion: {...plan.promotion, storePromotion: plan.example.storePromotion}}
       : {}),
-    starterKit: verified.record,
-    artifacts: verified.artifacts,
+    examples,
+    testflight: verifyExampleTestflight(plan, exampleTestflight),
+    googlePlay: validateExampleGooglePlay(plan, exampleGooglePlay),
+    artifacts,
     completedAt: requireIsoUtc(completedAt, "completedAt"),
     provenanceUrl: requirePublicHttpsUrl(provenanceUrl, "provenanceUrl"),
   }
@@ -257,7 +209,7 @@ export function assembleExampleReleaseResults({
 
 export function validateExampleReleaseRecord(record, plan) {
   if (
-    record?.schemaVersion !== 1 ||
+    record?.schemaVersion !== 2 ||
     record.kind !== EXAMPLE_RELEASE_KIND ||
     record.releaseSetId !== plan.releaseSetId ||
     record.releaseIdentity !== plan.releaseIdentity ||
@@ -267,8 +219,8 @@ export function validateExampleReleaseRecord(record, plan) {
     (plan.channel === "production" && record.promotion?.storePromotion !== "never") ||
     !SHA256_PATTERN.test(record.betaManifest?.sha256 || "") ||
     !Array.isArray(record.artifacts) ||
-    record.artifacts.length < 3 ||
-    !COMMIT_PATTERN.test(record.starterKit?.starterKit?.mergeCommit || "")
+    record.artifacts.length < 4 ||
+    record.examples?.sourceCommit !== plan.sourceCommit
   ) {
     throw new Error("Example release record does not describe a finalized Mentra Bluetooth example")
   }
@@ -284,19 +236,18 @@ export function validateExampleReleaseRecord(record, plan) {
 // omitted, run URLs differ). The record published by the first completed run
 // stays canonical; this checks that the candidates this run observed are the
 // ones that record describes.
-export function reconcileExampleReleaseRecord({plan, record, starterKit, exampleTestflight, exampleGooglePlay}) {
+export function reconcileExampleReleaseRecord({plan, record, examples, exampleTestflight, exampleGooglePlay}) {
   validateExampleReleaseRecord(record, plan)
-  const recorded = record.starterKit
+  const recorded = record
   const mismatches = []
   const check = (label, actual, expected) => {
     if (actual !== expected)
       mismatches.push(`${label}: recorded ${JSON.stringify(expected)}, observed ${JSON.stringify(actual)}`)
   }
-  check("Starter Kit release commit", starterKit?.starterKit?.releaseCommit, recorded.starterKit?.releaseCommit)
-  check("Starter Kit merge commit", starterKit?.starterKit?.mergeCommit, recorded.starterKit?.mergeCommit)
+  check("Example source commit", examples?.sourceCommit, recorded.examples?.sourceCommit)
   for (const artifact of record.artifacts) {
-    const observed = starterKit?.artifacts?.find((candidate) => candidate.name === artifact.coordinate)
-    check(`Starter Kit artifact ${artifact.coordinate}`, observed?.sha256, artifact.sha256)
+    const observed = examples?.artifacts?.find((candidate) => candidate.name === artifact.coordinate)
+    check(`Example artifact ${artifact.coordinate}`, observed?.sha256, artifact.sha256)
   }
   check("TestFlight build id", exampleTestflight?.build?.id, recorded.testflight?.build?.id)
   check("TestFlight build number", exampleTestflight?.version?.buildNumber, recorded.testflight?.version?.buildNumber)
@@ -338,7 +289,7 @@ function main() {
     const record = reconcileExampleReleaseRecord({
       plan: readJson(args.plan),
       record: readJson(args.record),
-      starterKit: readJson(args["starter-kit"]),
+      examples: readJson(args.examples),
       exampleTestflight: readJson(args["example-testflight"]),
       exampleGooglePlay: readJson(args["example-google-play"]),
     })
@@ -352,8 +303,7 @@ function main() {
     betaManifest: JSON.parse(betaManifestBytes.toString("utf8")),
     betaManifestUrl: args["beta-manifest-url"],
     betaManifestSha256: createHash("sha256").update(betaManifestBytes).digest("hex"),
-    starterKit: readJson(args["starter-kit"]),
-    starterKitResultUrl: args["starter-kit-result-url"],
+    examples: readJson(args.examples),
     exampleTestflight: readJson(args["example-testflight"]),
     exampleGooglePlay: readJson(args["example-google-play"]),
     completedAt: args["completed-at"],

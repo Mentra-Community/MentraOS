@@ -76,11 +76,11 @@ If your app uses SDK `{{release-version}}`, [install the matching Mentra Live `{
 - Confirm Mentra Live is connected to Wi-Fi before starting the stream.
 - For RTMP, the native iOS example embeds the derived HLS preview URL while live. You can also open or refresh the printed HLS preview URL on your computer after tapping **Start stream**.
 - If Docker is running in bridge mode, confirm UDP ports `8890` and `8189` are published.
-- If the helper picked the wrong network interface, restart it with `python3 examples/local-demo-cloud/server.py --host-ip <computer-lan-ip>`.
+- If the helper picked the wrong network interface, restart it with `python3 local-demo-cloud/server.py --host-ip <computer-lan-ip>`.
 
 ## React Native Or Expo Apps
 
-React Native and Expo apps use the `@mentra/bluetooth-sdk` package and must run as development builds or production native builds. Expo Go cannot load the native SDK. Start from `examples/react-native` for Expo, `examples/android` for bare Android, or `examples/ios` for bare iOS.
+React Native and Expo apps use the `@mentra/bluetooth-sdk` package and must run as development builds or production native builds. Expo Go cannot load the native SDK. Start from the Starter Kit's `react-native` for Expo, `android` for bare Android, or `ios` for bare iOS.
 
 If Android prebuild succeeds but native linking fails, confirm the generated project includes `:lc3Lib` in `android/settings.gradle`. The SDK plugin adds this module automatically during prebuild.
 
