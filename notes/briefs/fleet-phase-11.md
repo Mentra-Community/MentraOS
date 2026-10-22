@@ -52,6 +52,8 @@ When it disagrees with a source of truth below, the source of truth wins; then f
 
 - New protocol record kinds / ack revision / desired state -> `cloud-v2/packages/protocol/src/fleet.ts`
 - Phone Fleet reporter -> `mobile/modules/engine/src/services/fleet/FleetReporter.ts`
+- Phone assignment reconciler -> `mobile/modules/engine/src/services/fleet/assignmentReconciler.ts`; install reasons in
+  `AppRegistry.ts` (`hasAssignmentReason`); data partitions in `services/miniappDataPartition.ts`
 - Portal workspace sections -> `cloud-v2/websites/portal/src/lib/routes.ts`, `pages/workspace.tsx`
 - Leave / last-Owner -> `cloud-v2/packages/core/src/services/workspaces/workspace.service.ts` (`leaveWorkspace`)
 
@@ -107,6 +109,19 @@ When it disagrees with a source of truth below, the source of truth wins; then f
 15. The Fleet UI module is `fleet/ui/` in miniapp-store (stacked PR #66 on #65): built to `fleet/ui/dist`, served by MFM
     at `/v1/portal/ui/*`. The portal title is the Fleet item (`fleetNavItem`, first `?fleet=` segment, no description);
     the module draws its own page headings. `useSearch()` is "" in server-rendered tests, so test titles via `fleetNavItem`.
+16. W9 storage map (checked 2026-10-22). Miniapp user data before W9 was keyed by Mentra user id only (no Core, no
+    workspace), all in the default MMKV instance that logout's `storage.clearAll()` (`src/utils/LogoutUtils.ts`) wipes:
+    SimpleStorage `LocalMiniappStorage.ts` (`mentraos_localstorage_<userId>_<pkg>_<key>`, wired in
+    `LocalMiniappRuntime.ts` `simpleStorage`); blob metadata `BlobStore.ts` (`mentraos_blobmeta_<userId>_<pkg>_`) with
+    files in `Documents/mentra_blobs/<userId>/<pkg>/` (files survive logout, their metadata does not). Development
+    selections are global keys in `AppRegistry.ts` and its readers (`MiniappLauncher.ts`, `devMiniappLaunch.ts`,
+    `devMiniappSnapshot.ts`, `src/app/miniapps/miniappdev/scanner.tsx`, `src/app/applet/dev-offline.tsx`):
+    `<pkg>_dev_{meta,url,port,mdns,last_reachable,selected_snapshot}`, `dev_apps_index`, and `dev-*` snapshot
+    directories under `Documents/lmas/<pkg>/`. Release identity and publisher pins live in the
+    `mentra-miniapp-installations` MMKV instance (survives logout). The UI WebView's own DOM storage
+    (`LocalMiniappView.tsx` `domStorageEnabled`) is the platform WebView store and is not partitioned by JS code.
+    W9 partitions SimpleStorage and blobs by Core + account + (assigned package) workspace in
+    `miniappDataPartition.ts`, and swaps development selections per context instead of rewriting every reader.
 
 ## Open items
 
