@@ -277,6 +277,7 @@ before the Store starts deferring to Core.
 | `keptLastOwners` | Unclaimed Owner memberships the Store removed or demoted, kept because the workspace would have no other Owner. An Organization Admin decides in Core; a later run ends them once the workspace has another Owner. |
 | `pendingCollisions` | Memberships not imported because the person already holds an unclaimed one in that workspace, with the keys bound to them. |
 | `duplicateMemberships` | People with several active memberships in one organization; the highest role was kept. |
+| `otherOrgMemberships` | Memberships not imported because their person keeps one in another organization (`keptOrgId`): one membership per person, the highest role, then the earliest. Keys bound to one are in `keysWithoutCreator`, an organization this leaves with no owner is in `ownerlessOrgs`, and a re-run ends one an earlier run imported. |
 
 The report never contains a key hash or an invitation token hash.
 

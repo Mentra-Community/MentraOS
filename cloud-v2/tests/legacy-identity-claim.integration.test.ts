@@ -290,7 +290,10 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
         {orgId: "dorg_partner", userId: "user_01PAT", role: "owner", status: "active", email: "pat@partner.example", createdAt: at},
         {orgId: "dorg_partner", userId: "user_01DEE", role: "member", status: "active", email: "dee@studio.example", createdAt: at},
       ])
-      expect((await migrateStoreDeveloperOrgs({source, apply: true})).counts).toMatchObject({orgs: 2, memberships: 3})
+      // One membership per person: Dee keeps Studio (owner), and Partner's member row is reported instead.
+      const imported = await migrateStoreDeveloperOrgs({source, apply: true})
+      expect(imported.counts).toMatchObject({orgs: 2, memberships: 2})
+      expect(imported.otherOrgMemberships).toMatchObject([{orgId: "dorg_partner", userId: "user_01DEE", keptOrgId: "dorg_studio"}])
 
       // The operator exports the WorkOS users' verified emails (Pat's is not verified).
       const workos = workosStub({
