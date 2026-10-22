@@ -159,6 +159,9 @@
     "cloud-v2/packages/workspace-contract": {
       "name": "@mentra/workspace-contract",
       "version": "0.0.0",
+      "dependencies": {
+        "zod": "^3.24.1",
+      },
     },
     "miniapps/captions": {
       "name": "local-captions",
