@@ -102,15 +102,25 @@ export function sectionHref(section: WorkspaceSection | null, workspaceId: strin
 
 /**
  * Where an older `/w/<id>[/<section>]` address goes, keeping every other query parameter: `/<section>?workspace=<id>`,
- * or `/?workspace=<id>` without a section (or with one this portal does not have). Null for any other address.
+ * or `/?workspace=<id>` without a section (or with one this portal does not have), then `hash` if given. Null for any
+ * other address.
  */
-export function legacyRedirect(pathname: string, search: string): string | null {
+export function legacyRedirect(pathname: string, search: string, hash = ""): string | null {
   const route = parseRoute(pathname);
   if (route.kind !== "legacy-workspace") return null;
   const query = new URLSearchParams();
   query.set("workspace", route.workspaceId);
   for (const [name, value] of new URLSearchParams(search)) if (name !== "workspace") query.append(name, value);
-  return `${route.section ? `/${route.section}` : "/"}?${query.toString()}`;
+  return `${route.section ? `/${route.section}` : "/"}?${query.toString()}${hash}`;
+}
+
+/** `href` with every query parameter of `search` it does not already have, except `workspace`: a redirect that keeps the rest. */
+export function keepQuery(href: string, search: string): string {
+  const [path, own = ""] = href.split("?");
+  const query = new URLSearchParams(own);
+  for (const [name, value] of new URLSearchParams(search)) if (name !== "workspace") query.append(name, value);
+  const text = query.toString();
+  return text ? `${path}?${text}` : path!;
 }
 
 /**

@@ -41,11 +41,11 @@ import {
 } from "@mentra/workspace-ui";
 import { CreditCard, ScrollText, Settings, ShieldCheck, UserPlus, Users, type LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
-import { PortalShell } from "@/components/portal-shell";
-import { safeLocalStorage, type PortalMe } from "@/lib/api";
-import { navigate, Redirect } from "@/lib/navigation";
+import { PortalShell, useTabWorkspace } from "@/components/portal-shell";
+import type { PortalMe } from "@/lib/api";
+import { navigate, Redirect, useSearch } from "@/lib/navigation";
 import { portalBillingApi, portalNavigateOut, portalWorkspaceApi, STORE_DELETE_NOTICE } from "@/lib/portal";
-import { forgetWorkspace, sectionHref, type WorkspaceSection } from "@/lib/routes";
+import { keepQuery, sectionHref, type WorkspaceSection } from "@/lib/routes";
 import { billingOffered, LicensesHeaderActions, LicensesScreen } from "./licenses";
 import { NotFoundMessage } from "./not-found";
 
@@ -208,6 +208,8 @@ export function WorkspaceScreen({
   const list = useQuery(workspaceListQuery(api));
   const licenses = useQuery(licensesQuery(api, workspaceId));
   const [inviting, setInviting] = useState(false);
+  const tab = useTabWorkspace();
+  const search = useSearch();
 
   const data = detail.data;
   // Billing is for whoever manages it (Admins and Owners): a member sees the licenses they hold a seat in, no more.
@@ -244,7 +246,7 @@ export function WorkspaceScreen({
   const meta = shown ? SECTIONS[shown] : null;
 
   function gone() {
-    forgetWorkspace(safeLocalStorage(), workspaceId);
+    tab.forget(workspaceId);
     navigate("/", { replace: true });
   }
 
@@ -286,7 +288,7 @@ export function WorkspaceScreen({
         </div>
       ) : !active ? (
         // `/`, or a section this viewer does not have: open the first one they do.
-        <Redirect to={sectionHref(sections[0] ?? "settings", workspaceId, bareWorkspaceId)} />
+        <Redirect to={keepQuery(sectionHref(sections[0] ?? "settings", workspaceId, bareWorkspaceId), search)} />
       ) : active === "members" ? (
         <div className="space-y-6">
           {actsAsOrganizationAdmin(data) ? <OrganizationAdminNote /> : null}

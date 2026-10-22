@@ -4,6 +4,7 @@ import {
   forgetWorkspace,
   invitationLanding,
   joinedAddress,
+  keepQuery,
   legacyRedirect,
   parseRoute,
   recallWorkspace,
@@ -63,6 +64,10 @@ describe("the current workspace", () => {
     expect(workspaceParam("")).toBeNull();
     expect(workspaceParam("?workspace=")).toBeNull();
     expect(workspaceParam("?workspace=%20")).toBeNull();
+    // Two: the first. A malformed one is still an id, which Core will not know.
+    expect(workspaceParam("?workspace=ws_a&workspace=ws_b")).toBe("ws_a");
+    expect(workspaceParam("?workspace=%E0%A4%A")).not.toBeNull();
+    expect(workspaceParam("?workspace=&workspace=ws_b")).toBeNull();
     expect(currentWorkspace({ param: "ws_b", remembered: "ws_a", workspaces: list })).toBe("ws_b");
     expect(currentWorkspace({ param: "ws_other", remembered: "ws_a", workspaces: list })).toBe("ws_other");
     expect(currentWorkspace({ param: "ws_other", remembered: null, workspaces: [] })).toBe("ws_other");
@@ -106,6 +111,11 @@ describe("older addresses redirect to the short ones, keeping the query", () => 
     expect(legacyRedirect("/w/ws%2Fodd%20id/settings", "")).toBe("/settings?workspace=ws%2Fodd+id");
   });
 
+  test("the hash is kept when it is given", () => {
+    expect(legacyRedirect("/w/ws_1/settings", "?tab=2", "#danger")).toBe("/settings?workspace=ws_1&tab=2#danger");
+    expect(legacyRedirect("/w/ws_1", "", "#top")).toBe("/?workspace=ws_1#top");
+  });
+
   test("an unknown section goes to the workspace's first, an unrelated address nowhere", () => {
     expect(legacyRedirect("/w/ws_1/nope", "")).toBe("/?workspace=ws_1");
     expect(legacyRedirect("/w/ws_1/nope", "?purchase=pur_1")).toBe("/?workspace=ws_1&purchase=pur_1");
@@ -114,6 +124,15 @@ describe("older addresses redirect to the short ones, keeping the query", () => 
 
   test("a ?workspace= already on the old address does not override the one in its path", () => {
     expect(legacyRedirect("/w/ws_1/members", "?workspace=ws_2")).toBe("/members?workspace=ws_1");
+  });
+});
+
+describe("a link to another section keeps the rest of the query", () => {
+  test("every parameter but the workspace", () => {
+    expect(keepQuery("/members", "?purchase=pur_1&tab=2")).toBe("/members?purchase=pur_1&tab=2");
+    expect(keepQuery("/members?workspace=ws_x", "?workspace=ws_x&purchase=pur_1")).toBe("/members?workspace=ws_x&purchase=pur_1");
+    expect(keepQuery("/members", "?workspace=ws_own")).toBe("/members");
+    expect(keepQuery("/", "")).toBe("/");
   });
 });
 

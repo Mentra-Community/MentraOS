@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BrandPage, buttonVariants, Spinner, workspaceListQuery } from "@mentra/workspace-ui";
-import { useEffect, useReducer, useState } from "react";
-import { PortalShell } from "@/components/portal-shell";
+import { useEffect, useState } from "react";
+import { PortalShell, TabWorkspaceProvider, useTabWorkspace } from "@/components/portal-shell";
 import { SignedOutScreen } from "./components/signed-out";
 import { fetchPortalMe, safeLocalStorage, type PortalMe } from "./lib/api";
 import { DEVELOPER_CONSOLE_URL } from "./lib/config";
@@ -20,8 +20,6 @@ import {
   invitationLanding,
   legacyRedirect,
   parseRoute,
-  recallWorkspace,
-  rememberWorkspace,
   workspaceParam,
   type PortalRoute,
   type WorkspaceSection,
@@ -128,7 +126,16 @@ function PortalPage() {
  * The screen for an address. Needs a `PortalProvider` and a `QueryClientProvider`. `search` is the address's query
  * string; without it, the window's.
  */
-export function PortalRoutes({ route, me, search }: { route: PortalRoute; me: PortalMe; search?: string }) {
+export function PortalRoutes({ route, me, pathname, search }: { route: PortalRoute; me: PortalMe; pathname?: string; search?: string }) {
+  return (
+    <TabWorkspaceProvider>
+      <RouteScreen route={route} me={me} pathname={pathname} search={search} />
+    </TabWorkspaceProvider>
+  );
+}
+
+function RouteScreen({ route, me, pathname, search }: { route: PortalRoute; me: PortalMe; pathname?: string; search?: string }) {
+  const path = usePathname(pathname);
   const query = useSearch(search);
   switch (route.kind) {
     case "home":
@@ -137,8 +144,8 @@ export function PortalRoutes({ route, me, search }: { route: PortalRoute; me: Po
       return <WorkspaceRoute section={route.section} search={query} me={me} />;
     case "legacy-workspace": {
       // An older `/w/<id>[/<section>]` address: the same page at its short address, keeping its query.
-      const older = `/w/${encodeURIComponent(route.workspaceId)}${route.section ? `/${route.section}` : ""}`;
-      return <Redirect to={legacyRedirect(older, query) ?? "/"} />;
+      const hash = typeof window === "undefined" ? "" : window.location.hash;
+      return <Redirect to={legacyRedirect(path, query, hash) ?? "/"} />;
     }
     case "invitation":
       return <InvitationRoute />;
@@ -157,6 +164,7 @@ export function PortalRoutes({ route, me, search }: { route: PortalRoute; me: Po
  * `/` and a section's address: the current workspace (`?workspace=`, else the last one opened from the person's
  * own list, else their first), or the first run when there is none.
  *
+ * The remembered workspace is this tab's own (`TabWorkspaceProvider`): another tab's pick does not move this one.
  * A workspace opened from the person's list through `?workspace=` is remembered, and a `?workspace=` that names
  * what the bare address opens is dropped from the address in place. One the person is not in (an Organization Admin
  * at a customer's workspace) is neither remembered nor dropped: it never becomes the bare address.
@@ -164,21 +172,17 @@ export function PortalRoutes({ route, me, search }: { route: PortalRoute; me: Po
 function WorkspaceRoute({ section, search, me }: { section: WorkspaceSection | null; search: string; me: PortalMe }) {
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
   const { invitations } = usePortal();
-  // Storage is read on every render, so what was just remembered (or forgotten) is what the bare address means now.
-  const [, rereadStorage] = useReducer((count: number) => count + 1, 0);
+  const tab = useTabWorkspace();
   const param = workspaceParam(search);
   const workspaces = list.data;
-  const bare = workspaces ? currentWorkspace({ param: null, remembered: recallWorkspace(safeLocalStorage()), workspaces }) : null;
+  const bare = workspaces ? currentWorkspace({ param: null, remembered: tab.remembered, workspaces }) : null;
   const current = param ?? bare;
   const inList = param !== null && (workspaces?.some(item => item.workspaceId === param) ?? false);
 
   useEffect(() => {
     if (!param || !inList) return;
-    if (recallWorkspace(safeLocalStorage()) !== param) {
-      rememberWorkspace(safeLocalStorage(), param);
-      rereadStorage();
-    }
-  }, [param, inList]);
+    if (tab.remembered !== param) tab.remember(param);
+  }, [param, inList, tab.remembered]);
 
   useEffect(() => {
     if (param && param === bare) setQueryParam("workspace", null, { replace: true });

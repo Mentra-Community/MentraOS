@@ -903,11 +903,12 @@ describe("Billing in the account menu and the personal Billing page", () => {
   const menu = (billing: boolean) =>
     renderToStaticMarkup(<AccountFooter userEmail="sam@acme.test" items={accountItems(billing)} defaultOpen />);
 
-  test("the account menu offers Billing only when billing is offered, and always Sign out", () => {
-    expect(accountItems(true)).toEqual([expect.objectContaining({ key: "billing", label: "Billing", href: "/account/billing" })]);
+  test("the account menu has no Billing page to offer, and always has Sign out", () => {
+    // The personal Billing page has no address any more, so nothing links to it.
+    expect(accountItems(true)).toEqual([]);
     expect(accountItems(false)).toEqual([]);
     const withBilling = menu(true);
-    expect(withBilling).toMatch(/<a href="\/account\/billing"[^>]*>.*Billing<\/a>/);
+    expect(withBilling).not.toContain("/account/billing");
     expect(withBilling).toContain("Sign out");
     const without = menu(false);
     expect(without).not.toContain("Billing");

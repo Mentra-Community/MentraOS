@@ -212,6 +212,59 @@ describe("the current workspace", () => {
   });
 });
 
+describe("each tab stays on its own workspace", () => {
+  test("another tab picking a workspace does not move this one", async () => {
+    const core = await open("/settings", { listed: ["ws_a", "ws_b"] }, "Name of ws_a");
+    // Another tab remembers ws_b.
+    window.localStorage.setItem(LAST_WORKSPACE_KEY, "ws_b");
+    // This tab renders again (it navigates within the portal).
+    await click(find("nav a[href='/members']"));
+    await until(() => address() === "/members", "the Members page");
+    expect(core.requests.some(request => request.endsWith("/ws_b"))).toBe(false);
+    expect(page()).toContain("Name of ws_a");
+    expect(window.localStorage.getItem(LAST_WORKSPACE_KEY)).toBe("ws_b");
+  });
+
+  test("this tab's own pick is what its bare address means from then on", async () => {
+    await open("/settings", { listed: ["ws_a", "ws_b"] }, "Name of ws_a");
+    await click(find("button[aria-label^='Workspace:']"));
+    const entry = findAll<HTMLAnchorElement>("[role='menu'] a[href]").find(anchor => (anchor.textContent ?? "").includes("Name of ws_b"))!;
+    await click(entry);
+    await until(() => page().includes("Workspace: Name of ws_b") || document.querySelector("button[aria-label^='Workspace: Name of ws_b']") !== null, "ws_b to open");
+    await until(() => address() === "/settings", "ws_b to be the bare address");
+    expect(window.localStorage.getItem(LAST_WORKSPACE_KEY)).toBe("ws_b");
+  });
+});
+
+describe("a malformed or repeated ?workspace=", () => {
+  test("an id Core does not know is the not found page, however it is spelled", async () => {
+    await open("/members?workspace=%E0%A4%A", { listed: ["ws_own"] }, "Workspace not found");
+  });
+
+  test("a blank ?workspace= is none: the person's own workspace opens", async () => {
+    await open("/settings?workspace=%20", { listed: ["ws_own"] }, "Name of ws_own");
+    expect(page()).not.toContain("Workspace not found");
+  });
+
+  test("with two, the first is used, and a redundant one takes both out", async () => {
+    await open("/settings?workspace=ws_own&workspace=ws_x&purchase=pur_1", { listed: ["ws_own"], adminOf: ["ws_x"] }, "Name of ws_own");
+    await until(() => address() === "/settings?purchase=pur_1", "the redundant parameters to go");
+  });
+});
+
+describe("redirects keep what the address carried", () => {
+  test("/ to the first section keeps every query parameter", async () => {
+    await open("/?purchase=pur_1&tab=2", { listed: ["ws_own"] }, "Name of ws_own");
+    await until(() => address() === "/members?purchase=pur_1&tab=2", "the first section, query kept");
+  });
+
+  test("an older address keeps its hash", async () => {
+    await open("/w/ws_own/settings?tab=2#danger", { listed: ["ws_own"] }, "Name of ws_own");
+    await until(() => address() === "/settings?tab=2", "the short address");
+    expect(window.location.hash).toBe("#danger");
+  });
+});
+
 describe("a workspace the person cannot open", () => {
   for (const status of [404, 403] as const) {
     test(`?workspace= for one Core answers ${status} is the not found page`, async () => {

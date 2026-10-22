@@ -1,5 +1,5 @@
 /**
- * Licenses in one workspace: `/w/<workspaceId>/licenses`.
+ * Licenses in one workspace: `/licenses` (`?workspace=<workspaceId>` when it is not the one the bare address opens).
  *
  * The page is `WorkspaceLicensesView` (`@mentra/workspace-ui`): one card per license with its seats, dates, cost and
  * billing actions, the page total, and buying, as far as the viewer's role and what the portal offers them allow.

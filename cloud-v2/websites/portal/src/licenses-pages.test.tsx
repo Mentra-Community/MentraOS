@@ -203,12 +203,11 @@ describe("the Licenses page", () => {
     expect(buttonNamed(/^Billing$/)).toBeUndefined();
   });
 
-  test("and the account menu has Billing for someone offered billing", async () => {
+  test("and the account menu has no Billing, even for someone offered billing: that page has no address", async () => {
     await open(`/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(hrefs()).not.toContain("/account/billing");
     await click(find("button[aria-label='Open account menu']"));
-    const item = findAll<HTMLAnchorElement>("a[href='/account/billing']");
-    expect(item.map(anchor => anchor.textContent?.trim())).toEqual(["Billing"]);
+    expect(findAll<HTMLAnchorElement>("a[href='/account/billing']")).toEqual([]);
     expect(has("Sign out")).toBe(true);
   });
 
