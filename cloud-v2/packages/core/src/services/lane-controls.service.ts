@@ -321,7 +321,7 @@ function currentResourceReservation(records: ResourceControlRecord[]) {
   }
   return [...latest.values()].find(value => ['waiting', 'granted', 'returning'].includes(value.state))
 }
-function reconcileControls(records: ControlRecord[]): ControlRecord[] {
+export function reconcileControls(records: ControlRecord[]): ControlRecord[] {
   const lanes = reconcileReservations(records.filter(isLane)),
     latest = new Map<string, NonNullable<Extract<NonNullable<ResourceControlRecord['receipt']>['result'], {status: 'accepted'}>['reservation']>>()
   const constraints = new Map<string, number | undefined>()

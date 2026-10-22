@@ -46,7 +46,7 @@ test('routing reads only fresh current offers and preserves permission and physi
     resources: [{id: 'app', kind: 'app' as const, capabilities: ['camera'], permissionObservations: [observation]},
       {id: 'glasses', kind: 'glasses' as const, capabilities: ['display']}],
     glasses: [{resourceId: 'glasses', deviceId: 'physical-one', model: 'mentra-live', capabilities: ['display']}]};
-  const current = {hostId: 'mini', frameworkBinding: binding, lanes: [lane]};
+  const current = {hostId: 'mini', observedAt: new Date(now).toISOString(), frameworkBinding: binding, lanes: [lane]};
   const requirements = {platform: 'ios-on-mac' as const, resources: [{kind: 'app' as const, capabilities: ['camera'],
     permissions: [{permission: 'camera' as const, recipient: 'app' as const}]}, {kind: 'glasses' as const, capabilities: ['display']}],
     glasses: {models: ['mentra-live'], capabilities: ['display']}};
@@ -69,7 +69,8 @@ test('routing reads only fresh current offers and preserves permission and physi
   try {
     const service = new TestHostStateService(), [offered] = await service.list();
     expect(offered).toEqual({...current, receivedAt: new Date(now).toISOString(), authorityReservations: retained});
-    expect(selections).toEqual([{hostId: 1, receivedAt: 1, resourceReservations: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+    expect(selections).toEqual([{hostId: 1, receivedAt: 1, resourceReservations: 1, laneControls: 1, resourceLifecycleCursor: 1,
+      'snapshot.observedAt': 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
       'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle': 1, 'snapshot.resources': 1,
       'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
       'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,

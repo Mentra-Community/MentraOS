@@ -14,7 +14,7 @@ const now=Date.parse('2026-10-20T20:00:00Z'),at=new Date(now).toISOString(),id='
 function subject(){return resourceLifecycleSubjectSchema.parse({subject:{kind:'resource',id,authorityHostId:authority},generation:7,status:'idle',observedAt:at,receivedAt:null,current:true,reason:null,owner:null,
  idle:{contractVersion:'google-credential-baseline-v1',outcome:'passed',checkedAt:at,acceptedCheck:{operationId:'baseline',subjectGeneration:7,resultSha256:'a'.repeat(64),acceptedAt:at},qualifiedScope:{kind:'fleet'},evidenceRefs:['private-baseline']},repair:{configured:true,state:'none'},supportedActions:['reserve','release','check','mark-out-of-service'],resource:{kind:'fixture-data',capabilities:[capability],memberships:[],dependencies:[],placement:'fleet'}})}
 function hosts(){const dependency={resourceId:id,authorityHostId:authority,capability};return new Map<string,ResourceReservationHost>([
- [authority,{hostId:authority,incarnation:'mini-one',incarnationGeneration:1,sequence:1,receivedAt:new Date(now),resourceReservationVersion:0,laneControlVersion:0,laneControls:[],resourceReservations:[],snapshot:hostStateSchema.parse({hostId:authority,incarnation:'mini-one',incarnationGeneration:1,sequence:1,observedAt:at,resources:[{id,kind:'fixture-data',capabilities:[capability]}],lanes:[],laneControls:{schemaVersion:1,receipts:[],resourceControls:true},resourceLifecycle:{schemaVersion:1,subjects:[subject()],history:[]}})}],
+ [authority,{hostId:authority,incarnation:'mini-one',incarnationGeneration:1,sequence:1,receivedAt:new Date(now),resourceReservationVersion:0,laneControlVersion:0,laneControls:[],resourceReservations:[],snapshot:hostStateSchema.parse({hostId:authority,incarnation:'mini-one',incarnationGeneration:1,sequence:1,observedAt:at,resources:[{id,kind:'fixture-data',capabilities:[capability],idleContract:{version:'google-credential-baseline-v1',maximumAgeMs:120000,qualifiedScope:{kind:'fleet'},conditions:['credential-baseline'],repairConfigured:true}}],lanes:[],laneControls:{schemaVersion:1,receipts:[],resourceControls:true},resourceLifecycle:{schemaVersion:1,subjects:[subject()],history:[]}})}],
  ['air',{hostId:'air',incarnation:'air-one',incarnationGeneration:1,sequence:1,receivedAt:new Date(now),resourceReservationVersion:0,resourceReservations:[],snapshot:hostStateSchema.parse({hostId:'air',incarnation:'air-one',incarnationGeneration:1,sequence:1,observedAt:at,lanes:[{id:'mac',platform:'ios-on-mac',state:'idle',dispatchMode:'automatic',resources:[{id:'fixture',kind:'fixture-data',capabilities:[capability],exclusiveDependencies:[dependency]}]}]})}]
 ])}
 const intent={operationId:'run:original',hostId:'air',laneId:'mac',controller:{incarnation:'air-one',generation:1,sequence:1},owner:{id:'original',kind:'run'},inputSha256:'b'.repeat(64),resources:[{id:'fixture',capabilities:[capability]}]};
@@ -245,6 +245,7 @@ for(const state of ['out-of-service','unknown','failed','owned','stale','unquali
 
 test('legacy fallback is limited to an authority with no lifecycle subject or retained controls',async()=>{
  const f=fixture(),core=f.rows.get(authority)!;core.snapshot.laneControls={schemaVersion:1,receipts:[]};core.snapshot.resourceLifecycle!.subjects=[];
+ delete core.snapshot.resources![0]!.idleContract;
  expect((await f.service.acquire(intent,'air')).status).toBe('reserved');expect(f.writes()).toBe(1);
 });
 

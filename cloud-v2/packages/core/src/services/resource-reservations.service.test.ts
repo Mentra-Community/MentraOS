@@ -321,6 +321,8 @@ test('claims persist beyond reporting expiry and halted repair; only later clean
   await expect(f.service.giveBack(returned(claim, host, {originalOwner: {id: 'other', kind: 'run'}}), 'air1')).rejects.toThrow('recorded normal local release lineage')
   expect(await f.service.giveBack(returned(claim, host), 'air1')).toEqual({status: 'returned', claimId: claim.id})
   expect(f.rows.get('mini')!.resourceReservations).toEqual([])
+  expect((await f.service.acquire({...intent('air2'), controller: {...intent('air2').controller, sequence: 2}}, 'air2')).status).toBe('waiting')
+  f.observe('mini')
   expect((await f.service.acquire({...intent('air2'), controller: {...intent('air2').controller, sequence: 2}}, 'air2')).status).toBe('reserved')
   await expect(f.service.giveBack(returned(claim, host), 'air1')).rejects.toThrow('original resource authority')
 })
