@@ -70,15 +70,16 @@ TestFlight and Google Play. Examples never gate the release.
 
 The standalone
 [Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit)
-is exported from the completed release record by
+is exported from the latest completed release record of each channel by
 `bluetooth-starter-kit-export.yml`: `examples/bluetooth` at the release's source,
 with every SDK reference pinned to the published npm, Maven Central and Swift
 Package Manager packages, pushed as one `Release <identity>` commit and an
 `sdk-<identity>` tag to the channel's branch (`dev`, `staging` for beta, `main`
 for production). It runs every 30 minutes: a cheap first check stops at once
 when the kit already has the release, or when npm, Maven Central, the Swift
-package or the OTA manifest do not serve it yet; a later run retries. The kit
-keeps its own `.github`.
+package or the OTA manifest do not serve it yet; a later run retries.
+Intermediate releases are skipped; dispatch the workflow with an `identity` to
+export an older one. The kit keeps its own `.github`.
 
 ## Portable OTA Bundle
 

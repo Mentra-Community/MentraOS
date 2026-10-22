@@ -1407,3 +1407,32 @@ test("coordinated compiler reuse still generates the current app identity and si
   assert.match(ios, /mobile\/build\/CompilationCache\n\s+mobile\/build\/DerivedData\/SourcePackages/)
   assert.match(ios, /Install iOS signing assets/)
 })
+
+test("a dry run publishes nothing to the stores", () => {
+  const core = workflow("coordinated-release.yml")
+  for (const job of ["examples", "example-testflight", "example-google-play"]) {
+    assert.match(jobBlock(core, job), /^    if: needs\.plan\.outputs\.dry_run != 'true'$/m, job)
+  }
+  // Every job that calls a store workflow is guarded.
+  for (const [, job] of core.matchAll(/\n  ([a-z0-9-]+):\n(?:(?!\n  [a-z0-9-]+:\n)[\s\S])*?uses: \.\/\.github\/workflows\/reusable-coordinated-example-(?:testflight|google-play)\.yml/g)) {
+    assert.match(jobBlock(core, job), /dry_run != 'true'/, job)
+  }
+  // The release page and docs follow the guarded jobs, so a dry run deploys neither.
+  assert.match(jobBlock(core, "release-page"), /needs\.plan\.outputs\.dry_run != 'true'/)
+  assert.match(jobBlock(core, "docs"), /^    needs: \[plan, examples, example-testflight\]$/m)
+})
+
+test("the docs verification receives the release identity and both example links", () => {
+  const docs = jobBlock(workflow("coordinated-release.yml"), "docs")
+  const step = docs.split("      - name: Prepare and verify the Cloudflare Pages artifact\n")[1].split("\n      - name:")[0]
+  assert.match(step, /verify-coordinated-docs\.mjs/)
+  assert.match(step, /RELEASE_IDENTITY: \$\{\{ needs\.plan\.outputs\.release_identity \}\}/)
+  assert.match(step, /EXAMPLE_APK_URL: \$\{\{ needs\.examples\.outputs\.react_native_url \}\}/)
+  assert.match(step, /EXAMPLE_IOS_URL: \$\{\{ needs\.example-testflight\.outputs\.install_url \}\}/)
+  // The script reads exactly these variables.
+  const script = readFileSync(new URL("verify-coordinated-docs.mjs", import.meta.url), "utf8")
+  for (const name of ["RELEASE_IDENTITY", "EXAMPLE_APK_URL", "EXAMPLE_IOS_URL"]) {
+    assert.match(script, new RegExp(`process\\.env\\.${name}`), name)
+  }
+})
+

@@ -35,8 +35,9 @@ The standalone
 [Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit)
 is generated from `bluetooth/` with its SDK dependencies pinned to published
 versions: the export turns each example into a standalone project that
-depends on published package versions. A scheduled workflow exports every
-completed release (`.github/workflows/bluetooth-starter-kit-export.yml`, script
+depends on published package versions. A scheduled workflow exports each
+channel's latest completed release, skipping intermediate ones (older releases
+by manual dispatch only; `.github/workflows/bluetooth-starter-kit-export.yml`, script
 `.github/scripts/export-bluetooth-starter-kit.mjs`). The kit's own CI lives in
 the kit repository and is left untouched by the export.
 

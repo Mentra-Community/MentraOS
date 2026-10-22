@@ -35,10 +35,12 @@ builds every example on changes to them or to the SDK.
 The standalone
 [Starter Kit repository](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit)
 is generated from this folder, with the SDK dependencies pinned to published
-versions so it can be cloned and built without a MentraOS checkout. Each
-completed MentraOS release pushes one `Release <version>` commit and an
-`sdk-<version>` tag to the kit branch of its channel, and records its inputs in
-`starter-kit-release.json`. The kit repository keeps its own CI, which builds the
+versions so it can be cloned and built without a MentraOS checkout. A scheduled
+MentraOS workflow keeps each kit branch on its channel's latest completed
+release: it pushes one `Release <version>` commit and an `sdk-<version>` tag,
+and records the inputs in `starter-kit-release.json`. Intermediate releases are
+skipped; an older release is exported only by a manual dispatch with its
+identity. The kit repository keeps its own CI, which builds the
 examples from the published packages.
 
 ## Documentation

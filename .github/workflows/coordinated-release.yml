@@ -785,6 +785,8 @@ jobs:
   example-testflight:
     name: Publish React Native example to TestFlight
     needs: [plan, ota, finalize]
+    # A dry run publishes nothing to the stores.
+    if: needs.plan.outputs.dry_run != 'true'
     uses: ./.github/workflows/reusable-coordinated-example-testflight.yml
     with:
       source_commit: ${{ needs.plan.outputs.source_commit }}
@@ -798,6 +800,8 @@ jobs:
   example-google-play:
     name: Publish React Native example to Google Play
     needs: [plan, ota, finalize]
+    # A dry run publishes nothing to the stores.
+    if: needs.plan.outputs.dry_run != 'true'
     uses: ./.github/workflows/reusable-coordinated-example-google-play.yml
     with:
       source_commit: ${{ needs.plan.outputs.source_commit }}
@@ -880,6 +884,10 @@ jobs:
           bunx --bun mint export --output "$RUNNER_TEMP/mentraos-docs.zip"
 
       - name: Prepare and verify the Cloudflare Pages artifact
+        env:
+          RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+          EXAMPLE_APK_URL: ${{ needs.examples.outputs.react_native_url }}
+          EXAMPLE_IOS_URL: ${{ needs.example-testflight.outputs.install_url }}
         run: |
           set -euo pipefail
           export_dir="$RUNNER_TEMP/mentraos-docs"
