@@ -553,6 +553,9 @@ describe("package root", () => {
       "AuthExpiredError",
       "AuthUnavailableError",
       "SessionRevocationError",
+      "CoreRequestError",
+      "CoreResponseError",
+      "SessionChangedError",
     ] as const
     // Both through the package specifier, so each is the one module instance a host would get.
     const root = await import("@mentra/cloud-client")

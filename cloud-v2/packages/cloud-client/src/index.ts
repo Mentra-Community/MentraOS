@@ -86,3 +86,7 @@ export type {
   SupportProfileUpdateResult,
   SupportStateInput,
 } from "./modules/core/core";
+
+// Workspace and Fleet desired-state calls (`cloud.core.workspaces`, `cloud.core.fleet.desiredState`).
+export {CoreRequestError, CoreResponseError, SessionChangedError} from "./modules/core/core";
+export type {AccountCallOptions} from "./modules/core/core";

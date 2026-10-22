@@ -6,5 +6,5 @@
     "rootDir": "."
   },
   "include": ["src/**/*", "react-native/**/*", "node/**/*"],
-  "references": [{ "path": "../runtime" }]
+  "references": [{ "path": "../runtime" }, { "path": "../workspace-contract" }]
 }

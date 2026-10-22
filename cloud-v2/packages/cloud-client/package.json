@@ -16,6 +16,7 @@
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
+    "@mentra/workspace-contract": "workspace:*",
     "ws": "^8.18.0",
     "@types/ws": "^8.5.12"
   },
