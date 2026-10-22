@@ -5,7 +5,8 @@
  * rows on a local replica set. A person holds a feature through a license of their own or a seat in a
  * workspace's license, while that license is in its term (`validFrom <= now < paidThrough`, not ended), and
  * only for the packages the feature lists. `CLOUD_CORE_ENABLED_FEATURES` grants an entry's feature to every
- * signed-in person in the listed packages' tokens.
+ * signed-in person in the listed packages' tokens. A purchase's buyer, given a license by the write that
+ * created it (`applyLicenseWrite` with `assignTo`), has its features in their next token.
  *
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random database name, ignores
  * `MONGO_URL`) and asserts the live connection is on that database before any destructive call. The
@@ -23,13 +24,26 @@ import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {LicenseSeatModel} from "../packages/core/src/models/license-seat.model"
 import {LicenseModel} from "../packages/core/src/models/license.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
+import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
+import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
+import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import * as trustedEmail from "../packages/core/src/services/account/trusted-email.service"
 import {featuresFor} from "../packages/core/src/services/licenses/features.service"
+import {applyLicenseWrite} from "../packages/core/src/services/licenses/license.service"
 import * as session from "../packages/core/src/services/session.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {membershipRow} from "./support/membership-row"
 import {applyEnv} from "./support/signin-harness"
 
-const MODELS = [LicenseModel, LicenseSeatModel]
+const MODELS = [
+  LicenseModel,
+  LicenseSeatModel,
+  WorkspaceAuditCounterModel,
+  WorkspaceAuditEventModel,
+  WorkspaceMembershipModel,
+  WorkspaceModel,
+]
 
 const CALL = "com.mentra.call"
 const NOTES = "com.mentra.notes"
@@ -452,6 +466,40 @@ describe("POST /api/client/auth/miniapp-token", () => {
   test("has no features claim for a person whose license has a feature for no package", async () => {
     await personal("mu_alice", {...inTerm, features: [{key: "service.only", packages: []}]})
     expect("features" in (await mint(CALL))).toBe(false)
+  })
+
+  test("carries the license its buyer got from the write that created it", async () => {
+    await WorkspaceModel.create({workspaceId: "ws_alice", name: "Alice's Workspace", status: "active"})
+    await WorkspaceMembershipModel.create(
+      membershipRow({
+        membershipId: "wm_alice",
+        workspaceId: "ws_alice",
+        mentraUserId: "mu_alice",
+        role: "owner",
+        status: "active",
+        startedAt: new Date(),
+      }),
+    )
+    expect("features" in (await mint(CALL))).toBe(false)
+
+    const write = {
+      licenseId: newLicenseId(),
+      revision: 1,
+      owner: {type: "workspace", workspaceId: "ws_alice"} as const,
+      product: "mentra.call.unlimited",
+      features: [{key: UNLIMITED, packages: [CALL]}],
+      quantity: 5,
+      validFrom: inTerm.validFrom.toISOString(),
+      paidThrough: inTerm.paidThrough.toISOString(),
+      assignTo: {mentraUserId: "mu_alice"},
+    }
+    expect(await applyLicenseWrite(write, {kind: "service", service: "store", email: null})).toEqual({
+      applied: true,
+      revision: 1,
+    })
+
+    expect(await mint(CALL)).toMatchObject({sub: "mu_alice", features: [UNLIMITED]})
+    expect("features" in (await mint(NOTES))).toBe(false)
   })
 
   test("carries a configured grant to a person who holds no license", async () => {

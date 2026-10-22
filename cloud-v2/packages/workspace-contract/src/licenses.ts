@@ -45,6 +45,15 @@ export interface LicenseWrite {
   validFrom: string
   /** RFC 3339, UTC (`Z`). The features stop after it. */
   paidThrough: string
+  /**
+   * The purchase's buyer, by Core user ID, on every write of a subscription billing checked out, so the
+   * first write to reach Core carries it whatever order they come in. Core gives them one seat only on the
+   * write that creates the license, and only when they are an active member of the owner workspace, the
+   * license has a seat to give (`quantity` of 1 or more), and they hold no seat of an in-term license of the
+   * same product in that workspace; otherwise, and on every later write, it assigns nothing. Workspace
+   * licenses only: a personal write with one is refused. A Core that predates it ignores it.
+   */
+  assignTo?: {mentraUserId: string}
 }
 
 /** Core's answer to a license write that it accepted: whether it changed anything, and the revision it has. */
@@ -66,7 +75,7 @@ export interface LicenseSeatView {
  * seat on its own. `endedAt` is set when its owner was deleted; Core then refuses further writes for it.
  * `seats` is present where Core lists who holds them (the workspace routes).
  */
-export interface LicenseView extends Omit<LicenseWrite, "licenseId"> {
+export interface LicenseView extends Omit<LicenseWrite, "licenseId" | "assignTo"> {
   licenseId: string
   seatsUsed: number
   endedAt: string | null

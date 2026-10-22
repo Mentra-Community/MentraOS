@@ -151,7 +151,7 @@ app.post("/memberships/check", async c => {
   // Active workspaces the person is an active member of: anything else (no such workspace, deleted,
   // not a member, left) is null, and a deleted account is a member of nothing.
   const held = new Map(
-    (await isDeletedAccountId(mentraUserId) ? [] : await listWorkspacesForUser(mentraUserId)).map(entry => [
+    (await isDeletedAccountId(mentraUserId) ? [] : await listWorkspacesForUser(mentraUserId, {replaceable: false})).map(entry => [
       entry.workspaceId,
       entry,
     ]),

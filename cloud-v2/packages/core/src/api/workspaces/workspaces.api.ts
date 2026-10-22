@@ -35,8 +35,12 @@
  * them or none (409 `no_seats_available` lists each license that falls short),
  * with the same capability.
  *
- * Route order matters: `/invitations/...` is registered before `/:workspaceId`
- * so the literal segment is never read as a workspace id.
+ * The automatic workspace: `POST /ensure` answers the caller's workspace, 200 with the workspace of their
+ * oldest membership or 201 with a new automatic one (`automatic-workspace.service`), as a `WorkspaceDetail`.
+ * `GET /` marks each workspace `replaceable` while it is the caller's own automatic workspace holding nothing.
+ *
+ * Route order matters: `/ensure` and `/invitations/...` are registered before `/:workspaceId`
+ * so a literal segment is never read as a workspace id.
  */
 
 import {
@@ -62,6 +66,7 @@ import {
   releaseSeat,
 } from "../../services/licenses/license.service"
 import {listWorkspaceAudit, redactSecrets} from "../../services/workspaces/audit.service"
+import {ensureWorkspace} from "../../services/workspaces/automatic-workspace.service"
 import {
   createWorkspaceCredential,
   findCredentialOwner,
@@ -134,6 +139,22 @@ export function createWorkspacesApi(): Hono<AppEnv> {
       deletionHolds: [],
     }
     return c.json(detail, 201)
+  })
+
+  // The caller's workspace, made for them when they have none: 201 and the new automatic workspace, or 200
+  // and the workspace of their oldest membership. No body. Two at once, or a retry, still make one.
+  app.post("/ensure", async (c) => {
+    const actor = userActor(c)
+    const {created, workspace, membership} = await ensureWorkspace(actor)
+    const detail: WorkspaceDetail = {
+      ...workspace,
+      membership,
+      // As the workspace's own routes decide it: an Organization Admin acts as Owner whatever their role.
+      capabilities: [...capabilitiesForRole(actor.isOrganizationAdmin ? "owner" : membership.role)],
+      organizationAdmin: actor.isOrganizationAdmin,
+      deletionHolds: created ? [] : await listDeletionHolds(workspace.workspaceId),
+    }
+    return c.json(detail, created ? 201 : 200)
   })
 
   // --- Invitations to the caller (before `/:workspaceId`) ---------------------

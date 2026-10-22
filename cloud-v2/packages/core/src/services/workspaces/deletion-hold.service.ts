@@ -45,7 +45,8 @@ import {withTransaction} from "../../connections/mongo.connection"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {recordWorkspaceEvent} from "./audit.service"
 import {fail} from "./workspace-error"
-import {deletionHoldsOf, isId, loadActiveWorkspace} from "./workspace.service"
+import {deletionHoldsOf} from "./workspace-holdings"
+import {isId, loadActiveWorkspace} from "./workspace.service"
 
 type HoldSnapshot = {reason: string; count: number | null}
 
