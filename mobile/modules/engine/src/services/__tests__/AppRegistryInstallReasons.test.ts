@@ -185,4 +185,12 @@ describe("access revocation", () => {
     registry.restoreMiniappAccess(packageName)
     expect(registry.getMiniappEntryPaths(packageName, "1.0.0")).not.toBeNull()
   })
+
+  test("uninstalling the last version clears revocation so a later reinstall can launch", async () => {
+    registry.revokeMiniappAccess(packageName)
+    expect(registry.isMiniappAccessRevoked(packageName)).toBe(true)
+    installed = []
+    expect((await registry.uninstall(packageName)).is_ok()).toBe(true)
+    expect(registry.isMiniappAccessRevoked(packageName)).toBe(false)
+  })
 })

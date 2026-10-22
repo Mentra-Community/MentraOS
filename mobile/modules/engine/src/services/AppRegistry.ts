@@ -1720,6 +1720,10 @@ class AppRegistry {
         if (this.getInstalledVersions(packageName).length === 0) {
           restoreInstallationMetadata(publisherIdentityKey(packageName), {present: false})
           getInstallationMetadata().remove(installReasonsKey(packageName))
+          // Clear the revocation flag too: it blocks getMiniappEntryPaths and
+          // launch, so leaving it set would make a later QR/store/manual
+          // reinstall of the same package permanently unusable on this device.
+          getInstallationMetadata().remove(revokedAccessKey(packageName))
         }
         this.refreshNeeded = true
         this.notify()
