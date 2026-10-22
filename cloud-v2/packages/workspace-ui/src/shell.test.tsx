@@ -7,7 +7,7 @@ import { AccountFooter, AppShell, type NavGroup, type NavItem } from "./shell/ap
 import { BrandPage, MentraLogo } from "./shell/brand";
 import { CenteredLayout } from "./shell/centered-layout";
 import { isNavigationClick, type ShellLinkProps } from "./shell/link";
-import { SWITCHER_ITEM_CLASS, WorkspaceSwitcher, type SwitcherWorkspace } from "./shell/workspace-switcher";
+import { SWITCHER_ITEM_CLASS, WorkspaceLabel, WorkspaceSwitcher, type SwitcherWorkspace } from "./shell/workspace-switcher";
 import { Textarea } from "./ui/textarea";
 
 // Synthetic data only. Everything is a server render: no router, no network.
@@ -168,6 +168,15 @@ describe("the account menu", () => {
     expect(markup).not.toContain("Sign out");
   });
 
+  test("shows the person's name when sign-in gave one, with the address as its tooltip", () => {
+    const markup = renderToStaticMarkup(<AccountFooter userEmail="sam@acme.test" userName="Sam Rivera" />);
+    expect(markup).toContain("Sam Rivera");
+    expect(markup).toContain('title="sam@acme.test"');
+    const blank = renderToStaticMarkup(<AccountFooter userEmail="sam@acme.test" userName="  " />);
+    expect(blank).toContain("sam@acme.test");
+    expect(blank).not.toContain("title=");
+  });
+
   test("is part of the shell, with the shell's items", () => {
     const markup = renderToStaticMarkup(
       <AppShell brandTitle="Mentra Portal" nav={[]} userEmail="sam@acme.test" accountItems={[]}>
@@ -189,23 +198,20 @@ describe("the workspace switcher", () => {
         current={workspaces[0]!}
         workspaces={workspaces}
         invitations={[]}
-        canCreate
-        createNotice={null}
-        onCreate={() => {}}
         defaultOpen
         {...props}
       />,
     );
 
-  test("lists your workspaces with the current one checked, then Create workspace", () => {
+  test("lists your workspaces with the current one checked, and offers no way to create another", () => {
     const markup = open();
     expect(markup).toContain('role="menu"');
     expect(markup).toContain("Northwind Pilot");
     expect(markup).toContain('href="/w/ws_northwind/members"');
     expect(markup).toContain('aria-label="Current workspace"');
-    expect(markup).toContain("Create workspace");
+    expect(markup).not.toContain("Create workspace");
+    expect(markup).not.toContain("New workspace");
     expect(markup).not.toContain("Pending invitations");
-    expect(markup.indexOf("Northwind Pilot")).toBeLessThan(markup.indexOf("Create workspace"));
   });
 
   test("a workspace with an href is a link through the host's link component", () => {
@@ -222,7 +228,7 @@ describe("the workspace switcher", () => {
     expect(markup).toMatch(/<button type="button" role="menuitem" data-navigates="" class="[^"]*">.*?Northwind Pilot/);
   });
 
-  test("the host's extra items sit under the workspaces and above Create workspace", () => {
+  test("the host's extra items sit under the workspaces", () => {
     const markup = open({
       extraItems: (
         <a role="menuitem" href="https://portal.example.test/w/ws_acme" className={SWITCHER_ITEM_CLASS}>
@@ -232,7 +238,6 @@ describe("the workspace switcher", () => {
     });
     expect(markup.indexOf("Northwind Pilot")).toBeLessThan(markup.indexOf("Manage workspace"));
     expect(markup.indexOf('role="separator"')).toBeLessThan(markup.indexOf("Manage workspace"));
-    expect(markup.indexOf("Manage workspace")).toBeLessThan(markup.indexOf("Create workspace"));
   });
 
   test("pending invitations come last, with a count and the host's actions", () => {
@@ -245,7 +250,7 @@ describe("the workspace switcher", () => {
     expect(markup).toContain(">Accept</button>");
     expect(markup).toContain("(1 pending invitation)");
     expect(markup).toContain("ring-background absolute");
-    expect(markup.indexOf("Create workspace")).toBeLessThan(markup.indexOf("Pending invitations"));
+    expect(markup.indexOf("Manage workspace") === -1 || markup.indexOf("Manage workspace") < markup.indexOf("Pending invitations")).toBe(true);
   });
 
   test("no invitations, no badge and no section", () => {
@@ -253,12 +258,6 @@ describe("the workspace switcher", () => {
     expect(markup).not.toContain("Pending invitations");
     expect(markup).not.toContain("pending invitation");
     expect(markup).not.toContain("ring-background absolute");
-  });
-
-  test("says why creating is not offered", () => {
-    const markup = open({ canCreate: false, createNotice: "Workspaces here are created by its administrators." });
-    expect(markup).toContain('aria-disabled="true"');
-    expect(markup).toContain("created by its administrators");
   });
 
   test("while the list loads, the menu says so", () => {
@@ -272,7 +271,6 @@ describe("the workspace switcher", () => {
     expect(markup).toContain("load your workspaces");
     expect(markup).toContain("Retry");
     expect(markup).not.toContain("Loading…");
-    expect(markup).toContain("Create workspace");
   });
 
   test("closed, it shows only the current workspace and your role", () => {
@@ -360,5 +358,28 @@ describe("what closes the drawer and the switcher's menu", () => {
     expect(isNavigationClick(inside("a[href]"), 'a[role="menuitem"]')).toBe(false);
     expect(isNavigationClick(null)).toBe(false);
     expect(isNavigationClick({} as EventTarget)).toBe(false);
+  });
+});
+
+describe("the workspace label", () => {
+  const current = { workspaceId: "ws_acme", name: "Acme Field Team", roleLabel: "Owner" };
+
+  test("is the one workspace with the person's role, and nothing to switch or create", () => {
+    const markup = renderToStaticMarkup(<WorkspaceLabel current={current} />);
+    expect(markup).toContain("Acme Field Team");
+    expect(markup).toContain("Owner");
+    expect(markup).not.toContain("<button");
+    expect(markup).not.toContain('role="menu"');
+    expect(markup).not.toContain("aria-haspopup");
+    expect(markup).not.toContain("Switch workspace");
+    expect(markup).not.toContain("Create workspace");
+    expect(markup).not.toContain("New workspace");
+    // No chevron.
+    expect(markup).not.toContain("lucide-chevrons-up-down");
+  });
+
+  test("shows what the host puts under it, such as the pending invitations", () => {
+    const markup = renderToStaticMarkup(<WorkspaceLabel current={current} invitations={<a href="/invitation">2 invitations</a>} />);
+    expect(markup.indexOf("Acme Field Team")).toBeLessThan(markup.indexOf("2 invitations"));
   });
 });

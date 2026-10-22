@@ -5,8 +5,8 @@ import { api, PortalApiError, type PortalMe } from "@/lib/api";
 import {
   createFleetHost,
   endsSession,
-  FLEET_MODULE_URL,
   fleetApiBase,
+  fleetModuleUrl,
   FleetUnavailable,
   FleetUnavailableError,
   fleetLocation,
@@ -35,7 +35,16 @@ describe("where Fleet is", () => {
   test("its API is this one workspace under /api/portal/fleet/workspaces, and its UI entry is on this origin", () => {
     expect(fleetApiBase("ws_acme")).toBe("/api/portal/fleet/workspaces/ws_acme");
     expect(fleetApiBase("ws/odd id")).toBe("/api/portal/fleet/workspaces/ws%2Fodd%20id");
-    expect(FLEET_MODULE_URL).toBe("/api/portal/fleet/ui/entry.js");
+    // The entry is this workspace's too: Core checks fleet.read in it, as for the API. Chunks and CSS the entry
+    // loads by relative path come from the same `ui/` folder, so they take the same route and check.
+    expect(fleetModuleUrl("ws_acme")).toBe("/api/portal/fleet/workspaces/ws_acme/ui/entry.js");
+    expect(fleetModuleUrl("ws/odd id")).toBe("/api/portal/fleet/workspaces/ws%2Fodd%20id/ui/entry.js");
+    expect(new URL("chunk-1.js", `https://portal.test${fleetModuleUrl("ws_acme")}`).pathname).toBe(
+      "/api/portal/fleet/workspaces/ws_acme/ui/chunk-1.js",
+    );
+    expect(new URL("../ui/entry.css", `https://portal.test${fleetModuleUrl("ws_acme")}`).pathname).toBe(
+      "/api/portal/fleet/workspaces/ws_acme/ui/entry.css",
+    );
   });
 });
 
@@ -161,17 +170,18 @@ describe("loading the Fleet module", () => {
   test("a retry asks for a URL no earlier attempt used", async () => {
     const { module } = fakeModule();
     const { importEntry, asked } = importerOf(module);
-    await loadFleetModule(importEntry);
-    await loadFleetModule(importEntry, 17);
-    expect(asked).toEqual([FLEET_MODULE_URL, `${FLEET_MODULE_URL}?retry=17`]);
+    await loadFleetModule("ws_acme", importEntry);
+    await loadFleetModule("ws_acme", importEntry, 17);
+    const url = "/api/portal/fleet/workspaces/ws_acme/ui/entry.js";
+    expect(asked).toEqual([url, `${url}?retry=17`]);
   });
 
   test("a module for another contract version, or no module at all, is Fleet being unavailable", async () => {
-    const mismatch = await loadFleetModule(importerOf(fakeModule({ version: FLEET_UI_CONTRACT_VERSION + 1 }).module).importEntry).catch((e: unknown) => e);
+    const mismatch = await loadFleetModule("ws_acme", importerOf(fakeModule({ version: FLEET_UI_CONTRACT_VERSION + 1 }).module).importEntry).catch((e: unknown) => e);
     expect(mismatch).toBeInstanceOf(FleetUnavailableError);
     expect((mismatch as Error).message).toContain(`version ${FLEET_UI_CONTRACT_VERSION + 1}`);
     for (const entry of [undefined, null, "text", {}, { contractVersion: 1 }, { mount() {} }]) {
-      expect(await loadFleetModule(importerOf(entry).importEntry).catch((e: unknown) => e)).toBeInstanceOf(FleetUnavailableError);
+      expect(await loadFleetModule("ws_acme", importerOf(entry).importEntry).catch((e: unknown) => e)).toBeInstanceOf(FleetUnavailableError);
     }
   });
 
@@ -179,7 +189,7 @@ describe("loading the Fleet module", () => {
     const failing: FleetEntryImporter = async () => {
       throw new TypeError("Failed to fetch dynamically imported module");
     };
-    const error = await loadFleetModule(failing).catch((e: unknown) => e);
+    const error = await loadFleetModule("ws_acme", failing).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(FleetUnavailableError);
     expect((error as Error).cause).toBeInstanceOf(TypeError);
   });
@@ -192,7 +202,7 @@ describe("the Fleet host", () => {
     opened.host.start();
     await Promise.resolve();
     await Promise.resolve();
-    expect(opened.asked).toEqual([FLEET_MODULE_URL]);
+    expect(opened.asked).toEqual(["/api/portal/fleet/workspaces/ws_acme/ui/entry.js"]);
     expect(mounts).toHaveLength(1);
     expect(mounts[0]!.target).toBe(opened.shadow);
     expect(mounts[0]!.ctx).toMatchObject({

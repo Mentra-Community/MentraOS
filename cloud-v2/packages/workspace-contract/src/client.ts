@@ -4,6 +4,7 @@
  * request is signed over its timestamp, method, path and body hash (`service-signature.ts`); no request
  * names an organization.
  */
+import {WORKSPACE_ROLES} from "./capabilities"
 import {isWorkspaceDeletionHold} from "./deletion-holds"
 import {OWNER_NOT_FOUND_ERROR, STALE_REVISION_ERROR} from "./licenses"
 import type {LicenseOwner, LicensesResponse, LicenseView, LicenseWrite, LicenseWriteResponse} from "./licenses"
@@ -208,7 +209,34 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
         throw badResponse(path, "a closed interval has no known endReason")
       }
     }
+    checkRoleIntervals(path, interval)
     return interval as unknown as MembershipInterval
+  }
+
+  /** An interval's role intervals: at least one, in order, inside the interval, only the last one open. */
+  function checkRoleIntervals(path: string, interval: Json): void {
+    const roles = interval.roles
+    if (!Array.isArray(roles) || roles.length === 0) throw badResponse(path, "an interval has no role intervals")
+    const start = Date.parse(interval.start as string)
+    const end = interval.end === null ? null : Date.parse(interval.end as string)
+    let previousEnd = start
+    roles.forEach((value, index) => {
+      const entry = checkRecord(path, value, "a role interval")
+      if (typeof entry.role !== "string" || !(WORKSPACE_ROLES as readonly string[]).includes(entry.role)) {
+        throw badResponse(path, "a role interval has no known role")
+      }
+      const from = typeof entry.start === "string" ? Date.parse(entry.start) : NaN
+      if (Number.isNaN(from) || from < previousEnd) throw badResponse(path, "a role interval starts out of order")
+      const last = index === roles.length - 1
+      if (entry.end === null) {
+        if (!last || end !== null) throw badResponse(path, "only the last role of an open interval is open")
+        return
+      }
+      const to = typeof entry.end === "string" ? Date.parse(entry.end) : NaN
+      if (Number.isNaN(to) || to < from || (end !== null && to > end)) throw badResponse(path, "a role interval's end is out of range")
+      if (last && end === null) throw badResponse(path, "the last role of an open interval is still held")
+      previousEnd = to
+    })
   }
 
   function checkWorkspace(path: string, value: unknown, what: string): Json {

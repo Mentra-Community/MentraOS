@@ -84,15 +84,17 @@ When it disagrees with a source of truth below, the source of truth wins; then f
 5. Automatic update path in `miniappReleaseInstall.ts` calls `assertStillInstalled`, so it cannot first-install.
 6. One-workspace guard = raw doc in `workspace_memberships` (`membership-guard.service.ts`, `_id: ows:<userId>`). It
    carries none of `workspaceId`/`mentraUserId`/`status`/`role`, so no membership query matches it. A duplicate-key
-   error inside a transaction aborts it, so non-throwing paths (claim) pre-check with `canJoinWorkspace`.
+   error inside a transaction aborts it, so the claim inserts a guard only when the person holds no active
+   membership (it reads them first); a racing join then aborts the claim, which runs again at the next request.
    A guard counts only while the membership it names is still the person's active one: `initializeGuards` and the
    cleanup script write from earlier reads, so a stale guard must refuse nobody (the next join replaces it). Never
    test a guard with a membership id that has no row.
    The cleanup script writes the retained membership's row before every removal (`pinRetainedMembership`) so a
    concurrent leave of it conflicts instead of leaving the person with none; the portal turns a 401 from `/me` into
    `sessionExpired` (`PortalApiError.status`), not "Fleet unavailable".
-7. Claim of imported memberships now skips a pending row when the person is in another workspace (stays pending,
-   retried at later sign-ins). A person with several imported orgs gets the highest role claimed first.
+7. The claim picks one membership across every legacy identity with the email (highest role, earliest) and
+   discards every other pending one (`membership.removed`, keys revoked), per web-login "Membership claim" rule 4.
+   A discarded last Owner promotes the next live member; with none the workspace is logged as ownerless.
 8. Tests that need one person in several workspaces must write the extra membership directly (legacy state); the
    services refuse it. Create the guarded one through `createWorkspace` first.
 9. CLI `workspace list`/`use` are gone; ship the CLI only after `scripts/one-workspace-cleanup.ts` has run, or

@@ -262,10 +262,6 @@ const base = {
   collectorSessionId: FleetId,
   sequence: z.number().int().min(0),
   observedAt: FleetUtcTime,
-  management: z
-    .object({associationId: FleetId, generation: z.number().int().min(0)})
-    .strict()
-    .optional(),
   capabilities: z.array(z.enum(FLEET_CAPABILITIES)).max(FLEET_CAPABILITIES.length),
 }
 export const FleetRecordSchema = z.discriminatedUnion("kind", [

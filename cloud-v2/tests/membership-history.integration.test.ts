@@ -27,6 +27,7 @@ import {
 } from "../packages/core/src/services/workspaces/membership-history.service"
 import {toMemberViews} from "../packages/core/src/services/workspaces/member-view.service"
 import {
+  changeRole,
   createWorkspace,
   deleteWorkspace,
   leaveWorkspace,
@@ -297,6 +298,75 @@ describe("membership intervals", () => {
     expect(Date.parse(claimed.start)).toBeGreaterThanOrEqual(before)
     expect(claimed.start).not.toBe(importedAt.toISOString())
     expect(claimed.end).toBeNull()
+  })
+
+  test("a role change does not split the interval: roles lists each role from when it took effect", async () => {
+    const ws = await workspace()
+    const joined = new Date(Date.now() - 10 * DAY_MS)
+    await member(ws, "mu_a", "member", {startedAt: joined})
+    const a = (await listMembers(ws)).find(row => row.mentraUserId === "mu_a")!
+    const revision = (await WorkspaceModel.findOne({workspaceId: ws}).lean())!.authorizationRevision
+    const before = Date.now()
+    await changeRole(owner, ws, a.membershipId, "admin", revision)
+    const mine = (await allIntervals()).filter(i => i.mentraUserId === "mu_a")
+    expect(mine).toHaveLength(1)
+    const [interval] = mine
+    expect(interval!.role).toBe("admin")
+    expect(interval!.start).toBe(joined.toISOString())
+    expect(interval!.roles).toHaveLength(2)
+    expect(interval!.roles[0]).toMatchObject({role: "member", start: joined.toISOString()})
+    expect(Date.parse(interval!.roles[0]!.end!)).toBeGreaterThanOrEqual(before)
+    expect(interval!.roles[1]).toEqual({role: "admin", start: interval!.roles[0]!.end!, end: null})
+
+    await leaveWorkspace(actor("mu_a"), ws)
+    const closed = (await allIntervals()).find(i => i.mentraUserId === "mu_a")!
+    expect(closed.roles.at(-1)!.end).toBe(closed.end)
+  })
+
+  test("role intervals that ended before the window are left out; the one held at the window's start is kept", async () => {
+    const ws = await workspace()
+    const now = Date.now()
+    const day = (n: number) => new Date(now - n * DAY_MS)
+    await member(ws, "mu_long", "member", {
+      startedAt: day(300),
+      role: "owner",
+      roleHistory: [
+        {role: "member", from: day(300), authorizationRevision: 1},
+        {role: "developer", from: day(200), authorizationRevision: 2},
+        {role: "admin", from: day(100), authorizationRevision: 3},
+        {role: "owner", from: day(10), authorizationRevision: 4},
+      ],
+    })
+    const found = (await allIntervals()).find(i => i.mentraUserId === "mu_long")!
+    expect(found.start).toBe(day(300).toISOString())
+    expect(found.roles).toEqual([
+      {role: "admin", start: day(100).toISOString(), end: day(10).toISOString()},
+      {role: "owner", start: day(10).toISOString(), end: null},
+    ])
+  })
+
+  test("a role held before the claim is not counted: roles start at the claim", async () => {
+    const ws = await workspace()
+    const importedAt = new Date(Date.now() - 40 * DAY_MS)
+    await WorkspaceMembershipModel.create({
+      membershipId: "wm_imported_roles",
+      workspaceId: ws,
+      mentraUserId: null,
+      pendingWorkosUserId: "user_workos_2",
+      email: "imp2@example.test",
+      role: "admin",
+      roleHistory: [
+        {role: "developer", from: importedAt, authorizationRevision: 0},
+        {role: "admin", from: new Date(Date.now() - 20 * DAY_MS), authorizationRevision: 1},
+      ],
+      status: "active",
+      startedAt: importedAt,
+    })
+    await UserModel.create({mentraUserId: "mu_imp2", tenantId: "mentra", tenantUserId: "sb-imp2"})
+    await LegacyBrowserIdentityModel.create({workosUserId: "user_workos_2", email: "imp2@example.test"})
+    await claimLegacyIdentitiesOnce({mentraUserId: "mu_imp2", email: "imp2@example.test", emailVerified: true})
+    const claimed = (await allIntervals()).find(i => i.membershipId === "wm_imported_roles")!
+    expect(claimed.roles).toEqual([{role: "admin", start: claimed.start, end: null}])
   })
 
   test("a membership claimed before claimedAt existed starts at its membership.claimed event", async () => {

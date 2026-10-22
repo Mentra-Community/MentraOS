@@ -103,6 +103,7 @@ function PortalPage() {
 
   const session: PortalSession = {
     userEmail: me.data.user.email || "Signed in",
+    userName: me.data.user.name?.trim() || null,
     accountEmail,
     creation: me.data.workspaceCreation ?? { allowed: false, reason: null },
     link: invites.link,
@@ -173,9 +174,13 @@ function HomeRoute() {
 /** `/invitation`: the invitation link this tab holds (or, once, that it is no longer valid); without one, home. */
 function InvitationRoute() {
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
-  const { link } = usePortal();
-  if (link.status === "none") return <Redirect to="/" />;
-  if ((list.data === undefined && !list.isError) || link.status === "checking") return <Splash label="Loading your invitation" />;
+  const { link, invitations } = usePortal();
+  // The page for answering invitations: the tab's link, or the ones addressed to the person's email. With none
+  // of either there is nothing here.
+  if (link.status === "none" && invitations !== undefined && invitations.length === 0) return <Redirect to="/" />;
+  if ((list.data === undefined && !list.isError) || link.status === "checking" || invitations === undefined) {
+    return <Splash label="Loading your invitations" />;
+  }
   return <InvitationScreen />;
 }
 

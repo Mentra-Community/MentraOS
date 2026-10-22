@@ -403,13 +403,31 @@ test("workspace set-prefix reports a refused prefix and exits non-zero", async (
   expect(result.stderr).toContain("package_prefix_taken");
 });
 
-test("workspace show does not guess among several workspaces", async () => {
+test("workspace show does not guess among several workspaces, and says one is all an account may have", async () => {
   const f = await fixture(undefined, false, ["ws_1", "ws_2"]);
   f.signIn();
   const result = await f.cli("workspace", "show");
   expect(result.code).toBe(0);
-  expect(result.stdout).toContain("This account has no workspace. Create one with `mentra workspace create <name>`.");
+  expect(result.stdout).toContain("This account is in more than one workspace, which Mentra no longer allows. Contact Mentra support to bring it down to one.");
+  expect(result.stdout).not.toContain("This account has no workspace");
   expect(f.requests.some((request) => request.path === "/api/console/publishing-profile")).toBe(false);
+});
+
+test("workspace has show, set-prefix and create only: nothing lists, switches or selects among workspaces", async () => {
+  const f = await fixture();
+  f.signIn("ws_1");
+  // Without a subcommand commander prints the help on stderr, which the fixture captures.
+  const help = await f.cli("workspace");
+  const text = help.stdout + help.stderr;
+  expect(text).toMatch(/show\s+/);
+  expect(text).toMatch(/set-prefix <prefix>\s+/);
+  expect(text).toMatch(/create \[options\] <name>\s+/);
+  expect(text).not.toMatch(/\b(list|use|switch|select)\b\s+\S/);
+  for (const name of ["list", "use", "switch", "select"]) {
+    const result = await f.cli("workspace", name);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("unknown command");
+  }
 });
 
 test("workspace create makes the workspace, selects it and leaves the prefix alone when none is given", async () => {
