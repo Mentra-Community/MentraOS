@@ -77,13 +77,17 @@ export function requiresConnectedGlasses(packageName: string): boolean {
  */
 export function isHostTrustedSystemMiniapp(
   packageName: string,
-  releaseIdentity?: {source?: string; storePackageName?: string} | null,
+  releaseIdentity?: {source?: string; storePackageName?: string; sourceUrl?: string} | null,
 ): boolean {
   return isTrustedSystemMiniappRelease(
     getConfigValues(),
     packageName,
     releaseIdentity?.source
-      ? {source: releaseIdentity.source, storePackageName: releaseIdentity.storePackageName}
+      ? {
+          source: releaseIdentity.source,
+          storePackageName: releaseIdentity.storePackageName,
+          sourceUrl: releaseIdentity.sourceUrl,
+        }
       : null,
   )
 }

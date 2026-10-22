@@ -6772,7 +6772,8 @@ class LocalMiniappRuntime {
     return false
   }
 
-  private currentInstallCompatibilityPolicy(): MiniappCompatibilityPolicy | null {
+  /** The host's compatibility policy for installs and updates, or null until configured. */
+  public currentInstallCompatibilityPolicy(): MiniappCompatibilityPolicy | null {
     const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
     if (!hostVersion || !supportedMiniappSdkRange) return null
     const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
@@ -6801,7 +6802,7 @@ class LocalMiniappRuntime {
   }
 
   /** A QR-selected build or snapshot is the user's choice; automatic updates leave it alone. */
-  private hasDevelopmentSelection(packageName: string): boolean {
+  public hasDevelopmentSelection(packageName: string): boolean {
     return (
       this.interopApps().some((app) => app.packageName === packageName && app.isMiniappDev) ||
       getDevAppRecords().some((record) => record.packageName === packageName) ||

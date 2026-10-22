@@ -8,18 +8,44 @@
  * MentraJS router) are exported from `@mentra/engine` directly; the host mounts a
  * `<WebView>` wired to them. This facade is the lifecycle half.
  */
-import {useAppStatusStore} from "../stores/apps"
+import {getConfigValues} from "../runtime/bootstrap"
+import appRegistry from "../services/AppRegistry"
 import {onDeferredMiniappUpdateReady} from "../services/deferredMiniappUpdates"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
+import {installMiniappRelease} from "../services/miniappReleaseInstall"
+import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
+import {fetchHostedManifest, MiniappUrlUpdater} from "../services/miniappUrlUpdates"
 import {
   onRunningUpdateFailed,
   onRunningUpdatePrompt,
   type PendingRunningUpdatePrompt,
   type RunningUpdateFailure,
 } from "../services/runningUpdatePrompt"
+import {isSystemMiniappPackage} from "../services/SystemMiniappPolicy"
+import {firstPartyMiniappUrl} from "../services/systemMiniappTrust"
+import {useAppStatusStore} from "../stores/apps"
 import type {ClientApp} from "../types"
+import {MiniappRunningError} from "../utils/storeInstallRuntime"
 
 type AppsState = ReturnType<typeof useAppStatusStore.getState>
+
+const urlUpdater = new MiniappUrlUpdater({
+  installedPackages: async () =>
+    (await appRegistry.getInstalledMiniapps({includeBackgroundOnly: true})).map((app) => app.packageName),
+  activeVersion: (packageName) => appRegistry.getActiveVersion(packageName),
+  releaseIdentity: (packageName, version) => appRegistry.getReleaseIdentity(packageName, version),
+  isSystemPackage: isSystemMiniappPackage,
+  firstPartyUrl: (packageName) => firstPartyMiniappUrl(getConfigValues(), packageName),
+  hasDevelopmentSelection: (packageName) => localMiniappRuntime.hasDevelopmentSelection(packageName),
+  compatibilityPolicy: () => localMiniappRuntime.currentInstallCompatibilityPolicy(),
+  fetchManifest: fetchHostedManifest,
+  install: installMiniappRelease,
+  keepVersions: (packageName, versions) => appRegistry.gcReleaseVersions(packageName, versions),
+  isRunningError: (error) => error instanceof MiniappRunningError,
+  now: () => Date.now(),
+  log: (message) => console.log(`MiniappUpdates: ${message}`),
+  warn: (message, error) => console.warn(`MiniappUpdates: ${message}`, error ?? ""),
+})
 
 export const miniapps = {
   /** All installed miniapps (snapshot). */
@@ -65,9 +91,32 @@ export const miniapps = {
     timeoutMs?: number,
   ): Promise<unknown> => localMiniappRuntime.invokeActionFromHost(packageName, actionId, params, timeoutMs),
   /**
+   * Check every installed miniapp's own URL and install newer releases. A
+   * running miniapp's update is staged and asked about, or waits until it stops.
+   */
+  checkForUpdates: (): Promise<void> => urlUpdater.checkAll(),
+  /** Check a miniapp the user just opened, unless it was checked within the last minute. */
+  checkOpenedForUpdate: (packageName: string): Promise<void> => urlUpdater.checkOpened(packageName),
+  /** A miniapp started running. Returns an unsubscribe. */
+  onOpened: (listener: (packageName: string) => void): (() => void) => {
+    let running = new Set(miniappRunningRegistry.getAll())
+    return miniappRunningRegistry.subscribe(() => {
+      const now = miniappRunningRegistry.getAll()
+      for (const packageName of now) {
+        if (running.has(packageName)) continue
+        try {
+          listener(packageName)
+        } catch (error) {
+          console.warn("Miniapp opened listener threw", error)
+        }
+      }
+      running = new Set(now)
+    })
+  },
+  /**
    * Render "update now?" prompts for running miniapps and answer each one. The
-   * engine decides when one may appear (foreground, one at a time, at most
-   * daily per miniapp). Returns an unsubscribe.
+   * engine decides when one may appear (foreground, one at a time, once per
+   * run of a miniapp). Returns an unsubscribe.
    */
   onUpdatePrompt: (listener: (prompt: PendingRunningUpdatePrompt) => void): (() => void) =>
     onRunningUpdatePrompt(listener),

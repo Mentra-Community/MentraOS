@@ -101,3 +101,43 @@ describe("automatic update owner", () => {
     expect(automaticUpdateOwner("com.acme.weather", {source: "preinstalled_registry"})).toBeUndefined()
   })
 })
+
+describe("updates from Mentra's own host", () => {
+  test("a bundled package installed from a Mentra host keeps its system trust", () => {
+    withConfig({firstPartyMiniappsUrl: "https://miniapps.mentraglass.com"})
+    expect(
+      isHostTrustedSystemMiniapp(notes, {
+        source: "url",
+        sourceUrl: "https://miniapps.mentraglass.com/com.mentra.notes/",
+      }),
+    ).toBe(true)
+    // Including after a deployment that names another host, or none.
+    withConfig({firstPartyMiniappsUrl: null})
+    expect(
+      isHostTrustedSystemMiniapp(notes, {
+        source: "url",
+        sourceUrl: "https://miniapps.staging.mentraglass.com/com.mentra.notes/",
+      }),
+    ).toBe(true)
+  })
+
+  test("another domain, plain HTTP, or an unbundled package runs without it", () => {
+    withConfig({firstPartyMiniappsUrl: "https://miniapps.mentraglass.com/"})
+    expect(
+      isHostTrustedSystemMiniapp(notes, {source: "url", sourceUrl: "https://evil.example/com.mentra.notes/"}),
+    ).toBe(false)
+    expect(
+      isHostTrustedSystemMiniapp(notes, {
+        source: "url",
+        sourceUrl: "http://miniapps.mentraglass.com/com.mentra.notes/",
+      }),
+    ).toBe(false)
+    expect(isHostTrustedSystemMiniapp(notes, {source: "url"})).toBe(false)
+    expect(
+      isHostTrustedSystemMiniapp("com.mentra.unbundled", {
+        source: "url",
+        sourceUrl: "https://miniapps.mentraglass.com/com.mentra.unbundled/",
+      }),
+    ).toBe(false)
+  })
+})

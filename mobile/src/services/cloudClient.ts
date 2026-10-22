@@ -63,6 +63,7 @@ export function cloudConfigValues(): {
   cloudAuthStorageKey?: string
   otaManifestUrl?: string | null
   allowLegacyOtaFallback?: boolean
+  firstPartyMiniappsUrl?: string | null
   features?: {
     managedStreams: boolean
     nativeMeetings: boolean
@@ -111,6 +112,7 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
     // Preserve official legacy-glasses/embedded-engine OTA fallback semantics.
     otaManifestUrl: manifest.artifacts.mentraLiveOtaManifestUrl,
     allowLegacyOtaFallback: deployment.kind === "consumer",
+    firstPartyMiniappsUrl: manifest.artifacts.firstPartyMiniappsUrl ?? null,
     cloudDebugScope: deploymentDebugScope(deployment),
     resolveCloudEndpoints: resolvedEndpoints,
     features: {
