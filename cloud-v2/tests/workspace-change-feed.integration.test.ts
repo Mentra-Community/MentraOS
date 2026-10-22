@@ -19,7 +19,7 @@
  * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/workspace-change-feed.integration.test.ts`
  */
 
-import {afterAll, beforeAll, beforeEach, describe, expect, test} from "bun:test"
+import {afterAll, beforeAll, beforeEach, describe, expect, spyOn, test} from "bun:test"
 import type {Model} from "mongoose"
 
 import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
@@ -41,6 +41,8 @@ import {
   redactSecrets,
   type WorkspaceAuditEventInput,
 } from "../packages/core/src/services/workspaces/audit.service"
+import {ensureWorkspace} from "../packages/core/src/services/workspaces/automatic-workspace.service"
+import {acceptInvitation, createInvitation} from "../packages/core/src/services/workspaces/invitation.service"
 import {
   createWorkspace,
   renameWorkspace,
@@ -487,6 +489,74 @@ describe("listChanges", () => {
     expect(redactSecrets("token")).toBe("token")
     expect(redactSecrets(null)).toBeNull()
     expect(redactSecrets(7)).toBe(7)
+  })
+})
+
+// --- Giving way ------------------------------------------------------------
+
+describe("an empty automatic workspace giving way", () => {
+  const TEMPLATE = "CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE"
+
+  /** `mu_newcomer` with an automatic workspace, and an invitation from `mu_owner` to join "Acme" as a member. */
+  async function setUp() {
+    const saved = process.env[TEMPLATE]
+    process.env[TEMPLATE] = "https://core.example.test/invite/{token}"
+    try {
+      await UserModel.create([
+        {mentraUserId: "mu_newcomer", tenantId: "mentra", tenantUserId: "sb-newcomer"},
+        {mentraUserId: "mu_owner", tenantId: "mentra", tenantUserId: "sb-owner"},
+      ])
+      const newcomer: Actor & {kind: "user"} = {
+        kind: "user",
+        mentraUserId: "mu_newcomer",
+        email: "newcomer@example.test",
+        emailVerified: true,
+        isOrganizationAdmin: false,
+      }
+      const automatic = (await ensureWorkspace(newcomer)).workspace.workspaceId
+      const acme = await createWorkspace(owner, {name: "Acme"})
+      const invitation = await createInvitation(owner, acme.workspaceId, {email: "newcomer@example.test", role: "member"})
+      return {newcomer, automatic, acme: acme.workspaceId, token: invitation.inviteUrl.split("/invite/")[1]!}
+    } finally {
+      if (saved === undefined) delete process.env[TEMPLATE]
+      else process.env[TEMPLATE] = saved
+    }
+  }
+
+  test("the deletion and the join are both on the feed, in one run of consecutive numbers", async () => {
+    const {newcomer, automatic, acme, token} = await setUp()
+    const before = (await listChanges({})).events.at(-1)!.seq
+
+    await acceptInvitation(newcomer, token)
+
+    const added = (await listChanges({after: String(before)})).events
+    expect(added.map(e => [e.workspaceId, e.action])).toEqual([
+      [automatic, "workspace.deleted"],
+      [acme, "invitation.accepted"],
+      [acme, "membership.added"],
+    ])
+    expect(added.map(e => e.seq)).toEqual([before + 1, before + 2, before + 3])
+    expect(added[0]!.after).toMatchObject({status: "deleted", reason: "joined_another_workspace"})
+  })
+
+  test("an aborted accept leaves neither change on the feed and its numbers are reused", async () => {
+    const {newcomer, automatic, token} = await setUp()
+    const before = (await listChanges({})).events.at(-1)!.seq
+    const create = spyOn(WorkspaceMembershipModel, "create").mockRejectedValueOnce(new Error("forced failure"))
+    try {
+      await expect(acceptInvitation(newcomer, token)).rejects.toThrow("forced failure")
+    } finally {
+      create.mockRestore()
+    }
+
+    expect((await listChanges({after: String(before)})).events).toEqual([])
+    expect((await WorkspaceModel.findOne({workspaceId: automatic}).lean())!.status).toBe("active")
+    await acceptInvitation(newcomer, token)
+    expect((await listChanges({after: String(before)})).events.map(e => e.seq)).toEqual([
+      before + 1,
+      before + 2,
+      before + 3,
+    ])
   })
 })
 

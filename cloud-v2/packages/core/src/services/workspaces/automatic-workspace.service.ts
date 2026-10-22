@@ -20,7 +20,8 @@
  * active and automatic, the person's Owner membership is its only active membership (an imported one
  * waiting for its person counts as another), and it has no pending invitation that has not expired, no
  * unrevoked key, no license that has not ended and no deletion hold. The workspace list marks such a
- * workspace `replaceable`.
+ * workspace `replaceable`. Such a workspace gives way (`yieldAutomaticWorkspace`) in the transaction that
+ * gives its person a membership in another: it is deleted, recording `joined_another_workspace`.
  */
 
 import type {ClientSession} from "mongoose"
@@ -36,16 +37,20 @@ import {memberNames} from "./member-names.service"
 import {fail} from "./workspace-error"
 import {
   assertMayCreateWorkspace,
+  deleteWorkspaceIn,
   deletionHoldsOf,
   insertWorkspace,
   isId,
   refuseDeletedAccount,
+  loadActiveWorkspace,
   WORKSPACE_NAME_MAX_LENGTH,
   type Actor,
 } from "./workspace.service"
 
 const NAME_SUFFIX = "'s Workspace"
 const NAMELESS = "My Workspace"
+/** `workspace.deleted`'s `after.reason` when an automatic workspace gives way to another one. */
+const YIELD_REASON = "joined_another_workspace"
 
 /** What `ensureWorkspace` answers: the person's workspace, their membership in it, and whether it was just made. */
 export interface EnsuredWorkspace {
@@ -101,6 +106,41 @@ export async function holdsNothing(
   mentraUserId: string,
 ): Promise<boolean> {
   return (await workspacesHoldingNothing(session, mentraUserId, [workspaceId])).has(workspaceId)
+}
+
+/**
+ * Delete the person's automatic workspaces that hold nothing (`holdsNothing`), apart from `opts.except`, in
+ * `session`: the transaction that gives the person a membership in another workspace (accepting an
+ * invitation, claiming an imported membership, recovering ownership). The deletion is
+ * `deleteWorkspaceIn`'s, recorded for `actor`, with `workspace.deleted`'s `after.reason` set to
+ * `joined_another_workspace`. A workspace that holds anything is left as it is, and so is every workspace
+ * the person did not make for themselves: one where they are a Member, or an Owner beside others, or one
+ * made with `POST /`. Returns the ids it deleted. The holding is read in `session`, and deleting writes the
+ * workspace document, so a change to the workspace made concurrently conflicts with it and is seen on retry.
+ */
+export async function yieldAutomaticWorkspace(
+  session: ClientSession,
+  actor: Actor,
+  mentraUserId: string,
+  opts: {except?: string | null} = {},
+): Promise<string[]> {
+  if (!isId(mentraUserId)) return []
+  const owned = await WorkspaceMembershipModel.distinct("workspaceId", {
+    mentraUserId,
+    status: "active",
+    role: "owner",
+  }).session(session)
+  const candidates = owned.filter((id): id is string => typeof id === "string" && id !== opts.except)
+  if (candidates.length === 0) return []
+  const empty = await workspacesHoldingNothing(session, mentraUserId, candidates)
+  const yielded: string[] = []
+  for (const workspaceId of candidates) {
+    if (!empty.has(workspaceId)) continue
+    const workspace = await loadActiveWorkspace(session, workspaceId)
+    await deleteWorkspaceIn(session, workspace, actor, {reason: YIELD_REASON})
+    yielded.push(workspaceId)
+  }
+  return yielded
 }
 
 /**

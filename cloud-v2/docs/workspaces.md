@@ -130,6 +130,21 @@ licenses are assigned from the Licenses page.
   hold. `GET /` marks each of the caller's workspaces `replaceable`: `true`
   only for their own automatic workspace, which they own, while it holds
   nothing. A workspace made with `POST /` never is.
+- **Giving way.** In the transaction that gives a person a membership in
+  another workspace, their automatic workspaces that hold nothing are deleted
+  (`yieldAutomaticWorkspace`): accepting an invitation (by token or by id,
+  after its checks), claiming an imported membership (`claimPendingMemberships`,
+  when it moves a membership to the person rather than merging it into one they
+  hold), and `recoverOwnership` when it creates the membership. The deletion is
+  the workspace deletion's own steps without the typed name: the memberships
+  end (`workspace_deleted`), `workspace.deleted` is recorded with
+  `after.reason: "joined_another_workspace"` (for the person, or for the system
+  in a claim), and the deletion and the join commit together or not at all, so
+  both are on the change feed or neither is. The workspace being joined is never
+  the one deleted. A workspace that holds anything is kept, as is any the person
+  did not make for themselves: one where they are a Member or share ownership,
+  or one made with `POST /`. The join then succeeds as it would for anyone, and
+  the person has both memberships.
 - An invitation names an email, a role and an expiry (14 days). Admins invite
   Members and Developers, Owners anyone. Core stores only a hash of the
   invitation token; the link carries the token. The email names the inviter.

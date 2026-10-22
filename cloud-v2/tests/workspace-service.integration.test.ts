@@ -33,6 +33,7 @@ import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {runWithRequestId} from "../packages/core/src/services/request-context"
 import {
   clampPageSize,
+  listChanges,
   listWorkspaceAudit,
   recordWorkspaceEvent,
   redactSecrets,
@@ -720,6 +721,117 @@ describe("the automatic workspace", () => {
       } finally {
         for (const read of reads) read.mockRestore()
       }
+    })
+  })
+
+  describe("giving way to recovered ownership", () => {
+    async function automaticOf(actor: UserActor): Promise<string> {
+      return (await ensureWorkspace(await account(actor))).workspace.workspaceId
+    }
+
+    test("recovering ownership of another workspace deletes the person's empty automatic one, in one transaction", async () => {
+      const me = user("mu_me")
+      const automaticId = await automaticOf(me)
+      const target = await newWorkspace(user("mu_owner"), "Target")
+
+      await recoverOwnership(orgAdmin, target, "mu_me")
+
+      expect((await listWorkspacesForUser("mu_me")).map(item => item.workspaceId)).toEqual([target])
+      expect(await WorkspaceModel.findOne({workspaceId: automaticId}).lean()).toMatchObject({status: "deleted"})
+      const deleted = (await listWorkspaceAudit(automaticId, {limit: 10})).find(e => e.action === "workspace.deleted")
+      expect(deleted).toMatchObject({
+        actor: {kind: "user", mentraUserId: "mu_org_admin"},
+        before: {name: "Mu Me's Workspace", status: "active"},
+        after: {status: "deleted", reason: "joined_another_workspace"},
+      })
+      const feed = (await listChanges({})).events
+      expect(feed.map(e => [e.workspaceId, e.action]).filter(([, action]) => action !== "workspace.created")).toEqual([
+        [automaticId, "workspace.deleted"],
+        [target, "membership.ownership_recovered"],
+      ])
+    })
+
+    test("a failure after the yield leaves the automatic workspace and gives the person nothing", async () => {
+      const me = user("mu_me")
+      const automaticId = await automaticOf(me)
+      const target = await newWorkspace(user("mu_owner"), "Target")
+      const create = spyOn(WorkspaceMembershipModel, "create").mockRejectedValueOnce(new Error("forced failure"))
+      try {
+        expect((await thrown(() => recoverOwnership(system, target, "mu_me"))).message).toBe("forced failure")
+      } finally {
+        create.mockRestore()
+      }
+
+      expect(await WorkspaceModel.findOne({workspaceId: automaticId}).lean()).toMatchObject({status: "active"})
+      expect(await getActiveMembership(target, "mu_me")).toBeNull()
+      expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.deleted"})).toBe(0)
+    })
+
+    test("an automatic workspace that holds something, or one made with createWorkspace, is kept", async () => {
+      const holds: Array<[string, (workspaceId: string) => Promise<unknown>]> = [
+        ["a second member", ws => addMember(ws, "mu_second", "member")],
+        ["a key", ws => seedCredential(ws, null)],
+        ["a license", ws =>
+          LicenseModel.create({
+            _id: `01LICENSE${nextId()}`.toUpperCase(),
+            owner: {type: "workspace", workspaceId: ws},
+            product: "mentra.call.unlimited",
+            quantity: 1,
+            validFrom: new Date(Date.now() - 60_000),
+            paidThrough: new Date(Date.now() + 86_400_000),
+            revision: 1,
+          })],
+        ["a deletion hold", ws =>
+          setDeletionHold("store", ws, {reason: "owns_miniapps", count: 1, asOf: nextHoldAsOf()})],
+      ]
+      for (const [what, hold] of holds) {
+        await Promise.all(MODELS.map(model => model.deleteMany({})))
+        const automaticId = await automaticOf(user("mu_me"))
+        await hold(automaticId)
+        const target = await newWorkspace(user("mu_owner"), "Target")
+
+        await recoverOwnership(orgAdmin, target, "mu_me")
+
+        expect({what, status: (await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status}).toEqual({
+          what,
+          status: "active",
+        })
+        expect(await getActiveMembership(target, "mu_me")).toMatchObject({role: "owner"})
+      }
+
+      await Promise.all(MODELS.map(model => model.deleteMany({})))
+      const me = await account(user("mu_me"))
+      const made = await createWorkspace(me, {name: "Made"})
+      const target = await newWorkspace(user("mu_owner"), "Target")
+      await recoverOwnership(orgAdmin, target, "mu_me")
+      expect((await WorkspaceModel.findOne({workspaceId: made.workspaceId}).lean())!.status).toBe("active")
+    })
+
+    test("a workspace where the person is a Member, or promoted in place, is never deleted", async () => {
+      const host = user("mu_host")
+      const hostWs = await automaticOf(host)
+      await account(user("mu_me"))
+      await addMember(hostWs, "mu_me", "member")
+      const target = await newWorkspace(user("mu_owner"), "Target")
+
+      await recoverOwnership(orgAdmin, target, "mu_me")
+      expect((await WorkspaceModel.findOne({workspaceId: hostWs}).lean())!.status).toBe("active")
+
+      // Recovering the host workspace's owner role for a member of it deletes nothing either: no membership is made.
+      await recoverOwnership(orgAdmin, hostWs, "mu_me")
+      expect((await WorkspaceModel.findOne({workspaceId: hostWs}).lean())!.status).toBe("active")
+      expect(await getActiveMembership(hostWs, "mu_me")).toMatchObject({role: "owner"})
+      expect(await getActiveMembership(hostWs, "mu_host")).toMatchObject({role: "owner"})
+    })
+
+    test("someone who is already the target's owner, or has no new membership to make, loses nothing", async () => {
+      const me = user("mu_me")
+      const automaticId = await automaticOf(me)
+
+      await recoverOwnership(orgAdmin, automaticId, "mu_me")
+
+      expect((await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status).toBe("active")
+      expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.deleted"})).toBe(0)
     })
   })
 })

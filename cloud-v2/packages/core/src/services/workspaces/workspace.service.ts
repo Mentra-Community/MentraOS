@@ -57,7 +57,7 @@ import {legacyIdentityClaims} from "../../models/legacy-browser-identity.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {endLicensesForOwner, releaseSeatsForMembership, seatReleaseReasonFor} from "../licenses/license.service"
 import {isDeletedAccountId} from "../user.service"
-import {replaceableWorkspaces} from "./automatic-workspace.service"
+import {replaceableWorkspaces, yieldAutomaticWorkspace} from "./automatic-workspace.service"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
 import {workspaceCreationPolicy} from "./organization"
 import {fail, WorkspaceError, type WorkspaceErrorCode} from "./workspace-error"
@@ -350,24 +350,43 @@ export async function renameWorkspace(
 export async function deleteWorkspace(actor: Actor, workspaceId: string, opts: {confirmName: string}): Promise<void> {
   await withTransaction(async session => {
     const workspace = await assertCanDelete(session, actor, workspaceId, opts.confirmName)
-    const now = new Date()
-    await bumpRevision(session, workspaceId, undefined, {status: "deleted", deletedAt: now})
-    await WorkspaceMembershipModel.updateMany(
-      {workspaceId, status: "active"},
-      {$set: {status: "ended", endedAt: now, endedReason: "workspace_deleted"}},
-      {session},
-    )
-    await AccessCredentialModel.updateMany({workspaceId, revokedAt: null}, {$set: {revokedAt: now}}, {session})
-    await WorkspaceInvitationModel.updateMany({workspaceId, status: "pending"}, {$set: {status: "revoked"}}, {session})
-    await endLicensesForOwner(session, {type: "workspace", workspaceId}, "workspace_deleted", actor)
-    await recordWorkspaceEvent(session, {
-      workspaceId,
-      action: "workspace.deleted",
-      actor: auditActor(actor),
-      target: {workspaceId},
-      before: {name: workspace.name, status: "active"},
-      after: {status: "deleted"},
-    })
+    await deleteWorkspaceIn(session, workspace, actor)
+  })
+}
+
+/**
+ * Every step of deleting `workspace` after the checks of who may and whether it should be, in the
+ * caller's transaction: the workspace row becomes `deleted` (one revision bump, which serializes the
+ * deletion with any other change there), its active memberships end (`workspace_deleted`), its keys
+ * and pending invitations are revoked, its licenses end and release their seats, and `workspace.deleted`
+ * is recorded for `actor`. `after` is merged into that event's `after` (`{status: "deleted", ...after}`).
+ * `deleteWorkspace` calls it after `assertCanDelete`; giving way to another workspace
+ * (`yieldAutomaticWorkspace`) calls it after finding the workspace holds nothing.
+ */
+export async function deleteWorkspaceIn(
+  session: ClientSession,
+  workspace: Pick<WorkspaceRow, "workspaceId" | "name">,
+  actor: Actor,
+  after: Record<string, unknown> = {},
+): Promise<void> {
+  const {workspaceId} = workspace
+  const now = new Date()
+  await bumpRevision(session, workspaceId, undefined, {status: "deleted", deletedAt: now})
+  await WorkspaceMembershipModel.updateMany(
+    {workspaceId, status: "active"},
+    {$set: {status: "ended", endedAt: now, endedReason: "workspace_deleted"}},
+    {session},
+  )
+  await AccessCredentialModel.updateMany({workspaceId, revokedAt: null}, {$set: {revokedAt: now}}, {session})
+  await WorkspaceInvitationModel.updateMany({workspaceId, status: "pending"}, {$set: {status: "revoked"}}, {session})
+  await endLicensesForOwner(session, {type: "workspace", workspaceId}, "workspace_deleted", actor)
+  await recordWorkspaceEvent(session, {
+    workspaceId,
+    action: "workspace.deleted",
+    actor: auditActor(actor),
+    target: {workspaceId},
+    before: {name: workspace.name, status: "active"},
+    after: {status: "deleted", ...after},
   })
 }
 
@@ -524,6 +543,8 @@ export async function recoverOwnership(
         {session},
       )
     } else {
+      // A person who gains a workspace here no longer needs an empty automatic one of their own.
+      await yieldAutomaticWorkspace(session, actor, target, {except: workspaceId})
       membershipId = `wm_${ulid()}`
       await WorkspaceMembershipModel.create(
         [
