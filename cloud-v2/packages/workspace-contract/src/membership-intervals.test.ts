@@ -149,7 +149,7 @@ describe("listMembershipIntervals", () => {
       page({intervals: [open({end: "2026-09-01T00:00:00.000Z", endReason: "evicted" as never})]}),
       page({intervals: [open({start: "2026-09-02T00:00:00.000Z", end: "2026-09-01T00:00:00.000Z", endReason: "left"})]}),
       page({intervals: [open({roles: []})]}),
-      page({intervals: [{...open(), roles: undefined}]}),
+      page({intervals: [{...open(), roles: undefined as never}]}),
       page({intervals: [open({roles: [{role: "boss" as never, start: "2026-01-02T03:04:05.000Z", end: null}]})]}),
       page({intervals: [open({roles: [{role: "member", start: "2025-12-01T00:00:00.000Z", end: null}]})]}),
       page({intervals: [open({roles: [{role: "member", start: "2026-01-02T03:04:05.000Z", end: "2026-02-01T00:00:00.000Z"}]})]}),

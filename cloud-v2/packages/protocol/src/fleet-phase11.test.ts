@@ -257,10 +257,10 @@ describe("desired state", () => {
 describe("the spec's lists, exactly", () => {
   test("install reasons, outcome states and reasons are the provisioning and Fleet specs' sets", () => {
     expect([...FLEET_INSTALL_REASONS]).toEqual(["bundled", "explicit", "manifest", "assignment"])
-    expect([...FLEET_ASSIGNMENT_STATES].sort()).toEqual(
+    expect<string[]>([...FLEET_ASSIGNMENT_STATES].sort()).toEqual(
       ["blocked", "deferred_running", "downloading", "installed", "installing", "pending", "retrying", "withdrawn"].sort(),
     )
-    expect([...FLEET_ASSIGNMENT_REASONS].sort()).toEqual(
+    expect<string[]>([...FLEET_ASSIGNMENT_REASONS].sort()).toEqual(
       [
         "access_denied",
         "archived",
