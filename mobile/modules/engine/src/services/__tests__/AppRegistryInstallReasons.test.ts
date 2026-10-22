@@ -6,6 +6,7 @@ import type {MiniappAssignment, MiniappReleaseIdentity} from "../AppRegistry"
 const values = new Map<string, unknown>()
 const installationValues = new Map<string, string>()
 let failedWrite: string | undefined
+let devAllowed = true
 mock.module("../../utils/storage/storage", () => ({
   storage: {
     load: (key: string) => (values.has(key) ? Res.ok(values.get(key)) : Res.error(new Error("Missing key"))),
@@ -31,7 +32,7 @@ mock.module("react-native-mmkv", () => ({
 mock.module("../../runtime/bootstrap", () => ({
   assertMiniappDevelopmentAllowed: () => {},
   getConfigValues: () => ({}),
-  isDevMiniappAllowed: () => true,
+  isDevMiniappAllowed: () => devAllowed,
   isInstalledMiniappAllowed: () => true,
   isOfflineSystemMiniappAllowed: () => true,
   isMiniappAvailable: () => true,
@@ -80,6 +81,7 @@ beforeEach(() => {
   values.clear()
   installationValues.clear()
   failedWrite = undefined
+  devAllowed = true
   installed = []
   spyOn(registry, "getInstalledVersions").mockImplementation(() => installed)
 })
@@ -228,6 +230,23 @@ describe("live-development selection", () => {
     expect(values.has(`${packageName}_dev_port`)).toBe(false)
     expect(values.has(`${packageName}_active_version`)).toBe(false)
     expect(registry.getActiveReleaseVersion(packageName)).toBe("1.0.0")
+  })
+})
+
+describe("development snapshot selection", () => {
+  test("is a selection only while launching would run the snapshot instead of the release", async () => {
+    installed = ["1.0.0", "dev-1000"]
+    values.set(`${packageName}_active_version`, "1.0.0")
+    expect(registry.hasDevelopmentSelection(packageName)).toBe(false)
+    values.set(`${packageName}_active_version`, "dev-1000")
+    expect(registry.hasDevelopmentSelection(packageName)).toBe(true)
+    devAllowed = false
+    expect(registry.hasDevelopmentSelection(packageName)).toBe(false)
+    devAllowed = true
+    values.delete(`${packageName}_active_version`)
+    expect(registry.hasDevelopmentSelection(packageName)).toBe(true)
+    expect(values.has(`${packageName}_active_version`)).toBe(false)
+    expect(await registry.getActiveVersion(packageName)).toBe("dev-1000")
   })
 })
 

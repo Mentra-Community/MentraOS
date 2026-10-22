@@ -967,10 +967,7 @@ class AppRegistry {
     return (
       readDevAppRecord(packageName) !== null ||
       storage.load<string>(`${packageName}_dev_url`).is_ok() ||
-      this.getSelectedDevSnapshot(packageName) !== null ||
-      this.getInstalledVersions(packageName).some(
-        (version) => version.startsWith("dev-") && isDevSnapshotVisible(packageName, version),
-      )
+      this.chooseActiveVersion(packageName).version?.startsWith("dev-") === true
     )
   }
 
@@ -1841,6 +1838,13 @@ class AppRegistry {
   }
 
   public async getActiveVersion(packageName: string): Promise<string | undefined> {
+    const {version, remember} = this.chooseActiveVersion(packageName)
+    if (remember) this.setActiveVersion(packageName, remember)
+    return version
+  }
+
+  /** The version a launch runs, by launch precedence, and the active pointer to store for it (null to leave it). */
+  private chooseActiveVersion(packageName: string): {version: string | undefined; remember: string | null} {
     // Another account's or workspace's dev snapshot is not an installation here.
     let versions = this.getInstalledVersions(packageName).filter((version) =>
       isDevSnapshotVisible(packageName, version),
@@ -1850,7 +1854,7 @@ class AppRegistry {
     // scan back; until then a released version stays on screen.
     const devAllowed = isDevMiniappAllowed(packageName)
     const selectedSnapshot = devAllowed ? this.getSelectedDevSnapshot(packageName) : null
-    if (selectedSnapshot) return selectedSnapshot
+    if (selectedSnapshot) return {version: selectedSnapshot, remember: null}
     // Treat MMKV as a hint, not authority. A stored version may have been
     // GC'd off disk without this pointer being updated.
     const res = storage.load<string>(`${packageName}_active_version`)
@@ -1859,7 +1863,7 @@ class AppRegistry {
       versions.includes(res.value) &&
       (devAllowed || !this.isDeveloperVersion(packageName, res.value))
     ) {
-      return res.value
+      return {version: res.value, remember: null}
     }
     // Dev versions take precedence over semver-installed versions.
     if (devAllowed) {
@@ -1867,21 +1871,17 @@ class AppRegistry {
         .filter((v) => v.startsWith("dev-"))
         .sort()
         .reverse()
-      if (devVersions.length > 0) {
-        this.setActiveVersion(packageName, devVersions[0])
-        return devVersions[0]
-      }
+      if (devVersions.length > 0) return {version: devVersions[0], remember: devVersions[0]}
     }
     versions = versions.filter((v) => semver.valid(v))
     versions.sort((a, b) => semver.rcompare(a, b))
-    if (!versions.length) return undefined
+    if (!versions.length) return {version: undefined, remember: null}
     // The newest release the deployment allows, e.g. a workspace's managed
     // release over a newer release-QR or Store install that it does not.
     const active =
       versions.find((v) => isInstalledMiniappAllowed(packageName, v, this.getReleaseIdentity(packageName, v))) ??
       versions[0]
-    if (!(res.is_ok() && res.value.startsWith("dev-"))) this.setActiveVersion(packageName, active)
-    return active
+    return {version: active, remember: res.is_ok() && res.value.startsWith("dev-") ? null : active}
   }
 
   public setActiveVersion(packageName: string, version: string): Result<void, Error> {
