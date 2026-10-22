@@ -111,7 +111,7 @@
       },
       "peerDependencies": {
         "@craftzdog/react-native-buffer": "*",
-        "@dr.pogodin/react-native-fs": "*",
+        "@dr.pogodin/react-native-fs": "2.38.2",
         "@react-native-community/netinfo": "*",
         "@types/react": "*",
         "axios": "*",
@@ -285,7 +285,7 @@
       "version": "1.0.0",
       "dependencies": {
         "@craftzdog/react-native-buffer": "^6.1.2",
-        "@dr.pogodin/react-native-fs": "^2.37.0",
+        "@dr.pogodin/react-native-fs": "2.38.2",
         "@mentra/acs-meeting": "workspace:*",
         "@mentra/bluetooth-sdk": "workspace:*",
         "@mentra/cloud-client": "workspace:*",
@@ -597,7 +597,7 @@
 
     "@craftzdog/react-native-buffer": ["@craftzdog/react-native-buffer@6.1.2", "", { "dependencies": { "ieee754": "^1.2.1", "react-native-quick-base64": "^3.0.0" } }, "sha512-KV1HitN05FHLLDG7Zb/yftDsa+mKBYBzFMQ0PMldvUicq6vWOtAvz9mDavt7Fzozh+WNqORE+yFDkkdWysZ/SA=="],
 
-    "@dr.pogodin/react-native-fs": ["@dr.pogodin/react-native-fs@2.39.1", "", { "dependencies": { "buffer": "^6.0.3", "http-status-codes": "^2.3.0" }, "peerDependencies": { "react": "*", "react-native": "*" } }, "sha512-ubBP84ng89aV0tnCR6IAW9aKYq5wT8QgspvOs8gDLzB9d2Sen7x10N6fMGx58jyZjy5sAytcpzv2UbduL09B8A=="],
+    "@dr.pogodin/react-native-fs": ["@dr.pogodin/react-native-fs@2.38.2", "", { "dependencies": { "buffer": "^6.0.3", "http-status-codes": "^2.3.0" }, "peerDependencies": { "react": "*", "react-native": "*" } }, "sha512-8s+mzstTq2IrZm4U/UfcBHEWHnFvVtn/9MUGtpqS/eiZBb9tJiM2DnNRYu9+LuMnc+r95cyAcJe4rRAtnC0xlw=="],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.23.1", "", { "os": "aix", "cpu": "ppc64" }, "sha512-6VhYk1diRqrhBAqpJEdjASR/+WVRtfjpqKuNw11cLiaWpAT/Uu+nokB+UJnevzy/P9C/ty6AOe0dwueMrGh/iQ=="],
 
