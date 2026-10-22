@@ -752,18 +752,14 @@ describe("licenses", () => {
     }
   })
 
-  test("listLicenses asks for one owner's licenses, signed over the exact query", async () => {
+  test("listLicenses asks for one workspace's licenses, signed over the exact query", async () => {
     const {client, calls} = clientFor(() => json({licenses: [view()]}))
 
-    expect(await client.listLicenses({type: "workspace", workspaceId: "ws 1"})).toEqual({licenses: [view()]})
+    expect(await client.listLicenses("ws 1")).toEqual({licenses: [view()]})
     expect(calls[0].method).toBe("GET")
     expect(calls[0].url).toBe(`${BASE}/api/internal/licenses?ownerType=workspace&ownerId=ws+1`)
     expect(calls[0].body).toBe("")
     expect(verifies(calls[0])).toBe(true)
-
-    const person = clientFor(() => json({licenses: []}))
-    expect(await person.client.listLicenses({type: "person", mentraUserId: "mu_1"})).toEqual({licenses: []})
-    expect(person.calls[0].url).toBe(`${BASE}/api/internal/licenses?ownerType=person&ownerId=mu_1`)
   })
 
   test("listLicenses fails closed on an answer that is not a list of licenses", async () => {
@@ -777,7 +773,7 @@ describe("licenses", () => {
       {licenses: [{...view(), revision: undefined}]},
     ]) {
       const {client} = clientFor(() => json(body))
-      await expectClientError(client.listLicenses({type: "workspace", workspaceId: "ws_1"}), "bad_response")
+      await expectClientError(client.listLicenses("ws_1"), "bad_response")
     }
   })
 })

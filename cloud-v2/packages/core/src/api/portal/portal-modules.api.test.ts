@@ -198,7 +198,7 @@ describe("who may call, and in what order Core answers", () => {
   test("nobody is 401, whether or not the module is installed, and nothing is forwarded", async () => {
     for (const environment of [null, "prod"] as const) {
       if (environment) configure(environment)
-      for (const rest of ["/account/licenses", "/workspaces/ws_1/licenses", "/ui/entry.js", "/nothing"]) {
+      for (const rest of ["/workspaces/ws_1/licenses", "/ui/entry.js", "/nothing"]) {
         const reply = await billing(null, rest)
         expect([rest, reply.status, await reply.json()]).toEqual([rest, 401, {error: "unauthorized"}])
       }
@@ -209,7 +209,7 @@ describe("who may call, and in what order Core answers", () => {
   test("a workspace key or an operator key is 403, even for its own workspace", async () => {
     configure("prod")
     for (const name of [as("ws-key", workspaceKey), as("op-key", operatorKey)]) {
-      for (const rest of ["/workspaces/ws_1/licenses", "/account/licenses", "/ui/entry.js"]) {
+      for (const rest of ["/workspaces/ws_1/licenses", "/ui/entry.js"]) {
         const reply = await billing(name, rest)
         expect([name, rest, reply.status, (await errorBody(reply)).error]).toEqual([name, rest, 403, "forbidden"])
       }
@@ -218,7 +218,7 @@ describe("who may call, and in what order Core answers", () => {
   })
 
   test("a module that is not installed is a 404 after authentication, for every path and method", async () => {
-    for (const rest of ["/account/licenses", "/workspaces/ws_1/licenses", "/ui/entry.js", "/nothing"]) {
+    for (const rest of ["/workspaces/ws_1/licenses", "/ui/entry.js", "/nothing"]) {
       for (const method of ["GET", "POST"]) {
         const reply = await billing(as("member", member), rest, {method})
         expect([rest, method, reply.status, await reply.json()]).toEqual([rest, method, 404, {error: "module_not_installed"}])
@@ -233,7 +233,7 @@ describe("who may call, and in what order Core answers", () => {
 
   test("an installed module whose settings are unusable is a 503 for a person who may see it", async () => {
     configure("prod", {CLOUD_CORE_BILLING_URL: "ftp://nope.example.test"})
-    const reply = await billing(as("member", member), "/account/licenses")
+    const reply = await billing(as("member", member), "/workspaces/ws_1/licenses")
     expect([reply.status, await reply.json()]).toEqual([503, {error: "module_unavailable"}])
     delete process.env.CLOUD_CORE_BILLING_SECRET
     process.env.CLOUD_CORE_BILLING_URL = `http://127.0.0.1:${module_.port}`
@@ -244,12 +244,12 @@ describe("who may call, and in what order Core answers", () => {
 
   test("a person the module is hidden from gets the 404 of an absent module, not the 503 of a broken one", async () => {
     configure("staging", {CLOUD_CORE_BILLING_URL: "ftp://nope.example.test"})
-    const reply = await billing(as("member", member), "/account/licenses")
+    const reply = await billing(as("member", member), "/workspaces/ws_1/licenses")
     expect([reply.status, await reply.json()]).toEqual([404, {error: "module_not_installed"}])
   })
 
   test("Core's own answers are labelled as data", async () => {
-    for (const reply of [await billing(null, "/account/x"), await billing(as("member", member), "/account/x")]) {
+    for (const reply of [await billing(null, "/workspaces/ws_1/x"), await billing(as("member", member), "/workspaces/ws_1/x")]) {
       expect(reply.headers.get("x-content-type-options")).toBe("nosniff")
       expect(reply.headers.get("content-security-policy")).toBe("default-src 'none'; frame-ancestors 'none'; sandbox")
     }
@@ -261,7 +261,7 @@ describe("staff-only billing outside prod", () => {
     for (const environment of ["dev", "staging"]) {
       configure(environment)
       calls = []
-      for (const rest of ["/account/licenses", "/workspaces/ws_1/licenses", "/ui/entry.js"]) {
+      for (const rest of ["/workspaces/ws_1/licenses", "/ui/entry.js"]) {
         const hidden = await billing(as("member", member), rest)
         expect([environment, rest, hidden.status, await hidden.json()]).toEqual([
           environment,
@@ -271,11 +271,11 @@ describe("staff-only billing outside prod", () => {
         ])
       }
       expect(calls).toHaveLength(0)
-      for (const rest of ["/account/licenses", "/workspaces/ws_1/licenses", "/ui/entry.js"]) {
+      for (const rest of ["/workspaces/ws_1/licenses", "/ui/entry.js"]) {
         const reply = await billing(as("admin", admin), rest)
         expect([environment, rest, reply.status]).toEqual([environment, rest, 200])
       }
-      expect(calls).toHaveLength(3)
+      expect(calls).toHaveLength(2)
     }
   })
 
@@ -283,7 +283,7 @@ describe("staff-only billing outside prod", () => {
     const tooBig = "x".repeat(1024 * 1024 + 1)
     for (const environment of ["dev", "staging"]) {
       configure(environment)
-      for (const rest of ["/account/checkout", "/workspaces/ws_1/licenses"]) {
+      for (const rest of ["/workspaces/ws_1/checkout", "/workspaces/ws_1/licenses"]) {
         const reply = await billing(as("member", member), rest, {method: "POST", body: tooBig})
         expect([environment, rest, reply.status, await reply.json()]).toEqual([
           environment,
@@ -293,7 +293,7 @@ describe("staff-only billing outside prod", () => {
         ])
       }
       // The limit is for a request that will be forwarded: the same body from staff is refused as too large.
-      const staff = await billing(as("admin", admin), "/account/checkout", {method: "POST", body: tooBig})
+      const staff = await billing(as("admin", admin), "/workspaces/ws_1/checkout", {method: "POST", body: tooBig})
       expect([environment, staff.status, await staff.json()]).toEqual([environment, 413, {error: "payload_too_large"}])
     }
     expect(calls).toHaveLength(0)
@@ -301,15 +301,15 @@ describe("staff-only billing outside prod", () => {
 
   test("nor can a body over the limit tell a person the module is broken: it is the 503, unread", async () => {
     configure("prod", {CLOUD_CORE_BILLING_URL: "ftp://nope.example.test"})
-    const reply = await billing(as("member", member), "/account/checkout", {method: "POST", body: "x".repeat(1024 * 1024 + 1)})
+    const reply = await billing(as("member", member), "/workspaces/ws_1/checkout", {method: "POST", body: "x".repeat(1024 * 1024 + 1)})
     expect([reply.status, await reply.json()]).toEqual([503, {error: "module_unavailable"}])
     expect(calls).toHaveLength(0)
   })
 
   test("on prod both are forwarded", async () => {
     configure("prod")
-    expect((await billing(as("member", member), "/account/licenses")).status).toBe(200)
-    expect((await billing(as("admin", admin), "/account/licenses")).status).toBe(200)
+    expect((await billing(as("member", member), "/workspaces/ws_1/licenses")).status).toBe(200)
+    expect((await billing(as("admin", admin), "/workspaces/ws_1/licenses")).status).toBe(200)
     expect(calls).toHaveLength(2)
   })
 
@@ -317,9 +317,9 @@ describe("staff-only billing outside prod", () => {
     for (const environment of [null, "production", "local", ""]) {
       configure(environment)
       calls = []
-      const hidden = await billing(as("member", member), "/account/licenses")
+      const hidden = await billing(as("member", member), "/workspaces/ws_1/licenses")
       expect([environment, hidden.status]).toEqual([environment, 404])
-      expect([environment, (await billing(as("admin", admin), "/account/licenses")).status]).toEqual([environment, 200])
+      expect([environment, (await billing(as("admin", admin), "/workspaces/ws_1/licenses")).status]).toEqual([environment, 200])
     }
   })
 })
@@ -427,58 +427,50 @@ describe("workspace routes", () => {
   })
 })
 
-describe("account routes", () => {
-  test("carry the person's own scope and nothing else, at the module's /v1/portal/account path", async () => {
-    configure()
-    const reply = await billing(as("member", member), "/account/licenses?x=1", {method: "GET"})
-    expect(reply.status).toBe(200)
-    expect(calls[0].pathWithQuery).toBe("/v1/portal/account/licenses?x=1")
-    expect(verified()).toEqual({
-      kind: "user",
-      mentraUserId: "mu_member",
-      email: "mu_member@example.test",
-      emailVerified: true,
-      isOrganizationAdmin: false,
-      organizationCapabilities: [],
-      scope: {kind: "person"},
-    })
-    // No workspace is involved, so none is looked up.
-    expect(authorizeSpy).not.toHaveBeenCalled()
-  })
+describe("billing's account routes are gone", () => {
+  /** Every request the person-scoped family took: its reads, its writes and the family itself. */
+  const ACCOUNT: Array<[method: string, rest: string]> = [
+    ["GET", "/account/catalog"],
+    ["GET", "/account/catalog?locale=en-US"],
+    ["GET", "/account/status"],
+    ["GET", "/account/status?purchase=pur_1"],
+    ["GET", "/account/licenses"],
+    ["POST", "/account/purchase"],
+    ["POST", "/account/session"],
+    ["POST", "/account/checkout"],
+    ["GET", "/account"],
+    ["GET", "/account/"],
+  ]
 
-  test("stay a person's scope whatever the query, the body or the headers ask", async () => {
-    configure()
-    const forged = Buffer.from(JSON.stringify({kind: "user", scope: {kind: "workspace", workspaceId: "ws_2"}})).toString("base64url")
-    for (const [rest, init] of [
-      ["/account/checkout?scope=workspace&workspaceId=ws_2", {}],
-      ["/account/checkout?scope=organization", {}],
-      [
-        "/account/checkout",
-        {
-          method: "POST",
-          body: JSON.stringify({scope: "workspace", workspaceId: "ws_2", principal: {scope: {kind: "organization"}}}),
-          headers: {"content-type": "application/json", "x-mentra-principal": forged, "x-mentra-scope": "workspace"},
-        },
-      ],
-    ] as const) {
-      calls = []
-      const reply = await billing(as("admin", admin), rest, init)
-      expect([rest, reply.status]).toEqual([rest, 200])
-      expect([rest, verified()]).toMatchObject([rest, {isOrganizationAdmin: true, scope: {kind: "person"}}])
+  test("/account/* is a 404 for staff and everyone else, on prod and on a test Core, and nothing is called", async () => {
+    for (const environment of ["prod", "staging", "dev", null] as const) {
+      configure(environment)
+      for (const [name, principal] of [["member", member], ["admin", admin], ["stranger", stranger]] as const) {
+        // Staff, and everyone on prod, may see billing: the path is simply none of its routes. Anyone billing is
+        // hidden from is told it is absent, as for any path but an open read.
+        const error = environment === "prod" || principal.isOrganizationAdmin ? "not_found" : "module_not_installed"
+        for (const [method, rest] of ACCOUNT) {
+          const reply = await billing(as(name, principal), rest, {method, ...(method === "POST" ? {body: "{}"} : {})})
+          expect([environment, name, method, rest, reply.status, await reply.json()]).toEqual([
+            environment,
+            name,
+            method,
+            rest,
+            404,
+            {error},
+          ])
+        }
+      }
     }
-  })
-
-  test("the account itself, without a path after it, is an account route", async () => {
-    configure()
-    expect((await billing(as("member", member), "/account")).status).toBe(200)
-    expect(calls[0].pathWithQuery).toBe("/v1/portal/account")
+    expect(calls).toHaveLength(0)
+    expect(authorizeSpy).not.toHaveBeenCalled()
   })
 })
 
 describe("what the module receives", () => {
   test("only content-type and accept of the caller's headers; nothing under x-mentra-*, cookie or authorization", async () => {
     configure()
-    await billing(as("member", member), "/account/x", {
+    await billing(as("member", member), "/workspaces/ws_1/x", {
       method: "POST",
       body: "{}",
       headers: {
@@ -506,18 +498,18 @@ describe("what the module receives", () => {
 
   test("a request changed after Core signed it does not verify", async () => {
     configure()
-    await billing(as("member", member), "/account/x", {method: "POST", body: '{"a":1}'})
+    await billing(as("member", member), "/workspaces/ws_1/x", {method: "POST", body: '{"a":1}'})
     const call = calls[0]
     expect(verified(call)).not.toBeNull()
     expect(verified({...call, body: '{"a":2}'})).toBeNull()
-    expect(verified({...call, pathWithQuery: "/v1/portal/account/y"})).toBeNull()
+    expect(verified({...call, pathWithQuery: "/v1/portal/workspaces/ws_1/y"})).toBeNull()
     expect(verified({...call, method: "PUT"})).toBeNull()
   })
 
   test("correlates: Core's request id goes out, the module's comes back, and one line is logged without a body or query", async () => {
     configure()
     respond = request => Response.json({ok: true}, {headers: {"x-request-id": `module-${request.headers.get("x-request-id")}`}})
-    const reply = await billing(as("member", member), "/account/x?token=hunter2", {headers: {"x-request-id": "rid-1"}})
+    const reply = await billing(as("member", member), "/workspaces/ws_1/x?token=hunter2", {headers: {"x-request-id": "rid-1"}})
     expect(calls[0].headers.get("x-request-id")).not.toBeNull()
     expect(reply.headers.get("x-request-id")).toBe(`module-${calls[0].headers.get("x-request-id")}`)
     const lines = logs.filter(line => line.message.includes("billing"))
@@ -532,7 +524,7 @@ describe("what the person receives", () => {
   test("an upstream 401 is a 403 with the module's body: a module's answer never means sign in again", async () => {
     configure()
     respond = () => Response.json({error: "billing_staff_only"}, {status: 401})
-    const reply = await billing(as("member", member), "/account/x")
+    const reply = await billing(as("member", member), "/workspaces/ws_1/x")
     expect([reply.status, await reply.json()]).toEqual([403, {error: "billing_staff_only"}])
   })
 
@@ -540,7 +532,7 @@ describe("what the person receives", () => {
     configure()
     respond = () =>
       Response.json({error: "slow_down"}, {status: 429, headers: {"retry-after": "9", "x-secret": "1", "set-cookie": "a=b"}})
-    const reply = await billing(as("member", member), "/account/x")
+    const reply = await billing(as("member", member), "/workspaces/ws_1/x")
     expect([reply.status, await reply.json(), reply.headers.get("retry-after")]).toEqual([429, {error: "slow_down"}, "9"])
     expect(reply.headers.get("x-secret")).toBeNull()
     expect(reply.headers.get("set-cookie")).toBeNull()
@@ -556,29 +548,29 @@ describe("what the person receives", () => {
     ]
     for (const [name, answer] of failures) {
       respond = answer
-      const reply = await billing(as("member", member), "/account/x")
+      const reply = await billing(as("member", member), "/workspaces/ws_1/x")
       expect([name, reply.status, await reply.json()]).toEqual([name, 503, {error: "module_unavailable"}])
     }
   })
 
   test("a module that is down is a 503 module_unavailable", async () => {
     configure("prod", {CLOUD_CORE_BILLING_URL: "http://127.0.0.1:9"})
-    const reply = await billing(as("member", member), "/account/x")
+    const reply = await billing(as("member", member), "/workspaces/ws_1/x")
     expect([reply.status, await reply.json()]).toEqual([503, {error: "module_unavailable"}])
   })
 
   test("a body over the limit is a 413, and one that is not UTF-8 a 400, both without a call", async () => {
     configure()
-    const big = await billing(as("member", member), "/account/x", {method: "POST", body: "x".repeat(1024 * 1024 + 1)})
+    const big = await billing(as("member", member), "/workspaces/ws_1/x", {method: "POST", body: "x".repeat(1024 * 1024 + 1)})
     expect([big.status, await big.json()]).toEqual([413, {error: "payload_too_large"}])
-    const bad = await billing(as("member", member), "/account/x", {method: "POST", body: new Uint8Array([0xff, 0xfe, 0x41])})
+    const bad = await billing(as("member", member), "/workspaces/ws_1/x", {method: "POST", body: new Uint8Array([0xff, 0xfe, 0x41])})
     expect([bad.status, await bad.json()]).toEqual([400, {error: "invalid_body"}])
     expect(calls).toHaveLength(0)
   })
 
   test("keeps the session cookie Core rotated", async () => {
     configure()
-    const reply = await billing(as("member", member), "/account/x", {headers: {"x-test-set-cookie": "rotated=1; Path=/"}})
+    const reply = await billing(as("member", member), "/workspaces/ws_1/x", {headers: {"x-test-set-cookie": "rotated=1; Path=/"}})
     expect(reply.headers.get("set-cookie")).toBe("rotated=1; Path=/")
   })
 })
@@ -592,10 +584,9 @@ describe("what a cache may keep", () => {
     configure("staging")
     const reads: Array<[who: string, principal: UserPrincipal, method: string, rest: string]> = [
       ["member", member, "GET", "/workspaces/ws_1/catalog?locale=en-US"],
-      ["member", member, "GET", "/account/catalog"],
       ["admin", admin, "GET", "/workspaces/ws_1/catalog"],
       ["admin", admin, "GET", "/workspaces/ws_1/status"],
-      ["admin", admin, "GET", "/account/status?purchase=pur_1"],
+      ["admin", admin, "GET", "/workspaces/ws_2/status?purchase=pur_1"],
       ["admin", admin, "POST", "/workspaces/ws_1/purchase"],
     ]
     for (const [who, principal, method, rest] of reads) {
@@ -616,10 +607,10 @@ describe("what a cache may keep", () => {
       "private, no-store",
     )
     respond = () => Response.json({error: "slow_down"}, {status: 429, headers: {"retry-after": "9"}})
-    const relayed = await billing(as("member", member), "/account/catalog")
+    const relayed = await billing(as("member", member), "/workspaces/ws_1/catalog")
     expect([relayed.status, relayed.headers.get("cache-control")]).toEqual([429, "private, no-store"])
     respond = () => new Response("down", {status: 500})
-    const failed = await billing(as("member", member), "/account/catalog")
+    const failed = await billing(as("member", member), "/workspaces/ws_1/catalog")
     expect([failed.status, failed.headers.get("cache-control")]).toEqual([503, "private, no-store"])
   })
 
@@ -655,15 +646,15 @@ describe("paths", () => {
     configure()
     const base = "http://localhost/api/portal/billing"
     for (const rest of [
-      "/account/../workspaces/ws_2/x",
-      "/account/./x",
-      "/account/%2e%2e/x",
-      "/account/a%2fb",
-      "/account/a%5cb",
-      "/account/a%00b",
-      "/account/%252e",
-      "/account/%zz",
-      "/workspaces/ws_1/../../account/x",
+      "/workspaces/ws_1/../ws_2/x",
+      "/workspaces/ws_1/./x",
+      "/workspaces/ws_1/%2e%2e/x",
+      "/workspaces/ws_1/a%2fb",
+      "/workspaces/ws_1/a%5cb",
+      "/workspaces/ws_1/a%00b",
+      "/workspaces/ws_1/%252e",
+      "/workspaces/ws_1/%zz",
+      "/workspaces/ws_1/../../ui/x",
       "/workspaces/ws_1%2f..%2fws_2/x",
       "/workspaces/%252e%252e/x",
     ]) {
@@ -673,9 +664,24 @@ describe("paths", () => {
     expect(calls).toHaveLength(0)
   })
 
-  test("anything but exactly workspaces/<id>, account or ui is a 404, however the first segment is spelled", async () => {
+  test("anything but exactly workspaces/<id> or ui is a 404, however the first segment is spelled", async () => {
     configure()
-    for (const rest of ["", "/", "/nothing", "/Account/x", "/ACCOUNT", "/Workspaces/ws_1/x", "/UI/entry.js", "/%75i/entry.js", "//account/x", "/accounts/x", "/workspace/ws_1/x"]) {
+    for (const rest of [
+      "",
+      "/",
+      "/nothing",
+      "/account",
+      "/account/x",
+      "/account/catalog",
+      "/Account/x",
+      "/ACCOUNT",
+      "/Workspaces/ws_1/x",
+      "/UI/entry.js",
+      "/%75i/entry.js",
+      "//account/x",
+      "/accounts/x",
+      "/workspace/ws_1/x",
+    ]) {
       const reply = await root.fetch(
         rawUrlRequest(`http://localhost/api/portal/billing${rest}`, {"x-test-principal": as("admin", admin)}),
       )
@@ -774,12 +780,6 @@ describe("billing's open reads outside prod", () => {
     ["POST", "/workspaces/ws_1/checkout"],
     ["GET", "/workspaces/ws_1"],
     ["GET", "/workspaces/ws_1/"],
-    ["GET", "/account/status"],
-    ["POST", "/account/purchase"],
-    ["POST", "/account/session"],
-    ["GET", "/account/summary"],
-    ["GET", "/account"],
-    ["GET", "/account/"],
     ["GET", "/ui/entry.js"],
     ["HEAD", "/ui/entry.js"],
     ["GET", "/ui/entry.js?v=1"],
@@ -793,10 +793,6 @@ describe("billing's open reads outside prod", () => {
     ["PATCH", "/workspaces/ws_1/catalog"],
     ["DELETE", "/workspaces/ws_1/catalog"],
     ["OPTIONS", "/workspaces/ws_1/catalog"],
-    ["POST", "/account/catalog"],
-    ["HEAD", "/account/catalog"],
-    ["PUT", "/account/catalog"],
-    ["DELETE", "/account/catalog"],
     // The path is exact: a trailing slash, another case, an encoding, a deeper or a doubled path.
     ["GET", "/workspaces/ws_1/catalog/"],
     ["GET", "/workspaces/ws_1/Catalog"],
@@ -809,23 +805,14 @@ describe("billing's open reads outside prod", () => {
     ["GET", "/workspaces/ws_1/catalog;x"],
     ["GET", "/workspaces/ws_1/x/catalog"],
     ["GET", "/workspaces/ws_1//catalog"],
-    ["GET", "/account/catalog/"],
-    ["GET", "/account/Catalog"],
-    ["GET", "/account/catalog/x"],
-    ["GET", "/account/%63atalog"],
-    ["GET", "/account//catalog"],
     // The family is part of the path: catalog is not an asset, an icon is not a scope's path.
     ["GET", "/workspaces/catalog"],
     ["GET", "/workspaces/ws_1/ui/icons/a.png"],
     ["GET", "/workspaces/ws_1/icons/a.png"],
-    ["GET", "/account/icons/a.png"],
-    ["GET", "/account/ui/icons/a.png"],
     // Nothing in the query or the case of the first segment makes a request another.
     ["GET", "/workspaces/ws_1/status?path=catalog"],
     ["GET", "/workspaces/ws_1/status?/catalog"],
-    ["GET", "/account/status?x=/account/catalog"],
     ["GET", "/ui/entry.js?/icons/a.png"],
-    ["GET", "/Account/catalog"],
     ["GET", "/UI/icons/a.png"],
     ["GET", "/%75i/icons/a.png"],
     ["GET", "/Workspaces/ws_1/catalog"],
@@ -850,7 +837,7 @@ describe("billing's open reads outside prod", () => {
     ["OPTIONS", "/ui/icons/a.png"],
   ]
 
-  test("a member who is not staff reads a workspace's catalog, the person's, and the icons: forwarded, each with its scope", async () => {
+  test("a member who is not staff reads a workspace's catalog and the icons: forwarded, each with its scope", async () => {
     for (const environment of ENVIRONMENTS) {
       configure(environment)
       calls = []
@@ -870,34 +857,30 @@ describe("billing's open reads outside prod", () => {
       })
       expect(authorizeSpy).toHaveBeenCalledWith(member, {workspaceId: "ws_1"})
 
-      const accountCatalog = await billing(as("member", member), "/account/catalog?locale=en-US")
-      expect([environment, accountCatalog.status]).toEqual([environment, 200])
-      expect(calls[1].pathWithQuery).toBe("/v1/portal/account/catalog?locale=en-US")
-      expect(verified()).toMatchObject({isOrganizationAdmin: false, scope: {kind: "person"}})
-
       const icon = await billing(as("member", member), "/ui/icons/mentra.call.unlimited.png")
       expect([environment, icon.status]).toEqual([environment, 200])
       expect(icon.headers.get("content-type")).toBe("image/png")
       expect(icon.headers.get("x-content-type-options")).toBe("nosniff")
       expect(icon.headers.get("cross-origin-resource-policy")).toBe("same-origin")
       expect(new Uint8Array(await icon.arrayBuffer())).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47]))
-      expect(calls[2].method).toBe("GET")
-      expect(calls[2].pathWithQuery).toBe("/v1/portal/ui/icons/mentra.call.unlimited.png")
+      expect(calls[1].method).toBe("GET")
+      expect(calls[1].pathWithQuery).toBe("/v1/portal/ui/icons/mentra.call.unlimited.png")
       expect(verified()).toMatchObject({isOrganizationAdmin: false, scope: {kind: "person"}})
 
       const head = await billing(as("member", member), "/ui/icons/x.svg", {method: "HEAD"})
       expect([environment, head.status]).toEqual([environment, 200])
-      expect(calls[3].pathWithQuery).toBe("/v1/portal/ui/icons/x.svg")
-      expect(calls).toHaveLength(4)
+      expect(calls[2].pathWithQuery).toBe("/v1/portal/ui/icons/x.svg")
+      expect(calls).toHaveLength(3)
     }
   })
 
-  test("a person with no workspace reads the person's catalog and the icons too", async () => {
+  test("a person with no workspace reads the icons too, and there is no catalog of their own", async () => {
     configure("staging")
     answerIcons()
-    expect((await billing(as("stranger", stranger), "/account/catalog")).status).toBe(200)
     expect((await billing(as("stranger", stranger), "/ui/icons/a.png")).status).toBe(200)
-    expect(calls).toHaveLength(2)
+    const own = await billing(as("stranger", stranger), "/account/catalog")
+    expect([own.status, await own.json()]).toEqual([404, {error: "module_not_installed"}])
+    expect(calls).toHaveLength(1)
   })
 
   test("everything else stays a 404 module_not_installed, with no call and no workspace lookup", async () => {
@@ -932,8 +915,6 @@ describe("billing's open reads outside prod", () => {
       "/workspaces/ws_1/%2e%2e/catalog",
       "/workspaces/ws_1/catalog%00",
       "/workspaces/ws_1/catalog%zz",
-      "/account/catalog/../status",
-      "/account/%252e%252e/catalog",
       "/ui/icons/../entry.js",
       "/ui/icons/./a.png",
       "/ui/icons/%2e%2e/entry.js",
@@ -969,22 +950,22 @@ describe("billing's open reads outside prod", () => {
 
   test("an Organization Admin reads any workspace's catalog and every other path, as before", async () => {
     configure("staging")
-    for (const rest of ["/workspaces/ws_2/catalog", "/workspaces/ws_2/status", "/account/status", "/ui/entry.js", "/ui/icons/a.png"]) {
+    for (const rest of ["/workspaces/ws_2/catalog", "/workspaces/ws_2/status", "/ui/entry.js", "/ui/icons/a.png"]) {
       expect([rest, (await billing(as("admin", admin), rest)).status]).toEqual([rest, 200])
     }
     expect((await billing(as("admin", admin), "/workspaces/ws_2/purchase", {method: "POST", body: "{}"})).status).toBe(200)
-    expect(calls).toHaveLength(6)
+    expect(calls).toHaveLength(5)
   })
 
   test("a workspace key, an operator key and nobody still get no open read", async () => {
     configure("staging")
     for (const name of [as("ws-key", workspaceKey), as("op-key", operatorKey)]) {
-      for (const rest of ["/workspaces/ws_1/catalog", "/account/catalog", "/ui/icons/a.png"]) {
+      for (const rest of ["/workspaces/ws_1/catalog", "/ui/icons/a.png"]) {
         const reply = await billing(name, rest)
         expect([name, rest, reply.status, (await errorBody(reply)).error]).toEqual([name, rest, 403, "forbidden"])
       }
     }
-    for (const rest of ["/workspaces/ws_1/catalog", "/account/catalog", "/ui/icons/a.png"]) {
+    for (const rest of ["/workspaces/ws_1/catalog", "/ui/icons/a.png"]) {
       const reply = await billing(null, rest)
       expect([rest, reply.status, await reply.json()]).toEqual([rest, 401, {error: "unauthorized"}])
     }
@@ -1001,7 +982,6 @@ describe("billing's open reads outside prod", () => {
       ["POST", "/workspaces/ws_1/session"],
       ["GET", "/workspaces/ws_1/summary"],
       ["POST", "/workspaces/ws_1/catalog"],
-      ["GET", "/account/status"],
       ["GET", "/ui/entry.js"],
       ["GET", "/ui/icons/a.png"],
     ]
@@ -1016,7 +996,7 @@ describe("billing's open reads outside prod", () => {
     // Nothing configured, whatever the environment.
     for (const environment of ["staging", "prod"]) {
       process.env.CLOUD_CORE_ENVIRONMENT = environment
-      for (const rest of ["/workspaces/ws_1/catalog", "/account/catalog", "/ui/icons/a.png"]) {
+      for (const rest of ["/workspaces/ws_1/catalog", "/ui/icons/a.png"]) {
         const reply = await billing(as("member", member), rest)
         expect([environment, rest, reply.status, await reply.json()]).toEqual([environment, rest, 404, {error: "module_not_installed"}])
       }
@@ -1026,11 +1006,11 @@ describe("billing's open reads outside prod", () => {
 
   test("a module whose settings are unusable is a 503 for an open read and still a 404 for anything else", async () => {
     configure("staging", {CLOUD_CORE_BILLING_URL: "ftp://nope.example.test"})
-    for (const rest of ["/workspaces/ws_1/catalog", "/account/catalog", "/ui/icons/a.png"]) {
+    for (const rest of ["/workspaces/ws_1/catalog", "/ui/icons/a.png"]) {
       const reply = await billing(as("member", member), rest)
       expect([rest, reply.status, await reply.json()]).toEqual([rest, 503, {error: "module_unavailable"}])
     }
-    for (const rest of ["/workspaces/ws_1/status", "/account/status", "/ui/entry.js"]) {
+    for (const rest of ["/workspaces/ws_1/status", "/ui/entry.js"]) {
       const reply = await billing(as("member", member), rest)
       expect([rest, reply.status, await reply.json()]).toEqual([rest, 404, {error: "module_not_installed"}])
     }
@@ -1059,7 +1039,6 @@ describe("billing's open reads outside prod", () => {
       const requests: Array<[string, string]> = [
         ...CLOSED.filter(([method]) => method !== "HEAD"),
         ["GET", "/workspaces/ws_1/catalog"],
-        ["GET", "/account/catalog"],
         ["GET", "/ui/icons/a.png"],
       ]
       for (const [name, principal] of [["member", member], ["admin", admin]] as const) {
@@ -1121,7 +1100,7 @@ describe("mounted in Core", () => {
   test("the portal's sign-in gate is in front: a request with no session is 401 and the module is not called", async () => {
     configure()
     const app = createApp({readinessChecks: []})
-    for (const rest of ["/account/licenses", "/workspaces/ws_1/licenses", "/ui/entry.js"]) {
+    for (const rest of ["/workspaces/ws_1/licenses", "/ui/entry.js"]) {
       const reply = await app.request(`http://localhost/api/portal/billing${rest}`)
       expect([rest, reply.status]).toEqual([rest, 401])
     }

@@ -9,10 +9,10 @@
  * the public APIs; a phone token comes from Core's own token exchange. Licenses are rows seeded straight into
  * the collection, as billing's writes leave them.
  *
- * What it pins: an Organization Admin lists every license, workspace and personal, newest first, each with its
- * owner shown by name or email, its product, quantity, seats used, paid-through date and ended state; the
- * owners of a page are looked up in one batch per collection; search matches the owner's name or email, the
- * owner's id or the product as plain text, and pages with the same cursor; a workspace admin, an operator key
+ * What it pins: an Organization Admin lists every license, newest first, each with the workspace that holds it
+ * shown by name, its product, quantity, seats used, paid-through date and ended state; the workspaces of a page
+ * are looked up in one batch, and no person's record is read; search matches the workspace's name or id or the
+ * product as plain text, and pages with the same cursor; a workspace admin, an operator key
  * (every scope included), a workspace key and a phone token are refused; the route is read-only; and `/me`
  * says whether the Licenses page has anything to offer.
  *
@@ -225,7 +225,7 @@ let sequence = 0
 /** A license id in billing's ULID shape (26 characters) that sorts after every earlier one. */
 const nextLicenseId = () => `01K${String(++sequence).padStart(23, "0")}`
 
-type OwnerRow = {type: "workspace"; workspaceId: string} | {type: "person"; mentraUserId: string}
+type OwnerRow = {type: "workspace"; workspaceId: string}
 
 function licenseDoc(owner: OwnerRow, overrides: Record<string, unknown> = {}) {
   return {
@@ -233,8 +233,8 @@ function licenseDoc(owner: OwnerRow, overrides: Record<string, unknown> = {}) {
     owner,
     product: "mentra.call.unlimited",
     features: [{key: "call.unlimited", packages: ["com.mentra.call"]}],
-    quantity: owner.type === "person" ? 1 : 10,
-    seatsUsed: owner.type === "person" ? 1 : 0,
+    quantity: 10,
+    seatsUsed: 0,
     validFrom: new Date("2026-10-01T00:00:00.000Z"),
     paidThrough: new Date("2099-01-31T00:00:00.000Z"),
     revision: 1,
@@ -250,12 +250,14 @@ async function seedLicense(owner: OwnerRow, overrides: Record<string, unknown> =
   return doc._id
 }
 
-/** The workspaces and people the named licenses below belong to. */
+/** The workspaces the named licenses below belong to. `ws_unknown` has no record in Core. */
 async function seedOwners() {
   await WorkspaceModel.create([
     {workspaceId: "ws_acme", name: "Acme Robotics"},
+    {workspaceId: "ws_globex", name: "Globex Corporation"},
     {workspaceId: "ws_closed", name: "Closed Down", status: "deleted", deletedAt: new Date("2026-09-01T00:00:00.000Z")},
   ])
+  // A person Core knows by name and email, who holds a seat but owns no license.
   await SigninIdentityModel.create({
     mentraUserId: "mu_ada",
     tenantId: "mentra",
@@ -266,32 +268,23 @@ async function seedOwners() {
     name: "Ada Lovelace",
     signedInAt: new Date(),
   })
-  await AccountEmailModel.create([
-    {mentraUserId: "mu_grace", email: "grace@navy.test", checkedAt: new Date()},
-    {mentraUserId: "mu_gone", email: null, deletedAt: new Date("2026-09-02T00:00:00.000Z"), checkedAt: new Date()},
-  ])
 }
 
 /** One license for every kind of owner and state, oldest first; `seedNamedLicenses` returns their ids in that order. */
 async function seedNamedLicenses() {
   await seedOwners()
   const acme = await seedLicense({type: "workspace", workspaceId: "ws_acme"}, {quantity: 10, seatsUsed: 4})
-  const ada = await seedLicense({type: "person", mentraUserId: "mu_ada"})
-  const grace = await seedLicense({type: "person", mentraUserId: "mu_grace"})
-  const unknown = await seedLicense({type: "person", mentraUserId: "mu_unknown"})
+  const globex = await seedLicense({type: "workspace", workspaceId: "ws_globex"}, {quantity: 1, seatsUsed: 1})
+  const unknown = await seedLicense({type: "workspace", workspaceId: "ws_unknown"}, {quantity: 2, seatsUsed: 0})
   const closed = await seedLicense(
     {type: "workspace", workspaceId: "ws_closed"},
     {quantity: 3, seatsUsed: 2, endedAt: new Date("2026-09-01T00:00:00.000Z"), endedReason: "workspace_deleted"},
-  )
-  const gone = await seedLicense(
-    {type: "person", mentraUserId: "mu_gone"},
-    {endedAt: new Date("2026-09-02T00:00:00.000Z"), endedReason: "account_deleted"},
   )
   const expired = await seedLicense(
     {type: "workspace", workspaceId: "ws_acme"},
     {product: "mentra.notes.pro", quantity: 2, seatsUsed: 2, paidThrough: new Date("2020-03-15T00:00:00.000Z")},
   )
-  return {acme, ada, grace, unknown, closed, gone, expired}
+  return {acme, globex, unknown, closed, expired}
 }
 
 const idsOf = (reply: Reply) => (reply.json as AdminLicensesResponse).items.map(item => item.licenseId)
@@ -346,9 +339,10 @@ afterEach(() => {
 // --- The list --------------------------------------------------------------
 
 describe("GET /api/admin/licenses", () => {
-  test("an Organization Admin sees every license, workspace and personal, newest first, each with who holds it", async () => {
+  test("an Organization Admin sees every license, newest first, each with the workspace that holds it", async () => {
     const ids = await seedNamedLicenses()
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const term = {validFrom: "2026-10-01T00:00:00.000Z", paidThrough: "2099-01-31T00:00:00.000Z"}
 
     for (const via of ["session", "bearer"] as const) {
       const reply = await call("GET", LICENSES, {as: admin, via})
@@ -367,59 +361,34 @@ describe("GET /api/admin/licenses", () => {
           endedReason: null,
         },
         {
-          licenseId: ids.gone,
-          // The account is deleted: Core keeps no name or email for it.
-          owner: {type: "person", mentraUserId: "mu_gone", name: null, email: null},
-          product: "mentra.call.unlimited",
-          quantity: 1,
-          seatsUsed: 1,
-          validFrom: "2026-10-01T00:00:00.000Z",
-          paidThrough: "2099-01-31T00:00:00.000Z",
-          endedAt: "2026-09-02T00:00:00.000Z",
-          endedReason: "account_deleted",
-        },
-        {
           licenseId: ids.closed,
+          // A deleted workspace keeps its name.
           owner: {type: "workspace", workspaceId: "ws_closed", name: "Closed Down"},
           product: "mentra.call.unlimited",
           quantity: 3,
           seatsUsed: 2,
-          validFrom: "2026-10-01T00:00:00.000Z",
-          paidThrough: "2099-01-31T00:00:00.000Z",
+          ...term,
           endedAt: "2026-09-01T00:00:00.000Z",
           endedReason: "workspace_deleted",
         },
         {
           licenseId: ids.unknown,
-          owner: {type: "person", mentraUserId: "mu_unknown", name: null, email: null},
+          // Core has no record of the workspace: no name.
+          owner: {type: "workspace", workspaceId: "ws_unknown", name: null},
           product: "mentra.call.unlimited",
-          quantity: 1,
-          seatsUsed: 1,
-          validFrom: "2026-10-01T00:00:00.000Z",
-          paidThrough: "2099-01-31T00:00:00.000Z",
+          quantity: 2,
+          seatsUsed: 0,
+          ...term,
           endedAt: null,
           endedReason: null,
         },
         {
-          licenseId: ids.grace,
-          // Never signed in through Core's sign-in server, but Core has her verified email.
-          owner: {type: "person", mentraUserId: "mu_grace", name: null, email: "grace@navy.test"},
+          licenseId: ids.globex,
+          owner: {type: "workspace", workspaceId: "ws_globex", name: "Globex Corporation"},
           product: "mentra.call.unlimited",
           quantity: 1,
           seatsUsed: 1,
-          validFrom: "2026-10-01T00:00:00.000Z",
-          paidThrough: "2099-01-31T00:00:00.000Z",
-          endedAt: null,
-          endedReason: null,
-        },
-        {
-          licenseId: ids.ada,
-          owner: {type: "person", mentraUserId: "mu_ada", name: "Ada Lovelace", email: "ada@analytical.test"},
-          product: "mentra.call.unlimited",
-          quantity: 1,
-          seatsUsed: 1,
-          validFrom: "2026-10-01T00:00:00.000Z",
-          paidThrough: "2099-01-31T00:00:00.000Z",
+          ...term,
           endedAt: null,
           endedReason: null,
         },
@@ -429,8 +398,7 @@ describe("GET /api/admin/licenses", () => {
           product: "mentra.call.unlimited",
           quantity: 10,
           seatsUsed: 4,
-          validFrom: "2026-10-01T00:00:00.000Z",
-          paidThrough: "2099-01-31T00:00:00.000Z",
+          ...term,
           endedAt: null,
           endedReason: null,
         },
@@ -444,29 +412,13 @@ describe("GET /api/admin/licenses", () => {
     expect((await call("GET", LICENSES, {as: admin})).json).toEqual({items: [], next: null})
   })
 
-  test("an owner is read from the sign-in identity first and from Core's copy of the email otherwise", async () => {
-    await seedOwners()
-    await AccountEmailModel.create({mentraUserId: "mu_ada", email: "ada-old@analytical.test", checkedAt: new Date()})
-    await seedLicense({type: "person", mentraUserId: "mu_ada"})
-    const admin = await person("org-admin", {email: ADMIN_EMAIL})
-
-    const reply = await call("GET", LICENSES, {as: admin})
-
-    expect(reply.json.items[0].owner).toEqual({
-      type: "person",
-      mentraUserId: "mu_ada",
-      name: "Ada Lovelace",
-      email: "ada@analytical.test",
-    })
-  })
-
-  test("the owners of a page are looked up in one batch per collection, not one per row", async () => {
+  test("the workspaces of a page are looked up in one batch, not one per row, and no person's record is read", async () => {
     await seedOwners()
     const docs = []
     for (let i = 0; i < 20; i++) {
       await WorkspaceModel.create({workspaceId: `ws_batch_${i}`, name: `Batch ${i}`})
       docs.push(licenseDoc({type: "workspace", workspaceId: `ws_batch_${i}`}))
-      docs.push(licenseDoc({type: "person", mentraUserId: `mu_batch_${i}`}))
+      docs.push(licenseDoc({type: "workspace", workspaceId: `ws_batch_${i}`}, {product: "mentra.fleet"}))
     }
     await LicenseModel.insertMany(docs)
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
@@ -483,9 +435,10 @@ describe("GET /api/admin/licenses", () => {
 
       expect(reply.status).toBe(200)
       expect(reply.json.items).toHaveLength(40)
-      expect([workspaces, identities, emails].map((spy, index) => spy.mock.calls.length - before[index]!)).toEqual([1, 1, 1])
+      expect([workspaces, identities, emails].map((spy, index) => spy.mock.calls.length - before[index]!)).toEqual([1, 0, 0])
       expect([workspaceOne, identityOne, emailOne].map(spy => spy.mock.calls.length)).toEqual([0, 0, 0])
-      expect(reply.json.items.find((item: AdminLicenseView) => item.owner.type === "workspace" && item.owner.workspaceId === "ws_batch_7").owner.name).toBe(
+      expect(reply.json.items.every((item: AdminLicenseView) => item.owner.type === "workspace")).toBe(true)
+      expect(reply.json.items.find((item: AdminLicenseView) => item.owner.workspaceId === "ws_batch_7").owner.name).toBe(
         "Batch 7",
       )
     } finally {
@@ -494,7 +447,7 @@ describe("GET /api/admin/licenses", () => {
   })
 
   test("pages by cursor, 50 at a time, and the last page has no next", async () => {
-    const docs = Array.from({length: 120}, () => licenseDoc({type: "person", mentraUserId: `mu_page_${sequence}`}))
+    const docs = Array.from({length: 120}, () => licenseDoc({type: "workspace", workspaceId: `ws_page_${sequence}`}))
     await LicenseModel.insertMany(docs)
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
 
@@ -513,7 +466,7 @@ describe("GET /api/admin/licenses", () => {
   })
 
   test("a list of exactly one page has no next", async () => {
-    await LicenseModel.insertMany(Array.from({length: 50}, () => licenseDoc({type: "person", mentraUserId: `mu_full_${sequence}`})))
+    await LicenseModel.insertMany(Array.from({length: 50}, () => licenseDoc({type: "workspace", workspaceId: `ws_full_${sequence}`})))
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
 
     const reply = await call("GET", LICENSES, {as: admin})
@@ -523,11 +476,11 @@ describe("GET /api/admin/licenses", () => {
   })
 
   test("a license written after a page was read does not shift the next page", async () => {
-    await LicenseModel.insertMany(Array.from({length: 60}, () => licenseDoc({type: "person", mentraUserId: `mu_shift_${sequence}`})))
+    await LicenseModel.insertMany(Array.from({length: 60}, () => licenseDoc({type: "workspace", workspaceId: `ws_shift_${sequence}`})))
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
     const first = await call("GET", LICENSES, {as: admin})
 
-    await seedLicense({type: "person", mentraUserId: "mu_late"})
+    await seedLicense({type: "workspace", workspaceId: "ws_late"})
     const second = await call("GET", `${LICENSES}?cursor=${encodeURIComponent(first.json.next)}`, {as: admin})
 
     expect(second.json.items).toHaveLength(10)
@@ -570,13 +523,13 @@ describe("GET /api/admin/licenses?query=", () => {
     expect(idsOf(await search("closed down", admin))).toEqual([ids.closed])
   })
 
-  test("matches a person by name or by email, from the sign-in identity or Core's copy of the email", async () => {
-    const ids = await seedNamedLicenses()
+  test("a person's name, email or id matches nothing: a license's owner is its workspace", async () => {
+    await seedNamedLicenses()
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
 
-    expect(idsOf(await search("lovelace", admin))).toEqual([ids.ada])
-    expect(idsOf(await search("ANALYTICAL.TEST", admin))).toEqual([ids.ada])
-    expect(idsOf(await search("grace@navy", admin))).toEqual([ids.grace])
+    for (const query of ["lovelace", "ANALYTICAL.TEST", "mu_ada"]) {
+      expect([query, (await search(query, admin)).json]).toEqual([query, {items: [], next: null}])
+    }
   })
 
   test("matches the product", async () => {
@@ -584,15 +537,16 @@ describe("GET /api/admin/licenses?query=", () => {
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
 
     expect(idsOf(await search("notes.pro", admin))).toEqual([ids.expired])
-    expect(idsOf(await search("mentra.call", admin))).toEqual([ids.gone, ids.closed, ids.unknown, ids.grace, ids.ada, ids.acme])
+    expect(idsOf(await search("mentra.call", admin))).toEqual([ids.closed, ids.unknown, ids.globex, ids.acme])
   })
 
-  test("matches an owner Core knows no name for by its id", async () => {
+  test("matches a workspace by its id, one Core knows no name for included", async () => {
     const ids = await seedNamedLicenses()
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
 
-    expect(idsOf(await search("mu_unknown", admin))).toEqual([ids.unknown])
+    expect(idsOf(await search("ws_unknown", admin))).toEqual([ids.unknown])
     expect(idsOf(await search("ws_closed", admin))).toEqual([ids.closed])
+    expect(idsOf(await search("GLOBEX", admin))).toEqual([ids.globex])
   })
 
   test("a query that matches nothing is an empty list, and a blank one is the whole list", async () => {
@@ -600,8 +554,8 @@ describe("GET /api/admin/licenses?query=", () => {
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
 
     expect((await search("no such owner", admin)).json).toEqual({items: [], next: null})
-    expect(idsOf(await search("   ", admin))).toHaveLength(7)
-    expect(idsOf(await call("GET", `${LICENSES}?query=`, {as: admin}))).toHaveLength(7)
+    expect(idsOf(await search("   ", admin))).toHaveLength(5)
+    expect(idsOf(await call("GET", `${LICENSES}?query=`, {as: admin}))).toHaveLength(5)
   })
 
   test("is plain text, never a pattern", async () => {
@@ -689,7 +643,7 @@ describe("who may read the license list", () => {
         expect([label, path, reply.status]).toEqual([label, path, status])
         // Nothing of any license is in a refusal.
         expect([label, reply.text.includes("Acme Robotics")]).toEqual([label, false])
-        expect([label, reply.text.includes("ada@analytical.test")]).toEqual([label, false])
+        expect([label, reply.text.includes("Globex Corporation")]).toEqual([label, false])
       }
     }
     expect((await call("GET", LICENSES)).status).toBe(401)
@@ -726,9 +680,9 @@ describe("GET /api/admin/me says whether the Licenses page has anything to offer
     expect(reply.json.licenses).toEqual({available: false})
   })
 
-  test("once a license exists, whatever its owner", async () => {
+  test("once a license exists", async () => {
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
-    await seedLicense({type: "person", mentraUserId: "mu_ada"})
+    await seedLicense({type: "workspace", workspaceId: "ws_acme"})
 
     for (const via of ["session", "bearer"] as const) {
       expect((await call("GET", "/api/admin/me", {as: admin, via})).json.licenses).toEqual({available: true})

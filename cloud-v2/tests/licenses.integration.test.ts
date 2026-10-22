@@ -215,11 +215,16 @@ function licenseWrite(owner: LicenseOwner, overrides: Partial<LicenseWrite> = {}
     owner,
     product: "mentra.call.unlimited",
     features: [{key: "call.unlimited", packages: ["com.mentra.call"]}],
-    quantity: owner.type === "person" ? 1 : 5,
+    quantity: 5,
     validFrom: "2026-10-01T00:00:00.000Z",
     paidThrough: "2026-11-04T00:00:00.000Z",
     ...overrides,
   }
+}
+
+/** A write naming a person as the owner, as billing once sent for a personal license: no license can have one. */
+function personWrite(mentraUserId: string): Record<string, unknown> {
+  return {...licenseWrite({type: "workspace", workspaceId: "ws_none"}), owner: {type: "person", mentraUserId}, quantity: 1}
 }
 
 /** A workspace license billing has written. */
@@ -405,7 +410,7 @@ afterEach(() => {
 // --- The collections -------------------------------------------------------
 
 describe("collections", () => {
-  test("licenses are found by owner, and a seat is unique per license and membership", async () => {
+  test("licenses are found by their workspace, and a seat is unique per license and membership", async () => {
     const keys = async (model: typeof LicenseModel | typeof LicenseSeatModel) =>
       (await model.collection.indexes()).map((index) => ({key: index.key, unique: index.unique === true}))
     expect(LicenseModel.collection.collectionName).toBe("licenses")
@@ -413,9 +418,10 @@ describe("collections", () => {
     expect(await keys(LicenseModel)).toEqual(
       expect.arrayContaining([
         {key: {"owner.type": 1, "owner.workspaceId": 1}, unique: false},
-        {key: {"owner.type": 1, "owner.mentraUserId": 1}, unique: false},
       ]),
     )
+    // No license is a person's, so none is looked up by one.
+    expect(LicenseModel.schema.indexes().map(([key]) => key)).toEqual([{"owner.type": 1, "owner.workspaceId": 1}])
     expect(await keys(LicenseSeatModel)).toEqual(
       expect.arrayContaining([
         {key: {licenseId: 1, membershipId: 1}, unique: true},
@@ -434,7 +440,7 @@ describe("license writes", () => {
     const first = licenseWrite({type: "workspace", workspaceId}, {revision: 2})
 
     expect(await store().putLicense(first)).toEqual({applied: true, revision: 2})
-    expect(await store().listLicenses({type: "workspace", workspaceId})).toEqual({
+    expect(await store().listLicenses(workspaceId)).toEqual({
       licenses: [viewOf(first, {seatsUsed: 0})],
     })
 
@@ -444,7 +450,7 @@ describe("license writes", () => {
 
     const renewed = {...first, revision: 3, quantity: 7, paidThrough: "2026-12-04T00:00:00.000Z"}
     expect(await store().putLicense(renewed)).toEqual({applied: true, revision: 3})
-    expect(await store().listLicenses({type: "workspace", workspaceId})).toEqual({
+    expect(await store().listLicenses(workspaceId)).toEqual({
       licenses: [viewOf(renewed, {seatsUsed: 0})],
     })
 
@@ -452,7 +458,7 @@ describe("license writes", () => {
     await expectClientError(store().putLicense({...first, revision: 1}), "stale_revision", 409)
     const late = await signed("PUT", `${LICENSES}/${first.licenseId}`, {body: {...first, revision: 1}})
     expect(late).toMatchObject({status: 409, json: {error: "stale_revision", revision: 3}})
-    expect(await store().listLicenses({type: "workspace", workspaceId})).toEqual({
+    expect(await store().listLicenses(workspaceId)).toEqual({
       licenses: [viewOf(renewed, {seatsUsed: 0})],
     })
 
@@ -465,7 +471,7 @@ describe("license writes", () => {
     const write = licenseWrite({type: "workspace", workspaceId})
 
     await expectClientError(fleet().putLicense(write), "forbidden", 403)
-    await expectClientError(fleet().listLicenses({type: "workspace", workspaceId}), "forbidden", 403)
+    await expectClientError(fleet().listLicenses(workspaceId), "forbidden", 403)
     await expectClientError(clientFor("store", "not-the-secret").putLicense(write), "service_unauthorized", 401)
 
     const path = `${LICENSES}/${write.licenseId}`
@@ -485,17 +491,13 @@ describe("license writes", () => {
     expect(await LicenseModel.countDocuments({})).toBe(0)
   })
 
-  test("a write for an owner that is deleted or never existed is 404 owner_not_found", async () => {
+  test("a write for a workspace that is deleted or never existed is 404 owner_not_found", async () => {
     const {workspaceId, owner, name} = await newWorkspace()
-    const someone = await person("someone")
     await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: name})
-    await markAccountDeleted(someone.mentraUserId)
 
     for (const target of [
       {type: "workspace", workspaceId} as const,
       {type: "workspace", workspaceId: "ws_never"} as const,
-      {type: "person", mentraUserId: someone.mentraUserId} as const,
-      {type: "person", mentraUserId: "mu_never"} as const,
     ]) {
       await expectClientError(store().putLicense(licenseWrite(target)), "owner_not_found", 404)
     }
@@ -503,17 +505,36 @@ describe("license writes", () => {
     expect(await audit("license.written")).toEqual([])
   })
 
-  test("a malformed write is 400 invalid_request, a person's write with quantity 2 among them", async () => {
+  test("a license is a workspace's: a write for a person is 400 invalid_request, account or not, and Core keeps nothing", async () => {
     const someone = await person("someone")
-    const personal = licenseWrite({type: "person", mentraUserId: someone.mentraUserId}, {quantity: 2})
+    const gone = await person("gone")
+    await markAccountDeleted(gone.mentraUserId)
 
-    const refused = await signed("PUT", `${LICENSES}/${personal.licenseId}`, {body: personal})
+    for (const mentraUserId of [someone.mentraUserId, gone.mentraUserId, "mu_never"]) {
+      const write = personWrite(mentraUserId)
+      expect(await signed("PUT", `${LICENSES}/${write.licenseId}`, {body: write})).toEqual({
+        status: 400,
+        json: {error: "invalid_request", error_description: 'owner must be {"type": "workspace", "workspaceId"}'},
+      })
+      await expectClientError(store().putLicense(write as unknown as LicenseWrite), "bad_request", 400)
+      // Whatever it names, a quantity of 1 or a buyer: the owner is what refuses it.
+      expect((await signed("PUT", `${LICENSES}/${write.licenseId}`, {body: {...write, assignTo: {mentraUserId}}})).status).toBe(400)
+    }
+    expect(await LicenseModel.countDocuments({})).toBe(0)
+    expect(await audit("license.written")).toEqual([])
+  })
+
+  test("a malformed write is 400 invalid_request", async () => {
+    const {workspaceId} = await newWorkspace()
+    const negative = licenseWrite({type: "workspace", workspaceId}, {quantity: -1})
+
+    const refused = await signed("PUT", `${LICENSES}/${negative.licenseId}`, {body: negative})
     expect(refused.status).toBe(400)
     expect(refused.json.error).toBe("invalid_request")
-    await expectClientError(store().putLicense(personal), "bad_request", 400)
+    await expectClientError(store().putLicense(negative), "bad_request", 400)
 
     // The body names another license than the path.
-    const other = licenseWrite({type: "person", mentraUserId: someone.mentraUserId})
+    const other = licenseWrite({type: "workspace", workspaceId})
     expect((await signed("PUT", `${LICENSES}/${newLicenseId()}`, {body: other})).status).toBe(400)
     // A body that is not JSON.
     expect((await signed("PUT", `${LICENSES}/${other.licenseId}`, {body: "nope"})).status).toBe(400)
@@ -528,40 +549,43 @@ describe("license writes", () => {
 
   test("a license's owner never changes", async () => {
     const {workspaceId} = await newWorkspace()
+    const other = await newWorkspace("Other")
     const someone = await person("someone")
     const write = await workspaceLicense(workspaceId)
-    const moved = {
-      ...write,
-      revision: 2,
-      owner: {type: "person", mentraUserId: someone.mentraUserId},
-      quantity: 1,
-    } as LicenseWrite
-    await expectClientError(store().putLicense(moved), "bad_request", 400)
-    expect((await licenseRow(write.licenseId))!.owner).toEqual({type: "workspace", workspaceId})
+    const moved = {...write, revision: 2, owner: {type: "workspace", workspaceId: other.workspaceId}} as LicenseWrite
+    expect(await signed("PUT", `${LICENSES}/${write.licenseId}`, {body: moved})).toMatchObject({
+      status: 400,
+      json: {error: "invalid_request", error_description: "a license's owner never changes"},
+    })
+    const toPerson = {...personWrite(someone.mentraUserId), licenseId: write.licenseId, revision: 2}
+    await expectClientError(store().putLicense(toPerson as unknown as LicenseWrite), "bad_request", 400)
+    expect(await licenseRow(write.licenseId)).toMatchObject({owner: {type: "workspace", workspaceId}, revision: 1})
   })
 
-  test("listLicenses answers one owner's licenses, with seats used; a person's one seat is always theirs", async () => {
+  test("listLicenses answers one workspace's licenses, with seats used; any other owner type is 400", async () => {
     const acme = await newWorkspace("Acme")
     const other = await newWorkspace("Other")
     const first = await workspaceLicense(acme.workspaceId, {quantity: 3})
     const second = await workspaceLicense(acme.workspaceId, {quantity: 2, product: "mentra.fleet"})
     await workspaceLicense(other.workspaceId)
-    const personal = licenseWrite({type: "person", mentraUserId: acme.member.mentraUserId})
-    await store().putLicense(personal)
     await assignSeat(actorOf(acme.admin), acme.workspaceId, first.licenseId, acme.memberMembershipId)
 
-    const listed = await store().listLicenses({type: "workspace", workspaceId: acme.workspaceId})
+    const listed = await store().listLicenses(acme.workspaceId)
     expect(listed.licenses.sort((a, b) => a.licenseId.localeCompare(b.licenseId))).toEqual(
       [viewOf(first, {seatsUsed: 1}), viewOf(second, {seatsUsed: 0})].sort((a, b) =>
         a.licenseId.localeCompare(b.licenseId),
       ),
     )
-    expect(await store().listLicenses({type: "person", mentraUserId: acme.member.mentraUserId})).toEqual({
-      licenses: [viewOf(personal, {seatsUsed: 1})],
-    })
-    expect(await store().listLicenses({type: "person", mentraUserId: "mu_nobody"})).toEqual({licenses: []})
+    expect(await store().listLicenses("ws_nobody")).toEqual({licenses: []})
 
-    for (const query of ["", "?ownerType=workspace", "?ownerType=team&ownerId=ws_1", "?ownerType=person&ownerId="]) {
+    for (const query of [
+      "",
+      "?ownerType=workspace",
+      "?ownerType=team&ownerId=ws_1",
+      "?ownerType=person",
+      "?ownerType=person&ownerId=",
+      `?ownerType=person&ownerId=${acme.member.mentraUserId}`,
+    ]) {
       expect({query, status: (await signed("GET", `${LICENSES}${query}`)).status}).toEqual({query, status: 400})
     }
   })
@@ -783,8 +807,6 @@ describe("seats", () => {
     const elsewhere = await newWorkspace("Elsewhere")
     const license = await workspaceLicense(ws.workspaceId)
     const theirs = await workspaceLicense(elsewhere.workspaceId)
-    const personal = licenseWrite({type: "person", mentraUserId: ws.member.mentraUserId})
-    await store().putLicense(personal)
     const pending = `wm_pending_${counter++}`
     await WorkspaceMembershipModel.create(
       membershipRow({
@@ -800,10 +822,6 @@ describe("seats", () => {
     const as = (licenseId: string, membershipId: string) =>
       call("PUT", seatPath(ws.workspaceId, licenseId, membershipId), ws.admin)
     expect(await as(theirs.licenseId, ws.memberMembershipId)).toMatchObject({
-      status: 404,
-      json: {error: "license_not_found"},
-    })
-    expect(await as(personal.licenseId, ws.memberMembershipId)).toMatchObject({
       status: 404,
       json: {error: "license_not_found"},
     })
@@ -1181,8 +1199,6 @@ describe("assigning several seats at once", () => {
       {_id: ended.licenseId},
       {$set: {endedAt: new Date(), endedReason: "workspace_deleted"}},
     )
-    const personal = licenseWrite({type: "person", mentraUserId: ws.member.mentraUserId})
-    await store().putLicense(personal)
     const pending = `wm_pending_${counter++}`
     await WorkspaceMembershipModel.create(
       membershipRow({
@@ -1200,7 +1216,6 @@ describe("assigning several seats at once", () => {
       // A member who has not signed in yet has nobody to hold a seat.
       {refused: pair(license.licenseId, pending), status: 400, error: "invalid_request"},
       {refused: pair(theirs.licenseId, ws.developerMembershipId), status: 404, error: "license_not_found"},
-      {refused: pair(personal.licenseId, ws.developerMembershipId), status: 404, error: "license_not_found"},
       {refused: pair(newLicenseId(), ws.developerMembershipId), status: 404, error: "license_not_found"},
       {refused: pair(ended.licenseId, ws.developerMembershipId), status: 409, error: "license_ended"},
       {refused: pair(license.licenseId, elsewhere.memberMembershipId), status: 404, error: "not_found"},
@@ -1534,7 +1549,7 @@ describe("ending with the owner", () => {
     expect(ended.endedAt).toBeInstanceOf(Date)
     expect(await seatsOf(license.licenseId)).toEqual([])
     expect((await licenseRow(untouched.licenseId))!.endedAt).toBeNull()
-    expect(await store().listLicenses({type: "workspace", workspaceId: ws.workspaceId})).toEqual({
+    expect(await store().listLicenses(ws.workspaceId)).toEqual({
       licenses: [viewOf(license, {seatsUsed: 0, endedAt: ended.endedAt!.toISOString()})],
     })
     await expectClientError(store().putLicense({...license, revision: 2}), "owner_not_found", 404)
@@ -1553,139 +1568,42 @@ describe("ending with the owner", () => {
     })
   })
 
-  test("deleting an account ends the person's own licenses before its tombstone, and Core refuses further writes", async () => {
-    const someone = await person("someone")
-    const other = await person("other")
-    const own = licenseWrite({type: "person", mentraUserId: someone.mentraUserId})
-    const theirs = licenseWrite({type: "person", mentraUserId: other.mentraUserId})
-    await store().putLicense(own)
-    await store().putLicense(theirs)
+  test("deleting an account frees the person's seats with their memberships, and ends no license", async () => {
+    const ws = await newWorkspace()
+    const elsewhere = await newWorkspace("Elsewhere")
+    const elsewhereMembershipId = await addMember(elsewhere.workspaceId, ws.member, "member")
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 3})
+    const theirs = await workspaceLicense(elsewhere.workspaceId, {quantity: 2})
+    await assignSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, ws.memberMembershipId)
+    await assignSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, ws.developerMembershipId)
+    await assignSeat(actorOf(elsewhere.admin), elsewhere.workspaceId, theirs.licenseId, elsewhereMembershipId)
 
-    await markAccountDeleted(someone.mentraUserId)
-    await removeDeletedUserFromWorkspaces(someone.mentraUserId)
+    await markAccountDeleted(ws.member.mentraUserId)
+    await removeDeletedUserFromWorkspaces(ws.member.mentraUserId)
 
-    expect(await licenseRow(own.licenseId)).toMatchObject({endedReason: "account_deleted"})
-    expect((await licenseRow(own.licenseId))!.endedAt).toBeInstanceOf(Date)
-    expect((await licenseRow(theirs.licenseId))!.endedAt).toBeNull()
-    await expectClientError(store().putLicense({...own, revision: 2}), "owner_not_found", 404)
-
-    // A personal license is the organization's record, not the change feed's; the tombstone is on the feed.
-    const ended = await audit("license.ended")
-    expect(ended).toHaveLength(1)
-    expect(ended[0]).toMatchObject({
-      workspaceId: null,
-      target: {licenseId: own.licenseId},
-      after: {reason: "account_deleted"},
-    })
-    expect(ended[0]!.seq).toBeUndefined()
-    expect((await feed()).map((event) => event.action)).toEqual(["user.deleted"])
-
-    // Running the deletion again ends nothing more.
-    await removeDeletedUserFromWorkspaces(someone.mentraUserId)
-    expect(await audit("license.ended")).toHaveLength(1)
-  })
-
-  test("a personal license that outlived its deleted owner is ended by billing's next write, whatever its revision", async () => {
-    // A write that passed the account check, landed after the deletion's license query found nothing, and then
-    // failed before its own recheck (a crash, a failed read) leaves exactly this: an active license whose owner is
-    // deleted, and a deletion already complete. Each is written directly, as that write would have left it.
-    const outlived = async (revision: number) => {
-      const owner = await person("outlived")
-      const write = licenseWrite({type: "person", mentraUserId: owner.mentraUserId}, {revision})
-      await LicenseModel.create({
-        _id: write.licenseId,
-        owner: write.owner,
-        product: write.product,
-        features: write.features,
-        quantity: 1,
-        seatsUsed: 1,
-        validFrom: new Date(write.validFrom),
-        paidThrough: new Date(write.paidThrough),
-        revision,
-      })
-      await markAccountDeleted(owner.mentraUserId)
-      await UserModel.updateOne({mentraUserId: owner.mentraUserId}, {$set: {accountDeletionCompletedAt: new Date()}})
-      return write
-    }
-    const repeat = await outlived(3)
-    const newer = await outlived(3)
-    const older = await outlived(3)
-
-    // Billing's retry of the same revision, a later change, and a late older one: each ends the license and stops billing.
-    await expectClientError(store().putLicense(repeat), "owner_not_found", 404)
-    await expectClientError(
-      store().putLicense({...newer, revision: 4, paidThrough: "2026-12-04T00:00:00.000Z"}),
-      "owner_not_found",
-      404,
+    // Each seat went with its membership; the licenses stand, and take writes as before.
+    expect(await licenseRow(license.licenseId)).toMatchObject({seatsUsed: 1, endedAt: null, endedReason: null})
+    expect(await licenseRow(theirs.licenseId)).toMatchObject({seatsUsed: 0, endedAt: null, endedReason: null})
+    expect((await seatsOf(license.licenseId)).map((seat) => seat.membershipId)).toEqual([ws.developerMembershipId])
+    expect(await seatsOf(theirs.licenseId)).toEqual([])
+    expect(await store().putLicense({...license, revision: 2})).toEqual({applied: true, revision: 2})
+    expect(await audit("license.ended")).toEqual([])
+    expect(
+      (await audit("seat.released")).map((event) => [event.target?.membershipId, event.after?.reason]).sort(),
+    ).toEqual(
+      [
+        [ws.memberMembershipId, "account_deleted"],
+        [elsewhereMembershipId, "account_deleted"],
+      ].sort(),
     )
-    await expectClientError(store().putLicense({...older, revision: 2}), "owner_not_found", 404)
+    // On the feed, each release comes before the tombstone.
+    const actions = (await feed()).map((event) => event.action)
+    expect(actions.lastIndexOf("seat.released")).toBeLessThan(actions.indexOf("user.deleted"))
 
-    for (const write of [repeat, newer, older]) {
-      const row = (await licenseRow(write.licenseId))!
-      expect({
-        licenseId: write.licenseId,
-        revision: row.revision,
-        endedReason: row.endedReason,
-        seatsUsed: row.seatsUsed,
-      }).toEqual({
-        licenseId: write.licenseId,
-        revision: 3,
-        endedReason: "account_deleted",
-        seatsUsed: 0,
-      })
-      expect(row.endedAt).toBeInstanceOf(Date)
-    }
-    const ended = await audit("license.ended")
-    expect(ended.map((event) => event.target?.licenseId).sort()).toEqual(
-      [repeat.licenseId, newer.licenseId, older.licenseId].sort(),
-    )
-    expect(ended.every((event) => event.workspaceId === null && event.seq === undefined)).toBe(true)
-    // Ended, it stays ended: the same write again is refused the same way and records nothing more.
-    await expectClientError(store().putLicense(repeat), "owner_not_found", 404)
-    expect(await audit("license.ended")).toHaveLength(3)
-  })
-
-  test("a personal license written just as its owner's account is marked deleted is ended by that write", async () => {
-    const owner = await person("racer")
-    const write = licenseWrite({type: "person", mentraUserId: owner.mentraUserId})
-
-    // The write's account check passes; the deletion then marks the account, before the license is saved. The
-    // deletion's own license query comes after the mark, and may find nothing yet, so the write has to end it.
-    const exists = UserModel.exists.bind(UserModel)
-    let marked = false
-    const spy = spyOn(UserModel, "exists").mockImplementation(((filter: {mentraUserId?: string; supportTelemetryDeletedAt?: unknown}) => {
-      const query = exists(filter as never)
-      if (marked || filter.mentraUserId !== owner.mentraUserId || filter.supportTelemetryDeletedAt !== null) return query
-      marked = true
-      return query.then(async (found) => {
-        await markAccountDeleted(owner.mentraUserId)
-        return found
-      })
-    }) as never)
-    try {
-      await expectClientError(store().putLicense(write), "owner_not_found", 404)
-    } finally {
-      spy.mockRestore()
-    }
-    expect(marked).toBe(true)
-
-    const row = (await licenseRow(write.licenseId))!
-    expect({endedReason: row.endedReason, seatsUsed: row.seatsUsed}).toEqual({endedReason: "account_deleted", seatsUsed: 0})
-    expect(row.endedAt).toBeInstanceOf(Date)
-    expect(await audit("license.ended")).toHaveLength(1)
-
-    // The deletion that follows finds the license ended and ends nothing more.
-    await removeDeletedUserFromWorkspaces(owner.mentraUserId)
-    expect(await audit("license.ended")).toHaveLength(1)
-  })
-
-  test("for a person whose account is live, a repeat is still a 200 no-op and an older revision a 409", async () => {
-    const someone = await person("someone")
-    const write = licenseWrite({type: "person", mentraUserId: someone.mentraUserId}, {revision: 2})
-    expect(await store().putLicense(write)).toEqual({applied: true, revision: 2})
-    expect(await store().putLicense(write)).toEqual({applied: false, revision: 2})
-    await expectClientError(store().putLicense({...write, revision: 1}), "stale_revision", 409)
-    expect((await licenseRow(write.licenseId))!.endedAt).toBeNull()
+    // Running the deletion again frees and ends nothing more.
+    await removeDeletedUserFromWorkspaces(ws.member.mentraUserId)
+    expect(await audit("seat.released")).toHaveLength(2)
+    expect(await audit("license.ended")).toEqual([])
   })
 })
 
@@ -1824,7 +1742,7 @@ describe("listing a workspace's licenses", () => {
 // --- Audit -----------------------------------------------------------------
 
 describe("audit", () => {
-  test("every license and seat change records its event with its actor; a workspace's are on the change feed", async () => {
+  test("every license and seat change records its event with its actor, on the workspace's change feed", async () => {
     const ws = await newWorkspace()
     const license = await workspaceLicense(ws.workspaceId, {quantity: 2})
     await store().putLicense({...license, revision: 2, quantity: 3})
@@ -1834,8 +1752,6 @@ describe("audit", () => {
     expect(
       (await call("DELETE", seatPath(ws.workspaceId, license.licenseId, ws.memberMembershipId), ws.owner)).status,
     ).toBe(204)
-    const personal = licenseWrite({type: "person", mentraUserId: ws.member.mentraUserId})
-    await store().putLicense(personal)
 
     const written = await audit("license.written")
     expect(
@@ -1847,7 +1763,6 @@ describe("audit", () => {
     ).toEqual([
       {workspaceId: ws.workspaceId, actor: {kind: "service", service: "store"}, licenseId: license.licenseId},
       {workspaceId: ws.workspaceId, actor: {kind: "service", service: "store"}, licenseId: license.licenseId},
-      {workspaceId: null, actor: {kind: "service", service: "store"}, licenseId: personal.licenseId},
     ])
     expect(written[1]).toMatchObject({before: {revision: 1, quantity: 2}, after: {revision: 2, quantity: 3}})
     const [assigned] = await audit("seat.assigned")
@@ -1869,7 +1784,7 @@ describe("audit", () => {
       after: {reason: "unassigned"},
     })
 
-    // The feed carries the workspace's license and seat events in order, and never a personal license's.
+    // The feed carries the workspace's license and seat events in order.
     const onFeed = (await feed()).filter(
       (event) => event.action.startsWith("license.") || event.action.startsWith("seat."),
     )
@@ -1879,7 +1794,6 @@ describe("audit", () => {
       ["seat.assigned", ws.workspaceId, license.licenseId],
       ["seat.released", ws.workspaceId, license.licenseId],
     ])
-    expect(written[2]!.seq).toBeUndefined()
 
     // And the workspace's own audit page shows them.
     const page = await call("GET", `/api/workspaces/${ws.workspaceId}/audit`, ws.owner)
@@ -1914,7 +1828,7 @@ describe("the buyer's license", () => {
 
     expect(await store().putLicense(write)).toEqual({applied: true, revision: 1})
 
-    expect(await store().listLicenses(ownerOf(ws.workspaceId))).toEqual({licenses: [viewOf(write, {seatsUsed: 1})]})
+    expect(await store().listLicenses(ws.workspaceId)).toEqual({licenses: [viewOf(write, {seatsUsed: 1})]})
     const seats = await seatsOf(write.licenseId)
     expect(seats).toHaveLength(1)
     expect(seats[0]).toMatchObject({

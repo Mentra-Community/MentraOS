@@ -21,11 +21,8 @@ const workspaceWrite = (): LicenseWrite => ({
   paidThrough: "2026-11-04T00:00:00Z",
 })
 
-const personWrite = (): LicenseWrite => ({
-  ...workspaceWrite(),
-  owner: {type: "person", mentraUserId: "mu_1"},
-  quantity: 1,
-})
+/** A write for a person, which no license can have: a license is a workspace's. */
+const personWrite = () => ({...workspaceWrite(), owner: {type: "person", mentraUserId: "mu_1"}, quantity: 1})
 
 /** The 400 a malformed write gets: `invalid_request`, saying what is wrong. */
 function refused(body: unknown, licenseId = LICENSE_ID): WorkspaceError {
@@ -41,9 +38,8 @@ function refused(body: unknown, licenseId = LICENSE_ID): WorkspaceError {
 }
 
 describe("parseLicenseWrite", () => {
-  test("accepts a workspace and a personal license, keeping only the write's own fields", () => {
+  test("accepts a workspace license, keeping only the write's own fields", () => {
     expect(parseLicenseWrite({...workspaceWrite(), extra: "ignored"}, LICENSE_ID)).toEqual(workspaceWrite())
-    expect(parseLicenseWrite(personWrite(), LICENSE_ID)).toEqual(personWrite())
     // A feature for no package is a service's feature.
     const service = {...workspaceWrite(), features: [{key: "fleet.managed", packages: []}]}
     expect(parseLicenseWrite(service, LICENSE_ID)).toEqual(service)
@@ -51,9 +47,10 @@ describe("parseLicenseWrite", () => {
     expect(parseLicenseWrite({...workspaceWrite(), quantity: 0}, LICENSE_ID).quantity).toBe(0)
   })
 
-  test("a person holds exactly one seat: a personal write with quantity 2 is refused", () => {
-    expect(refused({...personWrite(), quantity: 2}).message).toContain("quantity")
-    refused({...personWrite(), quantity: 0})
+  test("a license is a workspace's: a write for a person is refused, whatever its quantity or assignTo", () => {
+    expect(refused(personWrite()).message).toBe('owner must be {"type": "workspace", "workspaceId"}')
+    refused({...personWrite(), quantity: 2})
+    refused({...personWrite(), assignTo: {mentraUserId: "mu_1"}})
   })
 
   test("the license id is the path's, a ULID", () => {
@@ -69,7 +66,7 @@ describe("parseLicenseWrite", () => {
     }
   })
 
-  test("the owner is a workspace or a person, named by a non-blank id", () => {
+  test("the owner is a workspace, named by a non-blank id", () => {
     for (const owner of [
       undefined,
       null,
@@ -78,6 +75,7 @@ describe("parseLicenseWrite", () => {
       {type: "workspace", workspaceId: "  "},
       {type: "workspace", mentraUserId: "mu_1"},
       {type: "person"},
+      {type: "person", mentraUserId: "mu_1"},
       {type: "person", workspaceId: "ws_1"},
       {type: "organization", organizationId: "org_1"},
     ]) {
@@ -158,10 +156,6 @@ describe("parseLicenseWrite", () => {
     ]) {
       expect(refused({...workspaceWrite(), assignTo}).message).toContain("assignTo")
     }
-  })
-
-  test("a personal license names no one to assign: its owner holds its one seat", () => {
-    expect(refused({...personWrite(), assignTo: {mentraUserId: "mu_1"}}).message).toContain("assignTo")
   })
 })
 
