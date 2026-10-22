@@ -1,8 +1,17 @@
+import type {FleetAssignmentReason} from "@mentra/cloud-protocol"
+
+import {getConfigValues} from "../runtime/bootstrap"
 import {useAppStatusStore} from "../stores/apps"
 import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
 import {installWithRuntimeReload, MiniappRunningError} from "../utils/storeInstallRuntime"
-import appRegistry, {type InstallBundleOptions, type LocalZipInstallOptions} from "./AppRegistry"
+import appRegistry, {
+  type InstallBundleOptions,
+  type LocalZipInstallOptions,
+  type MiniappAssignment,
+  type MiniappInstallReason,
+} from "./AppRegistry"
 import {markMiniappUpdateDeferred} from "./deferredMiniappUpdates"
+import {checkManifestVersions} from "./manifestVersionGate"
 import {miniappLauncher} from "./MiniappLauncher"
 import {canShowRunningUpdatePrompt, emitRunningUpdateFailed, requestRunningUpdatePrompt} from "./runningUpdatePrompt"
 
@@ -51,6 +60,13 @@ export interface ReleaseInstallOptions extends InstallBundleOptions {
    * shown, and nothing restarts into the ended session.
    */
   isCancelled?: () => boolean
+  /**
+   * With `onlyIfStopped`: a package that is not installed may be installed
+   * (a managed first install). It is silent: no updating state, no prompt.
+   * Launches still wait while its files activate. An installed package
+   * updates as usual.
+   */
+  firstInstall?: boolean
 }
 
 /** The session that requested an install ended before the release activated. */
@@ -74,28 +90,34 @@ export class MiniappInstallCancelledError extends Error {
  * - Automatic updates of a running miniapp with `askIfRunning` download,
  *   verify and unpack first, then ask; on Update the miniapp closes, the
  *   release commits, and the miniapp reopens.
+ * - A managed first install (`firstInstall`) of a package that is not
+ *   installed shows nothing and holds launches only while its files change.
  */
 export async function installMiniappRelease(
   archive: MiniappReleaseArchive,
   options: ReleaseInstallOptions,
 ): Promise<void> {
-  const {onlyIfStopped, askIfRunning, isCancelled, ...requestedOptions} = options
+  const {onlyIfStopped, askIfRunning, isCancelled, firstInstall, ...requestedOptions} = options
   const packageName = options.expectedPackageName
   const install = archiveInstaller(archive)
   const assertCurrent = () => {
     if (isCancelled?.()) throw new MiniappInstallCancelledError(packageName)
   }
+  // An explicit install is the user's choice; an automatic update changes no reason.
+  const installReason =
+    requestedOptions.installReason ?? (onlyIfStopped ? undefined : explicitInstallReason(requestedOptions))
+  const reasonOptions: InstallBundleOptions = installReason ? {...requestedOptions, installReason} : requestedOptions
   // Only the activation hook is wrapped: a `whenStaged` hook moves unpacking
   // out of the serialized install queue, so it is never added here.
   const installOptions: InstallBundleOptions = isCancelled
     ? {
-        ...requestedOptions,
+        ...reasonOptions,
         beforeActivate: () => {
           assertCurrent()
-          requestedOptions.beforeActivate?.()
+          reasonOptions.beforeActivate?.()
         },
       }
-    : requestedOptions
+    : reasonOptions
   assertCurrent()
   // An early check avoids stopping or reserving an app for a known downgrade.
   // AppRegistry checks again in its serialized filesystem transaction.
@@ -114,9 +136,12 @@ export async function installMiniappRelease(
     return
   }
 
-  assertStillInstalled(packageName)
+  const installsFirst = firstInstall === true && appRegistry.getInstalledVersions(packageName).length === 0
+  if (!installsFirst) assertStillInstalled(packageName)
   try {
-    if (askIfRunning && miniappLauncher.isProjectedRunning(packageName)) {
+    if (installsFirst) {
+      await installFirstWhenIdle(install, installOptions, packageName)
+    } else if (askIfRunning && miniappLauncher.isProjectedRunning(packageName)) {
       await installRunningUpdate(install, installOptions, packageName, options.expectedVersion, isCancelled)
     } else {
       await installIdleUpdate(install, installOptions, packageName)
@@ -133,6 +158,36 @@ function assertStillInstalled(packageName: string): void {
   if (appRegistry.getInstalledVersions(packageName).length === 0) {
     throw new Error(`${packageName} is no longer installed`)
   }
+}
+
+function explicitInstallReason(options: InstallBundleOptions): Exclude<MiniappInstallReason, "assignment"> {
+  switch (options.releaseIdentity?.source) {
+    case "bundled_asset":
+    case "system_store":
+    case "preinstalled_registry":
+      return "bundled"
+    case "deployment_manifest":
+      return "manifest"
+    default:
+      return "explicit"
+  }
+}
+
+/** A managed first install shows nothing: no updating state and no prompt. A launch waits only while it activates. */
+function installFirstWhenIdle(
+  install: ArchiveInstaller,
+  options: InstallBundleOptions,
+  packageName: string,
+): Promise<void> {
+  return miniappLauncher.installWhenIdle(packageName, (reserveActivation) =>
+    install({
+      ...options,
+      beforeActivate: () => {
+        options.beforeActivate?.()
+        reserveActivation()
+      },
+    }),
+  )
 }
 
 function installIdleUpdate(
@@ -236,4 +291,145 @@ async function restartAfterUpdate(packageName: string, reopen: boolean): Promise
     // A launch error is reported by the runtime; it does not undo a committed release.
     console.warn(`Miniapp ${packageName} could not restart after its update`, error)
   }
+}
+
+// ---- Managed (Fleet) installs -----------------------------------------------------------------------------------
+
+/** What a miniapp URL serves now, or the assignment reason it cannot be installed. */
+export type MiniappUrlResolution =
+  | {ok: true; packageName: string; version: string; bundleUrl: string; bundleSha256?: string}
+  | {ok: false; reason: FleetAssignmentReason}
+
+const URL_RESOLVE_TIMEOUT_MS = 20_000
+
+/**
+ * Read the manifest a miniapp URL serves (`<url>/miniapp.json`, with the archive at `<url>/bundle.zip`, the release
+ * QR's layout). The URL decides the version. The server decides access: 401 and 403 are `access_denied`.
+ */
+export async function resolveMiniappUrl(url: string, fetchImpl: typeof fetch = fetch): Promise<MiniappUrlResolution> {
+  const base = url.replace(/\/+$/, "")
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), URL_RESOLVE_TIMEOUT_MS)
+  let manifest: Record<string, unknown>
+  try {
+    const response = await fetchImpl(`${base}/miniapp.json`, {signal: controller.signal})
+    if (response.status === 401 || response.status === 403) return {ok: false, reason: "access_denied"}
+    if (response.status === 410) return {ok: false, reason: "archived"}
+    if (response.status === 404) return {ok: false, reason: "not_a_miniapp"}
+    if (!response.ok) return {ok: false, reason: "download_failed"}
+    try {
+      const parsed = (await response.json()) as unknown
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {ok: false, reason: "not_a_miniapp"}
+      manifest = parsed as Record<string, unknown>
+    } catch {
+      return {ok: false, reason: "not_a_miniapp"}
+    }
+  } catch {
+    return {ok: false, reason: "download_failed"}
+  } finally {
+    clearTimeout(timeout)
+  }
+  const packageName = typeof manifest.packageName === "string" ? manifest.packageName.trim() : ""
+  const version = typeof manifest.version === "string" ? manifest.version.trim() : ""
+  if (!packageName || !version) return {ok: false, reason: "not_a_miniapp"}
+  const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
+  if (hostVersion && supportedMiniappSdkRange) {
+    const versions = checkManifestVersions(
+      {
+        sdkVersion: typeof manifest.sdkVersion === "string" ? manifest.sdkVersion : undefined,
+        minHostVersion: typeof manifest.minHostVersion === "string" ? manifest.minHostVersion : undefined,
+      },
+      {hostVersion, supportedSdkRange: supportedMiniappSdkRange},
+    )
+    if (!versions.ok) return {ok: false, reason: "incompatible_host"}
+  }
+  const sha = typeof manifest.bundleSha256 === "string" ? manifest.bundleSha256.trim().toLowerCase() : ""
+  return {
+    ok: true,
+    packageName,
+    version,
+    bundleUrl: `${base}/bundle.zip`,
+    ...(/^[0-9a-f]{64}$/.test(sha) ? {bundleSha256: sha} : {}),
+  }
+}
+
+/** Why a managed install did not commit: an assignment reason, or it waits (`running`) or was superseded. */
+export type ManagedInstallFailure = FleetAssignmentReason | "running" | "cancelled"
+
+/** Map an installer error to a stable reason. Never error text. */
+export function classifyManagedInstallError(error: unknown): {kind: ManagedInstallFailure; retryable: boolean} {
+  if (error instanceof MiniappRunningError) return {kind: "running", retryable: true}
+  if (error instanceof MiniappInstallCancelledError) return {kind: "cancelled", retryable: true}
+  const message = error instanceof Error ? error.message : String(error)
+  if (/ENOSPC|no space|not enough space|disk is full|storage (is )?full|quota/i.test(message))
+    return {kind: "storage_full", retryable: true}
+  if (/signature|signer|unsigned bundle|publisher/i.test(message)) return {kind: "signature_invalid", retryable: false}
+  if (/is already installed/.test(message)) return {kind: "newer_version_installed", retryable: false}
+  if (/Requires Mentra App|Built for SDK|Mentra App version|Miniapp SDK version|not compatible/i.test(message))
+    return {kind: "incompatible_host", retryable: false}
+  if (/bundle version mismatch|SHA-256 mismatch/i.test(message)) return {kind: "download_failed", retryable: true}
+  if (
+    /package mismatch|miniapp\.json|UNZIP_FAILED|READ_MANIFEST_FAILED|invalid miniapp version|bundle (exceeds|must be)/i.test(
+      message,
+    )
+  )
+    return {kind: "not_a_miniapp", retryable: false}
+  return {kind: "download_failed", retryable: true}
+}
+
+export interface ManagedMiniappInstall {
+  resolution: Extract<MiniappUrlResolution, {ok: true}>
+  assignment: MiniappAssignment
+  /** True once the account, Core or workspace that asked for it is no longer current. Nothing then commits. */
+  isCancelled: () => boolean
+}
+
+/**
+ * Install or update an assigned miniapp through the one installer. A first install is silent; an update of a
+ * running miniapp stages first and asks, and waits for it to stop when the prompt is not shown or is declined.
+ * The `assignment` reason commits with the bundle; provenance stays `direct_download` (a URL install).
+ */
+export async function installManagedMiniapp({
+  resolution,
+  assignment,
+  isCancelled,
+}: ManagedMiniappInstall): Promise<void> {
+  const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
+  await installMiniappRelease(resolution.bundleUrl, {
+    expectedPackageName: resolution.packageName,
+    expectedVersion: resolution.version,
+    ...(resolution.bundleSha256 ? {expectedBundleSha256: resolution.bundleSha256} : {}),
+    releaseIdentity: {
+      source: "direct_download",
+      ...(resolution.bundleSha256 ? {bundleSha256: resolution.bundleSha256} : {}),
+    },
+    installReason: "assignment",
+    assignment,
+    onlyIfStopped: true,
+    askIfRunning: true,
+    firstInstall: true,
+    isCancelled,
+    ...(hostVersion && supportedMiniappSdkRange
+      ? {compatibilityPolicy: {hostVersion, supportedSdkRange: supportedMiniappSdkRange}}
+      : {}),
+  })
+}
+
+/** Uninstall a withdrawn miniapp. Its data stays in its partition for a later reinstall. */
+export async function uninstallManagedMiniapp(packageName: string): Promise<void> {
+  const result = await useAppStatusStore.getState().uninstall(packageName)
+  if (result.is_error()) throw result.error
+}
+
+/**
+ * The miniapp's server stopped admitting this account: block its launch and stop its running code now, whatever
+ * its reasons. Not deferred like an update. Nothing is uninstalled.
+ */
+export async function stopMiniappForRevocation(packageName: string): Promise<void> {
+  appRegistry.revokeMiniappAccess(packageName)
+  const state = useAppStatusStore.getState()
+  if (state.foregroundedPackage === packageName) state.clearForeground()
+  await state.stop(packageName)
+  if (miniappLauncher.isRunning(packageName)) await miniappLauncher.stop(packageName)
+  await useAppStatusStore.getState().refresh()
 }
