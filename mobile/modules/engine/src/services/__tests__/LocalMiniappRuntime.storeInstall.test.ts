@@ -64,7 +64,7 @@ interface Host {
   sendToMiniapp: (pkg: string, message: Record<string, unknown>) => void
   auditInterop: () => void
   storeMutationsInFlight: Set<string>
-  storeSessionEpoch: number
+  installSessionEpoch: number
   isSystemPackage: (pkg: string) => boolean
   buildMiniappInfo: (app: ClientApp) => Record<string, unknown>
   handleMiniappsInstall: (pkg: string, payload: Record<string, unknown>, requestId?: string) => Promise<void>
@@ -139,7 +139,7 @@ function harness(storeTrusted = true) {
   host.connectedApps = new Map([[store, {hostTrustedSystem: storeTrusted}]])
   host.interopApps = () => []
   host.storeMutationsInFlight = new Set()
-  host.storeSessionEpoch = 0
+  host.installSessionEpoch = 0
   host.auditInterop = () => {}
   host.sendResult = (_pkg, _id, ok, data, error) => results.push({ok, data, error: error as Result["error"]})
   host.sendToMiniapp = (_pkg, message) => pushes.push(message)
@@ -318,7 +318,7 @@ describe("Store install requests", () => {
       const isCancelled = options.isCancelled as () => boolean
       cancelledStates.push(isCancelled())
       // cleanup() bumps the epoch while the release downloads.
-      h.host.storeSessionEpoch += 1
+      h.host.installSessionEpoch += 1
       cancelledStates.push(isCancelled())
     }
     await h.host.handleMiniappsInstall(store, request(), "r1")
