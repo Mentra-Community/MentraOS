@@ -15,7 +15,8 @@
     "../mobile/modules/bluetooth-sdk",
     "../mobile/modules/acs-meeting",
     "../mobile/modules/glasses-media",
-    "../miniapps/*"
+    "../miniapps/*",
+    "../examples/miniapp"
   ],
   "scripts": {
     "build:miniapp": "cd ../mobile/modules/miniapp && bun run build",

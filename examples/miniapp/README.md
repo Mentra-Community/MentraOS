@@ -4,15 +4,20 @@ Reference MentraOS miniapp for the `@mentra/miniapp` SDK — captions demo plus 
 
 ## Dev
 
+Install from the repository root (or from `sdk/`), not from this folder. The
+miniapp is a member of those Bun workspaces, which link `@mentra/miniapp` and
+`@mentra/miniapp-cli` to their source; it is not part of the `examples/`
+workspace.
+
 ```bash
-cd miniapps/example-miniapp
-bun install
+bun install          # at the repository root
+cd examples/miniapp
 bun run dev
 ```
 
 ## ElevenLabs ConvAI tester
 
-Ports the React Native [`react-native-elevenlabs-audio`](../../Mentra-Bluetooth-SDK-Starter-Kit/examples/react-native-elevenlabs-audio) repro into **Tester → ElevenLabs**.
+Ports the React Native [`react-native-elevenlabs-audio`](../bluetooth/react-native-elevenlabs-audio) repro into **Tester → ElevenLabs**.
 
 Same logic and variables:
 
