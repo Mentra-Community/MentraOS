@@ -14,10 +14,12 @@ import type { CreateCredentialInput, WorkspaceApi } from "../api";
 import { formatDate, formatDateTime } from "../lib/format";
 import { credentialsQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
 import { can, canCreateCredentials } from "../roles";
+import { licenseStrings } from "../strings/licenses";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { ConfirmButton, CopyButton, ErrorNotice, Panel, QueryGate, Restricted } from "./common";
+import { CopyButton, ErrorNotice, Panel, QueryGate, Restricted } from "./common";
+import { ConfirmDialog, useAsking } from "./confirm-dialog";
 
 const TITLE = "Keys";
 const DESCRIPTION = "Keys that let CI and tools publish miniapps for this workspace. A key acts as the person who created it.";
@@ -126,13 +128,10 @@ export function CredentialsScreen({
                     credentials={credentials}
                     canCreate={canCreateCredentials(detail)}
                     busy={create.isPending || revoke.isPending}
-                    onCreate={(input, onCreated) => {
-                      revoke.reset();
-                      create.mutate(input, { onSuccess: onCreated });
-                    }}
-                    onRevoke={(credentialId) => {
+                    onCreate={(input, onCreated) => create.mutate(input, { onSuccess: onCreated })}
+                    onRevoke={async (credentialId) => {
                       create.reset();
-                      revoke.mutate(credentialId);
+                      await revoke.mutateAsync(credentialId);
                     }}
                   />
                 )}
@@ -140,7 +139,7 @@ export function CredentialsScreen({
             )
           }
         </QueryGate>
-        <ErrorNotice error={create.error ?? revoke.error} />
+        <ErrorNotice error={create.error} />
       </Panel>
       {secret.status === "shown" ? (
         <SecretDialog name={secret.name} token={secret.token} onDone={() => dispatch({ type: "dismissed" })} />
@@ -156,13 +155,15 @@ interface CredentialsContentProps {
   busy: boolean;
   /** `onCreated` runs when the server accepted the credential, so the form can clear itself. */
   onCreate(input: CreateCredentialInput, onCreated: () => void): void;
-  onRevoke(credentialId: string): void;
+  /** Revokes it: rejects with the refusal, which the dialog that asked shows. */
+  onRevoke(credentialId: string): Promise<void>;
 }
 
 /**
  * The create form and the credential table. Revoke is offered on every credential the viewer can see: the
- * server allows a credential's creator or an admin and says so when it refuses, and the listing does not
- * say who the viewer is, so a developer revoking their own key must not be hidden from them.
+ * server allows a credential's creator or an admin and says so when it refuses (in the dialog Revoke asks in),
+ * and the listing does not say who the viewer is, so a developer revoking their own key must not be hidden
+ * from them.
  */
 function CredentialsContent({ credentials, canCreate, busy, onCreate, onRevoke }: CredentialsContentProps) {
   const [name, setName] = useState("");
@@ -171,6 +172,9 @@ function CredentialsContent({ credentials, canCreate, busy, onCreate, onRevoke }
   const nameId = useId();
   const packagesId = useId();
   const expiresId = useId();
+  const ask = useAsking<CredentialView>((credential) => credential.credentialId, busy);
+  const asking = ask.asking;
+  const t = licenseStrings.confirm;
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -276,14 +280,17 @@ function CredentialsContent({ credentials, canCreate, busy, onCreate, onRevoke }
                     {credential.lastUsedAt ? formatDateTime(credential.lastUsedAt) : "Never used"}
                   </td>
                   <td className="py-3 text-right">
-                    <ConfirmButton
-                      label="Revoke"
-                      ariaLabel={`Revoke ${credential.name}`}
-                      prompt={`Revoke ${credential.name}? Anything using it stops working.`}
-                      confirmLabel="Confirm revoke"
+                    <Button
+                      ref={ask.trigger(credential.credentialId)}
+                      type="button"
+                      variant="destructive-secondary"
+                      size="sm"
+                      aria-label={`Revoke ${credential.name}`}
                       disabled={busy}
-                      onConfirm={() => onRevoke(credential.credentialId)}
-                    />
+                      onClick={() => ask.ask(credential, credentials)}
+                    >
+                      Revoke
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -291,6 +298,19 @@ function CredentialsContent({ credentials, canCreate, busy, onCreate, onRevoke }
           </table>
         </div>
       )}
+      {asking ? (
+        <ConfirmDialog
+          title={t.revokeKey.title(asking.name)}
+          description={t.revokeKey.body}
+          cancelLabel={t.cancel}
+          confirmLabel={t.revokeKey.action}
+          onConfirm={async () => {
+            await onRevoke(asking.credentialId);
+            return null;
+          }}
+          onClose={ask.close}
+        />
+      ) : null}
     </>
   );
 }

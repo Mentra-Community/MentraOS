@@ -69,7 +69,7 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `CatalogGrid`, `CatalogDialog`, `BuyDialog`, `CatalogCard`, `canBuy` | Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy licenses" dialog, a workspace's licenses step, and one product's card |
 | `PurchaseBanner`, `TestModeBanner`, `LicensesSummary`, `LicensesUnavailable`, `PURCHASE_POLL_MS`, `PURCHASE_TIMEOUT_MS` | The banners and states around the cards, and the pace of the poll after checkout (2 seconds, for a minute) |
 | `useHostedAction`, `HostedFeedback`, `NavigateOut`, `PortalTab` | How every ↗ button leaves the portal for a hosted page, its refusal in words, and the host's two ways out (see [Licenses](#licenses)) |
-| `ConfirmDialog` (`title`, `description`, `cancelLabel`, `confirmLabel`, `onConfirm`, `onClose`), `MembersLicenses` | A question in a modal for what can't be taken back (Unassign, Remove): Cancel and a destructive button, a refusal shown inside (a throw from `onConfirm` becomes the generic one), busy while the request is out; and the source `WorkspaceMembersPanel` takes (see [Members' licenses](#members-licenses)) |
+| `ConfirmDialog` (`title`, `description`, `cancelLabel`, `confirmLabel`, `typeToConfirm?`, `onConfirm`, `onClose`), `useAsking`, `MembersLicenses` | A question in a modal for what can't be taken back (Unassign, Remove, Leave, Delete, Revoke): Cancel and a destructive button, a refusal shown inside with focus back on the button (a throw from `onConfirm` becomes the generic one), busy while the request is out, and `typeToConfirm` for a name to type back first; `useAsking` is how a list of rows opens one and where focus goes when it closes; and the source `WorkspaceMembersPanel` takes (see [Members' licenses](#members-licenses)) |
 | `ProductIcon`, `ProductChip`, `FeatureChips` | A product's look: its icon (a letter tile when it has none or it fails to load), icon and short name, and its feature chips (only with more than one feature) |
 | `Notice`, `Fact`, `Skeleton`, `StatusBadge`, `HostedPageButton`, `isHeldLicense` | The pieces the cards are made of: a status notice (`warn`, `info`, `neutral`), a label and value for a `<dl>`, a loading bar, a badge, a button that leaves the portal (its ↗ is an icon, so its name is the label alone), and the guard for a card Core also lists |
 | `joinLicenses`, `fitFor`, `seatCounts`, `holdsSeat`, `listedAction`, `catalogForOwner` | The page's logic, with no schemas at run time: Core's licenses joined to billing's entries and the catalog, in the page's order; what fits a product's available licenses; and the rules that gate what is offered |
@@ -79,7 +79,6 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `InvitationAcceptCard`, `useAcceptInvitation(api, {token} \| {invitationId}, …)`, `isInvitationForOtherAccount` | The same card for an invitation the host already has (one of `myInvitationsQuery`), and accepting it |
 | `describeAuditEvent`, `plainText` | An audit event as a sentence, for other screens |
 | `SecretDialog` (`name`, `token`, `onDone`) | The show-once dialog for a new credential, for other screens that mint one (the admin portal's operator keys) |
-| `ConfirmButton` (`label`, `ariaLabel`, `prompt`, `confirmLabel`, `onConfirm`) | A destructive action behind an inline confirm step |
 | `Button`, `buttonVariants`, `Input`, `Label`, `NativeSelect`, `Textarea` | Mentra's controls, for a host's own screens: one pill button system (`default`, `secondary`, `destructive-secondary`, `destructive`, `ghost`, `link`), pill inputs, native selects drawn to match, and a multi-line field drawn like the input |
 | `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardAction`, `CardContent`, `CardFooter` | The bordered 24px card the panels sit in |
 | `Dialog` (`open`, `onClose`, `title`, `description?`) | A modal on the platform's `<dialog>`; its content renders only while open |
@@ -116,10 +115,10 @@ screens a second React (and every hook a null dispatcher). Each site's
 - **Stale views end in a refetch.** Changes carry the workspace revision the viewer last
   saw. On a 409 `membership_changed` the workspace is refetched and the panel says
   "This workspace changed. Review and try again."
-- **Destructive actions ask twice**: removing a member, revoking a key or an
-  invitation, leaving a workspace (an inline confirm step), and deleting one (type the
-  workspace name). The only owner cannot leave: Leave is disabled and says why. A
-  refused action says why next to its own control.
+- **Destructive actions ask twice, in a dialog**: removing a member, revoking a key or an
+  invitation, leaving a workspace, and deleting one (the workspace name is typed in the
+  dialog). The only owner cannot leave: Leave is disabled and says why. A refused action
+  says why inside its dialog, which stays open for another try.
 - **Resend is a new invitation.** It sends the same address the same role again; Core
   supersedes the pending invitation, so only the newest link works.
 - **Dialogs are the platform's `<dialog>`**, opened with `showModal()`: the page behind is
