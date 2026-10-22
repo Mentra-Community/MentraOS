@@ -263,6 +263,12 @@ describe("redirects keep what the address carried", () => {
     await until(() => address() === "/settings?tab=2", "the short address");
     expect(window.location.hash).toBe("#danger");
   });
+
+  test("an older address with no section keeps its hash through the redirect to the first section", async () => {
+    await open("/w/ws_own?tab=2#danger", { listed: ["ws_own"] }, "Name of ws_own");
+    await until(() => address() === "/members?tab=2", "the first section, query kept");
+    expect(window.location.hash).toBe("#danger");
+  });
 });
 
 describe("a workspace the person cannot open", () => {

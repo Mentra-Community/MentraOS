@@ -770,6 +770,25 @@ describe("the licenses step starts at the workspace's member count", () => {
     expect(setup.purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 1 }]]);
   });
 
+  test("the member count falling to one while the dialog is open buys the one license shown", async () => {
+    const client = new QueryClient();
+    const { billing, purchase } = stubBilling();
+    const out = ways();
+    const dialog = (memberCount: number) => (
+      <QueryClientProvider client={client}>
+        <BuyDialog open product={range()} billing={billing} scope={WS} navigateOut={out.navigateOut} memberCount={memberCount} onClose={() => {}} />
+      </QueryClientProvider>
+    );
+    const view = await render(dialog(2));
+    expect(stepper(topDialog()).value).toBe("2");
+    await view.rerender(dialog(1));
+    expect(findAll('[role="spinbutton"]', topDialog())).toHaveLength(0);
+    expect(byText("1 license · $15 a month · before tax", "p", topDialog())).toBeTruthy();
+    await click(buttonNamed("Continue to payment", topDialog()));
+    await settle();
+    expect(purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 1 }]]);
+  });
+
   test("one member and a floor of two still has the stepper", async () => {
     await openWith(1, range({ minSeats: 2 }));
     expect(stepper(topDialog()).value).toBe("2");

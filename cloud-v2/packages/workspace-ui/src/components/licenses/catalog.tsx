@@ -493,7 +493,9 @@ function BuyForm({
   const solo = memberCount === 1 && bounds.initial === 1;
   const [chosen, setChosen] = useState(bounds.initial);
   // Billing can change the limits while the form is open (the catalog is read again): the choice is held to them.
-  const seats = Math.min(bounds.max, Math.max(bounds.min, chosen));
+  // With one member there is no choice: the member count can fall to one while the form is open, and the one license
+  // shown is the one asked for.
+  const seats = solo ? bounds.initial : Math.min(bounds.max, Math.max(bounds.min, chosen));
   if (seats !== chosen) setChosen(seats);
   const hosted = useHostedAction(host);
   const stepperId = useId();

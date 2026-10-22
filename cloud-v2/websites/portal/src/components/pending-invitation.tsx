@@ -28,7 +28,7 @@ function useInvitationActions(invitation: PendingInvitation) {
     onAccepted: accepted => {
       portal.forgetInvitation(which, "accepted");
       // The joined workspace opens at the address the person is on, with the rest of its query (`?buy=`) kept.
-      navigate(joinedAddress(window.location.pathname, window.location.search, accepted.workspaceId), { replace: true });
+      navigate(joinedAddress(window.location.pathname, window.location.search, accepted.workspaceId, window.location.hash), { replace: true });
     },
     onGone: () => portal.forgetInvitation(which, "gone"),
   });

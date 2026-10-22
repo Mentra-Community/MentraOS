@@ -295,7 +295,7 @@ export function WorkspaceScreen({
         </div>
       ) : !active ? (
         // `/`, or a section this viewer does not have: open the first one they do.
-        <Redirect to={keepQuery(sectionHref(sections[0] ?? "settings", workspaceId, bareWorkspaceId), search)} />
+        <Redirect to={keepQuery(sectionHref(sections[0] ?? "settings", workspaceId, bareWorkspaceId), search, typeof window === "undefined" ? "" : window.location.hash)} />
       ) : active === "members" ? (
         <div className="space-y-6">
           {actsAsOrganizationAdmin(data) ? <OrganizationAdminNote /> : null}

@@ -134,6 +134,12 @@ describe("a link to another section keeps the rest of the query", () => {
     expect(keepQuery("/members", "?workspace=ws_own")).toBe("/members");
     expect(keepQuery("/", "")).toBe("/");
   });
+
+  test("the hash is kept when it is given", () => {
+    expect(keepQuery("/members", "?tab=2", "#danger")).toBe("/members?tab=2#danger");
+    expect(keepQuery("/members", "", "#danger")).toBe("/members#danger");
+    expect(keepQuery("/members?workspace=ws_x", "", "#top")).toBe("/members?workspace=ws_x#top");
+  });
 });
 
 describe("joining a workspace from where the person is", () => {
@@ -141,6 +147,11 @@ describe("joining a workspace from where the person is", () => {
     expect(joinedAddress("/licenses", "?buy=mentra.call.unlimited", "ws_new")).toBe("/licenses?workspace=ws_new&buy=mentra.call.unlimited");
     expect(joinedAddress("/", "", "ws_new")).toBe("/?workspace=ws_new");
     expect(joinedAddress("/members", "?workspace=ws_old", "ws_new")).toBe("/members?workspace=ws_new");
+  });
+
+  test("keeps the hash of a page it keeps, and drops it with one it does not", () => {
+    expect(joinedAddress("/settings", "", "ws_new", "#danger")).toBe("/settings?workspace=ws_new#danger");
+    expect(joinedAddress("/enterprise/access", "", "ws_new", "#x")).toBe("/?workspace=ws_new");
   });
 
   test("from the invitation screen it opens the workspace at /, and from an enterprise page without its query", () => {

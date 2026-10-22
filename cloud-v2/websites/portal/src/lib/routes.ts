@@ -111,26 +111,29 @@ export function legacyRedirect(pathname: string, search: string, hash = ""): str
   return `${route.section ? `/${route.section}` : "/"}?${query.toString()}${hash}`;
 }
 
-/** `href` with every query parameter of `search` it does not already have, except `workspace`: a redirect that keeps the rest. */
-export function keepQuery(href: string, search: string): string {
+/**
+ * `href` with every query parameter of `search` it does not already have, except `workspace`, and then `hash` if
+ * given: a redirect that keeps the rest of the address.
+ */
+export function keepQuery(href: string, search: string, hash = ""): string {
   const [path, own = ""] = href.split("?");
   const query = new URLSearchParams(own);
   for (const [name, value] of new URLSearchParams(search)) if (name !== "workspace") query.append(name, value);
   const text = query.toString();
-  return text ? `${path}?${text}` : path!;
+  return `${text ? `${path}?${text}` : path!}${hash}`;
 }
 
 /**
  * The address a workspace opens at after the person joins it from where they are: the same page and query,
- * now in `workspaceId`. A page that is not a workspace's (an enterprise page) opens the workspace's first section.
+ * now in `workspaceId`, with its hash. A page that is not a workspace's (an enterprise page) opens the workspace's first section.
  */
-export function joinedAddress(pathname: string, search: string, workspaceId: string): string {
+export function joinedAddress(pathname: string, search: string, workspaceId: string, hash = ""): string {
   const kind = parseRoute(pathname).kind;
   const keeps = kind === "section" || kind === "home" || kind === "invitation";
   const query = new URLSearchParams();
   query.set("workspace", workspaceId);
   if (keeps) for (const [name, value] of new URLSearchParams(search)) if (name !== "workspace") query.append(name, value);
-  return `${kind === "section" ? pathname : "/"}?${query.toString()}`;
+  return `${kind === "section" ? pathname : "/"}?${query.toString()}${keeps ? hash : ""}`;
 }
 
 export function enterprisePath(page: EnterprisePage): string {
