@@ -70,6 +70,11 @@ export interface WorkspaceApi {
 
   listWorkspaces(): Promise<WorkspaceListItem[]>;
   createWorkspace(name: string): Promise<WorkspaceDetail>;
+  /**
+   * The caller's own workspace, made when they have none: no body, 200 with the one they already have, 201 with
+   * a new one. Core's people-only route (`POST {base}/ensure`); an embedding without it answers 404.
+   */
+  ensureWorkspace(): Promise<WorkspaceDetail>;
   getWorkspace(workspaceId: string): Promise<WorkspaceDetail>;
   renameWorkspace(workspaceId: string, name: string, expectedRevision: number): Promise<WorkspaceDetail>;
   deleteWorkspace(workspaceId: string, confirmName: string): Promise<void>;
@@ -172,6 +177,7 @@ export function createWorkspaceApi(opts: {
 
     listWorkspaces: async () => (await json<{ items: WorkspaceListItem[] }>("GET", "")).items,
     createWorkspace: (name) => json("POST", "", { name }),
+    ensureWorkspace: () => json("POST", "/ensure"),
     getWorkspace: (workspaceId) => json("GET", workspace(workspaceId)),
     renameWorkspace: (workspaceId, name, expectedRevision) =>
       json("PATCH", workspace(workspaceId), { name, expectedRevision }),

@@ -57,22 +57,50 @@ account; a deleted account is refused (`404 user_not_found`).
 The workspace portal (`websites/portal`) is centred on the current workspace. A switcher at
 the top of the sidebar shows it and your role (your membership's; "Member · Organization
 Admin" when an Organization Admin's powers go beyond it), and lists your other workspaces,
-**Create workspace** and your pending invitations with **Accept** and **Dismiss**. Every
-page carries its workspace:
-`/w/<workspaceId>/members` (members, with pending invitations under them),
-`/w/<workspaceId>/settings`, `/w/<workspaceId>/audit` and `/w/<workspaceId>/licenses`
-([Licenses](licenses.md#in-the-workspace-portal)); the sidebar offers only what your
-role opens. Above your account, the sidebar links to the environment's Developer Console in a
-new tab; a Private Cloud, which has no Developer Console, shows no link. `/` opens your
-last-used workspace (remembered in the browser, never an authority), else your first, else the
-first run: your pending invitations if you have any
-you can accept, otherwise **Create your workspace**. An invitation link lands on
-`/invitation`, which reads the token from the tab's session storage. A link Core reports
-as no longer valid is shown as such once and then forgotten. Pending invitations are the
-link's and those addressed to your verified email, each shown once; **Dismiss** hides one
-in this browser only (Core does not record a refusal, and its link keeps working). Company sign-in
+**Create workspace** and your pending invitations with **Accept** and **Dismiss**.
+
+**Addresses.** Your own workspace is never in the address: `/members` (members, with pending
+invitations under them), `/settings`, `/audit` and `/licenses`
+([Licenses](licenses.md#in-the-workspace-portal)) are its pages, and the sidebar offers only
+what your role opens. `/` opens the current workspace's first page. Another workspace is named
+by `?workspace=<workspaceId>` on any of them, which is how an Organization Admin opens a
+customer's; the sidebar's links carry it exactly when the workspace is not the one the bare
+address opens, and a `?workspace=` that names the bare address is dropped from the address in
+place. A `?workspace=` you cannot open is "Workspace not found". The older
+`/w/<workspaceId>[/<page>]` addresses redirect to these, keeping their query
+(`?purchase=`, `?fleet=`). There is no personal page: `/account/billing` is "Page not found".
+
+**The current workspace** is `?workspace=` when the address has one; else the workspace this
+browser tab last opened from your own list while it is still there (remembered in the browser,
+never an authority, and another tab's pick does not move this one); else your first (oldest)
+workspace; else none. A workspace you reach only as an Organization Admin is never remembered.
+
+**The first run.** With no current workspace, the portal shows the invitations you can accept in
+place, at the address you came to; another account's invitation does not count. With none, it
+asks Core for your workspace (`POST /api/portal/workspaces/ensure`) and shows "Setting up your
+workspace" while it does, then opens it at the same address, so a `?buy=` link survives.
+Core answers with your workspace if you have one and makes one named for you ("Dana Reyes's
+Workspace") if not. If that fails, or Core answers but your list still has no workspace, the page
+says "Couldn't set up your workspace." with **Try again**. Nothing is made while the portal cannot
+tell whether an invitation waits (a dropped connection or a server error reading your invitations
+or the link's): the page says so, with **Try again**, and **Dismiss** for a link. Someone who may
+not have a workspace (an unverified email, or a deployment where only Organization Admins create
+them), or whom Core refuses with a `403` because the rules changed after the page loaded, sees
+"You're not in a workspace yet." with the reason ("You can't create a workspace with this
+account." when Core gave none) and "Open an invitation link someone sent you to join their
+workspace." Accepting an invitation from the first run keeps
+the address, now in the joined workspace.
+
+An invitation link lands on `/invitation`, which reads the token from the tab's session storage.
+A link Core reports as no longer valid is shown as such once and then forgotten. Pending
+invitations are the link's and those addressed to your verified email, each shown once;
+**Dismiss** hides one in this browser only (Core does not record a refusal, and its link keeps
+working). Above your account, the sidebar links to the environment's Developer Console in a new
+tab; a Private Cloud, which has no Developer Console, shows no link. Company sign-in
 (enterprise orgs and trusted issuers) is not in the navigation; its pages stay reachable
 at `/enterprise` until it returns as workspace settings.
+
+The sign-in page says "Use the same account you sign in to the Mentra App with."
 
 **Members** lists each member by name over email (the email alone where Core has no
 name), with a "You" mark on your own row, "Pending first sign-in" on an imported

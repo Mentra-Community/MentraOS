@@ -1,10 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { buttonVariants, workspaceListQuery } from "@mentra/workspace-ui";
 import { ArrowRight, Compass, Lock } from "lucide-react";
-import { safeLocalStorage } from "@/lib/api";
+import { useBareWorkspaceId } from "@/components/portal-shell";
 import { Link } from "@/lib/navigation";
 import { portalWorkspaceApi } from "@/lib/portal";
-import { homeWorkspace, recallWorkspace, workspacePath } from "@/lib/routes";
 
 /**
  * A workspace that does not exist or that the viewer may not see (Core does not say which, and neither do
@@ -12,7 +11,7 @@ import { homeWorkspace, recallWorkspace, workspacePath } from "@/lib/routes";
  */
 export function NotFoundMessage({ kind }: { kind: "workspace" | "page" }) {
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
-  const homeId = list.data ? homeWorkspace(list.data, recallWorkspace(safeLocalStorage())) : null;
+  const homeId = useBareWorkspaceId();
   const home = list.data?.find(item => item.workspaceId === homeId);
   const Icon = kind === "workspace" ? Lock : Compass;
 
@@ -30,7 +29,7 @@ export function NotFoundMessage({ kind }: { kind: "workspace" | "page" }) {
           : "There is nothing at this address. Check the link, or go back to your workspaces."}
       </p>
       <Link
-        href={home ? workspacePath(home.workspaceId) : "/"}
+        href="/"
         className={buttonVariants({ size: "lg", className: "mt-7 w-full" })}
       >
         {home ? `Go to ${home.name}` : "Go to your workspaces"}

@@ -46,15 +46,14 @@ export const workspaceKeys = {
 
 /**
  * Billing's answers, which are not part of the workspace API's cache but belong to an owner: a workspace's start
- * with its id, and the person's own sit apart. The billing client's base path and locale are in each key, so two
+ * with its id. The billing client's base path and locale are in each key, so two
  * embeddings, or a locale change, never share an answer. Status and catalog are separate branches under the
  * owner, so a seat change can refresh the one it affects (`statuses`) and leave the other.
  */
 export const billingKeys = {
   root: ["workspace-ui", "billing"] as const,
   /** Everything billing said about one owner: remove this to forget all of it. */
-  owner: (scope: BillingScope): readonly string[] =>
-    scope.kind === "workspace" ? [...billingKeys.root, "workspace", scope.workspaceId] : [...billingKeys.root, "account"],
+  owner: (scope: BillingScope): readonly string[] => [...billingKeys.root, "workspace", scope.workspaceId],
   /** Every status billing gave about one owner, for any purchase, locale or base path: invalidate this to refresh them. */
   statuses: (scope: BillingScope): readonly string[] => [...billingKeys.owner(scope), "status"],
   catalog: (billing: Pick<BillingApi, "base" | "locale">, scope: BillingScope) =>
@@ -139,7 +138,7 @@ export function billingShouldRetry(failureCount: number, error: unknown): boolea
 }
 
 /**
- * The products for the scope's owner type, parsed with the contract. Display content only unless the viewer may
+ * The products a workspace is shown, parsed with the contract. Display content only unless the viewer may
  * manage the owner's billing (then each product has its `offer`).
  */
 export const billingCatalogQuery = (billing: BillingApi, scope: BillingScope) =>

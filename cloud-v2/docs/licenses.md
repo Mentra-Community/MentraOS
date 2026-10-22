@@ -267,12 +267,16 @@ what](#who-sees-what)).
     licenses" and Add licenses ↗ where billing lists it, not Buy. A product whose
     first payment is not finished shows "Payment incomplete" and Complete
     payment ↗.
-  - Buy opens the licenses step: a counter ("Licenses", with "One license fewer"
-    and "One license more") held between billing's smallest and largest number of
-    licenses and starting at its default (5 for a workspace), the one sum the
-    portal works out ("10 licenses × $15 · $150 a month · before tax"), "Your
-    workspace has 14 members.", and Continue to payment ↗. It says "Renews every
-    month. Change the number of licenses or cancel at any time." Continue asks
+  - Buy opens the licenses step for every workspace, the same way: a counter
+    ("Licenses", with "One license fewer" and "One license more") held between
+    billing's smallest and largest number of licenses and starting at the number
+    of members the workspace has (imported members still waiting for their first
+    sign-in count), the one sum the portal works out ("10 licenses × $15 · $150
+    a month · before tax"), "Your workspace has 14 members.", and Continue to
+    payment ↗. It says "Renews every month. Change the number of licenses or
+    cancel at any time." In a workspace of one person there is no counter and no
+    member line: the step reads "1 license · $29 a month · before tax" and "It's
+    yours once payment goes through.", and Continue buys one. Continue asks
     billing for a purchase, and the browser goes to the hosted payment page it
     answers. For a price that is not per user, the step shows billing's label and
     no sum.
@@ -296,28 +300,47 @@ what](#who-sees-what)).
   take a few minutes to appear; a product that arrives later still turns it ready. A
   purchase that collected no payment says "Purchase complete" and never "Payment
   received". An unknown purchase, or another owner's, shows no banner.
+  When the new license's holders include the viewer, whom billing named the
+  buyer when it made the purchase, the banner says so: "Your Call Unlimited
+  license is ready" and "Payment received, and it's assigned to you." for one
+  license ("Purchase complete" and "Call Unlimited is active, and it's assigned
+  to you." when no payment was collected), or "Your 5 Call Unlimited licenses
+  are ready" and "Payment received, and one is assigned to you. Assign the rest
+  to members below." for more. Otherwise the banner says what it said before.
+- **A link that asks to buy.** A person who follows
+  `/licenses?buy=<product>` (a product's key) signs in if they have to, lands
+  in their own workspace (their first visit makes one, see [the first
+  run](workspaces.md#the-workspace-portal)),
+  and the Licenses page acts once its reads are in, then removes `?buy=` from
+  the address in place, so Back does not return to the link and a reload does
+  not act again. The page opens even for a Member who holds nothing, so the
+  answer is there. What it does:
+
+  | Case | The page |
+  | --- | --- |
+  | Billing is offered, and the catalog offers the product | Opens the Buy dialog on it |
+  | The workspace already holds it, or has a card for it | "<workspace> already has <product>." |
+  | The product is not in the catalog's offers | "That product isn't for sale." |
+  | The viewer is not an Admin or Owner | "Only Admins and Owners of <workspace> can buy <product>. Ask one of them." (the product's name from the catalog, else "licenses" where it can't be read) |
+  | The viewer is an Admin or Owner, but billing is not offered here | "Licenses can't be bought here." |
+
+  A note stays until the person leaves the page. Nothing goes to checkout
+  without the person's click on Continue to payment ↗. Billing puts the buyer's
+  Core user ID on the subscription it checks out, and Core gives the buyer one of
+  the new licenses when the purchase's first write arrives, so they have it
+  whether or not they keep the tab open. An Organization Admin buying in a
+  workspace they are not a member of gets none.
 - **Test mode.** Where billing sells with a test key, a banner above everything
   names the environment and the test card to pay with (with a copy button). A
   small × in its top-right corner ("Hide the test mode notice") hides it for the
-  rest of the browser session, on the Licenses page and the personal Billing page
-  alike, so a screenshot comes out clean: it is kept in `sessionStorage` under
+  rest of the browser session, so a screenshot comes out clean: it is kept in `sessionStorage` under
   `mentra.testModeNotice.hidden`, so a new session shows it again, and where
   storage throws (a private mode) it is hidden for that page only. Test mode
   itself, the buy dialogs and their words are unchanged.
-- **Billing.** The person's own page is `/account/billing`, with a Billing entry
-  in the account menu. Its sidebar is Your account with Billing under it, and a
-  way back to one of the person's workspaces if they have one; a person in no
-  workspace gets the page all the same. It is `PersonalBillingView` over
-  billing's account scope: a card for each license the person bought for
-  themselves, with the status, term, cost, failed-payment notice and "…" menu of
-  a workspace's card, and no list of people. With none, the catalog ("Buy a
-  license for yourself"), where Buy goes straight to the hosted payment page,
-  since a person's one license needs no licenses step. For a person who holds a
-  product, the title bar has Billing & invoices ↗ and, while something is left to
-  buy, Buy a license. Back from checkout shows the same banner ("Call Unlimited
-  is ready").
-  Where the person is not offered billing, the menu has no Billing entry and the
-  address is "Page not found".
+- **No personal Billing page.** Licenses belong to workspaces, and every
+  person who signs in to the portal has one, so buying for yourself is buying in
+  your own workspace: the account menu has Sign out and nothing else, and
+  `/account/billing` is "Page not found".
 
 ## Ending
 
@@ -415,8 +438,7 @@ the page does.
 | **A plain member** (Member or Developer) | Only the products they hold a license for, each as "Assigned to you" with "Your license" since when, "Given by" the workspace, and the miniapps it works in. No totals, no money, no one else's licenses, no controls. The Licenses item is in their sidebar while they hold a license. | Their licenses from Core, and the catalog for names and icons. Not billing's status, not the members. |
 | **A license manager without billing** (an Admin or Owner who is not offered billing) | Every product with its licenses and who holds each. They assign and unassign, from a card (Unassign asks in a dialog) or the people picker. No money, no dates, no total, no billing actions, no buying, no Add licenses. | Core's licenses and the members, and the catalog for names and icons. Not billing's status. |
 | **A billing manager** (an Admin or Owner offered billing) | All of that, plus each license's cost and dates, the total, billing's actions and the failed-payment notices, buying, the header actions, and the banner after checkout. | Billing's status as well. |
-| **A person**, on their own | `/account/billing`, where billing is offered to them: products they bought for themselves, with no list of people, and the catalog when they hold none. | Billing's catalog and status for their account. |
-| **Staff, where billing uses a test key** | Where `CLOUD_CORE_ENVIRONMENT` is not `prod`, billing is offered to Organization Admins only. They act as Owner everywhere, so they are billing managers of every workspace and have their own Billing page, under a test-mode banner. | As for a billing manager or a person. |
+| **Staff, where billing uses a test key** | Where `CLOUD_CORE_ENVIRONMENT` is not `prod`, billing is offered to Organization Admins only. They act as Owner everywhere, so they are billing managers of every workspace, under a test-mode banner. | As for a billing manager. |
 
 - **Who is a license manager without billing.** The roles hold the three
   capabilities together, so the difference is whether billing is offered. It is

@@ -21,8 +21,9 @@
  *
  * It asks only for what the viewer's page needs. The catalog is asked for by whoever is offered billing (it names
  * licenses and sells products) and, once Core's list is in, by anyone with a license to name: a member with no seat
- * (and a manager not offered billing with no licenses) is never asked for it, so that page waits for Core's list first
- * and a member's page makes its one extra round trip for the catalog after it.
+ * (and a manager not offered billing with no licenses) is never asked for it, unless a link asks to buy a product, when
+ * the note names it (that read is optional: it can hold the page while it is out, but never makes it unavailable). That
+ * page waits for Core's list first and a member's page makes its one extra round trip for the catalog after it.
  *
  * Which of these a viewer is, comes from Core's own answer for the workspace (their capabilities), and from the host's
  * `offer`: `catalog` is whether billing's catalog can be read (`me.modules.billingCatalog`) and `manage` whether this
@@ -40,21 +41,22 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { LicenseView, MemberView, WorkspaceDetail } from "@mentra/workspace-contract";
 import type { BillingStatus, CatalogEntry } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../../api";
 import type { BillingApi } from "../../billing-api";
 import { workspaceScope, type BillingScope } from "../../billing-scope";
-import { joinLicenses, listedAction } from "../../lib/license-join";
+import { holdsSeat, joinLicenses, listedAction } from "../../lib/license-join";
 import { billingCatalogQuery, billingStatusQuery, licensesQuery, membersQuery, statusPlaceholder, workspaceDetailQuery } from "../../queries";
 import { can } from "../../roles";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Loading, Restricted } from "../common";
 import { LicensesSummary, LicensesUnavailable, PURCHASE_POLL_MS, PURCHASE_TIMEOUT_MS, PurchaseBanner, TestModeBanner } from "./banners";
-import { CatalogDialog, CatalogGrid } from "./catalog";
+import { BuyDialog, canBuy, CatalogDialog, CatalogGrid, termsNow } from "./catalog";
 import { useHostedAction, type NavigateOut } from "./hosted-action";
 import { LicenseCard } from "./license-card";
+import { Notice } from "./parts";
 import { HeaderButtons, hasOffer, NoSeat, PageNote, readFailed, readRetrying, readWaiting, usePurchaseFlow, type PurchaseFlow } from "./page-parts";
 
 export interface WorkspaceLicensesViewProps {
@@ -71,6 +73,14 @@ export interface WorkspaceLicensesViewProps {
   };
   /** The `?purchase=` a checkout came back with, or none. */
   purchaseId?: string | null;
+  /**
+   * The `?buy=` product the address named, or none. Once the page's reads are in it acts once: it opens the Buy
+   * dialog on the product where the viewer can buy it, and otherwise says why not. Nothing goes to checkout
+   * until the person presses Continue to payment.
+   */
+  buyProduct?: string | null;
+  /** The page has acted on `buyProduct`: remove `?buy=` from the address. Called once per link. */
+  onBuyHandled?(): void;
   /** The purchase banner was dismissed: remove `?purchase=` from the address. */
   onPurchaseDone(): void;
   /**
@@ -97,7 +107,7 @@ interface LicensesPageData {
   /** The licenses that are cards: Core's, not ended, and for a member only those they hold a seat in. */
   shown: readonly LicenseView[];
   members: readonly MemberView[];
-  /** How many members the workspace has, once the list has been read. */
+  /** How many members the workspace has (imported members waiting for their first sign-in included): where buying starts. */
   memberCount: number | undefined;
   products: readonly CatalogEntry[];
   /** Billing's status: only for a viewer offered billing. */
@@ -117,7 +127,14 @@ interface LicensesPageData {
  * - `ready`: `data` is what the page and the header draw from.
  */
 function useLicensesPage(
-  { api, billing, workspaceId, offer, purchaseId }: Pick<WorkspaceLicensesViewProps, "api" | "billing" | "workspaceId" | "offer"> & { purchaseId: string | null },
+  {
+    api,
+    billing,
+    workspaceId,
+    offer,
+    purchaseId,
+    buyProduct = null,
+  }: Pick<WorkspaceLicensesViewProps, "api" | "billing" | "workspaceId" | "offer"> & { purchaseId: string | null; buyProduct?: string | null },
   /** False for a component that will draw nothing whatever it reads (the header, for someone not offered billing): it asks for nothing. */
   wanted = true,
 ) {
@@ -132,12 +149,18 @@ function useLicensesPage(
         ? licenses.data.filter((license) => !license.endedAt)
         : licenses.data.filter((license) => !license.endedAt && (license.seats?.length ?? 0) > 0)
       : null;
-  // Only those who see every seat need the members (to name the holders and to choose whom to give a seat).
+  // Only those who see every seat need the members (to name the holders and to choose whom to give a seat, and
+  // for a viewer offered billing, to start a purchase at the member count).
   const members = useQuery({ ...membersQuery(api, workspaceId), enabled: wanted && reads });
   // The catalog names licenses and sells products: wanted by whoever is offered billing, and by anyone with a license to
   // name. A viewer with nothing to name and nothing to buy isn't asked for it (so it waits for Core's list to know).
   const needsCatalog = offer.manage || (shown !== null && shown.length > 0);
-  const catalog = useQuery({ ...billingCatalogQuery(billing, scope), enabled: wanted && offer.catalog && needsCatalog });
+  // A link asking to buy, opened by someone who can't (a Member or Developer): the note names the product, so the catalog
+  // is read for its name. Nothing else needs it, so it never makes the page unavailable (a read that fails leaves the
+  // note saying "licenses"); it may hold the page while it is out. Once the link is handled the host removes `?buy=`,
+  // the read is no longer wanted, and what it answered stays.
+  const namesLink = buyProduct !== null && offer.catalog && detail.data !== undefined && !can(detail.data, "workspace.billing.manage");
+  const catalog = useQuery({ ...billingCatalogQuery(billing, scope), enabled: wanted && offer.catalog && (needsCatalog || namesLink) });
   // Only a viewer offered billing is asked for the status (the route refuses anyone else). While it is read under a key
   // that differs only by `purchase` (`?purchase=` came or went) it keeps its last answer, so that nothing swaps out the
   // cards; it never keeps another workspace's (see `statusPlaceholder`).
@@ -149,9 +172,9 @@ function useLicensesPage(
   if (readFailed(detail) || readFailed(licenses)) state = "unavailable";
   else if (readWaiting(detail) || readWaiting(licenses) || shown === null) state = "loading";
   else {
-    const required = [...(needsCatalog && offer.catalog ? [catalog] : []), ...(offer.manage ? [status] : []), ...(reads && shown.length > 0 ? [members] : [])];
+    const required = [...(needsCatalog && offer.catalog ? [catalog] : []), ...(offer.manage ? [status] : []), ...(reads && (shown.length > 0 || offer.manage) ? [members] : [])];
     if ((needsCatalog && !offer.catalog) || required.some(readFailed)) state = "unavailable";
-    else if (required.some(readWaiting)) state = "loading";
+    else if (required.some(readWaiting) || (namesLink && readWaiting(catalog))) state = "loading";
     else {
       data = {
         workspace: detail.data!,
@@ -174,13 +197,15 @@ export function WorkspaceLicensesView({
   workspaceId,
   offer,
   purchaseId = null,
+  buyProduct = null,
+  onBuyHandled,
   onPurchaseDone,
   onRetry,
   navigateOut,
   pollMs = PURCHASE_POLL_MS,
   timeoutMs = PURCHASE_TIMEOUT_MS,
 }: WorkspaceLicensesViewProps) {
-  const { scope, state, data, canRead, queries } = useLicensesPage({ api, billing, workspaceId, offer, purchaseId });
+  const { scope, state, data, canRead, queries } = useLicensesPage({ api, billing, workspaceId, offer, purchaseId, buyProduct });
   const { detail, licenses, members, catalog, status } = queries;
 
   const answer = offer.manage ? status.data?.purchase : null;
@@ -218,6 +243,8 @@ export function WorkspaceLicensesView({
       data={data}
       manage={offer.manage}
       flow={flow}
+      buyProduct={buyProduct}
+      onBuyHandled={onBuyHandled}
     />
   );
 }
@@ -231,10 +258,48 @@ interface LicensesBodyProps {
   /** The viewer is offered billing: `data.status` is billing's. */
   manage: boolean;
   flow: PurchaseFlow;
+  buyProduct: string | null;
+  onBuyHandled?(): void;
+}
+
+/**
+ * What the page does with a `?buy=` product, once: the Buy dialog on it (`linked`), or a neutral note saying why
+ * not (`note`). The note stays until the person leaves the page or follows another link. It acts when the page's reads are in (it lives in
+ * the body, which only exists then) and tells the host with `onBuyHandled`, which removes `?buy=` from the address;
+ * the same product is not acted on again however often the page reads again.
+ */
+function useBuyLink({
+  buyProduct,
+  onBuyHandled,
+  decide,
+}: {
+  buyProduct: string | null;
+  onBuyHandled?(): void;
+  decide(product: string): { note: string } | { entry: CatalogEntry };
+}) {
+  const [note, setNote] = useState<string | null>(null);
+  const [linked, setLinked] = useState<CatalogEntry | null>(null);
+  const done = useRef<string | null>(null);
+  const latest = useRef({ decide, onBuyHandled });
+  latest.current = { decide, onBuyHandled };
+  useEffect(() => {
+    if (buyProduct === null) {
+      done.current = null;
+      return;
+    }
+    if (done.current === buyProduct) return;
+    done.current = buyProduct;
+    const outcome = latest.current.decide(buyProduct);
+    // A newer link replaces what an earlier one left: a note never stays up behind the dialog, nor the dialog behind a note.
+    setNote("note" in outcome ? outcome.note : null);
+    setLinked("entry" in outcome ? outcome.entry : null);
+    latest.current.onBuyHandled?.();
+  }, [buyProduct]);
+  return { note, linked, closeLinked: () => setLinked(null) };
 }
 
 /** The page once everything it needs has been read. */
-function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow }: LicensesBodyProps) {
+function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, buyProduct, onBuyHandled }: LicensesBodyProps) {
   const { workspace, reads, all, shown, members, memberCount, products, status } = data;
   const workspaceName = workspace.name;
   const canAssign = can(workspace, "workspace.licenses.assign");
@@ -242,31 +307,53 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow }: 
 
   const cards = joinLicenses({ licenses: shown, billing: status?.licenses ?? null, catalog: products, purchase: flow.purchase, locale });
 
+  // The link's table: who may buy, whether billing is offered, whether the workspace holds the product, whether it is for sale.
+  const link = useBuyLink({
+    buyProduct,
+    onBuyHandled,
+    decide: (product) => {
+      const entry = products.find((candidate) => candidate.product === product);
+      const words = t.page.buyLink;
+      if (!can(workspace, "workspace.billing.manage")) return { note: words.askAnAdmin(workspaceName, entry?.name ?? words.anyProduct) };
+      if (!manage) return { note: words.notHere };
+      const held = cards.find((card) => card.product === product);
+      if (held || entry?.offer?.buy === null) return { note: words.alreadyHas(workspaceName, entry?.name ?? held?.name ?? product) };
+      if (entry && canBuy(entry)) return { entry };
+      return { note: words.notForSale };
+    },
+  });
+  const linkNote = link.note !== null ? <Notice tone="neutral" title={link.note} /> : null;
+
   // A member sees their own seats and nothing else.
   if (!reads) {
-    if (cards.length === 0) return <NoSeat workspaceName={workspaceName} />;
+    if (cards.length === 0 && link.note === null) return <NoSeat workspaceName={workspaceName} />;
     return (
       <div className="space-y-5">
+        {linkNote}
         {cards.map((card) => (
           <LicenseCard key={card.licenseId} card={card} view="member" scope={scope} billing={billing} navigateOut={navigateOut} locale={locale} workspaceName={workspaceName} />
         ))}
-        <PageNote>{t.page.adminsGiveOutSeats(workspaceName)}</PageNote>
+        {cards.length > 0 ? <PageNote>{t.page.adminsGiveOutSeats(workspaceName)}</PageNote> : <NoSeat workspaceName={workspaceName} />}
       </div>
     );
   }
 
-  // Buying is for a viewer billing offers something to: an entry for workspaces with an `offer`.
-  const offered = manage && hasOffer(products, "workspace");
+  // Buying is for a viewer billing offers something to: an entry with an `offer`.
+  const offered = manage && hasOffer(products);
   const showCatalog = offered && cards.length === 0;
   const purchase = flow.purchase;
   const productName = purchase ? (products.find((entry) => entry.product === purchase.product)?.name ?? purchase.product) : "";
-  const listed = purchase?.licenseId != null && all.some((license) => license.licenseId === purchase.licenseId);
+  const bought = purchase?.licenseId != null ? all.find((license) => license.licenseId === purchase.licenseId) : undefined;
+  const listed = bought !== undefined;
+  // Billing hands the buyer one of the new licenses: the banner says so.
+  const assigned = bought !== undefined && workspace.membership !== null && holdsSeat(bought, workspace.membership.membershipId);
 
   return (
     <div className="space-y-5">
+      {linkNote}
       {status?.testMode ? <TestModeBanner testMode={status.testMode} /> : null}
       {purchase ? (
-        <PurchaseBanner purchase={purchase} productName={productName} listed={listed} timedOut={flow.timedOut} onDismiss={flow.dismiss} />
+        <PurchaseBanner purchase={purchase} productName={productName} listed={listed} assigned={assigned} timedOut={flow.timedOut} onDismiss={flow.dismiss} />
       ) : null}
       {manage && status && cards.length > 0 ? <LicensesSummary total={status.total} locale={locale} /> : null}
       {cards.map((card) => (
@@ -298,6 +385,16 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow }: 
         />
       ) : null}
       {cards.length === 0 && !showCatalog ? <Restricted>{t.page.noLicenses}</Restricted> : null}
+      <BuyDialog
+        open={link.linked !== null}
+        product={termsNow(link.linked, products)}
+        billing={billing}
+        scope={scope}
+        navigateOut={navigateOut}
+        api={api}
+        memberCount={memberCount}
+        onClose={link.closeLinked}
+      />
     </div>
   );
 }
@@ -324,7 +421,7 @@ export function WorkspaceLicensesHeaderActions({ api, billing, workspaceId, offe
   const { products, status, shown } = data;
   // The same cards the page draws: the buttons are for a workspace that has some.
   if (joinLicenses({ licenses: shown, billing: status.licenses, catalog: products }).length === 0) return null;
-  const offered = hasOffer(products, "workspace");
+  const offered = hasOffer(products);
   return (
     <>
       <HeaderButtons invoices={listedAction(status, "billing_and_invoices")} onBuy={offered ? () => setBuying(true) : null} buyLabel={t.page.buyLicenses} hosted={hosted} />

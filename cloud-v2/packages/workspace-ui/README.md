@@ -5,8 +5,8 @@ settings, an audit log and the invitation-accept page. The workspace portal and 
 portal use it directly; the Developer Console vendors it. All of them call the same JSON
 API, so the package only needs to know where that API is mounted.
 
-It also holds the workspace portal's Licenses page and the personal Billing page: the
-views, their header actions, the cards, the buying dialogs, the billing client, and the
+It also holds the workspace portal's Licenses page: the
+view, its header actions, the cards, the buying dialogs, the billing client, and the
 strings and formatting they are worded with (see [Licenses](#licenses)).
 
 It also holds the workspace portal's frame and controls, for any Mentra site that should
@@ -51,7 +51,7 @@ screens a second React (and every hook a null dispatcher). Each site's
 | --- | --- |
 | `createWorkspaceApi({basePath, fetch?, credentials?})` | Typed client for every route; throws `WorkspaceApiError` |
 | `createBillingApi({locale, base?, fetch?, credentials?})`, `BillingApi` | Typed client for billing's `catalog`, `status`, `purchase` and `session`; every answer is parsed with the contract's schemas. `base` defaults to `/api/portal/billing`; `locale` rides on every request |
-| `BillingScope`, `workspaceScope(id)`, `ACCOUNT_SCOPE`, `ownerTypeOf` | Whose billing a call is about: a workspace's, or the signed-in person's own |
+| `BillingScope`, `workspaceScope(id)` | Whose billing a call is about: a workspace's. A license belongs to a workspace and to nothing else |
 | `BillingRefusedError`, `BillingUnavailableError`, `BillingContractError`, `billingErrorMessage` | A refusal billing worded with a code, a billing that could not answer, one that answered off-contract (`BillingContractError`, a `BillingUnavailableError` the queries do not retry), and the sentence for any |
 | `WorkspacePicker` | Choose among your workspaces in a select; optionally create one inline |
 | `CreateWorkspaceDialog` (`open`, `onClose`, `onCreated`), `CreateWorkspaceForm`, `useCreateWorkspace` | Create a workspace from just its name; the new workspace's detail is cached and the list refreshed |
@@ -62,9 +62,8 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `WorkspaceCredentialsPanel` | The workspace's `msk_` keys; the token is shown once, with a copy button |
 | `WorkspaceSettingsPanel` (`onDeleted?`, `onLeft?`) | Name and workspace ID (with copy), then a danger zone to leave or delete |
 | `WorkspaceAuditPanel` | The workspace's audit log, paged: each event a sentence ("Changed priya@… from Member to Developer"), with the raw record behind Show details |
-| `WorkspaceLicensesView`, `WorkspaceLicensesHeaderActions` | The workspace's Licenses page, and the buttons for the title bar (Billing & invoices ↗, Buy licenses, or Buy a license on the personal page); props in [Licenses](#licenses) |
-| `PersonalBillingView`, `PersonalBillingHeaderActions` | The signed-in person's own Billing page, and its title-bar buttons |
-| `LicenseCard` (`card`, `view`, `scope`, `billing`, `navigateOut`, `locale`, …) | One product's card: status badge, facts (Licenses, Renews or Ends, Cost), the notices for a failed or unfinished payment, who holds its licenses, and a "…" menu for billing's other actions; `view` is `workspace`, `member` or `person` |
+| `WorkspaceLicensesView`, `WorkspaceLicensesHeaderActions` | The workspace's Licenses page, and the buttons for the title bar (Billing & invoices ↗, Buy licenses); props in [Licenses](#licenses) |
+| `LicenseCard` (`card`, `view`, `scope`, `billing`, `navigateOut`, `locale`, …) | One product's card: status badge, facts (Licenses, Renews or Ends, Cost), the notices for a failed or unfinished payment, who holds its licenses, and a "…" menu for billing's other actions; `view` is `workspace` or `member` |
 | `SeatStrip`, `SeatRoster`, `AvatarStack`, `PeoplePickerDialog`, `seatHolders` | A product's licenses: the folded strip, the roster (Unassign, available licenses, search past 8 people), and the people picker that assigns them; `seatHolders` names who holds them |
 | `CatalogGrid`, `CatalogDialog`, `BuyDialog`, `CatalogCard`, `canBuy` | Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy licenses" dialog, a workspace's licenses step, and one product's card |
 | `PurchaseBanner`, `TestModeBanner`, `LicensesSummary`, `LicensesUnavailable`, `PURCHASE_POLL_MS`, `PURCHASE_TIMEOUT_MS` | The banners and states around the cards, and the pace of the poll after checkout (2 seconds, for a minute) |
@@ -72,7 +71,7 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `ConfirmDialog` (`title`, `description`, `cancelLabel`, `confirmLabel`, `typeToConfirm?`, `onConfirm`, `onClose`), `useAsking`, `MembersLicenses` | A question in a modal for what can't be taken back (Unassign, Remove, Leave, Delete, Revoke): Cancel and a destructive button, a refusal shown inside with focus back on the button (a throw from `onConfirm` becomes the generic one), busy while the request is out, and `typeToConfirm` for a name to type back first; `useAsking` is how a list of rows opens one and where focus goes when it closes; and the source `WorkspaceMembersPanel` takes (see [Members' licenses](#members-licenses)) |
 | `ProductIcon`, `ProductChip`, `FeatureChips` | A product's look: its icon (a letter tile when it has none or it fails to load), icon and short name, and its feature chips (only with more than one feature) |
 | `Notice`, `Fact`, `Skeleton`, `StatusBadge`, `HostedPageButton`, `isHeldLicense` | The pieces the cards are made of: a status notice (`warn`, `info`, `neutral`), a label and value for a `<dl>`, a loading bar, a badge, a button that leaves the portal (its ↗ is an icon, so its name is the label alone), and the guard for a card Core also lists |
-| `joinLicenses`, `fitFor`, `seatCounts`, `holdsSeat`, `listedAction`, `catalogForOwner` | The page's logic, with no schemas at run time: Core's licenses joined to billing's entries and the catalog, in the page's order; what fits a product's available licenses; and the rules that gate what is offered |
+| `joinLicenses`, `fitFor`, `seatCounts`, `holdsSeat`, `listedAction` | The page's logic, with no schemas at run time: Core's licenses joined to billing's entries and the catalog, in the page's order; what fits a product's available licenses; and the rules that gate what is offered |
 | `licenseStrings`, `refusalMessage` | Every sentence these pages show, in one module (see [Strings](#strings)) |
 | `formatMoney`, `formatRecurrence`, `formatDay`, `formatDayShort`, `formatDate`, `priceLine`, `costFact`, `totalSummary`, `taxNote`, `renewalCadence`, `fitNote`, `holderNames`, `nameList`, `groupCardNumber` | Billing's typed values as text, in the portal's locale (see [Formatting](#formatting)) |
 | `InvitationAcceptView` (`token`, `onAccepted(workspaceId)`, `onDismiss?`, `viewerEmail?`, `onSwitchAccount?`, `onGone?`) | What an invitation link opens; for someone else's invitation it says so and offers Switch account instead of Accept |
@@ -232,13 +231,11 @@ function ConsoleShell({children}: {children: React.ReactNode}) {
 
 ## Licenses
 
-`WorkspaceLicensesView` is a workspace's Licenses page and `PersonalBillingView` is the
-signed-in person's own Billing page. Each is composed from the cards, rosters, dialogs and
-banners in the table above, and each draws the page's content only. The title and
-description belong to the host's frame (`licenseStrings.page` and `licenseStrings.personal`),
-and so do the page's buttons: "Billing & invoices ↗" and "Buy licenses" ("Buy a license" on the personal page) come as a second
-component, `WorkspaceLicensesHeaderActions` or `PersonalBillingHeaderActions`, for the
-frame's title bar.
+`WorkspaceLicensesView` is a workspace's Licenses page. It is composed from the cards,
+rosters, dialogs and banners in the table above, and draws the page's content only. The
+title belongs to the host's frame (`licenseStrings.page`), and so do the page's buttons:
+"Billing & invoices ↗" and "Buy licenses" come as a second component,
+`WorkspaceLicensesHeaderActions`, for the frame's title bar.
 
 ```tsx
 import {WorkspaceLicensesHeaderActions, WorkspaceLicensesView, createBillingApi} from "@mentra/workspace-ui"
@@ -257,10 +254,13 @@ const shared = {
 }
 
 <Frame headerAction={<WorkspaceLicensesHeaderActions {...shared} />}>
-  <WorkspaceLicensesView {...shared} onPurchaseDone={() => setQueryParam("purchase", null)} />
+  <WorkspaceLicensesView
+    {...shared}
+    onPurchaseDone={() => setQueryParam("purchase", null)}
+    buyProduct={searchParams.get("buy")}
+    onBuyHandled={() => setQueryParam("buy", null)}
+  />
 </Frame>
-
-// PersonalBillingView and PersonalBillingHeaderActions take the same without `api`, `workspaceId` and `offer`.
 ```
 
 ### What a host supplies
@@ -308,20 +308,27 @@ const shared = {
   page, after the view has read its own data again. A host re-reads what the view takes as
   given: the portal invalidates its `me`, so a page opened before billing was ready
   (`offer.catalog` false, with licenses to name) can recover.
-- **`offer`** (workspace page only). `catalog` is whether billing's catalog can be read at
+- **`offer`**. `catalog` is whether billing's catalog can be read at
   all, and `manage` whether this viewer is offered billing for this workspace. Neither is
   decided here; the host knows them from its own `/me`.
+- **`buyProduct` and `onBuyHandled`** (optional), for a link that asks to buy a product
+  (`?buy=`). Once the page's reads are in, the view acts once and calls `onBuyHandled()`, which
+  removes `?buy=` from the address: it opens the Buy dialog on the product when billing offers
+  it to the viewer; otherwise it shows a neutral note (the workspace already has it, it isn't
+  for sale, only Admins and Owners can buy, or licenses can't be bought here). Nothing goes
+  to checkout until the person presses "Continue to payment ↗".
 - **The frame's words**, from `licenseStrings`: `page.title` (the Licenses page has no subtitle
-  under it, for anyone), `personal.title` and `personal.description` (the personal Billing page
-  keeps its subtitle), and `nav.*` for the sidebar and account menu.
+  under it, for anyone) and `nav.licenses` for the sidebar.
 
 ### What the pages show
 
-- **The workspace page follows the viewer.**
+- **The page follows the viewer.**
   - An Admin or Owner who is offered billing (`offer.manage`) sees every product with who
     holds its licenses, dates, cost and billing's actions, the page total ("2 products ·
     $295 a month in total"), the test-mode banner, and buying: "Buy licenses", or the
-    catalog itself while there are no products.
+    catalog itself while there are no products. Buy opens the Buy dialog, which starts at the
+    workspace's member count (held to what billing allows); a workspace of one member has no
+    number to choose, and buys one license.
   - An Admin or Owner who is not offered billing sees every product with its licenses and
     who holds them, and can assign and unassign. Billing is read for names only: no money, no
     billing buttons, no buying, and no request for the status.
@@ -331,20 +338,20 @@ const shared = {
 - **Cards are keyed by license id and come in the page's order**: payment failed, payment
   incomplete, over-assigned, the product just bought (ringed in green, roster open), then by
   name. A billing entry Core has not received yet (a purchase still setting up) is a card
-  without a list of people; on the personal page every card is like that.
+  without a list of people.
 - **A refetch never replaces the cards.** A page that has loaded keeps what is on screen
   through a refetch, and through one that fails. Billing's status keeps its last answer only
   while the key changes in its `purchase` (so removing `?purchase=` does not blank the page);
-  another workspace, the account, another locale or another base path never carries anything
+  another workspace, another locale or another base path never carries anything
   over.
 - **What cannot be read is "unavailable".** When Core's detail or licenses, the status for
   someone offered billing, or the catalog the page needs fails, the page says "Licenses are
-  unavailable" (the personal page, "Billing is unavailable") with Retry, rather than
+  unavailable" with Retry, rather than
   drawing cards without names. A page asks for what its viewer needs and no more.
 - **The header actions draw nothing until what they need has been read,** and nothing where
   there is nothing to act on or while the page says "unavailable", so the host mounts them
   unconditionally. A viewer who is not offered billing makes them ask for nothing at all.
-  Each owns its "Buy licenses" ("Buy a license") dialog and its "Billing & invoices ↗" request, and a refusal
+  Each owns its "Buy licenses" dialog and its "Billing & invoices ↗" request, and a refusal
   of that request shows in words under the buttons.
 - **Every ↗ button goes through `useHostedAction`.** It marks the pressed
   button busy, words a refusal with one alert (`HostedFeedback`), and keeps the other
@@ -398,8 +405,7 @@ sentence of its own, so it is the one module a translation touches.
   names, descriptions, and the `fallback*` labels. It arrives localized.
 - **The words are the Microsoft 365 ones.** A license is one person's right to use a product.
   A workspace buys some number of licenses for a product (what it buys is a product, never "a
-  license"), and each license is assigned to one member. A price per license is "per user", and a
-  person's own price has no unit. "Seat" is not a word a person reads, in a sentence, an
+  license"), and each license is assigned to one member. A price per license is "per user". "Seat" is not a word a person reads, in a sentence, an
   `aria-label` or hidden text; code and the API keep their names (`seats`, `seatsUsed`,
   `add_seats`, `SeatStrip`, `MAX_SEAT_ASSIGNMENTS`). The strings test scans every sentence for the
   word, this package's `no-seat-words.test.tsx` reads every literal in the components and
@@ -472,8 +478,7 @@ tab order and Space.
   host owns `open`. Keys from a dialog nested inside it are left to that dialog.
 - **`Notice`** is `role="status"` in every tone, because nothing on these pages interrupts
   the person. A failed action's message is an `ErrorNotice`, the alert.
-- **Amber is for payments.** On the Licenses page, the Members list, and the personal
-  Billing page, amber marks a failed or incomplete payment and over-assignment, and
+- **Amber is for payments.** On the Licenses page and the Members list, amber marks a failed or incomplete payment and over-assignment, and
   nothing else (the spec's rule; test mode's hazard tape is the design's). So every failure and
   refusal there, billing's included, is an alert in the neutral notice style
   (`tone="neutral"`: the surface of a plain `Notice`, no new token). `AlertText`, `ErrorNotice`
@@ -499,8 +504,8 @@ holds the frame (`app-shell`, `workspace-switcher`, `brand`, `centered-layout`, 
 `use-dismiss`); the workspace portal wires it in
 `websites/portal/src/components/portal-shell.tsx`.
 
-`src/components/licenses/` holds the Licenses pages and their pieces (`licenses-view`,
-`personal-billing-view`, `license-card`, `seats`, `people-picker`, `catalog`,
+`src/components/licenses/` holds the Licenses page and its pieces (`licenses-view`,
+`license-card`, `seats`, `people-picker`, `catalog`,
 `assign-licenses`, `banners`, `hosted-action`, `parts`, `product`); `src/strings/licenses.ts`
 holds every sentence they show, and `src/lib/` the formatting (`billing-format`, `format`)
 and the join (`license-join`). Tests for the DOM use `src/test-dom.tsx` (happy-dom, with
