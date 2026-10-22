@@ -172,7 +172,8 @@ function SheetButtons({
       className={sideBySide ? "mt-6 flex-row gap-2.5" : "mt-6 gap-2.5"}
       onLayout={(event) => setRowWidth(event.nativeEvent.layout.width)}
       testID={sideBySide ? "alert.buttons.row" : "alert.buttons.stack"}>
-      {pair && (
+      {/* Invisible copies of the labels, measured once and then removed so only the buttons carry the text. */}
+      {pair && !measured && (
         <View
           className="absolute left-0 right-0 top-0 items-start opacity-0"
           pointerEvents="none"

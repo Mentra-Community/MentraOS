@@ -52,12 +52,11 @@ const buttonLabels = (screen: ReturnType<typeof render>, labels: string[]) =>
 function layOut(screen: ReturnType<typeof render>, rowWidth: number, labels: Record<string, number>) {
   const area = screen.queryByTestId("alert.buttons.row") ?? screen.getByTestId("alert.buttons.stack")
   fireEvent(area, "layout", {nativeEvent: {layout: {width: rowWidth}}})
-  for (const [label, width] of Object.entries(labels)) {
-    const measure = screen.getByTestId("alert.buttons.measure", {includeHiddenElements: true})
-    fireEvent(within(measure).getByText(label, {includeHiddenElements: true}), "layout", {
-      nativeEvent: {layout: {width}},
-    })
-  }
+  const measure = screen.getByTestId("alert.buttons.measure", {includeHiddenElements: true})
+  const copies = Object.entries(labels).map(
+    ([label, width]) => [within(measure).getByText(label, {includeHiddenElements: true}), width] as const,
+  )
+  for (const [copy, width] of copies) fireEvent(copy, "layout", {nativeEvent: {layout: {width}}})
 }
 
 const UPDATE = {title: "Update Notes?", buttons: [{text: "Not now", style: "cancel" as const}, {text: "Update"}]}
@@ -230,6 +229,7 @@ describe("alert sheet", () => {
       layOut(screen, 320, {"Not now": 60, "Update": 55})
     })
     expect(screen.getByTestId("alert.buttons.row")).toBeTruthy()
+    expect(screen.queryByTestId("alert.buttons.measure", {includeHiddenElements: true})).toBeNull()
   })
 
   it("stacks three or more buttons", async () => {
