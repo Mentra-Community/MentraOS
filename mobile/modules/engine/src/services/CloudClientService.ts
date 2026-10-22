@@ -14,13 +14,20 @@
  * this service.
  */
 import {CloudClient, setNativeHttp, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
-import {AuthExpiredError, DEFAULT_REFRESH_TOKEN_KEY, HttpError, decodeClaims} from "@mentra/cloud-client"
+import {
+  AuthExpiredError,
+  DEFAULT_REFRESH_TOKEN_KEY,
+  HttpError,
+  SessionChangedError,
+  decodeClaims,
+} from "@mentra/cloud-client"
 import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {FleetReportOutcome, SubjectTokenType} from "@mentra/cloud-client"
 import {Platform} from "react-native"
 import type {
   AudioPosition,
   AudioSubscription,
+  FleetDesiredState,
   FleetReport,
   TranscriptionData,
   TranslationData,
@@ -41,6 +48,7 @@ import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
 import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
 import {resolveCloudEndpoints} from "./cloudEndpointPolicy"
+import type {DesiredStateClient} from "./fleet/assignmentReconciler"
 import {sameCoreUrl} from "./fleet/coreUrl"
 
 const LOG_TAG = "cloudClient"
@@ -1046,10 +1054,61 @@ export const cloudClientService = {
           throw err
         }
       },
+
+      /**
+       * The desired state of `expected` and only of it. Refused with `SessionChangedError` unless the current client
+       * was built for the same Core (compared like `reportAs`) and holds that account's token; an answer that comes
+       * back after the client was rebuilt is dropped the same way. Never builds a client. Every other failure rejects
+       * as `cloud.core.fleet.desiredState` does, so no failure reads as an empty or `unmanaged` answer.
+       */
+      async desiredStateAs(
+        expected: {coreUrl: string; mentraUserId: string},
+        opts?: {signal?: AbortSignal},
+      ): Promise<FleetDesiredState> {
+        const c = client
+        if (!c?.core) throw new SessionChangedError("signed_out")
+        if (!clientCoreUrl || !sameCoreUrl(clientCoreUrl, expected.coreUrl)) throw new SessionChangedError("other_account")
+        const state = await c.core.fleet.desiredState({
+          expectedAccount: expected.mentraUserId,
+          ...(opts?.signal ? {signal: opts.signal} : {}),
+        })
+        if (c !== client) throw new SessionChangedError("other_account")
+        return state
+      },
+    },
+    /** The signed-in person's workspace calls. Each is made as one account (`SessionChangedError` after a switch). */
+    workspaces: {
+      mine(...args: Parameters<CloudCore["workspaces"]["mine"]>) {
+        return getCoreClient().workspaces.mine(...args)
+      },
+      pendingInvitations(...args: Parameters<CloudCore["workspaces"]["pendingInvitations"]>) {
+        return getCoreClient().workspaces.pendingInvitations(...args)
+      },
+      acceptInvitation(...args: Parameters<CloudCore["workspaces"]["acceptInvitation"]>) {
+        return getCoreClient().workspaces.acceptInvitation(...args)
+      },
+      declineInvitation(...args: Parameters<CloudCore["workspaces"]["declineInvitation"]>) {
+        return getCoreClient().workspaces.declineInvitation(...args)
+      },
+      leave(...args: Parameters<CloudCore["workspaces"]["leave"]>) {
+        return getCoreClient().workspaces.leave(...args)
+      },
     },
   },
 
   hasAudioSubscriptions(): boolean {
     return audioSubscriptions.length > 0
+  },
+}
+
+/**
+ * The assignment reconciler's desired-state client: the desired state of the account the client speaks for when the
+ * fetch starts, which is the session the reconciler just read. Rejects on every failure, and with no account.
+ */
+export const fleetDesiredStateClient: DesiredStateClient = {
+  async fetch() {
+    const session = currentCoreSession()
+    if (!session?.mentraUserId) throw new SessionChangedError("signed_out")
+    return cloudClientService.core.fleet.desiredStateAs({coreUrl: session.coreUrl, mentraUserId: session.mentraUserId})
   },
 }

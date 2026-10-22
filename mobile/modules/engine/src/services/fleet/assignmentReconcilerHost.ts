@@ -126,6 +126,15 @@ export function notifyFleetWorkspaceLeft(): void {
   reconciler?.trigger("leave")
 }
 
+/** Read desired state now (after a join), without waiting for an ack revision. Never throws. */
+export function triggerAssignmentReconcile(): void {
+  try {
+    reconciler?.trigger("refresh")
+  } catch (error) {
+    console.warn("Fleet assignment reconcile could not be triggered", error)
+  }
+}
+
 export function stopAssignmentReconciler(): void {
   for (const cleanup of cleanups.splice(0)) {
     try {

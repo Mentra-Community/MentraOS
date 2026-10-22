@@ -113,7 +113,15 @@ export interface AssignmentReconcilerDeps {
   random?: () => number
 }
 
-export type ReconcileTrigger = "startup" | "foreground" | "revision" | "stopped" | "reconnect" | "leave" | "retry"
+export type ReconcileTrigger =
+  | "startup"
+  | "foreground"
+  | "revision"
+  | "stopped"
+  | "reconnect"
+  | "leave"
+  | "retry"
+  | "refresh"
 
 export interface AssignmentReconciler {
   /** Ask for a reconcile. `revision` is the ack revision for `revision` triggers. */
