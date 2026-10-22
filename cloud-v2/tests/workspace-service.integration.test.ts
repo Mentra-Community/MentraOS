@@ -38,11 +38,8 @@ import {
   recordWorkspaceEvent,
   redactSecrets,
 } from "../packages/core/src/services/workspaces/audit.service"
-import {
-  ensureWorkspace,
-  holdsNothing,
-  replaceableWorkspaces,
-} from "../packages/core/src/services/workspaces/automatic-workspace.service"
+import {ensureWorkspace} from "../packages/core/src/services/workspaces/automatic-workspace.service"
+import {holdsNothing, replaceableWorkspaces} from "../packages/core/src/services/workspaces/workspace-holdings"
 import {validateCredentialToken} from "../packages/core/src/services/workspaces/credential.service"
 import {
   clearDeletionHold,
@@ -501,13 +498,14 @@ describe("the automatic workspace", () => {
       expect(before).toEqual({workspaces: 1, memberships: 1, events: 1})
     })
 
-    test("a person in a workspace, automatic or not, gets their oldest membership's, and nothing is made", async () => {
+    test("a person in a workspace, automatic or not, gets their oldest workspace, and nothing is made", async () => {
       const owner = await account(user("mu_owner"))
       const made = await createWorkspace(owner, {name: "Acme"})
       const member = await account(user("mu_member"))
       const theirs = await newWorkspace(user("mu_other"), "Theirs")
-      await addMember(made.workspaceId, "mu_member", "developer", {startedAt: new Date(Date.now() - 60_000)})
-      await addMember(theirs, "mu_member", "member")
+      // Their membership in the newer workspace is the older one, but the oldest workspace is the one created first.
+      await addMember(made.workspaceId, "mu_member", "developer", {startedAt: new Date()})
+      await addMember(theirs, "mu_member", "member", {startedAt: new Date(Date.now() - 60_000)})
       const before = await counts()
 
       expect(await ensureWorkspace(owner)).toMatchObject({
@@ -515,13 +513,62 @@ describe("the automatic workspace", () => {
         workspace: {workspaceId: made.workspaceId, name: "Acme"},
         membership: {role: "owner"},
       })
-      expect(await ensureWorkspace(member)).toMatchObject({
+      const answered = await ensureWorkspace(member)
+      expect(answered).toMatchObject({
         created: false,
         workspace: {workspaceId: made.workspaceId},
         membership: {role: "developer"},
       })
+      // The list gives the same first workspace.
+      expect((await listWorkspacesForUser("mu_member"))[0]!.workspaceId).toBe(answered.workspace.workspaceId)
       expect(await counts()).toEqual(before)
       expect(await WorkspaceModel.countDocuments({automatic: true})).toBe(0)
+    })
+
+    test("the users-row write alone makes a second ensure wait for the first, with the feed counter stubbed out", async () => {
+      const dana = await account(user("mu_dana"), "Dana Reyes")
+      // Every workspace event writes the one feed counter, which would conflict two ensures by itself. Stubbed,
+      // it conflicts with nothing, so only the users-row write is left to serialize them.
+      const counter = spyOn(WorkspaceAuditCounterModel, "findOneAndUpdate").mockImplementation(
+        (() => ({lean: async () => ({seq: Math.floor(Date.now() + Math.random() * 1e6)})})) as never,
+      )
+      const realUpdate = UserModel.updateOne.bind(UserModel)
+      let firstHasWritten!: () => void
+      const written = new Promise<void>(resolve => (firstHasWritten = resolve))
+      let releaseFirst!: () => void
+      const released = new Promise<void>(resolve => (releaseFirst = resolve))
+      // Hold the first ensure inside its transaction right after its users-row write.
+      const gate = spyOn(UserModel, "updateOne").mockImplementationOnce(((...args: Parameters<typeof realUpdate>) =>
+        (async () => {
+          const result = await (realUpdate as any)(...args)
+          firstHasWritten()
+          await released
+          return result
+        })()) as never)
+      try {
+        const first = ensureWorkspace(dana)
+        await written
+        let secondDone = false
+        const second = ensureWorkspace(dana).then(answer => {
+          secondDone = true
+          return answer
+        })
+        // Without the users-row write the second would create its own workspace and commit within a few ms.
+        await new Promise(resolve => setTimeout(resolve, 400))
+        expect(secondDone).toBe(false)
+        expect(await WorkspaceModel.countDocuments({})).toBe(0)
+
+        releaseFirst()
+        const [a, b] = await Promise.all([first, second])
+        expect([a.created, b.created]).toEqual([true, false])
+        expect(b.workspace.workspaceId).toBe(a.workspace.workspaceId)
+        expect(await WorkspaceModel.countDocuments({})).toBe(1)
+        expect(await WorkspaceMembershipModel.countDocuments({mentraUserId: "mu_dana", status: "active"})).toBe(1)
+      } finally {
+        releaseFirst()
+        gate.mockRestore()
+        counter.mockRestore()
+      }
     })
 
     test("two ensures at once leave exactly one workspace and one membership, and both answers name it", async () => {
@@ -717,6 +764,31 @@ describe("the automatic workspace", () => {
         for (const read of reads) read.mockClear()
         const listed = await listWorkspacesForUser("mu_me")
         expect(listed.map(item => item.replaceable)).toEqual([false, false, true, true])
+        expect(reads.map(read => read.mock.calls.length)).toEqual([1, 1, 1, 1])
+      } finally {
+        for (const read of reads) read.mockRestore()
+      }
+    })
+  })
+
+  describe("listing without replaceable", () => {
+    test("{replaceable: false} asks no holding question and leaves replaceable off the items", async () => {
+      const me = user("mu_me")
+      await ensureWorkspace(await account(me))
+      const reads = [
+        spyOn(WorkspaceMembershipModel, "aggregate"),
+        spyOn(WorkspaceInvitationModel, "distinct"),
+        spyOn(AccessCredentialModel, "distinct"),
+        spyOn(LicenseModel, "distinct"),
+      ]
+      try {
+        const plain = await listWorkspacesForUser("mu_me", {replaceable: false})
+        expect(plain).toHaveLength(1)
+        expect(Object.keys(plain[0]!)).not.toContain("replaceable")
+        expect(reads.map(read => read.mock.calls.length)).toEqual([0, 0, 0, 0])
+
+        const full = await listWorkspacesForUser("mu_me")
+        expect(full[0]!.replaceable).toBe(true)
         expect(reads.map(read => read.mock.calls.length)).toEqual([1, 1, 1, 1])
       } finally {
         for (const read of reads) read.mockRestore()

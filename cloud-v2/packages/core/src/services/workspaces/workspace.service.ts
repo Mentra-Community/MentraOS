@@ -38,7 +38,6 @@ import {
   roleAtLeast,
   WORKSPACE_ROLES,
   type PrincipalResponse,
-  type WorkspaceDeletionHold,
   type WorkspaceRole,
   type WorkspaceSummary,
 } from "@mentra/workspace-contract"
@@ -57,7 +56,8 @@ import {legacyIdentityClaims} from "../../models/legacy-browser-identity.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {endLicensesForOwner, releaseSeatsForMembership, seatReleaseReasonFor} from "../licenses/license.service"
 import {isDeletedAccountId} from "../user.service"
-import {replaceableWorkspaces, yieldAutomaticWorkspace} from "./automatic-workspace.service"
+import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
+import {deletionHoldsOf, replaceableWorkspaces} from "./workspace-holdings"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
 import {workspaceCreationPolicy} from "./organization"
 import {fail, WorkspaceError, type WorkspaceErrorCode} from "./workspace-error"
@@ -97,9 +97,13 @@ export async function getWorkspace(workspaceId: string): Promise<WorkspaceSummar
  * The workspaces a person belongs to, oldest first. Deleted workspaces are left out. Each says whether it
  * is `replaceable`: the person's own automatic workspace, which they own, while it holds nothing
  * (`replaceableWorkspaces`). That is asked only about such workspaces, all of them at once, so a person
- * with none asks nothing more.
+ * with none asks nothing more. A caller that does not use it passes `{replaceable: false}`: nothing is
+ * asked, and the items carry no `replaceable`.
  */
-export async function listWorkspacesForUser(mentraUserId: string): Promise<PrincipalResponse["workspaces"]> {
+export async function listWorkspacesForUser(
+  mentraUserId: string,
+  opts: {replaceable?: boolean} = {},
+): Promise<PrincipalResponse["workspaces"]> {
   // A missing id must not become a `null` filter.
   if (!isId(mentraUserId)) return []
   const memberships = await WorkspaceMembershipModel.find({mentraUserId, status: "active"}).lean()
@@ -111,7 +115,9 @@ export async function listWorkspacesForUser(mentraUserId: string): Promise<Princ
   const ownAutomatic = workspaces
     .filter(workspace => workspace.automatic === true && byWorkspace.get(workspace.workspaceId)!.role === "owner")
     .map(workspace => workspace.workspaceId)
-  const replaceable = ownAutomatic.length > 0 ? await replaceableWorkspaces(mentraUserId, ownAutomatic) : new Set()
+  const askReplaceable = opts.replaceable !== false
+  const replaceable =
+    askReplaceable && ownAutomatic.length > 0 ? await replaceableWorkspaces(mentraUserId, ownAutomatic) : new Set()
   return workspaces.map(workspace => {
     const membership = byWorkspace.get(workspace.workspaceId)!
     const role = membership.role as WorkspaceRole
@@ -119,7 +125,7 @@ export async function listWorkspacesForUser(mentraUserId: string): Promise<Princ
       ...toSummary(workspace),
       membership: {membershipId: membership.membershipId, role},
       capabilities: [...capabilitiesForRole(role)],
-      replaceable: replaceable.has(workspace.workspaceId),
+      ...(askReplaceable ? {replaceable: replaceable.has(workspace.workspaceId)} : {}),
     }
   })
 }
@@ -220,6 +226,7 @@ export async function createWorkspace(actor: Actor & {kind: "user"}, input: {nam
   // An actor with no usable id would own a workspace nobody can ever be matched to.
   if (actor?.kind !== "user" || !isId(actor.mentraUserId)) fail("forbidden", "a signed-in user is required")
   // An unverified email is refused before a bad name, and a bad name before the creation policy.
+  // `assertMayCreateWorkspace` checks the email again; this one only keeps that order.
   if (actor.emailVerified !== true) {
     fail("email_unverified", "verify your email address before creating a workspace")
   }
@@ -578,22 +585,7 @@ export async function recoverOwnership(
 // The exported ones (`isId`, `isWorkspaceRole`, `validateName`, `loadActiveWorkspace`, `actingRole`,
 // `requireMembershipManager`, `bumpRevision`, `touchWorkspace`, `endMembership`, `auditActor`) are shared
 // with `invitation.service`, `credential.service`, `account-deletion.service` and `license.service`, which
-// follow the same mutation shape. `deletionHoldsOf` is shared with `deletion-hold.service`.
-
-/**
- * The workspace's deletion holds in the contract's shape, sorted by service (`count` only where the
- * service gave one). A workspace written before holds existed has none.
- */
-export function deletionHoldsOf(row: Pick<WorkspaceRow, "deletionHolds">): WorkspaceDeletionHold[] {
-  const stored = (row.deletionHolds ?? []) as Array<{service: string; reason: string; count?: number | null}>
-  return stored
-    .map(hold => ({
-      service: hold.service,
-      reason: hold.reason,
-      ...(typeof hold.count === "number" ? {count: hold.count} : {}),
-    }))
-    .sort((a, b) => (a.service < b.service ? -1 : a.service > b.service ? 1 : 0))
-}
+// follow the same mutation shape.
 
 function toSummary(
   row: Pick<WorkspaceRow, "workspaceId" | "name" | "status" | "authorizationRevision">,

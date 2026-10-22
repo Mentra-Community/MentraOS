@@ -42,4 +42,28 @@ describe("automaticWorkspaceName", () => {
     expect(automaticWorkspaceName({name: null, email: "._-@example.com"})).toBe("My Workspace")
     expect(automaticWorkspaceName({name: null, email: "not-an-address"})).toBe("My Workspace")
   })
+
+  test("drops invisible format characters, so a name made only of them falls back to the email", () => {
+    expect(automaticWorkspaceName({name: "\u200b\u200b", email: "dana@x"})).toBe("Dana's Workspace")
+    expect(automaticWorkspaceName({name: "\u2060\ufeff \u200e", email: null})).toBe("My Workspace")
+    expect(automaticWorkspaceName({name: "\u200eDa\u200bna\u202e Reyes", email: null})).toBe("Dana Reyes's Workspace")
+    // The joiners stay inside a name, where they hold emoji sequences and Persian words together, and go at its ends.
+    expect(automaticWorkspaceName({name: "\u200d\u200c", email: "dana@x"})).toBe("Dana's Workspace")
+    expect(automaticWorkspaceName({name: "\u200dمی\u200cخواهم\u200c", email: null})).toBe("می\u200cخواهم's Workspace")
+    expect(automaticWorkspaceName({name: "👩\u200d👩\u200d👧", email: null})).toBe("👩\u200d👩\u200d👧's Workspace")
+  })
+
+  test("never cuts a grapheme cluster: a joined emoji, a flag or a letter with its accent", () => {
+    const room = 68
+    const family = "👩\u200d👩\u200d👧"
+    const flag = "🇫🇷"
+    const accented = "e\u0301"
+    for (const cluster of [family, flag, accented]) {
+      // A cluster that fits is kept whole; one that straddles the limit goes entirely.
+      const fits = automaticWorkspaceName({name: `${"a".repeat(room - cluster.length)}${cluster}`, email: null})
+      expect(fits).toBe(`${"a".repeat(room - cluster.length)}${cluster}'s Workspace`)
+      const straddles = automaticWorkspaceName({name: `${"a".repeat(room - cluster.length + 1)}${cluster}`, email: null})
+      expect(straddles).toBe(`${"a".repeat(room - cluster.length + 1)}'s Workspace`)
+    }
+  })
 })

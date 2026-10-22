@@ -1814,6 +1814,47 @@ describe("an empty automatic workspace gives way to an invitation", () => {
 
     expect((await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status).toBe("active")
   })
+
+  test("an ensure racing the accept waits for it and answers the joined workspace, not the one being deleted", async () => {
+    const {actor, automaticId} = await newcomerWithAutomatic()
+    const ws = await newWorkspace()
+    const created = await invite(ws, NEWCOMER_EMAIL, "member")
+    const realUpdate = UserModel.updateOne.bind(UserModel)
+    let acceptHasWritten!: () => void
+    const written = new Promise<void>(resolve => (acceptHasWritten = resolve))
+    let release!: () => void
+    const released = new Promise<void>(resolve => (release = resolve))
+    // Hold the accept inside its transaction right after the users-row write of its yield.
+    const gate = spyOn(UserModel, "updateOne").mockImplementationOnce(((...args: Parameters<typeof realUpdate>) =>
+      (async () => {
+        const result = await (realUpdate as any)(...args)
+        acceptHasWritten()
+        await released
+        return result
+      })()) as never)
+    try {
+      const accepting = acceptInvitation(actor, created.token)
+      await written
+      let ensured = false
+      const ensuring = ensureWorkspace(actor).then(answer => {
+        ensured = true
+        return answer
+      })
+      await new Promise(resolve => setTimeout(resolve, 400))
+      // Answering from before the accept would name the workspace that is about to be deleted.
+      expect(ensured).toBe(false)
+
+      release()
+      await accepting
+      const answer = await ensuring
+      expect(answer).toMatchObject({created: false, workspace: {workspaceId: ws}})
+      expect((await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status).toBe("deleted")
+      expect(await WorkspaceModel.countDocuments({automatic: true, status: "active"})).toBe(0)
+    } finally {
+      release()
+      gate.mockRestore()
+    }
+  })
 })
 
 describe("through the workspace API, signed in with the fake identity provider", () => {

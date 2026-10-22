@@ -83,8 +83,9 @@ export interface PrincipalResponse {
   /**
    * The person's workspaces, oldest first. `replaceable` is true for their own automatic workspace (the one
    * Core made for them, which they own) while it holds nothing: they are its only member, and it has no
-   * pending invitation, key, license that has not ended, or deletion hold. Such a workspace gives way when
-   * they join another. An older Core leaves it out.
+   * pending invitation, key, license that has not ended, or deletion hold. Core deletes such a workspace in
+   * the transaction that gives them a membership in another one (accepting an invitation, claiming an
+   * imported membership, recovering ownership). An older Core leaves it out.
    */
   workspaces: Array<
     WorkspaceSummary & {membership: MembershipSummary; capabilities: WorkspaceCapability[]; replaceable?: boolean}

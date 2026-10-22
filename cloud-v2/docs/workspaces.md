@@ -106,8 +106,8 @@ licenses are assigned from the Licenses page.
   Owner. A Private Cloud may limit creation to Organization Admins with
   `CLOUD_CORE_WORKSPACE_CREATION=organization-admins`.
 - **The automatic workspace.** `POST /ensure` (no body) answers the caller's
-  workspace as a workspace detail: `200` with the workspace of their oldest
-  active membership, whatever made it, or, when they have none, `201` with a
+  workspace as a workspace detail: `200` with their oldest workspace (the first
+  `GET /` gives: the one created first), whatever made it, or, when they have none, `201` with a
   new one made for them, with them as its Owner. The same rules as creating
   apply to that one (`403 email_unverified`, and `403 forbidden` for a
   non-admin under `organization-admins`); someone with a workspace gets it
@@ -118,11 +118,13 @@ licenses are assigned from the Licenses page.
   verified email's local part, any `+tag` dropped, split on `.`, `_` and `-`,
   each word capitalized ("john.smith+x@…" is "John Smith's Workspace"); without
   either it is "My Workspace". The person's part is cut so the whole is at most
-  80 characters. Each ensure writes the person's `users` row
+  80 characters; invisible format characters (zero-width spaces, bidi marks)
+  are dropped, and the cut never splits a character or an emoji sequence. Each ensure writes the person's `users` row
   (`portalWorkspaceAt`) in its transaction before it looks for their
   memberships, so two at once (two tabs, or a retry racing its first try)
   conflict there, the one retried finds the other's workspace, and the person
-  ends with one. Core does not look at invitations here: the portal decides
+  ends with one. A join (below) writes that row too, so an ensure never answers
+  a workspace a join is deleting. Core does not look at invitations here: the portal decides
   when to ask.
 - An automatic workspace **holds nothing** while its Owner is its only member
   (an imported membership waiting for sign-in counts as another) and it has no

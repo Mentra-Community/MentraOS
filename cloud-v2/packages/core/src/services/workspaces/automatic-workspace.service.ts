@@ -7,7 +7,8 @@
  *  1. refuses a deleted account (`account_deleted`);
  *  2. writes the person's `users` row (`portalWorkspaceAt`), so two ensures at once, two tabs or a retry
  *     racing its own first try, conflict on that row and the one retried finds what the other made;
- *  3. answers the workspace of the person's oldest active membership, when they have one, whatever made it;
+ *  3. answers the person's oldest workspace (the first `listWorkspacesForUser` gives: the one created
+ *     first), when they have one, whatever made it;
  *  4. otherwise applies `createWorkspace`'s rules (a verified email, `CLOUD_CORE_WORKSPACE_CREATION`) and
  *     inserts a workspace marked `automatic: true`, with the person as its Owner, recording
  *     `workspace.created` with `after.automatic: true`.
@@ -16,29 +17,24 @@
  * so nothing here assumes a Mentra account. Core does not look at invitations: the portal decides whether
  * to ensure at all, and an automatic workspace made where an invitation would have done gives way.
  *
- * Giving way is for a workspace that **holds nothing** (`holdsNothing`, `replaceableWorkspaces`): it is
- * active and automatic, the person's Owner membership is its only active membership (an imported one
- * waiting for its person counts as another), and it has no pending invitation that has not expired, no
- * unrevoked key, no license that has not ended and no deletion hold. The workspace list marks such a
- * workspace `replaceable`. Such a workspace gives way (`yieldAutomaticWorkspace`) in the transaction that
- * gives its person a membership in another: it is deleted, recording `joined_another_workspace`.
+ * Giving way is for a workspace that **holds nothing** (`workspace-holdings`). Such a workspace gives way
+ * (`yieldAutomaticWorkspace`) in the transaction that gives its person a membership in another: it is
+ * deleted, recording `joined_another_workspace`. That transaction writes the person's `users` row as an
+ * ensure does, so an ensure racing a join cannot answer the workspace the join deletes.
  */
 
 import type {ClientSession} from "mongoose"
 import {withTransaction} from "../../connections/mongo.connection"
-import {AccessCredentialModel} from "../../models/access-credential.model"
-import {LicenseModel} from "../../models/license.model"
 import {UserModel} from "../../models/user.model"
-import {WorkspaceInvitationModel} from "../../models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import {WorkspaceModel} from "../../models/workspace.model"
 import type {MembershipSummary, WorkspaceRole, WorkspaceSummary} from "@mentra/workspace-contract"
 import {memberNames} from "./member-names.service"
 import {fail} from "./workspace-error"
+import {workspacesHoldingNothing} from "./workspace-holdings"
 import {
   assertMayCreateWorkspace,
   deleteWorkspaceIn,
-  deletionHoldsOf,
   insertWorkspace,
   isId,
   refuseDeletedAccount,
@@ -97,18 +93,6 @@ export async function ensureWorkspace(actor: Actor & {kind: "user"}): Promise<En
 }
 
 /**
- * Whether the person's automatic workspace `workspaceId` holds nothing (see the file header), read in
- * `session`: what lets it give way inside the transaction that gives the person a membership elsewhere.
- */
-export async function holdsNothing(
-  session: ClientSession,
-  workspaceId: string,
-  mentraUserId: string,
-): Promise<boolean> {
-  return (await workspacesHoldingNothing(session, mentraUserId, [workspaceId])).has(workspaceId)
-}
-
-/**
  * Delete the person's automatic workspaces that hold nothing (`holdsNothing`), apart from `opts.except`, in
  * `session`: the transaction that gives the person a membership in another workspace (accepting an
  * invitation, claiming an imported membership, recovering ownership). The deletion is
@@ -125,6 +109,9 @@ export async function yieldAutomaticWorkspace(
   opts: {except?: string | null} = {},
 ): Promise<string[]> {
   if (!isId(mentraUserId)) return []
+  // A join and an ensure for the same person conflict here, so an ensure never answers a workspace this
+  // join is deleting. A person with no `users` row cannot be ensured, so there is nothing to serialize.
+  await serializeEnsures(session, mentraUserId, {required: false})
   const owned = await WorkspaceMembershipModel.distinct("workspaceId", {
     mentraUserId,
     status: "active",
@@ -143,17 +130,6 @@ export async function yieldAutomaticWorkspace(
   return yielded
 }
 
-/**
- * Which of `workspaceIds` are the person's automatic workspaces that hold nothing: one read per check for
- * all of them.
- */
-export async function replaceableWorkspaces(
-  mentraUserId: string,
-  workspaceIds: readonly string[],
-): Promise<Set<string>> {
-  return workspacesHoldingNothing(null, mentraUserId, workspaceIds)
-}
-
 // --- Helpers ---------------------------------------------------------------
 
 /**
@@ -161,37 +137,43 @@ export async function replaceableWorkspaces(
  * `portalWorkspaceAt` becomes now, or a millisecond past its value when the clock has not passed it: a write
  * that changed nothing would conflict with nothing.
  */
-async function serializeEnsures(session: ClientSession, mentraUserId: string): Promise<void> {
+async function serializeEnsures(
+  session: ClientSession,
+  mentraUserId: string,
+  opts: {required: boolean} = {required: true},
+): Promise<void> {
   const now = new Date()
   const written = await UserModel.updateOne(
     {mentraUserId},
     [{$set: {portalWorkspaceAt: {$max: [now, {$add: [{$ifNull: ["$portalWorkspaceAt", new Date(0)]}, 1]}]}}}],
     {session},
   )
-  if (written.matchedCount !== 1) fail("user_not_found", "no such account")
+  if (written.matchedCount !== 1 && opts.required) fail("user_not_found", "no such account")
 }
 
-/** The workspace of the person's oldest active membership, with that membership, or null. */
+/**
+ * The person's oldest workspace, with their membership in it, or null: the first of their active
+ * workspaces by id (creation order), the order `listWorkspacesForUser` uses.
+ */
 async function oldestWorkspaceOf(
   session: ClientSession,
   mentraUserId: string,
 ): Promise<{workspace: WorkspaceSummary; membership: MembershipSummary} | null> {
   const memberships = await WorkspaceMembershipModel.find({mentraUserId, status: "active"})
-    .sort({startedAt: 1, _id: 1})
     .select({_id: 0, workspaceId: 1, membershipId: 1, role: 1})
     .session(session)
     .lean<Array<{workspaceId: string; membershipId: string; role: WorkspaceRole}>>()
   if (memberships.length === 0) return null
-  const workspaces = await WorkspaceModel.find({
+  const oldest = await WorkspaceModel.findOne({
     workspaceId: {$in: memberships.map(row => row.workspaceId)},
     status: "active",
   })
+    .sort({_id: 1})
     .session(session)
     .lean()
-  const active = new Map(workspaces.map(row => [row.workspaceId, row]))
-  const oldest = memberships.find(row => active.has(row.workspaceId))
   if (!oldest) return null
-  const row = active.get(oldest.workspaceId)!
+  const held = memberships.find(row => row.workspaceId === oldest.workspaceId)!
+  const row = oldest
   return {
     workspace: {
       workspaceId: row.workspaceId,
@@ -199,86 +181,23 @@ async function oldestWorkspaceOf(
       status: "active",
       authorizationRevision: row.authorizationRevision ?? 0,
     },
-    membership: {membershipId: oldest.membershipId, role: oldest.role},
+    membership: {membershipId: held.membershipId, role: held.role},
   }
 }
 
 /**
- * Which of `workspaceIds` hold nothing for `mentraUserId`. Each check is one read for all of them, and a
- * check runs only on the workspaces every earlier one left.
+ * Trimmed, with every run of whitespace or control characters one space; "" for anything but a string.
+ * Invisible format characters (category Cf: zero-width spaces, bidi marks, the word joiner, the byte order
+ * mark) are dropped, so a name made only of them is empty. The two joiners, U+200C and U+200D, are kept
+ * inside a name, where they hold emoji sequences and Persian and Indic words together, and trimmed at its
+ * ends like whitespace.
  */
-async function workspacesHoldingNothing(
-  session: ClientSession | null,
-  mentraUserId: string,
-  workspaceIds: readonly string[],
-): Promise<Set<string>> {
-  // A missing id must not become a `null` filter.
-  if (!isId(mentraUserId)) return new Set()
-  let left = [...new Set(workspaceIds.filter(isId))]
-  if (left.length === 0) return new Set()
-
-  // Active, automatic, and no deletion hold.
-  const workspaces = await WorkspaceModel.find({workspaceId: {$in: left}, status: "active", automatic: true})
-    .select({_id: 0, workspaceId: 1, deletionHolds: 1})
-    .session(session)
-    .lean()
-  left = workspaces.filter(row => deletionHoldsOf(row).length === 0).map(row => row.workspaceId)
-  if (left.length === 0) return new Set()
-
-  // The person's Owner membership is the only active one.
-  const members = await WorkspaceMembershipModel.aggregate<{_id: string; active: number; ownOwner: number}>([
-    {$match: {workspaceId: {$in: left}, status: "active"}},
-    {
-      $group: {
-        _id: "$workspaceId",
-        active: {$sum: 1},
-        ownOwner: {
-          $sum: {$cond: [{$and: [{$eq: ["$mentraUserId", mentraUserId]}, {$eq: ["$role", "owner"]}]}, 1, 0]},
-        },
-      },
-    },
-  ]).session(session)
-  const alone = new Set(members.filter(row => row.active === 1 && row.ownOwner === 1).map(row => row._id))
-  left = left.filter(workspaceId => alone.has(workspaceId))
-  if (left.length === 0) return new Set()
-
-  // No pending invitation anyone can still accept.
-  const invited = await WorkspaceInvitationModel.distinct("workspaceId", {
-    workspaceId: {$in: left},
-    status: "pending",
-    expiresAt: {$gt: new Date()},
-  }).session(session)
-  left = without(left, invited)
-  if (left.length === 0) return new Set()
-
-  // No unrevoked key.
-  const keyed = await AccessCredentialModel.distinct("workspaceId", {
-    workspaceId: {$in: left},
-    revokedAt: null,
-  }).session(session)
-  left = without(left, keyed)
-  if (left.length === 0) return new Set()
-
-  // No license that has not ended.
-  const licensed = await LicenseModel.distinct("owner.workspaceId", {
-    "owner.type": "workspace",
-    "owner.workspaceId": {$in: left},
-    endedAt: null,
-  }).session(session)
-  return new Set(without(left, licensed))
-}
-
-function without(ids: string[], taken: unknown[]): string[] {
-  const out = new Set(taken.filter((id): id is string => typeof id === "string"))
-  return ids.filter(id => !out.has(id))
-}
-
-/** Trimmed, with every run of whitespace or control characters one space; "" for anything but a string. */
 function clean(value: unknown): string {
   if (typeof value !== "string") return ""
   return value
+    .replace(/(?![\u200c\u200d])\p{Cf}/gu, "")
     .replace(/[\s\u0000-\u001f\u007f-\u009f]+/g, " ")
-    .trim()
+    .replace(/^[\s\u200c\u200d]+|[\s\u200c\u200d]+$/g, "")
 }
 
 function nameFromEmail(email: unknown): string {
@@ -295,13 +214,15 @@ function nameFromEmail(email: unknown): string {
   )
 }
 
-/** `value` cut to at most `max` UTF-16 units, never inside a character, and with no trailing space. */
+const GRAPHEMES = new Intl.Segmenter("en", {granularity: "grapheme"})
+
+/** `value` cut to at most `max` UTF-16 units, never inside a character or a grapheme cluster, and with no trailing space. */
 function cut(value: string, max: number): string {
   if (value.length <= max) return value
   let out = ""
-  for (const char of value) {
-    if (out.length + char.length > max) break
-    out += char
+  for (const {segment} of GRAPHEMES.segment(value)) {
+    if (out.length + segment.length > max) break
+    out += segment
   }
   return out.trimEnd()
 }
