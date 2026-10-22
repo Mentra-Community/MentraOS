@@ -35,6 +35,8 @@ export interface FleetAckResult {
 export interface FleetAck {
   schemaVersion: typeof FLEET_SCHEMA_VERSION
   results: FleetAckResult[]
+  /** The account's desired-state revision at the time of the answer (Phase 11). Absent from an older Fleet. */
+  revision?: number
 }
 
 /**
@@ -217,5 +219,8 @@ function readAck(body: unknown): FleetAck | null {
     if (isWholeNumber(raw.retryAfterSeconds)) result.retryAfterSeconds = raw.retryAfterSeconds
     results.push(result)
   }
-  return {schemaVersion: FLEET_SCHEMA_VERSION, results}
+  const ack: FleetAck = {schemaVersion: FLEET_SCHEMA_VERSION, results}
+  // A newer Fleet's revision tells the phone to fetch desired state. Anything but a whole number of 1 or more is not one.
+  if (typeof body.revision === "number" && Number.isSafeInteger(body.revision) && body.revision >= 1) ack.revision = body.revision
+  return ack
 }
