@@ -51,8 +51,7 @@ const BOARD = {
   "fleet:updatePromptMessage": ["Notes will restart.", {name: "Notes"}],
   "fleet:updatePromptNotNow": ["Not now"],
   "fleet:updatePromptUpdate": ["Update"],
-  "fleet:updateFailedTitle": ["Couldn't update Notes", {name: "Notes"}],
-  "fleet:updateFailedMessage": ["You're still on version 1.4.0.", {version: "1.4.0"}],
+  "fleet:updateFailed": ["Couldn't update Notes. You're still on version 1.4.0.", {name: "Notes", version: "1.4.0"}],
   "fleet:accessRevoked": ["You no longer have access to Notes.", {name: "Notes"}],
 } as const
 
@@ -63,11 +62,5 @@ describe("Fleet copy", () => {
 
   it.each(Object.entries(BOARD))("%s is verbatim", (key, [expected, options]) => {
     expect(translate(key as never, options as never)).toBe(expected)
-  })
-
-  it("words the update-failed notice as one sentence pair, 'Couldn't update <name>. You're still on version <version>.'", () => {
-    const title = translate("fleet:updateFailedTitle", {name: "Notes"})
-    const message = translate("fleet:updateFailedMessage", {version: "1.4.0"})
-    expect(`${title}. ${message}`).toBe("Couldn't update Notes. You're still on version 1.4.0.")
   })
 })

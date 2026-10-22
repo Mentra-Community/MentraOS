@@ -1,6 +1,9 @@
 import {act, fireEvent, render, within} from "@testing-library/react-native"
 import i18n from "i18next"
 import {Alert} from "react-native"
+import Toast from "react-native-toast-message"
+
+import {engine} from "@mentra/engine"
 
 import {ModalProvider} from "@/contexts/ModalContext"
 import en from "@/i18n/en"
@@ -20,6 +23,14 @@ jest.mock("react-native-gesture-handler", () => ({
 jest.mock("react-native-safe-area-context", () => require("react-native-safe-area-context/jest/mock").default)
 jest.mock("@/contexts/ThemeContext", () => ({
   useAppTheme: () => ({theme: {colors: {secondary_foreground: "#000", border: "#ddd"}, isDark: false}}),
+}))
+jest.mock("react-native-toast-message", () => ({__esModule: true, default: {show: jest.fn()}}))
+jest.mock("@/components/home/AppIcon", () => ({
+  __esModule: true,
+  default: ({app}: {app: {packageName: string}}) => {
+    const {View} = require("react-native")
+    return <View testID={`appIcon.${app.packageName}`} />
+  },
 }))
 jest.mock("@/components/ignite", () => {
   const {Pressable, Text} = require("react-native")
@@ -144,13 +155,30 @@ describe("the running update prompt on the real alert sheet", () => {
     expect(prompt.answer).toHaveBeenCalledWith("not_now")
   })
 
-  it("shows the failure copy with the version the user keeps", async () => {
+  it("shows the miniapp's icon above the title", async () => {
+    jest.mocked(engine.miniapps.list).mockReturnValueOnce([{packageName: "com.acme.notes", name: "Notes"} as never])
+    screen = render(<ModalProvider>{null}</ModalProvider>)
+    const prompt = pending()
+    act(() => {
+      void presentRunningUpdatePrompt(prompt)
+    })
+    expect(await screen.findByText("Update Notes?")).toBeTruthy()
+    expect(screen.getByTestId("appIcon.com.acme.notes")).toBeTruthy()
+    await act(async () => {
+      fireEvent.press(screen!.getByText("Not now"))
+    })
+  })
+
+  it("shows the failure as a toast with the version the user keeps, not as a sheet", async () => {
     screen = render(<ModalProvider>{null}</ModalProvider>)
     act(() => {
-      void presentRunningUpdateFailure({packageName: "com.acme.notes", displayName: "Notes", installedVersion: "1.0.0"})
+      presentRunningUpdateFailure({packageName: "com.acme.notes", displayName: "Notes", installedVersion: "1.0.0"})
     })
-    expect(await screen.findByText("Couldn't update Notes")).toBeTruthy()
-    expect(screen.getByText("You're still on version 1.0.0.")).toBeTruthy()
+    expect(Toast.show).toHaveBeenCalledWith({
+      type: "error",
+      text1: "Couldn't update Notes. You're still on version 1.0.0.",
+    })
+    expect(screen.queryByText(/Couldn't update/)).toBeNull()
     expect(systemAlert).not.toHaveBeenCalled()
   })
 })

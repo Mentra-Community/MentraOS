@@ -8,6 +8,12 @@ import {
   presentRunningUpdatePrompt,
 } from "./runningUpdatePromptBridge"
 
+const mockToast = jest.fn()
+jest.mock("react-native-toast-message", () => ({
+  __esModule: true,
+  default: {show: (...args: unknown[]) => mockToast(...args)},
+}))
+jest.mock("@/components/home/AppIcon", () => ({__esModule: true, default: () => null}))
 const mockShowAlert = jest.fn()
 const mockWaitForAlertHost = jest.fn()
 jest.mock("@/contexts/ModalContext", () => ({
@@ -37,7 +43,7 @@ describe("running update prompt bridge", () => {
       title: "Update Notes?",
       message: "Notes will restart.",
       buttons: [{text: "Not now", style: "cancel"}, {text: "Update"}],
-      options: {allowDismiss: true},
+      options: {icon: undefined, allowDismiss: true},
     })
     expect(prompt.answer).toHaveBeenCalledWith("update")
   })
@@ -88,14 +94,13 @@ describe("running update prompt bridge", () => {
     expect(prompt.answer).toHaveBeenCalledWith("not_now")
   })
 
-  it("shows the failure message with the version the user keeps", async () => {
-    mockShowAlert.mockResolvedValue(0)
-    await presentRunningUpdateFailure({packageName: "com.acme.notes", displayName: "Notes", installedVersion: "1.0.0"})
-    expect(mockShowAlert).toHaveBeenCalledWith({
-      title: "Couldn't update Notes",
-      message: "You're still on version 1.0.0.",
-      buttons: [{text: "OK"}],
+  it("shows the failure as a toast with the version the user keeps", () => {
+    presentRunningUpdateFailure({packageName: "com.acme.notes", displayName: "Notes", installedVersion: "1.0.0"})
+    expect(mockToast).toHaveBeenCalledWith({
+      type: "error",
+      text1: "Couldn't update Notes. You're still on version 1.0.0.",
     })
+    expect(mockShowAlert).not.toHaveBeenCalled()
   })
 
   it("subscribes to the engine's prompts and failures and unsubscribes both", () => {

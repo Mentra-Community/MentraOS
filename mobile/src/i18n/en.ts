@@ -1473,13 +1473,16 @@ const en = {
     updatePromptMessage: "{{name}} will restart.",
     updatePromptNotNow: "Not now",
     updatePromptUpdate: "Update",
-    updateFailedTitle: "Couldn't update {{name}}",
-    updateFailedMessage: "You're still on version {{version}}.",
-    // Invented: neither the board nor the plan words these.
+    // The toast after an accepted update fails (provisioning spec, "Running miniapps and update UI").
+    updateFailed: "Couldn't update {{name}}. You're still on version {{version}}.",
+    // Not worded by the spec or the board. The phone shows the roles with the words of Mentra Portal
+    // (`ROLE_LABELS` in `cloud-v2/packages/workspace-ui/src/roles.ts`), so a person sees one name for their role.
     roleDeveloper: "Developer",
     roleAdmin: "Admin",
     roleOwner: "Owner",
+    // Not worded by the spec or the board (Mentra Portal says "Invitation no longer valid"): an open decision.
     invitationExpired: "This invitation has expired.",
+    // Not worded by the spec or the board: an open decision.
     accessRevoked: "You no longer have access to {{name}}.",
   },
   appSettings: {

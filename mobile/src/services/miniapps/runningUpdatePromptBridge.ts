@@ -1,7 +1,18 @@
 import {engine, type PendingRunningUpdatePrompt, type RunningUpdateFailure} from "@mentra/engine"
+import {createElement, type ReactNode} from "react"
+import Toast from "react-native-toast-message"
 
+import AppIcon from "@/components/home/AppIcon"
 import {showAlert, waitForAlertHost, type AlertButton} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
+
+/** The miniapp's icon, as the board draws it above "Update <name>?". Without one the sheet shows no icon. */
+function miniappIcon(packageName: string): ReactNode {
+  const app = engine.miniapps.list().find((candidate) => candidate.packageName === packageName)
+  return app
+    ? createElement(AppIcon, {app, style: {width: 56, height: 56, borderRadius: 13}, disableLoader: true})
+    : undefined
+}
 
 type PromptChoice = "update" | "not_now"
 
@@ -27,7 +38,7 @@ export async function presentRunningUpdatePrompt(prompt: PendingRunningUpdatePro
       title: translate("fleet:updatePromptTitle", {name: prompt.displayName}),
       message: translate("fleet:updatePromptMessage", {name: prompt.displayName}),
       buttons: choices.map(({button}) => button),
-      options: {allowDismiss: true},
+      options: {icon: miniappIcon(prompt.packageName), allowDismiss: true},
     })
     // Anything but the Update button (Not now, a swipe, no answer) is Not now.
     answer = choices[index]?.role === "update" ? "update" : "not_now"
@@ -36,13 +47,11 @@ export async function presentRunningUpdatePrompt(prompt: PendingRunningUpdatePro
   }
 }
 
-/** An accepted update failed and the miniapp is back on its installed version. */
-export async function presentRunningUpdateFailure(failure: RunningUpdateFailure): Promise<void> {
-  await waitForAlertHost()
-  await showAlert({
-    title: translate("fleet:updateFailedTitle", {name: failure.displayName}),
-    message: translate("fleet:updateFailedMessage", {version: failure.installedVersion}),
-    buttons: [{text: translate("common:ok")}],
+/** An accepted update failed and the miniapp is back on its installed version: a toast, as the spec words it. */
+export function presentRunningUpdateFailure(failure: RunningUpdateFailure): void {
+  Toast.show({
+    type: "error",
+    text1: translate("fleet:updateFailed", {name: failure.displayName, version: failure.installedVersion}),
   })
 }
 
