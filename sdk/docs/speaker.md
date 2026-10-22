@@ -67,6 +67,11 @@ idle ─── speak()/play() ──► loading ──► playing ──► stop
 `error` is transient — it fires once with `errorCode` set, then the state
 settles to `stopped` so `isPlaying` reads `false` correctly.
 
+An open live PCM stream counts as `playing` as soon as `createStream()`
+resolves, including before its first write. The state remains `playing` until
+the stream closes, aborts, is stopped, or the host reports that specific stream
+has ended. A late state event for another playback cannot end the live stream.
+
 ---
 
 ## API
@@ -149,6 +154,25 @@ String(err)}` so callers can branch on `err.code` uniformly.
 
 ---
 
+### `createStream(options?)` — `Promise<SpeakerStreamWriter>`
+
+Open a live PCM output stream for audio that arrives in chunks. The writer
+accepts signed 16-bit little-endian PCM; `write()` sends chunks, `close()` drains
+queued audio, and `abort()` drops it immediately. Only one stream per miniapp
+can be active; opening another replaces the existing stream.
+
+```ts
+const stream = await session.speaker.createStream({sampleRate: 24_000})
+await stream.write(pcmBytes)
+await stream.close() // or await stream.abort()
+```
+
+The speaker reports `playing` as soon as the open request succeeds, even before
+the first chunk is written. `state` and `isPlaying` return to a non-playing
+state when the stream closes, aborts, is stopped, or fails on the host.
+
+---
+
 ### `stop()` — `void`
 
 Stop any audio this miniapp is currently playing. Fire-and-forget — sends
@@ -172,6 +196,8 @@ interface SpeakerStateEvent {
   errorMessage?: string
   /** When state === "stopped", how many ms the playback ran (best-effort). */
   durationMs?: number
+  /** Present on terminal events for a specific live PCM stream. */
+  streamId?: string
 }
 ```
 
@@ -179,7 +205,9 @@ interface SpeakerStateEvent {
 
 **Dedup behavior:** state transitions are idempotent — same-state events are
 dropped, except `error`, which is always delivered (it's transient and the
-phone immediately follows up with `stopped`).
+phone immediately follows up with `stopped`). While a live PCM stream is open,
+unscoped host state events are ignored; stream terminal events include
+`streamId` so an old or unrelated playback cannot clear the active stream.
 
 ---
 

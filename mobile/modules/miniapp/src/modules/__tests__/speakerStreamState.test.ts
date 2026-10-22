@@ -76,6 +76,8 @@ async function setupSession() {
 describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
   test("1. session.speaker.isPlaying transitions to true when createStream() resolves", async () => {
     const {transport, session} = await setupSession()
+    const observedStates: string[] = []
+    session.speaker.onStateChange((event) => observedStates.push(event.state))
 
     expect(session.speaker.isPlaying).toBe(false)
     expect(session.speaker.state).toBe("idle")
@@ -104,6 +106,7 @@ describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
     expect(stream.streamId).toBe("stream_test_1")
     expect(session.speaker.isPlaying).toBe(true)
     expect(session.speaker.state).toBe("playing")
+    expect(observedStates).toEqual(["playing"])
   })
 
   test("1b. isPlaying is immediately true upon createStream() resolve even if SPEAKER_STATE envelope is delayed", async () => {
@@ -289,6 +292,8 @@ describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
 
   test("4. session.speaker.stop() sends STOP_AUDIO, clears active streams, and transitions isPlaying to false", async () => {
     const {transport, session} = await setupSession()
+    const observedStates: string[] = []
+    session.speaker.onStateChange((event) => observedStates.push(event.state))
 
     const streamPromise = session.speaker.createStream()
     const openReq = await transport.waitForRequest(MiniappRequestType.SPEAKER_STREAM_OPEN)
@@ -308,12 +313,15 @@ describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
     const stopReq = await transport.waitForRequest(MiniappRequestType.STOP_AUDIO)
     expect(stopReq.payload.type).toBe(MiniappRequestType.STOP_AUDIO)
 
-    // Host emits stopped in response to STOP_AUDIO
+    // The host identifies the stream stopped by the request. The SDK already
+    // emitted the local stopped transition, so this acknowledgement is ignored.
     transport.deliverFromPhone({
       type: MiniappResponseType.SPEAKER_STATE,
       state: "stopped",
+      streamId: "stream_stop_test",
     })
     expect(session.speaker.isPlaying).toBe(false)
+    expect(observedStates).toEqual(["playing", "stopped"])
   })
 
   test("5. Un-scoped host terminal envelope does not clobber active stream, while speaker.stop() does", async () => {
@@ -350,5 +358,76 @@ describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
     // Calling session.speaker.stop() explicitly clears active streams and transitions isPlaying to false
     session.speaker.stop()
     expect(session.speaker.isPlaying).toBe(false)
+  })
+
+  test("6. speaker state events stay aligned with active stream and matching stream termination", async () => {
+    const {transport, session} = await setupSession()
+    const observedStates: string[] = []
+    session.speaker.onStateChange((event) => observedStates.push(event.state))
+
+    const streamPromise = session.speaker.createStream()
+    const openReq = await transport.waitForRequest(MiniappRequestType.SPEAKER_STREAM_OPEN)
+    transport.deliverFromPhone(
+      {
+        type: MiniappResponseType.REQUEST_RESULT,
+        ok: true,
+        data: {streamId: "stream_correlated_test"},
+      },
+      openReq.requestId,
+    )
+    await streamPromise
+
+    // Unscoped terminal events can belong to earlier play()/speak() audio.
+    transport.deliverFromPhone({
+      type: MiniappResponseType.SPEAKER_STATE,
+      state: "stopped",
+    })
+    expect(session.speaker.state).toBe("playing")
+    expect(session.speaker.isPlaying).toBe(true)
+    expect(observedStates).not.toContain("stopped")
+
+    // A terminal event tagged with this stream ends the active local stream.
+    transport.deliverFromPhone({
+      type: MiniappResponseType.SPEAKER_STATE,
+      state: "stopped",
+      streamId: "stream_correlated_test",
+    })
+    expect(session.speaker.state).toBe("stopped")
+    expect(session.speaker.isPlaying).toBe(false)
+    expect(observedStates).toEqual(["playing", "stopped"])
+  })
+
+  test("7. close() settles local state even when an older host sends an unscoped stopped event", async () => {
+    const {transport, session} = await setupSession()
+    const observedStates: string[] = []
+    session.speaker.onStateChange((event) => observedStates.push(event.state))
+
+    const streamPromise = session.speaker.createStream()
+    const openReq = await transport.waitForRequest(MiniappRequestType.SPEAKER_STREAM_OPEN)
+    transport.deliverFromPhone(
+      {
+        type: MiniappResponseType.REQUEST_RESULT,
+        ok: true,
+        data: {streamId: "stream_legacy_host_test"},
+      },
+      openReq.requestId,
+    )
+    const stream = await streamPromise
+
+    const closePromise = stream.close()
+    const closeReq = await transport.waitForRequest(MiniappRequestType.SPEAKER_STREAM_CLOSE)
+    transport.deliverFromPhone({type: MiniappResponseType.SPEAKER_STATE, state: "stopped"})
+    expect(session.speaker.state).toBe("playing")
+    expect(session.speaker.isPlaying).toBe(true)
+
+    transport.deliverFromPhone(
+      {type: MiniappResponseType.REQUEST_RESULT, ok: true, data: {durationMs: 200}},
+      closeReq.requestId,
+    )
+    await closePromise
+
+    expect(session.speaker.state).toBe("stopped")
+    expect(session.speaker.isPlaying).toBe(false)
+    expect(observedStates).toEqual(["playing", "stopped"])
   })
 })

@@ -2425,9 +2425,12 @@ class LocalMiniappRuntime {
   }
 
   private handleStopAudio(packageName: string, _payload: Record<string, unknown>, requestId?: string): void {
+    const app = this.connectedApps.get(packageName)
+    const streamId = app?.activeSpeakerStreamId
+    if (app) app.activeSpeakerStreamId = undefined
     this.cancelSpeech(packageName)
     audioPlaybackService.stopForApp(packageName)
-    this.setSpeakerState(packageName, "stopped")
+    this.setSpeakerState(packageName, "stopped", streamId ? {streamId} : undefined)
     this.sendResult(packageName, requestId, true)
   }
 
@@ -2478,6 +2481,10 @@ class LocalMiniappRuntime {
       await audioPlaybackService.abortStream(previous).catch((error) => {
         console.warn(`${LOG_TAG}: failed to abort previous speaker stream for ${packageName}`, error)
       })
+      // The aborted writer callback is intentionally ignored below because its
+      // stream is no longer current. Still notify the client that this exact
+      // stream ended before attempting to open its replacement.
+      this.setSpeakerState(packageName, "stopped", {streamId: previous})
     }
 
     const streamId = `spkstream_${Date.now()}_${++this.speakerStreamCounter}`
@@ -2502,12 +2509,13 @@ class LocalMiniappRuntime {
           }
           current.activeSpeakerStreamId = undefined
           if (success) {
-            this.setSpeakerState(packageName, "stopped", {durationMs: durationMs ?? undefined})
+            this.setSpeakerState(packageName, "stopped", {durationMs: durationMs ?? undefined, streamId: endedId})
           } else {
             this.setSpeakerState(packageName, "error", {
               errorCode: MiniappErrorCode.INTERNAL,
               errorMessage: error ?? "speaker stream failed",
               durationMs: durationMs ?? undefined,
+              streamId: endedId,
             })
           }
         },
@@ -6456,15 +6464,16 @@ class LocalMiniappRuntime {
   private setSpeakerState(
     packageName: string,
     next: SpeakerStateValue,
-    extra?: {errorCode?: string; errorMessage?: string; durationMs?: number},
+    extra?: {errorCode?: string; errorMessage?: string; durationMs?: number; streamId?: string},
   ): void {
     const app = this.connectedApps.get(packageName)
     if (!app) return
-    if (app.speakerState === next && next !== "error") return
+    if (app.speakerState === next && next !== "error" && extra?.streamId === undefined) return
     app.speakerState = next === "error" ? "error" : next
     this.sendToMiniapp(packageName, {
       type: MiniappResponseType.SPEAKER_STATE,
       state: next,
+      ...(extra?.streamId !== undefined ? {streamId: extra.streamId} : {}),
       ...(extra?.errorCode !== undefined ? {errorCode: extra.errorCode} : {}),
       ...(extra?.errorMessage !== undefined ? {errorMessage: extra.errorMessage} : {}),
       ...(extra?.durationMs !== undefined ? {durationMs: extra.durationMs} : {}),

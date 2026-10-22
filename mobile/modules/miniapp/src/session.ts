@@ -753,6 +753,11 @@ export class MiniappSession<TChannels extends object = any> {
     return () => this.emitter.off(event, handler as (...args: unknown[]) => void)
   }
 
+  /** @internal Emit a local speaker transition from the SDK's stream lifecycle. */
+  _emitSpeakerState(event: import("./modules/speaker").SpeakerStateEvent): void {
+    this.emitter.emit("speakerState", event)
+  }
+
   off<K extends keyof SessionEmitterEvents>(event: K, handler: SessionEmitterEvents[K]): void {
     this.emitter.off(event, handler as (...args: unknown[]) => void)
   }
@@ -874,9 +879,9 @@ export class MiniappSession<TChannels extends object = any> {
           errorCode: payload.errorCode as string | undefined,
           errorMessage: payload.errorMessage as string | undefined,
           durationMs: payload.durationMs as number | undefined,
+          streamId: payload.streamId as string | undefined,
         }
-        this.speaker._applyState(event)
-        this.emitter.emit("speakerState", event)
+        if (this.speaker._applyState(event)) this.emitter.emit("speakerState", event)
         return
       }
 
