@@ -45,7 +45,7 @@ function fixture(exclusive = false) {
     async *qualificationCandidates(){yield copy(row)},
     async candidatePreparation(original:StoredRoutineJob,pending:FleetCandidatePreparation){if(row.fleetCandidatePreparation||row.fleetCandidateSelection && candidateRenewal(row,pending.hostId,pending.laneId)?.candidate.attemptId!==pending.candidate.previousAttemptId||JSON.stringify(original)!==JSON.stringify(row))return null;writes++;row={...row,fleetCandidatePreparation:copy(pending),fleetCandidateSelection:undefined};return copy(row)},
     async settleCandidatePreparation(original:StoredRoutineJob,pending:FleetCandidatePreparation){if(JSON.stringify(original)!==JSON.stringify(row))return null;row={...row,fleetCandidatePreparations:[...row.fleetCandidatePreparations??[],copy(pending)],fleetCandidatePreparation:undefined,
-      ...(pending.settlement?.outcome==='qualified'?{fleetCandidateSelection:{hostId:pending.hostId,laneId:pending.laneId,targetInputSha256:pending.targetInputSha256}}:{})};return copy(row)},
+      ...(pending.settlement?.outcome==='qualified'&&row.state==='awaiting-runner'&&!row.fleetCancellation&&row.fleetDeadline.getTime()>now?{fleetCandidateSelection:{hostId:pending.hostId,laneId:pending.laneId,targetInputSha256:pending.targetInputSha256}}:{})};return copy(row)},
     async reserveResources(_id:string,_sha:string,hostId:string,laneId:string){bindWrites++;row={...row,fleetResourceReservation:{id:'d0af6e63-513c-43d5-9392-ff2e672bab86',requestId:row.requestId,fleetInputSha256:row.fleetInputSha256!,hostId,laneId,poolId:`${hostId}:disk`,minimumAvailableBytes:1024,reservedAt:new Date(now).toISOString()}};return copy(row)},
   } as unknown as RoutineJobRepository
   const service = new RoutineJobService(rows,undefined,undefined,undefined,{async get(id){return copy(hosts.find(h=>h.hostId===id)??null)},async list(){return copy(hosts)}},undefined,undefined,()=>now)
@@ -72,11 +72,10 @@ test('unknown first phone is probed unbound; settled negative falls back within 
  const originalInput=f.row.fleetInputSha256;f.settle('unqualified');await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparations).toHaveLength(1);expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2');expect(f.bindWrites).toBe(0)
  f.settle('qualified');await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparation).toBeUndefined();expect(f.row.fleetCandidateSelection?.hostId).toBe('air2');expect(f.row.fleetResourceReservation?.hostId).toBe('air2');expect(f.row.fleetInputSha256).toBe(originalInput);expect(f.row.fleetBinding).toBeUndefined()
 })
-for(const gap of ['raw-work','return-ack','unknown','claim','replacement','stale-positive'] as const)test(`candidate ${gap} never moves original custody to another phone`,async()=>{
- const f=fixture();await f.service.preparation('job-one');f.settle(gap==='unknown'?'unknown':gap==='stale-positive'?'qualified':'unqualified',gap!=='raw-work',gap!=='return-ack');const old=structuredClone(f.row.fleetCandidatePreparation)
+for(const gap of ['raw-work','return-ack','claim','replacement'] as const)test(`candidate ${gap} never moves original custody to another phone`,async()=>{
+ const f=fixture();await f.service.preparation('job-one');f.settle('unqualified',gap!=='raw-work',gap!=='return-ack');const old=structuredClone(f.row.fleetCandidatePreparation)
  if(gap==='claim')f.hosts[0]!.authorityReservations=[{...structuredClone(f.row.fleetCandidatePreparation!.claimReceipt!),prerequisite:undefined,resourceCheck:undefined,owner:{id:'other',kind:'run'}}] as any
  if(gap==='replacement')f.hosts[0]!.incarnation='other'
- if(gap==='stale-positive')f.advance(120001)
  await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparation?.hostId).toBe('air1');expect(f.writes).toBe(1);expect(f.bindWrites).toBe(0)
 })
 
@@ -93,8 +92,8 @@ test('a delayed fully returned negative settles historically and selects a fresh
  for(const field of ['requestId','fleetSelection','fleetSelectionSha256','fleetPreparation','fleetInputSha256','fleetDeadline','createdAt'] as const)expect(f.row[field]).toEqual(original[field]);
  expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetCandidatePreparations![0]).toEqual({...negative,settlement:{targetInputSha256:negative.targetInputSha256,candidate:negative.candidate,outcome:'unqualified',hostWorkSettled:true,checkOperationId:`backend-prerequisite:${negative.targetInputSha256}`}});
 })
-for(const gap of ['raw-work','return-ack','unknown','claim','replacement','subject-generation','binding','app','future-observation','observation-after-deadline','close-before-observation','return-before-close','stale-report'] as const)test(`delayed negative retains original custody with ${gap}`,async()=>{
- const f=fixture();await f.service.preparation('job-one');f.settle(gap==='unknown'?'unknown':'unqualified',gap!=='raw-work',gap!=='return-ack');
+for(const gap of ['raw-work','return-ack','claim','replacement','subject-generation','binding','app','future-observation','observation-after-deadline','close-before-observation','return-before-close','stale-report'] as const)test(`delayed negative retains original custody with ${gap}`,async()=>{
+ const f=fixture();await f.service.preparation('job-one');f.settle('unqualified',gap!=='raw-work',gap!=='return-ack');
  f.advance(120001);const host=f.hosts[0]!,health=host.lanes[0]!.resources[0]!.backendConnectivity!;
  if(gap==='claim')host.authorityReservations=[{...structuredClone(f.row.fleetCandidatePreparation!.claimReceipt!),prerequisite:undefined,resourceCheck:undefined,owner:{id:'other',kind:'run'}}] as any;
  if(gap==='replacement')host.incarnation='other';if(gap==='subject-generation')host.resourceLifecycle!.subjects[0]!.generation++;
@@ -601,3 +600,77 @@ for(const state of ['running','in-repair','out-of-service'] as const)test(`ordin
  try{expect(await resourceReservationRepository.stage!(row.requestId,row.fleetInputSha256!,admission,new Date(f.now))).toBeNull();expect(writes).toBe(0);expect(host.resourceReservations).toEqual([claim]);expect(f.row.fleetResourceAdmission).toBeUndefined()}
  finally{resourceReservationRepository.get=get;resourceReservationRepository.request=request;TestRequestModel.collection.findOneAndUpdate=write}
 });
+
+for (const scenario of ['returned-unknown', 'expired-returned-positive', 'returned-unqualified-control'] as const)
+test(`historical consumption liveness: ${scenario} consumes the exact returned attempt without executable admission`, async () => {
+ const f = fixture(); f.hosts.splice(1);
+ await f.service.preparation('job-one');
+ const original = structuredClone(f.row), outcome = scenario === 'returned-unknown' ? 'unknown' : scenario === 'expired-returned-positive' ? 'qualified' : 'unqualified';
+ f.settle(outcome);
+ const closed = structuredClone(f.row.fleetCandidatePreparation!), health = structuredClone(f.hosts[0]!.lanes[0]!.resources[0]!.backendConnectivity),
+   receipt = structuredClone(f.hosts[0]!.resourceReservations!.candidatePrerequisites![0]!);
+ expect(candidateReturnMatches(closed, closed.returnReceipt)).toBe(true);
+ expect((closed.returnReceipt as import('../types/resource-reservations.types').ExclusiveResourceReturn).release).toMatchObject({kind: 'resource-check', operationId: receipt.checkOperationId, subjectGeneration: 3});
+ expect(f.hosts[0]!.authorityReservations).toEqual([]);
+ expect(f.hosts[0]!.resourceLifecycle!.subjects[0]!.owner).toBeNull();
+ if (scenario === 'expired-returned-positive') f.advance(120001);
+ await f.service.preparation('job-one');
+ expect(f.row.fleetCandidatePreparations, 'the original closed and strictly returned attempt must become consumed immutable history').toEqual([{...closed, settlement: receipt}]);
+ expect(f.row.fleetCandidatePreparation?.targetInputSha256).not.toBe(closed.targetInputSha256);
+ expect(completedCandidatePreparationForHost(f.row, 'air1')).toBe(true);
+ expect(qualifiedCandidate(f.row, f.hosts[0]!, 'android', f.now, f.hosts[0]!.receivedAt)).toBeUndefined();
+ expect(f.hosts[0]!.lanes[0]!.resources[0]!.backendConnectivity).toEqual(health);
+ expect(f.bindWrites).toBe(0); expect(f.row.fleetBinding).toBeUndefined(); expect(f.row.hostReceipt).toBeUndefined(); expect(f.row.runId).toBeUndefined();
+ for (const field of ['requestId', 'fleetSelection', 'fleetSelectionSha256', 'fleetPreparation', 'fleetInputSha256', 'fleetDeadline', 'createdAt'] as const) expect(f.row[field]).toEqual(original[field]);
+})
+
+for(const outcome of ['unknown','qualified'] as const)for(const gap of ['raw-work','return-ack','claim','replacement','subject-generation','binding','app','future-observation','observation-after-deadline','close-before-observation','return-before-close','stale-report'] as const)
+test(`historical returned ${outcome} refuses ${gap} without consumption, alternate or executable admission`,async()=>{
+ const f=fixture();await f.service.preparation('job-one');f.settle(outcome,gap!=='raw-work',gap!=='return-ack');f.advance(120001);
+ const host=f.hosts[0]!,health=host.lanes[0]!.resources[0]!.backendConnectivity!;
+ if(gap==='claim')host.authorityReservations=[{...structuredClone(f.row.fleetCandidatePreparation!.claimReceipt!),prerequisite:undefined,resourceCheck:undefined,owner:{id:'other',kind:'run'}}] as any;
+ if(gap==='replacement')host.incarnation='other';if(gap==='subject-generation')host.resourceLifecycle!.subjects[0]!.generation++;
+ if(gap==='binding')health.binding={...health.binding,version:health.binding.version+1};if(gap==='app')health.app.archiveSha256=hash('a');
+ if(gap==='future-observation')health.observedAt=new Date(f.now+1).toISOString();
+ if(gap==='observation-after-deadline'){f.advance(180001);health.observedAt=health.check.closedAt=new Date(f.now).toISOString();(f.row.fleetCandidatePreparation!.returnReceipt as any).release.releasedAt=health.check.closedAt;}
+ if(gap==='close-before-observation')health.check.closedAt=new Date(Date.parse(health.observedAt)-1).toISOString();
+ if(gap==='return-before-close')health.check.closedAt=new Date(Date.parse(health.check.closedAt)+1).toISOString();
+ if(gap==='stale-report')host.observedAt=host.receivedAt=new Date(f.now-120001).toISOString();
+ const pending=structuredClone(f.row.fleetCandidatePreparation!);await f.service.preparation('job-one');
+ expect(f.row.fleetCandidatePreparation).toEqual(pending);expect(f.row.fleetCandidatePreparations).toBeUndefined();expect(f.writes).toBe(1);expect(f.bindWrites).toBe(0);expect(f.row.fleetBinding).toBeUndefined();
+})
+for(const outcome of ['unknown','qualified'] as const)for(const boundary of ['cancelled','deadline'] as const)
+test(`historical returned ${outcome} after ${boundary} records only immutable consumed history`,async()=>{
+ const f=fixture();await f.service.preparation('job-one');f.settle(outcome);const closed=structuredClone(f.row.fleetCandidatePreparation!),original=structuredClone(f.row);
+ if(boundary==='deadline')f.advance(300001);else{f.advance(120001);f.row={...f.row,state:'terminal',terminalStatus:'cancelled',fleetCancellation:{requestedAt:new Date(f.now).toISOString(),reason:'cancelled'}};}
+ await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparation).toBeUndefined();expect(f.row.fleetCandidatePreparations).toEqual([{...closed,settlement:{targetInputSha256:closed.targetInputSha256,candidate:closed.candidate,outcome,hostWorkSettled:true,checkOperationId:`backend-prerequisite:${closed.targetInputSha256}`}}]);
+ expect(f.row.fleetCandidateSelection).toBeUndefined();expect(f.writes).toBe(1);expect(f.bindWrites).toBe(0);expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);expect(f.row.fleetInputSha256).toEqual(original.fleetInputSha256);
+})
+
+for(const outcome of ['unknown','qualified'] as const)for(const boundary of ['cancelled','deadline','lost-cas'] as const)
+test(`historical ${outcome} repository ${boundary} preserves exact original settlement CAS`,async()=>{
+ const f=fixture();await f.service.preparation('job-one');f.settle(outcome);f.advance(120001);
+ const original=structuredClone(f.row),pending=original.fleetCandidatePreparation!,receipt=candidateSettlement(pending,f.hosts[0]!,[],f.now)!,
+   find=TestRequestModel.collection.findOneAndUpdate,calls:Array<{filter:any,update:any}>=[];
+ expect(receipt).toBeDefined();
+ TestRequestModel.collection.findOneAndUpdate=mock(async(filter:any,update:any)=>{calls.push({filter:structuredClone(filter),update:structuredClone(update)});
+  if(boundary==='lost-cas'||outcome==='qualified'&&calls.length===1)return null;
+  return {...original,...structuredClone(update.$set),fleetCandidatePreparation:undefined};
+ }) as any;
+ try{
+  const settled=await routineJobRepository.settleCandidatePreparation!(original,{...pending,settlement:receipt},new Date(f.now));
+  expect(calls).toHaveLength(outcome==='qualified'?2:1);
+  for(const {filter,update} of calls){expect(filter.requestId).toBe(original.requestId);expect(filter.fleetInputSha256).toBe(original.fleetInputSha256);
+   expect(filter.fleetCandidatePreparation).toEqual(pending);expect(filter.fleetCandidatePreparations).toEqual({$exists:false});
+   expect(filter.fleetBinding).toEqual({$exists:false});expect(filter.hostId).toEqual({$exists:false});expect(filter.fleetResourceAdmission).toEqual({$exists:false});
+   expect(update.$unset.fleetCandidatePreparation).toBe('');expect(update.$set.fleetCandidatePreparations).toEqual([{...pending,settlement:receipt}]);
+  }
+  const last=calls.at(-1)!;expect(last.update.$set.fleetCandidateSelection).toBeUndefined();
+  if(outcome==='qualified'){expect(calls[0]!.filter.fleetCancellation).toEqual({$exists:false});expect(calls[0]!.filter.fleetDeadline).toEqual({$gt:new Date(f.now)});
+   expect(last.filter.$or).toContainEqual(boundary==='deadline'?{fleetDeadline:{$lte:new Date(f.now)}}:{fleetCancellation:{$exists:true}});}
+  if(boundary==='lost-cas')expect(settled).toBeNull();else expect(settled?.fleetCandidatePreparations).toEqual([{...pending,settlement:receipt}]);
+  const writes=calls.length,changed=structuredClone(pending);(changed.returnReceipt as import('../types/resource-reservations.types').ExclusiveResourceReturn).release.releasedAt=new Date(f.now).toISOString();
+  expect(await routineJobRepository.settleCandidatePreparation!(original,{...changed,settlement:receipt},new Date(f.now))).toBeNull();expect(calls).toHaveLength(writes);
+  expect(f.row).toEqual(original);
+ }finally{TestRequestModel.collection.findOneAndUpdate=find;}
+})
