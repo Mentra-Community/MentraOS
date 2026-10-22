@@ -104,7 +104,8 @@ When it disagrees with a source of truth below, the source of truth wins; then f
     `/api/portal/fleet/workspaces/<id>`, `/me?workspaceId=` gives an Org Admin exactly that workspace). `PortalMe` fields
     are optional: a Core that predates them reads as "Fleet not installed". `queryFn` must not be passed `fetchPortalMe`
     directly (react-query hands it a context object).
-12. Portal `public/_headers` CSP is new and unverified in a browser; check sign-in, billing and Fleet load under it.
+12. Portal `public/_headers` CSP: Fleet (module, fonts, glasses images) loads under it with no violation in the local
+    stack (2026-10-22); real sign-in and billing under it are still unverified.
 13. Admin Workspaces link needs build-time `PORTAL_URL` (set by `scripts/deploy-pages.ts`, public, not a Doppler key).
 14. Portal Decline is `POST /api/{portal/,}workspaces/invitations/decline` (shared handler); the Mentra App uses
     `/api/client/workspaces/invitations/:id/decline`. Both call `declineInvitation`.
@@ -136,6 +137,10 @@ When it disagrees with a source of truth below, the source of truth wins; then f
     `WorkspaceApi` is `mobile/src/services/fleet/cloudWorkspaceApi.ts`, installed by `MantleManager` before
     `engine.start()`. Inventory drops entries without `bundleSha256`: bundled and release-QR installs record none.
     `isMiniappAccessRevoked` is gated in `stores/apps.ts` `start` (host `onAccessRevoked` alert) and `ensureRunning`.
+19. Local stack: `cloud-v2/scripts/fleet-local-stack.ts` (Core, fake GoTrue, built portals with `/__dev/login`) plus
+    miniapp-store `fleet/scripts/dev-stack.ts` (MFM with a fake registry and miniapp host) and `fleet/scripts/seed.ts`
+    (`--keep-alive` keeps "connected now" past the 10 minute window). The static portal server must send a
+    Content-Type, or the module script is refused and the page is blank.
 
 ## Open items
 
