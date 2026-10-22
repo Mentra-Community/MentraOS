@@ -5,7 +5,7 @@ import {testWriteConcern} from '../models/test-write-concern'
 import {exclusiveResourceIntentSchema, exclusiveResourceObservationInputSchema, exclusiveResourceReturnSchema, hostResourceReservationsSchema,
   fleetExclusiveObservationSchema, fleetExclusiveReservationSchema, fleetExclusiveExecutionBindingSchema, fleetResourceAdmissionSchema,
   isExclusiveHostReservation, type ExclusiveHostReservation, type ExclusiveResourceDependency, type ExclusiveResourceIntent,
-  type FleetExclusiveReservation, type FleetResourceAdmission, type HostResourceReservation} from '../types/resource-reservations.types'
+  type FleetExclusiveReservation, type FleetResourceAdmission, type HostResourceReservation, type ExclusiveResourceReturn} from '../types/resource-reservations.types'
 import {hostStateSchema, type TestHostState} from './test-host-state.service'
 import {requestInputDigest} from './test-request.service'
 import {TestRunError} from './test-result-error'
@@ -238,6 +238,37 @@ export const resourceReservationRepository: ResourceReservationRepository = {
 }
 const fresh = (host: ResourceReservationHost, now: number) => [host.receivedAt.getTime(), Date.parse(host.snapshot.observedAt)]
   .every(at => Number.isFinite(at) && at <= now && now - at <= 120_000)
+/** An ACK removes the original claim; it cannot renew physical readiness. */
+function closedNormalResourceReturn(host: ResourceReservationHost, claim: ExclusiveHostReservation, returned: ExclusiveResourceReturn) {
+  if ('kind' in returned.release || claim.authorityHostId !== host.hostId || returned.authorityHostId !== host.hostId) return false
+  const release = returned.release, subject = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === claim.resourceId),
+    installed = host.snapshot.resources?.find(value => value.id === claim.resourceId) ??
+      host.snapshot.lanes.find(value => value.id === claim.laneId)?.resources.find(value => value.id === claim.resourceId),
+    contract = installed?.idleContract, accepted = subject?.idle.acceptedCheck,
+    checkedAt = Date.parse(subject?.idle.checkedAt ?? ''), acceptedAt = Date.parse(accepted?.acceptedAt ?? ''),
+    releasedAt = Date.parse(release.releasedAt), observedAt = Date.parse(host.snapshot.observedAt),
+    subjectObservedAt = Date.parse(subject?.observedAt ?? '')
+  if (!subject?.current || subject.subject.authorityHostId !== host.hostId || subject.owner !== null || subject.repair.state !== 'none' ||
+    !['idle', 'unknown'].includes(subject.status) || !['passed', 'unknown'].includes(subject.idle.outcome) ||
+    subject.status === 'unknown' && !['resource-not-returned', 'idle-check-required'].includes(subject.reason?.code ?? '') ||
+    !contract || subject.idle.contractVersion !== contract.version || subject.idle.qualifiedScope.kind === 'unqualified' ||
+    !isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope) || !accepted || accepted.subjectGeneration !== subject.generation || !subject.idle.evidenceRefs.length ||
+    !claim.laneId && subject.resource.memberships.length ||
+    ![checkedAt, acceptedAt, releasedAt, observedAt, subjectObservedAt].every(Number.isFinite) || checkedAt < Date.parse(claim.reservedAt) ||
+    checkedAt > acceptedAt || acceptedAt > releasedAt || releasedAt > subjectObservedAt || subjectObservedAt > observedAt || observedAt - subjectObservedAt > 120_000 ||
+    releasedAt - checkedAt > contract.maximumAgeMs) return false
+  const history = host.snapshot.resourceLifecycle!.history.filter(event => event.resourceId === claim.resourceId),
+    matchingOwner = (event: typeof history[number]) => event.ownerId === release.owner.id &&
+      event.ownerGeneration === release.owner.generation && event.hostId === host.hostId && event.laneId === returned.laneId,
+    releases = history.filter(event => event.subjectGeneration === subject.generation),
+    checks = history.filter(event => event.subjectGeneration === subject.generation - 1)
+  // Exact consecutive generations prove the accepted check carried into this
+  // release, with no intervening resource transition or later replacement.
+  return releases.length === 1 && checks.length === 1 && releases[0]!.event === 'released' && checks[0]!.event === 'check-passed' &&
+    matchingOwner(releases[0]!) && matchingOwner(checks[0]!) && Date.parse(checks[0]!.at) === acceptedAt &&
+    Date.parse(releases[0]!.at) >= acceptedAt && Date.parse(releases[0]!.at) <= releasedAt &&
+    !history.some(event => event.subjectGeneration === null || event.subjectGeneration > subject.generation || Date.parse(event.at) > Date.parse(releases[0]!.at))
+}
 const dependencies = (host: ResourceReservationHost, intent: ExclusiveResourceIntent, observation = false): ExclusiveResourceDependency[] => {
   const lane = host.snapshot.lanes.find(value => value.id === intent.laneId), dispatch = intent.localDispatch,
     localDispatch = dispatch && intent.owner.kind === 'run' && intent.owner.id === dispatch.requestId &&
@@ -576,6 +607,9 @@ export class ResourceReservationsService {
       throw new TestRunError(409, 'Return requires fresh idle custody and its exact recorded normal local release lineage')
     for (let attempt = 0; attempt < 3; attempt++) {
       const authority = await this.host(returned.authorityHostId), claims = hostResourceReservationsSchema.parse(authority.resourceReservations ?? [])
+      if (authority.hostId === hostId && (authority.incarnation !== returned.controller.incarnation ||
+        authority.incarnationGeneration !== returned.controller.generation || authority.sequence !== returned.controller.sequence))
+        throw new TestRunError(409, 'Resource authority changed; retry the same normal return proof')
       const claim = claims.filter(isExclusiveHostReservation).find(value => value.resourceId === returned.resourceId)
       if (!claim) {
         return {status: 'returned' as const, claimId: returned.claimId}
@@ -584,10 +618,11 @@ export class ResourceReservationsService {
         subject = borrower.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === claim.resourceId),
         ref = borrower.snapshot.resources?.find(value => value.id === claim.resourceId), checkedAt = Date.parse(subject?.idle.checkedAt ?? '')
       const installed = ref ?? borrower.snapshot.lanes.find(value => value.id === claim.laneId)?.resources.find(value => value.id === claim.resourceId)
-      if (claim.resourceCheck && (!installed?.idleContract || !subject?.current || subject.subject.authorityHostId !== hostId || independent && subject.resource.memberships.length ||
-        subject.owner !== null || subject.status !== 'idle' || subject.idle.outcome !== 'passed' || subject.idle.acceptedCheck?.subjectGeneration !== subject.generation ||
-        subject.idle.qualifiedScope.kind === 'unqualified' || !Number.isFinite(checkedAt) || checkedAt > this.now() ||
-        this.now() - checkedAt > installed.idleContract.maximumAgeMs || checkedAt < Date.parse(claim.reservedAt)))
+      const freshBaseline = !!installed?.idleContract && !!subject?.current && subject.subject.authorityHostId === hostId && !(independent && subject.resource.memberships.length) &&
+        subject.owner === null && subject.status === 'idle' && subject.idle.outcome === 'passed' && subject.idle.acceptedCheck?.subjectGeneration === subject.generation &&
+        subject.idle.qualifiedScope.kind !== 'unqualified' && Number.isFinite(checkedAt) && checkedAt <= this.now() &&
+        this.now() - checkedAt <= installed.idleContract.maximumAgeMs && checkedAt >= Date.parse(claim.reservedAt)
+      if (claim.resourceCheck && (subject?.repair.state !== 'none' || !freshBaseline && !closedNormalResourceReturn(authority, claim, returned)))
         throw new TestRunError(409, 'Independent resource return lacks its exact fresh normal baseline')
       if (claim.prerequisite || claim.id !== returned.claimId || claim.intentSha256 !== returned.intentSha256 || claim.inputSha256 !== returned.inputSha256 ||
         claim.borrowerHostId !== hostId || !independent && claim.laneId !== returned.laneId || !isDeepStrictEqual(claim.owner, returned.originalOwner) ||
