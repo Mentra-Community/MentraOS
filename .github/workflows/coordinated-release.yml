@@ -859,20 +859,15 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - uses: actions/download-artifact@v4
-        if: needs.publish-release-page.result == 'success'
-        with:
-          name: coordinated-release-result-${{ needs.plan.outputs.release_set_id }}
-          path: release-page-input
-
+      # The examples have their own block on the page, so republishing the
+      # release downloads keeps them.
       - name: Add the example apps to the release download page
         if: needs.publish-release-page.result == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           node .github/scripts/publish-coordinated-release-page.mjs
-          --plan "release-page-input/mentra-release-plan-${{ needs.plan.outputs.release_identity }}.json"
-          --manifest "release-page-input/mentra-release-${{ needs.plan.outputs.release_identity }}.json"
+          --plan release-input/plan/release-plan.json
           --examples examples-result/examples-result.json
           --repository "${{ github.repository }}"
 

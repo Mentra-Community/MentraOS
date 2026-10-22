@@ -173,7 +173,7 @@ jobs:
 
       - name: Create the Starter Kit push token
         id: token
-        if: steps.wait.outputs.ready == 'true' && inputs.dry_run != true
+        if: (steps.wait.outputs.ready == 'true' || steps.status.outputs.repair_tag == 'true') && inputs.dry_run != true
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
@@ -183,6 +183,21 @@ jobs:
           permission-contents: write
           # The export carries the kit's own CI in .github/workflows.
           permission-workflows: write
+
+      # An earlier run advanced the branch but did not create the tag.
+      - name: Restore the missing release tag
+        id: repair
+        if: steps.status.outputs.repair_tag == 'true' && inputs.dry_run != true
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+          IDENTITY: ${{ steps.release.outputs.identity }}
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:${TOKEN}@github.com/${STARTER_KIT_REPOSITORY}.git"
+          commit=$(git -C kit rev-parse HEAD)
+          git -C kit tag "sdk-$IDENTITY" "$commit"
+          git -C kit push --quiet "$remote" "refs/tags/sdk-$IDENTITY"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push the release
         id: push
@@ -197,48 +212,53 @@ jobs:
         run: |
           set -euo pipefail
           remote="https://x-access-token:${TOKEN}@github.com/${STARTER_KIT_REPOSITORY}.git"
-          # Exits 0 when pushed or no longer needed, 1 when the push raced.
-          publish() (
-            set -euo pipefail
+          tag="refs/tags/sdk-$IDENTITY"
+          for attempt in 1 2; do
             rm -rf kit
             git clone --quiet --depth 1 --branch "$BRANCH" "$remote" kit
-            # A newer release may have landed since the first check.
+            tag_exists=false
+            if git ls-remote --exit-code --tags "$remote" "$tag" > /dev/null; then
+              tag_exists=true
+            fi
+            # A newer release, or this one, may have landed since the first check.
             node tooling/.github/scripts/export-bluetooth-starter-kit.mjs status \
-              --kit-dir kit --identity "$IDENTITY" --tag-exists false > kit-status.txt
+              --kit-dir kit --identity "$IDENTITY" --tag-exists "$tag_exists" > kit-status.txt
+            cat kit-status.txt
+            if grep -qx 'repair_tag=true' kit-status.txt; then
+              git -C kit tag "sdk-$IDENTITY" HEAD
+              git -C kit push --quiet "$remote" "$tag"
+              echo "commit=$(git -C kit rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             if grep -qx 'needed=false' kit-status.txt; then
-              cat kit-status.txt
-              # An earlier attempt may have advanced the branch and then failed
-              # to push the tag: tag the commit that carries this release.
-              if [[ "$(jq -r .releaseIdentity kit/starter-kit-release.json 2>/dev/null)" == "$IDENTITY" ]] &&
-                ! git ls-remote --exit-code --tags "$remote" "refs/tags/sdk-$IDENTITY" >/dev/null; then
-                git -C kit tag "sdk-$IDENTITY"
-                git -C kit push --quiet origin "refs/tags/sdk-$IDENTITY"
-              fi
               exit 0
             fi
             find kit -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
             cp -a export/. kit/
-            cd kit
-            git config user.name "mentra-starter-kit-export[bot]"
-            git config user.email "starter-kit-export@users.noreply.github.com"
-            git add --all
-            git commit --quiet \
+            git -C kit config user.name "mentra-starter-kit-export[bot]"
+            git -C kit config user.email "starter-kit-export@users.noreply.github.com"
+            git -C kit add --all
+            git -C kit commit --quiet \
               -m "Release $IDENTITY" \
               -m "Exported from Mentra-Community/MentraOS examples/bluetooth at $SOURCE_COMMIT, with every SDK dependency pinned to the packages release $IDENTITY published." \
               -m "Mentra-Release: $IDENTITY
           Mentra-Source-Commit: $SOURCE_COMMIT
           Mentra-Release-Record: $RECORD_URL#sha256=$RECORD_SHA256"
-            git tag "sdk-$IDENTITY"
-            # Fast-forward only: the commit's parent is the branch head cloned
-            # above, and nothing is ever force-pushed.
-            git push --quiet origin "HEAD:refs/heads/$BRANCH"
-            git push --quiet origin "refs/tags/sdk-$IDENTITY"
-            echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          )
-          if ! publish; then
-            echo "The push raced another update; checking the branch again." >&2
-            publish
-          fi
+            git -C kit tag "sdk-$IDENTITY"
+            # Branch and tag land together or not at all. Fast-forward only:
+            # the commit's parent is the branch head cloned above, and nothing
+            # is ever force-pushed. A rejected push is retried once from a
+            # fresh clone; any other failure, or a second rejection, fails.
+            push_status=0
+            git -C kit push --quiet --atomic "$remote" "HEAD:refs/heads/$BRANCH" "$tag" || push_status=$?
+            if (( push_status == 0 )); then
+              echo "commit=$(git -C kit rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Push of $IDENTITY to $BRANCH was rejected (attempt $attempt); checking the branch again." >&2
+          done
+          echo "Could not push $IDENTITY to $BRANCH." >&2
+          exit 1
 
       - name: Summarize
         if: always()
@@ -251,7 +271,8 @@ jobs:
           PRESENT: ${{ steps.source.outputs.present }}
           READY: ${{ steps.wait.outputs.ready }}
           MISSING: ${{ steps.wait.outputs.missing }}
-          COMMIT: ${{ steps.push.outputs.commit }}
+          COMMIT: ${{ steps.push.outputs.commit || steps.repair.outputs.commit }}
+          REPAIRED: ${{ steps.repair.outputs.commit != '' }}
           DRY_RUN: ${{ inputs.dry_run == true }}
         run: |
           {
@@ -259,6 +280,8 @@ jobs:
             echo
             if [[ "$FOUND" != true ]]; then
               echo "No completed ${{ matrix.channel }} release record${IDENTITY:+ for \`$IDENTITY\`} yet; nothing to export."
+            elif [[ "$REPAIRED" == true ]]; then
+              echo "\`$IDENTITY\` was already on \`$BRANCH\`; restored its missing tag \`sdk-$IDENTITY\` on $COMMIT."
             elif [[ "$NEEDED" != true ]]; then
               echo "Skipped \`$IDENTITY\`: $REASON."
             elif [[ "$PRESENT" != true ]]; then

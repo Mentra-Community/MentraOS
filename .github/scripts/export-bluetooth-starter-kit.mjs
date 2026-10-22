@@ -194,14 +194,25 @@ export function exportCoordinates(record, {channel, identity} = {}) {
 // of the same channel, or the release tag exists. This keeps nightly reruns
 // no-ops and stops a late older run from replacing a newer export.
 export function exportStatus({kitRecord, identity, tagExists}) {
-  if (tagExists) return {needed: false, reason: `sdk-${identity} already exists`}
   const current = kitRecord?.releaseIdentity
+  // The branch head already carries this release: an earlier run pushed it,
+  // and only the tag may be missing. Repair the tag rather than skip silently.
+  if (current === identity) {
+    return tagExists
+      ? {needed: false, repairTag: false, reason: `the branch already carries ${current}`}
+      : {needed: false, repairTag: true, reason: `the branch carries ${current} but sdk-${identity} is missing`}
+  }
+  if (tagExists) return {needed: false, repairTag: false, reason: `sdk-${identity} already exists`}
   if (current && IDENTITY_PATTERN.test(current) && identityChannel(current) === identityChannel(identity)) {
     if (compareIdentities(current, identity) >= 0) {
-      return {needed: false, reason: `the branch already carries ${current}`}
+      return {needed: false, repairTag: false, reason: `the branch already carries ${current}`}
     }
   }
-  return {needed: true, reason: current ? `the branch carries ${current}` : "the branch has no exported release"}
+  return {
+    needed: true,
+    repairTag: false,
+    reason: current ? `the branch carries ${current}` : "the branch has no exported release",
+  }
 }
 
 // --- availability -------------------------------------------------------------
@@ -621,7 +632,10 @@ async function main() {
     const file = path.join(path.resolve(args["kit-dir"]), RELEASE_RECORD_NAME)
     const kitRecord = existsSync(file) ? readJson(file) : null
     const status = exportStatus({kitRecord, identity: args.identity, tagExists: args["tag-exists"] === "true"})
-    output({needed: String(status.needed), reason: status.reason}, args["github-output"])
+    output(
+      {needed: String(status.needed), repair_tag: String(status.repairTag), reason: status.reason},
+      args["github-output"],
+    )
     return
   }
   if (command === "transform") {

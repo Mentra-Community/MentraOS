@@ -408,6 +408,18 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      # The stable release's own block for the example apps; the production
+      # record's downloads block never replaces it.
+      - name: Add the example apps to the stable release downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/publish-coordinated-release-page.mjs
+          --plan release-input/plan/release-plan.json
+          --examples examples-result/examples-result.json
+          --repository "${{ github.repository }}"
+          --release-id "${{ needs.load.outputs.stable_release_id }}"
+
   example-testflight:
     name: Distribute the example through TestFlight
     needs: [load, publish-examples]

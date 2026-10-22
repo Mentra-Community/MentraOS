@@ -153,6 +153,7 @@ test("completed releases publish a version page and example notices carry the ma
   const publishExamples = jobBlock(core, "publish-examples")
   assert.match(publishExamples, /needs: \[plan, examples, finalize, publish-release-page\]/)
   assert.match(publishExamples, /publish-coordinated-release-page\.mjs[\s\S]*--examples examples-result\/examples-result\.json/)
+  assert.doesNotMatch(publishExamples, /--manifest/)
   const examplesNotice = jobBlock(core, "notify-slack-examples")
   for (const kind of ["apk", "ipa"]) {
     assert.ok(examplesNotice.includes(`MOBILE_${kind.toUpperCase()}_URL: \${{ needs.mobile.outputs.${kind}_url }}`))
@@ -983,8 +984,13 @@ test("the Starter Kit export is idempotent, deferrable, and pushes only to the k
   assert.match(exporter, /permission-contents: write/)
   assert.match(exporter, /permission-workflows: write/)
   assert.doesNotMatch(exporter, /permission-actions|MentraOS\n\s+Mentra-Bluetooth|--force|push -f/)
-  assert.match(exporter, /git push --quiet origin "HEAD:refs\/heads\/\$BRANCH"/)
-  assert.match(exporter, /git tag "sdk-\$IDENTITY"/)
+  // Branch and tag land together, failures are explicit, and a branch that
+  // already carries the release gets its missing tag back instead of a skip.
+  assert.match(exporter, /git -C kit push --quiet --atomic "\$remote" "HEAD:refs\/heads\/\$BRANCH" "\$tag" \|\| push_status=\$\?/)
+  assert.doesNotMatch(exporter, /if ! publish|publish\(\) \(/)
+  assert.match(exporter, /- name: Restore the missing release tag\n        id: repair\n        if: steps\.status\.outputs\.repair_tag == 'true'/)
+  assert.match(exporter, /grep -qx 'repair_tag=true' kit-status\.txt/)
+  assert.match(exporter, /Could not push \$IDENTITY to \$BRANCH\.[^\n]*\n\s+exit 1/)
   assert.match(exporter, /Deferred/)
   const rollout = workflow("production-release-rollout.yml")
   const exportJob = jobBlock(rollout, "export-starter-kit")
@@ -1211,6 +1217,11 @@ test("the production example is keyed on the promoted beta and never promotes a 
   assert.match(example, /uses: \.\/\.github\/workflows\/reusable-bluetooth-examples\.yml/)
   assert.match(jobBlock(example, "publish-examples"), /--release-id "\$\{\{ needs\.load\.outputs\.stable_release_id \}\}"/)
   assert.doesNotMatch(example, /reusable-coordinated-starter-kit|starter_kit_result/)
+  // The stable release lists the production example apps in their own block.
+  assert.match(
+    jobBlock(example, "publish-examples"),
+    /publish-coordinated-release-page\.mjs\n\s+--plan release-input\/plan\/release-plan\.json\n\s+--examples examples-result\/examples-result\.json\n[\s\S]*--release-id "\$\{\{ needs\.load\.outputs\.stable_release_id \}\}"/,
+  )
   assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-example-testflight\.yml/)
   assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-example-google-play\.yml/)
   assert.match(example, /production_build_number: \$\{\{ fromJSON\(needs\.load\.outputs\.build_number\) \}\}/)

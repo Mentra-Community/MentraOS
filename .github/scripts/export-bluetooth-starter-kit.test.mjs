@@ -220,7 +220,17 @@ test("the export pins exactly the coordinates the completed release published", 
 test("an export is skipped when the branch already has the release or a newer one", () => {
   assert.equal(exportStatus({kitRecord: null, identity, tagExists: false}).needed, true)
   assert.equal(exportStatus({kitRecord: {releaseIdentity: "3.4.0-dev.1035"}, identity, tagExists: false}).needed, true)
-  assert.equal(exportStatus({kitRecord: {releaseIdentity: identity}, identity, tagExists: false}).needed, false)
+  // A branch that already carries the release but lost its tag gets the tag back.
+  assert.deepEqual(exportStatus({kitRecord: {releaseIdentity: identity}, identity, tagExists: false}), {
+    needed: false,
+    repairTag: true,
+    reason: `the branch carries ${identity} but sdk-${identity} is missing`,
+  })
+  assert.equal(exportStatus({kitRecord: {releaseIdentity: identity}, identity, tagExists: true}).repairTag, false)
+  assert.equal(
+    exportStatus({kitRecord: {releaseIdentity: "3.4.0-dev.1041"}, identity, tagExists: false}).repairTag,
+    false,
+  )
   assert.equal(exportStatus({kitRecord: {releaseIdentity: "3.4.0-dev.1041"}, identity, tagExists: false}).needed, false)
   assert.equal(exportStatus({kitRecord: null, identity, tagExists: true}).needed, false)
 })

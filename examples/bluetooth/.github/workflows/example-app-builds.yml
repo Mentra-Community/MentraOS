@@ -9,6 +9,11 @@ name: Example App Builds
 # Manager packages. Inside MentraOS this file is inert (GitHub only runs
 # workflows from the repository root); there, Example App Builds builds the same
 # examples against the SDK source.
+#
+# Linux jobs run on Blacksmith, which covers every Mentra-Community
+# repository. The Apple jobs stay on GitHub-hosted macOS runners: this
+# repository is public, and pull requests from forks must never run on
+# Mentra's self-hosted Macs.
 
 "on":
   pull_request:
@@ -38,7 +43,7 @@ env:
 jobs:
   android:
     name: Native Android example
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       sdk-version: ${{ steps.sdk-version.outputs.version }}
     steps:
@@ -314,7 +319,7 @@ jobs:
 
   react-native:
     name: React Native example
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     outputs:
       sdk-version: ${{ steps.sdk-version.outputs.version }}
     steps:
@@ -424,7 +429,7 @@ jobs:
 
   react-native-elevenlabs-audio:
     name: React Native ElevenLabs audio example
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       sdk-version: ${{ steps.sdk-version.outputs.version }}
     steps:

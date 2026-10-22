@@ -560,7 +560,8 @@ Then it:
   store inventories and the beta's own number;
 - builds `examples/bluetooth` at that source, stamped as release X.Y.Z with the
   beta's OTA pin, and publishes the example APKs and unsigned iOS IPA (including
-  `mentra-example-react-native-X.Y.Z.apk`) in the stable release `mentra-vX.Y.Z`;
+  `mentra-example-react-native-X.Y.Z.apk`) in the stable release `mentra-vX.Y.Z`,
+  and lists them under **Bluetooth example apps** in that release's downloads;
 - uploads the iOS build to the external TestFlight group
   `Mentra Bluetooth Example` (created with its public link on first use) and
   submits it for Beta App Review, and uploads the Android build to the closed
