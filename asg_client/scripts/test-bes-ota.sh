@@ -225,16 +225,22 @@ BROADCAST_OUTPUT="$("${ADB[@]}" shell am broadcast \
 BROADCAST_STATUS=$?
 set -e
 printf '%s\n' "$BROADCAST_OUTPUT"
-restore_legacy_path
 if [ "$BROADCAST_STATUS" -ne 0 ]; then
+    restore_legacy_path
     echo "❌ BES OTA broadcast failed"
     exit "$BROADCAST_STATUS"
 fi
 
 if [ "$FOLLOW_LOGS" = false ]; then
+    # ASG 36 re-reads the fixed path for SetStartInfo after BES grants
+    # authorization, long after the broadcast returns. Leave the staged image and
+    # its recovery state in place; the caller removes them once BES has applied
+    # the update, and the startup recovery above handles an interrupted run.
+    LEGACY_PATH_STAGED=false
     echo "✅ BES OTA triggered; log following disabled."
     exit 0
 fi
+restore_legacy_path
 
 echo ""
 echo "📋 Monitoring logs (Ctrl+C to exit)..."

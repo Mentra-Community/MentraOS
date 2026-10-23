@@ -572,7 +572,7 @@ query_firmware_versions() {
   "${ADB[@]}" logcat -c >/dev/null 2>&1 || return 1
   "${ADB[@]}" shell am broadcast \
     -a com.mentra.asg_client.ACTION_SEND_COMMAND \
-    --es json '{"type":"request_version","mId":424242}' \
+    --es json "'{\"type\":\"request_version\",\"mId\":424242}'" \
     -n "$COMMAND_RECEIVER" >/dev/null 2>&1 || return 1
 
   deadline=$((SECONDS + 20))
@@ -627,7 +627,7 @@ return_bes_to_rendezvous_before_bridge() {
   "${ADB[@]}" logcat -c >/dev/null 2>&1 || true
   "${ADB[@]}" shell am broadcast \
     -a com.mentra.asg_client.ACTION_SEND_COMMAND \
-    --es json "{\"type\":\"reboot_bes_for_mtk_flash\",\"mId\":424243,\"request_id\":\"$request_id\"}" \
+    --es json "'{\"type\":\"reboot_bes_for_mtk_flash\",\"mId\":424243,\"request_id\":\"$request_id\"}'" \
     -n "$COMMAND_RECEIVER" >/dev/null \
     || fail "Could not dispatch the BES rendezvous reset"
 
@@ -893,6 +893,15 @@ else
   echo "=== Updating BES to $BES_VERSION ==="
   ANDROID_SERIAL="$SERIAL" "$SCRIPT_DIR/test-bes-ota.sh" "$BES_PATH" "$BES_VERSION" --no-follow
   wait_for_bes_success "$BES_VERSION"
+  # test-bes-ota.sh leaves ASG 36's fixed-path image staged for SetStartInfo;
+  # restore the pre-existing artifact (or remove ours) now that BES applied it.
+  legacy_state="$("${ADB[@]}" shell cat /storage/emulated/0/asg/bes_firmware.pre_adb.state 2>/dev/null | tr -d '\r\n' || true)"
+  "${ADB[@]}" shell rm -f /storage/emulated/0/asg/bes_firmware.bin >/dev/null 2>&1 || true
+  if [[ "$legacy_state" == existing:* ]]; then
+    "${ADB[@]}" shell mv /storage/emulated/0/asg/bes_firmware.pre_adb.bin \
+      /storage/emulated/0/asg/bes_firmware.bin >/dev/null 2>&1 || true
+  fi
+  "${ADB[@]}" shell rm -f /storage/emulated/0/asg/bes_firmware.pre_adb.state >/dev/null 2>&1 || true
 fi
 
 echo ""
