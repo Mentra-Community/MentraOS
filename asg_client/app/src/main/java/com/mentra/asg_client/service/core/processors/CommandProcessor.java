@@ -642,6 +642,11 @@ public class CommandProcessor {
         return k900CommandHandler.requestSystemVersion();
     }
 
+    /** Asks the BES for a fresh sr_syvr so the log-delivery gate is re-evaluated. */
+    public boolean refreshBesSystemVersion() {
+        return requestBesSystemVersionNow();
+    }
+
     private boolean requestBesSystemVersionNow() {
         return k900CommandHandler != null && k900CommandHandler.requestSystemVersion();
     }

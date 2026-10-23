@@ -11,6 +11,7 @@ import com.mentra.asg_client.io.bes.BesOtaUartListener;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.bes.log.BesCrashDumpCollector;
 import com.mentra.asg_client.io.bes.log.BesLivenessMonitor;
+import com.mentra.asg_client.io.bes.log.BesLogDeliveryGate;
 import com.mentra.asg_client.io.bes.log.BesTraceTail;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
@@ -1468,11 +1469,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 linkState.capsAdvertised(applyBesWireCaps(json));
                                 // OS-1988: a BES with wire_caps.crash_pull reports its boot and
                                 // saved crash dump here; the collector ignores any other BES.
-                                BesCrashDumpCollector.get()
-                                        .onSystemVersion(json, this::sendBoundedQuietCommand);
+                                // BesLogDeliveryGate off (the shipped default): the collector never
+                                // sees the reply and the tail sees no caps, so nothing subscribes
+                                // and the BES sends no log data.
+                                boolean logDelivery = BesLogDeliveryGate.isEnabled();
+                                if (logDelivery) {
+                                    BesCrashDumpCollector.get()
+                                            .onSystemVersion(json, this::sendBoundedQuietCommand);
+                                }
                                 JSONObject caps = json.optJSONObject("wire_caps");
                                 I2sReadyGate.setSupported(caps != null && caps.optInt("i2s_ready", 0) == 1);
-                                BesTraceTail.get().onWireCaps(caps);
+                                BesTraceTail.get().onWireCaps(logDelivery ? caps : null);
                             });
             if (result == BesUartTransportCoordinator.SystemVersionResult.IGNORED) {
                 Log.i(TAG, "Ignoring sr_syvr from a retired UART session");

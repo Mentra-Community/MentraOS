@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
 
+import com.mentra.asg_client.io.bes.log.BesLogDeliveryGate;
 import com.mentra.asg_client.io.bes.log.BesTraceTail;
 import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
@@ -15,6 +16,9 @@ import com.mentra.asg_client.service.core.processors.CommandProcessor;
  * Usage:
  *   adb shell am broadcast -a com.mentra.DEBUG_BES_TRACE --ez enabled false
  *   adb shell am broadcast -a com.mentra.DEBUG_BES_TRACE --ez enabled true
+ *
+ * Master switch (BesLogDeliveryGate, off by default). Everything below needs it on:
+ *   adb shell am broadcast -a com.mentra.DEBUG_BES_TRACE -p com.mentra.asg_client --ez delivery true
  *
  * Persistence cost (OS-1988): the store logs one [ASG-BES-STORE] aggregate line per minute at
  * most. Dump the totals on demand, and optionally change the group commit for an A/B run:
@@ -28,6 +32,20 @@ public class DebugBesTraceReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent == null || !ACTION_DEBUG_BES_TRACE.equals(intent.getAction())) {
+            return;
+        }
+
+        if (intent.hasExtra("delivery")) {
+            // Master switch for BES log delivery (BesLogDeliveryGate). Persisted; applied by
+            // asking the BES for a fresh sr_syvr, which re-evaluates the caps.
+            boolean on = intent.getBooleanExtra("delivery", false);
+            BesLogDeliveryGate.setOverride(context, on);
+            Log.i(TAG, "BES log delivery " + (on ? "enabled" : "disabled"));
+            AsgClientService svc = AsgClientService.getInstance();
+            CommandProcessor proc = svc != null ? svc.getCommandProcessor() : null;
+            if (proc != null) {
+                proc.refreshBesSystemVersion();
+            }
             return;
         }
 

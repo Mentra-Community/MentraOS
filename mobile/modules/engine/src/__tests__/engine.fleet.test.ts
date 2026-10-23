@@ -67,6 +67,10 @@ mock.module("../services/MentraJSCrashloopReportService", () => ({
   startMentraJSCrashloopReportService: step("crashloop.start"),
   stopMentraJSCrashloopReportService: step("crashloop.stop"),
 }))
+mock.module("../services/BesCrashReportService", () => ({
+  startBesCrashReportService: step("besCrash.start"),
+  stopBesCrashReportService: step("besCrash.stop"),
+}))
 mock.module("../services/MiniappEngine", () => ({
   ensureMiniappEngine: step("miniappEngine.ensure"),
   stopMiniappEngine: step("miniappEngine.stop"),
