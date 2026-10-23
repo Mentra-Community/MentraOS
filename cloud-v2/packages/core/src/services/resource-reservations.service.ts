@@ -673,6 +673,83 @@ export class ResourceReservationsService {
     return rows?.length === 1 && rows[0]!.resourceId === intent.resourceCheck!.resourceId && rows[0]!.intentSha256 === digest &&
       isDeepStrictEqual(rows[0]!.resourceCheck, intent.resourceCheck) && isDeepStrictEqual(rows[0]!.intent, intent) ? rows[0] : undefined
   }
+  /** A stopped fixture baseline retains its claim while repair waits for an app baseline.
+   * Only this installed passive dependency check may share the otherwise idle lane.
+   * Prepared app intent and accepted failed-check history are producer-validated
+   * settlement facts; an unknown check without an accepted result is not one. */
+  private queuedFixtureDependencyClaims(host: ResourceReservationHost, intent: ExclusiveResourceIntent): Set<string> | undefined {
+    if (intent.prerequisite || !intent.laneId) return undefined
+    const lane = host.snapshot.lanes.find(value => value.id === intent.laneId), lifecycle = host.snapshot.resourceLifecycle,
+      now = this.now(), target = intent.resourceCheck!.resourceId
+    if (!lane || !['idle', 'offline'].includes(lane.state) || lane.activity || lane.dispatchMode !== 'automatic' || !lifecycle) return undefined
+    const installed = [...lane.resources, ...host.snapshot.resources ?? []], visited = new Set<string>()
+    const scopeCurrent = (id: string): boolean => {
+      if (visited.has(id)) return false
+      visited.add(id)
+      const ref = installed.find(value => value.id === id), subject = lifecycle.subjects.find(value => value.subject.id === id),
+        contract = ref?.idleContract
+      if (!contract || !subject?.current || ref.kind !== subject.resource.kind || subject.subject.authorityHostId !== host.hostId ||
+        subject.owner || subject.repair.state !== 'none' || !subject.supportedActions.includes('mark-out-of-service') ||
+        !['idle', 'unknown'].includes(subject.status) || !subject.observedAt ||
+        Date.parse(subject.observedAt) > Date.parse(host.snapshot.observedAt) ||
+        !fresh({...host, snapshot: {...host.snapshot, observedAt: subject.observedAt}}, now) ||
+        contract.version !== 'installed-resource-baseline-v1' || subject.idle.contractVersion !== contract.version ||
+        contract.qualifiedScope.kind !== 'same-controller' || contract.qualifiedScope.controllerId !== host.hostId ||
+        !isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope) || ref.exclusiveDependencies?.length ||
+        subject.resource.dependencies.length || subject.resource.memberships.length !== 1 ||
+        subject.resource.memberships[0]!.hostId !== host.hostId || subject.resource.memberships[0]!.laneId !== lane.id) return false
+      const appConditions = lane.platform === 'android' ? ['app-phone-identity', 'app-phone-same-boot', 'app-package-absent', 'app-process-absent', 'app-data-absent'] :
+        ['app-managed-processes-absent', 'app-managed-storage-absent'],
+        conditions = id === target ? appConditions : ['phone-identity', 'phone-same-boot', 'phone-default-network', 'phone-network-stable'],
+        dependencies = contract.dependencies ?? []
+      if (ref.kind !== (id === target ? 'app' : 'phone') || contract.conditions.length !== conditions.length ||
+        !conditions.every(condition => contract.conditions.includes(condition))) return false
+      if (id === target && lane.platform === 'android') return dependencies.length === 1 && scopeCurrent(dependencies[0]!)
+      return dependencies.length === 0
+    }
+    if (!scopeCurrent(target)) return undefined
+    const all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []), retained = all.filter(isExclusiveHostReservation)
+    if (retained.some(claim => visited.has(claim.resourceId))) return undefined
+    const claims = retained.filter(claim => claim.laneId === lane.id), admitted = new Set<string>()
+    for (const claim of claims) {
+      const check = claim.resourceCheck, subject = lifecycle.subjects.find(value => value.subject.id === claim.resourceId),
+        ref = lane.resources.find(value => value.id === claim.resourceId), accepted = subject?.idle.acceptedCheck,
+        journals = host.snapshot.resourceReservations?.resourceChecks?.filter(value => value.operationId === claim.operationId),
+        journal = journals?.length === 1 ? journals[0] : undefined, contract = ref?.idleContract
+      if (!check || claim.authorityHostId !== host.hostId || claim.prerequisite || claim.origin || !subject?.current || !subject.observedAt || !contract ||
+        ref.kind !== 'fixture-data' || subject.resource.kind !== ref.kind || subject.subject.authorityHostId !== host.hostId ||
+        !isDeepStrictEqual(subject.owner && {id: subject.owner.id, kind: subject.owner.kind}, claim.owner) ||
+        !Number.isSafeInteger(subject.owner?.generation) || subject.owner!.hostId !== host.hostId ||
+        subject.owner!.laneId !== undefined && subject.owner!.laneId !== lane.id ||
+        subject.status !== 'in-repair' || subject.repair.state !== 'queued' || !subject.repair.configured ||
+        !subject.supportedActions.includes('mark-out-of-service') ||
+        subject.repair.executionId || subject.repair.interruptionId || !accepted || !['failed', 'unknown'].includes(subject.idle.outcome) ||
+        subject.idle.contractVersion !== check.contractVersion || contract.version !== check.contractVersion ||
+        contract.version !== 'installed-resource-baseline-v1' || !contract.repairConfigured ||
+        contract.qualifiedScope.kind !== 'same-controller' || contract.qualifiedScope.controllerId !== host.hostId ||
+        !isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope) ||
+        contract.conditions.length !== 2 || !['fixture-owned-effects-returned', 'fixture-native-children-settled'].every(id => contract.conditions.includes(id)) ||
+        contract.dependencies?.length !== 1 || contract.dependencies[0] !== target || ref.exclusiveDependencies?.length ||
+        subject.resource.dependencies.some(id => id !== target) || subject.resource.memberships.length !== 1 ||
+        subject.resource.memberships[0]!.hostId !== host.hostId || subject.resource.memberships[0]!.laneId !== lane.id ||
+        !journal || journal.state !== 'began' || !this.resourceCheckClaimMatches(claim, journal.intent, this.resourceCheckIntentDigest(journal.intent)) ||
+        !isDeepStrictEqual(this.resourceCheckJournal(host, journal.intent), journal) || accepted.operationId !== claim.operationId ||
+        accepted.subjectGeneration <= check.subjectGeneration || accepted.subjectGeneration + 1 !== subject.generation ||
+        Date.parse(accepted.acceptedAt) < Date.parse(claim.reservedAt) || Date.parse(accepted.acceptedAt) > check.deadlineAt ||
+        Date.parse(journal.observedAt) > Date.parse(accepted.acceptedAt) ||
+        Date.parse(subject.observedAt) > Date.parse(host.snapshot.observedAt) ||
+        !fresh({...host, snapshot: {...host.snapshot, observedAt: subject.observedAt}}, now) ||
+        claim.controllerGeneration > host.incarnationGeneration || claim.controllerGeneration === host.incarnationGeneration &&
+          (claim.controllerIncarnation !== host.incarnation || claim.borrowerSequence > host.sequence)) return undefined
+      const failure = lifecycle.history.filter(event => event.resourceId === claim.resourceId &&
+        event.event === `check-${subject.idle.outcome}` && event.subjectGeneration === accepted.subjectGeneration && event.at === accepted.acceptedAt),
+        queued = lifecycle.history.filter(event => event.resourceId === claim.resourceId && event.event === 'repair-queued' && event.subjectGeneration === subject.generation)
+      if (failure.length !== 1 || queued.length !== 1 || Date.parse(queued[0]!.at) < Date.parse(accepted.acceptedAt) ||
+        Date.parse(queued[0]!.at) > Date.parse(subject.observedAt)) return undefined
+      admitted.add(claim.id)
+    }
+    return admitted.size ? admitted : undefined
+  }
   /** Only an original resource-check repair may share controller capacity with a disjoint baseline.
    * The installed controller still checks its complete native/repair history before preparing
    * this intent and again before dispatch. Reported claim IDs alone are not physical scope. */
@@ -819,7 +896,7 @@ export class ResourceReservationsService {
       if (intent.prerequisite && (intent.prerequisite.candidate ? !candidatePrerequisiteRequestMatches(selected ?? null, intent, this.now()) :
         intent.prerequisite.local ? Boolean(await this.rows.request?.(intent.prerequisite.jobId)) || !localBackendIntentMatches(host, intent, this.now()) :
           !backendPrerequisiteRequestMatches(selected ?? null, intent, this.now()))) return unknown
-      const disjointRepair = !intent.prerequisite ? this.disjointResourceCheckRepairClaims(host, intent) : undefined
+      const disjointRepair = !intent.prerequisite ? this.disjointResourceCheckRepairClaims(host, intent) ?? this.queuedFixtureDependencyClaims(host, intent) : undefined
       if (all.some(claim => isExclusiveHostReservation(claim) ? Boolean(!disjointRepair?.has(claim.id) && intent.laneId && claim.borrowerHostId === hostId && claim.laneId === intent.laneId &&
           (!intent.prerequisite || intent.prerequisite.local || !selected?.fleetExclusiveReservation?.claims.some(value => isDeepStrictEqual(value, claim)))) :
         claim.hostId === hostId && claim.laneId === intent.laneId &&

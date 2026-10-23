@@ -325,6 +325,163 @@ function initialBaseline(f: ReturnType<typeof fixture>) {
     dependencies: [{resourceId: subject.subject.id, authorityHostId: 'mini', capability: 'resource-idle'}]})
   return f
 }
+async function queuedFixtureRepair() {
+  const f = initialBaseline(fixture()), lane = f.host.snapshot.lanes[0]!, app = f.subject(),
+    resourceId = 'fixture-exact', operationId = 'fixture-check-original'
+  lane.platform = 'ios-on-mac'; lane.resources[0]!.kind = 'app'; app.resource.kind = 'app'
+  lane.resources[0]!.idleContract!.version = 'installed-resource-baseline-v1'
+  lane.resources[0]!.idleContract!.conditions = ['app-managed-processes-absent', 'app-managed-storage-absent']
+  app.idle.contractVersion = lane.resources[0]!.idleContract!.version
+  f.intent.resourceCheck!.contractVersion = app.idle.contractVersion
+  const target = f.host.snapshot.resourceReservations!.resourceChecks![0]!
+  target.intent = structuredClone(f.intent); target.resourceCheck = structuredClone(f.intent.resourceCheck!)
+  target.intentSha256 = requestInputDigest({...f.intent, controller: f.intent.resourceCheck!.controller,
+    dependencies: [{resourceId: app.subject.id, authorityHostId: 'mini', capability: 'resource-idle'}]})
+  lane.resources.push({id: resourceId, kind: 'fixture-data', idleContract: {
+    ...structuredClone(lane.resources[0]!.idleContract!), conditions: ['fixture-owned-effects-returned', 'fixture-native-children-settled'],
+    dependencies: [app.subject.id]}})
+  const fixtureSubject = structuredClone(app)
+  fixtureSubject.subject.id = resourceId; fixtureSubject.resource.kind = 'fixture-data'
+  f.host.snapshot.resourceLifecycle!.subjects.push(fixtureSubject)
+  const original = structuredClone(f.intent)
+  original.operationId = operationId; original.resources[0]!.id = resourceId; original.resourceCheck!.resourceId = resourceId
+  original.owner.id = `resource-check:${requestInputDigest({operationId, resourceId})}`
+  const digest = requestInputDigest({...original, controller: original.resourceCheck!.controller,
+    dependencies: [{resourceId, authorityHostId: 'mini', capability: 'resource-idle'}]})
+  const journal = {intentSha256: digest, operationId, resourceId, intent: structuredClone(original),
+    resourceCheck: structuredClone(original.resourceCheck!), state: 'prepared' as 'prepared' | 'began' | 'never-began',
+    observedAt: f.host.snapshot.observedAt}
+  f.host.snapshot.resourceReservations!.resourceChecks!.push(journal)
+  const acquired = await f.service.acquire(original, 'mini')
+  expect(acquired.status).toBe('reserved')
+  f.advance(); journal.state = 'began'; journal.observedAt = f.host.snapshot.observedAt
+  fixtureSubject.generation = 3; fixtureSubject.status = 'in-repair'
+  fixtureSubject.owner = {...original.owner, generation: 1, hostId: 'mini', laneId: lane.id}
+  fixtureSubject.observedAt = journal.observedAt; fixtureSubject.receivedAt = journal.observedAt
+  fixtureSubject.repair.state = 'queued'; fixtureSubject.idle.outcome = 'unknown'
+  fixtureSubject.supportedActions = ['mark-out-of-service']
+  fixtureSubject.idle.checkedAt = journal.observedAt
+  fixtureSubject.idle.acceptedCheck = {operationId, subjectGeneration: 2, resultSha256: hash, acceptedAt: journal.observedAt}
+  const failure = {id: 'fixture-check-unknown', resourceId, subjectGeneration: 2, at: journal.observedAt, event: 'check-unknown'}
+  const queued = {id: 'fixture-repair-queued', resourceId, subjectGeneration: 3, at: journal.observedAt, event: 'repair-queued'}
+  f.host.snapshot.resourceLifecycle!.history.push(failure, queued)
+  return {...f, fixtureSubject, original, journal, failure, queued, claim: acquired.claims[0]!}
+}
+test('settled queued fixture permits its fresh app dependency baseline without releasing original custody', async () => {
+  const f = await queuedFixtureRepair(), before = structuredClone(f.fixtureSubject), claim = structuredClone(f.claim)
+  const result = await f.service.acquire(f.intent, 'mini')
+  expect(result.status).toBe('reserved')
+  expect(result.claims).toHaveLength(1); expect(f.host.resourceReservations).toHaveLength(2)
+  expect(f.host.resourceReservations).toContainEqual(claim); expect(f.fixtureSubject).toEqual(before)
+  expect(f.host.snapshot.resourceLifecycle!.history).toContainEqual(f.queued)
+  expect(f.subject().owner).toBeNull(); expect(f.subject().generation).toBe(0)
+})
+test('resource-only owner keeps the original journal lane even when Core overview hides its actions', async () => {
+  const f = await queuedFixtureRepair()
+  delete f.fixtureSubject.owner!.laneId
+  const projected = projectResourceLifecycle([f.host], Date.parse(f.host.snapshot.observedAt)).subjects.find(value => value.subject.id === 'fixture-exact')!
+  expect(projected).toMatchObject({status: 'reserved', supportedActions: []})
+  expect(f.fixtureSubject).toMatchObject({status: 'in-repair', supportedActions: ['mark-out-of-service']})
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('reserved')
+  expect(f.host.resourceReservations).toContainEqual(f.claim)
+})
+test('queued fixture bootstrap rejects missing settlement, unknown effects, changed scope and active lane work', async () => {
+  for (const mutate of [
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.supportedActions = []},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.idle.acceptedCheck = null},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.idle.acceptedCheck!.resultSha256 = ''},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.idle.acceptedCheck!.subjectGeneration++},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.host.snapshot.resourceLifecycle!.history = [f.queued]},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.host.snapshot.resourceLifecycle!.history = [f.failure]},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.failure.at = new Date(start - 1).toISOString()},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.queued.at = new Date(start - 1).toISOString()},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.repair.state = 'running'},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.repair.executionId = 'already-started-fixer'},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.owner!.kind = 'fixer'},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.owner!.id = 'foreign-owner'},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.owner!.laneId = 'foreign-lane'},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.resource.dependencies = ['other-app']},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.host.snapshot.lanes[0]!.resources[1]!.idleContract!.dependencies = ['other-app']},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.resource.memberships.push({hostId: 'mini', laneId: 'shared-lane'})},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.subject().resource.dependencies = ['fixture-exact']},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.host.snapshot.lanes[0]!.resources[0]!.idleContract!.dependencies = ['fixture-exact']},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.subject().resource.memberships.push({hostId: 'mini', laneId: 'other-lane'})},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.subject().owner = {id: 'native-owner', kind: 'run', generation: 1, hostId: 'mini', laneId: 'android'}},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.subject().status = 'returning'},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.subject().current = false},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.subject().supportedActions = []},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.claim.controllerIncarnation = 'foreign-controller'; f.host.resourceReservations = [f.claim]},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.claim.owner.id = 'foreign-claim'; f.host.resourceReservations = [f.claim]},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.claim.inputSha256 = 'b'.repeat(64); f.host.resourceReservations = [f.claim]},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.journal.state = 'prepared'},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.host.snapshot.resourceReservations!.resourceChecks!.splice(1)},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.host.snapshot.lanes[0]!.activity = {generation: 1, owner: {id: 'active-run', kind: 'run', requestId: 'active-run'}}},
+    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.host.snapshot.lanes[0]!.dispatchMode = 'paused'},
+  ]) {
+    const f = await queuedFixtureRepair(); mutate(f)
+    const before = structuredClone(f.host.resourceReservations)
+    let result
+    try {result = await f.service.acquire(f.intent, 'mini')} catch {result = {status: 'invalid-report'}}
+    expect(result.status).not.toBe('reserved'); expect(f.writes).toHaveLength(1)
+    expect(f.host.resourceReservations).toEqual(before); expect(f.subject().generation).toBe(0)
+  }
+})
+test('Android app baseline checks its current phone scope while the stopped fixture claim remains queued', async () => {
+  const f = await queuedFixtureRepair(), lane = f.host.snapshot.lanes[0]!, app = lane.resources[0]!, subject = f.subject(),
+    phone = structuredClone(subject), phoneRef = {...structuredClone(app), id: 'physical-phone', kind: 'phone' as const}
+  lane.platform = 'android'
+  phoneRef.idleContract!.conditions = ['phone-identity', 'phone-same-boot', 'phone-default-network', 'phone-network-stable']
+  phone.subject.id = phoneRef.id; phone.resource.kind = 'phone'; phone.idle.acceptedCheck = null
+  phone.generation = 0; phone.status = 'unknown'; phone.idle.outcome = 'not-checked'
+  lane.resources.push(phoneRef); f.host.snapshot.resourceLifecycle!.subjects.push(phone)
+  app.idleContract!.conditions = ['app-phone-identity', 'app-phone-same-boot', 'app-package-absent', 'app-process-absent', 'app-data-absent']
+  app.idleContract!.dependencies = [phoneRef.id]
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('reserved')
+  expect(f.host.resourceReservations).toContainEqual(f.claim); expect(phone.owner).toBeNull()
+})
+test('new accepted controller may check app beside an exact historical stopped fixture claim without renewing its old authority', async () => {
+  const f = await queuedFixtureRepair(), target = f.host.snapshot.resourceReservations!.resourceChecks![0]!,
+    binding = {...f.intent.resourceCheck!.binding, revision: 'e'.repeat(40), installationId: 'replacement-source'}
+  f.advance(); f.host.incarnation = 'replacement-controller'; f.host.incarnationGeneration = 2
+  f.host.snapshot.incarnation = f.host.incarnation; f.host.snapshot.incarnationGeneration = 2
+  f.host.snapshot.frameworkBinding = binding; f.host.snapshot.frameworkAcceptedAt = f.host.snapshot.observedAt
+  f.intent.controller = {incarnation: f.host.incarnation, generation: 2, sequence: f.host.sequence}
+  f.intent.resourceCheck!.controller = {incarnation: f.host.incarnation, generation: 2}; f.intent.resourceCheck!.binding = binding
+  target.intent = structuredClone(f.intent); target.resourceCheck = structuredClone(f.intent.resourceCheck!)
+  target.intentSha256 = requestInputDigest({...f.intent, controller: f.intent.resourceCheck!.controller,
+    dependencies: [{resourceId: f.subject().subject.id, authorityHostId: 'mini', capability: 'resource-idle'}]})
+  const original = structuredClone(f.claim)
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('reserved')
+  expect(f.host.resourceReservations).toContainEqual(original); expect(f.claim.controllerGeneration).toBe(1)
+  expect(f.fixtureSubject.repair.state).toBe('queued')
+})
+test('queued fixture does not exempt recorder, run or target claims from the full capacity roster', async () => {
+  for (const kind of ['recorder', 'run', 'target']) {
+    const f = await queuedFixtureRepair(), blocker: HostResourceReservation = kind === 'recorder' ?
+      {id: randomUUID(), requestId: 'waiting-original', fleetInputSha256: hash, hostId: 'mini', laneId: 'android',
+        poolId: 'mini-disk', minimumAvailableBytes: 1, reservedAt: f.host.snapshot.observedAt} :
+      {...structuredClone(f.claim), id: randomUUID(), resourceId: kind === 'target' ? 'phone-exact' : 'other-resource', resourceCheck: undefined,
+        ...(kind === 'run' ? {owner: {kind: 'run', id: 'original-run'}, operationId: 'run:original-run'} : {}),
+        ...(kind === 'target' ? {laneId: 'other-lane'} : {})} as ExclusiveHostReservation
+    f.host.resourceReservations = [...hostResourceReservationsSchema.parse(f.host.resourceReservations), blocker]
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+    expect(f.writes).toHaveLength(1); expect(f.host.resourceReservations).toContainEqual(blocker)
+  }
+})
+test('queued fixture baseline cancellation or controller change before CAS preserves both original authorities', async () => {
+  for (const change of ['cancel', 'restart', 'started-repair']) {
+    const f = await queuedFixtureRepair()
+    f.beforeWrite(async () => {
+      f.advance()
+      if (change === 'cancel') f.host.snapshot.resourceReservations!.resourceChecks![0]!.state = 'never-began'
+      if (change === 'restart') {f.host.incarnation = 'new-controller'; f.host.incarnationGeneration++}
+      if (change === 'started-repair') {f.fixtureSubject.repair.state = 'running'; f.fixtureSubject.owner!.kind = 'fixer'}
+    })
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+    expect(f.host.resourceReservations).toEqual([f.claim]); expect(f.writes).toHaveLength(1)
+    expect(f.subject().owner).toBeNull()
+  }
+})
 async function originalGlassesRepair() {
   const f = initialBaseline(fixture()), lane = f.host.snapshot.lanes[0]!, phone = f.subject(), resourceId = 'glasses-exact',
     operationId = 'glasses-check-original', at = f.host.snapshot.observedAt
