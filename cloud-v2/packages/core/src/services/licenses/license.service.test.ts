@@ -157,6 +157,57 @@ describe("parseLicenseWrite", () => {
       expect(refused({...workspaceWrite(), assignTo}).message).toContain("assignTo")
     }
   })
+
+  const seatRequest = {requestId: "01JZWY3V8N0F2E9GQ4T6KXH5RE", mentraUserId: "mu_2", quantity: 6}
+
+  test("seatRequest names a request, its person and the quantity it expects, keeping only those; a write without one has none", () => {
+    const requested = {...workspaceWrite(), seatRequest}
+    expect(parseLicenseWrite(requested, LICENSE_ID)).toEqual(requested)
+    expect(parseLicenseWrite({...workspaceWrite(), seatRequest: {...seatRequest, extra: true}}, LICENSE_ID)).toEqual(
+      requested,
+    )
+    // Alongside the buyer, each is kept as it is.
+    const both = {...requested, assignTo: {mentraUserId: "mu_1"}}
+    expect(parseLicenseWrite(both, LICENSE_ID)).toEqual(both)
+    // The request's id is billing's: any non-blank id of up to 200 characters, and the quantity up to the most.
+    const longest = {...seatRequest, requestId: "r".repeat(200), quantity: 1_000_000}
+    expect(parseLicenseWrite({...workspaceWrite(), seatRequest: longest}, LICENSE_ID).seatRequest).toEqual(longest)
+    expect(parseLicenseWrite({...workspaceWrite(), seatRequest: {...seatRequest, quantity: 1}}, LICENSE_ID).seatRequest)
+      .toEqual({...seatRequest, quantity: 1})
+    expect("seatRequest" in parseLicenseWrite(workspaceWrite(), LICENSE_ID)).toBe(false)
+  })
+
+  test("a malformed seatRequest is refused", () => {
+    const {requestId: _requestId, ...noRequestId} = seatRequest
+    for (const malformed of [
+      null,
+      "01JZWY3V8N0F2E9GQ4T6KXH5RE",
+      [],
+      [seatRequest],
+      {},
+      noRequestId,
+      {...seatRequest, requestId: ""},
+      {...seatRequest, requestId: "   "},
+      {...seatRequest, requestId: 5},
+      {...seatRequest, requestId: "r".repeat(201)},
+      {...seatRequest, mentraUserId: undefined},
+      {...seatRequest, mentraUserId: ""},
+      {...seatRequest, mentraUserId: "  "},
+      {...seatRequest, mentraUserId: 5},
+      {...seatRequest, quantity: undefined},
+      {...seatRequest, quantity: 0},
+      {...seatRequest, quantity: -1},
+      {...seatRequest, quantity: 1.5},
+      {...seatRequest, quantity: "6"},
+      {...seatRequest, quantity: 1_000_001},
+      {...seatRequest, quantity: null},
+    ]) {
+      expect([malformed, refused({...workspaceWrite(), seatRequest: malformed}).message]).toEqual([
+        malformed,
+        expect.stringContaining("seatRequest"),
+      ])
+    }
+  })
 })
 
 describe("parseSeatAssignments", () => {

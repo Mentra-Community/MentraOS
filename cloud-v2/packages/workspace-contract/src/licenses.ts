@@ -54,6 +54,18 @@ export interface LicenseWrite {
    * predates it ignores it.
    */
   assignTo?: {mentraUserId: string}
+  /**
+   * A person's request for one more seat for themselves: the request's id, their Core user ID, and the
+   * quantity the license reaches once it is added. Billing names it on the write whose quantity reaches it,
+   * and on every later write until Core accepts one that carries it. Core decides each request once, on the
+   * first applied write (a new license or a newer revision) that carries an id it hasn't recorded: it records
+   * the id whatever it decides, and gives the person one seat only when that write raises the quantity to the
+   * request's (the quantity Core had, 0 for a new license, is below it, and the write's is at least it), the
+   * person is an active member of the owner workspace, the license has a seat to give, and they hold no seat
+   * of an in-term license of the same product in that workspace. Otherwise it assigns nothing, and a repeat or
+   * an older revision decides nothing. A Core that predates it ignores it.
+   */
+  seatRequest?: {requestId: string; mentraUserId: string; quantity: number}
 }
 
 /** Core's answer to a license write that it accepted: whether it changed anything, and the revision it has. */
@@ -75,7 +87,7 @@ export interface LicenseSeatView {
  * refuses further writes for it.
  * `seats` is present where Core lists who holds them (the workspace routes).
  */
-export interface LicenseView extends Omit<LicenseWrite, "licenseId" | "assignTo"> {
+export interface LicenseView extends Omit<LicenseWrite, "licenseId" | "assignTo" | "seatRequest"> {
   licenseId: string
   seatsUsed: number
   endedAt: string | null

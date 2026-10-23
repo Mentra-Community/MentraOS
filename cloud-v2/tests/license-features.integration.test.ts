@@ -6,7 +6,8 @@
  * through one, while that license is in its term (`validFrom <= now < paidThrough`, not ended), and only for
  * the packages the feature lists. `CLOUD_CORE_ENABLED_FEATURES` grants an entry's feature to every
  * signed-in person in the listed packages' tokens. A purchase's buyer, given a license by the write that
- * created it (`applyLicenseWrite` with `assignTo`), has its features in their next token.
+ * created it (`applyLicenseWrite` with `assignTo`), has its features in their next token, and so does a person
+ * given one by the write that added it for them (`seatRequest`).
  *
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random database name, ignores
  * `MONGO_URL`) and asserts the live connection is on that database before any destructive call. The
@@ -491,6 +492,43 @@ describe("POST /api/client/auth/miniapp-token", () => {
     expect(await applyLicenseWrite(write, {kind: "service", service: "store", email: null})).toEqual({
       applied: true,
       revision: 1,
+    })
+
+    expect(await mint(CALL)).toMatchObject({sub: "mu_alice", features: [UNLIMITED]})
+    expect("features" in (await mint(NOTES))).toBe(false)
+  })
+
+  test("carries the license a person asked for, from the write that added it", async () => {
+    await WorkspaceModel.create({workspaceId: "ws_acme", name: "Acme", status: "active"})
+    await WorkspaceMembershipModel.create(
+      membershipRow({
+        membershipId: "wm_alice_acme",
+        workspaceId: "ws_acme",
+        mentraUserId: "mu_alice",
+        role: "member",
+        status: "active",
+        startedAt: new Date(),
+      }),
+    )
+    const store = {kind: "service", service: "store", email: null} as const
+    const write = {
+      licenseId: newLicenseId(),
+      revision: 1,
+      owner: {type: "workspace", workspaceId: "ws_acme"} as const,
+      product: "mentra.call.unlimited",
+      features: [{key: UNLIMITED, packages: [CALL]}],
+      quantity: 1,
+      validFrom: inTerm.validFrom.toISOString(),
+      paidThrough: inTerm.paidThrough.toISOString(),
+    }
+    await applyLicenseWrite(write, store)
+    expect("features" in (await mint(CALL))).toBe(false)
+
+    // Alice opened an add-one session; the write that takes the license to 2 carries her request.
+    const seatRequest = {requestId: "01REQUEST0000000000000000A", mentraUserId: "mu_alice", quantity: 2}
+    expect(await applyLicenseWrite({...write, revision: 2, quantity: 2, seatRequest}, store)).toEqual({
+      applied: true,
+      revision: 2,
     })
 
     expect(await mint(CALL)).toMatchObject({sub: "mu_alice", features: [UNLIMITED]})

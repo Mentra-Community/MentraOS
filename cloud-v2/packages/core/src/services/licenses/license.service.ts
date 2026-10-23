@@ -53,6 +53,17 @@
  * holds no seat of an in-term license of the same product in the workspace. Repeats and later revisions
  * never assign, and two deliveries of the first write at once create one license, so it is given once.
  *
+ * **A requested seat.** A write may also carry a person's request for one more seat for themselves
+ * (`seatRequest`), which billing names from the write whose quantity reaches the request's until Core accepts
+ * one. Core decides each request once, on the first applied write that carries an id the license hasn't
+ * recorded (`seatRequests`): that write's own update records the id, whatever is decided, so a repeat, a
+ * later revision still carrying it, and a delivery racing it (whose update conflicts with this one's, and
+ * whose retry finds the newer revision or the id) never decide it again. It gives one seat (`assignRequested`)
+ * only when that write raises the quantity to the request's (the quantity Core had, 0 for a new license, is
+ * below it, and the write's is at least it), with the buyer's checks (`canGiveSeat`): an active member, who
+ * holds no seat of this license and none of an in-term license of the product there, and a free seat through
+ * the same conditional increment. Its `seat.assigned` follows `license.written` and the buyer's.
+ *
  * **Audit.** `license.written`, `license.ended`, `seat.assigned` and `seat.released` (with why: see
  * `SEAT_RELEASE_REASONS`), each with its actor. They are the workspace's (`recordWorkspaceEvent`, and
  * `recordWorkspaceEvents` for a batch of seats), so they are on the change feed.
@@ -102,6 +113,8 @@ const MAX_TEXT_LENGTH = 200
 const MAX_FEATURES = 50
 const MAX_PACKAGES_PER_FEATURE = 50
 const MAX_QUANTITY = 1_000_000
+/** How many decided seat request ids a license keeps: a request is carried only until Core accepts it. */
+const MAX_SEAT_REQUESTS = 20
 
 type JsonObject = Record<string, unknown>
 const isRecord = (value: unknown): value is JsonObject =>
@@ -117,7 +130,8 @@ function invalid(message: string): never {
 /**
  * The license write in `body`, for the license the path names (`licenseId`), with only the write's own
  * fields. Anything malformed is `invalid_request` (400), saying what: an owner that is not a workspace among
- * them, and a term whose `paidThrough` is before its `validFrom`. `assignTo` is absent or `{mentraUserId}`.
+ * them, and a term whose `paidThrough` is before its `validFrom`. `assignTo` is absent or `{mentraUserId}`, and
+ * `seatRequest` absent or `{requestId, mentraUserId, quantity}`.
  */
 export function parseLicenseWrite(body: unknown, licenseId: string): LicenseWrite {
   if (!isRecord(body)) invalid("a license write must be a JSON object")
@@ -136,11 +150,31 @@ export function parseLicenseWrite(body: unknown, licenseId: string): LicenseWrit
   // A term of no length is a subscription cancelled as it started; one that ends before it starts is a bug.
   if (Date.parse(paidThrough) < Date.parse(validFrom)) invalid("paidThrough must not be before validFrom")
   const write: LicenseWrite = {licenseId, revision, owner, product, features, quantity, validFrom, paidThrough}
-  if (body.assignTo === undefined) return write
-  if (!isRecord(body.assignTo) || !isId(body.assignTo.mentraUserId)) {
-    invalid('assignTo must be {"mentraUserId"}, a non-blank Core user ID')
+  if (body.assignTo !== undefined) {
+    if (!isRecord(body.assignTo) || !isId(body.assignTo.mentraUserId)) {
+      invalid('assignTo must be {"mentraUserId"}, a non-blank Core user ID')
+    }
+    write.assignTo = {mentraUserId: body.assignTo.mentraUserId}
   }
-  return {...write, assignTo: {mentraUserId: body.assignTo.mentraUserId}}
+  if (body.seatRequest !== undefined) write.seatRequest = parseSeatRequest(body.seatRequest)
+  return write
+}
+
+/**
+ * A seat request: a non-blank `requestId` of at most {@link MAX_TEXT_LENGTH} characters, a non-blank
+ * `mentraUserId`, and a whole `quantity` from 1 to {@link MAX_QUANTITY}, keeping only those.
+ */
+function parseSeatRequest(value: unknown): NonNullable<LicenseWrite["seatRequest"]> {
+  if (!isRecord(value)) invalid('seatRequest must be {"requestId", "mentraUserId", "quantity"}')
+  const {requestId, mentraUserId, quantity} = value
+  if (!isId(requestId) || requestId.length > MAX_TEXT_LENGTH) {
+    invalid(`seatRequest.requestId must be a non-blank id of at most ${MAX_TEXT_LENGTH} characters`)
+  }
+  if (!isId(mentraUserId)) invalid("seatRequest.mentraUserId must be a non-blank Core user ID")
+  if (!isWholeNumber(quantity) || quantity < 1 || quantity > MAX_QUANTITY) {
+    invalid(`seatRequest.quantity must be a whole number from 1 to ${MAX_QUANTITY}`)
+  }
+  return {requestId, mentraUserId, quantity}
 }
 
 /** A license's owner: a workspace, by a non-blank id. Any other owner, a person included, is refused. */
@@ -242,9 +276,12 @@ async function applyWorkspaceLicenseWrite(
       throw new Error(`license ${write.licenseId} changed during its write`)
     // Only the write that creates the license gives its buyer one: a repeat was answered above, and a later
     // revision finds the license.
-    const assigned = existing ? [] : await assignBuyer(session, write, workspaceId, actor)
-    // `license.written` first, then the buyer's `seat.assigned`, as the transaction's last writes.
-    await recordWorkspaceEvents(session, [writtenEvent(existing, write, actor), ...assigned])
+    const buyer = existing ? [] : await assignBuyer(session, write, workspaceId, actor)
+    // A seat request is decided against the license as it was before this write (`existing`), as
+    // `saveLicense` recorded it.
+    const requested = await assignRequested(session, existing, write, workspaceId, actor)
+    // `license.written` first, then the buyer's `seat.assigned` and the request's, as the transaction's last writes.
+    await recordWorkspaceEvents(session, [writtenEvent(existing, write, actor), ...buyer, ...requested])
     return {applied: true, revision: write.revision}
   })
 }
@@ -252,9 +289,8 @@ async function applyWorkspaceLicenseWrite(
 /**
  * Give the buyer billing names (`write.assignTo`) one seat of the license `write` has just created, in
  * that write's transaction, and return its `seat.assigned` event for the caller to record after
- * `license.written`. It gives none (an empty list) unless the buyer has an active membership of the
- * workspace, the license has a seat to give, and the buyer holds no seat of an in-term, not-ended license
- * of the same product there. Its checks are serialized as an assignment's are: the events the write
+ * `license.written`. It gives none (an empty list) unless the license has a seat to give and the buyer may
+ * have one ({@link canGiveSeat}). Its checks are serialized as an assignment's are: the events the write
  * records take the feed counter, so a concurrent end of the membership or assignment of another seat
  * conflicts with it, and the retry sees that change.
  */
@@ -266,14 +302,61 @@ async function assignBuyer(
 ): Promise<WorkspaceAuditEventInput[]> {
   const mentraUserId = write.assignTo?.mentraUserId
   if (!mentraUserId || write.quantity < 1) return []
+  const holder = await canGiveSeat(session, write, workspaceId, mentraUserId)
+  if (!holder) return []
+  const license = await takeSeats(session, write.licenseId, 1)
+  if (!license) return []
+  return insertSeats(session, actor, workspaceId, license, [holder])
+}
+
+/**
+ * Decide the seat request `write` carries, in that write's transaction, against the license as it was
+ * before the write (`existing`, null for a new one), and return the `seat.assigned` event of the seat it
+ * gave, if any, for the caller to record after `license.written`. A request whose id the license has
+ * recorded was decided by an earlier write and gives nothing; `saveLicense` records a new one. It gives its
+ * person one seat only when the write raises the quantity to the request's (the quantity Core had, 0 for a
+ * new license, is below `seatRequest.quantity`, and the write's is at least that), the person may have one
+ * ({@link canGiveSeat}), and a seat is free. Serialized as {@link assignBuyer} is.
+ */
+async function assignRequested(
+  session: ClientSession,
+  existing: LicenseRow | null,
+  write: LicenseWrite,
+  workspaceId: string,
+  actor: Actor,
+): Promise<WorkspaceAuditEventInput[]> {
+  const request = undecidedRequest(existing, write)
+  if (!request) return []
+  const had = existing?.quantity ?? 0
+  if (had >= request.quantity || write.quantity < request.quantity) return []
+  const holder = await canGiveSeat(session, write, workspaceId, request.mentraUserId)
+  if (!holder) return []
+  const license = await takeSeats(session, write.licenseId, 1)
+  if (!license) return []
+  return insertSeats(session, actor, workspaceId, license, [holder])
+}
+
+/**
+ * The membership of `mentraUserId` that may be given a seat of the license `write` names, or null: an active
+ * membership of the workspace that holds no seat of this license, and none of an in-term (`validFrom` <= now
+ * < `paidThrough`), not-ended license of the same product there.
+ */
+async function canGiveSeat(
+  session: ClientSession,
+  write: LicenseWrite,
+  workspaceId: string,
+  mentraUserId: string,
+): Promise<SeatHolder | null> {
   const membership = await WorkspaceMembershipModel.findOne({workspaceId, mentraUserId, status: "active"})
     .session(session)
     .lean<MembershipRow>()
-  if (!membership) return []
+  if (!membership) return null
   const held = await LicenseSeatModel.find({workspaceId, membershipId: membership.membershipId})
     .select({_id: 0, licenseId: 1})
     .session(session)
     .lean<Array<Pick<LicenseSeatRow, "licenseId">>>()
+  // A seat of this license, in its term or not: a member holds at most one per license.
+  if (held.some((seat) => seat.licenseId === write.licenseId)) return null
   if (held.length > 0) {
     const now = new Date()
     const hasProduct = await LicenseModel.exists({
@@ -283,13 +366,19 @@ async function assignBuyer(
       validFrom: {$lte: now},
       paidThrough: {$gt: now},
     }).session(session)
-    if (hasProduct) return []
+    if (hasProduct) return null
   }
-  const license = await takeSeats(session, write.licenseId, 1)
-  if (!license) return []
-  return insertSeats(session, actor, workspaceId, license, [
-    {membershipId: membership.membershipId, mentraUserId, email: membership.email ?? null},
-  ])
+  return {membershipId: membership.membershipId, mentraUserId, email: membership.email ?? null}
+}
+
+/** The seat request `write` carries when the license (`existing`, as before the write) hasn't decided it, or null. */
+function undecidedRequest(
+  existing: LicenseRow | null,
+  write: LicenseWrite,
+): NonNullable<LicenseWrite["seatRequest"]> | null {
+  const request = write.seatRequest
+  if (!request) return null
+  return existing?.seatRequests?.includes(request.requestId) ? null : request
 }
 
 /** What a write does to the license Core has: null to apply it, or Core's answer when it applies nothing. */
@@ -317,7 +406,9 @@ function byRevision(existing: LicenseRow | null, write: LicenseWrite): LicenseWr
 
 /**
  * Insert the license, with no seat assigned, or update the one read as `existing` while it still has that
- * revision. False when it had changed, which the transaction's snapshot rules out.
+ * revision, recording the id of a seat request the write carries that the license hasn't decided
+ * (`seatRequests`, the latest {@link MAX_SEAT_REQUESTS}). False when it had changed, which the transaction's
+ * snapshot rules out.
  */
 async function saveLicense(session: ClientSession, existing: LicenseRow | null, write: LicenseWrite): Promise<boolean> {
   const terms = {
@@ -328,13 +419,20 @@ async function saveLicense(session: ClientSession, existing: LicenseRow | null, 
     paidThrough: new Date(write.paidThrough),
     revision: write.revision,
   }
+  const request = undecidedRequest(existing, write)
   if (!existing) {
-    await LicenseModel.create([{_id: write.licenseId, owner: write.owner, ...terms, seatsUsed: 0}], {session})
+    const requests = request ? {seatRequests: [request.requestId]} : {}
+    await LicenseModel.create([{_id: write.licenseId, owner: write.owner, ...terms, seatsUsed: 0, ...requests}], {
+      session,
+    })
     return true
   }
   const updated = await LicenseModel.updateOne(
     {_id: write.licenseId, revision: existing.revision, endedAt: null},
-    {$set: terms},
+    {
+      $set: terms,
+      ...(request ? {$push: {seatRequests: {$each: [request.requestId], $slice: -MAX_SEAT_REQUESTS}}} : {}),
+    },
     {session},
   )
   return updated.matchedCount === 1
