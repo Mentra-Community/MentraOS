@@ -14,7 +14,8 @@
  * a 403; `ui/entry.js` is relayed under Core's security headers and html is refused; `GET /api/portal/me` reports
  * `modules.billing` and `modules.billingCatalog`; and on a Core that is not prod, billing is staff-only: 404 and no
  * call for anyone who is not an Organization Admin, except for its open reads, `GET catalog` and `ui/icons/*`, which
- * every member reaches, and which are all they reach.
+ * every member reaches, and which are all they reach. A product's public name (`GET public/products/<product>`) is
+ * read by anyone, signed in or not, on every Core, and reaches the module with the public principal, never a person.
  *
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random database name, ignores
  * `MONGO_URL`) and asserts the live connection is on that database before any destructive call. The database
@@ -143,6 +144,14 @@ const billingModule = Bun.serve({
       [SECRET],
     )
     if (!principal) return Response.json({error: "fake_module_unverified"}, {status: 403})
+    // A public read is for the public principal only, as billing's is: a product's name, and the rest it would
+    // never say, which Core must not relay.
+    const product = /^\/v1\/portal\/public\/products\/([^/?]+)$/.exec(got.pathWithQuery)?.[1]
+    if (product !== undefined) {
+      if (principal.kind !== "public") return Response.json({error: "forbidden"}, {status: 403})
+      if (product === "not.for.sale") return Response.json({error: "not_found"}, {status: 404})
+      return Response.json({name: `Product ${product}`, product, priceId: "price_1", principal})
+    }
     if (got.pathWithQuery.startsWith("/v1/portal/ui/icons/")) {
       return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {headers: {"content-type": "image/png"}})
     }
@@ -1003,6 +1012,96 @@ describe("billing's open reads outside prod", () => {
       expect([rest, reply.status, reply.json]).toEqual([rest, 404, {error: "module_not_installed"}])
     }
     expect((await fromPerson(owner, "GET", "/me")).json.modules).toEqual({billing: false, billingCatalog: false})
+    expect(received).toHaveLength(0)
+  })
+})
+
+describe("a product's public name", () => {
+  const NAME_PATH = "/api/portal/billing/public/products/mentra.call.unlimited"
+  const anyone = {kind: "public", scope: {kind: "public"}}
+
+  /** The principal the module was sent, decoded from its header: what it would read once it verified it. */
+  const sentPrincipal = (request: Received) =>
+    JSON.parse(Buffer.from(request.headers.get("x-mentra-principal") ?? "", "base64url").toString("utf8"))
+
+  for (const environment of ["prod", "staging", "dev"]) {
+    test(`on ${environment}: anyone reads it with no session, and only the name comes back, cached for five minutes`, async () => {
+      useBilling(environment)
+      const reply = await send("GET", NAME_PATH)
+      expect([reply.status, reply.json]).toEqual([200, {name: "Product mentra.call.unlimited"}])
+      expect(reply.headers.get("cache-control")).toBe("public, max-age=300")
+      expect(received).toHaveLength(1)
+      expect(received[0]!.pathWithQuery).toBe("/v1/portal/public/products/mentra.call.unlimited")
+      expect(sentPrincipal(received[0]!)).toEqual(anyone)
+    })
+  }
+
+  test("a signed-in person, by session or by token, is not told to the module: the request is the public one", async () => {
+    useBilling("staging")
+    const owner = await person("owner")
+    for (const via of ["session", "bearer"] as const) {
+      received = []
+      const reply = await fromPerson(owner, "GET", "/billing/public/products/mentra.call.unlimited?workspaceId=x", {via})
+      expect([via, reply.status, reply.json]).toEqual([via, 200, {name: "Product mentra.call.unlimited"}])
+      const sent = received[0]!
+      expect(sent.pathWithQuery).toBe("/v1/portal/public/products/mentra.call.unlimited")
+      expect(sentPrincipal(sent)).toEqual(anyone)
+      expect(sent.headers.get("cookie")).toBeNull()
+      expect(sent.headers.get("authorization")).toBeNull()
+      for (const [, value] of sent.headers) {
+        expect(value).not.toContain(owner.mentraUserId)
+        expect(value).not.toContain(owner.email)
+      }
+    }
+  })
+
+  test("a product billing doesn't name is a 404, and a module that is not installed has none", async () => {
+    useBilling("prod")
+    const missing = await send("GET", "/api/portal/billing/public/products/not.for.sale")
+    expect([missing.status, missing.json, missing.headers.get("cache-control")]).toEqual([404, {error: "not_found"}, "no-store"])
+    expect(received).toHaveLength(1)
+
+    restoreEnv()
+    restoreEnv = applyEnv({...TEST_ENV, CLOUD_CORE_BILLING_URL: undefined, CLOUD_CORE_BILLING_SECRET: undefined})
+    received = []
+    const absent = await send("GET", NAME_PATH)
+    expect([absent.status, absent.json]).toEqual([404, {error: "module_not_installed"}])
+    expect(received).toHaveLength(0)
+  })
+
+  test("every other method, spelling and extra segment is refused with no call, signed in or not", async () => {
+    useBilling("prod")
+    const owner = await person("owner")
+    const closed: Array<[method: string, rest: string]> = [
+      ["HEAD", "/public/products/mentra.call.unlimited"],
+      ["POST", "/public/products/mentra.call.unlimited"],
+      ["PUT", "/public/products/mentra.call.unlimited"],
+      ["DELETE", "/public/products/mentra.call.unlimited"],
+      ["GET", "/public/products/mentra.call.unlimited/"],
+      ["GET", "/public/products/mentra.call.unlimited/x"],
+      ["GET", "/public/products/Mentra.call.unlimited"],
+      ["GET", "/public/products/%6dentra.call.unlimited"],
+      ["GET", "/public/products/a%2fb"],
+      ["GET", "/public/products/..."],
+      ["GET", "/public/products/"],
+      ["GET", "/public/products"],
+      ["GET", "/public/Products/mentra.call.unlimited"],
+      ["GET", "/public/%70roducts/mentra.call.unlimited"],
+      ["GET", "/public"],
+    ]
+    for (const [method, rest] of closed) {
+      const anonymous = await send(method, `/api/portal/billing${rest}`, method === "GET" || method === "HEAD" ? {} : {body: "{}"})
+      expect([method, rest, anonymous.status]).toEqual([method, rest, 404])
+      const signedIn = await billing(owner, method, rest, method === "GET" || method === "HEAD" ? {} : {body: "{}"})
+      expect([method, rest, signedIn.status]).toEqual([method, rest, 404])
+    }
+    // Not under the public mount at all: the person gate answers, and a signed-in person gets the module's 404.
+    for (const rest of ["/Public/products/mentra.call.unlimited", "/%70ublic/products/mentra.call.unlimited"]) {
+      const anonymous = await send("GET", `/api/portal/billing${rest}`)
+      expect([rest, [401, 404].includes(anonymous.status)]).toEqual([rest, true])
+      const signedIn = await billing(owner, "GET", rest)
+      expect([rest, signedIn.status]).toEqual([rest, 404])
+    }
     expect(received).toHaveLength(0)
   })
 })

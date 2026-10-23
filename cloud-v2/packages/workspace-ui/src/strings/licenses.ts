@@ -54,6 +54,8 @@ export function refusalMessage(code: string, context: RefusalContext = {}): stri
       return "There's no billing account yet. It's created with the first purchase.";
     case "already_licensed":
       return `${product ? `You already have ${product}.` : "You already have that."} Add licenses instead.`;
+    case "seat_request_pending":
+      return `Someone else is adding ${product ? `a ${product} license` : "a license"} right now. Try again in a few minutes.`;
     case "checkout_in_progress":
       return `A purchase of ${product ?? "that"} is already under way. Finish it, or try again in a minute.`;
     case "seat_request_pending":

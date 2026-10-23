@@ -41,6 +41,7 @@ const personUser: ForwardedPrincipal = {
   ...workspaceUser,
   scope: {kind: "person"},
 }
+const anyone: ForwardedPrincipal = {kind: "public", scope: {kind: "public"}}
 
 /** A request whose headers are a plain string map, so a test can add, drop or replace one. */
 type SignedRequest = Omit<ForwardedRequest, "headers"> & {headers: Record<string, string>}
@@ -94,6 +95,9 @@ describe("verifyForwardedPrincipal", () => {
     expect(verify(forwarded(user))).toEqual(user)
     expect(verify(forwarded(workspaceUser))).toEqual(workspaceUser)
     expect(verify(forwarded(personUser))).toEqual(personUser)
+    expect(verify(forwarded(anyone, {method: "GET", pathWithQuery: "/v1/portal/public/products/mentra.call.unlimited", body: ""}))).toEqual(
+      anyone,
+    )
   })
 
   test("the principal header is base64url JSON and its signature is HMAC-SHA256 over `<ts>\\n<header>`", () => {
@@ -249,6 +253,7 @@ describe("parseForwardedPrincipal", () => {
     expect(parseForwardedPrincipal(user)).toEqual(user)
     expect(parseForwardedPrincipal(workspaceUser)).toEqual(workspaceUser)
     expect(parseForwardedPrincipal(personUser)).toEqual(personUser)
+    expect(parseForwardedPrincipal(anyone)).toEqual(anyone)
   })
 
   test("returns a copy, not the object it was given", () => {
@@ -335,6 +340,36 @@ describe("parseForwardedPrincipal", () => {
     expect(parseForwardedPrincipal({...user, scope: {kind: "workspace"}})).toBeNull()
     expect(parseForwardedPrincipal({...user, scope: {kind: "workspace", workspaceId: ""}})).toBeNull()
     expect(parseForwardedPrincipal({...user, scope: {kind: "workspace", workspaceId: 7}})).toBeNull()
+  })
+
+  test("a public principal names no person: it is the public scope and nothing else", () => {
+    // Whatever a person's fields say beside it, a public principal is only its kind and scope.
+    const parsed = parseForwardedPrincipal({
+      kind: "public",
+      scope: {kind: "public", workspaceId: "ws_1"},
+      mentraUserId: "mu_1",
+      email: "someone@example.com",
+      emailVerified: true,
+      isOrganizationAdmin: true,
+      organizationCapabilities: ["organization.fleet.administer"],
+    })
+    expect(parsed).toEqual(anyone)
+    expect(Object.keys(parsed!).sort()).toEqual(["kind", "scope"])
+    expect(Object.keys((parsed as {scope: object}).scope)).toEqual(["kind"])
+    // Its scope is the public one, present and its own.
+    expect(parseForwardedPrincipal({kind: "public"})).toBeNull()
+    expect(parseForwardedPrincipal({kind: "public", scope: null})).toBeNull()
+    expect(parseForwardedPrincipal({kind: "public", scope: "public"})).toBeNull()
+    expect(parseForwardedPrincipal({kind: "public", scope: Object.create({kind: "public"})})).toBeNull()
+    for (const scope of [{kind: "organization"}, {kind: "person"}, {kind: "workspace", workspaceId: "ws_1"}, {kind: "team"}]) {
+      expect([scope, parseForwardedPrincipal({kind: "public", scope})]).toEqual([scope, null])
+    }
+  })
+
+  test("a person's request is never public: a user principal with the public scope is refused", () => {
+    expect(parseForwardedPrincipal({...user, scope: {kind: "public"}})).toBeNull()
+    expect(parseForwardedPrincipal({...workspaceUser, scope: {kind: "public"}})).toBeNull()
+    expect(verify(withSignedPrincipalBody(forwarded(user), {...user, scope: {kind: "public"}}))).toBeNull()
   })
 
   test("a phone principal that carries organizationCapabilities or a scope is a phone principal without them", () => {

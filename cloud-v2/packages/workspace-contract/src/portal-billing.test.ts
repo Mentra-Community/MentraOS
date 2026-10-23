@@ -25,6 +25,7 @@ import {
   PriceSchema,
   PurchaseAnswerSchema,
   PurchaseRequestSchema,
+  PublicProductSchema,
   PurchaseStatusSchema,
   SessionAnswerSchema,
   SessionRequestSchema,
@@ -737,11 +738,41 @@ describe("requests", () => {
     expect(SessionRequestSchema.safeParse({locale: "en"}).success).toBe(false)
   })
 
+  test("a session request may ask for the one license it adds to be the asker's (forMe: true only)", () => {
+    const forMe = {action: "add_seats", licenseId: "01JZWY3V8N0F2E9GQ4T6KXH5RD", seats: 1, forMe: true as const, locale: "en"}
+    expect(SessionRequestSchema.parse(forMe)).toEqual(forMe)
+    expect(SessionRequestSchema.safeParse({...forMe, forMe: false}).success).toBe(false)
+    expect(SessionRequestSchema.safeParse({...forMe, forMe: "yes"}).success).toBe(false)
+    const {forMe: _forMe, ...without} = forMe
+    expect(SessionRequestSchema.parse(without)).toEqual(without)
+    expect(SessionRequestSchema.parse(without).forMe).toBeUndefined()
+  })
+
   test("an unknown field of a request is stripped", () => {
     expect(SessionRequestSchema.parse({action: "cancel", locale: "en", futureField: "x"})).toEqual({
       action: "cancel",
       locale: "en",
     })
+  })
+})
+
+describe("a product's public name", () => {
+  test("is a name and nothing else: a price, an id or an offer beside it is stripped", () => {
+    expect(PublicProductSchema.parse({name: "Mentra Call Unlimited"})).toEqual({name: "Mentra Call Unlimited"})
+    const parsed = PublicProductSchema.parse({
+      name: "Mentra Call Unlimited",
+      product: "mentra.call.unlimited",
+      priceId: "price_123",
+      offer: {price: {scheme: "per_seat"}},
+    })
+    expect(parsed).toEqual({name: "Mentra Call Unlimited"})
+    expect(Object.keys(parsed)).toEqual(["name"])
+  })
+
+  test("needs a non-empty string name", () => {
+    for (const value of [{}, {name: ""}, {name: null}, {name: 7}, {name: ["x"]}, null, "Mentra Call", []]) {
+      expect([value, PublicProductSchema.safeParse(value).success]).toEqual([value, false])
+    }
   })
 })
 
@@ -795,6 +826,7 @@ describe("billing's error codes", () => {
       "no_billing_account",
       "already_licensed",
       "checkout_in_progress",
+      "seat_request_pending",
       "owner_ended",
       "billing_unavailable",
       "core_unavailable",

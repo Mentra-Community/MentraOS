@@ -12,7 +12,8 @@
  *    visible to them, `billingCatalog` where it is ready at all, because its catalog is an open read;
  *  - `/workspaces/*`: the workspace API (`workspaces.api.ts`), the same handlers
  *    `/api/workspaces` and `/api/admin/workspaces` serve;
- *  - `/billing/*`: the billing portal module, forwarded to the Mentra Miniapp Store (`portal-modules.api.ts`);
+ *  - `/billing/*`: the billing portal module, forwarded to the Mentra Miniapp Store (`portal-modules.api.ts`).
+ *    Its public reads (`/billing/public/*`, a product's name) are mounted ahead of the person gate, for anyone;
  *  - `/org`, `/trusted-issuers`: enterprise orgs and their trusted issuers, owned
  *    by Core users (`mentraUserId`) and kept separate from workspaces.
  */
@@ -31,7 +32,7 @@ import { organizationView } from "../../services/workspaces/authorization.servic
 import { requireUserPrincipal, userPrincipal } from "../middleware/principal.middleware";
 import { createPortalAuthApi } from "../signin/portal-auth.api";
 import { createWorkspacesApi } from "../workspaces/workspaces.api";
-import { portalModuleApi } from "./portal-modules.api";
+import { portalModuleApi, portalModulePublicApi } from "./portal-modules.api";
 
 const app = new Hono<AppEnv>();
 const enterprise = new EnterpriseService();
@@ -60,6 +61,8 @@ const validateJwksSchema = z.object({
 app.get("/health", c => c.json({ status: "ok", service: "cloud-core-portal" }));
 // Enterprise portal sign-in, ahead of the person gate.
 app.route("/auth", createPortalAuthApi("portal"));
+// What anyone may read of billing, signed in or not (a product's name for the sign-in page), ahead of the gate too.
+app.route("/billing/public", portalModulePublicApi("billing"));
 app.use("*", requireUserPrincipal("portal"));
 app.route("/workspaces", createWorkspacesApi());
 app.route("/billing", portalModuleApi("billing"));

@@ -10,6 +10,11 @@
  * `revision` is billing's, and a write applies only when it is newer. `endedAt` and `endedReason` are set
  * when its workspace is deleted (`workspace_deleted`); an ended license takes no seat and no write. Nothing
  * is ever deleted.
+ *
+ * `seatRequests` are the ids of the seat requests (`LicenseWrite.seatRequest`) Core has decided for the
+ * license, the latest 20: each is decided once, on the first applied write that carries it, and its id is
+ * recorded by that write's update whether or not it gave a seat, so no later write decides it again. It is
+ * absent on a license no request has reached, unindexed, and never read except by the license's own writes.
  */
 
 import {LICENSE_ENDED_REASONS, LICENSE_OWNER_TYPES} from "@mentra/workspace-contract"
@@ -48,6 +53,8 @@ const LicenseSchema = new Schema(
     revision: {type: Number, required: true},
     endedAt: {type: Date, default: null},
     endedReason: {type: String, enum: [...LICENSE_ENDED_REASONS, null], default: null},
+    /** The seat requests decided for the license, by id, the latest 20; absent until the first. */
+    seatRequests: {type: [String], default: undefined},
   },
   {timestamps: true, collection: "licenses"},
 )

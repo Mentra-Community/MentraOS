@@ -11,6 +11,10 @@
  * to {@link SessionAnswer}) and `GET ui/icons/<file>`. A refusal is `{error}` with one of
  * {@link BILLING_ERROR_CODES}.
  *
+ * One route is for anyone, signed in or not: `GET /api/portal/billing/public/products/<product>`
+ * ({@link PublicProduct}), the product's name for the sign-in page. Core forwards it to billing's
+ * `GET /v1/portal/public/products/<product>` with the `public` principal, which names no person.
+ *
  * Values the portal doesn't know don't break a page. A status, an action kind and a tax value are plain
  * strings, with `KNOWN_*` lists to narrow them by; a price of a scheme the portal doesn't know carries a
  * `fallbackLabel`; an unknown field is stripped (an older Store's `ownerTypes` on an entry, or `defaultSeats` on a
@@ -268,6 +272,14 @@ export const PurchaseStatusSchema = z.object({
 })
 export type PurchaseStatus = z.infer<typeof PurchaseStatusSchema>
 
+/**
+ * `GET public/products/<product>`: what anyone may know of a product, its name, for the sign-in page ("Sign in to
+ * buy <name>."). Billing answers it for a product that is for sale, and 404 for any other; Core relays the name and
+ * nothing else, so a price, an id or an offer beside it never leaves Core.
+ */
+export const PublicProductSchema = z.object({name: z.string().min(1)})
+export type PublicProduct = z.infer<typeof PublicProductSchema>
+
 /** `GET status`: a workspace's licenses as billing reads them, with the owner's total, actions and purchase. */
 export const BillingStatusSchema = z.object({
   locale: z.string().min(1),
@@ -293,11 +305,17 @@ export type PurchaseRequest = z.infer<typeof PurchaseRequestSchema>
  * `POST session`: the hosted page for an action. `licenseId` names the license it is for (none for the
  * account's actions); `seats` is how many to add, for `add_seats`. An `action` that isn't offered gets
  * 400 `unknown_action` from billing, so it stays a plain string here.
+ *
+ * `forMe: true`, with `add_seats` and `seats: 1` only, adds one license for the person asking: billing records
+ * their request, and Core assigns them the license once the write that adds it arrives. Billing refuses it with
+ * any other action or count (400 `invalid_request`), and while another person's request on the license is open
+ * (409 `seat_request_pending`).
  */
 export const SessionRequestSchema = z.object({
   action: z.string(),
   licenseId: z.string().optional(),
   seats: z.number().int().safe().optional(),
+  forMe: z.literal(true).optional(),
   locale: z.string().min(1),
 })
 export type SessionRequest = z.infer<typeof SessionRequestSchema>
@@ -313,8 +331,8 @@ export type SessionAnswer = z.infer<typeof SessionAnswerSchema>
 /**
  * The `error` of a refusal from billing (`{error}`): 400 `invalid_request`, `not_for_sale`, `invalid_seats` or
  * `unknown_action`; 403 `forbidden` or `billing_staff_only`; 404 `license_not_found` or `no_billing_account`;
- * 409 `already_licensed`, `checkout_in_progress` or `owner_ended`; 503 `billing_unavailable` or
- * `core_unavailable`. Core words the ones it knows, and any other gets its generic "try again".
+ * 409 `already_licensed`, `checkout_in_progress`, `seat_request_pending` or `owner_ended`; 503
+ * `billing_unavailable` or `core_unavailable`. Core words the ones it knows, and any other gets its generic "try again".
  */
 export const BILLING_ERROR_CODES = [
   "invalid_request",
@@ -327,6 +345,7 @@ export const BILLING_ERROR_CODES = [
   "no_billing_account",
   "already_licensed",
   "checkout_in_progress",
+  "seat_request_pending",
   "owner_ended",
   "billing_unavailable",
   "core_unavailable",

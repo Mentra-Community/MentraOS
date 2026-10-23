@@ -42,6 +42,14 @@
  * after this, and a person who may not see the module at all gets what an absent one gives for anything else.
  * An open read of a module that is not installed is as hidden as any other, and one of a module whose settings
  * are unusable is `unavailable`.
+ *
+ * Public reads. A module's `publicReads` are for anyone, signed in or not, on every Core, staff-only or not:
+ * what it says there is marketing content (billing: a product's name, for the sign-in page). Each names a family
+ * of `GET public/<family>/<key>`, with exactly one key after it of 1 to 100 lowercase letters, digits, `.`, `_`
+ * and `-`, not only dots, matched as received (billing: `products`). `HEAD` and every other method, another case,
+ * an encoding, a dot segment, a trailing slash or a deeper path are not one, and `portalModulePublicAccess`
+ * answers `hidden` for them. Core forwards a public read with the `public` principal, which names no person, so
+ * it is not an open read either: it opens nothing under a workspace or `ui/`.
  */
 
 import {createLogger, type Logger} from "@mentra/cloud-shared"
@@ -76,6 +84,8 @@ interface PortalModuleSettings {
   staffOnlyUnlessProd: boolean
   /** What a person the module is hidden from may still read. */
   openReads: OpenReads
+  /** The families under `public/` whose `GET public/<family>/<key>` anyone may make, signed in or not. */
+  publicReads: readonly string[]
 }
 
 const REGISTRY: Record<PortalModuleName, PortalModuleSettings> = {
@@ -84,7 +94,32 @@ const REGISTRY: Record<PortalModuleName, PortalModuleSettings> = {
     secretVariable: "CLOUD_CORE_BILLING_SECRET",
     staffOnlyUnlessProd: true,
     openReads: {scopePaths: ["catalog"], assetPrefixes: ["icons/"]},
+    publicReads: ["products"],
   },
+}
+
+/** The one key after a public read's family: lowercase letters, digits, `.`, `_` and `-`, 1 to 100 of them. */
+const PUBLIC_READ_KEY = /^[a-z0-9._-]{1,100}$/
+/** A key of dots alone is a dot segment (`.`, `..`) or looks like one, and is no key. */
+const ONLY_DOTS = /^\.+$/
+
+/**
+ * A request under a module's `public/`, as far as whether it is a public read is concerned: its method and the
+ * rest of its path after `public/`, exactly as received (not decoded, no leading "/", no query):
+ * `products/mentra.call.unlimited` for `/public/products/mentra.call.unlimited`.
+ */
+export interface PortalModulePublicRequest {
+  method: string
+  rest: string
+}
+
+/** Whether `request` is one of the reads `name` leaves open to anyone (see the file header). Exact, so anything unlisted is not. */
+function isPublicRead(name: PortalModuleName, request: PortalModulePublicRequest): boolean {
+  if (request.method !== "GET") return false
+  const segments = request.rest.split("/")
+  if (segments.length !== 2) return false
+  const [family, key] = segments as [string, string]
+  return REGISTRY[name].publicReads.includes(family) && PUBLIC_READ_KEY.test(key) && !ONLY_DOTS.test(key)
 }
 
 /**
@@ -225,6 +260,25 @@ export function portalModuleAccess(
   const config = portalModuleConfig(name, env, log)
   if (config.state === "not_installed") return {state: "hidden"}
   if (!portalModuleVisibleTo(name, principal, env) && !(request && isOpenRead(name, request))) return {state: "hidden"}
+  if (config.state === "misconfigured") return {state: "unavailable"}
+  return {state: "ready", baseUrl: config.baseUrl, secret: config.secret}
+}
+
+/**
+ * What anyone, signed in or not, can reach of module `name` with `request`, a request under its `public/`. There
+ * is no person to ask about, so the module's visibility does not count, on any Core:
+ *  - `hidden`: the module is not installed, or the request is not one of its public reads (see the file header);
+ *  - `unavailable`: it is a public read, but the module's settings are unusable;
+ *  - `ready`: Core may forward, to `baseUrl`, signing with `secret`.
+ */
+export function portalModulePublicAccess(
+  name: PortalModuleName,
+  request: PortalModulePublicRequest,
+  env: NodeJS.ProcessEnv = processEnvironment(),
+  log: ConfigLog = logger,
+): PortalModuleAccess {
+  const config = portalModuleConfig(name, env, log)
+  if (config.state === "not_installed" || !isPublicRead(name, request)) return {state: "hidden"}
   if (config.state === "misconfigured") return {state: "unavailable"}
   return {state: "ready", baseUrl: config.baseUrl, secret: config.secret}
 }
