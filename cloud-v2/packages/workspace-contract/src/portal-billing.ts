@@ -293,11 +293,17 @@ export type PurchaseRequest = z.infer<typeof PurchaseRequestSchema>
  * `POST session`: the hosted page for an action. `licenseId` names the license it is for (none for the
  * account's actions); `seats` is how many to add, for `add_seats`. An `action` that isn't offered gets
  * 400 `unknown_action` from billing, so it stays a plain string here.
+ *
+ * `forMe: true`, with `add_seats` and `seats: 1` only, adds one license for the person asking: billing records
+ * their request, and Core assigns them the license once the write that adds it arrives. Billing refuses it with
+ * any other action or count (400 `invalid_request`), and while another person's request on the license is open
+ * (409 `seat_request_pending`).
  */
 export const SessionRequestSchema = z.object({
   action: z.string(),
   licenseId: z.string().optional(),
   seats: z.number().int().safe().optional(),
+  forMe: z.literal(true).optional(),
   locale: z.string().min(1),
 })
 export type SessionRequest = z.infer<typeof SessionRequestSchema>
@@ -313,8 +319,8 @@ export type SessionAnswer = z.infer<typeof SessionAnswerSchema>
 /**
  * The `error` of a refusal from billing (`{error}`): 400 `invalid_request`, `not_for_sale`, `invalid_seats` or
  * `unknown_action`; 403 `forbidden` or `billing_staff_only`; 404 `license_not_found` or `no_billing_account`;
- * 409 `already_licensed`, `checkout_in_progress` or `owner_ended`; 503 `billing_unavailable` or
- * `core_unavailable`. Core words the ones it knows, and any other gets its generic "try again".
+ * 409 `already_licensed`, `checkout_in_progress`, `seat_request_pending` or `owner_ended`; 503
+ * `billing_unavailable` or `core_unavailable`. Core words the ones it knows, and any other gets its generic "try again".
  */
 export const BILLING_ERROR_CODES = [
   "invalid_request",
@@ -327,6 +333,7 @@ export const BILLING_ERROR_CODES = [
   "no_billing_account",
   "already_licensed",
   "checkout_in_progress",
+  "seat_request_pending",
   "owner_ended",
   "billing_unavailable",
   "core_unavailable",
