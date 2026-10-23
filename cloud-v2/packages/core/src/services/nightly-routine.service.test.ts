@@ -937,20 +937,3 @@ test('nightly terminal evidence failures survive the frozen receipt and compact 
   expect(testStatusCounts(projected.members.map(member => ({...member, publicationComplete: member.publicationComplete === true}))))
     .toEqual({failed: 1, total: 2, skipped: 0, pending: 0, incomplete: 0});
 });
-
-test("nightly scopes build reads to one selection and never reopens them for a frozen retry", async () => {
- const state = fixture(), scopes: string[] = [];
- const provider = (state.service as unknown as {builds: ConstructorParameters<typeof ActualNightlyRoutineService>[1]}).builds!;
- provider.forSelection = boundary => {
-  scopes.push(boundary);
-  return {latestDev: provider.latestDev.bind(provider), resolve: provider.resolve.bind(provider)};
- };
- await state.service.start(occurrence);
- await state.service.start(occurrence);
- expect(scopes).toEqual([startedAt]);
- expect(state.buildReads).toEqual(["latest:android", "resolve:ios-on-mac"]);
- // Another unfrozen selection gets a distinct scope even if it shares the same timestamp.
- await (state.service as unknown as {select(input: typeof occurrence, suiteId: string): Promise<unknown>})
-  .select({...occurrence, occurrenceId: "another-occurrence"}, "another-suite");
- expect(scopes).toEqual([startedAt, startedAt]);
-});

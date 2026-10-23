@@ -92,21 +92,8 @@ export interface TestBuildGateway {
 export class GithubTestBuildGateway implements TestBuildGateway {
   constructor(private readonly options: {
     token?: string; privateReadToken?: string; appAuth?: TestRunGithubApp; fetch?: typeof fetch; channels?: string[]; routines?: string[];
-  } = {}, private readonly selectionBoundary?: string) { this.appAuth = options.appAuth ?? new TestRunGithubApp({ fetch: options.fetch }); }
+  } = {}) { this.appAuth = options.appAuth ?? new TestRunGithubApp({ fetch: options.fetch }); }
   private readonly appAuth: TestRunGithubApp;
-  private releaseReads?: {runId: number; reads: Map<string, Promise<unknown>>};
-  /** One selection only; never reuse mutable provider observations across occurrences. */
-  forSelection(before: string): GithubTestBuildGateway {
-    return new GithubTestBuildGateway({...this.options, appAuth: this.appAuth}, before);
-  }
-  private releaseRead<T>(runId: number, key: string, read: () => Promise<T>): Promise<T> {
-    if (this.selectionBoundary === undefined) return read();
-    // Discovery is sequential. Retain only the currently inspected run, including in-flight reads.
-    if (this.releaseReads?.runId !== runId) this.releaseReads = {runId, reads: new Map()};
-    const reads = this.releaseReads.reads;
-    if (!reads.has(key)) reads.set(key, read());
-    return reads.get(key) as Promise<T>;
-  }
   private fetcher = (input: string, init: RequestInit = {}) => (this.options.fetch ?? fetch)(input,
     { ...init, redirect: "error", signal: AbortSignal.timeout(20_000) });
   private async token(scope: "source" | "private" = "source") {
@@ -122,26 +109,16 @@ export class GithubTestBuildGateway implements TestBuildGateway {
         "X-GitHub-Api-Version": "2022-11-28", ...(init.body ? { "Content-Type": "application/json" } : {}) },
     });
     if (response.status === 404) throw new TestDispatchError(404, "Selected GitHub build was not found");
-    const reset = response.headers.get("x-ratelimit-reset");
-    if ([403, 429].includes(response.status) && response.headers.get("x-ratelimit-remaining") === "0"
-      && reset && /^[1-9]\d{0,9}$/.test(reset))
-      throw new TestDispatchError(503, `Build information is unavailable because GitHub's request limit was reached. The limit resets at ${new Date(Number(reset) * 1000).toISOString()}.`);
     return parseJson(await readTestMetadata(response, 4 * 1024 * 1024));
   }
   private async metadata(tag: string, name: string) {
     // Both segments are constructed from validated identities, never supplied URLs.
     requireThat(/^[A-Za-z0-9._-]+$/.test(tag) && /^[A-Za-z0-9._-]+$/.test(name), "Invalid artifact identity");
     const url = `${CDN}${tag}/${name}`;
-    const read = async () => {
-      const bytes = await readTestMetadata(await this.fetcher(url));
-      return { value: parseJson(bytes), sha256: hash(bytes), url, size: bytes.byteLength };
-    };
-    return this.releaseReads ? this.releaseRead(this.releaseReads.runId, url, read) : read();
+    const bytes = await readTestMetadata(await this.fetcher(url));
+    return { value: parseJson(bytes), sha256: hash(bytes), url, size: bytes.byteLength };
   }
-  private jobs(runId: number): Promise<Job[]> {
-    return this.releaseRead(runId, "jobs", () => this.readJobs(runId));
-  }
-  private async readJobs(runId: number): Promise<Job[]> {
+  private async jobs(runId: number): Promise<Job[]> {
     const jobs: Job[] = [];
     for (let page = 1; page <= 10; page++) {
       const data = z.object({ total_count: z.number().int().nonnegative(), jobs: z.array(jobSchema) }).parse(
@@ -200,8 +177,6 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   }
   /** Latest immutable dev publication at the occurrence boundary. Incomplete history never selects an older build. */
   async latestDev(platform: TestBuildPlatform, before: string): Promise<TestBuild | null> {
-    if (this.selectionBoundary === undefined) return this.forSelection(before).latestDev(platform, before);
-    requireThat(before === this.selectionBoundary, "Selection changed its original build boundary");
     const boundary = Date.parse(before);
     if (!Number.isFinite(boundary)) throw new TestDispatchError(400, "Invalid nightly build boundary");
     const seen = new Set<number>();
@@ -362,10 +337,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     return { attempt, tag: "pr-builds", archive: data.artifacts.android,
       result: { ...(diagnostic ? {diagnostic: "nimo-resource-v1" as const} : {}), receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
   }
-  private releaseIdentity(run: GithubRun): Promise<string | null> {
-    return this.releaseRead(run.id, `identity:${run.head_sha}`, () => this.readReleaseIdentity(run));
-  }
-  private async readReleaseIdentity(run: GithubRun): Promise<string | null> {
+  private async releaseIdentity(run: GithubRun): Promise<string | null> {
     const listed = z.object({ artifacts: z.array(z.object({ name: z.string(), expired: z.boolean(),
       workflow_run: z.object({ id: positive, head_sha: sha }) })) }).parse(await this.api(`${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`));
     const plans = listed.artifacts.filter(item => item.name.startsWith("coordinated-release-plan-mentra-"));
