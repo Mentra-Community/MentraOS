@@ -135,6 +135,40 @@ retry() {
   "$@"
 }
 
+# jq --argjson puts each document on argv. Linux rejects any single argument
+# over 128KiB ("Argument list too long", exit 126), and `az ad sp show` of
+# Microsoft Graph is larger than that. Bind each document from a file.
+# --slurpfile wraps it in a one-element array: use $name[0] for the object.
+# Pass -n; these documents are not on stdin.
+jq_json() {
+  local dir name status=0
+  local bindings=()
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/mentra-jq.XXXXXX")"
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    name="$1"
+    case "$name" in
+      [A-Za-z_][A-Za-z0-9_]*) ;;
+      *)
+        rm -rf "$dir"
+        printf 'jq_json: invalid binding name %s\n' "$name" >&2
+        return 2
+        ;;
+    esac
+    if [[ $# -lt 2 || "$2" == "--" ]]; then
+      rm -rf "$dir"
+      printf 'jq_json: missing JSON for %s\n' "$name" >&2
+      return 2
+    fi
+    printf '%s' "$2" >"$dir/$name"
+    bindings+=(--slurpfile "$name" "$dir/$name")
+    shift 2
+  done
+  [[ "${1:-}" == "--" ]] && shift
+  jq "${bindings[@]}" "$@" || status=$?
+  rm -rf "$dir"
+  return "$status"
+}
+
 # Tenant-wide admin consent through Microsoft Graph: one AllPrincipals grant
 # per API the app requests. (az ad app permission admin-consent calls an
 # unsupported portal endpoint that fails in Cloud Shell and can report success
@@ -146,9 +180,10 @@ grant_admin_consent() {
   for resource in $(jq -r '.requiredResourceAccess[]?.resourceAppId' <<<"$app"); do
     resource_sp="$(retry az ad sp show --id "$resource" -o json)"
     resource_id="$(jq -r .id <<<"$resource_sp")"
-    scopes="$(jq -r --argjson app "$app" --arg resource "$resource" '
+    scopes="$(jq_json app "$app" resource_sp "$resource_sp" -- -nr --arg resource "$resource" '
+      $app[0] as $app | $resource_sp[0] as $resource_sp |
       [$app.requiredResourceAccess[] | select(.resourceAppId == $resource) | .resourceAccess[] | select(.type == "Scope") | .id] as $ids
-      | [.oauth2PermissionScopes[]? | select(.id as $id | $ids | index($id)) | .value] | join(" ")' <<<"$resource_sp")"
+      | [$resource_sp.oauth2PermissionScopes[]? | select(.id as $id | $ids | index($id)) | .value] | join(" ")')"
     [[ -n "$scopes" ]] || continue
     filter="clientId%20eq%20'$client_sp'%20and%20consentType%20eq%20'AllPrincipals'%20and%20resourceId%20eq%20'$resource_id'"
     grant="$(az rest --method GET --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGrants?\$filter=$filter" \
@@ -173,8 +208,9 @@ configure_admin_portal() {
   local app graph_sp body
   app="$(retry az ad app show --id "$1" -o json)"
   graph_sp="$(retry az ad sp show --id "$GRAPH_APP_ID" -o json)"
-  body="$(jq -cn --argjson existing "$app" --argjson graph "$graph_sp" --arg graph_app "$GRAPH_APP_ID" \
+  body="$(jq_json existing "$app" graph "$graph_sp" -- -cn --arg graph_app "$GRAPH_APP_ID" \
     --arg redirect "$PORTAL_REDIRECT" '
+    $existing[0] as $existing | $graph[0] as $graph |
     [$graph.oauth2PermissionScopes[]? | select(.value == ("openid", "email", "profile")) | {id, type: "Scope"}] as $sign_in |
     if ($sign_in | length) != 3 then error("Microsoft Graph sign-in scopes were not found") else . end |
     ($existing.optionalClaims.idToken // []) as $claims |
@@ -301,11 +337,11 @@ if [[ -z "$CORE_SCOPE_ID" ]]; then
 fi
 
 core_app="$(retry az ad app show --id "$CORE_OBJECT_ID" -o json)"
-core_body="$(jq -cn \
+core_body="$(jq_json existing "$core_app" -- -cn \
   --arg uri "api://$CORE_CLIENT_ID" \
   --arg scope_id "$CORE_SCOPE_ID" \
-  --argjson existing "$core_app" \
-  '{identifierUris: (($existing.identifierUris // []) + [$uri] | unique), api:(($existing.api // {}) + {requestedAccessTokenVersion:2, oauth2PermissionScopes: ((($existing.api.oauth2PermissionScopes // []) | map(select(.value != "mentra.session"))) + [{adminConsentDescription:"Allow the Mentra App to access this organization Core on behalf of the signed-in user.",adminConsentDisplayName:"Access Mentra Core",id:$scope_id,isEnabled:true,type:"User",userConsentDescription:"Allow the Mentra App to access your organization Core.",userConsentDisplayName:"Access Mentra Core",value:"mentra.session"}])})}')"
+  '$existing[0] as $existing |
+  {identifierUris: (($existing.identifierUris // []) + [$uri] | unique), api:(($existing.api // {}) + {requestedAccessTokenVersion:2, oauth2PermissionScopes: ((($existing.api.oauth2PermissionScopes // []) | map(select(.value != "mentra.session"))) + [{adminConsentDescription:"Allow the Mentra App to access this organization Core on behalf of the signed-in user.",adminConsentDisplayName:"Access Mentra Core",id:$scope_id,isEnabled:true,type:"User",userConsentDescription:"Allow the Mentra App to access your organization Core.",userConsentDisplayName:"Access Mentra Core",value:"mentra.session"}])})}')"
 retry az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$CORE_OBJECT_ID" \
   --headers 'Content-Type=application/json' --body "$core_body" --output none
 configure_admin_portal "$CORE_OBJECT_ID"
@@ -326,22 +362,21 @@ mobile_app="$(retry az ad app show --id "$MOBILE_OBJECT_ID" -o json)"
 # while dropping disabled/deleted scope ids that make admin consent fail.
 CORE_VALID_SCOPE_IDS="$(jq -c '[.api.oauth2PermissionScopes[]? | select(.isEnabled == true and .value != "mentra.runtime") | .id]' <<<"$core_app")"
 ACS_VALID_SCOPE_IDS="$(jq -c '[.oauth2PermissionScopes[]? | select(.isEnabled != false) | .id]' <<<"$ACS_SP")"
-mobile_body="$(jq -cn \
+mobile_body="$(jq_json existing "$mobile_app" -- -cn \
   --arg ios "$IOS_REDIRECT" --arg apk "$APK_REDIRECT" --arg play "$PLAY_REDIRECT" \
   --arg core_app "$CORE_CLIENT_ID" --arg session_scope "$CORE_SCOPE_ID" \
   --arg acs_app "$ACS_APP_ID" --arg calls "$ACS_CALLS_SCOPE_ID" --arg chats "$ACS_CHATS_SCOPE_ID" \
   --argjson core_valid_scopes "$CORE_VALID_SCOPE_IDS" --argjson acs_valid_scopes "$ACS_VALID_SCOPE_IDS" \
-  --argjson existing "$mobile_app" \
   'def preserved_scopes($resource; $valid):
-     [($existing.requiredResourceAccess // [])[]
+     [($existing[0].requiredResourceAccess // [])[]
       | select(.resourceAppId == $resource)
       | (.resourceAccess // [])[]
       | select(.type == "Scope")
       | select(.id as $id | $valid | index($id))];
    {isFallbackPublicClient:true,
-    publicClient:{redirectUris: (($existing.publicClient.redirectUris // []) + [$ios,$apk,$play] | unique)},
+    publicClient:{redirectUris: (($existing[0].publicClient.redirectUris // []) + [$ios,$apk,$play] | unique)},
     requiredResourceAccess:
-      (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId != $core_app and .resourceAppId != $acs_app))))
+      (((($existing[0].requiredResourceAccess // []) | map(select(.resourceAppId != $core_app and .resourceAppId != $acs_app))))
        + [{resourceAppId:$core_app,resourceAccess:((preserved_scopes($core_app; $core_valid_scopes) + [{id:$session_scope,type:"Scope"}]) | unique_by(.id))},
           {resourceAppId:$acs_app,resourceAccess:((preserved_scopes($acs_app; $acs_valid_scopes) + [{id:$calls,type:"Scope"},{id:$chats,type:"Scope"}]) | unique_by(.id))}])}')"
 retry az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$MOBILE_OBJECT_ID" \
@@ -352,8 +387,9 @@ retry az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/application
 # this helper remains safe when another administrator-owned client still uses it.
 core_app="$(az ad app show --id "$CORE_OBJECT_ID" -o json)"
 if jq -e '.api.oauth2PermissionScopes // [] | any(.value == "mentra.runtime" and .isEnabled == true)' <<<"$core_app" >/dev/null; then
-  disable_legacy_body="$(jq -cn --argjson existing "$core_app" \
-    '{api:(($existing.api // {}) + {oauth2PermissionScopes:(($existing.api.oauth2PermissionScopes // []) | map(if .value == "mentra.runtime" then . + {isEnabled:false} else . end))})}')"
+  disable_legacy_body="$(jq_json existing "$core_app" -- -cn \
+    '$existing[0] as $existing |
+    {api:(($existing.api // {}) + {oauth2PermissionScopes:(($existing.api.oauth2PermissionScopes // []) | map(if .value == "mentra.runtime" then . + {isEnabled:false} else . end))})}')"
   az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$CORE_OBJECT_ID" \
     --headers 'Content-Type=application/json' --body "$disable_legacy_body" --output none
 fi
