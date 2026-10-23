@@ -1,7 +1,7 @@
 ---
 status: active
 owner: nicolo
-last_verified: 2026-10-22
+last_verified: 2026-10-23
 covers:
   - cloud-v2/packages/protocol/src/fleet.ts
   - cloud-v2/packages/workspace-contract/src/**
@@ -142,9 +142,12 @@ When it disagrees with a source of truth below, the source of truth wins; then f
     is bound. Their first look is "not wired" or `session_changed`; `onWorkspaceApiReady` (wire, account change) and
     `pass()` re-looking on `session_changed` make the sheet show without a foreground. Never present an invitation
     from a pass whose `mine()` was dropped: it offers plain Join instead of the leave-first variant.
-20. Revocation reaches the phone only as a 401/403 from an assigned URL; `resolveMiniappUrl` sends no credentials, so a
-    real private host cannot tell a removed member from anyone. A removed member's running private miniapp is
-    withdrawn (uninstalled once idle), not stopped. Device run 2026-10-22: `/tmp/fleet-e2e/phone/` (local, not kept).
+20. Removal is an `unmanaged` answer: like any withdrawal, the miniapp keeps running, uninstalls once idle, keeps its
+    data, and shows no message. That is the spec (Mentra-Specs #140 since `b13ce5f`, 2026-10-21, dropped "stops
+    running private code"; removal "uninstall[s] while idle", acceptance 7 "preserve ... data"). Do not stop it on
+    removal. Only a 401/403 from the URL revokes (stop now, launch blocked, `fleet.accessRevoked`). `resolveMiniappUrl`
+    sends no token and answers no challenge, so a private host cannot tell who asks; the challenge is Phase 17.
+    Tests: `assignmentReconciler.test.ts` "a removed member's ...". Device run 2026-10-22: `/tmp/fleet-e2e/phone/`.
 21. Local stack: `cloud-v2/scripts/fleet-local-stack.ts` (Core, fake GoTrue, built portals with `/__dev/login`) plus
     miniapp-store `fleet/scripts/dev-stack.ts` (MFM with a fake registry and miniapp host) and `fleet/scripts/seed.ts`
     (`--keep-alive` keeps "connected now" past the 10 minute window). The static portal server must send a
@@ -152,8 +155,8 @@ When it disagrees with a source of truth below, the source of truth wins; then f
 
 ## Open items
 
-- Phone access to private miniapp URLs (item 20): who authenticates the resolve, and whether removal must stop
-  running private code before idle (provisioning spec "stops running private code"). Not decided in code.
+- 401/403 (item 20) still stops and blocks launch, but the current spec says only "updates stop, and the miniapp's
+  backend decides what still works". Spec owner to confirm before Phase 16/17 changes it.
 - Dates: OS-2099 includes Phase 12; Oct 30 / Nov 11 / Nov 19 are meeting evidence, not checked commitments.
 - Cosmos boundary for the one-workspace guard (design is Cosmos-safe on paper; spike on Cosmos staging NOT run); named owners O1-O6; harness host readiness is uninspected.
 
