@@ -106,6 +106,19 @@ test("a pre-selection 403 retains all 27 original members in suite detail, index
   } finally {for (const mock of mocks.reverse()) mock.mockRestore();}
 });
 
+test("compact nightly history uses the two-argument MongoDB 4.2 $ifNull dialect", () => {
+  let expressions = 0;
+  const check = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "$ifNull") {expect(Array.isArray(child) && child.length === 2).toBe(true); expressions++;}
+      check(child);
+    }
+  };
+  check(suiteHistoryProjection);
+  expect(expressions).toBeGreaterThan(0);
+});
+
 const mongoUri = process.env.TEST_HISTORY_MONGO_URI;
 describe.skipIf(!mongoUri)("Mongo no-build nightly projection", () => {
   let connected = false;

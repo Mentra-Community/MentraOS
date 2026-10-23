@@ -187,7 +187,7 @@ const unselectedExecutionClaims = ["build", "selection", "dispatchIntent", "inpu
 const compactNightlyMember = {
   memberId: "$$member.memberId", requestId: "$$member.requestId", routineId: "$$member.routineId",
   platform: "$$member.platform", definitionRevision: "$$member.definitionRevision", routineRevision: "$$member.routineRevision",
-  hostId: "$$member.hostId", binding: "$$member.binding", portable: {$ne: [{$ifNull: ["$$member.selection", null]}, null]}, laneId: {$ifNull: ["$$member.dispatchIntent.laneId", "$$member.input.laneId", "$$REMOVE"]},
+  hostId: "$$member.hostId", binding: "$$member.binding", portable: {$ne: [{$ifNull: ["$$member.selection", null]}, null]}, laneId: {$ifNull: ["$$member.dispatchIntent.laneId", {$ifNull: ["$$member.input.laneId", "$$REMOVE"]}]},
   selectionErrors: "$$member.selectionErrors", admitted: {$anyElementTrue: [unselectedExecutionClaims.map(key => ({$ne: [{$type: `$$member.${key}`}, "missing"]}))]},
   unavailableReason: "$$member.unavailableReason", rejectedAt: "$$member.rejectedAt",
   preparedLaneId: "$$member.input.laneId", status: "$$member.status", publicationComplete: "$$member.publicationComplete",
