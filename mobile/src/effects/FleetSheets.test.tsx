@@ -190,6 +190,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  jest.useRealTimers()
   screen?.unmount()
   setWorkspaceApi(null)
   systemAlert.mockRestore()
@@ -328,7 +329,8 @@ describe("the invitation sheet", () => {
   })
 
   it("closes with a toast when the invitation runs out while its sheet is open", async () => {
-    jest.useFakeTimers()
+    // A faked setImmediate (React's act and scheduler flush on it) leaves the next tests hanging on Node 20.
+    jest.useFakeTimers({doNotFake: ["setImmediate"]})
     try {
       const core = fakeCore({
         invitations: [invitation(RIDGELINE, {expiresAt: new Date(Date.now() + 30_000).toISOString()})],
@@ -347,6 +349,7 @@ describe("the invitation sheet", () => {
       expect(core.api.accept).not.toHaveBeenCalled()
       expect(core.api.decline).not.toHaveBeenCalled()
     } finally {
+      jest.clearAllTimers()
       jest.useRealTimers()
     }
   })
