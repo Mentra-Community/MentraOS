@@ -181,13 +181,25 @@ export async function createRelease({
     }
     return missingAsNull(() => api(`${route}/tags/${encodeURIComponent(tag)}`))
   }
+  // GitHub ignores target_commitish when the tag already exists, so the tag
+  // itself is the authority on which commit a release identifies.
+  const pinned = !sharedTag && SHA_PATTERN.test(target || "")
+  const conflict = (actual) =>
+    new ReleaseConflictError(`Tag ${tag} already identifies ${actual}, expected ${target}`)
   const matching = async (existing) => {
     if (existing.tag_name !== tag) throw new ReleaseConflictError(`Release lookup for ${tag} returned ${existing.tag_name}`)
     await validate(existing)
-    if (sharedTag || !SHA_PATTERN.test(target || "") || existing.target_commitish === target) return existing
-    if (!existing.draft && (await tagCommit({repository, tag, api}))?.commit === target) return existing
-    throw new ReleaseConflictError(`Release ${tag} already exists for a different commit`)
+    if (!pinned) return existing
+    const actual = await tagCommit({repository, tag, api})
+    if (actual) {
+      if (actual.commit !== target) throw conflict(actual.commit)
+      return existing
+    }
+    // Only a draft may exist before its tag; it creates the tag at its target when published.
+    if (existing.draft && existing.target_commitish === target) return existing
+    throw new ReleaseConflictError(`Release ${tag} does not identify ${target}`)
   }
+  let tagChecked = !pinned
   return withCreateRetry({
     label: `release ${tag}`,
     lookupFirst,
@@ -197,7 +209,15 @@ export async function createRelease({
       const existing = await (find || defaultFind)()
       return existing ? matching(existing) : null
     },
-    create: async () => validate(await api(route, {method: "POST", data: release})),
+    create: async () => {
+      // Refuse to attach a release to a tag that already identifies another commit.
+      if (!tagChecked) {
+        const actual = await tagCommit({repository, tag, api})
+        if (actual && actual.commit !== target) throw conflict(actual.commit)
+        tagChecked = true
+      }
+      return validate(await api(route, {method: "POST", data: release}))
+    },
   })
 }
 
