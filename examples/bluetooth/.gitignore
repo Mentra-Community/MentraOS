@@ -1,0 +1,62 @@
+node_modules
+ios
+android
+.expo
+dist
+build
+.DS_Store
+__pycache__/
+*.pyc
+.build/
+.swiftpm/
+/react-native-macos/macos/Podfile.lock
+/macos/Package.resolved
+/react-native-macos/macos/Pods/
+/react-native-macos/macos/build/
+/react-native-macos/macos/*.xcworkspace/
+/react-native-macos/macos/**/*.xcuserstate
+/react-native-macos/macos/**/xcuserdata/
+/react-native-macos/macos/.xcode.env.local
+
+# Keep customer-facing native example source projects even though generic
+# React Native generated `android` / `ios` directories are ignored above.
+!/android/
+!/android/**
+!/ios/
+!/ios/**
+!/react-native/modules/
+!/react-native/modules/**
+!/react-native/modules/**/android/
+!/react-native/modules/**/android/**
+!/react-native/modules/**/ios/
+!/react-native/modules/**/ios/**
+
+# Android example generated files.
+/android/.gradle/
+/android/.idea/
+/android/**/build/
+/android/**/*.iml
+/android/local.properties
+/android/.gstreamer/
+/android/app/gst-android-build/
+/react-native/.gstreamer/
+
+/react-native/modules/**/android/.gradle/
+/react-native/modules/**/android/build/
+/react-native/modules/**/android/gst-android-build/
+/react-native-elevenlabs-audio/.env*
+!/react-native-elevenlabs-audio/.env.example
+
+# Local webhook demo uploads.
+/photo-webhook-server/uploads/
+/react-native/.barcode-debug/
+
+# iOS example generated files.
+/ios/Pods/
+/ios/Podfile.lock
+/ios/*.xcworkspace/
+/ios/DerivedData/
+/ios/build/
+/ios/**/*.xcuserstate
+/ios/**/xcuserdata/
+/ios/**/project.xcworkspace/

@@ -31,12 +31,13 @@ const result = await Bun.build({
   plugins: [tailwind],
   minify: true,
   target: "browser",
-  // Absolute asset URLs: the app is served for every path (`/w/<workspaceId>/members`), so a relative
+  // Absolute asset URLs: the app is served for every path (`/members`, `/licenses`), so a relative
   // `./chunk.js` would resolve under the workspace path and get the app's HTML back instead.
   publicPath: "/",
   sourcemap: "linked",
   // The self-hosted fonts are copied from public/fonts. Bun would otherwise inline them as data: URLs.
-  external: ["/fonts/*"],
+  // /api/* is Core's, reached at run time: a page imports a portal module's UI from /api/portal/<module>/ui/.
+  external: ["/fonts/*", "/api/*"],
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
     "process.env.DEVELOPER_CONSOLE_URL": JSON.stringify(consoleUrl ?? ""),

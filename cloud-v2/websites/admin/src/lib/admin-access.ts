@@ -8,6 +8,7 @@ export type AdminPageKey =
   | "routine-catalog"
   | "system-health"
   | "workspaces"
+  | "licenses"
   | "operator-keys"
   | "audit";
 
@@ -23,6 +24,11 @@ export interface AdminMe {
    * then says Fleet is unavailable). Absent from a Core that predates Fleet, which reads as not installed.
    */
   fleet?: { installed: boolean };
+  /**
+   * Whether the Licenses page has anything to offer this caller: they may read licenses, and billing is configured
+   * on this Core or any license exists. Absent from a Core that predates licenses, which reads as nothing to offer.
+   */
+  licenses?: { available: boolean };
 }
 
 /** The pages in navigation order. The first one a principal can see is their default page. */
@@ -33,6 +39,7 @@ export const PAGE_ORDER: readonly AdminPageKey[] = [
   "routine-catalog",
   "system-health",
   "workspaces",
+  "licenses",
   "operator-keys",
   "audit",
 ];
@@ -45,22 +52,25 @@ const PAGE_CAPABILITY: Partial<Record<AdminPageKey, OrganizationCapability>> = {
   "routine-catalog": "organization.testing.read",
   "system-health": "organization.testing.read",
   workspaces: "organization.workspaces.administer",
+  licenses: "organization.licenses.read",
   "operator-keys": "organization.credentials.manage",
 };
 
 /**
  * The pages this principal may open. There is no blanket admin gate: each page needs its own capability,
- * the audit log needs an Organization Admin who is a person, and the Fleet page also needs Fleet installed
- * on this Core. Core checks every request anyway; this only keeps the portal from offering what would be
- * refused.
+ * the audit log needs an Organization Admin who is a person, the Fleet page also needs Fleet installed on this
+ * Core, and the Licenses page also needs billing or a license on this Core. Core checks every request anyway;
+ * this only keeps the portal from offering what would be refused or empty.
  */
-export function visiblePages(me: Pick<AdminMe, "organization" | "user" | "fleet">): AdminPageKey[] {
+export function visiblePages(me: Pick<AdminMe, "organization" | "user" | "fleet" | "licenses">): AdminPageKey[] {
   const held = new Set<OrganizationCapability>(me.organization.capabilities);
   return PAGE_ORDER.filter(page => {
     // No capability opens the audit log, so no operator key sees it.
     if (page === "audit") return me.user?.isOrganizationAdmin === true;
     // Without Fleet on this Core there is nothing to open, whatever the principal holds.
     if (page === "fleet" && me.fleet?.installed !== true) return false;
+    // With no billing and no license on this Core there is nothing to list.
+    if (page === "licenses" && me.licenses?.available !== true) return false;
     const needed = PAGE_CAPABILITY[page];
     return needed !== undefined && held.has(needed);
   });

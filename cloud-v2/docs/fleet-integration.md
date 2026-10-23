@@ -14,6 +14,11 @@ behavior is implemented and tested in
 Nothing here changes a deployment that has no Fleet: the forwarding routes answer
 `404 {"error":"fleet_not_installed"}`.
 
+Signing, the headers a service receives, the mapping of its answers and the relay
+of its UI assets are shared with Core's other forwarding seam, the
+[portal modules](portal-modules.md) (billing), which follow the same rules under
+their own paths and error codes.
+
 ## Configuration
 
 Set on Core. Values are read on every request, so a change takes effect at once.
@@ -30,8 +35,10 @@ every Core variable.
   Required when the URL is set. A secret without a URL does nothing.
 - `CLOUD_CORE_ENABLED_FEATURES`: how a Private Cloud switches first-party
   features on, as comma-separated `feature[:package+package]` entries. Fleet
-  reads only the feature names. Blank or unset, as on the hosted Core, leaves the
-  installation to the URL and the secret. Set, it must list `fleet.managed` for
+  reads only the feature names; the packages are for the features in miniapp
+  tokens ([Licenses](licenses.md#features-in-miniapp-tokens)). Blank or
+  unset, as on the hosted Core, leaves the installation to the URL and the
+  secret. Set, it must list `fleet.managed` for
   Fleet to be installed; a Core that lists other features and not `fleet.managed`
   has no Fleet, whatever its Fleet URL says. Feature names are case-sensitive
   (`Fleet.Managed` is not `fleet.managed`), and a value of nothing but separators
@@ -255,8 +262,9 @@ if (!principal) return new Response(JSON.stringify({error: "forbidden"}), {statu
   organization, and `scope` is what this request covers. Core sends
   `{"kind": "organization"}` on the admin surface and the person must hold
   `organization.fleet.administer` for the request to be forwarded at all. The
-  contract also defines `{"kind": "workspace", "workspaceId": "..."}`, which a
-  receiver must be ready to read.
+  contract also defines `{"kind": "workspace", "workspaceId": "..."}` and
+  `{"kind": "person"}` (the scopes of [portal modules](portal-modules.md)), which
+  a receiver must be ready to read.
 - Core decided both within the signature's 60-second window, so Fleet acts on
   them as signed and does not ask Core again.
 
@@ -526,7 +534,14 @@ Notes:
   with yet.
 - `workspace.deleted` ends every membership of the workspace
   (`endedReason: "workspace_deleted"`), revokes its credentials and invitations,
-  and records no per-membership event: treat it as ending them all.
+  and records no per-membership event: treat it as ending them all. The
+  workspace's licenses and their seats end before it, each with its own
+  `license.ended` and `seat.released` event.
+- `license.written`, `license.ended`, `seat.assigned` and `seat.released` are a
+  workspace license's and its seats' changes; their shapes are in
+  [Licenses](licenses.md#audit-and-the-change-feed). A membership's
+  seats are released just before its `membership.removed` or `membership.left`
+  event.
 - `workspace.deletion_hold_*` events say which service holds the workspace from
   deletion and why; `count` is null when the service gave none. They change no
   membership, and a workspace is never deleted while held.

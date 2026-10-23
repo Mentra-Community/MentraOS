@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {scheduledOccurrence, githubOccurrence, nightlyApi, reconcileNightlyOccurrence, nightlySummary, publishNightlyMessage, NIGHTLY_WORKFLOW} from "./nightly-device-routines.mjs"
+import {createHash} from "node:crypto"
+import {scheduledOccurrence, githubOccurrence, nightlyApi, reconcileNightlyOccurrence, nightlySummary, nightlyMemberContext, publishNightlyMessage, NIGHTLY_WORKFLOW} from "./nightly-device-routines.mjs"
 const occurrence = {occurrenceId: "nightly-dev-2026-10-03", startedAt: "2026-10-03T11:00:00.000Z", trigger: "nightly"}
 function terminal() {return {...occurrence, suiteId: "nightly-example", finishedAt: "2026-10-03T12:00:00.000Z", status: "pass", expectedCount: 1, passed: 1,
   resultUrl: "https://admin.dev.mentraglass.com/?testRun=example", members: [{memberId: "example", routineId: "never-listed-check", platform: "android", status: "pass", publicationComplete: true, runId: "example"}]}}
@@ -80,6 +81,62 @@ async function slackText(result) {
   return body.text.split("\n").slice(2).join("\n")
 }
 
+function recordedDigest(value) {
+  const sorted = value => Array.isArray(value) ? value.map(sorted) : value && typeof value === "object"
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted(value[key])])) : value
+  return createHash("sha256").update(JSON.stringify(sorted(value))).digest("hex")
+}
+function assignedMember() {
+  const revision = "a".repeat(40), build = {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}
+  const input = {routineId: "bluetooth-toggle", platform: "android", definitionRevision: revision,
+    routineSource: {commit: revision}, laneId: "testing-pro-1-android", build,
+    resources: [{id: "pro1:phone", kind: "phone", exclusiveDependencies: [{resourceId: "shared:phone-link", authorityHostId: "testing-pro-1", capability: "backend-connectivity"}]},
+      {id: "pro1:app", kind: "app"}, {id: "pro1:recorder", kind: "recorder", exclusiveDependencies: [{resourceId: "shared:phone-link", authorityHostId: "testing-pro-1", capability: "quiet-room"}]}]}
+  return {memberId: "original-member", requestId: "original-request", routineId: input.routineId, platform: input.platform,
+    routineRevision: revision, hostId: "testing-pro-1", binding: {jobId: "original-request", requestId: "original-request",
+      hostId: "testing-pro-1", laneId: input.laneId, descriptorRevision: "c".repeat(64), actionsRunId: "10", actionsJobId: "20", boundAt: occurrence.startedAt},
+    dispatchIntent: {requestId: "original-request", routineId: input.routineId, platform: input.platform, routineRevision: revision, laneId: input.laneId, build},
+    input, inputSha256: recordedDigest(input), status: "not-run", publicationComplete: false, runId: "original-run"}
+}
+
+test("Slack context uses the original bound input and canonical dependencies without fleet or rerun substitution", async () => {
+  const member = {...assignedMember(), requiredResourceKinds: ["workspace"], laterRerun: {hostId: "other-host"}}
+  const expected = {machine: "testing-pro-1", lane: "testing-pro-1-android",
+    resources: ["pro1:phone", "shared:phone-link", "pro1:app", "pro1:recorder"]}
+  assert.deepEqual(nightlyMemberContext(member), expected)
+  assert.match(await slackText({...terminal(), status: "incomplete", passed: 0, members: [member]}),
+    /bluetooth-toggle \(machine=testing-pro-1, lane=testing-pro-1-android, resources=pro1:phone, shared:phone-link, pro1:app, pro1:recorder\) · not-run - <https:\/\/admin.dev.mentraglass.com\/\?testRun=original-run\|View result>/)
+})
+
+test("never-bound requirements remain explicit and missing or corrupt original assignment stays unknown", async () => {
+  const unassigned = {platform: "android", requiredResourceKinds: ["phone", "app", "recorder"]}
+  assert.deepEqual(nightlyMemberContext(unassigned), {machine: "unassigned", lane: "android", resources: ["phone", "app", "recorder"]})
+  assert.deepEqual(nightlyMemberContext({...unassigned, requiredResourceKinds: ["phone", "phone"]}).resources, ["unknown"])
+  assert.deepEqual(nightlyMemberContext({platform: "ios-on-mac"}), {machine: "unassigned", lane: "ios-on-mac", resources: ["unknown"]})
+  assert.deepEqual(nightlyMemberContext({...unassigned, assignmentEvidence: "invalid"}), {machine: "unknown", lane: "unknown", resources: ["unknown"]})
+  const kinds = ["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]
+  assert.deepEqual(nightlyMemberContext({platform: "android", requiredResourceKinds: kinds}).resources, kinds)
+  assert.deepEqual(nightlyMemberContext({platform: "android", requiredResourceKinds: [...kinds, "other"]}).resources, ["unknown"])
+  for (const change of [{hostId: "other-host"}, {dispatchIntent: undefined},
+    {binding: {...assignedMember().binding, requestId: "later-request"}}, {binding: {...assignedMember().binding, laneId: "other-lane"}}])
+    assert.deepEqual(nightlyMemberContext({...assignedMember(), ...change}), {machine: "unknown", lane: "unknown", resources: ["unknown"]})
+  for (const change of [{input: undefined}, {inputSha256: "f".repeat(64)}, {input: {...assignedMember().input, laneId: "different-lane"}}])
+    assert.deepEqual(nightlyMemberContext({...assignedMember(), ...change}), {machine: "testing-pro-1", lane: "testing-pro-1-android", resources: ["unknown"]})
+  assert.match(await slackText({...terminal(), status: "incomplete", passed: 0, members: [{...assignedMember(), input: undefined}]}),
+    /machine=testing-pro-1, lane=testing-pro-1-android, resources=unknown/)
+})
+
+test("Slack escapes recorded dependency markup and refuses control-bearing provenance", async () => {
+  const member = assignedMember()
+  member.input.resources[0].exclusiveDependencies[0].resourceId = "shared:<link>&"
+  member.inputSha256 = recordedDigest(member.input)
+  const text = await slackText({...terminal(), status: "incomplete", passed: 0, members: [member]})
+  assert.ok(text.includes("resources=pro1:phone, shared:&lt;link&gt;&amp;, pro1:app, pro1:recorder"))
+  member.input.resources[0].exclusiveDependencies[0].resourceId = "shared:\n<@everyone>"
+  member.inputSha256 = recordedDigest(member.input)
+  assert.deepEqual(nightlyMemberContext(member), {machine: "testing-pro-1", lane: "testing-pro-1-android", resources: ["unknown"]})
+})
+
 test("Slack lists failed and unfinished members with per-run links and history counts", async () => {
   const members = [
     {memberId: "pass", routineId: "passing", platform: "android", status: "pass", runId: "pass", publicationComplete: true},
@@ -93,19 +150,19 @@ test("Slack lists failed and unfinished members with per-run links and history c
   ]
   assert.equal(await slackText({...terminal(), status: "incomplete", expectedCount: members.length, members}),
     "Build: unavailable in the nightly receipt\n3/5 failed, 3 skipped\n\n" +
-    "- call (android) · failed - <https://admin.dev.mentraglass.com/?testRun=failed%3Arun%2F1|View result>\n" +
-    "- ota (ios-on-mac) · setup-failed - <https://admin.dev.mentraglass.com/?testRun=setup|View result>\n" +
-    "- notes&lt;&amp;&gt; (android) · teardown-failed - <https://admin.dev.mentraglass.com/?testRun=teardown|View result>\n" +
-    "- cancelled (android) · cancelled - <https://admin.dev.mentraglass.com/?testRun=cancelled|View result>\n" +
-    "- no-test-steps (android) · not-run - <https://admin.dev.mentraglass.com/?testRun=not-run|View result>\n" +
-    "- unavailable (android) · incomplete - <https://admin.dev.mentraglass.com/?testRun=example|View result>\n" +
-    "- never-started (android) · not-run - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
+    "- call (machine=unassigned, lane=android, resources=unknown) · failed - <https://admin.dev.mentraglass.com/?testRun=failed%3Arun%2F1|View result>\n" +
+    "- ota (machine=unassigned, lane=ios-on-mac, resources=unknown) · setup-failed - <https://admin.dev.mentraglass.com/?testRun=setup|View result>\n" +
+    "- notes&lt;&amp;&gt; (machine=unassigned, lane=android, resources=unknown) · teardown-failed - <https://admin.dev.mentraglass.com/?testRun=teardown|View result>\n" +
+    "- cancelled (machine=unassigned, lane=android, resources=unknown) · cancelled - <https://admin.dev.mentraglass.com/?testRun=cancelled|View result>\n" +
+    "- no-test-steps (machine=unassigned, lane=android, resources=unknown) · not-run - <https://admin.dev.mentraglass.com/?testRun=not-run|View result>\n" +
+    "- unavailable (machine=unassigned, lane=android, resources=unknown) · incomplete - <https://admin.dev.mentraglass.com/?testRun=example|View result>\n" +
+    "- never-started (machine=unassigned, lane=android, resources=unknown) · not-run - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
 })
 
 test("empty selection is neutral and unfinished members are listed", async () => {
   assert.equal(await slackText({...terminal(), status: "skipped", expectedCount: 0, passed: 0, members: []}), "Build: unavailable in the nightly receipt\n0/0 failed")
   assert.equal(await slackText({...terminal(), status: "incomplete", passed: 0,
-    members: [{memberId: "missing", routineId: "missing", platform: "android", status: "incomplete"}]}), "Build: unavailable in the nightly receipt\n0/0 failed, 1 skipped\n\n- missing (android) · incomplete - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
+    members: [{memberId: "missing", routineId: "missing", platform: "android", status: "incomplete"}]}), "Build: unavailable in the nightly receipt\n0/0 failed, 1 skipped\n\n- missing (machine=unassigned, lane=android, resources=unknown) · incomplete - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
 })
 
 test("Slack names execution passes with unpublished evidence as unsuccessful members", async () => {
@@ -113,16 +170,16 @@ test("Slack names execution passes with unpublished evidence as unsuccessful mem
     const result = {...terminal(), status: "incomplete", passed: 0,
       members: [{...terminal().members[0], publicationComplete}]}
     assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n0/1 failed\n\n" +
-      "- never-listed-check (android) · execution passed; evidence incomplete - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
+      "- never-listed-check (machine=unassigned, lane=android, resources=unknown) · execution passed; evidence incomplete - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
   }
 })
 
 test("failure without a run ID uses the occurrence result link without inventing a run", async () => {
   const result = {...terminal(), status: "failed", passed: 0,
     members: [{memberId: "failure", routineId: "call", platform: "android", status: "failed"}]}
-  assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n1/1 failed\n\n- call (android) · failed - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
+  assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n1/1 failed\n\n- call (machine=unassigned, lane=android, resources=unknown) · failed - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
   result.resultUrl = undefined
-  assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n1/1 failed\n\n- call (android) · failed - Result link unavailable")
+  assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n1/1 failed\n\n- call (machine=unassigned, lane=android, resources=unknown) · failed - Result link unavailable")
 })
 
 

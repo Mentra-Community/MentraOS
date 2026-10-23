@@ -22,7 +22,7 @@ export const resourceLifecycleSubjectSchema = z.object({
     acceptedCheck:z.object({operationId:id,subjectGeneration:generation,resultSha256:z.string().regex(/^[a-f0-9]{64}$/),acceptedAt:timestamp}).strict().nullable(),
     qualifiedScope:qualifiedScopeSchema,evidenceRefs:z.array(id).max(100)}).strict(),
   repair:z.object({configured:z.boolean(),state:z.enum(['none','queued','running','needs-input','halted']),interruptionId:id.optional(),executionId:id.optional()}).strict(),
-  supportedActions:z.array(z.enum(['check','repair','retry-repair','stop-repair','mark-out-of-service'])).max(5),
+  supportedActions:z.array(z.enum(['reserve','release','check','repair','retry-repair','stop-repair','mark-out-of-service'])).max(7),
   resource:z.object({kind:id,capabilities:z.array(id).max(30),memberships:z.array(z.object({hostId:id,laneId:id}).strict()).max(100),dependencies:z.array(id).max(100),placement:z.enum(['installed','fleet'])}).strict(),
 }).strict().superRefine((value,ctx)=>{
   if(value.owner?.generation===null && value.supportedActions.length) ctx.addIssue({code:'custom',message:'Unknown owner generation cannot enable actions'});

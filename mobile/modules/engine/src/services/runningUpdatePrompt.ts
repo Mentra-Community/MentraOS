@@ -4,12 +4,13 @@
  * When a newer release is staged for a miniapp the user is running, the
  * engine asks before stopping it. The host renders the prompt (its copy and
  * buttons) and answers it; the engine owns when a prompt may appear: only
- * while the Mentra App is in the foreground, one at a time, and at most once
- * a day per miniapp.
+ * while the Mentra App is in the foreground, one at a time, and once per run
+ * of a miniapp. After "Not now" it asks again the next time the miniapp is
+ * opened, and not before.
  */
 import {AppState} from "react-native"
 
-import {storage} from "../utils/storage/storage"
+import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 
 export interface RunningUpdatePromptRequest {
   packageName: string
@@ -32,27 +33,33 @@ export interface RunningUpdateFailure {
   installedVersion: string
 }
 
-/** A pending update asks at most once a day per miniapp. */
-export const RUNNING_UPDATE_PROMPT_INTERVAL_MS = 86_400_000
-
 export interface RunningUpdatePromptEnvironment {
   isForeground(): boolean
-  now(): number
-  lastPromptedAt(packageName: string): number | null
-  recordPrompted(packageName: string, at: number): void
+  /** Whether this run of the miniapp was already asked about an update. */
+  wasPromptedThisRun(packageName: string): boolean
+  recordPrompted(packageName: string): void
 }
 
-const promptedAtKey = (packageName: string) => `miniapp_update_prompted_at:${packageName}`
+/** Miniapps asked during their current run. A miniapp leaves the set when it stops. */
+const promptedRuns = new Set<string>()
+let unsubscribeRunTracking: (() => void) | null = null
+
+function forgetStoppedRuns(): void {
+  for (const packageName of [...promptedRuns]) {
+    if (!miniappRunningRegistry.has(packageName)) promptedRuns.delete(packageName)
+  }
+  if (promptedRuns.size === 0) {
+    unsubscribeRunTracking?.()
+    unsubscribeRunTracking = null
+  }
+}
 
 const defaultEnvironment: RunningUpdatePromptEnvironment = {
   isForeground: () => AppState.currentState === "active",
-  now: () => Date.now(),
-  lastPromptedAt: (packageName) => {
-    const stored = storage.load<number>(promptedAtKey(packageName))
-    return stored.is_ok() && typeof stored.value === "number" ? stored.value : null
-  },
-  recordPrompted: (packageName, at) => {
-    storage.save(promptedAtKey(packageName), at)
+  wasPromptedThisRun: (packageName) => promptedRuns.has(packageName),
+  recordPrompted: (packageName) => {
+    promptedRuns.add(packageName)
+    unsubscribeRunTracking ??= miniappRunningRegistry.subscribe(forgetStoppedRuns)
   },
 }
 
@@ -65,18 +72,14 @@ const openSettlers = new Set<(answer: RunningUpdatePromptAnswer) => void>()
 /** Whether a prompt for this miniapp would be shown right now. */
 export function canShowRunningUpdatePrompt(packageName: string): boolean {
   if (promptListeners.size === 0 || openPrompt !== null || !environment.isForeground()) return false
-  const last = environment.lastPromptedAt(packageName)
-  if (last === null) return true
-  const elapsed = environment.now() - last
-  // A clock set backwards must not suppress the prompt for an unbounded time.
-  return elapsed < 0 || elapsed >= RUNNING_UPDATE_PROMPT_INTERVAL_MS
+  return !environment.wasPromptedThisRun(packageName)
 }
 
 /**
  * Ask the user whether to update a running miniapp now. Resolves "not_shown"
  * without asking when the Mentra App is in the background, another prompt is
- * open, no host listener is registered, or this miniapp was asked within
- * {@link RUNNING_UPDATE_PROMPT_INTERVAL_MS}.
+ * open, no host listener is registered, or this run of the miniapp was
+ * already asked.
  */
 export function requestRunningUpdatePrompt(request: RunningUpdatePromptRequest): Promise<RunningUpdatePromptAnswer> {
   if (!canShowRunningUpdatePrompt(request.packageName)) return Promise.resolve("not_shown")
@@ -102,7 +105,7 @@ export function requestRunningUpdatePrompt(request: RunningUpdatePromptRequest):
       settle("not_shown")
       return
     }
-    environment.recordPrompted(request.packageName, environment.now())
+    environment.recordPrompted(request.packageName)
   })
 }
 
@@ -141,9 +144,12 @@ export function emitRunningUpdateFailed(failure: RunningUpdateFailure): void {
   }
 }
 
-/** Tests only: replace the foreground, clock and persistence seams. */
+/** Tests only: replace the foreground and run-tracking seams. */
 export function setRunningUpdatePromptEnvironmentForTests(next: RunningUpdatePromptEnvironment | null): void {
   environment = next ?? defaultEnvironment
+  promptedRuns.clear()
+  unsubscribeRunTracking?.()
+  unsubscribeRunTracking = null
   openPrompt = null
   openSettlers.clear()
   promptListeners.clear()

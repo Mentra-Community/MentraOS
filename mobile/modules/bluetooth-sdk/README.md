@@ -664,7 +664,7 @@ Engine coordinator:
 
 Release CI embeds an immutable manifest URL and checksum into every published
 SDK distribution. The completed coordinated release record correlates the SDK
-package with its exact manifest and OTA bundle. A completed release is available at
+package with its exact manifest and, for beta and stable releases, its OTA bundle. A completed release is available at
 `https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v<releaseIdentity>`
 and contains `mentra-release-<releaseIdentity>.json`, which records the exact
 package coordinates, asset URLs, sizes, checksums, and build provenance.
@@ -679,10 +679,11 @@ Android/iOS OTA contract or infrastructure beneath a coordinator. React Native
 application pages should render Mentra Engine's semantic controller state
 instead of sequencing raw events.
 
-Each coordinated prerelease publishes a portable OTA bundle. Stable releases
-promote the exact beta-tested OTA bytes, so always resolve the bundle coordinate
-and URL from `mentra-release-<releaseIdentity>.json` rather than constructing a
-filename. The selected archive contains
+Each beta release publishes a portable OTA bundle; development releases do not.
+A stable release publishes byte-identical copies of the promoted beta's OTA
+manifest and bundle under its own names, so always resolve the bundle
+coordinate and URL from `mentra-release-<releaseIdentity>.json` rather than
+constructing a filename. The selected archive contains
 `version.template.json`, every referenced ASG/MTK/BES artifact, `SHA256SUMS`,
 and a dependency-free configuration script. After unpacking it, generate the
 final manifest for its exact hosting URL:
@@ -865,10 +866,28 @@ MentraOS repo root:
 ./scripts/check-android-compile.sh bluetooth-sdk
 ```
 
-The `android/` folder in this package is source for the generated Expo Android
-project, not the local Gradle entrypoint. The check script prepares
-`mobile/android` and uses its Gradle wrapper with `-PmentraPublicSdk=true`,
-matching the CI release workflow's public SDK dependency mode.
+The check script prepares `mobile/android` and uses its Gradle wrapper with
+`-PmentraPublicSdk=true`, matching the CI release workflow's public SDK
+dependency mode. Inside an Expo app, the `android/` folder in this package is
+included by autolinking as `:mentra-bluetooth-sdk`.
+
+A plain Android app can also build the native SDK from a MentraOS checkout,
+without publishing it to Maven local, through a Gradle composite build. In the
+app's `settings.gradle.kts`:
+
+```kotlin
+includeBuild("/path/to/MentraOS/mobile/modules/bluetooth-sdk/android") {
+    dependencySubstitution {
+        substitute(module("com.mentraglass:bluetooth-sdk")).using(project(":"))
+    }
+}
+```
+
+The app keeps its `com.mentraglass:bluetooth-sdk` dependency; Gradle replaces it
+with the source build. This standalone build has the same dependencies as the
+Maven Central artifact (`-PmentraPublicSdk=true` is its default) and leaves out
+the Expo adapter classes, which need an Expo host. It needs the Android NDK for
+`lc3Lib`.
 
 For bare native iOS or macOS apps, use the public SwiftPM repository:
 
@@ -878,7 +897,7 @@ https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 
 Select a coordinated SDK version that includes your target platform, then add
 the `MentraBluetoothSDK` product to your app target. Native macOS support is new
-on `dev`; use the local source override until a supporting release is published.
+on `dev`; use the local package below until a supporting release is published.
 
 For local SDK development, add this package folder directly in Xcode:
 
@@ -894,7 +913,8 @@ permission/audio-input capability for host microphone capture and network-server
 capability for local SDK servers. macOS uses CoreAudio instead of
 `AVAudioSession`; it does not provide iOS background modes or ANCS relay. See
 [the macOS integration guide](../../../mintlify-docs/bluetooth-sdk/macos.mdx)
-and the Starter Kit's `examples/macos` and `examples/react-native-macos` hosts.
+and the [`examples/bluetooth/macos`](../../../examples/bluetooth/macos/README.md) and
+[`examples/bluetooth/react-native-macos`](../../../examples/bluetooth/react-native-macos/README.md) hosts.
 
 Maintainers publishing the public SwiftPM mirror should follow
 [RELEASING_IOS_SPM.md](./RELEASING_IOS_SPM.md).

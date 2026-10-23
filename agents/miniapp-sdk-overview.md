@@ -9,7 +9,7 @@ The SDK lives across four packages in `sdk/`:
 | `@mentra/miniapp`                        | Runtime SDK consumed by miniapp authors. Session, modules, transports, React hooks.          |
 | `@mentra/miniapp-cli` (`mentra-miniapp`) | Author-facing CLI. `dev`, `release`, `pack`, `manifest`, `permission`, `hardware`, `schema`. |
 | `create-mentra-miniapp`                  | Project scaffolder. `bunx create-mentra-miniapp my-app` → a working starter.                 |
-| `sdk/example-miniapp`                    | Reference miniapp ("Live Captions" + a tester for every module). What we build against.      |
+| `examples/miniapp`                        | Reference miniapp ("Live Captions" + a tester for every module). What we build against.      |
 
 A miniapp is a **static web app** (HTML/JS/CSS bundle, any framework) with a `miniapp.json` manifest. It runs inside the MentraOS app's WebView on the phone. The SDK gives it a typed API for talking to the glasses + phone.
 
@@ -70,7 +70,7 @@ Smart-glasses miniapps are **always-on services**. The webview is a UI on top of
 
 **The rule:** user-facing glasses logic must live in a session-scoped controller, instantiated once at module init. React pages read controller-driven state via a store (Zustand recommended) and call imperative methods on the controller for user-triggered actions. They do NOT subscribe to `session.*` directly.
 
-The reference implementation in `sdk/example-miniapp/src/`:
+The reference implementation in `examples/miniapp/src/`:
 
 - **`controller/GlassesController.ts`** — single class. Owns every `session.transcription.on(...)`, `session.input.onButtonPress(...)`, etc. `start()` is called once from `main.tsx`'s Bootstrap shim. Subscriptions live for the entire session.
 - **`store/appStore.ts`** — Zustand store. Controller writes (`store.appendHistory`); pages read (`useAppStore((s) => s.history)`).
@@ -191,7 +191,7 @@ useEffect(() => {
 
 **No default timeout.** Pass `{timeout: 5000}` per call if you need a deadline. The failure mode it would guard (background never replies) only happens when the session is already dead — at which point the timeout is papering over a real bug, not catching a useful condition.
 
-**Worked example:** `sdk/example-miniapp/src/background/controllers/TesterController.ts` uses `session.ui.handle("tester:invoke", ...)` to dispatch arbitrary `session[iface][method](...)` calls; the tester UI pages call `mentra.request("tester:invoke", ...)` via the `useTester().invoke(method, args)` convenience.
+**Worked example:** `examples/miniapp/src/background/controllers/TesterController.ts` uses `session.ui.handle("tester:invoke", ...)` to dispatch arbitrary `session[iface][method](...)` calls; the tester UI pages call `mentra.request("tester:invoke", ...)` via the `useTester().invoke(method, args)` convenience.
 
 Two transports, auto-selected:
 
@@ -292,7 +292,7 @@ For anyone digging in:
 - SDK runtime: `sdk/miniapp/src/{session,protocol,envelope,globals}.ts`, `sdk/miniapp/src/modules/`, `sdk/miniapp/src/transport/`, `sdk/miniapp/src/react/`
 - CLI: `sdk/miniapp-cli/src/{index,dev,pack,manifest,qr}.ts`
 - Scaffolder: `sdk/create-mentra-miniapp/`
-- Reference miniapp: `sdk/example-miniapp/` (the Live Captions page + a `/tester` route exercising every module)
+- Reference miniapp: `examples/miniapp/` (the Live Captions page + a `/tester` route exercising every module)
 
 Long-form planning docs (the "what this should look like once it's done" reading list, also linked in the PR body):
 

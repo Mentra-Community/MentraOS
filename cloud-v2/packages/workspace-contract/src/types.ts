@@ -80,7 +80,16 @@ export interface AuthorizeResponse {
 
 export interface PrincipalResponse {
   principal: CorePrincipal
-  workspaces: Array<WorkspaceSummary & {membership: MembershipSummary; capabilities: WorkspaceCapability[]}>
+  /**
+   * The person's workspaces, oldest first. `replaceable` is true for their own automatic workspace (the one
+   * Core made for them, which they own) while it holds nothing: they are its only member, and it has no
+   * pending invitation, key, license that has not ended, or deletion hold. Core deletes such a workspace in
+   * the transaction that gives them a membership in another one (accepting an invitation, claiming an
+   * imported membership, recovering ownership). An older Core leaves it out.
+   */
+  workspaces: Array<
+    WorkspaceSummary & {membership: MembershipSummary; capabilities: WorkspaceCapability[]; replaceable?: boolean}
+  >
 }
 
 export interface MembershipCheckEntry {
@@ -165,7 +174,7 @@ export interface DeletionHoldsResponse {
 /** What a hold's `reason` must match: a lowercase code of at most 64 letters, digits and underscores, starting with a letter. */
 export const DELETION_HOLD_REASON_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
 
-/** The Store's hold `reason` while a workspace still owns published miniapps; its `count` is how many. */
+/** The Store's hold `reason` while a workspace still owns a miniapp that is not deleted; its `count` is how many. */
 export const OWNS_MINIAPPS_HOLD_REASON = "owns_miniapps"
 
 /**
@@ -226,7 +235,7 @@ export const USER_DELETED_ACTION = "user.deleted"
 // --- Forwarded principals (Core -> Fleet) ----------------------------------
 
 /**
- * The headers Core adds to a request it forwards to the Fleet integration, beyond the service
+ * The headers Core adds to a request it forwards to the Fleet integration or to a portal module, beyond the service
  * signature headers (`SERVICE_HEADERS`, with `x-mentra-service: core`). `principal` is the caller as
  * base64url JSON ({@link ForwardedPrincipal}); `principalSignature` is a base64url HMAC-SHA256,
  * keyed with the same secret as the service signature, over `<timestamp>\n<principal header>`.
@@ -241,14 +250,21 @@ export const FORWARDED_PRINCIPAL_HEADERS = {
 export const FORWARDING_SERVICE = "core"
 
 /**
- * What a signed-in person's Fleet request covers, decided by Core: the whole organization, or one
- * workspace (a team).
+ * What a signed-in person's forwarded request covers, decided by Core: the whole organization, one
+ * workspace (a team), or the person's own account.
  */
-export type FleetScope = {kind: "organization"} | {kind: "workspace"; workspaceId: string}
+export type ForwardedScope =
+  | {kind: "organization"}
+  | {kind: "workspace"; workspaceId: string}
+  | {kind: "person"}
+
+/** The scope under its first name, when Fleet was the only service Core forwarded to. */
+export type FleetScope = ForwardedScope
 
 /**
- * Who a forwarded request is from. Only people reach Fleet: `/v1/client` only ever receives `phone`
- * principals and `/v1/admin` only `user` principals.
+ * Who a forwarded request is from. Only people reach a service Core forwards to: Fleet's `/v1/client` only
+ * ever receives `phone` principals, and Fleet's `/v1/admin` and a portal module's `/v1/portal` only `user`
+ * principals.
  *
  * - `phone`: a signed-in phone session. `email` is the account's verified email, or null; it is a
  *   display attribute and never an identity key.
@@ -265,7 +281,7 @@ export type ForwardedPrincipal =
       emailVerified: boolean
       isOrganizationAdmin: boolean
       organizationCapabilities: OrganizationCapability[]
-      scope: FleetScope
+      scope: ForwardedScope
     }
 
 /**
@@ -319,6 +335,11 @@ export interface MemberView {
   membershipId: string
   mentraUserId: string | null
   email: string | null
+  /**
+   * The person's name from their sign-in, null when Core has none or they haven't signed in. Optional so a
+   * portal still works against a Core that doesn't send it.
+   */
+  name?: string | null
   role: WorkspaceRole
   startedAt: string
   pending: boolean

@@ -14,8 +14,11 @@ import type {
   CredentialView,
   InvitationPreview,
   InvitationView,
+  LicenseView,
   MemberView,
   PrincipalResponse,
+  SeatAssignmentsRequest,
+  SeatAssignmentsResponse,
   WorkspaceDetail,
   WorkspaceRole,
   WorkspaceSummary,
@@ -67,6 +70,11 @@ export interface WorkspaceApi {
 
   listWorkspaces(): Promise<WorkspaceListItem[]>;
   createWorkspace(name: string): Promise<WorkspaceDetail>;
+  /**
+   * The caller's own workspace, made when they have none: no body, 200 with the one they already have, 201 with
+   * a new one. Core's people-only route (`POST {base}/ensure`); an embedding without it answers 404.
+   */
+  ensureWorkspace(): Promise<WorkspaceDetail>;
   getWorkspace(workspaceId: string): Promise<WorkspaceDetail>;
   renameWorkspace(workspaceId: string, name: string, expectedRevision: number): Promise<WorkspaceDetail>;
   deleteWorkspace(workspaceId: string, confirmName: string): Promise<void>;
@@ -97,6 +105,23 @@ export interface WorkspaceApi {
   revokeCredential(workspaceId: string, credentialId: string): Promise<void>;
 
   listAudit(workspaceId: string, page?: { before?: string; limit?: number }): Promise<AuditPage>;
+
+  /**
+   * The workspace's licenses as the caller may see them: every license with every seat for an Admin or Owner
+   * (`workspace.licenses.read`), otherwise only the licenses they hold a seat in, each with only their own.
+   */
+  listLicenses(workspaceId: string): Promise<LicenseView[]>;
+  /** Gives the membership a seat on the license (`workspace.licenses.assign`). Answers the license with its seats. */
+  assignSeat(workspaceId: string, licenseId: string, membershipId: string): Promise<LicenseView>;
+  /** Takes the seat back from the membership (`workspace.licenses.assign`). */
+  releaseSeat(workspaceId: string, licenseId: string, membershipId: string): Promise<void>;
+  /**
+   * Gives several seats at once (`workspace.licenses.assign`), one request for every `{licenseId, membershipId}`
+   * pair, 1 to `MAX_SEAT_ASSIGNMENTS` of them. Core assigns all of them or none: a pair that is repeated or already
+   * held is dropped, and when any license lacks the seats nothing is assigned and the call fails with a 409
+   * `no_seats_available` (`isLicenseChangedError`). Answers every license it touched, as Core now holds it.
+   */
+  assignSeats(workspaceId: string, assignments: SeatAssignmentsRequest["assignments"]): Promise<LicenseView[]>;
 }
 
 /** What `createWorkspaceApi` needs of `fetch`; the global `fetch` of any runtime satisfies it. */
@@ -152,6 +177,7 @@ export function createWorkspaceApi(opts: {
 
     listWorkspaces: async () => (await json<{ items: WorkspaceListItem[] }>("GET", "")).items,
     createWorkspace: (name) => json("POST", "", { name }),
+    ensureWorkspace: () => json("POST", "/ensure"),
     getWorkspace: (workspaceId) => json("GET", workspace(workspaceId)),
     renameWorkspace: (workspaceId, name, expectedRevision) =>
       json("PATCH", workspace(workspaceId), { name, expectedRevision }),
@@ -194,6 +220,19 @@ export function createWorkspaceApi(opts: {
       const queryString = query.toString();
       return json("GET", `${workspace(workspaceId)}/audit${queryString ? `?${queryString}` : ""}`);
     },
+
+    listLicenses: async (workspaceId) =>
+      (await json<{ items: LicenseView[] }>("GET", `${workspace(workspaceId)}/licenses`)).items,
+    assignSeat: (workspaceId, licenseId, membershipId) =>
+      json("PUT", `${workspace(workspaceId)}/licenses/${id(licenseId)}/seats/${id(membershipId)}`),
+    releaseSeat: (workspaceId, licenseId, membershipId) =>
+      empty("DELETE", `${workspace(workspaceId)}/licenses/${id(licenseId)}/seats/${id(membershipId)}`),
+    assignSeats: async (workspaceId, assignments) =>
+      (
+        await json<SeatAssignmentsResponse>("POST", `${workspace(workspaceId)}/seat-assignments`, {
+          assignments,
+        } satisfies SeatAssignmentsRequest)
+      ).licenses,
   };
 }
 

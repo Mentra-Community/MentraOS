@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.core.handlers;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -11,10 +12,12 @@ import com.mentra.asg_client.service.communication.interfaces.ICommunicationMana
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
+import java.util.List;
 import org.json.JSONObject;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
@@ -69,6 +72,40 @@ public class PhoneReadyCommandHandlerTest {
 
         assertThat(handled).isTrue();
         verify(communicationManager).sendBluetoothResponse(any(JSONObject.class));
+    }
+
+    @Test
+    public void repeatedReadyId_resetsTransportOnceAndAnswersEveryCopy() throws Exception {
+        // Copies of one exchange the BES buffered while MTK booted.
+        for (int copy = 0; copy < 3; copy++) {
+            assertThat(handler.handleCommand("phone_ready", new JSONObject().put("readyId", "r1")))
+                    .isTrue();
+        }
+
+        verify(transport, times(1)).onTransportReset();
+        ArgumentCaptor<JSONObject> replies = ArgumentCaptor.forClass(JSONObject.class);
+        verify(communicationManager, times(3)).sendBluetoothResponse(replies.capture());
+        List<JSONObject> sent = replies.getAllValues();
+        assertThat(sent).allSatisfy(reply -> {
+            assertThat(reply.optString("type")).isEqualTo("glasses_ready");
+            assertThat(reply.optString("readyId")).isEqualTo("r1");
+        });
+    }
+
+    @Test
+    public void newReadyId_resetsTransportAgain() throws Exception {
+        handler.handleCommand("phone_ready", new JSONObject().put("readyId", "r1"));
+        handler.handleCommand("phone_ready", new JSONObject().put("readyId", "r2"));
+
+        verify(transport, times(2)).onTransportReset();
+    }
+
+    @Test
+    public void phoneReadyWithoutReadyId_resetsTransportEveryTime() {
+        handler.handleCommand("phone_ready", new JSONObject());
+        handler.handleCommand("phone_ready", new JSONObject());
+
+        verify(transport, times(2)).onTransportReset();
     }
 
     @Test

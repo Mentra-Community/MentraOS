@@ -1,0 +1,253 @@
+name: Bluetooth Starter Kit Export
+
+# Publishes examples/bluetooth as the standalone Bluetooth SDK Starter Kit
+# (Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit), pinned to the packages
+# one completed release published. The release's bill of materials,
+# mentra-release-<identity>.json, is the input: the kit branch of its channel
+# (dev -> dev, beta -> staging, production -> main) receives one fast-forward
+# "Release <identity>" commit and the tag sdk-<identity>, pushed atomically.
+#
+# Nothing triggers this from a release. It runs every 30 minutes: each channel
+# first makes a cheap check (no checkout) of the newest completed release
+# against the kit branch's starter-kit-release.json, and stops at once when the
+# kit already has it or a newer one, or when npm, Maven Central, the Swift
+# package or the OTA manifest do not serve the release yet. The next run retries.
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and check the export without pushing it
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
+
+jobs:
+  export:
+    name: Export the ${{ matrix.channel }} Starter Kit
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [dev, beta, production]
+    concurrency:
+      group: starter-kit-export-${{ matrix.channel }}
+      cancel-in-progress: false
+    steps:
+      # Cheap check first: curl and the GitHub API only, so a run with nothing
+      # to export ends in seconds.
+      - name: Check whether the kit needs a release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL: ${{ matrix.channel }}
+        run: |
+          set -euo pipefail
+          cdn="https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases"
+          stop() {
+            echo "$1" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          case "$CHANNEL" in
+            dev) branch=dev dist_tag=dev pattern='^[0-9]+\.[0-9]+\.[0-9]+-dev\.[1-9][0-9]*$' ;;
+            beta) branch=staging dist_tag=beta pattern='^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$' ;;
+            production) branch=main dist_tag=latest pattern='^[0-9]+\.[0-9]+\.[0-9]+$' ;;
+            *) echo "Unsupported channel $CHANNEL" >&2; exit 1 ;;
+          esac
+          # The npm dist-tag names the channel's release family; the family
+          # container's index lists the records of completed releases only.
+          current=$(curl -fsS "https://registry.npmjs.org/-/package/@mentra%2fbluetooth-sdk/dist-tags" |
+            jq -r --arg tag "$dist_tag" '.[$tag] // empty')
+          [[ -n "$current" ]] || stop "@mentra/bluetooth-sdk has no $dist_tag dist-tag."
+          if [[ "$CHANNEL" == production ]]; then
+            identity="$current"
+          else
+            identity=$(curl -fsS "$cdn/mentra-builds-v${current%%-*}/_assets.json" |
+              jq -r '.assets[] | select(.state == "uploaded") | .name | capture("^mentra-release-(?<id>.+)\\.json$") | .id' |
+              { grep -E "$pattern" || true; } | sort -V | tail -n 1)
+            [[ -n "$identity" ]] || stop "No completed $CHANNEL release in the ${current%%-*} family yet."
+          fi
+          kit=$(gh api "repos/$STARTER_KIT_REPOSITORY/contents/starter-kit-release.json?ref=$branch" --jq .content 2>/dev/null |
+            base64 -d 2>/dev/null | jq -r '.releaseIdentity // empty' 2>/dev/null || true)
+          tag_exists=false
+          if gh api "repos/$STARTER_KIT_REPOSITORY/git/ref/tags/sdk-$identity" > /dev/null 2>&1; then
+            tag_exists=true
+          fi
+          if [[ "$kit" == "$identity" ]]; then
+            # Branch and tag are pushed atomically: a branch that carries the
+            # release without its tag was changed outside the export.
+            if [[ "$tag_exists" != true ]]; then
+              echo "$branch carries $identity but sdk-$identity does not exist; check the branch and restore the tag by hand." >&2
+              exit 1
+            fi
+            stop "\`$branch\` already carries \`$identity\`."
+          fi
+          if [[ "$kit" =~ $pattern && "$(printf '%s\n%s\n' "$kit" "$identity" | sort -V | tail -n 1)" == "$kit" ]]; then
+            stop "\`$branch\` carries \`$kit\`, newer than \`$identity\`."
+          fi
+          # Releases before this export were published to the kit by its own
+          # release workflow, which already tagged them.
+          [[ "$tag_exists" != true ]] || stop "\`sdk-$identity\` already exists."
+          if [[ "$CHANNEL" == production ]]; then
+            container="mentra-v$identity"
+          else
+            container="mentra-builds-v${identity%%-*}"
+          fi
+          record_url="$cdn/$container/mentra-release-$identity.json"
+          mkdir -p release
+          curl -fsS -o release/mentra-release.json "$record_url" ||
+            stop "\`$identity\` has no completed release record yet."
+          [[ "$(jq -r .releaseIdentity release/mentra-release.json)" == "$identity" ]]
+          [[ "$(jq -r .channel release/mentra-release.json)" == "$CHANNEL" ]]
+          # One availability check per run; the next run retries.
+          missing=()
+          for package in bluetooth-sdk engine; do
+            curl -fsS -o /dev/null "https://registry.npmjs.org/@mentra%2f$package/$identity" || missing+=("npm @mentra/$package")
+          done
+          for artifact in bluetooth-sdk lc3Lib; do
+            curl -fsSI -o /dev/null "https://repo1.maven.org/maven2/com/mentraglass/$artifact/$identity/$artifact-$identity.pom" ||
+              missing+=("Maven Central $artifact")
+          done
+          git ls-remote --exit-code --tags https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git "refs/tags/$identity" > /dev/null ||
+            missing+=("Swift package")
+          ota_url=$(jq -r .otaManifest.url release/mentra-release.json)
+          ota_sha=$(jq -r .otaManifest.sha256 release/mentra-release.json)
+          [[ "$(curl -fsS "$ota_url" | sha256sum | cut -c1-64)" == "$ota_sha" ]] || missing+=("OTA manifest")
+          (( ${#missing[@]} == 0 )) || stop "\`$identity\` is not served yet: ${missing[*]}. The next run retries."
+          {
+            echo "proceed=true"
+            echo "identity=$identity"
+            echo "branch=$branch"
+            echo "source_commit=$(jq -er .sourceCommit release/mentra-release.json)"
+            echo "record_url=$record_url"
+            echo "record_sha256=$(sha256sum release/mentra-release.json | cut -c1-64)"
+          } >> "$GITHUB_OUTPUT"
+
+      # The export tooling runs from this workflow's revision, which may be
+      # newer than the release's source.
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.proceed == 'true'
+        with:
+          sparse-checkout: .github/scripts
+          path: tooling
+
+      - name: Check out the release's examples
+        if: steps.check.outputs.proceed == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.check.outputs.source_commit }}
+          path: source
+          sparse-checkout: examples
+          sparse-checkout-cone-mode: true
+
+      - name: Check that the release contains the kit
+        id: source
+        if: steps.check.outputs.proceed == 'true'
+        run: |
+          if [[ -d source/examples/bluetooth ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            # Releases cut before the kit moved into MentraOS have no
+            # examples/bluetooth; their kit was released from its own repository.
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "\`${{ steps.check.outputs.identity }}\` predates examples/bluetooth; nothing to export." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.source.outputs.present == 'true'
+        with:
+          node-version: "24"
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.source.outputs.present == 'true'
+        with:
+          bun-version: "1.3.11"
+
+      - name: Export the standalone Starter Kit
+        if: steps.source.outputs.present == 'true'
+        run: >-
+          node tooling/.github/scripts/export-bluetooth-starter-kit.mjs transform
+          --examples-dir source/examples/bluetooth
+          --workspace-dir source/examples
+          --record release/mentra-release.json
+          --out export
+
+      - name: Create the Starter Kit push token
+        id: token
+        if: steps.source.outputs.present == 'true' && inputs.dry_run != true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: Mentra-Bluetooth-SDK-Starter-Kit
+          permission-contents: write
+
+      - name: Commit and push the release
+        id: push
+        if: steps.source.outputs.present == 'true' && inputs.dry_run != true
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+          BRANCH: ${{ steps.check.outputs.branch }}
+          IDENTITY: ${{ steps.check.outputs.identity }}
+          SOURCE_COMMIT: ${{ steps.check.outputs.source_commit }}
+          RECORD_URL: ${{ steps.check.outputs.record_url }}
+          RECORD_SHA256: ${{ steps.check.outputs.record_sha256 }}
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:${TOKEN}@github.com/${STARTER_KIT_REPOSITORY}.git"
+          tag="refs/tags/sdk-$IDENTITY"
+          for attempt in 1 2; do
+            rm -rf kit
+            git clone --quiet --depth 1 --branch "$BRANCH" "$remote" kit
+            # A newer release, or this one, may have landed since the check.
+            current=$(jq -r '.releaseIdentity // empty' kit/starter-kit-release.json 2>/dev/null || true)
+            if [[ -n "$current" && "$(printf '%s\n%s\n' "$current" "$IDENTITY" | sort -V | tail -n 1)" == "$current" ]]; then
+              echo "$BRANCH already carries $current."
+              exit 0
+            fi
+            # The kit keeps its own .github (its CI); everything else is the export,
+            # in the kit's layout: shared files at the root, apps under examples/.
+            find kit -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
+            cp -a export/. kit/
+            git -C kit config user.name "mentra-starter-kit-export[bot]"
+            git -C kit config user.email "starter-kit-export@users.noreply.github.com"
+            git -C kit add --all
+            git -C kit commit --quiet \
+              -m "Release $IDENTITY" \
+              -m "Exported from Mentra-Community/MentraOS examples/bluetooth at $SOURCE_COMMIT, with every SDK dependency pinned to the packages release $IDENTITY published." \
+              -m "Mentra-Release: $IDENTITY
+          Mentra-Source-Commit: $SOURCE_COMMIT
+          Mentra-Release-Record: $RECORD_URL#sha256=$RECORD_SHA256"
+            git -C kit tag "sdk-$IDENTITY"
+            # Branch and tag land together or not at all. Fast-forward only:
+            # the commit's parent is the branch head cloned above, and nothing
+            # is ever force-pushed. A rejected push is retried once from a
+            # fresh clone; a second rejection fails.
+            push_status=0
+            git -C kit push --quiet --atomic "$remote" "HEAD:refs/heads/$BRANCH" "$tag" || push_status=$?
+            if (( push_status == 0 )); then
+              echo "Pushed $IDENTITY to $BRANCH: https://github.com/$STARTER_KIT_REPOSITORY/commit/$(git -C kit rev-parse HEAD) (tag sdk-$IDENTITY)." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "Push of $IDENTITY to $BRANCH was rejected (attempt $attempt); checking the branch again." >&2
+          done
+          echo "Could not push $IDENTITY to $BRANCH." >&2
+          exit 1
+
+      - name: Summarize a dry run
+        if: steps.source.outputs.present == 'true' && inputs.dry_run == true
+        env:
+          IDENTITY: ${{ steps.check.outputs.identity }}
+        run: |
+          echo "Dry run: \`$IDENTITY\` exported and checked, not pushed." >> "$GITHUB_STEP_SUMMARY"

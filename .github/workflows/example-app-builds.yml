@@ -1,0 +1,65 @@
+name: Example App Builds
+
+# Builds the integrator examples in examples/bluetooth against the SDK source
+# in this repository: no published packages, no version pins. The jobs live in
+# reusable-bluetooth-examples.yml, which the coordinated release also calls to
+# build the release's example apps. The engine example (examples/oem-app) has
+# its own gates: oem-host-gate.yml and oem-app-apk.yml.
+#
+# The path filter below skips this workflow for pull requests that cannot
+# affect the examples. It is not a required check and ci-gate-dev does not
+# gate on it, so a skipped run blocks nothing. Release scripts in
+# .github/scripts are covered by Coordinated Release Family Checks; pull
+# request builds never stamp a release.
+
+"on":
+  pull_request:
+    paths:
+      - "examples/bluetooth/**"
+      - "examples/package.json"
+      - "examples/bun.lock"
+      - "examples/patches/**"
+      - "mobile/modules/bluetooth-sdk/**"
+      - "mobile/modules/engine/**"
+      - "mobile/modules/crust/**"
+      - "mobile/modules/jspolyfill/**"
+      - "mobile/modules/acs-meeting/**"
+      - "mobile/modules/glasses-media/**"
+      - "mobile/modules/miniapp/**"
+      - "cloud-v2/packages/protocol/**"
+      - "cloud-v2/packages/cloud-client/**"
+      - ".github/workflows/example-app-builds.yml"
+      - ".github/workflows/reusable-bluetooth-examples.yml"
+  push:
+    branches:
+      - dev
+    paths:
+      - "examples/bluetooth/**"
+      - "examples/package.json"
+      - "examples/bun.lock"
+      - "examples/patches/**"
+      - "mobile/modules/bluetooth-sdk/**"
+      - "mobile/modules/engine/**"
+      - "mobile/modules/crust/**"
+      - "mobile/modules/jspolyfill/**"
+      - "mobile/modules/acs-meeting/**"
+      - "mobile/modules/glasses-media/**"
+      - "mobile/modules/miniapp/**"
+      - "cloud-v2/packages/protocol/**"
+      - "cloud-v2/packages/cloud-client/**"
+      - ".github/workflows/example-app-builds.yml"
+      - ".github/workflows/reusable-bluetooth-examples.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: example-app-builds-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  examples:
+    name: Bluetooth examples
+    uses: ./.github/workflows/reusable-bluetooth-examples.yml

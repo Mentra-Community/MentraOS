@@ -37,6 +37,10 @@ const workspaceUser: ForwardedPrincipal = {
   organizationCapabilities: [],
   scope: {kind: "workspace", workspaceId: "ws_1"},
 }
+const personUser: ForwardedPrincipal = {
+  ...workspaceUser,
+  scope: {kind: "person"},
+}
 
 /** A request whose headers are a plain string map, so a test can add, drop or replace one. */
 type SignedRequest = Omit<ForwardedRequest, "headers"> & {headers: Record<string, string>}
@@ -89,6 +93,7 @@ describe("verifyForwardedPrincipal", () => {
     expect(verify(forwarded(phoneWithoutEmail))).toEqual(phoneWithoutEmail)
     expect(verify(forwarded(user))).toEqual(user)
     expect(verify(forwarded(workspaceUser))).toEqual(workspaceUser)
+    expect(verify(forwarded(personUser))).toEqual(personUser)
   })
 
   test("the principal header is base64url JSON and its signature is HMAC-SHA256 over `<ts>\\n<header>`", () => {
@@ -150,6 +155,12 @@ describe("verifyForwardedPrincipal", () => {
     const request = forwarded(workspaceUser)
     const escalated = Buffer.from(JSON.stringify({...workspaceUser, scope: {kind: "organization"}})).toString("base64url")
     expect(verify({...request, headers: {...request.headers, [FORWARDED_PRINCIPAL_HEADERS.principal]: escalated}})).toBeNull()
+    // A person's own scope cannot be widened to a workspace's or the organization's either.
+    const personal = forwarded(personUser)
+    for (const scope of [{kind: "organization"}, {kind: "workspace", workspaceId: "ws_1"}]) {
+      const widened = Buffer.from(JSON.stringify({...personUser, scope})).toString("base64url")
+      expect(verify({...personal, headers: {...personal.headers, [FORWARDED_PRINCIPAL_HEADERS.principal]: widened}})).toBeNull()
+    }
   })
 
   test("requires both signatures from the same secret", () => {
@@ -237,6 +248,7 @@ describe("parseForwardedPrincipal", () => {
     expect(parseForwardedPrincipal(phoneWithoutEmail)).toEqual(phoneWithoutEmail)
     expect(parseForwardedPrincipal(user)).toEqual(user)
     expect(parseForwardedPrincipal(workspaceUser)).toEqual(workspaceUser)
+    expect(parseForwardedPrincipal(personUser)).toEqual(personUser)
   })
 
   test("returns a copy, not the object it was given", () => {
@@ -261,6 +273,10 @@ describe("parseForwardedPrincipal", () => {
     const workspaceScope = parseForwardedPrincipal({...workspaceUser, scope: {kind: "workspace", workspaceId: "ws_1", extra: 1}})
     expect(workspaceScope).toEqual(workspaceUser)
     expect(Object.keys((workspaceScope as {scope: object}).scope).sort()).toEqual(["kind", "workspaceId"])
+    // A person's scope names nobody else: a workspace id beside `person` is not read.
+    const personScope = parseForwardedPrincipal({...personUser, scope: {kind: "person", workspaceId: "ws_1", extra: 1}})
+    expect(personScope).toEqual(personUser)
+    expect(Object.keys((personScope as {scope: object}).scope)).toEqual(["kind"])
   })
 
   test("reads only a value's own properties, so a prototype can neither supply nor pollute a field", () => {

@@ -147,7 +147,8 @@ export function requireWorkspaceCapability(
   })
 }
 
-function denied(c: AppContext, decision: AuthorizeResponse) {
+/** The answer for a workspace authorization that did not allow: see "Status mapping" in the file header. */
+export function denied(c: AppContext, decision: AuthorizeResponse) {
   switch (decision.reason) {
     case "unauthenticated":
     case "credential_invalid":

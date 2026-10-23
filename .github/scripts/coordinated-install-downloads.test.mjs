@@ -173,7 +173,7 @@ test("coordinated routine links select the exact source and archive without clai
   for (const channel of ["dev", "staging"]) {
     const {state, options} = coordinatedFixture(channel)
     const env = {BRANCH: channel, RELEASE_SCOPE: "core", FINALIZE_RESULT: "success", RELEASE_PAGE_RESULT: "success",
-      EXAMPLES_DISPATCH_RESULT: "success", RELEASE_IDENTITY: state.plan.releaseIdentity,
+      RELEASE_IDENTITY: state.plan.releaseIdentity,
       REPOSITORY: "Mentra-Community/MentraOS", SHA: state.plan.sourceCommit, RUN_ID: "100", RUN_ATTEMPT: "2",
       TEST_RUN_INGEST_TOKEN: "synthetic-ingest-token",
       MAC_URL: state.receipt.app.otaManifestUrl.replace(state.plan.artifactNames.otaManifest, state.receipt.artifacts.mac.name)}
@@ -197,7 +197,7 @@ test("coordinated routine links select the exact source and archive without clai
       assert.match(unavailable, /Not requested|could not be verified/)
       assert.doesNotMatch(unavailable, /Results for this exact build/)
     }
-    for (const key of ["RELEASE_PAGE_RESULT", "EXAMPLES_DISPATCH_RESULT"]) for (const result of ["failure", "cancelled", "skipped", undefined]) {
+    for (const key of ["RELEASE_PAGE_RESULT"]) for (const result of ["failure", "cancelled", "skipped", undefined]) {
       const notRequested = JSON.stringify(await coordinatedRoutineLinks({...env, [key]: result}, fetchImpl))
       assert.match(notRequested, /Publishing this build does not request tests/)
       assert.doesNotMatch(notRequested, /pending/)

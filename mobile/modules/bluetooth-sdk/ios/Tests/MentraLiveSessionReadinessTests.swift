@@ -9,6 +9,10 @@ private final class SessionReadinessTransport: MentraLive {
     override func sendJson(_ jsonOriginal: [String: Any], wakeUp: Bool, requireAck: Bool) {
         commands.append(jsonOriginal)
     }
+
+    func phoneReadyIds() -> [String] {
+        commands.filter { $0["type"] as? String == "phone_ready" }.compactMap { $0["readyId"] as? String }
+    }
 }
 
 @MainActor
@@ -107,11 +111,15 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
         let saved = ["bluetooth", "glasses"].map { ($0, store.getCategory($0)) }
         let previous = DeviceManager.shared.sgc
         resetPairingState()
+        // The fixture models a live link. Pin phone Bluetooth on so the SDK does not tear the
+        // transport down when the host has no usable radio (CI runners report it unsupported).
+        BluetoothAvailability.shared.stateOverride = .poweredOn
         let transport = SessionReadinessTransport()
         let sdk = MentraBluetoothSDK()
         DeviceManager.shared.sgc = transport
         defer {
             sdk.invalidate()
+            BluetoothAvailability.shared.stateOverride = nil
             transport.cleanup()
             DeviceManager.shared.sgc = previous
             resetPairingState()
@@ -443,6 +451,131 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
             RunLoop.main.run(until: Date().addingTimeInterval(0.15))
             XCTAssertEqual(store.get("bluetooth", "mentra_live_secure_firmware") as? Bool, true)
         }
+    }
+
+    func testBufferedPhoneReadyCopiesAreOneExchangeWithOneInit() throws {
+        try withReadinessTransport { transport, receive, versionRequests in
+            // Two SOC-ready heartbeats while the glasses boot: one exchange, sent twice.
+            try receive(["C": "sr_hrt", "B": ["ready": 1]])
+            try receive(["C": "sr_hrt", "B": ["ready": 1]])
+            let readyIds = transport.phoneReadyIds()
+            XCTAssertEqual(readyIds.count, 2)
+            XCTAssertEqual(Set(readyIds).count, 1)
+            let readyId = try XCTUnwrap(readyIds.first)
+
+            // The glasses answer every buffered copy; only the first followed a reset.
+            for _ in 0 ..< 7 {
+                try receive(["type": "glasses_ready", "sid": "booted", "readyId": readyId])
+            }
+            XCTAssertEqual(versionRequests(), 1)
+            XCTAssertEqual(DeviceStore.shared.store.get("glasses", "fullyBooted") as? Bool, true)
+        }
+    }
+
+    func testRestartedGlassesProcessStartsANewExchangeAndIgnoresStaleAnswers() throws {
+        try withReadinessTransport { transport, receive, versionRequests in
+            try receive(["C": "sr_hrt", "B": ["ready": 1]])
+            let first = try XCTUnwrap(transport.phoneReadyIds().last)
+            try receive(["type": "glasses_ready", "sid": "booted", "readyId": first])
+
+            // asg restarted under the live link: a new exchange, and the old one's answers no
+            // longer count even though the new process will reset for its own.
+            try receive(["type": "version_info_1", "sid": "restarted", "build_number": "302010073"])
+            let second = try XCTUnwrap(transport.phoneReadyIds().last)
+            XCTAssertNotEqual(second, first)
+            try receive(["type": "glasses_ready", "sid": "booted", "readyId": first])
+            XCTAssertEqual(versionRequests(), 1)
+
+            try receive(["type": "glasses_ready", "sid": "restarted", "readyId": second])
+            XCTAssertEqual(versionRequests(), 2)
+        }
+    }
+
+    func testAnswerFromAnotherGlassesProcessIsHandledWithNoExchangePending() throws {
+        try withReadinessTransport { transport, receive, versionRequests in
+            try receive(["C": "sr_hrt", "B": ["ready": 1]])
+            let readyId = try XCTUnwrap(transport.phoneReadyIds().last)
+            try receive(["type": "glasses_ready", "sid": "booted", "readyId": readyId])
+
+            // A different process reset its transport for this copy, so it is not a repeat.
+            try receive(["type": "glasses_ready", "sid": "restarted", "readyId": readyId])
+            XCTAssertEqual(versionRequests(), 2)
+        }
+    }
+
+    func testRestartedProcessAnsweringAnOlderCopyIsHandledAndThePendingExchangeStillCounts() throws {
+        try withReadinessTransport { transport, receive, versionRequests in
+            try receive(["C": "sr_hrt", "B": ["ready": 1]])
+            let first = try XCTUnwrap(transport.phoneReadyIds().last)
+            try receive(["type": "glasses_ready", "sid": "booted", "readyId": first])
+            try receive(["type": "version_info_1", "sid": "restarted", "build_number": "302010073"])
+            let second = try XCTUnwrap(transport.phoneReadyIds().last)
+
+            // The restarted process reset for a buffered copy of the old exchange, then resets
+            // again for the pending one: both answers follow a reset.
+            try receive(["type": "glasses_ready", "sid": "restarted", "readyId": first])
+            XCTAssertEqual(versionRequests(), 2)
+            try receive(["type": "glasses_ready", "sid": "restarted", "readyId": second])
+            XCTAssertEqual(versionRequests(), 3)
+            try receive(["type": "glasses_ready", "sid": "restarted", "readyId": second])
+            XCTAssertEqual(versionRequests(), 3)
+        }
+    }
+
+    func testReadinessExchangeEndsWithTheBleSession() throws {
+        try withReadinessTransport { transport, receive, _ in
+            try receive(["C": "sr_hrt", "B": ["ready": 1]])
+            let first = try XCTUnwrap(transport.phoneReadyIds().last)
+            transport.cleanup()
+            DeviceStore.shared.store.set("glasses", "fullyBooted", false)
+
+            try receive(["C": "sr_hrt", "B": ["ready": 1]])
+            XCTAssertNotEqual(try XCTUnwrap(transport.phoneReadyIds().last), first)
+        }
+    }
+
+    func testGlassesWithoutReadyIdKeepInitializingOnEveryAnswer() throws {
+        try withReadinessTransport { _, receive, versionRequests in
+            try receive(["type": "glasses_ready", "sid": "legacy"])
+            try receive(["type": "glasses_ready", "sid": "legacy"])
+            XCTAssertEqual(versionRequests(), 2)
+        }
+    }
+
+    /// Runs `body` on a fresh transport whose glasses have not reported readiness yet.
+    private func withReadinessTransport(
+        _ body: (
+            SessionReadinessTransport,
+            ([String: Any]) throws -> Void,
+            () -> Int
+        ) throws -> Void
+    ) throws {
+        let store = DeviceStore.shared.store
+        let saved = ["bluetooth", "glasses"].map { ($0, store.getCategory($0)) }
+        let previous = DeviceManager.shared.sgc
+        let transport = SessionReadinessTransport()
+        DeviceManager.shared.sgc = transport
+        defer {
+            transport.cleanup()
+            DeviceManager.shared.sgc = previous
+            for (category, values) in saved {
+                for key in store.getCategory(category).keys where values[key] == nil {
+                    store.remove(category, key)
+                }
+                for (key, value) in values {
+                    store.set(category, key, value)
+                }
+            }
+        }
+        store.set("glasses", "fullyBooted", false)
+
+        func receive(_ value: [String: Any]) throws {
+            try transport.processReceivedData(JSONSerialization.data(withJSONObject: value))
+        }
+        func versionRequests() -> Int {
+            transport.commands.filter { $0["type"] as? String == "request_version" }.count
+        }
+        try body(transport, receive, versionRequests)
     }
 
     func testInitialVersionChunkDoesNotStartAnExtraReadinessExchange() throws {

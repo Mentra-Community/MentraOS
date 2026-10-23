@@ -763,36 +763,51 @@ declare const __nativeClearTimer: (token: number) => void
   // existing usage (UTF-8 only; we don't expose stream encoding because the
   // miniapp doesn't need it).
   if (typeof (g as Record<string, unknown>).TextEncoder !== "function") {
+    // The code point starting at `i`: a surrogate pair combines, and a lone
+    // surrogate stays as its own code unit.
+    const codePointAt = (str: string, i: number): number => {
+      const code = str.charCodeAt(i)
+      if (code >= 0xd800 && code <= 0xdbff && i + 1 < str.length) {
+        const next = str.charCodeAt(i + 1)
+        if (next >= 0xdc00 && next <= 0xdfff) return ((code - 0xd800) << 10) + (next - 0xdc00) + 0x10000
+      }
+      return code
+    }
     class TextEncoderPolyfill {
       readonly encoding = "utf-8"
       encode(input?: string): Uint8Array {
         const str = input ?? ""
-        const out: number[] = []
+        // Size the output first and write bytes straight into it. A number[]
+        // costs a full JS value per byte, so fetch().arrayBuffer() on a
+        // two-megabyte text body exhausted the 32 MB miniapp heap.
+        let length = 0
         for (let i = 0; i < str.length; i++) {
-          let code = str.charCodeAt(i)
-          if (code >= 0xd800 && code <= 0xdbff && i + 1 < str.length) {
-            const next = str.charCodeAt(i + 1)
-            if (next >= 0xdc00 && next <= 0xdfff) {
-              code = ((code - 0xd800) << 10) + (next - 0xdc00) + 0x10000
-              i++
-            }
-          }
+          const code = codePointAt(str, i)
+          if (code > 0xffff) i++
+          length += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4
+        }
+        const out = new Uint8Array(length)
+        let at = 0
+        for (let i = 0; i < str.length; i++) {
+          const code = codePointAt(str, i)
+          if (code > 0xffff) i++
           if (code < 0x80) {
-            out.push(code)
+            out[at++] = code
           } else if (code < 0x800) {
-            out.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f))
+            out[at++] = 0xc0 | (code >> 6)
+            out[at++] = 0x80 | (code & 0x3f)
           } else if (code < 0x10000) {
-            out.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
+            out[at++] = 0xe0 | (code >> 12)
+            out[at++] = 0x80 | ((code >> 6) & 0x3f)
+            out[at++] = 0x80 | (code & 0x3f)
           } else {
-            out.push(
-              0xf0 | (code >> 18),
-              0x80 | ((code >> 12) & 0x3f),
-              0x80 | ((code >> 6) & 0x3f),
-              0x80 | (code & 0x3f),
-            )
+            out[at++] = 0xf0 | (code >> 18)
+            out[at++] = 0x80 | ((code >> 12) & 0x3f)
+            out[at++] = 0x80 | ((code >> 6) & 0x3f)
+            out[at++] = 0x80 | (code & 0x3f)
           }
         }
-        return new Uint8Array(out)
+        return out
       }
     }
     ;(g as Record<string, unknown>).TextEncoder = TextEncoderPolyfill

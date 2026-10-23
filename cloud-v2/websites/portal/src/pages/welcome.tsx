@@ -1,34 +1,31 @@
 /**
  * The screens before a workspace, each one centered column:
  *
- *  - the first run (`/` with no workspaces): the person's valid invitations, from a link or addressed to
- *    their verified email, and nothing else; with none they can accept, "Create your workspace". An
- *    invitation that is no longer valid never counts, so it never hides the create card.
+ *  - the first run (`/` with no workspace) where the portal makes none: the person's valid invitations, from a
+ *    link or addressed to their verified email; with none they can accept, why they have no workspace and the way
+ *    into one. Where the portal can make a workspace it does (App.tsx), so this is never the screen for that.
  *  - an invitation link (`/invitation`): that invitation alone, with Accept and Dismiss, or Switch account
  *    when it is for someone else. A link Core says is no longer valid says so once, with the way on.
  *
- * Accepting opens the workspace joined; creating opens the new one.
+ * Accepting opens the workspace joined, at the address the person came to.
  */
 
 import { useQuery } from "@tanstack/react-query";
 import {
   buttonVariants,
   Count,
-  CreateWorkspaceForm,
   InvitationAcceptCard,
   isInvitationForOtherAccount,
   Spinner,
   workspaceListQuery,
 } from "@mentra/workspace-ui";
-import { ArrowLeft, UsersRound } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
-import { CenteredLayout } from "@/components/centered-layout";
 import { PendingInvitationCard } from "@/components/pending-invitation";
-import { safeLocalStorage } from "@/lib/api";
-import type { PendingInvitation } from "@/lib/invitations";
+import { PortalCenteredLayout, useBareWorkspaceId } from "@/components/portal-shell";
+import type { PendingInvitation, UnavailableInvitations } from "@/lib/invitations";
 import { Link, navigate } from "@/lib/navigation";
 import { creationNotice, portalWorkspaceApi, usePortal } from "@/lib/portal";
-import { homeWorkspace, recallWorkspace, workspacePath } from "@/lib/routes";
 
 export const GONE_EXPLANATION =
   "It may have expired, been revoked, been replaced by a newer one or already been used. Ask the person who invited you to send a new one.";
@@ -36,9 +33,8 @@ export const GONE_EXPLANATION =
 /** The workspace `/` would open, if the person has any. */
 function useHomeWorkspace() {
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
-  const workspaces = list.data;
-  const homeId = workspaces ? homeWorkspace(workspaces, recallWorkspace(safeLocalStorage())) : null;
-  return { list, home: workspaces?.find(item => item.workspaceId === homeId) ?? null };
+  const homeId = useBareWorkspaceId();
+  return { list, home: list.data?.find(item => item.workspaceId === homeId) ?? null };
 }
 
 function Heading({ title, children }: { title: string; children?: ReactNode }) {
@@ -67,10 +63,11 @@ function InvitationList({ invitations }: { invitations: readonly PendingInvitati
   );
 }
 
-function BackHome({ name, workspaceId }: { name: string; workspaceId: string }) {
+/** Back to the workspace the bare address opens. */
+function BackHome({ name }: { name: string }) {
   return (
     <Link
-      href={workspacePath(workspaceId)}
+      href="/"
       className="text-muted-foreground hover:text-foreground mt-7 inline-flex items-center gap-1.5 self-center text-[15px] font-semibold"
     >
       <ArrowLeft className="size-4" />
@@ -79,18 +76,20 @@ function BackHome({ name, workspaceId }: { name: string; workspaceId: string }) 
   );
 }
 
-/** `/` with no workspaces: the person's invitations, or with none they can accept, "Create your workspace". */
-export function WelcomeScreen() {
+/**
+ * `/` with no workspace to open, where the portal does not make one: the person's invitations, or with none they
+ * can accept, why they have no workspace and the way into one.
+ */
+export function WelcomeScreen({ creationRefused = false }: { /** Core just refused to make the person a workspace: say so as the deployment's rule does. */ creationRefused?: boolean }) {
   const portal = usePortal();
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
   const invitations = portal.invitations ?? [];
-  // Only an invitation this account can accept puts the first run in invitation-only mode; one for
-  // another account is shown (with Switch account) above the create card.
+  // One for another account is shown (with Switch account) but does not count as something to accept.
   const acceptable = invitations.filter(invitation => !invitation.forOtherAccount);
 
   if (list.data === undefined) {
     return (
-      <CenteredLayout>
+      <PortalCenteredLayout>
         <Heading title="Welcome to Mentra" />
         {list.isError ? (
           <p role="alert" className="rounded-notice bg-error text-error-foreground mt-8 px-4 py-3 text-center text-sm">
@@ -104,26 +103,50 @@ export function WelcomeScreen() {
             <Spinner /> Loading your workspaces
           </div>
         )}
-      </CenteredLayout>
+      </PortalCenteredLayout>
     );
   }
 
   return (
-    <CenteredLayout>
-      <Heading title="Welcome to Mentra">
-        {acceptable.length > 0
-          ? acceptable.length === 1
+    <PortalCenteredLayout>
+      {acceptable.length > 0 ? (
+        <Heading title="Welcome to Mentra">
+          {acceptable.length === 1
             ? "You've been invited to join a workspace. Accept to get started."
-            : `You've been invited to join ${acceptable.length} workspaces. Accept one to get started.`
-          : "Workspaces are how teams work together on Mentra. Create one to get started."}
-      </Heading>
+            : `You've been invited to join ${acceptable.length} workspaces. Accept one to get started.`}
+        </Heading>
+      ) : (
+        <Heading title="You're not in a workspace yet.">
+          {[creationNotice(portal.creation) ?? (creationRefused ? creationNotice({ allowed: false, reason: null }) : null), "Open an invitation link someone sent you to join their workspace."].filter(Boolean).join(" ")}
+        </Heading>
+      )}
       {invitations.length > 0 ? <InvitationList invitations={invitations} /> : null}
-      {acceptable.length === 0 ? (
-        <div className="mt-8">
-          <CreateFirstWorkspace />
-        </div>
-      ) : null}
-    </CenteredLayout>
+    </PortalCenteredLayout>
+  );
+}
+
+/**
+ * `/` for a person with no workspace whose invitations could not be read: the same unavailable state as a link that
+ * could not be looked up, with Try again. The portal makes no workspace until it knows whether one is waiting. A link
+ * that cannot be looked up may be dismissed, which lets the first run go on without it.
+ */
+export function InvitationsUnavailable({ unavailable }: { unavailable: UnavailableInvitations }) {
+  const portal = usePortal();
+  const { token } = unavailable;
+  return (
+    <PortalCenteredLayout>
+      <Heading title="Welcome to Mentra" />
+      <div className="mt-8">
+        <InvitationAcceptCard
+          load={{ status: "error", error: unavailable.error }}
+          onRetry={unavailable.retry}
+          onAccept={() => {}}
+          onDismiss={token === null ? undefined : () => portal.forgetInvitation({ invitationId: null, token }, "dismissed")}
+          accepting={false}
+          acceptError={null}
+        />
+      </div>
+    </PortalCenteredLayout>
   );
 }
 
@@ -136,13 +159,13 @@ export function InvitationScreen() {
 
   if (link.status === "gone") {
     return (
-      <CenteredLayout>
+      <PortalCenteredLayout>
         <section aria-label="Invitation no longer valid" className="bg-card rounded-card border p-6 text-center sm:p-8">
           <h1 className="text-2xl leading-tight font-semibold">Invitation no longer valid</h1>
           <p className="text-muted-foreground mx-auto mt-2 max-w-[420px]">{GONE_EXPLANATION}</p>
           <div className="mt-7 grid">
             {home ? (
-              <Link href={workspacePath(home.workspaceId)} className={buttonVariants({ size: "lg" })}>
+              <Link href="/" className={buttonVariants({ size: "lg" })}>
                 Go to {home.name}
               </Link>
             ) : (
@@ -153,13 +176,13 @@ export function InvitationScreen() {
             )}
           </div>
         </section>
-      </CenteredLayout>
+      </PortalCenteredLayout>
     );
   }
 
   if (link.status === "unavailable") {
     return (
-      <CenteredLayout>
+      <PortalCenteredLayout>
         <Heading title="You're invited" />
         <div className="mt-8">
           <InvitationAcceptCard
@@ -174,8 +197,8 @@ export function InvitationScreen() {
             acceptError={null}
           />
         </div>
-        {home ? <BackHome name={home.name} workspaceId={home.workspaceId} /> : null}
-      </CenteredLayout>
+        {home ? <BackHome name={home.name} /> : null}
+      </PortalCenteredLayout>
     );
   }
 
@@ -186,7 +209,7 @@ export function InvitationScreen() {
     forOtherAccount: isInvitationForOtherAccount(link.preview, portal.accountEmail),
   };
   return (
-    <CenteredLayout>
+    <PortalCenteredLayout>
       {invitation.forOtherAccount ? (
         <Heading title="Switch accounts to accept">This invitation was sent to a different email address.</Heading>
       ) : firstRun ? (
@@ -195,41 +218,7 @@ export function InvitationScreen() {
         <Heading title="You're invited">Accept to join the workspace with the account you're signed in with.</Heading>
       )}
       <InvitationList invitations={[invitation]} />
-      {home ? <BackHome name={home.name} workspaceId={home.workspaceId} /> : null}
-    </CenteredLayout>
-  );
-}
-
-/** The centered "Create your workspace" card of the first run. */
-function CreateFirstWorkspace() {
-  const portal = usePortal();
-  const notice = creationNotice(portal.creation);
-  return (
-    <section aria-label="Create your workspace" className="bg-card rounded-card border p-6 sm:p-8">
-      <div className="flex items-start gap-4">
-        <div className="bg-info text-info-foreground flex size-12 shrink-0 items-center justify-center rounded-[14px]">
-          <UsersRound className="size-5" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-xl leading-tight font-semibold">Create your workspace</h2>
-          <p className="text-muted-foreground mt-1.5 text-[15px]">
-            Invite your team and give each person the right role. You will be the workspace's owner.
-          </p>
-        </div>
-      </div>
-      <div className="mt-6">
-        {portal.creation.allowed ? (
-          <CreateWorkspaceForm
-            api={portalWorkspaceApi}
-            wide
-            onCreated={created => navigate(workspacePath(created.workspaceId), { replace: true })}
-          />
-        ) : (
-          <p className="rounded-notice bg-surface px-4 py-3 text-sm">
-            {notice} Open an invitation link someone sent you to join their workspace.
-          </p>
-        )}
-      </div>
-    </section>
+      {home ? <BackHome name={home.name} /> : null}
+    </PortalCenteredLayout>
   );
 }

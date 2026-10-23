@@ -174,7 +174,6 @@ const router = {
 } as unknown as MentraJSRouter
 
 let foreground = true
-let now = 10_000_000
 let answer: "update" | "not_now" | "hold" = "update"
 const prompts: PendingRunningUpdatePrompt[] = []
 const failures: unknown[] = []
@@ -218,7 +217,6 @@ beforeEach(async () => {
   activationFailure = undefined
   downloadGate = undefined
   foreground = true
-  now = 10_000_000
   answer = "update"
   prompts.length = 0
   failures.length = 0
@@ -227,9 +225,8 @@ beforeEach(async () => {
   deferredUpdates.resetDeferredMiniappUpdatesForTests()
   prompt.setRunningUpdatePromptEnvironmentForTests({
     isForeground: () => foreground,
-    now: () => now,
-    lastPromptedAt: (packageName) => (stored.get(`prompted:${packageName}`) as number | undefined) ?? null,
-    recordPrompted: (packageName, at) => stored.set(`prompted:${packageName}`, at),
+    wasPromptedThisRun: (packageName) => stored.has(`prompted:${packageName}`),
+    recordPrompted: (packageName) => stored.set(`prompted:${packageName}`, true),
   })
   prompt.onRunningUpdatePrompt((pending) => {
     prompts.push(pending)
@@ -340,16 +337,16 @@ describe("update prompt for a running miniapp", () => {
     expect(active).toBe("1.1.0")
   })
 
-  test("asks at most once a day per miniapp, without downloading while it may not ask", async () => {
+  test("asks once per run of a miniapp, without downloading while it may not ask", async () => {
     answer = "not_now"
     await runApp({open: false})
     await expect(release()).rejects.toBeInstanceOf(MiniappRunningError)
     calls.length = 0
-    now += prompt.RUNNING_UPDATE_PROMPT_INTERVAL_MS - 1
     await expect(release()).rejects.toBeInstanceOf(MiniappRunningError)
     expect(calls).toEqual([])
     expect(prompts).toHaveLength(1)
-    now += 1
+    // The next time it is opened, it asks again.
+    stored.delete(`prompted:${pkg}`)
     answer = "update"
     await release()
     expect(prompts).toHaveLength(2)

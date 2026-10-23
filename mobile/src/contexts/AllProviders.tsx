@@ -16,7 +16,6 @@ import {DeeplinkProvider} from "@/contexts/DeeplinkContext"
 import {SplashLoaderProvider} from "@/contexts/SplashLoaderProvider"
 import {ThemeProvider} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@mentra/engine"
-import {ModalProvider as LegacyModalProvider} from "@/utils/AlertUtils"
 import {ModalProvider} from "@/contexts/ModalContext"
 import {KonamiCodeProvider} from "@/utils/dev/konami"
 import ConnectionOverlayProvider from "@/contexts/ConnectionOverlayContext"
@@ -86,7 +85,6 @@ export const AllProviders = withWrappers(
     return <GestureHandlerRootView style={{flex: 1}}>{props.children}</GestureHandlerRootView>
   },
   ModalProvider,
-  LegacyModalProvider,
   BottomSheetModalProvider,
   // props => {
   //   return (

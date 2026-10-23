@@ -14,6 +14,22 @@ export type PortalUser = {
   /** The Core user ID. */
   id: string;
   email: string | null;
+  emailVerified: boolean;
+};
+
+/**
+ * What this person is offered of billing. They are separate because they are not the same people: on a Core that
+ * is not prod billing is staff-only, but its catalog (the products' names and icons, which name the licenses a
+ * workspace holds) is readable by every Admin.
+ *
+ * - `billing`: billing is ready and visible to them. They see money, buy, and manage: the Billing page, the
+ *   Licenses page's totals and actions. A Private Cloud with no billing says false.
+ * - `billingCatalog`: billing is ready, whoever asks. Licenses can be named, so the Licenses page and the
+ *   Members list can draw them. True wherever `billing` is.
+ */
+export type PortalModules = {
+  billing: boolean;
+  billingCatalog: boolean;
 };
 
 /** `GET /api/portal/me`. */
@@ -23,7 +39,27 @@ export type PortalMe = {
   workspaceCreation: WorkspaceCreation;
   onboardingRequired: boolean;
   org: EnterpriseOrg | null;
+  modules: PortalModules;
 };
+
+/**
+ * The modules as `/api/portal/me` sent them, read strictly: only an explicit `true` offers one, and a Core that
+ * sends no `modules` (the portal and Core deploy separately) offers none, rather than failing the page. Billing
+ * implies its catalog (decision 4: the catalog is readable wherever billing is ready, whoever asks), so
+ * `billingCatalog` is true where `billing` is, whatever it says itself. That also reads a Core from before
+ * `billingCatalog` existed, which sent only `billing`. A `billingCatalog` that is there but isn't true offers nothing of its own.
+ */
+export function readPortalModules(raw: unknown): PortalModules {
+  const modules = typeof raw === "object" && raw !== null ? (raw as { billing?: unknown; billingCatalog?: unknown }) : {};
+  const billing = modules.billing === true;
+  return { billing, billingCatalog: billing || modules.billingCatalog === true };
+}
+
+/** `GET /api/portal/me`, with the modules read by {@link readPortalModules}. */
+export async function fetchPortalMe(): Promise<PortalMe> {
+  const me = await api<Omit<PortalMe, "modules"> & { modules?: unknown }>("/api/portal/me");
+  return { ...me, modules: readPortalModules(me.modules) };
+}
 
 export async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const response = await fetch(path, {

@@ -5,23 +5,26 @@
  * typed back, and leaving is offered to anyone who is a member (an organization admin acting from
  * outside the workspace has nothing to leave). The only owner cannot leave, so for them Leave is
  * disabled and says why. A workspace a service holds (`deletionHolds`, such as the Store's while it
- * owns published miniapps) cannot be deleted by anyone, so for them Delete is disabled and says why.
- * A host adds what deleting means in its context with `deleteNotice`. A refused action says why next
- * to the control that caused it.
+ * owns a miniapp) cannot be deleted by anyone, so for them Delete is disabled and says why.
+ * A host adds what deleting means in its context with `deleteNotice`. Leaving and deleting each ask in
+ * a dialog (`ConfirmDialog`), and a refused one says why there, with the dialog still open.
  */
 
 import { useQuery } from "@tanstack/react-query";
 import { describeDeletionHolds, type WorkspaceDeletionHold, type WorkspaceDetail } from "@mentra/workspace-contract";
 import { useId, useState, type FormEvent, type ReactNode } from "react";
 import type { WorkspaceApi } from "../api";
-import { isWorkspaceHeldError } from "../errors";
 import { membersQuery, settingsDetailQuery, useWorkspaceMutation } from "../queries";
 import { can } from "../roles";
+import { licenseStrings } from "../strings/licenses";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { ConfirmButton, CopyButton, ErrorNotice, Panel, QueryGate } from "./common";
+import { CopyButton, ErrorNotice, Panel, QueryGate } from "./common";
+import { ConfirmDialog, useAsking } from "./confirm-dialog";
+
+const confirmStrings = licenseStrings.confirm;
 
 interface SettingsPanelProps {
   api: WorkspaceApi;
@@ -45,7 +48,6 @@ export function WorkspaceSettingsPanel(props: SettingsPanelProps) {
           key={workspaceId}
           {...props}
           detail={detail}
-          detailUpdatedAt={detailResult.dataUpdatedAt}
           checkingHolds={detailResult.isFetching}
           onCheckHolds={() => void detailResult.refetch()}
         />
@@ -61,12 +63,10 @@ function SettingsForms({
   onLeft,
   deleteNotice,
   detail,
-  detailUpdatedAt,
   checkingHolds,
   onCheckHolds,
 }: SettingsPanelProps & {
   detail: WorkspaceDetail;
-  detailUpdatedAt: number;
   checkingHolds: boolean;
   onCheckHolds(): void;
 }) {
@@ -96,8 +96,6 @@ function SettingsForms({
   function submitRename(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!trimmed || trimmed === detail.name) return;
-    leave.reset();
-    remove.reset();
     rename.mutate({ name: trimmed, expectedRevision: detail.authorizationRevision });
   }
 
@@ -155,11 +153,10 @@ function SettingsForms({
                 workspaceName={detail.name}
                 onlyOwner={onlyOwner}
                 busy={busy}
-                error={leave.error}
-                onConfirm={() => {
+                onLeave={async () => {
                   rename.reset();
-                  remove.reset();
-                  leave.mutate(undefined, { onSuccess: () => onLeft?.() });
+                  await leave.mutateAsync(undefined);
+                  onLeft?.();
                 }}
               />
             ) : null}
@@ -172,15 +169,10 @@ function SettingsForms({
                 onCheckHolds={onCheckHolds}
                 deleteNotice={deleteNotice}
                 busy={busy}
-                error={deleteRefusalToShow(remove.error, {
-                  held: (detail.deletionHolds?.length ?? 0) > 0,
-                  submittedAt: remove.submittedAt,
-                  detailUpdatedAt,
-                })}
-                onDelete={(typed) => {
+                onDelete={async (typed) => {
                   rename.reset();
-                  leave.reset();
-                  remove.mutate(typed, { onSuccess: () => onDeleted?.() });
+                  await remove.mutateAsync(typed);
+                  onDeleted?.();
                 }}
               />
             ) : null}
@@ -192,23 +184,23 @@ function SettingsForms({
 }
 
 /**
- * Leaving: behind a confirm step, and disabled (saying why) for the workspace's only owner. A refusal
- * shows right under the button.
+ * Leaving: asked in a dialog, and disabled (saying why) for the workspace's only owner. `onLeave` rejects with the
+ * refusal, which the dialog shows.
  */
 export function LeaveSection({
   workspaceName,
   onlyOwner,
   busy,
-  error,
-  onConfirm,
+  onLeave,
 }: {
   workspaceName: string;
   onlyOwner: boolean;
   busy: boolean;
-  error: unknown;
-  onConfirm(): void;
+  onLeave(): Promise<void>;
 }) {
   const noteId = useId();
+  const ask = useAsking<string>((id) => id, busy);
+  const t = confirmStrings.leave;
   return (
     <section aria-label="Leave workspace" className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
       <div className="max-w-xl space-y-1">
@@ -219,42 +211,39 @@ export function LeaveSection({
             : "You lose access to this workspace. The last owner cannot leave: make someone else an owner first."}
         </p>
       </div>
-      <ConfirmButton
-        label="Leave workspace"
-        ariaLabel="Leave workspace"
-        ariaDescribedBy={onlyOwner ? noteId : undefined}
-        prompt={`Leave ${workspaceName}?`}
-        confirmLabel="Confirm leave"
+      <Button
+        ref={ask.trigger("leave")}
+        type="button"
+        variant="destructive-secondary"
+        aria-label="Leave workspace"
+        aria-describedby={onlyOwner ? noteId : undefined}
         disabled={busy || onlyOwner}
-        outline
-        onConfirm={onConfirm}
-      />
-      {error ? (
-        <div className="basis-full">
-          <ErrorNotice error={error} />
-        </div>
+        onClick={() => ask.ask("leave")}
+      >
+        Leave workspace
+      </Button>
+      {ask.asking ? (
+        <ConfirmDialog
+          title={t.title(workspaceName)}
+          description={t.body}
+          cancelLabel={confirmStrings.cancel}
+          confirmLabel={t.action}
+          onConfirm={async () => {
+            await onLeave();
+            return null;
+          }}
+          onClose={ask.close}
+        />
       ) : null}
     </section>
   );
 }
 
 /**
- * The delete refusal to show. A refusal for holds (409 `workspace_has_holds`) is answered by the holds'
- * note while they last, and is stale once the workspace has been looked up again since it (Check again,
- * the window regaining focus) and is no longer held. Every other refusal shows until the next attempt.
- */
-export function deleteRefusalToShow(
-  error: unknown,
-  state: { held: boolean; submittedAt: number; detailUpdatedAt: number },
-): unknown {
-  if (!isWorkspaceHeldError(error)) return error ?? null;
-  return state.held || state.detailUpdatedAt > state.submittedAt ? null : error;
-}
-
-/**
- * Deleting: the workspace's name typed back, then the button. While a service holds the workspace
- * (`holds`) the form is disabled and says why instead, with Check again (`onCheckHolds`) for when the
- * cause has been cleared elsewhere. A refusal shows right under the form.
+ * Deleting: a button that asks in a dialog, where the workspace's name is typed back before the button there works.
+ * While a service holds the workspace (`holds`) the button is disabled and the section says why instead, with Check
+ * again (`onCheckHolds`) for when the cause has been cleared elsewhere. `onDelete` rejects with the refusal, which
+ * the dialog shows.
  */
 export function DeleteSection({
   workspaceName,
@@ -263,7 +252,6 @@ export function DeleteSection({
   onCheckHolds,
   deleteNotice,
   busy,
-  error,
   onDelete,
 }: {
   workspaceName: string;
@@ -275,28 +263,19 @@ export function DeleteSection({
   onCheckHolds?(): void;
   deleteNotice?: ReactNode;
   busy: boolean;
-  error: unknown;
-  onDelete(typedName: string): void;
+  onDelete(typedName: string): Promise<void>;
 }) {
-  const [confirmName, setConfirmName] = useState("");
-  const confirmId = useId();
-  const labelId = useId();
   const heldId = useId();
   const held = holds.length > 0;
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (held || confirmName !== workspaceName) return;
-    onDelete(confirmName);
-  }
+  const ask = useAsking<string>((id) => id, busy);
+  const t = confirmStrings.delete;
+  const typeName = t.typeName(workspaceName);
 
   return (
-    <section aria-label="Delete workspace" className="space-y-4 px-6 py-5">
+    <section aria-label="Delete workspace" className="flex flex-col gap-4 px-6 py-5">
       <div className="max-w-xl space-y-1">
         <h3 className="text-[15px] font-semibold">Delete workspace</h3>
-        <p className="text-muted-foreground text-sm">
-          Deleting a workspace ends every membership and invitation and revokes every key. It cannot be undone.
-        </p>
+        <p className="text-muted-foreground text-sm">{t.body}</p>
       </div>
       {held ? (
         <div className="flex max-w-xl flex-wrap items-start gap-3">
@@ -314,36 +293,41 @@ export function DeleteSection({
           {deleteNotice}
         </div>
       ) : null}
-      <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
-        <div className="grid gap-2">
-          <Label id={labelId} htmlFor={confirmId}>
-            <span className="font-normal">
-              Type <strong className="font-semibold">{workspaceName}</strong> to confirm
-            </span>
-          </Label>
-          {/* Named by its label twice over (for and labelledby), so every assistive tool finds it. */}
-          <Input
-            id={confirmId}
-            aria-labelledby={labelId}
-            aria-describedby={held ? heldId : undefined}
-            autoComplete="off"
-            className="w-72"
-            value={confirmName}
-            onChange={(event) => setConfirmName(event.target.value)}
-            disabled={held}
-          />
-        </div>
-        <Button
-          type="submit"
-          variant="destructive"
-          aria-describedby={held ? heldId : undefined}
-          disabled={held || busy || confirmName !== workspaceName}
-        >
-          Delete workspace
-        </Button>
-      </form>
-      {/* A refusal for holds the note above already names would only repeat it. */}
-      {held && isWorkspaceHeldError(error) ? null : <ErrorNotice error={error} />}
+      <Button
+        ref={ask.trigger("delete")}
+        type="button"
+        variant="destructive-secondary"
+        className="self-start"
+        aria-describedby={held ? heldId : undefined}
+        disabled={held || busy}
+        onClick={() => ask.ask("delete")}
+      >
+        Delete workspace
+      </Button>
+      {ask.asking ? (
+        <ConfirmDialog
+          title={t.title(workspaceName)}
+          description={t.body}
+          cancelLabel={confirmStrings.cancel}
+          confirmLabel={t.action}
+          typeToConfirm={{
+            phrase: workspaceName,
+            label: (
+              <>
+                {typeName.lead}
+                <strong className="font-semibold">{typeName.name}</strong>
+                {typeName.rest}
+              </>
+            ),
+          }}
+          onConfirm={async () => {
+            // The button works only once the name is typed back, so the name typed is the workspace's.
+            await onDelete(workspaceName);
+            return null;
+          }}
+          onClose={ask.close}
+        />
+      ) : null}
     </section>
   );
 }

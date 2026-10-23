@@ -4,7 +4,9 @@ import {frameworkBindingSchema, routineSourceRefSchema} from './framework-versio
 import {publishedRoutineDefinitionSchema, routineResourceRequirementSchema, routinePlatformSchema,
   glassesModelSchema, routineIdentitySchema} from './routine-definition.types';
 import {routineDispatchSelectionSchema, routinePreparedBuildSchema, routineRevisionSchema} from './routine-dispatch.types';
-import {backendQualificationPurposeSchema, backendLocalPrerequisiteSchema, backendPreparingReceiptSchema} from './backend-connectivity.types';
+import {backendQualificationPurposeSchema, backendLocalPrerequisiteSchema, backendPreparingReceiptSchema, backendCandidatePrerequisiteSchema, backendConnectivityTargetSchema, candidatePrerequisiteSettlementSchema, backendPrerequisiteOrigin} from './backend-connectivity.types';
+import {recorderHostReservationSchema} from './recorder-storage.types';
+import {fleetResourceAdmissionSchema, fleetExclusiveReservationSchema} from './resource-reservations.types';
 
 const canonicalTarget = (value: unknown): unknown => Array.isArray(value) ? value.map(canonicalTarget) :
   value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
@@ -41,17 +43,20 @@ export const routineQualificationTargetSchema = z.object({jobId: frameworkIdenti
   acceptedBinding: frameworkBindingSchema.optional(),
   proposedInput: frameworkRequestInputSchema.optional(),
   preparing: backendPreparingReceiptSchema.optional(), local: backendLocalPrerequisiteSchema.optional(),
+  candidate: backendCandidatePrerequisiteSchema.optional(), definition: publishedRoutineDefinitionSchema.optional(), definitionSha256: jobHashSchema.optional(),
   accepted: z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema, inputSha256: jobHashSchema,
     acceptedAt: z.string().datetime({offset: true}), binding: frameworkBindingSchema,
     controller: z.object({incarnation: frameworkIdentitySchema, generation: z.number().int().positive().safe()}).strict()}).strict().optional(),
   target: routineJobTargetSchema.optional()}).strict().refine(value => value.selection.requestId === value.jobId &&
-    (value.purpose ? value.selection.platform === 'android' && !!value.acceptedBinding && (Boolean(value.preparing) !== Boolean(value.local)) && !!value.proposedInput && !value.accepted &&
+    (value.purpose ? value.selection.platform === 'android' && !!value.acceptedBinding && backendPrerequisiteOrigin(value) && !!value.proposedInput && !value.accepted &&
       value.requirements.resources.some(resource => resource.kind === 'phone' && resource.capabilities.includes('backend-connectivity'))
-      : value.selection.platform === 'ios-on-mac' && !value.acceptedBinding && !value.proposedInput && !value.local) && value.requirements.platform === value.selection.platform &&
+      : value.selection.platform === 'ios-on-mac' && !value.acceptedBinding && !value.proposedInput && !value.local && !value.candidate) && value.requirements.platform === value.selection.platform &&
     (!value.target || value.target.hostId === value.hostId && (!value.target.laneId || value.target.laneId === value.laneId)) &&
     (!value.accepted || value.accepted.requestId === value.jobId && value.accepted.hostId === value.hostId) &&
-    (!(value.preparing || value.local) || !value.accepted && value.target?.hostId === value.hostId && value.target.laneId === value.laneId),
-  'Qualification target differs from its selected job, platform or explicit lane constraint').refine(value => !value.local ||
+    (!(value.preparing || value.local || value.candidate) || !value.accepted && value.target?.hostId === value.hostId && value.target.laneId === value.laneId),
+  'Qualification target differs from its selected job, platform or explicit lane constraint').refine(value => value.candidate
+    ? !!value.definition && !!value.definitionSha256 && Date.parse(value.candidate.requestedAt) < Date.parse(value.deadline)
+    : !value.definition && !value.definitionSha256, 'Candidate requires its immutable declared definition').refine(value => !value.local ||
     value.proposedInput &&
     value.deadline === new Date(value.local.admissionExpiresAt).toISOString() &&
     Date.parse(value.local.requestedAt) < value.local.admissionExpiresAt &&
@@ -63,6 +68,17 @@ export const routineQualificationTargetSchema = z.object({jobId: frameworkIdenti
     canonicalTargetIdentity(value.proposedInput.routineSource) === canonicalTargetIdentity(value.selection.routineSource) &&
     (value.local.authority.kind === 'candidate' ? canonicalTargetIdentity(value.proposedInput.verification) === canonicalTargetIdentity(value.local.authority.verification) : !value.proposedInput.verification),
   'Local prerequisite must retain its original admission input, authority and deadline');
+/** One pre-binding probe on the existing request; retained through its exact normal return. */
+export const fleetCandidatePreparationSchema = z.object({candidate: backendCandidatePrerequisiteSchema, hostId: frameworkIdentitySchema,
+  laneId: frameworkIdentitySchema, target: routineQualificationTargetSchema, targetInputSha256: jobHashSchema,
+  backendTarget: backendConnectivityTargetSchema.optional(),
+  provisionalReturn: z.object({recorder: recorderHostReservationSchema, admission: fleetResourceAdmissionSchema.optional(),
+    exclusive: fleetExclusiveReservationSchema.optional(), releasedAt: z.string().datetime({offset: true}).optional()}).strict().optional(),
+  claimReceipt: z.unknown().optional(), returnReceipt: z.unknown().optional(), settlement: candidatePrerequisiteSettlementSchema.optional(),
+  noAcquisitionReceipt: z.unknown().optional(),
+}).strict()
+export type FleetCandidatePreparation = z.infer<typeof fleetCandidatePreparationSchema>
+export const MAX_FLEET_CANDIDATE_PREPARATIONS = 20
 export type RoutineQualificationTarget = z.infer<typeof routineQualificationTargetSchema>;
 /** Exact passive owner lookup on the existing host-authenticated target read. */
 export const ownedRoutineQualificationSchema = z.object({jobId: frameworkIdentitySchema, laneId: frameworkIdentitySchema,
@@ -108,6 +124,9 @@ export interface StoredRoutineJob {
   fleetPreparationStatus?: RoutinePreparationStatus;
   fleetInputSha256?: string;
   fleetDeadline: Date;
+  fleetCandidateSelection?: {hostId: string; laneId: string; targetInputSha256: string};
+  fleetCandidatePreparation?: FleetCandidatePreparation;
+  fleetCandidatePreparations?: FleetCandidatePreparation[];
   fleetTarget?: z.infer<typeof routineJobTargetSchema>;
   fleetBinding?: RoutineJobBinding;
   /** Existing request authority retains the shared recorder capacity selected before device dispatch. */

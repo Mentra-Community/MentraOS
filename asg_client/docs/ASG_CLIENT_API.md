@@ -868,7 +868,14 @@ White flash for photo capture. `duration` defaults to 5000 ms.
 
 Solid white for video recording. Internal duration is 30 minutes — the recorder turns the LED off explicitly when recording stops.
 
-All four commands respond with either `<command>_response` (success: `true`) or `rgb_led_control_error` if the device doesn't support RGB LEDs or validation fails.
+All four commands accept an optional `requestId` and answer with one `rgb_led_control_response` that echoes it. The phone settles the matching LED request with this reply.
+
+```json
+{"type": "rgb_led_control_response", "requestId": "…", "state": "success", "success": true}
+{"type": "rgb_led_control_response", "requestId": "…", "state": "error", "success": false, "errorCode": "invalid_parameters", "error": "Invalid RGB LED index: 9"}
+```
+
+`errorCode` is `device_not_supported`, `invalid_parameters` or `command_failed`.
 
 ---
 
@@ -1017,13 +1024,22 @@ Same active-recording cleanup, then `SysControl.reboot()`.
 #### `phone_ready`
 
 ```json
-{"type": "phone_ready"}
+{"type": "phone_ready", "readyId": "6f1c…"}
 ```
 
-The phone announces it has connected. Glasses respond with `glasses_ready`, then 500 ms later auto-send WiFi status and hotspot status, and claim RGB LED control authority from the BES chip.
+The phone announces it has connected. `readyId` names one readiness exchange: the phone repeats it on every retry until it receives the matching `glasses_ready`.
+
+For the first `phone_ready` of an exchange (or one without `readyId`), the glasses do four things:
+
+- reset the BLE transport state (packet sizing, file transport and wire protocol)
+- respond with `glasses_ready`, echoing `readyId`
+- 500 ms later, auto-send WiFi status and hotspot status
+- claim RGB LED control authority from the BES chip
+
+A later `phone_ready` with the same `readyId` gets the same `glasses_ready`, but no reset and none of the delayed WiFi, hotspot or LED messages. This covers copies the BES buffered while the glasses booted, and retries after a lost reply.
 
 ```json
-{"type": "glasses_ready", "timestamp": 1708963201234}
+{"type": "glasses_ready", "timestamp": 1708963201234, "sid": "2c5ade53", "readyId": "6f1c…"}
 ```
 
 #### `auth_token`

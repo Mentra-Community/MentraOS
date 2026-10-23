@@ -1,3 +1,50 @@
+// Standalone build of the Bluetooth SDK's Android library, used when this
+// directory is the root of a Gradle build: for example a plain Android app that
+// consumes the SDK from source through a composite build,
+//   includeBuild("<MentraOS>/mobile/modules/bluetooth-sdk/android")
+// with com.mentraglass:bluetooth-sdk substituted by project(":").
+// The MentraOS app (an Expo host) ignores this file: Expo autolinking adds this
+// directory as :mentra-bluetooth-sdk, and the SDK's config plugin adds :lc3Lib
+// and :silero to the host's own settings.gradle.
+
+gradle.rootProject { project ->
+  // Same versions as the MentraOS app's generated Android project. AGP refuses
+  // two versions in one composite build, so when this build is included in an
+  // app, use the AGP version on that app's root build classpath.
+  def androidGradlePluginVersion = '8.12.0'
+  def appGradle = gradle.parent
+  if (appGradle != null) {
+    try {
+      androidGradlePluginVersion = appGradle.rootProject.buildscript.classLoader
+        .loadClass('com.android.Version')
+        .getField('ANDROID_GRADLE_PLUGIN_VERSION')
+        .get(null)
+    } catch (ClassNotFoundException ignored) {
+      // The app does not load AGP in its root build; keep the default.
+    }
+  }
+
+  project.buildscript {
+    repositories {
+      google()
+      mavenCentral()
+    }
+    dependencies {
+      classpath "com.android.tools.build:gradle:${androidGradlePluginVersion}"
+      classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.0'
+    }
+  }
+}
+
+gradle.beforeProject { project ->
+  project.repositories {
+    google()
+    mavenCentral()
+  }
+}
+
+rootProject.name = 'mentra-bluetooth-sdk'
+
 include ':lc3Lib'
 
 include ':silero'

@@ -455,6 +455,11 @@ export async function verifyAccessToken(token: string): Promise<VerifiedAccessTo
  * stamped as `email` + `email_verified: true` for every miniapp audience; when
  * absent (OEM users, unverified or unavailable) both claims are omitted.
  *
+ * `features` are the licensed feature keys the person holds for this package
+ * (`services/licenses/features.service.ts`). They are stamped as the
+ * `features` claim only when there is at least one; a miniapp backend reads it
+ * with `hasFeature` from `@mentra/auth`.
+ *
  * TTL defaults to 1h and is env-overridable via MENTRA_MINIAPP_TOKEN_TTL_SEC
  * so tests can shorten it. Returns the token and its absolute expiry as Unix
  * seconds (what the client caches against).
@@ -464,6 +469,7 @@ export async function issueMiniappToken(args: {
   tenantId: string
   packageName: string
   email?: string | null
+  features?: string[]
 }): Promise<{token: string; expiresAt: number}> {
   const {privateKey} = await getMiniappKeys()
   const ttlSec = miniappTokenTtlSec()
@@ -472,6 +478,7 @@ export async function issueMiniappToken(args: {
   const token = await new jose.SignJWT({
     tenantId: args.tenantId,
     ...(args.email ? {email: args.email, email_verified: true} : {}),
+    ...(args.features?.length ? {features: args.features} : {}),
   })
     // The `kid` points the developer backend at the miniapp-token public key.
     .setProtectedHeader({alg: MENTRA_ALG, kid: MINIAPP_TOKEN_KID})

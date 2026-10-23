@@ -5,7 +5,6 @@
   },
   "workspaces": [
     "create-mentra-miniapp",
-    "example-oem-app",
     "miniapp-cli",
     "../cloud-v2/packages/*",
     "!../cloud-v2/packages/workspace-ui",
@@ -16,7 +15,8 @@
     "../mobile/modules/bluetooth-sdk",
     "../mobile/modules/acs-meeting",
     "../mobile/modules/glasses-media",
-    "../miniapps/*"
+    "../miniapps/*",
+    "../examples/miniapp"
   ],
   "scripts": {
     "build:miniapp": "cd ../mobile/modules/miniapp && bun run build",

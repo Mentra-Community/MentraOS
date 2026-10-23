@@ -5,8 +5,9 @@
  *  - ends every active membership the user holds with `endedReason:
  *    "account_deleted"`. Each ends as removal does (`endMembership`): the
  *    workspace's revision is bumped, the credentials and pending invitations
- *    that membership created are revoked, and one `membership.removed` event is
- *    recorded;
+ *    that membership created are revoked, the licenses assigned to it are freed
+ *    (`seat.released`, reason `account_deleted`), and one `membership.removed`
+ *    event is recorded. No license ends: a license is always a workspace's;
  *  - revokes every other pending invitation the user sent, such as one sent as
  *    an Organization Admin (`invitation.revoked`, reason `inviter_account_deleted`);
  *  - records the `user.deleted` tombstone last: `workspaceId` null, target
@@ -58,10 +59,10 @@ import {auditActor, endMembership, isId, type Actor, type MembershipRow} from ".
 const logger = createLogger("core").child({service: "account-deletion"})
 
 /**
- * End the deleted user's workspace memberships and revoke the invitations they sent (in one
- * transaction that ends with the `user.deleted` tombstone), revoke the operator keys they created
- * and clear their identity from the rows that stay. Safe to run again: a second run finds nothing
- * left to end or revoke, and the tombstone already recorded.
+ * End the deleted user's workspace memberships, freeing the licenses assigned to them, and revoke the
+ * invitations they sent (in one transaction that ends with the `user.deleted` tombstone), revoke the operator keys they
+ * created and clear their identity from the rows that stay. Safe to run again: a second run finds
+ * nothing left to end or revoke, and the tombstone already recorded.
  */
 export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Promise<{
   endedMembershipIds: string[]
@@ -117,7 +118,6 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
       if (!(await tombstoneRecorded(mentraUserId, null))) await recordFeedEventWithoutTransaction(tombstone)
     }
   }
-
   // An operator key is one document: revoked one by one, without a transaction.
   const operatorKeys = await AccessCredentialModel.find({
     credentialKind: "organization",

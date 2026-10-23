@@ -541,9 +541,75 @@ describe("PhoneStreamCoordinator", () => {
         cloudflareStatusPollMs: 1000,
       })
       await expect(coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})).rejects.toThrow("BLE down")
+      // The glasses answered, so there is no publisher left to stop.
+      expect(stopStream).not.toHaveBeenCalled()
       // Should be able to start another stream after the failure.
       await coord.startUnmanaged("com.a", {streamUrl: "rtmp://y"})
       expect(startStream).toHaveBeenCalledTimes(2)
+    })
+
+    test("a start that times out stops the publisher the glasses may still be retrying", async () => {
+      const timeout = Object.assign(new Error("start stream timed out waiting for glasses response."), {
+        code: "request_timeout",
+      })
+      startStream.mockRejectedValueOnce(timeout)
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+      })
+      await expect(coord.startUnmanaged("com.a", {streamUrl: "srt://x:1?passphrase=p"})).rejects.toBe(timeout)
+      expect(stopStream).toHaveBeenCalledTimes(1)
+      expect(coord.getDiagnosticSnapshot().active).toBe(false)
+      await coord.startUnmanaged("com.a", {streamUrl: "srt://x:1"})
+      expect(startStream).toHaveBeenCalledTimes(2)
+    })
+
+    test("a failed stop after a start timeout is retried before the next start", async () => {
+      const timeout = Object.assign(new Error("start stream timed out waiting for glasses response."), {
+        code: "request_timeout",
+      })
+      startStream.mockRejectedValueOnce(timeout)
+      stopStream.mockRejectedValueOnce(new Error("stop stream timed out"))
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+      })
+      await expect(coord.startUnmanaged("com.a", {streamUrl: "srt://x:1"})).rejects.toBe(timeout)
+      expect(coord.getDiagnosticSnapshot().pendingBleStop).not.toBeNull()
+
+      const order: string[] = []
+      stopStream.mockImplementationOnce(async () => {
+        order.push("stop")
+      })
+      startStream.mockImplementationOnce(async (request) => {
+        order.push("start")
+        return streamStatusFor(request)
+      })
+      await coord.startUnmanaged("com.a", {streamUrl: "srt://x:1"})
+      expect(order).toEqual(["stop", "start"])
+    })
+
+    test("a start that times out with the link down stops the publisher on reconnect", async () => {
+      const link = fakeLink()
+      const timeout = Object.assign(new Error("start stream timed out waiting for glasses response."), {
+        code: "request_timeout",
+      })
+      startStream.mockImplementationOnce(async () => {
+        link.set(false)
+        throw timeout
+      })
+      const coord = new PhoneStreamCoordinator(
+        {hlsReadinessInitialDelayMs: 5, hlsReadinessPollMs: 5, cloudflareStatusPollMs: 1000},
+        {linkSource: link.source},
+      )
+      await expect(coord.startUnmanaged("com.a", {streamUrl: "srt://x:1"})).rejects.toBe(timeout)
+      expect(stopStream).not.toHaveBeenCalled()
+      link.set(true)
+      await settle()
+      expect(stopStream).toHaveBeenCalledTimes(1)
+      expect(link.listenerCount()).toBe(0)
     })
   })
 
@@ -687,6 +753,21 @@ describe("PhoneStreamCoordinator", () => {
       expect(arg.audio).toEqual({bitrate: 64_000})
       expect("keepAlive" in arg).toBe(false)
       expect("keepAliveIntervalSeconds" in arg).toBe(false)
+    })
+
+    test("a managed start that times out stops the glasses publisher", async () => {
+      const timeout = Object.assign(new Error("start stream timed out waiting for glasses response."), {
+        code: "request_timeout",
+      })
+      startStream.mockRejectedValueOnce(timeout)
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+      })
+      await expect(coord.startManaged("com.a", {})).rejects.toBe(timeout)
+      expect(stopStream).toHaveBeenCalledTimes(1)
+      expect(coord.getDiagnosticSnapshot().active).toBe(false)
     })
 
     test("startManaged forwards captureAudio=false onto the BLE start_stream payload", async () => {

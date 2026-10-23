@@ -2,7 +2,8 @@ import {advanceResourceLifecycleCursor} from './resource-lifecycle.service'
 import {resourceIdleContractSchema,resourceLifecycleSchema} from '../types/resource-lifecycle.types'
 import {recorderStorageObservationSchema} from '../types/recorder-storage.types'
 import {exclusiveResourceDependenciesSchema, hostResourceReservationsSchema, resourceReservationObservationSchema, type HostResourceReservation} from '../types/resource-reservations.types'
-import {laneControlExchangeSchema} from './lane-controls.service'
+import {laneControlExchangeSchema} from '../types/lane-control.types'
+import type {ResourceReadinessAuthority} from './resource-readiness'
 import {z} from "zod"
 import {TestHostStateModel} from "../models/test-host-state.model"
 import {testWriteConcern} from "../models/test-write-concern"
@@ -91,7 +92,11 @@ function validateLaneResources(lane: {resources: z.infer<typeof resource>[]; gla
       })
   }
 }
-function validateHostLaneInventory(snapshot: {lanes: z.infer<typeof routingLaneSchema>[]}, ctx: z.RefinementCtx) {
+function validateHostLaneInventory(snapshot: {lanes: z.infer<typeof routingLaneSchema>[]; resources?: z.infer<typeof resource>[]}, ctx: z.RefinementCtx) {
+  const independent = snapshot.resources ?? [];
+  if (new Set(independent.map(value => value.id)).size !== independent.length ||
+    independent.some(value => value.laneId !== undefined || snapshot.lanes.some(lane => lane.resources.some(member => member.id === value.id))))
+    ctx.addIssue({code: 'custom', message: 'Independent canonical resource inventory must be unique and have no lane membership'});
   if (new Set(snapshot.lanes.map((lane) => lane.id)).size !== snapshot.lanes.length)
     ctx.addIssue({code: "custom", message: "Duplicate host lane identity"})
   const byResource = new Map<string, string>(),
@@ -124,12 +129,16 @@ const routingHostSchema = z.object({
   incarnationGeneration: z.number().int().positive().safe().optional(),
   frameworkBinding: frameworkBindingSchema.optional(),
   resourceLifecycle: resourceLifecycleSchema.optional(),
+  observedAt: z.string().datetime({offset: true}).optional(),
+  laneControls: laneControlExchangeSchema.optional(),
+  resources: z.array(resource).max(100).optional(),
   lanes: z.array(routingLaneSchema).max(100),
 }).strict().superRefine(validateHostLaneInventory)
-export type RoutingTestHostState = z.infer<typeof routingHostSchema> & {receivedAt: string; authorityReservations?: HostResourceReservation[]}
+export type RoutingTestHostState = z.infer<typeof routingHostSchema> & ResourceReadinessAuthority & {receivedAt: string; authorityReservations?: HostResourceReservation[]}
 // Permission observations remain fresh; only diagnostic/history fields are excluded at the database.
-const routingStateProjection = {hostId: 1, receivedAt: 1, resourceReservations: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
-  'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle': 1,
+const routingStateProjection = {hostId: 1, receivedAt: 1, resourceReservations: 1, laneControls: 1, resourceLifecycleCursor: 1,
+  'snapshot.observedAt': 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+  'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle': 1, 'snapshot.resources': 1,
   'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
   'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
   'snapshot.lanes.glasses': 1, _id: 0} as const
@@ -148,6 +157,7 @@ export const hostStateSchema = z
     incarnationGeneration: z.number().int().positive().safe(),
     sequence: z.number().int().nonnegative().safe(),
     observedAt: z.string().datetime({offset: true}),
+    resources: z.array(resource).max(100).optional(),
     lanes: z
       .array(
         z
@@ -271,7 +281,7 @@ export const updaterDeploymentSchema = z
     stopped: frameworkStopSchema.optional(),
   })
   .strict()
-export type ReceivedTestHostState = TestHostState & {receivedAt: string; frameworkHistory?: FrameworkHistoryEntry[]; authorityReservations?: HostResourceReservation[]}
+export type ReceivedTestHostState = TestHostState & ResourceReadinessAuthority & {receivedAt: string; frameworkHistory?: FrameworkHistoryEntry[]; authorityReservations?: HostResourceReservation[]}
 const deploymentCursor = (row: {deploymentGeneration?: number; deploymentSequence?: number}) => ({
   deploymentGeneration: row.deploymentGeneration ?? {$exists: false},
   deploymentSequence: row.deploymentSequence ?? {$exists: false},
@@ -467,7 +477,9 @@ export class TestHostStateService {
       // The existing authority retains selected, preparing and unknown custody until
       // its normal reconciliation proves return. No request-history scan is needed.
       const authorityReservations = hostResourceReservationsSchema.parse(row.resourceReservations ?? []);
-      return {...snapshot, receivedAt: z.date().parse(row.receivedAt).toISOString(), authorityReservations};
+      return {...snapshot, receivedAt: z.date().parse(row.receivedAt).toISOString(), authorityReservations,
+        ...(row.laneControls === undefined ? {} : {resourceControlRecords: row.laneControls}),
+        ...(row.resourceLifecycleCursor === undefined ? {} : {resourceLifecycleCursor: row.resourceLifecycleCursor})};
     });
   }
   async get(hostId: string): Promise<ReceivedTestHostState | null> {
@@ -476,6 +488,8 @@ export class TestHostStateService {
       ? {
           ...hostStateSchema.parse(row.snapshot),
           authorityReservations: hostResourceReservationsSchema.parse(row.resourceReservations ?? []),
+          ...(row.laneControls === undefined ? {} : {resourceControlRecords: row.laneControls}),
+          ...(row.resourceLifecycleCursor === undefined ? {} : {resourceLifecycleCursor: row.resourceLifecycleCursor}),
           receivedAt: row.receivedAt.toISOString(),
           frameworkHistory: (row.frameworkHistory ?? []).map((value) => frameworkHistoryEntrySchema.parse(value)),
         }

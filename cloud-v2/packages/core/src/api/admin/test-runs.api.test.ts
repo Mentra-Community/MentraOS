@@ -423,7 +423,10 @@ test('recovery button body uses existing authenticated lane-control admission an
   const {LaneControlsService} = await import('../../services/lane-controls.service')
   const observed: unknown[] = []
   class Controls extends LaneControlsService {
-    override async submit(value: unknown, operator: string, operatorLabel?: string) {
+    override async submit(value: import('../../types/lane-control.types').LaneControlInput, operator: string, label?: string): Promise<import('../../types/lane-control.types').LaneControlView>
+    override async submit(value: import('../../types/lane-control.types').ResourceControlInput, operator: string, label?: string): Promise<import('../../types/lane-control.types').ResourceControlView>
+    override async submit(value: unknown, operator: string, label?: string): Promise<import('../../types/lane-control.types').LaneControlView | import('../../types/lane-control.types').ResourceControlView>
+    override async submit(value: unknown, operator: string, operatorLabel?: string): Promise<import('../../types/lane-control.types').LaneControlView | import('../../types/lane-control.types').ResourceControlView> {
       const {laneControlInputSchema} = await import('../../types/lane-control.types')
       const input = laneControlInputSchema.parse(value); observed.push({input, operator, operatorLabel})
       return {operationId: input.operationId, hostId: input.hostId, laneId: input.laneId,

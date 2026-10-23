@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { createWorkspaceApi } from "./api";
 import {
   errorMessage,
+  isLicenseChangedError,
   isWorkspaceChangedError,
   isWorkspaceHeldError,
   WORKSPACE_CHANGED_MESSAGE,
@@ -62,6 +63,25 @@ describe("createWorkspaceApi: routes", () => {
     expect(await api.createWorkspace("New")).toEqual(detail as never);
     expect(rec.calls[0]).toMatchObject({ url: "/api/workspaces", method: "POST", body: { name: "New" } });
     expect(rec.calls[0]!.headers["content-type"]).toBe("application/json");
+  });
+
+  test("ensures the caller's workspace with POST {base}/ensure and no body, whether it answers 200 or 201", async () => {
+    const detail = { workspaceId: "ws_auto", name: "Dana's Workspace" };
+    const rec = recordingFetch(Response.json(detail, { status: 201 }), Response.json(detail, { status: 200 }));
+    const api = createWorkspaceApi({ basePath: "/api/portal/workspaces", fetch: rec.fetch });
+    expect(await api.ensureWorkspace()).toEqual(detail as never);
+    expect(await api.ensureWorkspace()).toEqual(detail as never);
+    for (const call of rec.calls) {
+      expect(call).toMatchObject({ url: "/api/portal/workspaces/ensure", method: "POST", credentials: "same-origin" });
+      expect(call.body).toBeUndefined();
+      expect(call.headers["content-type"]).toBeUndefined();
+    }
+  });
+
+  test("a refused ensure is a typed error", async () => {
+    const rec = recordingFetch(Response.json({ error: "workspace_creation_not_allowed", error_description: "no" }, { status: 403 }));
+    const api = createWorkspaceApi({ basePath: "/api/portal/workspaces", fetch: rec.fetch });
+    await expect(api.ensureWorkspace()).rejects.toMatchObject({ status: 403, code: "workspace_creation_not_allowed" });
   });
 
   test("reads, renames and deletes a workspace", async () => {
@@ -255,13 +275,13 @@ describe("createWorkspaceApi: errors", () => {
     expect(errorMessage(lastOwner)).toBe("A workspace must keep at least one owner");
   });
 
-  test("a Store refusal to delete a workspace that publishes miniapps asks to move or delete them", async () => {
+  test("a Store refusal to delete a workspace that publishes miniapps asks to delete them first", async () => {
     const rec = recordingFetch(Response.json({ error: "workspace_has_miniapps", count: 2 }, { status: 409 }));
     const api = createWorkspaceApi({ basePath: "/api/console/workspaces", fetch: rec.fetch });
     const refused = await api.deleteWorkspace("ws_1", "Acme").catch((e: unknown) => e);
     expect(refused).toMatchObject({ status: 409, code: "workspace_has_miniapps" });
     expect(isWorkspaceChangedError(refused)).toBe(false);
-    expect(errorMessage(refused)).toBe("Move or delete this workspace's miniapps before deleting it.");
+    expect(errorMessage(refused)).toBe("Delete this workspace's miniapps before deleting the workspace.");
   });
 
   test("a 409 workspace_has_holds carries the holds, and reads as what holds the workspace", async () => {
@@ -281,7 +301,7 @@ describe("createWorkspaceApi: errors", () => {
     expect(isWorkspaceHeldError(refused)).toBe(true);
     expect(isWorkspaceChangedError(refused)).toBe(false);
     expect(errorMessage(refused)).toBe(
-      "This workspace still owns 3 published miniapps. Delete them in the Developer Console first.",
+      "This workspace still owns 3 miniapps. Delete them in the Developer Console first.",
     );
 
     const odd = await api.deleteWorkspace("ws_1", "Acme").catch((e: unknown) => e);
@@ -321,5 +341,108 @@ describe("createWorkspaceApi: errors", () => {
       "Name must be 1-64 characters",
     );
     expect(errorMessage(new Error("boom"))).toBe("Something went wrong. Try again.");
+  });
+});
+
+describe("createWorkspaceApi: licenses and seats", () => {
+  const license = {
+    licenseId: "lic_1",
+    revision: 2,
+    owner: { type: "workspace", workspaceId: "ws_1" },
+    product: "mentra.call.unlimited",
+    features: [{ key: "call.unlimited", packages: ["com.mentra.call"] }],
+    quantity: 5,
+    validFrom: "2026-09-01T12:00:00.000Z",
+    paidThrough: "2099-06-15T12:00:00.000Z",
+    seatsUsed: 1,
+    endedAt: null,
+    seats: [{ membershipId: "wm_1", mentraUserId: "mu_1", assignedAt: "2026-09-02T12:00:00.000Z" }],
+  };
+
+  test("lists a workspace's licenses from GET {base}/{id}/licenses", async () => {
+    const rec = recordingFetch(Response.json({ items: [license] }));
+    const api = createWorkspaceApi({ basePath: "/api/portal/workspaces", fetch: rec.fetch });
+    expect(await api.listLicenses("ws_1")).toEqual([license] as never);
+    expect(rec.calls[0]).toMatchObject({ url: "/api/portal/workspaces/ws_1/licenses", method: "GET" });
+    expect(rec.calls[0]!.body).toBeUndefined();
+  });
+
+  test("assigns a seat with PUT and unassigns it with DELETE, neither with a body", async () => {
+    const rec = recordingFetch(Response.json(license), noContent());
+    const api = createWorkspaceApi({ basePath: "/api/workspaces", fetch: rec.fetch });
+    expect(await api.assignSeat("ws_1", "lic_1", "wm_1")).toEqual(license as never);
+    expect(await api.releaseSeat("ws_1", "lic_1", "wm_1")).toBeUndefined();
+    expect(rec.calls).toMatchObject([
+      { url: "/api/workspaces/ws_1/licenses/lic_1/seats/wm_1", method: "PUT" },
+      { url: "/api/workspaces/ws_1/licenses/lic_1/seats/wm_1", method: "DELETE" },
+    ]);
+    for (const call of rec.calls) expect(call.body).toBeUndefined();
+  });
+
+  test("encodes the license and membership ids so a hostile id cannot change the route", async () => {
+    const rec = recordingFetch(Response.json(license), noContent());
+    const api = createWorkspaceApi({ basePath: "/api/workspaces", fetch: rec.fetch });
+    await api.assignSeat("ws_1", "lic/../x", "wm 1");
+    await api.releaseSeat("ws_1", "lic_1", "a/b");
+    expect(rec.calls.map((call) => call.url)).toEqual([
+      "/api/workspaces/ws_1/licenses/lic%2F..%2Fx/seats/wm%201",
+      "/api/workspaces/ws_1/licenses/lic_1/seats/a%2Fb",
+    ]);
+  });
+
+  test("a refusal keeps Core's code, and a full license reads as Core's explanation", async () => {
+    const rec = recordingFetch(
+      Response.json({ error: "no_seats_available", error_description: "every license is assigned" }, { status: 409 }),
+    );
+    const api = createWorkspaceApi({ basePath: "/api/workspaces", fetch: rec.fetch });
+    const error = await api.assignSeat("ws_1", "lic_1", "wm_1").catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 409, code: "no_seats_available" });
+    expect(errorMessage(error)).toBe("Every license is assigned");
+  });
+
+  describe("assignSeats", () => {
+    const pairs = [
+      { licenseId: "lic_1", membershipId: "wm_1" },
+      { licenseId: "lic_1", membershipId: "wm_2" },
+      { licenseId: "lic_2", membershipId: "wm_1" },
+    ];
+
+    test("POSTs every pair in one request to {base}/{id}/seat-assignments and answers the licenses it touched", async () => {
+      const touched = [license, { ...license, licenseId: "lic_2" }];
+      const rec = recordingFetch(Response.json({ licenses: touched }));
+      const api = createWorkspaceApi({ basePath: "/api/portal/workspaces", fetch: rec.fetch });
+      expect(await api.assignSeats("ws_1", pairs)).toEqual(touched as never);
+      expect(rec.calls).toHaveLength(1);
+      expect(rec.calls[0]).toMatchObject({
+        url: "/api/portal/workspaces/ws_1/seat-assignments",
+        method: "POST",
+        body: { assignments: pairs },
+      });
+      expect(rec.calls[0]!.headers["content-type"]).toBe("application/json");
+    });
+
+    test("escapes the workspace id", async () => {
+      const rec = recordingFetch(Response.json({ licenses: [] }));
+      const api = createWorkspaceApi({ basePath: "/api/workspaces", fetch: rec.fetch });
+      await api.assignSeats("ws/1", pairs);
+      expect(rec.calls[0]!.url).toBe("/api/workspaces/ws%2F1/seat-assignments");
+    });
+
+    test("a 409 no_seats_available keeps its code, so the screen knows the counts it showed are stale", async () => {
+      const rec = recordingFetch(
+        Response.json(
+          {
+            error: "no_seats_available",
+            error_description: "too few licenses are available for these assignments; nothing was assigned",
+            licenses: [{ licenseId: "lic_1", needed: 2, free: 1 }],
+          },
+          { status: 409 },
+        ),
+      );
+      const api = createWorkspaceApi({ basePath: "/api/workspaces", fetch: rec.fetch });
+      const error = await api.assignSeats("ws_1", pairs).catch((e: unknown) => e);
+      expect(error).toMatchObject({ status: 409, code: "no_seats_available" });
+      expect(isLicenseChangedError(error)).toBe(true);
+    });
   });
 });

@@ -23,7 +23,9 @@
  * recorders retry meanwhile. They are rare admin operations; a transaction that
  * records several events (ending many memberships, an import) holds the counter
  * for the rest of its run, so a caller should record its first event as late in
- * its transaction as it can.
+ * its transaction as it can. One that has many events to record at once (a bulk
+ * seat assignment) records them together (`recordWorkspaceEvents`): one
+ * increment of the counter and one insert, whatever their number.
  *
  * The change feed services read (`listChanges`) is this trail's events that have
  * a `seq`: workspace-scoped events and user-level tombstones (`user.deleted`).
@@ -76,7 +78,28 @@ export type WorkspaceAuditEventInput = Omit<
  * recorder retries meanwhile. Record the first event as late in the transaction as you can.
  */
 export async function recordWorkspaceEvent(session: ClientSession, event: WorkspaceAuditEventInput): Promise<string> {
-  return appendEvent(session, event, await nextSeq(session))
+  return appendEvent(session, event, await takeSeqs(session, 1))
+}
+
+/**
+ * Append `events` inside the caller's transaction, in order, and return their `eventId`s in that order.
+ * The events are the ones {@link recordWorkspaceEvent} would record for each in turn: the same
+ * documents, with contiguous `seq` in the same order and `eventId`s minted in it. They take two writes
+ * whatever their number, one increment of the feed's counter by `events.length` and then one insert. As
+ * with {@link recordWorkspaceEvent}, the counter is held from that increment until the transaction ends,
+ * so record the batch as late as you can: as the transaction's last write, only its insert and the commit
+ * hold the counter, rather than a pair of writes per event. An empty list writes nothing and takes no
+ * counter.
+ */
+export async function recordWorkspaceEvents(
+  session: ClientSession,
+  events: WorkspaceAuditEventInput[],
+): Promise<string[]> {
+  if (events.length === 0) return []
+  const last = await takeSeqs(session, events.length)
+  const documents = events.map((event, index) => eventDocument(event, last - events.length + 1 + index))
+  await WorkspaceAuditEventModel.insertMany(documents, {session})
+  return documents.map((document) => document.eventId)
 }
 
 /**
@@ -111,7 +134,7 @@ export async function recordOrganizationEvent(event: WorkspaceAuditEventInput): 
  * transactions this never happens.
  */
 export async function recordFeedEventWithoutTransaction(event: WorkspaceAuditEventInput): Promise<string> {
-  return appendEvent(null, event, await nextSeq(null))
+  return appendEvent(null, event, await takeSeqs(null, 1))
 }
 
 async function appendEvent(
@@ -119,32 +142,33 @@ async function appendEvent(
   event: WorkspaceAuditEventInput,
   seq: number | undefined,
 ): Promise<string> {
-  const eventId = nextEventId()
-  await WorkspaceAuditEventModel.create(
-    [
-      {
-        ...event,
-        requestId: event.requestId ?? currentRequestId(),
-        eventId,
-        ...(seq === undefined ? {} : {seq}),
-        occurredAt: new Date(),
-      },
-    ],
-    session ? {session} : {},
-  )
-  return eventId
+  const document = eventDocument(event, seq)
+  await WorkspaceAuditEventModel.create([document], session ? {session} : {})
+  return document.eventId
+}
+
+/** The event as it is stored: the caller's fields, with its ids, its `seq` (when it has one) and its time. */
+function eventDocument(event: WorkspaceAuditEventInput, seq: number | undefined) {
+  return {
+    ...event,
+    requestId: event.requestId ?? currentRequestId(),
+    eventId: nextEventId(),
+    ...(seq === undefined ? {} : {seq}),
+    occurredAt: new Date(),
+  }
 }
 
 /**
- * Take the feed's next sequence number by incrementing the counter, in the caller's transaction when
- * there is one. The first event ever recorded upserts the counter; if another transaction creates it
- * in the meantime, the server answers the loser with a transient write conflict and
+ * Take the feed's next `count` sequence numbers by incrementing the counter by `count`, in the caller's
+ * transaction when there is one, and return the last of them: the numbers taken are the `count` up to
+ * and including it. The first event ever recorded upserts the counter; if another transaction creates
+ * it in the meantime, the server answers the loser with a transient write conflict and
  * `withTransaction` retries, so that race needs no handling here.
  */
-async function nextSeq(session: ClientSession | null): Promise<number> {
+async function takeSeqs(session: ClientSession | null, count: number): Promise<number> {
   const counter = await WorkspaceAuditCounterModel.findOneAndUpdate(
     {_id: WORKSPACE_AUDIT_COUNTER_ID},
-    {$inc: {seq: 1}},
+    {$inc: {seq: count}},
     {upsert: true, new: true, setDefaultsOnInsert: false, ...(session ? {session} : {})},
   ).lean()
   return counter!.seq

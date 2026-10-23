@@ -20,7 +20,9 @@
  * at the same time end with exactly one owner.
  *
  * Memberships are never deleted: ending one keeps the row as history, and a
- * later re-join is a new row with a new `membershipId`. Every write that starts
+ * later re-join is a new row with a new `membershipId`. Ending one releases the
+ * license seats it holds in the same transaction (`license.service`), so a
+ * rejoined member has none. Every write that starts
  * a membership or changes its role appends the role to its `roleHistory` in the
  * same update, stamped with the workspace revision that write produced.
  *
@@ -36,7 +38,6 @@ import {
   roleAtLeast,
   WORKSPACE_ROLES,
   type PrincipalResponse,
-  type WorkspaceDeletionHold,
   type WorkspaceRole,
   type WorkspaceSummary,
 } from "@mentra/workspace-contract"
@@ -53,12 +54,16 @@ import {
 } from "../../models/workspace-membership.model"
 import {legacyIdentityClaims} from "../../models/legacy-browser-identity.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
+import {endLicensesForOwner, releaseSeatsForMembership, seatReleaseReasonFor} from "../licenses/license.service"
 import {isDeletedAccountId} from "../user.service"
+import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
+import {deletionHoldsOf, replaceableWorkspaces} from "./workspace-holdings"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
 import {workspaceCreationPolicy} from "./organization"
 import {fail, WorkspaceError, type WorkspaceErrorCode} from "./workspace-error"
 
-const NAME_MAX_LENGTH = 80
+/** The longest a workspace name may be. */
+export const WORKSPACE_NAME_MAX_LENGTH = 80
 
 /**
  * Who is acting. For a user, `emailVerified` says whether the identity provider
@@ -88,8 +93,17 @@ export async function getWorkspace(workspaceId: string): Promise<WorkspaceSummar
   return row ? toSummary(row) : null
 }
 
-/** The workspaces a person belongs to, oldest first. Deleted workspaces are left out. */
-export async function listWorkspacesForUser(mentraUserId: string): Promise<PrincipalResponse["workspaces"]> {
+/**
+ * The workspaces a person belongs to, oldest first. Deleted workspaces are left out. Each says whether it
+ * is `replaceable`: the person's own automatic workspace, which they own, while it holds nothing
+ * (`replaceableWorkspaces`). That is asked only about such workspaces, all of them at once, so a person
+ * with none asks nothing more. A caller that does not use it passes `{replaceable: false}`: nothing is
+ * asked, and the items carry no `replaceable`.
+ */
+export async function listWorkspacesForUser(
+  mentraUserId: string,
+  opts: {replaceable?: boolean} = {},
+): Promise<PrincipalResponse["workspaces"]> {
   // A missing id must not become a `null` filter.
   if (!isId(mentraUserId)) return []
   const memberships = await WorkspaceMembershipModel.find({mentraUserId, status: "active"}).lean()
@@ -98,6 +112,12 @@ export async function listWorkspacesForUser(mentraUserId: string): Promise<Princ
   const workspaces = await WorkspaceModel.find({workspaceId: {$in: [...byWorkspace.keys()]}, status: "active"})
     .sort({_id: 1})
     .lean()
+  const ownAutomatic = workspaces
+    .filter(workspace => workspace.automatic === true && byWorkspace.get(workspace.workspaceId)!.role === "owner")
+    .map(workspace => workspace.workspaceId)
+  const askReplaceable = opts.replaceable !== false
+  const replaceable =
+    askReplaceable && ownAutomatic.length > 0 ? await replaceableWorkspaces(mentraUserId, ownAutomatic) : new Set()
   return workspaces.map(workspace => {
     const membership = byWorkspace.get(workspace.workspaceId)!
     const role = membership.role as WorkspaceRole
@@ -105,6 +125,7 @@ export async function listWorkspacesForUser(mentraUserId: string): Promise<Princ
       ...toSummary(workspace),
       membership: {membershipId: membership.membershipId, role},
       capabilities: [...capabilitiesForRole(role)],
+      ...(askReplaceable ? {replaceable: replaceable.has(workspace.workspaceId)} : {}),
     }
   })
 }
@@ -204,54 +225,86 @@ export async function countActiveOwners(workspaceId: string, session?: ClientSes
 export async function createWorkspace(actor: Actor & {kind: "user"}, input: {name: string}): Promise<WorkspaceSummary> {
   // An actor with no usable id would own a workspace nobody can ever be matched to.
   if (actor?.kind !== "user" || !isId(actor.mentraUserId)) fail("forbidden", "a signed-in user is required")
+  // An unverified email is refused before a bad name, and a bad name before the creation policy.
+  // `assertMayCreateWorkspace` checks the email again; this one only keeps that order.
   if (actor.emailVerified !== true) {
     fail("email_unverified", "verify your email address before creating a workspace")
   }
   const name = validateName(input?.name)
+  assertMayCreateWorkspace(actor)
+  return withTransaction(async session => {
+    await refuseDeletedAccount(session, actor.mentraUserId)
+    return (await insertWorkspace(session, actor, {name, automatic: false})).workspace
+  })
+}
+
+/**
+ * Who may create a workspace: a person whose email is verified (`email_unverified`), and under
+ * `CLOUD_CORE_WORKSPACE_CREATION=organization-admins` only an Organization Admin (`forbidden`).
+ */
+export function assertMayCreateWorkspace(actor: Actor & {kind: "user"}): void {
+  if (actor.emailVerified !== true) {
+    fail("email_unverified", "verify your email address before creating a workspace")
+  }
   if (workspaceCreationPolicy() === "organization-admins" && !actor.isOrganizationAdmin) {
     fail("forbidden", "only organization admins can create workspaces")
   }
-  return withTransaction(async session => {
-    await refuseDeletedAccount(session, actor.mentraUserId)
-    const workspaceId = `ws_${ulid()}`
-    const membershipId = `wm_${ulid()}`
-    const now = new Date()
-    await WorkspaceModel.create(
-      [
-        {
-          workspaceId,
-          name,
-          status: "active",
-          authorizationRevision: 0,
-          createdByMentraUserId: actor.mentraUserId,
-        },
-      ],
-      {session},
-    )
-    await WorkspaceMembershipModel.create(
-      [
-        {
-          membershipId,
-          workspaceId,
-          mentraUserId: actor.mentraUserId,
-          email: actor.email,
-          role: "owner",
-          roleHistory: [roleEntry("owner", now, 0)],
-          status: "active",
-          startedAt: now,
-        },
-      ],
-      {session},
-    )
-    await recordWorkspaceEvent(session, {
-      workspaceId,
-      action: "workspace.created",
-      actor: auditActor(actor),
-      target: {workspaceId, membershipId},
-      after: {name, role: "owner"},
-    })
-    return {workspaceId, name, status: "active", authorizationRevision: 0}
+}
+
+/**
+ * Insert a workspace with `actor` as its Owner, inside the caller's transaction, and record
+ * `workspace.created`. `automatic` marks a person's automatic workspace (`automatic-workspace.service`), and
+ * its event's `after` says so; any other workspace has no such field. The caller has already checked who
+ * may create one (`assertMayCreateWorkspace`) and refused a deleted account.
+ */
+export async function insertWorkspace(
+  session: ClientSession,
+  actor: Actor & {kind: "user"},
+  input: {name: string; automatic: boolean},
+): Promise<{workspace: WorkspaceSummary; membership: {membershipId: string; role: "owner"}}> {
+  const name = validateName(input.name)
+  const workspaceId = `ws_${ulid()}`
+  const membershipId = `wm_${ulid()}`
+  const now = new Date()
+  await WorkspaceModel.create(
+    [
+      {
+        workspaceId,
+        name,
+        status: "active",
+        authorizationRevision: 0,
+        createdByMentraUserId: actor.mentraUserId,
+        ...(input.automatic ? {automatic: true} : {}),
+      },
+    ],
+    {session},
+  )
+  await WorkspaceMembershipModel.create(
+    [
+      {
+        membershipId,
+        workspaceId,
+        mentraUserId: actor.mentraUserId,
+        email: actor.email,
+        role: "owner",
+        roleHistory: [roleEntry("owner", now, 0)],
+        status: "active",
+        startedAt: now,
+      },
+    ],
+    {session},
+  )
+  await recordWorkspaceEvent(session, {
+    workspaceId,
+    action: "workspace.created",
+    actor: auditActor(actor),
+    target: {workspaceId, membershipId},
+    after: {name, role: "owner", ...(input.automatic ? {automatic: true} : {})},
   })
+  return {
+    workspace: {workspaceId, name, status: "active", authorizationRevision: 0},
+    membership: {membershipId, role: "owner"},
+  }
 }
 
 export async function renameWorkspace(
@@ -285,7 +338,8 @@ export async function renameWorkspace(
 
 /**
  * Delete a workspace after confirming its name. Deleting ends every membership,
- * revokes every credential and pending invitation, bumps the authorization
+ * revokes every credential and pending invitation, ends the workspace's licenses
+ * and releases their seats (`endLicensesForOwner`), bumps the authorization
  * revision, and keeps the workspace row (`status: "deleted"`) so audit history
  * stays resolvable and its id is never reused. It records `workspace.deleted`.
  *
@@ -296,30 +350,50 @@ export async function renameWorkspace(
  * (someone who may not learns nothing about them) and before the typed name.
  *
  * Core asks no other service at delete time: a service that needs a workspace
- * kept holds it beforehand. The Store holds a workspace while it owns published
- * miniapps. Whatever else a service keeps for a deleted workspace is that
+ * kept holds it beforehand. The Store holds a workspace while it owns a miniapp
+ * that is not deleted, a draft included. Whatever else a service keeps for a deleted workspace is that
  * service's to handle; it learns of the deletion from the change feed.
  */
 export async function deleteWorkspace(actor: Actor, workspaceId: string, opts: {confirmName: string}): Promise<void> {
   await withTransaction(async session => {
     const workspace = await assertCanDelete(session, actor, workspaceId, opts.confirmName)
-    const now = new Date()
-    await bumpRevision(session, workspaceId, undefined, {status: "deleted", deletedAt: now})
-    await WorkspaceMembershipModel.updateMany(
-      {workspaceId, status: "active"},
-      {$set: {status: "ended", endedAt: now, endedReason: "workspace_deleted"}},
-      {session},
-    )
-    await AccessCredentialModel.updateMany({workspaceId, revokedAt: null}, {$set: {revokedAt: now}}, {session})
-    await WorkspaceInvitationModel.updateMany({workspaceId, status: "pending"}, {$set: {status: "revoked"}}, {session})
-    await recordWorkspaceEvent(session, {
-      workspaceId,
-      action: "workspace.deleted",
-      actor: auditActor(actor),
-      target: {workspaceId},
-      before: {name: workspace.name, status: "active"},
-      after: {status: "deleted"},
-    })
+    await deleteWorkspaceIn(session, workspace, actor)
+  })
+}
+
+/**
+ * Every step of deleting `workspace` after the checks of who may and whether it should be, in the
+ * caller's transaction: the workspace row becomes `deleted` (one revision bump, which serializes the
+ * deletion with any other change there), its active memberships end (`workspace_deleted`), its keys
+ * and pending invitations are revoked, its licenses end and release their seats, and `workspace.deleted`
+ * is recorded for `actor`. `after` is merged into that event's `after` (`{status: "deleted", ...after}`).
+ * `deleteWorkspace` calls it after `assertCanDelete`; giving way to another workspace
+ * (`yieldAutomaticWorkspace`) calls it after finding the workspace holds nothing.
+ */
+export async function deleteWorkspaceIn(
+  session: ClientSession,
+  workspace: Pick<WorkspaceRow, "workspaceId" | "name">,
+  actor: Actor,
+  after: Record<string, unknown> = {},
+): Promise<void> {
+  const {workspaceId} = workspace
+  const now = new Date()
+  await bumpRevision(session, workspaceId, undefined, {status: "deleted", deletedAt: now})
+  await WorkspaceMembershipModel.updateMany(
+    {workspaceId, status: "active"},
+    {$set: {status: "ended", endedAt: now, endedReason: "workspace_deleted"}},
+    {session},
+  )
+  await AccessCredentialModel.updateMany({workspaceId, revokedAt: null}, {$set: {revokedAt: now}}, {session})
+  await WorkspaceInvitationModel.updateMany({workspaceId, status: "pending"}, {$set: {status: "revoked"}}, {session})
+  await endLicensesForOwner(session, {type: "workspace", workspaceId}, "workspace_deleted", actor)
+  await recordWorkspaceEvent(session, {
+    workspaceId,
+    action: "workspace.deleted",
+    actor: auditActor(actor),
+    target: {workspaceId},
+    before: {name: workspace.name, status: "active"},
+    after: {status: "deleted", ...after},
   })
 }
 
@@ -476,6 +550,8 @@ export async function recoverOwnership(
         {session},
       )
     } else {
+      // A person who gains a workspace here no longer needs an empty automatic one of their own.
+      await yieldAutomaticWorkspace(session, actor, target, {except: workspaceId})
       membershipId = `wm_${ulid()}`
       await WorkspaceMembershipModel.create(
         [
@@ -508,23 +584,8 @@ export async function recoverOwnership(
 // --- Helpers ---------------------------------------------------------------
 // The exported ones (`isId`, `isWorkspaceRole`, `validateName`, `loadActiveWorkspace`, `actingRole`,
 // `requireMembershipManager`, `bumpRevision`, `touchWorkspace`, `endMembership`, `auditActor`) are shared
-// with `invitation.service`, `credential.service` and `account-deletion.service`, which follow the same
-// mutation shape. `deletionHoldsOf` is shared with `deletion-hold.service`.
-
-/**
- * The workspace's deletion holds in the contract's shape, sorted by service (`count` only where the
- * service gave one). A workspace written before holds existed has none.
- */
-export function deletionHoldsOf(row: Pick<WorkspaceRow, "deletionHolds">): WorkspaceDeletionHold[] {
-  const stored = (row.deletionHolds ?? []) as Array<{service: string; reason: string; count?: number | null}>
-  return stored
-    .map(hold => ({
-      service: hold.service,
-      reason: hold.reason,
-      ...(typeof hold.count === "number" ? {count: hold.count} : {}),
-    }))
-    .sort((a, b) => (a.service < b.service ? -1 : a.service > b.service ? 1 : 0))
-}
+// with `invitation.service`, `credential.service`, `account-deletion.service` and `license.service`, which
+// follow the same mutation shape.
 
 function toSummary(
   row: Pick<WorkspaceRow, "workspaceId" | "name" | "status" | "authorizationRevision">,
@@ -559,8 +620,8 @@ export function isWorkspaceRole(value: unknown): value is WorkspaceRole {
 
 export function validateName(name: unknown): string {
   const trimmed = typeof name === "string" ? name.trim() : ""
-  if (trimmed.length < 1 || trimmed.length > NAME_MAX_LENGTH) {
-    fail("invalid_request", `name must be 1-${NAME_MAX_LENGTH} characters`)
+  if (trimmed.length < 1 || trimmed.length > WORKSPACE_NAME_MAX_LENGTH) {
+    fail("invalid_request", `name must be 1-${WORKSPACE_NAME_MAX_LENGTH} characters`)
   }
   // Names go into invitation emails' subjects and bodies: no line breaks or other control characters.
   if (/[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) fail("invalid_request", "name must not contain control characters")
@@ -674,10 +735,12 @@ export async function bumpRevision(
 
 /**
  * Write the workspace document without changing anything it holds, so this
- * transaction conflicts with any other mutation of the workspace (the same
- * serialization every membership change gets from its revision bump) without
- * invalidating anyone's `expectedRevision`. Invitations and credentials use it:
- * they do not change who holds which role.
+ * transaction usually conflicts with a concurrent mutation of the workspace
+ * without invalidating anyone's `expectedRevision`. Invitations and credentials
+ * use it: they do not change who holds which role. It is not a guarantee: when
+ * `updatedAt` already holds the same instant the write is a no-op and conflicts
+ * with nothing. Seat changes are serialized by the license's conditional
+ * increment and the feed counter instead.
  */
 export async function touchWorkspace(session: ClientSession, workspaceId: string): Promise<void> {
   const touched = await WorkspaceModel.updateOne(
@@ -690,9 +753,11 @@ export async function touchWorkspace(session: ClientSession, workspaceId: string
 
 /**
  * End a membership, revoke the credentials it created and the invitations it
- * sent, and record the audit event. The caller has already bumped the
- * workspace's revision in the same transaction. Ending closes the membership's
- * last `roleHistory` entry at `endedAt`, so nothing is appended to it.
+ * sent, release the license seats it holds (`seat.released`, reason
+ * `member_removed`, `member_left` or `account_deleted`), and record the audit
+ * event. The caller has already bumped the workspace's revision in the same
+ * transaction. Ending closes the membership's last `roleHistory` entry at
+ * `endedAt`, so nothing is appended to it.
  */
 export async function endMembership(
   session: ClientSession,
@@ -747,6 +812,9 @@ export async function endMembership(
       {session},
     )
   }
+
+  // A seat belongs to this membership: it ends with it, and a later membership of the same person starts with none.
+  await releaseSeatsForMembership(session, membership, seatReleaseReasonFor(reason), actor)
 
   await recordWorkspaceEvent(session, {
     workspaceId: workspace.workspaceId,

@@ -206,6 +206,19 @@ interface ConnectedMiniapp {
    * on-reconnect re-drive so we stop hammering once auth has landed.
    */
   authDelivered: boolean
+  /**
+   * Identifies the CONNECT handshake whose token this app is waiting for or holding (0 before its first
+   * CONNECT). Every token request records the value it started under and applies its answer only while the
+   * app still has it, so a slow answer for an earlier CONNECT or a replaced instance cannot mark the
+   * current handshake delivered, deliver a stale token or re-arm its timers.
+   */
+  authSession: number
+  /**
+   * True while a request for the token this CONNECT is waiting for is out. The reconnect re-drive leaves such an
+   * app alone: a cache-first request now would deliver the cached token and the fresh one still on its way would
+   * then be discarded.
+   */
+  authRequestPending: boolean
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
   /** Live PCM output stream this app has open (speaker.createStream), if any. */
@@ -658,6 +671,7 @@ class LocalMiniappRuntime {
 
   private speechRuns = new Map<string, SpeechRun>()
   private runtimeSeq = 0
+  private authSessionSeq = 0
 
   // Browser fallback token auth — HMAC-signed blob with a phone-local
   // secret. Both issuer and verifier are the same process, so the
@@ -891,7 +905,17 @@ class LocalMiniappRuntime {
     // UI_OPEN also fires during periodic foreground resync. Only the authoritative
     // selection/host-activity edge should trigger a miniapp's foreground redraw.
     if (previous && this.handshookApps.has(previous)) this.sendVisibilityChange(previous, "background")
-    if (next && this.handshookApps.has(next)) this.sendVisibilityChange(next, "foreground")
+    if (next && this.handshookApps.has(next)) {
+      this.sendVisibilityChange(next, "foreground")
+      // Coming back to the foreground is an open: the miniapp gets a token minted now, so what the user
+      // acquired while it was away (a purchase) is in the token it uses next. A miniapp still waiting for its
+      // first token already has a fresh mint on the way (CONNECT's, or its retry), so it is left to that.
+      if (this.connectedApps.get(next)?.authDelivered) {
+        void this.refreshMiniappAuth(next, {fresh: true}).catch((err) => {
+          console.warn(`${LOG_TAG}: miniapp auth refresh failed for ${next}: ${(err as Error)?.message ?? err}`)
+        })
+      }
+    }
   }
 
   // ===========================================================================
@@ -971,6 +995,8 @@ class LocalMiniappRuntime {
       authRefreshTimerId: null,
       authRetryTimerId: null,
       authDelivered: false,
+      authSession: 0,
+      authRequestPending: false,
       speakerState: "idle",
       requestedLocationRate: null,
       runtimeId: `rt-${++this.runtimeSeq}`,
@@ -1671,8 +1697,12 @@ class LocalMiniappRuntime {
     // retry timer can't fire against this new connection and so the retry loop
     // below re-arms from scratch.
     existing.authDelivered = false
+    existing.authSession = ++this.authSessionSeq
     this.clearMiniappAuthDeliveryRetry(packageName)
-    const authPromise = this.requestMiniappAuth(packageName)
+    // A connect is an open, so the token is minted now rather than taken from the cache: it must carry
+    // whatever the user has acquired since the last one. If this mint fails, the retries in
+    // deliverInitialMiniappAuth fall back to the cache-first path.
+    const authPromise = this.requestMiniappAuth(packageName, {fresh: true})
 
     // Send CONNECT_ACK in this turn, before any await. A 1.5s auth wait let a
     // concurrent unregister (dev respawn, tray stop, glasses-not-ready teardown)
@@ -1700,7 +1730,10 @@ class LocalMiniappRuntime {
     this.flushConnectWaiters(packageName)
   }
 
-  private async requestMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+  private async requestMiniappAuth(
+    packageName: string,
+    opts?: {minTtlMs?: number; fresh?: boolean},
+  ): Promise<MiniappAuthToken | null> {
     // Core owns miniapp-backend token minting. A Runtime-only deployment has
     // no such capability, so fail once instead of entering the retry loop.
     if (!cloudClientService.hasCore()) return null
@@ -1733,15 +1766,31 @@ class LocalMiniappRuntime {
     }
   }
 
-  private async refreshMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+  private async refreshMiniappAuth(
+    packageName: string,
+    opts?: {minTtlMs?: number; fresh?: boolean},
+  ): Promise<MiniappAuthToken | null> {
+    const session = this.connectedApps.get(packageName)?.authSession
     const auth = await this.requestMiniappAuth(packageName, opts)
     if (!auth) return null
+    // The miniapp that asked may have reconnected or been replaced while the mint was out. Its successor has
+    // its own token on the way, so this one is neither delivered nor handed back to a requester that could be
+    // that successor: the SDK would apply it over the newer token.
+    if (!this.currentAuthApp(packageName, session)) {
+      throw new Error("The miniapp reconnected or stopped while its auth token was being refreshed")
+    }
     this.scheduleMiniappAuthRefresh(packageName, auth)
     this.sendToMiniapp(packageName, {
       type: MiniappResponseType.AUTH_UPDATE,
       auth,
     })
     return auth
+  }
+
+  /** The app registered under `packageName`, if it is still in the auth session a token request started under. */
+  private currentAuthApp(packageName: string, session: number | undefined): ConnectedMiniapp | undefined {
+    const app = this.connectedApps.get(packageName)
+    return app && app.authSession === session ? app : undefined
   }
 
   private authRefreshOptions(payload: Record<string, unknown>): {minTtlMs?: number} | undefined {
@@ -1756,13 +1805,34 @@ class LocalMiniappRuntime {
     this.clearMiniappAuthRefresh(packageName)
 
     const refreshAt = auth.expiresAt - MINIAPP_AUTH_REFRESH_HEADROOM_MS
-    const delay = Math.max(MINIAPP_AUTH_REFRESH_MIN_DELAY_MS, refreshAt - Date.now())
+    this.armMiniappAuthRefresh(packageName, Math.max(MINIAPP_AUTH_REFRESH_MIN_DELAY_MS, refreshAt - Date.now()), 0)
+  }
+
+  /**
+   * Arm the refresh timer. A refresh that fails (Core or the network is down at that moment) arms it again with the
+   * same backoff as the first token's delivery, until a new token lands, the miniapp reconnects or it stops; the
+   * miniapp must not be left holding a token that runs out.
+   */
+  private armMiniappAuthRefresh(packageName: string, delay: number, attempt: number): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+    const session = app.authSession
     app.authRefreshTimerId = BgTimer.setTimeout(() => {
-      const current = this.connectedApps.get(packageName)
+      const current = this.currentAuthApp(packageName, session)
       if (!current) return
       current.authRefreshTimerId = null
-      void this.refreshMiniappAuth(packageName).catch((err) => {
+      // Fresh: the cached token is the one being replaced and has no more than the headroom left, so asking
+      // for it again would hand the miniapp the same token and re-arm this timer for the minimum delay.
+      void this.refreshMiniappAuth(packageName, {fresh: true}).catch((err) => {
         console.warn(`${LOG_TAG}: miniapp auth refresh failed for ${packageName}: ${(err as Error)?.message ?? err}`)
+        // Nothing else (a foreground refresh, a miniapp request) has armed the timer in the meantime.
+        const stillCurrent = this.currentAuthApp(packageName, session)
+        if (!stillCurrent || stillCurrent.authRefreshTimerId !== null) return
+        this.armMiniappAuthRefresh(
+          packageName,
+          Math.min(MINIAPP_AUTH_RETRY_MAX_MS, MINIAPP_AUTH_RETRY_BASE_MS * 2 ** attempt),
+          attempt + 1,
+        )
       })
     }, delay)
   }
@@ -1779,13 +1849,19 @@ class LocalMiniappRuntime {
    * Deliver the miniapp's FIRST auth token, retrying until it lands. Called from
    * {@link handleConnect} when the initial mint didn't resolve in the CONNECT_ACK
    * window. `inFlight` lets attempt 0 reuse the mint the handshake already
-   * started (avoids a redundant duplicate request); later attempts mint fresh.
+   * started (avoids a redundant duplicate request); that request is fresh (see
+   * {@link handleConnect}). Later attempts take the default, cache-first path: a
+   * still-valid cached token reaches the miniapp at once while Core is
+   * unreachable, and with no usable cached token the default path mints. The
+   * foreground edge and the scheduled refresh are fresh and pick up anything
+   * newer.
    *
    * A `null` result means auth is fundamentally unavailable (no miniappAuth hook)
    * — permanent, so we do NOT retry. A REJECTION means a transient failure
    * (typically the cloud client isn't connection-ready yet) — retry with backoff.
-   * Either way we bail if the app has since disconnected or already got a token
-   * (e.g. via {@link redriveMiniappAuthDelivery} on cloud-connect).
+   * Either way we bail if the app has since disconnected, reconnected (a later CONNECT
+   * delivers its own token; see {@link ConnectedMiniapp.authSession}) or already got a
+   * token (e.g. via {@link redriveMiniappAuthDelivery} on cloud-connect).
    */
   private deliverInitialMiniappAuth(
     packageName: string,
@@ -1794,11 +1870,15 @@ class LocalMiniappRuntime {
   ): void {
     const app = this.connectedApps.get(packageName)
     if (!app || app.authDelivered) return
+    const session = app.authSession
+    app.authRequestPending = true
     const mint = inFlight ?? this.requestMiniappAuth(packageName)
     void mint
       .then((auth) => {
-        const current = this.connectedApps.get(packageName)
-        if (!current || current.authDelivered) return
+        const current = this.currentAuthApp(packageName, session)
+        if (!current) return
+        current.authRequestPending = false
+        if (current.authDelivered) return
         if (!auth) return // no auth hook — permanent, don't spin
         current.authDelivered = true
         this.clearMiniappAuthDeliveryRetry(packageName)
@@ -1811,6 +1891,10 @@ class LocalMiniappRuntime {
             (err as Error)?.message ?? err
           }`,
         )
+        // A later CONNECT (or a replacement) owns its own delivery and retries.
+        const current = this.currentAuthApp(packageName, session)
+        if (!current) return
+        current.authRequestPending = false
         this.scheduleInitialMiniappAuthRetry(packageName, attempt)
       })
   }
@@ -1844,7 +1928,7 @@ class LocalMiniappRuntime {
    */
   private redriveMiniappAuthDelivery(): void {
     for (const [packageName, app] of this.connectedApps) {
-      if (app.authDelivered) continue
+      if (app.authDelivered || app.authRequestPending) continue
       // Only apps that finished their CONNECT handshake are in the mint-retry
       // state; skip anything still mid-handshake (handleConnect owns that).
       if (!this.handshookApps.has(packageName)) continue
@@ -6443,7 +6527,12 @@ class LocalMiniappRuntime {
   /** Packages a Store request is installing or uninstalling: one operation per package. */
   private storeMutationsInFlight = new Set<string>()
   /** Bumped by cleanup(): a Store install requested before sign-out or a deployment switch never activates. */
-  private storeSessionEpoch = 0
+  private installSessionEpoch = 0
+
+  /** Changes at cleanup: an install started earlier belongs to the ended session. */
+  public installSession(): number {
+    return this.installSessionEpoch
+  }
 
   private interopApps(): ClientApp[] {
     return useAppStatusStore.getState().apps
@@ -6688,7 +6777,8 @@ class LocalMiniappRuntime {
     return false
   }
 
-  private currentInstallCompatibilityPolicy(): MiniappCompatibilityPolicy | null {
+  /** The host's compatibility policy for installs and updates, or null until configured. */
+  public currentInstallCompatibilityPolicy(): MiniappCompatibilityPolicy | null {
     const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
     if (!hostVersion || !supportedMiniappSdkRange) return null
     const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
@@ -6717,7 +6807,7 @@ class LocalMiniappRuntime {
   }
 
   /** A QR-selected build or snapshot is the user's choice; automatic updates leave it alone. */
-  private hasDevelopmentSelection(packageName: string): boolean {
+  public hasDevelopmentSelection(packageName: string): boolean {
     return (
       this.interopApps().some((app) => app.packageName === packageName && app.isMiniappDev) ||
       getDevAppRecords().some((record) => record.packageName === packageName) ||
@@ -6732,7 +6822,7 @@ class LocalMiniappRuntime {
   ): Promise<void> {
     const target = typeof payload.packageName === "string" ? payload.packageName.trim() : undefined
     if (!this.requireHostTrustedStore(storePackageName, requestId, "install", target)) return
-    const sessionEpoch = this.storeSessionEpoch
+    const sessionEpoch = this.installSessionEpoch
     const fail = (code: MiniappErrorCode, message: string) => {
       this.sendResult(storePackageName, requestId, false, undefined, {code, message})
       this.auditInterop({caller: storePackageName, op: "install", target, ok: false, errorCode: code})
@@ -6824,7 +6914,7 @@ class LocalMiniappRuntime {
         compatibilityPolicy,
         onlyIfStopped,
         askIfRunning,
-        isCancelled: () => sessionEpoch !== this.storeSessionEpoch,
+        isCancelled: () => sessionEpoch !== this.installSessionEpoch,
         beforeActivate: () => {
           if (onlyIfStopped && this.hasDevelopmentSelection(target)) {
             throw new Error(`${target} uses a manually selected build`)
@@ -7325,9 +7415,9 @@ class LocalMiniappRuntime {
 
   public cleanup(): void {
     console.log(`${LOG_TAG}: cleanup()`)
-    // Store installs already in flight belong to the ending session: they must
+    // Installs already in flight belong to the ending session: they must
     // not activate afterwards, and their open update prompts close unanswered.
-    this.storeSessionEpoch += 1
+    this.installSessionEpoch += 1
     dismissRunningUpdatePrompts()
     this.visibilityUnsubscribe?.()
     this.visibilityUnsubscribe = null

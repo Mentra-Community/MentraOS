@@ -38,6 +38,7 @@ import {startCore, type CoreHandle} from "../packages/core/src/index"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {EnterpriseOrgModel} from "../packages/core/src/models/enterprise-org.model"
 import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
+import {LicenseModel} from "../packages/core/src/models/license.model"
 import {SigninIdentityModel} from "../packages/core/src/models/signin-identity.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
@@ -50,6 +51,8 @@ import {createSession} from "../packages/core/src/services/session.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {resetPortalSigninCaches} from "../packages/core/src/services/signin/portal-signin.service"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
+import {ensureWorkspace} from "../packages/core/src/services/workspaces/automatic-workspace.service"
+import {listChanges} from "../packages/core/src/services/workspaces/audit.service"
 import {validateCredentialToken} from "../packages/core/src/services/workspaces/credential.service"
 import {
   claimLegacyIdentities,
@@ -113,6 +116,7 @@ const CLEANED = [
   AccessCredentialModel,
   EnterpriseOrgModel,
   LegacyBrowserIdentityModel,
+  LicenseModel,
   SigninIdentityModel,
   UserModel,
   WorkspaceAuditCounterModel,
@@ -594,6 +598,128 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
     await UserModel.create({mentraUserId: "mu_PO_DELETED", tenantId: "t_po", tenantUserId: "po", email: "po@studio.example", supportTelemetryDeletedAt: new Date()})
     await LegacyBrowserIdentityModel.updateOne({workosUserId: "user_01PO"}, {$set: {claimedAt: new Date(), claimedBy: "mu_PO_DELETED"}})
     expect(await countActiveOwners("ws_owners")).toBe(0)
+  })
+
+  describe("an empty automatic workspace gives way to the claim", () => {
+    /** A claimable person (`sub`, email `<sub>@studio.example`) who holds their automatic workspace and an imported membership in `ws_imported`. */
+    async function claimant(sub: string) {
+      const mentraUserId = await mentraUser(sub)
+      const email = `${sub}@studio.example`
+      const automaticId = (
+        await ensureWorkspace({kind: "user", mentraUserId, email, emailVerified: true, isOrganizationAdmin: false})
+      ).workspace.workspaceId
+      await seedWorkspace("ws_imported")
+      const pending = await seedPending("ws_imported", `user_${sub}`, "developer")
+      await seedIdentity(`user_${sub}`, email)
+      return {mentraUserId, email, automaticId, pending}
+    }
+
+    const statusOf = async (workspaceId: string) => (await WorkspaceModel.findOne({workspaceId}).lean())!.status
+
+    test("claiming deletes the person's empty automatic workspace in the claim's transaction and records why", async () => {
+      const {mentraUserId, email, automaticId, pending} = await claimant("gives-way")
+
+      await claimLegacyIdentities({mentraUserId, email, emailVerified: true})
+
+      expect(await membership(pending)).toMatchObject({mentraUserId, pendingWorkosUserId: null, status: "active"})
+      expect(await statusOf(automaticId)).toBe("deleted")
+      expect(await WorkspaceMembershipModel.countDocuments({mentraUserId, status: "active"})).toBe(1)
+      const deleted = (await WorkspaceAuditEventModel.findOne({workspaceId: automaticId, action: "workspace.deleted"}).lean())!
+      expect(deleted).toMatchObject({
+        actor: {kind: "system"},
+        before: {status: "active"},
+        after: {status: "deleted", reason: "joined_another_workspace"},
+      })
+      const feed = (await listChanges({})).events
+      expect(feed.filter(e => e.workspaceId === automaticId).map(e => e.action)).toEqual([
+        "workspace.created",
+        "workspace.deleted",
+      ])
+      expect(feed.some(e => e.action === "membership.claimed" && e.workspaceId === "ws_imported")).toBe(true)
+    })
+
+    test("a failure after the yield rolls the whole claim back", async () => {
+      const {mentraUserId, email, automaticId, pending} = await claimant("rolled-back")
+      const stamp = spyOn(AccessCredentialModel, "updateMany").mockRejectedValueOnce(new Error("forced failure"))
+      try {
+        await expect(claimLegacyIdentities({mentraUserId, email, emailVerified: true})).rejects.toThrow("forced failure")
+      } finally {
+        stamp.mockRestore()
+      }
+
+      expect(await statusOf(automaticId)).toBe("active")
+      expect(await membership(pending)).toMatchObject({mentraUserId: null, pendingWorkosUserId: "user_rolled-back"})
+      expect(await identity("user_rolled-back")).toMatchObject({claimedAt: null, claimedBy: null})
+      expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.deleted"})).toBe(0)
+    })
+
+    test("a workspace that holds anything is kept, and the claim goes through", async () => {
+      const holds: Array<[string, (workspaceId: string, creator: string) => Promise<unknown>]> = [
+        ["a second member", async ws =>
+          WorkspaceMembershipModel.create(
+            membershipRow({membershipId: "wm_second", workspaceId: ws, mentraUserId: "mu_second", role: "member", status: "active", startedAt: STARTED}),
+          )],
+        ["a key", async (ws, creator) => seedKey(ws, creator)],
+        ["a license", async ws =>
+          LicenseModel.create({
+            _id: `01LICENSE${ulid()}`,
+            owner: {type: "workspace", workspaceId: ws},
+            product: "mentra.call.unlimited",
+            quantity: 1,
+            validFrom: new Date(Date.now() - 60_000),
+            paidThrough: new Date(Date.now() + 86_400_000),
+            revision: 1,
+          })],
+      ]
+      let n = 0
+      for (const [what, hold] of holds) {
+        await Promise.all(CLEANED.map(model => model.deleteMany({})))
+        resetLegacyIdentityClaimChecks()
+        const {mentraUserId, email, automaticId, pending} = await claimant(`kept-${n++}`)
+        const creator = (await WorkspaceMembershipModel.findOne({workspaceId: automaticId, mentraUserId}).lean())!.membershipId
+        await hold(automaticId, creator)
+
+        await claimLegacyIdentities({mentraUserId, email, emailVerified: true})
+
+        expect({what, status: await statusOf(automaticId)}).toEqual({what, status: "active"})
+        expect(await membership(pending)).toMatchObject({mentraUserId})
+        expect(await WorkspaceMembershipModel.countDocuments({mentraUserId, status: "active"})).toBe(2)
+      }
+    })
+
+    test("a claim that only merges into a workspace the person is in, or one made with createWorkspace, deletes nothing", async () => {
+      const mentraUserId = await mentraUser("merge-only")
+      const email = "merge-only@studio.example"
+      const automaticId = (
+        await ensureWorkspace({kind: "user", mentraUserId, email, emailVerified: true, isOrganizationAdmin: false})
+      ).workspace.workspaceId
+      // The imported membership is in the automatic workspace itself, so the person gains nothing elsewhere.
+      const pending = await seedPending(automaticId, "user_merge-only", "member")
+      await seedIdentity("user_merge-only", email)
+
+      await claimLegacyIdentities({mentraUserId, email, emailVerified: true})
+
+      expect(await membership(pending)).toMatchObject({status: "ended", endedReason: "removed"})
+      expect(await statusOf(automaticId)).toBe("active")
+      expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.deleted"})).toBe(0)
+    })
+
+    test("someone else's automatic workspace, where the person is a Member, is never deleted", async () => {
+      const {mentraUserId, email, automaticId} = await claimant("not-theirs")
+      const hostId = await mentraUser("host")
+      const hostWs = (
+        await ensureWorkspace({kind: "user", mentraUserId: hostId, email: "host@studio.example", emailVerified: true, isOrganizationAdmin: false})
+      ).workspace.workspaceId
+      await WorkspaceMembershipModel.create(
+        membershipRow({membershipId: "wm_guest", workspaceId: hostWs, mentraUserId, role: "member", status: "active", startedAt: STARTED}),
+      )
+
+      await claimLegacyIdentities({mentraUserId, email, emailVerified: true})
+
+      expect(await statusOf(hostWs)).toBe("active")
+      expect(await statusOf(automaticId)).toBe("deleted")
+      expect(await membership("wm_guest")).toMatchObject({status: "active", role: "member"})
+    })
   })
 
   test("the phone token exchange claims nothing, and its token claims nothing at Core's API", async () => {

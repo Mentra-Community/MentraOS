@@ -9,7 +9,10 @@ on:
       release_plan_artifact:
         required: true
         type: string
-      starter_kit_result_artifact:
+      ota_manifest_url:
+        required: true
+        type: string
+      ota_manifest_sha256:
         required: true
         type: string
       testflight_group:
@@ -43,7 +46,6 @@ permissions:
 env:
   CI: true
   GSTREAMER_VERSION: 1.28.2
-  STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
   EXAMPLE_APP_ID: "6792839366"
   EXAMPLE_BUNDLE_ID: com.mentra.bluetoothsdkexample
   APPLE_TEAM_ID: T5XXXL6N36
@@ -132,11 +134,6 @@ jobs:
           name: ${{ inputs.release_plan_artifact }}
           path: release-input/plan
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ inputs.starter_kit_result_artifact }}
-          path: release-input/starter-kit
-
       - name: Resolve exact example release coordinates
         id: coordinates
         env:
@@ -144,15 +141,10 @@ jobs:
         run: |
           set -euo pipefail
           plan=release-input/plan/release-plan.json
-          starter=$(find release-input/starter-kit -type f -name 'starter-kit-release-*.json' -print -quit)
-          test -n "$starter"
           release_set_id=$(jq -er .releaseSetId "$plan")
           release_identity=$(jq -er .releaseIdentity "$plan")
-          source_commit=$(jq -er .sourceCommit "$plan")
-          [[ "$(jq -er .releaseSetId "$starter")" == "$release_set_id" ]]
-          [[ "$(jq -er .releaseIdentity "$starter")" == "$release_identity" ]]
-          [[ "$(jq -er .mentraos.sourceCommit "$starter")" == "$source_commit" ]]
-          release_commit=$(jq -er '.starterKit.releaseCommit | select(test("^[0-9a-f]{40}$"))' "$starter")
+          [[ "$(jq -er .sourceCommit "$plan")" == "${{ inputs.source_commit }}" ]]
+          [[ "$(git rev-parse HEAD)" == "${{ inputs.source_commit }}" ]]
           expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" elif .channel == "production" then "Mentra Bluetooth Example" else error("unsupported channel") end' "$plan")
           [[ "$TESTFLIGHT_GROUP" == "$expected_group" ]]
           expected_audience=$(jq -er 'if .channel == "dev" then "internal" else "external" end' "$plan")
@@ -166,8 +158,6 @@ jobs:
           {
             echo "release_set_id=$release_set_id"
             echo "release_identity=$release_identity"
-            echo "starter_result=$starter"
-            echo "starter_release_commit=$release_commit"
             echo "marketing_version=$(jq -er .native.marketingVersion "$plan")"
             echo "build_number=$build_number"
             echo "upload_artifact=coordinated-example-testflight-upload-$release_set_id"
@@ -210,29 +200,6 @@ jobs:
           set -euo pipefail
           [[ "${{ steps.app-store.outputs.app_id }}" == "$EXAMPLE_APP_ID" ]]
 
-      - name: Create Starter Kit checkout token
-        id: starter-kit-app-token
-        if: steps.app-store.outputs.exists != 'true' && vars.STARTER_KIT_COORDINATOR_APP_ID != ''
-        continue-on-error: true
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
-          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
-          owner: Mentra-Community
-          repositories: |
-            MentraOS
-            Mentra-Bluetooth-SDK-Starter-Kit
-          permission-contents: read
-
-      - name: Checkout the exact validated Starter Kit source
-        if: steps.app-store.outputs.exists != 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.STARTER_KIT_REPOSITORY }}
-          ref: ${{ steps.coordinates.outputs.starter_release_commit }}
-          token: ${{ steps.starter-kit-app-token.outputs.token || secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
-          path: starter-kit
-
       - name: Set up Ruby signing tools
         if: steps.app-store.outputs.exists != 'true'
         uses: ruby/setup-ruby@v1
@@ -250,29 +217,46 @@ jobs:
         with:
           bun-version: "1.3.11"
 
+      # The example builds from examples/bluetooth at the release source
+      # against the SDK source, like the release's other example builds.
       - name: Install React Native example dependencies
         if: steps.app-store.outputs.exists != 'true'
-        working-directory: starter-kit/examples/react-native
-        env:
-          EXPECTED_VERSION: ${{ steps.coordinates.outputs.marketing_version }}
+        working-directory: examples
         run: |
           set -euo pipefail
           if [[ "$(jq -er .channel "$GITHUB_WORKSPACE/release-input/plan/release-plan.json")" == "production" ]]; then
-            [[ "$(jq -er .expo.ios.bundleIdentifier app.json)" == "$EXAMPLE_BUNDLE_ID" ]]
-            [[ "$(jq -er .expo.android.package app.json)" == "$EXAMPLE_BUNDLE_ID" ]]
-            [[ "$(jq -er '.dependencies["@mentra/bluetooth-sdk"]' package.json)" == "$EXPECTED_VERSION" ]]
-            [[ "$(jq -er '.dependencies["@mentra/engine"]' package.json)" == "$EXPECTED_VERSION" ]]
+            [[ "$(jq -er .expo.ios.bundleIdentifier bluetooth/react-native/app.json)" == "$EXAMPLE_BUNDLE_ID" ]]
+            [[ "$(jq -er .expo.android.package bluetooth/react-native/app.json)" == "$EXAMPLE_BUNDLE_ID" ]]
           fi
           bun install --frozen-lockfile
 
+      # The tooling comes from the workflow revision: the frozen source of a
+      # production example may predate the stamping action.
+      - name: Check out the release tooling
+        if: steps.app-store.outputs.exists != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          sparse-checkout: .github/actions
+          sparse-checkout-cone-mode: false
+
+      - name: Stamp the release into the SDK and Engine
+        if: steps.app-store.outputs.exists != 'true'
+        uses: ./release-tooling/.github/actions/stamp-release
+        with:
+          plan: release-input/plan/release-plan.json
+          ota-manifest-url: ${{ inputs.ota_manifest_url }}
+          ota-manifest-sha256: ${{ inputs.ota_manifest_sha256 }}
+
       - name: Install GStreamer iOS SDK
         if: steps.app-store.outputs.exists != 'true'
-        working-directory: starter-kit/examples/react-native
+        working-directory: examples/bluetooth/react-native
         run: bash modules/mentra-video-stream-receiver/scripts/setup-gstreamer-ios.sh
 
       - name: Generate the React Native iOS project
         if: steps.app-store.outputs.exists != 'true'
-        working-directory: starter-kit/examples/react-native
+        working-directory: examples/bluetooth/react-native
         env:
           MARKETING_VERSION: ${{ steps.coordinates.outputs.marketing_version }}
           BUILD_NUMBER: ${{ steps.coordinates.outputs.build_number }}
@@ -383,7 +367,7 @@ jobs:
       - name: Archive and export the signed React Native example
         if: steps.app-store.outputs.exists != 'true'
         id: ipa
-        working-directory: starter-kit/examples/react-native
+        working-directory: examples/bluetooth/react-native
         env:
           ASC_KEY_PATH: ${{ steps.asc.outputs.key_path }}
           ASC_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
@@ -598,11 +582,6 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ inputs.starter_kit_result_artifact }}
-          path: release-input/starter-kit
-
-      - uses: actions/download-artifact@v4
-        with:
           name: ${{ needs.ios.outputs.upload_artifact }}
           path: release-input/upload
 
@@ -613,13 +592,9 @@ jobs:
         run: |
           set -euo pipefail
           plan=release-input/plan/release-plan.json
-          starter=$(find release-input/starter-kit -type f -name 'starter-kit-release-*.json' -print -quit)
-          test -n "$starter"
           release_set_id=$(jq -er .releaseSetId "$plan")
           release_identity=$(jq -er .releaseIdentity "$plan")
-          [[ "$(jq -er .releaseSetId "$starter")" == "$release_set_id" ]]
-          [[ "$(jq -er .releaseIdentity "$starter")" == "$release_identity" ]]
-          [[ "$(jq -er .mentraos.sourceCommit "$starter")" == "$(jq -er .sourceCommit "$plan")" ]]
+          [[ "$(jq -er .sourceCommit "$plan")" == "${{ inputs.source_commit }}" ]]
           expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" elif .channel == "production" then "Mentra Bluetooth Example" else error("unsupported channel") end' "$plan")
           [[ "$TESTFLIGHT_GROUP" == "$expected_group" ]]
           expected_audience=$(jq -er 'if .channel == "dev" then "internal" else "external" end' "$plan")
@@ -632,7 +607,6 @@ jobs:
           fi
           {
             echo "release_identity=$release_identity"
-            echo "starter_result=$starter"
             echo "marketing_version=$(jq -er .native.marketingVersion "$plan")"
             echo "build_number=$build_number"
             echo "result_artifact=coordinated-example-testflight-$release_set_id"
@@ -716,7 +690,6 @@ jobs:
           mkdir -p release-output
           node release-tooling/.github/scripts/coordinated-example-testflight-record.mjs \
             --plan release-input/plan/release-plan.json \
-            --starter-kit "${{ steps.coordinates.outputs.starter_result }}" \
             --app-id "$app_id" \
             --bundle-id "$EXAMPLE_BUNDLE_ID" \
             --build-id "$build_id" \

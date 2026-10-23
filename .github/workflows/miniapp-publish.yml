@@ -1,0 +1,161 @@
+name: Publish first-party miniapps
+
+# Builds the first-party miniapps kept in miniapps/ on every change. Each branch
+# publishes them to its own static host, where the Mentra App updates them from
+# <host>/<packageName>/miniapp.json: dev to miniapps.dev.mentraglass.com,
+# staging to miniapps.staging.mentraglass.com, and main to
+# miniapps.mentraglass.com. A version a host already has is skipped, so
+# publishing happens when a miniapp.json version is bumped.
+
+on:
+  pull_request:
+    paths:
+      - "miniapps/captions/**"
+      - "miniapps/translation/**"
+      - "miniapps/teleprompter/**"
+      - "miniapps/navigation/**"
+      - "miniapps/recorder/**"
+      - "sdk/miniapp-cli/**"
+      - "mobile/modules/miniapp/**"
+      - ".github/scripts/publish-miniapp-r2*"
+      - ".github/workflows/miniapp-publish.yml"
+  push:
+    branches: [dev, staging, main]
+    paths:
+      - "miniapps/captions/**"
+      - "miniapps/translation/**"
+      - "miniapps/teleprompter/**"
+      - "miniapps/navigation/**"
+      - "miniapps/recorder/**"
+      - "sdk/miniapp-cli/**"
+      - "mobile/modules/miniapp/**"
+      - ".github/scripts/publish-miniapp-r2*"
+      - ".github/workflows/miniapp-publish.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: miniapp-publish-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    name: Validate ${{ matrix.miniapp }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        miniapp: [captions, translation, teleprompter, navigation, recorder]
+    env:
+      # Public Mapbox tiles token baked into the Maps UI bundle.
+      PUBLIC_MAPBOX_TOKEN: ${{ vars.PUBLIC_MAPBOX_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Build the Mentra Miniapp SDK
+        working-directory: mobile/modules/miniapp
+        run: bun run build
+      - name: Typecheck
+        working-directory: miniapps/${{ matrix.miniapp }}
+        run: bun run typecheck
+      - name: Test
+        if: matrix.miniapp == 'navigation'
+        working-directory: miniapps/${{ matrix.miniapp }}
+        run: bun run test
+      - name: Production pack
+        working-directory: miniapps/${{ matrix.miniapp }}
+        run: NODE_ENV=production bun run pack
+      - name: Check the bundle matches its miniapp.json
+        working-directory: miniapps/${{ matrix.miniapp }}
+        run: |
+          package=$(jq -r .packageName miniapp.json)
+          version=$(jq -r .version miniapp.json)
+          zip="build/$package-$version.zip"
+          test -f "$zip" || { echo "::error::pack did not produce $zip"; exit 1; }
+          unzip -p "$zip" miniapp.json | jq -e --arg p "$package" --arg v "$version" '.packageName == $p and .version == $v' >/dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: miniapp-${{ matrix.miniapp }}-${{ github.sha }}
+          path: miniapps/${{ matrix.miniapp }}/build/*.zip
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+
+  publisher:
+    name: Test the publisher
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun test ./.github/scripts/publish-miniapp-r2.test.ts
+
+  hosts:
+    name: Choose this branch's host
+    if: github.event_name != 'pull_request'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    outputs:
+      hosts: ${{ steps.choose.outputs.hosts }}
+    steps:
+      - id: choose
+        env:
+          BRANCH: ${{ github.ref_name }}
+          # Each host, the branch that publishes to it, its R2 bucket, and the GitHub environment holding
+          # its credentials, which only that branch may deploy to.
+          HOSTS: >-
+            [
+            {"name": "prod", "branch": "main", "bucket": "mentra-miniapps-prod", "url": "https://miniapps.mentraglass.com/", "environment": "miniapp-store-production"},
+            {"name": "staging", "branch": "staging", "bucket": "mentra-miniapps-staging", "url": "https://miniapps.staging.mentraglass.com/", "environment": "miniapp-store-staging"},
+            {"name": "dev", "branch": "dev", "bucket": "mentra-miniapps-dev", "url": "https://miniapps.dev.mentraglass.com/", "environment": "miniapp-store-dev"}
+            ]
+        run: |
+          hosts=$(jq -c --arg branch "$BRANCH" 'map(select(.branch == $branch))' <<<"$HOSTS")
+          echo "hosts=$hosts" >> "$GITHUB_OUTPUT"
+          if [[ "$hosts" == "[]" ]]; then echo "$BRANCH publishes to no host."; fi
+
+  publish:
+    name: Publish ${{ matrix.miniapp }} to ${{ matrix.host.name }}
+    needs: [validate, publisher, hosts]
+    if: needs.hosts.outputs.hosts != '[]'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # The host's credentials are in its GitHub environment, which only the branch that publishes to it may
+    # use, so another branch can neither publish there nor read them.
+    environment: ${{ matrix.host.environment }}
+    strategy:
+      fail-fast: false
+      matrix:
+        host: ${{ fromJSON(needs.hosts.outputs.hosts) }}
+        miniapp: [captions, translation, teleprompter, navigation, recorder]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: miniapp-${{ matrix.miniapp }}-${{ github.sha }}
+          path: build
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Publish
+        env:
+          MINIAPPS_R2_ENDPOINT: ${{ secrets.MINIAPPS_R2_ENDPOINT }}
+          MINIAPPS_R2_ACCESS_KEY_ID: ${{ secrets.MINIAPPS_R2_ACCESS_KEY_ID }}
+          MINIAPPS_R2_SECRET_ACCESS_KEY: ${{ secrets.MINIAPPS_R2_SECRET_ACCESS_KEY }}
+          MINIAPPS_R2_BUCKET: ${{ matrix.host.bucket }}
+          MINIAPPS_PUBLIC_URL: ${{ matrix.host.url }}
+        run: |
+          zips=(build/*.zip)
+          if [[ ${#zips[@]} -ne 1 ]]; then echo "::error::Expected one ZIP, found ${#zips[@]}"; exit 1; fi
+          bun .github/scripts/publish-miniapp-r2.ts "${zips[0]}"

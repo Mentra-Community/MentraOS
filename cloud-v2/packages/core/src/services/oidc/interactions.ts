@@ -5,8 +5,9 @@
  * hand-off, or the customer's identity provider), the sign-in ends the same
  * way:
  *  - the person's sign-in identity is recorded (`signin_identities`): source,
- *    subject, email and its verification, name. The provider's ID tokens and
- *    Core's view of the person's access tokens read it;
+ *    subject, email and its verification, and name, the last one a sign-in
+ *    carried. The provider's ID tokens and Core's view of the person's access
+ *    tokens read it;
  *  - the hooks registered with `registerAfterSignInHook` run (a throwing hook
  *    is logged and never blocks sign-in);
  *  - the provider interaction is finished with the person as its login.
@@ -44,8 +45,14 @@ export function registerAfterSignInHook(hook: AfterSignInHook): void {
   if (!afterSignInHooks.includes(hook)) afterSignInHooks.push(hook)
 }
 
-/** Record the person's sign-in identity and run the after-sign-in hooks. */
+/**
+ * Record the person's sign-in identity and run the after-sign-in hooks. What the sign-in carries replaces
+ * what Core had, except a name it lacks: a sign-in with no name, or a blank one (a source that sends none),
+ * keeps the last name a sign-in carried, so one such sign-in does not erase it. A first sign-in without a
+ * name records none.
+ */
 export async function recordSignIn(person: SignedInPerson): Promise<void> {
+  const named = typeof person.name === "string" && person.name.trim().length > 0
   await SigninIdentityModel.updateOne(
     {mentraUserId: person.mentraUserId},
     {
@@ -55,9 +62,10 @@ export async function recordSignIn(person: SignedInPerson): Promise<void> {
         subject: person.subject,
         email: person.email,
         emailVerified: person.emailVerified,
-        name: person.name,
+        ...(named ? {name: person.name} : {}),
         signedInAt: person.authTime,
       },
+      ...(named ? {} : {$setOnInsert: {name: null}}),
     },
     {upsert: true},
   )

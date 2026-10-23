@@ -277,6 +277,8 @@ describe("GET /api/admin/me", () => {
       workspaces: [],
       // This suite sets no Fleet URL.
       fleet: {installed: false},
+      // No billing and no license.
+      licenses: {available: false},
     }
 
     const bySession = await call("GET", "/api/admin/me", {as: admin})
@@ -338,6 +340,8 @@ describe("GET /api/admin/me", () => {
       workspaces: [],
       // This suite sets no Fleet URL.
       fleet: {installed: false},
+      // No billing and no license.
+      licenses: {available: false},
     })
     expect(reply.text).not.toContain(key.token)
   })
@@ -356,6 +360,8 @@ describe("GET /api/admin/me", () => {
       workspaces: [],
       // This suite sets no Fleet URL.
       fleet: {installed: false},
+      // No billing and no license.
+      licenses: {available: false},
     })
     expect(reply.text).not.toContain(ws.token)
   })

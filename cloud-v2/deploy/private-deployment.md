@@ -56,9 +56,11 @@ repository.
 | `CLOUD_CORE_OIDC_CLIENTS` | Public | The sign-in server's clients as JSON: the admin portal, with its callback on Core's origin. |
 | `CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET` | Secret | The admin portal's client secret at Core's sign-in server (at least 32 characters). |
 | `ENTRA_BROWSER_CLIENT_SECRET` (the name in `browser.clientSecretEnv`) | Secret | Core's sign-in server's client secret at the provider. |
-| `CLOUD_CORE_ENABLED_FEATURES` | Public | Optional. The first-party features this deployment has bought, as comma-separated `feature[:package+package]` entries. Names are case-sensitive; Fleet needs `fleet.managed`. Blank leaves a feature to its own settings. See [Fleet integration](../docs/fleet-integration.md). |
+| `CLOUD_CORE_ENABLED_FEATURES` | Public | Optional. The first-party features this deployment has bought, as comma-separated `feature[:package+package]` entries. Names are case-sensitive; Fleet needs `fleet.managed`. An entry with packages (`call.unlimited:com.mentra.call`) also grants that feature to every signed-in person, in those packages' miniapp tokens only. Blank leaves a feature to its own settings. See [Fleet integration](../docs/fleet-integration.md) and [Licenses](../docs/licenses.md#features-in-miniapp-tokens). |
 | `CLOUD_CORE_FLEET_URL` | Public | Optional. Fleet's base URL. Unset means Fleet is not installed. The size and time limits (`CLOUD_CORE_FLEET_MAX_BODY_BYTES`, `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`, `CLOUD_CORE_FLEET_MAX_ASSET_BYTES`, `CLOUD_CORE_FLEET_TIMEOUT_MS`) are in [Fleet integration](../docs/fleet-integration.md). |
 | `CLOUD_CORE_FLEET_SECRET` | Secret | Optional. The secret that signs what Core forwards to Fleet. Required when `CLOUD_CORE_FLEET_URL` is set. |
+| `CLOUD_CORE_BILLING_URL` | Public | Optional, hosted Core only: a Private Cloud leaves it unset, and billing is not installed. The billing portal module's base URL. See [Portal modules](../docs/portal-modules.md). |
+| `CLOUD_CORE_BILLING_SECRET` | Secret | Optional. The secret that signs what Core forwards to the billing module. Required when `CLOUD_CORE_BILLING_URL` is set. |
 
 Signing keys and the refresh pepper must survive upgrades. An Entra provider is
 configured explicitly:
@@ -296,6 +298,12 @@ and never accept an issuer or JWKS URL supplied by a client or token. A
 backend shared by Mentra Cloud and multiple Private Deployments needs an
 explicit issuer-to-JWKS trust list; that multi-Core helper is a later SDK
 addition, not a reason to produce customer-specific miniapp bundles.
+
+The verified session also carries the token's `features` claim, which
+`session.hasFeature("feature.key")` reads. A backend configured with this
+deployment's `jwksUrl` accepts tokens signed by that Core alone, so it honors
+only the features this Core minted; a token from a Mentra Cloud Core is refused
+before its features are read.
 
 Runtime requires exact feature/module agreement in both directions:
 `runtimeRealtimeSession` and `cloudSpeech` equal whether `realtime-audio` is

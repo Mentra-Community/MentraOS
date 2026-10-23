@@ -8,8 +8,8 @@ import {OWNS_MINIAPPS_HOLD_REASON, type WorkspaceDeletionHold} from "./types"
 export function describeDeletionHold(hold: WorkspaceDeletionHold): string {
   const count = typeof hold.count === "number" ? hold.count : undefined
   if (hold.service === "store" && hold.reason === OWNS_MINIAPPS_HOLD_REASON) {
-    if (count === 1) return "This workspace still owns 1 published miniapp. Delete it in the Developer Console first."
-    const owned = count === undefined ? "published miniapps" : `${count} published miniapps`
+    if (count === 1) return "This workspace still owns 1 miniapp. Delete it in the Developer Console first."
+    const owned = count === undefined ? "miniapps" : `${count} miniapps`
     return `This workspace still owns ${owned}. Delete them in the Developer Console first.`
   }
   const reason = hold.reason.replace(/_/g, " ")

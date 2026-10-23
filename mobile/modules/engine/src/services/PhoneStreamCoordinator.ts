@@ -399,6 +399,7 @@ export class PhoneStreamCoordinator {
         this.startLifecycle(streamId)
         return result
       } catch (err) {
+        if (isRequestTimeout(err)) await this.stopTimedOutPublisher(streamId)
         this.current = null
         throw err
       }
@@ -560,6 +561,7 @@ export class PhoneStreamCoordinator {
         this.attachLink()
         try {
           await entry.relay?.stop()
+          if (!entry.relay && isRequestTimeout(err)) await this.stopTimedOutPublisher(streamId)
           this.current = null
           await this.flushPendingBleStop()
           this.detachLinkIfIdle()
@@ -804,6 +806,26 @@ export class PhoneStreamCoordinator {
         this.fanout({streamId, source: "coordinator", status: "error", data: {reason: "cleanup_failed"}})
       }
     })
+  }
+
+  /**
+   * Stop the publisher of a start that timed out. The phone stopped waiting,
+   * but the glasses may still be starting it or retrying it through their
+   * reconnect backoff, holding the camera with nothing here tracking it. A stop
+   * that cannot be sent now, or fails, stays deferred: it goes out on the next
+   * reconnect, and every start flushes it before commanding a new publisher.
+   */
+  private async stopTimedOutPublisher(streamId: string): Promise<void> {
+    if (this.linkSource.isConnected()) {
+      try {
+        await BluetoothSdk.stopStream()
+        return
+      } catch (err) {
+        console.warn("[STREAM] stopStream after a start timeout failed; retrying it later:", err)
+      }
+    }
+    this.pendingBleStop = {streamId, generation: this.publisherGeneration}
+    this.attachLink()
   }
 
   private async flushPendingBleStop(): Promise<void> {
@@ -1109,6 +1131,11 @@ export class PhoneStreamCoordinator {
       this.detachLinkIfIdle()
     }
   }
+}
+
+/** The native SDK's code for a request the glasses never answered. */
+function isRequestTimeout(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as {code?: unknown}).code === "request_timeout"
 }
 
 function pickIngestUrl(p: ProvisionResult, preference?: "srt" | "whip" | "rtmp"): string {

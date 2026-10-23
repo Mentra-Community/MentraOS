@@ -36,6 +36,24 @@ export interface VerifiedMentraAuth {
   tokenId?: string;
   expiresAt?: number;
   issuedAt?: number;
+  /**
+   * The paid features Core granted this user for this miniapp when it minted
+   * the token, from the token's `features` claim. Empty when the claim is
+   * absent or malformed (not a list of strings): a malformed claim never grants
+   * a feature.
+   *
+   * The claim is honored from any key set this verifier trusts, because the
+   * token's signature is what vouches for it. By default that is every Mentra
+   * Core (prod, staging, dev and debug); a Private Cloud backend configured
+   * with its own JWKS URL honors only that Core. There is no feature setting.
+   */
+  features: string[];
+  /**
+   * True when {@link features} includes `feature` (an exact, case-sensitive
+   * match). Safe to destructure; it answers from the verified claim, whatever
+   * is later done to the `features` array.
+   */
+  hasFeature(feature: string): boolean;
   claims: jose.JWTPayload;
 }
 
@@ -154,6 +172,9 @@ export class MentraAuth {
       throw new MentraAuthError("miniapp token missing subject");
     }
 
+    const features = featuresClaim(payload.features);
+    const granted = new Set(features);
+
     return {
       mentraUserId: subject,
       tenantId: stringClaim(payload.tenantId),
@@ -162,6 +183,8 @@ export class MentraAuth {
       tokenId: stringClaim(payload.jti),
       expiresAt: typeof payload.exp === "number" ? payload.exp : undefined,
       issuedAt: typeof payload.iat === "number" ? payload.iat : undefined,
+      features,
+      hasFeature: (feature) => granted.has(feature),
       claims: payload,
     };
   }
@@ -362,6 +385,18 @@ function resolveIssuer(issuer?: string | string[]): string | string[] {
 function env(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value ? value : undefined;
+}
+
+/**
+ * The `features` claim as a list of keys. Core mints it as an array of strings;
+ * anything else (absent, not an array, or an array with a non-string entry) is
+ * read as no features rather than as a partial grant.
+ */
+function featuresClaim(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    return [];
+  }
+  return [...value];
 }
 
 function stringClaim(value: unknown): string | undefined {

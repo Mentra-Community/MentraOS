@@ -169,7 +169,7 @@ These commands are documented in detail in [ASG_CLIENT_API.md#rgb-led-control](.
 | `rgb_led_photo_flash` | White flash for photo capture (default 5 s).                                                            |
 | `rgb_led_video_solid` | Solid white for video recording (30 min internal duration; turned off explicitly when recording stops). |
 
-Each command responds with `<command>_response` on success or `rgb_led_control_error` on failure / unsupported hardware.
+Each command answers with one `rgb_led_control_response` that echoes the command's `requestId`, with `state: "success"` or `state: "error"` and an `errorCode` (see the [API reference](../ASG_CLIENT_API.md#rgb-led-control)).
 
 ## Camera LED behavior
 
@@ -222,7 +222,7 @@ In application code, prefer routing through the BLE command surface (so the phon
 - **MTK never claimed RGB authority** — RGB commands can still drive the LED,
   but ownership-sensitive BES output is no longer suppressed and can interfere.
   Check for `🚨 Sending RGB LED authority command:` in logcat.
-- **Hardware doesn't support RGB LEDs** — `RgbLedCommandHandler` returns an error response (`{"type": "rgb_led_control_error", "error": "RGB LED not supported on this device"}`) and short-circuits.
+- **Hardware doesn't support RGB LEDs** — `RgbLedCommandHandler` replies `{"type": "rgb_led_control_response", "state": "error", "errorCode": "device_not_supported"}` (with the command's `requestId`) and short-circuits.
 
 ## Logcat tags
 

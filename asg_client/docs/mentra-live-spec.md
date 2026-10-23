@@ -459,6 +459,12 @@ without the field get the phone's legacy behavior; the field first appearing rig
 an update from such a build is itself treated as a restart (that transition is the
 upgrade OTA completing).
 
+### Readiness exchange
+
+Each `phone_ready` carries a `readyId` that names one readiness exchange. The phone repeats the same `readyId` on every retry until a matching `glasses_ready` arrives. It starts a new exchange for a new BLE session, and when an `asg_client` restart calls for one.
+
+`asg_client` resets the phone transport once per exchange and echoes the `readyId` in `glasses_ready`. Copies the BES buffered while MTK booted, and retries after a lost reply, are answered without another reset. The phone acts only on the answer to the exchange it is waiting on, plus answers from a different `sid`. A phone that omits `readyId` gets a transport reset and a fresh answer for every `phone_ready`.
+
 ### Camera button photo flow
 
 1. User short-presses the camera button.

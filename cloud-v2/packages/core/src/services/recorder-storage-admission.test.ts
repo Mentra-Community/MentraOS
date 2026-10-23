@@ -4,7 +4,7 @@ import {recorderStorageAvailable, STORAGE_MARGIN_BYTES} from '../types/recorder-
 import {TestRequestModel} from '../models/test-request.model'
 import {TestHostStateModel} from '../models/test-host-state.model'
 import {requestInputDigest} from './test-request.service'
-import {ResourceReservationsService, type ResourceReservationRepository} from './resource-reservations.service'
+import {resourceReservationRepository, ResourceReservationsService, type ResourceReservationRepository} from './resource-reservations.service'
 import type {FleetResourceAdmission} from '../types/resource-reservations.types'
 import {sharedResourceWait, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait'
 const now=new Date('2026-10-15T12:00:00Z'),gib=1024**3,required={minimumAvailableBytes:7*gib}
@@ -64,6 +64,7 @@ test('job requirement derives from exact recording policy and preserves the exis
 })
 function admissionFixture(options:{reportRace?:boolean;missing?:boolean;offline?:boolean;selectionFailure?:boolean;exclusive?:boolean;exclusiveAnswerLost?:boolean;
  beforeStage?:(admission:FleetResourceAdmission)=>Promise<void>}={}) {
+ const clock=spyOn(Date,'now').mockReturnValue(now.getTime())
  const hosts=new Map<string,any>(['host','other'].map(hostId=>[hostId,{hostId,incarnation:'one',incarnationGeneration:1,sequence:1,receivedAt:now,resourceReservationVersion:0,resourceReservations:[],
  snapshot:{hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:now.toISOString(),lanes:['mac','android'].map(id=>({id,platform:'ios-on-mac',state:options.offline?'offline':'idle',dispatchMode:'automatic',resources:[{id:`${id}-rec`,kind:'recorder',storage:{...offer,poolId:`${hostId}:disk:1`}}]}))}}]))
  const requests=new Map<string,any>(), writes:any[]=[];let raced=false,selectionFailed=false
@@ -83,6 +84,12 @@ function admissionFixture(options:{reportRace?:boolean;missing?:boolean;offline?
   if(options.reportRace&&!raced){raced=true;host.sequence++;host.snapshot.sequence++;return null}
   if(query.resourceReservationVersion!==host.resourceReservationVersion||query.sequence!==host.sequence)return null
   const saved={...host,...update.$set,resourceReservationVersion:host.resourceReservationVersion+1};hosts.set(query.hostId,saved);return structuredClone(saved)}) as any)
+ const resourceGet=spyOn(resourceReservationRepository,'get').mockImplementation(async(hostId)=>read({hostId}) as any)
+ const resourceClaims=spyOn(resourceReservationRepository,'recorderClaims').mockImplementation(async(requestId)=>[...hosts.values()].flatMap(host=>
+  host.resourceReservations.filter((value:any)=>value.kind!=='exclusive'&&value.requestId===requestId)).map(value=>structuredClone(value)))
+ const resourceReplace=spyOn(resourceReservationRepository,'replace').mockImplementation(async(host,claims)=>Boolean(await hostSave({hostId:host.hostId,
+  incarnation:host.incarnation,incarnationGeneration:host.incarnationGeneration,sequence:host.sequence,resourceReservationVersion:host.resourceReservationVersion},
+  {$set:{resourceReservations:claims}}) as any))
  const find=spyOn(TestRequestModel.collection,'find').mockImplementation(((query:any)=>({limit(){return this},async toArray(){return query.requestId.$in.map((id:string)=>requests.get(id)).filter(Boolean)}})) as any)
  const save=spyOn(TestRequestModel.collection,'findOneAndUpdate').mockImplementation((async(query:any,update:any)=>{
   const request=requests.get(query.requestId)
@@ -116,7 +123,7 @@ function admissionFixture(options:{reportRace?:boolean;missing?:boolean;offline?
  const exclusive=spyOn(ResourceReservationsService.prototype,'reserveFleet').mockImplementation(async(...args)=>{
   exclusiveCalls.push(args[0]);return reserveFleet.call(resources,...args)
  })
- return {writes,requests,exclusiveCalls,resources,host:(hostId='host')=>hosts.get(hostId),restore(){first.mockRestore();read.mockRestore();hostSave.mockRestore();find.mockRestore();save.mockRestore();exclusive.mockRestore()}}
+ return {writes,requests,exclusiveCalls,resources,host:(hostId='host')=>hosts.get(hostId),restore(){first.mockRestore();read.mockRestore();hostSave.mockRestore();find.mockRestore();save.mockRestore();exclusive.mockRestore();resourceGet.mockRestore();resourceClaims.mockRestore();resourceReplace.mockRestore();clock.mockRestore()}}
 }
 test('two simultaneous lane claims atomically fence the existing host record and cannot spend the same bytes',async()=>{
  const f=admissionFixture()

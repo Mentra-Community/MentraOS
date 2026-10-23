@@ -1,5 +1,4 @@
-import { buttonVariants } from "@mentra/workspace-ui";
-import { BrandPage } from "./brand";
+import { BrandPage, buttonVariants } from "@mentra/workspace-ui";
 
 /**
  * After signing out of the workspace portal. The workspace portal session has ended;
