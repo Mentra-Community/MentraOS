@@ -26,9 +26,10 @@
  * unavailable). That page waits for Core's list first and a member's page makes its one extra round trip for the
  * catalog after it.
  *
- * A `?buy=<product>` link is answered by one dialog, chosen by what the person needs (`decideLink`, in `buy-link.tsx`:
- * the viewer already has it, a license is free for them, they should ask an Admin, billing isn't offered, one can be
- * added for them, the workspace has it, the Buy dialog, or it isn't for sale), and never by a note above the cards. A
+ * A `?buy=<product>` link is answered by what the person needs (`decideLink`, in `buy-link.tsx`): a free license is
+ * assigned to them, or billing's hosted page for one more (or for the product) opens, each with no click and with
+ * `?buy=` already out of the address; otherwise a dialog says why not (they already have it, they should ask an Admin,
+ * billing isn't offered, the workspace has it, or it isn't for sale). It is never a note above the cards. A
  * `?added=<licenseId>` is a return from the hosted page that added a license for the viewer: the page reads Core's
  * licenses until the viewer holds the product and then says so (`AddedBanner`).
  *
@@ -380,7 +381,8 @@ function useBuyLink({
   onBuyHandled?(): void;
   decide(product: string): LinkOutcome;
 }) {
-  const [outcome, setOutcome] = useState<LinkOutcome | null>(null);
+  const [answer, setAnswer] = useState<{ outcome: LinkOutcome; serial: number } | null>(null);
+  const serial = useRef(0);
   const done = useRef<string | null>(null);
   const latest = useRef({ decide, onBuyHandled });
   latest.current = { decide, onBuyHandled };
@@ -391,12 +393,17 @@ function useBuyLink({
     }
     if (done.current === buyProduct) return;
     done.current = buyProduct;
-    setOutcome(latest.current.decide(buyProduct));
+    // `?buy=` leaves the address first: an answer that goes to a hosted page is never one that Back returns to.
     latest.current.onBuyHandled?.();
+    setAnswer({ outcome: latest.current.decide(buyProduct), serial: ++serial.current });
   }, [buyProduct]);
   // A dialog closing as it is replaced (the platform raises `close` as an open dialog turns shut) must not close the
   // one that replaced it: a close ends only the outcome it was drawn for.
-  return { outcome, close: (closing: LinkOutcome | null) => setOutcome((current) => (current !== null && current === closing ? null : current)) };
+  return {
+    outcome: answer?.outcome ?? null,
+    serial: answer?.serial ?? 0,
+    close: (closing: LinkOutcome | null) => setAnswer((current) => (current !== null && current.outcome === closing ? null : current)),
+  };
 }
 
 /** The page once everything it needs has been read. */
@@ -416,8 +423,8 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, ad
   });
   const linked = link.outcome;
   const linkDialog =
-    linked !== null && linked.kind !== "buy" ? (
-      <LinkDialog outcome={linked} workspace={workspace} api={api} billing={billing} scope={scope} navigateOut={navigateOut} onClose={() => link.close(linked)} />
+    linked !== null && linked.kind !== "choose" ? (
+      <LinkDialog key={link.serial} outcome={linked} workspace={workspace} api={api} billing={billing} scope={scope} navigateOut={navigateOut} onClose={() => link.close(linked)} />
     ) : null;
   const addedBanner = added.showing ? (
     <AddedBanner
@@ -491,14 +498,14 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, ad
       {cards.length === 0 && !showCatalog ? <Restricted>{t.page.noLicenses}</Restricted> : null}
       {linkDialog}
       <BuyDialog
-        open={linked?.kind === "buy"}
-        product={linked?.kind === "buy" ? termsNow(linked.entry, products) : null}
+        open={linked?.kind === "choose"}
+        product={linked?.kind === "choose" ? termsNow(linked.entry, products) : null}
         billing={billing}
         scope={scope}
         navigateOut={navigateOut}
         api={api}
         memberCount={memberCount}
-        onClose={() => link.close(linked?.kind === "buy" ? linked : null)}
+        onClose={() => link.close(linked?.kind === "choose" ? linked : null)}
       />
     </div>
   );

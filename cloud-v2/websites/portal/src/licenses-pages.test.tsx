@@ -19,6 +19,7 @@ import {
   CALL_LICENSE,
   EXAMPLE_BILLING,
   FLEET_BILLING,
+  FLEET_LICENSE,
   FLEET_PAST_DUE,
   HOSTED,
   PEOPLE,
@@ -274,38 +275,87 @@ describe("coming back from checkout", () => {
 describe("a link that asks to buy one product", () => {
   const CALL_LINK = "/licenses?buy=mentra.call.unlimited";
   const dialog = () => document.querySelector<HTMLDialogElement>("dialog[open]");
-  const purchases = (core: ReturnType<typeof fakeCore>) => core.requests.filter(request => request.method === "POST" && request.path.endsWith("/purchase"));
+  const posts = (core: ReturnType<typeof fakeCore>, route: "purchase" | "session") =>
+    core.requests.filter(request => request.method === "POST" && request.path.endsWith(`/${route}`));
+  /** Call's three licenses are all assigned to others, billing's quantity says three, and Dana (the Owner) holds Fleet only. */
+  const callFull: Scenario = {
+    ...SCENARIOS.twoActive(),
+    licenses: [{ ...CALL_LICENSE, quantity: 3 }, FLEET_LICENSE],
+    workspaceStatus: statusOf([{ ...CALL_BILLING, quantity: 3 }, FLEET_BILLING]),
+  };
 
-  test("an Owner gets the Buy dialog on that product, the address loses ?buy= in place, and nothing is bought until she asks", async () => {
+  test("a workspace without the product goes straight to checkout for one license: no dialog, no click, and the address is /licenses before it leaves", async () => {
+    const out = ways();
     const before = window.history.length;
-    const { core } = await open(CALL_LINK, SCENARIOS.catalog(), { ready: "Continue to payment" });
-    expect(dialog()!.textContent).toContain("Mentra Call Unlimited");
+    const { core } = await open(CALL_LINK, SCENARIOS.catalog(), {});
+    await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
+    expect(out.assign.mock.calls).toEqual([[HOSTED.checkout]]);
+    expect(posts(core, "purchase").map(request => request.body)).toEqual([{ product: "mentra.call.unlimited", seats: 1, locale: expect.any(String) }]);
     expect(window.location.pathname).toBe("/licenses");
     expect(search()).toBe("");
     expect(window.history.length).toBe(before);
-    expect(purchases(core)).toEqual([]);
+    expect(out.openWindow).not.toHaveBeenCalled();
   });
 
-  test("the dialog starts at the workspace's member count", async () => {
-    await open(CALL_LINK, SCENARIOS.catalog(), { ready: "Continue to payment" });
-    expect(find<HTMLInputElement>("input[role=spinbutton]", dialog()!).value).toBe(String(PEOPLE.length));
-  });
-
-  test("in a workspace of one person there is no number to choose: one license, and it is hers", async () => {
-    const { core } = await open(CALL_LINK, SCENARIOS.solo(), { ready: "Continue to payment" });
-    expect(findAll("input[role=spinbutton]", dialog()!)).toHaveLength(0);
-    expect(dialog()!.textContent).toContain("1 license");
-    expect(dialog()!.textContent).not.toContain("It's yours once payment goes through.");
-    expect(has("Your workspace has")).toBe(false);
+  test("while billing is asked for the page the dialog says 'Opening checkout…'", async () => {
     ways();
-    await click(buttonNamed(/Continue to payment/)!);
-    await until(() => purchases(core).length > 0, "the purchase");
-    expect(purchases(core)[0]!.body).toMatchObject({ seats: 1 });
+    const slow: Scenario = { ...SCENARIOS.catalog(), hosted: () => ({ url: HOSTED.checkout }) };
+    await open(CALL_LINK, slow, { ready: "Opening checkout…" });
+    expect(dialog()!.textContent).toContain("Mentra Call Unlimited");
+  });
+
+  test("a refusal from billing is a dialog with its words", async () => {
+    ways();
+    const refused: Scenario = { ...SCENARIOS.catalog(), hosted: () => ({ status: 409, body: { error: "checkout_in_progress" } }) };
+    await open(CALL_LINK, refused, { ready: "is already under way" });
+    expect(dialog()!.textContent).toContain("A purchase of Mentra Call Unlimited is already under way. Finish it, or try again in a minute.");
+    expect(dialog()!.textContent).toContain("Done");
+    expect(search()).toBe("");
+  });
+
+  test("in a workspace of one person it is the same: one license, straight to checkout", async () => {
+    const out = ways();
+    const { core } = await open(CALL_LINK, SCENARIOS.solo(), {});
+    await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
+    expect(posts(core, "purchase")[0]!.body).toMatchObject({ seats: 1 });
   });
 
   test("?workspace= naming the person's own workspace goes with it: both leave the address", async () => {
-    await open(`${CALL_LINK}&workspace=${ACME}`, SCENARIOS.catalog(), { ready: "Continue to payment" });
+    const out = ways();
+    await open(`${CALL_LINK}&workspace=${ACME}`, SCENARIOS.catalog(), {});
+    await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
     expect(window.location.pathname + search()).toBe("/licenses");
+  });
+
+  test("an Owner whose workspace's licenses are all assigned to others goes straight to billing for one more, assigned to her, and the address is /licenses", async () => {
+    const out = ways();
+    const { core } = await open(CALL_LINK, callFull, {});
+    await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
+    expect(out.assign.mock.calls).toEqual([[HOSTED.checkout]]);
+    expect(posts(core, "session").map(request => request.body)).toEqual([
+      { action: "add_seats", licenseId: "lic_call", seats: 1, forMe: true, locale: expect.any(String) },
+    ]);
+    expect(posts(core, "purchase")).toEqual([]);
+    expect(window.location.pathname + search()).toBe("/licenses");
+    expect(out.openWindow).not.toHaveBeenCalled();
+  });
+
+  test("a free license is assigned to the person who followed the link, with no click and no payment, and a dialog says so", async () => {
+    const { core } = await open(CALL_LINK, SCENARIOS.twoActive(), { ready: "You now have Mentra Call Unlimited." });
+    expect(dialog()!.textContent).toContain("It's one of Acme Field Services's unassigned licenses.");
+    const puts = core.requests.filter(request => request.method === "PUT");
+    expect(puts.map(request => request.path)).toEqual(["/api/portal/workspaces/ws_acme/licenses/lic_call/seats/wm_dana"]);
+    expect(posts(core, "purchase")).toEqual([]);
+    expect(posts(core, "session")).toEqual([]);
+    expect(search()).toBe("");
+    await until(() => has("4 of 5 assigned"), "the card to count the new seat");
+  });
+
+  test("an Owner who holds the product is told she already has it", async () => {
+    const { core } = await open("/licenses?buy=mentra.fleet", SCENARIOS.twoActive(), { ready: "You already have Fleet." });
+    expect(dialog()!.textContent).toContain("Done");
+    expect(window.location.pathname + search()).toBe("/licenses");
+    expect(core.requests.filter(request => request.method !== "GET")).toEqual([]);
   });
 
   test("a Member is told who to ask, in a dialog, and the address keeps no ?buy=", async () => {
@@ -324,19 +374,11 @@ describe("a link that asks to buy one product", () => {
       workspaceCatalog: workspaceCatalog(false),
     };
     await open(CALL_LINK, scenario, { ready: "You already have Mentra Call Unlimited." });
-    expect(dialog()!.textContent).toContain("You already have Mentra Call Unlimited.");
     expect(has("Assigned to you")).toBe(true);
     expect(search()).toBe("");
   });
 
-  test("a license that is free is offered to the person who followed the link, not bought again", async () => {
-    const { core } = await open(CALL_LINK, SCENARIOS.twoActive(), { ready: "Acme Field Services has 2 unassigned Mentra Call Unlimited licenses." });
-    expect(dialog()!.textContent).toContain("Assign it to me");
-    expect(search()).toBe("");
-    expect(purchases(core)).toEqual([]);
-  });
-
-  test("a product that isn't for sale is a dialog too", async () => {
+  test("a product that isn't for sale is a dialog", async () => {
     await open("/licenses?buy=nothing.here", SCENARIOS.catalog(), { ready: "That product isn't for sale." });
     expect(dialog()!.textContent).toContain("That product isn't for sale.");
     expect(search()).toBe("");
@@ -349,11 +391,10 @@ describe("a link that asks to buy one product", () => {
     expect(search()).toBe("");
   });
 
-  test("no ?buy= in the address, no note and no dialog", async () => {
-    await open("/licenses", SCENARIOS.catalog(), { ready: "Mentra Call Unlimited" });
+  test("no ?buy= in the address, no dialog and nothing requested", async () => {
+    const { core } = await open("/licenses", SCENARIOS.catalog(), { ready: "Mentra Call Unlimited" });
     expect(dialog()).toBeNull();
-    expect(has("Ask one of them.")).toBe(false);
-    expect(has("isn't for sale")).toBe(false);
+    expect(core.requests.filter(request => request.method !== "GET")).toEqual([]);
   });
 });
 

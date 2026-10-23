@@ -184,22 +184,19 @@ export const licenseStrings = {
     noLicenses: "This workspace has no products yet.",
     loading: "Loading licenses…",
     /**
-     * What a `?buy=` link answers, each in a dialog of its own, titled with the product's name (`page.title` where the
-     * catalog doesn't know it). `product` is the product's name; `people` is {@link licenseStrings.names.short}.
+     * What a `?buy=` link answers. Where the link can get the person a license, the page does it with no click (assigns
+     * a free one, or opens billing's hosted page for one more) and a dialog says what happened; the others are a
+     * dialog that says why not. Every dialog is titled with the product's name (`page.title` where the catalog doesn't
+     * know it). `product` is the product's name; `people` is {@link licenseStrings.names.short}.
      */
     buyLink: {
       /** The viewer holds the product already. */
       held: (product: string) => `You already have ${product}.`,
-      /** A license of it is unassigned: the dialog offers to assign it to the viewer. */
-      free: (workspace: string, count: number, product: string) =>
-        `${workspace} has ${count === 1 ? "1 unassigned" : `${count} unassigned`} ${product} ${count === 1 ? "license" : "licenses"}.`,
-      assignToMe: "Assign it to me",
-      assigned: (product: string) => `${product} is assigned to you.`,
-      /** Every license is assigned to someone else: the dialog offers to add one for the viewer. */
-      add: (workspace: string, count: number, product: string, people: string) =>
-        `${workspace} has ${count} ${product} ${count === 1 ? "license" : "licenses"}, assigned to ${people}. Add one for you?`,
-      /** The one sum under it: `price` is "$29 a month", or billing's own label for a price that isn't per user. */
-      addTerms: ({ price, note }: { price: string; note: string | null }) => `1 more license · ${price}${note ? ` · ${note}` : ""}`,
+      /** A free license was assigned to the viewer, with no click. */
+      youNowHave: (product: string) => `You now have ${product}.`,
+      oneOfUnassigned: (workspace: string) => `It's one of ${workspace}'s unassigned licenses.`,
+      /** While billing is asked for the hosted page the link goes to. */
+      openingCheckout: "Opening checkout…",
       /** Nothing can be added: the licenses are all assigned (or over-assigned) and billing lists no way to add one. */
       full: (workspace: string, count: number, product: string, people: string) => ({
         body: `${workspace} has ${count} ${product} ${count === 1 ? "license" : "licenses"}, assigned to ${people}.`,

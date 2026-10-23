@@ -20,7 +20,7 @@ import type { ReactElement } from "react";
 import { AddedBanner, LicensesSummary, LicensesUnavailable, PurchaseBanner, TestModeBanner } from "./components/licenses/banners";
 import { LinkDialog, type LinkOutcome } from "./components/licenses/buy-link";
 import { NoSeat } from "./components/licenses/page-parts";
-import { catalogEntryFor, licenseBillingFor } from "./test-billing-fixtures";
+import { catalogEntryFor } from "./test-billing-fixtures";
 import { cleanup, render, setupDom, teardownDom, wordsUnder } from "./test-dom";
 import { detailFor, offlineApi } from "./test-fixtures";
 
@@ -88,13 +88,14 @@ describe("the banners, in every state", () => {
     expect(await draw(<AddedBanner productName="Mentra Call Unlimited" held={false} timedOut={false} onDismiss={noop} />)).toEqual([]);
   });
 
-  test("every dialog the ?buy= link can open", async () => {
+  test("every answer the ?buy= link can give", async () => {
     const entry = catalogEntryFor();
-    const billing = licenseBillingFor();
-    const outcomes: LinkOutcome[] = [
+    const add = { kind: "add_seats", fallbackLabel: "Add licenses" };
+    const outcomes: Array<Exclude<LinkOutcome, { kind: "choose" }>> = [
       { product: entry.product, entry, kind: "held" },
-      { product: entry.product, entry, kind: "free", licenseId: "lic_call", free: 2 },
-      { product: entry.product, entry, kind: "add", licenseId: "lic_call", count: 3, people: ["Ana Ruiz", "Ben Cho", "Cy Dunn"], action: { kind: "add_seats", fallbackLabel: "Add licenses" }, billing },
+      { product: entry.product, entry, kind: "assign", licenseId: "lic_call" },
+      { product: entry.product, entry, kind: "add", licenseId: "lic_call", action: add },
+      { product: entry.product, entry, kind: "buy" },
       { product: entry.product, entry, kind: "full", count: 3, people: ["Ana Ruiz"] },
       { product: entry.product, entry, kind: "already_has" },
       { product: entry.product, entry, kind: "ask" },
@@ -103,7 +104,6 @@ describe("the banners, in every state", () => {
       { product: "mentra.nope", entry: null, kind: "ask" },
     ];
     for (const outcome of outcomes) {
-      if (outcome.kind === "buy") continue;
       const { api } = offlineApi();
       const words = await draw(
         <LinkDialog
@@ -117,7 +117,8 @@ describe("the banners, in every state", () => {
         />,
       );
       expect([outcome.kind, words.filter((word) => SEAT.test(word))]).toEqual([outcome.kind, []]);
-      expect(words.length).toBeGreaterThan(2);
+      // An assignment draws nothing until it is done.
+      if (outcome.kind !== "assign") expect(words.length).toBeGreaterThan(2);
       await cleanup();
     }
   });

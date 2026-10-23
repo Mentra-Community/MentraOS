@@ -61,6 +61,26 @@ export async function fetchPortalMe(): Promise<PortalMe> {
   return { ...me, modules: readPortalModules(me.modules) };
 }
 
+/**
+ * The name of a product, for a page that has no session yet (the sign-in gate of a `?buy=` link):
+ * `GET /api/portal/billing/public/products/<product>`, which needs no sign-in and answers `{name}`, or 404 for a product
+ * it doesn't know. Null for anything else: a 404, any other status, a body that isn't `{name: string}`, a dropped
+ * connection. The caller says something generic then, and never fails.
+ */
+export async function fetchPublicProductName(product: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  try {
+    const response = await fetchImpl(`/api/portal/billing/public/products/${encodeURIComponent(product)}`, {
+      headers: { accept: "application/json" },
+      credentials: "same-origin",
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { name?: unknown } | null;
+    return typeof body?.name === "string" && body.name.trim() !== "" ? body.name.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const response = await fetch(path, {
     method: init?.method ?? "GET",

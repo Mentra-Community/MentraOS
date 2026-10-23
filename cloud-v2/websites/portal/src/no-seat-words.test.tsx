@@ -415,18 +415,18 @@ describe("after checkout", () => {
 describe("a link to buy one product", () => {
   const link = "/licenses?buy=mentra.call.unlimited";
 
-  test("the dialog for a workspace of one", async () => {
-    await open(link, SCENARIOS.solo(), "1 license ·");
-    expectNoSeat("the solo buy step");
-  });
-
-  test("the dialogs: held, free, not for sale, not allowed, not offered", async () => {
+  test("the answers: held, assigned, opening checkout, not for sale, not allowed, not offered", async () => {
     await open("/licenses?buy=mentra.fleet", SCENARIOS.twoActive(), t.page.buyLink.held("Fleet"));
     expectNoSeat("held");
     await cleanup();
     mock.restore();
-    await open(link, SCENARIOS.twoActive(), t.page.buyLink.free("Acme Field Services", 2, "Mentra Call Unlimited"));
-    expectNoSeat("free");
+    await open(link, SCENARIOS.twoActive(), t.page.buyLink.youNowHave("Mentra Call Unlimited"));
+    expectNoSeat("assigned");
+    await cleanup();
+    mock.restore();
+    spyOn(window.location, "assign").mockImplementation(() => {});
+    await open(link, { ...SCENARIOS.catalog(), hosted: () => ({ status: 409, body: { error: "checkout_in_progress" } }) }, "is already under way");
+    expectNoSeat("a refused checkout");
     await cleanup();
     mock.restore();
     await open("/licenses?buy=nothing.here", SCENARIOS.catalog(), t.page.buyLink.notForSale);
@@ -517,9 +517,9 @@ describe("the states were reached", () => {
     ["ready", t.purchase.readyTitle({ seats: 10, product: "Fleet" })],
     ["a license given to the buyer", t.purchase.givenTitle({ seats: 1, product: "Mentra Call Unlimited", paid: true })],
     ["the same, for many", t.purchase.givenBody({ seats: 3, product: "Fleet", paid: true })],
-    ["the solo buy step", "1 license ·"],
     ["a link to a product held", t.page.buyLink.held("Fleet")],
-    ["a link to a free license", t.page.buyLink.free("Acme Field Services", 2, "Mentra Call Unlimited")],
+    ["a link to a free license", t.page.buyLink.youNowHave("Mentra Call Unlimited")],
+    ["the free license's line", t.page.buyLink.oneOfUnassigned("Acme Field Services")],
     ["a link to a product not sold", t.page.buyLink.notForSale],
     ["a link a member can't follow", t.page.buyLink.askAnAdmin("Acme Field Services", "Mentra Call Unlimited")],
     ["a link where billing isn't offered", t.page.buyLink.notHere],
