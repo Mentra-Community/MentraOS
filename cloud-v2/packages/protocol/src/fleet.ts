@@ -62,6 +62,7 @@ export const FLEET_CAPABILITIES = [
   "app_foreground",
   "engine_active",
   "photo_operations",
+  "phone_battery",
 ] as const
 
 const Battery = z.discriminatedUnion("state", [
@@ -88,6 +89,8 @@ export const FleetSnapshotPayloadSchema = z
         appBuild: FleetText,
         engineVersion: FleetText.optional(),
         sdkVersion: FleetText.optional(),
+        /** The phone's own battery; absent from an app that does not report one. */
+        battery: Battery.optional(),
       })
       .strict(),
     glasses: z

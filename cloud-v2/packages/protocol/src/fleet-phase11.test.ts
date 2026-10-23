@@ -50,6 +50,58 @@ const outcome = (payload: Record<string, unknown> = {}, overrides: Record<string
   ...overrides,
 })
 
+const phoneSnapshot = (battery?: Record<string, unknown>, capabilities: string[] = ["phone_battery"]) => ({
+  ...base,
+  capabilities,
+  kind: "snapshot",
+  payload: {
+    phone: {
+      model: "Pixel 9",
+      os: "android",
+      osVersion: "15",
+      appVersion: "3.5.0",
+      appBuild: "3500",
+      ...(battery === undefined ? {} : {battery}),
+    },
+  },
+})
+
+describe("phone battery", () => {
+  const parses = (battery?: Record<string, unknown>) => FleetRecordSchema.safeParse(phoneSnapshot(battery)).success
+
+  test("a phone snapshot without a battery still parses (an older app)", () => {
+    expect(FleetRecordSchema.safeParse(phoneSnapshot(undefined, [])).success).toBe(true)
+  })
+
+  test("measured carries a level of 0 to 100 and whether it is charging", () => {
+    expect(parses({state: "measured", observedAt: T, level: 0})).toBe(true)
+    expect(parses({state: "measured", observedAt: T, level: 100, charging: true})).toBe(true)
+    expect(parses({state: "measured", observedAt: T, level: 101})).toBe(false)
+    expect(parses({state: "measured", observedAt: T, level: -1})).toBe(false)
+    expect(parses({state: "measured", observedAt: T, level: 42.5})).toBe(false)
+    expect(parses({state: "measured", observedAt: T})).toBe(false)
+  })
+
+  test("unsupported and unknown carry no level, so neither can be read as 0", () => {
+    expect(parses({state: "unsupported", observedAt: T})).toBe(true)
+    expect(parses({state: "unknown", observedAt: T})).toBe(true)
+    expect(parses({state: "unknown", observedAt: T, level: 0})).toBe(false)
+    expect(parses({state: "unsupported", observedAt: T, level: 0})).toBe(false)
+    expect(parses({state: "unknown", observedAt: T, charging: false})).toBe(false)
+  })
+
+  test("carries no other battery detail or identifier", () => {
+    for (const extra of [{health: "good"}, {temperature: 31}, {serial: "R3CN70"}, {deviceName: "Maya's Pixel"}, {lowPowerMode: true}]) {
+      expect(parses({state: "measured", observedAt: T, level: 50, ...extra})).toBe(false)
+    }
+  })
+
+  test("phone_battery is a capability a record may declare", () => {
+    expect(FleetRecordSchema.safeParse(phoneSnapshot({state: "measured", observedAt: T, level: 50})).success).toBe(true)
+    expect(FleetRecordSchema.safeParse(phoneSnapshot(undefined, ["phone_charge"])).success).toBe(false)
+  })
+})
+
 describe("miniapp_inventory", () => {
   test("parses its fixture", () => {
     expect(FleetRecordSchema.safeParse(inventory()).success).toBe(true)
