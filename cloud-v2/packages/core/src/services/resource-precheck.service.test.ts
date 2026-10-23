@@ -426,7 +426,7 @@ test('queued fixture bootstrap rejects missing settlement, unknown effects, chan
     expect(f.host.resourceReservations).toEqual(before); expect(f.subject().generation).toBe(0)
   }
 })
-test('Android app baseline checks its current phone scope while the stopped fixture claim remains queued', async () => {
+async function queuedAndroidFixtureRepair() {
   const f = await queuedFixtureRepair(), lane = f.host.snapshot.lanes[0]!, app = lane.resources[0]!, subject = f.subject(),
     phone = structuredClone(subject), phoneRef = {...structuredClone(app), id: 'physical-phone', kind: 'phone' as const}
   lane.platform = 'android'
@@ -436,8 +436,38 @@ test('Android app baseline checks its current phone scope while the stopped fixt
   lane.resources.push(phoneRef); f.host.snapshot.resourceLifecycle!.subjects.push(phone)
   app.idleContract!.conditions = ['app-phone-identity', 'app-phone-same-boot', 'app-package-absent', 'app-process-absent', 'app-data-absent']
   app.idleContract!.dependencies = [phoneRef.id]
+  return {...f, phone, phoneRef}
+}
+test('Android app baseline checks its current phone scope while the stopped fixture claim remains queued', async () => {
+  const f = await queuedAndroidFixtureRepair()
   expect((await f.service.acquire(f.intent, 'mini')).status).toBe('reserved')
-  expect(f.host.resourceReservations).toContainEqual(f.claim); expect(phone.owner).toBeNull()
+  expect(f.host.resourceReservations).toContainEqual(f.claim); expect(f.phone.owner).toBeNull()
+})
+test('phone control withdrawal wins before app baseline even before the raw dependency projection advances', async () => {
+  for (const action of ['reserve', 'mark-out-of-service', 'check'] as const) for (const accepted of [false, true]) {
+    const f = await queuedAndroidFixtureRepair(), operationId = randomUUID(), subject = {resourceId: f.phoneRef.id, subjectGeneration: f.phone.generation},
+      command = {operationId, hostId: 'mini', subject, operatorId: hash, expiresAt: start + 60000, action,
+        ...(action === 'reserve' ? {purpose: 'Human phone use'} : action === 'mark-out-of-service' ? {reason: 'Phone withdrawn'} : {})},
+      result = action === 'reserve' ? {status: 'accepted', reservation: {id: 'phone-reservation', resourceId: f.phoneRef.id,
+        generation: 1, state: 'granted', purpose: 'Human phone use', requestedAt: f.host.snapshot.observedAt}} :
+        action === 'mark-out-of-service' ? {status: 'accepted', resource: {resourceId: f.phoneRef.id, generation: 1, status: 'out-of-service'}} :
+          {status: 'accepted', check: {operationId, resourceId: f.phoneRef.id, generation: 1, state: 'active'}}
+    f.host.laneControls = [{command, ...(accepted ? {receipt: {operationId, hostId: 'mini', subject,
+      inputSha256: hash, completedAt: f.host.snapshot.observedAt, result}} : {})}]
+    expect(f.phone.supportedActions).toContain('mark-out-of-service')
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+    expect(f.writes).toHaveLength(1); expect(f.host.resourceReservations).toEqual([f.claim])
+  }
+})
+test('phone withdrawal winning the same host-row CAS prevents the app dependency claim', async () => {
+  const f = await queuedAndroidFixtureRepair()
+  f.beforeWrite(async () => {
+    f.host.laneControlVersion!++
+    f.host.laneControls = [{command: {operationId: randomUUID(), hostId: 'mini', operatorId: hash, expiresAt: start + 60000,
+      subject: {resourceId: f.phoneRef.id, subjectGeneration: f.phone.generation}, action: 'reserve', purpose: 'Human phone use'}}]
+  })
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+  expect(f.writes).toHaveLength(1); expect(f.host.resourceReservations).toEqual([f.claim])
 })
 test('new accepted controller may check app beside an exact historical stopped fixture claim without renewing its old authority', async () => {
   const f = await queuedFixtureRepair(), target = f.host.snapshot.resourceReservations!.resourceChecks![0]!,

@@ -708,6 +708,14 @@ export class ResourceReservationsService {
       return dependencies.length === 0
     }
     if (!scopeCurrent(target)) return undefined
+    const controls = z.array(z.union([laneControlRecordSchema, resourceControlRecordSchema])).max(100).parse(host.laneControls ?? [])
+    if (controls.some(row => 'subject' in row.command && visited.has(row.command.subject.resourceId) &&
+      (!row.receipt || row.receipt.result.status === 'accepted' &&
+        (row.receipt.result.reservation && ['waiting', 'granted', 'returning'].includes(row.receipt.result.reservation.state) ||
+          'check' in row.receipt.result && row.receipt.result.check?.state !== undefined && row.receipt.result.check.state !== 'settled' ||
+          manualWithdrawalNeedsRestoration(row as ResourceControlRecord,
+            lifecycle.subjects.find(value => value.subject.id === (row.command as ResourceControlRecord['command']).subject.resourceId), host.hostId, true, now)))))
+      return undefined
     const all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []), retained = all.filter(isExclusiveHostReservation)
     if (retained.some(claim => visited.has(claim.resourceId))) return undefined
     const claims = retained.filter(claim => claim.laneId === lane.id), admitted = new Set<string>()
