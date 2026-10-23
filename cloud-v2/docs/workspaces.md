@@ -173,8 +173,9 @@ licenses are assigned from the Licenses page.
   both are on the change feed or neither is. The workspace being joined is never
   the one deleted. A workspace that holds anything is kept, as is any the person
   did not make for themselves: one where they are a Member or share ownership,
-  or one made with `POST /`. The join then succeeds as it would for anyone, and
-  the person has both memberships.
+  or one made with `POST /`. A person is in one workspace at a time, so while
+  they keep one, accepting and `recoverOwnership` are refused (`409
+  already_in_workspace`) and a claim discards the imported membership.
 - An invitation names an email, a role and an expiry (14 days). Admins invite
   Members and Developers, Owners anyone. Core stores only a hash of the
   invitation token; the link carries the token. The email names the inviter.

@@ -27,10 +27,14 @@ import {
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
 import { portalModuleAvailability } from "../../services/portal-modules/portal-modules";
-import { organizationView } from "../../services/workspaces/authorization.service";
+import { fleetInstalled } from "../../services/fleet/fleet-config";
+import { SigninIdentityModel } from "../../models/signin-identity.model";
+import { authorize, organizationView } from "../../services/workspaces/authorization.service";
+import { listWorkspacesForUser } from "../../services/workspaces/workspace.service";
 import { requireUserPrincipal, userPrincipal } from "../middleware/principal.middleware";
 import { createPortalAuthApi } from "../signin/portal-auth.api";
 import { createWorkspacesApi } from "../workspaces/workspaces.api";
+import { portalFleetApi } from "../fleet/fleet-forwarding";
 import { portalModuleApi } from "./portal-modules.api";
 
 const app = new Hono<AppEnv>();
@@ -63,6 +67,8 @@ app.route("/auth", createPortalAuthApi("portal"));
 app.use("*", requireUserPrincipal("portal"));
 app.route("/workspaces", createWorkspacesApi());
 app.route("/billing", portalModuleApi("billing"));
+// Fleet Management for a workspace's Admins and Owners: not a portal module, so it has its own mount.
+app.route("/fleet", portalFleetApi);
 app.get("/me", getMe);
 app.get("/org", getOrg);
 app.put("/org", putOrg);
@@ -73,17 +79,60 @@ app.patch("/trusted-issuers/:trustedIssuerId", patchTrustedIssuer);
 
 async function getMe(c: AppContext) {
   const user = portalUser(c);
+  const principal = userPrincipal(c);
   const org = await enterprise.getPrimaryOrgForUser(user);
   return c.json({
     authenticated: true,
-    user: { id: user.mentraUserId, email: user.email, emailVerified: userPrincipal(c).emailVerified },
-    workspaceCreation: organizationView(userPrincipal(c)).workspaceCreation,
+    // `mentraUserId` is the Fleet UI contract's name for `id`.
+    user: {
+      id: user.mentraUserId,
+      mentraUserId: user.mentraUserId,
+      email: user.email,
+      // The name the person's last sign-in carried, which the portal shows in place of their address; null when
+      // no sign-in has carried one.
+      name: await signInName(user.mentraUserId),
+      emailVerified: principal.emailVerified,
+    },
+    workspaceCreation: organizationView(principal).workspaceCreation,
     onboardingRequired: org === null,
     org,
     // What this person is offered of the portal modules: billing where it is installed, usable and visible to
     // them (`billing`), and its catalog wherever it is installed and usable, staff or not (`billingCatalog`).
-    modules: portalModuleAvailability(userPrincipal(c)),
+    modules: portalModuleAvailability(principal),
+    // What Fleet's UI needs of the caller (`FleetUiMe`): organization capabilities, the workspace(s) they may use
+    // Fleet in with their capabilities there, and whether Fleet is installed.
+    organization: { capabilities: organizationView(principal).capabilities },
+    workspaces: await fleetWorkspacesOf(principal, c.req.query("workspaceId")),
+    fleet: { installed: fleetInstalled() },
   });
+}
+
+/** The last name a sign-in carried for this person, trimmed; null when there is none. One indexed read. */
+async function signInName(mentraUserId: string): Promise<string | null> {
+  const identity = await SigninIdentityModel.findOne({ mentraUserId }, { name: 1 }).lean();
+  const name = typeof identity?.name === "string" ? identity.name.trim() : "";
+  return name === "" ? null : name;
+}
+
+/**
+ * The workspaces the caller may use Fleet in: their own workspace(s), with the capabilities their role gives. For
+ * an Organization Admin asking about the workspace the page is open on (`?workspaceId=`), exactly that workspace
+ * with an Owner's capabilities, member or not; an unknown or deleted one is simply absent.
+ */
+async function fleetWorkspacesOf(principal: ReturnType<typeof userPrincipal>, openWorkspaceId: string | undefined) {
+  if (principal.isOrganizationAdmin && openWorkspaceId) {
+    const decision = await authorize(principal, { workspaceId: openWorkspaceId });
+    if (!decision.allowed || !decision.workspace) return [];
+    return [
+      { workspaceId: decision.workspace.workspaceId, name: decision.workspace.name, capabilities: decision.capabilities },
+    ];
+  }
+  const mine = await listWorkspacesForUser(principal.mentraUserId);
+  return mine.map((workspace) => ({
+    workspaceId: workspace.workspaceId,
+    name: workspace.name,
+    capabilities: workspace.capabilities,
+  }));
 }
 
 async function getOrg(c: AppContext) {

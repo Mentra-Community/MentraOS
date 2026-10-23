@@ -12,15 +12,15 @@ import {
   invitationPreviewQuery,
   licensesQuery,
   workspaceDetailQuery,
+  InvitationAcceptCard,
   WorkspaceApiError,
   workspaceKeys,
-  WorkspaceSwitcher,
   type InvitationPreview,
   type WorkspaceListItem,
 } from "@mentra/workspace-ui";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LoginGate, PortalRoutes } from "./App";
-import { portalLinks, switcherInvitation } from "./components/portal-shell";
+import { portalLinks } from "./components/portal-shell";
 import type { PortalMe } from "./lib/api";
 import type { PendingInvitation } from "./lib/invitations";
 import { Link } from "./lib/navigation";
@@ -175,20 +175,71 @@ const hrefs = (markup: string) => [...markup.matchAll(/href="([^"]+)"/g)].map(ma
 describe("the sidebar follows the viewer's role", () => {
   const caps = (role: WorkspaceRole) => ({ capabilities: [...capabilitiesForRole(role)] });
 
-  test("members and developers get Settings only; admins and owners add Members and the Audit log", () => {
+  test("members and developers get Settings only; admins and owners add Members", () => {
     expect(visibleSections(caps("member"))).toEqual(["settings"]);
     expect(visibleSections(caps("developer"))).toEqual(["settings"]);
-    expect(visibleSections(caps("admin"))).toEqual(["members", "settings", "audit"]);
-    expect(visibleSections(caps("owner"))).toEqual(["members", "settings", "audit"]);
+    expect(visibleSections(caps("admin"))).toEqual(["members", "settings"]);
+    expect(visibleSections(caps("owner"))).toEqual(["members", "settings"]);
     expect(visibleSections(undefined)).toEqual(["settings"]);
   });
 
-  test("the Fleet group exists for later but has no items, so it renders nothing", () => {
+  test("the Fleet Management group is hidden unless Fleet is installed and the viewer has fleet.read", () => {
     const nav = workspaceNav(ACME, visibleSections(caps("owner")), ACME);
     expect(nav.map(group => group.key)).toEqual(["workspace", "fleet"]);
     expect(nav.find(group => group.key === "fleet")?.items).toEqual([]);
+    expect(visibleSections(caps("owner"), { fleet: false })).not.toContain("fleet");
+    for (const role of ["member", "developer"] as const) expect(visibleSections(caps(role), { fleet: true })).not.toContain("fleet");
+    expect(visibleSections(undefined, { fleet: true })).not.toContain("fleet");
     const markup = render(`/members`, TWO_WORKSPACES);
-    expect(markup).not.toContain(">Fleet<");
+    expect(markup).not.toContain("Fleet Management");
+  });
+
+  test("Fleet Management shows Overview, People, Devices and Miniapps, each a ?fleet= link, for admins and owners", () => {
+    for (const role of ["admin", "owner"] as const) {
+      expect(visibleSections(caps(role), { fleet: true })).toEqual(["members", "settings", "fleet"]);
+    }
+    const nav = workspaceNav(ACME, visibleSections(caps("admin"), { fleet: true }), ACME);
+    const group = nav.find(entry => entry.key === "fleet");
+    expect(group?.label).toBe("Fleet Management");
+    expect(group?.items.map(item => [item.label, item.href])).toEqual([
+      ["Overview", `/fleet?fleet=overview`],
+      ["People", `/fleet?fleet=people`],
+      ["Devices", `/fleet?fleet=devices`],
+      ["Miniapps", `/fleet?fleet=miniapps`],
+    ]);
+    // Another workspace's Fleet links name it.
+    const other = workspaceNav(NORTHWIND, visibleSections(caps("admin"), { fleet: true }), ACME).find(entry => entry.key === "fleet");
+    expect(other?.items[0]?.href).toBe(`/fleet?workspace=${NORTHWIND}&fleet=overview`);
+    expect(nav.flatMap(entry => entry.items).map(item => item.label)).not.toContain("Audit log");
+  });
+
+  test("Fleet has no portal title bar: the module draws each page's header, so the portal's would say it twice", () => {
+    const withFleet = { ...ME, fleet: { installed: true } };
+    const markup = render(`/fleet`, TWO_WORKSPACES, {}, undefined, withFleet);
+    expect(markup).not.toMatch(/<h1/);
+    expect(markup).not.toContain("<header");
+    expect(markup).not.toContain("The people, devices and miniapps of");
+    // The sidebar still marks the item being viewed.
+    expect(markup).toMatch(/<a href="[^"]*fleet\?fleet=overview"[^>]*aria-current="page"/);
+    // The other sections keep their own title and line.
+    expect(render(`/members`, TWO_WORKSPACES)).toContain("Manage who has access to");
+    expect(render(`/members`, TWO_WORKSPACES)).toMatch(/<h1[^>]*>Members<\/h1>/);
+  });
+
+  test("an Organization Admin who is not a member has Fleet Management through fleet.read", () => {
+    const notMember = detail(ACME, "Acme", "owner", false);
+    expect(visibleSections(notMember, { fleet: true })).toContain("fleet");
+  });
+
+  test("the members page has Members and Invited tabs with counts for someone who manages members, and no tabs otherwise", () => {
+    const owner = render(`/members`, TWO_WORKSPACES);
+    expect(owner).toContain('role="tablist"');
+    expect(owner).toMatch(/aria-selected="true"[^>]*>Members<span[^>]*>2<\/span>/);
+    expect(owner).toMatch(/aria-selected="false"[^>]*>Invited<span[^>]*>0<\/span>/);
+    // Nobody is waiting, so the Invited tab's panel is not drawn until chosen; the member list is shown.
+    expect(owner).toContain("priya@acme.test");
+    const developer = render(`/settings?workspace=${NORTHWIND}`, TWO_WORKSPACES);
+    expect(developer).not.toContain('role="tablist"');
   });
 
   test("an Organization Admin who is not a member shows as such", () => {
@@ -198,12 +249,17 @@ describe("the sidebar follows the viewer's role", () => {
 });
 
 describe("a workspace page", () => {
-  test("an owner's members page: the switcher, the sections as links that carry the workspace, and Invite", () => {
+  test("an owner's members page: the workspace and role as a static block, the sections as links, and Invite", () => {
     const markup = render(`/members`, TWO_WORKSPACES);
-    expect(markup).toContain('aria-label="Workspace: Acme Field Team. Switch workspace"');
+    expect(markup).toContain('data-slot="workspace-label"');
+    expect(markup).toContain(">Acme Field Team<");
     expect(markup).toContain(">Owner<");
+    expect(markup).not.toContain("Switch workspace");
     expect(hrefs(markup)).toEqual(
-      expect.arrayContaining([`/members`, `/settings`, `/audit`]),
+      expect.arrayContaining([`/members`, `/settings`]),
+    );
+    expect(hrefs(markup)).not.toContain(`/audit`);
+    expect(markup).not.toContain("Audit log"
     );
     expect(markup).toMatch(/aria-current="page"[^>]*>.*Members/);
     expect(markup).toContain(">Invite<");
@@ -212,7 +268,7 @@ describe("a workspace page", () => {
 
   test("in their own workspace a person gets bare section links, in another one the sections name it", () => {
     const own = render(`/members`, TWO_WORKSPACES);
-    expect(hrefs(own)).toEqual(expect.arrayContaining(["/members", "/settings", "/audit"]));
+    expect(hrefs(own)).toEqual(expect.arrayContaining(["/members", "/settings"]));
     expect(hrefs(own).some(href => href.includes("workspace="))).toBe(false);
     // The second workspace in the list is not what the bare address opens, so its sections name it.
     const other = render(`/settings?workspace=${NORTHWIND}`, TWO_WORKSPACES);
@@ -224,18 +280,17 @@ describe("a workspace page", () => {
     const customer = "ws_customer";
     const seed: Seed = { ...TWO_WORKSPACES, details: [...TWO_WORKSPACES.details!, detail(customer, "Customer Co", "owner", false)] };
     const markup = render(`/members?workspace=${customer}`, seed);
-    expect(markup).toContain('aria-label="Workspace: Customer Co. Switch workspace"');
-    const sections = hrefs(markup).filter(href => /^\/(members|settings|audit)/.test(href));
-    expect(sections).toEqual([`/members?workspace=${customer}`, `/settings?workspace=${customer}`, `/audit?workspace=${customer}`]);
+    expect(markup).toContain(">Customer Co<");
+    const sections = hrefs(markup).filter(href => /^\/(members|settings)/.test(href));
+    expect(sections).toEqual([`/members?workspace=${customer}`, `/settings?workspace=${customer}`]);
   });
 
   test("a person with no workspace of their own gets ?workspace= on links into a customer's", () => {
     const customer = "ws_customer";
     const markup = render(`/settings?workspace=${customer}`, { list: [], details: [detail(customer, "Customer Co", "owner", false)] });
-    expect(hrefs(markup).filter(href => /^\/(members|settings|audit)/.test(href))).toEqual([
+    expect(hrefs(markup).filter(href => /^\/(members|settings)/.test(href))).toEqual([
       `/members?workspace=${customer}`,
       `/settings?workspace=${customer}`,
-      `/audit?workspace=${customer}`,
     ]);
   });
 
@@ -246,10 +301,10 @@ describe("a workspace page", () => {
 
   test("a developer sees only Settings, and no Invite", () => {
     const markup = render(`/settings?workspace=${NORTHWIND}`, TWO_WORKSPACES);
-    expect(markup).toContain('aria-label="Workspace: Northwind Pilot. Switch workspace"');
+    expect(markup).toContain(">Northwind Pilot<");
+    expect(markup).not.toContain("Switch workspace");
     expect(hrefs(markup)).toContain(`/settings?workspace=${NORTHWIND}`);
     expect(hrefs(markup)).not.toContain(`/members?workspace=${NORTHWIND}`);
-    expect(hrefs(markup)).not.toContain(`/audit?workspace=${NORTHWIND}`);
     expect(markup).not.toContain(">Invite<");
     expect(markup).toContain("Workspace ID");
     expect(markup).toContain("Leave workspace");
@@ -303,7 +358,7 @@ describe("the Developer Console link", () => {
 
   test("sits under the workspace's sections, above the account", () => {
     const markup = render(`/members`, TWO_WORKSPACES, { developerConsoleUrl: CONSOLE });
-    expect(markup.indexOf(`href="/audit"`)).toBeLessThan(markup.indexOf(`href="${CONSOLE}"`));
+    expect(markup.indexOf(`href="/settings"`)).toBeLessThan(markup.indexOf(`href="${CONSOLE}"`));
     expect(markup.indexOf(`href="${CONSOLE}"`)).toBeLessThan(markup.indexOf("Open account menu"));
   });
 
@@ -340,63 +395,98 @@ describe("a workspace the viewer may not see", () => {
     expect(markup).toContain("Workspace not found");
     expect(markup).toContain("you don&#x27;t have access to it");
     expect(markup).not.toContain(">Invite<");
-    expect(markup).toContain('aria-label="Choose a workspace"');
+    expect(markup).not.toContain("Switch workspace");
   });
 });
 
-// The switcher's own rendering (the list, loading, a failed list, the closed state) is tested in
-// packages/workspace-ui. These are the portal's entries in it: its invitations and its creation notice.
-describe("the workspace switcher", () => {
-  const workspaces = [
-    { workspaceId: ACME, name: "Acme Field Team", roleLabel: "Owner", href: `/members` },
-    { workspaceId: NORTHWIND, name: "Northwind Pilot", roleLabel: "Developer", href: `/members?workspace=${NORTHWIND}` },
-  ];
-  const invitation = switcherInvitation({ preview: invitationTo("Contoso"), token: null, forOtherAccount: false });
-  // In the portal's providers: an invitation entry's Accept talks to the API and tells the portal.
-  const open = (props: Partial<Parameters<typeof WorkspaceSwitcher>[0]> = {}) =>
-    renderToStaticMarkup(
-      <QueryClientProvider client={new QueryClient()}>
-        <PortalProvider value={session()}>
-          <WorkspaceSwitcher
-            current={workspaces[0]!}
-            workspaces={workspaces}
-            invitations={[]}
-            canCreate
-            createNotice={null}
-            onCreate={() => {}}
-            linkComponent={Link}
-            defaultOpen
-            {...props}
-          />
-        </PortalProvider>
-      </QueryClientProvider>,
-    );
-
-  test("pending invitations come last, with a count, who sent them, and Accept and Dismiss", () => {
-    const markup = open({ invitations: [invitation] });
-    expect(markup).toContain("Pending invitations");
-    expect(markup).toContain("Join Contoso");
-    expect(markup).toContain("Member · from olivia@acme.test");
-    expect(markup).toMatch(/role="menuitem"[^>]*aria-label="Accept the invitation to Contoso"/);
-    expect(markup).toMatch(/role="menuitem"[^>]*aria-label="Dismiss the invitation to Contoso"/);
-    expect(markup).toContain("(1 pending invitation)");
-    expect(markup.indexOf("Create workspace")).toBeLessThan(markup.indexOf("Pending invitations"));
+// The static workspace block's own rendering is tested in packages/workspace-ui. These are the portal's: there is
+// no switcher and no way to create a workspace, and the invitations are one link away.
+describe("the workspace in the sidebar", () => {
+  test("is a name and a role with no menu, no chevron and no New workspace, on every workspace page", () => {
+    for (const path of [`/members`, `/settings`, `/settings?workspace=${NORTHWIND}`]) {
+      const page = render(path, TWO_WORKSPACES);
+      expect(page).toContain('data-slot="workspace-label"');
+      for (const gone of ["Switch workspace", "Choose a workspace", "New workspace", "Create workspace", "chevrons-up-down"]) {
+        expect(page).not.toContain(gone);
+      }
+    }
   });
 
-  test("an invitation for another account is named as such and reviewed on the invitation page", () => {
-    const other = switcherInvitation({ preview: invitationTo("Contoso", { email: "b@else.test" }), token: TOKEN, forOtherAccount: true });
-    expect(other.detail).toBe("For b@else.test");
-    const markup = open({ invitations: [other] });
-    expect(markup).toContain('href="/invitation"');
-    expect(markup).toContain(">Review<");
-    expect(markup).not.toContain("Accept the invitation");
+  test("a page with no workspace (billing, not found) has no workspace block at all", () => {
+    const page = render("/nowhere", TWO_WORKSPACES);
+    expect(page).not.toContain('data-slot="workspace-label"');
+    expect(page).not.toContain("New workspace");
+  });
+
+  test("with invitations to answer there is one link to /invitation with a count; with none, no link", () => {
+    const invited = render(`/members`, TWO_WORKSPACES, withMine(invitationTo("Contoso"), invitationTo("Fabrikam")));
+    expect(hrefs(invited)).toContain("/invitation");
+    expect(invited).toMatch(/Pending invitations<\/span><span[^>]*>2<\/span>/);
+    // They are answered on that page, not in the sidebar.
+    expect(invited).not.toContain("Accept the invitation to");
+    expect(invited).not.toContain("Join Contoso");
+    const one = render(`/members`, TWO_WORKSPACES, withMine(invitationTo("Contoso")));
+    expect(one).toContain(">Pending invitation<");
+    const none = render(`/members`, TWO_WORKSPACES);
+    expect(hrefs(none)).not.toContain("/invitation");
+    expect(none).not.toContain("Pending invitation");
+  });
+
+  test("the account footer shows the person's name when Core has one, and their address otherwise", () => {
+    const named = render(`/members`, TWO_WORKSPACES, { userName: "Sam Rivera" });
+    expect(named).toContain(">Sam Rivera<");
+    expect(named).toContain('title="sam@acme.test"');
+    expect(render(`/members`, TWO_WORKSPACES)).toContain(">sam@acme.test<");
   });
 
   test("says why creating is not offered on this deployment", () => {
     const creation: WorkspaceCreation = { allowed: false, reason: "organization_admins_only" };
-    const markup = open({ canCreate: false, createNotice: creationNotice(creation) });
-    expect(markup).toContain('aria-disabled="true"');
-    expect(markup).toContain("created by its administrators");
+    expect(creationNotice(creation)).toContain("created by its administrators");
+  });
+});
+
+describe("the invitation card's Decline and leave-first", () => {
+  const card = (props: Partial<Parameters<typeof InvitationAcceptCard>[0]> = {}) =>
+    renderToStaticMarkup(
+      <InvitationAcceptCard
+        load={{ status: "ready", preview: invitationTo("Contoso") }}
+        onRetry={() => {}}
+        onAccept={() => {}}
+        accepting={false}
+        acceptError={null}
+        viewerEmail="sam@acme.test"
+        {...props}
+      />,
+    );
+
+  test("offers Decline beside Accept when the host provides it, and not for another account's invitation", () => {
+    expect(card({ onDecline: () => {} })).toContain(">Decline<");
+    expect(card()).not.toContain(">Decline<");
+    const other = card({
+      load: { status: "ready", preview: invitationTo("Contoso", { email: "b@else.test" }) },
+      onDecline: () => {},
+      onSwitchAccount: () => {},
+    });
+    expect(other).not.toContain(">Decline<");
+    expect(other).not.toContain("Accept invitation");
+  });
+
+  test("with Dismiss, Decline and Accept, Accept takes a row of its own so its words fit", () => {
+    const three = card({ onDismiss: () => {}, onDecline: () => {} });
+    expect(three).not.toContain("grid-cols-3");
+    expect(three).toMatch(/<div class="col-span-2 grid"><button[^>]*>Accept invitation<\/button><\/div>/);
+    expect(card({ onDecline: () => {} })).not.toContain("col-span-2");
+  });
+
+  test("shows Declining… and disables both while a decline is in flight", () => {
+    const markup = card({ onDecline: () => {}, declining: true });
+    expect(markup).toContain("Declining…");
+    expect(markup.match(/disabled=""/g)?.length).toBe(2);
+  });
+
+  test("a person already in a workspace is told to leave it first; nothing else changes", () => {
+    const error = new WorkspaceApiError(409, "already_in_workspace", "leave your current workspace first");
+    expect(card({ acceptError: error })).toContain("Leave it in Settings first, then accept this invitation.");
   });
 });
 
@@ -471,29 +561,53 @@ describe("before a workspace", () => {
     expect(markup).not.toContain("Workspace name");
   });
 
-  test("where creating is not allowed an invitation is still shown, and no workspace is on the way", () => {
-    const markup = render("/", { list: [] }, { creation: { allowed: false, reason: "organization_admins_only" }, ...withMine(invitationTo("Dev check")) });
-    expect(markup).toContain("Join Dev check");
-    expect(markup).not.toContain("Setting up your workspace");
-    expect(markup).not.toContain("not in a workspace yet");
-  });
-
-  test("a ?workspace= opens that workspace's page, not the first run", () => {
-    const markup = render("/members?workspace=ws_x", { list: [], details: [detail("ws_x", "Customer", "owner", false)], members: MEMBERS });
-    expect(markup).not.toContain("Setting up your workspace");
-    expect(markup).not.toContain("not in a workspace yet");
-  });
-
-  test("an invitation link opens the accept card, with the way back to your workspaces", () => {
-    const markup = render("/invitation", TWO_WORKSPACES, withLink(invitationTo("Northwind Pilot", { role: "developer" })));
-    expect(markup).toContain("You&#x27;re invited");
+  test("an invitation link opens the accept card, with the way back to your workspace", () => {
+    const markup = render("/invitation", { list: [] }, withLink(invitationTo("Northwind Pilot", { role: "developer" })));
     expect(markup).toContain("Join Northwind Pilot");
     expect(markup).toContain("Developer");
     expect(markup).toContain("Dismiss");
+    expect(markup).toContain(">Decline<");
     expect(markup).toContain("Accept invitation");
-    expect(markup).toContain('href="/"');
+    expect(markup).toMatch(/Expires in \d+ days?/);
     expect(markup).not.toContain("Create your workspace");
     expect(markup).not.toContain(TOKEN);
+  });
+
+  test("someone already in a workspace is told to leave it first: no Accept, Decline stays, Leave goes to Settings", () => {
+    const markup = render("/invitation", TWO_WORKSPACES, withLink(invitationTo("Northwind Pilot", { role: "developer" })));
+    expect(markup).toContain("You&#x27;re invited");
+    expect(markup).toContain("Join Northwind Pilot");
+    expect(markup).toContain(">Acme Field Team</strong>. Leave it to join <strong");
+    expect(markup).toContain(">Decline<");
+    expect(markup).toContain(`href="/settings"`);
+    expect(markup).toContain(">Leave Acme Field Team<");
+    expect(markup).not.toContain("Accept invitation");
+    expect(markup).toContain(`href="/"`);
+    expect(markup).not.toContain(TOKEN);
+  });
+
+  test("an automatic workspace holding nothing gives way, so its person keeps Accept and is not told to leave it", () => {
+    const own = { ...listItem(ACME, "Sam's Workspace", "owner"), replaceable: true };
+    const markup = render("/invitation", { list: [own], details: [detail(ACME, "Sam's Workspace", "owner")] }, withLink(invitationTo("Northwind Pilot")));
+    expect(markup).toContain("Accept invitation");
+    expect(markup).not.toContain("Leave it to join");
+    expect(markup).not.toContain("Leave Sam");
+    expect(markup).not.toContain("You belong to one workspace at a time");
+  });
+
+  test("/invitation with no link lists the invitations addressed to the person, each with Accept and Decline", () => {
+    const markup = render("/invitation", { list: [] }, withMine(invitationTo("Contoso"), invitationTo("Fabrikam")));
+    expect(markup).toMatch(/Pending invitations<span[^>]*>2<\/span>/);
+    expect(markup).toContain("Join Contoso");
+    expect(markup).toContain("Join Fabrikam");
+    expect(markup.split("Accept invitation")).toHaveLength(3);
+    expect(markup.split(">Decline<")).toHaveLength(3);
+  });
+
+  test("/invitation with nothing to answer goes home", () => {
+    const markup = render("/invitation", TWO_WORKSPACES);
+    expect(markup).not.toContain("Join ");
+    expect(markup).not.toContain("Pending invitation");
   });
 
   test("signed in as someone else, the invitation page says whose it is and offers Switch account, not Accept", () => {
@@ -507,7 +621,7 @@ describe("before a workspace", () => {
     expect(markup).not.toContain("Accept invitation");
     expect(markup).not.toContain("You&#x27;re invited");
     // Case and spacing aside, the same address is not someone else.
-    const same = render("/invitation", TWO_WORKSPACES, withLink(invitationTo("Northwind Pilot", { email: "Sam@Acme.TEST" })));
+    const same = render("/invitation", { list: [] }, withLink(invitationTo("Northwind Pilot", { email: "Sam@Acme.TEST" })));
     expect(same).toContain("Accept invitation");
     expect(same).not.toContain("Switch account");
   });
@@ -600,16 +714,17 @@ describe("invitations as the app finds them", () => {
     expect(markup).not.toContain("Pending invitation");
   });
 
-  test("a dead link never shows in the switcher: no entry, no badge", async () => {
+  test("a dead link never shows in the sidebar: no link, no badge", async () => {
     const markup = renderHooked(await client(gone(), [], TWO_WORKSPACES), `/members`, TOKEN);
-    expect(markup).toContain('aria-label="Workspace: Acme Field Team. Switch workspace"');
-    expect(markup).not.toContain("pending invitation");
+    expect(markup).toContain('data-slot="workspace-label"');
+    expect(markup).not.toContain("Pending invitation");
+    expect(markup).not.toContain('href="/invitation"');
   });
 
   test("an invitation that arrived by link and is also addressed to the person is offered once", async () => {
     const preview = invitationTo("Dev check");
     const markup = renderHooked(await client(preview, [preview, invitationTo("Northwind")], TWO_WORKSPACES), `/members`, TOKEN);
-    expect(markup).toContain("(2 pending invitations)");
+    expect(markup).toMatch(/Pending invitations<\/span><span[^>]*>2<\/span>/);
   });
 
   test("a valid link stays stored (the reason it is stored); accepting forgets it, dismissing another does not", async () => {
@@ -780,11 +895,11 @@ const LICENSES_HEADING = /<h1[^>]*>Licenses<\/h1>/;
 
 describe("Licenses in the sidebar", () => {
   test("is the last section, and is offered only where there are licenses to show", () => {
-    expect(visibleSections(caps("admin"), { licenses: true })).toEqual(["members", "settings", "audit", "licenses"]);
-    expect(visibleSections(caps("owner"), { licenses: true })).toEqual(["members", "settings", "audit", "licenses"]);
+    expect(visibleSections(caps("admin"), { licenses: true })).toEqual(["members", "settings", "licenses"]);
+    expect(visibleSections(caps("owner"), { licenses: true })).toEqual(["members", "settings", "licenses"]);
     expect(visibleSections(caps("member"), { licenses: true })).toEqual(["settings", "licenses"]);
-    expect(visibleSections(caps("owner"), { licenses: false })).toEqual(["members", "settings", "audit"]);
-    expect(visibleSections(caps("owner"))).toEqual(["members", "settings", "audit"]);
+    expect(visibleSections(caps("owner"), { licenses: false })).toEqual(["members", "settings"]);
+    expect(visibleSections(caps("owner"))).toEqual(["members", "settings"]);
   });
 
   test("is called Licenses and goes to the workspace's licenses address", () => {

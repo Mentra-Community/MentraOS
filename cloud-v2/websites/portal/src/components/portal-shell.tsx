@@ -2,45 +2,38 @@ import { useQuery } from "@tanstack/react-query";
 import {
   AppShell,
   CenteredLayout,
-  CreateWorkspaceDialog,
-  ROLE_LABELS,
-  WorkspaceSwitcher,
+  Count,
+  WorkspaceLabel,
   workspaceListQuery,
   type ExternalNavItem,
   type NavGroup,
   type SwitcherCurrent,
-  type SwitcherInvitation,
-  type SwitcherWorkspace,
 } from "@mentra/workspace-ui";
-import { CodeXml } from "lucide-react";
+import { CodeXml, Mail } from "lucide-react";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
-import { SwitcherInvitationActions } from "@/components/pending-invitation";
 import { safeLocalStorage } from "@/lib/api";
-import type { PendingInvitation } from "@/lib/invitations";
-import { Link, navigate } from "@/lib/navigation";
-import { creationNotice, portalWorkspaceApi, usePortal } from "@/lib/portal";
-import { currentWorkspace, forgetWorkspace, recallWorkspace, rememberWorkspace, sectionHref, type WorkspaceSection } from "@/lib/routes";
+import { Link } from "@/lib/navigation";
+import { portalWorkspaceApi, usePortal } from "@/lib/portal";
+import { currentWorkspace, forgetWorkspace, INVITATION_PATH, recallWorkspace, rememberWorkspace } from "@/lib/routes";
 
 /**
- * The person's valid invitations as switcher entries, with Accept and Dismiss: the one this tab's link
- * holds and those addressed to their verified email, each once (lib/invitations). Nothing while they are
- * being looked up, and never a link that is no longer valid.
+ * Under the workspace: a link to `/invitation` while the person has invitations to answer ("2 pending
+ * invitations"), and nothing otherwise. The invitations themselves, with Accept and Decline, are on that page.
  */
-export function useSwitcherInvitations(): SwitcherInvitation[] {
+export function InvitationsLink() {
   const { invitations } = usePortal();
-  return (invitations ?? []).map(switcherInvitation);
-}
-
-export function switcherInvitation(invitation: PendingInvitation): SwitcherInvitation {
-  const { preview } = invitation;
-  return {
-    key: preview.invitationId,
-    label: `Join ${preview.workspaceName}`,
-    detail: invitation.forOtherAccount
-      ? `For ${preview.email}`
-      : [ROLE_LABELS[preview.role], preview.invitedByEmail ? `from ${preview.invitedByEmail}` : null].filter(Boolean).join(" · "),
-    actions: <SwitcherInvitationActions invitation={invitation} />,
-  };
+  const count = invitations?.length ?? 0;
+  if (count === 0) return null;
+  return (
+    <Link
+      href={INVITATION_PATH}
+      className="bg-info text-info-foreground hover:bg-hover flex items-center gap-2.5 rounded-full px-4 py-2 text-sm font-semibold"
+    >
+      <Mail className="size-4 shrink-0" />
+      <span className="flex-1">{count === 1 ? "Pending invitation" : "Pending invitations"}</span>
+      <Count>{count}</Count>
+    </Link>
+  );
 }
 
 /**
@@ -106,12 +99,12 @@ export function portalLinks(developerConsoleUrl: string | null): ExternalNavItem
 
 /**
  * The shared `AppShell` as the portal's: named Mentra Portal, on MentraOS, with the portal's History-API
- * `Link`, the workspace switcher wired to the person's workspaces, this tab's invitation and the
- * create-workspace dialog, and the links out of the portal. A new workspace opens as soon as it exists.
+ * `Link`, the person's one workspace (name and role) at the top of the sidebar, a link to their invitations
+ * under it, and the links out of the portal. A person belongs to one workspace: there is nothing to switch
+ * to and no way to create another from here.
  */
 export function PortalShell({
   current,
-  section,
   nav,
   navLabel,
   activeKey,
@@ -121,8 +114,6 @@ export function PortalShell({
   children,
 }: {
   current: SwitcherCurrent | null;
-  /** The section open now: switching workspaces keeps it when the other workspace has it. */
-  section?: WorkspaceSection;
   nav: readonly NavGroup[];
   /** The navigation's name for assistive technology; "Workspace" unless it is not a workspace's. */
   navLabel?: string;
@@ -133,17 +124,7 @@ export function PortalShell({
   children: ReactNode;
 }) {
   const portal = usePortal();
-  const list = useQuery(workspaceListQuery(portalWorkspaceApi));
-  const invitations = useSwitcherInvitations();
-  const bareWorkspaceId = useBareWorkspaceId();
-  const [creating, setCreating] = useState(false);
-
-  const workspaces: SwitcherWorkspace[] | undefined = list.data?.map(item => ({
-    workspaceId: item.workspaceId,
-    name: item.name,
-    roleLabel: ROLE_LABELS[item.membership.role],
-    href: sectionHref(section ?? null, item.workspaceId, bareWorkspaceId),
-  }));
+  const invitations = <InvitationsLink />;
 
   return (
     <AppShell
@@ -151,17 +132,12 @@ export function PortalShell({
       brandSubtitle="MentraOS"
       linkComponent={Link}
       switcher={
-        <WorkspaceSwitcher
-          current={current}
-          workspaces={workspaces}
-          invitations={invitations}
-          canCreate={portal.creation.allowed}
-          createNotice={creationNotice(portal.creation)}
-          onCreate={() => setCreating(true)}
-          listFailed={list.isError}
-          onRetry={() => void list.refetch()}
-          linkComponent={Link}
-        />
+        current ? (
+          <WorkspaceLabel current={current} invitations={invitations} />
+        ) : (
+          // No workspace (billing, a missing page): just the invitations, when there are any.
+          invitations
+        )
       }
       nav={nav}
       navLabel={navLabel}
@@ -171,16 +147,11 @@ export function PortalShell({
       description={description}
       headerAction={headerAction}
       userEmail={portal.userEmail}
+      userName={portal.userName}
       onSignOut={portal.signOut}
       signingOut={portal.signingOut}
     >
       {children}
-      <CreateWorkspaceDialog
-        api={portalWorkspaceApi}
-        open={creating}
-        onClose={() => setCreating(false)}
-        onCreated={created => navigate(sectionHref(null, created.workspaceId, null))}
-      />
     </AppShell>
   );
 }
@@ -189,7 +160,7 @@ export function PortalShell({
 export function PortalCenteredLayout({ children }: { children: ReactNode }) {
   const portal = usePortal();
   return (
-    <CenteredLayout userEmail={portal.userEmail} onSignOut={portal.signOut} signingOut={portal.signingOut}>
+    <CenteredLayout userEmail={portal.userEmail} userName={portal.userName} onSignOut={portal.signOut} signingOut={portal.signingOut}>
       {children}
     </CenteredLayout>
   );
