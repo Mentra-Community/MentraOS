@@ -7,7 +7,7 @@ import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
 
 import {reactNative, reactNativeAppState} from "../../__tests__/reactNativeTestMock"
-import type {InstalledMiniapp, InventorySource} from "../fleetCollector"
+import type {InstalledMiniapp, InventorySource, PhoneBatteryReading, PhoneBatterySource} from "../fleetCollector"
 import {fakeCreateMMKV, resetFakeMmkv} from "./fakeMmkv"
 import {MemoryFleetStore} from "./memoryFleetStore"
 
@@ -124,6 +124,25 @@ function disconnectLive(): void {
   glassesStore.setState({connection: {state: "disconnected"}, ...IDENTITY_CLEARED})
 }
 
+/** The phone's battery as the app's source would hold it: `land` is a new reading arriving after a refresh. */
+const phoneBattery = {
+  value: {level: 64, charging: false} as PhoneBatteryReading | "unsupported" | null,
+  refreshes: 0,
+  listeners: new Set<() => void>(),
+  land(value: PhoneBatteryReading | "unsupported" | null): void {
+    this.value = value
+    for (const listener of [...this.listeners]) listener()
+  },
+}
+const phoneBatterySource: PhoneBatterySource = {
+  read: () => phoneBattery.value,
+  refresh: () => void (phoneBattery.refreshes += 1),
+  subscribe(listener) {
+    phoneBattery.listeners.add(listener)
+    return () => void phoneBattery.listeners.delete(listener)
+  },
+}
+
 let appStateListener: ((state: string) => void) | null = null
 function setAppState(state: string, notify = true): void {
   reactNativeAppState.currentState = state
@@ -194,8 +213,16 @@ beforeEach(() => {
       },
     }
   }) as never
+  phoneBattery.value = {level: 64, charging: false}
+  phoneBattery.refreshes = 0
+  phoneBattery.listeners.clear()
   queue = createFleetQueue(new MemoryFleetStore(), {now: () => clock.wall})
-  collector = createFleetCollector({queue, now: () => clock.wall, monotonic: () => clock.mono})
+  collector = createFleetCollector({
+    queue,
+    now: () => clock.wall,
+    monotonic: () => clock.mono,
+    phoneBattery: phoneBatterySource,
+  })
 })
 
 afterEach(() => {
@@ -1081,6 +1108,7 @@ describe("snapshots", () => {
         appBuild: "345",
         engineVersion: ENGINE_VERSION,
         sdkVersion: SDK_VERSION,
+        battery: {state: "measured", observedAt: iso(clock.wall), level: 64, charging: false},
       },
     })
     expect(snapshot.deviceBinding).toBeUndefined()
@@ -1484,8 +1512,158 @@ describe("glasses that are away", () => {
   })
 })
 
+describe("the phone's battery", () => {
+  const phoneBatteryOf = (record: Kind<"snapshot"> | undefined) => record?.payload.phone.battery
+
+  test("is asked for at start and on each checkpoint wake-up, with no timer of its own", () => {
+    start()
+    expect(phoneBattery.refreshes).toBe(1)
+    expect(timers.size).toBe(1)
+    advance(60 * 60_000)
+    expect(phoneBattery.refreshes).toBe(5)
+    expect(timers.size).toBe(1)
+  })
+
+  test("no reading yet is unknown, with no level, and keeps the time it was first seen", () => {
+    phoneBattery.value = null
+    start()
+    const seenAt = clock.wall
+    expect(phoneBatteryOf(snapshots()[0])).toEqual({state: "unknown", observedAt: iso(seenAt)})
+    setAppState("active")
+    advance(15 * 60_000)
+    expect(snapshots().length).toBeGreaterThan(1)
+    expect(phoneBatteryOf(snapshots().at(-1))).toEqual({state: "unknown", observedAt: iso(seenAt)})
+  })
+
+  test.each([
+    ["not a number", Number.NaN],
+    ["below 0", -1],
+    ["above 100", 150],
+  ])("a level %s is unknown, never a number", (_name, level) => {
+    phoneBattery.value = {level, charging: false}
+    start()
+    expect(phoneBatteryOf(snapshots()[0])).toEqual({state: "unknown", observedAt: iso(clock.wall)})
+  })
+
+  test("the first reading after an unknown one is worth a snapshot", () => {
+    phoneBattery.value = null
+    start()
+    advance(60_000)
+    phoneBattery.land({level: 0, charging: true})
+    advance(2_000)
+    expect(snapshots()).toHaveLength(2)
+    expect(phoneBatteryOf(snapshots()[1])).toEqual({
+      state: "measured",
+      observedAt: iso(clock.wall - 2_000),
+      level: 0,
+      charging: true,
+    })
+  })
+
+  test("a phone that cannot report one is unsupported, and no record claims phone_battery", () => {
+    phoneBattery.value = "unsupported"
+    connectLive()
+    start()
+    collector.flushCheckpoint()
+    expect(phoneBatteryOf(snapshots()[0])).toEqual({state: "unsupported", observedAt: iso(clock.wall)})
+    for (const record of all()) expect(record.capabilities).not.toContain("phone_battery")
+  })
+
+  test("a phone that reports one claims phone_battery on every record, with or without glasses", () => {
+    start()
+    collector.flushCheckpoint()
+    connectLive()
+    advance(5_000)
+    collector.flushCheckpoint()
+    for (const record of all()) expect(record.capabilities).toContain("phone_battery")
+  })
+
+  test("a move of under 5 points is not worth a snapshot; 5 points and a charging change are", () => {
+    start()
+    phoneBattery.land({level: 60, charging: false})
+    advance(5_000)
+    expect(snapshots()).toHaveLength(1)
+    phoneBattery.land({level: 59, charging: false})
+    advance(5_000)
+    expect(snapshots()).toHaveLength(2)
+    expect(phoneBatteryOf(snapshots()[1])).toMatchObject({level: 59})
+    phoneBattery.land({level: 59, charging: true})
+    advance(5_000)
+    expect(snapshots()).toHaveLength(3)
+    expect(phoneBatteryOf(snapshots()[2])).toMatchObject({level: 59, charging: true})
+  })
+
+  test("a reading that lands in a burst is one snapshot", () => {
+    start()
+    phoneBattery.land({level: 50, charging: false})
+    phoneBattery.land({level: 50, charging: true})
+    phoneBattery.land({level: 51, charging: true})
+    advance(5_000)
+    expect(snapshots()).toHaveLength(2)
+    expect(phoneBatteryOf(snapshots()[1])).toMatchObject({level: 51, charging: true})
+  })
+
+  test("with only the engine active, a phone draining all day writes a snapshot per 5 points, not per reading", () => {
+    phoneBattery.value = {level: 100, charging: false}
+    start()
+    for (let quarter = 1; quarter <= 96; quarter++) {
+      advance(15 * 60_000)
+      phoneBattery.land({level: 100 - quarter, charging: false})
+    }
+    advance(5_000)
+    expect(checkpoints()).toHaveLength(96)
+    // The one at start, then one for each 5 points down to 4%.
+    expect(snapshots()).toHaveLength(1 + Math.floor(96 / 5))
+  })
+
+  test("a later snapshot does not make an old phone reading look fresh", () => {
+    setAppState("active", false)
+    start()
+    const measuredAt = clock.wall
+    advance(15 * 60_000)
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.observedAt).toBe(iso(clock.wall))
+    expect(phoneBatteryOf(latest)).toMatchObject({level: 64, observedAt: iso(measuredAt)})
+  })
+
+  test("a reading that lands after stop changes nothing", () => {
+    start()
+    collector.stop("engine_stopped")
+    const before = all().length
+    phoneBattery.land({level: 10, charging: true})
+    advance(5_000)
+    expect(all()).toHaveLength(before)
+  })
+
+  test("a source that throws is unknown, and nothing breaks", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    const fragile = createFleetCollector({
+      queue,
+      now: () => clock.wall,
+      monotonic: () => clock.mono,
+      phoneBattery: {
+        read: () => {
+          throw new Error("boom")
+        },
+        refresh: () => {
+          throw new Error("boom")
+        },
+        subscribe: () => () => {},
+      },
+    })
+    try {
+      expect(() => fragile.start({partition: PARTITION, collectorSessionId: SESSION})).not.toThrow()
+      expect(phoneBatteryOf(snapshots()[0])).toEqual({state: "unknown", observedAt: iso(clock.wall)})
+      expect(() => advance(15 * 60_000)).not.toThrow()
+    } finally {
+      fragile.stop("engine_stopped")
+      warn.mockRestore()
+    }
+  })
+})
+
 describe("capabilities", () => {
-  test("with glasses connected the phone measures all seven", () => {
+  test("with glasses connected the phone measures all of them", () => {
     connectLive()
     start()
     expect([...snapshots()[0].capabilities].sort()).toEqual([...FLEET_CAPABILITIES].sort())
