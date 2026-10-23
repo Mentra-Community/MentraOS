@@ -17,7 +17,7 @@ import {
   type WorkspaceDetail,
   type WorkspaceRole,
 } from "@mentra/workspace-contract";
-import { CheckIcon, MoreHorizontalIcon, SendIcon, XIcon } from "lucide-react";
+import { CheckIcon, MailIcon, MoreHorizontalIcon, SendIcon, XIcon } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 import type { WorkspaceApi } from "../api";
 import { formatExpiry } from "../lib/format";
@@ -26,12 +26,13 @@ import { invitationsQuery, useWorkspaceMutation, workspaceDetailQuery } from "..
 import { assignableRoles, can, effectiveRole, ROLE_DESCRIPTIONS, ROLE_LABELS } from "../roles";
 import { licenseStrings } from "../strings/licenses";
 import { Button } from "../ui/button";
+import { Card } from "../ui/card";
 import { Dialog } from "../ui/dialog";
 import { Menu, type MenuItem } from "../ui/menu";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { NativeSelect } from "../ui/native-select";
-import { Avatar, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
+import { CopyButton, ErrorNotice, Panel, QueryGate, Restricted } from "./common";
 import { ConfirmDialog, useAsking } from "./confirm-dialog";
 
 const TITLE = "Invitations";
@@ -177,9 +178,10 @@ function newestFirst(invitations: InvitationView[]): InvitationView[] {
 }
 
 /**
- * The pending invitations as a table: each address, its role and when it expires ("In 6 days", "Tomorrow"), newest
- * first. Where the viewer could have sent one, its row's "…" menu has Resend and Revoke. Revoke asks in a dialog, which
- * shows a refusal itself; a failed Resend is shown under the list.
+ * The pending invitations as a table: each address (with a mail mark: nobody has signed in as it yet), its role and when
+ * it expires ("In 6 days", "Tomorrow"), newest first, as the design board draws them. Where the viewer could have sent
+ * one, its row's "…" menu has Resend and Revoke. Revoke asks in a dialog, which shows a refusal itself; a failed Resend
+ * is shown under the list. `flush` is for a card that holds nothing else: its own border is the table's top edge.
  */
 function PendingInvitationsList({
   api,
@@ -187,12 +189,14 @@ function PendingInvitationsList({
   detail,
   invitations,
   onResent,
+  flush = false,
 }: {
   api: WorkspaceApi;
   workspaceId: string;
   detail: WorkspaceDetail;
   invitations: InvitationView[];
   onResent(link: InvitationLink): void;
+  flush?: boolean;
 }) {
   const viewer = effectiveRole(detail);
   const resend = useWorkspaceMutation(api, workspaceId, async (invitation: InvitationView) => {
@@ -216,7 +220,7 @@ function PendingInvitationsList({
     <>
       <div data-slot="invitations-list" className="-mx-6">
         <table className="w-full text-left text-sm">
-          <thead className="text-muted-foreground border-y text-xs">
+          <thead className={cn("text-muted-foreground border-b text-xs", !flush && "border-t")}>
             <tr>
               <th className="py-3 pr-4 pl-6 font-semibold">Email</th>
               <th className="py-3 pr-4 font-semibold">Role</th>
@@ -256,13 +260,16 @@ function PendingInvitationsList({
                 <tr key={invitation.invitationId} className="border-b last:border-b-0">
                   <td className="py-3.5 pr-4 pl-6">
                     <div className="flex min-w-0 items-center gap-3">
-                      <Avatar label={invitation.email} className="text-muted-foreground bg-background border-dashed" />
+                      <span
+                        aria-hidden="true"
+                        className="border-border text-muted-foreground bg-background inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-dashed"
+                      >
+                        <MailIcon className="size-4" />
+                      </span>
                       <span className="min-w-0 text-[15px] font-semibold [overflow-wrap:anywhere]">{invitation.email}</span>
                     </div>
                   </td>
-                  <td className="py-3.5 pr-4">
-                    <RoleBadge role={invitation.role} />
-                  </td>
+                  <td className="text-muted-foreground py-3.5 pr-4 whitespace-nowrap">{ROLE_LABELS[invitation.role]}</td>
                   <td className="text-muted-foreground py-3.5 pr-4 whitespace-nowrap">{formatExpiry(invitation.expiresAt)}</td>
                   <td className="py-3.5 pr-4 text-right">
                     {items.length > 0 ? (
@@ -393,25 +400,30 @@ export function PendingInvitationsScreen({
 
   if (!detail || !mayManage) return null;
   if (!link && invitationsResult.data?.length === 0) return null;
+  // The board draws the list as one card with no heading of its own: the Invited tab above it already says what it is.
   return (
-    <Panel
-      title="Pending invitations"
-      count={invitationsResult.data?.length}
-      description="Sent but not accepted yet. Each can only be accepted by the address it was sent to."
-    >
-      {link ? <InvitationLinkNotice link={link} onDismiss={() => setLink(null)} /> : null}
-      <QueryGate result={invitationsResult}>
-        {(invitations) => (
-          <PendingInvitationsList
-            api={api}
-            workspaceId={workspaceId}
-            detail={detail}
-            invitations={invitations}
-            onResent={setLink}
-          />
-        )}
-      </QueryGate>
-    </Panel>
+    <Card role="region" aria-label="Pending invitations" className="gap-0 overflow-hidden py-0">
+      {link ? (
+        <div className="px-6 pt-6">
+          <InvitationLinkNotice link={link} onDismiss={() => setLink(null)} />
+        </div>
+      ) : null}
+      {/* The table bleeds to the card's edges (its own -mx-6); a loading or failed state keeps the card's padding. */}
+      <div className={cn("px-6 [&:not(:has(table))]:py-6", link && "pt-4")}>
+        <QueryGate result={invitationsResult}>
+          {(invitations) => (
+            <PendingInvitationsList
+              api={api}
+              workspaceId={workspaceId}
+              detail={detail}
+              invitations={invitations}
+              onResent={setLink}
+              flush={!link}
+            />
+          )}
+        </QueryGate>
+      </div>
+    </Card>
   );
 }
 

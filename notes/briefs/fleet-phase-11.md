@@ -13,157 +13,66 @@ covers:
 
 # Fleet Phase 11 (Fleet Management in Mentra Portal): context brief
 
-Read this first for any Phase 11 question (OS-2110). It is a map and a pitfalls log, not a spec.
-When it disagrees with a source of truth below, the source of truth wins; then fix this file.
+Read first for any Phase 11 question (OS-2110). A map and pitfalls log, not a spec; the sources below win over this file.
 
 ## Sources of truth, in order
 
-1. Mentra-Specs `platform/enterprise/mentra-fleet-management/spec.md` (Phase 11 criteria 2-4, 7, 9, 10,
-   15-22, 26, 27), `managed-miniapp-provisioning/spec.md`, `cloud/core/workspaces/{spec,plan}.md`.
-2. Sign-in plan Tasks 21-23 (`cloud/auth/web-login/plan.md`): Core portal forwarding, FleetUi contract,
-   Store eligibility.
-3. Design board `Mentra-Community/fleet-design-board` round 2 (`src/r2/*`, `UPDATE-2026-10-20.md`). The
-   update note overrides older drawings.
-4. The plan: `~/.cursor/plans/fleet_phase_11_plan_*.plan.md` (not committed; ownership map W0-W17,
-   checkpoints A-H, walkthroughs, operational owners O1-O6).
-5. Code: Core `cloud-v2/packages/core/src/api/fleet/fleet-forwarding.ts`; protocol
-   `cloud-v2/packages/protocol/src/fleet.ts`; MFM is `fleet/` in `Mentra-Community/miniapp-store` (`dev`).
+1. Mentra-Specs `platform/enterprise/mentra-fleet-management/spec.md` (Phase 11 criteria 2-4, 7, 9, 10, 15-22, 26, 27), `managed-miniapp-provisioning/spec.md`, `cloud/core/workspaces/{spec,plan}.md`.
+2. Sign-in plan Tasks 21-23 (`cloud/auth/web-login/plan.md`); design board `Mentra-Community/fleet-design-board` r2 (`UPDATE-2026-10-20.md` overrides drawings).
+3. Plan `~/.cursor/plans/fleet_phase_11_plan_*.plan.md` (not committed: owners W0-W17, checkpoints A-H, O1-O6).
+4. Code: Core `cloud-v2/packages/core/src/api/fleet/fleet-forwarding.ts`; protocol `cloud-v2/packages/protocol/src/fleet.ts`; MFM is `fleet/` in `Mentra-Community/miniapp-store` (`dev`).
 
-## Model
+## Model and entry points
 
-- Membership is management. A member of a workspace is managed from the moment they join. No acknowledgment
-  step gates installs; the Fleet notice only informs.
-- Desired state: `managed` (workspace + entries, entries may be empty) or `unmanaged`. `paused` is Phase 15
-  and is not in this schema. One monotonic `revision` per account. Error, timeout, partial read or missing MFM
-  is never an empty set: MFM answers 503 and the phone keeps its last complete snapshot.
-- MFM scopes queries by its own copy of membership intervals (from the Core change feed plus a bootstrap read
-  bounded by `CLOUD_CORE_FLEET_HISTORY_MAX_DAYS`, deployed at least 120). Records are never re-stamped.
-- A query is answered only when intervals are current (catch-up to Core head, or within
-  `FLEET_INTERVAL_MAX_STALENESS`); otherwise 503.
-- Core signs workspace scope from the URL only: `/api/portal/fleet/workspaces/:id/*` to MFM
-  `/v1/portal/workspaces/:id/*`. Organization Admins act as Owner. Fleet is not a `PORTAL_MODULE_NAMES` entry.
-- One workspace per person. Cosmos RU rejects cross-collection transactions, so the guard must live in the
-  memberships collection (W1 spike decides). No unique index on a populated Core collection.
-- Phone: installation reasons (`bundled`, `explicit`, `manifest`, `assignment`) are stored apart from artifact
-  provenance (`MiniappReleaseIdentity.source`). Withdrawal keeps data. Private data and development selections
-  partition by account/Core and workspace.
-
-## Entry points
-
-- New protocol record kinds / ack revision / desired state -> `cloud-v2/packages/protocol/src/fleet.ts`
-- Phone Fleet reporter -> `mobile/modules/engine/src/services/fleet/FleetReporter.ts`
-- Phone assignment reconciler -> `mobile/modules/engine/src/services/fleet/assignmentReconciler.ts`; install reasons in
-  `AppRegistry.ts` (`hasAssignmentReason`); data partitions in `services/miniappDataPartition.ts`
-- Portal workspace sections -> `cloud-v2/websites/portal/src/lib/routes.ts`, `pages/workspace.tsx`
-- Leave / last-Owner -> `cloud-v2/packages/core/src/services/workspaces/workspace.service.ts` (`leaveWorkspace`)
+- Membership is management; the Fleet notice only informs. Desired state is `managed` (maybe empty) or `unmanaged` (`paused` is Phase 15); one monotonic `revision` per account. Error, timeout, partial read or no MFM is never an empty set: MFM answers 503, the phone keeps its snapshot.
+- MFM scopes queries by its own copy of membership intervals (Core change feed + bootstrap, `CLOUD_CORE_FLEET_HISTORY_MAX_DAYS`, deployed >= 120); records are never re-stamped; stale intervals mean 503.
+- Core signs scope from the URL only: `/api/portal/fleet/workspaces/:id/*` -> MFM `/v1/portal/workspaces/:id/*`. Org Admins act as Owner. Fleet is not a `PORTAL_MODULE_NAMES` entry. One workspace per person; no unique index on a populated collection.
+- Install reasons (`bundled`, `explicit`, `manifest`, `assignment`) are stored apart from artifact provenance (`MiniappReleaseIdentity.source`). Withdrawal keeps data. Private data and dev selections partition by account/Core/workspace.
+- Phone Connected = it REPORTED (receipt time `lastReportedAt`) within 20 min, not "last seen" (`phoneStatus`, `fleet/src/query/workspace.service.ts`; `fleet/tests/workspace-queries.integration.test.ts`). Glasses: connected + 10 min.
+- Phone: `mobile/modules/engine/src/services/fleet/{FleetReporter,fleetCollector,assignmentReconciler}.ts`, reasons in `AppRegistry.ts` (`hasAssignmentReason`), `services/miniappDataPartition.ts`.
+- Portal: `cloud-v2/websites/portal/src/{lib/routes.ts,pages/workspace.tsx,pages/fleet.tsx}`; Invited list `cloud-v2/packages/workspace-ui/src/components/invitations-panel.tsx`; leave/last-Owner Core `services/workspaces/workspace.service.ts` (`leaveWorkspace`).
 
 ## Engineering choices recorded (Nicolo's; bounded, no sign-off needed)
 
-1. Latest versions: newest reported in the last 30 days per platform and per glasses model.
-2. Mentra Live "Glasses software" is the ASG client APK version; More lists BES and MTK firmware.
+1. Latest versions: newest reported in the last 30 days per platform and per glasses model. 2. Mentra Live "Glasses software" is the ASG client APK version; More lists BES and MTK firmware.
 3. Phone page is built (Status, Battery, Mentra App; More: OS, app version, assigned miniapp status).
 4. Last-Owner copy: "You're this workspace's only Owner. Hand over ownership or delete the workspace in Mentra Portal first."
-5. Failure words (reasons per Mentra-Specs #140; desired-state entries carry the miniapp `url`): storage_full
-   "Not enough space"; archived "No longer available"; access_denied "No access to this miniapp"; not_a_miniapp
-   "Not a miniapp"; download_failed
-   "Download failed"; signature_invalid "Signature check failed"; incompatible_host "Needs a newer Mentra App";
-   newer_version_installed "A newer version is installed"; manifest_conflict "Set by your organization".
-6. Invitation sheet is not swipeable (deviates from the board; Decline is irreversible). Flag in the PR.
-7. Update prompt buttons stack, main action on top (`UPDATE-2026-10-20.md`).
-8. Overview cache: rolling-window parts only, keyed by workspace + last complete bucket + interval revision,
-   15 minute TTL; "Connected now" and battery are live.
-9. Usage tab deferred to Phase 12; `GET usage` API ships.
-10. Undrawn copy: skeleton loading, "Something went wrong. Try again.", empty search "No results for "<query>"".
+5. Failure words (reasons per Mentra-Specs #140): storage_full "Not enough space"; archived "No longer available"; access_denied "No access to this miniapp"; not_a_miniapp "Not a miniapp"; download_failed "Download failed"; signature_invalid "Signature check failed"; incompatible_host "Needs a newer Mentra App"; newer_version_installed "A newer version is installed"; manifest_conflict "Set by your organization".
+6. Invitation sheet is not swipeable (deviates from the board; Decline is irreversible). Flag in the PR. 7. Update prompt buttons stack, main action on top.
+8. Overview cache: rolling-window parts only, keyed by workspace + last complete bucket + interval revision, 15 min TTL; "Connected now" and battery are live.
+9. Usage tab deferred to Phase 12; `GET usage` API ships. 10. Undrawn copy: skeleton loading, "Something went wrong. Try again.", empty search "No results for "<query>"".
 
 ## Pitfalls log
 
-1. Local MentraOS checkout was 125 commits behind `origin/dev`; read `origin/dev` or work in a worktree.
+1. Local MentraOS checkout was 125 commits behind `origin/dev`; read `origin/dev` or use a worktree.
 2. `/w/<id>` redirects to the first section and drops the query; Fleet URL is `/w/<id>/fleet?fleet=<path>`.
-3. `membership.replaced` is emitted only by `scripts/migrate-store-developer-orgs.ts` (close plus open).
-4. Round-1/2 review: an `unmanaged` answer on a failed Core membership check is wrong; it is 503.
-5. Automatic update path in `miniappReleaseInstall.ts` calls `assertStillInstalled`, so it cannot first-install.
-6. One-workspace guard = raw doc in `workspace_memberships` (`membership-guard.service.ts`, `_id: ows:<userId>`). It
-   carries none of `workspaceId`/`mentraUserId`/`status`/`role`, so no membership query matches it. A duplicate-key
-   error inside a transaction aborts it, so the claim inserts a guard only when the person holds no active
-   membership (it reads them first); a racing join then aborts the claim, which runs again at the next request.
-   A guard counts only while the membership it names is still the person's active one: `initializeGuards` and the
-   cleanup script write from earlier reads, so a stale guard must refuse nobody (the next join replaces it). Never
-   test a guard with a membership id that has no row.
-   The cleanup script writes the retained membership's row before every removal (`pinRetainedMembership`) so a
-   concurrent leave of it conflicts instead of leaving the person with none; the portal turns a 401 from `/me` into
-   `sessionExpired` (`PortalApiError.status`), not "Fleet unavailable".
-7. The claim picks one membership across every legacy identity with the email (highest role, earliest) and
-   discards every other pending one (`membership.removed`, keys revoked), per web-login "Membership claim" rule 4.
-   A discarded last Owner promotes the next live member; with none the workspace is logged as ownerless.
-8. Tests that need one person in several workspaces must write the extra membership directly (legacy state); the
-   services refuse it. Create the guarded one through `createWorkspace` first.
-9. CLI `workspace list`/`use` are gone; ship the CLI only after `scripts/one-workspace-cleanup.ts` has run, or
-   legacy multi-workspace accounts are locked out of the CLI.
+3. `membership.replaced` is emitted only by `scripts/migrate-store-developer-orgs.ts`. 4. An `unmanaged` answer on a failed Core membership check is wrong; it is 503.
+5. `miniappReleaseInstall.ts` automatic update calls `assertStillInstalled`, so it cannot first-install.
+6. One-workspace guard = raw doc in `workspace_memberships` (`membership-guard.service.ts`, `_id: ows:<userId>`) lacking `workspaceId`/`mentraUserId`/`status`/`role`, so no membership query matches it. A duplicate key aborts a transaction, so a claim inserts a guard only when the person holds no active membership; a guard counts only while its membership is the active one (never test one with a membership id that has no row). Cleanup writes the retained membership's row before each removal (`pinRetainedMembership`). A 401 from `/me` is `sessionExpired`, not "Fleet unavailable".
+7. The claim picks one membership across legacy identities with the email (highest role, earliest), discards the other pending ones (`membership.removed`, keys revoked; web-login rule 4). A discarded last Owner promotes the next live member; none = ownerless, logged.
+8. A test with one person in several workspaces writes the extra membership directly (services refuse it); create the guarded one through `createWorkspace` first.
+9. CLI `workspace list`/`use` are gone; ship the CLI only after `scripts/one-workspace-cleanup.ts` has run.
 10. `/api/portal/fleet` accepts the portal session cookie only (`via === "session"`); a bearer is 403 even if valid.
-11. Portal Fleet host: `cloud-v2/websites/portal/src/pages/fleet.tsx` (`/w/<id>/fleet?fleet=<path>`, apiBase
-    `/api/portal/fleet/workspaces/<id>`, `/me?workspaceId=` gives an Org Admin exactly that workspace). `PortalMe` fields
-    are optional: a Core that predates them reads as "Fleet not installed". `queryFn` must not be passed `fetchPortalMe`
-    directly (react-query hands it a context object).
-12. Portal `public/_headers` CSP: Fleet (module, fonts, glasses images) loads under it with no violation in the local
-    stack (2026-10-22); real sign-in and billing under it are still unverified.
-13. Admin Workspaces link needs build-time `PORTAL_URL` (set by `scripts/deploy-pages.ts`, public, not a Doppler key).
-14. Portal Decline is `POST /api/{portal/,}workspaces/invitations/decline` (shared handler); the Mentra App uses
-    `/api/client/workspaces/invitations/:id/decline`. Both call `declineInvitation`.
-15. The Fleet UI module is `fleet/ui/` in miniapp-store (stacked PR #66 on #65): built to `fleet/ui/dist`, served by MFM
-    at `/v1/portal/ui/*`. The portal title is the Fleet item (`fleetNavItem`, first `?fleet=` segment, no description);
-    the module draws its own page headings. `useSearch()` is "" in server-rendered tests, so test titles via `fleetNavItem`.
-16. W9 storage map (checked 2026-10-22). Miniapp user data before W9 was keyed by Mentra user id only (no Core, no
-    workspace), all in the default MMKV instance that logout's `storage.clearAll()` (`src/utils/LogoutUtils.ts`) wipes:
-    SimpleStorage `LocalMiniappStorage.ts` (`mentraos_localstorage_<userId>_<pkg>_<key>`, wired in
-    `LocalMiniappRuntime.ts` `simpleStorage`); blob metadata `BlobStore.ts` (`mentraos_blobmeta_<userId>_<pkg>_`) with
-    files in `Documents/mentra_blobs/<userId>/<pkg>/` (files survive logout, their metadata does not). Development
-    selections are global keys in `AppRegistry.ts` and its readers (`MiniappLauncher.ts`, `devMiniappLaunch.ts`,
-    `devMiniappSnapshot.ts`, `src/app/miniapps/miniappdev/scanner.tsx`, `src/app/applet/dev-offline.tsx`):
-    `<pkg>_dev_{meta,url,port,mdns,last_reachable,selected_snapshot}`, `dev_apps_index`, and `dev-*` snapshot
-    directories under `Documents/lmas/<pkg>/`. Release identity and publisher pins live in the
-    `mentra-miniapp-installations` MMKV instance (survives logout). The UI WebView's own DOM storage
-    (`LocalMiniappView.tsx` `domStorageEnabled`) is the platform WebView store and is not partitioned by JS code.
-    W9 partitions SimpleStorage and blobs by Core + account + (assigned package) workspace in
-    `miniappDataPartition.ts`, and swaps development selections per context instead of rewriting every reader.
-17. W9 reconciler: an assigned install's provenance is `direct_download`, which `bootstrap.isInstalledMiniappAllowed`
-    and `AppRegistry.getActiveVersion` treat as a developer release under a workspace `localMiniappPolicy`. Phase 16
-    (`installMiniapp(url)`) needs a URL provenance. Compare installs against released versions on disk, not
-    `getActiveVersion`. Reconciler state is per Core + account in the `mentra-fleet` MMKV (`fleet.assignments.v1/`);
-    no lock is persisted.
-18. App wiring (integration branch): `engine.ts` sets `registryInventorySource` (`services/fleet/`), then starts the
-    reporter and `startAssignmentReconciler(fleetDesiredStateClient)` (`CloudClientService.ts`, account-bound
-    `desiredStateAs`); stop runs in reverse. `AppRegistry` notifies on its first load and on assignment/reason writes,
-    except inside an install transaction's `apply` (a subscriber there could move the active pointer). The real
-    `WorkspaceApi` is `mobile/src/services/fleet/cloudWorkspaceApi.ts`, installed by `MantleManager` before
-    `engine.start()`. Inventory drops entries without `bundleSha256`: bundled and release-QR installs record none.
-    `isMiniappAccessRevoked` is gated in `stores/apps.ts` `start` (host `onAccessRevoked` alert) and `ensureRunning`,
-    and in `setForeground`: Home's running-tile path foregrounds without `start`.
-19. Fleet sheets mount at sign-in, before `MantleManager` wires the client and before the new account's Core session
-    is bound. Their first look is "not wired" or `session_changed`; `onWorkspaceApiReady` (wire, account change) and
-    `pass()` re-looking on `session_changed` make the sheet show without a foreground. Never present an invitation
-    from a pass whose `mine()` was dropped: it offers plain Join instead of the leave-first variant.
-20. Removal is an `unmanaged` answer: like any withdrawal, the miniapp keeps running, uninstalls once idle, keeps its
-    data, and shows no message. That is the spec (Mentra-Specs #140 since `b13ce5f`, 2026-10-21, dropped "stops
-    running private code"; removal "uninstall[s] while idle", acceptance 7 "preserve ... data"). Do not stop it on
-    removal. Only a 401/403 from the URL revokes (stop now, launch blocked, `fleet.accessRevoked`). `resolveMiniappUrl`
-    sends no token and answers no challenge, so a private host cannot tell who asks; the challenge is Phase 17.
-    Tests: `assignmentReconciler.test.ts` "a removed member's ...". Device run 2026-10-22: `/tmp/fleet-e2e/phone/`.
-21. Local stack: `cloud-v2/scripts/fleet-local-stack.ts` (Core, fake GoTrue, built portals with `/__dev/login`) plus
-    miniapp-store `fleet/scripts/dev-stack.ts` (MFM with a fake registry and miniapp host) and `fleet/scripts/seed.ts`
-    (`--keep-alive` keeps "connected now" past the 10 minute window). The static portal server must send a
-    Content-Type, or the module script is refused and the page is blank.
+11. `pages/fleet.tsx` apiBase `/api/portal/fleet/workspaces/<id>`; `/me?workspaceId=` gives an Org Admin that workspace. `PortalMe` fields are optional: an older Core reads as "Fleet not installed". Never pass `fetchPortalMe` as a `queryFn`.
+12. Portal `public/_headers` CSP: Fleet loads with no violation locally (2026-10-22); real sign-in/billing under it unverified.
+13. Admin Workspaces link needs build-time `PORTAL_URL` (`scripts/deploy-pages.ts`, public, not a Doppler key).
+14. Portal Decline is `POST /api/{portal/,}workspaces/invitations/decline`; the Mentra App uses `/api/client/workspaces/invitations/:id/decline`; both call `declineInvitation`.
+15. The Fleet UI is `fleet/ui/` in miniapp-store (built to `fleet/ui/dist`, served at `/v1/portal/ui/*`). The MODULE draws every page header (title + search/Add on lists, back + subject on details); the portal passes no title for Fleet (test with `render("/w/<id>/fleet")`; `parseRoute` ignores the query). Trim glasses pictures to the glasses (`fleet/ui/test/glasses.test.ts`) or the shared 150x40 box shrinks them.
+16. W9 storage: user data was keyed by Mentra user id only in the default MMKV that logout's `storage.clearAll()` (`src/utils/LogoutUtils.ts`) wipes: `LocalMiniappStorage.ts` (`mentraos_localstorage_<userId>_<pkg>_<key>`), `BlobStore.ts` metadata (files in `Documents/mentra_blobs/<userId>/<pkg>/` survive). Dev selections are global keys (`<pkg>_dev_*`, `dev_apps_index`, `Documents/lmas/<pkg>/dev-*`) in `AppRegistry.ts`, `MiniappLauncher.ts`, `devMiniappLaunch.ts`, `devMiniappSnapshot.ts`, `miniappdev/scanner.tsx`, `applet/dev-offline.tsx`. Release identity/pins live in the `mentra-miniapp-installations` MMKV (survives logout). WebView DOM storage is not partitioned. W9 partitions via `miniappDataPartition.ts` and swaps dev selections per context.
+17. An assigned install's provenance is `direct_download`, which `bootstrap.isInstalledMiniappAllowed` and `AppRegistry.getActiveVersion` treat as a developer release under a workspace `localMiniappPolicy`; Phase 16 needs a URL provenance. Compare installs against released versions on disk. State: `mentra-fleet` MMKV (`fleet.assignments.v1/`).
+18. `engine.ts` sets `registryInventorySource`, starts the reporter and `startAssignmentReconciler(fleetDesiredStateClient)` (`CloudClientService.ts`); stop is the reverse. `AppRegistry` notifies on first load and assignment/reason writes, not inside an install transaction's `apply`. Real `WorkspaceApi`: `mobile/src/services/fleet/cloudWorkspaceApi.ts`, installed by `MantleManager` before `engine.start()`. Inventory drops entries without `bundleSha256`. `isMiniappAccessRevoked` gates `stores/apps.ts` (`start`, `ensureRunning`, `setForeground`).
+19. Fleet sheets mount at sign-in before `MantleManager` wires the client: first look is "not wired" or `session_changed`; `onWorkspaceApiReady` and `pass()` re-looking on `session_changed` make the sheet show. Never present an invitation from a pass whose `mine()` was dropped (offers plain Join, not leave-first).
+20. Removal is an `unmanaged` answer: like any withdrawal the miniapp keeps running, uninstalls once idle, keeps its data and shows no message (Mentra-Specs #140 since `b13ce5f`, 2026-10-21, dropped "stops running private code"; do not stop it on removal; tests: `assignmentReconciler.test.ts` "a removed member's ..."). Only a 401/403 from the URL revokes (stop now, launch blocked, `fleet.accessRevoked`); `resolveMiniappUrl` sends no token and answers no challenge, so a private host cannot tell who asks (Phase 17).
+21. Local stack: `cloud-v2/scripts/fleet-local-stack.ts` + store `fleet/scripts/{dev-stack,seed}.ts` (`--keep-alive` keeps "connected now" past 10 min). Use `--state <dir>` and `FLEET_LOCAL_*_MONGO_URL` to leave another stack alone. The static portal server must send a Content-Type or the module script is refused. The seed sends a not-connected person's records in process with an old receipt time; over HTTP they are received now and read Connected.
 
 ## Open items
 
-- 401/403 (item 20) still stops and blocks launch, but the current spec says only "updates stop, and the miniapp's
-  backend decides what still works". Spec owner to confirm before Phase 16/17 changes it.
-- Dates: OS-2099 includes Phase 12; Oct 30 / Nov 11 / Nov 19 are meeting evidence, not checked commitments.
-- Cosmos boundary for the one-workspace guard (design is Cosmos-safe on paper; spike on Cosmos staging NOT run); named owners O1-O6; harness host readiness is uninspected.
+- Phone battery (spec: person card, Devices > Phones, phone page): the protocol `phone` snapshot has no battery (`battery` is glasses only), `phoneRow` returns `battery: null`. Needs protocol field, collector read, MFM store.
+- Members > Invited keeps the page description line as shipped. Cosmos spike for the one-workspace guard NOT run; owners O1-O6; harness host readiness uninspected.
+- 401/403 (pitfall 20) still stops and blocks launch, but the current spec says only "updates stop, and the miniapp's backend decides what still works". Spec owner to confirm before Phase 16/17 changes it.
+- Dates: OS-2099 includes Phase 12; Oct 30 / Nov 11 / Nov 19 are meeting evidence, not commitments.
 
 ## Tests and verification
 
-- Guard/cleanup: `tests/one-workspace-{guard,cleanup}.integration.test.ts`. Protocol: `cd cloud-v2/packages/protocol && bun test`. Core: `cd cloud-v2 && bun run test`.
-- Device evidence follows the plan's checkpoint gate. Android (SM-S906U) against the local stack: flows (a)-(f),
-  (h), (i) and the URL-401 revocation pass on 2026-10-22; no iOS, glasses or real private-host evidence yet.
-- Local phone setup: debug build reads JS from `debug_http_host` in `com.mentra.mentra_preferences.xml`; the dev
-  miniapp host's self-signed cert needs a debug-only trust anchor in the generated `network_security_config.xml`.
+- Guard/cleanup: `tests/one-workspace-{guard,cleanup}.integration.test.ts`. Protocol: `cd cloud-v2/packages/protocol && bun test`. Core: `cd cloud-v2 && bun run test`. Portal: `cd cloud-v2/websites/portal && bun test src && bun run typecheck`.
+- Device evidence: Android SM-S906U against the local stack, flows (a)-(f), (h), (i), URL-401 revocation (2026-10-22); no iOS, glasses or real private-host evidence. The debug build reads JS from `debug_http_host` in `com.mentra.mentra_preferences.xml`; the dev host's self-signed cert needs a debug-only trust anchor in `network_security_config.xml`.
