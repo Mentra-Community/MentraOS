@@ -69,3 +69,19 @@ test("constrains the external Engine asset peer to the mobile Expo SDK", () => {
   })
   assert.equal(JSON.parse(readFileSync(path.join(output, "package.json"), "utf8")).dependencies["expo-asset"], expected)
 })
+
+// @dr.pogodin/react-native-fs 2.41.0 declares an `ArrayBuffer` TurboModule type
+// that React Native 0.83's codegen rejects, which breaks pod install and the
+// Android codegen for any host that resolves it fresh. Lift this bound, in all
+// three places, when the app moves to a React Native whose codegen supports it.
+test("bounds react-native-fs below the release React Native 0.83 codegen rejects", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+  const readPackage = (relativePath) => JSON.parse(readFileSync(path.join(root, relativePath), "utf8"))
+  const expected = ">=2.37.0 <2.41.0"
+  assert.equal(readPackage("mobile/package.json").dependencies["@dr.pogodin/react-native-fs"], expected)
+  assert.equal(
+    readPackage("mobile/modules/engine/package.json").peerDependencies["@dr.pogodin/react-native-fs"],
+    expected,
+  )
+  assert.equal(readPackage("sdk/example-oem-app/package.json").dependencies["@dr.pogodin/react-native-fs"], expected)
+})

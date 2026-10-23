@@ -153,7 +153,7 @@
     "react-native-permissions": "*",
     "react-native-wifi-reborn": "*",
     "@react-native-community/netinfo": "*",
-    "@dr.pogodin/react-native-fs": "*",
+    "@dr.pogodin/react-native-fs": ">=2.37.0 <2.41.0",
     "@craftzdog/react-native-buffer": "*",
     "axios": "*"
   }
