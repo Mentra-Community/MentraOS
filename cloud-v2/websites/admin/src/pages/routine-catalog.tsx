@@ -75,7 +75,7 @@ export function matchesBuildSearch(build: {headSha: string; prNumber?: number; r
 export function matchesHistorySearch(entry: TestHistoryEntry, routines: RoutineCardDefinition[], filters: RoutineSearchFilters) {
   if (!hasRoutineFilters(filters)) return true;
   if (entry.kind === "unavailable") return false;
-  const buildMatch = matchesBuildSearch(entry.build, filters.search);
+  const buildMatch = entry.build ? matchesBuildSearch(entry.build, filters.search) : false;
   const memberFilters = buildMatch ? {...filters, search: ""} : filters;
   if (buildMatch && !filters.platform && !filters.glasses) return true;
   const members = entry.kind === "suite" ? entry.members ?? [] : [entry];

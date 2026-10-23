@@ -28,7 +28,7 @@ export type RoutineCatalogCard = RoutineCardDefinition & {
 export interface FrameworkRunPage {runs: FrameworkRunSummary[]; nextCursor: string | null}
 export type TestHistoryEntry = ({kind: "run"; followUp?: import("./routine-fix-provenance.types").CaseFollowUpSummary; latest?: import("./test-rerun.types").RerunAttempt; latestUnavailable?: boolean; rerunCount?: number; rerun?: {rerunId: string; parentSuiteId?: string; rootKey?: string}} & FrameworkRunSummary) | {
   kind: "suite"; suiteId: string; channel: TestSuite["channel"]; trigger: TestSuite["trigger"];
-  startedAt: string; finishedAt?: string; outcome: string; expectedCount: number; passed: number; skipped?: number; build: TestSuite["build"] & {repository?: string; prNumber?: number};
+  startedAt: string; finishedAt?: string; outcome: string; expectedCount: number; passed: number; skipped?: number; build?: TestSuite["build"] & {repository?: string; prNumber?: number};
   /** Unique submitted routine attempts across accepted reruns, independent of pagination and batch count. */
   followUps?: import("./routine-fix-provenance.types").CaseFollowUpSummary[]; rerunCount: number; failedCount: number; comparison?: {original: import("./test-status-comparison").TestStatusCounts; latest?: import("./test-status-comparison").TestStatusCounts}; latestUnavailable?: boolean; lanes: {hostId: string; laneId: string}[];
   members?: (Pick<TestSuite["members"][number], "routineId" | "platform"> & {laneId?: string; hostId?: string})[];

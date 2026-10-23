@@ -11,6 +11,7 @@ import {TestRunError} from "./test-result-error";
 import {hostRejectionSchema, requestInputDigest, type HostAcceptance, type StoredRequest} from "./test-request.service";
 import {frameworkBuildSchema, frameworkIdentitySchema, recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
 import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
+import {routineIdentitySchema, routinePlatformSchema} from "../types/routine-definition.types";
 import {routineJobBindingSchema, routinePublicationFailureSchema} from "../types/routine-job.types";
 import {NightlyRoutineService, nightlyPreparedInput, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 import {nightlyUnassignedReason} from "./nightly-deadline-reason";
@@ -114,7 +115,7 @@ async function boundSuiteRequests(requestIds: string[]): Promise<BoundRequest[]>
 }
 
 /** Add known request location only; a frozen verdict never rereads later run evidence. */
-function withRequestLanes(suite: ReturnType<typeof summarizeSuite>, requests: BoundRequest[]): ReturnType<typeof summarizeSuite> {
+function withRequestLanes(suite: SuiteSummary, requests: BoundRequest[]): SuiteSummary {
   return {...suite, members: suite.members.map(member => {
     if (!member.requestId || member.hostId && member.laneId) return member;
     const request = requests.find(request => request.requestId === member.requestId);
@@ -131,7 +132,7 @@ function withRequestLanes(suite: ReturnType<typeof summarizeSuite>, requests: Bo
         location = {routineId: intent.data.routineId, platform: intent.data.platform, revision: intent.data.routineRevision,
           laneId: intent.data.laneId, channel: intent.data.build.channel, headSha: intent.data.build.headSha};
     }
-    if (!location || location.routineId !== member.routineId || location.platform !== member.platform
+    if (!suite.build || !location || location.routineId !== member.routineId || location.platform !== member.platform
       || member.definitionRevision && location.revision !== member.definitionRevision
       || location.channel !== suite.channel || location.headSha !== (member.headSha ?? suite.build.headSha)
       || member.hostId && member.hostId !== request.hostId || member.laneId && member.laneId !== location.laneId) return member;
@@ -164,7 +165,7 @@ function suiteRejections(requests: BoundRequest[]): SuiteRejection[] {
   });
 }
 
-type SuiteSummary = ReturnType<typeof summarizeSuite>;
+type SuiteSummary = Omit<ReturnType<typeof summarizeSuite>, "build"> & {build?: TestSuite["build"]};
 export type SuiteSummaryRead = SuiteSummary | Error;
 
 /** Active execution comes from fresh controller custody, never from admission alone. */
@@ -181,10 +182,13 @@ function withLiveLaneActivity(suite: SuiteSummary, overview: LaneOverviewList, n
   })};
 }
 
+const unselectedExecutionClaims = ["build", "selection", "dispatchIntent", "input", "inputSha256", "binding", "hostId", "laneId", "preparedLaneId",
+  "runId", "runStartedAt", "runFinishedAt", "evidenceStatus", "requiredResourceKinds", "assignmentEvidence"];
 const compactNightlyMember = {
   memberId: "$$member.memberId", requestId: "$$member.requestId", routineId: "$$member.routineId",
   platform: "$$member.platform", definitionRevision: "$$member.definitionRevision", routineRevision: "$$member.routineRevision",
   hostId: "$$member.hostId", binding: "$$member.binding", portable: {$ne: [{$ifNull: ["$$member.selection", null]}, null]}, laneId: {$ifNull: ["$$member.dispatchIntent.laneId", "$$member.input.laneId"]},
+  selectionErrors: "$$member.selectionErrors", admitted: {$anyElementTrue: [unselectedExecutionClaims.map(key => ({$ne: [{$type: `$$member.${key}`}, "missing"]}))]},
   unavailableReason: "$$member.unavailableReason", rejectedAt: "$$member.rejectedAt",
   preparedLaneId: "$$member.input.laneId", status: "$$member.status", publicationComplete: "$$member.publicationComplete",
   evidenceStatus: "$$member.evidenceStatus",
@@ -195,8 +199,9 @@ const compactNightlyMember = {
 };
 const compactNightly = (field: string, open = false) => ({suiteId: `$${field}.suiteId`, occurrenceId: `$${field}.occurrenceId`,
   startedAt: `$${field}.startedAt`, trigger: `$${field}.trigger`, finishedAt: `$${field}.finishedAt`,
-  expectedCount: `$${field}.expectedCount`, members: {$map: {input: `$${field}.members`, as: "member", in: {...compactNightlyMember, ...(open ? {dispatchIntent: "$$member.dispatchIntent", selection: "$$member.selection"} : {})}}}});
-export const suiteHistoryProjection: PipelineStage.Project = {$project: {suiteId: 1, payload: 1, finishedAt: 1, completedResult: 1,
+  expectedCount: `$${field}.expectedCount`, passed: `$${field}.passed`, status: `$${field}.status`,
+  hasSuite: {$ne: [{$type: `$${field}.suite`}, "missing"]}, hasPublication: {$ne: [{$type: `$${field}.publication`}, "missing"]}, members: {$map: {input: `$${field}.members`, as: "member", in: {...compactNightlyMember, ...(open ? {dispatchIntent: "$$member.dispatchIntent", selection: "$$member.selection"} : {})}}}});
+export const suiteHistoryProjection: PipelineStage.Project = {$project: {suiteId: 1, startedAt: 1, payload: 1, finishedAt: 1, completedResult: 1,
   nightlyPlan: {$cond: [{$eq: [{$ifNull: ["$nightlyPlan", null]}, null]}, "$$REMOVE",
     {$cond: [{$ne: [{$ifNull: ["$nightlyResult", null]}, null]}, compactNightly("nightlyPlan"), compactNightly("nightlyPlan", true)]}]},
   nightlyResult: {$cond: [{$ne: [{$ifNull: ["$nightlyResult", null]}, null]}, compactNightly("nightlyResult"), "$$REMOVE"]},
@@ -204,10 +209,54 @@ export const suiteHistoryProjection: PipelineStage.Project = {$project: {suiteId
 interface CompactNightlyMember {
   memberId: string; requestId: string; routineId: string; platform: string; definitionRevision: string; routineRevision?: string;
   hostId?: string; laneId?: string; portable?: boolean; binding?: NightlyPlan["members"][number]["binding"]; preparedLaneId?: string; build?: {repository?: string; channel?: string; headSha?: string; prNumber?: number};
+  admitted?: boolean; selectionErrors?: NightlyPlan["members"][number]["selectionErrors"];
   status?: string; publicationComplete?: boolean; evidenceStatus?: 'complete' | 'failed'; runId?: string; runStartedAt?: string; runFinishedAt?: string; unavailableReason?: string; rejectedAt?: string;
 }
 interface CompactNightlyReceipt {suiteId: string; occurrenceId: string; startedAt: string; trigger: string;
-  finishedAt?: string; expectedCount?: number; members: CompactNightlyMember[]}
+  finishedAt?: string; expectedCount?: number; passed?: number; status?: string; hasSuite?: boolean; hasPublication?: boolean; members: CompactNightlyMember[]}
+
+/** A failed selection is a recorded occurrence, without an executable build or admitted run. */
+function unselectedNightlySummary(row: {suiteId: string; startedAt?: Date | null; finishedAt?: string | null}, plan: NightlyPlan | CompactNightlyReceipt, result: NightlyResult | CompactNightlyReceipt): SuiteSummary {
+  const invalid = () => {throw new TestRunError(503, "Nightly selection receipt differs from its frozen plan");};
+  const recordedPlan = plan as NightlyPlan & {hasSuite?: boolean; hasPublication?: boolean};
+  const recordedResult = result as NightlyResult & {suite?: unknown; publication?: unknown; hasSuite?: boolean; hasPublication?: boolean};
+  if (plan.suiteId !== row.suiteId || !(row.startedAt instanceof Date) || row.startedAt.getTime() !== Date.parse(plan.startedAt)
+    || result.finishedAt !== (row.finishedAt ?? undefined) || !frameworkRunIdSchema.safeParse(plan.suiteId).success || !frameworkIdentitySchema.safeParse(plan.occurrenceId).success
+    || recordedPlan.suite !== undefined || recordedPlan.publication !== undefined || recordedPlan.hasSuite || recordedPlan.hasPublication
+    || recordedResult.suite !== undefined || recordedResult.publication !== undefined || recordedResult.hasSuite || recordedResult.hasPublication
+    || !["nightly", "manual"].includes(plan.trigger) || !z.string().datetime({offset: true}).safeParse(plan.startedAt).success
+    || result.suiteId !== plan.suiteId || result.occurrenceId !== plan.occurrenceId || result.startedAt !== plan.startedAt || result.trigger !== plan.trigger
+    || !Array.isArray(plan.members) || !Array.isArray(result.members) || plan.members.length < 2 || plan.members.length > 100 || result.members.length !== plan.members.length
+    || result.expectedCount !== plan.members.length || recordedResult.passed !== 0 || recordedResult.status !== "incomplete"
+    || new Set(plan.members.map(member => member.memberId)).size !== plan.members.length
+    || new Set(plan.members.map(member => member.requestId)).size !== plan.members.length
+    || new Set(result.members.map(member => member.memberId)).size !== result.members.length
+    || result.finishedAt !== undefined && (!z.string().datetime({offset: true}).safeParse(result.finishedAt).success || Date.parse(result.finishedAt) < Date.parse(plan.startedAt))) invalid();
+  const members = plan.members.map(expected => {
+    const receipt = result.members.find(member => member.memberId === expected.memberId);
+    const e = expected as typeof expected & {portable?: boolean; admitted?: boolean};
+    const errors = z.array(z.object({stage: z.enum(["build", "host", "admission"]), status: z.number().int().min(100).max(599).optional(),
+      message: z.string().min(1).max(2000)}).strict()).min(1).max(100).safeParse(expected.selectionErrors);
+    const r = receipt as typeof e & {status?: string; publicationComplete?: boolean};
+    if (!receipt || !frameworkRunIdSchema.safeParse(expected.memberId).success || !frameworkRunIdSchema.safeParse(expected.requestId).success
+      || !routineIdentitySchema.safeParse(expected.routineId).success || !routinePlatformSchema.safeParse(expected.platform).success
+      || !/^[a-f0-9]{40}$/.test(expected.definitionRevision) || expected.routineRevision !== expected.definitionRevision
+      || receipt.requestId !== expected.requestId || receipt.routineId !== expected.routineId || receipt.platform !== expected.platform
+      || receipt.definitionRevision !== expected.definitionRevision || receipt.routineRevision !== expected.routineRevision
+      || e.portable || e.admitted || r?.portable || r?.admitted
+      || unselectedExecutionClaims.some(key => (expected as unknown as Record<string, unknown>)[key] !== undefined || (receipt as unknown as Record<string, unknown>)[key] !== undefined)
+      || r.status !== "incomplete" || r.publicationComplete !== false
+      || typeof expected.unavailableReason !== "string" || !expected.unavailableReason.length || expected.unavailableReason.length > 2000
+      || !errors.success || expected.unavailableReason !== errors.data.map(error => error.message).join(" ").slice(0, 2000)
+      || receipt.unavailableReason !== expected.unavailableReason
+      || requestInputDigest(receipt.selectionErrors ?? null) !== requestInputDigest(expected.selectionErrors ?? null)) invalid();
+    return {memberId: expected.memberId, requestId: expected.requestId, routineId: expected.routineId, platform: expected.platform as TestSuite["members"][number]["platform"],
+      definitionRevision: expected.definitionRevision, status: "incomplete", publicationComplete: false, unavailableReason: expected.unavailableReason};
+  });
+  return {suiteId: plan.suiteId, channel: "dev", trigger: plan.trigger as "nightly" | "manual", startedAt: plan.startedAt,
+    ...(result.finishedAt ? {finishedAt: result.finishedAt} : {}), members, passed: 0, outcome: result.finishedAt ? "failed" : "running",
+    failedRoutines: [...new Set(members.map(member => member.routineId))]};
+}
 
 /** List integrity covers displayed bindings and verdicts; the detail reader verifies complete artifact/input digests. */
 export function terminalNightlySummary(suite: TestSuite, plan: CompactNightlyReceipt, result: CompactNightlyReceipt): SuiteSummary {
@@ -359,7 +408,13 @@ export class TestSuiteService {
           continue;
         }
         const suite = row.payload as TestSuite | undefined;
-        if (!suite) throw new TestRunError(404, "Occurrence has no multi-member test suite");
+        if (!suite) {
+          if (!row.nightlyPlan) throw new TestRunError(404, "Occurrence has no multi-member test suite");
+          const plan = row.nightlyPlan as NightlyPlan;
+          const result = row.nightlyResult ?? await new NightlyRoutineService().snapshot(plan, readers);
+          summaries.set(row.suiteId, unselectedNightlySummary(row, plan, result));
+          continue;
+        }
         if (row.nightlyPlan) {
           if (row.nightlyResult) summaries.set(row.suiteId, terminalNightlySummary(suite, row.nightlyPlan as CompactNightlyReceipt, row.nightlyResult));
           else {
@@ -464,7 +519,7 @@ export class TestSuiteService {
     const row = rows[0], member = (row?.payload as TestSuite | undefined)?.members.find(m=>m.requestId===requestId);
     return row && member ? {suiteId:row.suiteId,memberId:member.memberId} : null;
   }
-  async detail(suiteId: string) {
+  async detail(suiteId: string): Promise<SuiteSummary> {
     if (!frameworkRunIdSchema.safeParse(suiteId).success) throw new TestRunError(400, "invalid suite ID");
     const row = await TestSuiteModel.findOne({suiteId}).read("primary").readConcern("majority").lean();
     if (!row) throw new TestRunError(404, "test suite not found");
@@ -473,7 +528,12 @@ export class TestSuiteService {
       const requestIds = frozen.members.flatMap(member => member.requestId && (!member.hostId || !member.laneId) ? [member.requestId] : []);
       return withRequestLanes(frozen, await boundSuiteRequests(requestIds));
     }
-    if (!row.payload) throw new TestRunError(404, "Occurrence has no multi-member test suite");
+    if (!row.payload) {
+      if (!row.nightlyPlan) throw new TestRunError(404, "Occurrence has no multi-member test suite");
+      const plan = row.nightlyPlan as NightlyPlan;
+      const result = row.nightlyResult as NightlyResult | undefined ?? await new NightlyRoutineService().detail(plan.occurrenceId);
+      return unselectedNightlySummary(row, plan, result);
+    }
     const suite = row.payload as TestSuite;
     if (row.nightlyPlan) {
       const plan = row.nightlyPlan as NightlyPlan;
@@ -509,9 +569,9 @@ export class TestSuiteService {
     })};
   }
   async list() {
-    const rows = await TestSuiteModel.find({"payload.members.1": {$exists: true}}).sort({createdAt: -1})
-      .select({suiteId: 1, "payload.members": 1}).limit(20).lean();
-    return {suites: await Promise.all(rows.filter(row => (row.payload as TestSuite).members.length >= 2)
+    const rows = await TestSuiteModel.find({$or: [{"payload.members.1": {$exists: true}}, {"nightlyPlan.members.1": {$exists: true}}]}).sort({createdAt: -1})
+      .select({suiteId: 1, "payload.members": 1, "nightlyPlan.members": 1}).limit(20).lean();
+    return {suites: await Promise.all(rows.filter(row => ((row.payload as TestSuite | undefined)?.members ?? (row.nightlyPlan as NightlyPlan | undefined)?.members ?? []).length >= 2)
       .map(row => this.detail(row.suiteId)))};
   }
 }

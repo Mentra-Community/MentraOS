@@ -125,7 +125,7 @@ test("suite labels require multiple declared members and retain exact member ide
 
 test("suite index excludes single-member jobs and includes an unstarted declared second member", async () => {
   const find = spyOn(TestSuiteModel, "find").mockImplementation(((filter: unknown) => {
-    expect(filter).toEqual({"payload.members.1": {$exists: true}});
+    expect(filter).toEqual({$or: [{"payload.members.1": {$exists: true}}, {"nightlyPlan.members.1": {$exists: true}}]});
     return {sort() {return this;}, select() {return this;}, limit() {return this;}, lean: async () => [
       {suiteId: "single-job", payload: {members: [{memberId: "mac", requestId: "request"}]}},
       {suiteId: "multiple-job", payload: {members: [{memberId: "mac", requestId: "request"}, {memberId: "unstarted"}]}},

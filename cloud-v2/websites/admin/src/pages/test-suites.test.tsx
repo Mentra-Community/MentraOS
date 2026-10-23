@@ -226,3 +226,17 @@ test('nightly summary evidence failure displays a red failure instead of publish
   expect(html).not.toContain('Publishing');
   expect(html).not.toContain('pending');
 });
+
+test("failed build selection displays original coverage without a fabricated build or run", () => {
+  const client = new QueryClient();
+  const noBuild = {...suite, build: undefined, passed: 0, failedRoutines: ["notes", "ota"], members: Array.from({length: 27}, (_, i) => ({...suite.members[i % 2]!, memberId: `unselected-${i}`, status: "incomplete", publicationComplete: false, runId: undefined, hostId: undefined, laneId: undefined, unavailableReason: "Build metadata unavailable (HTTP 403)"}))};
+  client.setQueryData(["test-suite-summary", suite.suiteId], noBuild);
+  client.setQueryData(["test-suites"], {suites: [noBuild]});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
+  expect(html).toContain("No build selected"); expect(html).toContain("Incomplete");
+  expect(html).toContain("The testing system could not retrieve build information, so no tests started.");
+  expect(html).toContain("27 incomplete · 0 executed"); expect(html).toContain("0/27 failed, 27 incomplete");
+  expect(html).toContain("Build metadata unavailable (HTTP 403)");
+  expect(html).not.toContain("/?testRun="); expect(html).not.toContain("Dispatched job / build");
+  expect(renderToStaticMarkup(<QueryClientProvider client={client}><RecentTestSuites/></QueryClientProvider>)).toContain("No build selected");
+});
