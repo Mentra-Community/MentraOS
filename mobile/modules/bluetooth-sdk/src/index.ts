@@ -63,6 +63,7 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "ota_start_ack",
   "ota_status",
   "ar99_ota_status",
+  "bes_crash_detected",
   "version_info",
   "extraction_progress",
 ])
@@ -221,6 +222,10 @@ export type {
   AudioDisconnectedEvent,
   AudioPairingNeededEvent,
   BatteryStatusEvent,
+  BesCrashDetectedEvent,
+  BesCrashEviction,
+  BesCrashIncidentState,
+  BesCrashSummary,
   BluetoothSdkEvent,
   BluetoothSdkEventListener,
   BluetoothSdkEventMap,

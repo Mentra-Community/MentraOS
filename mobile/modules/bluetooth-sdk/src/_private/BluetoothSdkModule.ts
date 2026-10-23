@@ -131,6 +131,12 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Incident Reporting
   sendIncidentId(incidentId: string, apiBaseUrl?: string | null): Promise<void>
+  /**
+   * Tell Mentra Live that Cloud recorded `reportId` for the BES crash incident
+   * `incidentKey`. Resolves only on the glasses' matching `ok:true` ack; rejects
+   * on `ok:false`, disconnect, or after 10 s. Call `sendIncidentId` only after it resolves.
+   */
+  sendBesCrashReported(incidentKey: string, reportId: string): Promise<void>
 
   // WiFi Commands
   requestWifiScan(): Promise<WifiSearchResult[]>
@@ -755,6 +761,10 @@ NativeBluetoothSdkModule.requestWearTuning = bindNativeMethod<() => Promise<void
   "requestWearTuning",
 )
 NativeBluetoothSdkModule.resetWearTuning = bindNativeMethod<() => Promise<void>>(nativeWearModule, "resetWearTuning")
+
+NativeBluetoothSdkModule.sendBesCrashReported = bindNativeMethod<
+  (incidentKey: string, reportId: string) => Promise<void>
+>(NativeBluetoothSdkModule as unknown as Record<string, unknown>, "sendBesCrashReported")
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule

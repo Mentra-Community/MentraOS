@@ -169,7 +169,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- Debug receiver for polling BES trace logs into MentraBleTrace via adb -->
+        <!-- Debug override for the BES TRACE tail (mh_rlog delivery) via adb -->
         <receiver
             android:name="com.mentra.asg_client.receiver.DebugBesTraceReceiver"
             android:enabled="true"

@@ -696,25 +696,28 @@ private struct BlePhotoTransfer {
     }
 }
 
-private enum BleIncidentLogRelayKind {
+enum BleIncidentLogRelayKind {
     case firmware
     case logcat
 }
 
-private final class BleIncidentLogRelayEntry {
+final class BleIncidentLogRelayEntry {
     let fileBaseKey: String
     let incidentId: String
     let apiBaseUrl: String
     let kind: BleIncidentLogRelayKind
+    let reservedAt: TimeInterval
     var session: MentraLiveFileTransferSession?
 
     init(
-        fileBaseKey: String, incidentId: String, apiBaseUrl: String, kind: BleIncidentLogRelayKind
+        fileBaseKey: String, incidentId: String, apiBaseUrl: String, kind: BleIncidentLogRelayKind,
+        reservedAt: TimeInterval
     ) {
         self.fileBaseKey = fileBaseKey
         self.incidentId = incidentId
         self.apiBaseUrl = apiBaseUrl
         self.kind = kind
+        self.reservedAt = reservedAt
     }
 }
 
@@ -1643,7 +1646,11 @@ class MentraLive: NSObject, SGCManager {
     private var fileWriteCharacteristic: CBCharacteristic?
     private var activeFileTransfers = [String: MentraLiveFileTransferSession]()
     private var blePhotoTransfers = [String: BlePhotoTransfer]()
-    private var bleIncidentLogRelays = [String: BleIncidentLogRelayEntry]()
+    private(set) var bleIncidentLogRelays = [String: BleIncidentLogRelayEntry]()
+    // Longer than the glasses' bounded relay of one report (BES logs, two file transfers, the
+    // phone POST), so an unreleased name cannot be reused while its report is in flight.
+    static let incidentRelayOwnershipSeconds: TimeInterval = 600
+    var incidentRelayClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     private var l2capFileChannel: MentraLiveL2capChannel?
     private var l2capFileChannelId: UUID?
     private var l2capFileChannelOpening = false
@@ -3764,6 +3771,11 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")
             Bridge.sendOtaStartAck()
 
+        case "bes_crash_detected", "bes_crash_reported_ack":
+            let ok = json["ok"].map { "\($0)" } ?? "-"
+            Bridge.log("LIVE: \(type) incidentKey=\(json["incidentKey"] as? String ?? "") state=\(json["state"] as? String ?? "-") ok=\(ok)")
+            Bridge.sendTypedMessage(type, body: json)
+
         case "ota_status":
             // Short keys (sid/ts/cs/st/sq/sp/op/err) are used by new firmware to keep BLE payload small.
             // Verbose keys (session_id/total_steps/…) are the fallback for older firmware.
@@ -4505,12 +4517,14 @@ class MentraLive: NSObject, SGCManager {
         }
         let bKey = MentraLive.incidentBleFileBase(incidentId: incidentId, prefix: "B")
         let lKey = MentraLive.incidentBleFileBase(incidentId: incidentId, prefix: "L")
-        bleIncidentLogRelays[bKey] = BleIncidentLogRelayEntry(
-            fileBaseKey: bKey, incidentId: incidentId, apiBaseUrl: base, kind: .firmware
+        let now = incidentRelayClock()
+        let bRelay = BleIncidentLogRelayEntry(
+            fileBaseKey: bKey, incidentId: incidentId, apiBaseUrl: base, kind: .firmware, reservedAt: now
         )
-        bleIncidentLogRelays[lKey] = BleIncidentLogRelayEntry(
-            fileBaseKey: lKey, incidentId: incidentId, apiBaseUrl: base, kind: .logcat
+        let lRelay = BleIncidentLogRelayEntry(
+            fileBaseKey: lKey, incidentId: incidentId, apiBaseUrl: base, kind: .logcat, reservedAt: now
         )
+        try reserveIncidentRelays([bRelay, lRelay], now: now)
 
         let auth: [String: Any] = [
             "type": "auth_token", "coreToken": coreToken,
@@ -4521,11 +4535,54 @@ class MentraLive: NSObject, SGCManager {
               sendJson(["type": "upload_incident_logs", "incidentId": incidentId, "apiBaseUrl": base],
                        wakeUp: true, requireAck: true, bridgeLogging: true)
         else {
-            bleIncidentLogRelays.removeValue(forKey: bKey)
-            bleIncidentLogRelays.removeValue(forKey: lKey)
+            releaseIncidentRelay(bRelay)
+            releaseIncidentRelay(lRelay)
             throw BluetoothSdkError(code: "incident_dispatch_failed", message: "Could not queue the glasses incident-log request.")
         }
         Bridge.log("LIVE: Queued incidentId to glasses for log upload: \(incidentId) (BLE relay \(bKey), \(lKey))")
+    }
+
+    /// The 16-character relay file names keep only 15 characters of the report id, so two reports
+    /// can share them. A received file goes to the report registered under its name; refuse a
+    /// second report until the owner's Cloud POST is confirmed or its ownership expires.
+    private func reserveIncidentRelays(_ relays: [BleIncidentLogRelayEntry], now: TimeInterval) throws {
+        for relay in relays {
+            if let owner = bleIncidentLogRelays[relay.fileBaseKey],
+               owner.incidentId != relay.incidentId,
+               now - owner.reservedAt < MentraLive.incidentRelayOwnershipSeconds
+            {
+                throw BluetoothSdkError(
+                    code: "incident_relay_busy",
+                    message: "BLE relay \(relay.fileBaseKey) is still owned by report \(owner.incidentId)."
+                )
+            }
+        }
+        for relay in relays {
+            bleIncidentLogRelays[relay.fileBaseKey] = relay
+        }
+    }
+
+    private func releaseIncidentRelay(_ relay: BleIncidentLogRelayEntry) {
+        if bleIncidentLogRelays[relay.fileBaseKey] === relay {
+            bleIncidentLogRelays.removeValue(forKey: relay.fileBaseKey)
+        }
+    }
+
+    func sendBesCrashReported(incidentKey: String, reportId: String) throws {
+        guard incidentLogTransportReady else {
+            throw BluetoothSdkError(code: "glasses_not_connected", message: "Cannot report the BES crash because the glasses BLE link is not ready.")
+        }
+        guard sendJson(["type": "bes_crash_reported", "incidentKey": incidentKey, "reportId": reportId],
+                       wakeUp: true, requireAck: true, bridgeLogging: true)
+        else {
+            throw BluetoothSdkError(code: "bes_crash_dispatch_failed", message: "Could not queue bes_crash_reported to the glasses.")
+        }
+        Bridge.log("LIVE: Queued bes_crash_reported incidentKey=\(incidentKey) reportId=\(reportId)")
+    }
+
+    static func isIncidentRelayFileName(_ fileName: String) -> Bool {
+        guard fileName.count == 16, let first = fileName.first, first == "B" || first == "L" else { return false }
+        return fileName.dropFirst().allSatisfy { ("a" ... "z").contains($0) || ("0" ... "9").contains($0) || $0 == "_" }
     }
 
     private static func incidentBleFileBase(incidentId: String, prefix: Character) -> String {
@@ -5355,6 +5412,15 @@ class MentraLive: NSObject, SGCManager {
                 if sess.isComplete {
                     Bridge.log("LIVE: 📦 File transfer complete: \(packetInfo.fileName)")
 
+                    if Self.isIncidentRelayFileName(packetInfo.fileName) {
+                        // No relay registered (e.g. the app restarted mid-relay): nothing reached
+                        // Cloud, so success would make the glasses mark the incident uploaded.
+                        Bridge.log("LIVE: Incident log relay without a registered report: \(packetInfo.fileName)")
+                        sendTransferCompleteConfirmation(fileName: packetInfo.fileName, success: false)
+                        activeFileTransfers.removeValue(forKey: packetInfo.fileName)
+                        return
+                    }
+
                     if let fileData = sess.assembleFile() {
                         saveReceivedFile(
                             fileName: packetInfo.fileName, fileData: fileData,
@@ -5456,7 +5522,7 @@ class MentraLive: NSObject, SGCManager {
         ]
     }
 
-    private func uploadBleIncidentLogRelay(
+    func uploadBleIncidentLogRelay(
         relay: BleIncidentLogRelayEntry, fileName: String, data: Data
     ) {
         let token = DeviceStore.shared.get("bluetooth", "core_token") as? String ?? ""
@@ -5507,14 +5573,24 @@ class MentraLive: NSObject, SGCManager {
                 statusCode = nil
             }
             DispatchQueue.main.async {
+                // A different report now owns this name (it was admitted after our owner finished),
+                // so a completion here would mark ITS file done. Drop the stale callback.
+                if let owner = self.bleIncidentLogRelays[relay.fileBaseKey], owner.incidentId != relay.incidentId {
+                    Bridge.log("LIVE: Dropping stale incident relay callback for \(relay.fileBaseKey)")
+                    return
+                }
                 if ok {
                     Bridge.log("LIVE: ✅ Incident log BLE relay uploaded (\(relay.kind))")
-                    self.bleIncidentLogRelays.removeValue(forKey: relay.fileBaseKey)
                 } else if let existing = self.bleIncidentLogRelays[relay.fileBaseKey] {
                     // Keep relay entry for glasses retry after transfer_complete:false.
                     existing.session = nil
                 }
                 self.sendTransferCompleteConfirmation(fileName: fileName, success: ok)
+                // Release only after the glasses' confirmation is queued, so a report that reuses
+                // this name is ordered behind the owner's completion.
+                if ok {
+                    self.releaseIncidentRelay(relay)
+                }
             }
         }.resume()
     }

@@ -46,11 +46,19 @@ export type EngineSubmitReportInput =
       context?: Partial<ReportContext>
     })
 
-export type EngineSubmitAutomaticReportInput = Omit<Extract<SubmitReportInput, {kind: "automatic"}>, "context"> & {
+type AutomaticSubmitReportInput = Extract<SubmitReportInput, {kind: "automatic"}> & {incidentKey?: string}
+
+export type EngineSubmitAutomaticReportInput = Omit<AutomaticSubmitReportInput, "context"> & {
   context?: Partial<ReportContext>
   screenshots?: ReportAttachmentInput[]
   throttleKey?: string
   throttleWindowMs?: number
+  /**
+   * Request glasses log upload (`upload_incident_logs`) for the new report.
+   * Defaults to true. Pass false when the caller must first hand the reportId
+   * to the glasses, then call `requestGlassesReportLogs` itself.
+   */
+  notifyGlasses?: boolean
 }
 
 type ReportSubmissionOptions = {signal: AbortSignal; onCreated: (reportId: string) => void}
@@ -192,6 +200,44 @@ async function updateLogCollection(
   }
 }
 
+function automaticSubmitBody(
+  input: EngineSubmitAutomaticReportInput,
+  context: ReportContext,
+): AutomaticSubmitReportInput {
+  return {
+    kind: "automatic",
+    ...(input.automationCorrelation ? {automationCorrelation: input.automationCorrelation} : {}),
+    ...(input.incidentKey ? {incidentKey: input.incidentKey} : {}),
+    trigger: input.trigger,
+    report: input.report,
+    context,
+  }
+}
+
+/**
+ * Ask the connected glasses to upload their logs for `reportId` and record the
+ * dispatch outcome on the report's glasses log-collection receipts.
+ */
+export async function requestGlassesReportLogs(
+  reportId: string,
+  signal?: AbortSignal,
+): Promise<{
+  dispatch: ReportLogCollectionUpdate
+  receiptsStored: boolean
+}> {
+  const dispatch = await notifyGlasses(reportId, signal)
+  let receiptsStored = true
+  for (const source of ["glasses", "glasses_firmware"] as const) {
+    if (!(await updateLogCollection(reportId, source, dispatch, signal))) receiptsStored = false
+  }
+  logBuffer.append({
+    level: dispatch.state === "failed" ? "warn" : "info",
+    source: "reports",
+    message: `Report ${reportId}: glasses log notification ${dispatch.state} (${dispatch.reason})`,
+  })
+  return {dispatch, receiptsStored}
+}
+
 async function submitReportInternal(
   input: InternalSubmitReportInput,
   options?: ReportSubmissionOptions,
@@ -229,13 +275,7 @@ async function submitReportInternal(
         ? {kind: "feedback", feedback: input.feedback, context}
         : input.kind === "bug"
           ? {kind: "bug", trigger: input.trigger, report: input.report, context}
-          : {
-              kind: "automatic",
-              ...(input.automationCorrelation ? {automationCorrelation: input.automationCorrelation} : {}),
-              trigger: input.trigger,
-              report: input.report,
-              context,
-            }
+          : automaticSubmitBody(input, context)
     const res = signal
       ? await cloudClientService.core.reports.submit(payload, signal)
       : await cloudClientService.core.reports.submit(payload)
@@ -252,15 +292,9 @@ async function submitReportInternal(
     const originalLogs = new Set(logs)
     // Dispatch immediately; slow phone HTTP must not delay the glasses relay.
     const notification = (async () => {
-      const dispatch = await notifyGlasses(reportId, signal)
-      for (const source of ["glasses", "glasses_firmware"] as const) {
-        if (!(await updateLogCollection(reportId, source, dispatch, signal))) artifactsComplete = false
-      }
-      logBuffer.append({
-        level: dispatch.state === "failed" ? "warn" : "info",
-        source: "reports",
-        message: `Report ${reportId}: glasses log notification ${dispatch.state} (${dispatch.reason})`,
-      })
+      if (input.kind === "automatic" && input.notifyGlasses === false) return
+      const {receiptsStored} = await requestGlassesReportLogs(reportId, signal)
+      if (!receiptsStored) artifactsComplete = false
     })()
     const phoneUpload = (async () => {
       try {

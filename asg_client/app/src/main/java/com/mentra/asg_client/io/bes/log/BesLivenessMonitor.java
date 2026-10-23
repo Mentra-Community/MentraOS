@@ -43,6 +43,7 @@ public final class BesLivenessMonitor {
     private volatile long lastInboundMs;
     private volatile long lastOutboundMs;
     private volatile boolean streamActive;
+    private volatile Runnable rebootListener;
 
     /**
      * Writes issued since the last inbound frame. A wedged BES still accepts bytes into its UART
@@ -132,6 +133,26 @@ public final class BesLivenessMonitor {
         outboundWritesWhileSilent++;
     }
 
+    /**
+     * Runs when a trace snapshot proves the BES rebooted (its uptime went backwards) or when
+     * traffic resumes after a reported stall. Used to re-read {@code sr_syvr} for a BES-only reset.
+     */
+    public void setRebootListener(Runnable listener) {
+        rebootListener = listener;
+    }
+
+    private void fireReboot() {
+        Runnable listener = rebootListener;
+        if (listener == null) {
+            return;
+        }
+        try {
+            listener.run();
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Reboot listener failed", e);
+        }
+    }
+
     /** Streaming holds BES's BLE, A2DP and LC3 paths busy at once; record it as crash context. */
     public void setStreamActive(boolean active) {
         streamActive = active;
@@ -164,6 +185,7 @@ public final class BesLivenessMonitor {
             if (BesTraceUptime.rebooted(previousUptimeMs, uptimeMs)) {
                 fields.put("previousUptimeMs", previousUptimeMs);
                 BesLivenessLog.warn("bes_reboot_confirmed", fields);
+                fireReboot();
             } else {
                 BesLivenessLog.info("bes_uptime", fields);
             }
@@ -225,6 +247,7 @@ public final class BesLivenessMonitor {
             fields.put("unansweredWrites", strandedWrites);
             fields.put("streamActive", streamActive);
             BesLivenessLog.warn("bes_stall_recovered", fields);
+            fireReboot();
         } catch (Exception e) {
             Log.d(TAG, "Resume record failed", e);
         }

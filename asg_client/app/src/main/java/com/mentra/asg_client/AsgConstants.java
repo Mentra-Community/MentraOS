@@ -539,6 +539,131 @@ public class AsgConstants {
     /** Minimum spacing between stall probes, so a wedged chip cannot be polled in a tight loop. */
     public static final long BES_STALL_PROBE_MIN_SPACING_MS = 15_000;
 
+    // BES crash incidents (OS-1988): bundles under files/bes_incident, dump pulled with cs_log.
+
+    /** Directory under {@code files/} holding incident bundles and their bookkeeping files. */
+    public static final String BES_INCIDENT_DIR_NAME = "bes_incident";
+
+    /** Most TRACE bytes frozen into one incident bundle. */
+    public static final int BES_INCIDENT_TRACE_MAX_BYTES = 1024 * 1024;
+
+    /** Smallest size a budget trim leaves in an incident's TRACE. */
+    public static final int BES_INCIDENT_TRACE_TRIM_FLOOR_BYTES = 64 * 1024;
+
+    /** Most dump bytes accepted for one incident; the BES sends at most 200 packets of 400 bytes. */
+    public static final int BES_INCIDENT_DUMP_MAX_BYTES = 80 * 1024;
+
+    /** Budget for everything under {@code files/bes_incident}. */
+    public static final long BES_INCIDENT_DIR_BUDGET_BYTES = 8L * 1024 * 1024;
+
+    /** Latest evictions kept in evictions.json (the counter keeps the total). */
+    public static final int BES_INCIDENT_EVICTION_RING = 16;
+
+    /**
+     * How long the crash collector waits for the UART lane to take its cs_log request. The
+     * collector's timers run on the same thread, so the wait must end well before them; a request
+     * that missed the window is cancelled and never sent later.
+     */
+    public static final long BES_INCIDENT_SEND_TIMEOUT_MS = 2000;
+
+    /**
+     * Report ids whose incident bundle was evicted or deleted, remembered in evictions.json (oldest
+     * dropped first). A report on this list is never answered with the current BES log.
+     */
+    public static final int BES_INCIDENT_RETIRED_REPORT_RING = 256;
+
+    /** Most incident bundles kept at once, so per-incident metadata cannot grow without bound. */
+    public static final int BES_INCIDENT_MAX_BUNDLES = 32;
+
+    /** Collected dump ids and observed-reset boot ids remembered for deduplication. */
+    public static final int BES_INCIDENT_COLLECTED_RING = 64;
+
+    /** Failed dump retrievals (persisted per incident) before the incident is dropped. */
+    public static final int BES_INCIDENT_COLLECT_MAX_ATTEMPTS = 5;
+
+    public static final long BES_INCIDENT_COLLECT_BACKOFF_BASE_MS = 2_000;
+
+    public static final long BES_INCIDENT_COLLECT_BACKOFF_MAX_MS = 60_000;
+
+    /** No cs_log header within this long after the request fails the attempt. */
+    public static final long BES_INCIDENT_COLLECT_FIRST_PACKET_TIMEOUT_MS = 3_000;
+
+    /** Silence between cs_log packets that fails the attempt. */
+    public static final long BES_INCIDENT_COLLECT_IDLE_TIMEOUT_MS = 4_000;
+
+    /** Longest one cs_log transfer may hold the UART log channel. */
+    public static final long BES_INCIDENT_COLLECT_OVERALL_TIMEOUT_MS = 15_000;
+
+    /** Spacing between tries while another owner holds the log transfer lock. */
+    public static final long BES_INCIDENT_LOCK_RETRY_MS = 2_000;
+
+    /** Lock retries (not counted as failed attempts) before one is counted. */
+    public static final int BES_INCIDENT_LOCK_MAX_DEFERRALS = 30;
+
+    /** A lock holder that never releases loses the lock after this long. */
+    public static final long BES_LOG_LOCK_MAX_HOLD_MS = 60_000;
+
+    /** How long a bug report's mh_logs waits behind a crash pull (BesLogManager's overall timeout). */
+    public static final long BES_LOG_USER_LOCK_WAIT_MS = 20_000;
+
+    // BES TRACE delivery (mh_rlog / mh_rlog_ack). The BES wakes a sleeping MTK at least every
+    // ten minutes; while awake the tail polls on its own. See mentra-live-bes
+    // docs/uart-log-budget.md and docs/trace-log-policy.md.
+
+    /** Poll interval while awake and caught up. */
+    public static final long BES_TRACE_POLL_IDLE_MS = 1_000;
+
+    /** Spacing between back-to-back reads while the BES reports a backlog (at most 8/s). */
+    public static final long BES_TRACE_POLL_BACKLOG_MS = 125;
+
+    /** A read with no reply by then is retried; the BES skips replies while its UART is busy. */
+    public static final long BES_TRACE_REPLY_TIMEOUT_MS = 500;
+
+    /** Acknowledge at least this often while awake so the BES never needs to wake the MTK. */
+    public static final long BES_TRACE_IDLE_ACK_MS = 60_000;
+
+    /** CPU lease held after hm_rlog_ready so Android does not suspend mid-transfer. */
+    public static final long BES_TRACE_WAKE_LEASE_MS = 25_000;
+
+    /** A BES-announced transfer window; the lease is released earlier once caught up. */
+    public static final long BES_TRACE_WINDOW_MS = 20_000;
+
+    /** Within this many bytes of the BES end the tail counts as caught up. */
+    public static final long BES_TRACE_CAUGHT_UP_BYTES = 1_024;
+
+    /** Rolling store of delivered BES TRACE lines attached to bug reports. */
+    public static final long BES_TRACE_STORE_RETENTION_MS = 30L * 60 * 1000;
+
+    public static final long BES_TRACE_STORE_MAX_BYTES = 2L * 1024 * 1024;
+
+    public static final long BES_TRACE_SEGMENT_MAX_BYTES = 256L * 1024;
+
+    public static final long BES_TRACE_SEGMENT_MAX_AGE_MS = 5L * 60 * 1000;
+
+    /** The BLE incident relay carries only the newest part of the store. */
+    public static final int BES_TRACE_BLE_RELAY_MAX_BYTES = 32 * 1024;
+
+    // OS-1988 asg-store: TRACE store persistence cost, subscription and transfer gate.
+
+    /** At most one [ASG-BES-STORE] persistence aggregate line per this interval. */
+    public static final long BES_TRACE_STORE_STATS_INTERVAL_MS = 60_000;
+
+    /**
+     * Advancing batches that may share one log sync + cursor save. 1 keeps the original one
+     * durable commit per batch; raise only after the hardware measurement justifies it. The
+     * acknowledgement to the BES is always sent after the commit, never before.
+     */
+    public static final int BES_TRACE_GROUP_COMMIT_MAX_BATCHES = 1;
+
+    /** Longest an unsynced batch may wait before the group commit is forced. */
+    public static final long BES_TRACE_GROUP_COMMIT_MAX_MS = 250;
+
+    /** Wait for the shared BES log transfer gate before one TRACE read window. */
+    public static final long BES_TRACE_GATE_TIMEOUT_MS = 50;
+
+    /** Re-send mh_rlog_sub {on:1} when no hm_rlog_sub arrived within this time. */
+    public static final long BES_TRACE_SUB_RETRY_MS = 5_000;
+
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED
 

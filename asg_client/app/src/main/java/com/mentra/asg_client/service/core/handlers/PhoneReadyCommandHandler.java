@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.core.handlers;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import com.mentra.asg_client.io.bes.log.BesIncidentNotifier;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
@@ -26,6 +27,7 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
     private final IStateManager stateManager;
     private final IResponseBuilder responseBuilder;
     private final AsgClientServiceManager serviceManager;
+    private final BesIncidentNotifier incidentNotifier;
 
     /** {@code readyId} of the last phone_ready this process reset the transport for. */
     private String transportResetReadyId;
@@ -35,10 +37,25 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
             IStateManager stateManager,
             IResponseBuilder responseBuilder,
             AsgClientServiceManager serviceManager) {
+        this(
+                communicationManager,
+                stateManager,
+                responseBuilder,
+                serviceManager,
+                BesIncidentNotifier.get());
+    }
+
+    PhoneReadyCommandHandler(
+            ICommunicationManager communicationManager,
+            IStateManager stateManager,
+            IResponseBuilder responseBuilder,
+            AsgClientServiceManager serviceManager,
+            BesIncidentNotifier incidentNotifier) {
         this.communicationManager = communicationManager;
         this.stateManager = stateManager;
         this.responseBuilder = responseBuilder;
         this.serviceManager = serviceManager;
+        this.incidentNotifier = incidentNotifier;
     }
 
     @Override
@@ -109,6 +126,16 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
                             + (sent
                                     ? "✅ Glasses ready response sent successfully"
                                     : "❌ Failed to send glasses ready response"));
+
+            // Every phone_ready re-announces BES incidents that are not uploaded yet, right after
+            // glasses_ready, until the phone has uploaded them.
+            if (sent) {
+                try {
+                    incidentNotifier.resendPending(communicationManager::sendBluetoothResponse);
+                } catch (Exception e) {
+                    Log.e(TAG, "📱 💥 Error resending pending BES incidents", e);
+                }
+            }
 
             // Wire v2 activation is RESPONDER-ONLY on the glasses side. glasses_ready
             // advertises wire_caps (a harmless JSON key to old phones); a v2-capable

@@ -182,6 +182,45 @@ public class BesOtaStateStoreTest {
     }
 
     @Test
+    public void applyRebootTimeoutIsSupersededByExactTargetInTheAuthorizationBoot() {
+        reserveAndMarkApply();
+        assertThat(store.fail(OWNER, "apply_reboot_timeout")).isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.uartPolicy(BOOT_A, false, "")).isEqualTo(UartPolicy.RECOVERY_PROBE_ONLY);
+
+        assertThat(store.completeVersionProofAfterRestart(OWNER, BOOT_A, TARGET))
+                .isEqualTo(TransitionResult.APPLIED);
+
+        Snapshot snapshot = store.read();
+        assertThat(snapshot.getTerminalStatus()).isEqualTo(TerminalStatus.SUCCESS);
+        assertThat(snapshot.getTerminalCode()).isEqualTo("verified");
+        assertThat(snapshot.getVerificationBootId()).isEqualTo(BOOT_A);
+        assertThat(store.uartPolicy(BOOT_A, false, "")).isEqualTo(UartPolicy.NORMAL);
+    }
+
+    @Test
+    public void applyRebootTimeoutIsSupersededByExactTargetOnLaterBoot() {
+        reserveAndMarkApply();
+        store.fail(OWNER, "apply_reboot_timeout");
+
+        assertThat(store.completeVersionProofAfterRestart(OWNER, BOOT_B, TARGET))
+                .isEqualTo(TransitionResult.APPLIED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.SUCCESS);
+    }
+
+    @Test
+    public void applyRebootTimeoutStaysFailedForAnotherVersionOrOwner() {
+        reserveAndMarkApply();
+        store.fail(OWNER, "apply_reboot_timeout");
+
+        assertThat(store.completeVersionProofAfterRestart(OWNER, BOOT_A, "26.7.30.3"))
+                .isEqualTo(TransitionResult.ALREADY_TERMINAL);
+        assertThat(store.completeVersionProofAfterRestart(OTHER_OWNER, BOOT_A, TARGET))
+                .isEqualTo(TransitionResult.REJECTED);
+        assertThat(store.read().getTerminalStatus()).isEqualTo(TerminalStatus.FAILURE);
+        assertThat(store.read().getTerminalCode()).isEqualTo("apply_reboot_timeout");
+    }
+
+    @Test
     public void restartVersionProofAtomicallyCompletesApplyPending() {
         reserveAndMarkApply();
 

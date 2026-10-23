@@ -95,6 +95,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "ota_start_ack",
             "ota_status",
             "ar99_ota_status",
+            "bes_crash_detected",
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
@@ -381,6 +382,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try await MainActor.run {
                 try self.bluetoothSdk().sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
             }
+        }
+
+        AsyncFunction("sendBesCrashReported") { (incidentKey: String, reportId: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try await sdk.sendBesCrashReported(incidentKey: incidentKey, reportId: reportId)
         }
 
         AsyncFunction("configureNativeNotifications") { (values: [String: Any]) in
@@ -1008,6 +1014,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("ota_start_ack", event.values)
         case let .otaStatus(event):
             sendEvent("ota_status", event.values)
+        case let .besCrashDetected(event):
+            sendEvent("bes_crash_detected", event.values)
         case let .settingsAck(event):
             sendEvent("settings_ack", event.values)
         case let .versionInfo(event):
