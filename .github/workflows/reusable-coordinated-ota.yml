@@ -534,11 +534,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! gh release view "$ASG_RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$ASG_RELEASE_TAG" --title "Mentra Reusable ASG Artifacts" --prerelease \
-              --notes "Immutable ASG APK and provenance pairs reused by coordinated Mentra release sets."
-          fi
-          release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${ASG_RELEASE_TAG}" --jq .id)
+          payload=$(jq -n --arg tag "$ASG_RELEASE_TAG" \
+            '{tag_name: $tag, name: "Mentra Reusable ASG Artifacts", body: "Immutable ASG APK and provenance pairs reused by coordinated Mentra release sets.", draft: false, prerelease: true}')
+          release_id=$(node .github/scripts/github-release-create.mjs release \
+            --repository "$GITHUB_REPOSITORY" --input - <<< "$payload" | jq -er .id)
           for file in coordinated-ota-work/asg-release-assets/*; do
             name=$(basename "$file")
             node .github/scripts/publish-immutable-release-asset.mjs \

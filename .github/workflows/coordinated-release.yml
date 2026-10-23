@@ -251,19 +251,16 @@ jobs:
           set -euo pipefail
           tag=$(jq -er .artifactContainerTag release-plan.json)
           name=$(jq -er .artifactContainerName release-plan.json)
-          if ! release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$tag" 2>/dev/null); then
-            payload=$(jq -n \
-              --arg tag "$tag" \
-              --arg source "$SOURCE_COMMIT" \
-              --arg name "$name" \
-              --arg body "Immutable development and beta artifacts for the Mentra $(jq -er .familyBaseVersion release-plan.json) release train. Exact source revisions are preserved by per-build tags." \
-              '{tag_name: $tag, target_commitish: $source, name: $name, body: $body, draft: false, prerelease: true}')
-            if ! release=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" --input - <<< "$payload" 2>/dev/null); then
-              # Dev and staging can allocate the same base-version bucket concurrently.
-              sleep 2
-              release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$tag")
-            fi
-          fi
+          payload=$(jq -n \
+            --arg tag "$tag" \
+            --arg source "$SOURCE_COMMIT" \
+            --arg name "$name" \
+            --arg body "Immutable development and beta artifacts for the Mentra $(jq -er .familyBaseVersion release-plan.json) release train. Exact source revisions are preserved by per-build tags." \
+            '{tag_name: $tag, target_commitish: $source, name: $name, body: $body, draft: false, prerelease: true}')
+          # Dev and staging share each base-version bucket and can allocate it
+          # concurrently, so reuse the container whichever source created it.
+          release=$(node .github/scripts/github-release-create.mjs release \
+            --repository "$GITHUB_REPOSITORY" --input - --shared-tag true <<< "$payload")
           [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
           [[ "$(jq -r .name <<< "$release")" == "$name" ]]
           [[ "$(jq -r .draft <<< "$release")" == "false" ]]
@@ -705,11 +702,8 @@ jobs:
         run: |
           set -euo pipefail
           source_tag="mentra-v${{ steps.results.outputs.identity }}"
-          if ! ref=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/$source_tag" 2>/dev/null); then
-            ref=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              -f ref="refs/tags/$source_tag" \
-              -f sha="${{ needs.plan.outputs.source_commit }}")
-          fi
+          ref=$(node .github/scripts/github-release-create.mjs tag \
+            --repository "$GITHUB_REPOSITORY" --tag "$source_tag" --sha "${{ needs.plan.outputs.source_commit }}")
           [[ "$(jq -r .object.sha <<< "$ref")" == "${{ needs.plan.outputs.source_commit }}" ]]
           url="https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/${{ steps.results.outputs.tag }}/${{ steps.results.outputs.manifest_name }}"
           node .github/scripts/verify-public-release-asset.mjs \
@@ -737,7 +731,7 @@ jobs:
     needs: [plan, finalize]
     if: needs.plan.outputs.dry_run != 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
