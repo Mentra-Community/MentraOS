@@ -9,12 +9,11 @@ import {router} from "expo-router"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
-import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
+import {miniappUpdateScheduler} from "@/services/miniapps/miniappUpdateScheduler"
 import {workspaceManifestScheduler} from "@/services/deployment/workspaceManifestScheduler"
 import {installCloudWorkspaceApi} from "@/services/fleet/cloudWorkspaceApi"
 import {BUNDLED_MINIAPPS, BUNDLED_SYSTEM_MINIAPP_PACKAGES} from "@/generated/bundledMiniapps"
 import {
-  BUNDLED_STORE_MINIAPP_PACKAGES,
   CHINA_HIDDEN_APPS,
   SUPPORTED_MINIAPP_SDK_RANGE,
   linkLingoPackageName,
@@ -51,22 +50,9 @@ import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
 import {showAlert} from "@/utils/AlertUtils"
-import type {GlassesMenuItem} from "@/utils/glassesMenu"
 import {translate} from "@/i18n"
 import {Buffer} from "@craftzdog/react-native-buffer"
 import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployment"
-
-/**
- * The bundled Store updates every miniapp this build bundles. OEM builds can
- * bundle another Store and assign packages to it; one Store cannot update a
- * package assigned to another.
- */
-const BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS: Readonly<Record<string, string>> = Object.fromEntries(
-  BUNDLED_SYSTEM_MINIAPP_PACKAGES.map((packageName) => [packageName, "com.mentra.store"]),
-)
-
-const isBundledStore = (packageName: string): boolean =>
-  BUNDLED_STORE_MINIAPP_PACKAGES.some((store) => store === packageName)
 
 /**
  * Miniapp bundles shipped inside the app binary, installed on first launch by
@@ -569,10 +555,6 @@ class MantleManager {
         ...deploymentCloudConfigValues(deployment),
         isLocalMiniappAllowed: isSuperModeMiniappAllowed,
         bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
-        bundledStoreMiniappPackages: BUNDLED_STORE_MINIAPP_PACKAGES,
-        bundledSystemMiniappStoreOwners: BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS,
-        // A Store is a background updater only: never listed or opened.
-        isMiniappAvailable: (packageName, mode) => mode === "background" || !isBundledStore(packageName),
         hostVersion: Constants.expoConfig?.version ?? process.env.EXPO_PUBLIC_MENTRAOS_VERSION,
         supportedMiniappSdkRange: SUPPORTED_MINIAPP_SDK_RANGE,
       },
@@ -716,7 +698,7 @@ class MantleManager {
     // Remove all event subscriptions
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
-    storeUpdateScheduler.stop()
+    miniappUpdateScheduler.stop()
     workspaceManifestScheduler.stop()
     this.activePhoneNotificationId = null
 
@@ -809,11 +791,6 @@ class MantleManager {
       if (!isCurrent()) return
     }
 
-    // Stores run only as background updaters. Clear any older UI or autostart
-    // state without interrupting a maintenance action already in progress.
-    await this.prepareBackgroundStores()
-    if (!isCurrent()) return
-
     // Region-restricted miniapps must not surface or autostart from an old install.
     this.hidePlatformBlockedMiniapps()
     for (const visibility of this.miniappVisibility.values()) visibility.applyRestriction()
@@ -829,32 +806,9 @@ class MantleManager {
       .catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
     if (!isCurrent()) return
 
-    // Updates now come from the bundled Store's backend. Start them after the
-    // user's sessions are restored, so a running miniapp defers its update,
-    // and only for the Stores this deployment allows.
-    const installed = await appRegistry.getInstalledMiniapps({includeBackgroundOnly: true})
-    if (!isCurrent()) return
-    void storeUpdateScheduler.start(
-      BUNDLED_STORE_MINIAPP_PACKAGES.filter((packageName) => installed.some((app) => app.packageName === packageName)),
-    )
-  }
-
-  /** A Store never shows on Home, in the glasses menu, or as running UI. */
-  private async prepareBackgroundStores(): Promise<void> {
-    for (const packageName of BUNDLED_STORE_MINIAPP_PACKAGES) {
-      engine.miniapps.setHiddenStatus(packageName, true)
-    }
-    const menuItems = engine.settings.get(SETTINGS.menu_apps.key) as GlassesMenuItem[] | null
-    const visibleMenuItems = menuItems?.filter((item) => !isBundledStore(item.packageName))
-    if (menuItems && visibleMenuItems && visibleMenuItems.length !== menuItems.length) {
-      await engine.settings.set(SETTINGS.menu_apps.key, visibleMenuItems)
-    }
-    for (const packageName of BUNDLED_STORE_MINIAPP_PACKAGES) {
-      // A context the user started (from an older build) must not survive. A
-      // hidden maintenance context may already be applying an update.
-      if (miniappLauncher.isProjectedRunning(packageName)) await miniappLauncher.stop(packageName)
-      saveLocalAppRunningState(packageName, false)
-    }
+    // Each miniapp updates from its own URL. Start after the user's sessions
+    // are restored, so a running miniapp defers its update.
+    void miniappUpdateScheduler.start()
   }
 
   /**

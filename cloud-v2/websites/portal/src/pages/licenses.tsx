@@ -1,5 +1,5 @@
 /**
- * Licenses in one workspace: `/w/<workspaceId>/licenses`.
+ * Licenses in one workspace: `/licenses` (`?workspace=<workspaceId>` when it is not the one the bare address opens).
  *
  * The page is `WorkspaceLicensesView` (`@mentra/workspace-ui`): one card per license with its seats, dates, cost and
  * billing actions, the page total, and buying, as far as the viewer's role and what the portal offers them allow.
@@ -8,7 +8,8 @@
  *
  * The portal wires the view to what it owns: Core's workspace API, billing's client in the portal's locale, `me`
  * (which says whether billing's catalog can be read, and whether this viewer is offered billing), the
- * `?purchase=` of a return from checkout, and the two ways out to a hosted page. The view and its header stay
+ * `?purchase=` of a return from checkout, the `?buy=<product>` of a link that asks to buy one product, and the two
+ * ways out to a hosted page. The view and its header stay
  * mounted while a request for a hosted page is out. The portal draws everything from billing's data and links out for
  * anything that needs a payment page.
  */
@@ -33,6 +34,11 @@ export function billingOffered(me: PortalMe, detail: Pick<WorkspaceDetail, "capa
 /** The `?purchase=` a checkout returned with, from the address's query string; null when there is none. */
 export function purchaseParam(search: string): string | null {
   return new URLSearchParams(search).get("purchase") || null;
+}
+
+/** The `?buy=` product a link asked for, from the address's query string; null when there is none. */
+export function buyParam(search: string): string | null {
+  return new URLSearchParams(search).get("buy") || null;
 }
 
 /**
@@ -63,11 +69,17 @@ interface LicensesProps {
 
 /** The page's content. */
 export function LicensesScreen({ workspaceId, me, detail }: LicensesProps) {
-  const purchaseId = purchaseParam(useSearch());
+  const search = useSearch();
+  const purchaseId = purchaseParam(search);
   const client = useQueryClient();
   return (
     <WorkspaceLicensesView
       {...licensesPageProps(me, workspaceId, detail, purchaseId)}
+      // A link that asks to buy one product: the view acts on it once its reads are in (a dialog, or a note saying why
+      // not) and then the address loses `?buy=` in place, so Back does not return to the link and a reload does not
+      // open the dialog again.
+      buyProduct={buyParam(search) ?? undefined}
+      onBuyHandled={() => setQueryParam("buy", null, { replace: true })}
       // The banner was dismissed: the address loses `?purchase=` in place, so Back does not return to the banner.
       onPurchaseDone={() => setQueryParam("purchase", null, { replace: true })}
       // Retry also asks who the person is again: a page opened before billing was ready (`billingCatalog` false, with

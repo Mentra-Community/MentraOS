@@ -141,12 +141,17 @@ function fakeCore(start: {mine?: MyWorkspace | null; invitations?: InvitationPre
 
 const failWith = (code: string, text = "Core says: raw server text") => Object.assign(new Error(text), {code})
 
-/** The sheet's buttons, top to bottom. The backdrop is a button too, when the sheet can be dismissed, and has no text. */
-const buttons = (screen: ReturnType<typeof render>) =>
-  screen
+/**
+ * The sheet's buttons, main action first: top to bottom when stacked, right to left when side by side. The
+ * backdrop is a button too, when the sheet can be dismissed, and has no text.
+ */
+const buttons = (screen: ReturnType<typeof render>) => {
+  const labels = screen
     .getAllByRole("button")
     .flatMap((button) => within(button).queryAllByText(/./))
     .map((text) => String(text.props.children))
+  return screen.queryByTestId("alert.buttons.row") ? labels.reverse() : labels
+}
 
 async function press(screen: ReturnType<typeof render>, label: string) {
   await act(async () => {
@@ -191,7 +196,7 @@ afterEach(() => {
 })
 
 describe("the invitation sheet", () => {
-  it("shows the board's words, the can-see and can't-see lists, Join on top and Decline below", async () => {
+  it("shows the board's words, the can-see and can't-see lists, Join as the main action and Decline after it", async () => {
     const core = fakeCore({invitations: [invitation(RIDGELINE)]})
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
@@ -365,7 +370,7 @@ describe("the invitation sheet", () => {
 })
 
 describe("the leave-first variant", () => {
-  it("names the current workspace, puts Leave on top, and goes Leave -> confirm -> Join", async () => {
+  it("names the current workspace, makes Leave the main action, and goes Leave -> confirm -> Join", async () => {
     const core = fakeCore({mine: NORTHWIND, invitations: [invitation(RIDGELINE)]})
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)

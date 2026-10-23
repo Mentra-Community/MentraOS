@@ -1,19 +1,20 @@
+import { useQuery } from "@tanstack/react-query";
 import {
   AppShell,
   CenteredLayout,
   Count,
-  licenseStrings,
   WorkspaceLabel,
+  workspaceListQuery,
   type ExternalNavItem,
   type NavGroup,
-  type NavItem,
   type SwitcherCurrent,
 } from "@mentra/workspace-ui";
-import { CodeXml, CreditCard, Mail } from "lucide-react";
-import type { ReactNode } from "react";
+import { CodeXml, Mail } from "lucide-react";
+import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { safeLocalStorage } from "@/lib/api";
 import { Link } from "@/lib/navigation";
-import { usePortal } from "@/lib/portal";
-import { ACCOUNT_BILLING_PATH, INVITATION_PATH } from "@/lib/routes";
+import { portalWorkspaceApi, usePortal } from "@/lib/portal";
+import { currentWorkspace, forgetWorkspace, INVITATION_PATH, recallWorkspace, rememberWorkspace } from "@/lib/routes";
 
 /**
  * Under the workspace: a link to `/invitation` while the person has invitations to answer ("2 pending
@@ -35,16 +36,65 @@ export function InvitationsLink() {
   );
 }
 
+/**
+ * The last workspace this tab opened from the person's list. It is read from the browser's storage once, when the
+ * tab starts, and from then on changes only when this tab remembers or forgets one itself, so another tab's pick
+ * never moves this one (the bare address means the same workspace for as long as this tab is open).
+ */
+export interface TabWorkspace {
+  remembered: string | null;
+  remember(workspaceId: string): void;
+  forget(workspaceId: string): void;
+}
+
+const TabWorkspaceContext = createContext<TabWorkspace | null>(null);
+
+export function TabWorkspaceProvider({ children }: { children: ReactNode }) {
+  const [remembered, setRemembered] = useState(() => recallWorkspace(safeLocalStorage()));
+  const value = useMemo<TabWorkspace>(
+    () => ({
+      remembered,
+      remember(workspaceId) {
+        rememberWorkspace(safeLocalStorage(), workspaceId);
+        setRemembered(workspaceId);
+      },
+      forget(workspaceId) {
+        forgetWorkspace(safeLocalStorage(), workspaceId);
+        setRemembered(current => (current === workspaceId ? null : current));
+      },
+    }),
+    [remembered],
+  );
+  return <TabWorkspaceContext.Provider value={value}>{children}</TabWorkspaceContext.Provider>;
+}
+
+/** This tab's {@link TabWorkspace}. Outside a `TabWorkspaceProvider` it is the storage as of the first render. */
+export function useTabWorkspace(): TabWorkspace {
+  const tab = useContext(TabWorkspaceContext);
+  const [initial] = useState(() => recallWorkspace(safeLocalStorage()));
+  return (
+    tab ?? {
+      remembered: initial,
+      remember: workspaceId => rememberWorkspace(safeLocalStorage(), workspaceId),
+      forget: workspaceId => forgetWorkspace(safeLocalStorage(), workspaceId),
+    }
+  );
+}
+
+/**
+ * The workspace the bare address (`/members`, without `?workspace=`) opens for this person: the last one this tab opened
+ * from their list while it is still there, else their first. Null while the list loads, and for a person in none.
+ */
+export function useBareWorkspaceId(): string | null {
+  const list = useQuery(workspaceListQuery(portalWorkspaceApi));
+  const { remembered } = useTabWorkspace();
+  return list.data ? currentWorkspace({ param: null, remembered, workspaces: list.data }) : null;
+}
+
 /** The sidebar's links out of the portal: this environment's Developer Console, where there is one. */
 export function portalLinks(developerConsoleUrl: string | null): ExternalNavItem[] {
   if (!developerConsoleUrl) return [];
   return [{ key: "developer-console", label: "Developer Console", icon: CodeXml, href: developerConsoleUrl }];
-}
-
-/** The account menu's pages: the person's own Billing, where billing is offered to them. */
-export function accountItems(billing: boolean): NavItem[] {
-  if (!billing) return [];
-  return [{ key: "billing", label: licenseStrings.nav.billing, icon: CreditCard, href: ACCOUNT_BILLING_PATH }];
 }
 
 /**
@@ -93,7 +143,6 @@ export function PortalShell({
       navLabel={navLabel}
       active={item => item.key === activeKey}
       links={portalLinks(portal.developerConsoleUrl)}
-      accountItems={accountItems(portal.modules.billing)}
       title={title}
       description={description}
       headerAction={headerAction}

@@ -60,6 +60,13 @@ const WorkspaceSchema = new Schema(
      * sorted by service. Absent until the first; not indexed, like `deletionHolds`.
      */
     deletionHoldAsOf: {type: [DeletionHoldAsOfSchema], default: undefined},
+    /**
+     * `true` for a person's automatic workspace, the one Core made for them when they had none
+     * (`automatic-workspace.service`); absent on every other workspace. It stays when the workspace grows:
+     * whether it can give way to another is what it holds, not this flag. Not indexed: it is read with the
+     * workspace, never searched.
+     */
+    automatic: {type: Boolean, default: undefined},
   },
   {timestamps: true, collection: "workspaces"},
 )

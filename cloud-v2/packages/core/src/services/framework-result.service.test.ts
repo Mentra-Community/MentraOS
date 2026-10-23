@@ -1,12 +1,22 @@
 import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import type {RoutineEnrollment} from "../types/routine-definition.types";
-import {expect, test, spyOn} from "bun:test";
+import {afterEach, expect, test, spyOn} from "bun:test";
 import {FrameworkResultConflict, FrameworkResultService, frameworkResultCursorFilter, type FrameworkResultRepository} from "./framework-result.service";
 import {createFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 import {requestInputDigest} from "./test-request.service";
 import {TestAssetModel, TestRunModel} from "../models/test-run.model";
 import type {FrameworkRun} from "../types/framework-run.types";
 import {lifecycleRuns} from '../testing/framework-lifecycle.fixture';
+
+let streamedAssetFixture: {stopping: boolean; work: Promise<void>} | undefined;
+afterEach(async () => {
+  const original = streamedAssetFixture;
+  streamedAssetFixture = undefined;
+  if (original) {
+    original.stopping = true;
+    await original.work.catch(() => {});
+  }
+});
 
 test('ingest and detail retain actual frozen Harness diagnostic actions with independent cleanup readiness', async () => {
   for (const fixture of lifecycleRuns) {
@@ -708,7 +718,10 @@ test('asset declarations and accepted mappings preserve authorization and missin
   } finally {find.mockRestore(); receipt.mockRestore(); upload.mockRestore(); media.mockRestore();}
 });
 
-test("4096 streamed assets acknowledge once at complete with immutable metadata and concurrent retry custody", async () => {
+test("4096 streamed assets acknowledge once at complete with immutable metadata and concurrent retry custody", () => {
+  const original = {stopping: false, work: Promise.resolve()};
+  streamedAssetFixture = original;
+  original.work = (async () => {
   const {createHash} = await import("node:crypto");
   const {mkdtemp, rm} = await import("node:fs/promises");
   const {tmpdir} = await import("node:os");
@@ -791,38 +804,68 @@ test("4096 streamed assets acknowledge once at complete with immutable metadata 
   )
   const headers = new Headers({"content-type": "application/json", "content-length": String(bytes.length)});
   const body = () => new ReadableStream<Uint8Array>({start(controller) {controller.enqueue(bytes); controller.close();}});
-  const upload = (assetId: string) => service.upload(run.requestId, assetId, "mini", body(), headers);
+  const uploads = new Set<Promise<unknown>>();
+  const active = () => {if (original.stopping) throw Error("Streamed asset fixture stopped");};
+  const complete = () => {active(); return service.complete(run.requestId, "mini");};
+  const detail = () => {active(); return service.detail(run.requestId);};
+  const upload = (assetId: string, contents?: ReadableStream<Uint8Array>) => {
+    active();
+    const work = service.upload(run.requestId, assetId, "mini", contents ?? body(), headers);
+    uploads.add(work);
+    work.then(() => uploads.delete(work), () => uploads.delete(work));
+    return work;
+  };
+  let next = 0;
+  const workers = Array.from({length: 4}, async () => {
+    while (!original.stopping && next < declared.length - 1) {
+      try {await upload(declared[next++]!.id);}
+      catch (error) {original.stopping = true; throw error;}
+    }
+  });
   try {
-    let next = 0;
-    await Promise.all(Array.from({length: 4}, async () => {
-      while (next < declared.length - 1) await upload(declared[next++]!.id);
-    }));
+    await Promise.all(workers);
+    if (original.stopping) return;
     expect(rows.size).toBe(FRAMEWORK_RUN_ASSET_LIMIT - 1);
     expect(inventoryReads).toBe(0); // No full collection scan in any PUT.
-    await expect(service.complete(run.requestId, "mini")).rejects.toThrow("not acknowledged");
+    await expect(complete()).rejects.toThrow("not acknowledged");
+    if (original.stopping) return;
     expect(stored.uploadsComplete).toBe(false);
     const final = declared.at(-1)!;
     const retries = await Promise.all([upload(final.id), upload(final.id)]);
+    if (original.stopping) return;
     expect(retries.every(receipt => receipt.uploaded && receipt.sha256 === final.sha256 && receipt.size === final.size)).toBe(true);
     expect(rows.size).toBe(FRAMEWORK_RUN_ASSET_LIMIT);
     for (const fault of ["digest", "size", "duplicate"] as const) {
       corrupt = fault;
-      await expect(service.complete(run.requestId, "mini")).rejects.toThrow("not acknowledged");
+      await expect(complete()).rejects.toThrow("not acknowledged");
+      if (original.stopping) return;
       expect(stored.uploadsComplete).toBe(false);
     }
     corrupt = undefined;
-    const receipt = await service.complete(run.requestId, "mini");
+    const receipt = await complete();
+    if (original.stopping) return;
     expect(receipt).toEqual({entityId: run.result.runId, payloadSha256: stored.payloadSha256, manifestSha256: requestInputDigest(run.assets)});
     expect(completionWrites).toBe(1); expect(inventoryReads).toBe(5);
     expect(duplicateLookups).toBe(FRAMEWORK_RUN_ASSET_LIMIT + 1);
-    expect(await service.complete(run.requestId, "mini")).toEqual(receipt);
+    expect(await complete()).toEqual(receipt);
+    if (original.stopping) return;
     expect(inventoryReads).toBe(5);
     expect((await upload(final.id)).created).toBe(false);
-    expect(await service.complete(run.requestId, "mini")).toEqual(receipt);
+    if (original.stopping) return;
+    expect(await complete()).toEqual(receipt);
+    if (original.stopping) return;
     const bad = new ReadableStream<Uint8Array>({start(controller) {controller.enqueue(Buffer.from("[]")); controller.close();}});
-    await expect(service.upload(run.requestId, final.id, "mini", bad, headers)).rejects.toThrow("SHA256");
-    expect((await service.detail(run.requestId)).outcome).toBe("failed");
-  } finally {await rm(directory, {recursive: true, force: true});}
+    await expect(upload(final.id, bad)).rejects.toThrow("SHA256");
+    if (original.stopping) return;
+    expect((await detail()).outcome).toBe("failed");
+  } finally {
+    original.stopping = true;
+    await Promise.allSettled(workers);
+    await Promise.allSettled([...uploads]);
+    await rm(directory, {recursive: true, force: true});
+  }
+  })();
+  return original.work;
 })
 
 test("results cursor validates before querying and handles equal timestamps by run identity", () => {

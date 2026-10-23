@@ -133,6 +133,30 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
         try body(transport, sdk, store)
     }
 
+    /// Transport-only state tests must not observe the host's real Bluetooth availability.
+    private func withStateTransport(
+        _ body: (SessionReadinessTransport, ObservableStore) throws -> Void
+    ) rethrows {
+        let store = DeviceStore.shared.store
+        let saved = ["bluetooth", "glasses"].map { ($0, store.getCategory($0)) }
+        let previous = DeviceManager.shared.sgc
+        resetPairingState()
+        let transport = SessionReadinessTransport()
+        DeviceManager.shared.sgc = transport
+        defer {
+            transport.cleanup()
+            DeviceManager.shared.sgc = previous
+            resetPairingState()
+            for (category, values) in saved {
+                for key in store.getCategory(category).keys where values[key] == nil {
+                    store.remove(category, key)
+                }
+                for (key, value) in values { store.set(category, key, value) }
+            }
+        }
+        try body(transport, store)
+    }
+
     private func receive(_ transport: MentraLive, _ value: [String: Any]) throws {
         try transport.processReceivedData(JSONSerialization.data(withJSONObject: value))
     }
@@ -211,7 +235,7 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
     }
 
     func testFlagOffFirmwareEnteringPairingModeIsAPersistentRejection() throws {
-        try withPairingTransport { transport, _, store in
+        try withStateTransport { transport, store in
             var enteringEvents = 0
             let sink = Bridge.addEventSink { event, _ in
                 if event == "entering_pairing_mode" { enteringEvents += 1 }
@@ -250,7 +274,7 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
     }
 
     func testPhoneHelloOnEverySecureSessionAndPairSelectOnlyOnAnExplicitAttempt() throws {
-        try withPairingTransport { transport, _, store in
+        try withStateTransport { transport, store in
             let securePairingInfo: [String: Any] = [
                 "type": "pairing_info", "secure_pairing_capable": true, "protocol_version": 4,
                 "had_previous_bond": true, "owner_committed": true, "auto_audio": true,
@@ -288,7 +312,7 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
     }
 
     func testLegacyFirmwareGetsNoPairingProtocolMessages() throws {
-        try withPairingTransport { transport, _, store in
+        try withStateTransport { transport, store in
             store.set("bluetooth", "mentra_live_secure_firmware", false)
             store.set("bluetooth", "pending_device_name", "MENTRA_LIVE_BLE_ABCD")
             try receive(transport, ["type": "pairing_info", "had_previous_bond": false])
@@ -299,7 +323,7 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
     }
 
     func testError14OnAnExplicitAttemptAsksToForgetThePairingWithItsCode() throws {
-        try withPairingTransport { transport, _, store in
+        try withStateTransport { transport, store in
             var failures: [[String: Any]] = []
             let sink = Bridge.addEventSink { event, body in
                 if event == "pair_failure" { failures.append(body) }
@@ -347,7 +371,7 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
     }
 
     func testUnknownCapabilityWithoutPairingInfoIsReportedReadyAfterTheWait() throws {
-        try withPairingTransport { transport, _, store in
+        try withStateTransport { transport, store in
             transport.unknownCapabilityPairingInfoWaitMs = 50
             startExplicitPair(store, capability: nil)
             try receive(transport, ["type": "glasses_ready", "sid": "legacy"])
@@ -361,7 +385,7 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
     }
 
     func testUnknownCapabilityWithASecurePairingInfoFollowsTheSecureRule() throws {
-        try withPairingTransport { transport, _, store in
+        try withStateTransport { transport, store in
             var failures = 0
             let sink = Bridge.addEventSink { event, _ in
                 if event == "pair_failure" { failures += 1 }
@@ -393,7 +417,7 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
     }
 
     func testUnknownCapabilityWithALegacyPairingInfoIsReadyAtOnce() throws {
-        try withPairingTransport { transport, _, store in
+        try withStateTransport { transport, store in
             startExplicitPair(store, capability: nil)
             try receive(transport, ["type": "glasses_ready", "sid": "legacy"])
             XCTAssertFalse(ready(store))
@@ -403,7 +427,7 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
     }
 
     func testTheSelectedRowDecidesTheSecureRuleNotTheSession() throws {
-        try withPairingTransport { transport, _, store in
+        try withStateTransport { transport, store in
             // The row listed legacy firmware: no owner-commit wait and no pair_select, even if
             // the glasses then report secure firmware.
             startExplicitPair(store, capability: false)
@@ -429,7 +453,7 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
     }
 
     func testAReadySessionWithoutPairingInfoClearsTheSecureFirmwareFlag() throws {
-        try withPairingTransport { transport, _, store in
+        try withStateTransport { transport, store in
             transport.secureFirmwareRefreshMs = 50
             store.set("bluetooth", "mentra_live_secure_firmware", true)
             store.set("glasses", "fullyBooted", false)
@@ -440,8 +464,20 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
         }
     }
 
+    func testDisconnectedSessionCancelsTheSecureFirmwareRefresh() throws {
+        try withStateTransport { transport, store in
+            transport.secureFirmwareRefreshMs = 50
+            store.set("bluetooth", "mentra_live_secure_firmware", true)
+            store.set("glasses", "fullyBooted", false)
+            try receive(transport, ["type": "glasses_ready", "sid": "disconnected"])
+            transport.cleanup()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            XCTAssertEqual(store.get("bluetooth", "mentra_live_secure_firmware") as? Bool, true)
+        }
+    }
+
     func testASecurePairingInfoKeepsTheSecureFirmwareFlag() throws {
-        try withPairingTransport { transport, _, store in
+        try withStateTransport { transport, store in
             transport.secureFirmwareRefreshMs = 50
             store.set("bluetooth", "mentra_live_secure_firmware", false)
             store.set("glasses", "fullyBooted", false)

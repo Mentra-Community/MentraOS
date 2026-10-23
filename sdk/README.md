@@ -25,11 +25,11 @@ This `sdk/` folder is a standalone [Bun workspace](https://bun.sh/docs/install/w
 | --- | --- |
 | `../mobile/modules/miniapp` | **The actual `@mentra/miniapp` SDK source** (a workspace member, despite living outside `sdk/`). |
 | `sdk/miniapp-cli` | `@mentra/miniapp-cli` — the `mentra-miniapp` author CLI (`dev`, `release`, `pack`, …). |
-| `sdk/example-miniapp` | Reference miniapp that consumes both via `workspace:*`. The thing you run to see the SDK work. |
+| `examples/miniapp` | Reference miniapp that consumes both via `workspace:*` (a member of this workspace, despite living outside `sdk/`). The thing you run to see the SDK work. |
 | `sdk/create-mentra-miniapp` | The `bunx create-mentra-miniapp` scaffolder + template. The template pins published versions, **not** `workspace:*`. |
 | `sdk/docs` | Per-module SDK reference (`session.<module>`). |
 
-Because `example-miniapp` depends on `@mentra/miniapp` via `workspace:*`, it
+Because `examples/miniapp` depends on `@mentra/miniapp` via `workspace:*`, it
 resolves to the **source** package — which means that package must be **built
 to `dist/`** before the example can import it.
 
@@ -48,7 +48,7 @@ bun install
 ## Running the example
 
 ```bash
-cd sdk/example-miniapp
+cd examples/miniapp
 bun run dev
 ```
 
@@ -62,7 +62,7 @@ instead). See [`miniapp-cli/README.md`](./miniapp-cli/README.md) for
 ## Developing the SDK itself
 
 The example bundles `@mentra/miniapp` from the SDK's compiled `dist/` (it is
-bundled *in*, not externalised — see `example-miniapp/build.ts`). So when you
+bundled *in*, not externalised — see `examples/miniapp/build.ts`). So when you
 change SDK source, you must recompile `dist/` for the example to pick it up.
 
 **The normal loop — rebuild after a change:**
@@ -127,7 +127,7 @@ was edited/cleaned and not rebuilt.
 
 **`workspace:*` won't resolve / `@mentra/miniapp` not found at install time.**
 Run `bun install` from `sdk/` (the workspace root where `bun.lock` lives), not
-from inside `example-miniapp/`. The workspace includes `../mobile/modules/miniapp`,
+from inside `examples/miniapp/`. The workspace includes `../mobile/modules/miniapp`,
 so that path must be present in your checkout (no sparse clone).
 
 **Using `npm` instead of Bun.** This workspace is Bun-only: `workspace:*` is a

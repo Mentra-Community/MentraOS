@@ -40,6 +40,8 @@ export interface DeploymentManifest {
     mentraLiveOtaManifestUrl: string | null
     sttModelBaseUrl: string | null
     ttsModelBaseUrl: string | null
+    /** Where Mentra hosts its own miniapps; bundled miniapps update from it. Absent or null pins them. */
+    firstPartyMiniappsUrl?: string | null
   }
   appUpdates: {
     mode: "store" | "managed"

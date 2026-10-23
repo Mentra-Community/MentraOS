@@ -3,7 +3,7 @@
  * first run and on `/invitation`.
  *
  * Accept uses the link's token when the invitation came by this tab's link, its id otherwise; Core runs
- * the same checks either way. Accepting opens the workspace joined. Dismiss stops offering it in this
+ * the same checks either way. Accepting opens the workspace joined, at the address the person is on. Dismiss stops offering it in this
  * browser. An invitation for another account offers Switch account (the portal's sign-out) instead.
  */
 
@@ -15,10 +15,11 @@ import {
   workspaceListQuery,
 } from "@mentra/workspace-ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useBareWorkspaceId } from "@/components/portal-shell";
 import type { PendingInvitation } from "@/lib/invitations";
 import { Link, navigate } from "@/lib/navigation";
 import { portalWorkspaceApi, usePortal } from "@/lib/portal";
-import { INVITATION_PATH, workspacePath } from "@/lib/routes";
+import { INVITATION_PATH, joinedAddress, sectionHref } from "@/lib/routes";
 
 /** Accept and Dismiss for `invitation`, with what each tells the rest of the portal. */
 function useInvitationActions(invitation: PendingInvitation) {
@@ -28,7 +29,8 @@ function useInvitationActions(invitation: PendingInvitation) {
   const accept = useAcceptInvitation(portalWorkspaceApi, token ? { token } : { invitationId: preview.invitationId }, {
     onAccepted: accepted => {
       portal.forgetInvitation(which, "accepted");
-      navigate(workspacePath(accepted.workspaceId), { replace: true });
+      // The joined workspace opens at the address the person is on, with the rest of its query (`?buy=`) kept.
+      navigate(joinedAddress(window.location.pathname, window.location.search, accepted.workspaceId, window.location.hash), { replace: true });
     },
     onGone: () => portal.forgetInvitation(which, "gone"),
   });
@@ -57,13 +59,16 @@ function useInvitationActions(invitation: PendingInvitation) {
 /**
  * The invitation as a card: who invited you to what, when it expires, and Accept (or Switch account), Decline
  * and Dismiss. A person belongs to one workspace, so for someone already in one, Accept gives way to "You're in
- * <workspace>. Leave it to join <this one>." and a link to that workspace's Settings, where they leave.
+ * <workspace>. Leave it to join <this one>." and a link to that workspace's Settings, where they leave. An
+ * automatic workspace holding nothing (`replaceable`) gives way to the one joined, so it keeps Accept.
  */
 export function PendingInvitationCard({ invitation }: { invitation: PendingInvitation }) {
   const portal = usePortal();
   const { accept, decline, dismiss } = useInvitationActions(invitation);
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
-  const current = list.data?.[0] ?? null;
+  const bareWorkspaceId = useBareWorkspaceId();
+  const held = list.data?.[0] ?? null;
+  const current = held && !held.replaceable ? held : null;
   return (
     <InvitationAcceptCard
       load={{ status: "ready", preview: invitation.preview }}
@@ -81,7 +86,7 @@ export function PendingInvitationCard({ invitation }: { invitation: PendingInvit
       leaveAction={
         current ? (
           <Link
-            href={workspacePath(current.workspaceId, "settings")}
+            href={sectionHref("settings", current.workspaceId, bareWorkspaceId)}
             className={buttonVariants({ size: "lg" })}
           >
             Leave {current.name}

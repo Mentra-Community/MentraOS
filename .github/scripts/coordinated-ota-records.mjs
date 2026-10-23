@@ -120,12 +120,25 @@ export function createOtaReleaseResult({
   reused,
   workflow,
 }) {
+  // Only beta plans name a portable OTA bundle. A dev release publishes the
+  // manifest alone; production copies the promoted beta's bundle.
+  const bundleAsset = releasePlan.artifactNames?.otaBundle
+  if (bundleAsset ? !bundlePath : bundlePath) {
+    throw new Error(
+      bundleAsset
+        ? `The release plan names the OTA bundle ${bundleAsset}, but none was built`
+        : "The release plan names no OTA bundle, so none may be published",
+    )
+  }
   if (
     !PUBLICATION_STATUSES.has(selectionStatus) ||
     !PUBLICATION_STATUSES.has(manifestStatus) ||
-    !PUBLICATION_STATUSES.has(bundleStatus)
+    (bundleAsset && !PUBLICATION_STATUSES.has(bundleStatus))
   ) {
     throw new Error("ASG selection, OTA manifest, and bundle must have valid publication statuses")
+  }
+  if (bundleAsset && path.basename(bundlePath) !== bundleAsset) {
+    throw new Error(`The OTA bundle must be named ${bundleAsset}`)
   }
   verifyAsgProvenance({
     identity,
@@ -179,13 +192,17 @@ export function createOtaReleaseResult({
       sha256: sha256File(manifestPath),
       size: statSync(manifestPath).size,
     },
-    bundle: {
-      status: bundleStatus,
-      asset: path.basename(bundlePath),
-      url: requirePublicHttpsUrl(bundleUrl, "OTA bundle URL"),
-      sha256: sha256File(bundlePath),
-      size: statSync(bundlePath).size,
-    },
+    ...(bundleAsset
+      ? {
+          bundle: {
+            status: bundleStatus,
+            asset: bundleAsset,
+            url: requirePublicHttpsUrl(bundleUrl, "OTA bundle URL"),
+            sha256: sha256File(bundlePath),
+            size: statSync(bundlePath).size,
+          },
+        }
+      : {}),
     asg: {
       fingerprint: identity.fingerprint,
       versionCode: identity.versionCode,
@@ -263,7 +280,7 @@ function main() {
       selectionStatus: args["selection-status"],
       manifestPath: path.resolve(args.manifest),
       manifestUrl: args["manifest-url"],
-      bundlePath: path.resolve(args.bundle),
+      bundlePath: args.bundle ? path.resolve(args.bundle) : undefined,
       bundleUrl: args["bundle-url"],
       bundleStatus: args["bundle-status"],
       manifestStatus: args["manifest-status"],

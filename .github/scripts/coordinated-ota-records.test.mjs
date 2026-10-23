@@ -32,6 +32,7 @@ const releasePlan = {
   artifactNames: {
     otaManifest: "mentra-live-ota-3.1.0-beta.57.json",
     asgSelection: "mentra-live-asg-selection-3.1.0-beta.57.json",
+    otaBundle: "mentra-live-ota-bundle-3.1.0-beta.57.zip",
   },
   otaInputs: {
     firmwareManifest: {path: "asg_client/ota_manifests/firmware_live.json", sha256: "d".repeat(64)},
@@ -201,6 +202,74 @@ test("the OTA workflow reuses a historical GitHub APK URL through exact release-
   assert.equal(result.asg.originatingReleaseSetId, releasePlan.releaseSetId)
   assert.equal(result.firmwareManifestSha256, releasePlan.otaInputs.firmwareManifest.sha256)
   assert.match(result.manifest.sha256, /^[0-9a-f]{64}$/)
+})
+
+test("only beta releases publish a portable OTA bundle", () => {
+  const fixtureData = fixture()
+  const input = (plan, bundle) => ({
+    releasePlan: plan,
+    identity,
+    provenance: fixtureData.provenance,
+    selectionPath: fixtureData.selectionPath,
+    selectionUrl: "https://example.com/asg-selection.json",
+    selectionStatus: "published",
+    manifestPath: fixtureData.manifestPath,
+    manifestUrl: "https://example.com/version.json",
+    ...(bundle
+      ? {bundlePath: fixtureData.bundlePath, bundleUrl: "https://example.com/bundle.zip", bundleStatus: "published"}
+      : {}),
+    manifestStatus: "published",
+    reused: false,
+    workflow: {
+      apkPath: fixtureData.apkPath,
+      signingCertificateSha256,
+      repository: "Mentra-Community/MentraOS",
+      runId: "123",
+      runAttempt: 1,
+    },
+  })
+  const {otaBundle, ...devNames} = releasePlan.artifactNames
+  const devPlan = {...releasePlan, artifactNames: devNames}
+  const dev = createOtaReleaseResult(input(devPlan, false))
+  assert.equal(dev.bundle, undefined)
+  assert.equal(dev.manifest.status, "published")
+  assert.throws(() => createOtaReleaseResult(input(devPlan, true)), /names no OTA bundle/)
+  assert.throws(() => createOtaReleaseResult(input(releasePlan, false)), new RegExp(`names the OTA bundle ${otaBundle}`))
+  assert.equal(createOtaReleaseResult(input(releasePlan, true)).bundle.asset, otaBundle)
+})
+
+test("the OTA workflow builds no bundle for a dev plan", () => {
+  const fixtureData = fixture()
+  const root = path.dirname(path.dirname(fixtureData.apkPath))
+  mkdirSync(path.join(root, "release-intent"))
+  mkdirSync(path.join(root, "coordinated-ota-work"))
+  const {otaBundle, ...devNames} = releasePlan.artifactNames
+  writeFileSync(
+    path.join(root, "release-intent/release-plan.json"),
+    JSON.stringify({...releasePlan, artifactContainerTag: "mentra-builds-v3.1.0", artifactNames: devNames}),
+  )
+  writeFileSync(path.join(root, "coordinated-ota-work/asg-build-identity.json"), JSON.stringify(identity))
+  const workflow = readFileSync(new URL("../workflows/reusable-coordinated-ota.yml", import.meta.url), "utf8")
+  const step = workflow.split("      - name: Prepare immutable asset names\n")[1].split("\n      - name:")[0]
+  const script = step.split("        run: |\n")[1].replace(/^          /gm, "")
+  const output = path.join(root, "output")
+  execFileSync("bash", ["-c", script], {
+    cwd: root,
+    env: {
+      ...process.env,
+      GITHUB_OUTPUT: output,
+      REPOSITORY: "Mentra-Community/MentraOS",
+      ASG_RELEASE_TAG: "mentra-coordinated-asg",
+      ASG_REUSED: "false",
+      EXPECTED_APK_ASSET: identity.apkAsset,
+      EXPECTED_PROVENANCE_ASSET: identity.provenanceAsset,
+    },
+  })
+  const outputs = readFileSync(output, "utf8")
+  assert.match(outputs, /^bundle_asset=$/m)
+  assert.match(outputs, /^bundle_url=$/m)
+  assert.ok(otaBundle)
+  assert.match(workflow, /- name: Build deterministic portable OTA bundle\n        if: steps\.names\.outputs\.bundle_asset != ''/)
 })
 
 test("the OTA workflow assigns the CDN URL to a newly built ASG APK", () => {

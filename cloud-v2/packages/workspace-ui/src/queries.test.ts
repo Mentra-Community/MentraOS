@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
 import { WORKSPACE_CHANGED_MESSAGE, WorkspaceApiError, errorMessage } from "./errors";
 import { createWorkspaceApi } from "./api";
-import { ACCOUNT_SCOPE, BillingContractError, BillingRefusedError, BillingUnavailableError, createBillingApi, workspaceScope } from "./billing-api";
+import { BillingContractError, BillingRefusedError, BillingUnavailableError, createBillingApi, workspaceScope } from "./billing-api";
 import {
   billingCatalogQuery,
   billingKeys,
@@ -230,7 +230,7 @@ describe("billing's queries", () => {
   test("an answer that doesn't match the contract fails the query", async () => {
     const { billing } = billingFor({ locale: "en", products: "none" });
     const client = new QueryClient();
-    const error = await client.fetchQuery({ ...billingCatalogQuery(billing, ACCOUNT_SCOPE), retry: false }).catch((e: unknown) => e);
+    const error = await client.fetchQuery({ ...billingCatalogQuery(billing, workspaceScope(WORKSPACE_ID)), retry: false }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(BillingUnavailableError);
   });
 
@@ -238,14 +238,14 @@ describe("billing's queries", () => {
     const { billing } = billingFor();
     const german = createBillingApi({ locale: "de-DE" });
     const ws = workspaceScope(WORKSPACE_ID);
-    expect(billingKeys.catalog(billing, ws)).not.toEqual(billingKeys.catalog(billing, ACCOUNT_SCOPE));
+    expect(billingKeys.catalog(billing, ws)).not.toEqual(billingKeys.catalog(billing, workspaceScope(OTHER_ID)));
     expect(billingKeys.catalog(billing, ws)).not.toEqual(billingKeys.catalog(german, ws));
     expect(billingKeys.status(billing, ws, "pur_1")).not.toEqual(billingKeys.status(billing, ws, null));
     expect(billingKeys.status(billing, ws, undefined)).toEqual(billingKeys.status(billing, ws, null));
     for (const key of [billingKeys.catalog(billing, ws), billingKeys.status(billing, ws, "pur_1")]) {
       expect(key.slice(0, billingKeys.owner(ws).length)).toEqual([...billingKeys.owner(ws)]);
     }
-    expect(JSON.stringify(billingKeys.owner(ACCOUNT_SCOPE))).not.toContain(WORKSPACE_ID);
+    expect(JSON.stringify(billingKeys.owner(workspaceScope(OTHER_ID)))).not.toContain(WORKSPACE_ID);
     // Every status of an owner, whatever its purchase, locale or base path, shares one prefix: the catalog isn't under it.
     const statuses = billingKeys.statuses(ws);
     expect(billingKeys.status(billing, ws, "pur_1").slice(0, statuses.length)).toEqual([...statuses]);
@@ -255,7 +255,7 @@ describe("billing's queries", () => {
 
   test("a refusal (4xx) isn't retried, and an unavailable answer or a 5xx gets one more try", () => {
     const { billing } = billingFor();
-    const retry = billingStatusQuery(billing, ACCOUNT_SCOPE).retry as (count: number, error: unknown) => boolean;
+    const retry = billingStatusQuery(billing, workspaceScope(WORKSPACE_ID)).retry as (count: number, error: unknown) => boolean;
     expect(retry(0, new BillingRefusedError("forbidden", {}, 403))).toBe(false);
     expect(retry(0, new BillingRefusedError("billing_unavailable", {}, 503))).toBe(true);
     expect(retry(1, new BillingRefusedError("billing_unavailable", {}, 503))).toBe(false);
@@ -265,12 +265,12 @@ describe("billing's queries", () => {
 
   test("an answer that doesn't match the contract isn't retried: it would only mismatch again", async () => {
     const { billing } = billingFor();
-    const retry = billingStatusQuery(billing, ACCOUNT_SCOPE).retry as (count: number, error: unknown) => boolean;
+    const retry = billingStatusQuery(billing, workspaceScope(WORKSPACE_ID)).retry as (count: number, error: unknown) => boolean;
     expect(retry(0, new BillingContractError("status doesn't match"))).toBe(false);
     // Through the query: a mismatch is asked once, while a dropped connection is asked again.
     const mismatch = billingFor({ locale: "en", products: "none" }, { locale: "en", products: "none" });
     const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } });
-    const error = await client.fetchQuery(billingCatalogQuery(mismatch.billing, ACCOUNT_SCOPE)).catch((e: unknown) => e);
+    const error = await client.fetchQuery(billingCatalogQuery(mismatch.billing, workspaceScope(WORKSPACE_ID))).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(BillingContractError);
     expect(mismatch.urls).toHaveLength(1);
     let asked = 0;
@@ -281,11 +281,11 @@ describe("billing's queries", () => {
         throw new TypeError("network down");
       }) as unknown as typeof fetch,
     });
-    await new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } }).fetchQuery(billingCatalogQuery(flaky, ACCOUNT_SCOPE)).catch(() => {});
+    await new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } }).fetchQuery(billingCatalogQuery(flaky, workspaceScope(WORKSPACE_ID))).catch(() => {});
     expect(asked).toBe(2);
   });
 
-  /** A client holding one workspace's billing (catalog and status), another's, and the person's own. */
+  /** A client holding one workspace's billing (catalog and status), and another's. */
   function seededBilling() {
     const { api } = offlineApi();
     const { billing } = billingFor();
@@ -296,7 +296,6 @@ describe("billing's queries", () => {
     client.setQueryData(billingKeys.status(billing, mine, "pur_1"), statusBody);
     client.setQueryData(billingKeys.catalog(billing, mine), catalogBody);
     client.setQueryData(billingKeys.status(billing, other, null), statusBody);
-    client.setQueryData(billingKeys.status(billing, ACCOUNT_SCOPE, null), statusBody);
     client.setQueryData(workspaceKeys.licenses(api, WORKSPACE_ID), []);
     client.setQueryData(workspaceKeys.members(api, WORKSPACE_ID), []);
     return { api, billing, client, mine, other };
@@ -316,7 +315,6 @@ describe("billing's queries", () => {
     // The catalog is display content a seat doesn't change, and no other owner's billing is touched.
     expect(stale(client, billingKeys.catalog(billing, mine))).toBe(false);
     expect(stale(client, billingKeys.status(billing, other, null))).toBe(false);
-    expect(stale(client, billingKeys.status(billing, ACCOUNT_SCOPE, null))).toBe(false);
   });
 
   test("a mutation that isn't a seat's (rename, invite, role change) leaves billing alone", async () => {
@@ -412,15 +410,12 @@ describe("statusPlaceholder", () => {
   test("keeps the previous answer while only the purchase in the key changes, so `?purchase=` going doesn't blank the page", () => {
     expect(asked(billingKeys.status(billing, a, "pur_1"), billingKeys.status(billing, a, null))).toBe(answer);
     expect(asked(billingKeys.status(billing, a, null), billingKeys.status(billing, a, "pur_2"))).toBe(answer);
-    expect(asked(billingKeys.status(billing, ACCOUNT_SCOPE, "pur_1"), billingKeys.status(billing, ACCOUNT_SCOPE, null))).toBe(answer);
   });
 
-  test("never carries an answer to another workspace, from a workspace to the account or back, or to another locale or base path", () => {
+  test("never carries an answer to another workspace, or to another locale or base path", () => {
     const from = billingKeys.status(billing, a, "pur_1");
     expect(asked(from, billingKeys.status(billing, b, "pur_1"))).toBeUndefined();
     expect(asked(from, billingKeys.status(billing, b, null))).toBeUndefined();
-    expect(asked(from, billingKeys.status(billing, ACCOUNT_SCOPE, null))).toBeUndefined();
-    expect(asked(billingKeys.status(billing, ACCOUNT_SCOPE, null), billingKeys.status(billing, a, null))).toBeUndefined();
     expect(asked(from, billingKeys.status(client("de-DE"), a, "pur_1"))).toBeUndefined();
     expect(asked(from, billingKeys.status(client("en-US", "/api/other"), a, "pur_1"))).toBeUndefined();
   });

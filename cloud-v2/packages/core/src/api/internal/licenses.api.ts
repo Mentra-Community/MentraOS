@@ -5,16 +5,17 @@
  * The shapes are the contract's (`@mentra/workspace-contract`), spoken by `createCoreWorkspaceClient`'s
  * `putLicense` and `listLicenses`.
  *
- * | Route                            | Answers                                                                        |
- * | -------------------------------- | ------------------------------------------------------------------------------ |
- * | `PUT /:licenseId`                | `LicenseWriteResponse`; 409 `stale_revision`, 404 `owner_not_found`, 400       |
- * | `GET /?ownerType=&ownerId=`      | `LicensesResponse`: the owner's licenses, ended ones included, with seats used |
+ * | Route                                | Answers                                                                            |
+ * | ------------------------------------ | ---------------------------------------------------------------------------------- |
+ * | `PUT /:licenseId`                    | `LicenseWriteResponse`; 409 `stale_revision`, 404 `owner_not_found`, 400           |
+ * | `GET /?ownerType=workspace&ownerId=` | `LicensesResponse`: the workspace's licenses, ended ones included, with seats used |
  *
  * `PUT` takes a `LicenseWrite` for the license the path names, and applies it only when its revision is
  * newer than Core's (`license.service`): an equal revision answers 200 `applied: false`, an older one 409
- * `stale_revision` (with Core's `revision`), and a write for an owner that is deleted or never existed 404
- * `owner_not_found`. A malformed write, one for another license than the path's, a personal license whose
- * quantity is not 1 and a change of owner are 400 `invalid_request`.
+ * `stale_revision` (with Core's `revision`), and a write for a workspace that is deleted or never existed 404
+ * `owner_not_found`. A malformed write, one for another license than the path's, one whose owner is not a
+ * workspace (a person included) and a change of owner are 400 `invalid_request`. A list for any `ownerType`
+ * but `workspace` is 400 too: a license has no other owner.
  */
 
 import type {LicenseOwner, LicensesResponse, LicenseWriteResponse} from "@mentra/workspace-contract"
@@ -45,12 +46,11 @@ app.get("/", async (c) => {
   return c.json(answer)
 })
 
-/** The owner a list asks for: `ownerType` `workspace` or `person`, and its non-blank id. */
+/** The owner a list asks for: `ownerType` `workspace`, the only owner a license has, and its non-blank id. */
 function ownerOf(ownerType: string | undefined, ownerId: string | undefined): LicenseOwner {
+  if (ownerType !== "workspace") throw new InvalidRequest('ownerType must be "workspace"')
   if (typeof ownerId !== "string" || !ownerId.trim()) throw new InvalidRequest("ownerId must be a non-empty string")
-  if (ownerType === "workspace") return {type: "workspace", workspaceId: ownerId}
-  if (ownerType === "person") return {type: "person", mentraUserId: ownerId}
-  throw new InvalidRequest('ownerType must be "workspace" or "person"')
+  return {type: "workspace", workspaceId: ownerId}
 }
 
 export default app

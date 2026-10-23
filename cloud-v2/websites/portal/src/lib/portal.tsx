@@ -9,7 +9,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { createBillingApi, createWorkspaceApi, type BillingApi, type FetchLike, type NavigateOut } from "@mentra/workspace-ui";
 import { createContext, useContext } from "react";
 import type { PortalModules } from "./api";
-import type { LinkInvitation, PendingInvitation } from "./invitations";
+import type { LinkInvitation, PendingInvitation, UnavailableInvitations } from "./invitations";
 import { portalLocale } from "./locale";
 import { leavePortal, openPortalTab } from "./navigation";
 
@@ -79,6 +79,11 @@ export interface PortalSession {
    * each once, dismissed ones left out (lib/invitations). Undefined while they are being looked up.
    */
   invitations: PendingInvitation[] | undefined;
+  /**
+   * Invitations that could not be read (a dropped connection or a 5xx on the link's lookup or on the person's own
+   * list), so the portal cannot tell whether one is waiting. Null or absent when they were read.
+   */
+  invitationsUnavailable?: UnavailableInvitations | null;
   /**
    * Stop offering an invitation: it was accepted, dismissed (remembered in this browser), or Core said it
    * is no longer valid. Forgets this tab's link when it is that invitation's.

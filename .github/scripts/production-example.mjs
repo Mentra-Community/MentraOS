@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Production Bluetooth example candidates.
 //
-// The Starter Kit example is its own release notion. Its production release is
-// keyed on the promoted beta exactly like the stable packages: it builds the
-// Starter Kit main branch against the public plain X.Y.Z packages and the
-// beta's frozen OTA pin (whose ASG client is named after the same base
-// version), distributes it through the public TestFlight link and the Play
-// open-testing link, and records mentra-example-release-X.Y.Z.json in the
-// stable release container. Nothing here promotes a store listing: the
-// example never reaches a public store from this workflow.
+// The Bluetooth example is its own release notion. Its production release is
+// keyed on the promoted beta exactly like the stable packages: it builds
+// examples/bluetooth at the beta's source, stamped as X.Y.Z with the beta's
+// frozen OTA pin (whose ASG client is named after the same base version),
+// uploads the apps to the stable release container, and distributes the React
+// Native example through the public TestFlight link and its closed Play track.
+// Nothing here promotes a store listing: the example never reaches a public
+// store from this workflow.
 import {createHash} from "node:crypto"
 import {appendFileSync, mkdirSync, readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"

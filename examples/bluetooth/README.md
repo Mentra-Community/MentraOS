@@ -28,14 +28,21 @@ checkout, with no published packages and no version pins:
 | `ios`, `macos` | Local Swift package `mobile/modules/bluetooth-sdk` |
 | `react-native`, `react-native-elevenlabs-audio`, `react-native-macos` | Members of the `examples/` Bun workspace; `@mentra/*` are `workspace:*` links to `mobile/modules` and `cloud-v2/packages` |
 
-Paths in this folder's docs are relative to the Starter Kit root, which is
-`examples/bluetooth` in MentraOS. The `Example App Builds` workflow in MentraOS
+In the standalone Starter Kit the shared files (this README, `LICENSE`,
+`docs/`) sit at the repository root and each app under `examples/<app>`; in
+MentraOS every app sits directly in `examples/bluetooth`. The export moves the
+apps and rewrites the relative links between them. The `Example App Builds` workflow in MentraOS
 builds every example on changes to them or to the SDK.
 
 The standalone
 [Starter Kit repository](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit)
 is generated from this folder, with the SDK dependencies pinned to published
-versions so it can be cloned and built without a MentraOS checkout.
+versions so it can be cloned and built without a MentraOS checkout. A scheduled
+MentraOS workflow keeps each kit branch on its channel's latest completed
+release: it pushes one `Release <version>` commit and an `sdk-<version>` tag,
+and records the inputs in `starter-kit-release.json`. Intermediate releases are
+skipped. The kit repository keeps its own CI, which builds the examples from the
+published packages on every push, including each export.
 
 ## Documentation
 
@@ -56,11 +63,10 @@ Read the first-party [Mentra Live Bluetooth SDK docs](https://docs.mentraglass.c
 
 ## Install Prebuilt Example Apps
 
-Installable builds of the examples for published SDK versions are attached to
-the standalone Starter Kit's
-[GitHub Releases](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases).
-Each filename carries its SDK version, for example
-`mentra-example-react-native-<version>.apk`. Android APKs install directly from
+Installable builds of the examples for each SDK release are listed on that
+release's page in [MentraOS releases](https://github.com/Mentra-Community/MentraOS/releases)
+(`mentra-v<version>`), under **Bluetooth example apps**. Each filename carries
+its SDK version, for example `mentra-example-react-native-<version>.apk`. Android APKs install directly from
 the phone browser (enable installs from unknown sources when prompted). The iOS
 IPA is unsigned; install it with a sideloading tool such as
 [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/), which

@@ -496,13 +496,15 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   /*
-   * Mentra Live can power itself off after ~20 minutes off the wearer's face
-   * (cs_swit type 11). Off unless Super Mode turns it on. Re-pushed on connect,
-   * so this default is what a new install sends to the glasses.
+   * Mentra Live powers itself off after ~20 minutes off the wearer's face
+   * (cs_swit type 11). On by default, matching the firmware. Re-pushed on
+   * connect, so this default is what a new install sends to the glasses, and
+   * it overwrites a value saved on the glasses. Automated test lanes turn it
+   * off after pairing.
    */
   auto_power_off_enabled: {
     key: "auto_power_off_enabled",
-    defaultValue: () => false,
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,

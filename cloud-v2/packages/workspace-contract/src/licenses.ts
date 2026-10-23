@@ -4,16 +4,16 @@
  * `GET /:workspaceId/licenses`) and to Organization Admins (the admin portal's `GET /api/admin/licenses`).
  * See Core's `docs/licenses.md`.
  *
- * A license is a quantity of one product for a term, held by a workspace (its Admins and Owners assign
- * the seats to members) or by a person (who holds its one seat). Core keeps a copy of each license as
+ * A license is a quantity of one product for a term, held by a workspace: its Admins and Owners assign the
+ * seats to members, and a person has a license only through a seat. Core keeps a copy of each license as
  * billing last wrote it, and who holds each seat.
  */
 
-/** The owners a license can have. */
-export const LICENSE_OWNER_TYPES = ["workspace", "person"] as const
+/** The owners a license can have: a workspace, and nothing else. A typed field, so another could be added. */
+export const LICENSE_OWNER_TYPES = ["workspace"] as const
 
-/** Who holds a license: a workspace, or a person by Core user ID. */
-export type LicenseOwner = {type: "workspace"; workspaceId: string} | {type: "person"; mentraUserId: string}
+/** Who holds a license: a workspace. */
+export type LicenseOwner = {type: "workspace"; workspaceId: string}
 
 /**
  * A feature a license unlocks (`call.unlimited`) and the packages it is for (`com.mentra.call`).
@@ -39,12 +39,33 @@ export interface LicenseWrite {
   /** The product, e.g. `mentra.call.unlimited`. */
   product: string
   features: LicenseFeature[]
-  /** Seats: always 1 for a person. */
+  /** Seats, for the workspace's Admins and Owners to assign. */
   quantity: number
   /** RFC 3339, UTC (`Z`). */
   validFrom: string
   /** RFC 3339, UTC (`Z`). The features stop after it. */
   paidThrough: string
+  /**
+   * The purchase's buyer, by Core user ID, on every write of a subscription billing checked out, so the
+   * first write to reach Core carries it whatever order they come in. Core gives them one seat only on the
+   * write that creates the license, and only when they are an active member of the owner workspace, the
+   * license has a seat to give (`quantity` of 1 or more), and they hold no seat of an in-term license of the
+   * same product in that workspace; otherwise, and on every later write, it assigns nothing. A Core that
+   * predates it ignores it.
+   */
+  assignTo?: {mentraUserId: string}
+  /**
+   * A person's request for one more seat for themselves: the request's id, their Core user ID, and the
+   * quantity the license reaches once it is added. Billing names it on the write whose quantity reaches it,
+   * and on every later write until Core accepts one that carries it. Core decides each request once, on the
+   * first applied write (a new license or a newer revision) that carries an id it hasn't recorded: it records
+   * the id whatever it decides, and gives the person one seat only when that write raises the quantity to the
+   * request's (the quantity Core had, 0 for a new license, is below it, and the write's is at least it), the
+   * person is an active member of the owner workspace, the license has a seat to give, and they hold no seat
+   * of an in-term license of the same product in that workspace. Otherwise it assigns nothing, and a repeat or
+   * an older revision decides nothing. A Core that predates it ignores it.
+   */
+  seatRequest?: {requestId: string; mentraUserId: string; quantity: number}
 }
 
 /** Core's answer to a license write that it accepted: whether it changed anything, and the revision it has. */
@@ -61,31 +82,28 @@ export interface LicenseSeatView {
 }
 
 /**
- * A license as Core holds it. `seatsUsed` is how many seats are assigned (a personal license's one seat
- * is always its owner's, so it is 1), and may exceed `quantity` after a write lowered it: Core frees no
- * seat on its own. `endedAt` is set when its owner was deleted; Core then refuses further writes for it.
+ * A license as Core holds it. `seatsUsed` is how many seats are assigned, and may exceed `quantity` after a
+ * write lowered it: Core frees no seat on its own. `endedAt` is set when its workspace was deleted; Core then
+ * refuses further writes for it.
  * `seats` is present where Core lists who holds them (the workspace routes).
  */
-export interface LicenseView extends Omit<LicenseWrite, "licenseId"> {
+export interface LicenseView extends Omit<LicenseWrite, "licenseId" | "assignTo" | "seatRequest"> {
   licenseId: string
   seatsUsed: number
   endedAt: string | null
   seats?: LicenseSeatView[]
 }
 
-/** Response of `GET /api/internal/licenses?ownerType=&ownerId=`: one owner's licenses, ended ones included. */
+/** Response of `GET /api/internal/licenses?ownerType=workspace&ownerId=`: one workspace's licenses, ended ones included. */
 export interface LicensesResponse {
   licenses: LicenseView[]
 }
 
 /**
- * Who holds a license, as the admin portal's list shows it: the workspace by name, or the person by the name
- * and email Core has for them. Each is null when Core has none (a person who never signed in through Core's
- * sign-in server, or whose account is deleted), and the portal then shows the id.
+ * Who holds a license, as the admin portal's list shows it: the workspace, by its name. The name is null when
+ * Core has no record of the workspace, and the portal then shows the id.
  */
-export type AdminLicenseOwner =
-  | {type: "workspace"; workspaceId: string; name: string | null}
-  | {type: "person"; mentraUserId: string; name: string | null; email: string | null}
+export type AdminLicenseOwner = {type: "workspace"; workspaceId: string; name: string | null}
 
 /** One license in the admin portal's list. Times are ISO 8601 UTC; `endedAt` and `endedReason` are null while it stands. */
 export interface AdminLicenseView {
@@ -101,8 +119,7 @@ export interface AdminLicenseView {
 }
 
 /**
- * Response of `GET /api/admin/licenses?query=&cursor=`: a page of every license, workspace and personal,
- * newest first. `next` is the `cursor` of the page after this one, or null on the last page.
+ * Response of `GET /api/admin/licenses?query=&cursor=`: a page of every license, newest first. `next` is the `cursor` of the page after this one, or null on the last page.
  */
 export interface AdminLicensesResponse {
   items: AdminLicenseView[]
@@ -120,14 +137,14 @@ export const SEAT_RELEASE_REASONS = [
 ] as const
 export type SeatReleaseReason = (typeof SEAT_RELEASE_REASONS)[number]
 
-/** Why a license ended, in `license.ended`'s `after.reason`: its owner was deleted. */
-export const LICENSE_ENDED_REASONS = ["workspace_deleted", "account_deleted"] as const
+/** Why a license ended, in `license.ended`'s `after.reason`: its workspace was deleted. */
+export const LICENSE_ENDED_REASONS = ["workspace_deleted"] as const
 export type LicenseEndedReason = (typeof LICENSE_ENDED_REASONS)[number]
 
 /** `error` of the 409 a license write older than the one Core has gets. The body's `revision` is Core's. */
 export const STALE_REVISION_ERROR = "stale_revision"
 
-/** `error` of the 404 a license write gets when its owner is deleted or never existed. Retrying cannot help. */
+/** `error` of the 404 a license write gets when its workspace is deleted or never existed. Retrying cannot help. */
 export const OWNER_NOT_FOUND_ERROR = "owner_not_found"
 
 /** The most pairs one `POST /api/portal/workspaces/:workspaceId/seat-assignments` takes. */

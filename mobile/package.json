@@ -62,7 +62,7 @@
     "@config-plugins/react-native-webrtc": "^13.0.0",
     "@craftzdog/react-native-buffer": "^6.1.2",
     "@douglowder/expo-av-route-picker-view": "^0.0.5",
-    "@dr.pogodin/react-native-fs": "^2.37.0",
+    "@dr.pogodin/react-native-fs": "2.38.2",
     "@expo-google-fonts/red-hat-display": "^0.4.1",
     "@expo-google-fonts/space-grotesk": "^0.4.1",
     "@expo/metro-runtime": "~55.0.11",

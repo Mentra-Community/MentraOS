@@ -4,7 +4,7 @@
  *
  * It also holds the portal's two ways out for a hosted page (`leavePortal`, `openPortalTab`: the host's side of
  * `@mentra/workspace-ui`'s `NavigateOut`) and the query parameter a page keeps in its address
- * (`?purchase=`).
+ * (`?purchase=`, `?workspace=`, `?buy=`).
  */
 
 import { HostedUrlSchema } from "@mentra/workspace-contract/portal-billing";
@@ -50,8 +50,11 @@ export function navigate(path: string, options: { replace?: boolean } = {}): voi
 
 // --- Query parameters ------------------------------------------------------------------------------------------
 
-/** The query parameters pages keep in their address: the purchase a checkout returned with. */
-export type QueryParam = "purchase";
+/**
+ * The query parameters pages keep in their address: the purchase a checkout returned with, the workspace an address
+ * names when it is not the person's default, and the product a link asks to buy.
+ */
+export type QueryParam = "purchase" | "workspace" | "buy";
 
 /** Sets (or, for null, removes) one query parameter, leaving the path and the other parameters as they are. */
 export function setQueryParam(name: QueryParam, value: string | null, options: { replace?: boolean } = {}): void {

@@ -51,6 +51,17 @@ const UserSchema = new Schema(
      * providers, a token issued (`iat`) before it.
      */
     webSignInsRevokedAt: {type: Date, default: null},
+
+    /**
+     * When the person last asked for their workspace (`POST /workspaces/ensure`,
+     * `automatic-workspace.service`). The write is what serializes those asks:
+     * each one writes this row in its transaction before it looks for the
+     * person's memberships, so two at once conflict here and the one retried
+     * finds the workspace the other made. Every write moves it forward, so no
+     * write is a no-op that would conflict with nothing. Not indexed: it is
+     * never searched.
+     */
+    portalWorkspaceAt: {type: Date, default: null},
   },
   {timestamps: {createdAt: true, updatedAt: false}, collection: "users"},
 )

@@ -3,49 +3,40 @@
 This is the employee procedure for promoting one completed coordinated beta to
 production. It covers Cloud V2 and the Mentra App on iOS and Android.
 
-The Bluetooth SDK Starter Kit example app is outside the promotion state
-machine. Its production candidates are built by a separate workflow keyed on
-the promoted beta (see "Bluetooth example" below): it is distributed through
-a public TestFlight link and a dedicated closed Play track and is never
-submitted for App Review or released through a store. Do not add the example
-app manually to a promotion attempt.
+The Bluetooth example app is outside the promotion state machine. Its
+production candidates are built by a separate workflow keyed on the promoted
+beta (see "Bluetooth example" below): it is distributed through a public
+TestFlight link and a dedicated closed Play track and is never submitted for
+App Review or released through a store. Do not add the example app manually to
+a promotion attempt.
 
 The example app is also its own release notion in the coordinated beta. A beta
 is complete, and promotable, when `finalize` writes `mentra-release-<beta>.json`
-for Cloud V2, the Mentra App, the Engine, and the Bluetooth SDK. The Starter
-Kit examples are then built against that finalized beta and recorded
-separately as `mentra-example-release-<beta>.json`, the "finalized Mentra
-Bluetooth example". An example build or store publish that fails never makes
-the beta incomplete and never blocks a promotion.
+for Cloud V2, the Mentra App, the Engine, and the Bluetooth SDK. The examples
+in `examples/bluetooth` are built from the same source in the same run, in
+parallel with the package and app builds, and upload their APKs and unsigned
+iOS IPA to the release container under deterministic names
+(`mentra-example-react-native-<identity>.apk` and so on). An example build or
+store publish that fails never makes the beta incomplete and never blocks a
+promotion.
 
-For dev and staging, `coordinated-release.yml` publishes the core release,
-dispatches `coordinated-example-release.yml`, and posts the core notification.
-The examples workflow has its own per-branch concurrency group; Starter Kit
-builds, example store distribution, and docs never hold the next core release.
-It restores the originating run's exact plan and finalized manifest instead of
-allocating another version. A small path-filtered push trigger registers the
-new workflow on dev/staging; only dispatch events perform example release work.
+For dev and staging, `coordinated-release.yml` builds the examples alongside
+the release. After `finalize` it writes the release page once, listing the
+example apps when their build succeeded; uploads the React Native example to
+TestFlight and Google Play; deploys the release-matched docs; and posts one
+Slack message covering the release, the examples and the docs.
 
-Docs require the finalized core release, the matching Starter Kit APK, and the
-example TestFlight result. Google Play publication and example finalization do
-not gate docs, because the Android documentation links to the GitHub APK.
-The complete example release record still requires both stores to succeed.
+Docs require the published React Native example APK and the example
+TestFlight result. Google Play publication does not gate docs, because the
+Android documentation links to the published APK. To retry examples or docs,
+rerun the failed jobs of the release run: example files already in the
+container are kept, never replaced.
 
-To recover examples/docs without republishing the core, dispatch on the same
-channel as the original run (including old combined runs that failed only their
-example jobs):
-
-```bash
-gh workflow run coordinated-example-release.yml --ref dev \
-  -f source_run_id=35173449955
-```
-
-The loader rejects a different repository/channel, an unsuccessful core
-finalizer, expired or ambiguous artifacts, and mismatched release evidence.
-Starter Kit and store steps retain their existing exact-version reuse behavior;
-this is not a docs-only dispatch. A Play failure will still mark the examples
-workflow failed while allowing its docs deployment to succeed. To retry docs
-alone after an export/deployment failure, rerun that failed job.
+The standalone Starter Kit is not part of the release run. A scheduled
+workflow (`bluetooth-starter-kit-export.yml`, every 30 minutes) exports each
+channel's newest completed release once its packages are served. Intermediate
+releases are skipped; there is no export of an older release. The kit's own
+`Example App Builds` validates each export push.
 
 The process is resumable. It records immutable state in a draft GitHub release
 named `mentra-production-promotion-vX.Y.Z-attempt-N`. Store review may take days;
@@ -466,7 +457,12 @@ phased-release state, record monotonically increasing observations:
 checkpoint. It then stages `mentra-release-plan-X.Y.Z.json` and
 `mentra-release-X.Y.Z.json`, plus the exact finalizing checkpoint record, in the
 draft `mentra-vX.Y.Z` release and only then closes the immutable promotion
-chain. If finalization is interrupted, rerun the same `--complete` command; it
+chain. Alongside them it publishes `mentra-live-ota-X.Y.Z.json` and
+`mentra-live-ota-bundle-X.Y.Z.zip`, byte-identical copies of the promoted beta's
+OTA manifest and portable OTA bundle, lists them in `mentra-release-X.Y.Z.json`
+and in the draft release's downloads (with the production example apps when the
+stable container holds them). The scheduled Starter Kit export then picks up
+X.Y.Z for the kit's `main` branch. If finalization is interrupted, rerun the same `--complete` command; it
 verifies identical existing assets and resumes. Do not abort or start a
 replacement attempt after `finalizing`: the 100 percent rollout is already
 public, so the only valid recovery is to finish reconciling this attempt.
@@ -559,33 +555,30 @@ promotion state machine.
 ```
 
 It refuses to start until `@mentra/bluetooth-sdk@X.Y.Z` and `@mentra/engine@X.Y.Z`
-are public on npm, because the Starter Kit installs them from the registry.
+are public on npm, because the example is released as the SDK X.Y.Z example.
 Then it:
 
 - freezes a production example plan from the beta's exact `sourceCommit` and
   frozen OTA manifest pin, with one example build number allocated above both
   store inventories and the beta's own number;
-- requests the Starter Kit's production channel, which synchronizes its `main`
-  branch to the plain versions, builds the examples, tags `sdk-X.Y.Z`, and
-  publishes them in the non-prerelease Starter Kit release `sdk-X.Y.Z`
-  (including `mentra-example-react-native-X.Y.Z.apk`);
+- builds `examples/bluetooth` at that source, stamped as release X.Y.Z with the
+  beta's OTA pin, and publishes the example APKs and unsigned iOS IPA (including
+  `mentra-example-react-native-X.Y.Z.apk`) to the stable release `mentra-vX.Y.Z`,
+  whose downloads list them once the rollout completes;
 - uploads the iOS build to the external TestFlight group
   `Mentra Bluetooth Example` (created with its public link on first use) and
   submits it for Beta App Review, and uploads the Android build to the closed
   Play track `Mentra Bluetooth Example Production Candidates`. Create that
   track once in Play Console under exactly that name; a Play track serves one
   release at a time, so the production example never shares the internal or
-  open-testing tracks with the dev and beta examples; and
-- records `mentra-example-release-X.Y.Z.json` in the stable release
-  `mentra-vX.Y.Z`, the same draft the packages and the rollout finalization
-  stage records into. The record carries `storePromotion: "never"`.
+  open-testing tracks with the dev and beta examples. The plan carries
+  `storePromotion: "never"`.
 
-A rerun reuses the Starter Kit release, TestFlight build, and Play upload that
-already exist and refuses anything that exists with different bytes. A Play
-upload that fails leaves the Starter Kit release and TestFlight build in place
-and stops the record; rerun once Play accepts the build. The record is written
-as soon as Apple has the build for review; the public link becomes installable
-when Beta App Review approves it.
+A rerun reuses the published example files, TestFlight build, and Play upload
+that already exist and refuses anything that exists with different bytes. A Play
+upload that fails leaves the example files and TestFlight build in place; rerun
+once Play accepts the build. The public TestFlight link becomes installable when
+Beta App Review approves it.
 
 ## Abort, retry, and incident handling
 

@@ -21,11 +21,8 @@ const workspaceWrite = (): LicenseWrite => ({
   paidThrough: "2026-11-04T00:00:00Z",
 })
 
-const personWrite = (): LicenseWrite => ({
-  ...workspaceWrite(),
-  owner: {type: "person", mentraUserId: "mu_1"},
-  quantity: 1,
-})
+/** A write for a person, which no license can have: a license is a workspace's. */
+const personWrite = () => ({...workspaceWrite(), owner: {type: "person", mentraUserId: "mu_1"}, quantity: 1})
 
 /** The 400 a malformed write gets: `invalid_request`, saying what is wrong. */
 function refused(body: unknown, licenseId = LICENSE_ID): WorkspaceError {
@@ -41,9 +38,8 @@ function refused(body: unknown, licenseId = LICENSE_ID): WorkspaceError {
 }
 
 describe("parseLicenseWrite", () => {
-  test("accepts a workspace and a personal license, keeping only the write's own fields", () => {
+  test("accepts a workspace license, keeping only the write's own fields", () => {
     expect(parseLicenseWrite({...workspaceWrite(), extra: "ignored"}, LICENSE_ID)).toEqual(workspaceWrite())
-    expect(parseLicenseWrite(personWrite(), LICENSE_ID)).toEqual(personWrite())
     // A feature for no package is a service's feature.
     const service = {...workspaceWrite(), features: [{key: "fleet.managed", packages: []}]}
     expect(parseLicenseWrite(service, LICENSE_ID)).toEqual(service)
@@ -51,9 +47,10 @@ describe("parseLicenseWrite", () => {
     expect(parseLicenseWrite({...workspaceWrite(), quantity: 0}, LICENSE_ID).quantity).toBe(0)
   })
 
-  test("a person holds exactly one seat: a personal write with quantity 2 is refused", () => {
-    expect(refused({...personWrite(), quantity: 2}).message).toContain("quantity")
-    refused({...personWrite(), quantity: 0})
+  test("a license is a workspace's: a write for a person is refused, whatever its quantity or assignTo", () => {
+    expect(refused(personWrite()).message).toBe('owner must be {"type": "workspace", "workspaceId"}')
+    refused({...personWrite(), quantity: 2})
+    refused({...personWrite(), assignTo: {mentraUserId: "mu_1"}})
   })
 
   test("the license id is the path's, a ULID", () => {
@@ -69,7 +66,7 @@ describe("parseLicenseWrite", () => {
     }
   })
 
-  test("the owner is a workspace or a person, named by a non-blank id", () => {
+  test("the owner is a workspace, named by a non-blank id", () => {
     for (const owner of [
       undefined,
       null,
@@ -78,6 +75,7 @@ describe("parseLicenseWrite", () => {
       {type: "workspace", workspaceId: "  "},
       {type: "workspace", mentraUserId: "mu_1"},
       {type: "person"},
+      {type: "person", mentraUserId: "mu_1"},
       {type: "person", workspaceId: "ws_1"},
       {type: "organization", organizationId: "org_1"},
     ]) {
@@ -134,6 +132,81 @@ describe("parseLicenseWrite", () => {
 
   test("a body that is not an object is refused", () => {
     for (const body of [null, [], "license", 5]) refused(body)
+  })
+
+  test("assignTo names the buyer by Core user ID, keeping only that id; a write without one has none", () => {
+    const named = {...workspaceWrite(), assignTo: {mentraUserId: "mu_1"}}
+    expect(parseLicenseWrite(named, LICENSE_ID)).toEqual(named)
+    expect(parseLicenseWrite({...workspaceWrite(), assignTo: {mentraUserId: "mu_1", extra: true}}, LICENSE_ID)).toEqual(
+      named,
+    )
+    expect("assignTo" in parseLicenseWrite(workspaceWrite(), LICENSE_ID)).toBe(false)
+  })
+
+  test("a malformed assignTo is refused", () => {
+    for (const assignTo of [
+      "mu_1",
+      {},
+      {mentraUserId: ""},
+      {mentraUserId: "  "},
+      {mentraUserId: 5},
+      null,
+      [],
+      ["mu_1"],
+    ]) {
+      expect(refused({...workspaceWrite(), assignTo}).message).toContain("assignTo")
+    }
+  })
+
+  const seatRequest = {requestId: "01JZWY3V8N0F2E9GQ4T6KXH5RE", mentraUserId: "mu_2", quantity: 6}
+
+  test("seatRequest names a request, its person and the quantity it expects, keeping only those; a write without one has none", () => {
+    const requested = {...workspaceWrite(), seatRequest}
+    expect(parseLicenseWrite(requested, LICENSE_ID)).toEqual(requested)
+    expect(parseLicenseWrite({...workspaceWrite(), seatRequest: {...seatRequest, extra: true}}, LICENSE_ID)).toEqual(
+      requested,
+    )
+    // Alongside the buyer, each is kept as it is.
+    const both = {...requested, assignTo: {mentraUserId: "mu_1"}}
+    expect(parseLicenseWrite(both, LICENSE_ID)).toEqual(both)
+    // The request's id is billing's: any non-blank id of up to 200 characters, and the quantity up to the most.
+    const longest = {...seatRequest, requestId: "r".repeat(200), quantity: 1_000_000}
+    expect(parseLicenseWrite({...workspaceWrite(), seatRequest: longest}, LICENSE_ID).seatRequest).toEqual(longest)
+    expect(parseLicenseWrite({...workspaceWrite(), seatRequest: {...seatRequest, quantity: 1}}, LICENSE_ID).seatRequest)
+      .toEqual({...seatRequest, quantity: 1})
+    expect("seatRequest" in parseLicenseWrite(workspaceWrite(), LICENSE_ID)).toBe(false)
+  })
+
+  test("a malformed seatRequest is refused", () => {
+    const {requestId: _requestId, ...noRequestId} = seatRequest
+    for (const malformed of [
+      null,
+      "01JZWY3V8N0F2E9GQ4T6KXH5RE",
+      [],
+      [seatRequest],
+      {},
+      noRequestId,
+      {...seatRequest, requestId: ""},
+      {...seatRequest, requestId: "   "},
+      {...seatRequest, requestId: 5},
+      {...seatRequest, requestId: "r".repeat(201)},
+      {...seatRequest, mentraUserId: undefined},
+      {...seatRequest, mentraUserId: ""},
+      {...seatRequest, mentraUserId: "  "},
+      {...seatRequest, mentraUserId: 5},
+      {...seatRequest, quantity: undefined},
+      {...seatRequest, quantity: 0},
+      {...seatRequest, quantity: -1},
+      {...seatRequest, quantity: 1.5},
+      {...seatRequest, quantity: "6"},
+      {...seatRequest, quantity: 1_000_001},
+      {...seatRequest, quantity: null},
+    ]) {
+      expect([malformed, refused({...workspaceWrite(), seatRequest: malformed}).message]).toEqual([
+        malformed,
+        expect.stringContaining("seatRequest"),
+      ])
+    }
   })
 })
 

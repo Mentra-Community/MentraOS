@@ -56,6 +56,7 @@ import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {isDeletedAccountId} from "../user.service"
 import {recordWorkspaceEvent} from "./audit.service"
+import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
 import {insertGuard} from "./membership-guard.service"
 import {RecentChecks} from "./recent-checks"
 import {countActiveOwners, endMembership, isId, roleEntry, type MembershipRow} from "./workspace.service"
@@ -97,6 +98,8 @@ function pickOrder(a: MembershipRow, b: MembershipRow): number {
  * Hand the active memberships pending under `workosUserIds` (every WorkOS user the person claims) to
  * `mentraUserId`, inside the caller's transaction, keeping one workspace per person:
  *  - a pending membership in a workspace where the person already holds an active one merges into it;
+ *  - an automatic workspace of theirs that holds nothing gives way first (`yieldAutomaticWorkspace`), so it
+ *    does not count as the one they hold;
  *  - when the person holds none, the one the import's rule picks (`pickOrder`) is claimed in place, and the
  *    others in that workspace merge into it;
  *  - every other one is discarded: ended (`removed`, `membership.removed` as the system) with its keys and
@@ -123,6 +126,7 @@ export async function claimPendingMemberships(
   const heldByWorkspace = new Map(held.map(row => [row.workspaceId, row]))
   const bumped = new Map<string, WorkspaceRow | null>()
   const now = new Date()
+  let yielded = false
 
   for (const row of pending) {
     const workosUserId = row.pendingWorkosUserId as string
@@ -140,6 +144,15 @@ export async function claimPendingMemberships(
         }
       }
       continue
+    }
+
+    // The person is about to hold a workspace of their own accord: an empty automatic one gives way, once,
+    // before the one-workspace rule below looks at what they hold.
+    if (!yielded && workspace) {
+      yielded = true
+      for (const gone of await yieldAutomaticWorkspace(session, SYSTEM_ACTOR, mentraUserId, {except: row.workspaceId})) {
+        heldByWorkspace.delete(gone)
+      }
     }
 
     // One workspace per person: once they hold one, every other pending membership is discarded.

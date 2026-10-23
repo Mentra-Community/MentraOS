@@ -49,12 +49,14 @@ function pending() {
   return {packageName: "com.acme.notes", displayName: "Notes", version: "1.1.0", answer: jest.fn()}
 }
 
-/** The sheet's buttons, top to bottom. */
-const buttons = (screen: ReturnType<typeof render>) =>
-  screen
+/** The sheet's buttons, main action first: top to bottom when stacked, right to left when side by side. */
+const buttons = (screen: ReturnType<typeof render>) => {
+  const labels = screen
     .getAllByRole("button")
     .flatMap((button) => within(button).queryAllByText(/./))
     .map((text) => String(text.props.children))
+  return screen.queryByTestId("alert.buttons.row") ? labels.reverse() : labels
+}
 
 let systemAlert: jest.SpyInstance
 let screen: ReturnType<typeof render> | undefined
@@ -101,7 +103,7 @@ describe("the running update prompt on the real alert sheet", () => {
     expect(systemAlert).not.toHaveBeenCalled()
   })
 
-  it("stacks Update on top and Not now below, and the top button updates", async () => {
+  it("makes Update the main action and Not now the other, and the main action updates", async () => {
     screen = render(<ModalProvider>{null}</ModalProvider>)
     const prompt = pending()
     let done!: Promise<void>
@@ -112,7 +114,7 @@ describe("the running update prompt on the real alert sheet", () => {
     expect(buttons(screen).filter((text) => ["Update", "Not now"].includes(text))).toEqual(["Update", "Not now"])
 
     await act(async () => {
-      fireEvent.press(screen!.getAllByRole("button").find((button) => within(button).queryByText(/./))!)
+      fireEvent.press(screen!.getByText(buttons(screen!)[0]))
     })
     await act(async () => {
       await done
@@ -121,7 +123,7 @@ describe("the running update prompt on the real alert sheet", () => {
     expect(prompt.answer).toHaveBeenCalledTimes(1)
   })
 
-  it("defers on the bottom button", async () => {
+  it("defers on Not now", async () => {
     screen = render(<ModalProvider>{null}</ModalProvider>)
     const prompt = pending()
     let done!: Promise<void>

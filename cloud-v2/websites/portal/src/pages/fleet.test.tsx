@@ -66,11 +66,16 @@ describe("the Fleet route in the address", () => {
   });
 
   test("the module's navigation becomes ?fleet= on this workspace's Fleet address, and reads back the same", () => {
-    expect(fleetLocation("ws_acme", "/people")).toBe("/w/ws_acme/fleet?fleet=people");
-    for (const route of ["/", "/people", "/devices/dev_1?tab=battery&since=7d", "/miniapps/com.acme.app"]) {
-      const location = fleetLocation("ws_acme", route);
-      expect(location.startsWith("/w/ws_acme/fleet?fleet=")).toBe(true);
-      expect(readFleetPath(new URL(location, "https://portal.test").search)).toBe(route);
+    expect(fleetLocation("ws_acme", "ws_acme", "/people")).toBe("/fleet?fleet=people");
+    expect(fleetLocation("ws_acme", "ws_own", "/people")).toBe("/fleet?workspace=ws_acme&fleet=people");
+    for (const bare of ["ws_acme", null]) {
+      for (const route of ["/", "/people", "/devices/dev_1?tab=battery&since=7d", "/miniapps/com.acme.app"]) {
+        const location = fleetLocation("ws_acme", bare, route);
+        expect(location.startsWith(bare ? "/fleet?fleet=" : "/fleet?workspace=ws_acme&fleet=")).toBe(true);
+        const search = new URL(location, "https://portal.test").search;
+        expect(readFleetPath(search)).toBe(route);
+        expect(new URLSearchParams(search).get("workspace")).toBe(bare ? null : "ws_acme");
+      }
     }
   });
 });

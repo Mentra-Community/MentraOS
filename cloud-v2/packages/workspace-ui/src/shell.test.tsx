@@ -145,9 +145,9 @@ describe("the account menu", () => {
     renderToStaticMarkup(<AccountFooter userEmail="sam@acme.test" items={items} defaultOpen {...props} />);
 
   test("offers the host's items above Sign out, links through the host's link component", () => {
-    const markup = menu([{ key: "billing", label: "Billing", icon: CreditCard, href: "/account/billing" }], { linkComponent: HostLink });
-    expect(markup).toMatch(/<a data-host-link="" href="\/account\/billing"[^>]*>.*?Billing<\/a>/);
-    expect(markup.indexOf("Billing")).toBeLessThan(markup.indexOf("Sign out"));
+    const markup = menu([{ key: "help", label: "Help", icon: CreditCard, href: "/help" }], { linkComponent: HostLink });
+    expect(markup).toMatch(/<a data-host-link="" href="\/help"[^>]*>.*?Help<\/a>/);
+    expect(markup.indexOf("Help")).toBeLessThan(markup.indexOf("Sign out"));
   });
 
   test("an onSelect item is a button", () => {

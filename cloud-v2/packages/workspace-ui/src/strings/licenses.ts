@@ -1,5 +1,5 @@
 /**
- * Every sentence the Licenses page, the Members list's licenses, the personal Billing page and
+ * Every sentence the Licenses page, the Members list's licenses and
  * their refusals show. Billing sends typed values and Core words them, here and nowhere else: this is the one
  * module a translation touches, and no component writes a sentence of its own.
  *
@@ -14,7 +14,7 @@
  * The words are Microsoft 365's. A license is one person's right to use a product; a workspace buys some number
  * of licenses for a product, and each license is assigned to one member. What the workspace buys is a product (or a
  * subscription), never "a license", and the count above the cards counts products. A price per license is "per
- * user"; a person's own price has no unit. "Seat" is not a word anyone reads: the API and the code keep their names
+ * user". "Seat" is not a word anyone reads: the API and the code keep their names
  * (`seats`, `seatsUsed`, `add_seats`, the keys of this object), and the strings test scans every sentence for it.
  */
 
@@ -23,14 +23,10 @@ import type { LicenseFit } from "../lib/license-join";
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const and = (names: readonly string[]) => (names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
 
-/** Whether a sentence is for a workspace's licenses or a person's own. */
-export type LicenseScope = "workspace" | "person";
-
 /** What a refusal's words may name. */
 export interface RefusalContext {
   /** The product's name, as billing sent it. */
   product?: string;
-  scope?: LicenseScope;
 }
 
 const GENERIC_REFUSAL = "Billing couldn't do that. Try again.";
@@ -40,7 +36,7 @@ const GENERIC_REFUSAL = "Billing couldn't do that. Try again.";
  * get the generic line.
  */
 export function refusalMessage(code: string, context: RefusalContext = {}): string {
-  const { product, scope = "workspace" } = context;
+  const { product } = context;
   switch (code) {
     case "not_for_sale":
       return product ? `${product} isn't for sale right now.` : "That isn't for sale right now.";
@@ -56,16 +52,14 @@ export function refusalMessage(code: string, context: RefusalContext = {}): stri
       return "That subscription no longer exists. Reload the page.";
     case "no_billing_account":
       return "There's no billing account yet. It's created with the first purchase.";
-    case "already_licensed": {
-      const held = product ? `You already have ${product}.` : "You already have that.";
-      return scope === "person" ? held : `${held} Add licenses instead.`;
-    }
+    case "already_licensed":
+      return `${product ? `You already have ${product}.` : "You already have that."} Add licenses instead.`;
+    case "seat_request_pending":
+      return `Someone else is adding ${product ? `a ${product} license` : "a license"} right now. Try again in a few minutes.`;
     case "checkout_in_progress":
       return `A purchase of ${product ?? "that"} is already under way. Finish it, or try again in a minute.`;
     case "owner_ended":
-      return scope === "person"
-        ? "This account has been deleted, so billing can't change it."
-        : "This workspace has been deleted, so billing can't change it.";
+      return "This workspace has been deleted, so billing can't change it.";
     case "billing_unavailable":
     case "core_unavailable":
       return "Billing is unavailable right now. Try again in a moment.";
@@ -166,9 +160,6 @@ export const licenseStrings = {
 
   nav: {
     licenses: "Licenses",
-    billing: "Billing",
-    yourAccount: "Your account",
-    backTo: (workspace: string) => `Back to ${workspace}`,
   },
 
   page: {
@@ -181,27 +172,21 @@ export const licenseStrings = {
     billingAndInvoices: "Billing & invoices",
     /** The workspace's header button: it buys several licenses for a product. */
     buyLicenses: "Buy licenses",
-    /** The personal page's header button: a person buys their own license. */
-    buyALicense: "Buy a license",
     /** A manager's page for a workspace with no product, where billing offers nothing to buy. */
     noLicenses: "This workspace has no products yet.",
     loading: "Loading licenses…",
+    /** What the page says when the address asked to buy a product (`?buy=`) and the Buy dialog doesn't open. */
+    buyLink: {
+      alreadyHas: (workspace: string, product: string) => `${workspace} already has ${product}.`,
+      notForSale: "That product isn't for sale.",
+      /** `product` is the product's name, or {@link licenseStrings.page.buyLink.anyProduct} where the page doesn't know it. */
+      askAnAdmin: (workspace: string, product: string) => `Only Admins and Owners of ${workspace} can buy ${product}. Ask one of them.`,
+      anyProduct: "licenses",
+      notHere: "Licenses can't be bought here.",
+    },
     unavailable: {
       title: "Licenses are unavailable",
       body: "They can't be shown right now. Try again in a moment.",
-      retry: "Retry",
-    },
-  },
-
-  personal: {
-    title: "Billing",
-    description: "Licenses you buy for yourself, apart from any workspace's.",
-    /** The page of someone with no license, where billing sells a person nothing. */
-    nothingToBuy: "There is nothing to buy for yourself right now.",
-    loading: "Loading billing…",
-    unavailable: {
-      title: "Billing is unavailable",
-      body: "It can't be shown right now. Try again in a moment.",
       retry: "Retry",
     },
   },
@@ -224,29 +209,15 @@ export const licenseStrings = {
   price: {
     /** "$15 per user a month". */
     perSeat: (unit: string, rate: string) => `${unit} per user ${rate}`,
-    /** "$29 a month": a person's own price has no unit. */
-    perPerson: (unit: string, rate: string) => `${unit} ${rate}`,
   },
 
   catalog: {
-    workspace: {
-      title: "Buy licenses for your members",
-      intro: "You'll pay by card on a secure payment page, then come back here to assign the licenses.",
-    },
-    person: {
-      title: "Buy a license for yourself",
-      intro: "You'll pay by card on a secure payment page, then come back here.",
-    },
+    title: "Buy licenses for your members",
     buy: "Buy",
-    youHaveIt: "You have it",
     youHaveSeats: (n: number) => `You have ${plural(n, "license")}`,
     dialog: {
       title: "Buy licenses",
-      /** A person's own catalog dialog. */
-      personTitle: "Buy a license",
       description: "Products for your workspace. For one you have, add licenses instead.",
-      /** A person's own catalog: there are no licenses to add. */
-      personDescription: "Products you can buy for yourself.",
     },
   },
 
@@ -258,10 +229,11 @@ export const licenseStrings = {
     fewer: "One license fewer",
     more: "One license more",
     members: (n: number) => `Your workspace has ${plural(n, "member")}.`,
+    /** A workspace of one member buys one license, with no number to choose: "1 license · $29 a month · before tax". */
+    solo: (parts: { total: string; rate: string; note: string | null }) => `1 license · ${parts.total} ${parts.rate}${parts.note ? ` · ${parts.note}` : ""}`,
     /** "10 licenses × $15 · $150 a month · before tax": the one sum Core shows. */
     summary: (parts: { seats: number; unit: string; total: string; rate: string; note: string | null }) =>
       `${plural(parts.seats, "license")} × ${parts.unit} · ${parts.total} ${parts.rate}${parts.note ? ` · ${parts.note}` : ""}`,
-    payNote: "You'll pay by card on a secure payment page.",
     cancel: "Cancel",
     continue: "Continue to payment",
   },
@@ -501,17 +473,17 @@ export const licenseStrings = {
       `Your ${seats} ${product} ${seats === 1 ? "license is" : "licenses are"} ready`,
     readyBody: ({ product, paid }: { product: string; paid: boolean }) =>
       `${paid ? `Payment received, and ${product} is active.` : `${product} is active.`} Assign the licenses to members below.`,
-    /** A person. */
-    personSettingUp: (product: string) => `Setting up ${product}. This takes a few seconds; you can stay on this page.`,
-    personReadyTitle: (product: string) => `${product} is ready`,
-    personReadyBody: ({ product, paid }: { product: string; paid: boolean }) =>
-      paid ? `Payment received, and ${product} is active on your account.` : `${product} is active on your account.`,
+    /** The new licenses include one assigned to the viewer, who bought them. */
+    givenTitle: ({ seats, product, paid }: { seats: number; product: string; paid: boolean }) =>
+      seats === 1 ? (paid ? `Your ${product} license is ready` : "Purchase complete") : `Your ${seats} ${product} licenses are ready`,
+    givenBody: ({ seats, product, paid }: { seats: number; product: string; paid: boolean }) => {
+      const lead = paid ? "Payment received" : `${product} is active`;
+      return seats === 1 ? `${lead}, and it's assigned to you.` : `${lead}, and one is assigned to you. Assign the rest to members below.`;
+    },
     /** The purchase hasn't reached Core after a minute. */
     timeout: {
       title: (paid: boolean) => (paid ? "Your payment went through" : "Your purchase went through"),
       body: "The licenses can take a few minutes to appear.",
-      /** A person's purchase is one license. */
-      personBody: "Your license can take a few minutes to appear.",
       reload: "Reload",
     },
   },

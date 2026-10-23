@@ -177,7 +177,6 @@ describe("portalModuleAccess for an open read", () => {
   test("is ready for someone the module is hidden from, for GET of a catalog and GET or HEAD of an icon", () => {
     for (const request of [
       read("workspace", "catalog"),
-      read("account", "catalog"),
       read("ui", "icons/mentra.call.unlimited.png"),
       read("ui", "icons/x.svg"),
       read("ui", "icons/x.png", "HEAD"),
@@ -194,16 +193,12 @@ describe("portalModuleAccess for an open read", () => {
     const closed: PortalModuleRequest[] = [
       // Other paths and methods under a scope.
       read("workspace", "status"),
-      read("account", "status"),
       read("workspace", "summary"),
       read("workspace", "purchase", "POST"),
       read("workspace", "session", "POST"),
       read("workspace", "", "GET"),
-      read("account", "", "GET"),
       read("workspace", "catalog", "POST"),
-      read("account", "catalog", "POST"),
       read("workspace", "catalog", "HEAD"),
-      read("account", "catalog", "HEAD"),
       read("workspace", "catalog", "PUT"),
       read("workspace", "catalog", "DELETE"),
       read("workspace", "catalog", "PATCH"),
@@ -221,9 +216,6 @@ describe("portalModuleAccess for an open read", () => {
       read("workspace", "catalog "),
       read("workspace", "catalog;x"),
       read("workspace", "catalog?x"),
-      read("account", "catalog/"),
-      read("account", "Catalog"),
-      read("account", "%63atalog"),
       // Assets: icons only, GET and HEAD only, one file.
       read("ui", "entry.js"),
       read("ui", "entry.js", "HEAD"),
@@ -247,10 +239,8 @@ describe("portalModuleAccess for an open read", () => {
       read("ui", "icons/a.png", "head"),
       // The open paths belong to their own family only.
       read("ui", "catalog"),
-      read("account", "icons/a.png"),
       read("workspace", "icons/a.png"),
       read("workspace", "ui/icons/a.png"),
-      read("account", "ui/icons/a.png"),
     ]
     for (const request of closed) {
       expect([request, portalModuleAccess("billing", everyoneElse, staging(), recordingLog(), request)]).toEqual([
@@ -311,7 +301,7 @@ describe("portalModuleAccess for an open read", () => {
     expect(portalModuleAccess("billing", everyoneElse, broken, recordingLog(), read("ui", "icons/a.png"))).toEqual({state: "unavailable"})
     expect(portalModuleAccess("billing", everyoneElse, broken, recordingLog(), read("workspace", "status"))).toEqual({state: "hidden"})
     const noSecret = staging({CLOUD_CORE_BILLING_SECRET: ""})
-    expect(portalModuleAccess("billing", everyoneElse, noSecret, recordingLog(), read("account", "catalog"))).toEqual({state: "unavailable"})
+    expect(portalModuleAccess("billing", everyoneElse, noSecret, recordingLog(), read("workspace", "catalog"))).toEqual({state: "unavailable"})
     expect(portalModuleAccess("billing", everyoneElse, noSecret, recordingLog(), read("ui", "entry.js"))).toEqual({state: "hidden"})
   })
 

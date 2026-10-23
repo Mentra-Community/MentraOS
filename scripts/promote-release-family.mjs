@@ -8,7 +8,6 @@ import {fileURLToPath} from "node:url"
 import {createInterface} from "node:readline/promises"
 
 const MENTRAOS_REPOSITORY = "Mentra-Community/MentraOS"
-const STARTER_KIT_REPOSITORY = "Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit"
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
@@ -49,10 +48,10 @@ Commands:
   start   --next X.Y.Z [--yes]
   finish  --next X.Y.Z --run RUN_ID [--yes]
 
-start promotes an exact Starter Kit dev head to staging before promoting an
-exact MentraOS dev head to staging. finish accepts only a successful MentraOS
-coordinated beta run, reconciles Starter Kit staging back into dev, and then
-prepares this checkout for the next release family.`
+start promotes an exact MentraOS dev head to staging. finish accepts only a
+successful MentraOS coordinated beta run and prepares this checkout for the
+next release family. The Bluetooth SDK Starter Kit needs no promotion: each
+completed release exports its own branch.`
 }
 
 function versionTuple(version) {
@@ -306,10 +305,9 @@ function commitTrailer(repository, commit, key) {
   return values[0]
 }
 
-// A Mentra beta is complete on its own; the Starter Kit example is finalized
-// separately against it and the release plan no longer pins a Starter Kit
-// source. The Starter Kit reconciliation below only needs the family, so the
-// beta cut is validated on its MentraOS run, source, and identity alone.
+// A Mentra beta is complete on its own; its Bluetooth example is finalized
+// separately against it. The beta cut is validated on its MentraOS run,
+// source, and identity alone.
 function requireSuccessfulBetaRun(runId) {
   if (!/^\d+$/.test(runId || "")) fail("finish requires --run RUN_ID")
   const run = ghJson(["api", `repos/${MENTRAOS_REPOSITORY}/actions/runs/${runId}`])
@@ -379,18 +377,11 @@ async function main() {
     const nextVersion = requireNextVersion(checkoutVersion, options.next)
     requireDevCheckout()
     await confirm(command, checkoutVersion, nextVersion, options.yes)
-    const starterKitStagingHead = promoteExactHead({
-      repository: STARTER_KIT_REPOSITORY,
-      source: "dev",
-      target: "staging",
-      family: checkoutVersion,
-    })
     const mentraosStagingHead = promoteExactHead({
       repository: MENTRAOS_REPOSITORY,
       source: "dev",
       target: "staging",
       family: checkoutVersion,
-      mergeBody: `Starter-Kit-Source: ${starterKitStagingHead}`,
     })
     const run = findCoordinatedRun(mentraosStagingHead)
     console.log(`Beta release started: ${run.url}`)
@@ -413,17 +404,11 @@ async function main() {
   }
   requireNextVersion(currentVersion, nextVersion)
   await confirm(command, currentVersion, nextVersion, options.yes)
-  promoteExactHead({
-    repository: STARTER_KIT_REPOSITORY,
-    source: "staging",
-    target: "dev",
-    family: currentVersion,
-  })
   execFileSync("bun", [path.join(rootDir, "scripts/prepare-next-release-family.mjs"), nextVersion], {
     cwd: rootDir,
     stdio: "inherit",
   })
-  console.log(`Starter Kit history is reconciled and this checkout is ready for the ${nextVersion} preparation PR.`)
+  console.log(`This checkout is ready for the ${nextVersion} preparation PR.`)
 }
 
 main().catch((error) => {

@@ -24,6 +24,7 @@ import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {AuthRateLimitModel} from "../packages/core/src/models/auth-rate-limit.model"
+import {LicenseModel} from "../packages/core/src/models/license.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
@@ -32,7 +33,9 @@ import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-me
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
-import {listWorkspaceAudit} from "../packages/core/src/services/workspaces/audit.service"
+import {listChanges, listWorkspaceAudit} from "../packages/core/src/services/workspaces/audit.service"
+import {ensureWorkspace} from "../packages/core/src/services/workspaces/automatic-workspace.service"
+import {setDeletionHold} from "../packages/core/src/services/workspaces/deletion-hold.service"
 import {
   acceptInvitation,
   acceptInvitationById,
@@ -55,6 +58,7 @@ import {
   type Actor,
 } from "../packages/core/src/services/workspaces/workspace.service"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
+import {nextHoldAsOf} from "./support/hold-as-of"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {membershipRow} from "./support/membership-row"
 import {
@@ -76,6 +80,7 @@ const MODELS: Model<any>[] = [
   AccessCredentialModel,
   WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
+  LicenseModel,
 ]
 
 const URL_TEMPLATE = "https://core.example.test/invite/{token}"
@@ -1631,6 +1636,257 @@ describe("acceptInvitationById", () => {
       "workspace_deleted",
       410,
     )
+  })
+})
+
+describe("an empty automatic workspace gives way to an invitation", () => {
+  const NEWCOMER = "mu_newcomer"
+  const NEWCOMER_EMAIL = "newcomer@example.test"
+
+  /** The newcomer, signed up and holding their automatic workspace. */
+  async function newcomerWithAutomatic() {
+    await account(NEWCOMER)
+    const actor = user(NEWCOMER, {email: NEWCOMER_EMAIL})
+    const ensured = await ensureWorkspace(actor)
+    return {actor, automaticId: ensured.workspace.workspaceId}
+  }
+
+  async function license(workspaceId: string, fields: Record<string, unknown> = {}) {
+    await LicenseModel.create({
+      _id: `01LICENSE${nextId()}`.toUpperCase(),
+      owner: {type: "workspace", workspaceId},
+      product: "mentra.call.unlimited",
+      quantity: 1,
+      validFrom: new Date(Date.now() - 60_000),
+      paidThrough: new Date(Date.now() + DAY_MS),
+      revision: 1,
+      ...fields,
+    })
+  }
+
+  async function seedKey(workspaceId: string) {
+    await AccessCredentialModel.create({
+      credentialId: `01CRED${nextId()}`.toUpperCase(),
+      prefix: "msk",
+      credentialKind: "workspace",
+      workspaceId,
+      name: "key",
+      env: "local",
+      hash: "a".repeat(64),
+      last4: "abcd",
+      createdByMembershipId: null,
+    })
+  }
+
+  test("accepting leaves the person one membership, deletes the empty workspace and puts both on the change feed", async () => {
+    const {actor, automaticId} = await newcomerWithAutomatic()
+    const ws = await newWorkspace()
+    const created = await invite(ws, NEWCOMER_EMAIL, "member")
+    const automaticRevision = await revisionOf(automaticId)
+
+    const result = await acceptInvitation(actor, created.token)
+
+    expect((await listWorkspacesForUser(NEWCOMER)).map(w => [w.workspaceId, w.membership.membershipId])).toEqual([
+      [ws, result.membershipId],
+    ])
+    expect(await WorkspaceMembershipModel.countDocuments({mentraUserId: NEWCOMER, status: "active"})).toBe(1)
+    expect(await WorkspaceModel.findOne({workspaceId: automaticId}).lean()).toMatchObject({status: "deleted"})
+    expect(await revisionOf(ws)).toBeGreaterThan(0)
+    expect(await WorkspaceMembershipModel.findOne({workspaceId: automaticId}).lean()).toMatchObject({
+      status: "ended",
+      endedReason: "workspace_deleted",
+    })
+
+    const deleted = (await listWorkspaceAudit(automaticId, {limit: 10})).find(e => e.action === "workspace.deleted")!
+    expect(deleted).toMatchObject({
+      actor: {kind: "user", mentraUserId: NEWCOMER},
+      target: {workspaceId: automaticId},
+      before: {status: "active"},
+      after: {status: "deleted", reason: "joined_another_workspace"},
+    })
+    // The deletion bumped the workspace once, like any other.
+    expect(await WorkspaceModel.findOne({workspaceId: automaticId}).lean()).toMatchObject({
+      authorizationRevision: automaticRevision + 1,
+    })
+
+    const feed = (await listChanges({})).events
+    const gone = feed.find(e => e.action === "workspace.deleted" && e.workspaceId === automaticId)
+    const joined = feed.find(e => e.action === "membership.added" && e.workspaceId === ws)
+    expect(gone?.after).toMatchObject({reason: "joined_another_workspace"})
+    expect(joined).toBeDefined()
+    expect(new Set(feed.map(e => e.seq)).size).toBe(feed.length)
+  })
+
+  test("a failure after the yield rolls everything back: the workspace stays, nothing joins, the feed has no gap", async () => {
+    const {actor, automaticId} = await newcomerWithAutomatic()
+    const ws = await newWorkspace()
+    const created = await invite(ws, NEWCOMER_EMAIL, "member")
+    const feedBefore = (await listChanges({})).events.map(e => e.seq)
+    const create = spyOn(WorkspaceMembershipModel, "create").mockRejectedValueOnce(new Error("forced failure"))
+    try {
+      expect((await thrown(() => acceptInvitation(actor, created.token))).message).toBe("forced failure")
+    } finally {
+      create.mockRestore()
+    }
+
+    expect(await WorkspaceModel.findOne({workspaceId: automaticId}).lean()).toMatchObject({status: "active"})
+    expect(await WorkspaceMembershipModel.findOne({workspaceId: automaticId}).lean()).toMatchObject({status: "active"})
+    expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ws, mentraUserId: NEWCOMER})).toBe(0)
+    expect((await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean())!.status).toBe(
+      "pending",
+    )
+    expect((await listChanges({})).events.map(e => e.seq)).toEqual(feedBefore)
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.deleted"})).toBe(0)
+
+    // The same invitation then works.
+    await acceptInvitation(actor, created.token)
+    expect(await WorkspaceModel.findOne({workspaceId: automaticId}).lean()).toMatchObject({status: "deleted"})
+  })
+
+  test("a workspace that holds anything is kept, and the accept is refused until the person leaves it", async () => {
+    const holds: Array<[string, (workspaceId: string) => Promise<unknown>]> = [
+      ["a second member", ws => addMember(ws, "mu_second", "member")],
+      ["a pending invitation", ws => createInvitation(user(NEWCOMER, {email: NEWCOMER_EMAIL}), ws, {email: "x@example.test", role: "member"})],
+      ["an unrevoked key", ws => seedKey(ws)],
+      ["a license with no end", ws => license(ws)],
+      ["a license that has expired by date but has not ended", ws =>
+        license(ws, {validFrom: new Date(Date.now() - 3 * DAY_MS), paidThrough: new Date(Date.now() - DAY_MS)})],
+      ["a deletion hold", ws => setDeletionHold("store", ws, {reason: "owns_miniapps", count: 1, asOf: nextHoldAsOf()})],
+    ]
+    for (const [what, hold] of holds) {
+      await Promise.all([...MODELS, UserModel].map(model => model.deleteMany({})))
+      const {actor, automaticId} = await newcomerWithAutomatic()
+      await hold(automaticId)
+      const ws = await newWorkspace()
+      const created = await invite(ws, NEWCOMER_EMAIL, "member")
+
+      // One workspace per person: the workspace that did not give way refuses the join.
+      await expectError(() => acceptInvitation(actor, created.token), "already_in_workspace", 409)
+
+      expect({what, status: (await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status}).toEqual({
+        what,
+        status: "active",
+      })
+      expect((await listWorkspacesForUser(NEWCOMER)).map(w => w.workspaceId), what).toEqual([automaticId])
+      expect((await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean())!.status, what).toBe(
+        "pending",
+      )
+      expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.deleted"})).toBe(0)
+    }
+  })
+
+  test("a workspace made with createWorkspace is kept, and the accept is refused", async () => {
+    await account(NEWCOMER)
+    const actor = user(NEWCOMER, {email: NEWCOMER_EMAIL})
+    const mine = await createWorkspace(actor, {name: "Mine"})
+    const ws = await newWorkspace()
+    const created = await invite(ws, NEWCOMER_EMAIL, "member")
+
+    await expectError(() => acceptInvitation(actor, created.token), "already_in_workspace", 409)
+
+    expect((await WorkspaceModel.findOne({workspaceId: mine.workspaceId}).lean())!.status).toBe("active")
+    expect((await listWorkspacesForUser(NEWCOMER)).map(w => w.workspaceId)).toEqual([mine.workspaceId])
+  })
+
+  test("an ended license does not hold the workspace", async () => {
+    const {actor, automaticId} = await newcomerWithAutomatic()
+    await license(automaticId, {endedAt: new Date(), endedReason: "workspace_deleted"})
+    const ws = await newWorkspace()
+    const created = await invite(ws, NEWCOMER_EMAIL, "member")
+
+    await acceptInvitation(actor, created.token)
+
+    expect((await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status).toBe("deleted")
+    expect((await listWorkspacesForUser(NEWCOMER)).map(w => w.workspaceId)).toEqual([ws])
+  })
+
+  test("an automatic workspace someone else owns is never deleted, and its Member must leave it first", async () => {
+    await account(NEWCOMER)
+    const actor = user(NEWCOMER, {email: NEWCOMER_EMAIL})
+    // Another person's empty automatic workspace, where the newcomer is a plain Member.
+    await account("mu_host")
+    const hostWs = (await ensureWorkspace(user("mu_host"))).workspace.workspaceId
+    await addMember(hostWs, NEWCOMER, "member")
+    const ws = await newWorkspace()
+    const created = await invite(ws, NEWCOMER_EMAIL, "member")
+
+    await expectError(() => acceptInvitation(actor, created.token), "already_in_workspace", 409)
+
+    expect((await WorkspaceModel.findOne({workspaceId: hostWs}).lean())!.status).toBe("active")
+    expect(await getActiveMembership(hostWs, NEWCOMER)).toMatchObject({role: "member"})
+    expect(await getActiveMembership(hostWs, "mu_host")).toMatchObject({role: "owner"})
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.deleted"})).toBe(0)
+  })
+
+  test("accepting by id gives way the same way, and a refused accept deletes nothing", async () => {
+    const {actor, automaticId} = await newcomerWithAutomatic()
+    const ws = await newWorkspace()
+    const created = await invite(ws, NEWCOMER_EMAIL, "member")
+
+    await expectError(
+      () => acceptInvitationById(user(NEWCOMER, {email: "other@example.test"}), created.invitationId),
+      "email_mismatch",
+      403,
+    )
+    await expectError(() => acceptInvitation(actor, "not-a-token"), "invitation_not_found", 404)
+    expect((await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status).toBe("active")
+
+    await acceptInvitationById(actor, created.invitationId)
+
+    expect((await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status).toBe("deleted")
+    expect((await listWorkspacesForUser(NEWCOMER)).map(w => w.workspaceId)).toEqual([ws])
+  })
+
+  test("an expired invitation deletes nothing", async () => {
+    const {actor, automaticId} = await newcomerWithAutomatic()
+    const ws = await newWorkspace()
+    const created = await invite(ws, NEWCOMER_EMAIL, "member")
+    await expire(created.invitationId)
+
+    await expectError(() => acceptInvitation(actor, created.token), "invitation_expired", 410)
+
+    expect((await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status).toBe("active")
+  })
+
+  test("an ensure racing the accept waits for it and answers the joined workspace, not the one being deleted", async () => {
+    const {actor, automaticId} = await newcomerWithAutomatic()
+    const ws = await newWorkspace()
+    const created = await invite(ws, NEWCOMER_EMAIL, "member")
+    const realUpdate = UserModel.updateOne.bind(UserModel)
+    let acceptHasWritten!: () => void
+    const written = new Promise<void>(resolve => (acceptHasWritten = resolve))
+    let release!: () => void
+    const released = new Promise<void>(resolve => (release = resolve))
+    // Hold the accept inside its transaction right after the users-row write of its yield.
+    const gate = spyOn(UserModel, "updateOne").mockImplementationOnce(((...args: Parameters<typeof realUpdate>) =>
+      (async () => {
+        const result = await (realUpdate as any)(...args)
+        acceptHasWritten()
+        await released
+        return result
+      })()) as never)
+    try {
+      const accepting = acceptInvitation(actor, created.token)
+      await written
+      let ensured = false
+      const ensuring = ensureWorkspace(actor).then(answer => {
+        ensured = true
+        return answer
+      })
+      await new Promise(resolve => setTimeout(resolve, 400))
+      // Answering from before the accept would name the workspace that is about to be deleted.
+      expect(ensured).toBe(false)
+
+      release()
+      await accepting
+      const answer = await ensuring
+      expect(answer).toMatchObject({created: false, workspace: {workspaceId: ws}})
+      expect((await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status).toBe("deleted")
+      expect(await WorkspaceModel.countDocuments({automatic: true, status: "active"})).toBe(0)
+    } finally {
+      release()
+      gate.mockRestore()
+    }
   })
 })
 

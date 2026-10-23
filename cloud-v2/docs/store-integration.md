@@ -54,7 +54,7 @@ The license routes, for the Store only, sit beside these at `/api/internal/licen
 | Route | Answers |
 | --- | --- |
 | `PUT /api/internal/licenses/:licenseId` | `{applied, revision}`: a `LicenseWrite`, applied when its revision is newer than Core's; `409 stale_revision` for an older one, `404 owner_not_found` for an owner that is deleted or never existed ([Writing licenses](licenses.md#writing-licenses)). |
-| `GET /api/internal/licenses?ownerType=&ownerId=` | `{licenses}`: one workspace's or person's licenses, with seats used. |
+| `GET /api/internal/licenses?ownerType=workspace&ownerId=` | `{licenses}`: one workspace's licenses, with seats used. |
 
 - **Principals.** A bearer credential is what a person or a key presented to the
   Store: a Core access token from the Core's sign-in server (issued to the

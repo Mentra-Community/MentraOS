@@ -4,15 +4,7 @@
  * a host that never reads billing. `billing-api.ts` (the client) is what reaches them.
  */
 
-import type { LicenseScope } from "./strings/licenses";
-
-/** Whose billing: a workspace's, or the signed-in person's own (the personal Billing page). */
-export type BillingScope = { kind: "workspace"; workspaceId: string } | { kind: "account" };
-
-/** The signed-in person's own billing. */
-export const ACCOUNT_SCOPE: BillingScope = { kind: "account" };
+/** Whose billing: a workspace's. A license belongs to a workspace and to nothing else. */
+export type BillingScope = { kind: "workspace"; workspaceId: string };
 
 export const workspaceScope = (workspaceId: string): BillingScope => ({ kind: "workspace", workspaceId });
-
-/** The owner type a scope sells to: a workspace's licenses, or a person's own. */
-export const ownerTypeOf = (scope: BillingScope): LicenseScope => (scope.kind === "workspace" ? "workspace" : "person");

@@ -1,11 +1,11 @@
 /**
- * What the billing module sends the portal's Licenses and Billing pages, as typed values: the catalog of
- * products, and a workspace's or person's billing status. Billing builds its answers with these schemas
+ * What the billing module sends the portal's Licenses page, as typed values: the catalog of
+ * products, and a workspace's billing status. Billing builds its answers with these schemas
  * and the portal parses them with the same ones; the types are inferred from them. Core formats the values
  * in the portal's locale and the viewer's time zone and words them with its own strings. Billing localizes
  * only its own content (names, descriptions, feature and miniapp names, and every `fallback*` label).
  *
- * The routes, under `/api/portal/billing/workspaces/<workspaceId>/` and `/api/portal/billing/account/`:
+ * The routes, under `/api/portal/billing/workspaces/<workspaceId>/`:
  * `GET catalog?locale=` ({@link BillingCatalog}), `GET status?locale=&purchase=` ({@link BillingStatus}),
  * `POST purchase` ({@link PurchaseRequest} to {@link PurchaseAnswer}), `POST session` ({@link SessionRequest}
  * to {@link SessionAnswer}) and `GET ui/icons/<file>`. A refusal is `{error}` with one of
@@ -13,8 +13,8 @@
  *
  * Values the portal doesn't know don't break a page. A status, an action kind and a tax value are plain
  * strings, with `KNOWN_*` lists to narrow them by; a price of a scheme the portal doesn't know carries a
- * `fallbackLabel`; an owner type it doesn't know is dropped from an entry's `ownerTypes`; an unknown field is
- * stripped. A value that is malformed is another matter: a response that doesn't match is the portal's
+ * `fallbackLabel`; an unknown field is stripped (an older Store's `ownerTypes` on an entry, or `defaultSeats` on a
+ * `buy`, among them). A value that is malformed is another matter: a response that doesn't match is the portal's
  * "unavailable" state, so the schemas are strict about what the portal acts on (amounts, dates, addresses it
  * follows) and `icon` is the one value that degrades instead (to null).
  *
@@ -23,7 +23,6 @@
 
 import {z} from "zod"
 
-import {LICENSE_OWNER_TYPES} from "./licenses"
 import {BILLING_ICON_FILE, BILLING_ICON_PATH_PREFIX, billingIconPath} from "./portal-billing-icons"
 
 /** Where billing serves its own files from, behind Core's portal proxy. */
@@ -163,11 +162,13 @@ export const CatalogFeatureSchema = z.object({
 })
 export type CatalogFeature = z.infer<typeof CatalogFeatureSchema>
 
-/** What buying a product allows: the seats within `minSeats` and `maxSeats` (unbounded when absent). */
+/**
+ * What buying a product allows: the seats within `minSeats` and `maxSeats` (unbounded when absent). The portal
+ * starts at the workspace's member count, held to these.
+ */
 export const BuySchema = z.object({
   minSeats: PositiveIntSchema,
   maxSeats: PositiveIntSchema.optional(),
-  defaultSeats: PositiveIntSchema,
 })
 export type Buy = z.infer<typeof BuySchema>
 
@@ -183,23 +184,9 @@ export const OfferSchema = z.object({
 })
 export type Offer = z.infer<typeof OfferSchema>
 
-/** The owner types the portal has pages for. An entry's other owner types are dropped, so a new one never fails a catalog. */
-export const KNOWN_OWNER_TYPES = LICENSE_OWNER_TYPES
-export type KnownOwnerType = (typeof KNOWN_OWNER_TYPES)[number]
-
-/**
- * The owner types of an entry that the portal knows: any strings parse, and those not in {@link KNOWN_OWNER_TYPES}
- * are dropped.
- */
-const OwnerTypesSchema = z.array(z.string()).transform((types) => types.filter(isKnownOwnerType))
-
-function isKnownOwnerType(value: string): value is KnownOwnerType {
-  return (KNOWN_OWNER_TYPES as readonly string[]).includes(value)
-}
-
 /**
  * One product. `offer` is there only for a viewer who may manage the owner's billing; for anyone else the
- * entry is display content only, the same for every owner of the type, and reveals no price.
+ * entry is display content only, the same for every workspace, and reveals no price.
  *
  * `icon` is a path under {@link BILLING_ICON_PATH_PREFIX} or null: any other address parses to null.
  */
@@ -215,13 +202,11 @@ export const CatalogEntrySchema = z.object({
     .nullable()
     .transform((value) => billingIconPath(value)),
   features: z.array(CatalogFeatureSchema),
-  /** The owners it is for; only the types in {@link KNOWN_OWNER_TYPES} are kept. */
-  ownerTypes: OwnerTypesSchema,
   offer: OfferSchema.optional(),
 })
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>
 
-/** `GET catalog`: the products for the scope's owner type, in the locale billing chose (`locale`). */
+/** `GET catalog`: the products a workspace is shown, in the locale billing chose (`locale`). */
 export const BillingCatalogSchema = z.object({
   locale: z.string().min(1),
   products: z.array(CatalogEntrySchema),
@@ -283,7 +268,7 @@ export const PurchaseStatusSchema = z.object({
 })
 export type PurchaseStatus = z.infer<typeof PurchaseStatusSchema>
 
-/** `GET status`: an owner's licenses as billing reads them, with the owner's total, actions and purchase. */
+/** `GET status`: a workspace's licenses as billing reads them, with the owner's total, actions and purchase. */
 export const BillingStatusSchema = z.object({
   locale: z.string().min(1),
   licenses: z.array(LicenseBillingSchema),
@@ -308,11 +293,17 @@ export type PurchaseRequest = z.infer<typeof PurchaseRequestSchema>
  * `POST session`: the hosted page for an action. `licenseId` names the license it is for (none for the
  * account's actions); `seats` is how many to add, for `add_seats`. An `action` that isn't offered gets
  * 400 `unknown_action` from billing, so it stays a plain string here.
+ *
+ * `forMe: true`, with `add_seats` and `seats: 1` only, adds one license for the person asking: billing records
+ * their request, and Core assigns them the license once the write that adds it arrives. Billing refuses it with
+ * any other action or count (400 `invalid_request`), and while another person's request on the license is open
+ * (409 `seat_request_pending`).
  */
 export const SessionRequestSchema = z.object({
   action: z.string(),
   licenseId: z.string().optional(),
   seats: z.number().int().safe().optional(),
+  forMe: z.literal(true).optional(),
   locale: z.string().min(1),
 })
 export type SessionRequest = z.infer<typeof SessionRequestSchema>
@@ -328,8 +319,8 @@ export type SessionAnswer = z.infer<typeof SessionAnswerSchema>
 /**
  * The `error` of a refusal from billing (`{error}`): 400 `invalid_request`, `not_for_sale`, `invalid_seats` or
  * `unknown_action`; 403 `forbidden` or `billing_staff_only`; 404 `license_not_found` or `no_billing_account`;
- * 409 `already_licensed`, `checkout_in_progress` or `owner_ended`; 503 `billing_unavailable` or
- * `core_unavailable`. Core words the ones it knows, and any other gets its generic "try again".
+ * 409 `already_licensed`, `checkout_in_progress`, `seat_request_pending` or `owner_ended`; 503
+ * `billing_unavailable` or `core_unavailable`. Core words the ones it knows, and any other gets its generic "try again".
  */
 export const BILLING_ERROR_CODES = [
   "invalid_request",
@@ -342,6 +333,7 @@ export const BILLING_ERROR_CODES = [
   "no_billing_account",
   "already_licensed",
   "checkout_in_progress",
+  "seat_request_pending",
   "owner_ended",
   "billing_unavailable",
   "core_unavailable",

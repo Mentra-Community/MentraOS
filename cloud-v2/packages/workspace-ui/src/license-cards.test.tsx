@@ -1004,25 +1004,6 @@ describe("a member's own view", () => {
   });
 });
 
-describe("a person's own license", () => {
-  test("has its renewal and cost, per person, and no list of people", async () => {
-    const r = rig();
-    const [card] = joinLicenses({ licenses: [], billing: [licenseBillingFor({ licenseId: "lic_me", quantity: 1, total: usd(2900), actions: [{ kind: "cancel", fallbackLabel: "Cancel" }] })], catalog: [catalogEntryFor()] });
-    await mountCard(r, card!, { view: "person", scope: { kind: "account" }, api: undefined });
-    const text_ = text(theCard());
-    expect(text_).toContain("Renews");
-    expect(find("dl > div:nth-child(2) > dd:nth-of-type(1)", theCard()).textContent).toBe("$29 a month");
-    expect(find("dl > div:nth-child(2) > dd:nth-of-type(2)", theCard()).textContent).toBe("Before tax");
-    expect(text_).not.toContain("1 ×");
-    expect(text_).not.toContain("Licenses");
-    expect(text_).not.toContain("Assigned to");
-    await openMenu();
-    await click(find('[role="menuitem"]'));
-    await flush();
-    expect(r.session).toHaveBeenCalledWith({ kind: "account" }, { action: "cancel", licenseId: "lic_me" });
-  });
-});
-
 describe("icons", () => {
   test("an icon outside billing's own path is a letter tile, and never reaches the page", async () => {
     const unsafe = catalogEntryFor({ icon: "https://evil.example/x.png" });
@@ -1816,15 +1797,6 @@ describe("the purchase banner", () => {
     expect(onReload).toHaveBeenCalledTimes(1);
   });
 
-  test("a person's timed-out purchase says their license can take a few minutes, not licenses", async () => {
-    await mount(banner({ purchase: { ...processing, quantity: 1 }, listed: true, scope: "person", timedOut: true }));
-    const words = text(find("section"));
-    expect(words).toContain("Your payment went through");
-    expect(words).toContain("Your license can take a few minutes to appear.");
-    expect(words).not.toContain("licenses");
-    expect(hasButton("Reload")).toBe(true);
-  });
-
   test("keeps no clock of its own: the page's flow says when the minute is up", async () => {
     // Not on fake timers (see `turn` in test-dom): the banner is shown to start no timer on the page's scale, which
     // is what a clock of its own would be. The library's zero-length turns are not one.
@@ -1872,13 +1844,17 @@ describe("the purchase banner", () => {
     }
   });
 
-  test("a person's reads in their own words", async () => {
-    await mount(banner({ scope: "person", purchase: { ...processing, quantity: 1 }, listed: true }));
-    expect(text(find("section"))).toContain("Setting up Mentra Call Unlimited. This takes a few seconds; you can stay on this page.");
+  test("given the viewer's own license it says so; that is only in the ready state", async () => {
+    await mount(banner({ purchase: { ...ready, quantity: 1 }, assigned: true }));
+    expect(text(find("section"))).toContain("Your Mentra Call Unlimited license is ready");
+    expect(text(find("section"))).toContain("Payment received, and it's assigned to you.");
     await cleanup();
-    await mount(banner({ scope: "person" }));
-    expect(text(find("section"))).toContain("Mentra Call Unlimited is ready");
-    expect(text(find("section"))).toContain("Payment received, and Mentra Call Unlimited is active on your account.");
+    await mount(banner({ purchase: { ...ready, quantity: 5, paid: false }, assigned: true }));
+    expect(text(find("section"))).toContain("Your 5 Mentra Call Unlimited licenses are ready");
+    expect(text(find("section"))).toContain("Mentra Call Unlimited is active, and one is assigned to you. Assign the rest to members below.");
+    await cleanup();
+    await mount(banner({ purchase: processing, listed: false, assigned: true }));
+    expect(text(find("section"))).not.toContain("assigned to you");
   });
 });
 
@@ -2058,9 +2034,9 @@ describe("the summary and the unavailable state", () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  test("the personal page's wording, and Retry is off while it retries", async () => {
-    await mount(<LicensesUnavailable personal retrying onRetry={() => {}} />);
-    expect(text()).toContain("Billing is unavailable");
+  test("Retry is off while it retries", async () => {
+    await mount(<LicensesUnavailable retrying onRetry={() => {}} />);
+    expect(text()).toContain("Licenses are unavailable");
     expect(buttonNamed("Retry").hasAttribute("disabled")).toBe(true);
   });
 });

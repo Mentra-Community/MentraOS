@@ -7,7 +7,7 @@ import {router} from "expo-router"
 
 import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
-import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
+import {miniappUpdateScheduler} from "@/services/miniapps/miniappUpdateScheduler"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {linkLingoPackageName, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
 import {deploymentStore} from "@/services/deployment/store"
@@ -174,7 +174,7 @@ describe("MantleManager", () => {
   })
 
   afterAll(() => {
-    storeUpdateScheduler.stop()
+    miniappUpdateScheduler.stop()
     jest.clearAllTimers()
     jest.useRealTimers()
   })
@@ -664,59 +664,30 @@ describe("MantleManager", () => {
     })
   })
 
-  it("keeps a bundled Store background-only and assigns it the build's bundled miniapps", () => {
-    expect(miniappConfig.isMiniappAvailable("com.mentra.store", "interactive")).toBe(false)
-    expect(miniappConfig.isMiniappAvailable("com.mentra.store", "background")).toBe(true)
-    expect(miniappConfig.isMiniappAvailable("com.mentra.notes", "interactive")).toBe(true)
-    expect(miniappConfig.bundledStoreMiniappPackages).toEqual(["com.mentra.store"])
-    expect(miniappConfig.bundledSystemMiniappStoreOwners["com.mentra.notes"]).toBe("com.mentra.store")
+  it("configures the build's bundled miniapps and its miniapp SDK range", () => {
+    expect(miniappConfig.bundledStoreMiniappPackages).toBeUndefined()
+    expect(miniappConfig.bundledSystemMiniappStoreOwners).toBeUndefined()
+    expect(miniappConfig.isMiniappAvailable).toBeUndefined()
     expect(miniappConfig.supportedMiniappSdkRange).toBe(">=0.3.0 <4.0.0")
   })
 
-  it("clears a Store's Home, glasses-menu and autostart state without stopping background maintenance", async () => {
-    const instance = mantle as unknown as {prepareBackgroundStores: () => Promise<void>}
-    await engine.settings.set(SETTINGS.menu_apps.key, [
-      {name: "Store", packageName: "com.mentra.store", running: true},
-      {name: "Notes", packageName: "com.mentra.notes", running: false},
-    ])
-    await instance.prepareBackgroundStores()
-    expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.store", true)
-    expect(saveLocalAppRunningState).toHaveBeenCalledWith("com.mentra.store", false)
-    expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual([
-      {name: "Notes", packageName: "com.mentra.notes", running: false},
-    ])
-    // A hidden maintenance context is left alone; a user-visible one (an older build's Store UI) is stopped.
-    expect(miniappLauncher.stop).not.toHaveBeenCalled()
-    ;(miniappLauncher.isProjectedRunning as jest.Mock).mockReturnValueOnce(true)
-    await instance.prepareBackgroundStores()
-    expect(miniappLauncher.stop).toHaveBeenCalledWith("com.mentra.store")
-  })
-
-  it("starts background updates after restoring sessions, for the Stores this deployment allows", async () => {
+  it("starts miniapp updates after restoring sessions", async () => {
     const instance = mantle as unknown as {
       restoreMiniapps: () => Promise<void>
       installBundledMiniapps: () => Promise<void>
     }
-    const start = jest.spyOn(storeUpdateScheduler, "start").mockResolvedValue()
+    const start = jest.spyOn(miniappUpdateScheduler, "start").mockResolvedValue()
     const install = jest.spyOn(instance, "installBundledMiniapps").mockResolvedValue()
     const sync = jest.spyOn(deploymentManagedMiniappSync, "sync").mockResolvedValue()
-    const installed = jest.mocked(appRegistry.getInstalledMiniapps)
-    installed.mockResolvedValue([{packageName: "com.mentra.store"} as any])
     const autostart = miniappLauncher.autostartLocalMiniapps as jest.Mock
     try {
       await instance.restoreMiniapps()
-      expect(installed).toHaveBeenLastCalledWith({includeBackgroundOnly: true})
-      expect(start).toHaveBeenLastCalledWith(["com.mentra.store"])
+      expect(start).toHaveBeenCalledTimes(1)
       expect(autostart.mock.invocationCallOrder.at(-1)).toBeLessThan(start.mock.invocationCallOrder.at(-1)!)
-
-      installed.mockResolvedValue([])
-      await instance.restoreMiniapps()
-      expect(start).toHaveBeenLastCalledWith([])
     } finally {
       start.mockRestore()
       install.mockRestore()
       sync.mockRestore()
-      installed.mockResolvedValue([])
     }
   })
 

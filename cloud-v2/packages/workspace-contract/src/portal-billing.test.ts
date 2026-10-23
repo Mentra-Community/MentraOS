@@ -2,6 +2,7 @@ import {describe, expect, test} from "bun:test"
 import {readFileSync} from "node:fs"
 import {join} from "node:path"
 import * as root from "./index"
+import * as portalBilling from "./portal-billing"
 import type {MemberView} from "./index"
 import {
   BILLING_ERROR_CODES,
@@ -16,7 +17,6 @@ import {
   HostedUrlSchema,
   KNOWN_ACTION_KINDS,
   KNOWN_LICENSE_STATUSES,
-  KNOWN_OWNER_TYPES,
   KNOWN_TAX,
   LicenseBillingSchema,
   MoneySchema,
@@ -51,7 +51,6 @@ const callUnlimited = {
   description: "Unlimited calls and call summaries in Mentra Call.",
   icon: "/api/portal/billing/ui/icons/mentra.call.unlimited.png",
   features: [{key: "call.unlimited", name: "Unlimited calls", appName: "Mentra Call"}],
-  ownerTypes: ["workspace", "person"],
   offer: {
     price: {
       scheme: "per_seat",
@@ -59,7 +58,7 @@ const callUnlimited = {
       recurrence: {interval: "month", count: 1},
     },
     tax: "excluded",
-    buy: {minSeats: 1, maxSeats: 500, defaultSeats: 5},
+    buy: {minSeats: 1, maxSeats: 500},
   },
 }
 
@@ -72,7 +71,6 @@ const notesPro = {
     {key: "notes.pro", name: "Pro notes", appName: "Mentra Notes"},
     {key: "notes.export", name: "Export"},
   ],
-  ownerTypes: ["workspace"],
   offer: {
     price: {
       scheme: "per_seat",
@@ -90,11 +88,10 @@ const fleetSuite = {
   description: "Device management for a fleet of glasses.",
   icon: "/api/portal/billing/ui/icons/mentra.fleet.suite.svg",
   features: [],
-  ownerTypes: ["workspace"],
   offer: {
     price: {scheme: "tiered", fallbackLabel: "From $10 per seat a month"},
     tax: "none",
-    buy: {minSeats: 1, defaultSeats: 5},
+    buy: {minSeats: 1},
   },
 }
 
@@ -344,31 +341,35 @@ describe("a catalog entry", () => {
 
   test("an offer's buy is null where the owner can't buy now, and maxSeats is optional", () => {
     expect(CatalogEntrySchema.parse(notesPro).offer!.buy).toBeNull()
-    expect(CatalogEntrySchema.parse(fleetSuite).offer!.buy).toEqual({minSeats: 1, defaultSeats: 5})
+    expect(CatalogEntrySchema.parse(fleetSuite).offer!.buy).toEqual({minSeats: 1})
   })
 
-  test("an owner type the portal doesn't know is dropped and never fails the entry", () => {
-    expect(KNOWN_OWNER_TYPES).toEqual(["workspace", "person"])
-    expect(CatalogEntrySchema.parse({...callUnlimited, ownerTypes: ["workspace", "team"]}).ownerTypes).toEqual([
-      "workspace",
-    ])
-    expect(CatalogEntrySchema.parse({...callUnlimited, ownerTypes: ["organization"]}).ownerTypes).toEqual([])
-    expect(
-      CatalogEntrySchema.parse({...callUnlimited, ownerTypes: ["team", "person", "workspace"]}).ownerTypes,
-    ).toEqual(["person", "workspace"])
-    expect(CatalogEntrySchema.parse({...callUnlimited, ownerTypes: []}).ownerTypes).toEqual([])
+  test("an owner type list from an older Store is stripped, and never fails the entry", () => {
+    for (const ownerTypes of [["workspace", "person"], ["team"], [], [3], "workspace"]) {
+      const parsed = CatalogEntrySchema.parse({...callUnlimited, ownerTypes})
+      expect("ownerTypes" in parsed).toBe(false)
+      expect(parsed).toEqual(callUnlimited as never)
+    }
   })
 
-  test("a catalog with an entry for an owner type the portal doesn't know still parses, and keeps the rest", () => {
+  test("a catalog whose entries still carry ownerTypes parses, and keeps the rest", () => {
     const catalog = copy(catalogDocument)
-    catalog.products[1]!.ownerTypes = ["team"]
+    for (const product of catalog.products) (product as Record<string, unknown>).ownerTypes = ["workspace", "person"]
     const parsed = BillingCatalogSchema.parse(catalog)
-    expect(parsed.products.map((product) => product.ownerTypes)).toEqual([["workspace", "person"], [], ["workspace"]])
+    expect(parsed.products.map((product) => "ownerTypes" in product)).toEqual([false, false, false])
+    expect(parsed.products.map((product) => product.product)).toEqual(catalog.products.map((product) => product.product))
   })
 
-  test("an owner type that is not a string still fails the entry", () => {
-    expect(CatalogEntrySchema.safeParse({...callUnlimited, ownerTypes: [3]}).success).toBe(false)
-    expect(CatalogEntrySchema.safeParse({...callUnlimited, ownerTypes: "workspace"}).success).toBe(false)
+  test("a buy from an older Store with defaultSeats is stripped to its limits", () => {
+    const old = {...callUnlimited, offer: {...callUnlimited.offer, buy: {minSeats: 1, maxSeats: 500, defaultSeats: 5}}}
+    const parsed = CatalogEntrySchema.parse(old)
+    expect(parsed.offer!.buy).toEqual({minSeats: 1, maxSeats: 500})
+    expect(BuySchema.parse({minSeats: 2, defaultSeats: 9})).toEqual({minSeats: 2})
+  })
+
+  test("the owner-type helpers are gone: a workspace is the only owner", () => {
+    expect("KNOWN_OWNER_TYPES" in portalBilling).toBe(false)
+    expect("isKnownOwnerType" in portalBilling).toBe(false)
   })
 })
 
@@ -736,6 +737,16 @@ describe("requests", () => {
     expect(SessionRequestSchema.safeParse({locale: "en"}).success).toBe(false)
   })
 
+  test("a session request may ask for the one license it adds to be the asker's (forMe: true only)", () => {
+    const forMe = {action: "add_seats", licenseId: "01JZWY3V8N0F2E9GQ4T6KXH5RD", seats: 1, forMe: true as const, locale: "en"}
+    expect(SessionRequestSchema.parse(forMe)).toEqual(forMe)
+    expect(SessionRequestSchema.safeParse({...forMe, forMe: false}).success).toBe(false)
+    expect(SessionRequestSchema.safeParse({...forMe, forMe: "yes"}).success).toBe(false)
+    const {forMe: _forMe, ...without} = forMe
+    expect(SessionRequestSchema.parse(without)).toEqual(without)
+    expect(SessionRequestSchema.parse(without).forMe).toBeUndefined()
+  })
+
   test("an unknown field of a request is stripped", () => {
     expect(SessionRequestSchema.parse({action: "cancel", locale: "en", futureField: "x"})).toEqual({
       action: "cancel",
@@ -794,6 +805,7 @@ describe("billing's error codes", () => {
       "no_billing_account",
       "already_licensed",
       "checkout_in_progress",
+      "seat_request_pending",
       "owner_ended",
       "billing_unavailable",
       "core_unavailable",
@@ -830,13 +842,13 @@ describe("seat assignments and member names", () => {
 describe("the parts of the contract are exported by name", () => {
   test("the catalog's and the status's inner objects parse and keep their values", () => {
     const feature: CatalogFeature = CatalogFeatureSchema.parse({key: "call.unlimited", name: "Unlimited calls"})
-    const buy: Buy = BuySchema.parse({minSeats: 1, maxSeats: 500, defaultSeats: 5})
+    const buy: Buy = BuySchema.parse({minSeats: 1, maxSeats: 500})
     const offer: Offer = OfferSchema.parse(callUnlimited.offer)
     const total: BillingTotal = BillingTotalSchema.parse(statusDocument.total)
     const testMode: TestMode = TestModeSchema.parse(statusDocument.testMode)
     const purchase: PurchaseStatus = PurchaseStatusSchema.parse(statusDocument.purchase)
     expect(feature).toEqual({key: "call.unlimited", name: "Unlimited calls"})
-    expect(buy).toEqual({minSeats: 1, maxSeats: 500, defaultSeats: 5})
+    expect(buy).toEqual({minSeats: 1, maxSeats: 500})
     expect(offer).toEqual(callUnlimited.offer as unknown as Offer)
     expect(total).toEqual(statusDocument.total as unknown as BillingTotal)
     expect(testMode).toEqual(statusDocument.testMode)
@@ -853,7 +865,7 @@ describe("the parts of the contract are exported by name", () => {
   })
 
   test("each part rejects what the whole rejects", () => {
-    expect(BuySchema.safeParse({minSeats: 0, defaultSeats: 1}).success).toBe(false)
+    expect(BuySchema.safeParse({minSeats: 0}).success).toBe(false)
     expect(BillingTotalSchema.safeParse({...statusDocument.total, licenseCount: -1}).success).toBe(false)
     expect(PurchaseStatusSchema.safeParse({...statusDocument.purchase, paid: "yes"}).success).toBe(false)
     expect(TestModeSchema.safeParse({cardNumber: "4242424242424242"}).success).toBe(false)

@@ -14,7 +14,6 @@ import type {
   BillingAction,
   CatalogEntry,
   CatalogFeature,
-  KnownOwnerType,
   LicenseBilling,
   PurchaseStatus,
 } from "@mentra/workspace-contract/portal-billing";
@@ -50,14 +49,6 @@ export function listedAction(source: { actions: readonly BillingAction[] } | nul
   return source?.actions.find((action) => action.kind === kind) ?? null;
 }
 
-/**
- * The catalog's entries that are sold to `ownerType`: what a catalog grid offers. An entry whose `ownerTypes`
- * lacks it is dropped. Not for naming a license the owner holds (`joinLicenses` reads the whole catalog for that).
- */
-export function catalogForOwner(catalog: readonly CatalogEntry[], ownerType: KnownOwnerType): CatalogEntry[] {
-  return catalog.filter((entry) => entry.ownerTypes.includes(ownerType));
-}
-
 /** What needs the viewer first: a failed payment, a first payment that isn't finished, or more seats given out than bought. */
 export type LicenseProblem = "past_due" | "incomplete" | "over";
 
@@ -79,7 +70,7 @@ export interface JoinedLicense {
   /** The catalog's icon path, or null (a letter tile). */
   icon: string | null;
   features: readonly CatalogFeature[];
-  /** The catalog's entry, null when the catalog has none for this owner type. */
+  /** The catalog's entry, null when the catalog has none for this product. */
   catalog: CatalogEntry | null;
   /** Core's license. Null for a billing entry Core hasn't received yet (being set up, or its payment isn't finished). */
   license: LicenseView | null;
@@ -95,7 +86,7 @@ export interface JoinedLicense {
 
 /** Everything the join reads. */
 export interface JoinInput {
-  /** Core's licenses for the owner, as listed. A license that has ended is no card. Empty where Core has none (a person's page). */
+  /** Core's licenses for the owner, as listed. A license that has ended is no card. */
   licenses: readonly LicenseView[];
   /** Billing's licenses (`status.licenses`); null or absent where the viewer isn't offered billing. */
   billing?: readonly LicenseBilling[] | null;
@@ -126,9 +117,8 @@ function rank(card: JoinedLicense): number {
  * just bought (or being set up), then by name; the license's id settles a tie.
  *
  * - A card is a Core license that hasn't ended, joined to billing's entry by `licenseId` and to the catalog by
- *   `product`. The whole catalog names what is held: billing sends every product the owner holds, even one whose
- *   `ownerTypes` no longer include the owner, so that its card has a name. (What is *offered* is a different
- *   list: `catalogForOwner`.) When a product is listed twice the first entry wins. A product the catalog lacks
+ *   `product`. The whole catalog names what is held: billing sends every product the owner holds, even one it no
+ *   longer sells, so that its card has a name. (What is *offered* is a different matter: an entry's `offer`.) When a product is listed twice the first entry wins. A product the catalog lacks
  *   keeps its key as its name.
  * - A billing entry with no Core license yet (`processing`, `incomplete`) is a card of its own, with no seats.
  *   An entry for a Core license that has ended is not.

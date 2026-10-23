@@ -6,7 +6,7 @@ SDK for building Mentra miniapps — local JavaScript running in the Mentra App 
 > Per-module deep dives (return shapes, events, error codes): **[`sdk/docs/`](../../../sdk/docs/README.md)**.
 > Companion package: **[`@mentra/miniapp-cli`](../../../sdk/miniapp-cli/README.md)** — `mentra-miniapp` CLI (`dev`, `release`, `pack`, `manifest`, `permission`, `hardware`, `schema`). Per-command docs live there.
 > Scaffolder: `bunx create-mentra-miniapp my-app`.
-> Reference miniapp: [`sdk/example-miniapp/`](../../../sdk/example-miniapp).
+> Reference miniapp: [`examples/miniapp/`](../../../examples/miniapp).
 > High-level walkthrough: [`agents/miniapp-sdk-overview.md`](../../../agents/miniapp-sdk-overview.md).
 
 ## Install
@@ -249,7 +249,7 @@ Smart-glasses miniapps are **always-on services**. The webview is a UI on top of
 
 **Rule:** user-facing glasses logic lives in a session-scoped controller, instantiated once at module init. React pages read controller-driven state via a store (Zustand recommended) and call imperative methods on the controller for user-triggered actions. They do **not** subscribe to `session.*` directly.
 
-See [`sdk/example-miniapp/src/controller/GlassesController.ts`](../../../sdk/example-miniapp/src/background/controllers/GlassesController.ts) for a worked reference.
+See [`examples/miniapp/src/background/controllers/GlassesController.ts`](../../../examples/miniapp/src/background/controllers/GlassesController.ts) for a worked reference.
 
 **Tester pages exception:** `pages/tester/*` are diagnostic surfaces — by design they inline-subscribe to `session.*` and tear down on unmount. This is the only place where that pattern is acceptable.
 
@@ -258,7 +258,7 @@ See [`sdk/example-miniapp/src/controller/GlassesController.ts`](../../../sdk/exa
 - Runtime: [`src/{session,protocol,envelope,globals}.ts`](./src/), [`src/modules/`](./src/modules/), [`src/transport/`](./src/transport/), [`src/react/`](./src/react/)
 - CLI: [`../miniapp-cli/src/`](../../../sdk/miniapp-cli/src/)
 - Scaffolder: [`../create-mentra-miniapp/`](../../../sdk/create-mentra-miniapp/)
-- Reference miniapp: [`../example-miniapp/`](../../../sdk/example-miniapp/)
+- Reference miniapp: [`examples/miniapp/`](../../../examples/miniapp/)
 
 Phone Wi-Fi APIs read the phone radio on Android (`true`/`false`); iOS returns `true` when connected to Wi-Fi and `null` otherwise. `requestWifiEnable(reason?)` presents the host prompt and resolves with `{enabled, cancelled}` after returning from system settings. See [Phone Wi-Fi](https://docs.mentra.glass/app-devs/core-concepts/phone#phone-wi-fi) for platform behavior and cancellation.
 

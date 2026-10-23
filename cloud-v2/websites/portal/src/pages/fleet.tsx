@@ -1,5 +1,6 @@
 /**
- * Fleet Management in the workspace portal: `/w/<workspaceId>/fleet?fleet=<path>`.
+ * Fleet Management in the workspace portal: `/fleet?fleet=<path>` (with `&workspace=<workspaceId>` when it is not the
+ * workspace the bare address opens).
  *
  * A host for the Fleet UI module that the Fleet integration serves through Core
  * (`/api/portal/fleet/workspaces/<id>/ui/entry.js`, same origin, so the portal's `script-src 'self'` allows it, and
@@ -27,7 +28,8 @@ import { useEffect, useRef, useState } from "react";
 import { fetchPortalMe, PortalApiError, type PortalMe } from "@/lib/api";
 import { navigate, useSearch } from "@/lib/navigation";
 import { usePortal } from "@/lib/portal";
-import { fleetPath } from "@/lib/routes";
+import { useBareWorkspaceId } from "@/components/portal-shell";
+import { sectionHref, withFleetParam } from "@/lib/routes";
 
 /** Where the module sends its API requests: Core forwards it to Fleet scoped to this workspace. */
 export function fleetApiBase(workspaceId: string): string {
@@ -65,9 +67,9 @@ export function fleetRoute(fleetRoutePath: string): FleetUiContext["route"] {
 }
 
 /** The portal address that holds the module's route `to` for this workspace. */
-export function fleetLocation(workspaceId: string, to: string): string {
-  const base = fleetPath(workspaceId).split("?")[0];
-  return `${base}?${FLEET_PARAM}=${encodeURIComponent(normalizeFleetPath(to).replace(/^\//, ""))}`.replace(/%2F/g, "/");
+export function fleetLocation(workspaceId: string, bareWorkspaceId: string | null, to: string): string {
+  const value = encodeURIComponent(normalizeFleetPath(to).replace(/^\//, "")).replace(/%2F/g, "/");
+  return withFleetParam(sectionHref("fleet", workspaceId, bareWorkspaceId), value);
 }
 
 /** What the module is told about the caller: the contract's fields, and nothing else the portal knows. */
@@ -361,6 +363,7 @@ function SessionEnded({ onExpired }: { onExpired(): void }) {
 export function FleetScreen({ workspaceId }: { workspaceId: string }) {
   const portal = usePortal();
   const search = useSearch();
+  const bareWorkspaceId = useBareWorkspaceId();
   const me = useQuery({
     queryKey: ["portal-me", "fleet", workspaceId],
     queryFn: () => fetchPortalMe(workspaceId),
@@ -384,7 +387,7 @@ export function FleetScreen({ workspaceId }: { workspaceId: string }) {
       workspaceId={workspaceId}
       me={me.data}
       path={readFleetPath(search)}
-      onNavigate={(to, opts) => navigate(fleetLocation(workspaceId, to), opts)}
+      onNavigate={(to, opts) => navigate(fleetLocation(workspaceId, bareWorkspaceId, to), opts)}
       onSessionExpired={portal.sessionExpired}
     />
   );

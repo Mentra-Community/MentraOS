@@ -2,15 +2,19 @@
  * @fileoverview `licenses` collection. One document per license: Core's copy of a license as billing last
  * wrote it (`services/licenses/license.service.ts`). `_id` is billing's license id, a ULID.
  *
- * The owner is a workspace (`{type: "workspace", workspaceId}`), whose Admins and Owners assign its seats,
- * or a person (`{type: "person", mentraUserId}`), who holds its one seat: a personal license has no seat
- * document and `seatsUsed` is always 1. A workspace license's seats are `license_seats` documents, and
- * `seatsUsed` counts them: assigning a seat increments it only while it is below `quantity`, in the same
- * transaction as the seat's insert, which is what caps the seats.
+ * The owner is a workspace (`{type: "workspace", workspaceId}`), whose Admins and Owners assign its seats; a
+ * license has no other kind of owner. Its seats are `license_seats` documents, and `seatsUsed` counts them:
+ * assigning a seat increments it only while it is below `quantity`, in the same transaction as the seat's
+ * insert, which is what caps the seats.
  *
  * `revision` is billing's, and a write applies only when it is newer. `endedAt` and `endedReason` are set
- * when the owner is deleted (`workspace_deleted`, `account_deleted`); an ended license takes no seat and
- * no write. Nothing is ever deleted.
+ * when its workspace is deleted (`workspace_deleted`); an ended license takes no seat and no write. Nothing
+ * is ever deleted.
+ *
+ * `seatRequests` are the ids of the seat requests (`LicenseWrite.seatRequest`) Core has decided for the
+ * license, the latest 20: each is decided once, on the first applied write that carries it, and its id is
+ * recorded by that write's update whether or not it gave a seat, so no later write decides it again. It is
+ * absent on a license no request has reached, unindexed, and never read except by the license's own writes.
  */
 
 import {LICENSE_ENDED_REASONS, LICENSE_OWNER_TYPES} from "@mentra/workspace-contract"
@@ -20,10 +24,8 @@ import {registerModel} from "./register-model"
 const LicenseOwnerSchema = new Schema(
   {
     type: {type: String, enum: LICENSE_OWNER_TYPES, required: true},
-    /** A workspace license's workspace. */
+    /** The workspace that holds the license. */
     workspaceId: {type: String},
-    /** A personal license's person. */
-    mentraUserId: {type: String},
   },
   {_id: false},
 )
@@ -51,14 +53,14 @@ const LicenseSchema = new Schema(
     revision: {type: Number, required: true},
     endedAt: {type: Date, default: null},
     endedReason: {type: String, enum: [...LICENSE_ENDED_REASONS, null], default: null},
+    /** The seat requests decided for the license, by id, the latest 20; absent until the first. */
+    seatRequests: {type: [String], default: undefined},
   },
   {timestamps: true, collection: "licenses"},
 )
 
-// The licenses one owner holds: a workspace's (its portal page, billing's list, ending them with it), a
-// person's (their own licenses, and the features in their miniapp tokens).
+// The licenses a workspace holds: its portal page, billing's list, and ending them with it.
 LicenseSchema.index({"owner.type": 1, "owner.workspaceId": 1})
-LicenseSchema.index({"owner.type": 1, "owner.mentraUserId": 1})
 
 export type LicenseRow = InferSchemaType<typeof LicenseSchema> & {_id: string}
 export const LicenseModel = registerModel("License", LicenseSchema)

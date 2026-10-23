@@ -94,7 +94,7 @@ async function runBuild(cwd: string): Promise<void> {
     throw new Error(
       'build.ts not found at project root. Two-layer miniapps emit ' +
         '`dist/background/index.js` + `dist/ui/index.html` via a build.ts ' +
-        'script — see sdk/example-miniapp/build.ts for the canonical shape.',
+        'script — see examples/miniapp/build.ts for the canonical shape.',
     );
   }
   const proc = Bun.spawn(['bun', 'run', 'build.ts'], {

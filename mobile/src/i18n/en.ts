@@ -19,6 +19,8 @@ const en = {
     autoPowerOff: "Turn off automatically",
     autoPowerOffSubtitle:
       "Powers down about 20 minutes after you take the glasses off. Charging or a call holds the shutdown.",
+    autoPowerOffSaveError: "Could not save or check this setting. Check the glasses connection and try again.",
+    autoPowerOffStatusHint: "This is the latest glasses status, not confirmation of your change. It refreshes about every 10 seconds.",
     brightness: "Brightness",
     display: "Display",
     disconnectGlasses: "Disconnect glasses",

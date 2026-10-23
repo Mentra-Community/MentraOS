@@ -72,14 +72,19 @@ export function assembleCoordinatedReleaseResults({
   const otaProvenanceUrl = provenanceUrl(ota)
   const artifacts = [
     ...merged.artifacts,
-    {
-      status: ota.bundle.status,
-      coordinate: ota.bundle.asset,
-      url: ota.bundle.url,
-      sha256: ota.bundle.sha256,
-      size: ota.bundle.size,
-      provenanceUrl: otaProvenanceUrl,
-    },
+    // Beta releases publish a portable OTA bundle; dev releases do not.
+    ...(ota.bundle
+      ? [
+          {
+            status: ota.bundle.status,
+            coordinate: ota.bundle.asset,
+            url: ota.bundle.url,
+            sha256: ota.bundle.sha256,
+            size: ota.bundle.size,
+            provenanceUrl: otaProvenanceUrl,
+          },
+        ]
+      : []),
     {
       status: ota.asg.reused ? "reused" : ota.manifest.status,
       coordinate: ota.asg.artifact.asset,
