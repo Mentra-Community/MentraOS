@@ -126,6 +126,26 @@ test("never creates a release on a tag that already identifies another commit", 
   assert.equal(f.posts().length, 0)
 })
 
+test("rechecks the tag before every attempt, so one moved during backoff is refused", async () => {
+  let checks = 0
+  const f = rfixture([workflowCheck(), missing()], () => ({object: {type: "commit", sha: ++checks > 1 ? other : sha}}))
+  await assert.rejects(createRelease({...f.args, release: payload}), /already identifies/)
+  assert.equal(f.posts().length, 1)
+})
+
+test("refuses a created release whose tag turns out to identify another commit", async () => {
+  let created = false
+  const f = rfixture([release], () => ({object: {type: "commit", sha: created ? other : sha}}))
+  const api = f.args.api
+  f.args.api = async (route, options) => {
+    const response = await api(route, options)
+    if (options?.method === "POST") created = true
+    return response
+  }
+  await assert.rejects(createRelease({...f.args, release: payload}), ReleaseConflictError)
+  assert.deepEqual(f.delays, [])
+})
+
 test("a published release without its tag is not accepted", async () => {
   const f = rfixture([failure(422), release], null)
   await assert.rejects(createRelease({...f.args, release: payload}), /does not identify/)

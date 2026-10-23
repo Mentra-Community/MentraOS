@@ -199,7 +199,12 @@ export async function createRelease({
     if (existing.draft && existing.target_commitish === target) return existing
     throw new ReleaseConflictError(`Release ${tag} does not identify ${target}`)
   }
-  let tagChecked = !pinned
+  // A tag that identifies another commit is refused before every attempt and
+  // after a published release is created; an absent tag is created at target.
+  const refuseMovedTag = async () => {
+    const actual = pinned ? await tagCommit({repository, tag, api}) : null
+    if (actual && actual.commit !== target) throw conflict(actual.commit)
+  }
   return withCreateRetry({
     label: `release ${tag}`,
     lookupFirst,
@@ -210,13 +215,10 @@ export async function createRelease({
       return existing ? matching(existing) : null
     },
     create: async () => {
-      // Refuse to attach a release to a tag that already identifies another commit.
-      if (!tagChecked) {
-        const actual = await tagCommit({repository, tag, api})
-        if (actual && actual.commit !== target) throw conflict(actual.commit)
-        tagChecked = true
-      }
-      return validate(await api(route, {method: "POST", data: release}))
+      await refuseMovedTag()
+      const created = await validate(await api(route, {method: "POST", data: release}))
+      if (!created.draft) await refuseMovedTag()
+      return created
     },
   })
 }
