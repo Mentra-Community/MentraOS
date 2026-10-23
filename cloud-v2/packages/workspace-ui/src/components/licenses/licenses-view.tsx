@@ -87,7 +87,11 @@ export interface WorkspaceLicensesViewProps {
    * until the person presses Continue to payment.
    */
   buyProduct?: string | null;
-  /** The page has acted on `buyProduct`: remove `?buy=` from the address. Called once per link. */
+  /**
+   * The page has acted on `buyProduct`: remove `?buy=` from the address. Called once per link. A host must pass it:
+   * the link goes to a hosted page with no click, so a `?buy=` left in the address would send Back from there to the
+   * same checkout again.
+   */
   onBuyHandled?(): void;
   /**
    * The `?added=` license a return from the hosted page that added one license for the viewer came back with, or

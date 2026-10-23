@@ -76,6 +76,7 @@ function nameList(names: readonly string[]): string {
 
 /** One name; two joined by "and"; three or more, the first and a count: "Ana Ruiz and 2 others". */
 function shortNames(names: readonly string[]): string {
+  if (names.length === 0) return "";
   if (names.length <= 2) return and(names);
   return `${names[0]} and ${names.length - 1} others`;
 }
@@ -194,12 +195,13 @@ export const licenseStrings = {
       held: (product: string) => `You already have ${product}.`,
       /** A free license was assigned to the viewer, with no click. */
       youNowHave: (product: string) => `You now have ${product}.`,
-      oneOfUnassigned: (workspace: string) => `It's one of ${workspace}'s unassigned licenses.`,
+      /** The free license the link picked was taken before the assignment landed. */
+      assignTaken: "That license was just taken. Nothing was assigned.",
       /** While billing is asked for the hosted page the link goes to. */
       openingCheckout: "Opening checkout…",
       /** Nothing can be added: the licenses are all assigned (or over-assigned) and billing lists no way to add one. */
       full: (workspace: string, count: number, product: string, people: string) => ({
-        body: `${workspace} has ${count} ${product} ${count === 1 ? "license" : "licenses"}, assigned to ${people}.`,
+        body: `${workspace} has ${count} ${product} ${count === 1 ? "license" : "licenses"}${people === "" ? "" : `, assigned to ${people}`}.`,
         hint: `Unassign someone on the ${product} card to free a license.`,
       }),
       alreadyHas: (workspace: string, product: string) => `${workspace} already has ${product}.`,

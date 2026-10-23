@@ -519,7 +519,6 @@ describe("the states were reached", () => {
     ["the same, for many", t.purchase.givenBody({ seats: 3, product: "Fleet", paid: true })],
     ["a link to a product held", t.page.buyLink.held("Fleet")],
     ["a link to a free license", t.page.buyLink.youNowHave("Mentra Call Unlimited")],
-    ["the free license's line", t.page.buyLink.oneOfUnassigned("Acme Field Services")],
     ["a link to a product not sold", t.page.buyLink.notForSale],
     ["a link a member can't follow", t.page.buyLink.askAnAdmin("Acme Field Services", "Mentra Call Unlimited")],
     ["a link where billing isn't offered", t.page.buyLink.notHere],

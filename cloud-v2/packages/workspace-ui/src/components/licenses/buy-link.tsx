@@ -28,13 +28,14 @@ import type { BillingAction, BillingStatus, CatalogEntry } from "@mentra/workspa
 import type { WorkspaceApi } from "../../api";
 import type { BillingApi } from "../../billing-api";
 import type { BillingScope } from "../../billing-scope";
+import { isLicenseChangedError } from "../../errors";
 import { holdsSeat, joinLicenses, listedAction } from "../../lib/license-join";
 import { useSeatMutation } from "../../queries";
 import { can } from "../../roles";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { Dialog } from "../../ui/dialog";
-import { Spinner } from "../common";
+import { AlertText, Spinner } from "../common";
 import { canBuy } from "./catalog";
 import { HostedFeedback, useHostedAction, type NavigateOut } from "./hosted-action";
 import { SeatErrorNotice } from "./parts";
@@ -153,6 +154,19 @@ export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOu
   const assign = useSeatMutation(api, workspace.workspaceId, (variables: { licenseId: string; membershipId: string }) =>
     api.assignSeat(workspace.workspaceId, variables.licenseId, variables.membershipId),
   );
+  // Back from the hosted page can bring this page out of the browser's back/forward cache as it was when it left: the
+  // dialog locked on "Opening checkout…", with a request that is long over. Closing it ends the outcome, and its state.
+  const leaving = outcome.kind === "add" || outcome.kind === "buy";
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    if (!leaving) return;
+    const restored = (event: Event) => {
+      if ((event as PageTransitionEvent).persisted) close.current();
+    };
+    window.addEventListener("pageshow", restored);
+    return () => window.removeEventListener("pageshow", restored);
+  }, [leaving]);
   // React's strict mode runs an effect twice from the same render: the request is made once.
   const started = useRef(false);
   useEffect(() => {
@@ -180,7 +194,7 @@ export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOu
       break;
     case "assign":
       // While it is being assigned the page shows nothing; once it is, the person is told.
-      if (assign.isSuccess) lines = [words.youNowHave(name), words.oneOfUnassigned(workspace.name)];
+      if (assign.isSuccess) lines = [words.youNowHave(name)];
       else if (assign.isError) body = "assignment";
       else return null;
       break;
@@ -190,7 +204,8 @@ export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOu
       break;
     case "full": {
       const full = words.full(workspace.name, outcome.count, name, t.names.short(outcome.people));
-      lines = [full.body, full.hint];
+      // With nobody holding a seat (a license out of its term) there is no one to unassign.
+      lines = outcome.people.length === 0 ? [full.body] : [full.body, full.hint];
       break;
     }
     case "already_has":
@@ -223,7 +238,10 @@ export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOu
             {lines.map((line) => (
               <p key={line}>{line}</p>
             ))}
-            {body === "assignment" ? <SeatErrorNotice error={assign.error} /> : null}
+            {body === "assignment" ? (
+              // The person chose nothing: a license that changed under the link is not "while you were choosing".
+              isLicenseChangedError(assign.error) ? <AlertText tone="neutral">{words.assignTaken}</AlertText> : <SeatErrorNotice error={assign.error} />
+            ) : null}
             {body === "hosted" ? <HostedFeedback action={hosted} /> : null}
           </div>
         </div>

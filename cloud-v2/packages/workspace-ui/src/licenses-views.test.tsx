@@ -174,6 +174,8 @@ function rig(
     if (assignError) throw assignError;
     const list = answer(answers.licenses);
     const target = list.find((license) => license.licenseId === licenseId)!;
+    // Core's answer for a membership that already holds the license: success, and no second seat.
+    if (target.seats?.some((seat) => seat.membershipId === membershipId)) return target;
     const updated = {
       ...target,
       seatsUsed: target.seatsUsed + 1,
@@ -980,6 +982,51 @@ describe("the ?buy= link", () => {
     noDialogs();
   });
 
+  test("back from the hosted page out of the browser's cache, the dialog is gone and the page is usable", async () => {
+    const r = rig();
+    await mountView(r, { buyProduct: EXAMPLE, onBuyHandled: onBuyHandled() });
+    await toCheckout(r);
+    expect(text(dialog())).toContain("Opening checkout…");
+    const pageshow = (persisted: boolean) => {
+      const event = new Event("pageshow");
+      Object.defineProperty(event, "persisted", { value: persisted });
+      return act(async () => void window.dispatchEvent(event));
+    };
+    // A page shown for the first time is not a return.
+    await pageshow(false);
+    expect(openDialogs()).toHaveLength(1);
+    await pageshow(true);
+    await until(() => openDialogs().length === 0, "the dialog to go");
+    expect(text()).not.toContain("Opening checkout");
+    expect(cardNames()).toContain("Mentra Call Unlimited");
+    // Nothing is asked again, and the page answers a click.
+    expect(r.purchase).toHaveBeenCalledTimes(1);
+    expect(r.leave).toHaveBeenCalledTimes(1);
+    await click(buttonNamed("Assign licenses", cardNamed("Mentra Call Unlimited")));
+    expect(openDialogs()).toHaveLength(1);
+  });
+
+  test("two tabs that both follow the link each end with 'You now have', and only one seat is added", async () => {
+    const r = rig();
+    const hold = deferred();
+    r.gates.licenses = hold.promise;
+    // Both tabs read the same list, with the license free, before either assigns.
+    const first = await mount(<WorkspaceLicensesView {...viewProps(r, { buyProduct: CALL, onBuyHandled: onBuyHandled() })} />);
+    const second = await mount(<WorkspaceLicensesView {...viewProps(r, { buyProduct: CALL, onBuyHandled: onBuyHandled() })} />);
+    hold.resolve();
+    await until(() => openDialogs().length === 2, "both tabs' dialogs");
+    for (const open of openDialogs()) expect(text(open)).toContain("You now have Mentra Call Unlimited.");
+    expect(first.container.isConnected && second.container.isConnected).toBe(true);
+    expect(r.assignSeat.mock.calls).toEqual([
+      [WS, "lic_call", "wm_self"],
+      [WS, "lic_call", "wm_self"],
+    ]);
+    const license = (r.answers.licenses as LicenseView[]).find((candidate) => candidate.licenseId === "lic_call")!;
+    expect(license.seatsUsed).toBe(4);
+    expect(license.seats!.filter((seat) => seat.membershipId === "wm_self")).toHaveLength(1);
+    expect(openDialogs().every((open) => !text(open).includes("Licenses changed"))).toBe(true);
+  });
+
   test("it asks once, however often the page reads again", async () => {
     const r = rig();
     const { client } = await mountView(r, { buyProduct: EXAMPLE, onBuyHandled: onBuyHandled() });
@@ -1054,7 +1101,7 @@ describe("the ?buy= link", () => {
     expect(find("h2", dialog()).textContent).toBe("Mentra Call Unlimited");
     expect(findAll("img", dialog())).toHaveLength(1);
     expect(text(dialog())).toContain("You now have Mentra Call Unlimited.");
-    expect(text(dialog())).toContain(`It's one of ${WORKSPACE_NAME}'s unassigned licenses.`);
+    expect(text(dialog())).not.toContain("unassigned licenses");
     expect(buttons(dialog())).toContain("Done");
     expect(r.assignSeat.mock.calls).toEqual([[WS, "lic_call", "wm_self"]]);
     expect(r.session).not.toHaveBeenCalled();
@@ -1079,7 +1126,8 @@ describe("the ?buy= link", () => {
   test("a refused assignment is a dialog with the refusal and Done", async () => {
     const r = rig({ assignError: new WorkspaceApiError(409, "no_seats_available", "none left") });
     await mountView(r, { buyProduct: CALL, onBuyHandled: onBuyHandled() });
-    await until(() => openDialogs().length === 1 && text(dialog()).includes("Licenses changed while you were choosing."), "the refusal");
+    await until(() => openDialogs().length === 1 && text(dialog()).includes("That license was just taken. Nothing was assigned."), "the refusal");
+    expect(text(dialog())).not.toContain("choosing");
     expect(text(dialog())).not.toContain("You now have");
     expect(buttons(dialog())).toContain("Done");
   });
@@ -1126,6 +1174,20 @@ describe("the ?buy= link", () => {
     await dialogOpen();
     expect(text(dialog())).toContain("Unassign someone on the Mentra Call Unlimited card to free a license.");
     expect(over.session).not.toHaveBeenCalled();
+  });
+
+  test("a license out of its term with nobody on it is Full without a clause about who holds it", async () => {
+    const r = rig({
+      licenses: [callLicense({ quantity: 3, seatsUsed: 0, seats: [], paidThrough: "2020-01-01T00:00:00.000Z" }), fleetLicense()],
+      status: statusFor({ licenses: [callBilling({ quantity: 3, actions: [{ kind: "cancel", fallbackLabel: "Cancel" }] }), fleetBilling()] }),
+    });
+    await mountView(r, { buyProduct: CALL, onBuyHandled: onBuyHandled() });
+    await dialogOpen();
+    expect(text(dialog())).toContain(`${WORKSPACE_NAME} has 3 Mentra Call Unlimited licenses.`);
+    expect(text(dialog())).not.toMatch(/undefined|assigned to|Unassign someone/);
+    expect(buttons(dialog())).toContain("Done");
+    expect(r.session).not.toHaveBeenCalled();
+    expect(r.assignSeat).not.toHaveBeenCalled();
   });
 
   test("an Organization Admin who isn't a member is told the workspace already has it", async () => {

@@ -342,7 +342,7 @@ describe("a link that asks to buy one product", () => {
 
   test("a free license is assigned to the person who followed the link, with no click and no payment, and a dialog says so", async () => {
     const { core } = await open(CALL_LINK, SCENARIOS.twoActive(), { ready: "You now have Mentra Call Unlimited." });
-    expect(dialog()!.textContent).toContain("It's one of Acme Field Services's unassigned licenses.");
+    expect(dialog()!.textContent).not.toContain("unassigned licenses");
     const puts = core.requests.filter(request => request.method === "PUT");
     expect(puts.map(request => request.path)).toEqual(["/api/portal/workspaces/ws_acme/licenses/lic_call/seats/wm_dana"]);
     expect(posts(core, "purchase")).toEqual([]);

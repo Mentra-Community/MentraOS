@@ -361,7 +361,7 @@ what](#who-sees-what)).
   | # | Case | What happens |
   | --- | --- | --- |
   | 1 | The viewer holds the product (a seat of a license of it that has not ended) | A dialog: "You already have <product>." |
-  | 2 | The viewer has a membership and may assign licenses, and a license of it is free (in its term, with a license left) | The page assigns it to them, with no click and no payment, and a dialog says "You now have <product>." and "It's one of <workspace>'s unassigned licenses." |
+  | 2 | The viewer has a membership and may assign licenses, and a license of it is free (in its term, with a license left) | The page assigns it to them, with no click and no payment, and a dialog says "You now have <product>." |
   | 3 | The viewer is not an Admin or Owner | A dialog: "Only Admins and Owners of <workspace> can buy <product>. Ask one of them." (the product's name from the catalog, else "licenses" where it can't be read) |
   | 4 | Billing is not offered to the viewer here | A dialog: "Licenses can't be bought here." |
   | 5 | The workspace has a card for the product and the viewer has a membership | When one of its licenses lists `add_seats` and has no more people than licenses, the browser goes to billing's hosted page for one more license, assigned to the viewer (`add_seats` of 1, with `forMe`). Otherwise a dialog: "<workspace> has 3 <product> licenses, assigned to Ana Ruiz and 2 others." and "Unassign someone on the <product> card to free a license." |
@@ -379,7 +379,11 @@ what](#who-sees-what)).
   or Developer sees only their own licenses, so for them row 2 never matches.
   Every dialog is titled with the product's name ("Licenses" where the catalog
   doesn't know it) and shows its icon. A refused assignment is a dialog with the
-  refusal. Billing puts the buyer's Core user ID on the subscription it checks
+  refusal ("That license was just taken. Nothing was assigned." where the license
+  filled up first). Pressing Back from the hosted page can bring the page back
+  from the browser's back/forward cache as it was, with the locked "Opening
+  checkout…" dialog; the page closes that dialog when it is shown again from the
+  cache (`pageshow` with `persisted`). Billing puts the buyer's Core user ID on the subscription it checks
   out, and Core gives the buyer one of the new licenses when the purchase's
   first write arrives, so they have it whether or not they keep the tab open. An
   Organization Admin buying in a workspace they are not a member of gets none.

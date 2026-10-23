@@ -56,13 +56,15 @@ describe("the pages", () => {
     const call = "Mentra Call Unlimited";
     expect(words.held(call)).toBe("You already have Mentra Call Unlimited.");
     expect(words.youNowHave(call)).toBe("You now have Mentra Call Unlimited.");
-    expect(words.oneOfUnassigned(ws)).toBe("It's one of Acme Field Services's unassigned licenses.");
+    expect(words.assignTaken).toBe("That license was just taken. Nothing was assigned.");
     expect(words.openingCheckout).toBe("Opening checkout…");
     expect(words.full(ws, 3, call, t.names.short(["Ana Ruiz", "Ben Cho", "Cy Dunn"]))).toEqual({
       body: "Acme Field Services has 3 Mentra Call Unlimited licenses, assigned to Ana Ruiz and 2 others.",
       hint: "Unassign someone on the Mentra Call Unlimited card to free a license.",
     });
     expect(words.full(ws, 1, call, "Ana Ruiz").body).toBe("Acme Field Services has 1 Mentra Call Unlimited license, assigned to Ana Ruiz.");
+    expect(words.full(ws, 1, call, t.names.short([])).body).toBe("Acme Field Services has 1 Mentra Call Unlimited license.");
+    expect(t.names.short([])).toBe("");
     expect(words.alreadyHas(ws, call)).toBe("Acme Field Services already has Mentra Call Unlimited.");
     expect(words.notForSale).toBe("That product isn't for sale.");
     expect(words.askAnAdmin(ws, call)).toBe("Only Admins and Owners of Acme Field Services can buy Mentra Call Unlimited. Ask one of them.");
@@ -71,7 +73,7 @@ describe("the pages", () => {
     expect(words.done).toBe("Done");
     // The dialogs that asked first (Assign it to me, Add one for you?) are gone: the page does it.
     expect(Object.keys(words).sort()).toEqual(
-      ["alreadyHas", "anyProduct", "askAnAdmin", "done", "full", "held", "notForSale", "notHere", "oneOfUnassigned", "openingCheckout", "youNowHave"].sort(),
+      ["alreadyHas", "anyProduct", "askAnAdmin", "assignTaken", "done", "full", "held", "notForSale", "notHere", "openingCheckout", "youNowHave"].sort(),
     );
   });
 });
@@ -541,11 +543,10 @@ const FIT_LINES: unknown[][] = (["enough", "some_hold", "all_hold", "short", "fu
 const SAMPLES: Record<string, unknown[][]> = {
   "names.list": [[[]], [["A"]], [["A", "B"]], [["A", "B", "C"]], [["A", "B", "C", "D", "E"]]],
   "names.holders": [[[]], [["A"]], [["A", "B", "C", "D", "E"]]],
-  "names.short": [[["A"]], [["A", "B"]], [["A", "B", "C"]], [["A", "B", "C", "D", "E"]]],
+  "names.short": [[[]], [["A"]], [["A", "B"]], [["A", "B", "C"]], [["A", "B", "C", "D", "E"]]],
   "page.buyLink.held": [["Mentra Call Unlimited"]],
   "page.buyLink.youNowHave": [["Mentra Call Unlimited"]],
-  "page.buyLink.oneOfUnassigned": [["Acme Field Services"]],
-  "page.buyLink.full": [["Acme Field Services", 3, "Mentra Call Unlimited", "Ana Ruiz and 2 others"], ["Acme Field Services", 1, "Mentra Call Unlimited", "Ana Ruiz"]],
+  "page.buyLink.full": [["Acme Field Services", 1, "Mentra Call Unlimited", ""], ["Acme Field Services", 3, "Mentra Call Unlimited", "Ana Ruiz and 2 others"], ["Acme Field Services", 1, "Mentra Call Unlimited", "Ana Ruiz"]],
   "page.buyLink.alreadyHas": [["Acme Field Services", "Mentra Call Unlimited"]],
   "page.buyLink.askAnAdmin": [["Acme Field Services", "Mentra Call Unlimited"], ["Acme Field Services", "licenses"]],
   "page.adminsGiveOutSeats": [["Acme Field Services"]],
