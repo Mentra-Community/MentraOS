@@ -7,7 +7,7 @@
  * the alert host (`waitForAlertHost`) so a cold start never falls back on a system alert.
  *
  * Words are verbatim from the Fleet design board (round 2); `UPDATE-2026-10-20.md` overrides older drawings.
- * The invitation is not swipeable (Decline cannot be undone), unlike the board's drawing.
+ * Swiping the invitation presses Decline, its cancel button. A sheet with only OK cannot be swiped.
  */
 import {getFleetManagementState, onFleetManagementStateChanged} from "@mentra/engine-host-internal"
 import {useEffect} from "react"
@@ -185,7 +185,7 @@ const DECLINE = 0
 
 /**
  * The invitation. The main action is Join, or "Leave <current>" when the person is already in a workspace.
- * Decline is its cancel button, but the sheet is not swipeable: Decline cannot be undone.
+ * Decline is its cancel button, so a swipe, the backdrop or Android back declines.
  */
 function presentInvitation(invitation: InvitationPreview, current: MyWorkspace | null): Promise<number> {
   return present({
@@ -217,7 +217,7 @@ function presentInvitation(invitation: InvitationPreview, current: MyWorkspace |
           )}
         </View>
       ),
-      allowDismiss: false,
+      allowDismiss: true,
     },
   })
 }

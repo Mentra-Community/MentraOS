@@ -855,15 +855,15 @@ describe("managed signal", () => {
 })
 
 describe("access", () => {
-  test("access_denied blocks launch and stops the miniapp now, even a manual install, and withdraws nothing", async () => {
+  test("access_denied stops updates and leaves the running miniapp alone, even a manual install", async () => {
     installed.set(notes, {version: "1.0.0"})
     otherReasons.add(notes)
     running.add(notes)
     served.set(notesUrl, {ok: false, reason: "access_denied"})
     await startAndSettle()
-    expect(calls).toEqual(["revoke:com.acme.notes"])
-    expect(revoked.has(notes)).toBe(true)
-    expect(running.has(notes)).toBe(false)
+    expect(calls).not.toContain("revoke:com.acme.notes")
+    expect(revoked.has(notes)).toBe(false)
+    expect(running.has(notes)).toBe(true)
     expect(installed.has(notes)).toBe(true)
     expect(states()).toEqual(["blocked:access_denied"])
   })
@@ -879,17 +879,26 @@ describe("access", () => {
     expect(states()).toEqual(["blocked:access_denied", "installed"])
   })
 
-  test("one account's revocation does not block another account", async () => {
+  test("a launch block stored by an older build is lifted, and it is not put back", async () => {
     installed.set(notes, {version: "1.0.0"})
+    revoked.add(notes)
+    store.set(
+      `fleet.assignments.v1/${sessionA.coreUrl}|${sessionA.mentraUserId}`,
+      JSON.stringify({revoked: [notes]}),
+    )
     served.set(notesUrl, {ok: false, reason: "access_denied"})
     const r = await startAndSettle()
+    expect(revoked.has(notes)).toBe(false)
+    expect(calls).toContain("restore:com.acme.notes")
     session = sessionB
     answer = async () => unmanaged(1)
     r.sessionChanged()
     await timers.advance(TRIGGER_JITTER_MS)
-    expect(revoked.has(notes)).toBe(false)
     session = sessionA
+    served.set(notesUrl, {ok: false, reason: "access_denied"})
     r.sessionChanged()
-    expect(revoked.has(notes)).toBe(true)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(revoked.has(notes)).toBe(false)
+    expect(calls.filter((call) => call.startsWith("revoke:"))).toEqual([])
   })
 })

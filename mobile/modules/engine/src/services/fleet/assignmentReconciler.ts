@@ -11,8 +11,9 @@
  *   reinstalls, unless the URL serves different bytes under the same version. Entries no longer desired lose their
  *   `assignment` reason; a package left with no reason uninstalls once it is idle. Its data stays.
  * - `unmanaged`: every assignment reason this account holds is withdrawn the same way.
- * - The URL's server decides access. `access_denied` blocks the package's launch and stops it now (an update may
- *   wait for a stop; a revocation never does). `archived` and `not_a_miniapp` are reported and withdraw nothing.
+ * - The URL's server decides access. `access_denied` stops updates and is reported; the miniapp keeps running and
+ *   can still be opened, and its backend decides what still works. A revocation recorded by an older build is
+ *   lifted. `archived` and `not_a_miniapp` are reported and withdraw nothing.
  * - A context (Core, account, workspace) change invalidates every operation of the old context before the new one
  *   activates: nothing downloaded for the old context commits. No lock is persisted, so a kill leaves none.
  * - Each assignment's state change is one `assignment_outcome` (validated against the protocol schema).
@@ -279,8 +280,9 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     wantedRevision = 0
     failures = 0
     again = false
-    // Signed out, the last account's revocations stand. Another account sees only its own.
-    if (current) applyRevocations(sessionKey(current))
+    // A refused server stops updates only. Lift any launch block an older build stored, for this account and for
+    // one left behind by another account on this phone.
+    if (current) liftRevocations()
     publishManagement()
     return current !== null
   }
@@ -296,10 +298,10 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     )
   }
 
-  function applyRevocations(key: string): void {
-    const mine = new Set(state.revoked)
+  function liftRevocations(): void {
+    const names = new Set<string>(state.revoked)
     for (const other of deps.store.getAllKeys()) {
-      if (other === key || !other.startsWith(RECONCILER_STORE_PREFIX)) continue
+      if (!other.startsWith(RECONCILER_STORE_PREFIX)) continue
       let revoked: unknown
       try {
         revoked = (JSON.parse(deps.store.getString(other) ?? "{}") as Partial<PersistedState>).revoked
@@ -308,12 +310,15 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       }
       if (!Array.isArray(revoked)) continue
       for (const packageName of revoked) {
-        if (typeof packageName === "string" && !mine.has(packageName) && miniapps.isAccessRevoked(packageName))
-          miniapps.restoreAccess(packageName)
+        if (typeof packageName === "string") names.add(packageName)
       }
     }
-    for (const packageName of mine) {
-      if (!miniapps.isAccessRevoked(packageName)) void miniapps.revokeAccess(packageName).catch(() => {})
+    for (const packageName of names) {
+      if (miniapps.isAccessRevoked(packageName)) miniapps.restoreAccess(packageName)
+    }
+    if (state.revoked.length > 0) {
+      state.revoked = []
+      save()
     }
   }
 
@@ -534,14 +539,10 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     const resolution = await miniapps.resolve(entry.url)
     assertCurrent(gen)
     if (!resolution.ok) {
-      if (resolution.reason === "access_denied") {
-        const installed = await miniapps.installedRelease(entry.packageName)
-        assertCurrent(gen)
-        if (installed && !state.revoked.includes(entry.packageName)) {
-          state.revoked.push(entry.packageName)
-          save()
-          await miniapps.revokeAccess(entry.packageName)
-        }
+      if (resolution.reason === "access_denied" && state.revoked.includes(entry.packageName)) {
+        state.revoked = state.revoked.filter((name) => name !== entry.packageName)
+        save()
+        miniapps.restoreAccess(entry.packageName)
       }
       if (resolution.reason === "download_failed") {
         record(entry, desired.revision, {state: "retrying", reason: "download_failed"})

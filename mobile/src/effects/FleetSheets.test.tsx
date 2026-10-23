@@ -224,37 +224,20 @@ describe("the invitation sheet", () => {
     expect(systemAlert).not.toHaveBeenCalled()
   })
 
-  it("is not swipeable: the drag, the backdrop and Android back leave it open, and it has no handle", async () => {
-    const listeners: Array<() => boolean | null | undefined> = []
-    const addListener = jest.spyOn(BackHandler, "addEventListener").mockImplementation((_event, listener) => {
-      listeners.push(listener)
-      return {remove: () => listeners.splice(listeners.indexOf(listener), 1)}
+  it("a swipe, the backdrop or Android back declines, and the sheet shows its handle", async () => {
+    const core = fakeCore({invitations: [invitation(RIDGELINE)]})
+    setWorkspaceApi(core.api)
+    screen = render(<ModalProvider>{null}</ModalProvider>)
+    const run = start()
+    await screen.findByText("Ridgeline Field Services invited you to join their workspace")
+
+    expect(mockDrag.enabled).toBe(true)
+    expect(screen.getByTestId("alert.handle")).toBeTruthy()
+    await act(async () => {
+      fireEvent.press(screen.getByTestId("alert.backdrop"))
     })
-    try {
-      const core = fakeCore({invitations: [invitation(RIDGELINE)]})
-      setWorkspaceApi(core.api)
-      screen = render(<ModalProvider>{null}</ModalProvider>)
-      const run = start()
-      await screen.findByText("Ridgeline Field Services invited you to join their workspace")
-
-      expect(mockDrag.enabled).toBe(false)
-      expect(screen.queryByTestId("alert.handle")).toBeNull()
-      await act(async () => {
-        fireEvent.press(screen.getByTestId("alert.backdrop", {includeHiddenElements: true}))
-      })
-      let handled: boolean | null | undefined
-      await act(async () => {
-        handled = listeners[listeners.length - 1]?.()
-      })
-      expect(handled).toBe(true)
-      expect(screen.getByText("Ridgeline Field Services invited you to join their workspace")).toBeTruthy()
-      expect(core.api.decline).not.toHaveBeenCalled()
-
-      await press(screen, "Decline")
-      await finish(run)
-    } finally {
-      addListener.mockRestore()
-    }
+    await finish(run)
+    expect(core.api.decline).toHaveBeenCalledTimes(1)
   })
 
   it("declines through Core, and does not list again", async () => {
@@ -382,7 +365,8 @@ describe("the leave-first variant", () => {
     await screen.findByText("Ridgeline Field Services invited you to join their workspace")
     expect(screen.getByText("You're in Northwind Labs. Leave it to join Ridgeline Field Services.")).toBeTruthy()
     expect(buttons(screen)).toEqual(["Leave Northwind Labs", "Decline"])
-    expect(mockDrag.enabled).toBe(false)
+    // Decline is the cancel button, so the invitation itself can be swiped away.
+    expect(mockDrag.enabled).toBe(true)
 
     await press(screen, "Leave Northwind Labs")
     expect(await screen.findByText("Leave Northwind Labs?")).toBeTruthy()
