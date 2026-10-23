@@ -282,6 +282,21 @@ export function fakeCore(scenario: Scenario) {
     }
     if (path === `${workspaces}/${ACME}/invitations`) return json({ items: [] });
     if (path === `${workspaces}/${ACME}/licenses`) return json({ items: licenses });
+    // Core's ordinary assignment: the seat is the member's, and the next read of the licenses lists it.
+    const seatRoute = new RegExp(`^${workspaces}/${ACME}/licenses/([^/]+)/seats/([^/]+)$`).exec(path);
+    if (seatRoute && method === "PUT") {
+      const at = licenses.findIndex(license => license.licenseId === seatRoute[1]);
+      if (at < 0) return json({ error: "license_not_found" }, 404);
+      const license = licenses[at]!;
+      if (!license.seats?.some(seat => seat.membershipId === seatRoute[2])) {
+        licenses[at] = {
+          ...license,
+          seatsUsed: license.seatsUsed + 1,
+          seats: [...(license.seats ?? []), { membershipId: seatRoute[2]!, mentraUserId: seatRoute[2]!.replace(/^wm_/, "u_"), assignedAt: "2026-10-21T12:00:00.000Z" }],
+        };
+      }
+      return json(licenses[at]);
+    }
 
     const billing = "/api/portal/billing";
     const prefix = `${billing}/workspaces/${ACME}`;

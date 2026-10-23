@@ -8,7 +8,8 @@
  *
  * The portal wires the view to what it owns: Core's workspace API, billing's client in the portal's locale, `me`
  * (which says whether billing's catalog can be read, and whether this viewer is offered billing), the
- * `?purchase=` of a return from checkout, the `?buy=<product>` of a link that asks to buy one product, and the two
+ * `?purchase=` of a return from checkout, the `?buy=<product>` of a link that asks to buy one product (answered by a
+ * dialog), the `?added=<licenseId>` of a return from the hosted page that added one license for the person, and the two
  * ways out to a hosted page. The view and its header stay
  * mounted while a request for a hosted page is out. The portal draws everything from billing's data and links out for
  * anything that needs a payment page.
@@ -39,6 +40,11 @@ export function purchaseParam(search: string): string | null {
 /** The `?buy=` product a link asked for, from the address's query string; null when there is none. */
 export function buyParam(search: string): string | null {
   return new URLSearchParams(search).get("buy") || null;
+}
+
+/** The `?added=` license a return from the hosted page that added one for the person came back with, from the address's query string; null when there is none. */
+export function addedParam(search: string): string | null {
+  return new URLSearchParams(search).get("added") || null;
 }
 
 /**
@@ -75,11 +81,15 @@ export function LicensesScreen({ workspaceId, me, detail }: LicensesProps) {
   return (
     <WorkspaceLicensesView
       {...licensesPageProps(me, workspaceId, detail, purchaseId)}
-      // A link that asks to buy one product: the view acts on it once its reads are in (a dialog, or a note saying why
-      // not) and then the address loses `?buy=` in place, so Back does not return to the link and a reload does not
-      // open the dialog again.
+      // A link that asks to buy one product: the view answers it once its reads are in, in a dialog (the Buy dialog, or
+      // what the person needs instead) and then the address loses `?buy=` in place, so Back does not return to the
+      // link and a reload does not open the dialog again.
       buyProduct={buyParam(search) ?? undefined}
       onBuyHandled={() => setQueryParam("buy", null, { replace: true })}
+      // Back from the hosted page that added a license for her: the view reads until she holds it and says so. Dismiss
+      // takes `?added=` out of the address in place, so Back does not return to the banner.
+      addedLicenseId={addedParam(search) ?? undefined}
+      onAddedDone={() => setQueryParam("added", null, { replace: true })}
       // The banner was dismissed: the address loses `?purchase=` in place, so Back does not return to the banner.
       onPurchaseDone={() => setQueryParam("purchase", null, { replace: true })}
       // Retry also asks who the person is again: a page opened before billing was ready (`billingCatalog` false, with

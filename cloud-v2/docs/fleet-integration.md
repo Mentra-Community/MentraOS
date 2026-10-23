@@ -264,7 +264,9 @@ if (!principal) return new Response(JSON.stringify({error: "forbidden"}), {statu
   `organization.fleet.administer` for the request to be forwarded at all. The
   contract also defines `{"kind": "workspace", "workspaceId": "..."}` and
   `{"kind": "person"}` (the scopes of [portal modules](portal-modules.md)), which
-  a receiver must be ready to read.
+  a receiver must be ready to read. A third kind, `{"kind": "public", "scope":
+  {"kind": "public"}}`, names no person: Core sends it only to a portal module's
+  public reads, never to Fleet, and a `user` principal never has that scope.
 - Core decided both within the signature's 60-second window, so Fleet acts on
   them as signed and does not ask Core again.
 

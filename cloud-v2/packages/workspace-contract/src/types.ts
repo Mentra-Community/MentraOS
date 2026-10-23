@@ -250,27 +250,35 @@ export const FORWARDED_PRINCIPAL_HEADERS = {
 export const FORWARDING_SERVICE = "core"
 
 /**
- * What a signed-in person's forwarded request covers, decided by Core: the whole organization, one
- * workspace (a team), or the person's own account.
+ * What a forwarded request covers, decided by Core. A signed-in person's request ({@link UserScope}) covers
+ * the whole organization, one workspace (a team), or the person's own account. `public` is a request Core
+ * forwards for anyone, signed in or not, and it names no person: only a `public` principal carries it.
  */
 export type ForwardedScope =
   | {kind: "organization"}
   | {kind: "workspace"; workspaceId: string}
   | {kind: "person"}
+  | {kind: "public"}
+
+/** What a signed-in person's request covers: every scope but `public`, which names no person. */
+export type UserScope = Exclude<ForwardedScope, {kind: "public"}>
 
 /** The scope under its first name, when Fleet was the only service Core forwarded to. */
 export type FleetScope = ForwardedScope
 
 /**
- * Who a forwarded request is from. Only people reach a service Core forwards to: Fleet's `/v1/client` only
- * ever receives `phone` principals, and Fleet's `/v1/admin` and a portal module's `/v1/portal` only `user`
- * principals.
+ * Who a forwarded request is from. Fleet's `/v1/client` only ever receives `phone` principals, and Fleet's
+ * `/v1/admin` and a portal module's `/v1/portal` `user` principals, but for a module's public reads, which
+ * receive only `public` ones. Which kinds a route accepts is the route's decision: one that serves people
+ * refuses a `public` principal, and the one that serves a public read refuses everything else.
  *
  * - `phone`: a signed-in phone session. `email` is the account's verified email, or null; it is a
  *   display attribute and never an identity key.
  * - `user`: a signed-in person. `isOrganizationAdmin` comes from a verified identity email; `email`
  *   may be unverified (`emailVerified`) and is never an authorization. `organizationCapabilities` is
  *   what Core decided the person may do to the organization, and `scope` is what this request covers.
+ * - `public`: a request Core forwards for anyone, signed in or not. It names no person, not even one who is
+ *   signed in, and covers the `public` scope only: Core vouches that it sent the request, and for nobody.
  */
 export type ForwardedPrincipal =
   | {kind: "phone"; mentraUserId: string; tenantId: string; sessionId: string; email: string | null}
@@ -281,8 +289,9 @@ export type ForwardedPrincipal =
       emailVerified: boolean
       isOrganizationAdmin: boolean
       organizationCapabilities: OrganizationCapability[]
-      scope: ForwardedScope
+      scope: UserScope
     }
+  | {kind: "public"; scope: {kind: "public"}}
 
 /**
  * `error` values on 401 responses from the internal service API. The client treats only `invalid_token`
