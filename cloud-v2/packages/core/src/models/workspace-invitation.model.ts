@@ -3,7 +3,7 @@
  *
  * Only the SHA-256 hash of the invitation token is stored (`tokenHash`); the
  * token itself exists only in the invitation link. At most one invitation can
- * be pending per workspace and email; revoked and accepted rows stay as history.
+ * be pending per workspace and email; revoked, accepted and declined rows stay as history.
  *
  * Every invitation records the authority it was sent with (`invitedByAuthority`),
  * which acceptance checks again:
@@ -20,7 +20,7 @@ import {WORKSPACE_ROLES} from "@mentra/workspace-contract"
 import {Schema, type InferSchemaType} from "mongoose"
 import {registerModel} from "./register-model"
 
-export const WORKSPACE_INVITATION_STATUSES = ["pending", "accepted", "revoked"] as const
+export const WORKSPACE_INVITATION_STATUSES = ["pending", "accepted", "revoked", "declined"] as const
 export type WorkspaceInvitationStatus = (typeof WORKSPACE_INVITATION_STATUSES)[number]
 
 export const INVITER_AUTHORITIES = ["membership", "organization_admin", "system"] as const

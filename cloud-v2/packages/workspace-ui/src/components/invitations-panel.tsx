@@ -17,20 +17,22 @@ import {
   type WorkspaceDetail,
   type WorkspaceRole,
 } from "@mentra/workspace-contract";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, MailIcon, MoreHorizontalIcon, SendIcon, XIcon } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 import type { WorkspaceApi } from "../api";
-import { formatDate } from "../lib/format";
+import { formatExpiry } from "../lib/format";
 import { cn } from "../lib/utils";
 import { invitationsQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
 import { assignableRoles, can, effectiveRole, ROLE_DESCRIPTIONS, ROLE_LABELS } from "../roles";
 import { licenseStrings } from "../strings/licenses";
 import { Button } from "../ui/button";
+import { Card } from "../ui/card";
 import { Dialog } from "../ui/dialog";
+import { Menu, type MenuItem } from "../ui/menu";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { NativeSelect } from "../ui/native-select";
-import { Avatar, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
+import { CopyButton, ErrorNotice, Panel, QueryGate, Restricted } from "./common";
 import { ConfirmDialog, useAsking } from "./confirm-dialog";
 
 const TITLE = "Invitations";
@@ -170,9 +172,16 @@ function InviteForm({
   );
 }
 
+/** The newest invitation first: every invitation lives the same time, so the latest to expire was sent last. */
+function newestFirst(invitations: InvitationView[]): InvitationView[] {
+  return [...invitations].sort((a, b) => Date.parse(b.expiresAt) - Date.parse(a.expiresAt));
+}
+
 /**
- * The pending invitations, each with Resend and Revoke where the viewer could have sent it. Revoke asks in a dialog,
- * which shows a refusal itself; a failed Resend is shown under the list.
+ * The pending invitations as a table: each address (with a mail mark: nobody has signed in as it yet), its role and when
+ * it expires ("In 6 days", "Tomorrow"), newest first, as the design board draws them. Where the viewer could have sent
+ * one, its row's "…" menu has Resend and Revoke. Revoke asks in a dialog, which shows a refusal itself; a failed Resend
+ * is shown under the list. `flush` is for a card that holds nothing else: its own border is the table's top edge.
  */
 function PendingInvitationsList({
   api,
@@ -180,12 +189,14 @@ function PendingInvitationsList({
   detail,
   invitations,
   onResent,
+  flush = false,
 }: {
   api: WorkspaceApi;
   workspaceId: string;
   detail: WorkspaceDetail;
   invitations: InvitationView[];
   onResent(link: InvitationLink): void;
+  flush?: boolean;
 }) {
   const viewer = effectiveRole(detail);
   const resend = useWorkspaceMutation(api, workspaceId, async (invitation: InvitationView) => {
@@ -198,59 +209,90 @@ function PendingInvitationsList({
   );
   const busy = resend.isPending || revoke.isPending;
   const ask = useAsking<InvitationView>((invitation) => invitation.invitationId, busy);
-  // The invitations the viewer may resend or revoke: the ones with buttons, which focus moves between.
-  const manageable = viewer ? invitations.filter((invitation) => canChangeRole(viewer, null, invitation.role)) : [];
+  const rows = newestFirst(invitations);
+  // The invitations the viewer may resend or revoke: the ones with a menu, which focus moves between.
+  const manageable = viewer ? rows.filter((invitation) => canChangeRole(viewer, null, invitation.role)) : [];
   const asking = ask.asking;
   const t = licenseStrings.confirm;
 
   if (invitations.length === 0) return <Restricted>No pending invitations.</Restricted>;
   return (
     <>
-      <ul className="divide-y">
-        {invitations.map((invitation) => (
-          <li
-            key={invitation.invitationId}
-            className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 first:pt-0 last:pb-0"
-          >
-            <div className="flex min-w-0 items-center gap-3">
-              <Avatar label={invitation.email} className="text-muted-foreground bg-background border-dashed" />
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="truncate text-[15px] font-semibold">{invitation.email}</span>
-                  <RoleBadge role={invitation.role} />
-                </div>
-                <div className="text-muted-foreground mt-0.5 text-xs">Expires {formatDate(invitation.expiresAt)}</div>
-              </div>
-            </div>
-            {viewer && canChangeRole(viewer, null, invitation.role) ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  aria-label={`Resend invitation to ${invitation.email}`}
-                  title="Sends a new link. The earlier link stops working."
-                  disabled={busy}
-                  onClick={() => resend.mutate(invitation)}
-                >
-                  Resend
-                </Button>
-                <Button
-                  ref={ask.trigger(invitation.invitationId)}
-                  type="button"
-                  variant="destructive-secondary"
-                  size="sm"
-                  aria-label={`Revoke invitation for ${invitation.email}`}
-                  disabled={busy}
-                  onClick={() => ask.ask(invitation, manageable)}
-                >
-                  Revoke
-                </Button>
-              </div>
-            ) : null}
-          </li>
-        ))}
-      </ul>
+      <div data-slot="invitations-list" className="-mx-6">
+        <table className="w-full text-left text-sm">
+          <thead className={cn("text-muted-foreground border-b text-xs", !flush && "border-t")}>
+            <tr>
+              <th className="py-3 pr-4 pl-6 font-semibold">Email</th>
+              <th className="py-3 pr-4 font-semibold">Role</th>
+              <th className="py-3 pr-4 font-semibold">Expires</th>
+              <th aria-hidden="true" className="w-12 py-3 pr-4" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((invitation) => {
+              const items: MenuItem[] =
+                viewer && canChangeRole(viewer, null, invitation.role)
+                  ? [
+                      {
+                        key: "resend",
+                        label: (
+                          <>
+                            <SendIcon aria-hidden="true" className="size-4" />
+                            Resend
+                          </>
+                        ),
+                        onSelect: () => resend.mutate(invitation),
+                      },
+                      {
+                        key: "revoke",
+                        destructive: true,
+                        label: (
+                          <>
+                            <XIcon aria-hidden="true" className="size-4" />
+                            Revoke
+                          </>
+                        ),
+                        onSelect: () => ask.ask(invitation, manageable),
+                      },
+                    ]
+                  : [];
+              return (
+                <tr key={invitation.invitationId} className="border-b last:border-b-0">
+                  <td className="py-3.5 pr-4 pl-6">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span
+                        aria-hidden="true"
+                        className="border-border text-muted-foreground bg-background inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-dashed"
+                      >
+                        <MailIcon className="size-4" />
+                      </span>
+                      <span className="min-w-0 text-[15px] font-semibold [overflow-wrap:anywhere]">{invitation.email}</span>
+                    </div>
+                  </td>
+                  <td className="text-muted-foreground py-3.5 pr-4 whitespace-nowrap">{ROLE_LABELS[invitation.role]}</td>
+                  <td className="text-muted-foreground py-3.5 pr-4 whitespace-nowrap">{formatExpiry(invitation.expiresAt)}</td>
+                  <td className="py-3.5 pr-4 text-right">
+                    {items.length > 0 ? (
+                      <span
+                        ref={(element) => ask.trigger(invitation.invitationId)(element?.querySelector("button") ?? null)}
+                        className="inline-block"
+                      >
+                        <Menu
+                          label={`More for ${invitation.email}`}
+                          trigger={<MoreHorizontalIcon aria-hidden="true" />}
+                          items={items}
+                          disabled={busy}
+                          className="text-muted-foreground"
+                        />
+                      </span>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
       <ErrorNotice error={resend.error} />
       {asking ? (
         <ConfirmDialog
@@ -358,25 +400,32 @@ export function PendingInvitationsScreen({
 
   if (!detail || !mayManage) return null;
   if (!link && invitationsResult.data?.length === 0) return null;
+  // The board draws the list as one card with no heading of its own: the Invited tab above it already says what it is.
   return (
-    <Panel
-      title="Pending invitations"
-      count={invitationsResult.data?.length}
-      description="Sent but not accepted yet. Each can only be accepted by the address it was sent to."
-    >
-      {link ? <InvitationLinkNotice link={link} onDismiss={() => setLink(null)} /> : null}
-      <QueryGate result={invitationsResult}>
-        {(invitations) => (
-          <PendingInvitationsList
-            api={api}
-            workspaceId={workspaceId}
-            detail={detail}
-            invitations={invitations}
-            onResent={setLink}
-          />
-        )}
-      </QueryGate>
-    </Panel>
+    // No `overflow-hidden`: a row's "…" menu opens over the card's edge, and a card with one row is shorter than the
+    // menu. The table has no fill, so nothing needs clipping to the card's rounded corners.
+    <Card role="region" aria-label="Pending invitations" className="gap-0 py-0">
+      {link ? (
+        <div className="px-6 pt-6">
+          <InvitationLinkNotice link={link} onDismiss={() => setLink(null)} />
+        </div>
+      ) : null}
+      {/* The table bleeds to the card's edges (its own -mx-6); a loading or failed state keeps the card's padding. */}
+      <div className={cn("px-6 [&:not(:has(table))]:py-6", link && "pt-4")}>
+        <QueryGate result={invitationsResult}>
+          {(invitations) => (
+            <PendingInvitationsList
+              api={api}
+              workspaceId={workspaceId}
+              detail={detail}
+              invitations={invitations}
+              onResent={setLink}
+              flush={!link}
+            />
+          )}
+        </QueryGate>
+      </div>
+    </Card>
   );
 }
 

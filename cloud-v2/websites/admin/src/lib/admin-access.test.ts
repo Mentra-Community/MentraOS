@@ -24,32 +24,19 @@ describe("the admin portal's pages follow capabilities", () => {
     expect(resolvePage(null, visible)).toBe("incidents");
   });
 
-  test("the Fleet page follows the incident system in navigation order, and Licenses follows Workspaces", () => {
+  test("there is no Fleet page: Fleet Management opens in the workspace portal, from Workspaces", () => {
     expect([...PAGE_ORDER]).toEqual([
-      "incidents", "fleet", "test-runs", "routine-catalog", "system-health", "workspaces", "licenses", "operator-keys", "audit",
+      "incidents", "test-runs", "routine-catalog", "system-health", "workspaces", "licenses", "operator-keys", "audit",
     ]);
-  });
-
-  test("an Organization Admin sees the Fleet page, right after the incident system, once Fleet is installed", () => {
+    expect([...PAGE_ORDER] as string[]).not.toContain("fleet");
+    // Installed or not, and whatever the principal holds, no page is offered for it.
+    for (const fleet of [{ installed: true }, { installed: false }, undefined]) {
+      expect(visiblePages(me(ORGANIZATION_CAPABILITIES, true, fleet)) as string[]).not.toContain("fleet");
+    }
+    // organization.fleet.administer alone opens nothing in the admin portal.
+    expect(visiblePages(me(["organization.fleet.administer"], false, { installed: true }))).toEqual([]);
     const visible = visiblePages(me(ORGANIZATION_CAPABILITIES, true, { installed: true }));
-    expect(visible).toEqual([
-      "incidents", "fleet", "test-runs", "routine-catalog", "system-health", "workspaces", "operator-keys", "audit",
-    ]);
-    expect(resolvePage("fleet", visible)).toBe("fleet");
-  });
-
-  test("the Fleet page is hidden when Fleet is not installed, or the answer is missing", () => {
-    expect(visiblePages(me(ORGANIZATION_CAPABILITIES, true, { installed: false }))).not.toContain("fleet");
-    expect(visiblePages(me(ORGANIZATION_CAPABILITIES, true))).not.toContain("fleet");
-    const visible = visiblePages(me(ORGANIZATION_CAPABILITIES, true, { installed: false }));
-    expect(resolvePage("fleet", visible)).toBe("incidents");
-  });
-
-  test("the Fleet page needs organization.fleet.administer even when Fleet is installed", () => {
-    const withoutFleet = ORGANIZATION_CAPABILITIES.filter(capability => capability !== "organization.fleet.administer");
-    expect(visiblePages(me(withoutFleet, true, { installed: true }))).not.toContain("fleet");
-    expect(visiblePages(me([], false, { installed: true }))).toEqual([]);
-    expect(visiblePages(me(["organization.fleet.administer"], false, { installed: true }))).toEqual(["fleet"]);
+    expect(resolvePage("fleet" as AdminPageKey, visible)).toBe("incidents");
   });
 
   test("an Organization Admin sees the Licenses page, right after Workspaces, once licenses are available", () => {

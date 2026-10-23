@@ -10,12 +10,15 @@ import { MentraLogo } from "./brand";
  */
 export function CenteredLayout({
   userEmail,
+  userName,
   onSignOut,
   signingOut = false,
   children,
 }: {
   /** Who is signed in, beside Sign out (hidden on a phone). */
   userEmail: string;
+  /** Their name from sign-in, shown in place of the address (which stays as the tooltip). */
+  userName?: string | null;
   onSignOut?: () => void;
   signingOut?: boolean;
   children: ReactNode;
@@ -25,7 +28,12 @@ export function CenteredLayout({
       <header className="flex h-16 items-center justify-between gap-4 px-5 md:h-20 md:px-8">
         <MentraLogo className="h-[22px]" />
         <div className="flex min-w-0 items-center gap-4">
-          <span className="text-muted-foreground hidden truncate text-sm sm:inline">{userEmail}</span>
+          <span
+            className="text-muted-foreground hidden truncate text-sm sm:inline"
+            title={userName?.trim() ? userEmail : undefined}
+          >
+            {userName?.trim() || userEmail}
+          </span>
           <Button type="button" variant="secondary" size="sm" disabled={signingOut} onClick={onSignOut}>
             <LogOut />
             {signingOut ? "Signing out..." : "Sign out"}

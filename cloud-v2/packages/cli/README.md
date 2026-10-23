@@ -144,21 +144,17 @@ the staging Store and `bun run mentra:local` a Store on `localhost:3003`.
 
 ## Workspaces
 
-The CLI keeps publishing scoped to one workspace: a group of people who share
-miniapps, credentials, and a package prefix. `mentra login` selects your workspace
-automatically when you belong to only one. When an account belongs to more than
-one, select it explicitly:
+The CLI keeps publishing scoped to your workspace: the group of people who share
+miniapps, credentials, and a package prefix. A person is in one workspace, and
+`mentra login` selects it. If an account still belongs to more than one, which
+Mentra no longer allows, commands that need a workspace stop and say so: contact
+Mentra support to bring the account down to one.
 
 ```bash
-mentra workspace list          # * marks the active workspace
-mentra workspace use ws_...
-mentra workspace show          # the active workspace and its package prefix
+mentra workspace show          # your workspace and its package prefix
 ```
 
-Without a selection, a command that needs a workspace stops and asks you to run
-`mentra workspace use <id>`, listing the ids you can choose from.
-
-To create another workspace, optionally with its package prefix:
+To create your workspace when you have none, optionally with its package prefix:
 
 ```bash
 mentra workspace create "Your Team" --package-prefix com.example

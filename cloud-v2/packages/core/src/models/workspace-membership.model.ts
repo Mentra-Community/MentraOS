@@ -65,6 +65,13 @@ const WorkspaceMembershipSchema = new Schema(
     },
     status: {type: String, enum: WORKSPACE_MEMBERSHIP_STATUSES, default: "active"},
     startedAt: {type: Date, required: true},
+    /**
+     * When the person took up an imported membership (its claim). Null for a membership Core created for a known
+     * person, and for one claimed before this was recorded (its claim event, `membership.claimed`, has the time).
+     * Fleet's membership intervals begin here, not at `startedAt`, so what a phone sent before its person joined
+     * is never counted for the workspace.
+     */
+    claimedAt: {type: Date, default: null},
     endedAt: {type: Date, default: null},
     endedReason: {type: String, enum: [...WORKSPACE_MEMBERSHIP_ENDED_REASONS, null], default: null},
   },

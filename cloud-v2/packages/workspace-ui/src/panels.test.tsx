@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { MemberView } from "@mentra/workspace-contract";
 import { act, type ReactElement } from "react";
@@ -21,11 +21,10 @@ import {
   WorkspaceInviteDialog,
   WorkspacePendingInvitationsPanel,
 } from "./components/invitations-panel";
-import { CreateWorkspaceDialog, CreateWorkspaceForm } from "./components/create-workspace";
+import { CreateWorkspaceForm } from "./components/create-workspace";
 import { ROLE_DESCRIPTIONS } from "./roles";
 import { QueryGate } from "./components/common";
 import { WorkspaceMembersPanel } from "./components/members-panel";
-import { WorkspacePicker } from "./components/workspace-picker";
 import { WorkspaceSettingsPanel } from "./components/settings-panel";
 import { byText, cleanup, click, find, findAll, press, render, setupDom, teardownDom } from "./test-dom";
 import { invitationPreviewQuery, workspaceKeys } from "./queries";
@@ -46,6 +45,20 @@ import {
 } from "./test-fixtures";
 
 const ALL_ROLES = ["member", "developer", "admin", "owner"];
+
+
+/**
+ * Runs `body` at local noon, so "in N days" (counted in the viewer's calendar days) does not depend on the hour the
+ * suite runs: an hour past N days from 23:30 is already N + 1 calendar days away.
+ */
+function atLocalNoon(body: () => void) {
+  setSystemTime(new Date(2026, 5, 15, 12, 0, 0));
+  try {
+    body();
+  } finally {
+    setSystemTime();
+  }
+}
 
 describe("members panel: role controls follow the viewer's role", () => {
   test("a developer sees no role controls", () => {
@@ -309,7 +322,7 @@ describe("invitations panel", () => {
     expect(roles("admin")).toEqual(["member", "developer"]);
   });
 
-  test("revoke is offered only for invitations the viewer could have sent", () => {
+  test("a row's menu is offered only for invitations the viewer could have sent", () => {
     const { api } = offlineApi();
     const seed = (role: "owner" | "admin") =>
       renderSeeded(
@@ -317,11 +330,8 @@ describe("invitations panel", () => {
         { detail: detailFor(role), invitations: INVITATIONS },
         <WorkspaceInvitationsPanel api={api} workspaceId={WORKSPACE_ID} />,
       );
-    expect(labelsStartingWith(seed("admin"), "Revoke invitation")).toEqual(["Revoke invitation for newbie@acme.test"]);
-    expect(labelsStartingWith(seed("owner"), "Revoke invitation")).toEqual([
-      "Revoke invitation for newbie@acme.test",
-      "Revoke invitation for boss@acme.test",
-    ]);
+    expect(labelsStartingWith(seed("admin"), "More for ")).toEqual(["More for newbie@acme.test"]);
+    expect(labelsStartingWith(seed("owner"), "More for ")).toEqual(["More for newbie@acme.test", "More for boss@acme.test"]);
   });
 
   test("the public panel passes only api and workspaceId on: a smuggled test-only prop never shows a link", () => {
@@ -416,14 +426,7 @@ describe("a failed background refetch keeps what was already loaded", () => {
     );
     expect(settings).toContain("Save name");
 
-    const picker = await failed(
-      <WorkspacePicker api={api} value={WORKSPACE_ID} onChange={() => {}} />,
-      { list: [detailFor("owner")] },
-      ["list"],
-    );
-    expect(picker).toContain(WORKSPACE_NAME);
-
-    for (const markup of [members, audit, settings, picker]) expect(markup).not.toContain("Try again");
+    for (const markup of [members, audit, settings]) expect(markup).not.toContain("Try again");
   });
 });
 
@@ -609,31 +612,6 @@ describe("audit panel", () => {
   });
 });
 
-describe("workspace picker", () => {
-  const list = [detailFor("owner"), { ...detailFor("member"), workspaceId: "ws_other", name: "Side Project" }];
-
-  test("lists the caller's workspaces with the current one selected", () => {
-    const { api } = offlineApi();
-    const markup = renderSeeded(
-      api,
-      { list },
-      <WorkspacePicker api={api} value="ws_other" onChange={() => {}} />,
-    );
-    expect(markup).toContain(WORKSPACE_NAME);
-    expect(markup).toMatch(/<option value="ws_other" selected="">Side Project<\/option>/);
-    expect(markup).not.toContain("New workspace");
-  });
-
-  test("offers creation only when asked to, and says so when there is nothing to pick", () => {
-    const { api } = offlineApi();
-    const creating = renderSeeded(api, { list }, <WorkspacePicker api={api} value={null} onChange={() => {}} allowCreate />);
-    expect(creating).toContain("New workspace");
-    expect(creating).toContain("Select a workspace");
-    const empty = renderSeeded(api, { list: [] }, <WorkspacePicker api={api} value={null} onChange={() => {}} />);
-    expect(empty).toContain("You are not in any workspace yet.");
-  });
-});
-
 describe("invitation accept view", () => {
   const TOKEN = "invite-token-never-shown";
   const preview = {
@@ -720,6 +698,28 @@ describe("invitation accept view", () => {
     expect(card({ status: "ready", preview: { ...preview, invitedByEmail: null } })).toContain("You have been invited to join");
   });
 
+  test("someone already in a workspace is told to leave it first: no Accept, Decline stays, expiry is relative", () => atLocalNoon(() => {
+    const soon = { ...preview, expiresAt: new Date(Date.now() + 3 * 86_400_000 + 3_600_000).toISOString() };
+    const markup = card({ status: "ready", preview: soon }, null, {
+      viewerEmail: "newbie@acme.test",
+      inWorkspace: { name: "Side Project" },
+      leaveAction: <a href="/w/ws_side/settings">Leave Side Project</a>,
+      onDecline: () => {},
+    });
+    expect(markup).toContain("You&#x27;re in <strong");
+    expect(markup).toContain(">Side Project</strong>. Leave it to join <strong");
+    expect(markup).toContain("Leave Side Project");
+    expect(markup).toContain("Decline");
+    expect(markup).not.toContain("Accept invitation");
+    expect(markup).toContain("Expires in 3 days");
+    // Someone else's invitation says that first, and is not asked to leave anything.
+    const other = card({ status: "ready", preview }, null, { viewerEmail: "sam@acme.test", inWorkspace: { name: "Side Project" }, onSwitchAccount: () => {} });
+    expect(other).toContain("This invitation is for <strong");
+    expect(other).not.toContain("Leave it to join");
+    // Not in a workspace: plain Accept.
+    expect(card({ status: "ready", preview }, null, { viewerEmail: "newbie@acme.test", inWorkspace: null })).toContain("Accept invitation");
+  }));
+
   test("an invitation for another account says so up front and offers Switch account instead of Accept", () => {
     expect(isInvitationForOtherAccount(preview, "sam@acme.test")).toBe(true);
     expect(isInvitationForOtherAccount(preview, " NEWBIE@acme.test ")).toBe(false);
@@ -777,22 +777,47 @@ describe("pending invitations panel", () => {
     );
   };
 
-  test("lists pending invitations with Resend and Revoke where the viewer could have sent them", () => {
+  test("lists pending invitations with a menu where the viewer could have sent them; Resend and Revoke are in it", () => {
     const owner = render("owner");
     expect(owner).toContain("Pending invitations");
-    expect(labelsStartingWith(owner, "Resend invitation")).toEqual([
-      "Resend invitation to newbie@acme.test",
-      "Resend invitation to boss@acme.test",
-    ]);
-    expect(labelsStartingWith(owner, "Revoke invitation")).toEqual([
-      "Revoke invitation for newbie@acme.test",
-      "Revoke invitation for boss@acme.test",
-    ]);
+    expect(labelsStartingWith(owner, "More for ")).toEqual(["More for newbie@acme.test", "More for boss@acme.test"]);
+    // Nothing destructive is drawn until a row's menu is opened.
+    expect(owner).not.toContain("Resend");
+    expect(owner).not.toContain("Revoke");
     const admin = render("admin");
-    expect(labelsStartingWith(admin, "Resend invitation")).toEqual(["Resend invitation to newbie@acme.test"]);
+    expect(labelsStartingWith(admin, "More for ")).toEqual(["More for newbie@acme.test"]);
     expect(admin).toContain("boss@acme.test");
     // The invite form lives in the dialog, not here.
     expect(owner).not.toContain("<form");
+  });
+
+  test("is a table of address, role and when it expires, newest first", () => atLocalNoon(() => {
+    const now = Date.now();
+    const day = 86_400_000;
+    const invitations = [
+      { invitationId: "inv_old", email: "old@acme.test", role: "member" as const, expiresAt: new Date(now + 2 * day).toISOString(), invitedByMembershipId: null },
+      { invitationId: "inv_new", email: "new@acme.test", role: "admin" as const, expiresAt: new Date(now + 6 * day + 3_600_000).toISOString(), invitedByMembershipId: null },
+    ];
+    const markup = render("owner", invitations);
+    for (const heading of ["Email", "Role", "Expires"]) expect(markup).toContain(`>${heading}</th>`);
+    expect(markup.indexOf("new@acme.test")).toBeLessThan(markup.indexOf("old@acme.test"));
+    expect(markup).toContain("In 6 days");
+    expect(markup).toContain("In 2 days");
+    expect(markup).not.toContain("Expires Oct");
+  }));
+
+  test("is the board's list: one card with no heading, a mail mark for each address, and the role as plain text", () => {
+    const markup = render("owner");
+    // The Invited tab above it names it; the card keeps an accessible name but draws no title, count or blurb.
+    expect(markup).toContain('role="region" aria-label="Pending invitations"');
+    expect(markup).not.toContain("Sent but not accepted yet");
+    expect(markup).not.toMatch(/data-slot="card-title"/);
+    // A mail mark, not initials, and no role chip (the board's role is plain grey text).
+    expect(markup.match(/lucide-mail/g)).toHaveLength(INVITATIONS.length);
+    expect(markup).not.toContain("rounded-full px-2.5 text-xs leading-none font-semibold");
+    expect(markup).toMatch(/whitespace-nowrap">Member<\/td>/);
+    // The table's top edge is the card's own border.
+    expect(markup).toMatch(/<thead class="text-muted-foreground border-b text-xs">/);
   });
 
   test("renders nothing for a viewer who cannot manage members, or when nothing is pending", () => {
@@ -911,16 +936,6 @@ describe("creating a workspace", () => {
     expect(markup).toContain("Cancel");
     expect(markup.match(/<input/g)).toHaveLength(1);
     expect(requests).toEqual([]);
-  });
-
-  test("the dialog shows the form only while open", () => {
-    const { api } = offlineApi();
-    expect(renderSeeded(api, {}, <CreateWorkspaceDialog api={api} open={false} onClose={() => {}} onCreated={() => {}} />)).not.toContain(
-      "Workspace name",
-    );
-    const open = renderSeeded(api, {}, <CreateWorkspaceDialog api={api} open onClose={() => {}} onCreated={() => {}} />);
-    expect(open).toContain("Create a workspace");
-    expect(open).toContain("Workspace name");
   });
 });
 

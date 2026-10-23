@@ -305,16 +305,18 @@ export async function submitRelease(
   );
 }
 
-/** The caller belongs to several workspaces and has not chosen one. The message says how to choose. */
+/**
+ * The caller belongs to several workspaces and has not chosen one. A person is meant to be in one workspace; an
+ * account that predates that rule is brought down to one by Mentra (the one-workspace cleanup), so the message
+ * says so instead of offering a command to choose.
+ */
 export class WorkspaceSelectionRequiredError extends Error {
   constructor(readonly workspaces: Array<{ workspaceId: string; name: string }>) {
     super(
-      workspaces.length === 0
-        ? "Several workspaces are available and none is selected. Run `mentra workspace use <id>`; `mentra workspace list` shows the ids."
-        : [
-            "Several workspaces are available and none is selected. Run `mentra workspace use <id>` with one of:",
-            ...workspaces.map((workspace) => `  ${workspace.workspaceId}\t${workspace.name}`),
-          ].join("\n"),
+      [
+        "This account is in more than one workspace, which Mentra no longer allows. Contact Mentra support to bring it down to one.",
+        ...workspaces.map((workspace) => `  ${workspace.workspaceId}\t${workspace.name}`),
+      ].join("\n"),
     );
     this.name = "WorkspaceSelectionRequiredError";
   }

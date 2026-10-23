@@ -13,7 +13,8 @@
     "../mobile/modules/glasses-media",
     "../mobile/modules/miniapp",
     "../cloud-v2/packages/cloud-client",
-    "../cloud-v2/packages/protocol"
+    "../cloud-v2/packages/protocol",
+    "../cloud-v2/packages/workspace-contract"
   ],
   "patchedDependencies": {
     "expo-modules-core@55.0.25": "patches/expo-modules-core@55.0.25.patch"

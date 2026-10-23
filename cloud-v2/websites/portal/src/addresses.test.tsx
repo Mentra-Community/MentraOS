@@ -1,6 +1,6 @@
 /**
  * The portal's short addresses, mounted over the real clients and a small fake Core, in a DOM (happy-dom): the
- * address a person lands on after a redirect, an invitation or a switch, and which workspace is current. The
+ * address a person lands on after a redirect or an invitation, and which workspace is current. The
  * pure rules are in lib/routes.test.ts; `app.test.tsx` has the server-rendered frame.
  */
 
@@ -144,16 +144,7 @@ const address = () => `${window.location.pathname}${window.location.search}`;
 const sidebarHrefs = () =>
   findAll<HTMLAnchorElement>("nav a[href]")
     .map(anchor => anchor.getAttribute("href")!)
-    .filter(href => ["/members", "/settings", "/audit", "/licenses"].includes(href.split("?")[0]!));
-/** The switcher's entries (open it first), by workspace: where each one goes. */
-function switcherHrefs(): Record<string, string> {
-  const entries: Record<string, string> = {};
-  for (const anchor of findAll<HTMLAnchorElement>("[role='menu'] a[href], [role='menuitem'][href]")) {
-    const label = anchor.textContent ?? "";
-    for (const id of ["ws_a", "ws_b"]) if (label.includes(`Name of ${id}`)) entries[id] = anchor.getAttribute("href")!;
-  }
-  return entries;
-}
+    .filter(href => ["/members", "/settings", "/licenses", "/fleet"].includes(href.split("?")[0]!));
 const page = () => document.body.textContent ?? "";
 
 describe("older addresses land on the same page, keeping their query", () => {
@@ -180,13 +171,13 @@ describe("the current workspace", () => {
   test("a person's own workspace gets bare links, and a redundant ?workspace= is dropped in place", async () => {
     await open("/settings?workspace=ws_own&purchase=pur_1", { listed: ["ws_own"] }, "Name of ws_own");
     await until(() => address() === "/settings?purchase=pur_1", "the redundant parameter to go");
-    expect(sidebarHrefs()).toEqual(["/members", "/settings", "/audit"]);
+    expect(sidebarHrefs()).toEqual(["/members", "/settings"]);
   });
 
   test("an Organization Admin at a customer's workspace gets ?workspace= on every sidebar link, and it is not remembered", async () => {
     await open("/members?workspace=ws_x", { listed: ["ws_own"], adminOf: ["ws_x"] }, "Name of ws_x");
     expect(address()).toBe("/members?workspace=ws_x");
-    expect(sidebarHrefs()).toEqual(["/members?workspace=ws_x", "/settings?workspace=ws_x", "/audit?workspace=ws_x"]);
+    expect(sidebarHrefs()).toEqual(["/members?workspace=ws_x", "/settings?workspace=ws_x"]);
     expect(window.localStorage.getItem(LAST_WORKSPACE_KEY)).toBeNull();
   });
 
@@ -194,9 +185,9 @@ describe("the current workspace", () => {
     await open("/settings?workspace=ws_b", { listed: ["ws_a", "ws_b"] }, "Name of ws_b");
     await until(() => window.localStorage.getItem(LAST_WORKSPACE_KEY) === "ws_b", "the workspace to be remembered");
     await until(() => address() === "/settings", "ws_b to be the bare address");
-    // In the switcher, the other one is now the one that is named.
-    await click(find("button[aria-label^='Workspace:']"));
-    expect(switcherHrefs()).toEqual({ ws_a: "/settings?workspace=ws_a", ws_b: "/settings" });
+    // There is no switcher to name the other one from.
+    expect(document.querySelector("button[aria-label^='Workspace:']")).toBeNull();
+    expect(sidebarHrefs()).toEqual(["/members", "/settings"]);
   });
 
   test("a remembered workspace the person is not in is ignored: the first one opens and the stale one is never asked for", async () => {
@@ -226,13 +217,14 @@ describe("each tab stays on its own workspace", () => {
   });
 
   test("this tab's own pick is what its bare address means from then on", async () => {
-    await open("/settings", { listed: ["ws_a", "ws_b"] }, "Name of ws_a");
-    await click(find("button[aria-label^='Workspace:']"));
-    const entry = findAll<HTMLAnchorElement>("[role='menu'] a[href]").find(anchor => (anchor.textContent ?? "").includes("Name of ws_b"))!;
-    await click(entry);
-    await until(() => page().includes("Workspace: Name of ws_b") || document.querySelector("button[aria-label^='Workspace: Name of ws_b']") !== null, "ws_b to open");
+    await open("/settings?workspace=ws_b", { listed: ["ws_a", "ws_b"] }, "Name of ws_b");
     await until(() => address() === "/settings", "ws_b to be the bare address");
     expect(window.localStorage.getItem(LAST_WORKSPACE_KEY)).toBe("ws_b");
+    // Another tab remembers ws_a; this one still means ws_b.
+    window.localStorage.setItem(LAST_WORKSPACE_KEY, "ws_a");
+    await click(find("nav a[href='/settings']"));
+    await until(() => address() === "/settings", "the Settings page");
+    expect(page()).toContain("Name of ws_b");
   });
 });
 

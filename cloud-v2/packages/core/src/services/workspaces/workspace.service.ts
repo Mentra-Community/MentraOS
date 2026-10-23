@@ -59,6 +59,7 @@ import {isDeletedAccountId} from "../user.service"
 import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
 import {deletionHoldsOf, replaceableWorkspaces} from "./workspace-holdings"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
+import {acquireGuard, releaseGuard, releaseGuardsOfWorkspace} from "./membership-guard.service"
 import {workspaceCreationPolicy} from "./organization"
 import {fail, WorkspaceError, type WorkspaceErrorCode} from "./workspace-error"
 
@@ -266,6 +267,8 @@ export async function insertWorkspace(
   const workspaceId = `ws_${ulid()}`
   const membershipId = `wm_${ulid()}`
   const now = new Date()
+  // One workspace per person: refused when they already hold one, atomically with the membership below.
+  await acquireGuard(session, actor.mentraUserId, {workspaceId, membershipId})
   await WorkspaceModel.create(
     [
       {
@@ -364,8 +367,8 @@ export async function deleteWorkspace(actor: Actor, workspaceId: string, opts: {
 /**
  * Every step of deleting `workspace` after the checks of who may and whether it should be, in the
  * caller's transaction: the workspace row becomes `deleted` (one revision bump, which serializes the
- * deletion with any other change there), its active memberships end (`workspace_deleted`), its keys
- * and pending invitations are revoked, its licenses end and release their seats, and `workspace.deleted`
+ * deletion with any other change there), its active memberships end (`workspace_deleted`) and release
+ * their one-workspace guards, its keys and pending invitations are revoked, its licenses end and release their seats, and `workspace.deleted`
  * is recorded for `actor`. `after` is merged into that event's `after` (`{status: "deleted", ...after}`).
  * `deleteWorkspace` calls it after `assertCanDelete`; giving way to another workspace
  * (`yieldAutomaticWorkspace`) calls it after finding the workspace holds nothing.
@@ -379,6 +382,15 @@ export async function deleteWorkspaceIn(
   const {workspaceId} = workspace
   const now = new Date()
   await bumpRevision(session, workspaceId, undefined, {status: "deleted", deletedAt: now})
+  const members = await WorkspaceMembershipModel.find({workspaceId, status: "active", mentraUserId: {$type: "string"}})
+    .select({_id: 0, mentraUserId: 1})
+    .session(session)
+    .lean<Array<{mentraUserId: string}>>()
+  await releaseGuardsOfWorkspace(
+    session,
+    workspaceId,
+    members.map(member => member.mentraUserId),
+  )
   await WorkspaceMembershipModel.updateMany(
     {workspaceId, status: "active"},
     {$set: {status: "ended", endedAt: now, endedReason: "workspace_deleted"}},
@@ -553,6 +565,7 @@ export async function recoverOwnership(
       // A person who gains a workspace here no longer needs an empty automatic one of their own.
       await yieldAutomaticWorkspace(session, actor, target, {except: workspaceId})
       membershipId = `wm_${ulid()}`
+      await acquireGuard(session, target, {workspaceId, membershipId})
       await WorkspaceMembershipModel.create(
         [
           {
@@ -777,6 +790,8 @@ export async function endMembership(
     {session},
   )
   if (ended.modifiedCount !== 1) fail("membership_changed")
+  // The person is in no workspace now; their guard goes with the membership it named.
+  if (membership.mentraUserId) await releaseGuard(session, membership.mentraUserId, membership.membershipId)
 
   const credentials = await AccessCredentialModel.find({
     workspaceId: workspace.workspaceId,

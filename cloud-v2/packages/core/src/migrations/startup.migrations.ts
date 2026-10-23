@@ -34,6 +34,7 @@ import { WorkspaceMembershipModel } from "../models/workspace-membership.model";
 import { WorkspaceModel } from "../models/workspace.model";
 import { LegacyBrowserIdentityModel } from "../models/legacy-browser-identity.model";
 import { convertLegacyAdminKeys } from "../services/workspaces/legacy-admin-keys";
+import { initializeGuards } from "../services/workspaces/membership-guard.service";
 import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
@@ -143,6 +144,14 @@ export async function runStartupMigrations(): Promise<void> {
   // Allowlisted admin API keys keep working as operator keys, before any
   // request is served. A key that fails is logged and retried next start.
   await convertLegacyAdminKeys();
+  // One workspace per person: everyone with exactly one active membership gets the guard that keeps it
+  // one. Idempotent; a failure is logged and retried at the next start (joins are still refused for anyone
+  // who holds an active membership, so nothing slips through meanwhile).
+  try {
+    await initializeGuards();
+  } catch (error) {
+    logger.error({ error: (error as Error)?.message }, "failed to write one-workspace guards");
+  }
   await ensureMentraAccountOem();
 }
 

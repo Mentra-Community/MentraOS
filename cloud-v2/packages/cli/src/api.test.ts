@@ -394,7 +394,7 @@ describe("workspace selection required", () => {
     activeWorkspaceId: null,
   };
 
-  test("a 409 tells the caller to run `mentra workspace use <id>` and lists the available ids", async () => {
+  test("a 409 says the account must be brought down to one workspace and lists the ids it is in", async () => {
     globalThis.fetch = mock(async (url: string | URL | Request) =>
       String(url).endsWith("/api/console/auth/me")
         ? Response.json(sessionWithTwoWorkspaces)
@@ -405,7 +405,7 @@ describe("workspace selection required", () => {
 
     expect(error).toBeInstanceOf(WorkspaceSelectionRequiredError);
     const message = (error as Error).message;
-    expect(message).toContain("Run `mentra workspace use <id>`");
+    expect(message).toContain("more than one workspace");
     expect(message).toContain("ws_1");
     expect(message).toContain("Acme");
     expect(message).toContain("ws_2");
@@ -420,8 +420,7 @@ describe("workspace selection required", () => {
     const error = await getPublishingProfile(credentials).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(WorkspaceSelectionRequiredError);
-    expect((error as Error).message).toContain("Run `mentra workspace use <id>`");
-    expect((error as Error).message).toContain("mentra workspace list");
+    expect((error as Error).message).toContain("more than one workspace");
   });
 
   test("other errors keep the Store's message", async () => {

@@ -13,7 +13,11 @@ export type EnterpriseOrg = {
 export type PortalUser = {
   /** The Core user ID. */
   id: string;
+  /** The same ID under the Fleet UI contract's name. */
+  mentraUserId?: string;
   email: string | null;
+  /** The person's name as sign-in gave it; absent from a Core that does not send one yet (then the footer shows the address). */
+  name?: string | null;
   emailVerified: boolean;
 };
 
@@ -40,6 +44,14 @@ export type PortalMe = {
   onboardingRequired: boolean;
   org: EnterpriseOrg | null;
   modules: PortalModules;
+  /** The organization capabilities Fleet's UI reads (absent from a Core that predates Fleet in the portal). */
+  organization?: { capabilities: string[] };
+  /**
+   * The workspaces the person may use Fleet in, with their capabilities there. At most one; for an Organization
+   * Admin it is exactly the workspace the request named with `?workspaceId=`, member or not.
+   */
+  workspaces?: Array<{ workspaceId: string; name: string; capabilities: string[] }>;
+  fleet?: { installed: boolean };
 };
 
 /**
@@ -55,9 +67,13 @@ export function readPortalModules(raw: unknown): PortalModules {
   return { billing, billingCatalog: billing || modules.billingCatalog === true };
 }
 
-/** `GET /api/portal/me`, with the modules read by {@link readPortalModules}. */
-export async function fetchPortalMe(): Promise<PortalMe> {
-  const me = await api<Omit<PortalMe, "modules"> & { modules?: unknown }>("/api/portal/me");
+/**
+ * `GET /api/portal/me`, with the modules read by {@link readPortalModules}. `workspaceId` asks Core for that
+ * workspace's Fleet capabilities as well.
+ */
+export async function fetchPortalMe(workspaceId?: string): Promise<PortalMe> {
+  const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+  const me = await api<Omit<PortalMe, "modules"> & { modules?: unknown }>(`/api/portal/me${query}`);
   return { ...me, modules: readPortalModules(me.modules) };
 }
 
@@ -81,6 +97,17 @@ export async function fetchPublicProductName(product: string, fetchImpl: typeof 
   }
 }
 
+/** A failed portal request, with the HTTP status so a caller can tell an ended session (401) from a failure. */
+export class PortalApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "PortalApiError";
+  }
+}
+
 export async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const response = await fetch(path, {
     method: init?.method ?? "GET",
@@ -98,7 +125,7 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
     } catch {
       // Keep generic status text.
     }
-    throw new Error(message);
+    throw new PortalApiError(message, response.status);
   }
   return (await response.json()) as T;
 }

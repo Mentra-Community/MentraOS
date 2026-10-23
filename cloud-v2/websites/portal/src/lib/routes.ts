@@ -3,9 +3,11 @@
  * `?workspace=`:
  *
  *  - `/`                              the current workspace's first section you may open, else the first run
- *  - `/members`, `/settings`, `/licenses`, `/audit`   a section of the current workspace
+ *  - `/members`, `/settings`, `/licenses`, `/fleet`   a section of the current workspace
  *  - `?workspace=ws_…`                on any of them: that workspace instead (an Organization Admin's way into a customer's)
  *  - `/invitation`                    the invitation this tab holds (from an invitation link)
+ *  - `/fleet?fleet=<item>`             Fleet Management (overview, people, devices, miniapps); the module's own
+ *                                     route lives in `?fleet=`
  *  - `/enterprise[/environments|/access]`  the enterprise pages, by direct address only (see pages/enterprise)
  *  - `/w/<workspaceId>[/<section>]`   an older address; it redirects to the one above, keeping its query
  *
@@ -16,8 +18,12 @@
  * Anything else is "page not found". The address never carries an invitation token (lib/workspace-invite).
  */
 
-export const WORKSPACE_SECTIONS = ["members", "settings", "audit", "licenses"] as const;
+export const WORKSPACE_SECTIONS = ["members", "settings", "licenses", "fleet"] as const;
 export type WorkspaceSection = (typeof WORKSPACE_SECTIONS)[number];
+
+/** The Fleet Management items the sidebar links to, each `/fleet?fleet=<item>` (see `fleetPath`). */
+export const FLEET_ITEMS = ["overview", "people", "devices", "miniapps"] as const;
+export type FleetItem = (typeof FLEET_ITEMS)[number];
 
 export const ENTERPRISE_PAGES = ["overview", "environments", "access"] as const;
 export type EnterprisePage = (typeof ENTERPRISE_PAGES)[number];
@@ -134,6 +140,30 @@ export function joinedAddress(pathname: string, search: string, workspaceId: str
   query.set("workspace", workspaceId);
   if (keeps) for (const [name, value] of new URLSearchParams(search)) if (name !== "workspace") query.append(name, value);
   return `${kind === "section" ? pathname : "/"}?${query.toString()}${keeps ? hash : ""}`;
+}
+
+/**
+ * The address of a Fleet Management item in `workspaceId`, carrying `?workspace=` as `sectionHref` does. The bare
+ * `/fleet` opens the overview, but nothing links to it.
+ */
+export function fleetPath(workspaceId: string, bareWorkspaceId: string | null, item: FleetItem = "overview"): string {
+  return withFleetParam(sectionHref("fleet", workspaceId, bareWorkspaceId), item);
+}
+
+/** `href` (a `sectionHref`) with `fleet=<value>` added to its query; `value` is already encoded. */
+export function withFleetParam(href: string, value: string): string {
+  return `${href}${href.includes("?") ? "&" : "?"}fleet=${value}`;
+}
+
+/**
+ * The Fleet item an address's query names: the first segment of `?fleet=`. A phone's page (`phones/<id>`) belongs to
+ * Devices. A blank or unknown one is the overview.
+ */
+export function fleetItemOf(search: string): FleetItem {
+  const value = new URLSearchParams(search).get("fleet") ?? "";
+  const first = value.replace(/^\/+/, "").split(/[/?#]/)[0];
+  if (first === "phones") return "devices";
+  return FLEET_ITEMS.find(item => item === first) ?? "overview";
 }
 
 export function enterprisePath(page: EnterprisePage): string {

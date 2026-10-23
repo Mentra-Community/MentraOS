@@ -99,6 +99,8 @@ export interface WorkspaceApi {
   listMyInvitations(): Promise<InvitationPreview[]>;
   /** Accepts one of `listMyInvitations` by its id: the same checks as accepting by token. */
   acceptInvitationById(invitationId: string): Promise<AcceptedInvitation>;
+  /** Turns down one of `listMyInvitations` by its id. Idempotent; no membership changes. */
+  declineInvitation(invitationId: string): Promise<{ invitationId: string; declined: true }>;
 
   listCredentials(workspaceId: string): Promise<CredentialView[]>;
   createCredential(workspaceId: string, input: CreateCredentialInput): Promise<CreatedCredential>;
@@ -200,6 +202,7 @@ export function createWorkspaceApi(opts: {
     acceptInvitation: (token) => json("POST", "/invitations/accept", { token }),
     listMyInvitations: async () => (await json<{ items: InvitationPreview[] }>("GET", "/invitations/mine")).items,
     acceptInvitationById: (invitationId) => json("POST", "/invitations/accept", { invitationId }),
+    declineInvitation: (invitationId) => json("POST", "/invitations/decline", { invitationId }),
 
     listCredentials: async (workspaceId) =>
       (await json<{ items: CredentialView[] }>("GET", `${workspace(workspaceId)}/credentials`)).items,

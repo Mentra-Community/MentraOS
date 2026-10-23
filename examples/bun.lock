@@ -11,6 +11,7 @@
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
+        "@mentra/workspace-contract": "workspace:*",
         "@types/ws": "^8.5.12",
         "ws": "^8.18.0",
       },
@@ -24,6 +25,13 @@
     "../cloud-v2/packages/protocol": {
       "name": "@mentra/cloud-protocol",
       "version": "3.4.0",
+      "dependencies": {
+        "zod": "^3.24.1",
+      },
+    },
+    "../cloud-v2/packages/workspace-contract": {
+      "name": "@mentra/workspace-contract",
+      "version": "0.0.0",
       "dependencies": {
         "zod": "^3.24.1",
       },
@@ -810,6 +818,8 @@
     "@mentra/jspolyfill": ["@mentra/jspolyfill@workspace:../mobile/modules/jspolyfill"],
 
     "@mentra/miniapp": ["@mentra/miniapp@workspace:../mobile/modules/miniapp"],
+
+    "@mentra/workspace-contract": ["@mentra/workspace-contract@workspace:../cloud-v2/packages/workspace-contract"],
 
     "@nicolo-ribaudo/chokidar-2": ["@nicolo-ribaudo/chokidar-2@2.1.8-no-fsevents.3", "", {}, "sha512-s88O1aVtXftvp5bCPB7WnmXc5IwOZZ7YPuwNPt+GtOOXpPvad1LfbmjYv+qII7zP6RU2QGnqve27dnLycEnyEQ=="],
 
