@@ -52,6 +52,7 @@ is `403 forbidden`; an unsigned or wrongly signed call is
 | `quantity` | The number of licenses bought, a whole number of 0 or more. |
 | `validFrom`, `paidThrough` | RFC 3339 times in UTC (`2026-10-01T00:00:00Z`). |
 | `assignTo` | Optional: `{"mentraUserId"}`, the purchase's buyer ([The buyer's license](#the-buyers-license)). |
+| `seatRequest` | Optional: `{"requestId", "mentraUserId", "quantity"}`, a person's request for one more license for themselves ([A license added for oneself](#a-license-added-for-oneself)). |
 
 Core applies a write only if its revision is newer than the one it has, so
 billing sends the latest version of each license until Core accepts it, and
@@ -63,7 +64,7 @@ repeats and late deliveries are harmless:
 | `200 {"applied": false, "revision"}` | The revision Core has. Nothing changes. | Delivered. |
 | `409 stale_revision` | An older revision. The body's `revision` is Core's. | Delivered: Core has a newer one. |
 | `404 owner_not_found` | The workspace is deleted, or never existed, or the license ended with it. | Stop sending it. |
-| `400 invalid_request` | A malformed write, another license than the path's, an owner that is not a workspace (a person included), a `paidThrough` before `validFrom`, an `assignTo` other than `{"mentraUserId"}` with a non-blank ID, or a change of owner. | A bug to fix. |
+| `400 invalid_request` | A malformed write, another license than the path's, an owner that is not a workspace (a person included), a `paidThrough` before `validFrom`, an `assignTo` other than `{"mentraUserId"}` with a non-blank ID, a malformed `seatRequest`, or a change of owner. | A bug to fix. |
 | `5xx` | Core could not answer. | Send it again. |
 
 `GET /api/internal/licenses?ownerType=workspace&ownerId=` answers
@@ -96,6 +97,33 @@ the buyer is unassigned, and deliveries of the first write that race create the
 license once, so the buyer gets one seat at most. The buyer has their license
 whether or not they come back to the page; an Organization Admin who buys for a
 workspace they aren't a member of gets none.
+
+### A license added for oneself
+
+When a person adds one license for themselves (`POST session` with `forMe`),
+billing records their request and names it as `seatRequest` on the write whose
+quantity reaches the request's, and on every later write until Core accepts one
+that carries it: `requestId` (a non-blank id of at most 200 characters),
+`mentraUserId` (theirs, a non-blank Core user ID) and `quantity` (the count the
+license reaches with their license added, a whole number from 1 to 1,000,000).
+Anything else is `400 invalid_request`.
+
+Core decides each request once, on the first applied write (a new license or a
+newer revision) that carries an id the license hasn't recorded. That write's
+update records the id on the license (`seatRequests`, the latest 20), whatever
+is decided, inside its transaction. Core gives the person one license only when
+that write raises the quantity to the request's (the quantity Core had, 0 for a
+new license, is below `seatRequest.quantity`, and the write's is at least that),
+the person has an active membership in the owner workspace, they hold no seat of
+this license and none of an in-term, not-ended license of the same product
+there, and a seat is free. It takes the seat through the same conditional
+increment as an assignment and records `seat.assigned` (actor `store`) after
+`license.written` and the buyer's. Otherwise it assigns nothing, and the
+license is left free for an Admin to assign. A repeat (`applied: false`), an
+older revision (`stale_revision`), and every later write still carrying the
+request decide nothing, even after the person is unassigned, and deliveries
+that race decide it once. The request names the person who opened the session,
+never the buyer `assignTo` names. A Core that predates it ignores the field.
 
 ## Assigning licenses
 
@@ -464,7 +492,7 @@ the page does.
 ## Audit and the change feed
 
 Every license and seat change is in Core's audit trail, with its actor (the
-`store` service for a license write and the buyer's seat it gives, the person
+`store` service for a license write and the seat it gives a buyer or a requester, the person
 for a seat change). A license's events are its workspace's, so they are on its
 audit page and on the [change feed](fleet-integration.md#the-change-feed).
 

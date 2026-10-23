@@ -47,6 +47,28 @@ describe("package entry points", () => {
     }
   })
 
+  test("a license write may carry a seat request, and a license view never shows one", () => {
+    const write: root.LicenseWrite = {
+      licenseId: "01JZWY3V8N0F2E9GQ4T6KXH5RD",
+      revision: 2,
+      owner: {type: "workspace", workspaceId: "ws_1"},
+      product: "mentra.call.unlimited",
+      features: [{key: "call.unlimited", packages: ["com.mentra.call"]}],
+      quantity: 6,
+      validFrom: "2026-10-01T00:00:00Z",
+      paidThrough: "2026-11-01T00:00:00Z",
+      seatRequest: {requestId: "01JZWY3V8N0F2E9GQ4T6KXH5RE", mentraUserId: "mu_1", quantity: 6},
+    }
+    const {licenseId, seatRequest: _seatRequest, assignTo: _assignTo, ...rest} = write
+    const view: root.LicenseView = {...rest, licenseId, seatsUsed: 6, endedAt: null}
+    // @ts-expect-error A view leaves the seat request out, as it leaves out the buyer.
+    const withRequest: root.LicenseView = {...view, seatRequest: write.seatRequest}
+    // @ts-expect-error
+    const withBuyer: root.LicenseView = {...view, assignTo: {mentraUserId: "mu_1"}}
+    expect(write.seatRequest).toEqual({requestId: "01JZWY3V8N0F2E9GQ4T6KXH5RE", mentraUserId: "mu_1", quantity: 6})
+    expect([withRequest.licenseId, withBuyer.licenseId]).toEqual([licenseId, licenseId])
+  })
+
   test("the server entry exposes signing and the Core client", () => {
     expect(typeof server.signServiceRequest).toBe("function")
     expect(typeof server.verifyServiceRequest).toBe("function")
