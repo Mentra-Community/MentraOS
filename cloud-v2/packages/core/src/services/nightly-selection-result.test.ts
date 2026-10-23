@@ -1,7 +1,9 @@
-import {expect, spyOn, test} from "bun:test";
+import {afterAll, beforeAll, describe, expect, spyOn, test} from "bun:test";
+import {randomUUID} from "node:crypto";
+import mongoose from "mongoose";
 import {NightlyRoutineService, nightlyPlanRepository} from "./nightly-routine.service";
 import {GithubTestBuildGateway} from "./test-builds.service";
-import {TestSuiteService} from "./test-suite.service";
+import {TestSuiteService, suiteHistoryProjection} from "./test-suite.service";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestHistoryService, testHistoryQueries} from "./test-history.service";
 
@@ -102,4 +104,53 @@ test("a pre-selection 403 retains all 27 original members in suite detail, index
     stored = frozen; expect(await service.detail(result.suiteId)).toEqual(detail);
     expect(admissionCalls).toBe(0); expect(calls).toHaveLength(1);
   } finally {for (const mock of mocks.reverse()) mock.mockRestore();}
+});
+
+const mongoUri = process.env.TEST_HISTORY_MONGO_URI;
+describe.skipIf(!mongoUri)("Mongo no-build nightly projection", () => {
+  let connected = false;
+  beforeAll(async () => {
+    const url = new URL(mongoUri!);
+    if (url.protocol !== "mongodb:" || url.hostname !== "127.0.0.1" || url.username || url.password || url.search)
+      throw new Error("Nightly projection tests require plain loopback Mongo");
+    url.pathname = `/nightly_selection_${randomUUID().replaceAll("-", "")}`;
+    await mongoose.connect(url.href, {autoIndex: false, serverSelectionTimeoutMS: 5000}); connected = true;
+  });
+  afterAll(async () => {if (connected) {await mongoose.connection.dropDatabase(); await mongoose.disconnect();}});
+  test("the actual compact projection omits absent lanes but refuses recorded null claims", async () => {
+    const startedAt = "2026-10-23T11:00:00.000Z", finishedAt = "2026-10-23T11:18:34.000Z", revision = "a".repeat(40);
+    const members = Array.from({length: 27}, (_, i) => ({memberId: `member-${i}`, requestId: `request-${i}`, routineId: `routine-${i}`,
+      platform: i % 2 ? "ios-on-mac" : "android", routineRevision: revision, definitionRevision: revision,
+      unavailableReason: "Build metadata unavailable (HTTP 403)", selectionErrors: [{stage: "build", status: 502, message: "Build metadata unavailable (HTTP 403)"}]}));
+    const plan = {suiteId: "no-build-mongo", occurrenceId: "no-build-mongo-occurrence", startedAt, trigger: "nightly", members};
+    const result = {...plan, expectedCount: 27, passed: 0, status: "incomplete", finishedAt,
+      members: members.map(m => ({...m, status: "incomplete", publicationComplete: false}))};
+    const service = new TestSuiteService({overview: async () => {throw new Error("No lane read expected");}});
+    for (const terminal of [false, true]) {
+      await TestSuiteModel.collection.deleteMany({});
+      await TestSuiteModel.collection.insertOne({suiteId: plan.suiteId, startedAt: new Date(startedAt), nightlyPlan: plan,
+        ...(terminal ? {nightlyResult: result, finishedAt} : {})});
+      const [projected] = await TestSuiteModel.aggregate([{$match: {suiteId: plan.suiteId}}, suiteHistoryProjection]);
+      expect(projected.nightlyPlan.members).toHaveLength(27);
+      for (const m of projected.nightlyPlan.members) {
+        expect(m).not.toHaveProperty("laneId"); expect(m.admitted).toBe(false);
+      }
+      if (terminal) for (const m of projected.nightlyResult.members) {
+        expect(m).not.toHaveProperty("laneId"); expect(m.admitted).toBe(false);
+      }
+      const summary = await service.summary(plan.suiteId);
+      expect(summary).toMatchObject({passed: 0, outcome: terminal ? "failed" : "running"});
+      expect(summary.members).toHaveLength(27); expect(summary.build).toBeUndefined();
+      expect(summary.members.every(m => m.status === "incomplete" && !m.hostId && !m.laneId && !m.runId)).toBe(true);
+      for (const field of ["laneId", "hostId", "input", "build", "dispatchIntent"] as const) {
+        const path = `${terminal ? "nightlyResult" : "nightlyPlan"}.members.0.${field}`;
+        await TestSuiteModel.collection.updateOne({suiteId: plan.suiteId}, {$set: {[path]: null}});
+        const [mutant] = await TestSuiteModel.aggregate([{$match: {suiteId: plan.suiteId}}, suiteHistoryProjection]);
+        expect((terminal ? mutant.nightlyResult : mutant.nightlyPlan).members[0].admitted).toBe(true);
+        await expect(service.summary(plan.suiteId)).rejects.toThrow("differs from its frozen plan");
+        await TestSuiteModel.collection.updateOne({suiteId: plan.suiteId}, {$unset: {[path]: ""}});
+      }
+      await expect(service.summary(plan.suiteId)).resolves.toMatchObject({passed: 0});
+    }
+  });
 });
