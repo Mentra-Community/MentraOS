@@ -20,13 +20,12 @@ import * as jose from "jose"
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "../packages/core/src/connections/mongo.connection"
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
-import {DeveloperOrgApiKeyModel} from "../packages/core/src/models/developer-org-api-key.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
-import {DeveloperApiKeyService} from "../packages/core/src/services/developer-orgs/developer-api-key.service"
 import {convertLegacyAdminKeys} from "../packages/core/src/services/workspaces/legacy-admin-keys"
 import {
   createPortalSession,
@@ -37,8 +36,10 @@ import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-toke
 import {sha256Hex} from "../packages/core/src/services/signin/random"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
+import {legacyAdminKey, legacyKeys} from "./support/legacy-admin-key"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {
+  coreAccessToken,
   ADMIN_COOKIE,
   ADMIN_EMAIL,
   ADMIN_ORIGIN,
@@ -56,7 +57,13 @@ import {
 setDefaultTimeout(30_000)
 
 const databaseUrl = localTestMongoUrl("principal-auth")
-const WORKSPACE_MODELS = [AccessCredentialModel, WorkspaceAuditEventModel, WorkspaceMembershipModel, WorkspaceModel] as const
+const WORKSPACE_MODELS = [
+  AccessCredentialModel,
+  WorkspaceAuditCounterModel,
+  WorkspaceAuditEventModel,
+  WorkspaceMembershipModel,
+  WorkspaceModel,
+] as const
 let verified = false
 let app: ReturnType<typeof createApp>
 let idp: FakeIdp
@@ -76,7 +83,7 @@ beforeAll(async () => {
   await connectMongo(databaseUrl)
   assertConnectedTo(databaseUrl, UserModel.db.name)
   verified = true
-  await Promise.all([UserModel.syncIndexes(), BrowserSessionModel.syncIndexes(), DeveloperOrgApiKeyModel.syncIndexes()])
+  await Promise.all([UserModel.syncIndexes(), BrowserSessionModel.syncIndexes()])
   for (const model of WORKSPACE_MODELS) {
     await model.createCollection()
     await model.syncIndexes()
@@ -98,7 +105,7 @@ beforeEach(async () => {
   await Promise.all([
     UserModel.deleteMany({}),
     BrowserSessionModel.deleteMany({}),
-    DeveloperOrgApiKeyModel.deleteMany({}),
+    legacyKeys().deleteMany({}),
     ...WORKSPACE_MODELS.map(model => model.deleteMany({})),
   ])
   resetIdpTokenCaches()
@@ -115,13 +122,18 @@ const adminMe = (headers: Record<string, string>) => app.request(`${ADMIN_ORIGIN
 const portalMe = (headers: Record<string, string>) => app.request(`${PORTAL_ORIGIN}/api/portal/me`, {headers})
 
 function supabaseToken(claims: Record<string, unknown> = {}) {
-  return idp.mint({sub: "supa-admin", aud: "authenticated", client_id: "console-client", email: ADMIN_EMAIL, ...claims})
+  return idp.mint({sub: "supa-admin", aud: "authenticated", email: ADMIN_EMAIL, ...claims})
 }
 
-describe("identity-provider bearers", () => {
-  test("a Supabase access token is a bearer on the admin and enterprise portal APIs", async () => {
+/** A Core access token for the admin, as Core's sign-in server issues it. */
+function adminAccessToken(overrides: Partial<Parameters<typeof coreAccessToken>[0]> = {}) {
+  return coreAccessToken({sub: "supa-admin", email: ADMIN_EMAIL, emailVerified: true, ...overrides})
+}
+
+describe("Core access token bearers", () => {
+  test("a Core access token is a bearer on the admin and workspace portal APIs", async () => {
     const phoneUser = await findOrCreateUser({tenantId: "mentra", tenantUserId: "supa-admin"})
-    const token = await supabaseToken()
+    const token = await adminAccessToken()
     const admin = await adminMe({authorization: `Bearer ${token}`})
     expect(admin.status).toBe(200)
     expect(((await admin.json()) as {user: {mentraUserId: string}}).user.mentraUserId).toBe(phoneUser.mentraUserId)
@@ -143,21 +155,29 @@ describe("identity-provider bearers", () => {
     expect((await portalMe({authorization: `Bearer ${coreToken}`})).status).toBe(401)
   })
 
-  test("a Supabase ID token is refused (L07)", async () => {
-    const idToken = await supabaseToken({aud: "console-client"})
-    expect((await adminMe({authorization: `Bearer ${idToken}`})).status).toBe(401)
+  test("Supabase tokens, Core's own ID tokens and another environment's Core access tokens are refused (L07)", async () => {
+    const supabaseAccess = await supabaseToken()
+    const supabaseOAuth = await supabaseToken({client_id: "console-client"})
+    const restore = applyEnv({CLOUD_CORE_OIDC_ISSUER: "https://account.staging.test"})
+    const otherEnvironment = await adminAccessToken()
+    restore()
+    const idTokenShaped = await adminAccessToken({claims: {aud: "admin-portal"}})
+    for (const token of [supabaseAccess, supabaseOAuth, otherEnvironment, idTokenShaped]) {
+      expect((await adminMe({authorization: `Bearer ${token}`})).status).toBe(401)
+    }
+  })
+
+  test("a token from before the person's revocation is refused, and one from after is accepted (L07)", async () => {
+    const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: "supa-admin"})
+    const before = await adminAccessToken({iat: Math.floor(Date.now() / 1000) - 120})
+    await UserModel.updateOne({mentraUserId: user.mentraUserId}, {$set: {webSignInsRevokedAt: new Date(Date.now() - 60_000)}})
+    expect((await adminMe({authorization: `Bearer ${before}`})).status).toBe(401)
+    expect((await adminMe({authorization: `Bearer ${await adminAccessToken()}`})).status).toBe(200)
   })
 
   test("an invalid bearer never falls back to a valid cookie", async () => {
     const {cookieValue: session} = await createPortalSession("admin", adminIdentity)
     expect((await adminMe({authorization: "Bearer not-a-token", cookie: `${ADMIN_COOKIE}=${session}`})).status).toBe(401)
-  })
-
-  test("an identity provider outage answers 503, never success", async () => {
-    const token = await idp.mint({sub: "supa-admin", aud: "authenticated", client_id: "console-client"}, {alg: "ES256"})
-    idp.outage = true
-    const response = await adminMe({authorization: `Bearer ${token}`})
-    expect(response.status).toBe(503)
   })
 })
 
@@ -176,9 +196,9 @@ describe("portal cookies authenticate only their own route group (L05, Review Fo
     expect((await adminMe({cookie: `${ADMIN_COOKIE}=${session}`})).status).toBe(401)
   })
 
-  test("a cookie named like Supabase's authenticates nothing, even holding a valid token", async () => {
-    const token = await supabaseToken()
-    const cookie = `sb-access-token=${token}; sb-signin-auth-token=${token}`
+  test("a cookie named like Supabase's, or the sign-in server's own, authenticates nothing, even holding a valid token", async () => {
+    const token = await adminAccessToken()
+    const cookie = `sb-access-token=${token}; sb-signin-auth-token=${token}; __Host-mentra_oidc_session=${token}`
     expect((await adminMe({cookie})).status).toBe(401)
     expect((await portalMe({cookie})).status).toBe(401)
   })
@@ -222,15 +242,15 @@ describe("Organization Admins (L06)", () => {
 
 describe("admin keys keep working", () => {
   test("an existing allowlisted admin key reads incidents once Core converts it at startup", async () => {
-    const key = await new DeveloperApiKeyService().create("org_ops", "incident reader", "seed", "local")
-    process.env.CLOUD_CORE_ADMIN_EMAILS = `${ADMIN_EMAIL},api-key@${key.id}.local`
-    expect((await convertLegacyAdminKeys()).converted).toEqual([key.id])
-    const reports = await adminReports({authorization: `Bearer ${key.value}`})
+    const key = await legacyAdminKey({orgId: "org_ops", name: "incident reader"})
+    process.env.CLOUD_CORE_ADMIN_EMAILS = `${ADMIN_EMAIL},api-key@${key.keyId}.local`
+    expect((await convertLegacyAdminKeys()).converted).toEqual([key.keyId])
+    const reports = await adminReports({authorization: `Bearer ${key.token}`})
     expect(reports.status).toBe(200)
-    const me = await adminMe({authorization: `Bearer ${key.value}`})
+    const me = await adminMe({authorization: `Bearer ${key.token}`})
     expect(me.status).toBe(200)
     const body = (await me.json()) as {credential: {credentialId: string; credentialKind: string}; organization: {capabilities: string[]}}
-    expect(body.credential).toMatchObject({credentialId: key.id, credentialKind: "organization"})
+    expect(body.credential).toMatchObject({credentialId: key.keyId, credentialKind: "organization"})
     expect(body.organization.capabilities.sort()).toEqual([
       "organization.incidents.read",
       "organization.supportProfiles.read",
@@ -240,20 +260,20 @@ describe("admin keys keep working", () => {
   })
 
   test("a key that is not allowlisted is no principal, and neither is an invalid one", async () => {
-    const key = await new DeveloperApiKeyService().create("org_ops", "not admin", "seed", "local")
+    const key = await legacyAdminKey({orgId: "org_ops", name: "not admin"})
     expect((await convertLegacyAdminKeys()).converted).toEqual([])
-    expect((await adminReports({authorization: `Bearer ${key.value}`})).status).toBe(401)
+    expect((await adminReports({authorization: `Bearer ${key.token}`})).status).toBe(401)
     expect((await adminReports({authorization: "Bearer msk_local_01ABC.secret"})).status).toBe(401)
     expect((await adminReports({authorization: "Bearer mak_local_01ABC.secret"})).status).toBe(401)
   })
 
   test("a key gets 403 on the enterprise portal API and the workspace API, which are for people", async () => {
-    const key = await new DeveloperApiKeyService().create("org_ops", "key", "seed", "local")
-    process.env.CLOUD_CORE_ADMIN_EMAILS = `api-key@${key.id}.local`
+    const key = await legacyAdminKey({orgId: "org_ops", name: "key"})
+    process.env.CLOUD_CORE_ADMIN_EMAILS = `api-key@${key.keyId}.local`
     await convertLegacyAdminKeys()
-    expect((await portalMe({authorization: `Bearer ${key.value}`})).status).toBe(403)
-    expect((await app.request(`${ADMIN_ORIGIN}/api/workspaces`, {headers: {authorization: `Bearer ${key.value}`}})).status).toBe(403)
-    expect((await app.request(`${ADMIN_ORIGIN}/api/organization/credentials`, {headers: {authorization: `Bearer ${key.value}`}})).status).toBe(403)
+    expect((await portalMe({authorization: `Bearer ${key.token}`})).status).toBe(403)
+    expect((await app.request(`${ADMIN_ORIGIN}/api/workspaces`, {headers: {authorization: `Bearer ${key.token}`}})).status).toBe(403)
+    expect((await app.request(`${ADMIN_ORIGIN}/api/organization/credentials`, {headers: {authorization: `Bearer ${key.token}`}})).status).toBe(403)
   })
 })
 
@@ -279,8 +299,8 @@ describe("the workspace API under each route group", () => {
     }
   })
 
-  test("an identity-provider access token works under every group", async () => {
-    const bearer = {authorization: `Bearer ${await supabaseToken()}`}
+  test("a Core access token works under every group", async () => {
+    const bearer = {authorization: `Bearer ${await adminAccessToken()}`}
     expect((await list(ADMIN_ORIGIN, "/api/workspaces", bearer)).status).toBe(200)
     expect((await list(PORTAL_ORIGIN, "/api/portal/workspaces", bearer)).status).toBe(200)
     expect((await list(ADMIN_ORIGIN, "/api/admin/workspaces", bearer)).status).toBe(200)

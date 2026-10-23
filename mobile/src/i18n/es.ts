@@ -46,6 +46,7 @@ const es = {
     hint: "Consejo: puedes usar cualquier email y tu contraseña preferida :)",
   },
   home: {
+    pairAgain: "Emparejar de nuevo",
     hardwareIncompatible: "Hardware Incompatible",
     hardwareIncompatibleMessage:
       "{{app}} requiere hardware que no está disponible en tus lentes conectados: {{missing}}",
@@ -57,6 +58,11 @@ const es = {
   },
   pairing: {
     ...en.pairing,
+    livePairingScanTitle: "Pon tus gafas en modo de emparejamiento",
+    livePairingScanBody: "Pulsa el botón de encendido 3 veces rápidamente. Tus gafas dirán un código de 4 caracteres.",
+    livePairingScanSearching: "Buscando tus gafas",
+    pairingModeAlertTitle: "Tus gafas están en modo de emparejamiento",
+    pairingModeAlertBody: "Pulsa el botón de encendido 3 veces para salir.",
     nearbyNotInPairingModeHint:
       "Se encontraron gafas Mentra Live cerca, pero no están en modo de emparejamiento. Pulsa el botón de encendido 3 veces rápido y vuelve a intentarlo.",
     notInPairingModeLabel: "No está en modo de emparejamiento",
@@ -68,6 +74,18 @@ const es = {
     livePairingModeInfo:
       "Pulsa el botón de encendido 3 veces rápido. El LED parpadea y las gafas dicen un código de 4 caracteres (0–9, A–F). Compara ese código en la lista si aparece más de una unidad.",
     noGlassesFoundHint: "Asegúrate de pulsar el botón de encendido 3 veces rápido y vuelve a intentarlo.",
+  },
+  onboarding: {
+    ...en.onboarding,
+    btClassicStep1: "Toca Abrir Ajustes",
+    btClassicStep2: "Toca Bluetooth",
+    btClassicStep3: 'Toca "{{name}}" en Mis dispositivos u Otros dispositivos',
+    btClassicStep4: 'Vuelve a la app cuando diga "Conectado"',
+    forgetIosPairingTitle: "Olvida el emparejamiento anterior",
+    forgetIosPairingSubtitle: "Elimina el emparejamiento Bluetooth guardado en tu iPhone para continuar.",
+    forgetIosPairingStep1: "Abre Ajustes y toca Bluetooth.",
+    forgetIosPairingStep2: "Toca ⓘ junto a {{name}} y luego toca Omitir este dispositivo.",
+    forgetIosPairingStep3: "Vuelve a la Mentra App para emparejar de nuevo.",
   },
   demoNavigator: {
     componentsTab: "Componentes",

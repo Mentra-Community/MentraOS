@@ -13,7 +13,16 @@ export const cloudClientService: Record<string, unknown> = {
   sendAudioFrame: mock(() => {}),
   startManagedPhoto: mock(async () => ({})),
   awaitManagedPhotoReady: mock(async () => ({})),
-  core: {supportProfile: {update: mock(async () => ({status: "accepted"}))}},
+  getCoreSession: () => null,
+  resolveCoreSession: async () => null,
+  onCoreSessionChanged: () => () => {},
+  core: {
+    supportProfile: {update: mock(async () => ({status: "accepted"}))},
+    fleet: {
+      report: mock(async () => ({kind: "unavailable", retryAfterSeconds: null})),
+      reportAs: mock(async () => ({kind: "session_changed"})),
+    },
+  },
 }
 
 mock.module("../CloudClientService", () => ({

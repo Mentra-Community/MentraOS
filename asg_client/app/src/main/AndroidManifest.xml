@@ -201,6 +201,18 @@
             </intent-filter>
         </receiver>
 
+        <!-- Button injection into BES (mh_dbgkey). Release-safe: only holders of DUMP
+             (adb shell, privileged apps) can deliver the broadcast. -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.BesButtonInjectReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.mentra.BES_BUTTON" />
+            </intent-filter>
+        </receiver>
+
         <!-- Intent IPC receiver for third-party app commands -->
         <receiver
             android:name="com.mentra.asg_client.receiver.IntentCommandReceiver"

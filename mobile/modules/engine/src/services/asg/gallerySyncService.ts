@@ -18,6 +18,7 @@ import {SETTINGS, useSettingsStore} from "../../stores/settings"
 import {PhotoInfo, CaptureGroup} from "../../types/asg"
 import GlobalEventEmitter from "../../utils/GlobalEventEmitter"
 import {BgTimer} from "../../utils/timers"
+import {acquireGlassesHotspot} from "../GlassesHotspotLease"
 import {fixGlassesClockIfSkewed} from "../glassesClockSync"
 import {detectClockSkew, isSyncManifestEmpty} from "../gallerySyncClock"
 import {MediaLibraryPermissions} from "../../utils/permissions/MediaLibraryPermissions"
@@ -147,6 +148,9 @@ type SyncManifestData = {
 }
 
 class GallerySyncService {
+  private readonly networkOwner = Symbol("gallery-sync")
+  private releaseHotspot: (() => void) | null = null
+  private hotspotEnablePromise: Promise<unknown> | null = null
   private static instance: GallerySyncService
   private hotspotListenerRegistered = false
   private hotspotConnectionTimeout: number | null = null
@@ -282,12 +286,8 @@ class GallerySyncService {
     // A permission prompt must not block teardown or later enable the AP.
     this.ssidReadable = true
     this.isInitialized = false
-    if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-      const failure = await this.closeHotspot()
-      if (failure) throw failure
-    } else {
-      await localNetworkTransport.disconnect()
-    }
+    const failure = await this.closeHotspot()
+    if (failure) throw failure
     console.log("[GallerySyncService] Cleaned up")
   }
 
@@ -329,7 +329,9 @@ class GallerySyncService {
     }
 
     gallerySyncNotifications.showSyncError("Glasses disconnected")
-    const cleanup = store.syncServiceOpenedHotspot ? this.closeHotspot() : localNetworkTransport.disconnect()
+    const cleanup = this.closeHotspot().then((failure) => {
+      if (failure) throw failure
+    })
     void cleanup.catch((error) => {
       console.error("[GallerySyncService] Failed to release routing after glasses disconnected:", error)
     })
@@ -550,12 +552,8 @@ class GallerySyncService {
   private async admitStartSync(replacingAttempt: boolean, signal: AbortSignal): Promise<void> {
     if (replacingAttempt) {
       mediaProcessingQueue.abort()
-      if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-        const failure = await this.closeHotspot()
-        if (failure) throw failure
-      } else {
-        await localNetworkTransport.disconnect()
-      }
+      const failure = await this.closeHotspot()
+      if (failure) throw failure
     }
     if (signal.aborted) return
     await this.runStartSync(signal)
@@ -984,6 +982,14 @@ class GallerySyncService {
 
     if (this.shouldAbortPreFlight(signal)) return
 
+    // The same reservation protects Gallery, OTA, calls and streams before any
+    // BLE AP mutation or association. A refused start has no network cleanup.
+    try {
+      this.reserveHotspot()
+    } catch (error) {
+      store.setSyncError(error instanceof Error ? error.message : String(error))
+      return
+    }
     // Every fallible pre-flight gate has passed. It is now safe to replace the previous
     // in-memory queue; startFileDownload immediately recovers its durable ledger work.
     mediaProcessingQueue.reset()
@@ -1004,7 +1010,10 @@ class GallerySyncService {
       const hotspotInfo: HotspotInfo = currentGlassesHotspot
       store.setHotspotInfo(hotspotInfo)
       store.setSyncState("connecting_wifi")
-      if (localNetworkTransport.supportsScopedConnection() && !localNetworkTransport.isScopedConnectionActive()) {
+      if (
+        CrustModule.isIOSAppOnMac ||
+        (localNetworkTransport.supportsScopedConnection() && !localNetworkTransport.isScopedConnectionActive())
+      ) {
         console.log("[GallerySyncService] 📡 System SSID matches; establishing scoped glasses transport")
         await this.connectToHotspotWifi(hotspotInfo, signal)
       } else {
@@ -1019,6 +1028,7 @@ class GallerySyncService {
     this.hotspotOwner = this.connectedGlassesIdentity()
     if (!this.hotspotOwner) {
       store.setSyncError("Connected glasses identity is unavailable")
+      await this.closeHotspot()
       return
     }
     store.setRequestingHotspot()
@@ -1041,7 +1051,13 @@ class GallerySyncService {
 
     try {
       console.log("[GallerySyncService]   📤 Sending hotspot enable command to glasses...")
-      await BluetoothSdk.setHotspotState(true)
+      const enabling = BluetoothSdk.setHotspotState(true)
+      this.hotspotEnablePromise = enabling
+      try {
+        await enabling
+      } finally {
+        if (this.hotspotEnablePromise === enabling) this.hotspotEnablePromise = null
+      }
       console.log("[GallerySyncService]   ✅ Hotspot enabled by glasses")
     } catch (error) {
       if (signal?.aborted) return
@@ -1112,6 +1128,13 @@ class GallerySyncService {
       return
     }
 
+    // Direct status/retry entrypoints require the same reservation as startSync.
+    try {
+      this.reserveHotspot()
+    } catch (error) {
+      store.setSyncError(error instanceof Error ? error.message : String(error))
+      return
+    }
     // Show explanation dialog on first sync (user must acknowledge before proceeding)
     await this.showWifiJoinExplanation(hotspotInfo.ssid, signal)
     if (signal?.aborted) return
@@ -1185,7 +1208,11 @@ class GallerySyncService {
               console.log(`[GallerySyncService] 📡 Current WiFi SSID: "${preConnectSSID}"`)
 
               // Check if already connected (shouldn't happen, but good to verify)
-              if (!localNetworkTransport.supportsScopedConnection() && preConnectSSID === hotspotInfo.ssid) {
+              if (
+                !CrustModule.isIOSAppOnMac &&
+                !localNetworkTransport.supportsScopedConnection() &&
+                preConnectSSID === hotspotInfo.ssid
+              ) {
                 console.log("[GallerySyncService] ✅ Already connected to target SSID! Proceeding to download.")
                 appStateSubscription.remove()
 
@@ -1222,7 +1249,9 @@ class GallerySyncService {
           appBackgroundTime = null
 
           if (signal?.aborted) return
-          await localNetworkTransport.connect(hotspotInfo.ssid, hotspotInfo.password)
+          const joinedAddress = await localNetworkTransport.connect(this.networkOwner, hotspotInfo.ssid, hotspotInfo.password, {
+            gateway: hotspotInfo.ip,
+          })
           if (signal?.aborted) return
 
           const connectCallDuration = Date.now() - connectCallStartTime
@@ -1240,7 +1269,10 @@ class GallerySyncService {
           // The poll below is a second opinion, not the primary gate — never fail on it
           // when the SSID simply cannot be read.
 
-          if (Platform.OS === "ios" && !this.ssidReadable) {
+          if (Platform.OS === "ios" && joinedAddress) {
+            // The shared native owner already verified association, interface and DHCP.
+            console.log("[GallerySyncService] Native hotspot association verified")
+          } else if (Platform.OS === "ios" && !this.ssidReadable) {
             console.log(
               `[GallerySyncService] 🍎 Skipping SSID verification (Location denied) - using glasses connectivity probe`,
             )
@@ -1324,7 +1356,7 @@ class GallerySyncService {
             console.log("[GallerySyncService] 📶 Skipping final SSID check (Location denied)")
           } else {
             try {
-              finalSSID = localNetworkTransport.isScopedConnectionActive()
+              finalSSID = joinedAddress || localNetworkTransport.isScopedConnectionActive()
                 ? hotspotInfo.ssid
                 : await WifiManager.getCurrentWifiSSID()
               console.log(`[GallerySyncService] 📶 Final SSID check before download: "${finalSSID}"`)
@@ -1537,6 +1569,9 @@ class GallerySyncService {
           // iOS: Gives user time to interact with system dialog
           // Android: Gives hotspot time to fully initialize and start broadcasting
           if (attempt < TIMING.IOS_WIFI_MAX_RETRIES) {
+            // A completed join can outlive a failed health/download probe.
+            // Release its owner before admitting another Mac association.
+            if (CrustModule.isIOSAppOnMac) await localNetworkTransport.disconnect(this.networkOwner)
             const reason =
               Platform.OS === "ios" ? "user may be seeing system dialog" : "hotspot may still be initializing"
             console.log("[GallerySyncService] ----------------------------------------")
@@ -1589,12 +1624,13 @@ class GallerySyncService {
         await this.closeHotspot()
       }
     } finally {
-      // Release the scoped Android Network on every terminal path. This is idempotent with
-      // closeHotspot(), and intentionally leaves Android 9/iOS legacy routing unchanged.
       try {
-        // Cleanup already released an aborted attempt. Its late continuation
-        // must not disconnect a subsequent Gallery session.
-        if (!signal?.aborted) await localNetworkTransport.disconnect()
+        // Cancellation already owns an aborted attempt's cleanup. Its late
+        // continuation must not release a subsequent Gallery session.
+        if (!signal?.aborted) {
+          const failure = await this.closeHotspot()
+          if (failure) throw failure
+        }
       } finally {
         // A failed network release cannot skip listener cleanup.
         appStateSubscription.remove()
@@ -1872,8 +1908,13 @@ class GallerySyncService {
       store.setSyncError(error?.message || "Failed to start download")
       await gallerySyncNotifications.showSyncError("Failed to start download")
     } finally {
-      // Notification/recovery failures must not bypass the AP owner’s teardown.
-      if (!signal?.aborted && useGallerySyncStore.getState().syncServiceOpenedHotspot) await this.closeHotspot()
+      // Every admitted transfer releases phone routing and its reservation,
+      // including shortcuts onto a pre-existing AP. closeHotspot only disables
+      // an AP opened by this Gallery session; failed cleanup retains custody.
+      if (!signal?.aborted) {
+        const failure = await this.closeHotspot()
+        if (failure) throw failure
+      }
     }
   }
 
@@ -2454,14 +2495,10 @@ class GallerySyncService {
     }
 
     if (signal?.aborted) return
-    // Close hotspot if we opened it
+    // Release the admitted phone transport even when the AP pre-existed Gallery.
     const store = useGallerySyncStore.getState()
-    if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-      console.log("[GallerySyncService]   📡 Closing hotspot (service opened it)...")
-      await this.closeHotspot()
-    } else {
-      console.log("[GallerySyncService]   ℹ️ Hotspot was not opened by service - leaving it enabled")
-    }
+    const failure = await this.closeHotspot()
+    if (failure) throw failure
 
     if (signal?.aborted) return
     // Record a known empty gallery immediately after successful sync.
@@ -2524,17 +2561,8 @@ class GallerySyncService {
 
     store.setSyncCancelled()
     const failures: unknown[] = []
-    if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-      const failure = await this.closeHotspot()
-      if (failure) failures.push(failure)
-    } else {
-      // Phone transport belongs to this sync even when the AP pre-existed it.
-      try {
-        await localNetworkTransport.disconnect()
-      } catch (error) {
-        failures.push(error)
-      }
-    }
+    const networkFailure = await this.closeHotspot()
+    if (networkFailure) failures.push(...(networkFailure instanceof AggregateError ? networkFailure.errors : [networkFailure]))
     try {
       await localStorageService.clearSyncQueue()
     } catch (error) {
@@ -2560,12 +2588,21 @@ class GallerySyncService {
     return closing
   }
 
+  private reserveHotspot(): void {
+    this.releaseHotspot ??= acquireGlassesHotspot()
+  }
+
   private async performHotspotClose(): Promise<Error | null> {
+    // A refused start never owned the AP or phone association.
+    if (!this.releaseHotspot) return null
+    // A cancelled BLE enable may finish late; retain custody until it returns
+    // before stopping the AP and admitting another caller.
+    if (this.hotspotEnablePromise) await this.hotspotEnablePromise.catch(() => undefined)
     const store = useGallerySyncStore.getState()
     const failures: unknown[] = []
     console.log("[GallerySyncService] Closing hotspot...")
     try {
-      await localNetworkTransport.disconnect()
+      await localNetworkTransport.disconnect(this.networkOwner)
     } catch (error) {
       failures.push(error)
     }
@@ -2592,6 +2629,8 @@ class GallerySyncService {
       console.error("[GallerySyncService] Failed to close hotspot:", failure)
       return failure
     }
+    this.releaseHotspot()
+    this.releaseHotspot = null
     console.log("[GallerySyncService] Hotspot closed")
     return null
   }

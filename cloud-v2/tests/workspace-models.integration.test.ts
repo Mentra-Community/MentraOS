@@ -16,9 +16,22 @@
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test} from "bun:test"
 import type {Model} from "mongoose"
 
-import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
+import {
+  connectMongo,
+  disconnectMongo,
+  isCrossCollectionTransactionUnsupported,
+  isTransactionsUnsupportedError,
+  withTransaction,
+} from "../packages/core/src/connections/mongo.connection"
 import {runStartupMigrations} from "../packages/core/src/migrations/startup.migrations"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
+import {LicenseSeatModel} from "../packages/core/src/models/license-seat.model"
+import {LicenseModel} from "../packages/core/src/models/license.model"
+import {
+  WORKSPACE_AUDIT_COUNTER_ID,
+  WorkspaceAuditCounterModel,
+} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -32,6 +45,10 @@ const MODELS: Model<any>[] = [
   WorkspaceInvitationModel,
   AccessCredentialModel,
   WorkspaceAuditEventModel,
+  WorkspaceAuditCounterModel,
+  LegacyBrowserIdentityModel,
+  LicenseModel,
+  LicenseSeatModel,
 ]
 
 /** Run `fn` and return whatever it throws (fails the test if it does not throw). */
@@ -206,6 +223,148 @@ describe("withTransaction (error mapping, no Mongo)", () => {
     }
   })
 
+  test("isTransactionsUnsupportedError tells a deployment that cannot run transactions from one that failed", () => {
+    const standalone = Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {
+      code: 20,
+    })
+    const wrapped = new Error("MongoDB transactions require a replica set", {cause: standalone})
+    const compat = Object.assign(new Error("Current topology does not support sessions"), {name: "MongoCompatibilityError"})
+
+    // The original failure, and `withTransaction`'s wrapper of it (the cause).
+    for (const unsupported of [standalone, wrapped, compat, new Error("outer", {cause: wrapped})]) {
+      expect(isTransactionsUnsupportedError(unsupported)).toBe(true)
+    }
+    // Everything else, transient or not, is a failure of this attempt.
+    const transient = Object.assign(new Error("write conflict"), {errorLabels: ["TransientTransactionError"], code: 112})
+    const unknownCommit = Object.assign(new Error("commit result unknown"), {errorLabels: ["UnknownTransactionCommitResult"]})
+    const timeout = Object.assign(new Error("operation exceeded time limit"), {code: 50})
+    const lookalike = Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {code: 11000})
+    for (const failed of [
+      transient,
+      unknownCommit,
+      timeout,
+      lookalike,
+      new Error("connection closed"),
+      new Error("outer", {cause: transient}),
+      "Transaction numbers are only allowed on a replica set member or mongos",
+      null,
+      undefined,
+    ]) {
+      expect(isTransactionsUnsupportedError(failed)).toBe(false)
+    }
+  })
+
+  describe("a cause that leads back to itself", () => {
+    // `Error.cause` can be set to anything, including an error further up its own chain. The classifiers
+    // look a fixed number of causes down, so such a chain ends in "no" rather than in a RangeError that
+    // hides the failure being classified.
+    const cycle = (...errors: Error[]) => {
+      errors.forEach((error, index) => {
+        error.cause = errors[(index + 1) % errors.length]
+      })
+      return errors[0]!
+    }
+    const classifiers = [
+      ["isTransactionsUnsupportedError", isTransactionsUnsupportedError],
+      ["isCrossCollectionTransactionUnsupported", isCrossCollectionTransactionUnsupported],
+    ] as const
+
+    test("is not a match and does not throw, whether it loops through itself or through another error", () => {
+      for (const [name, classify] of classifiers) {
+        const self = new Error("a failure")
+        self.cause = self
+        const pair = cycle(new Error("outer"), new Error("inner"))
+
+        expect([name, classify(self)]).toEqual([name, false])
+        expect([name, classify(pair)]).toEqual([name, false])
+      }
+    })
+
+    test("still finds the signature in a cycle, wherever the loop closes", () => {
+      const standalone = Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {
+        code: 20,
+      })
+      const cosmos = new (WorkspaceModel.base.mongo.MongoServerError)({
+        message:
+          "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; " +
+          'Reason: (Message: {"Errors":["Transaction is not active"]}\r\n)\'',
+        code: 2,
+        errorLabels: [],
+      })
+
+      expect(isTransactionsUnsupportedError(cycle(new Error("outer"), standalone))).toBe(true)
+      expect(isCrossCollectionTransactionUnsupported(cycle(new Error("outer"), cosmos))).toBe(true)
+    })
+
+    test("looks five causes down and no further", () => {
+      const standalone = Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {
+        code: 20,
+      })
+      const wrapped = (depth: number) => {
+        let error: Error = standalone
+        for (let i = 0; i < depth; i++) error = new Error(`wrapper ${i}`, {cause: error})
+        return error
+      }
+
+      expect(isTransactionsUnsupportedError(wrapped(5))).toBe(true)
+      expect(isTransactionsUnsupportedError(wrapped(6))).toBe(false)
+    })
+  })
+
+  describe("Azure Cosmos DB for MongoDB's refusal of a transaction across collections", () => {
+    const cosmosMessage =
+      "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; " +
+      'ActivityId: 0b9d3a52-6a38-4f0e-9c1d-5c0e3f8a7e21; Reason: (Message: {"Errors":["Transaction is not active"]}\r\n' +
+      "ActivityId: 0b9d3a52-6a38-4f0e-9c1d-5c0e3f8a7e21, Request URI: /apps/.../partitions/..., RequestStats: ...)'"
+    const cosmos = (fields: Record<string, unknown> = {}) =>
+      new (WorkspaceModel.base.mongo.MongoServerError)({message: cosmosMessage, code: 2, errorLabels: [], ...fields})
+
+    test("is recognized by its code and both parts of its text, on the error or its cause", () => {
+      const refused = cosmos()
+      expect(refused.name).toBe("MongoServerError")
+      expect(refused.hasErrorLabel("TransientTransactionError")).toBe(false)
+
+      for (const recognized of [refused, new Error("outer", {cause: refused})]) {
+        expect(isCrossCollectionTransactionUnsupported(recognized)).toBe(true)
+      }
+    })
+
+    test("is nothing broader: another code, half the text, another class, or a non-error is not it", () => {
+      for (const other of [
+        cosmos({code: 112}),
+        cosmos({code: undefined}),
+        cosmos({message: "BadValue: unknown operator"}),
+        cosmos({message: "Error=2, Details='Transaction is not active'"}),
+        cosmos({message: "Error=2, Details='BadRequest (400); Substatus: 1101'"}),
+        cosmos({errorLabels: ["TransientTransactionError"], code: 112, message: "write conflict"}),
+        Object.assign(new Error(cosmosMessage), {code: 2}),
+        new Error("outer", {cause: Object.assign(new Error(cosmosMessage), {code: 2})}),
+        new Error("connection closed"),
+        cosmosMessage,
+        null,
+        undefined,
+      ]) {
+        expect(isCrossCollectionTransactionUnsupported(other)).toBe(false)
+      }
+    })
+
+    test("is not what withTransaction rewraps as a replica-set requirement: the workspace writes see Cosmos' own error", async () => {
+      const refused = cosmos()
+      expect(isTransactionsUnsupportedError(refused)).toBe(false)
+      const spy = spyOn(WorkspaceModel.db, "startSession").mockResolvedValue({
+        withTransaction: async () => {
+          throw refused
+        },
+        endSession: async () => {},
+      } as any)
+      try {
+        expect(await thrown(() => withTransaction(async () => 1))).toBe(refused)
+      } finally {
+        spy.mockRestore()
+      }
+    })
+  })
+
   test("rethrows unrelated errors unchanged and still ends the session", async () => {
     let ended = false
     const boom = new Error("boom")
@@ -369,22 +528,46 @@ describe("workspace models (local replica set)", () => {
       // The lookups the services use are indexed too.
       expect(byKey({mentraUserId: 1, status: 1})).toBeDefined()
       expect(byKey({workspaceId: 1, role: 1, status: 1})).toBeDefined()
+      // The claim at first sign-in finds a WorkOS user's pending rows. The index is not unique: Azure
+      // Cosmos DB cannot add a unique index to a populated collection, so the import enforces one pending
+      // row per person per workspace itself.
+      const pending = byKey({pendingWorkosUserId: 1, status: 1})
+      expect(pending).toBeDefined()
+      expect(pending?.unique).toBeUndefined()
+      expect(indexes.filter(index => index.unique && "pendingWorkosUserId" in index.key)).toEqual([])
     })
 
-    test("requires a mentraUserId and keeps only the fields it defines", async () => {
+    test("needs a Core user or a pending WorkOS user, and keeps only the fields it defines", async () => {
       for (const mentraUserId of [null, undefined, ""]) {
         const err = await thrown(() =>
           WorkspaceMembershipModel.create(membership({membershipId: `wm_${String(mentraUserId)}`, mentraUserId})),
         )
         expect(err.name).toBe("ValidationError")
       }
-      // Memberships carry no display name and no pending identity-provider id.
-      const row = await WorkspaceMembershipModel.create(
-        membership({membershipId: "wm_a", name: "Ada", pendingWorkosUserId: "user_01"}),
-      )
+      expect(
+        (await thrown(() =>
+          WorkspaceMembershipModel.create(membership({membershipId: "wm_blank", mentraUserId: null, pendingWorkosUserId: " "})),
+        )).name,
+      ).toBe("ValidationError")
+      // Memberships carry no display name. A row a Core mutation creates has no pending id at all.
+      const row = await WorkspaceMembershipModel.create(membership({membershipId: "wm_a", name: "Ada"}))
       const stored = await WorkspaceMembershipModel.findOne({membershipId: row.membershipId}).lean()
       expect(stored).not.toHaveProperty("name")
       expect(stored).not.toHaveProperty("pendingWorkosUserId")
+    })
+
+    test("a membership imported from the Store waits for its person under their WorkOS user id", async () => {
+      const pending = await WorkspaceMembershipModel.create(
+        membership({membershipId: "wm_pending_a", mentraUserId: null, pendingWorkosUserId: "user_01A"}),
+      )
+      expect(pending.mentraUserId).toBeNull()
+      expect(pending.pendingWorkosUserId).toBe("user_01A")
+      // Pending rows never meet the one-active-membership index, which only covers string user ids.
+      await WorkspaceMembershipModel.create(
+        membership({membershipId: "wm_pending_b", mentraUserId: null, pendingWorkosUserId: "user_01B"}),
+      )
+      await WorkspaceMembershipModel.create(membership({membershipId: "wm_claimed"}))
+      expect(await WorkspaceMembershipModel.countDocuments({workspaceId: "ws_1", status: "active"})).toBe(3)
     })
 
     test("applies defaults and validates role and endedReason", async () => {
@@ -637,6 +820,40 @@ describe("workspace models (local replica set)", () => {
       expect(byKey({workspaceId: 1, eventId: -1})).toBeDefined()
     })
 
+    test("indexes the change feed by seq, and the index is not unique", async () => {
+      // `workspace_audit_events` is populated in every deployment, and Azure Cosmos DB cannot add a unique
+      // index to a populated collection: a unique seq index would stop an upgrade. Sequence order comes from
+      // the counter's transaction, not from the index.
+      const index = (await WorkspaceAuditEventModel.collection.indexes()).find(
+        candidate => JSON.stringify(candidate.key) === JSON.stringify({seq: 1}),
+      )
+      expect(index).toBeDefined()
+      expect(index!.unique).not.toBe(true)
+      const [fields, options] = WorkspaceAuditEventModel.schema.indexes().find(([f]) => "seq" in f)!
+      expect(fields).toEqual({seq: 1})
+      expect(options.unique).not.toBe(true)
+    })
+
+    test("takes a seq only from events recorded for the feed: older events and organization events have none", async () => {
+      const row = await WorkspaceAuditEventModel.create({
+        eventId: "01HZ0000000000000000000030",
+        action: "credential.created",
+        actor: {kind: "system"},
+        occurredAt: new Date(),
+      })
+      expect(row.seq).toBeUndefined()
+      const stored = await WorkspaceAuditEventModel.collection.findOne({eventId: "01HZ0000000000000000000030"})
+      expect(stored).not.toHaveProperty("seq")
+      await WorkspaceAuditEventModel.create({
+        eventId: "01HZ0000000000000000000031",
+        seq: 5,
+        action: "workspace.created",
+        actor: {kind: "system"},
+        occurredAt: new Date(),
+      })
+      expect((await WorkspaceAuditEventModel.findOne({eventId: "01HZ0000000000000000000031"}).lean())?.seq).toBe(5)
+    })
+
     test("allows organization-level events without a workspace and validates the actor kind", async () => {
       const row = await WorkspaceAuditEventModel.create({
         eventId: "01HZ0000000000000000000011",
@@ -665,6 +882,17 @@ describe("workspace models (local replica set)", () => {
           )
         ).name,
       ).toBe("ValidationError")
+    })
+  })
+
+  describe("workspace audit counter", () => {
+    test("is one document under a fixed id that starts at 0 and cannot be created twice", async () => {
+      const row = await WorkspaceAuditCounterModel.create({_id: WORKSPACE_AUDIT_COUNTER_ID})
+      expect(row.seq).toBe(0)
+      expect(
+        (await thrown(() => WorkspaceAuditCounterModel.create({_id: WORKSPACE_AUDIT_COUNTER_ID}))).code,
+      ).toBe(11000)
+      expect(WorkspaceAuditCounterModel.collection.collectionName).toBe("workspace_audit_counters")
     })
   })
 
@@ -718,6 +946,22 @@ describe("workspace models (local replica set)", () => {
       expect(err.code).toBe(11000)
       expect(await WorkspaceModel.countDocuments({workspaceId: "ws_side"})).toBe(0)
       expect(await WorkspaceMembershipModel.countDocuments({membershipId: "wm_dup"})).toBe(0)
+    })
+  })
+
+  describe("legacy browser identities", () => {
+    test("one row per WorkOS user, its email lowercased, unclaimed until claimed", async () => {
+      const row = await LegacyBrowserIdentityModel.create({workosUserId: "user_01A", email: " Dev@Studio.Example "})
+      expect(row).toMatchObject({workosUserId: "user_01A", email: "dev@studio.example", claimedAt: null, claimedBy: null})
+      const duplicate = await thrown(() => LegacyBrowserIdentityModel.create({workosUserId: "user_01A", email: "x@studio.example"}))
+      expect(duplicate.code).toBe(11000)
+      // Two WorkOS users may share an address: the claim takes both for the person who verified it.
+      await LegacyBrowserIdentityModel.create({workosUserId: "user_01B", email: "dev@studio.example"})
+      expect(await LegacyBrowserIdentityModel.countDocuments({email: "dev@studio.example"})).toBe(2)
+      const indexes = await LegacyBrowserIdentityModel.collection.indexes()
+      expect(indexes.find(index => JSON.stringify(index.key) === JSON.stringify({workosUserId: 1}))?.unique).toBe(true)
+      expect(indexes.find(index => JSON.stringify(index.key) === JSON.stringify({email: 1}))).toBeDefined()
+      expect(indexes.find(index => JSON.stringify(index.key) === JSON.stringify({claimedBy: 1}))).toBeDefined()
     })
   })
 

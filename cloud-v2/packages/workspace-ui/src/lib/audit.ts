@@ -8,7 +8,7 @@
  * does not know shows its readable changes instead.
  */
 
-import { WORKSPACE_ROLES, type AuditEventView, type WorkspaceRole } from "@mentra/workspace-contract";
+import { OWNS_MINIAPPS_HOLD_REASON, WORKSPACE_ROLES, type AuditEventView, type WorkspaceRole } from "@mentra/workspace-contract";
 import { ROLE_LABELS } from "../roles";
 import { formatDate, formatDateTime } from "./format";
 
@@ -27,6 +27,8 @@ const ACTION_LABELS: Record<string, string> = {
   "workspace.created": "Workspace created",
   "workspace.renamed": "Workspace renamed",
   "workspace.deleted": "Workspace deleted",
+  "workspace.deletion_hold_set": "Deletion hold set",
+  "workspace.deletion_hold_cleared": "Deletion hold cleared",
   "membership.added": "Member added",
   "membership.role_changed": "Role changed",
   "membership.removed": "Member removed",
@@ -39,6 +41,10 @@ const ACTION_LABELS: Record<string, string> = {
   "invitation.revoked": "Invitation revoked",
   "credential.created": "Key created",
   "credential.revoked": "Key revoked",
+  "license.written": "Licenses bought or changed",
+  "license.ended": "Licenses ended",
+  "seat.assigned": "License assigned",
+  "seat.released": "License released",
 };
 
 /** A readable name for an audit action; an action this UI does not know shows as its raw name. */
@@ -116,6 +122,21 @@ export function describeAuditEvent(event: AuditEventView): AuditDescription {
       const name = text(before.name);
       return done(name ? ["Deleted the workspace ", strong(name)] : ["Deleted the workspace"]);
     }
+    case "workspace.deletion_hold_set": {
+      // The panel names the service beside the sentence, so the sentence says only what holds the workspace.
+      const reason = text(after.reason);
+      const held = typeof after.count === "number" ? after.count : null;
+      if (text(target.service) === "store" && reason === OWNS_MINIAPPS_HOLD_REASON) {
+        // Events are append-only and an older one counted published miniapps only, so the sentence says
+        // what the Store held the workspace for, and claims nothing about what it owned.
+        const heldFor = held === null ? "its miniapps" : plural(held, "miniapp", "miniapps");
+        return done([`Held the workspace from deletion for ${heldFor}`]);
+      }
+      const why = reason ? ` (${reason.replace(/_/g, " ")}${held === null ? "" : `: ${held}`})` : "";
+      return done([`Held the workspace from deletion${why}`]);
+    }
+    case "workspace.deletion_hold_cleared":
+      return done(["Stopped holding the workspace from deletion"]);
     case "membership.added": {
       const as = role(after.role);
       const asRole: AuditText = as ? [" as ", strong(as)] : [];
@@ -186,9 +207,12 @@ export function describeAuditEvent(event: AuditEventView): AuditDescription {
 const INTERNAL_FIELD = /(^id$|Ids?$)/;
 const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
+/** Fields whose name is not the word a person reads: a license is one person's right to a product, so `seatsUsed` counts licenses assigned. */
+const FIELD_LABELS: Record<string, string> = { seatsUsed: "Licenses assigned" };
+
 /** "expiresAt" as "Expires at", "packageNames" as "Package names". */
 function fieldLabel(field: string): string {
-  return capitalize(field.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase());
+  return FIELD_LABELS[field] ?? capitalize(field.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase());
 }
 
 /** A value in words: roles capitalised, dates formatted, lists as lists; null for nothing at all. */

@@ -10,6 +10,7 @@ Match coverage to the PR's behavior, then make the appropriate request:
 | Coverage needed | Request |
 | --- | --- |
 | Existing steps already test the behavior | Add `routine:<id>` for ordinary replay of the PR build |
+| The PR fixes a recorded failed test | Copy its rerun label from the Admin run or suite page and apply it to this PR |
 | An existing flow needs changed expectations or additional steps | Request `routine-work:edit` with an authoring brief |
 | No suitable flow exists | Request `routine-work:create` with an authoring brief |
 
@@ -68,6 +69,42 @@ A request is not a passing test result. Docs-only changes need no device coverag
    Explain which stable step IDs cover the PR; for an edit, name the insertion
    before/after an existing step and its expected outcome. A matching recorded
    example can corroborate behavior, but it may use an older source revision.
+
+## Verify a fix against its original failure
+
+On the Admin run or suite page, use **Copy rerun label** next to the affected
+routine. Apply that exact label to the fixing MentraOS PR. Its format is
+`rerun:<routine>:s:<suite-reference>` or `rerun:<routine>:r:<run-reference>`.
+An explicit trailing `~` marks a server-verified unique prefix so the label fits
+GitHub's 50-character limit. Do not shorten or invent a reference yourself.
+A run reference may identify a standalone original, a suite member, or a previous
+linked attempt; the system preserves the original parent and member lineage.
+
+The existing **Routine tests** check tracks this linked verification on the
+current PR head. It inherits the original exact routine definition and uses the
+PR's exact app artifacts. Follow its ongoing progress and use its native re-run
+or cancellation controls. An active predecessor waits for cleanup; an ambiguous
+or invalid label reports a refusal instead of guessing another test.
+
+Keep the PR open until its required ordinary or tagged routine check has finished.
+Closing or merging the PR cancels remaining check-owned requests, including linked
+reruns whose build inputs are already frozen. Cancellation does not release hardware;
+wait for accepted cleanup/readiness before a replacement run. If an early merge is
+necessary, preserve the canceled result and verify the merged build through the
+ordinary linked-rerun API.
+
+Keep the original failed run, screenshots and incident report in the PR evidence.
+State whether the change fixes app code, routine code or framework code, and
+link the resulting verification attempt. A labelled rerun attaches the fixing PR as
+an intended fix on the existing failure follow-up; it does not infer a diagnosis.
+Inspect the follow-up's recorded owner, cause and intended PRs before duplicating
+work. `Failed → Passed` describes original and latest outcomes; recorded stage
+and PR merge state are separate. Exact app artifact or routine bundle identity
+can establish component inclusion; a mobile PR artifact does not establish
+Cloud V2 deployment. Record unavailable backend or hardware observations.
+A passing latest attempt does not erase
+the original failure. There is no fixed number of passing attempts required by
+this employee workflow; follow any separately assigned verification policy.
 
 ## Request existing coverage
 

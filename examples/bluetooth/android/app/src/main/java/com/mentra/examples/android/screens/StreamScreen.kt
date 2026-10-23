@@ -1,0 +1,728 @@
+package com.mentra.examples.android.screens
+
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.mentra.examples.android.MentraExampleController
+import com.mentra.bluetoothsdk.StreamResolvedConfig
+import com.mentra.examples.android.elapsedText
+import com.mentra.examples.android.isGlassesConnected
+import com.mentra.examples.android.isGlassesWifiConnected
+import com.mentra.examples.android.rtmpHlsPreviewUrl
+import com.mentra.examples.android.srtHlsPreviewUrl
+import com.mentra.examples.android.streamProtocolLabel
+import com.mentra.examples.android.webrtcPreviewUrl
+import com.mentra.examples.android.ui.AppColor
+import com.mentra.examples.android.ui.GlassCard
+import com.mentra.examples.android.ui.LocalKeyboardBottomInset
+import com.mentra.examples.android.ui.LocalKeyboardVisible
+import com.mentra.examples.android.ui.OfflineNotice
+import com.mentra.examples.android.ui.PageHeader
+import com.mentra.examples.android.ui.scrollBottomPadding
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import java.util.Locale
+import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
+
+private val barHeights = listOf(18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40)
+private fun streamSdkCall(fps: Int) = """
+	val streamId = "android-${'$'}{System.currentTimeMillis()}"
+	val started = mentraBluetoothSdk.startStream(
+	  StreamRequest(
+	    streamUrl = streamUrl,
+	    streamId = streamId,
+	    video = StreamVideoConfig(fps = $fps),
+	  )
+	)
+	println("Stream started: ${'$'}{started.status}")
+	""".trimIndent()
+
+@Composable
+fun StreamScreen(controller: MentraExampleController) {
+    val state = controller.state
+    val connected = isGlassesConnected(state.glassesStatus)
+    val glassesWifiConnected = isGlassesWifiConnected(state.glassesStatus)
+    val streamActive = state.streamRequested || state.streamStartedAt != null
+    val streamStarting = state.streamStartPending && !streamActive
+    val streamButtonEnabled = !streamStarting && ((connected && glassesWifiConnected) || streamActive)
+    val wifiRequired = connected && !glassesWifiConnected && !streamActive
+    val previewReady = streamActive && state.streamPreviewReady
+    val previewPending = streamActive || streamStarting
+    val cloudServerEnabled = state.streamCloudServerEnabled
+    val directPhoneWebRtc = !cloudServerEnabled
+    val streamIndicatorColor = when {
+        previewReady -> AppColor.greenAccent
+        streamActive || state.directStreamReceiverRunning -> AppColor.red
+        else -> AppColor.muted
+    }
+    val uptime = elapsedText(state.streamStartedAt)
+    val setupHint = if (cloudServerEnabled) localStreamSetupHint(state.streamProtocol, state.streamUrl, state.streamStatus) else null
+    val previewTarget = if (cloudServerEnabled && previewReady) streamPreviewTarget(state.streamProtocol, state.streamUrl) else null
+    val clipboardManager = LocalClipboardManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val streamUrlFocusRequester = remember { FocusRequester() }
+    val scrollState = rememberScrollState()
+    var streamUrlFocused by remember { mutableStateOf(false) }
+    var resolvedConfigExpanded by remember { mutableStateOf(false) }
+    val sdkCall = streamSdkCall(state.streamFps)
+
+    LaunchedEffect(streamUrlFocused) {
+        if (streamUrlFocused) {
+            repeat(4) {
+                scrollState.animateScrollTo(scrollState.maxValue)
+                delay(120)
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(scrollState)) {
+        PageHeader("Stream")
+        if (!connected) {
+            OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+        } else if (wifiRequired) {
+            OfflineNotice(
+                message = "Connect the glasses to Wi-Fi from the System tab before streaming. Streams are published over the glasses network connection.",
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+
+        // Live preview card
+        GlassCard(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            padding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+        ) {
+            Box(modifier = Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(22.dp))) {
+                if (directPhoneWebRtc) {
+                    DirectPhoneStreamPreview(
+                        frame = state.directStreamFrame,
+                        message = if (previewPending && !previewReady) state.streamStatus else null,
+                        modifier = Modifier.matchParentSize()
+                    )
+                } else if (previewTarget != null) {
+                    LiveStreamPreview(previewTarget, modifier = Modifier.matchParentSize())
+                } else {
+                    PlaceholderStreamPreview(
+                        message = if (previewPending) "Starting stream...\nWaiting for preview" else null,
+                        modifier = Modifier.matchParentSize()
+                    )
+                }
+
+                // LIVE pill
+                Row(
+                    modifier = Modifier.align(Alignment.TopStart).padding(14.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 11.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (previewPending) AppColor.redLive else AppColor.greenSoft))
+                    Text(if (previewReady) "LIVE" else if (previewPending) "STARTING" else "READY", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+                }
+                Text(uptime, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.TopEnd).padding(14.dp))
+
+                if (!previewReady) {
+                    Text(
+                        if (directPhoneWebRtc && previewPending) {
+                            "Waiting for first frame"
+                        } else if (previewPending) {
+                            "Waiting for preview"
+                        } else if (directPhoneWebRtc) {
+                            "Ready · phone receiver starts on stream"
+                        } else {
+                            "Ready · enter stream URL"
+                        },
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.align(Alignment.BottomStart).padding(14.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Brush.verticalGradient(if (streamActive) listOf(Color(0xFFDE3A30), Color(0xFFC43B30)) else listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
+                    .clickable(enabled = streamButtonEnabled) {
+                        if (cloudServerEnabled && shouldFocusStreamUrlTemplate(state.streamUrl, streamActive)) {
+                            streamUrlFocusRequester.requestFocus()
+                            keyboardController?.show()
+                        }
+                        controller.toggleStream()
+                    }
+                    .padding(vertical = 16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (streamActive) {
+                        Box(modifier = Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(Color.White))
+                    } else {
+                        Icon(Icons.Outlined.PlayArrow, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
+                    Text(
+                        if (!connected && !streamActive) {
+                            "Connect glasses first"
+                        } else if (!glassesWifiConnected && !streamActive) {
+                            "Connect glasses to Wi-Fi"
+                        } else if (streamStarting) {
+                            "Starting stream..."
+                        } else if (streamActive) {
+                            "End stream"
+                        } else {
+                            "Start stream"
+                        },
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+
+        // SDK card
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .border(1.dp, AppColor.borderSoft, RoundedCornerShape(22.dp))
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().background(AppColor.ink).padding(horizontal = 16.dp, vertical = 14.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("SDK CALL", color = AppColor.greenAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(Color.White.copy(alpha = 0.06f))
+                            .clickable { clipboardManager.setText(AnnotatedString(sdkCall)) }
+                            .heightIn(min = 36.dp)
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(Icons.Outlined.ContentCopy, null, tint = AppColor.consoleText, modifier = Modifier.size(12.dp))
+                        Text("Copy", color = AppColor.consoleText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    sdkCall,
+                    color = AppColor.consoleText, fontSize = 11.sp, fontFamily = FontFamily.Monospace
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.6f)).padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(streamIndicatorColor.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(streamIndicatorColor))
+                }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text(state.streamStatus, color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("uptime $uptime · SDK keep-alive", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+
+        ResolvedStreamConfigCard(
+            config = state.streamResolvedConfig,
+            expanded = resolvedConfigExpanded,
+            onToggle = { resolvedConfigExpanded = !resolvedConfigExpanded },
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+
+        // Protocol card
+        GlassCard(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            corner = 22,
+            padding = PaddingValues(horizontal = 14.dp, vertical = 14.dp)
+        ) {
+            CloudServerToggle(
+                enabled = cloudServerEnabled,
+                onEnabledChange = controller::setStreamCloudServerEnabled,
+            )
+            if (cloudServerEnabled) {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AppColor.ink.copy(alpha = 0.05f)).padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    ProtocolTab("RTMP", state.streamProtocol == "rtmp", Modifier.weight(1f)) { controller.selectProtocol("rtmp") }
+                    ProtocolTab("SRT", state.streamProtocol == "srt", Modifier.weight(1f)) { controller.selectProtocol("srt") }
+                    ProtocolTab("WebRTC", state.streamProtocol == "webrtc", Modifier.weight(1f)) { controller.selectProtocol("webrtc") }
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(streamProtocolLabel(state.streamProtocol), color = AppColor.greenAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+                    Box(modifier = Modifier.size(width = 1.dp, height = 14.dp).background(AppColor.ink.copy(alpha = 0.12f)))
+                    BasicTextField(
+                        value = state.streamUrl,
+                        onValueChange = controller::setStreamUrl,
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(streamUrlFocusRequester)
+                            .onFocusChanged { focusState ->
+                                streamUrlFocused = focusState.isFocused
+                            },
+                    )
+                    Icon(Icons.Outlined.Edit, null, tint = AppColor.muted, modifier = Modifier.size(14.dp))
+                }
+            } else {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (state.directStreamReceiverRunning) AppColor.greenAccent else AppColor.muted))
+                    Text(
+                        if (state.directStreamReceiverRunning) "Phone receiver ready" else "Phone receiver starts on stream",
+                        color = AppColor.ink,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            StreamFpsSlider(
+                enabled = !streamActive,
+                value = state.streamFps,
+                onValueChange = controller::setStreamFps,
+            )
+            if (cloudServerEnabled && setupHint != null) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    setupHint,
+                    color = AppColor.muted,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(AppColor.ink.copy(alpha = 0.04f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(if (streamUrlFocused) maxOf(scrollBottomPadding(), 340.dp) else scrollBottomPadding()))
+    }
+}
+
+@Composable
+private fun ResolvedStreamConfigCard(
+    config: StreamResolvedConfig?,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    GlassCard(
+        modifier = modifier,
+        corner = 18,
+        padding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { onToggle() },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("RESOLVED STREAM CONFIG", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                Text(streamResolvedConfigSummary(config), color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp))
+            }
+            Text(if (expanded) "Hide" else "Show", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+
+        if (expanded) {
+            Spacer(Modifier.height(10.dp))
+            Column(
+                modifier = Modifier.fillMaxWidth().border(1.dp, AppColor.ink.copy(alpha = 0.08f), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                streamResolvedConfigRows(config).forEach { row ->
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(row.first, color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text(row.second, color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.End, modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun shouldFocusStreamUrlTemplate(streamUrl: String, streamActive: Boolean): Boolean =
+    !streamActive && streamUrl.contains("<computer-ip>")
+
+private data class StreamPreviewTarget(
+    val kind: StreamPreviewKind,
+    val url: String,
+)
+
+private enum class StreamPreviewKind {
+    Hls,
+    Web,
+}
+
+private fun streamPreviewTarget(protocol: String, streamUrl: String): StreamPreviewTarget? {
+    return try {
+        when (protocol) {
+            "rtmp" -> rtmpHlsPreviewUrl(streamUrl)?.let { StreamPreviewTarget(StreamPreviewKind.Hls, it) }
+            "srt" -> srtHlsPreviewUrl(streamUrl)?.let { StreamPreviewTarget(StreamPreviewKind.Hls, it) }
+            "webrtc" -> StreamPreviewTarget(StreamPreviewKind.Web, webrtcPreviewUrl(streamUrl))
+            else -> null
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+@Composable
+private fun PlaceholderStreamPreview(message: String? = null, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .background(Brush.linearGradient(listOf(Color(0xFF163A26), Color(0xFF26583E), Color(0xFF7DD89E), Color(0xFF3F8F5C))))
+    ) {
+        if (message != null) {
+            Text(
+                message,
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 21.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        } else {
+            Row(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                barHeights.forEachIndexed { i, h ->
+                    Box(
+                        modifier = Modifier
+                            .size(width = 5.dp, height = h.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(if (i % 3 == 2) Color.White else Color.White.copy(alpha = 0.85f))
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DirectPhoneStreamPreview(frame: android.graphics.Bitmap?, message: String? = null, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.background(Color.Black)) {
+        if (frame != null) {
+            Image(
+                bitmap = frame.asImageBitmap(),
+                contentDescription = "Direct phone WebRTC preview",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
+            )
+        }
+        if (message != null) {
+            if (frame != null) {
+                Box(modifier = Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.62f)))
+            }
+            Text(
+                message,
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 21.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        }
+    }
+}
+
+@Composable
+private fun LiveStreamPreview(target: StreamPreviewTarget, modifier: Modifier = Modifier) {
+    when (target.kind) {
+        StreamPreviewKind.Hls -> HlsStreamPreview(target.url, modifier)
+        StreamPreviewKind.Web -> WebStreamPreview(target.url, modifier)
+    }
+}
+
+@Composable
+private fun HlsStreamPreview(url: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val player = remember(url) {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(
+                MediaItem.Builder()
+                    .setUri(url)
+                    .setMimeType(MimeTypes.APPLICATION_M3U8)
+                    .build()
+            )
+            volume = 0f
+            playWhenReady = true
+            prepare()
+        }
+    }
+    DisposableEffect(player) {
+        onDispose { player.release() }
+    }
+    AndroidView(
+        modifier = modifier.background(Color.Black),
+        factory = { viewContext ->
+            PlayerView(viewContext).apply {
+                useController = false
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                this.player = player
+            }
+        },
+        update = { it.player = player }
+    )
+}
+
+@Composable
+private fun WebStreamPreview(url: String, modifier: Modifier = Modifier) {
+    AndroidView(
+        modifier = modifier.background(Color.Black),
+        factory = { context ->
+            WebView(context).apply {
+                setBackgroundColor(android.graphics.Color.BLACK)
+                webViewClient = WebViewClient()
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.mediaPlaybackRequiresUserGesture = false
+                settings.cacheMode = WebSettings.LOAD_NO_CACHE
+                loadUrl(url)
+            }
+        },
+        update = { webView ->
+            if (webView.url != url) {
+                webView.loadUrl(url)
+            }
+        }
+    )
+}
+
+private fun localStreamSetupHint(protocol: String, streamUrl: String, status: String): String? {
+    if (protocol != "rtmp" && protocol != "srt" && protocol != "webrtc") {
+        return null
+    }
+    val normalized = status.lowercase()
+    val url = streamUrl.trim()
+    val needsSetup = url.isEmpty() ||
+        url.contains("<computer-ip>") ||
+        url.contains("YOUR_") ||
+        normalized.contains("not reachable") ||
+        normalized.contains("replace") ||
+        normalized.contains("required")
+    if (!needsSetup) {
+        return null
+    }
+    if (protocol == "rtmp") {
+        return "Local RTMP setup: run python3 local-demo-cloud/server.py, paste the printed RTMP publish URL here, then start streaming. The app previews the derived HLS URL; the printed ffplay command is optional for debugging."
+    }
+    if (protocol == "srt") {
+        return "Local SRT setup: run python3 local-demo-cloud/server.py, paste the printed SRT publish URL here, then start streaming. The app previews the derived HLS URL; the printed SRT ffplay command is optional for debugging."
+    }
+    return "Local WebRTC setup: run python3 local-demo-cloud/server.py, paste the printed WHIP publish URL here, then start streaming. The app previews the MediaMTX WebRTC page."
+}
+
+private fun streamResolvedConfigSummary(config: StreamResolvedConfig?): String {
+    config ?: return "Waiting for stream status from the glasses"
+    val video = config.video
+    return listOfNotNull(
+        config.transport?.value?.uppercase(),
+        video?.let { "${it.width}x${it.height}" },
+        video?.let { "${it.fps} fps" },
+        video?.let { bitrateLabel(it.bitrate) },
+    ).joinToString(" · ")
+}
+
+private fun streamResolvedConfigRows(config: StreamResolvedConfig?): List<Pair<String, String>> {
+    config ?: return listOf("Status" to "No resolved config received yet")
+    val rows = mutableListOf("Transport" to (config.transport?.value?.uppercase() ?: "Unknown"))
+    config.video?.let { video ->
+        rows += "Video" to "${video.width} x ${video.height}"
+        rows += "Capture" to if (video.captureWidth != null && video.captureHeight != null) {
+            "${video.captureWidth} x ${video.captureHeight}"
+        } else {
+            "Same as video"
+        }
+        rows += "FPS" to "${video.fps}"
+        rows += "Video bitrate" to bitrateLabel(video.bitrate)
+    }
+    config.audio?.let { audio ->
+        rows += "Audio bitrate" to audio.bitrate?.let(::bitrateLabel).orEmpty().ifBlank { "Not reported" }
+        rows += "Sample rate" to audio.sampleRate?.let { "$it Hz" }.orEmpty().ifBlank { "Not reported" }
+        rows += "Echo cancellation" to when (audio.echoCancellation) {
+            true -> "On"
+            false -> "Off"
+            null -> "Not reported"
+        }
+        rows += "Noise suppression" to when (audio.noiseSuppression) {
+            true -> "On"
+            false -> "Off"
+            null -> "Not reported"
+        }
+    }
+    return rows
+}
+
+private fun bitrateLabel(bitsPerSecond: Int): String =
+    when {
+        bitsPerSecond >= 1_000_000 -> String.format(Locale.US, "%.1f Mbps", bitsPerSecond / 1_000_000.0)
+        bitsPerSecond >= 1_000 -> "${bitsPerSecond / 1_000} kbps"
+        else -> "$bitsPerSecond bps"
+    }
+
+@Composable
+private fun StreamFpsSlider(enabled: Boolean, value: Int, onValueChange: (Int) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("STREAM FPS", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+            Text("$value fps", color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            SliderNudgeButton("-", enabled = enabled && value > 1) {
+                onValueChange(value - 1)
+            }
+            Slider(
+                enabled = enabled,
+                value = value.toFloat(),
+                onValueChange = { onValueChange(it.roundToInt()) },
+                valueRange = 1f..24f,
+                steps = 22,
+                modifier = Modifier.weight(1f),
+            )
+            SliderNudgeButton("+", enabled = enabled && value < 24) {
+                onValueChange(value + 1)
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("1", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            if (!enabled) {
+                Text("Read-only while streaming", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            }
+            Text("24", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun CloudServerToggle(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            "Use cloud server",
+            color = AppColor.ink,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Switch(checked = enabled, onCheckedChange = onEnabledChange)
+    }
+}
+
+@Composable
+private fun SliderNudgeButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (enabled) AppColor.ink else AppColor.muted,
+        fontSize = 18.sp,
+        fontWeight = FontWeight.ExtraBold,
+        modifier = Modifier
+            .size(width = 34.dp, height = 34.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color.White.copy(alpha = 0.78f))
+            .border(1.dp, AppColor.ink.copy(alpha = 0.08f), RoundedCornerShape(999.dp))
+            .clickable(enabled = enabled) { onClick() }
+            .wrapContentSize(Alignment.Center)
+    )
+}
+
+@Composable
+private fun ProtocolTab(title: String, active: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (active) Color.White else Color.Transparent)
+            .clickable { onClick() }
+            .heightIn(min = 44.dp)
+            .padding(vertical = 10.dp, horizontal = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(title, color = if (active) AppColor.ink else AppColor.muted, fontSize = 13.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium)
+    }
+}

@@ -2,8 +2,12 @@
 export const GENERATED_RELEASE_CHANGELOGS = Object.freeze(
 [
   {
-    "version": "3.3.0",
+    "version": "3.4.0",
     "markdown": "This release is under active development. User-facing changes will be documented as they land."
+  },
+  {
+    "version": "3.3.0",
+    "markdown": "- **Mentra Call:** Now available on iPhone, with a redesigned call screen and photo sharing during calls.\n- **Microphone:** Improved glasses microphone reliability, including after phone calls.\n- **Photos and gallery:** More reliable photo capture and gallery syncing.\n- **Glasses updates:** More reliable glasses updates, with clearer progress.\n- **Miniapps:** Miniapps now update automatically. Fixed miniapps getting stuck on loading screens.\n- **Mentra AI:** Reliability improvements and bug fixes.\n- **Notes:** Take photos with the glasses camera button, and add meeting and location details to your notes.\n- **Pairing and connections:** Improved glasses audio reconnection on Android.\n- **G1 and NIMO:** Improved text display, including accented letters.\n- **Android tablets:** The Mentra App now rotates to landscape."
   },
   {
     "version": "3.2.1",

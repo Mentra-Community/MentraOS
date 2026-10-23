@@ -56,18 +56,41 @@ describe("the Workspaces page", () => {
     expect(render(<WorkspacesPage />)).toContain("Loading workspaces");
   });
 
-  test("warns that the Mentra Miniapp Store keeps the workspace's miniapps until an operator reassigns them", () => {
+  test("states that a workspace that owns miniapps in the Mentra Miniapp Store can't be deleted", () => {
     const owner: WorkspaceDetail = {
       ...everyone[0]!,
       membership: null,
       capabilities: [...capabilitiesForRole("owner")],
+      deletionHolds: [],
     };
     const markup = render(
       <WorkspaceSettingsPanel api={adminWorkspaceApi} workspaceId="ws_acme" deleteNotice={STORE_DELETE_NOTICE} />,
       { details: [owner] },
     );
-    expect(markup).toContain("stay published");
-    expect(markup).toContain("until a Store operator assigns them to another workspace");
+    expect(markup).toContain(
+      "A workspace that owns miniapps in the Mentra Miniapp Store can&#x27;t be deleted. Delete its miniapps first.",
+    );
+    // Nothing is left behind any more, so there is no word of miniapps staying in the Store.
+    expect(markup).not.toContain("stay there");
+    expect(markup).not.toContain("Store operator");
+  });
+
+  test("a workspace that still owns miniapps says so where the delete is, and cannot be deleted from here", () => {
+    const held: WorkspaceDetail = {
+      ...everyone[0]!,
+      membership: null,
+      capabilities: [...capabilitiesForRole("owner")],
+      organizationAdmin: true,
+      deletionHolds: [{ service: "store", reason: "owns_miniapps", count: 3 }],
+    };
+    const markup = render(
+      <WorkspaceSettingsPanel api={adminWorkspaceApi} workspaceId="ws_acme" deleteNotice={STORE_DELETE_NOTICE} />,
+      { details: [held] },
+    );
+    const section = /<section aria-label="Delete workspace"[\s\S]*?<\/section>/.exec(markup)?.[0] ?? "";
+    expect(section).toContain("This workspace still owns 3 miniapps. Delete them in the Developer Console first.");
+    expect(section).toMatch(/<button[^>]*disabled=""[^>]*>Delete workspace<\/button>/);
+    expect(section).not.toContain(STORE_DELETE_NOTICE);
   });
 });
 

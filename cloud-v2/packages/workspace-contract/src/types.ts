@@ -80,7 +80,16 @@ export interface AuthorizeResponse {
 
 export interface PrincipalResponse {
   principal: CorePrincipal
-  workspaces: Array<WorkspaceSummary & {membership: MembershipSummary; capabilities: WorkspaceCapability[]}>
+  /**
+   * The person's workspaces, oldest first. `replaceable` is true for their own automatic workspace (the one
+   * Core made for them, which they own) while it holds nothing: they are its only member, and it has no
+   * pending invitation, key, license that has not ended, or deletion hold. Core deletes such a workspace in
+   * the transaction that gives them a membership in another one (accepting an invitation, claiming an
+   * imported membership, recovering ownership). An older Core leaves it out.
+   */
+  workspaces: Array<
+    WorkspaceSummary & {membership: MembershipSummary; capabilities: WorkspaceCapability[]; replaceable?: boolean}
+  >
 }
 
 export interface MembershipCheckEntry {
@@ -103,6 +112,177 @@ export interface ServiceCredentialResponse {
 export interface ResolveEmailResponse {
   mentraUserId: string
 }
+
+// --- Deletion holds ---------------------------------------------------------
+
+/**
+ * A service's hold on a workspace. While a workspace has any hold, nobody can delete it, an
+ * Organization Admin included: the delete is refused with 409 {@link WORKSPACE_HAS_HOLDS_ERROR}
+ * until the service clears its hold. Each service has at most one hold per workspace, which it sets
+ * with `PUT /workspaces/:workspaceId/deletion-holds/:service` (replacing its previous one) and clears
+ * with `DELETE` on the same path.
+ *
+ * Every set and clear carries `asOf`, the instant the service computed it ({@link DeletionHoldUpdate}),
+ * so a call Core applies late never overwrites a newer one.
+ *
+ * `service` is the service that placed it (`store`); `reason` is a lowercase code
+ * ({@link DELETION_HOLD_REASON_PATTERN}, for example `owns_miniapps`); `count`, when present, is how
+ * many of the things the reason names the workspace still has. `describeDeletionHold` puts a hold in
+ * words.
+ */
+export interface WorkspaceDeletionHold {
+  service: string
+  reason: string
+  count?: number
+}
+
+/**
+ * What every set and clear of a hold carries (`PUT` and `DELETE` bodies both): `asOf`, the instant at
+ * which the service computed the hold, as an ISO 8601 UTC string with at most millisecond precision
+ * (`Date.prototype.toISOString`). Take it just before reading what the hold counts, so the count
+ * reflects every change made before it, and make it later than every `asOf` the service sent for the
+ * workspace before: an equal `asOf` with a different hold is stale too, and wall clocks repeat, step
+ * back and differ between hosts.
+ *
+ * Core keeps, for each service, the newest `asOf` it has applied, a clear's included, and ignores a
+ * set or clear that is not newer (see {@link DeletionHoldsResponse.ignored}): a call that timed out
+ * and reached Core late cannot undo a newer one. The same call again, with the same `asOf`, is
+ * answered as applied. An `asOf` more than {@link DELETION_HOLD_MAX_FUTURE_SKEW_MS} ahead of Core's
+ * clock is 400 `invalid_request`, as is a missing or malformed one.
+ */
+export interface DeletionHoldUpdate {
+  asOf: string
+}
+
+/** How far ahead of Core's clock a hold's `asOf` may be: five minutes. */
+export const DELETION_HOLD_MAX_FUTURE_SKEW_MS = 5 * 60_000
+
+/** Response of `PUT` and `DELETE /workspaces/:workspaceId/deletion-holds/:service`: every hold on the workspace after the call. */
+export interface DeletionHoldsResponse {
+  workspaceId: string
+  holds: WorkspaceDeletionHold[]
+  /**
+   * True when Core ignored the call because it has already applied a set or clear from this service
+   * with a newer `asOf`, or the same `asOf` and a different hold. Core wrote and recorded nothing, and
+   * `holds` are the holds it keeps. A stale call changes nothing, so it is not a failure, but a caller
+   * that needs the workspace held (before a publication takes effect) must find its own hold in
+   * `holds`: an ignored set leaves whatever the newer call did, a clear included.
+   */
+  ignored: boolean
+}
+
+/** What a hold's `reason` must match: a lowercase code of at most 64 letters, digits and underscores, starting with a letter. */
+export const DELETION_HOLD_REASON_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
+
+/** The Store's hold `reason` while a workspace still owns a miniapp that is not deleted; its `count` is how many. */
+export const OWNS_MINIAPPS_HOLD_REASON = "owns_miniapps"
+
+/**
+ * `error` of the 409 that deleting a workspace answers while any service holds it. The body is
+ * {@link WorkspaceHasHoldsErrorBody}: `error_description` says why in words and `holds` lists every hold.
+ */
+export const WORKSPACE_HAS_HOLDS_ERROR = "workspace_has_holds"
+
+export interface WorkspaceHasHoldsErrorBody {
+  error: typeof WORKSPACE_HAS_HOLDS_ERROR
+  error_description: string
+  holds: WorkspaceDeletionHold[]
+}
+
+// --- Change feed ------------------------------------------------------------
+
+/**
+ * One entry of Core's change feed (`GET /changes`). `eventId` identifies the event; `seq` is its
+ * position in the feed, assigned in commit order, and is the only thing to page by: pass the last
+ * `seq` you processed, as a decimal string, as the next request's `after`. The feed leaves out
+ * organization-level events (operator keys), so consecutive events can skip `seq` numbers. A
+ * skipped number is never a missed event.
+ *
+ * `workspaceId` is null only for user-level tombstones ({@link USER_DELETED_ACTION}). `action`
+ * names the change (`"user.deleted"`, `"workspace.created"`, ...); a receiver treats an action it
+ * does not know as a no-op. `target`, `before` and `after` are snapshots whose shape depends on
+ * `action` (see the event catalog in Core's `docs/fleet-integration.md`), null when the event has
+ * none, with every credential-looking key (`token`, `secret`, `hash`, `password`) removed at any
+ * depth.
+ */
+export interface WorkspaceChangeEvent {
+  eventId: string
+  seq: number
+  workspaceId: string | null
+  action: string
+  occurredAt: string
+  target: Record<string, unknown> | null
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+}
+
+/**
+ * Response of `GET /changes`: events in `seq` order. `next` is the cursor for the following page
+ * (the last event's `seq`), or null when the page was not full and there is nothing more yet.
+ */
+export interface WorkspaceChangesResponse {
+  events: WorkspaceChangeEvent[]
+  next: string | null
+}
+
+/**
+ * `action` of the tombstone recorded when a Mentra account is deleted: `workspaceId` is null and
+ * `target` is `{mentraUserId}`. A service that keeps data keyed by that user deletes it. Each
+ * membership the deletion ended was recorded before it, as a `membership.removed` event.
+ */
+export const USER_DELETED_ACTION = "user.deleted"
+
+// --- Forwarded principals (Core -> Fleet) ----------------------------------
+
+/**
+ * The headers Core adds to a request it forwards to the Fleet integration or to a portal module, beyond the service
+ * signature headers (`SERVICE_HEADERS`, with `x-mentra-service: core`). `principal` is the caller as
+ * base64url JSON ({@link ForwardedPrincipal}); `principalSignature` is a base64url HMAC-SHA256,
+ * keyed with the same secret as the service signature, over `<timestamp>\n<principal header>`.
+ * Verify both with `verifyForwardedPrincipal` from `@mentra/workspace-contract/server`.
+ */
+export const FORWARDED_PRINCIPAL_HEADERS = {
+  principal: "x-mentra-principal",
+  principalSignature: "x-mentra-principal-signature",
+} as const
+
+/** The `x-mentra-service` value of every request Core forwards. */
+export const FORWARDING_SERVICE = "core"
+
+/**
+ * What a signed-in person's forwarded request covers, decided by Core: the whole organization, one
+ * workspace (a team), or the person's own account.
+ */
+export type ForwardedScope =
+  | {kind: "organization"}
+  | {kind: "workspace"; workspaceId: string}
+  | {kind: "person"}
+
+/** The scope under its first name, when Fleet was the only service Core forwarded to. */
+export type FleetScope = ForwardedScope
+
+/**
+ * Who a forwarded request is from. Only people reach a service Core forwards to: Fleet's `/v1/client` only
+ * ever receives `phone` principals, and Fleet's `/v1/admin` and a portal module's `/v1/portal` only `user`
+ * principals.
+ *
+ * - `phone`: a signed-in phone session. `email` is the account's verified email, or null; it is a
+ *   display attribute and never an identity key.
+ * - `user`: a signed-in person. `isOrganizationAdmin` comes from a verified identity email; `email`
+ *   may be unverified (`emailVerified`) and is never an authorization. `organizationCapabilities` is
+ *   what Core decided the person may do to the organization, and `scope` is what this request covers.
+ */
+export type ForwardedPrincipal =
+  | {kind: "phone"; mentraUserId: string; tenantId: string; sessionId: string; email: string | null}
+  | {
+      kind: "user"
+      mentraUserId: string
+      email: string | null
+      emailVerified: boolean
+      isOrganizationAdmin: boolean
+      organizationCapabilities: OrganizationCapability[]
+      scope: ForwardedScope
+    }
 
 /**
  * `error` values on 401 responses from the internal service API. The client treats only `invalid_token`
@@ -139,15 +319,30 @@ export interface WorkspaceDetail extends WorkspaceSummary {
    * Optional for servers that predate it.
    */
   organizationAdmin?: boolean
+  /**
+   * What holds the workspace from deletion: deleting it is refused while this is not empty. Optional for
+   * servers that predate holds.
+   */
+  deletionHolds?: WorkspaceDeletionHold[]
 }
 
-/** One row of a workspace's member list. `email` is display-only and never an authorization. */
+/**
+ * One row of a workspace's member list. `email` is display-only and never an authorization. `pending`
+ * marks a membership imported from the Store whose person has not signed in yet: it has no
+ * `mentraUserId` until they do, and holds its role meanwhile.
+ */
 export interface MemberView {
   membershipId: string
-  mentraUserId: string
+  mentraUserId: string | null
   email: string | null
+  /**
+   * The person's name from their sign-in, null when Core has none or they haven't signed in. Optional so a
+   * portal still works against a Core that doesn't send it.
+   */
+  name?: string | null
   role: WorkspaceRole
   startedAt: string
+  pending: boolean
 }
 
 /** A pending invitation as listed to administrators. It never carries the token or its hash. */

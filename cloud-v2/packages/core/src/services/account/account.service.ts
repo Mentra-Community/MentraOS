@@ -13,9 +13,11 @@ import {findOrCreateUser} from "../user.service"
 import {sendEmail} from "../email/email.service"
 import * as gotrue from "./gotrue.client"
 import {SupportProfileModel} from "../../models/support-profile.model"
+import {SigninIdentityModel} from "../../models/signin-identity.model"
 import {UserModel} from "../../models/user.model"
 import * as otc from "./one-time-code.service"
 import {AccountError} from "./account-error"
+import {forgetAccountEmail, markAccountEmailChanged} from "./account-email.service"
 import {removeDeletedUserFromWorkspaces} from "../workspaces/account-deletion.service"
 import {MENTRA_TENANT_ID} from "../signin/config"
 import {createLogger} from "@mentra/cloud-shared"
@@ -78,7 +80,15 @@ export async function requestPasswordReset(email: string): Promise<void> {
   })
 }
 
-export async function resetPassword(email: string, code: string, newPassword: string): Promise<TokenResponse> {
+/**
+ * Reset a password with an emailed code. Every session of the person ends
+ * (`revokeAllSessionsForUser`). The Mentra App is then signed in fresh; the
+ * sign-in page passes `signIn: false`, gets no phone session, and the person
+ * signs in again through Core's sign-in server.
+ */
+export async function resetPassword(email: string, code: string, newPassword: string, opts: {signIn: false}): Promise<null>
+export async function resetPassword(email: string, code: string, newPassword: string, opts?: {signIn?: true}): Promise<TokenResponse>
+export async function resetPassword(email: string, code: string, newPassword: string, opts: {signIn?: boolean} = {}): Promise<TokenResponse | null> {
   const {payload} = await otc.consumeCode({
     code,
     purpose: "password_reset",
@@ -91,6 +101,7 @@ export async function resetPassword(email: string, code: string, newPassword: st
   // before minting so the new session is the only survivor.
   const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: userId})
   await revokeAllSessionsForUser({mentraUserId: user.mentraUserId})
+  if (opts.signIn === false) return null
   const identity = await gotrue.verifyPassword(email, newPassword)
   return sessionForIdentity(identity)
 }
@@ -140,8 +151,14 @@ export async function requestEmailChange(
   })
 }
 
-/** Step 2: consume the code (bound to this user) and apply the new address. */
-export async function confirmEmailChange(tenantUserId: string, code: string): Promise<void> {
+/**
+ * Step 2: consume the code (bound to this user) and apply the new address. Core's
+ * copy of the account's email (`account-email.service.ts`) is then marked for a
+ * check, so its next lookup reads the address the directory ended with and Fleet
+ * shows it within minutes; should that write fail, the copy's daily check picks
+ * the change up, and the change itself stands.
+ */
+export async function confirmEmailChange(mentraUserId: string, tenantUserId: string, code: string): Promise<void> {
   const {payload} = await otc.consumeCode({
     code,
     purpose: "email_change",
@@ -150,6 +167,11 @@ export async function confirmEmailChange(tenantUserId: string, code: string): Pr
   const newEmail = (payload as {newEmail?: string})?.newEmail
   if (!newEmail) throw new AccountError("code_invalid", "code is invalid", 400)
   await gotrue.setEmail(tenantUserId, newEmail)
+  try {
+    await markAccountEmailChanged(mentraUserId)
+  } catch (err) {
+    logger.warn({errorName: (err as Error)?.name, mentraUserId}, "changed email not marked for a check; the daily check will pick it up")
+  }
 }
 
 export async function requestAccountDeletion(email: string, tenantUserId: string): Promise<void> {
@@ -209,9 +231,11 @@ export async function confirmAccountDeletion(mentraUserId: string, tenantUserId:
  *  2. end workspace memberships, and revoke what the person created
  *     (`removeDeletedUserFromWorkspaces`), before the account directory is
  *     asked: a deleted account must never be left holding workspace access;
- *  3. remove the operational support profile/outbox;
+ *  3. remove the operational support profile/outbox and the person's sign-in
+ *     identity, and clear Core's copy of their email (`account_emails`, whose
+ *     emptied row stays as a fence against a lookup still in flight);
  *  4. on hosted Core, delete the account in the account directory (GoTrue).
- *     Everything human-identifying (email, password, name) lives there.
+ *     Everything else human-identifying (email, password, name) lives there.
  * Throws when a step fails; the deletion stays pending and the sweep retries it.
  * A users row without a tombstone is no deletion and is left alone.
  */
@@ -222,6 +246,10 @@ export async function finishAccountDeletion(mentraUserId: string): Promise<"comp
   await revokeAllSessionsForUser({mentraUserId})
   await removeDeletedUserFromWorkspaces(mentraUserId)
   await SupportProfileModel.deleteOne({mentraUserId})
+  // How the person last signed in to Core's sign-in server, email included.
+  await SigninIdentityModel.deleteOne({mentraUserId})
+  // Core's copy of the account's email: cleared, and fenced against a lookup still in flight.
+  await forgetAccountEmail(mentraUserId)
   if (user.tenantId === MENTRA_TENANT_ID) await gotrue.deleteUser(user.tenantUserId)
   await UserModel.updateOne(
     {mentraUserId, accountDeletionCompletedAt: null},

@@ -126,21 +126,43 @@ export function Restricted({ children }: { children: ReactNode }) {
   return <p className="text-muted-foreground text-sm">{children}</p>;
 }
 
-/** The failure of the last action, in words, as the sign-in page's error notice. Renders nothing when there is none. */
-export function ErrorNotice({ error }: { error: unknown }) {
-  if (error === null || error === undefined) return null;
+/**
+ * How an alert is drawn: `error`, amber as the sign-in page's error notice (the default, for the screens outside the
+ * Licenses, Members and Billing pages), or `neutral`, the grey surface of a plain notice. On those three pages amber
+ * marks a failed or incomplete payment and over-assignment, and nothing else, so every failure and refusal there is
+ * `neutral`.
+ */
+export type AlertTone = "error" | "neutral";
+
+const ALERT_TONES: Record<AlertTone, string> = {
+  error: "bg-error text-error-foreground",
+  neutral: "bg-surface text-foreground",
+};
+
+/**
+ * A failure or a refusal in words, `role="alert"` because it is the answer to something the person just did. Amber,
+ * as the sign-in page's error notice, unless the screen asks for the `neutral` tone. `ErrorNotice` is this with an
+ * error's words; use this one for a sentence of your own.
+ */
+export function AlertText({ children, tone = "error" }: { children: ReactNode; tone?: AlertTone }) {
   return (
-    <p role="alert" className="rounded-notice bg-error text-error-foreground px-4 py-3 text-sm">
-      {errorMessage(error)}
+    <p role="alert" className={cn("rounded-notice px-4 py-3 text-sm", ALERT_TONES[tone])}>
+      {children}
     </p>
   );
 }
 
+/** The failure of the last action, in words (see {@link AlertText} for the tones). Renders nothing when there is none. */
+export function ErrorNotice({ error, tone }: { error: unknown; tone?: AlertTone }) {
+  if (error === null || error === undefined) return null;
+  return <AlertText tone={tone}>{errorMessage(error)}</AlertText>;
+}
+
 /** A failed load, with a way to try again. */
-export function LoadError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+export function LoadError({ error, onRetry, tone }: { error: unknown; onRetry: () => void; tone?: AlertTone }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <ErrorNotice error={error} />
+      <ErrorNotice error={error} tone={tone} />
       <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
         Try again
       </Button>
@@ -158,14 +180,17 @@ export function LoadError({ error, onRetry }: { error: unknown; onRetry: () => v
 export function QueryGate<T>({
   result,
   loadingLabel,
+  tone,
   children,
 }: {
   result: { data: T | undefined; isError: boolean; error: unknown; refetch: () => unknown };
   loadingLabel?: string;
+  /** How the failed load is drawn (see {@link AlertTone}). */
+  tone?: AlertTone;
   children: (data: T) => ReactNode;
 }) {
   if (result.data !== undefined) return <>{children(result.data)}</>;
-  if (result.isError) return <LoadError error={result.error} onRetry={() => void result.refetch()} />;
+  if (result.isError) return <LoadError error={result.error} onRetry={() => void result.refetch()} tone={tone} />;
   return <Loading>{loadingLabel}</Loading>;
 }
 
@@ -183,97 +208,30 @@ export function RoleBadge({ role, className }: { role: WorkspaceRole; className?
   );
 }
 
-/** A small outlined chip ("You"). */
-export function Badge({ children, className }: { children: ReactNode; className?: string }) {
+/**
+ * A chip's colours, from the tokens: `outline` (the default, "You"), `success` in the confirmation green
+ * ("Published"), `warn` in the notice amber ("Changes requested"), and `neutral` grey ("Draft").
+ */
+const BADGE_TONES = {
+  outline: "border-border text-muted-foreground",
+  success: "border-transparent bg-info text-info-foreground",
+  warn: "border-transparent bg-error text-error-foreground",
+  neutral: "border-transparent bg-surface text-foreground",
+} as const;
+
+export type BadgeTone = keyof typeof BADGE_TONES;
+
+/** A small chip: outlined by default ("You"), or filled in a `tone` for a status. */
+export function Badge({ children, tone = "outline", className }: { children: ReactNode; tone?: BadgeTone; className?: string }) {
   return (
     <span
       className={cn(
-        "border-border text-muted-foreground inline-flex h-6 items-center rounded-full border px-2.5 text-xs leading-none font-semibold whitespace-nowrap",
+        BADGE_TONES[tone],
+        "inline-flex h-6 items-center rounded-full border px-2.5 text-xs leading-none font-semibold whitespace-nowrap",
         className,
       )}
     >
       {children}
-    </span>
-  );
-}
-
-/**
- * A destructive action behind an inline confirm step: the first click only asks, the second does it.
- * Focus lands on Cancel so a stray Enter backs out, and returns to the trigger when the prompt closes.
- */
-export function ConfirmButton({
-  label,
-  ariaLabel,
-  ariaDescribedBy,
-  prompt,
-  confirmLabel,
-  disabled,
-  outline = false,
-  onConfirm,
-}: {
-  label: string;
-  ariaLabel: string;
-  /** The id of text that explains the action (or why it is disabled). */
-  ariaDescribedBy?: string;
-  prompt: string;
-  confirmLabel: string;
-  disabled?: boolean;
-  /** Full-size buttons, for a destructive action that stands on its own row (a danger zone) rather than in a list. */
-  outline?: boolean;
-  onConfirm: () => void;
-}) {
-  const [confirming, setConfirming] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const restoreFocus = useRef(false);
-  // The trigger is swapped for the prompt while confirming, so focus would otherwise fall to the page.
-  useEffect(() => {
-    if (!confirming && restoreFocus.current) {
-      restoreFocus.current = false;
-      trigger.current?.focus();
-    }
-  }, [confirming]);
-  const close = () => {
-    restoreFocus.current = true;
-    setConfirming(false);
-  };
-  if (!confirming) {
-    return (
-      <Button
-        ref={trigger}
-        type="button"
-        variant="destructive-secondary"
-        size={outline ? "default" : "sm"}
-        aria-label={ariaLabel}
-        aria-describedby={ariaDescribedBy}
-        disabled={disabled}
-        onClick={() => setConfirming(true)}
-      >
-        {label}
-      </Button>
-    );
-  }
-  return (
-    <span
-      role="group"
-      aria-label={ariaLabel}
-      className={cn("inline-flex flex-wrap items-center justify-end gap-2", !outline && "max-w-[19rem]")}
-    >
-      <span className={cn("text-sm", !outline && "basis-full text-right")}>{prompt}</span>
-      <Button
-        type="button"
-        variant="destructive"
-        size={outline ? "default" : "sm"}
-        disabled={disabled}
-        onClick={() => {
-          close();
-          onConfirm();
-        }}
-      >
-        {confirmLabel}
-      </Button>
-      <Button type="button" variant="secondary" size={outline ? "default" : "sm"} autoFocus onClick={close}>
-        Cancel
-      </Button>
     </span>
   );
 }

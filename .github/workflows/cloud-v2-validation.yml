@@ -11,6 +11,8 @@ on:
       - "sdk/miniapp-cli/**"
       - ".dockerignore"
       - ".github/workflows/cloud-v2-validation.yml"
+      - ".github/scripts/no-workos.test.mjs"
+      - ".github/scripts/no-stripe.test.mjs"
   workflow_dispatch:
 
 concurrency:
@@ -63,6 +65,15 @@ jobs:
         working-directory: sdk
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Keep WorkOS out of Cloud V2
+        run: node --test .github/scripts/no-workos.test.mjs
+
+      - name: Keep Stripe out of Cloud V2
+        run: node --test .github/scripts/no-stripe.test.mjs
+
+      - name: Classify every Cloud V2 setting in the production release contract
+        run: node --test .github/scripts/validate-production-cloud-config.test.mjs
+
       - name: Test enterprise deployment helpers
         working-directory: cloud-v2
         run: |
@@ -86,11 +97,14 @@ jobs:
 
       - name: Run website sign-in tests
         working-directory: cloud-v2
-        # Mentra's sign-in page, and the portal sites' sign-in, sign-out and
-        # Pages relay. Browserless: React views render to static markup.
+        # Mentra's sign-in page, the portal sites' sign-in, sign-out and Pages
+        # relay, and the Pages deployment's per-environment settings.
+        # Browserless: React views render to static markup.
         run: |
           bun test --max-concurrency=1 \
+            scripts/deploy-pages.test.ts \
             websites/account/src \
+            websites/account/functions \
             websites/portal/src \
             websites/portal/functions \
             websites/admin/functions \
@@ -99,7 +113,9 @@ jobs:
             websites/admin/src/lib/shared-react.test.ts \
             websites/admin/src/components/signed-out.test.tsx \
             websites/admin/src/pages/workspaces.test.tsx \
-            websites/admin/src/pages/operator-keys.test.tsx
+            websites/admin/src/pages/operator-keys.test.tsx \
+            websites/admin/src/pages/fleet.test.tsx \
+            websites/admin/src/pages/licenses.test.tsx
 
       - name: Typecheck backend packages
         working-directory: cloud-v2
@@ -108,7 +124,6 @@ jobs:
       - name: Typecheck websites
         working-directory: cloud-v2
         run: |
-          bun run typecheck:console
           bun run typecheck:admin
           bun run typecheck:portal
           bun run typecheck:account
@@ -116,7 +131,6 @@ jobs:
       - name: Build websites
         working-directory: cloud-v2
         run: |
-          bun run build:console
           bun run build:admin
           bun run build:portal
           bun run build:account
@@ -180,6 +194,10 @@ jobs:
           bun test --max-concurrency=1 --timeout 30000 \
             tests/auth.mentra-user-exchange.integration.test.ts \
             tests/idp-tokens.integration.test.ts \
+            tests/oidc-provider.integration.test.ts \
+            tests/oidc-clients.integration.test.ts \
+            tests/oidc-interaction.integration.test.ts \
+            tests/cli-login.integration.test.ts \
             tests/signin-sessions.integration.test.ts \
             tests/portal-signin.integration.test.ts \
             tests/principal-auth.integration.test.ts \
@@ -195,9 +213,148 @@ jobs:
             tests/workspaces-api.integration.test.ts \
             tests/admin-capabilities.integration.test.ts \
             tests/workspaces-internal-api.integration.test.ts \
+            tests/workspace-change-feed.integration.test.ts \
+            tests/fleet-forwarding.integration.test.ts \
+            tests/portal-modules.integration.test.ts \
             tests/legacy-admin-keys.integration.test.ts \
-            tests/account-deletion.integration.test.ts
+            tests/account-deletion.integration.test.ts \
+            tests/licenses.integration.test.ts \
+            tests/license-features.integration.test.ts \
+            tests/admin-licenses.integration.test.ts \
+            tests/migrate-store-developer-orgs.integration.test.ts \
+            tests/legacy-identity-claim.integration.test.ts \
+            tests/legacy-miniapp-registry.integration.test.ts
 
       - name: Show Mongo logs after a failure
         if: failure()
         run: docker logs cloud-v2-test-mongo
+
+  cosmos-upgrade:
+    name: Core install and upgrade on Azure Cosmos DB
+    # Private Cloud runs Core on Azure Cosmos DB for MongoDB, which refuses some
+    # things MongoDB allows: for example, it cannot add a unique index to a
+    # collection that already holds documents. Start this change's Core on a
+    # fresh database, and on one the base branch's Core left behind with every
+    # collection populated, as a running deployment's upgrade would.
+    # Azure trusts this repository's pull requests and dev (ci-database/main.bicep);
+    # forks, Dependabot and manual runs on other branches skip this job.
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev')
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      # cloud-v2/deploy/azure/ci-database/main.bicep
+      COSMOS_RESOURCE_GROUP: rg-mentra-ci-core-database
+      COSMOS_ACCOUNT: mentra-ci-core-cosmos
+      CHECK: packages/core/src/scripts/database-upgrade-check.ts
+    steps:
+      # A pull_request checkout is the merge commit; its first parent is the
+      # base branch the change lands on.
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          # Match the Cloud V2 deployment image.
+          bun-version: "1.3.14"
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cloud-v2-${{ hashFiles('cloud-v2/bun.lock', 'sdk/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cloud-v2-
+
+      - name: Install dependencies for this change and its base
+        run: |
+          set -euo pipefail
+          (cd cloud-v2 && bun install --frozen-lockfile)
+          git worktree add --detach "$RUNNER_TEMP/base" HEAD^1
+          (cd "$RUNNER_TEMP/base/cloud-v2" && bun install --frozen-lockfile)
+
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.CORE_DATABASE_CI_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.CORE_DATABASE_CI_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.CORE_DATABASE_CI_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Require the CI account to match the Private Cloud database
+        run: |
+          set -euo pipefail
+          expected=$(az bicep build --file cloud-v2/deploy/azure/enterprise-reference/main.bicep --stdout | jq -c '
+            [(.resources | if type == "object" then .[] else .[] end)
+              | select(.type == "Microsoft.DocumentDB/databaseAccounts")
+              | {kind, serverVersion: .properties.apiProperties.serverVersion,
+                 capabilities: ([.properties.capabilities[].name] | sort)}]')
+          actual=$(az cosmosdb show --resource-group "$COSMOS_RESOURCE_GROUP" --name "$COSMOS_ACCOUNT" | jq -c '
+            [{kind, serverVersion: .apiProperties.serverVersion, capabilities: ([.capabilities[].name] | sort)}]')
+          if [[ "$expected" != "$actual" ]]; then
+            echo "::error title=CI database differs from Private Cloud::Private Cloud deploys $expected but $COSMOS_ACCOUNT is $actual. Update cloud-v2/deploy/azure/ci-database/main.bicep and redeploy it."
+            exit 1
+          fi
+
+      - name: Create this run's databases
+        run: |
+          set -euo pipefail
+          url=$(az cosmosdb keys list --type connection-strings --resource-group "$COSMOS_RESOURCE_GROUP" \
+            --name "$COSMOS_ACCOUNT" --query "connectionStrings[0].connectionString" --output tsv)
+          key=${url#*://*:}; key=${key%%@*}
+          echo "::add-mask::$key"
+          prefix="ci-$(date +%s)-${{ github.run_id }}-${{ github.run_attempt }}"
+          # The same form Private Cloud gives Core: the database name before the options.
+          {
+            echo "ACCOUNT_URL=${url/\/\?//admin?}"
+            echo "FRESH_URL=${url/\/\?//$prefix-fresh?}"
+            echo "UPGRADE_URL=${url/\/\?//$prefix-upgrade?}"
+          } >> "$GITHUB_ENV"
+
+      - name: Drop databases left by cancelled runs
+        working-directory: cloud-v2
+        run: bun "$CHECK" sweep "$ACCOUNT_URL"
+
+      - name: Install this change's Core on an empty database
+        working-directory: cloud-v2
+        run: |
+          bun "$CHECK" start . "$FRESH_URL" || {
+            echo "::error title=Core does not start on Cosmos DB::A new Private Cloud install of this change fails at Core startup. See the log above."
+            exit 1
+          }
+          # Core logs an index its database refuses and carries on, so /ready does not show it. verify
+          # also deletes a throwaway account, which records its user.deleted tombstone without a
+          # transaction on Cosmos DB, a path only this database can run.
+          bun "$CHECK" verify "$FRESH_URL" || {
+            echo "::error title=Core did not build its schema on Cosmos DB::A new Private Cloud install of this change starts but is missing a collection or index Core needs, or cannot record an account deletion's user.deleted tombstone. See the log above."
+            exit 1
+          }
+
+      - name: Upgrade the base branch's Core, with data, to this change
+        working-directory: cloud-v2
+        run: |
+          set -euo pipefail
+          bun "$CHECK" start "$RUNNER_TEMP/base/cloud-v2" "$UPGRADE_URL"
+          bun "$CHECK" seed "$UPGRADE_URL"
+          bun "$CHECK" start . "$UPGRADE_URL" || {
+            echo "::error title=Core upgrade fails on Cosmos DB::Existing Private Cloud deployments could not start this change's Core. Cosmos DB cannot, for example, add a unique index to a collection that already holds documents. See the log above."
+            exit 1
+          }
+          bun "$CHECK" verify "$UPGRADE_URL" || {
+            echo "::error title=Core upgrade did not build its schema on Cosmos DB::Core starts on an existing Private Cloud database but could not build a collection or index it needs there, or cannot record an account deletion's user.deleted tombstone. See the log above."
+            exit 1
+          }
+
+      - name: Drop this run's databases
+        if: always() && env.FRESH_URL != ''
+        working-directory: cloud-v2
+        run: |
+          bun "$CHECK" drop "$FRESH_URL"
+          bun "$CHECK" drop "$UPGRADE_URL"

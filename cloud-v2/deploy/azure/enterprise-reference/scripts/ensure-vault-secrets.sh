@@ -55,8 +55,33 @@ MISSING=()
 for name in "${NAMES[@]}"; do
   jq -e --arg name "$name" 'index($name) != null' <<<"$PRESENT" >/dev/null || MISSING+=("$name")
 done
+# Core's sign-in server's cookie keys and the admin portal's client secret at
+# it. New values sign nobody out, so a missing one is created on any run that
+# finds or creates the signing keys.
+GENERATED=(oidc-cookie-keys oidc-admin-portal-client-secret)
+generate_secret() {
+  local dir status
+  dir="$(mktemp -d)"
+  (umask 077 && openssl rand -base64 48 | tr -d '\r\n' > "$dir/$1")
+  az keyvault secret set --vault-name "$VAULT" --name "$1" --file "$dir/$1" --encoding utf-8 \
+    --content-type text/plain --output none
+  status=$?
+  rm -rf "$dir"
+  return $status
+}
+ensure_generated() {
+  local name
+  for name in "${GENERATED[@]}"; do
+    if ! jq -e --arg name "$name" 'index($name) != null' <<<"$PRESENT" >/dev/null; then
+      vault_call generate_secret "$name"
+      printf 'Created %s in Key Vault %s.\n' "$name" "$VAULT" >&2
+    fi
+  done
+}
+
 if [[ ${#MISSING[@]} -eq 0 ]]; then
   printf 'Signing keys are in Key Vault %s.\n' "$VAULT" >&2
+  ensure_generated
   exit 0
 fi
 # A failed lookup stops here; it must never read as "no Core yet".
@@ -92,3 +117,4 @@ for name in "${NAMES[@]}"; do
   vault_call set_secret "$name"
 done
 printf 'Created signing keys in Key Vault %s.\n' "$VAULT" >&2
+ensure_generated

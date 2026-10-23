@@ -1,11 +1,9 @@
 import { mock } from "bun:test";
-import type { AuthChangeEvent, AuthError, OAuthAuthorizationDetails, OAuthRedirect } from "@supabase/supabase-js";
+import type { AuthChangeEvent, AuthError } from "@supabase/supabase-js";
+import type { ContinueResult, DetailsResult, InteractionApi } from "../lib/interaction-api";
 import type { AccountAuthClient, AccountSession, AuthCallResult } from "../lib/supabase";
 
-type DetailsResult = { data: OAuthAuthorizationDetails | OAuthRedirect | null; error: AuthError | null };
-type ConsentResult = { data: OAuthRedirect | null; error: AuthError | null };
-
-export const SIGNED_IN: AccountSession = { user: { email: "person@example.com" } };
+export const SIGNED_IN: AccountSession = { access_token: "supabase-access-token", user: { email: "person@example.com" } };
 
 /**
  * An in-memory stand-in for `supabase.auth`. Every method is a bun mock, so
@@ -14,7 +12,6 @@ export const SIGNED_IN: AccountSession = { user: { email: "person@example.com" }
 export function createFakeAuth(options: { session?: AccountSession | null } = {}) {
   let session: AccountSession | null = options.session === undefined ? SIGNED_IN : options.session;
   const listeners: Array<(event: AuthChangeEvent, session: AccountSession | null) => void> = [];
-
   const auth = {
     getSession: mock(async () => ({ data: { session }, error: null as AuthError | null })),
     signInWithPassword: mock(async (_credentials: { email: string; password: string }): Promise<AuthCallResult> => {
@@ -22,7 +19,7 @@ export function createFakeAuth(options: { session?: AccountSession | null } = {}
       return { error: null };
     }),
     signInWithOAuth: mock(
-      async (_credentials: { provider: "google" | "apple"; options: { redirectTo: string } }): Promise<AuthCallResult> => ({
+      async (_credentials: Parameters<AccountAuthClient["signInWithOAuth"]>[0]): Promise<AuthCallResult> => ({
         error: null,
       }),
     ),
@@ -32,10 +29,6 @@ export function createFakeAuth(options: { session?: AccountSession | null } = {}
         error: null as AuthError | null,
       }),
     ),
-    resetPasswordForEmail: mock(
-      async (_email: string, _options: { redirectTo: string }): Promise<AuthCallResult> => ({ error: null }),
-    ),
-    updateUser: mock(async (_attributes: { password: string }): Promise<AuthCallResult> => ({ error: null })),
     signOut: mock(async (_options?: { scope?: "local" | "global" | "others" }): Promise<AuthCallResult> => {
       session = null;
       return { error: null };
@@ -44,41 +37,32 @@ export function createFakeAuth(options: { session?: AccountSession | null } = {}
       listeners.push(callback);
       return { data: { subscription: { unsubscribe: () => undefined } } };
     }),
-    oauth: {
-      getAuthorizationDetails: mock(
-        async (_authorizationId: string): Promise<DetailsResult> => ({ data: { redirect_url: "" }, error: null }),
-      ),
-      approveAuthorization: mock(
-        async (_authorizationId: string, _options: { skipBrowserRedirect: true }): Promise<ConsentResult> => ({
-          data: { redirect_url: "https://client.example/callback?code=approved" },
-          error: null,
-        }),
-      ),
-      denyAuthorization: mock(
-        async (_authorizationId: string, _options: { skipBrowserRedirect: true }): Promise<ConsentResult> => ({
-          data: { redirect_url: "https://client.example/callback?error=access_denied" },
-          error: null,
-        }),
-      ),
-    },
-    /** Test helper: emit an auth event to every listener. */
-    emit(event: AuthChangeEvent) {
-      for (const listener of listeners) listener(event, session);
-    },
+    /** Test helper: the page's current Supabase session. */
+    current: () => session,
   };
-
   const typed: AccountAuthClient = auth;
   void typed;
   return auth;
 }
 
-export function consentDetails(overrides: Partial<OAuthAuthorizationDetails> = {}): OAuthAuthorizationDetails {
-  return {
-    authorization_id: "auth-123",
-    redirect_uri: "https://client.example/callback",
-    client: { id: "third-party-client", name: "Example Notes", uri: "https://client.example", logo_uri: "" },
-    user: { id: "user-1", email: "person@example.com" },
-    scope: "openid email",
-    ...overrides,
+export const CONTINUATION = "https://account.example/oidc/auth/resume-123";
+
+/** A stand-in for Core's sign-in server on the page's origin. */
+export function createFakeInteractions(
+  overrides: { details?: DetailsResult; handOff?: ContinueResult; decide?: ContinueResult } = {},
+) {
+  const api = {
+    details: mock(async (_interactionId: string): Promise<DetailsResult> =>
+      overrides.details ?? { kind: "ok", prompt: "login", clientName: "Mentra admin portal", scopes: ["openid", "email"] },
+    ),
+    handOff: mock(async (_interactionId: string, _accessToken: string): Promise<ContinueResult> =>
+      overrides.handOff ?? { kind: "continue", url: CONTINUATION },
+    ),
+    decide: mock(async (_interactionId: string, _decision: "allow" | "deny"): Promise<ContinueResult> =>
+      overrides.decide ?? { kind: "continue", url: CONTINUATION },
+    ),
   };
+  const typed: InteractionApi = api;
+  void typed;
+  return api;
 }

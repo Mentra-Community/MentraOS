@@ -58,10 +58,11 @@ Rotate the administrator key with Mentra support. Do not store a new
 `mentra-admin-key` value by hand: setup identifies the key by its `keyId` tag and
 Core's journal, so a hand-made value breaks later setup runs.
 
-Enterprise Dev CI uses the `ENTERPRISE_DEV_CORE_ADMIN_EMAILS` repository variable
-and `ENTERPRISE_DEV_ADMIN_TOKEN` secret. The secret is used only to verify the
-existing authenticated admin report route; the application validates the key
-against its database. The deployment helper performs the same check when
+The Acme demo stacks' CI deployments read each stack's `mentra-admin-key` from
+its Key Vault, only to verify the existing authenticated admin report route; the
+application validates the key against its database. Each stack's
+`coreAdminEmails` (in `.github/workflows/private-deployment.yml`) keeps the
+key's creator allowlisted. The deployment helper performs the same check when
 `MENTRA_ADMIN_TOKEN` is set. Preserve signing keys and the refresh-token pepper
 when updating an existing deployment.
 
@@ -75,10 +76,10 @@ export MENTRA_ADMIN_TOKEN="$(az keyvault secret show --vault-name <key-vault> --
 ./scripts/fetch-incident-logs.sh rep_01...
 ```
 
-`--list` also works with this admin credential. For Enterprise Dev, operators
-who keep the key as `MENTRA_ADMIN_TOKEN_ENTERPRISEDEV` can pass
-`MENTRA_ADMIN_TOKEN="$MENTRA_ADMIN_TOKEN_ENTERPRISEDEV"` to the script along
-with the Enterprise Core URL.
+`--list` also works with this admin credential. For the Acme demo stacks, read
+the key from `kv-mentra-enterprise-ref` (demo.acmeworkspace.com) or
+`kv-mentra-ent-demo-dev` (demo-dev.acmeworkspace.com) as above, with that
+stack's Core URL.
 
 This setup needs no separate report-only credential. Admin credentials never
 belong in the mobile manifest.
@@ -254,11 +255,12 @@ It then removes the prior version owned by that deployment. Removing the entry
 from the manifest removes that deployment-owned install. Unrelated local and
 SYSTEM installs are never adopted or deleted.
 
-In v1, the Mentra App resolves the remote manifest when the workspace is
-selected and then uses that validated snapshot on later boots. To apply a
-changed managed list, the employee uses the workspace-change flow and selects
-the same workspace again. Automatic background manifest refresh is a later
-delivery feature; Runtime minimum-version policy remains live and independent.
+The Mentra App resolves the remote manifest when the workspace is selected and
+re-reads it each time the app opens and every 15 minutes while it runs, so a
+changed managed list installs then.
+An open miniapp asks the employee before it updates, and a removed one goes when
+it closes.
+Runtime minimum-version policy remains live and independent.
 
 The reference Mentra Cloud image does not contain customer miniapp ZIPs. Put them in
 `cloud-v2/deploy/azure/enterprise-reference/miniapps/` when producing the

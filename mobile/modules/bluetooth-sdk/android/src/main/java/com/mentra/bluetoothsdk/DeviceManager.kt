@@ -23,8 +23,10 @@ import com.mentra.bluetoothsdk.sgcs.SceneElement
 import com.mentra.bluetoothsdk.sgcs.SceneFrame
 import com.mentra.bluetoothsdk.sgcs.Mach1
 import com.mentra.bluetoothsdk.sgcs.MentraLive
+import com.mentra.bluetoothsdk.sgcs.MentraLivePairingStateStore
 import com.mentra.bluetoothsdk.sgcs.MentraNex
 import com.mentra.bluetoothsdk.sgcs.Nimo
+import com.mentra.bluetoothsdk.sgcs.NimoResourceDiagnostics
 import com.mentra.bluetoothsdk.sgcs.SGCManager
 import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.utils.ControllerTypes
@@ -305,7 +307,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             }
         }
         initializeViewStates()
-        if (initializeHardware) initializeHardwareServices()
+        if (initializeHardware) {
+            initializeHardwareServices()
+            NimoResourceDiagnostics.start(Bridge.getContext())
+        }
     }
 
     // Keep host routing usable without starting audio codecs, receivers or services.
@@ -567,8 +572,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
 
                         BluetoothAdapter.STATE_ON -> {
                             Bridge.log("MAN: Bluetooth turned ON")
-                            // Auto-reconnect to last known device if we have one
-                            if (defaultWearable.isNotEmpty() && deviceName.isNotEmpty()) {
+                            // Auto-reconnect to last known device if we have one.
+                            // After owner loss, connectById watches for the next pairing
+                            // mode instead of opening GATT.
+                            if (shouldReconnectAfterBluetoothOn()) {
                                 Bridge.log(
                                     "MAN: Bluetooth restored, attempting reconnect to: $deviceName"
                                 )
@@ -1375,6 +1382,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     // MARK: - Auxiliary Commands
 
     fun initSGC(wearable: String) {
+        if (!NimoResourceDiagnostics.allowManagerConnect(wearable)) return
         Bridge.log("Initializing manager for wearable: $wearable")
         if (sgc != null && sgc?.type != wearable) {
             Bridge.log("MAN: Manager already initialized, cleaning up previous sgc")
@@ -1504,6 +1512,8 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             Bridge.log("MAN: SGC is null, returning")
             return
         }
+        // Before clearPendingConnection(): the pending target is what marks an explicit pair.
+        notePairingSessionReady()
 
         // A new identity must never inherit the previous glasses' address when
         // pairing supplied only a name. Same-device reconnects retain their cache.
@@ -2024,7 +2034,13 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         sgc?.sendHotspotState(enabled)
     }
 
-    fun setWifiAdbState(enabled: Boolean) {
+    fun setWifiAdbState(enabled: Boolean, expectedBluetoothMac: String? = null) {
+        if (expectedBluetoothMac != null) {
+            val current = sgc as? MentraLive ?: throw BluetoothSdkException(
+                "glasses_not_connected", "Mentra Live glasses are not connected.")
+            current.sendWifiAdbStateToPeer(enabled, expectedBluetoothMac)
+            return
+        }
         Bridge.log("MAN: Setting glasses Wi-Fi ADB state: $enabled")
         sgc?.sendWifiAdbState(enabled)
     }
@@ -2070,6 +2086,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     fun sendGalleryServerEnabled(requestId: String, enabled: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendGalleryServerEnabled(requestId, enabled)
+    }
+
+    fun sendTouchGestureDefaultBehaviorEnabled(requestId: String, gesture: TouchGesture, enabled: Boolean) {
+        val live = sgc as? MentraLive ?: throw BluetoothSdkException("unsupported_device", "This command requires Mentra Live glasses.")
+        live.sendTouchGestureDefaultBehaviorEnabled(requestId, gesture, enabled)
     }
 
     fun sendGalleryMode(requestId: String, enabled: Boolean) {
@@ -2341,7 +2362,39 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         sgc?.sendRgbLedControl(requestId, packageName, action, color, onDurationMs, offDurationMs, count)
     }
 
+    internal fun shouldReconnectAfterBluetoothOn(): Boolean =
+        defaultWearable.isNotEmpty() && deviceName.isNotEmpty()
+
+    /**
+     * A ready Mentra Live session. Only an explicit pair (a pending target) clears
+     * `pairing_rejected`; an automatic session only ends a pause and resets the streak.
+     */
+    internal fun notePairingSessionReady() {
+        if (sgc !is MentraLive) return
+        val explicitAttempt = pendingDeviceName.isNotEmpty() || pendingDeviceAddress.isNotEmpty()
+        MentraLivePairingStateStore.update("device_ready") { it.onSessionReady(explicitAttempt) }
+    }
+
+    /** Forget ends the pairing record. Also drops the pre-v4 owner-lost setting. */
+    internal fun clearPairingStateOnForget() {
+        MentraLivePairingStateStore.update("forget") { it.onForget() }
+        if (DeviceStore.store.get("bluetooth", "mentra_live_owner_lost") as? Boolean != true) return
+        DeviceStore.apply("bluetooth", "mentra_live_owner_lost", false)
+        Bridge.saveSetting("mentra_live_owner_lost", false)
+    }
+
+    /**
+     * The saved glasses' firmware is no longer known once they are forgotten. The next glasses
+     * report it again with their first `pairing_info`.
+     */
+    internal fun clearSecureFirmware() {
+        if (DeviceStore.store.get("bluetooth", "mentra_live_secure_firmware") as? Boolean != true) return
+        DeviceStore.apply("bluetooth", "mentra_live_secure_firmware", false)
+        Bridge.saveSetting("mentra_live_secure_firmware", false)
+    }
+
     fun connectDefault() {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectDefault() }) return
         if (defaultWearable.isEmpty()) {
             Bridge.log("MAN: No default wearable, returning")
             return
@@ -2363,10 +2416,17 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             Bridge.log("MAN: connectDefault skipped — bluetooth runtime permissions not granted")
             return
         }
+        if (!NimoResourceDiagnostics.allowManagerConnect(defaultWearable, reconnectTarget)) return
         initSGC(defaultWearable)
         val live = sgc as? MentraLive
-        if (live?.isPairingYieldActive() == true) {
-            Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
+        if (live != null && MentraLivePairingStateStore.isRejected) {
+            Bridge.log("MAN: connectDefault skipped — Mentra Live pairing_rejected (Pair Again or forget)")
+            return
+        }
+        if (live != null && MentraLivePairingStateStore.isPaused) {
+            // connectById only records the target and watches for the window to end.
+            Bridge.log("MAN: connectDefault deferred — Mentra Live pairing_mode")
+            live.connectById(reconnectTarget)
             return
         }
         searching = true
@@ -2393,6 +2453,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectByName(dName: String) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectByName(dName) }) return
         Bridge.log("MAN: Connecting to wearable: $dName")
 
         var name = dName
@@ -2407,6 +2468,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             return
         }
 
+        if (!NimoResourceDiagnostics.allowManagerConnect(pendingWearable.ifEmpty { defaultWearable }, name)) return
         if (pendingWearable.isEmpty() && !defaultWearable.isEmpty()) {
             Bridge.log("MAN: No pending wearable, using default wearable")
             pendingWearable = defaultWearable
@@ -2421,8 +2483,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             return
         }
 
-        disconnect(clearPendingIdentity = false)
-        Thread.sleep(100)
+        if (!NimoResourceDiagnostics.allowManagerConnect(pendingWearable, name)) return
+        if (!NimoResourceDiagnostics.preserveCapturedScan(pendingWearable, name)) {
+            disconnect(clearPendingIdentity = false)
+            Thread.sleep(100)
+        }
         searching = true
         pendingDeviceName = name
 
@@ -2431,8 +2496,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectDevice(deviceModel: String, deviceName: String) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectDevice(deviceModel, deviceName) }) return
         Bridge.log("MAN: Connecting to device: $deviceModel $deviceName")
         if (DeviceTypes.ALL.contains(deviceModel)) {
+            if (!NimoResourceDiagnostics.allowManagerConnect(deviceModel, deviceName)) return
             pendingWearable = deviceModel
             initSGC(pendingWearable)
             sgc?.connectById(deviceName)
@@ -2552,6 +2619,8 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             connectionRecovery.clear()
         }
         Bridge.log("MAN: Forgetting smart glasses")
+        clearPairingStateOnForget()
+        clearSecureFirmware()
 
         val live = sgc as? MentraLive
         if (live != null) {
@@ -2636,6 +2705,8 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun findCompatibleDevices(deviceModel: String) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { findCompatibleDevices(deviceModel) }) return
+        if (!NimoResourceDiagnostics.allowManagerConnect(deviceModel)) return
         Bridge.log("MAN: Searching for compatible device names for: $deviceModel")
 
         // reset the search results:

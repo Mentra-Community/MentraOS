@@ -1,16 +1,18 @@
 /**
- * @fileoverview The deployment's identity providers for web sign-in.
+ * @fileoverview The identity provider behind Core's sign-in server.
  *
- * Each Core trusts one identity provider for its websites:
+ * Core's sign-in server (`services/oidc`) shows no credential form of its own;
+ * one identity provider checks who the person is:
  *  - hosted Core: Supabase Auth (the Mentra account), configured with
- *    `CLOUD_CORE_SUPABASE_ISSUER`; its web clients are listed in
- *    `CLOUD_CORE_WEB_CLIENT_IDS`;
+ *    `CLOUD_CORE_SUPABASE_ISSUER`. The sign-in page hands its access token
+ *    to the provider's interaction;
  *  - a Mentra Private Cloud: the one provider in `CLOUD_CORE_OIDC_PROVIDERS`
- *    that carries `browser` settings (the customer's Entra, say).
+ *    that carries `browser` settings (the customer's Entra, say), of which
+ *    Core's sign-in server is a confidential client.
  *
  * Everything is read from the environment at use time, so tests and a changed
- * environment take effect on the next call. With none of it set, Core runs as
- * before and portal sign-in answers "not configured".
+ * environment take effect on the next call. With none of it set, sign-in
+ * answers "not configured".
  *
  * `assertSigninConfiguration` runs at startup and refuses configuration that
  * would let one source vouch for another's people.
@@ -27,7 +29,7 @@ export const MENTRA_SOURCE_ID = "mentra"
 /** Asymmetric algorithms accepted on Supabase tokens, verified against the project's key set. HS256 uses the JWT secret. */
 export const SUPABASE_ASYMMETRIC_ALGORITHMS = ["RS256", "ES256"] as const
 
-const RESERVED_TENANT_IDS = new Set(["mentra", "workos"])
+const RESERVED_TENANT_IDS = new Set(["mentra"])
 const MENTRA_EMAIL_DOMAINS = ["mentra.glass", "mentraglass.com"]
 const DEPLOYED_ENVIRONMENTS: ReadonlySet<string> = new Set(["dev", "staging", "prod", "production"])
 
@@ -58,8 +60,6 @@ export interface WebIdentityProvider {
   /** Providers only. */
   verifiedEmailDomains: string[]
   browser: BrowserSourceSettings | null
-  /** Providers only: the checks on access tokens presented as bearers (the same as the phone token exchange). */
-  accessToken: {audience: string; requiredScopes: string[]; allowedClientIds: string[] | null} | null
 }
 
 export class ConfigurationError extends Error {
@@ -69,11 +69,12 @@ export class ConfigurationError extends Error {
 /**
  * Whether this process is a deployed Core: `NODE_ENV=production`, or
  * `CLOUD_CORE_ENVIRONMENT` is dev, staging, prod or production. Local runs and
- * tests are not.
+ * tests are not. `env` is the process environment unless a caller that reads a
+ * snapshot of it (`services/fleet/fleet-config.ts`) passes its own.
  */
-export function isDeployedEnvironment(): boolean {
-  if (process.env.NODE_ENV === "production") return true
-  return DEPLOYED_ENVIRONMENTS.has((process.env.CLOUD_CORE_ENVIRONMENT ?? "").trim().toLowerCase())
+export function isDeployedEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.NODE_ENV === "production") return true
+  return DEPLOYED_ENVIRONMENTS.has((env.CLOUD_CORE_ENVIRONMENT ?? "").trim().toLowerCase())
 }
 
 // Each variable is read as a literal process.env property so the production config
@@ -117,22 +118,7 @@ export function supabaseProvider(): WebIdentityProvider | null {
     algorithms: [...SUPABASE_ASYMMETRIC_ALGORITHMS],
     verifiedEmailDomains: [],
     browser: null,
-    accessToken: null,
   }
-}
-
-/**
- * This environment's web client IDs (`CLOUD_CORE_WEB_CLIENT_IDS`, comma
- * separated): its admin portal, enterprise portal, Console and CLI. A Supabase
- * token issued to any other client, including another environment's, is refused.
- */
-export function webClientIds(): Set<string> {
-  return new Set(
-    clean(process.env.CLOUD_CORE_WEB_CLIENT_IDS)
-      .split(",")
-      .map(id => id.trim())
-      .filter(Boolean),
-  )
 }
 
 function toWebProvider(provider: ConfiguredOidcProvider): WebIdentityProvider {
@@ -148,11 +134,6 @@ function toWebProvider(provider: ConfiguredOidcProvider): WebIdentityProvider {
     algorithms: provider.algorithms ?? ["RS256"],
     verifiedEmailDomains: provider.verifiedEmailDomains,
     browser: provider.browser,
-    accessToken: {
-      audience: provider.audience,
-      requiredScopes: provider.requiredScopes ?? [],
-      allowedClientIds: provider.allowedClientIds ?? null,
-    },
   }
 }
 
@@ -162,16 +143,16 @@ export function oidcProviders(): WebIdentityProvider[] {
 }
 
 /**
- * The provider the admin and enterprise portals sign in with: Supabase on
- * hosted Core, otherwise the one deployment provider with `browser` settings.
- * Throws ConfigurationError when there is neither.
+ * The identity provider behind Core's sign-in server: Supabase on hosted Core,
+ * otherwise the one deployment provider with `browser` settings. Throws
+ * ConfigurationError when there is neither.
  */
-export function portalIdentityProvider(): WebIdentityProvider {
+export function signInSource(): WebIdentityProvider {
   const supabase = supabaseProvider()
   if (supabase) return supabase
   const browser = oidcProviders().filter(provider => provider.browser)
   if (browser.length === 1) return browser[0]!
-  throw new ConfigurationError("portal sign-in is not configured: set CLOUD_CORE_SUPABASE_ISSUER or a provider's browser settings")
+  throw new ConfigurationError("sign-in is not configured: set CLOUD_CORE_SUPABASE_ISSUER or a provider's browser settings")
 }
 
 export function findProviderBySourceId(sourceId: string): WebIdentityProvider | null {
@@ -185,7 +166,11 @@ export function findProviderByIssuer(issuer: string): WebIdentityProvider | null
   return oidcProviders().find(provider => provider.issuer === issuer) ?? null
 }
 
-/** Whether the sign-in source behind a portal session is still configured. A removed provider's sessions end on their next request. */
+/**
+ * Whether a sign-in source is still configured. A removed provider's people
+ * lose their portal sessions, provider sessions and Core access tokens on
+ * their next request.
+ */
 export function isSourceEnabled(tenantId: string, sourceId: string): boolean {
   const provider = findProviderBySourceId(sourceId)
   return provider !== null && provider.tenantId === tenantId
@@ -268,7 +253,7 @@ export async function assertSigninConfiguration(opts: {skipDatabase?: boolean} =
   const issuer = supabaseIssuer()
   if (issuer) {
     if (browserProviders > 0) {
-      throw new ConfigurationError("CLOUD_CORE_SUPABASE_ISSUER and a provider's browser settings are both set; the portals sign in with one identity provider")
+      throw new ConfigurationError("CLOUD_CORE_SUPABASE_ISSUER and a provider's browser settings are both set; Core's sign-in server fronts one identity provider")
     }
     const jwksUrl = supabaseJwksUrl(issuer)!
     for (const [name, value] of [
@@ -279,23 +264,11 @@ export async function assertSigninConfiguration(opts: {skipDatabase?: boolean} =
         throw new ConfigurationError(`${name} must be ${deployed ? "an HTTPS" : "a"} URL`)
       }
     }
-    if (deployed && webClientIds().size === 0) {
-      throw new ConfigurationError("CLOUD_CORE_WEB_CLIENT_IDS must list this environment's web clients when CLOUD_CORE_SUPABASE_ISSUER is set")
-    }
-    // A portal whose client is missing from the list could never complete a
-    // sign-in: Core refuses every token issued to an unlisted client.
-    for (const name of ["CLOUD_CORE_ADMIN_PORTAL_CLIENT_ID", "CLOUD_CORE_ENTERPRISE_PORTAL_CLIENT_ID"] as const) {
-      const clientId = clean(process.env[name])
-      if (clientId && !webClientIds().has(clientId)) {
-        throw new ConfigurationError(`CLOUD_CORE_WEB_CLIENT_IDS must include ${name}`)
-      }
-    }
   }
 
   for (const [name, raw] of [
     ["CLOUD_CORE_ADMIN_PORTAL_URL", process.env.CLOUD_CORE_ADMIN_PORTAL_URL],
     ["CLOUD_CORE_ENTERPRISE_PORTAL_URL", process.env.CLOUD_CORE_ENTERPRISE_PORTAL_URL],
-    ["CLOUD_CORE_IDP_SIGNOUT_URL", process.env.CLOUD_CORE_IDP_SIGNOUT_URL],
   ] as const) {
     const value = clean(raw)
     if (value && (deployed ? !isHttpsUrl(value) : !isUrl(value))) {

@@ -82,6 +82,26 @@ class MentraLivePairingAdvertisementParserTest {
     }
 
     @Test
+    fun readsTheOwnerChangedFlagAndWindowIdFromTheV4Trailer() {
+        val payload = securePayload(pairingFlag = 0)
+        payload[6] = 4
+        payload[7] = 0x05
+        payload[12] = 0xC8.toByte()
+        val result = MentraLivePairingAdvertisementParser.parse(payload)
+
+        assertTrue(result?.ownerChanged == true)
+        assertEquals(200, result?.pairingGeneration)
+        assertFalse(result?.pairingMode == true)
+    }
+
+    @Test
+    fun ownerChangedIsFalseWithoutTheFlag() {
+        val result = MentraLivePairingAdvertisementParser.parse(securePayload(pairingFlag = 1))
+
+        assertFalse(result?.ownerChanged == true)
+    }
+
+    @Test
     fun rejectsLegacyPayloadThatMatchesOldVersionCapabilityHeuristic() {
         val legacyPayload = ByteArray(27)
         legacyPayload[5] = 0

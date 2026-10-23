@@ -1,7 +1,7 @@
 import {Schema} from "mongoose";
 import {registerModel} from "./register-model";
 
-/** Cloud admission only. Resource ownership lives in the host controller. */
+/** Cloud admission and immutable selected receipts. Resource authorities remain on existing host rows and controller custody. */
 function executableInputRequired(this: {state?: string; preparationCancellation?: unknown; preparationRejection?: unknown; fleetSelection?: unknown; fleetCancellation?: unknown}) {
   return !this.fleetCancellation && !['preparing', 'awaiting-source', 'awaiting-runner'].includes(this.state ?? '') && !this.preparationCancellation && !this.preparationRejection;
 }
@@ -18,10 +18,18 @@ const schema = new Schema({
   hostId: {type: String, required: function(this: {fleetSelection?: unknown}) {return !this.fleetSelection;}, immutable: true},
   fleetSelection: {type: Schema.Types.Mixed, immutable: true},
   fleetSelectionSha256: {type: String, immutable: true},
+  fleetPreparationStatus: {type: Schema.Types.Mixed},
   fleetPreparation: {type: Schema.Types.Mixed, immutable: true},
   fleetInputSha256: {type: String, immutable: true},
   fleetDeadline: {type: Date, immutable: true},
+  fleetCandidateSelection: {type: Schema.Types.Mixed},
+  fleetCandidatePreparation: {type: Schema.Types.Mixed},
+  fleetCandidatePreparations: {type: [Schema.Types.Mixed], default: undefined},
   fleetTarget: {type: Schema.Types.Mixed, immutable: true},
+  fleetResourceReservation: {type: Schema.Types.Mixed},
+  fleetResourceAdmission: {type: Schema.Types.Mixed, immutable: true},
+  fleetExclusiveReservation: {type: Schema.Types.Mixed, immutable: true},
+  fleetExclusiveExecutionBinding: {type: Schema.Types.Mixed, immutable: true},
   fleetBinding: {type: Schema.Types.Mixed, immutable: true},
   fleetCancellation: {type: Schema.Types.Mixed},
   fleetSupersessionCheckedAt: {type: Date},

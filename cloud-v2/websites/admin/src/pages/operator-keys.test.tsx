@@ -99,12 +99,12 @@ describe("operator keys page", () => {
     expect(markup.match(/Look up support profiles/g)!.length).toBeGreaterThanOrEqual(2);
   });
 
-  test("offers revoking each key behind a confirm step", () => {
+  test("offers revoking each key, which asks in a dialog", () => {
     const markup = render();
     expect(markup).toContain('aria-label="Revoke Routine harness"');
     expect(markup).toContain('aria-label="Revoke Triage bot"');
-    // Only the first click of the confirm step is rendered.
-    expect(markup).not.toContain("Confirm revoke");
+    // The question is in a dialog that is not there until a key asks.
+    expect(markup).not.toContain("<dialog");
   });
 
   test("says a key works only while its creator stays an Organization Admin", () => {

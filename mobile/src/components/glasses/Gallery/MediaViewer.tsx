@@ -19,11 +19,20 @@ interface MediaViewerProps {
   onDelete?: () => void
 }
 
+/**
+ * Snapshot the media the viewer can swipe through. Besides the selected item,
+ * only media for which `isViewable` holds is included, so swiping skips items
+ * that are still transferring from the glasses instead of landing on a
+ * playback error or a blank image.
+ */
 export function createMediaViewerSnapshot(
   photos: readonly (PhotoInfo | undefined)[],
   selectedPhotoName: string,
+  isViewable: (photo: PhotoInfo) => boolean,
 ): {photos: PhotoInfo[]; initialIndex: number} | null {
-  const availablePhotos = photos.filter((photo): photo is PhotoInfo => photo !== undefined)
+  const availablePhotos = photos.filter(
+    (photo): photo is PhotoInfo => photo !== undefined && (photo.name === selectedPhotoName || isViewable(photo)),
+  )
   const initialIndex = availablePhotos.findIndex((photo) => photo.name === selectedPhotoName)
   return initialIndex >= 0 ? {photos: availablePhotos, initialIndex} : null
 }

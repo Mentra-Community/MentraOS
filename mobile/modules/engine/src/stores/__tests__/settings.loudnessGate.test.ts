@@ -5,6 +5,7 @@ import {result as Res} from "typesafe-ts"
 
 let GATE_KEY: string
 let MIGRATION_KEY: string
+const RESET_KEY = "migration:loudness_gate_default_off_v1"
 const saved = new Map<string, unknown>()
 let failGateSave = false
 let logSpy: ReturnType<typeof spyOn>
@@ -28,54 +29,65 @@ function restartSettings() {
   return require("../settings") as typeof import("../settings")
 }
 
-describe.each([
-  ["loudness_gate_enabled", "migration:loudness_gate_default_off_v1"],
-])("%s settings migration", (gateKey, migrationKey) => {
-  beforeEach(() => {
-    GATE_KEY = gateKey
-    MIGRATION_KEY = migrationKey
-    logSpy = spyOn(console, "log").mockImplementation(() => {})
-    Object.assign(globalThis, {__DEV__: false})
-    saved.clear()
-    failGateSave = false
-  })
+describe.each([["loudness_gate_enabled", "migration:loudness_gate_default_on_v1"]])(
+  "%s settings migration",
+  (gateKey, migrationKey) => {
+    beforeEach(() => {
+      GATE_KEY = gateKey
+      MIGRATION_KEY = migrationKey
+      logSpy = spyOn(console, "log").mockImplementation(() => {})
+      Object.assign(globalThis, {__DEV__: false})
+      saved.clear()
+      failGateSave = false
+    })
 
-  afterEach(() => logSpy.mockRestore())
+    afterEach(() => logSpy.mockRestore())
 
-  test("fresh installs default off and send off to Mentra Live", async () => {
-    const {SETTINGS, useSettingsStore} = restartSettings()
-    expect(SETTINGS[GATE_KEY].defaultValue()).toBe(false)
-    const result = await useSettingsStore.getState().loadAllSettings()
-    expect(result.is_error()).toBe(false)
-    expect(useSettingsStore.getState().getBluetoothSettings()[GATE_KEY]).toBe(false)
-    expect(saved.get(GATE_KEY)).toBe(false)
-    expect(saved.get(MIGRATION_KEY)).toBe(true)
-  })
+    test("fresh installs default on and send on to Mentra Live", async () => {
+      const {SETTINGS, useSettingsStore} = restartSettings()
+      expect(SETTINGS[GATE_KEY].defaultValue()).toBe(true)
+      const result = await useSettingsStore.getState().loadAllSettings()
+      expect(result.is_error()).toBe(false)
+      expect(useSettingsStore.getState().getBluetoothSettings()[GATE_KEY]).toBe(true)
+    })
 
-  test("resets a saved true once, then preserves a later opt-in across restart", async () => {
-    saved.set(GATE_KEY, true)
-    const {useSettingsStore} = restartSettings()
-    await useSettingsStore.getState().loadAllSettings()
-    expect(useSettingsStore.getState().getSetting(GATE_KEY)).toBe(false)
-    expect(saved.get(GATE_KEY)).toBe(false)
+    test("turns an install the off migration reset back on once, then preserves a later opt-out", async () => {
+      saved.set(GATE_KEY, false)
+      saved.set(RESET_KEY, true)
+      const {useSettingsStore} = restartSettings()
+      await useSettingsStore.getState().loadAllSettings()
+      expect(useSettingsStore.getState().getSetting(GATE_KEY)).toBe(true)
+      expect(saved.get(GATE_KEY)).toBe(true)
+      expect(saved.get(MIGRATION_KEY)).toBe(true)
 
-    await useSettingsStore.getState().setSetting(GATE_KEY, true)
-    const restartedStore = restartSettings().useSettingsStore
-    await restartedStore.getState().loadAllSettings()
-    expect(restartedStore.getState().getBluetoothSettings()[GATE_KEY]).toBe(true)
-    expect(saved.get(GATE_KEY)).toBe(true)
-  })
+      await useSettingsStore.getState().setSetting(GATE_KEY, false)
+      const restartedStore = restartSettings().useSettingsStore
+      await restartedStore.getState().loadAllSettings()
+      expect(restartedStore.getState().getBluetoothSettings()[GATE_KEY]).toBe(false)
+      expect(saved.get(GATE_KEY)).toBe(false)
+    })
 
-  test("retries on the next launch if persisting the reset failed", async () => {
-    saved.set(GATE_KEY, true)
-    failGateSave = true
-    await restartSettings().useSettingsStore.getState().loadAllSettings()
-    expect(saved.get(MIGRATION_KEY)).toBeUndefined()
-    expect(saved.get(GATE_KEY)).toBe(true)
+    test("keeps an opt-out saved before the off migration ever ran", async () => {
+      saved.set(GATE_KEY, false)
+      const {useSettingsStore} = restartSettings()
+      await useSettingsStore.getState().loadAllSettings()
+      expect(useSettingsStore.getState().getBluetoothSettings()[GATE_KEY]).toBe(false)
+      expect(saved.get(GATE_KEY)).toBe(false)
+      expect(saved.get(MIGRATION_KEY)).toBeUndefined()
+    })
 
-    failGateSave = false
-    await restartSettings().useSettingsStore.getState().loadAllSettings()
-    expect(saved.get(GATE_KEY)).toBe(false)
-    expect(saved.get(MIGRATION_KEY)).toBe(true)
-  })
-})
+    test("retries on the next launch if persisting the change failed", async () => {
+      saved.set(GATE_KEY, false)
+      saved.set(RESET_KEY, true)
+      failGateSave = true
+      await restartSettings().useSettingsStore.getState().loadAllSettings()
+      expect(saved.get(MIGRATION_KEY)).toBeUndefined()
+      expect(saved.get(GATE_KEY)).toBe(false)
+
+      failGateSave = false
+      await restartSettings().useSettingsStore.getState().loadAllSettings()
+      expect(saved.get(GATE_KEY)).toBe(true)
+      expect(saved.get(MIGRATION_KEY)).toBe(true)
+    })
+  },
+)

@@ -1,9 +1,8 @@
 import {useEffect, useRef, useState} from "react"
 
 import {useNavigationStore} from "@/stores/navigation"
-import {Capabilities, getModelCapabilities} from "@mentra/engine"
+import {Capabilities, getModelCapabilities, SETTINGS, useSetting} from "@mentra/engine"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
-import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
@@ -29,6 +28,7 @@ export function getPendingUpdatePromptAction(
   wifiConnected: boolean,
   hotspotOtaSupported: boolean,
 ): "install" | "wifi_setup" | null {
+  if (hotspotOtaSupported) return "install"
   if (!wifiStatusKnown) return null
   if (!returnedHome && !wifiConnected && !hotspotOtaSupported) return null
   return wifiConnected || hotspotOtaSupported ? "install" : "wifi_setup"
@@ -217,7 +217,7 @@ export function OtaUpdateChecker() {
     // disconnect and navigation happen in the same render cycle.
     if (!areGlassesConnectedNow()) return
     const currentOtaSnapshot = engine.ota.snapshot()
-    if (!currentOtaSnapshot.wifiStatusKnown) return
+    if (!currentOtaSnapshot.wifiStatusKnown && currentOtaSnapshot.hotspotOtaVersion !== 1) return
     wasAwayFromHomeRef.current = false
     const promptAction = getPendingUpdatePromptAction(
       returnedHome,
@@ -391,7 +391,7 @@ export function OtaUpdateChecker() {
             pendingUpdate.current = {latestVersionInfo, updates, isDowngrade: isApkDowngrade}
 
             const currentOtaSnapshot = engine.ota.snapshot()
-            if (!currentOtaSnapshot.wifiStatusKnown) {
+            if (!currentOtaSnapshot.wifiStatusKnown && currentOtaSnapshot.hotspotOtaVersion !== 1) {
               console.log("OTA: Update available but glasses Wi-Fi status is not known yet - caching for later")
               wasAwayFromHomeRef.current = true
               return

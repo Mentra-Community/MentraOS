@@ -325,7 +325,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         return false
       if (installActionPendingRef.current || !isOtaAutoChainActive() || !result.updateInfo) return false
       const snapshot = ota.snapshot()
-      if (!snapshot.wifiStatusKnown || (!snapshot.wifiConnected && snapshot.hotspotOtaVersion !== 1)) return false
+      if (snapshot.hotspotOtaVersion !== 1 && (!snapshot.wifiStatusKnown || !snapshot.wifiConnected)) return false
 
       const admission = tryAdvanceOtaAutoChain(
         otaAutoChainFingerprint(result),
@@ -484,7 +484,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
             const fromVersion = currentReleaseVersion(ota.snapshot().appVersion)
             setOfferedReleaseTransition(result.releaseVersion ? {fromVersion, toVersion: result.releaseVersion} : null)
           }
-          if (isOtaAutoChainActive() && !ota.snapshot().wifiStatusKnown) {
+          if (isOtaAutoChainActive() && !ota.snapshot().wifiStatusKnown && ota.snapshot().hotspotOtaVersion !== 1) {
             checkCompletedRef.current = true
             return
           }
@@ -534,7 +534,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       !runtimeReady ||
       page !== "check" ||
       (checkState !== "checking" && checkState !== "update_available") ||
-      !otaSnapshot.wifiStatusKnown ||
+      (!otaSnapshot.wifiStatusKnown && otaSnapshot.hotspotOtaVersion !== 1) ||
       !isOtaAutoChainActive()
     ) {
       return
@@ -624,7 +624,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       setBatteryBlocked(true)
       return
     }
-    if (!snapshot.wifiStatusKnown) {
+    if (!snapshot.wifiStatusKnown && snapshot.hotspotOtaVersion !== 1) {
       check()
       return
     }
@@ -667,6 +667,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   const finish = useCallback(async () => {
     if (deviceRevision !== otaDeviceSessionRevision()) return
     if (page === "check") {
+      stopOtaAutoChain()
       onFinishedRef.current?.()
       return
     }
@@ -702,7 +703,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
 
   const state = useMemo<MentraLiveOtaState>(() => {
     const hotspotSupported = otaSnapshot.hotspotOtaVersion === 1
-    const canInstall = otaSnapshot.wifiStatusKnown && (otaSnapshot.wifiConnected || hotspotSupported)
+    const canInstall = hotspotSupported || (otaSnapshot.wifiStatusKnown && otaSnapshot.wifiConnected)
     const autoChainActive = isOtaAutoChainActive()
     if (!runtimeReady) {
       return {
@@ -776,7 +777,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         screen,
         connected: otaSnapshot.connected,
         batteryLevel: otaSnapshot.batteryLevel,
-        transport: otaSnapshot.wifiConnected ? "wifi" : hotspotSupported ? "hotspot" : null,
+        transport: hotspotSupported ? "hotspot" : otaSnapshot.wifiConnected ? "wifi" : null,
         updateRequired: isUpdateRequired,
         versionChange: isVersionChange,
         versionChangeConverged: false,
@@ -837,7 +838,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     // phone-side copy outranks it. Only a failed ota_status carries a current code.
     const glassesCode = installSnapshot.otaStatus?.status === "failed" ? installSnapshot.otaStatus.error || null : null
     // Precedence mirrors the legacy screen: the BES restart instruction, then a phone-side
-    // watchdog/preflight message (English-only, no copy key), then the glasses code mapped to
+    // watchdog/preflight message (translated when a copy key is available), then the glasses code mapped to
     // copy (unknown codes get the generic glasses-error copy rather than the raw code).
     let displayedError: string
     let copyKey: string | null
@@ -846,7 +847,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       copyKey = OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY
     } else if (installSnapshot.errorMsg) {
       displayedError = installSnapshot.errorMsg
-      copyKey = null
+      copyKey = installSnapshot.errorCopyKey ?? null
     } else {
       displayedError = getOtaErrorMessage(glassesCode)
       copyKey = otaErrorCopyKey(glassesCode)
@@ -896,7 +897,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       canFinish: screen === "complete" || (screen === "failed" && requiresGlassesReboot),
       canDismiss: false,
       canDiscard: screen === "disconnected",
-      canOpenWifiSetup: screen === "failed" && showChangeWifi,
+      canOpenWifiSetup: screen === "failed" && !hotspotSupported && showChangeWifi,
       continueDisabled: installSnapshot.continueButtonDisabled,
       completedUpdate: false,
       releaseTransition: releaseTransitionFromRange(otaAutoChainReleaseRange()),

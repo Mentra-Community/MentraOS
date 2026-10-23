@@ -24,6 +24,11 @@ TypeScript setup. Dependency pins are stamped at publish time to the exact
 SDK versions this scaffolder shipped with, so a generated project installs
 on any release channel.
 
+It also includes an `AGENTS.md` (imported by `CLAUDE.md`) with the rules a
+coding agent needs to build a miniapp that fits the Mentra App: safe areas and
+the capsule menu, light and dark colors, back navigation, the icon, and when to
+use `dev` vs. `release`.
+
 To publish a finished miniapp to the Mentra Miniapp Store, see
 [`@mentra/cli`](https://www.npmjs.com/package/@mentra/cli) (`mentra login` /
 `mentra publish`).

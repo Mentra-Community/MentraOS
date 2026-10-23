@@ -4,10 +4,48 @@ import Foundation
 public final class GlassesMediaRelayModule: Module {
     private let queue = DispatchQueue(label: "com.mentra.glassesmedia.relay")
     private var session: ManagedRelaySession?
+    private let localHotspot = GlassesHotspotNetwork()
+    private var localHotspotOwner: String?
 
     public func definition() -> ModuleDefinition {
         Name("MentraGlassesMediaRelay")
         Events("onRelayState")
+
+        AsyncFunction("joinLocalHotspot") { (id: String, ssid: String, password: String, gateway: String?, purpose: String, promise: Promise) in
+            self.queue.async {
+                guard self.localHotspotOwner == nil else {
+                    promise.reject(LocalMediaError("Previous hotspot session has not been released")); return
+                }
+                guard let accessPurpose = HotspotAccessPurpose(rawValue: purpose) else {
+                    promise.reject(LocalMediaError("Invalid hotspot access purpose")); return
+                }
+                self.localHotspotOwner = id
+                self.localHotspot.join(ssid: ssid, passphrase: password, gateway: gateway, purpose: accessPurpose) { result in
+                    switch result {
+                    case let .success(address): promise.resolve(address)
+                    case let .failure(error):
+                        let failure = HotspotJoinFailure(error)
+                        promise.reject(Exception(name: "HotspotJoinFailure", description: failure.message, code: failure.code))
+                    }
+                }
+            }
+        }
+
+        AsyncFunction("leaveLocalHotspot") { (id: String, waitForInternet: Bool, promise: Promise) in
+            self.queue.async {
+                guard self.localHotspotOwner == id else { promise.resolve(nil); return }
+                self.localHotspot.leave(waitForInternet: waitForInternet) { result in
+                    self.queue.async {
+                        switch result {
+                        case .success:
+                            if self.localHotspotOwner == id { self.localHotspotOwner = nil }
+                            promise.resolve(nil)
+                        case let .failure(error): promise.reject(error)
+                        }
+                    }
+                }
+            }
+        }
 
         AsyncFunction("prepare") { (options: [String: Any], promise: Promise) in
             guard let id = options["attemptId"] as? String,
@@ -38,16 +76,23 @@ public final class GlassesMediaRelayModule: Module {
         AsyncFunction("stop") { (id: String, promise: Promise) in
             self.queue.async {
                 guard let session = self.session, session.id == id else { promise.resolve(nil); return }
-                session.stop {
-                    if self.session === session { self.session = nil }
-                    promise.resolve(nil)
+                session.stop { result in
+                    switch result {
+                    case .success:
+                        if self.session === session { self.session = nil }
+                        promise.resolve(nil)
+                    case let .failure(error): promise.reject(error)
+                    }
                 }
             }
         }
 
         OnDestroy {
             self.queue.async {
-                self.session?.stop { self.session = nil }
+                self.session?.stop { result in
+                    if case .success = result { self.session = nil }
+                }
+                self.localHotspot.leave { _ in }
             }
         }
     }
@@ -62,7 +107,7 @@ private final class ManagedRelaySession {
     private var publisher: PhoneWhipPublisher?
     private var stopped = false
     private var stopFinished = false
-    private var stopReplies: [() -> Void] = []
+    private var stopReplies: [(Result<Void, Error>) -> Void] = []
     private var ready: ((Result<String, Error>) -> Void)?
 
     init(id: String, queue: DispatchQueue) {
@@ -116,10 +161,11 @@ private final class ManagedRelaySession {
         let callback = ready; ready = nil; callback?(result)
     }
 
-    func stop(completion: @escaping () -> Void) {
-        if stopFinished { completion(); return }
+    func stop(completion: @escaping (Result<Void, Error>) -> Void) {
+        if stopFinished { completion(.success(())); return }
+        let stopping = !stopReplies.isEmpty
         stopReplies.append(completion)
-        guard !stopped else { return }
+        guard !stopping else { return }
         stopped = true
         finish(.failure(LocalMediaError("Relay cancelled")))
         hotspot.onLost = nil
@@ -131,10 +177,14 @@ private final class ManagedRelaySession {
         if let publisher {
             group.enter(); publisher.stop { group.leave() }
         }
-        group.enter(); hotspot.leave { group.leave() }
+        var cleanupResult: Result<Void, Error> = .success(())
+        group.enter(); hotspot.leave { result in
+            self.queue.async { cleanupResult = result; group.leave() }
+        }
         group.notify(queue: queue) {
-            self.receiver = nil; self.publisher = nil; self.stopFinished = true
-            let replies = self.stopReplies; self.stopReplies.removeAll(); replies.forEach { $0() }
+            self.receiver = nil; self.publisher = nil
+            if case .success = cleanupResult { self.stopFinished = true }
+            let replies = self.stopReplies; self.stopReplies.removeAll(); replies.forEach { $0(cleanupResult) }
         }
     }
 }

@@ -61,10 +61,16 @@ const ReportSchema = new Schema(
     feedback: { type: Schema.Types.Mixed, default: null },
     context: { type: Schema.Types.Mixed, required: true },
     automationCorrelation: {type: AutomationCorrelationSchema},
+    // Device-chosen identity of one reported event; a resubmission returns the
+    // existing report. Absent on reports filed without one. The reportId is
+    // derived from it (incidentReportId), so the unique reportId index keeps
+    // one report per user and key and serves the lookup.
+    incidentKey: {type: String},
     // Native completion retries own notification delivery; no separate worker or queue.
     slackDelivery: { type: Schema.Types.Mixed },
     logCollection: {type: LogCollectionSchema},
     artifacts: { type: [ReportArtifactSchema], default: [] },
+    nativeDiagnostics: {type: Schema.Types.Mixed},
     status: {
       type: String,
       enum: ["collecting", "ready", "closed"],

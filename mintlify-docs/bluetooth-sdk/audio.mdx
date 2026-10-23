@@ -141,20 +141,23 @@ export function SpeakingLogger() {
 }
 ```
 
-## Quiet Audio Barrier
+## Barrier
 
 `setLoudnessGateEnabled(enabled)` controls Mentra Live's center-microphone
-loudness gate, also called Barrier:
+loudness gate, also called Barrier. It keeps the microphone from picking up the
+glasses' own speaker:
 
-- When enabled, quiet input is represented as silence while audio frames
-  continue. This preserves a continuous audio timeline for voice agents.
-- When disabled, quiet center-microphone input passes through unchanged.
-- The standalone public Bluetooth SDK default is enabled. The Mentra App
-  manages separate persisted OS-level microphone preferences.
+- When enabled, quiet center-microphone input is replaced with silence while
+  the glasses speaker is playing, and for a moment after. Audio frames keep
+  flowing, so the audio timeline stays continuous. The rest of the time, input
+  passes through unchanged.
+- When disabled, input always passes through unchanged.
+- The default is enabled, both in the standalone Bluetooth SDK and in the
+  Mentra App, which keeps its own persisted microphone preferences.
 - The SDK retains the setting and reapplies it when Mentra Live reconnects.
 
-For a voice-to-voice agent that needs continuous audio without low-level
-self-talk or background input, disable VAD and keep Barrier enabled:
+For a voice-to-voice agent that needs continuous audio without hearing its own
+replies, disable VAD and keep Barrier enabled:
 
 ```ts
 await BluetoothSdk.setVoiceActivityDetectionEnabled(false);

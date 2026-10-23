@@ -7,7 +7,7 @@ that UDP traffic reaches our EKS cluster on AWS.
 
 Porter's standard ingress is an **ALB** (Application Load Balancer, layer-7).
 ALB only speaks HTTP/HTTPS — no UDP. Porter's `additionalPorts:` in
-`porter.yaml` exposes the port on the container but does NOT create a
+`cloud-v2/deploy/porter.shared.yaml` exposes the port on the container but does NOT create a
 public-facing Service to receive UDP from the internet.
 
 So we need a separate, manually-managed **NLB** (Network Load Balancer,

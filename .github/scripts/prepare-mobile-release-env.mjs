@@ -3,20 +3,16 @@ import {readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
-const CLOUDS = {
-  dev: {
-    core: "https://core.dev.us-west-2.mentraglass.com",
-    runtime: "https://runtime.dev.us-west-2.mentraglass.com",
-  },
-  staging: {
-    core: "https://core.staging.us-west-2.mentraglass.com",
-    runtime: "https://runtime.staging.us-west-2.mentraglass.com",
-  },
-  prod: {
-    core: "https://core.us-west-2.mentraglass.com",
-    runtime: "https://runtime.us-west-2.mentraglass.com",
-  },
-}
+// Values a release takes from the backend's Doppler config (project
+// mentra-mobile-client, config dev/stg/prd). There is no fallback: a missing or
+// empty value fails the release instead of shipping a checked-in dev value.
+const DOPPLER_KEYS = [
+  "EXPO_PUBLIC_CLOUD_CORE_URL",
+  "EXPO_PUBLIC_CLOUD_RUNTIME_URL",
+  "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN",
+  "EXPO_PUBLIC_SENTRY_DSN",
+  "EXPO_PUBLIC_MINIAPPS_URL",
+]
 
 function requireHttps(value, label) {
   const url = new URL(value)
@@ -26,16 +22,7 @@ function requireHttps(value, label) {
   return url.toString()
 }
 
-function parseEnv(contents) {
-  const values = new Map()
-  for (const line of contents.split(/\r?\n/)) {
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line)
-    if (match) values.set(match[1], match[2])
-  }
-  return values
-}
-
-export function prepareMobileReleaseEnvironment({plan, template, backendEnvironment, otaManifestUrl, publicValues}) {
+export function prepareMobileReleaseEnvironment({plan, doppler, backendEnvironment, otaManifestUrl}) {
   if (plan.releaseSetId !== `mentra-${plan.releaseIdentity}` || plan.products?.mentraos !== plan.releaseIdentity) {
     throw new Error("Release plan does not contain the coordinated MentraOS product")
   }
@@ -53,25 +40,26 @@ export function prepareMobileReleaseEnvironment({plan, template, backendEnvironm
       `${plan.channel} mobile releases must target the ${expectedBackend} backend, not ${JSON.stringify(backendEnvironment)}`,
     )
   }
-  const cloud = CLOUDS[backendEnvironment]
-  if (!cloud) throw new Error(`Unsupported mobile backend environment ${JSON.stringify(backendEnvironment)}`)
-  const values = parseEnv(template)
-  const updates = {
+  const values = {
+    ...Object.fromEntries(DOPPLER_KEYS.map((key) => [key, doppler[key]])),
     EXPO_PUBLIC_ASG_OTA_VERSION_URL: requireHttps(otaManifestUrl, "OTA manifest URL"),
     EXPO_PUBLIC_BUILD_ENV: backendEnvironment,
-    EXPO_PUBLIC_CLOUD_CORE_URL: cloud.core,
-    EXPO_PUBLIC_CLOUD_RUNTIME_URL: cloud.runtime,
     EXPO_PUBLIC_MENTRAOS_VERSION: plan.releaseIdentity,
     MENTRAOS_NATIVE_MARKETING_VERSION: plan.native.marketingVersion,
     MENTRAOS_PINNED_BUILD_NUMBER: String(plan.native.buildNumber),
-    ...publicValues,
   }
-  for (const [key, value] of Object.entries(updates)) {
-    if (typeof value !== "string" || value.trim() === "") throw new Error(`${key} must be a non-empty string`)
+  const missing = Object.keys(values).filter((key) => typeof values[key] !== "string" || values[key].trim() === "")
+  if (missing.length > 0) throw new Error(`Missing or empty release environment values: ${missing.join(", ")}`)
+  for (const [key, value] of Object.entries(values)) {
     if (/\r|\n/.test(value)) throw new Error(`${key} must be a single-line value`)
-    values.set(key, value)
+    if (key.endsWith("_URL")) requireHttps(value, key)
   }
-  return `${[...values].map(([key, value]) => `${key}=${value}`).join("\n")}\n`
+  return {
+    env: Object.entries(values)
+      .map(([key, value]) => `${key}=${value}\n`)
+      .join(""),
+    masked: DOPPLER_KEYS.filter((key) => !key.endsWith("_URL")).map((key) => values[key]),
+  }
 }
 
 function parseArgs(args) {
@@ -85,20 +73,17 @@ function parseArgs(args) {
   return values
 }
 
+// Reads `doppler secrets download --no-file --format json` on stdin.
 function main() {
   const args = parseArgs(process.argv.slice(2))
-  const envFile = path.resolve(args["env-file"])
-  const rendered = prepareMobileReleaseEnvironment({
+  const {env, masked} = prepareMobileReleaseEnvironment({
     plan: JSON.parse(readFileSync(path.resolve(args.plan), "utf8")),
-    template: readFileSync(envFile, "utf8"),
+    doppler: JSON.parse(readFileSync(0, "utf8")),
     backendEnvironment: args["backend-environment"],
     otaManifestUrl: args["ota-manifest-url"],
-    publicValues: {
-      EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN: args["mapbox-public-token"],
-      EXPO_PUBLIC_SENTRY_DSN: args["sentry-dsn"],
-    },
   })
-  writeFileSync(envFile, rendered)
+  for (const value of masked) console.log(`::add-mask::${value}`)
+  writeFileSync(path.resolve(args.output), env)
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()

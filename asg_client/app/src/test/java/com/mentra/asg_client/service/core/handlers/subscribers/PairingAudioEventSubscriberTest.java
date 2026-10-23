@@ -74,4 +74,31 @@ public class PairingAudioEventSubscriberTest {
 
         verify(hardware).playAudioAsset(AudioAssets.PAIRING_EXITED);
     }
+
+    @Test
+    public void pairingExit_paired_isSilent_and_unknown_playsGenericClip() {
+        when(hardware.supportsAudioPlayback()).thenReturn(true);
+
+        subscriber.onMcuEvent(new PairingModeExitEvent("paired"));
+        subscriber.onMcuEvent(new PairingModeExitEvent(null));
+
+        verify(hardware).stopAudioPlayback();
+        verify(hardware, org.mockito.Mockito.times(1))
+                .playAudioAsset(AudioAssets.PAIRING_EXITED);
+    }
+
+    @Test
+    public void pairingExit_timeoutAndCancelled_pickReasonClipOrGenericWhenMissing() {
+        when(hardware.supportsAudioPlayback()).thenReturn(true);
+
+        subscriber.onMcuEvent(new PairingModeExitEvent("timeout"));
+        subscriber.onMcuEvent(new PairingModeExitEvent("cancelled"));
+
+        ArgumentCaptor<String> played = ArgumentCaptor.forClass(String.class);
+        verify(hardware, org.mockito.Mockito.times(2)).playAudioAsset(played.capture());
+        assertThat(played.getAllValues().get(0))
+                .isIn(AudioAssets.AUDIO_PAIRING_ENDED_NO_PHONE, AudioAssets.PAIRING_EXITED);
+        assertThat(played.getAllValues().get(1))
+                .isIn(AudioAssets.AUDIO_PAIRING_CANCELLED, AudioAssets.PAIRING_EXITED);
+    }
 }

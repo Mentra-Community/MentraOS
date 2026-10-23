@@ -1,6 +1,6 @@
 {
   "name": "@mentra/engine",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Mentra Engine — miniapp registry, WebView bridge, and miniapp store",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -97,13 +97,13 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@mentra/acs-meeting": "3.3.0",
-    "@mentra/glasses-media": "3.3.0",
-    "@mentra/bluetooth-sdk": "3.3.0",
-    "@mentra/cloud-client": "3.3.0",
-    "@mentra/cloud-protocol": "3.3.0",
-    "@mentra/crust": "3.3.0",
-    "@mentra/miniapp": "3.3.0",
+    "@mentra/acs-meeting": "3.4.0",
+    "@mentra/glasses-media": "3.4.0",
+    "@mentra/bluetooth-sdk": "3.4.0",
+    "@mentra/cloud-client": "3.4.0",
+    "@mentra/cloud-protocol": "3.4.0",
+    "@mentra/crust": "3.4.0",
+    "@mentra/miniapp": "3.4.0",
     "buffer": "^6.0.3",
     "events": "^3.3.0",
     "jszip": "^3.10.1",
@@ -140,6 +140,8 @@
     "expo-audio": "~55.0.14",
     "expo-clipboard": "~55.0.13",
     "expo-calendar": "~55.0.14",
+    "expo-application": "~55.0.15",
+    "expo-asset": "~55.0.17",
     "expo-constants": "~55.0.16",
     "expo-device": "~55.0.17",
     "expo-location": "~55.1.10",
@@ -151,7 +153,7 @@
     "react-native-permissions": "*",
     "react-native-wifi-reborn": "*",
     "@react-native-community/netinfo": "*",
-    "@dr.pogodin/react-native-fs": "*",
+    "@dr.pogodin/react-native-fs": "2.38.2",
     "@craftzdog/react-native-buffer": "*",
     "axios": "*"
   }

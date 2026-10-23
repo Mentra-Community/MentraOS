@@ -598,41 +598,216 @@ declare const __nativeClearTimer: (token: number) => void
   }
   ;(g as Record<string, unknown>).crypto = cryptoNs
 
+  // ---------- bytes over the JSON bridge -----------------------------------
+  // __dispatch and __deliver carry JSON text only, so binary data (fetch
+  // bodies that are not UTF-8 text, WebSocket binary frames) crosses as
+  // base64 and is decoded here.
+  const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  // Values 0-63; 0xff marks a character outside the alphabet.
+  const BASE64_VALUES = new Uint8Array(128).fill(0xff)
+  for (let i = 0; i < BASE64_ALPHABET.length; i++) BASE64_VALUES[BASE64_ALPHABET.charCodeAt(i)] = i
+  // String.fromCharCode.apply takes one argument per code unit and engines
+  // cap argument counts near 64K, so strings are built from bounded chunks.
+  const CHARS_PER_CHUNK = 8192
+
+  function bytesOf(data: ArrayBuffer | ArrayBufferView): Uint8Array {
+    return data instanceof ArrayBuffer
+      ? new Uint8Array(data)
+      : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  }
+
+  function bytesToBase64(bytes: Uint8Array): string {
+    const parts: string[] = []
+    const chars: number[] = []
+    for (let i = 0; i < bytes.length; i += 3) {
+      const b1 = bytes[i]!
+      const b2 = i + 1 < bytes.length ? bytes[i + 1]! : 0
+      const b3 = i + 2 < bytes.length ? bytes[i + 2]! : 0
+      chars.push(
+        BASE64_ALPHABET.charCodeAt(b1 >> 2),
+        BASE64_ALPHABET.charCodeAt(((b1 & 3) << 4) | (b2 >> 4)),
+        i + 1 < bytes.length ? BASE64_ALPHABET.charCodeAt(((b2 & 15) << 2) | (b3 >> 6)) : 0x3d,
+        i + 2 < bytes.length ? BASE64_ALPHABET.charCodeAt(b3 & 63) : 0x3d,
+      )
+      if (chars.length >= CHARS_PER_CHUNK) {
+        parts.push(String.fromCharCode.apply(null, chars))
+        chars.length = 0
+      }
+    }
+    parts.push(String.fromCharCode.apply(null, chars))
+    return parts.join("")
+  }
+
+  /** Strict: the native bridges always emit padded RFC 4648 base64. */
+  function base64ToBytes(base64: string): Uint8Array {
+    const length = base64.length
+    if (length % 4 !== 0) throw new TypeError("Invalid base64 from the native bridge")
+    const padding =
+      length === 0 || base64.charCodeAt(length - 1) !== 0x3d ? 0 : base64.charCodeAt(length - 2) === 0x3d ? 2 : 1
+    const out = new Uint8Array((length / 4) * 3 - padding)
+    // Groups before the padded one decode without per-character branches;
+    // the accumulated codes and values are checked once at the end.
+    const unpadded = padding === 0 ? length : length - 4
+    let codes = 0
+    let values = 0
+    let o = 0
+    for (let i = 0; i < unpadded; i += 4) {
+      const c1 = base64.charCodeAt(i)
+      const c2 = base64.charCodeAt(i + 1)
+      const c3 = base64.charCodeAt(i + 2)
+      const c4 = base64.charCodeAt(i + 3)
+      const v1 = BASE64_VALUES[c1 & 0x7f]!
+      const v2 = BASE64_VALUES[c2 & 0x7f]!
+      const v3 = BASE64_VALUES[c3 & 0x7f]!
+      const v4 = BASE64_VALUES[c4 & 0x7f]!
+      codes |= c1 | c2 | c3 | c4
+      values |= v1 | v2 | v3 | v4
+      out[o++] = (v1 << 2) | (v2 >> 4)
+      out[o++] = ((v2 & 15) << 4) | (v3 >> 2)
+      out[o++] = ((v3 & 3) << 6) | v4
+    }
+    if (padding > 0) {
+      const c1 = base64.charCodeAt(unpadded)
+      const c2 = base64.charCodeAt(unpadded + 1)
+      const c3 = padding === 1 ? base64.charCodeAt(unpadded + 2) : 0x41
+      const v1 = BASE64_VALUES[c1 & 0x7f]!
+      const v2 = BASE64_VALUES[c2 & 0x7f]!
+      const v3 = BASE64_VALUES[c3 & 0x7f]!
+      codes |= c1 | c2 | c3
+      values |= v1 | v2 | v3
+      out[o++] = (v1 << 2) | (v2 >> 4)
+      if (padding === 1) out[o++] = ((v2 & 15) << 4) | (v3 >> 2)
+    }
+    // A non-ASCII code, or a character outside the alphabet (value 0xff).
+    if (codes > 0x7f || values > 0x3f) throw new TypeError("Invalid base64 from the native bridge")
+    return out
+  }
+
+  /**
+   * The WHATWG Encoding Standard's UTF-8 decoder: each maximal malformed
+   * subsequence becomes one U+FFFD, or throws when `fatal` is set. Runs of
+   * ASCII, most of any JSON body, are copied straight from the bytes.
+   */
+  function decodeUtf8(bytes: Uint8Array, fatal: boolean, ignoreBOM: boolean): string {
+    const length = bytes.length
+    const parts: string[] = []
+    const units: number[] = []
+    let i = !ignoreBOM && length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0
+    while (i < length) {
+      const asciiStart = i
+      while (i < length && bytes[i]! < 0x80) i++
+      if (i > asciiStart) {
+        if (units.length > 0) {
+          parts.push(String.fromCharCode.apply(null, units))
+          units.length = 0
+        }
+        for (let start = asciiStart; start < i; start += CHARS_PER_CHUNK) {
+          const chunk = bytes.subarray(start, Math.min(i, start + CHARS_PER_CHUNK))
+          parts.push(String.fromCharCode.apply(null, chunk as unknown as number[]))
+        }
+        if (i >= length) break
+      }
+      const lead = bytes[i++]!
+      let codePoint: number
+      let needed: number
+      let lower = 0x80
+      let upper = 0xbf
+      if (lead >= 0xc2 && lead <= 0xdf) {
+        needed = 1
+        codePoint = lead & 0x1f
+      } else if (lead >= 0xe0 && lead <= 0xef) {
+        if (lead === 0xe0) lower = 0xa0
+        if (lead === 0xed) upper = 0x9f
+        needed = 2
+        codePoint = lead & 0x0f
+      } else if (lead >= 0xf0 && lead <= 0xf4) {
+        if (lead === 0xf0) lower = 0x90
+        if (lead === 0xf4) upper = 0x8f
+        needed = 3
+        codePoint = lead & 0x07
+      } else {
+        needed = -1
+        codePoint = 0
+      }
+      while (needed > 0) {
+        const next = i < length ? bytes[i]! : -1
+        // A byte outside the allowed range ends the sequence unconsumed, so
+        // it is decoded again as the start of the next one.
+        if (next < lower || next > upper) break
+        codePoint = (codePoint << 6) | (next & 0x3f)
+        lower = 0x80
+        upper = 0xbf
+        needed--
+        i++
+      }
+      if (needed !== 0) {
+        if (fatal) throw new TypeError("The encoded data was not valid utf-8")
+        units.push(0xfffd)
+      } else if (codePoint > 0xffff) {
+        codePoint -= 0x10000
+        units.push(0xd800 + (codePoint >> 10), 0xdc00 + (codePoint & 0x3ff))
+      } else {
+        units.push(codePoint)
+      }
+      if (units.length >= CHARS_PER_CHUNK) {
+        parts.push(String.fromCharCode.apply(null, units))
+        units.length = 0
+      }
+    }
+    if (units.length > 0) parts.push(String.fromCharCode.apply(null, units))
+    return parts.join("")
+  }
+
   // ---------- TextEncoder / TextDecoder ------------------------------------
   // Both engines lack these. Tiny implementations sufficient for the SDK's
   // existing usage (UTF-8 only; we don't expose stream encoding because the
   // miniapp doesn't need it).
   if (typeof (g as Record<string, unknown>).TextEncoder !== "function") {
+    // The code point starting at `i`: a surrogate pair combines, and a lone
+    // surrogate stays as its own code unit.
+    const codePointAt = (str: string, i: number): number => {
+      const code = str.charCodeAt(i)
+      if (code >= 0xd800 && code <= 0xdbff && i + 1 < str.length) {
+        const next = str.charCodeAt(i + 1)
+        if (next >= 0xdc00 && next <= 0xdfff) return ((code - 0xd800) << 10) + (next - 0xdc00) + 0x10000
+      }
+      return code
+    }
     class TextEncoderPolyfill {
       readonly encoding = "utf-8"
       encode(input?: string): Uint8Array {
         const str = input ?? ""
-        const out: number[] = []
+        // Size the output first and write bytes straight into it. A number[]
+        // costs a full JS value per byte, so fetch().arrayBuffer() on a
+        // two-megabyte text body exhausted the 32 MB miniapp heap.
+        let length = 0
         for (let i = 0; i < str.length; i++) {
-          let code = str.charCodeAt(i)
-          if (code >= 0xd800 && code <= 0xdbff && i + 1 < str.length) {
-            const next = str.charCodeAt(i + 1)
-            if (next >= 0xdc00 && next <= 0xdfff) {
-              code = ((code - 0xd800) << 10) + (next - 0xdc00) + 0x10000
-              i++
-            }
-          }
+          const code = codePointAt(str, i)
+          if (code > 0xffff) i++
+          length += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4
+        }
+        const out = new Uint8Array(length)
+        let at = 0
+        for (let i = 0; i < str.length; i++) {
+          const code = codePointAt(str, i)
+          if (code > 0xffff) i++
           if (code < 0x80) {
-            out.push(code)
+            out[at++] = code
           } else if (code < 0x800) {
-            out.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f))
+            out[at++] = 0xc0 | (code >> 6)
+            out[at++] = 0x80 | (code & 0x3f)
           } else if (code < 0x10000) {
-            out.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
+            out[at++] = 0xe0 | (code >> 12)
+            out[at++] = 0x80 | ((code >> 6) & 0x3f)
+            out[at++] = 0x80 | (code & 0x3f)
           } else {
-            out.push(
-              0xf0 | (code >> 18),
-              0x80 | ((code >> 12) & 0x3f),
-              0x80 | ((code >> 6) & 0x3f),
-              0x80 | (code & 0x3f),
-            )
+            out[at++] = 0xf0 | (code >> 18)
+            out[at++] = 0x80 | ((code >> 12) & 0x3f)
+            out[at++] = 0x80 | ((code >> 6) & 0x3f)
+            out[at++] = 0x80 | (code & 0x3f)
           }
         }
-        return new Uint8Array(out)
+        return out
       }
     }
     ;(g as Record<string, unknown>).TextEncoder = TextEncoderPolyfill
@@ -640,46 +815,16 @@ declare const __nativeClearTimer: (token: number) => void
   if (typeof (g as Record<string, unknown>).TextDecoder !== "function") {
     class TextDecoderPolyfill {
       readonly encoding: string
-      constructor(encoding = "utf-8") {
+      readonly fatal: boolean
+      readonly ignoreBOM: boolean
+      constructor(encoding = "utf-8", options?: {fatal?: boolean; ignoreBOM?: boolean}) {
         this.encoding = encoding
+        this.fatal = options?.fatal === true
+        this.ignoreBOM = options?.ignoreBOM === true
       }
       decode(buffer?: ArrayBuffer | ArrayBufferView | null): string {
         if (!buffer) return ""
-        const bytes =
-          buffer instanceof Uint8Array
-            ? buffer
-            : buffer instanceof ArrayBuffer
-              ? new Uint8Array(buffer)
-              : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
-        let out = ""
-        let i = 0
-        while (i < bytes.length) {
-          const b1 = bytes[i++]!
-          let code: number
-          if (b1 < 0x80) {
-            code = b1
-          } else if (b1 < 0xc0) {
-            // Invalid start byte; emit replacement character.
-            code = 0xfffd
-          } else if (b1 < 0xe0) {
-            code = ((b1 & 0x1f) << 6) | (bytes[i++]! & 0x3f)
-          } else if (b1 < 0xf0) {
-            code = ((b1 & 0x0f) << 12) | ((bytes[i++]! & 0x3f) << 6) | (bytes[i++]! & 0x3f)
-          } else {
-            code =
-              ((b1 & 0x07) << 18) |
-              ((bytes[i++]! & 0x3f) << 12) |
-              ((bytes[i++]! & 0x3f) << 6) |
-              (bytes[i++]! & 0x3f)
-          }
-          if (code > 0xffff) {
-            code -= 0x10000
-            out += String.fromCharCode(0xd800 + (code >> 10), 0xdc00 + (code & 0x3ff))
-          } else {
-            out += String.fromCharCode(code)
-          }
-        }
-        return out
+        return decodeUtf8(bytesOf(buffer), this.fatal, this.ignoreBOM)
       }
     }
     ;(g as Record<string, unknown>).TextDecoder = TextDecoderPolyfill
@@ -723,17 +868,26 @@ declare const __nativeClearTimer: (token: number) => void
   }
 
   // ---------- fetch (thin native bridge) -----------------------------------
-  // Async — uses __mentraSendRequest under the hood with iface "fetch". The
-  // native handler is expected to return {status, statusText, headers, body}
-  // where body is either a JSON-encodable value or a base64 string.
+  // Async — uses __mentraSendRequest under the hood with iface "fetch".
+  // Bodies cross in either direction as `body`, a string whose UTF-8
+  // encoding is exactly the body, or `bodyBase64`, the bytes in base64:
+  //   request  {url, method, headers, body | bodyBase64}
+  //   response {status, statusText, headers, ok, body | bodyBase64}
+  // Requests use bodyBase64 for ArrayBuffer and typed-array bodies; native
+  // responds with bodyBase64 whenever the bytes are not exactly UTF-8 text.
+  // Either way arrayBuffer() is exact and text() follows the Fetch
+  // Standard's UTF-8 decode.
   if (typeof (g as Record<string, unknown>).fetch !== "function") {
     ;(g as Record<string, unknown>).fetch = async (input: string | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString()
       const method = (init?.method ?? "GET").toUpperCase()
       let bodyString: string | null = null
+      let bodyBase64: string | undefined
       const reqBody = init?.body as unknown
       if (typeof reqBody === "string") {
         bodyString = reqBody
+      } else if (reqBody instanceof ArrayBuffer || ArrayBuffer.isView(reqBody)) {
+        bodyBase64 = bytesToBase64(bytesOf(reqBody))
       } else if (reqBody && typeof (reqBody as {toString?: () => string}).toString === "function") {
         bodyString = (reqBody as {toString: () => string}).toString()
       }
@@ -761,15 +915,17 @@ declare const __nativeClearTimer: (token: number) => void
         args: unknown[],
       ) => Promise<unknown>
       const result = (await sendRequest("fetch", "request", [
-        {url, method, headers, body: bodyString},
+        bodyBase64 === undefined ? {url, method, headers, body: bodyString} : {url, method, headers, bodyBase64},
       ])) as {
         status: number
         statusText?: string
         headers?: Record<string, string>
-        body?: string | null
+        body?: string
+        bodyBase64?: string
         ok?: boolean
       }
-      const bodyText = typeof result.body === "string" ? result.body : ""
+      const responseText = typeof result.body === "string" ? result.body : null
+      const responseBase64 = typeof result.bodyBase64 === "string" ? result.bodyBase64 : ""
       const responseHeaders = new Map(Object.entries(result.headers ?? {}))
       // Minimal Response polyfill — enough for SDK usage.
       class ResponseLike {
@@ -785,11 +941,14 @@ declare const __nativeClearTimer: (token: number) => void
           },
         }
         async text(): Promise<string> {
-          return bodyText
+          if (responseText === null) return decodeUtf8(base64ToBytes(responseBase64), false, false)
+          // UTF-8 decode drops a leading byte order mark.
+          return responseText.charCodeAt(0) === 0xfeff ? responseText.slice(1) : responseText
         }
         async json(): Promise<unknown> {
+          const text = await this.text()
           try {
-            return JSON.parse(bodyText)
+            return JSON.parse(text)
           } catch (e) {
             // Match the browser fetch().json() behaviour — a SyntaxError
             // is thrown that names the response in its message so the
@@ -804,8 +963,10 @@ declare const __nativeClearTimer: (token: number) => void
           }
         }
         async arrayBuffer(): Promise<ArrayBuffer> {
+          if (responseText === null) return base64ToBytes(responseBase64).buffer as ArrayBuffer
+          // Exact: native sends `body` only when this re-encoding is the body.
           const enc = new (g as unknown as {TextEncoder: new () => TextEncoder}).TextEncoder()
-          return enc.encode(bodyText).buffer as ArrayBuffer
+          return enc.encode(responseText).buffer as ArrayBuffer
         }
       }
       return new ResponseLike()
@@ -910,11 +1071,7 @@ declare const __nativeClearTimer: (token: number) => void
           payload = data
         } else {
           kind = "binary"
-          const bytes =
-            data instanceof ArrayBuffer
-              ? new Uint8Array(data)
-              : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
-          payload = bytesToBase64(bytes)
+          payload = bytesToBase64(bytesOf(data))
         }
         // bufferedAmount is intentionally a static 0 — native owns the
         // real queue (URLSessionWebSocketTask / OkHttp); reading it
@@ -1006,40 +1163,6 @@ declare const __nativeClearTimer: (token: number) => void
       }
     }
 
-    function bytesToBase64(bytes: Uint8Array): string {
-      const b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-      let out = ""
-      let i = 0
-      while (i < bytes.length) {
-        const c1 = bytes[i++]!
-        const c2 = i < bytes.length ? bytes[i++]! : NaN
-        const c3 = i < bytes.length ? bytes[i++]! : NaN
-        const e1 = c1 >> 2
-        const e2 = ((c1 & 3) << 4) | (Number.isNaN(c2) ? 0 : c2 >> 4)
-        const e3 = Number.isNaN(c2) ? 64 : ((c2 & 15) << 2) | (Number.isNaN(c3) ? 0 : c3 >> 6)
-        const e4 = Number.isNaN(c3) ? 64 : c3 & 63
-        out += b64[e1]! + b64[e2]! + (e3 === 64 ? "=" : b64[e3]!) + (e4 === 64 ? "=" : b64[e4]!)
-      }
-      return out
-    }
-    function base64ToBytes(s: string): Uint8Array {
-      const b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-      const clean = s.replace(/=+$/, "")
-      const out: number[] = []
-      let buf = 0
-      let bits = 0
-      for (let i = 0; i < clean.length; i++) {
-        const idx = b64.indexOf(clean[i]!)
-        if (idx < 0) continue
-        buf = (buf << 6) | idx
-        bits += 6
-        if (bits >= 8) {
-          bits -= 8
-          out.push((buf >> bits) & 0xff)
-        }
-      }
-      return new Uint8Array(out)
-    }
     function queueMicrotaskSafe(fn: () => void): void {
       const q = (g as Record<string, unknown>).queueMicrotask as ((cb: () => void) => void) | undefined
       if (typeof q === "function") q(fn)

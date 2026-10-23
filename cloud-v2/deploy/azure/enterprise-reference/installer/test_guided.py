@@ -779,7 +779,7 @@ class GuidedTests(unittest.TestCase):
     def core_registration(self, redirect=True, claim=True, scopes=('openid', 'email', 'profile')):
         ids = {'openid': 'id-openid', 'email': 'id-email', 'profile': 'id-profile', 'offline_access': 'id-offline'}
         app = {'id': 'core-object',
-               'web': {'redirectUris': ['https://core.example/api/admin/auth/callback'] if redirect else []},
+               'web': {'redirectUris': ['https://core.example/interaction/callback/workforce'] if redirect else []},
                'optionalClaims': {'idToken': [{'name': 'email'}] if claim else []},
                'requiredResourceAccess': [{'resourceAppId': setup.GRAPH_APP_ID,
                                            'resourceAccess': [{'id': ids[s], 'type': 'Scope'} for s in scopes]}],

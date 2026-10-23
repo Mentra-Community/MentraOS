@@ -1,16 +1,16 @@
-import { buttonVariants } from "@mentra/workspace-ui";
-import { BrandPage } from "./brand";
+import { BrandPage, buttonVariants } from "@mentra/workspace-ui";
 
 /**
  * After signing out of the workspace portal. The workspace portal session has ended;
- * the Mentra account (or the company's identity provider) may still be signed
- * in, so its sign-out is offered as a separate link when Core provides one: that
+ * the person may still be signed in to Mentra on this browser, at Core's
+ * sign-in server, so its sign-out (the end-session endpoint) is offered as a
+ * separate link when Core provides one: that
  * is how a person switches accounts. Signing in again returns to `signInHref`
  * (the pending invitation, when one is waiting for the other account).
  */
 export function SignedOutScreen({ signOutUrl, signInHref = "/" }: { signOutUrl: string | null; signInHref?: string }) {
   return (
-    <BrandPage title="Signed out of the workspace portal">
+    <BrandPage title="Signed out of Mentra Portal">
       <p className="text-muted-foreground mb-7">
         {signOutUrl
           ? "Your Mentra account is still signed in on this browser. Sign out of it too, for example to switch accounts."

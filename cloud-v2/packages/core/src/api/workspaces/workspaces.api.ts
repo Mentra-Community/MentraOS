@@ -23,8 +23,24 @@
  * DELETE (or any other call with nothing to say) is 204. The response types are
  * the contract's (`@mentra/workspace-contract`), shared with the portals and the Developer Console.
  *
- * Route order matters: `/invitations/...` is registered before `/:workspaceId`
- * so the literal segment is never read as a workspace id.
+ * Members: `GET /:workspaceId/members` names each member with the last name a sign-in through Core's
+ * provider carried, trimmed (`name`, null when none has), all of them read in one query.
+ *
+ * Licenses: `GET /:workspaceId/licenses` answers every license and seat to a
+ * caller with `workspace.licenses.read` (Admins and Owners), and to any other
+ * member only the licenses they hold a seat in, each with only their own seat.
+ * `PUT` and `DELETE /:workspaceId/licenses/:licenseId/seats/:membershipId`
+ * assign and unassign a seat, with `workspace.licenses.assign`, and
+ * `POST /:workspaceId/seat-assignments` assigns several seats at once, all of
+ * them or none (409 `no_seats_available` lists each license that falls short),
+ * with the same capability.
+ *
+ * The automatic workspace: `POST /ensure` answers the caller's workspace, 200 with the workspace of their
+ * oldest membership or 201 with a new automatic one (`automatic-workspace.service`), as a `WorkspaceDetail`.
+ * `GET /` marks each workspace `replaceable` while it is the caller's own automatic workspace holding nothing.
+ *
+ * Route order matters: `/ensure` and `/invitations/...` are registered before `/:workspaceId`
+ * so a literal segment is never read as a workspace id.
  */
 
 import {
@@ -33,20 +49,31 @@ import {
   type AuditEventView,
   type InvitationPreview,
   type InvitationView,
+  type LicenseView,
   type MemberView,
+  type SeatAssignmentsResponse,
   type WorkspaceDetail,
   type WorkspaceRole,
   type WorkspaceSummary,
 } from "@mentra/workspace-contract"
 import {Hono} from "hono"
 import type {WorkspaceAuditEventRow} from "../../models/workspace-audit-event.model"
+import {
+  assignSeat,
+  assignSeats,
+  listWorkspaceLicenses,
+  parseSeatAssignments,
+  releaseSeat,
+} from "../../services/licenses/license.service"
 import {listWorkspaceAudit, redactSecrets} from "../../services/workspaces/audit.service"
+import {ensureWorkspace} from "../../services/workspaces/automatic-workspace.service"
 import {
   createWorkspaceCredential,
   findCredentialOwner,
   listWorkspaceCredentials,
   revokeCredential,
 } from "../../services/workspaces/credential.service"
+import {listDeletionHolds} from "../../services/workspaces/deletion-hold.service"
 import {
   acceptInvitation,
   acceptInvitationById,
@@ -57,6 +84,7 @@ import {
   revokeInvitation,
   type InvitationRow,
 } from "../../services/workspaces/invitation.service"
+import {memberNames} from "../../services/workspaces/member-names.service"
 import {fail} from "../../services/workspaces/workspace-error"
 import {
   changeRole,
@@ -107,8 +135,26 @@ export function createWorkspacesApi(): Hono<AppEnv> {
       membership: await ownerMembership(summary.workspaceId, actor.mentraUserId),
       capabilities: [...capabilitiesForRole("owner")],
       organizationAdmin: actor.isOrganizationAdmin,
+      // Nothing can hold a workspace that did not exist a moment ago.
+      deletionHolds: [],
     }
     return c.json(detail, 201)
+  })
+
+  // The caller's workspace, made for them when they have none: 201 and the new automatic workspace, or 200
+  // and the workspace of their oldest membership. No body. Two at once, or a retry, still make one.
+  app.post("/ensure", async (c) => {
+    const actor = userActor(c)
+    const {created, workspace, membership} = await ensureWorkspace(actor)
+    const detail: WorkspaceDetail = {
+      ...workspace,
+      membership,
+      // As the workspace's own routes decide it: an Organization Admin acts as Owner whatever their role.
+      capabilities: [...capabilitiesForRole(actor.isOrganizationAdmin ? "owner" : membership.role)],
+      organizationAdmin: actor.isOrganizationAdmin,
+      deletionHolds: created ? [] : await listDeletionHolds(workspace.workspaceId),
+    }
+    return c.json(detail, created ? 201 : 200)
   })
 
   // --- Invitations to the caller (before `/:workspaceId`) ---------------------
@@ -147,7 +193,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
 
   // --- One workspace ---------------------------------------------------------
 
-  app.get("/:workspaceId", requireWorkspaceCapability("workspace.read"), (c) => c.json(workspaceDetail(c)))
+  app.get("/:workspaceId", requireWorkspaceCapability("workspace.read"), async (c) => c.json(await workspaceDetail(c)))
 
   app.patch("/:workspaceId", requireWorkspaceCapability("workspace.settings.manage"), async (c) => {
     const body = await readJsonObject(c)
@@ -157,9 +203,10 @@ export function createWorkspacesApi(): Hono<AppEnv> {
       requiredString(body, "name"),
       expectedRevision(body),
     )
-    return c.json(workspaceDetail(c, summary))
+    return c.json(await workspaceDetail(c, summary))
   })
 
+  // Refused with 409 `workspace_has_holds` (and the holds) while any service holds the workspace.
   app.delete("/:workspaceId", requireWorkspaceCapability("workspace.delete"), async (c) => {
     const body = await readJsonObject(c)
     await deleteWorkspace(userActor(c), c.req.param("workspaceId"), {confirmName: requiredString(body, "confirmName")})
@@ -170,7 +217,9 @@ export function createWorkspacesApi(): Hono<AppEnv> {
 
   app.get("/:workspaceId/members", requireWorkspaceCapability("workspace.members.read"), async (c) => {
     const rows = await listMembers(c.req.param("workspaceId"))
-    return c.json({items: rows.map(memberView)})
+    // Every member's name in one read, not one per row.
+    const names = await memberNames(rows.map(row => row.mentraUserId))
+    return c.json({items: rows.map(row => memberView(row, names))})
   })
 
   app.patch("/:workspaceId/members/:membershipId", requireWorkspaceCapability("workspace.read"), async (c) => {
@@ -266,6 +315,52 @@ export function createWorkspacesApi(): Hono<AppEnv> {
     return c.body(null, 204)
   })
 
+  // --- Licenses --------------------------------------------------------------
+
+  // Every member sees the seats they hold; `workspace.licenses.read` sees every license and every seat.
+  app.get("/:workspaceId/licenses", requireWorkspaceCapability("workspace.read"), async (c) => {
+    const decision = c.get("workspaceAuthorization")
+    const seatsOf = decision?.capabilities.includes("workspace.licenses.read")
+      ? "everyone"
+      : (decision?.membership?.membershipId ?? null)
+    const items: LicenseView[] = await listWorkspaceLicenses(c.req.param("workspaceId"), seatsOf)
+    return c.json({items})
+  })
+
+  // Assigning a seat a member already holds changes nothing; either way the answer is the license with its seats.
+  app.put(
+    "/:workspaceId/licenses/:licenseId/seats/:membershipId",
+    requireWorkspaceCapability("workspace.licenses.assign"),
+    async (c) => {
+      const license: LicenseView = await assignSeat(
+        userActor(c),
+        c.req.param("workspaceId"),
+        c.req.param("licenseId"),
+        c.req.param("membershipId"),
+      )
+      return c.json(license)
+    },
+  )
+
+  // Unassigning a seat nobody holds changes nothing.
+  app.delete(
+    "/:workspaceId/licenses/:licenseId/seats/:membershipId",
+    requireWorkspaceCapability("workspace.licenses.assign"),
+    async (c) => {
+      await releaseSeat(userActor(c), c.req.param("workspaceId"), c.req.param("licenseId"), c.req.param("membershipId"))
+      return c.body(null, 204)
+    },
+  )
+
+  // Several seats at once, all of them or none: the answer is every license the pairs name, with its seats.
+  app.post("/:workspaceId/seat-assignments", requireWorkspaceCapability("workspace.licenses.assign"), async (c) => {
+    const assignments = parseSeatAssignments(await readJsonObject(c))
+    const answer: SeatAssignmentsResponse = {
+      licenses: await assignSeats(userActor(c), c.req.param("workspaceId"), assignments),
+    }
+    return c.json(answer)
+  })
+
   // --- Audit -----------------------------------------------------------------
 
   app.get("/:workspaceId/audit", requireWorkspaceCapability("workspace.audit.read"), async (c) => {
@@ -287,9 +382,10 @@ export function createWorkspacesApi(): Hono<AppEnv> {
 
 /**
  * The workspace as the caller sees it: the summary (the one the gate loaded, or a fresh one from a
- * mutation) with the caller's membership and capabilities from the gate's decision.
+ * mutation) with the caller's membership and capabilities from the gate's decision, and what holds it
+ * from deletion, so a screen can say why it cannot be deleted before anyone tries.
  */
-function workspaceDetail(c: AppContext, summary?: WorkspaceSummary): WorkspaceDetail {
+async function workspaceDetail(c: AppContext, summary?: WorkspaceSummary): Promise<WorkspaceDetail> {
   const decision = c.get("workspaceAuthorization")
   const workspace = summary ?? decision?.workspace
   if (!decision?.allowed || !workspace) throw new Error("a workspace route ran without its authorization decision")
@@ -300,6 +396,7 @@ function workspaceDetail(c: AppContext, summary?: WorkspaceSummary): WorkspaceDe
     capabilities: decision.capabilities,
     // The caller's own standing, so a screen can say why they hold more than their membership's role.
     organizationAdmin: principal?.kind === "user" && principal.isOrganizationAdmin,
+    deletionHolds: await listDeletionHolds(workspace.workspaceId),
   }
 }
 
@@ -314,13 +411,17 @@ function workspaceRole(body: JsonObject): WorkspaceRole {
   return role
 }
 
-function memberView(row: MembershipRow): MemberView {
+/** `names` are the members' sign-in names by Core user id (`memberNames`); a member without one has `name: null`. */
+function memberView(row: MembershipRow, names: ReadonlyMap<string, string>): MemberView {
   return {
     membershipId: row.membershipId,
-    mentraUserId: row.mentraUserId,
+    mentraUserId: row.mentraUserId ?? null,
     email: row.email ?? null,
+    name: (row.mentraUserId ? names.get(row.mentraUserId) : undefined) ?? null,
     role: row.role as WorkspaceRole,
     startedAt: row.startedAt.toISOString(),
+    // Imported from the Store and not yet claimed: the person has no Core user here until they sign in.
+    pending: !row.mentraUserId,
   }
 }
 

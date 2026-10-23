@@ -4,6 +4,101 @@ import {TestHostStateModel} from "../models/test-host-state.model"
 import {TestRequestModel} from '../models/test-request.model'
 import {hostStateSchema, TestHostStateService} from "./test-host-state.service"
 import {routineProgressSchema} from '../types/routine-progress.types'
+import {compatibleRoutineLane, routineJobRouting} from './routine-job.service'
+import {permissionContext} from '../types/resource-permissions.types'
+import type {ExclusiveHostReservation} from '../types/resource-reservations.types'
+
+test('run progress lookup selects only one lane snapshot and uses a bounded consistent read', async () => {
+  const selections: unknown[] = [], settings: unknown[] = [], filters: unknown[] = [];
+  const snapshot = {incarnation: 'boot-one', sequence: 7, lanes: [{id: 'phone', resources: [{id: 'private'}]}]};
+  const find = spyOn(TestHostStateModel, 'findOne').mockImplementation(((filter: unknown) => {
+    filters.push(filter);
+    const query = {select(value: unknown) {selections.push(value); return query},
+      read(value: unknown) {settings.push(value); return query}, readConcern(value: unknown) {settings.push(value); return query},
+      setOptions(value: unknown) {settings.push(value); return query}, async lean() {return {snapshot, receivedAt: new Date('2026-10-03T01:00:00Z')}}};
+    return query;
+  }) as never);
+  try {
+    expect(await new TestHostStateService().progressObservation('host-one', 'phone')).toEqual({
+      incarnation: 'boot-one', sequence: 7, receivedAt: '2026-10-03T01:00:00.000Z', lane: {id: 'phone'},
+    });
+    expect(filters).toEqual([{hostId: 'host-one'}]);
+    expect(selections).toEqual([{'snapshot.incarnation': 1, 'snapshot.sequence': 1, 'snapshot.lanes.id': 1,
+      'snapshot.lanes.activity': 1, 'snapshot.lanes.progress': 1, 'snapshot.lanes.waiting': 1, receivedAt: 1, _id: 0}]);
+    expect(settings).toEqual(['primary', 'majority', {timeoutMS: 5000}]);
+  } finally {find.mockRestore()}
+})
+
+
+test('routing reads only fresh current offers and preserves permission and physical glasses admission', async () => {
+  const now = Date.parse('2026-10-14T08:00:00Z'), binding = {version: 952, revision: 'a'.repeat(40),
+    installationId: 'accepted', configurationSha256: 'b'.repeat(64), runtimeSha256: 'c'.repeat(64),
+    routineApiVersion: 39, publicApiSha256: 'd'.repeat(64)};
+  const build = {headSha: 'e'.repeat(40), archive: {sha256: 'f'.repeat(64)}, receipt: {sha256: '1'.repeat(64)}};
+  const observation = {permission: 'camera' as const, status: 'granted' as const, rawStatus: 'authorized',
+    observedAt: new Date(now).toISOString(), binding, evidence: {sha256: '2'.repeat(64)},
+    recipient: {kind: 'app' as const, uid: 501, pid: 50, processStartedAt: 'verified lifetime', launchedAt: now - 1000,
+      bundleId: 'com.mentra.mentra' as const, bundlePath: '/Applications/Mentra.app', executablePath: '/Applications/Mentra.app/Mentra',
+      version: '3.3.0', build: '912', teamId: 'T5XXXL6N36', codeRequirement: 'verified requirement',
+      selectedBuild: {headSha: build.headSha, archiveSha256: build.archive.sha256, receiptSha256: build.receipt.sha256}}};
+  const lane = {id: 'mac', descriptorRevision: '3'.repeat(64), platform: 'ios-on-mac' as const,
+    dispatchMode: 'automatic' as const, state: 'idle' as const,
+    resources: [{id: 'app', kind: 'app' as const, capabilities: ['camera'], permissionObservations: [observation]},
+      {id: 'glasses', kind: 'glasses' as const, capabilities: ['display']}],
+    glasses: [{resourceId: 'glasses', deviceId: 'physical-one', model: 'mentra-live', capabilities: ['display']}]};
+  const current = {hostId: 'mini', observedAt: new Date(now).toISOString(), frameworkBinding: binding, lanes: [lane]};
+  const requirements = {platform: 'ios-on-mac' as const, resources: [{kind: 'app' as const, capabilities: ['camera'],
+    permissions: [{permission: 'camera' as const, recipient: 'app' as const}]}, {kind: 'glasses' as const, capabilities: ['display']}],
+    glasses: {models: ['mentra-live'], capabilities: ['display']}};
+  const selections: unknown[] = [], settings: unknown[] = [], filters: unknown[] = [];
+  const retained: ExclusiveHostReservation[] = [{kind: 'exclusive', id: 'a1d9b22e-12c1-4f5b-b210-0bca2b0798c6', authorityHostId: 'mini',
+    borrowerHostId: 'air1', laneId: 'android', resourceId: 'google-account', operationId: 'run:pending-original',
+    owner: {kind: 'run', id: 'pending-original'}, inputSha256: 'a'.repeat(64), intentSha256: 'b'.repeat(64),
+    controllerIncarnation: 'one', controllerGeneration: 1, borrowerSequence: 1, reservedAt: new Date(now).toISOString()}];
+  let reads = 0;
+  const find = spyOn(TestHostStateModel, 'find').mockImplementation(((filter: unknown) => {
+    filters.push(filter);
+    const query = {select(value: unknown) {selections.push(value); return query},
+      limit(value: unknown) {settings.push(value); return query}, read(value: unknown) {settings.push(value); return query},
+      readConcern(value: unknown) {settings.push(value); return query}, async lean() {
+        reads++; return [{hostId: 'mini', snapshot: structuredClone(current), receivedAt: new Date(now), resourceReservations: retained}];
+      }}; return query;
+  }) as never);
+  const previous = process.env.TEST_HOST_TOKENS;
+  process.env.TEST_HOST_TOKENS = JSON.stringify({mini: 't'.repeat(32), invalid: 'short'});
+  try {
+    const service = new TestHostStateService(), [offered] = await service.list();
+    expect(offered).toEqual({...current, receivedAt: new Date(now).toISOString(), authorityReservations: retained});
+    expect(selections).toEqual([{hostId: 1, receivedAt: 1, resourceReservations: 1, laneControls: 1, resourceLifecycleCursor: 1,
+      'snapshot.observedAt': 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+      'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle': 1, 'snapshot.resources': 1,
+      'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
+      'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
+      'snapshot.lanes.glasses': 1, _id: 0}]);
+    expect(settings).toEqual([100, 'primary', 'majority']);
+    expect(filters).toEqual([{hostId: {$in: ['mini']}}]);
+    const full = {...current, incarnation: 'boot', incarnationGeneration: 1, sequence: 1, observedAt: new Date(now).toISOString(),
+      frameworkHistory: [], restoration: {diagnostics: 'baggage'.repeat(10000)}, receivedAt: offered.receivedAt};
+    expect(routineJobRouting(requirements, [offered], now, undefined, build)).toEqual(routineJobRouting(requirements, [full], now, undefined, build));
+    expect(compatibleRoutineLane(requirements, offered.lanes[0], permissionContext(binding, build, now))).toBe(true);
+    expect(compatibleRoutineLane(requirements, offered.lanes[0], permissionContext(binding, {...build, headSha: '0'.repeat(40)}, now))).toBe(false);
+    observation.observedAt = new Date(now - 120001).toISOString();
+    const [fresh] = await service.list();
+    expect(reads).toBe(2);
+    expect(compatibleRoutineLane(requirements, fresh.lanes[0], permissionContext(binding, build, now))).toBe(false);
+    current.lanes[0].glasses[0].resourceId = 'unoffered';
+    await expect(service.list()).rejects.toThrow('Glasses inventory must exactly identify declared glasses resources');
+    current.lanes[0].glasses[0].resourceId = 'glasses';
+    observation.recipient.selectedBuild.headSha = 'invalid';
+    await expect(service.list()).rejects.toThrow();
+    observation.recipient.selectedBuild.headSha = build.headSha;
+    current.hostId = 'different';
+    await expect(service.list()).rejects.toThrow('Routing snapshot differs from enrolled host');
+  } finally {
+    find.mockRestore();
+    if (previous === undefined) delete process.env.TEST_HOST_TOKENS; else process.env.TEST_HOST_TOKENS = previous;
+  }
+})
 
 function fixture() {
   let row: Record<string, any> | null = null,
@@ -12,42 +107,53 @@ function fixture() {
     reads = 0,
     writeAttempts = 0,
     failedWrites = 0
+  const readProjections: Array<Record<string, number> | undefined> = [], writeProjections: Array<Record<string, number> | undefined> = []
+  const project = (value: Record<string, any> | null, fields?: Record<string, number>) => value &&
+    (fields ? structuredClone(Object.fromEntries(Object.entries(value).filter(([key]) => fields[key]))) : structuredClone(value))
   let beforeWrite: ((change: Record<string, any>) => void | Promise<void>) | undefined
-  const find = spyOn(TestHostStateModel, "findOne").mockImplementation((() => ({
-    lean: async () => {
-      reads++
-      return row && structuredClone(row)
-    },
-  })) as any)
+  const find = spyOn(TestHostStateModel, "findOne").mockImplementation((() => {
+    let fields: Record<string, number> | undefined
+    const query = {
+      select(value: Record<string, number>) {fields = value; return query},
+      lean: async () => {
+        reads++
+        readProjections.push(fields)
+        return project(row, fields)
+      },
+    }; return query}) as any)
   const update = spyOn(TestHostStateModel, "findOneAndUpdate").mockImplementation(((
     filter: Record<string, unknown>,
     change: {$set: Record<string, any>},
     options: {upsert: boolean},
-  ) => ({
-    lean: async () => {
-      writeAttempts++
-      await beforeWrite?.(change.$set)
-      if (failedWrites > 0) {
-        failedWrites--
-        return null
-      }
-      if (
-        row &&
-        Object.entries(filter).some(([key, value]) =>
-          typeof value === "object" && value !== null && "$exists" in value
-            ? (row![key] !== undefined) !== (value as {$exists: boolean}).$exists
-            : row![key] !== value,
-        )
-      ) {
-        if (options.upsert) throw Object.assign(new Error('Duplicate host identity'), {code: 11000})
-        return null
-      }
-      if (!row && !options.upsert) return null
-      row = {...row, ...change.$set}
-      writes++
-      return {...row}
-    },
-  })) as any)
+  ) => {
+    let fields: Record<string, number> | undefined
+    const query = {
+      select(value: Record<string, number>) {fields = value; return query},
+      lean: async () => {
+        writeAttempts++
+        await beforeWrite?.(change.$set)
+        if (failedWrites > 0) {
+          failedWrites--
+          return null
+        }
+        if (
+          row &&
+          Object.entries(filter).some(([key, value]) =>
+            typeof value === "object" && value !== null && "$exists" in value
+              ? (row![key] !== undefined) !== (value as {$exists: boolean}).$exists
+              : row![key] !== value,
+          )
+        ) {
+          if (options.upsert) throw Object.assign(new Error('Duplicate host identity'), {code: 11000})
+          return null
+        }
+        if (!row && !options.upsert) return null
+        row = {...row, ...change.$set}
+        writes++
+        writeProjections.push(fields)
+        return project(row, fields)
+      },
+    }; return query}) as any)
   return {
     service: new TestHostStateService(() => now),
     advance: (ms: number) => (now += ms),
@@ -57,6 +163,7 @@ function fixture() {
     failWrites: (count: number) => {failedWrites = count},
     beforeWrite: (hook: typeof beforeWrite) => {beforeWrite = hook},
     row: () => row!,
+    readProjections, writeProjections,
     stop: () => {
       find.mockRestore()
       update.mockRestore()
@@ -377,6 +484,30 @@ const observation = (sequence: number, extra: Record<string, unknown> = {}) => (
     nextAction: "Wait for active executor",
   },
   ...extra,
+})
+
+test('heartbeat and updater acknowledgements preserve large diagnostics without returning them from Mongo', async () => {
+  const f = fixture()
+  try {
+    await f.service.report(accepted(1, 1), 'mini')
+    const diagnostics = {retained: 'x'.repeat(180_000)}
+    Object.assign(f.row(), {unrelatedDiagnostics: diagnostics})
+    f.readProjections.length = 0; f.writeProjections.length = 0
+    expect(await f.service.report(accepted(1, 2), 'mini')).toEqual({hostId: 'mini', incarnation: 'boot-1',
+      incarnationGeneration: 1, sequence: 2})
+    expect(await f.service.reportDeployment(observation(1), 'mini')).toEqual({hostId: 'mini', generation: 1, sequence: 1})
+    expect(f.readProjections).toHaveLength(2); expect(f.writeProjections).toHaveLength(2)
+    for (const fields of [...f.readProjections, ...f.writeProjections]) {
+      expect(fields).toBeDefined()
+      expect(fields).not.toHaveProperty('snapshot')
+      expect(fields).not.toHaveProperty('unrelatedDiagnostics')
+      const selected = Object.fromEntries(Object.entries(f.row()).filter(([key]) => fields?.[key]))
+      expect(JSON.stringify(selected).length).toBeLessThan(2048)
+    }
+    expect(f.row().unrelatedDiagnostics).toEqual(diagnostics)
+    expect(f.row().frameworkHistory).toHaveLength(1)
+    expect((await f.service.get('mini'))!.frameworkBinding).toEqual(binding(1))
+  } finally {f.stop()}
 })
 
 for (const updaterFirst of [true, false]) {
@@ -788,5 +919,32 @@ test("offline accepted intervals merge idempotently without relabeling current o
     )
   } finally {
     f.stop()
+  }
+})
+
+test('lifecycle comparison survives omitted envelope and omitted subject without renewing observation', async () => {
+  const {projectResourceLifecycle} = await import('./resource-lifecycle.service')
+  for (const omission of [undefined, {schemaVersion: 1, subjects: [], history: []}]) {
+    const f = fixture()
+    const at = '2026-10-03T01:00:00Z'
+    const subject = {subject: {kind: 'resource', id: 'resource-one', authorityHostId: 'mini'}, generation: 10,
+      status: 'unknown', observedAt: at, receivedAt: null, current: true, reason: null, owner: null,
+      idle: {contractVersion: 'v1', outcome: 'not-checked', checkedAt: null, acceptedCheck: null, qualifiedScope: {kind: 'unqualified'}, evidenceRefs: []},
+      repair: {configured: false, state: 'none'}, supportedActions: [], resource: {kind: 'account', capabilities: [], memberships: [], dependencies: [], placement: 'fleet'}}
+    const lifecycle = {schemaVersion: 1, subjects: [subject], history: [{id: 'original-event', resourceId: 'resource-one', subjectGeneration: 10, at, event: 'checking'}]}
+    try {
+      await f.service.report({...snapshot(1, 1), resourceLifecycle: lifecycle}, 'mini')
+      await f.service.report({...snapshot(1, 2), ...(omission ? {resourceLifecycle: omission} : {})}, 'mini')
+      expect(f.row().resourceLifecycleCursor.subjects[0].generation).toBe(10)
+      const stored=f.row()
+      const projected = projectResourceLifecycle([{hostId:'mini',receivedAt:stored.receivedAt,snapshot:stored.snapshot,resourceLifecycleCursor:stored.resourceLifecycleCursor}], Date.parse(at)).subjects[0]!
+      expect(projected.status).toBe('unknown'); expect(projected.current).toBe(false)
+      expect(projected.supportedActions).toEqual([])
+      await expect(f.service.report({...snapshot(1, 3), resourceLifecycle: {...lifecycle,
+        subjects: [{...subject, generation: 1}], history: []}}, 'mini')).rejects.toThrow('generation regressed')
+      await expect(f.service.report({...snapshot(1, 3), resourceLifecycle: {...lifecycle,
+        history: [{...lifecycle.history[0], event: 'active'}]}}, 'mini')).rejects.toThrow('immutable')
+      expect(f.row().sequence).toBe(2)
+    } finally {f.stop()}
   }
 })

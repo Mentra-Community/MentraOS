@@ -1,14 +1,21 @@
 /**
- * @fileoverview Verified Mentra account email for a user.
+ * @fileoverview Verified Mentra account email for a user, from the account directory.
  *
  * Only first-party (`tenantId: "mentra"`) users store a GoTrue id in
  * `tenantUserId`. An OEM sub is a different identifier space, so a stray
  * collision would resolve some unrelated account's email; OEM users resolve to
  * null instead. Unverified addresses also resolve to null, so every caller can
- * treat a non-null result as an email the user has proven they own.
+ * treat a non-null result as an email the user has proven they own. A deleted
+ * account resolves to null too: it is no longer anyone's.
+ *
+ * Null means the account has no verified email. A directory that cannot answer
+ * (an outage, a rate limit, a timeout, `signal`) throws instead, so a caller
+ * that keeps the answer (`account-email.service.ts`) never keeps an outage as
+ * "no email".
  */
 import {UserModel} from "../../models/user.model"
-import {getUserById} from "./gotrue.client"
+import {isDeletedAccount} from "../user.service"
+import {findAccountById} from "./gotrue.client"
 
 const MENTRA_TENANT_ID = "mentra"
 
@@ -17,10 +24,10 @@ export async function trustedAccountEmail(
   options: {signal?: AbortSignal} = {},
 ): Promise<string | null> {
   const user = await UserModel.findOne({mentraUserId}).lean()
-  if (!user || user.tenantId !== MENTRA_TENANT_ID) return null
+  if (!user || user.tenantId !== MENTRA_TENANT_ID || isDeletedAccount(user)) return null
   // Deployments without an account directory (private clouds) have no
   // trusted email source.
   if (!process.env.SUPABASE_URL?.trim()) return null
-  const identity = await getUserById(user.tenantUserId, options.signal)
+  const identity = await findAccountById(user.tenantUserId, undefined, options.signal)
   return identity?.emailVerified && identity.email ? identity.email : null
 }

@@ -2,9 +2,31 @@ import {expect, spyOn, test} from 'bun:test'
 import {createHash} from 'node:crypto'
 import {gzipSync} from 'node:zlib'
 import {Hono} from 'hono'
+import {mongo} from 'mongoose'
+import {RoutineDefinitionService} from '../../services/routine-definition.service'
 import {StorageService} from '../../services/storage/storage.service'
 import {routineSourceRefSchema} from '../../types/framework-version.types'
 import {createRoutineDefinitionsApi} from './routine-definitions.api'
+
+test('collection enrollment logs the Mongo quota cause while returning a generic unavailable response', async () => {
+  const logs: unknown[] = [], token = 'synthetic-collection-host-' + 'x'.repeat(32)
+  const error = new mongo.MongoServerError({message: 'Storage quota exhausted mongodb+srv://user:secret@private.example/db Bearer private-token',
+    code: 8000, codeName: 'AtlasError'})
+  class Service extends RoutineDefinitionService {
+    override async publishCollection(): Promise<never> {throw error}
+  }
+  const app = new Hono<import('../middleware/test-host-auth.middleware').TestHostEnv>()
+  app.use('*', async (c, next) => {c.set('logger', {error(value: unknown) {logs.push(value)}} as any); await next()})
+  app.route('/api/internal/routine-definitions', createRoutineDefinitionsApi(new Service(), () => JSON.stringify({mini: token})))
+  const response = await app.request('/api/internal/routine-definitions/collection', {method: 'POST', body: '{}',
+    headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'}})
+  expect(response.status).toBe(503)
+  expect(await response.json()).toEqual({error: 'definition_enrollment_unavailable'})
+  expect(logs).toEqual([{errorName: 'MongoServerError', errorCode: 8000, errorCodeName: 'AtlasError',
+    errorMessage: 'Storage quota exhausted [redacted Mongo URI] Bearer [redacted]'}])
+  expect(JSON.stringify(logs)).not.toContain('private-token')
+  expect(JSON.stringify(logs)).not.toContain('user:secret')
+})
 
 test('routine publication behind TLS ingress returns an exact HTTPS receipt after verified storage', async () => {
   const token = 'synthetic-bundle-host-' + 'x'.repeat(32), bytes = gzipSync('fixture source archive')

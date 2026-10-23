@@ -65,7 +65,10 @@ async function main() {
     const directory = await mkdtemp(path.join(tmpdir(), "mentra-artifact-"))
     try {
       const file = path.join(directory, "asset")
-      await downloadAsset(repository, {id: args["asset-id"]}, file)
+      const id = args["asset-id"]
+      await downloadAsset(repository, {id}, file, {
+        store: String(id).startsWith("r2:") ? await createR2Store() : undefined,
+      })
       await pipeline(createReadStream(file), process.stdout)
     } finally {
       await rm(directory, {recursive: true, force: true})

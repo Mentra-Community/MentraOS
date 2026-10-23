@@ -66,6 +66,16 @@ class RepackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'executable changed'):
             verify_payload(self.before, self.after, **self.inputs)
 
+    def test_signature_allocation_does_not_reject_unchanged_compiled_app(self):
+        self.package()
+        entitlements = self.root / 'entitlements.plist'
+        entitlements.write_bytes(plistlib.dumps({'com.mentra.signature-probe': 'x' * 64000}))
+        subprocess.run(['codesign', '--force', '--sign', '-', '--entitlements', str(entitlements),
+                        str(self.after)], check=True, capture_output=True)
+        originals = [(app / 'Mentra').read_bytes() for app in [self.before, self.after]]
+        verify_payload(self.before, self.after, **self.inputs)
+        self.assertEqual(originals, [(app / 'Mentra').read_bytes() for app in [self.before, self.after]])
+
     def test_rejects_unrelated_info_plist_changes(self):
         self.package()
         file = self.after/'Info.plist'

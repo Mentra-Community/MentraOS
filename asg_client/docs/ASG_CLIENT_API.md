@@ -803,7 +803,7 @@ No response.
 
 ### Spoken pairing code
 
-Mentra Live pairing mode speaks one serialized I2S WAV containing “Connect to your Mentra Live in the app. Your code is:” and the 4-character code. BES requests the whole phrase with `hm_spkcode` immediately and every 30 seconds. `hm_pairexit` plays “Pairing mode ended.” once when the firmware closes the pairing window.
+Mentra Live pairing mode speaks one serialized I2S WAV containing “Connect to your Mentra Live in the app. Your code is:” and the 4-character code. BES requests the whole phrase with `hm_spkcode` once when pairing starts, and again on a later three-press. It does not repeat on a timer. `hm_pairexit` plays “Pairing mode ended.” once when the firmware closes the pairing window. BES does not send `hm_pairexit` for a successful pair when “Connected” is the next prompt.
 
 Inbound K900 command from BES:
 
@@ -868,7 +868,14 @@ White flash for photo capture. `duration` defaults to 5000 ms.
 
 Solid white for video recording. Internal duration is 30 minutes — the recorder turns the LED off explicitly when recording stops.
 
-All four commands respond with either `<command>_response` (success: `true`) or `rgb_led_control_error` if the device doesn't support RGB LEDs or validation fails.
+All four commands accept an optional `requestId` and answer with one `rgb_led_control_response` that echoes it. The phone settles the matching LED request with this reply.
+
+```json
+{"type": "rgb_led_control_response", "requestId": "…", "state": "success", "success": true}
+{"type": "rgb_led_control_response", "requestId": "…", "state": "error", "success": false, "errorCode": "invalid_parameters", "error": "Invalid RGB LED index: 9"}
+```
+
+`errorCode` is `device_not_supported`, `invalid_parameters` or `command_failed`.
 
 ---
 
@@ -994,33 +1001,6 @@ Adjusts the file packet size to fit the MTU just negotiated by the phone. Effect
 
 ### Power
 
-#### `disable_unworn_auto_power_off`
-
-Fixed device-setup command; disables BES's persisted type 11 switch over the existing
-UART path. Accepts a `request_id` of 8–64 letters, digits, `_` or `-`.
-
-```json
-{"type":"disable_unworn_auto_power_off","request_id":"setup-power-1234"}
-```
-
-The terminal result is logged once by `PowerCommandHandler` as
-`UNWORN_AUTO_POWER_OFF_RESULT <json>` and broadcast to registered local intent listeners:
-
-```json
-{"type":"unworn_auto_power_off_result","schema":1,"request_id":"setup-power-1234","process_sid":"1234abcd","elapsed_realtime_ms":123456,"success":true,"status":"disabled","result_code":0,"switch_type":11,"switch_value":0}
-```
-
-`disabled` requires the current UART session's actual `sr_swit` reply with `S:0`,
-`type:11`, `switch:0`, plus a completed successful write. Queue acceptance is insufficient.
-Other terminal statuses are `transport_unavailable`, `busy`, `session_changed`,
-`send_failed`, `rejected` (including BES `S:5` NV-update failure), or `timeout`.
-The total request window is five seconds. A timeout after writing began can still have
-changed the switch; it never becomes success. Because BES replies have no request ID,
-an ambiguous write blocks another attempt on that same UART session. There is no
-automatic retry, reset, or arbitrary BES-command passthrough. The acknowledged setting
-uses the firmware's normal NV update path; the response does not prove a completed
-flash flush or persistence across power loss.
-
 #### `shutdown`
 
 ```json
@@ -1044,13 +1024,22 @@ Same active-recording cleanup, then `SysControl.reboot()`.
 #### `phone_ready`
 
 ```json
-{"type": "phone_ready"}
+{"type": "phone_ready", "readyId": "6f1c…"}
 ```
 
-The phone announces it has connected. Glasses respond with `glasses_ready`, then 500 ms later auto-send WiFi status and hotspot status, and claim RGB LED control authority from the BES chip.
+The phone announces it has connected. `readyId` names one readiness exchange: the phone repeats it on every retry until it receives the matching `glasses_ready`.
+
+For the first `phone_ready` of an exchange (or one without `readyId`), the glasses do four things:
+
+- reset the BLE transport state (packet sizing, file transport and wire protocol)
+- respond with `glasses_ready`, echoing `readyId`
+- 500 ms later, auto-send WiFi status and hotspot status
+- claim RGB LED control authority from the BES chip
+
+A later `phone_ready` with the same `readyId` gets the same `glasses_ready`, but no reset and none of the delayed WiFi, hotspot or LED messages. This covers copies the BES buffered while the glasses booted, and retries after a lost reply.
 
 ```json
-{"type": "glasses_ready", "timestamp": 1708963201234}
+{"type": "glasses_ready", "timestamp": 1708963201234, "sid": "2c5ade53", "readyId": "6f1c…"}
 ```
 
 #### `auth_token`

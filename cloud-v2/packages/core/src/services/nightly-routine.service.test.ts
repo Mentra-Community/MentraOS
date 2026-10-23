@@ -1,6 +1,6 @@
 import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {expect, spyOn, test} from "bun:test";
-import {NightlyRoutineService as ActualNightlyRoutineService, nightlyPlanRepository, type NightlyPlan, type NightlyResult, type NightlyPlanRepository, type NightlyCancellation} from "./nightly-routine.service";
+import {NightlyRoutineService as ActualNightlyRoutineService, nightlyPlanRepository, nightlyRequiredResourceKinds, type NightlyPlan, type NightlyResult, type NightlyPlanRepository, type NightlyCancellation} from "./nightly-routine.service";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRequestModel} from "../models/test-request.model";
 import type {RoutineCatalogService} from "./routine-catalog.service";
@@ -12,10 +12,33 @@ import {TestSuiteService} from "./test-suite.service";
 import {requestInputDigest, TestRequestService, type StoredRequest, type StoredPreparingRequest, type TestRequestRepository} from "./test-request.service";
 import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
 import {TestDispatchError} from "./test-builds.service";
-import {RoutineJobService, routineLaneDescriptorRevision, type RoutineJobRepository} from './routine-job.service';
+import {RoutineJobService, routineJobInputDigest, routineLaneDescriptorRevision, type RoutineJobRepository} from './routine-job.service';
 import type {StoredRoutineJob} from '../types/routine-job.types';
+import {GithubRoutineSourceGateway} from './routine-source-selection.service';
 
 const mainRevision = "7".repeat(40);
+
+test("never-bound Slack requirements require the exact original preparation digest and source", async () => {
+  const state = fixture([row("original-requirements", "android")]), {plan} = await state.service.start(occurrence);
+  const member = plan.members[0]!, definition = {...row(member.routineId, member.platform).definition,
+    source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: mainRevision, path: `routines/${member.routineId}/routine.ts`}};
+  const job = {requestId: member.requestId, state: 'awaiting-runner', fleetSelection: member.selection,
+    fleetSelectionSha256: requestInputDigest(member.selection), fleetDeadline: new Date(now + 3 * 3600_000),
+    fleetPreparation: {routineSource: testRoutineSource(mainRevision), definition, definitionSha256: requestInputDigest(definition),
+      requirements: {platform: 'android', resources: definition.resourceRequirements}}} as StoredRoutineJob;
+  job.fleetInputSha256 = routineJobInputDigest(job);
+  expect(nightlyRequiredResourceKinds(member, job)).toEqual(['phone', 'app', 'recorder']);
+  for (const change of [{fleetPreparation: undefined}, {fleetInputSha256: 'f'.repeat(64)}, {requestId: 'different-request'},
+    {fleetDeadline: new Date(job.fleetDeadline.getTime() + 1)}, {fleetSelectionSha256: 'f'.repeat(64)},
+    {fleetBinding: {hostId: 'later-host'}},
+    {fleetPreparation: {...job.fleetPreparation!, definitionSha256: 'f'.repeat(64)}},
+    {fleetPreparation: {...job.fleetPreparation!, requirements: {platform: 'android', resources: [{kind: 'unknown', capabilities: []}]}}}])
+    expect(nightlyRequiredResourceKinds(member, {...job, ...change} as StoredRoutineJob)).toBeUndefined();
+  const foreign = {...job, fleetPreparation: {...job.fleetPreparation!, routineSource: testRoutineSource('8'.repeat(40))}};
+  foreign.fleetInputSha256 = routineJobInputDigest(foreign);
+  expect(nightlyRequiredResourceKinds(member, foreign)).toBeUndefined();
+});
+
 // Old targeted test inputs are adapted into portable submission at the test boundary.
 class NightlyRoutineService extends ActualNightlyRoutineService {
   constructor(...legacy: [catalog?: Pick<RoutineCatalogService, 'list'>,
@@ -76,7 +99,7 @@ function row(id: string, platform: "android" | "ios-on-mac", nightlyEnabled = tr
         requirements: [],
         fixtures: [],
         steps: [{id: "check", instruction: "Check", expected: "Checked"}],
-        execution: {resourceKinds: [...(platform === "android" ? ["phone"] : []), "app", "recorder"]},
+        execution: {resourceKinds: [...(platform === "android" ? ["phone"] : []), "app", "recorder"],policy:{estimatedOutputBytes:1024**3}},
         source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: "a".repeat(40), path: `routines/${id}/routine.ts`},
       },
     }),
@@ -120,7 +143,7 @@ function fixture(
     {async summary(id) {completionEvents.push("evidence:" + id); const result = resultRows.get(id); if (typeof result === "function") return result(); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, "missing"); return result;}},
     () => clock,
     undefined,
-    {async resolve() {sourceReads++; return selectedMain;}},
+    {async resolve(revision, boundary) {expect(revision).toBeUndefined(); expect(boundary).toBe(startedAt); sourceReads++; return selectedMain;}},
   )
   return {service, admitted, get sourceReads() {return sourceReads;}, set main(value: string) {selectedMain = value;}, set autoPrepare(value: boolean) {autoPrepare = value;}, cancelled, completionEvents, buildReads, resultRows, requestRows, requestErrors, get plan() {return plan!;}, get reads() {return reads;}, set clock(value: number) {clock = value;}, set catalog(next: typeof initial) {catalog = next;}, set failId(value: string | undefined) {failId = value;}, set cancelFailId(value: string | undefined) {cancelFailId = value;}};
 }
@@ -143,6 +166,33 @@ test("nightly pins fresh main for every enabled routine and freezes exact app ar
   expect(state.sourceReads).toBe(1);
   expect(state.admitted).toHaveLength(2);
   await expect(state.service.start({...occurrence, startedAt: "2026-10-03T12:00:00Z"})).rejects.toThrow("changed");
+});
+test('delayed first delivery selects boundary main and frozen retry never consults later source', async () => {
+  const oldMain = '1'.repeat(40), laterMain = '2'.repeat(40), calls: string[] = [];
+  let available = true, plan: NightlyPlan | null = null;
+  const sources = new GithubRoutineSourceGateway({async token() {return 'private';}}, async url => {
+    calls.push(url); if (!available) throw new Error('History unavailable');
+    if (url.endsWith('/commits/main')) return Response.json({sha: laterMain});
+    if (url.includes('/activity?')) return Response.json([
+      {id: 2, ref: 'refs/heads/main', before: oldMain, after: laterMain, timestamp: '2026-10-03T11:02:00Z', activity_type: 'pr_merge'},
+      {id: 1, ref: 'refs/heads/main', before: '3'.repeat(40), after: oldMain, timestamp: '2026-10-03T10:58:00Z', activity_type: 'pr_merge'},
+    ]);
+    if (url.includes('/compare/')) return Response.json({status: 'ahead', base_commit: {sha: oldMain}, merge_base_commit: {sha: oldMain}});
+    throw new Error('Unexpected source read');
+  });
+  const jobs = {async submitFrozen() {return {} as any;}, async cancelFrozen() {return {} as any;}, async cancel() {return {} as any;}};
+  const service = new ActualNightlyRoutineService({async list() {return [row('delayed', 'android')];}} as any,
+    {async latestDev(platform, before) {expect(before).toBe(startedAt); return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
+    {async get() {return null;}}, {...cancellationRepository(), async get() {return plan;}, async freeze(next) {plan ??= next; return plan;},
+      async completed() {return null;}, async finish(_id, result) {return result;}}, undefined, () => now + 5 * 60_000, undefined, sources, jobs);
+  const first = await service.start(occurrence);
+  expect(first.plan.members[0]!.routineRevision).toBe(oldMain);
+  expect(first.plan.members[0]!.selection!.routineRevision).toBe(oldMain);
+  expect(first.plan.startedAt).toBe(startedAt);
+  expect(first.plan.publication!.source).toEqual({channel: 'dev', buildRunId: 21, publicationAttempt: 2});
+  const readCount = calls.length; available = false;
+  expect((await service.start(occurrence)).plan).toEqual(first.plan);
+  expect(calls).toHaveLength(readCount);
 });
 test("one failed admission does not suppress neighboring members and retries the same request", async () => {
   const state = fixture();
@@ -579,7 +629,7 @@ test("prepared input must match the pinned revision and every frozen app referen
   }
   state.requestRows.set(member.requestId, {...original, dispatchIntent: {...original.dispatchIntent, routineRevision: "a".repeat(40)}});
   expect((await state.service.detail(occurrence.occurrenceId)).members[0]).toMatchObject({status: "incomplete", publicationComplete: false,
-    unavailableReason: "Bound request identity differs from its assignment."});
+    assignmentEvidence: 'invalid', unavailableReason: "Bound request identity differs from its assignment."});
   state.requestRows.set(member.requestId, original);
   expect((await state.service.detail(occurrence.occurrenceId))).toMatchObject({status: "pass", passed: 1});
 });
@@ -660,7 +710,7 @@ test('fleet nightly rejects a changed bound app selection before using host resu
   const request = state.requestRows.get(member.requestId), changed = {...request.dispatchIntent, build: {...request.dispatchIntent.build, headSha: '9'.repeat(40)}};
   request.dispatchIntent = changed; request.dispatchIntentSha256 = requestInputDigest(changed);
   expect((await state.service.detail(occurrence.occurrenceId)).members[0]).toMatchObject({status: 'incomplete',
-    unavailableReason: 'Bound request source differs from the frozen selection.'});
+    assignmentEvidence: 'invalid', unavailableReason: 'Bound request source differs from the frozen selection.'});
 });
 
 test('terminal fleet suite projects actual assignments and refuses changed binding custody', async () => {
@@ -697,6 +747,28 @@ test('result outages preserve validated binding in live and frozen suite project
   expect(await state.service.complete(occurrence.occurrenceId)).toEqual(frozen);
 });
 
+test('bound setup refusals retain the original machine and lane without inventing prepared resources', async () => {
+  const state = fixture([row('bound-setup-refusal', 'android')]), {plan} = await state.service.start(occurrence);
+  const member = plan.members[0]!, request = state.requestRows.get(member.requestId);
+  request.state = 'preparing'; delete request.input; delete request.inputSha256;
+  request.preparationRejection = {code: 'setup-unavailable', reason: 'Original setup refused'};
+  const result = await state.service.snapshot(plan);
+  expect(result.members[0]).toMatchObject({hostId: 'mini', binding: request.fleetBinding, dispatchIntent: request.dispatchIntent,
+    status: 'waiting', publicationComplete: false, unavailableReason: 'setup-unavailable: Original setup refused'});
+  expect(result.members[0]!.input).toBeUndefined();
+  expect(result.members[0]!.requiredResourceKinds).toBeUndefined();
+});
+
+test('corrupt original binding is marked invalid without publishing its foreign machine identity', async () => {
+  const state = fixture([row('corrupt-assignment', 'android')]), {plan} = await state.service.start(occurrence);
+  const member = plan.members[0]!, request = state.requestRows.get(member.requestId);
+  request.fleetBinding.hostId = 'foreign-machine';
+  const result = (await state.service.snapshot(plan)).members[0]!;
+  expect(result.assignmentEvidence).toBe('invalid');
+  expect(result.hostId).toBeUndefined(); expect(result.binding).toBeUndefined();
+  expect(result.unavailableReason).toBe('Bound request identity differs from its assignment.');
+});
+
 test('actual fleet service preserves every nightly member through preparation, binding, result outage and frozen restart', async () => {
   let clock = now, plan: NightlyPlan | null = null, finished: NightlyResult | null = null, reads = 0, dispatches = 0;
   const requestRows = new Map<string, StoredRoutineJob>(), results = new Map<string, any>();
@@ -709,6 +781,7 @@ test('actual fleet service preserves every nightly member through preparation, b
       const next = {...value, state: 'awaiting-runner' as const, fleetPreparation: preparation, fleetInputSha256: inputSha256};
       requestRows.set(id, next); return copy(next);
     },
+    async reserveResources(id, digest, hostId, laneId) {const value=requestRows.get(id);if(!value||value.fleetCancellation||value.fleetInputSha256!==digest)return null;value.fleetResourceReservation??={id:'bb5736e3-7031-44c3-af88-b7fd1c07ee3c',requestId:id,fleetInputSha256:digest,hostId,laneId,poolId:'real-host:disk:1',minimumAvailableBytes:3*1024**3,reservedAt:new Date(clock).toISOString()};return copy(value);},
     async bind(id, digest, binding, intent) {
       const value = requestRows.get(id); if (!value || value.fleetCancellation || value.fleetBinding || value.fleetInputSha256 !== digest) return null;
       const next = {...value, state: 'preparing' as const, hostId: binding.hostId, fleetBinding: binding,
@@ -727,13 +800,13 @@ test('actual fleet service preserves every nightly member through preparation, b
   };
   const lanes = ['android', 'ios-on-mac'].map(platform => {
     const lane = {id: platform, platform: platform as 'android' | 'ios-on-mac', state: 'idle' as const, dispatchMode: 'automatic' as const,
-      resources: [...(platform === 'android' ? [{id:`phone:${platform}`,kind:'phone' as const}] : []), {id: `app:${platform}`, kind: 'app' as const}, {id: `recorder:${platform}`, kind: 'recorder' as const}]};
+      resources: [...(platform === 'android' ? [{id:`phone:${platform}`,kind:'phone' as const}] : []), {id: `app:${platform}`, kind: 'app' as const}, {id: `recorder:${platform}`, kind: 'recorder' as const, storage:{poolId:'real-host:disk:1',observedAt:new Date(clock).toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}}]};
     return {...lane, descriptorRevision: routineLaneDescriptorRevision(lane)};
   });
   const requests = {async get(id: string) {reads++; return copy(requestRows.get(id) ?? null) as any;}, async cancel() {return null;}};
   const summary = {async summary(id: string) {const result = results.get(id); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, 'No result'); return result;}, async detail() {throw new TestRunError(404, 'No result');}};
   const jobs = new RoutineJobService(rows, undefined, undefined, {async getExact() {return null;}},
-    {async get(hostId) {return {hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    {async list(){return [{hostId:'real-host',receivedAt:new Date(clock).toISOString(),lanes}];},async get(hostId) {return {hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
       observedAt: new Date(clock).toISOString(), receivedAt: new Date(clock).toISOString(), lanes};}}, requests, summary, () => clock,
     {async dispatch() {dispatches++;}, async cancel() {}});
   const repository = {...cancellationRepository(), async get() {return copy(plan);}, async freeze(value: NightlyPlan) {plan ??= copy(value); return copy(plan);},
@@ -752,6 +825,8 @@ test('actual fleet service preserves every nightly member through preparation, b
       routineSource: testRoutineSource(mainRevision), definitionSha256: requestInputDigest(definition), definition});
   }
   expect((await service.detail(occurrence.occurrenceId)).members.every(member => member.status === 'waiting' && member.unavailableReason === 'Awaiting compatible runner.')).toBe(true);
+  expect((await service.detail(occurrence.occurrenceId)).members.map(member => member.requiredResourceKinds))
+    .toEqual([['phone', 'app', 'recorder'], ['app', 'recorder']]);
   for (const member of first.plan.members) {
     const preparation = await jobs.preparation(member.requestId), lane = lanes.find(lane => lane.id === member.platform)!;
     expect((await jobs.bind(member.requestId, 'real-host', {inputSha256: preparation.inputSha256, laneId: lane.id,
@@ -833,4 +908,32 @@ test("completion scans advance past failing batches and wrap to retry them", asy
     expect(calls.slice(45)).toEqual(rows.slice(0, 20).map(row => row.nightlyPlan.occurrenceId));
     expect(query).toHaveBeenCalledTimes(5);
   } finally {query.mockRestore(); complete.mockRestore();}
+});
+
+test('unbound permanent source failures settle nightly members through their cancellation fence', async () => {
+ const state=fixture(),{plan}=await state.service.start(occurrence);
+ for(const member of plan.members){const row=state.requestRows.get(member.requestId);state.requestRows.set(member.requestId,{...row,fleetBinding:undefined,state:'terminal',terminalStatus:'not-applicable',fleetCancellation:{requestedAt:new Date().toISOString(),reason:'Routine does not support selected platform.'}})}
+ const result=await state.service.snapshot(plan);
+ expect(result.status).toBe('incomplete');expect(result.members.every(member=>member.status==='incomplete')).toBe(true);
+ expect(result.members[0]!.unavailableReason).toContain('does not support selected platform');
+});
+
+test('nightly terminal evidence failures survive the frozen receipt and compact suite projection', async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence);
+  state.resultRows.set(plan.members[0]!.requestId, {...publishedResult(plan.members[0]!, true), evidenceStatus: 'failed'});
+  state.resultRows.set(plan.members[1]!.requestId, publishedResult(plan.members[1]!, true));
+  const frozen = await state.service.complete(occurrence.occurrenceId);
+  expect(frozen).toMatchObject({status: 'failed', passed: 1, members: [
+    {status: 'pass', publicationComplete: false, evidenceStatus: 'failed'},
+    {status: 'pass', publicationComplete: true, evidenceStatus: 'complete'}]});
+  // Restart does not reinterpret this original result from later evidence reads.
+  state.resultRows.clear();
+  expect(await state.service.detail(occurrence.occurrenceId)).toEqual(frozen);
+  const {nightlySuiteProjection} = await import('./test-suite.service');
+  const projected = nightlySuiteProjection(structuredClone(plan.suite!), structuredClone(plan), structuredClone(frozen));
+  expect(projected.members[0]).toMatchObject({status: 'pass', publicationComplete: false, evidenceStatus: 'failed'});
+  const {testStatusCounts, observedTestStatus} = await import('../types/test-status-comparison');
+  expect(observedTestStatus({...projected.members[0]!, publicationComplete: false})).toBe('evidence-failed');
+  expect(testStatusCounts(projected.members.map(member => ({...member, publicationComplete: member.publicationComplete === true}))))
+    .toEqual({failed: 1, total: 2, skipped: 0, pending: 0, incomplete: 0});
 });

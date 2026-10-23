@@ -13,6 +13,7 @@ import {
   getConfigValues,
   start as bootstrapStart,
   stop as bootstrapStop,
+  updateMiniappPolicy,
   updateUiSeams,
 } from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
@@ -26,6 +27,7 @@ import {
 import {startOtaService, stopOtaService} from "./services/OtaService"
 import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloudUplink"
 import {startSupportProfileSync, stopSupportProfileSync} from "./services/SupportProfileSync"
+import {startFleetReporter, stopFleetReporter} from "./services/fleet/FleetReporter"
 import {startDeviceEventRouter, stopDeviceEventRouter} from "./services/DeviceEventRouter"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
 import {
@@ -58,6 +60,8 @@ export const engine = {
   configure,
   /** Merge host-UI seams on a running runtime (scan overlay, wifi setup, …). */
   updateUiSeams,
+  /** Replace a workspace's miniapp catalog on a running runtime. */
+  updateMiniappPolicy,
   /** Start the runtime: mark started + construct/connect the cloud client + begin
    * syncing device settings to the glasses. */
   async start() {
@@ -117,6 +121,10 @@ export const engine = {
         )
       }
       startSupportProfileSync()
+      // Fleet: after the token sync above, so the account is usually known and the collector starts synchronously,
+      // here inside start(), before the host restores miniapps (MantleManager awaits engine.start() before
+      // autostartLocalMiniapps()). When the account is not known yet, those launches wait for the collector.
+      startFleetReporter()
     }
     // Push device-setting changes to the glasses for ANY host, so
     // engine.glasses.settings.set() reaches the device (not just the Mentra app).
@@ -158,6 +166,7 @@ export const engine = {
     await safely("ota service", stopOtaService)
     await safely("audio cloud uplink", stopAudioCloudUplink)
     await safely("support profile sync", stopSupportProfileSync)
+    await safely("fleet reporter", stopFleetReporter)
     await safely("phone notifications sync", stopPhoneNotificationsSync)
     await safely("mentrajs crashloop report service", stopMentraJSCrashloopReportService)
     await safely("bes crash report service", stopBesCrashReportService)

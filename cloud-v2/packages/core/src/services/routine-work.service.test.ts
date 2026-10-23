@@ -2,8 +2,13 @@ import {expect, spyOn, test} from 'bun:test'
 import {RoutineWorkModel} from '../models/routine-work.model'
 import {RoutineWorkService as ActualRoutineWorkService, type RoutineWorkDelivery, type RoutineWorkRepository} from './routine-work.service'
 import {requestInputDigest} from './test-request.service'
-import {routineWorkRequestSchema, routineWorkStatusSchema, authoringWorkSchema, type AuthoringWork} from '../types/routine-work.types'
+import {routineWorkRequestSchema, routineWorkStatusSchema, authoringWorkSchema, portableAuthoringWorkSchema, type AuthoringWork} from '../types/routine-work.types'
 import {createRoutineWorkIntakeApi} from '../api/internal/routine-work.api'
+import {compatibleRoutineLane, routineLaneContext, routineLaneDescriptorRevision} from './routine-job.service'
+import {testFrameworkBinding} from '../testing/framework-fixtures'
+import {backendConnectivityObservationSchema} from '../types/backend-connectivity.types'
+import {resourceLifecycleSubjectSchema} from '../types/resource-lifecycle.types'
+import {permissionContext} from '../types/resource-permissions.types'
 
 
 // Existing status/cursor regression cases operate after the single host binding.
@@ -16,7 +21,7 @@ class RoutineWorkService extends ActualRoutineWorkService {
   override async submit(value:unknown):Promise<RoutineWorkDelivery & {hostId:string;work:AuthoringWork}> {return await super.submit(value) as RoutineWorkDelivery & {hostId:string;work:AuthoringWork};}
 }
 
-const input = routineWorkRequestSchema.parse({
+export const input = routineWorkRequestSchema.parse({
   schemaVersion: 1,
   workId: 'work:one',
   kind: 'edit',
@@ -31,6 +36,114 @@ const input = routineWorkRequestSchema.parse({
   requirements: {platform: 'android', glasses: [], environment: [], resources:[{kind:"app",capabilities:[]},{kind:"phone",capabilities:[]},{kind:"recorder",capabilities:[]}]},
   origin: {repository: 'Mentra-Community/MentraOS', prNumber: 12, headSha: 'b'.repeat(40)},
   buildSource: {channel: 'pr', prNumber: 12, buildRunId: 55, publicationAttempt: 2},
+})
+
+function backendAuthoringFixture(options: {permission?: boolean; storage?: boolean} = {}) {
+  const now = Date.parse('2026-10-19T23:00:00Z'), at = new Date(now).toISOString()
+  const binding = {...testFrameworkBinding(), routineApiVersion: 61}
+  const {buildSource: _, ...fields} = input
+  const work = portableAuthoringWorkSchema.parse({...fields,
+    requirements: {...input.requirements, resources: input.requirements.resources.map(resource => resource.kind === 'phone'
+      ? {...resource, capabilities: ['backend-connectivity']} : resource.kind === 'app' && options.permission
+        ? {...resource, permissions: [{permission: 'camera', recipient: 'app'}]} : resource.kind === 'recorder' && options.storage
+          ? {...resource, storage: {minimumAvailableBytes: 100}} : resource)},
+    build: {repository: input.origin.repository, headSha: input.origin.headSha, kind: 'android-apk', channel: 'pr', prNumber: 12,
+      source: input.buildSource, archive: {name: 'candidate.apk', url: 'https://artifactscdn.mentraglass.com/candidate.apk', size: 100, sha256: 'c'.repeat(64)},
+      receipt: {url: 'https://artifactscdn.mentraglass.com/receipt.json', size: 50, sha256: 'd'.repeat(64)}}})
+  const deadline = new Date(now + 60_000)
+  let row: RoutineWorkDelivery = {workId: work.workId, work, inputSha256: requestInputDigest(work), request: input,
+    requestSha256: requestInputDigest(input), fleetSelection: work, fleetDeadline: deadline,
+    fleetInputSha256: requestInputDigest({selection: work, deadline: deadline.toISOString()})}
+  const phone = resourceLifecycleSubjectSchema.parse({subject: {kind: 'resource', id: 'phone', authorityHostId: 'mini'}, generation: 2,
+    status: 'unknown', current: true, observedAt: at, receivedAt: at, reason: null, owner: null,
+    idle: {contractVersion: 'not-commissioned', outcome: 'not-checked', checkedAt: null, acceptedCheck: null,
+      qualifiedScope: {kind: 'unqualified'}, evidenceRefs: []}, repair: {configured: false, state: 'none'}, supportedActions: [],
+    resource: {kind: 'phone', capabilities: ['backend-connectivity'], memberships: [{hostId: 'mini', laneId: 'phone'}], dependencies: [], placement: 'installed'}})
+  const host: import('./test-host-state.service').ReceivedTestHostState = {hostId: 'mini', incarnation: 'original-controller', incarnationGeneration: 1,
+    sequence: 1, observedAt: at, receivedAt: at, frameworkBinding: binding, resourceLifecycle: {schemaVersion: 1, subjects: [phone], history: []},
+    lanes: [{id: 'phone', platform: 'android', state: 'idle', dispatchMode: 'automatic', resources: [
+      {id: 'phone', kind: 'phone', capabilities: ['backend-connectivity']}, {id: 'app', kind: 'app'}, {id: 'recorder', kind: 'recorder'}]}]}
+  const lane = host.lanes[0]!
+  lane.descriptorRevision = routineLaneDescriptorRevision(lane)
+  let binds = 0
+  const unexpected = async (): Promise<never> => {throw Error('Unexpected authoring operation')}
+  const repository: RoutineWorkRepository = {async get() {return structuredClone(row)}, insert: unexpected, queued: unexpected,
+    accept: unexpected, updateStatus: unexpected, async bind(_id, digest, fleetBinding, acceptedWork) {
+      expect(digest).toBe(row.fleetInputSha256!); binds++
+      row = {...row, hostId: fleetBinding.hostId, fleetBinding, work: acceptedWork, inputSha256: requestInputDigest(acceptedWork)}
+      return structuredClone(row)
+    }}
+  const service = new ActualRoutineWorkService(repository, undefined, {async get() {return structuredClone(host)}, async list() {return [structuredClone(host)]}},
+    {async publish() {}}, undefined, () => now, null)
+  const bindInput = {inputSha256: row.fleetInputSha256!, laneId: lane.id, descriptorRevision: lane.descriptorRevision, actionsRunId: '10', actionsJobId: '20'}
+  const qualified = () => {
+    lane.resources[0]!.backendConnectivity = backendConnectivityObservationSchema.parse({schemaVersion: 1, capability: 'backend-connectivity', outcome: 'qualified',
+      observedAt: at, phoneResourceId: 'phone', binding, controller: {incarnation: host.incarnation, generation: 1},
+      app: {headSha: work.build.headSha, archiveSha256: work.build.archive.sha256, receiptSha256: work.build.receipt.sha256},
+      target: {schemaVersion: 1, coreUrl: 'https://core.dev.mentraglass.com'}, targetSource: 'verified-apk-configuration',
+      bootId: '06965353-509e-4b20-a6d9-746e553b5315', tool: {path: '/tools/adb', sha256: 'e'.repeat(64)},
+      check: {operationId: 'original-check', resultSha256: 'e'.repeat(64), readersSha256: 'e'.repeat(64), closedAt: at},
+      releasedGeneration: 2, appRouteVerified: false})
+  }
+  return {service, host, lane, work, row, now, bindInput, qualified, binds: () => binds}
+}
+
+test('Android authoring preparation routes structurally before its selected backend check exists', async () => {
+  const f = backendAuthoringFixture()
+  expect(await f.service.preparation(f.work.workId)).toMatchObject({kind: 'author', state: 'awaiting-runner'})
+  expect((await f.service.preparation(f.work.workId)).waitingReason).toBeUndefined()
+  expect(compatibleRoutineLane({platform: 'android', resources: f.work.requirements.resources}, f.lane,
+    routineLaneContext(f.host, f.work.build, f.now))).toBe(false)
+  expect(f.binds()).toBe(0)
+  expect((await f.service.bind(f.work.workId, f.host.hostId, f.bindInput)).execute).toBe(true)
+  expect(f.binds()).toBe(1)
+})
+
+test('Android authoring binds the exact structural lane even with valid health that permissionContext cannot authorize', async () => {
+  const f = backendAuthoringFixture(); f.qualified()
+  const requirements = {platform: 'android' as const, resources: f.work.requirements.resources}
+  expect(compatibleRoutineLane(requirements, f.lane, routineLaneContext(f.host, f.work.build, f.now))).toBe(true)
+  expect(compatibleRoutineLane(requirements, f.lane, permissionContext(f.host.frameworkBinding, f.work.build, f.now))).toBe(false)
+  expect((await f.service.bind(f.work.workId, f.host.hostId, f.bindInput)).execute).toBe(true)
+  expect(f.binds()).toBe(1)
+  delete f.lane.resources[0]!.backendConnectivity
+  expect(compatibleRoutineLane(requirements, f.lane, routineLaneContext(f.host, f.work.build, f.now))).toBe(false)
+  for (const change of [
+    () => {f.lane.resources[0]!.backendConnectivity!.observedAt = new Date(f.now - 120_001).toISOString()},
+    () => {f.lane.resources[0]!.backendConnectivity!.app.archiveSha256 = '0'.repeat(64)},
+    () => {f.lane.resources[0]!.backendConnectivity!.outcome = 'unknown'},
+    () => {f.lane.resources[0]!.backendConnectivity!.releasedGeneration = 3},
+  ]) {
+    f.qualified(); change()
+    expect(compatibleRoutineLane(requirements, f.lane, routineLaneContext(f.host, f.work.build, f.now))).toBe(false)
+  }
+})
+
+test('structural Android authoring still refuses incompatible API, offers, policy, custody and exact inputs before binding', async () => {
+  for (const change of [
+    (f: ReturnType<typeof backendAuthoringFixture>) => {f.host.frameworkBinding!.routineApiVersion = 60},
+    (f: ReturnType<typeof backendAuthoringFixture>) => {delete f.host.frameworkBinding},
+    (f: ReturnType<typeof backendAuthoringFixture>) => {f.lane.resources[0]!.capabilities = []},
+    (f: ReturnType<typeof backendAuthoringFixture>) => {f.lane.dispatchMode = 'paused'},
+    (f: ReturnType<typeof backendAuthoringFixture>) => {f.lane.state = 'reserved'},
+    (f: ReturnType<typeof backendAuthoringFixture>) => {f.host.receivedAt = new Date(f.now - 120_001).toISOString()},
+    (f: ReturnType<typeof backendAuthoringFixture>) => {f.bindInput.descriptorRevision = '0'.repeat(64)},
+    (f: ReturnType<typeof backendAuthoringFixture>) => {f.bindInput.inputSha256 = '0'.repeat(64)},
+    (f: ReturnType<typeof backendAuthoringFixture>) => {f.row.fleetCancellation = {requestedAt: new Date(f.now).toISOString(), reason: 'Original cancelled'}},
+    (f: ReturnType<typeof backendAuthoringFixture>) => {f.row.fleetDeadline = new Date(f.now)
+      f.row.fleetInputSha256 = requestInputDigest({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline.toISOString()})
+      f.bindInput.inputSha256 = f.row.fleetInputSha256},
+  ]) {
+    const f = backendAuthoringFixture(); change(f)
+    await expect(f.service.bind(f.work.workId, f.host.hostId, f.bindInput)).rejects.toThrow()
+    expect(f.binds()).toBe(0)
+  }
+  for (const option of [{permission: true}, {storage: true}]) {
+    const f = backendAuthoringFixture(option)
+    expect((await f.service.preparation(f.work.workId)).waitingReason).toBeDefined()
+    await expect(f.service.bind(f.work.workId, f.host.hostId, f.bindInput)).rejects.toThrow('compatible authoring lane descriptor')
+    expect(f.binds()).toBe(0)
+  }
 })
 test('invalid portable author fixtures fail intake before any persistence or Actions delivery', async () => {
   const previous = process.env.TEST_RUN_INGEST_TOKEN, token = 'f'.repeat(40)
@@ -94,7 +207,7 @@ test('author routing uses an accepting alternate model and refreshes labels with
   expect((await service.inspect(row.workId)).fleetSelection).toEqual(frozen)
   expect((await service.inspect(row.workId)).fleetInputSha256).toBe(first.inputSha256)
 })
-function fixture(options: {buildHead?: string; noHost?: boolean; notificationFailure?: boolean} = {}) {
+export function fixture(options: {buildHead?: string; noHost?: boolean; notificationFailure?: boolean; now?:()=>number; passedCandidate?:(id:string)=>Promise<{request:unknown;run:unknown}|null>; beforeVerificationWrite?:(row:RoutineWorkDelivery)=>void} = {}) {
   const rows = new Map<string, RoutineWorkDelivery>()
   let resolves = 0,
     notifications = 0
@@ -126,6 +239,14 @@ function fixture(options: {buildHead?: string; noHost?: boolean; notificationFai
       row.acceptance = structuredClone(receipt)
       return structuredClone(row)
     },
+    async updateVerification(value, original, previous) {
+      const row=rows.get(value.event.workId)
+      if(row)options.beforeVerificationWrite?.(row)
+      if(!row||(value.identity.previousFailure.code==='permission-required'||value.identity.finalization&&value.event.state!=='cancelled')&&row.fleetCancellation||requestInputDigest(row.status)!==requestInputDigest(original)||requestInputDigest(row.verification??null)!==requestInputDigest(previous??null))return null
+      row.verification={identity:structuredClone(value.identity),status:structuredClone(value.event),receipts:[...(previous?.receipts??[]),
+        {eventId:value.event.eventId,sequence:value.event.sequence,sha256:requestInputDigest(value.event)}]}
+      return structuredClone(row)
+    },
     async updateStatus(event, previous) {
       const row = rows.get(event.workId)
       if (
@@ -147,6 +268,10 @@ function fixture(options: {buildHead?: string; noHost?: boolean; notificationFai
   const service = new RoutineWorkService(
     repository,
     {
+      async resolveNimoDiagnostic(source) {
+        const result = await this.resolve(source, 'android')
+        return {...result, diagnostic: 'nimo-resource-v1' as const}
+      },
       async resolve(source, platform) {
         resolves++
         return {
@@ -188,6 +313,7 @@ function fixture(options: {buildHead?: string; noHost?: boolean; notificationFai
         if (options.notificationFailure) throw new Error('Unavailable')
       },
     },
+    undefined, options.now, null, undefined, options.passedCandidate,
   )
   return {
     service,
@@ -542,3 +668,99 @@ test('Mongo status compare-and-swap refuses a terminal outcome raced after the s
     expect(f.rows.get(row.workId)?.statusReceipts).toHaveLength(1)
   } finally {update.mockRestore(); find.mockRestore()}
 })
+
+
+test('recording verification has separate durable identity and preserves original terminal failure',async()=>{
+ const f=fixture(),row=await f.service.submit(input)
+ const accepted={workId:row.workId,inputSha256:row.inputSha256,hostId:row.hostId,acceptedAt:'2026-10-05T10:00:00.000Z'}
+ await f.service.accept(accepted,row.hostId)
+ const details={reason:'Recording response failed',summary:'Recording response failed',sourceRevision:'c'.repeat(40),requestId:'original-recorded-run',
+  prUrl:'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601',review:{sourceRevision:'c'.repeat(40),
+    prUrl:'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601',reviewUrl:'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601#pullrequestreview-21',verdict:'APPROVED'}}
+ const {acceptedAt:_,...binding}=accepted
+ const original=routineWorkStatusSchema.parse({...binding,eventId:'failed',sequence:4,state:'failed',details:{...accepted,work:row.work,attemptId:2,
+  state:'failed',sequence:4,details,events:[{eventId:'failed',sequence:4,state:'failed',at:'2026-10-05T11:00:00.000Z',details}]}})
+ await f.service.status(original,row.hostId)
+ const identity={decisionId:'recording-retry',inputSha256:'d'.repeat(64),failureEventId:original.eventId,failureSha256:requestInputDigest(original),
+  acceptedAt:'2026-10-05T11:01:00.000Z',deadline:'2026-10-05T11:31:00.000Z',previousFailure:{code:'recording-response',reason:details.reason}}
+ const event=routineWorkStatusSchema.parse({...original,eventId:'recording-retry',sequence:5,state:'verifying',details:{...original.details,state:'verifying',sequence:5,
+  details:{...details,summary:'Verify original recording'},events:[...original.details.events,{eventId:'recording-retry',sequence:5,state:'verifying',at:'2026-10-05T11:01:00.003Z',details}]}})
+ await expect(f.service.status(event,row.hostId)).rejects.toThrow('Terminal')
+ expect(await f.service.verifyRecording({identity,event},row.hostId)).toEqual(event)
+ expect(await f.service.verifyRecording({identity,event},row.hostId)).toEqual(event)
+ expect(f.rows.get(row.workId)?.status).toEqual(original)
+ expect(f.rows.get(row.workId)?.verification?.status).toEqual(event)
+ for(const change of [{failureSha256:'e'.repeat(64)},{decisionId:'other'},{deadline:'2026-10-05T11:32:00.000Z'}])
+  await expect(f.service.verifyRecording({identity:{...identity,...change},event},row.hostId)).rejects.toThrow()
+ for(const key of ['sourceRevision','requestId','review'] as const){
+  const altered=structuredClone(event);(altered.details.details as any)[key]=key==='review'?{...details.review,sourceRevision:'e'.repeat(40)}:'other'
+  await expect(f.service.verifyRecording({identity,event:altered},row.hostId)).rejects.toThrow()
+ }
+ const final=routineWorkStatusSchema.parse({...event,eventId:'verification-failed',sequence:6,state:'failed',details:{...event.details,state:'failed',sequence:6,
+  events:[...event.details.events,{eventId:'verification-failed',sequence:6,state:'failed',at:'2026-10-05T11:02:00.000Z',details}]}})
+ expect(await f.service.verifyRecording({identity,event:final},row.hostId)).toEqual(final)
+ await expect(f.service.verifyRecording({identity,event:{...event,eventId:'reopen',sequence:7,details:{...event.details,sequence:7}}},row.hostId)).rejects.toThrow('terminal')
+ expect(f.rows.get(row.workId)?.status).toEqual(original)
+})
+
+test('pre-admission verification retains the failed status and admits only its original ordered authenticated retry',async()=>{
+ const f=fixture(),row=await f.service.submit(input)
+ const accepted={workId:row.workId,inputSha256:row.inputSha256,hostId:row.hostId,acceptedAt:'2026-10-05T10:00:00.000Z'}
+ await f.service.accept(accepted,row.hostId)
+ const details={reason:'Selected app microphone permission is missing',summary:'Original unadmitted candidate failed',sourceRevision:'c'.repeat(40),
+  prUrl:'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601',review:{sourceRevision:'c'.repeat(40),
+   prUrl:'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601',reviewUrl:'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601#pullrequestreview-21',verdict:'APPROVED'}}
+ const {acceptedAt:_,...binding}=accepted
+ const original=routineWorkStatusSchema.parse({...binding,eventId:'permission-failed',sequence:4,state:'failed',details:{...accepted,work:row.work,attemptId:2,
+  state:'failed',sequence:4,details,events:[{eventId:'permission-failed',sequence:4,state:'failed',at:'2026-10-05T11:00:00.000Z',details}]}})
+ await f.service.status(original,row.hostId)
+ const requestId='local:1792177290232:original-candidate',identity={decisionId:'admission-retry',inputSha256:'d'.repeat(64),
+  failureEventId:original.eventId,failureSha256:requestInputDigest(original),acceptedAt:'2026-10-05T11:01:00.000Z',deadline:'2026-10-05T11:31:00.000Z',
+  previousFailure:{code:'permission-required',reason:details.reason},admission:{requestId,originalAdmissionExpiresAt:1792177290232}}
+ const event=routineWorkStatusSchema.parse({...original,eventId:identity.decisionId,sequence:5,state:'awaiting-installation',details:{...original.details,
+  state:'awaiting-installation',sequence:5,details:{...details,requestId,summary:'Prepare original candidate with fresh permissions'},
+  events:[...original.details.events,{eventId:identity.decisionId,sequence:5,state:'awaiting-installation',at:'2026-10-05T11:01:00.002Z',details}]}})
+ let registered=false,reads=0
+ const service=new ActualRoutineWorkService((f.service as any).rows,undefined,undefined,{async publish(){}},undefined,undefined,null,
+  async id=>{expect(id).toBe(requestId);reads++;return registered})
+ registered=true;await expect(service.verifyRecording({identity,event},row.hostId)).rejects.toThrow('unregistered');registered=false
+ const futureIdentity={...identity,acceptedAt:new Date(Date.now()+60000).toISOString(),deadline:new Date(Date.now()+1800000).toISOString()}
+ const futureEvent=structuredClone(event);futureEvent.details.events.at(-1)!.at=futureIdentity.acceptedAt
+ await expect(service.verifyRecording({identity:futureIdentity,event:futureEvent},row.hostId)).rejects.toThrow('future')
+ for(const altered of [{...event,state:'passed'},{...event,hostId:'other'},{...event,sequence:4},
+  {...event,details:{...event.details,attemptId:3}},{...event,details:{...event.details,details:{...event.details.details,requestId:'other'}}}])
+  await expect(service.verifyRecording({identity,event:altered},row.hostId)).rejects.toThrow()
+ for(const changed of [{failureSha256:'e'.repeat(64)},{admission:{...identity.admission,originalAdmissionExpiresAt:1}},
+  {previousFailure:{code:'recording-response',reason:details.reason}}])
+  await expect(service.verifyRecording({identity:{...identity,...changed},event},row.hostId)).rejects.toThrow()
+ expect(await service.verifyRecording({identity,event},row.hostId)).toEqual(event)
+ registered=true;const readCount=reads;expect(await service.verifyRecording({identity,event},row.hostId)).toEqual(event);expect(reads).toBe(readCount)
+ expect(f.rows.get(row.workId)?.status).toEqual(original)
+ await expect(service.verifyRecording({identity:{...identity,decisionId:'replaced-retry'},event},row.hostId)).rejects.toThrow('identity')
+ const cancelled=routineWorkStatusSchema.parse({...event,eventId:'retry-cancelled',sequence:6,state:'cancelled',details:{...event.details,
+  state:'cancelled',sequence:6,events:[...event.details.events,{eventId:'retry-cancelled',sequence:6,state:'cancelled',at:'2026-10-05T11:02:00.000Z',details}]}})
+ expect(await service.verifyRecording({identity,event:cancelled},row.hostId)).toEqual(cancelled)
+ await expect(service.verifyRecording({identity,event:{...event,eventId:'reopen-cancelled',sequence:7,details:{...event.details,sequence:7}}},row.hostId)).rejects.toThrow('terminal')
+ expect(f.rows.get(row.workId)?.status).toEqual(original)
+ f.rows.get(row.workId)!.fleetCancellation={requestedAt:'2026-10-05T11:03:00.000Z',reason:'Cancel work'}
+ await expect(service.verifyRecording({identity,event},row.hostId)).rejects.toThrow('uncancelled')
+})
+
+test('diagnostic authoring intake rejects phone-only, G2, alternate-model, and Mac requirements before resolution', async () => {
+ const f = fixture();
+ for (const requirements of [input.requirements, {...input.requirements,glasses:['g2'],resources:[...input.requirements.resources,{kind:'glasses',capabilities:[]}]},
+   {...input.requirements,platform:'mac',glasses:['nimo']}, {...input.requirements,glasses:['nimo','g2'],resources:[...input.requirements.resources,{kind:'glasses',capabilities:[]}]}]) {
+   await expect(f.service.submit({...input,diagnostic:'nimo-resource-v1',requirements})).rejects.toMatchObject({status:400});
+ }
+ expect(f.rows.size).toBe(0);
+});
+
+
+test('explicit NIMO authoring freezes diagnostic selection and rejects changed ordinary retry', async () => {
+ const f = fixture();
+ const request = {...input,diagnostic:'nimo-resource-v1',requirements:{...input.requirements,glasses:['nimo'],resources:[...input.requirements.resources,{kind:'glasses',capabilities:[]}]}};
+ const row = await f.service.submit(request);
+ expect(row.work.build).toMatchObject({kind:'android-apk',diagnostic:'nimo-resource-v1'});
+ const {diagnostic: _diagnostic, ...ordinary} = request;
+ await expect(f.service.submit(ordinary)).rejects.toThrow('retry changed');
+});

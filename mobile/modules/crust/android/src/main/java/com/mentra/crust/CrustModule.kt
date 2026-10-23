@@ -23,6 +23,7 @@ import com.mentra.crust.jsc.JSCRuntime
 import com.mentra.crust.jsc.InstalledMiniappManifest
 import com.mentra.crust.jsc.JSCPolyfillBridge
 import com.mentra.crust.http.NativeHttpRequests
+import com.mentra.crust.http.nativeHttpFailureCode
 
 class CrustModule : Module() {
   companion object {
@@ -210,7 +211,7 @@ class CrustModule : Module() {
             )
           )
         },
-        onError = { error -> promise.reject("E_NATIVE_HTTP", error.message ?: "Native HTTP request failed", error) },
+        onError = { error -> promise.reject(nativeHttpFailureCode(error), error.message ?: "Native HTTP request failed", error) },
       )
     }
 

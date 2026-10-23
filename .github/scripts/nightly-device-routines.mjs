@@ -1,3 +1,6 @@
+import {createHash} from "node:crypto"
+import {slackCall} from "./release-slack-message.mjs"
+
 const ENDPOINT = "https://core.dev.us-west-2.mentraglass.com/api/internal/nightly-routines"
 export const NIGHTLY_WORKFLOW = ".github/workflows/nightly-device-routines.yml"
 export const NIGHTLY_CRONS = Object.freeze(["0 11 * * *", "0 12 * * *"])
@@ -88,10 +91,66 @@ export function nightlySummary(result) {
     rows: result.members.map(member => [member.routineId, member.platform, member.status, member.unavailableReason ?? ""])}
 }
 
-/** One attempted send per original scheduler run. Reruns reconcile Core without replaying an uncertain webhook POST. */
-export async function publishNightlyWebhook({result, webhook, attempt, fetchImpl = fetch}) {
+const identity = value => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/.test(value)
+const resourceKinds = new Set(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"])
+const unknownContext = () => ({machine: "unknown", lane: "unknown", resources: ["unknown"]})
+function inputDigest(value) {
+  const canonical = value => {
+    if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number" && Number.isFinite(value)) return value
+    if (Array.isArray(value)) return value.map(canonical)
+    if (value && Object.getPrototypeOf(value) === Object.prototype)
+      return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])]))
+    throw new Error("Invalid recorded input")
+  }
+  return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex")
+}
+
+/** Display only the original member's validated assignment, never a current fleet or rerun. */
+export function nightlyMemberContext(member) {
+  if (member.assignmentEvidence === "invalid") return unknownContext()
+  if (!member.binding && !member.hostId && !member.dispatchIntent) {
+    const kinds = member.requiredResourceKinds
+    return {machine: "unassigned", lane: ["android", "ios-on-mac"].includes(member.platform) ? member.platform : "unknown",
+      resources: Array.isArray(kinds) && kinds.length > 0 && kinds.length <= 9 && new Set(kinds).size === kinds.length &&
+        kinds.every(kind => resourceKinds.has(kind)) ? kinds : ["unknown"]}
+  }
+  const {binding, input, dispatchIntent: intent} = member
+  if (!binding || !intent || !identity(member.requestId) || binding.jobId !== member.requestId ||
+      binding.requestId !== member.requestId || !identity(binding.hostId) || member.hostId !== binding.hostId ||
+      !identity(binding.laneId) || intent.laneId !== binding.laneId ||
+      !/^[a-f0-9]{64}$/.test(binding.descriptorRevision ?? "") || !/^[1-9][0-9]{0,19}$/.test(binding.actionsRunId ?? "") ||
+      !/^[1-9][0-9]{0,19}$/.test(binding.actionsJobId ?? "") || !Number.isFinite(Date.parse(binding.boundAt)) ||
+      intent.requestId !== member.requestId || intent.routineId !== member.routineId || intent.platform !== member.platform ||
+      intent.routineRevision !== member.routineRevision) return unknownContext()
+  const assigned = {machine: binding.hostId, lane: binding.laneId, resources: ["unknown"]}
+  try {
+    // Core validates executable source/build. The sender checks only the frozen resource payload's provenance.
+    if (!input || input.laneId !== binding.laneId || input.routineId !== member.routineId || input.platform !== member.platform ||
+      input.definitionRevision !== member.routineRevision ||
+      !/^[a-f0-9]{64}$/.test(member.inputSha256 ?? "") || inputDigest(input) !== member.inputSha256 ||
+      !Array.isArray(input.resources) || input.resources.length === 0) return assigned
+    const resources = []
+    for (const resource of input.resources) {
+      if (!identity(resource.id) || !resourceKinds.has(resource.kind) || resource.exclusiveDependencies !== undefined &&
+        (!Array.isArray(resource.exclusiveDependencies) || resource.exclusiveDependencies.length === 0 || resource.exclusiveDependencies.length > 30)) return assigned
+      for (const dependency of resource.exclusiveDependencies ?? []) {
+        if (!dependency || typeof dependency !== "object" || !identity(dependency.authorityHostId) ||
+          !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/.test(dependency.capability ?? "")) return assigned
+      }
+      for (const id of [resource.id, ...(resource.exclusiveDependencies ?? []).map(dependency => dependency.resourceId)]) {
+        // Dependency IDs use the recorded resource contract; refuse line/control injection and escape Slack markup at rendering.
+        if (typeof id !== "string" || id.length === 0 || id.length > 240 || /[\u0000-\u001f\u007f]/.test(id)) return assigned
+        if (!resources.includes(id)) resources.push(id)
+      }
+    }
+    return {machine: binding.hostId, lane: binding.laneId, resources}
+  } catch {return assigned}
+}
+
+/** One attempted send per original scheduler run. Reruns reconcile Core without replaying an uncertain Slack POST. */
+export async function publishNightlyMessage({result, token, channel, attempt, fetchImpl = fetch}) {
   const summary = nightlySummary(result)
-  requireThat(attempt === 1 && /^https:\/\/hooks\.slack\.com\/services\//.test(webhook ?? ""), "Nightly Slack replay requires reconciliation")
+  requireThat(attempt === 1 && token && /^C[A-Z0-9]+$/.test(channel ?? ""), "Nightly Slack replay requires reconciliation and a configured channel")
   const escape = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
   const failures = result.members.filter(member => member.status !== "pass" || member.publicationComplete !== true)
   const build = result.members.find(member => member.build)?.build
@@ -104,12 +163,13 @@ export async function publishNightlyWebhook({result, webhook, attempt, fetchImpl
     ...(failures.length ? ["", ...failures.map(member => {
       const url = member.runId ? `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(member.runId)}` : summary.url
       const status = member.status === "pass" ? "execution passed; evidence incomplete" : member.status
-      return `- ${escape(member.routineId)} (${escape(member.platform)}) · ${escape(status)} - ${url ? `<${url}|View result>` : "Result link unavailable"}`
+      const context = nightlyMemberContext(member)
+      return `- ${escape(member.routineId)} (machine=${escape(context.machine)}, lane=${escape(context.lane)}, resources=${context.resources.map(escape).join(", ")}) · ${escape(status)} - ${url ? `<${url}|View result>` : "Result link unavailable"}`
     })] : [])].join("\n")
-  let response
-  try {response = await fetchImpl(webhook, {method: "POST", redirect: "error", signal: AbortSignal.timeout(30_000),
-    headers: {"Content-Type": "application/json"}, body: JSON.stringify({text, unfurl_links: false, unfurl_media: false})})}
-  catch {throw new Error("Nightly Slack acknowledgement is unavailable; inspect the send before retrying")}
-  requireThat(response.ok, `Nightly Slack rejected the notification (${response.status})`)
-  return {occurrenceId: result.occurrenceId, status: "acknowledged", passed: summary.passed}
+  const posted = await slackCall("chat.postMessage", token,
+    {channel, text, unfurl_links: false, unfurl_media: false}, fetchImpl)
+  requireThat(posted.channel === channel && /^\d+\.\d+$/.test(posted.ts ?? "") && /^B[A-Z0-9]+$/.test(posted.message?.bot_id ?? ""),
+    "Nightly Slack acknowledgement differs from the requested channel")
+  return {occurrenceId: result.occurrenceId, status: "acknowledged", passed: summary.passed,
+    channel: posted.channel, ts: posted.ts, botId: posted.message.bot_id}
 }

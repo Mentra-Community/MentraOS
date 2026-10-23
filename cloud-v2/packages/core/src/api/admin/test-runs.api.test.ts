@@ -11,6 +11,32 @@ import {TestRunError} from "../../services/test-result-error";
 import {requestInputDigest, TestRequestService, type StoredTestRequest, type StoredPreparingRequest, type TestRequestRepository} from "../../services/test-request.service";
 import {routineEnrollmentSchema} from "../../types/routine-definition.types";
 import {frameworkRunSchema} from "../../types/framework-run.types";
+import {TestRequestProgressService} from '../../services/test-request-progress.service';
+import {TestHostStateService} from '../../services/test-host-state.service';
+import {sharedResourceWait} from '../../services/routine-resource-wait';
+
+test('the ordinary run detail carries live progress until its published result replaces the request', async () => {
+  const input = {routineSource: testRoutineSource(), routineId: 'miniapps', definitionRevision: 'a'.repeat(40), platform: 'android',
+    laneId: 'phone', resources: [], build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)}};
+  const row = {requestId: 'active-request', hostId: 'pro', input, inputSha256: requestInputDigest(input), state: 'accepted' as const};
+  const live = {title: 'Miniapps', steps: [{id: 'open', instruction: 'Open miniapp'}], progress: {phase: 'test'}};
+  const detail = spyOn(FrameworkResultService.prototype, 'detailByRun').mockRejectedValue(new TestRunError(404, 'pending'));
+  const byRequest = spyOn(FrameworkResultService.prototype, 'detail').mockRejectedValue(new TestRunError(404, 'pending'));
+  const requests = spyOn(TestRequestService.prototype, 'get').mockResolvedValue(row);
+  const progress = spyOn(TestRequestProgressService.prototype, 'get').mockResolvedValue(live as never);
+  try {
+    const app = createTestRunAdminApi();
+    expect(await (await app.request('/active-request')).json()).toMatchObject({kind: 'request', request: {live}});
+    expect(progress).toHaveBeenCalledWith(row);
+    progress.mockRejectedValueOnce(new Error('Host observation unavailable'));
+    const unavailable = await app.request('/active-request');
+    expect(unavailable.status).toBe(200);
+    expect(await unavailable.json()).toMatchObject({kind: 'request', request: {state: 'accepted', liveUnavailable: true}});
+    progress.mockClear(); byRequest.mockResolvedValue({run: {requestId: 'active-request'}, outcome: 'pass'} as never);
+    expect(await (await app.request('/active-request')).json()).toMatchObject({kind: 'run', outcome: 'pass'});
+    expect(progress).not.toHaveBeenCalled();
+  } finally {detail.mockRestore(); byRequest.mockRestore(); requests.mockRestore(); progress.mockRestore();}
+});
 
 test("mounted lane run history forwards host, lane and pagination at the collection URL", async () => {
   const calls: Record<string, string>[] = [];
@@ -347,3 +373,104 @@ test('Admin gate cancellation requires operator identity and strict retained gen
  expect((await app.request(`/pr-checks/${gateId}/cancel`, {method: 'POST', body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}})).status).toBe(202);
  expect(calls).toEqual([[gateId, body, 'admin:operator-one']]);
 });
+
+test('activity reads and displays bounded fleet preparation failures', async () => {
+ const {TestRequestModel}=await import('../../models/test-request.model');
+ const {portableRoutineSelectionSchema}=await import('../../types/routine-job.types');
+ const source={channel:'dev',buildRunId:1,publicationAttempt:1},selected=portableRoutineSelectionSchema.parse({requestId:'fleet-failure',routineId:'sample',platform:'android',routineRevision:'a'.repeat(40),source,
+  build:{repository:'Mentra-Community/MentraOS',headSha:'b'.repeat(40),channel:'dev',kind:'android-apk',source,archive:{name:'app.apk',url:'https://artifactscdn.mentraglass.com/app.apk',size:100,sha256:'c'.repeat(64)},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',size:10,sha256:'d'.repeat(64)}}});
+ const row={requestId:selected.requestId,state:'awaiting-source',fleetSelection:selected,fleetSelectionSha256:requestInputDigest(selected),fleetPreparationStatus:{reason:'Routine source preparation failed during Git blobs; retrying the same request.'}};
+ let projection:any;
+ const find=spyOn(TestRequestModel,'find').mockReturnValue({sort(){return this},limit(){return this},select(value:any){projection=value;return this},read(){return this},readConcern(){return this},lean:async()=>[{...row,fleetPreparationStatus:projection?.fleetPreparationStatus?row.fleetPreparationStatus:undefined}]} as any);
+ try{const response=await createTestRunAdminApi().request('/activity');expect(response.status).toBe(200);expect(await response.json()).toMatchObject({requests:[{requestId:selected.requestId,reason:row.fleetPreparationStatus.reason}]});expect(projection).toMatchObject({fleetPreparationStatus:1});}
+ finally{find.mockRestore();}
+});
+test('Admin activity and request detail project the actual exclusive blocker through existing reason text, with safe unknown fallback', async () => {
+  const {TestRequestModel} = await import('../../models/test-request.model');
+  const source = {channel: 'dev', buildRunId: 1, publicationAttempt: 1};
+  const selected = {requestId: 'account-waiting', routineId: 'account-google', platform: 'ios-on-mac', routineRevision: 'a'.repeat(40), source,
+    build: {repository: 'Mentra-Community/MentraOS', headSha: 'b'.repeat(40), channel: 'dev', kind: 'mac-ci-package', source,
+      archive: {name: 'app.zip', url: 'https://artifactscdn.mentraglass.com/app.zip', size: 100, sha256: 'c'.repeat(64)},
+      receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 10, sha256: 'd'.repeat(64)}}};
+  const row = {requestId: selected.requestId, state: 'awaiting-runner', fleetSelection: selected, fleetSelectionSha256: requestInputDigest(selected),
+    fleetInputSha256: 'e'.repeat(64), fleetResourceAdmission: {intent: {operationId: `run:${selected.requestId}`, hostId: 'borrower', laneId: 'mac',
+      owner: {id: selected.requestId, kind: 'run'}, inputSha256: 'e'.repeat(64), controller: {incarnation: 'one', generation: 1, sequence: 1},
+      resources: [{id: 'fixtures', capabilities: ['google-authentication']}]},
+      dependencies: [{resourceId: 'private-account', authorityHostId: 'mini', capability: 'google-authentication'}]}};
+  const hosts = [{hostId: 'mini', lanes: [], receivedAt: '2026-10-17T01:00:00Z', authorityReservations: [{kind: 'exclusive',
+    resourceId: 'private-account', authorityHostId: 'mini', borrowerHostId: 'private-host', laneId: 'private-lane', owner: {id: 'private-owner', kind: 'run'}}]}];
+  let projection: any;
+  const find = spyOn(TestRequestModel, 'find').mockReturnValue({sort(){return this},limit(){return this},select(value:any){projection=value;return this},read(){return this},readConcern(){return this},lean:async()=>[row]} as any);
+  const read = spyOn(TestHostStateService.prototype, 'list').mockResolvedValue(hosts as any);
+  const detail = spyOn(FrameworkResultService.prototype, 'detailByRun').mockRejectedValue(new TestRunError(404, 'pending'));
+  const byRequest = spyOn(FrameworkResultService.prototype, 'detail').mockRejectedValue(new TestRunError(404, 'pending'));
+  const requests = spyOn(TestRequestService.prototype, 'get').mockResolvedValue(row as any);
+  try {
+    const api = createTestRunAdminApi(), before = structuredClone(row);
+    const activity = await (await api.request('/activity')).json() as any;
+    const pending = await (await api.request('/account-waiting')).json() as any;
+    expect(activity.requests[0].reason).toBe(sharedResourceWait('google-authentication'));
+    expect(pending.request.reason).toBe(activity.requests[0].reason); expect(projection.fleetResourceAdmission).toBe(1);
+    for (const secret of ['private-account', 'private-host', 'private-lane', 'private-owner']) expect(JSON.stringify(pending.request)).not.toContain(secret);
+    expect(row).toEqual(before);
+    read.mockRejectedValue(new Error('Authority observation unavailable'));
+    expect((await (await api.request('/account-waiting')).json() as any).request.reason).toBe('Awaiting a compatible testing runner.');
+    expect((await api.request('/activity')).status).toBe(200);
+  } finally {find.mockRestore();read.mockRestore();detail.mockRestore();byRequest.mockRestore();requests.mockRestore();}
+});
+
+test('recovery button body uses existing authenticated lane-control admission and refuses anonymous operators', async () => {
+  const {LaneControlsService} = await import('../../services/lane-controls.service')
+  const observed: unknown[] = []
+  class Controls extends LaneControlsService {
+    override async submit(value: import('../../types/lane-control.types').LaneControlInput, operator: string, label?: string): Promise<import('../../types/lane-control.types').LaneControlView>
+    override async submit(value: import('../../types/lane-control.types').ResourceControlInput, operator: string, label?: string): Promise<import('../../types/lane-control.types').ResourceControlView>
+    override async submit(value: unknown, operator: string, label?: string): Promise<import('../../types/lane-control.types').LaneControlView | import('../../types/lane-control.types').ResourceControlView>
+    override async submit(value: unknown, operator: string, operatorLabel?: string): Promise<import('../../types/lane-control.types').LaneControlView | import('../../types/lane-control.types').ResourceControlView> {
+      const {laneControlInputSchema} = await import('../../types/lane-control.types')
+      const input = laneControlInputSchema.parse(value); observed.push({input, operator, operatorLabel})
+      return {operationId: input.operationId, hostId: input.hostId, laneId: input.laneId,
+        action: input.action, expiresAt: input.expiresAt}
+    }
+  }
+  const body = {operationId: '11111111-1111-4111-8111-111111111111', hostId: 'air', laneId: 'mac',
+    expiresAt: Date.now() + 120000, action: 'reopen-repair', repair: {interruptionId: 'repair:mac:98',
+      expectedHaltDecisionId: 'halt:98', changedConditions: 'I allowed microphone access.'}}
+  const route = () => createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, undefined, new Controls())
+  const options = {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}
+  expect((await route().request('/lanes/controls', options)).status).toBe(403)
+  expect(observed).toEqual([])
+  const app = new Hono<any>()
+  app.use('*', async (c, next) => {c.set('developer', {developerId: 'signed-in-operator', email: 'signed-in@example.com'}); await next()})
+  app.route('/', route())
+  const response = await app.request('/lanes/controls', options)
+  expect(response.status).toBe(202)
+  expect(response.headers.get('Cache-Control')).toBe('no-store')
+  expect(observed).toEqual([{input: body, operator: 'signed-in-operator', operatorLabel: 'signed-in@example.com'}])
+  expect((await app.request('/lanes/controls', {...options, body: JSON.stringify({...body, ready: true})})).status).toBe(400)
+  expect(observed).toHaveLength(1)
+})
+
+test('lane reserve forwards an authenticated operator-key label and preserves retries', async () => {
+  const {LaneControlsService} = await import('../../services/lane-controls.service')
+  const now = Date.now()
+  let records: any[] = [], version = 0
+  const controls = new LaneControlsService({async get() {return {hostId: 'air', laneControlVersion: version,
+    laneControls: records, observedAt: new Date(now), receivedAt: new Date(now),
+    snapshot: {laneControls: {schemaVersion: 1, receipts: []}, lanes: [{id: 'mac', dispatchMode: 'automatic'}]}}},
+    async replace(_host, expected, next) {if (expected !== version) return false; records = next; version++; return true}}, () => now)
+  const app = new Hono<any>()
+  app.use('*', async (c, next) => {c.set('developer', {developerId: 'api_key:operator', email: 'credential:operator'}); await next()})
+  app.route('/', createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, undefined, controls))
+  const body = {operationId: '33333333-3333-4333-8333-333333333333', hostId: 'air', laneId: 'mac',
+    expiresAt: now + 120000, action: 'reserve', purpose: 'Manual work'}
+  const options = {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}
+  const first = await app.request('/lanes/controls', options)
+  expect(first.status).toBe(202)
+  const repeat = await app.request('/lanes/controls', options)
+  expect(repeat.status).toBe(202)
+  expect(await repeat.json()).toEqual(await first.json())
+  expect(records).toHaveLength(1)
+  expect(records[0].operatorLabel).toBe('credential:operator')
+  expect(records[0].command).not.toHaveProperty('operatorLabel')
+})

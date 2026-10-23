@@ -90,6 +90,18 @@ public class AsgConstants {
     /** Canonical network interface used by the Mentra Live WiFi hotspot. */
     public static final String MENTRA_LIVE_HOTSPOT_INTERFACE = "ap0";
 
+    /** SystemUI receiver that owns the K900 vendor hotspot across ASG process restarts. */
+    public static final String K900_SYSTEM_UI_RECEIVER = "com.android.systemui.CTReceiver";
+
+    /** Android's hidden FLAG_RECEIVER_INCLUDE_BACKGROUND for privileged SystemUI commands. */
+    public static final int K900_INCLUDE_BACKGROUND_RECEIVERS = 0x00400000;
+
+    /** Native WifiManager AP state after Android has stopped the access point. */
+    public static final int WIFI_AP_STATE_DISABLED = 11;
+
+    /** Terminal SoftAP setup failure; no access point is running after native cleanup. */
+    public static final int WIFI_AP_STATE_FAILED = 14;
+
     /** SmartXY setting containing the Mentra Live hotspot SSID. */
     public static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
 
@@ -412,19 +424,6 @@ public class AsgConstants {
 
     /** BES command that resets the MCU without rebooting the running MTK Android system. */
     public static final String BES_REBOOT_COMMAND = "cs_rebt";
-
-    /** Fixed local/phone command used by device setup to keep unworn glasses powered on. */
-    public static final String COMMAND_DISABLE_UNWORN_AUTO_POWER_OFF =
-            "disable_unworn_auto_power_off";
-
-    /** Correlated terminal response; queue acceptance is not a BES acknowledgment. */
-    public static final String UNWORN_AUTO_POWER_OFF_RESULT = "unworn_auto_power_off_result";
-
-    /** Maximum queue, UART write and BES acknowledgment window for the fixed switch command. */
-    public static final long UNWORN_AUTO_POWER_OFF_TIMEOUT_MS = 5_000L;
-
-    /** BES persisted feature switch: type 11 is bit 10. */
-    public static final int UNWORN_AUTO_POWER_OFF_SWITCH_TYPE = 11;
 
     /**
      * Exclusive decompressed destination limit in the deployed ota_copy bootloader:

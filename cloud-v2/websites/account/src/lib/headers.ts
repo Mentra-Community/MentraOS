@@ -29,7 +29,15 @@ export function contentSecurityPolicy(supabaseUrl: string | undefined): string {
   ].join("; ");
 }
 
-/** Cloudflare Pages `_headers` file for the account site. */
+/** The sign-in routes: never cached. */
+export const NO_STORE_ROUTES = ["/login", "/consent", "/signup", "/reset", "/signout"] as const;
+
+/**
+ * Cloudflare Pages `_headers` file for the sign-in site's own pages. The
+ * provider's routes (`/oidc/*`, `/interaction/*`, discovery) are relayed to
+ * Core, which sends their headers itself (`no-store`, and a strict CSP on its
+ * pages).
+ */
 export function buildHeadersFile(supabaseUrl: string | undefined): string {
   return [
     "/*",
@@ -38,11 +46,6 @@ export function buildHeadersFile(supabaseUrl: string | undefined): string {
     "  X-Content-Type-Options: nosniff",
     "  X-Frame-Options: DENY",
     "",
-    "/oauth/*",
-    "  Cache-Control: no-store",
-    "",
-    "/signout",
-    "  Cache-Control: no-store",
-    "",
+    ...NO_STORE_ROUTES.flatMap((route) => [route, "  Cache-Control: no-store", ""]),
   ].join("\n");
 }

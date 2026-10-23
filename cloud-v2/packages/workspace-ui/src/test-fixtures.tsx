@@ -6,6 +6,7 @@ import {
   type AuditEventView,
   type CredentialView,
   type InvitationView,
+  type LicenseView,
   type MemberView,
   type WorkspaceCapability,
   type WorkspaceDetail,
@@ -19,6 +20,7 @@ import {
   auditQuery,
   credentialsQuery,
   invitationsQuery,
+  licensesQuery,
   membersQuery,
   workspaceDetailQuery,
   workspaceKeys,
@@ -61,13 +63,13 @@ export function organizationAdminDetail(): WorkspaceDetail {
   return { ...detailFor("owner"), membership: null };
 }
 
-const START = "2026-09-01T10:00:00.000Z";
+export const START = "2026-09-01T10:00:00.000Z";
 
 export const OTHER_MEMBERS: MemberView[] = [
-  { membershipId: "wm_owner", mentraUserId: "u_1", email: "olivia@acme.test", role: "owner", startedAt: START },
-  { membershipId: "wm_admin", mentraUserId: "u_2", email: "adam@acme.test", role: "admin", startedAt: START },
-  { membershipId: "wm_dev", mentraUserId: "u_3", email: "dana@acme.test", role: "developer", startedAt: START },
-  { membershipId: "wm_member", mentraUserId: "u_4", email: "max@acme.test", role: "member", startedAt: START },
+  { membershipId: "wm_owner", mentraUserId: "u_1", email: "olivia@acme.test", role: "owner", startedAt: START, pending: false },
+  { membershipId: "wm_admin", mentraUserId: "u_2", email: "adam@acme.test", role: "admin", startedAt: START, pending: false },
+  { membershipId: "wm_dev", mentraUserId: "u_3", email: "dana@acme.test", role: "developer", startedAt: START, pending: false },
+  { membershipId: "wm_member", mentraUserId: "u_4", email: "max@acme.test", role: "member", startedAt: START, pending: false },
 ];
 
 /** The member list as the viewer sees it: the others plus the viewer's own row when they are a member. */
@@ -79,6 +81,7 @@ export function membersFor(viewer: WorkspaceDetail): MemberView[] {
     email: "sam@acme.test",
     role: viewer.membership.role,
     startedAt: START,
+    pending: false,
   };
   return [self, ...OTHER_MEMBERS];
 }
@@ -132,6 +135,34 @@ export const AUDIT_EVENTS: AuditEventView[] = [
   },
 ];
 
+/** A mid-month noon, so the date reads the same in every time zone. */
+export const PAID_THROUGH = "2099-06-15T12:00:00.000Z";
+export const EXPIRED_AT = "2020-06-15T12:00:00.000Z";
+
+/**
+ * One workspace license as an Admin's listing shows it: five seats, two of them taken by Dana and Max.
+ * `overrides` change it; a member's listing is one with only their own seat in `seats`.
+ */
+export function licenseFor(overrides: Partial<LicenseView> = {}): LicenseView {
+  return {
+    licenseId: "lic_call",
+    revision: 3,
+    owner: { type: "workspace", workspaceId: WORKSPACE_ID },
+    product: "mentra.call.unlimited",
+    features: [{ key: "call.unlimited", packages: ["com.mentra.call"] }],
+    quantity: 5,
+    validFrom: "2026-09-01T12:00:00.000Z",
+    paidThrough: PAID_THROUGH,
+    seatsUsed: 2,
+    endedAt: null,
+    seats: [
+      { membershipId: "wm_dev", mentraUserId: "u_3", assignedAt: START },
+      { membershipId: "wm_member", mentraUserId: "u_4", assignedAt: START },
+    ],
+    ...overrides,
+  };
+}
+
 /** What a test seeds into the query cache before a server render. */
 export interface Seed {
   list?: WorkspaceDetail[];
@@ -139,6 +170,7 @@ export interface Seed {
   members?: MemberView[];
   invitations?: InvitationView[];
   credentials?: CredentialView[];
+  licenses?: LicenseView[];
   audit?: { items: AuditEventView[]; next: string | null };
 }
 
@@ -148,6 +180,7 @@ export function seedClient(api: WorkspaceApi, seed: Seed, client = new QueryClie
   if (seed.members) client.setQueryData(workspaceKeys.members(api, WORKSPACE_ID), seed.members);
   if (seed.invitations) client.setQueryData(workspaceKeys.invitations(api, WORKSPACE_ID), seed.invitations);
   if (seed.credentials) client.setQueryData(workspaceKeys.credentials(api, WORKSPACE_ID), seed.credentials);
+  if (seed.licenses) client.setQueryData(workspaceKeys.licenses(api, WORKSPACE_ID), seed.licenses);
   if (seed.audit) {
     client.setQueryData(workspaceKeys.audit(api, WORKSPACE_ID), { pages: [seed.audit], pageParams: [undefined] });
   }
@@ -174,6 +207,8 @@ const FAILING = {
     client.fetchQuery({ ...invitationsQuery(api, WORKSPACE_ID), retry: false }),
   credentials: (client: QueryClient, api: WorkspaceApi) =>
     client.fetchQuery({ ...credentialsQuery(api, WORKSPACE_ID), retry: false }),
+  licenses: (client: QueryClient, api: WorkspaceApi) =>
+    client.fetchQuery({ ...licensesQuery(api, WORKSPACE_ID), retry: false }),
   audit: (client: QueryClient, api: WorkspaceApi) =>
     client.fetchInfiniteQuery({ ...auditQuery(api, WORKSPACE_ID), retry: false }),
 };

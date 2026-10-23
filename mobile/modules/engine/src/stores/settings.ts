@@ -344,6 +344,20 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
     nativeAuthoritative: true,
   },
+  // Set from the saved glasses' `pairing_info` (native `secure_pairing_capable`).
+  // Native uses it to treat repeated connect-time rejections as a takeover only
+  // for secure-pairing firmware; legacy firmware never rejects a non-owner on
+  // purpose. Cleared on forget; refreshed by the next `pairing_info`.
+  mentra_live_secure_firmware: {
+    key: "mentra_live_secure_firmware",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    // Native owns this flag and echoes it down via save_setting; a stale JS
+    // value must not overwrite what the glasses just reported on connect.
+    nativeAuthoritative: true,
+  },
   default_controller: {
     key: "default_controller",
     defaultValue: () => "",
@@ -458,29 +472,39 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // Keep glasses mic audio continuous by default: Mentra Live's VAD clips the
+  // first words after a pause, including the Mentra AI wake word. Off also
+  // vetoes miniapp VAD requests (MicStateCoordinator). Users can opt in.
   voice_activity_detection_enabled: {
     key: "voice_activity_detection_enabled",
-    defaultValue: () => true,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
-  // Mentra Live center-mic loudness / "Barrier" gate (cs_swit type 10). Opt-in.
-  loudness_gate_enabled: {
-    key: "loudness_gate_enabled",
     defaultValue: () => false,
     writable: true,
     saveOnServer: true,
     persist: true,
   },
   /*
-   * Mentra Live can power itself off after ~20 minutes off the wearer's face
-   * (cs_swit type 11). Off unless Super Mode turns it on. Re-pushed on connect,
-   * so this default is what a new install sends to the glasses.
+   * Mentra Live center-mic loudness / "Barrier" gate (cs_swit type 10). The
+   * firmware only applies it while the glasses speaker is playing (plus a short
+   * decay tail), so it keeps the wearer's mic from hearing the glasses' own
+   * speech without touching quiet audio the rest of the time.
+   */
+  loudness_gate_enabled: {
+    key: "loudness_gate_enabled",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  /*
+   * Mentra Live powers itself off after ~20 minutes off the wearer's face
+   * (cs_swit type 11). On by default, matching the firmware. Re-pushed on
+   * connect, so this default is what a new install sends to the glasses, and
+   * it overwrites a value saved on the glasses. Automated test lanes turn it
+   * off after pairing.
    */
   auto_power_off_enabled: {
     key: "auto_power_off_enabled",
-    defaultValue: () => false,
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -846,6 +870,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.device_name.key,
   SETTINGS.device_address.key,
   SETTINGS.project_name.key,
+  SETTINGS.mentra_live_secure_firmware.key,
   SETTINGS.default_controller.key,
   SETTINGS.pending_controller.key,
   SETTINGS.controller_device_name.key,
@@ -1160,18 +1185,40 @@ export const useSettingsStore = create<SettingsState>()(
           }
         }
 
-        // Reset existing installs once; later user/app opt-ins remain available.
-        const LOUDNESS_GATE_MIGRATION_KEY = "migration:loudness_gate_default_off_v1"
+        // migration:loudness_gate_default_off_v1 reset every install it ran on to off. Turn those
+        // installs back on once. Installs that never ran it keep whatever they saved, so an opt-out
+        // from before that reset survives, and a later opt-out remains in force.
+        const LOUDNESS_GATE_RESET_KEY = "migration:loudness_gate_default_off_v1"
+        const LOUDNESS_GATE_MIGRATION_KEY = "migration:loudness_gate_default_on_v1"
+        const loudnessGateWasReset = storage.load<boolean>(LOUDNESS_GATE_RESET_KEY)
         const loudnessGateMigrationDone = storage.load<boolean>(LOUDNESS_GATE_MIGRATION_KEY)
-        if (loudnessGateMigrationDone.is_error() || !loudnessGateMigrationDone.value) {
+        if (
+          !loudnessGateWasReset.is_error() &&
+          loudnessGateWasReset.value &&
+          (loudnessGateMigrationDone.is_error() || !loudnessGateMigrationDone.value)
+        ) {
           // updateServer: true, matching the android_blur / camera_fov migrations. The flag is
           // inert until the Cloud V2 settings sync lands, but this setting is saveOnServer, so
           // the intent recorded here is the one that should carry over.
-          const result = await get().setSetting(SETTINGS.loudness_gate_enabled.key, false, true)
+          const result = await get().setSetting(SETTINGS.loudness_gate_enabled.key, true, true)
           if (result.is_error()) {
             console.log("SETTINGS: loudness gate migration failed:", result.error)
           } else {
             storage.save(LOUDNESS_GATE_MIGRATION_KEY, true)
+          }
+        }
+
+        // Turn VAD off once on every install, whatever it holds. v1 of this migration was removed
+        // when the default briefly went back on, so installs from that window saved true; a new key
+        // reaches them too. Only a later explicit opt-in survives.
+        const VAD_MIGRATION_KEY = "migration:vad_default_off_v2"
+        const vadMigrationDone = storage.load<boolean>(VAD_MIGRATION_KEY)
+        if (vadMigrationDone.is_error() || !vadMigrationDone.value) {
+          const result = await get().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, true)
+          if (result.is_error()) {
+            console.log("SETTINGS: VAD migration failed:", result.error)
+          } else {
+            storage.save(VAD_MIGRATION_KEY, true)
           }
         }
 

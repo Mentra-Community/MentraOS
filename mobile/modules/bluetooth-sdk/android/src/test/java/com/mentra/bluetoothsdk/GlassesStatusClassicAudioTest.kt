@@ -10,5 +10,7 @@ class GlassesStatusClassicAudioTest {
                 GlassesStatus.fromMap(mapOf("bluetoothClassicConnected" to true)).toMap()
 
         assertThat(serialized["bluetoothClassicConnected"]).isEqualTo(true)
+        assertThat(serialized["bluetoothClassicProfilesConnected"]).isEqualTo(true)
+        assertThat(serialized["bluetoothAudioRouted"]).isEqualTo(true)
     }
 }

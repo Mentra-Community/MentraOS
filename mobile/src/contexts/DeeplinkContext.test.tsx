@@ -12,6 +12,12 @@ const mockSetPendingRoute = jest.fn()
 const mockGetSession = jest.fn()
 const mockIncidentRequest = jest.fn()
 const mockLoadAuthoringMiniapp = jest.fn()
+const mockPublishPermissionStatus = jest.fn()
+const mockRequestAttendedPermissions = jest.fn()
+jest.mock("@/services/attendedPermissionRequest", () => ({requestAttendedPermissions: (...args: unknown[]) => mockRequestAttendedPermissions(...args)}))
+jest.mock("@/services/permissionStatusRequest", () => ({
+  publishPermissionStatusRequest: (...args: unknown[]) => mockPublishPermissionStatus(...args),
+}))
 jest.mock("@/services/miniapps/loadAuthoringMiniapp", () => ({
   loadAuthoringMiniapp: (...args: unknown[]) => mockLoadAuthoringMiniapp(...args),
 }))
@@ -32,8 +38,18 @@ jest.mock("expo-linking", () => ({
   getInitialURL: jest.fn(async () => null),
 }))
 jest.mock("expo-web-browser", () => ({dismissBrowser: jest.fn()}))
+const mockMiniappsList = jest.fn((): Array<{packageName: string; name: string}> => [])
+const mockMiniappsStart = jest.fn()
+const mockSetForeground = jest.fn()
 jest.mock("@mentra/engine", () => ({
   BgTimer: {setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay)},
+  engine: {
+    miniapps: {
+      list: () => mockMiniappsList(),
+      start: (...args: unknown[]) => mockMiniappsStart(...args),
+      setForeground: (...args: unknown[]) => mockSetForeground(...args),
+    },
+  },
 }))
 jest.mock("@/contexts/SplashLoaderProvider", () => ({
   useSplashLoader: () => ({setSplashEnabled: mockSetSplashEnabled}),
@@ -73,6 +89,7 @@ beforeEach(() => {
   mockCompleteOAuthHandoff.mockResolvedValue({is_error: () => false})
   mockGetSession.mockResolvedValue({is_error: () => false, value: {token: undefined}})
   mockCompleteSignupVerification.mockResolvedValue({is_error: () => false})
+  mockRequestAttendedPermissions.mockResolvedValue({requestId: "batch-1"})
   mockPendingRoute = null
   mockSetPendingRoute.mockImplementation((url: string) => {
     mockPendingRoute = url
@@ -147,6 +164,53 @@ it("removes its native URL subscription on unmount", () => {
 
 const incidentUrl =
   "com.mentra://test/submit-incident-report?alert_id=run-1&failure_code=ota_failed&failure_message=failed%20%26%20stopped"
+
+it("handles passive permission status without auth, modal, or navigation", async () => {
+  render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+  const url = "com.mentra://test/permissions?request_id=read-1"
+  await act(async () => { await processUrl(url) })
+  expect(mockPublishPermissionStatus).toHaveBeenCalledWith(url)
+  expect(mockGetSession).not.toHaveBeenCalled()
+  expect(mockIncidentRequest).not.toHaveBeenCalled()
+  expect(mockSetPendingRoute).not.toHaveBeenCalled()
+  expect(mockPush).not.toHaveBeenCalled()
+  expect(mockReplace).not.toHaveBeenCalled()
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+  expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+})
+
+it.each(["success", "failure"])("a pending passive status %s never changes the splash overlay", async (outcome) => {
+  let complete!: () => void
+  let refuse!: (error: Error) => void
+  mockPublishPermissionStatus.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        complete = resolve
+        refuse = reject
+      }),
+  )
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  let pending!: Promise<void>
+  await act(async () => {
+    pending = processUrl("com.mentra://test/permissions?request_id=pending-read")
+    await Promise.resolve()
+  })
+  expect(mockPublishPermissionStatus).toHaveBeenCalledTimes(1)
+  expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+  await act(async () => {
+    if (outcome === "success") complete()
+    else refuse(new Error("native status unavailable"))
+    await pending
+  })
+  expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+  expect(mockPush).not.toHaveBeenCalled()
+  expect(mockReplace).not.toHaveBeenCalled()
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+})
 
 it("still defers a protected home link to sign-in without running its handler", async () => {
   render(
@@ -324,6 +388,7 @@ it("consumes an auth-deferred authoring link immediately after sign-in exactly o
   await act(async () => {await processUrl(url)})
   expect(mockLoadAuthoringMiniapp).not.toHaveBeenCalled()
   mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+  mockRequestAttendedPermissions.mockResolvedValue({requestId: "batch-1"})
   mockPendingRoute = null
   await act(async () => {await processUrl(url, false, true); await processUrl(url)})
   expect(mockLoadAuthoringMiniapp).toHaveBeenCalledTimes(1)
@@ -338,6 +403,7 @@ it("consumes a cold-start authoring link during the startup delay exactly once",
     await Promise.resolve()
   })
   expect(mockPendingRoute).toBe(authoringUrl)
+  mockRequestAttendedPermissions.mockResolvedValue({requestId: "batch-1"})
   mockPendingRoute = null
   await act(async () => {
     await processUrl(authoringUrl, false, true)
@@ -380,4 +446,84 @@ it("claims a pending replay before concurrent authentication completes", async (
   })
   expect(mockLoadAuthoringMiniapp).toHaveBeenCalledTimes(1)
   expect(mockPendingRoute).toBeNull()
+})
+
+// Opening the existing controls must not enable Super Mode or change a device setting.
+it("opens Super Settings for an authenticated user", async () => {
+  mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "signed-in"}})
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl("com.mentra://miniapps/settings/super")
+  })
+  expect(mockPush).toHaveBeenCalledWith("/miniapps/settings/super")
+})
+
+it("explicit attended route requests without auth, an extra page, or splash and leaves passive status separate", async () => {
+  render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+  const url = "com.mentra://test/request-permissions?request_id=batch-1&readback_id=read-1&features=camera&timeout_ms=1000"
+  await act(async () => { await processUrl(url) })
+  expect(mockRequestAttendedPermissions).toHaveBeenCalledWith(url)
+  expect(mockPublishPermissionStatus).not.toHaveBeenCalled()
+  expect(mockGetSession).not.toHaveBeenCalled()
+  expect(mockIncidentRequest).not.toHaveBeenCalled()
+  expect(mockPush).not.toHaveBeenCalled()
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+  expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+})
+
+describe("the Gallery link", () => {
+  const gallery = {packageName: "com.mentra.camera", name: "Gallery"}
+  const galleryUrl = "com.mentra://asg/gallery"
+
+  beforeEach(() => {
+    mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+    mockMiniappsList.mockReturnValue([gallery])
+  })
+
+  it("opens Gallery the way a tap on Home does: a user start, then on screen", async () => {
+    mockMiniappsStart.mockResolvedValue(true)
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(galleryUrl)
+    })
+    expect(mockMiniappsStart).toHaveBeenCalledWith(gallery, {trigger: "user", skipNavigation: true})
+    expect(mockSetForeground).toHaveBeenCalledWith("com.mentra.camera")
+    expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  it("shows nothing when the start is refused, as Home does (glasses not connected, an update running)", async () => {
+    mockMiniappsStart.mockResolvedValue(false)
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(galleryUrl)
+    })
+    expect(mockSetForeground).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  it("still opens the Gallery screen before the built-in miniapps are registered", async () => {
+    mockMiniappsList.mockReturnValue([])
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(galleryUrl)
+    })
+    expect(mockMiniappsStart).not.toHaveBeenCalled()
+    expect(mockPush).toHaveBeenCalledWith("/asg/gallery")
+  })
 })

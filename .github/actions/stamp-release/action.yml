@@ -1,0 +1,41 @@
+name: Stamp the release into the SDK and Engine
+description: >-
+  Stamps a source checkout the way the Mentra App release build does: the
+  release family's versions in its package manifests (stage-release-family.mjs),
+  and the release identity and OTA manifest pin in the Bluetooth SDK and Engine
+  metadata (write-release-metadata.mjs). Runs the scripts of the checked-out
+  source in the workspace root.
+
+inputs:
+  plan:
+    description: Path to the release plan JSON
+    required: true
+  ota-manifest-url:
+    description: URL of the release's OTA manifest
+    required: true
+  ota-manifest-sha256:
+    description: SHA-256 of the release's OTA manifest
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Stamp the release into the SDK and Engine
+      shell: bash
+      env:
+        PLAN: ${{ inputs.plan }}
+        OTA_MANIFEST_URL: ${{ inputs.ota-manifest-url }}
+        OTA_MANIFEST_SHA256: ${{ inputs.ota-manifest-sha256 }}
+      run: |
+        set -euo pipefail
+        node .github/scripts/stage-release-family.mjs --plan "$PLAN"
+        metadata=(
+          --family-base-version "$(jq -er .familyBaseVersion "$PLAN")"
+          --release-identity "$(jq -er .releaseIdentity "$PLAN")"
+          --release-set-id "$(jq -er .releaseSetId "$PLAN")"
+          --source-commit "$(jq -er .sourceCommit "$PLAN")"
+          --ota-manifest-url "$OTA_MANIFEST_URL"
+          --ota-manifest-sha256 "$OTA_MANIFEST_SHA256"
+        )
+        node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
+        node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"

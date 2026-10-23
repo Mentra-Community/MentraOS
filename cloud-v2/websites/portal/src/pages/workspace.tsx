@@ -1,20 +1,30 @@
 /**
- * One workspace in the workspace portal: `/w/<workspaceId>/<section>`, framed by the sidebar.
+ * One workspace in the workspace portal: `/<section>` (`?workspace=<workspaceId>` when it is not the one the bare
+ * address opens), framed by the sidebar.
  *
  * The sections are the shared Core workspace screens (`@mentra/workspace-ui`): Members (the member list
- * with the pending invitations under it, and Invite in the header), Settings and the Audit log. The
- * sidebar offers only the sections the viewer's capabilities open; every request is still checked by
- * Core. A workspace that does not exist, or that the viewer may not see, is one "not found" page.
+ * with the pending invitations under it, and Invite in the header), Settings and the Audit log, and Licenses
+ * (pages/licenses). The sidebar offers only the sections the viewer's capabilities open, and Licenses only
+ * where there is something to show: the person manages billing, or the workspace has licenses (a member sees
+ * their own seats, never billing). A Private Cloud has neither. Every request is still checked by Core. A
+ * workspace that does not exist, or that the viewer may not see, is one "not found" page.
+ *
+ * Members shows each member's licenses where billing's catalog can be read, and only shows them: licenses are
+ * assigned from the Licenses page. A row's "…" menu changes a role or removes the member.
  */
 
 import { useQuery } from "@tanstack/react-query";
-import type { WorkspaceCapability, WorkspaceDetail } from "@mentra/workspace-contract";
+import type { LicenseView, WorkspaceCapability, WorkspaceDetail } from "@mentra/workspace-contract";
 import {
   actsAsOrganizationAdmin,
   Button,
   can,
+  billingCatalogQuery,
+  billingStatusQuery,
   effectiveRole,
   errorMessage,
+  licensesQuery,
+  licenseStrings,
   ROLE_LABELS,
   Spinner,
   WorkspaceApiError,
@@ -25,15 +35,18 @@ import {
   WorkspaceSettingsPanel,
   workspaceDetailQuery,
   workspaceListQuery,
+  workspaceScope,
+  type MembersLicenses,
+  type NavGroup,
 } from "@mentra/workspace-ui";
-import { ScrollText, Settings, ShieldCheck, UserPlus, Users, type LucideIcon } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { NavGroup } from "@/components/app-shell";
-import { PortalShell } from "@/components/portal-shell";
-import { safeLocalStorage } from "@/lib/api";
-import { navigate, Redirect } from "@/lib/navigation";
-import { portalWorkspaceApi, STORE_DELETE_NOTICE } from "@/lib/portal";
-import { forgetWorkspace, rememberWorkspace, workspacePath, type WorkspaceSection } from "@/lib/routes";
+import { CreditCard, ScrollText, Settings, ShieldCheck, UserPlus, Users, type LucideIcon } from "lucide-react";
+import { useMemo, useState } from "react";
+import { PortalShell, useTabWorkspace } from "@/components/portal-shell";
+import type { PortalMe } from "@/lib/api";
+import { navigate, Redirect, useSearch } from "@/lib/navigation";
+import { portalBillingApi, portalNavigateOut, portalWorkspaceApi, STORE_DELETE_NOTICE } from "@/lib/portal";
+import { keepQuery, sectionHref, type WorkspaceSection } from "@/lib/routes";
+import { billingOffered, buyParam, LicensesHeaderActions, LicensesScreen } from "./licenses";
 import { NotFoundMessage } from "./not-found";
 
 type SectionMeta = {
@@ -41,7 +54,8 @@ type SectionMeta = {
   icon: LucideIcon;
   /** The capability that opens it; null for everyone in the workspace (leaving is in Settings). */
   needs: WorkspaceCapability | null;
-  description(workspaceName: string): string;
+  /** The line under the title; none for Licenses, whose title stands alone. */
+  description(workspaceName: string): string | undefined;
 };
 
 const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
@@ -63,6 +77,13 @@ const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
     needs: "workspace.audit.read",
     description: name => `Every change made in ${name}, newest first.`,
   },
+  licenses: {
+    label: licenseStrings.nav.licenses,
+    icon: CreditCard,
+    // Open to everyone in the workspace, but offered only where there is something to show (see `licensesPartShown`).
+    needs: null,
+    description: () => undefined,
+  },
 };
 
 /**
@@ -70,20 +91,39 @@ const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
  * Fleet (devices and deployments, behind `fleet.read`) joins as its own group in a later phase.
  */
 export const NAV_GROUPS: ReadonlyArray<{ key: string; label?: string; sections: readonly WorkspaceSection[] }> = [
-  { key: "workspace", sections: ["members", "settings", "audit"] },
+  { key: "workspace", sections: ["members", "settings", "audit", "licenses"] },
   { key: "fleet", label: "Fleet", sections: [] },
 ];
 
-/** The sections the viewer's capabilities in this workspace open, in sidebar order. */
-export function visibleSections(detail: Pick<WorkspaceDetail, "capabilities"> | undefined): WorkspaceSection[] {
+/**
+ * Whether the workspace's Licenses section is offered: `billing` (the person is offered the billing module
+ * and holds `workspace.billing.manage`, see `billingOffered`), or the workspace has licenses to show them (an
+ * Admin's every license, a member's own seats). A Private Cloud has neither, and shows nothing.
+ */
+export function licensesPartShown(billing: boolean, licenses: readonly LicenseView[] | undefined): boolean {
+  return billing || (licenses?.length ?? 0) > 0;
+}
+
+/**
+ * The sections the viewer's capabilities in this workspace open, in sidebar order. `licenses` says whether
+ * Licenses is offered (see {@link licensesPartShown}).
+ */
+export function visibleSections(
+  detail: Pick<WorkspaceDetail, "capabilities"> | undefined,
+  options: { licenses?: boolean } = {},
+): WorkspaceSection[] {
   return NAV_GROUPS.flatMap(group => group.sections).filter(section => {
+    if (section === "licenses") return options.licenses === true;
     const needs = SECTIONS[section].needs;
     return needs === null || can(detail, needs);
   });
 }
 
-/** The sidebar for this workspace and viewer. */
-export function workspaceNav(workspaceId: string, sections: readonly WorkspaceSection[]): NavGroup[] {
+/**
+ * The sidebar for this workspace and viewer. Its links carry `?workspace=` exactly when `workspaceId` is not what the
+ * bare address opens (`bareWorkspaceId`).
+ */
+export function workspaceNav(workspaceId: string, sections: readonly WorkspaceSection[], bareWorkspaceId: string | null): NavGroup[] {
   return NAV_GROUPS.map(group => ({
     key: group.key,
     label: group.label,
@@ -93,7 +133,7 @@ export function workspaceNav(workspaceId: string, sections: readonly WorkspaceSe
         key: section,
         label: SECTIONS[section].label,
         icon: SECTIONS[section].icon,
-        href: workspacePath(workspaceId, section),
+        href: sectionHref(section, workspaceId, bareWorkspaceId),
       })),
   }));
 }
@@ -118,19 +158,78 @@ export function isNoAccess(error: unknown): boolean {
   return error instanceof WorkspaceApiError && (error.status === 404 || error.status === 403);
 }
 
-export function WorkspaceScreen({ workspaceId, section }: { workspaceId: string; section: WorkspaceSection | null }) {
+/**
+ * The Members list's licenses source (`WorkspaceMembersPanel`'s `licenses`): billing's catalog, which names and draws the
+ * licenses a member holds. The list only shows them, so billing's status, the billing client and the portal's ways out
+ * are not part of it. Nothing is asked until the list can use it: the viewer sees every license
+ * (`workspace.licenses.read`) in a workspace that holds one. None where billing's catalog can't be read (a Private
+ * Cloud), so the list is the admin portal's.
+ */
+export function useMembersLicenses({
+  me,
+  workspaceId,
+  detail,
+  licenses,
+  enabled,
+}: {
+  me: PortalMe;
+  workspaceId: string;
+  detail: WorkspaceDetail | undefined;
+  licenses: readonly LicenseView[] | undefined;
+  /** The Members section is open. */
+  enabled: boolean;
+}): MembersLicenses | undefined {
+  const scope = useMemo(() => workspaceScope(workspaceId), [workspaceId]);
+  const wanted = enabled && me.modules.billingCatalog && can(detail, "workspace.licenses.read") && (licenses ?? []).some(license => !license.endedAt);
+  const catalog = useQuery({ ...billingCatalogQuery(portalBillingApi, scope), enabled: wanted });
+
+  return useMemo(
+    // The one place the source is built.
+    () => (me.modules.billingCatalog ? { catalog: catalog.data?.products } : undefined),
+    [me.modules.billingCatalog, catalog.data],
+  );
+}
+
+export function WorkspaceScreen({
+  workspaceId,
+  bareWorkspaceId,
+  section,
+  me,
+}: {
+  workspaceId: string;
+  /** The workspace the bare address opens for this person, if they have one. */
+  bareWorkspaceId: string | null;
+  /** The section the address names; null for `/`, which opens the first one the viewer may. */
+  section: WorkspaceSection | null;
+  me: PortalMe;
+}) {
   const api = portalWorkspaceApi;
   const detail = useQuery(workspaceDetailQuery(api, workspaceId));
   const list = useQuery(workspaceListQuery(api));
+  const licenses = useQuery(licensesQuery(api, workspaceId));
   const [inviting, setInviting] = useState(false);
+  const tab = useTabWorkspace();
+  const search = useSearch();
 
   const data = detail.data;
-  const sections = data ? visibleSections(data) : [];
+  // Billing is for whoever manages it (Admins and Owners): a member sees the licenses they hold a seat in, no more.
+  const billing = billingOffered(me, data);
+  // A licenses address whose list failed to load still opens the page, which says so and offers to try again,
+  // rather than sending the person elsewhere over a dropped connection.
+  const licensesFailed = section === "licenses" && licenses.isError && licenses.data === undefined;
+  // A link that asks to buy a product opens the page for anyone, so that a Member with no license is told who to ask
+  // instead of being sent to another section with the question unanswered. The page removes `?buy=` once it has acted,
+  // so the link is remembered for as long as the address stays on Licenses.
+  const [linkedToBuy, setLinkedToBuy] = useState(false);
+  const wantsToBuy = section === "licenses" && buyParam(search) !== null;
+  if (wantsToBuy !== linkedToBuy && (wantsToBuy || section !== "licenses")) setLinkedToBuy(wantsToBuy);
+  const buyLinked = section === "licenses" && (linkedToBuy || wantsToBuy);
+  const sections = data ? visibleSections(data, { licenses: licensesPartShown(billing, licenses.data) || licensesFailed || buyLinked }) : [];
   const active = section && sections.includes(section) ? section : null;
-
-  useEffect(() => {
-    if (data) rememberWorkspace(safeLocalStorage(), workspaceId);
-  }, [data, workspaceId]);
+  // The address is the licenses page and the list has not answered yet: wait for it instead of leaving.
+  const waitingForLicenses = data !== undefined && section === "licenses" && active === null && licenses.isPending;
+  // The Members list shows each member's licenses.
+  const membersLicenses = useMembersLicenses({ me, workspaceId, detail: data, licenses: licenses.data, enabled: active === "members" });
 
   if (!data && detail.isError && isNoAccess(detail.error)) {
     return (
@@ -148,11 +247,13 @@ export function WorkspaceScreen({ workspaceId, section }: { workspaceId: string;
     name,
     roleLabel: data ? roleLabel(data) : listed ? ROLE_LABELS[listed.membership.role] : null,
   };
-  const shown = active ?? section;
+  // An address for a section this viewer is not offered redirects at once; it does not borrow that section's title.
+  const redirecting = data !== undefined && active === null && !waitingForLicenses;
+  const shown = redirecting ? null : (active ?? section);
   const meta = shown ? SECTIONS[shown] : null;
 
   function gone() {
-    forgetWorkspace(safeLocalStorage(), workspaceId);
+    tab.forget(workspaceId);
     navigate("/", { replace: true });
   }
 
@@ -160,7 +261,7 @@ export function WorkspaceScreen({ workspaceId, section }: { workspaceId: string;
     <PortalShell
       current={current}
       section={active ?? undefined}
-      nav={workspaceNav(workspaceId, sections)}
+      nav={workspaceNav(workspaceId, sections, bareWorkspaceId)}
       activeKey={active}
       title={meta?.label ?? name}
       description={meta?.description(name)}
@@ -170,6 +271,8 @@ export function WorkspaceScreen({ workspaceId, section }: { workspaceId: string;
             <UserPlus className="size-4" />
             Invite
           </Button>
+        ) : active === "licenses" && data ? (
+          <LicensesHeaderActions workspaceId={workspaceId} me={me} detail={data} />
         ) : null
       }
     >
@@ -186,13 +289,22 @@ export function WorkspaceScreen({ workspaceId, section }: { workspaceId: string;
             <Spinner /> Loading workspace
           </div>
         )
+      ) : waitingForLicenses ? (
+        <div role="status" className="text-muted-foreground flex items-center gap-2.5 text-sm">
+          <Spinner /> Loading licenses
+        </div>
       ) : !active ? (
-        // `/w/<id>`, or a section this viewer does not have: open the first one they do.
-        <Redirect to={workspacePath(workspaceId, sections[0] ?? "settings")} />
+        // `/`, or a section this viewer does not have: open the first one they do.
+        <Redirect to={keepQuery(sectionHref(sections[0] ?? "settings", workspaceId, bareWorkspaceId), search, typeof window === "undefined" ? "" : window.location.hash)} />
       ) : active === "members" ? (
         <div className="space-y-6">
           {actsAsOrganizationAdmin(data) ? <OrganizationAdminNote /> : null}
-          <WorkspaceMembersPanel api={api} workspaceId={workspaceId} />
+          <WorkspaceMembersPanel
+            api={api}
+            workspaceId={workspaceId}
+            licenses={membersLicenses}
+            locale={portalBillingApi.locale}
+          />
           <WorkspacePendingInvitationsPanel api={api} workspaceId={workspaceId} />
           <WorkspaceInviteDialog api={api} workspaceId={workspaceId} open={inviting} onClose={() => setInviting(false)} />
         </div>
@@ -207,6 +319,8 @@ export function WorkspaceScreen({ workspaceId, section }: { workspaceId: string;
             deleteNotice={STORE_DELETE_NOTICE}
           />
         </div>
+      ) : active === "licenses" ? (
+        <LicensesScreen workspaceId={workspaceId} me={me} detail={data} />
       ) : (
         <WorkspaceAuditPanel api={api} workspaceId={workspaceId} />
       )}

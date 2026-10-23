@@ -76,12 +76,12 @@ public class UploadIncidentLogsBesIncidentTest {
                         });
         doAnswer(
                         invocation -> {
-                            Consumer<String> callback = invocation.getArgument(3);
+                            Consumer<String> callback = invocation.getArgument(4);
                             callback.accept("{\"source\":\"glasses_firmware\",\"entries\":[]}");
                             return null;
                         })
                 .when(bes)
-                .requestBesLogs(anyString(), any(), eq(configuration), any(Consumer.class));
+                .requestBesLogs(anyString(), any(), eq(configuration), anyString(), any());
         BesIncidentUploader.HttpPoster poster =
                 (url, token, body) -> {
                     postedUrls.add(url);
@@ -128,7 +128,7 @@ public class UploadIncidentLogsBesIncidentTest {
                 .isEqualTo("BES_CRASH");
         assertThat(state()).isEqualTo("UPLOADED");
         assertThat(sentNames).isEmpty();
-        verify(bes, never()).requestBesLogs(anyString(), any(), any(), anyString());
+        verify(bes, never()).requestBesLogs(anyString(), any(), any(), anyString(), any());
     }
 
     @Test
@@ -182,7 +182,7 @@ public class UploadIncidentLogsBesIncidentTest {
         assertThat(postedBodies).isEmpty();
         assertThat(state()).isEqualTo("REPORTED");
         assertThat(access.find(KEY).getBoolean("uploaded")).isFalse();
-        verify(bes, never()).requestBesLogs(anyString(), any(), any(), any(Consumer.class));
+        verify(bes, never()).requestBesLogs(anyString(), any(), any(), anyString(), any());
     }
 
     @Test
@@ -194,7 +194,7 @@ public class UploadIncidentLogsBesIncidentTest {
         File persisted = new File(access.bundleDir(KEY), "upload-relay.json");
         assertThat(sentBytes.get(0)).isEqualTo(Files.readAllBytes(persisted.toPath()));
         assertThat(state()).isEqualTo("REPORTED");
-        verify(bes, never()).requestBesLogs(anyString(), any(), any(), any(Consumer.class));
+        verify(bes, never()).requestBesLogs(anyString(), any(), any(), anyString(), any());
 
         handler.relayLogsViaBle(REPORT); // a retry resends the same persisted bytes
         assertThat(sentBytes.get(2)).isEqualTo(sentBytes.get(0));
@@ -209,7 +209,7 @@ public class UploadIncidentLogsBesIncidentTest {
 
         assertThat(sentNames).hasSize(1);
         assertThat(sentNames.get(0)).startsWith("L");
-        verify(bes, never()).requestBesLogs(anyString(), any(), any(), any(Consumer.class));
+        verify(bes, never()).requestBesLogs(anyString(), any(), any(), anyString(), any());
         handler.uploadIncidentFirmwareOverHttp(REPORT, API);
         assertThat(postedBodies).isEmpty();
     }
@@ -222,7 +222,7 @@ public class UploadIncidentLogsBesIncidentTest {
         handler.uploadIncidentFirmwareOverHttp(REPORT, API);
 
         // Only the Java logs go out; the BES ring now holds something else and is not read.
-        verify(bes, never()).requestBesLogs(anyString(), any(), any(), any(Consumer.class));
+        verify(bes, never()).requestBesLogs(anyString(), any(), any(), anyString(), any());
         assertThat(postedBodies).isEmpty();
         assertThat(sentNames).hasSize(1);
         assertThat(sentNames.get(0)).startsWith("L");
@@ -232,7 +232,7 @@ public class UploadIncidentLogsBesIncidentTest {
     public void userBugReportKeepsTheLegacyMhLogsPath() throws Exception {
         handler.relayLogsViaBle("rep_user_bug_report");
 
-        verify(bes).requestBesLogs(eq("rep_user_bug_report"), any(), eq(configuration), any(Consumer.class));
+        verify(bes).requestBesLogs(eq("rep_user_bug_report"), any(), eq(configuration), eq(""), any(Consumer.class));
         assertThat(sentNames).hasSize(2);
         assertThat(sentNames.get(0)).startsWith("B");
         assertThat(access.recordArtifactCalls).isZero();

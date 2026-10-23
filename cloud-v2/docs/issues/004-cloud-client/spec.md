@@ -51,9 +51,9 @@ interface CloudClientTransports {
 interface AuthModule {
   getRuntimeToken(): Promise<string>                // cloud-runtime audience
   getCoreToken(): Promise<string>                   // cloud-core audience, Core-backed mode only
-  getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>  // cached per package
+  getMiniappToken(packageName: string, opts?: { minTtlMs?: number; fresh?: boolean }): Promise<{ token: string; expiresAt: number }>  // cached per package unless fresh
   readonly identity: { mentraUserId: string; tenantId: string }
-  onExpired(handler: () => void): () => void        // refresh failed; host must re-auth
+  onExpired(handler: () => void): () => void        // Core rejected the refresh token; host must re-auth
 }
 ```
 
@@ -64,9 +64,13 @@ interface AuthModule {
 - In Core-backed mode, `getCoreToken()` and `getMiniappToken` use Core/Auth.
   `getCoreToken()` is for Core-owned APIs with audience `cloud-core`.
 - `getMiniappToken` calls `POST /api/client/auth/miniapp-token`, caches per
-  packageName, re-mints before expiry. The Core token is used only as the Bearer
-  to Core-owned APIs and is never handed to a miniapp; only the miniapp-scoped
-  token is exposed to a miniapp.
+  packageName, re-mints before expiry. `{ fresh: true }` skips the cache, for
+  the moments a token must carry what Core knows now (a miniapp opening). Mints
+  for one package run one at a time, and a fresh request shares only a mint
+  whose request has not yet been sent; otherwise it waits for that mint and
+  starts the next one, which later fresh requests share. The Core token is used
+  only as the Bearer to Core-owned APIs and is never handed to a miniapp; only
+  the miniapp-scoped token is exposed to a miniapp.
 - `identity` is Core-owned identity. Runtime-only tokens may carry identity
   claims for Runtime authorization/logging, but `cloud.auth.identity`, miniapp
   token minting, and miniapp auto-auth are unavailable unless `auth.core` and

@@ -1,3 +1,6 @@
+/** Total automated incident submission and required device collection budget. */
+export const AUTOMATED_INCIDENT_TIMEOUT_MS = 120_000;
+
 /** Identity of the single device incident request saved by an automated run.
  * This binds report creation, independently of transport or collection completion.
  */

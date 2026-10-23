@@ -162,7 +162,7 @@ The current keys, their types, and defaults:
 | `preferred_mic` | enum | `"auto"` | `auto` \| `glasses` \| `phone` |
 | `lc3_frame_size` | enum (bytes) | `60` | `20` \| `40` \| `60` |
 | `sensing_enabled` | boolean | `true` | onboard sensors |
-| `voice_activity_detection_enabled` | boolean | `true` | voice-activity detection |
+| `voice_activity_detection_enabled` | boolean | `false` | voice-activity detection; when `false`, glasses mic audio streams continuously |
 | `power_saving_mode` | boolean | `false` | low-power mode |
 | `offline_mode` | boolean | `false` | offline operation |
 | `gallery_mode` | boolean | `true` | capture-to-gallery enabled — when `true`, a camera-button press takes a photo to the on-device gallery. The Mentra App auto-manages this (enabled when the camera app is running or no other app is claiming button events); set it directly only if your host has no equivalent button-routing logic |

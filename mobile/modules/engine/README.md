@@ -193,3 +193,50 @@ _different_ test file — each file must set up everything it imports.
 Settings are `native_notifications_enabled`, `native_notifications_auto_display`, `native_notifications_duration`, and `native_notifications_do_not_disturb`. Native presentation defaults off. The Android `notifications_blocklist` is also passed to native configuration so pending work is invalidated when filtering changes. Disconnected events are not retained for replay.
 
 On iOS, G2 receives ANCS directly; the host does not upload the app-identity relay back to the glasses. Full title/body access, editing the firmware app filter, and phone-dismissal synchronization remain unsupported. The existing G2 app-identity event is not evidence of full content access.
+
+### Passive app permission diagnostics
+
+`engine.permissions.status()` reads the current iOS app's Camera, Microphone,
+Bluetooth and foreground Location authorization without requesting consent.
+Location Services enablement is a separate field: an authorized app cannot use
+Location when the global service is off. Local Network remains `unknown` because
+iOS provides no passive authorization getter. Missing native implementations
+reject as unavailable; they do not manufacture a grant.
+
+Commissioning can send `com.mentra://test/permissions?request_id=<nonce>` to the
+already selected app. It preserves the current screen and writes one atomic
+receipt to the app container's `Library/Caches/MentraDiagnostics/permission-status.json`.
+The receipt includes its request ID, observation time and the app's native
+PID/UID, bundle paths and version. The host must verify that identity against the
+same live selected process and installed artifact, and reject stale or mismatched
+receipts. Status observation is separate from explicit permission requests and
+never files an incident, starts recording, scans Bluetooth or joins a network.
+
+An attended operator may separately send
+`com.mentra://test/request-permissions?request_id=<batch>&readback_id=<fresh-nonce>&features=camera,microphone,location,bluetooth&timeout_ms=125000`
+to the already selected, foregrounded Mentra App through the owning framework's
+verified original-PID/lifetime URL carrier. A bare `open` or default scheme handler
+can target another installed build and is not a commissioning entrypoint.
+The caller owns the normal app reservation and must
+show the person which selected recipient and permissions are about to be requested.
+The app validates distinct bounded IDs, a nonempty unique subset of those four
+features and a 1–125 second budget. It records the initial raw snapshot under the
+batch ID, observes before each request, and uses `engine.permissions.request`
+exactly once for each selected `notDetermined` permission. It does not record
+media, scan for glasses, associate a network, click a system dialog or open Settings.
+Existing grants, denial, restriction, disabled Location Services and unknown status
+remain observed facts; independent eligible requests continue. Local Network has
+no generic native grant getter or request here and remains `unknown`.
+
+On settlement within the budget, the fixed native receipt is refreshed with the
+separate readback nonce and actual grant states. A successful command does not
+mean every grant was approved: the operator must inspect that raw receipt and
+report missing permissions, including the exact app Settings/global Location
+Services or system restriction action. Logs retain a bounded per-feature request
+summary. A deadline rejects without claiming native cancellation; an outstanding
+native consent request keeps the app's single-batch gate until it settles and
+cannot be followed by another batch or further prompts. A raw receipt alone never
+proves native writer cessation. Reconcile the original operation before cleanup;
+use the existing passive nonce route to observe a later decision. If the app
+leaves the foreground, no further requests start. None of this changes the passive
+`/test/permissions` route or makes ordinary routine startup request consent.

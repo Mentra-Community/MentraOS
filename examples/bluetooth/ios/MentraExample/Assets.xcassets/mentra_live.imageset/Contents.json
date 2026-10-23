@@ -1,0 +1,13 @@
+{
+  "images": [
+    {
+      "filename": "mentra_live.png",
+      "idiom": "universal",
+      "scale": "1x"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

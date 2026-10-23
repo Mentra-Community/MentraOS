@@ -1,5 +1,7 @@
+import {recorderStorageRequirementSchema} from './recorder-storage.types';
 import {routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
+import {permissionRequirementsSchema} from "./resource-permissions.types";
 import {glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
 
@@ -14,17 +16,18 @@ const action = z.object({id, instruction: text, expected: text}).strict();
 export const routinePlatformSchema = z.enum(["ios-on-mac", "android"]);
 export const routineResourceKindSchema = z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]);
 export const resourceCapabilityMap = {
-  app: ['relaunch'], phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs'],
-  glasses: ['glasses-ble', 'connection', 'software', 'wifi'], recorder: [],
+  app: ['relaunch'], phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs', 'backend-connectivity'],
+  glasses: ['glasses-ble', 'connection', 'software', 'wifi', 'button'], recorder: ['quiet-room'],
   audio: ['speech', 'witness', 'synthesis', 'recognition'], browser: ['external-window'],
   network: ['independent-uplink'],
   'fixture-data': ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode', 'stream-receivers'],
   workspace: [],
 } as const;
 export const routineResourceRequirementSchema = z.object({kind: routineResourceKindSchema,
-  capabilities: z.array(routineIdentitySchema).max(30)}).strict().refine(value =>
+  capabilities: z.array(routineIdentitySchema).max(30), storage: recorderStorageRequirementSchema.optional(), permissions: permissionRequirementsSchema.optional()}).strict().refine(value =>
     new Set(value.capabilities).size === value.capabilities.length && value.capabilities.every(capability =>
-      (resourceCapabilityMap[value.kind] as readonly string[]).includes(capability)), 'Resource capabilities must be unique implemented public operations');
+      (resourceCapabilityMap[value.kind] as readonly string[]).includes(capability)), 'Resource capabilities must be unique implemented public operations')
+  .refine(value => !value.storage || value.kind === 'recorder', 'Storage capacity belongs to the recorder resource');
 /** Serialized source definition; executable functions remain in the harness repository. */
 export const publishedRoutineDefinitionSchema = z.object({
   id,
@@ -90,6 +93,22 @@ export const routineEnrollmentSchema = z.object({
     ctx.addIssue({code: 'custom', message: 'Candidate verification source differs from its definition'});
 });
 export type RoutineEnrollment = z.infer<typeof routineEnrollmentSchema>;
+
+/** Exact recorded source for history; executable admission separately requires routineEnrollmentSchema. */
+export const recordedRoutineDefinitionSchema = z.object({
+  id, title: text, purpose: text, platforms: z.array(routinePlatformSchema).min(1).max(2),
+  setup: z.array(action).max(500).optional(), steps: z.array(action).min(1).max(500), teardown: z.array(action).max(500).optional(),
+  source: z.object({repository: z.string(), revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string()}).passthrough(),
+}).passthrough();
+export const recordedRoutineEnrollmentSchema = z.object({
+  routineId: id, platform: routinePlatformSchema, definitionRevision: z.string().regex(/^[a-f0-9]{40}$/),
+  definitionSha256: z.string().regex(/^[a-f0-9]{64}$/), definition: recordedRoutineDefinitionSchema,
+  routineSource: routineSourceRefSchema.optional(),
+}).strict().superRefine((row, ctx) => {
+  if (row.routineId !== row.definition.id || row.definitionRevision !== row.definition.source.revision || !row.definition.platforms.includes(row.platform))
+    ctx.addIssue({code: 'custom', message: 'Recorded definition identity differs'});
+});
+export type RecordedRoutineEnrollment = z.infer<typeof recordedRoutineEnrollmentSchema>;
 
 /** Card metadata only. Full definitions and source verification belong to detail and dispatch. */
 export const routineCardDefinitionSchema = z.object({

@@ -52,6 +52,7 @@ jest.mock("@mentra/bluetooth-sdk/ota-transport", () => {
   return {
     otaLocalNetwork: {
       isAvailable: () => true,
+      getNetworkDiagnostics: mentraLocalNetworkMock.getNetworkDiagnostics,
       connect: mentraLocalNetworkMock.connect,
       request: mentraLocalNetworkMock.request,
       download: mentraLocalNetworkMock.download,
@@ -552,6 +553,9 @@ const mockIslandEntries = () => {
             connected: realGlasses.isGlassesConnected(glassesState.connection),
             fullyBooted: realGlasses.isGlassesReady(glassesState.connection),
             bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
+            bluetoothClassicProfilesConnected: glassesState.bluetoothClassicProfilesConnected,
+            bluetoothAudioRouted: glassesState.bluetoothAudioRouted,
+            audioSetup: glassesState.audioSetup ?? {state: "idle"},
             nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
           }
         }),
@@ -563,6 +567,9 @@ const mockIslandEntries = () => {
               connected: realGlasses.isGlassesConnected(glassesState.connection),
               fullyBooted: realGlasses.isGlassesReady(glassesState.connection),
               bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
+              bluetoothClassicProfilesConnected: glassesState.bluetoothClassicProfilesConnected,
+              bluetoothAudioRouted: glassesState.bluetoothAudioRouted,
+              audioSetup: glassesState.audioSetup ?? {state: "idle"},
               nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
             }
           }
@@ -639,6 +646,9 @@ const mockIslandEntries = () => {
         onUpdatePrompt: jest.fn(() => () => {}),
         onUpdateFailed: jest.fn(() => () => {}),
         onDeferredUpdateReady: jest.fn(() => () => {}),
+        checkForUpdates: jest.fn(() => Promise.resolve()),
+        checkOpenedForUpdate: jest.fn(() => Promise.resolve()),
+        onOpened: jest.fn(() => () => {}),
       },
       session: {
         status: jest.fn(() => ({status: "disconnected", audioTransport: "none"})),
@@ -991,6 +1001,7 @@ const mockIslandEntries = () => {
     getDevAppRecords: jest.fn(() => []),
     sha256Hex: jest.fn(() => Promise.resolve("0".repeat(64))),
     miniappLauncher: {
+      isRunning: jest.fn(() => false),
       isProjectedRunning: jest.fn(() => false),
       ensureConnected: jest.fn(() => Promise.resolve(true)),
       ensureRunning: jest.fn(() => Promise.resolve(true)),

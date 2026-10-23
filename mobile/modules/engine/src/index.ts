@@ -145,6 +145,7 @@ export {
 // glasses-camera DTO types (re-exported through the host @/types/asg shim).
 export type {GalleryNotice, GalleryNoticeCode} from "./services/asg/galleryNotices"
 export {MediaLibraryPermissions} from "./utils/permissions/MediaLibraryPermissions"
+export type {AppPermissionReceipt, AppPermissionSnapshot, AppPermissionStatus} from "@mentra/crust"
 export {deriveGalleryDisplayName} from "./utils/permissions/galleryDisplayName"
 export type {
   PhotoInfo,

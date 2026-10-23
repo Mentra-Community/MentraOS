@@ -16,6 +16,11 @@ export const MENTRA_JWKS_URLS = [
 const DEFAULT_ISSUER = "cloud-core";
 const DEFAULT_CLOCK_TOLERANCE = "2 minutes";
 const DEFAULT_ALGORITHMS = ["EdDSA"] as const;
+/**
+ * The key IDs Core signs miniapp tokens under. Core's key set also publishes
+ * keys for other token types, so a miniapp token is accepted only under these.
+ */
+const DEFAULT_KEY_IDS = ["mentra-miniapp-1"] as const;
 const DEFAULT_CONTEXT_KEY = "mentraAuth";
 
 export interface VerifiedMentraAuth {
@@ -31,6 +36,24 @@ export interface VerifiedMentraAuth {
   tokenId?: string;
   expiresAt?: number;
   issuedAt?: number;
+  /**
+   * The paid features Core granted this user for this miniapp when it minted
+   * the token, from the token's `features` claim. Empty when the claim is
+   * absent or malformed (not a list of strings): a malformed claim never grants
+   * a feature.
+   *
+   * The claim is honored from any key set this verifier trusts, because the
+   * token's signature is what vouches for it. By default that is every Mentra
+   * Core (prod, staging, dev and debug); a Private Cloud backend configured
+   * with its own JWKS URL honors only that Core. There is no feature setting.
+   */
+  features: string[];
+  /**
+   * True when {@link features} includes `feature` (an exact, case-sensitive
+   * match). Safe to destructure; it answers from the verified claim, whatever
+   * is later done to the `features` array.
+   */
+  hasFeature(feature: string): boolean;
   claims: jose.JWTPayload;
 }
 
@@ -59,6 +82,11 @@ export interface MentraAuthOptions {
    * Allowed signature algorithms. Defaults to EdDSA.
    */
   algorithms?: string[];
+  /**
+   * Accepted key IDs (`kid`). Defaults to the miniapp token key; tokens of any
+   * other type that Core signs are refused even though Core publishes their keys.
+   */
+  keyIds?: string[];
   /**
    * jose clockTolerance option. Defaults to two minutes for mobile clock skew.
    */
@@ -114,6 +142,7 @@ export class MentraAuth {
   private readonly packageName: string;
   private readonly issuer: string | string[];
   private readonly algorithms: string[];
+  private readonly keyIds: ReadonlySet<string>;
   private readonly clockTolerance: string | number;
   private readonly jwksUrls: string[];
   private readonly jwksSets: ReturnType<typeof jose.createRemoteJWKSet>[];
@@ -122,6 +151,7 @@ export class MentraAuth {
     this.packageName = resolvePackageName(options.packageName);
     this.issuer = resolveIssuer(options.issuer);
     this.algorithms = options.algorithms ?? [...DEFAULT_ALGORITHMS];
+    this.keyIds = new Set(options.keyIds ?? DEFAULT_KEY_IDS);
     this.clockTolerance = options.clockTolerance ?? DEFAULT_CLOCK_TOLERANCE;
     this.jwksUrls = resolveJwksUrls(options);
     const remoteOptions = {
@@ -142,6 +172,9 @@ export class MentraAuth {
       throw new MentraAuthError("miniapp token missing subject");
     }
 
+    const features = featuresClaim(payload.features);
+    const granted = new Set(features);
+
     return {
       mentraUserId: subject,
       tenantId: stringClaim(payload.tenantId),
@@ -150,6 +183,8 @@ export class MentraAuth {
       tokenId: stringClaim(payload.jti),
       expiresAt: typeof payload.exp === "number" ? payload.exp : undefined,
       issuedAt: typeof payload.iat === "number" ? payload.iat : undefined,
+      features,
+      hasFeature: (feature) => granted.has(feature),
       claims: payload,
     };
   }
@@ -186,6 +221,22 @@ export class MentraAuth {
    * than pointlessly retrying every environment.
    */
   private async verifyAcrossEnvironments(token: string): Promise<jose.JWTPayload> {
+    // Pin the token type and key: Core's key set also carries the keys of its
+    // access and sign-in tokens, which must never pass as miniapp tokens.
+    let header: jose.ProtectedHeaderParameters;
+    try {
+      header = jose.decodeProtectedHeader(token);
+    } catch {
+      throw new MentraAuthError("miniapp token rejected: not a JWT");
+    }
+    if (header.kid === undefined || !this.keyIds.has(header.kid)) {
+      throw new MentraAuthError("miniapp token rejected: unexpected key ID");
+    }
+    // The header is caller-controlled JSON: `typ` may be any type.
+    const typ: unknown = header.typ;
+    if (typ !== undefined && (typeof typ !== "string" || typ.toUpperCase() !== "JWT")) {
+      throw new MentraAuthError("miniapp token rejected: unexpected token type");
+    }
     const verifyOptions = {
       issuer: this.issuer,
       audience: this.packageName,
@@ -334,6 +385,18 @@ function resolveIssuer(issuer?: string | string[]): string | string[] {
 function env(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value ? value : undefined;
+}
+
+/**
+ * The `features` claim as a list of keys. Core mints it as an array of strings;
+ * anything else (absent, not an array, or an array with a non-string entry) is
+ * read as no features rather than as a partial grant.
+ */
+function featuresClaim(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    return [];
+  }
+  return [...value];
 }
 
 function stringClaim(value: unknown): string | undefined {

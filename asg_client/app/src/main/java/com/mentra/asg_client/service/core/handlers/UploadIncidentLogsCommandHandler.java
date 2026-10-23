@@ -33,9 +33,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Handles the "upload_incident_logs" BLE command from the phone.
@@ -279,8 +277,8 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
         if (source == FirmwareSource.INCIDENT) {
             new Thread(() -> uploadIncidentFirmwareOverHttp(incidentId, apiBaseUrl)).start();
         } else if (source == FirmwareSource.LEGACY && mK900CommandHandler != null) {
-            mK900CommandHandler.requestBesLogs(
-                    incidentId, mContext, mConfigurationManager, apiBaseUrl);
+            // Same monitor-coordinated capture as the BLE relay, so the two never share a session.
+            new Thread(() -> captureBesLogsOverHttp(incidentId, apiBaseUrl)).start();
         }
     }
 
@@ -367,7 +365,29 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
         new Thread(() -> relayLogsViaBle(incidentId)).start();
     }
 
-    void relayLogsViaBle(String incidentId) {
+    synchronized void captureBesLogsOverHttp(String incidentId, String apiBaseUrl) {
+        if (mK900CommandHandler == null) return;
+        try {
+            BesLogManager session =
+                    mK900CommandHandler.requestBesLogs(
+                            incidentId, mContext, mConfigurationManager, apiBaseUrl, null);
+            awaitBesCapture(session, incidentId);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.e(TAG, "HTTP incident BES capture interrupted for " + incidentId, e);
+        }
+    }
+
+    private void awaitBesCapture(BesLogManager session, String incidentId)
+            throws InterruptedException {
+        if (session != null && !session.awaitCollection(BES_WAIT_SEC, TimeUnit.SECONDS)) {
+            Log.w(TAG, "Incident BES capture wait expired after partial settlement: " + incidentId);
+        }
+    }
+
+    // Both reports share one BES capture session and one BLE file-transfer slot.
+    // Hold this handler's monitor for the complete B/L transaction, not just its idle check.
+    synchronized void relayLogsViaBle(String incidentId) {
         IBluetoothManager bt =
                 mServiceManager != null ? mServiceManager.getBluetoothManager() : null;
         if (bt == null) {
@@ -395,33 +415,17 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
                 return;
             }
 
-            CountDownLatch besDone = new CountDownLatch(1);
-            AtomicReference<String> firmwareJson = new AtomicReference<>(null);
-
+            BesLogManager session = null;
             if (mK900CommandHandler != null) {
-                mK900CommandHandler.requestBesLogs(
-                        incidentId,
-                        mContext,
-                        mConfigurationManager,
-                        json -> {
-                            firmwareJson.set(json);
-                            besDone.countDown();
-                        });
-            } else {
-                besDone.countDown();
+                // Select BLE delivery; the exact session supplies its frozen JSON after settlement,
+                // independently from callback scheduling or the handler's ownership monitor.
+                session = mK900CommandHandler.requestBesLogs(
+                        incidentId, mContext, mConfigurationManager, "", json -> {});
             }
-
-            boolean besFinished = besDone.await(BES_WAIT_SEC, TimeUnit.SECONDS);
-            if (!besFinished) {
-                Log.w(
-                        TAG,
-                        "Timed out waiting for BES log collection — sending empty firmware"
-                                + " payload");
-            }
-            String fwJson = firmwareJson.get();
-            if (fwJson == null) {
-                fwJson = BesLogManager.buildFirmwareUploadJson("");
-            }
+            awaitBesCapture(session, incidentId);
+            String fwJson = session != null
+                    ? session.getCollectedFirmwareJson()
+                    : BesLogManager.buildFirmwareUploadJson("");
 
             relayFileViaBle(bt, incidentId, "glasses_firmware", 'B', fwJson);
             relayGlassesLogcat(bt, incidentId);

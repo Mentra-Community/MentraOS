@@ -1,11 +1,12 @@
 {
   "name": "@mentra/glasses-media",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Shared native glasses media receivers and local network transport",
   "license": "MIT",
   "author": "Mentra Community",
   "homepage": "https://github.com/Mentra-Community/MentraOS",
   "main": "index.js",
+  "types": "index.d.ts",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Mentra-Community/MentraOS.git",
@@ -14,8 +15,12 @@
   "publishConfig": {
     "access": "public"
   },
+  "peerDependencies": {
+    "expo-modules-core": "~55.0.25"
+  },
   "files": [
     "index.js",
+    "index.d.ts",
     "expo-module.config.json",
     "android/build.gradle",
     "android/src/main",

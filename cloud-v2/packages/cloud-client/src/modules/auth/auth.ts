@@ -11,13 +11,27 @@
  *    fetches the subject token on demand for subject tokens that themselves
  *    expire. An `accessToken`/`refreshToken` variant skips straight to refresh.
  *  - Near expiry (within a 60s margin) it refreshes at `/refresh` and rotates.
- *  - Exchange, refresh, and each per-miniapp mint are single-flighted, so a
- *    reconnect storm cannot fire a burst of competing requests (and a rotated
- *    refresh token cannot be invalidated out from under a concurrent caller).
- *  - If a refresh fails and the host can fetch a fresh subject token on demand,
- *    we clear the dead refresh token and exchange once. If no fresh subject is
- *    available (or exchange also fails), `onExpired` fires once and the host
- *    re-authenticates. We do not retry forever against a dead refresh token.
+ *  - Exchange and refresh are single-flighted, so a reconnect storm cannot fire
+ *    a burst of competing requests (and a rotated refresh token cannot be
+ *    invalidated out from under a concurrent caller). Miniapp mints run one at
+ *    a time per package and are shared as `getMiniappToken` describes.
+ *  - If Core definitively rejects the refresh token (see
+ *    `DEAD_REFRESH_TOKEN_ERRORS`) and the host can fetch a fresh subject token
+ *    on demand, we clear the dead refresh token and exchange once. If no fresh
+ *    subject is available (or exchange also fails), `onExpired` fires once and
+ *    the host re-authenticates. We do not retry forever against a dead refresh
+ *    token.
+ *  - Any other refresh failure (network error, timeout, 408, 429, 5xx, an answer
+ *    that is not Core's) says nothing about the token. It is kept, `onExpired`
+ *    does not fire, no exchange is attempted, and `AuthUnavailableError` is
+ *    thrown so the caller retries later with the same refresh token.
+ *  - Exchange failures are classified the same way: only Core's own refusal of
+ *    the subject token (`EXCHANGE_REFUSAL_ERRORS`) is an `AuthExpiredError`, and
+ *    `onExpired` fires only when that refusal answers the fresh exchange that
+ *    follows a rejected refresh token. Anything else, including the host's
+ *    `getSubjectToken` throwing, is an `AuthUnavailableError` and notifies no one.
+ *  - A rejection or exchange answer that arrives after `clearSession()` is about
+ *    a session that is gone: it notifies no one and restores nothing.
  *
  * Security: the access token is never written to storage, never given to a
  * miniapp, and no token is ever logged.
@@ -29,7 +43,7 @@ import type {AuthConfig, CoreAuthConfig, RuntimeAuthConfig, SubjectTokenType} fr
 import type {HttpClient} from "../../http"
 import type {Logger} from "../../logger"
 import type {HttpTransport} from "../../transports"
-import {AuthExpiredError, HttpError, SessionRevocationError} from "../../errors"
+import {AuthExpiredError, AuthUnavailableError, HttpError, SessionRevocationError} from "../../errors"
 import {systemTimers, type CloudClientTimers} from "../../timers"
 import {decodeClaims} from "./jwt"
 import {TokenStore} from "./token-store"
@@ -50,10 +64,12 @@ export interface AuthModule {
   getRuntimeToken(opts?: {forceRefresh?: boolean}): Promise<string>
   // current Core token, refreshing as needed (Core-backed mode only).
   getCoreToken(opts?: {forceRefresh?: boolean}): Promise<string>
-  // a miniapp-scoped token, cached per packageName and re-minted before expiry
+  // a miniapp-scoped token, cached per packageName and re-minted before expiry.
+  // Pass `{ fresh: true }` to skip the cache and mint now, for the moments the
+  // token's claims must be current (a miniapp opening).
   getMiniappToken(
     packageName: string,
-    opts?: {minTtlMs?: number},
+    opts?: {minTtlMs?: number; fresh?: boolean},
   ): Promise<{token: string; expiresAt: number}>
   // Core-owned user/oem identity, read from the Core access token.
   // Runtime-only deployments do not expose this surface.
@@ -62,7 +78,7 @@ export interface AuthModule {
   // credentials are always cleared; rejects with `SessionRevocationError` when
   // Core did not confirm revocation of the server-side session.
   clearSession(): Promise<void>
-  // refresh failed; the host must send the user back through login
+  // Core rejected the refresh token; the host must send the user back through login
   onExpired(handler: () => void): () => void
 }
 
@@ -122,6 +138,16 @@ interface MiniappTokenEntry {
   expiresAt: number
 }
 
+/**
+ * One miniapp mint. `requestSent()` turns true just before the request to Core
+ * leaves. Until then a caller who needs a token minted from now on can still
+ * share it, because Core has not yet read anything on its behalf.
+ */
+interface MiniappMint {
+  promise: Promise<MiniappTokenEntry>
+  requestSent: () => boolean
+}
+
 interface RuntimeTokenResponse {
   access_token: string
   token_type: string
@@ -140,6 +166,88 @@ interface RuntimeTokenEntry {
  */
 function isRetryableRevokeError(err: unknown): boolean {
   return err instanceof HttpError && (err.status === 0 || err.status >= 500)
+}
+
+/**
+ * What counts as Core itself refusing a token request, as opposed to a request
+ * that merely failed. Core renders every refusal as `{error, error_description}`
+ * through its global error translator (`api/app.ts`) with the status its
+ * `OauthError` carries (`types/oauth.types.ts`). Only a 400 or 401 whose body has
+ * one of the codes below counts; RFC 6749 lets a server pick between the two
+ * statuses, so both are accepted for every code. A 5xx, 408 or 429, a body that
+ * is not JSON, or any other 4xx is not Core talking about the credentials at all
+ * (a proxy, a captive portal, an outage), so it is never a refusal.
+ */
+const CORE_REFUSAL_STATUSES: ReadonlySet<number> = new Set([400, 401])
+
+/**
+ * The only answers to `POST /api/client/auth/refresh` that say the refresh token
+ * (or the session it belongs to) is gone for good. `refreshSession`
+ * (`services/session.service.ts`) refuses a token for exactly two reasons:
+ *
+ *  - `invalid_grant`, HTTP 400: the token is unknown, expired or already used,
+ *    its session identity is incomplete, or its account is deleted.
+ *  - `unauthorized_client`, HTTP 401: the session's tenant (OEM or enterprise
+ *    org) is unknown or disabled.
+ *
+ * `invalid_request` and `unsupported_grant_type` describe the shape of the
+ * request (a missing `refresh_token` or `grant_type`), which a proxy that drops
+ * or rewrites the form body produces just as well, so they are no verdict on the
+ * token.
+ */
+const DEAD_REFRESH_TOKEN_ERRORS: ReadonlySet<string> = new Set(["invalid_grant", "unauthorized_client"])
+
+/**
+ * The answers to `POST /api/client/auth/exchange` that say the subject token is
+ * unusable (`oem.service.ts`, `session.service.ts`): `invalid_grant` (it failed
+ * verification or lacks required claims), `unauthorized_client` (its OEM is
+ * unknown or disabled), and `invalid_request` (it is not a parseable JWT).
+ * `unsupported_grant_type` is left out for the same reason as on refresh.
+ */
+const EXCHANGE_REFUSAL_ERRORS: ReadonlySet<string> = new Set([
+  "invalid_grant",
+  "unauthorized_client",
+  "invalid_request",
+])
+
+/** OAuth error codes are short snake_case words; anything else is not safe to keep or log. */
+const OAUTH_ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
+
+/**
+ * A token endpoint answered with a non-2xx status. `status` is the HTTP status and
+ * `code` is the OAuth `error` from a JSON body, when there was a well-formed one.
+ *
+ * It is an `AuthExpiredError` so the logout refresh, which has always thrown that
+ * for any non-2xx, is unchanged. `requestTokens` lets it out only when it is
+ * Core's refusal (`isCoreRefusal`); every other non-2xx becomes an
+ * `AuthUnavailableError` there.
+ */
+class TokenEndpointError extends AuthExpiredError {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message)
+  }
+}
+
+/** Core definitively rejected the refresh token: it is cleared, and the host must re-authenticate. */
+class RefreshTokenRejectedError extends AuthExpiredError {}
+
+/** `err` is Core itself refusing the request: a 400 or 401 carrying one of `codes`. */
+function isCoreRefusal(err: unknown, codes: ReadonlySet<string>): err is TokenEndpointError {
+  return (
+    err instanceof TokenEndpointError &&
+    CORE_REFUSAL_STATUSES.has(err.status) &&
+    err.code !== undefined &&
+    codes.has(err.code)
+  )
+}
+
+/** The caller or the transport cancelled the request. */
+function isAbortError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError"
 }
 
 export class Auth implements AuthModule {
@@ -164,6 +272,8 @@ export class Auth implements AuthModule {
 
   /** Miniapp tokens cached per packageName until near expiry. */
   private readonly miniappCache = new Map<string, MiniappTokenEntry>()
+  /** The newest mint per package (and session), until it settles. See `mintMiniappToken`. */
+  private readonly miniappMints = new Map<string, MiniappMint>()
   /** Core-brokered runtime token cache. */
   private runtimeToken: RuntimeTokenEntry | null = null
 
@@ -251,34 +361,61 @@ export class Auth implements AuthModule {
   /**
    * Mint (or return a cached) miniapp-scoped token for `packageName`.
    *
-   * Cached per packageName and re-minted only when near expiry, so a steady
-   * miniapp does not hit the cloud on every call. The mint is single-flighted
-   * per packageName so two near-simultaneous launches of the same miniapp share
-   * one request. The access token is the Bearer here and is never exposed to the
-   * miniapp; only the returned miniapp-scoped token is.
+   * By default the token is cached per packageName and re-minted only when near
+   * expiry, so a steady miniapp does not hit the cloud on every call.
+   *
+   * `fresh: true` skips the cache and reaches Core, because what Core puts in a
+   * token (the features the user holds, today) can change within its hour. It
+   * can share a mint only if that mint's request has not left yet; a mint whose
+   * request is already out may have read the user's features before the change,
+   * so the caller gets a new mint, which starts once the earlier one settles.
+   * Callers waiting on that follow-up share it. `minTtlMs` has no use with
+   * `fresh`: the token it returns was minted for this call.
+   *
+   * Mints for one package never overlap, and a default call that finds one in
+   * flight takes it rather than starting another. The access token is the
+   * Bearer here and is never exposed to the miniapp; only the returned
+   * miniapp-scoped token is.
    */
   async getMiniappToken(
     packageName: string,
-    opts?: {minTtlMs?: number},
+    opts?: {minTtlMs?: number; fresh?: boolean},
   ): Promise<{token: string; expiresAt: number}> {
     this.assertSessionActive()
     const generation = this.sessionGeneration
-    const marginSeconds = this.tokenMarginSeconds(opts?.minTtlMs)
-    const cached = this.miniappCache.get(packageName)
-    if (cached && !this.isExpiring(cached.expiresAt, marginSeconds)) {
-      return {token: cached.token, expiresAt: cached.expiresAt}
+    const fresh = opts?.fresh === true
+    if (!fresh) {
+      const marginSeconds = this.tokenMarginSeconds(opts?.minTtlMs)
+      const cached = this.miniappCache.get(packageName)
+      if (cached && !this.isExpiring(cached.expiresAt, marginSeconds)) {
+        return {token: cached.token, expiresAt: cached.expiresAt}
+      }
     }
 
-    return this.store.singleFlight(`${MINIAPP_FLIGHT_PREFIX}${packageName}:${generation}`, async () => {
-      // Re-check the cache inside the flight: a concurrent mint that resolved
-      // while we were queued may have already filled it.
-      const fresh = this.miniappCache.get(packageName)
-      if (fresh && !this.isExpiring(fresh.expiresAt, marginSeconds)) {
-        return {token: fresh.token, expiresAt: fresh.expiresAt}
-      }
+    const entry = await this.mintMiniappToken(packageName, generation, fresh)
+    return {token: entry.token, expiresAt: entry.expiresAt}
+  }
 
+  /**
+   * The mint a caller should wait on. Mints for a package form a chain, one at a
+   * time; `miniappMints` holds the newest link.
+   *
+   *  - A default caller takes the newest mint, whatever its state.
+   *  - A fresh caller takes it only while its request is unsent. Otherwise it
+   *    appends a mint that starts when the newest one settles, win or lose, and
+   *    becomes the newest, so later fresh callers share it until it too sends.
+   */
+  private mintMiniappToken(packageName: string, generation: number, fresh: boolean): Promise<MiniappTokenEntry> {
+    const key = `${MINIAPP_FLIGHT_PREFIX}${packageName}:${generation}`
+    const newest = this.miniappMints.get(key)
+    if (newest && (!fresh || !newest.requestSent())) return newest.promise
+
+    let requestSent = false
+    const promise = (async () => {
+      if (newest) await newest.promise.catch(() => undefined)
       const accessToken = await this.getCoreToken()
       const http = this.requireCoreHttp()
+      requestSent = true
       // A dev build of a package is that package: the request names it and
       // nothing else. The phone has already applied the installed signer rule.
       const res = await http.post<MiniappTokenEntry>(MINIAPP_TOKEN_PATH, {packageName}, {bearer: accessToken})
@@ -287,8 +424,16 @@ export class Auth implements AuthModule {
       const entry: MiniappTokenEntry = {token: res.token, expiresAt: res.expiresAt}
       this.miniappCache.set(packageName, entry)
       this.logger.debug("minted miniapp token", {packageName})
-      return {token: entry.token, expiresAt: entry.expiresAt}
-    })
+      return entry
+    })()
+    const mint: MiniappMint = {promise, requestSent: () => requestSent}
+    this.miniappMints.set(key, mint)
+    // A later mint that replaced this one as the newest stays registered.
+    const release = () => {
+      if (this.miniappMints.get(key) === mint) this.miniappMints.delete(key)
+    }
+    void promise.then(release, release)
+    return promise
   }
 
   /**
@@ -434,18 +579,47 @@ export class Auth implements AuthModule {
       try {
         return await this.refresh(refreshToken, {deferExpired: this.canExchangeFreshSubject(), generation})
       } catch (err) {
-        if (this.canExchangeFreshSubject()) {
-          this.logger.info("refresh failed; exchanging fresh subject token")
-          try {
-            return await this.exchange(generation)
-          } catch {
-            this.fireExpired()
-          }
+        // Only a definitive rejection of the refresh token earns a fresh subject
+        // exchange. A transient failure would meet the same network, an abort
+        // was the caller's answer, and a cleared session must not reacquire
+        // credentials from the upstream provider.
+        if (err instanceof RefreshTokenRejectedError && this.canExchangeFreshSubject()) {
+          return this.exchangeAfterRejection(generation, err)
         }
         throw err
       }
     }
     return this.exchange(generation)
+  }
+
+  /**
+   * One fresh subject exchange after Core rejected the refresh token (the host
+   * can supply a subject token on demand). The dead refresh token is already
+   * cleared, so a failure here leaves the next `getCoreToken` on the first-use
+   * exchange; `onExpired` fires only if Core itself refuses the fresh subject
+   * token, which is when the host really must re-authenticate.
+   */
+  private async exchangeAfterRejection(generation: number, rejection: RefreshTokenRejectedError): Promise<string> {
+    this.assertSessionActive(generation)
+    this.logger.info("refresh token rejected; exchanging fresh subject token")
+    try {
+      return await this.exchange(generation)
+    } catch (err) {
+      if (isAbortError(err)) throw err
+      // A logout that raced the exchange wins over whatever the exchange came to.
+      this.assertSessionActive(generation)
+      if (isCoreRefusal(err, EXCHANGE_REFUSAL_ERRORS)) {
+        this.fireExpired()
+        throw rejection
+      }
+      // Already classified: a retryable failure, or a local problem that is not about the credentials.
+      if (err instanceof AuthUnavailableError || err instanceof AuthExpiredError) throw err
+      // The host's getSubjectToken threw (or the like): nothing was refused.
+      this.logger.warn("fresh subject token could not be exchanged; keeping the session retryable", {
+        error: err instanceof Error ? err.name : typeof err,
+      })
+      throw new AuthUnavailableError("fresh subject token could not be exchanged; try again later", {cause: err})
+    }
   }
 
   /**
@@ -481,7 +655,7 @@ export class Auth implements AuthModule {
       subject_token_type: SUBJECT_TOKEN_TYPE_URN[subject.type],
     })
 
-    const tokens = await this.postForm(EXCHANGE_PATH, body, "exchange")
+    const tokens = await this.requestTokens(EXCHANGE_PATH, body, "exchange", EXCHANGE_REFUSAL_ERRORS)
     await this.saveTokenPair(
       {
         accessToken: tokens.access_token,
@@ -500,13 +674,20 @@ export class Auth implements AuthModule {
    * Refresh near expiry: trade the stored refresh token for a new access token
    * and a rotated refresh token, saving both.
    *
-   * On failure (the refresh token is dead or revoked) we clear stored state.
-   * The caller either falls back to one fresh subject-token exchange (for
-   * on-demand subject-token configs) or fires `onExpired` once and surfaces an
-   * `AuthExpiredError`. We do not retry refresh forever: a dead refresh token
-   * will not heal on its own, and retrying would loop.
+   * Only Core's definitive rejection of the refresh token
+   * (`DEAD_REFRESH_TOKEN_ERRORS`) clears the stored state. The caller either
+   * falls back to one fresh subject-token exchange (for on-demand subject-token
+   * configs) or fires `onExpired` once; both surface a
+   * `RefreshTokenRejectedError`. We do not retry refresh forever: a dead
+   * refresh token will not heal on its own, and retrying would loop.
+   *
+   * Every other failure leaves the refresh token in place for the next call: it
+   * says nothing about the token, and Core accepts a retry with the same token
+   * even when it rotated the token and the response never arrived. Those throw
+   * `AuthUnavailableError`, except an abort, which propagates unchanged.
    */
   private async refresh(refreshToken: string, opts?: {deferExpired?: boolean; generation?: number}): Promise<string> {
+    const generation = opts?.generation ?? this.sessionGeneration
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
@@ -514,15 +695,20 @@ export class Auth implements AuthModule {
 
     let tokens: TokenResponse
     try {
-      tokens = await this.postForm(REFRESH_PATH, body, "refresh")
-    } catch {
-      // The refresh token is unusable: drop it so we do not keep presenting a
-      // known-bad token.
+      tokens = await this.requestTokens(REFRESH_PATH, body, "refresh", DEAD_REFRESH_TOKEN_ERRORS)
+    } catch (err) {
+      // An abort, a retryable failure and a local problem are not a rejection of the token.
+      if (!isCoreRefusal(err, DEAD_REFRESH_TOKEN_ERRORS)) throw err
+      // A rejection that arrives after logout is about a session that is already gone: it must
+      // not notify the host, clear what a newer session saved, or send the caller to exchange.
+      this.assertSessionActive(generation)
+      // Core rejected the refresh token for good: drop it so we do not keep
+      // presenting a known-bad token.
       await this.store.clear()
       if (!opts?.deferExpired) {
         this.fireExpired()
       }
-      throw new AuthExpiredError("token refresh failed; re-auth required")
+      throw new RefreshTokenRejectedError("token refresh failed; re-auth required")
     }
 
     await this.saveTokenPair(
@@ -530,7 +716,7 @@ export class Auth implements AuthModule {
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
       },
-      opts?.generation ?? this.sessionGeneration,
+      generation,
     )
     this.expiredFired = false
     this.logger.debug("refreshed access token")
@@ -606,6 +792,42 @@ export class Auth implements AuthModule {
   }
 
   /**
+   * `postForm` for the calls whose failure says something about the credentials
+   * (`/exchange` and `/refresh`). Settles as exactly one of:
+   *  - the tokens;
+   *  - the caller's abort, unchanged;
+   *  - a `TokenEndpointError` that is Core's own refusal (`isCoreRefusal` with
+   *    `refusals`), for the caller to act on;
+   *  - an `AuthExpiredError` that is not a failed request (no Core endpoint
+   *    configured), unchanged;
+   *  - `AuthUnavailableError` for everything else: a network error, a timeout, a
+   *    408, 429 or 5xx, a body that is not Core's JSON, any other 4xx. None of
+   *    those says the credentials are bad, so the caller keeps them and retries.
+   */
+  private async requestTokens(
+    path: string,
+    body: URLSearchParams,
+    label: string,
+    refusals: ReadonlySet<string>,
+  ): Promise<TokenResponse> {
+    try {
+      return await this.postForm(path, body, label)
+    } catch (err) {
+      if (isAbortError(err) || isCoreRefusal(err, refusals)) throw err
+      if (err instanceof AuthExpiredError && !(err instanceof TokenEndpointError)) throw err
+      // Core answering with an error we do not recognize still carries its status;
+      // a transport or parse failure does not.
+      const status = err instanceof TokenEndpointError ? err.status : undefined
+      this.logger.warn("token request failed; keeping the credentials", {
+        label,
+        ...(status !== undefined ? {status} : {}),
+        error: err instanceof Error ? err.name : typeof err,
+      })
+      throw new AuthUnavailableError(`${label} could not be completed; try again later`, {status, cause: err})
+    }
+  }
+
+  /**
    * POST a form-encoded body to a token endpoint and parse the RFC token
    * response.
    *
@@ -630,14 +852,28 @@ export class Auth implements AuthModule {
     if (signal?.aborted) throw new Error("Core session revocation timed out")
 
     if (!res.ok) {
-      // The body may carry an RFC `{ error, error_description }`, but we keep the
-      // thrown detail to the status + label so no token field can leak into a
-      // message a host might surface. The caller maps this to re-auth.
-      this.logger.warn("auth token request failed", {label, status: res.status})
-      throw new AuthExpiredError(`${label} request failed with status ${res.status}`)
+      // The body may carry an RFC `{ error, error_description }`. We keep only
+      // the short `error` code (the caller decides what it means) and never the
+      // description, so no token field can leak into a message a host might
+      // surface.
+      // Only a 400 or 401 body is ever consulted, so no other body is read.
+      const code = CORE_REFUSAL_STATUSES.has(res.status) ? await this.readOauthErrorCode(res) : undefined
+      this.logger.warn("auth token request failed", {label, status: res.status, ...(code ? {code} : {})})
+      throw new TokenEndpointError(`${label} request failed with status ${res.status}`, res.status, code)
     }
 
     return (await res.json()) as TokenResponse
+  }
+
+  /** The OAuth `error` code of a refusal, or undefined when the body is not Core's `{error}` JSON. */
+  private async readOauthErrorCode(res: Response): Promise<string | undefined> {
+    try {
+      const data: unknown = await res.json()
+      const code = typeof data === "object" && data !== null ? (data as {error?: unknown}).error : undefined
+      return typeof code === "string" && OAUTH_ERROR_CODE_PATTERN.test(code) ? code : undefined
+    } catch {
+      return undefined
+    }
   }
 
   /**

@@ -1,6 +1,6 @@
 import {storage} from "@/utils/storage/storage"
 
-import type {ActiveDeployment, DeploymentCandidate, WorkspaceDeployment} from "./types"
+import type {ActiveDeployment, DeploymentCandidate, DeploymentManifest, WorkspaceDeployment} from "./types"
 import {withClearedDeploymentDebugOverrides} from "./debugOverrides"
 import {createConsumerDeployment} from "./officialManifest"
 import {deploymentManifestSchema} from "./schema"
@@ -40,12 +40,17 @@ export class DeploymentStore {
   private active: ActiveDeployment
   private resolved: boolean
   private selectingWorkspace = false
+  /** The workspace manifest last saved; a running session may run on part of it until the next start. */
+  private savedManifest: DeploymentManifest | null
+  /** Advances whenever the selection or its saved manifest changes. */
+  private revision = 0
   private readonly listeners = new Set<(deployment: ActiveDeployment, resolved: boolean) => void>()
 
   constructor(private readonly persistence: DeploymentStorage = new MmkvDeploymentStorage()) {
     const restored = restoreDeploymentSelection(persistence.load())
     this.active = restored ?? createConsumerDeployment()
     this.resolved = restored !== null
+    this.savedManifest = restored?.kind === "workspace" ? restored.manifest : null
   }
 
   getActive(): ActiveDeployment {
@@ -79,6 +84,7 @@ export class DeploymentStore {
     }
     await withClearedDeploymentDebugOverrides(() => this.persistence.save(deployment))
     this.selectingWorkspace = false
+    this.savedManifest = deployment.manifest
     this.setActive(deployment)
     return deployment
   }
@@ -93,6 +99,7 @@ export class DeploymentStore {
       this.persistence.save(deployment)
     }
     this.selectingWorkspace = false
+    this.savedManifest = null
     this.setActive(deployment, true)
   }
 
@@ -107,6 +114,7 @@ export class DeploymentStore {
   async beginWorkspaceSelection(): Promise<void> {
     await withClearedDeploymentDebugOverrides(() => this.persistence.remove())
     this.selectingWorkspace = true
+    this.savedManifest = null
     this.setActive(createConsumerDeployment(), false)
   }
 
@@ -114,7 +122,40 @@ export class DeploymentStore {
   async clearSelection(): Promise<void> {
     await withClearedDeploymentDebugOverrides(() => this.persistence.remove())
     this.selectingWorkspace = false
+    this.savedManifest = null
     this.setActive(createConsumerDeployment(), false)
+  }
+
+  /**
+   * Adopt the workspace's current manifest for the selection it was fetched for.
+   *
+   * Only a manifest with the same deployment, Core, Runtime and sign-in
+   * configuration is adopted; those identify the stored session, which carries
+   * over. It is saved whole. Before Engine starts it becomes the active
+   * deployment; a running session takes only its miniapp catalog and
+   * presentation, and the rest applies when Engine next starts.
+   */
+  adoptRefreshedManifest(
+    expected: WorkspaceDeployment,
+    manifest: DeploymentManifest,
+    {running, revision}: {running: boolean; revision: number},
+  ): RefreshedManifestOutcome {
+    // A refresh that started before another one saved its result is older.
+    if (this.active !== expected || revision !== this.revision) return "superseded"
+    if (sameJson(this.savedManifest ?? expected.manifest, manifest)) return "unchanged"
+    if (!keepsWorkspaceSession(expected.manifest, manifest)) return "sign-in-changed"
+    this.persistence.save({...expected, manifest})
+    this.savedManifest = manifest
+    this.revision += 1
+    const next = running ? withLiveChanges(expected.manifest, manifest) : manifest
+    if (sameJson(next, expected.manifest)) return "saved-for-next-start"
+    this.setActive({...expected, manifest: next})
+    return "updated"
+  }
+
+  /** Pass to {@link adoptRefreshedManifest} for a refresh that starts now. */
+  currentRevision(): number {
+    return this.revision
   }
 
   subscribe(listener: (deployment: ActiveDeployment, resolved: boolean) => void): () => void {
@@ -123,10 +164,76 @@ export class DeploymentStore {
   }
 
   private setActive(deployment: ActiveDeployment, resolved = true): void {
+    this.revision += 1
     this.active = deployment
     this.resolved = resolved
     for (const listener of this.listeners) listener(deployment, resolved)
   }
+}
+
+export type RefreshedManifestOutcome =
+  | "updated"
+  | "saved-for-next-start"
+  | "unchanged"
+  | "sign-in-changed"
+  | "superseded"
+
+/** The stored Entra account and Cloud session belong to these fields. */
+function keepsWorkspaceSession(current: DeploymentManifest, next: DeploymentManifest): boolean {
+  return (
+    current.deploymentId === next.deploymentId &&
+    current.services.coreUrl === next.services.coreUrl &&
+    current.services.runtimeUrl === next.services.runtimeUrl &&
+    sameJson(withScopeSets(current.auth), withScopeSets(next.auth))
+  )
+}
+
+/** Scopes are requested as a set, so their order is not part of the sign-in. */
+function withScopeSets(auth: DeploymentManifest["auth"]): DeploymentManifest["auth"] {
+  if (auth.mode !== "microsoft-entra") return auth
+  return {...auth, sessionScopes: [...auth.sessionScopes].sort(), teamsScopes: [...auth.teamsScopes].sort()}
+}
+
+/**
+ * What a running session adopts from a refreshed manifest: its miniapp catalog,
+ * which installs as miniapps can be replaced, and its presentation. Feature
+ * switches, OTA, telemetry, glasses and system-miniapp policy were set up when
+ * Engine started, so they stay until it starts again.
+ */
+function withLiveChanges(running: DeploymentManifest, next: DeploymentManifest): DeploymentManifest {
+  const {branding: _branding, ...rest} = running
+  return {
+    ...rest,
+    ...(next.branding ? {branding: next.branding} : {}),
+    displayName: next.displayName,
+    links: next.links,
+    content: next.content,
+    miniapps: next.miniapps,
+  }
+}
+
+/** Structural equality for schema-parsed manifest values, independent of key order. */
+function sameJson(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => sameJson(value, right[index]))
+    )
+  }
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false
+  const leftKeys = Object.keys(left)
+  const rightRecord = right as Record<string, unknown>
+  return (
+    leftKeys.length === Object.keys(right).length &&
+    leftKeys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(rightRecord, key) &&
+        sameJson((left as Record<string, unknown>)[key], rightRecord[key]),
+    )
+  )
 }
 
 function restoreDeploymentSelection(value: unknown): PersistedDeploymentSelection | null {

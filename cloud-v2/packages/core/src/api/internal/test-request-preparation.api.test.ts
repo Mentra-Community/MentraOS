@@ -1,7 +1,7 @@
 import {expect, test} from 'bun:test';
 import {createHash} from 'node:crypto';
 import {createTestRequestsApi} from './test-requests.api';
-import {TestRequestService, TestRequestConflict, type StoredPreparingRequest} from '../../services/test-request.service';
+import {TestRequestService, TestRequestConflict, type StoredPreparingRequest, type StoredRequest} from '../../services/test-request.service';
 import {GithubRoutineSourceGateway} from '../../services/routine-source-selection.service';
 import {TestRunError} from '../../services/test-result-error';
 import {RoutineDispatchService} from '../../services/routine-dispatch.service';
@@ -9,8 +9,14 @@ const token = 'synthetic-controller-credential-' + 'x'.repeat(32), headers = {au
 const bytes = new TextEncoder().encode('routine'), blob = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'), commit = 'a'.repeat(40);
 const row: StoredPreparingRequest = {requestId:'r1',hostId:'mini',state:'preparing',dispatchIntentSha256:'b'.repeat(64),dispatchIntent:{requestId:'r1',routineId:'sample',platform:'android',routineRevision:commit,laneId:'android',source:{channel:'dev',buildRunId:1,publicationAttempt:1},build:{repository:'Mentra-Community/MentraOS',headSha:'c'.repeat(40),channel:'dev',kind:'android-apk',source:{channel:'dev',buildRunId:1,publicationAttempt:1},archive:{name:'app.apk',url:'https://artifactscdn.mentraglass.com/app.apk',sha256:'d'.repeat(64),size:100},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',sha256:'e'.repeat(64),size:10}}}};
 function fixture() {
-  let active=true, blobReads=0;
+  let active=true, blobReads=0, repositoryReads=0;
   class Service extends TestRequestService {
+    constructor() {
+      const unexpected = async (): Promise<never> => {throw new Error('Unexpected preparation API fixture storage operation')};
+      super({get: async id => {repositoryReads++;return id === row.requestId ? row : null},
+        insert: unexpected, accept: unexpected, reject: unexpected, cancel: unexpected,
+        acknowledgeCancellation: unexpected, queued: unexpected, cancellations: unexpected});
+    }
     override async preparation(id:string,host:string,digest?:string) {if(id!=='r1'||host!=='mini')throw new TestRunError(404,'not assigned');if(digest&&digest!==row.dispatchIntentSha256)throw new TestRequestConflict('changed');return {...row,state:active?'preparing' as const:'terminal' as const};}
     override async preparationStatus(id:string,host:string,input:unknown) {await this.preparation(id,host,(input as any).dispatchIntentSha256);return row;}
   }
@@ -20,7 +26,7 @@ function fixture() {
   }
   const service=new Service(); const dispatch={async validatePreparationSource(){},async prepared(id:string,host:string,body:any){await service.preparation(id,host,body.dispatchIntentSha256);return row;}} as unknown as RoutineDispatchService;
   const api=createTestRequestsApi(service,()=>JSON.stringify({mini:token}),new Sources(),dispatch);
-  return {api,get blobReads(){return blobReads},cancel(){active=false}};
+  return {api,get blobReads(){return blobReads},get repositoryReads(){return repositoryReads},cancel(){active=false}};
 }
 test('exact source endpoints scope assigned request and inventory membership without exposing credentials',async()=>{
   const f=fixture();expect((await f.api.request('/r1/routine-source/inventory')).status).toBe(401);
@@ -31,10 +37,23 @@ test('exact source endpoints scope assigned request and inventory membership wit
   f.cancel();expect((await f.api.request(`/r1/routine-source/blobs/${blob}`,{headers})).status).toBe(409);expect(f.blobReads).toBe(1);
 });
 test('host sees actual preparation state and completion acknowledgment retains immutable intent',async()=>{
-  const f=fixture(),detail=await f.api.request('/r1/preparation',{headers});expect(await detail.json()).toEqual({request:row});
+  const f=fixture(),detail=await f.api.request('/r1/preparation',{headers});expect(await detail.json()).toEqual({request:row});expect(f.repositoryReads).toBe(1);
   const body={dispatchIntentSha256:row.dispatchIntentSha256};
   expect((await f.api.request('/r1/prepared',{method:'POST',headers,body:JSON.stringify({...body,dispatchIntentSha256:'changed'})})).status).toBe(409);
   expect(await (await f.api.request('/r1/prepared',{method:'POST',headers,body:JSON.stringify(body)})).json()).toEqual({request:row});
+});
+
+test('unbound candidate metadata is visible only to its authenticated pending host',async()=>{
+  let request: unknown = {requestId:'candidate',state:'awaiting-runner',fleetCandidatePreparation:{hostId:'mini'}}, reads=0;
+  const unexpected = async (): Promise<never> => {throw new Error('Unexpected candidate metadata storage operation')};
+  const service=new TestRequestService({get:async id=>{reads++;return id==='candidate'?request as StoredRequest:null},
+    insert:unexpected,accept:unexpected,reject:unexpected,cancel:unexpected,acknowledgeCancellation:unexpected,queued:unexpected,cancellations:unexpected});
+  const otherToken='synthetic-other-controller-'+'y'.repeat(32),api=createTestRequestsApi(service,()=>JSON.stringify({mini:token,other:otherToken}));
+  expect((await api.request('/candidate/preparation')).status).toBe(401);expect(reads).toBe(0);
+  expect(await(await api.request('/candidate/preparation',{headers})).json()).toEqual({request});
+  expect((await api.request('/candidate/preparation',{headers:{authorization:`Bearer ${otherToken}`}})).status).toBe(404);
+  request={...request as object,hostId:'mini',fleetBinding:{hostId:'mini'}};
+  expect((await api.request('/candidate/preparation',{headers})).status).toBe(409);
 });
 
 

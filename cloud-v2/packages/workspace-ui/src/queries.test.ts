@@ -2,7 +2,18 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
 import { WORKSPACE_CHANGED_MESSAGE, WorkspaceApiError, errorMessage } from "./errors";
 import { createWorkspaceApi } from "./api";
-import { invitationPreviewQuery, shouldRetry, workspaceKeys, workspaceMutationOptions } from "./queries";
+import { BillingContractError, BillingRefusedError, BillingUnavailableError, createBillingApi, workspaceScope } from "./billing-api";
+import {
+  billingCatalogQuery,
+  billingKeys,
+  billingStatusQuery,
+  invitationPreviewQuery,
+  settingsDetailQuery,
+  shouldRetry,
+  statusPlaceholder,
+  workspaceKeys,
+  workspaceMutationOptions,
+} from "./queries";
 import { detailFor, membersFor, offlineApi, seedClient, WORKSPACE_ID } from "./test-fixtures";
 
 const OTHER_ID = "ws_other";
@@ -45,6 +56,55 @@ describe("workspaceMutationOptions", () => {
     expect(stale(client, workspaceKeys.members(api, WORKSPACE_ID))).toBe(true);
   });
 
+  test("409 workspace_has_holds refetches the workspace, so the screen shows what holds it", async () => {
+    const { api, client } = seeded();
+    const held = new WorkspaceApiError(409, "workspace_has_holds", "held", [
+      { service: "store", reason: "owns_miniapps", count: 1 },
+    ]);
+    const observer = new MutationObserver(
+      client,
+      workspaceMutationOptions(
+        client,
+        api,
+        WORKSPACE_ID,
+        async () => {
+          throw held;
+        },
+        { workspaceGone: true },
+      ),
+    );
+    expect(await observer.mutate(undefined).catch((e: unknown) => e)).toBe(held);
+    expect(stale(client, workspaceKeys.detail(api, WORKSPACE_ID))).toBe(true);
+  });
+
+  test("a license that changed under the caller (every seat taken, or gone) is read again, and the error still reaches them", async () => {
+    for (const changed of [
+      new WorkspaceApiError(409, "no_seats_available", "every license is assigned"),
+      new WorkspaceApiError(404, "license_not_found", "license not found"),
+    ]) {
+      const { api, client } = seeded();
+      client.setQueryData(workspaceKeys.licenses(api, WORKSPACE_ID), []);
+      const observer = new MutationObserver(
+        client,
+        workspaceMutationOptions(client, api, WORKSPACE_ID, async () => {
+          throw changed;
+        }),
+      );
+      expect(await observer.mutate(undefined).catch((e: unknown) => e)).toBe(changed);
+      expect(stale(client, workspaceKeys.licenses(api, WORKSPACE_ID))).toBe(true);
+    }
+  });
+
+  test("a success marks the workspace's licenses stale too, and another workspace's alone are left", async () => {
+    const { api, client } = seeded();
+    client.setQueryData(workspaceKeys.licenses(api, WORKSPACE_ID), []);
+    client.setQueryData(workspaceKeys.licenses(api, OTHER_ID), []);
+    const observer = new MutationObserver(client, workspaceMutationOptions(client, api, WORKSPACE_ID, async () => "done"));
+    await observer.mutate(undefined);
+    expect(stale(client, workspaceKeys.licenses(api, WORKSPACE_ID))).toBe(true);
+    expect(stale(client, workspaceKeys.licenses(api, OTHER_ID))).toBe(false);
+  });
+
   test("any other failure leaves the cache alone", async () => {
     const { api, client } = seeded();
     for (const failure of [
@@ -80,6 +140,22 @@ describe("workspaceMutationOptions", () => {
     const admin = { basePath: "/api/workspaces" };
     const store = { basePath: "/api/console/workspaces" };
     expect(workspaceKeys.detail(admin, WORKSPACE_ID)).not.toEqual(workspaceKeys.detail(store, WORKSPACE_ID));
+  });
+});
+
+describe("settingsDetailQuery", () => {
+  test("shares the workspace detail's cache, and refetches on focus while a service holds the workspace", () => {
+    const { api } = offlineApi();
+    const options = settingsDetailQuery(api, WORKSPACE_ID);
+    expect([...options.queryKey]).toEqual([...workspaceKeys.detail(api, WORKSPACE_ID)]);
+    // Hosts turn refetch-on-focus off; a held workspace is the exception, since its hold is cleared
+    // elsewhere (the Developer Console) while this tab is in the background.
+    const onFocus = options.refetchOnWindowFocus as (query: { state: { data: unknown } }) => boolean;
+    const held = { ...detailFor("owner"), deletionHolds: [{ service: "store", reason: "owns_miniapps", count: 1 }] };
+    expect(onFocus({ state: { data: held } })).toBe(true);
+    expect(onFocus({ state: { data: { ...detailFor("owner"), deletionHolds: [] } } })).toBe(false);
+    expect(onFocus({ state: { data: detailFor("owner") } })).toBe(false);
+    expect(onFocus({ state: { data: undefined } })).toBe(false);
   });
 });
 
@@ -120,5 +196,235 @@ describe("invitationPreviewQuery", () => {
       fetched.mockRestore();
       client.clear();
     }
+  });
+});
+
+describe("billing's queries", () => {
+  const catalogBody = { locale: "en", products: [] };
+  const statusBody = { locale: "en", licenses: [], total: null, actions: [], testMode: null, purchase: null };
+
+  function billingFor(...bodies: unknown[]) {
+    const urls: string[] = [];
+    const answers = [...bodies];
+    const billing = createBillingApi({
+      locale: "en-US",
+      fetch: (async (input: RequestInfo | URL) => {
+        urls.push(String(input));
+        return Response.json(answers.shift() ?? {});
+      }) as unknown as typeof fetch,
+    });
+    return { billing, urls };
+  }
+
+  test("the catalog and the status are read through the billing client, parsed with the contract", async () => {
+    const { billing, urls } = billingFor(catalogBody, statusBody);
+    const client = new QueryClient();
+    expect(await client.fetchQuery(billingCatalogQuery(billing, workspaceScope(WORKSPACE_ID)))).toEqual(catalogBody);
+    expect(await client.fetchQuery(billingStatusQuery(billing, workspaceScope(WORKSPACE_ID), "pur_1"))).toEqual(statusBody);
+    expect(urls).toEqual([
+      `/api/portal/billing/workspaces/${WORKSPACE_ID}/catalog?locale=en-US`,
+      `/api/portal/billing/workspaces/${WORKSPACE_ID}/status?locale=en-US&purchase=pur_1`,
+    ]);
+  });
+
+  test("an answer that doesn't match the contract fails the query", async () => {
+    const { billing } = billingFor({ locale: "en", products: "none" });
+    const client = new QueryClient();
+    const error = await client.fetchQuery({ ...billingCatalogQuery(billing, workspaceScope(WORKSPACE_ID)), retry: false }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(BillingUnavailableError);
+  });
+
+  test("keys are per owner, per locale and per purchase, and a workspace's start with its id", () => {
+    const { billing } = billingFor();
+    const german = createBillingApi({ locale: "de-DE" });
+    const ws = workspaceScope(WORKSPACE_ID);
+    expect(billingKeys.catalog(billing, ws)).not.toEqual(billingKeys.catalog(billing, workspaceScope(OTHER_ID)));
+    expect(billingKeys.catalog(billing, ws)).not.toEqual(billingKeys.catalog(german, ws));
+    expect(billingKeys.status(billing, ws, "pur_1")).not.toEqual(billingKeys.status(billing, ws, null));
+    expect(billingKeys.status(billing, ws, undefined)).toEqual(billingKeys.status(billing, ws, null));
+    for (const key of [billingKeys.catalog(billing, ws), billingKeys.status(billing, ws, "pur_1")]) {
+      expect(key.slice(0, billingKeys.owner(ws).length)).toEqual([...billingKeys.owner(ws)]);
+    }
+    expect(JSON.stringify(billingKeys.owner(workspaceScope(OTHER_ID)))).not.toContain(WORKSPACE_ID);
+    // Every status of an owner, whatever its purchase, locale or base path, shares one prefix: the catalog isn't under it.
+    const statuses = billingKeys.statuses(ws);
+    expect(billingKeys.status(billing, ws, "pur_1").slice(0, statuses.length)).toEqual([...statuses]);
+    expect(billingKeys.status(german, ws, null).slice(0, statuses.length)).toEqual([...statuses]);
+    expect(billingKeys.catalog(billing, ws).slice(0, statuses.length)).not.toEqual([...statuses]);
+  });
+
+  test("a refusal (4xx) isn't retried, and an unavailable answer or a 5xx gets one more try", () => {
+    const { billing } = billingFor();
+    const retry = billingStatusQuery(billing, workspaceScope(WORKSPACE_ID)).retry as (count: number, error: unknown) => boolean;
+    expect(retry(0, new BillingRefusedError("forbidden", {}, 403))).toBe(false);
+    expect(retry(0, new BillingRefusedError("billing_unavailable", {}, 503))).toBe(true);
+    expect(retry(1, new BillingRefusedError("billing_unavailable", {}, 503))).toBe(false);
+    expect(retry(0, new BillingUnavailableError("network"))).toBe(true);
+    expect(retry(1, new BillingUnavailableError("network"))).toBe(false);
+  });
+
+  test("an answer that doesn't match the contract isn't retried: it would only mismatch again", async () => {
+    const { billing } = billingFor();
+    const retry = billingStatusQuery(billing, workspaceScope(WORKSPACE_ID)).retry as (count: number, error: unknown) => boolean;
+    expect(retry(0, new BillingContractError("status doesn't match"))).toBe(false);
+    // Through the query: a mismatch is asked once, while a dropped connection is asked again.
+    const mismatch = billingFor({ locale: "en", products: "none" }, { locale: "en", products: "none" });
+    const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } });
+    const error = await client.fetchQuery(billingCatalogQuery(mismatch.billing, workspaceScope(WORKSPACE_ID))).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(BillingContractError);
+    expect(mismatch.urls).toHaveLength(1);
+    let asked = 0;
+    const flaky = createBillingApi({
+      locale: "en-US",
+      fetch: (async () => {
+        asked += 1;
+        throw new TypeError("network down");
+      }) as unknown as typeof fetch,
+    });
+    await new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } }).fetchQuery(billingCatalogQuery(flaky, workspaceScope(WORKSPACE_ID))).catch(() => {});
+    expect(asked).toBe(2);
+  });
+
+  /** A client holding one workspace's billing (catalog and status), and another's. */
+  function seededBilling() {
+    const { api } = offlineApi();
+    const { billing } = billingFor();
+    const client = new QueryClient();
+    const mine = workspaceScope(WORKSPACE_ID);
+    const other = workspaceScope(OTHER_ID);
+    client.setQueryData(billingKeys.status(billing, mine, null), statusBody);
+    client.setQueryData(billingKeys.status(billing, mine, "pur_1"), statusBody);
+    client.setQueryData(billingKeys.catalog(billing, mine), catalogBody);
+    client.setQueryData(billingKeys.status(billing, other, null), statusBody);
+    client.setQueryData(workspaceKeys.licenses(api, WORKSPACE_ID), []);
+    client.setQueryData(workspaceKeys.members(api, WORKSPACE_ID), []);
+    return { api, billing, client, mine, other };
+  }
+
+  test("a seat mutation (assigned, released, assigned in bulk) marks licenses, members and that workspace's billing status stale", async () => {
+    const { api, billing, client, mine, other } = seededBilling();
+    const observer = new MutationObserver(
+      client,
+      workspaceMutationOptions(client, api, WORKSPACE_ID, async () => "done", { seats: true }),
+    );
+    await observer.mutate(undefined);
+    expect(stale(client, workspaceKeys.licenses(api, WORKSPACE_ID))).toBe(true);
+    expect(stale(client, workspaceKeys.members(api, WORKSPACE_ID))).toBe(true);
+    expect(stale(client, billingKeys.status(billing, mine, null))).toBe(true);
+    expect(stale(client, billingKeys.status(billing, mine, "pur_1"))).toBe(true);
+    // The catalog is display content a seat doesn't change, and no other owner's billing is touched.
+    expect(stale(client, billingKeys.catalog(billing, mine))).toBe(false);
+    expect(stale(client, billingKeys.status(billing, other, null))).toBe(false);
+  });
+
+  test("a mutation that isn't a seat's (rename, invite, role change) leaves billing alone", async () => {
+    const { api, billing, client, mine } = seededBilling();
+    const observer = new MutationObserver(client, workspaceMutationOptions(client, api, WORKSPACE_ID, async () => "done"));
+    await observer.mutate(undefined);
+    expect(stale(client, workspaceKeys.members(api, WORKSPACE_ID))).toBe(true);
+    expect(stale(client, billingKeys.status(billing, mine, null))).toBe(false);
+    expect(stale(client, billingKeys.catalog(billing, mine))).toBe(false);
+  });
+
+  test("a failed non-seat mutation leaves billing alone too, even a 409 membership_changed", async () => {
+    const { api, billing, client, mine } = seededBilling();
+    const observer = new MutationObserver(
+      client,
+      workspaceMutationOptions(client, api, WORKSPACE_ID, async () => {
+        throw new WorkspaceApiError(409, "membership_changed", "membership_changed");
+      }),
+    );
+    await observer.mutate(undefined).catch(() => {});
+    expect(stale(client, workspaceKeys.members(api, WORKSPACE_ID))).toBe(true);
+    expect(stale(client, billingKeys.status(billing, mine, null))).toBe(false);
+  });
+
+  test("a seat that changed under the caller (every seat taken) refreshes billing's status as well, and not the catalog", async () => {
+    const { api, billing, client, mine } = seededBilling();
+    const observer = new MutationObserver(
+      client,
+      workspaceMutationOptions(
+        client,
+        api,
+        WORKSPACE_ID,
+        async () => {
+          throw new WorkspaceApiError(409, "no_seats_available", "too few licenses are available for these assignments; nothing was assigned");
+        },
+        { seats: true },
+      ),
+    );
+    await observer.mutate(undefined).catch(() => {});
+    expect(stale(client, workspaceKeys.licenses(api, WORKSPACE_ID))).toBe(true);
+    expect(stale(client, billingKeys.status(billing, mine, null))).toBe(true);
+    expect(stale(client, billingKeys.catalog(billing, mine))).toBe(false);
+  });
+
+  test("any other failure of a seat mutation leaves everything alone", async () => {
+    const { api, billing, client, mine } = seededBilling();
+    const observer = new MutationObserver(
+      client,
+      workspaceMutationOptions(
+        client,
+        api,
+        WORKSPACE_ID,
+        async () => {
+          throw new WorkspaceApiError(403, "forbidden", "forbidden");
+        },
+        { seats: true },
+      ),
+    );
+    await observer.mutate(undefined).catch(() => {});
+    expect(stale(client, billingKeys.status(billing, mine, null))).toBe(false);
+    expect(stale(client, workspaceKeys.licenses(api, WORKSPACE_ID))).toBe(false);
+  });
+
+  test("a workspace that is gone takes its billing answers with it", async () => {
+    const { api } = offlineApi();
+    const { billing } = billingFor();
+    const client = new QueryClient();
+    const mine = workspaceScope(WORKSPACE_ID);
+    const other = workspaceScope(OTHER_ID);
+    client.setQueryData(billingKeys.status(billing, mine, null), statusBody);
+    client.setQueryData(billingKeys.catalog(billing, mine), catalogBody);
+    client.setQueryData(billingKeys.status(billing, other, null), statusBody);
+    const observer = new MutationObserver(
+      client,
+      workspaceMutationOptions(client, api, WORKSPACE_ID, async () => undefined, { workspaceGone: true }),
+    );
+    await observer.mutate(undefined);
+    expect(client.getQueryData(billingKeys.status(billing, mine, null))).toBeUndefined();
+    expect(client.getQueryData(billingKeys.catalog(billing, mine))).toBeUndefined();
+    expect(client.getQueryData(billingKeys.status(billing, other, null))).toBeDefined();
+  });
+});
+
+describe("statusPlaceholder", () => {
+  const client = (locale: string, base?: string) => createBillingApi({ locale, base, fetch: (async () => Response.json({})) as unknown as typeof fetch });
+  const billing = client("en-US");
+  const a = workspaceScope("ws_a");
+  const b = workspaceScope("ws_b");
+  const answer = { licenses: ["A's"] };
+  /** What the placeholder is asked: the answer the page had, and the query it came from. */
+  const asked = (from: readonly unknown[], to: readonly unknown[]) => statusPlaceholder<typeof answer>(to)(answer, { queryKey: from } as never);
+
+  test("keeps the previous answer while only the purchase in the key changes, so `?purchase=` going doesn't blank the page", () => {
+    expect(asked(billingKeys.status(billing, a, "pur_1"), billingKeys.status(billing, a, null))).toBe(answer);
+    expect(asked(billingKeys.status(billing, a, null), billingKeys.status(billing, a, "pur_2"))).toBe(answer);
+  });
+
+  test("never carries an answer to another workspace, or to another locale or base path", () => {
+    const from = billingKeys.status(billing, a, "pur_1");
+    expect(asked(from, billingKeys.status(billing, b, "pur_1"))).toBeUndefined();
+    expect(asked(from, billingKeys.status(billing, b, null))).toBeUndefined();
+    expect(asked(from, billingKeys.status(client("de-DE"), a, "pur_1"))).toBeUndefined();
+    expect(asked(from, billingKeys.status(client("en-US", "/api/other"), a, "pur_1"))).toBeUndefined();
+  });
+
+  test("has nothing to keep without a previous answer or a previous query, or for a key of another shape", () => {
+    const key = billingKeys.status(billing, a, null);
+    expect(statusPlaceholder<typeof answer>(key)(undefined, { queryKey: key } as never)).toBeUndefined();
+    expect(statusPlaceholder<typeof answer>(key)(answer, undefined)).toBeUndefined();
+    expect(asked(["something", "else"], key)).toBeUndefined();
+    expect(asked([...key, "extra"], key)).toBeUndefined();
   });
 });

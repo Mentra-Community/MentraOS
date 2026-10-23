@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {frameworkBuildSchema, frameworkIdentitySchema} from './framework-request.types';
-import {frameworkVersionSchema, routineSourceRefSchema} from './framework-version.types';
+import {frameworkBindingSchema, frameworkVersionSchema, routineSourceRefSchema} from './framework-version.types';
 import {routineIdentitySchema, routinePlatformSchema} from './routine-definition.types';
 import {testBuildSourceSchema} from './test-build.types';
 
@@ -26,6 +26,22 @@ export const routineDispatchIntentSchema = routineDispatchSelectionSchema.extend
 export type RoutineDispatchIntent = z.infer<typeof routineDispatchIntentSchema>;
 
 export const preparationStatusSchema = z.object({dispatchIntentSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  frameworkBinding: frameworkBindingSchema.optional(),
   code: frameworkIdentitySchema, reason: z.string().min(1).max(2000), observedAt: z.string().datetime({offset: true})}).strict();
 export const preparationRejectionSchema = preparationStatusSchema.omit({observedAt: true})
   .extend({rejectedAt: z.string().datetime({offset: true}), disposition: z.enum(['not-run', 'not-applicable'])});
+
+/** Bounded reconciliation of one framework-floor observation; request state still owns its effect. */
+export const preparationFrameworkEffectSchema = z.discriminatedUnion('kind', [
+  z.object({kind: z.literal('complete'), inputSha256: z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
+  z.object({kind: z.literal('reject'), rejectionSha256: z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
+]);
+export const preparationFrameworkAdmissionSchema = z.object({requestId: frameworkIdentitySchema,
+  dispatchIntentSha256: z.string().regex(/^[a-f0-9]{64}$/), effect: preparationFrameworkEffectSchema,
+  requestFenceSha256: z.string().regex(/^[a-f0-9]{64}$/), binding: frameworkBindingSchema,
+  incarnation: frameworkIdentitySchema, incarnationGeneration: z.number().int().positive().safe(), sequence: z.number().int().nonnegative().safe(),
+  deploymentGeneration: z.number().int().nonnegative().safe().optional(), deploymentSequence: z.number().int().nonnegative().safe().optional(),
+  receivedAt: z.string().datetime({offset: true}), observedAt: z.string().datetime({offset: true}), admittedAt: z.string().datetime({offset: true}),
+}).strict();
+export type PreparationFrameworkEffect = z.infer<typeof preparationFrameworkEffectSchema>;
+export type PreparationFrameworkAdmission = z.infer<typeof preparationFrameworkAdmissionSchema>;

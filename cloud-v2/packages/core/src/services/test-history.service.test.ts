@@ -1,3 +1,5 @@
+import {routineCaseRepository} from './routine-case.repository';
+import {rerunRootKey} from './test-rerun.service';
 import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {afterAll, beforeAll, describe, expect, spyOn, test} from "bun:test";
 import {randomUUID} from "node:crypto";
@@ -11,6 +13,7 @@ import type {TestSuite} from "../types/test-suite.types";
 import {TestHistoryService, testHistoryQueries, historySuiteBuild, enrichHistoryPrBuilds, type StoredHistoryRow} from "./test-history.service";
 import {TestSuiteService, type SuiteSummaryRead} from "./test-suite.service";
 import {createFrameworkRunSummaryProjection} from "./framework-run-summary.service";
+import {writeRunEnvelope} from "./framework-run-detail.service";
 import {requestInputDigest} from "./test-request.service";
 import {TestRunError} from "./test-result-error";
 import {FrameworkResultService} from "./framework-result.service";
@@ -67,8 +70,9 @@ test("history hides accepted reruns by default and validates the explicit toggle
   expect(flags).toEqual([false, false, true]);
   const queries = testHistoryQueries(null, 2);
   const rerunLookup = queries.runs.find(stage => "$lookup" in stage && stage.$lookup.from === TestRerunModel.collection.name);
-  expect(rerunLookup).toMatchObject({$lookup: {localField: "payload.requestId", foreignField: "plan.members.requestId",
-    pipeline: [{$match: {state: "accepted"}}, {$limit: 1}, {$project: {_id: 0, rerunId: 1, parentSuiteId: "$plan.parent.suiteId"}}]}});
+  expect(rerunLookup).toMatchObject({$lookup: {localField: "requestId", foreignField: "plan.members.requestId",
+    let: {requestId: "$requestId"}}});
+  expect((rerunLookup as any).$lookup.pipeline.at(-1)).toEqual({$project: {_id: 0, rerunId: 1, parentSuiteId: "$plan.parent.suiteId", rootKey: "$member.rootKey"}});
   const summary = queries.runs.find(stage => "$project" in stage) as any;
   expect(summary.$project.historySuppressed.$or).toContainEqual({$gt: [{$size: "$historyReruns"}, 0]});
   const shown = testHistoryQueries(null, 2, true).runs.find(stage => "$project" in stage) as any;
@@ -114,23 +118,23 @@ test("history suite summaries retain the reader's frozen failed outcome and decl
     finishedAt: "2026-10-03T19:01:00Z", outcome: "failed", passed: 1, build: {headSha: "a".repeat(40), release: "dev.42"},
     members: [{memberId: "published", routineId: "notes-phone", platform: "ios-on-mac", status: "pass"}, {memberId: "unstarted", routineId: "camera", platform: "android", status: "not-run"}]} as any;
   const rows: StoredHistoryRow[] = [{historyKind: "suite", historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt)}];
-  const service = new TestHistoryService(summaryReader(async () => suite), async () => [[], rows]);
+  const service = new TestHistoryService(summaryReader(async () => suite), async () => [[], rows], {async latestAttempts() {return new Map()}});
   expect(await service.list()).toEqual({entries: [{kind: "suite", suiteId: suite.suiteId, channel: "dev", trigger: "nightly",
     startedAt: suite.startedAt, finishedAt: suite.finishedAt, outcome: "failed", passed: 1, skipped: 1, expectedCount: 2, build: suite.build,
-    rerunCount: 0, failedCount: 0, lanes: [], members: [{routineId: "notes-phone", platform: "ios-on-mac"}, {routineId: "camera", platform: "android"}]}], nextCursor: null});
+    rerunCount: 0, failedCount: 0, comparison: {original: {failed: 0, total: 1, skipped: 1, pending: 1, incomplete: 0}}, lanes: [], members: [{routineId: "notes-phone", platform: "ios-on-mac"}, {routineId: "camera", platform: "android"}]}], nextCursor: null});
 });
 
 test("suite history retains accepted job count and exact distinct host/lane pairs", async () => {
   const suite = {suiteId: "suite:lanes", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T19:00:00Z",
     outcome: "running", passed: 0, build: {headSha: "a".repeat(40)}, members: [
-      {routineId: "notes", platform: "ios-on-mac", hostId: "mini", dispatchIntent: {laneId: "mac"}},
-      {routineId: "settings", platform: "ios-on-mac", hostId: "mini", laneId: "mac"},
-      {routineId: "camera", platform: "android", hostId: "other", laneId: "android"},
-      {routineId: "historical", platform: "android"},
+      {memberId: "notes", routineId: "notes", status: "pending", platform: "ios-on-mac", hostId: "mini", dispatchIntent: {laneId: "mac"}},
+      {memberId: "settings", routineId: "settings", status: "pending", platform: "ios-on-mac", hostId: "mini", laneId: "mac"},
+      {memberId: "camera", routineId: "camera", status: "pending", platform: "android", hostId: "other", laneId: "android"},
+      {memberId: "historical", routineId: "historical", status: "pending", platform: "android"},
     ]} as any;
   const service = new TestHistoryService(summaryReader(async () => suite), async () => [[], [
     {historyKind: "suite", historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt), rerunCount: 5},
-  ]]);
+  ]], {async latestAttempts() {return new Map()}});
   expect((await service.list()).entries[0]).toMatchObject({kind: "suite", rerunCount: 5,
     lanes: [{hostId: "mini", laneId: "mac"}, {hostId: "other", laneId: "android"}],
     members: [{routineId: "notes", hostId: "mini", laneId: "mac"}, {routineId: "settings", hostId: "mini", laneId: "mac"},
@@ -152,7 +156,7 @@ test("one unavailable row preserves its page slot and cursor without failing nei
   const service = new TestHistoryService(summaryReader(async id => {
     if (id === suite.suiteId) return suite;
     throw new TestRunError(404, "missing");
-  }), async () => [[], rows]);
+  }), async () => [[], rows], {async latestAttempts() {return new Map()}});
   const page = await service.list({limit: "2"});
   expect(page.entries[0]!.kind).toBe("suite");
   expect(page.entries[1]).toEqual({kind: "unavailable", sourceKind: "suite", id: "suite:b",
@@ -202,9 +206,13 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
   const plan = (suiteId: string, members: TestSuite["members"]): TestSuite => ({suiteId, channel: "dev", trigger: "nightly",
     startedAt: at, build: {headSha: sha}, members});
   const member = (requestId: string) => ({memberId: requestId, requestId, routineId: "notes", platform: "ios-on-mac" as const});
-  const saveRun = async (payload: FrameworkRun) => TestRunModel.collection.insertOne({runId: payload.result.runId,
-    requestId: payload.requestId, routineId: payload.routineId, platform: payload.platform, startedAt: new Date(payload.startedAt),
-    payload, payloadSha256: requestInputDigest(payload), summaryProjection: createFrameworkRunSummaryProjection(payload, requestInputDigest(payload)), outcome: "pass", uploadsComplete: true});
+  const saveRun = async (payload: FrameworkRun) => {
+    const payloadSha256 = requestInputDigest(payload), detail = await writeRunEnvelope(payload, payloadSha256, [], true);
+    return TestRunModel.collection.insertOne({runId: payload.result.runId, requestId: payload.requestId,
+      routineId: payload.routineId, platform: payload.platform, startedAt: new Date(payload.startedAt), detail,
+      resultSchemaVersion: 1, build: payload.build, definitionRevision: payload.definitionRevision, payloadSha256,
+      summaryProjection: createFrameworkRunSummaryProjection(payload, payloadSha256), outcome: "pass", uploadsComplete: true});
+  };
   const saveSuite = async (payload: TestSuite) => TestSuiteModel.collection.insertOne({suiteId: payload.suiteId, payload,
     startedAt: new Date(payload.startedAt)});
 
@@ -277,7 +285,7 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
       const summaryProjection = createFrameworkRunSummaryProjection(result, payloadSha256);
       if (index === 2) summaryProjection.summarySha256 = "f".repeat(64);
       frozenRows.push({runId: result.requestId, requestId: result.requestId, startedAt: new Date(at),
-        payload: result, payloadSha256, summaryProjection, uploadsComplete: index !== 3});
+        resultSchemaVersion: 1, build: result.build, definitionRevision: result.definitionRevision, payloadSha256, summaryProjection, uploadsComplete: index !== 3});
     }
     await TestSuiteModel.collection.insertMany(suites);
     await TestRequestModel.collection.insertMany(requests);
@@ -336,20 +344,20 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     expect((await history.list()).entries[0]).toMatchObject({kind: "suite", outcome: "failed", passed: 1, skipped: 1, lanes: [{hostId: "mini", laneId: "mac"}]});
   });
 
-  test("missing native suite projections use the shared frozen reader, while corrupt projections stay unavailable", async () => {
+  test("missing or corrupt native projections stay unavailable without inventing or backfilling detail", async () => {
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRequestModel.deleteMany({}); await TestRerunModel.deleteMany({});
     const payload = plan("native-missing-summary", [member("native-one"), member("native-two")]);
     await saveSuite(payload); await saveRun(run("native-one")); await saveRun(run("native-two"));
     await TestRunModel.collection.updateOne({runId: "native-one"}, {$unset: {summaryProjection: ""}});
     const page = await new TestHistoryService().list();
     expect(page.entries).toHaveLength(1);
-    expect(page.entries[0]).toMatchObject({kind: "suite", outcome: "running", passed: 2});
-    expect((await TestRunModel.collection.findOne({runId: "native-one"}))?.summaryProjection).toBeDefined();
+    expect(page.entries[0]).toMatchObject({kind: "unavailable", id: payload.suiteId});
+    expect((await TestRunModel.collection.findOne({runId: "native-one"}))?.summaryProjection).toBeUndefined();
     await TestRunModel.collection.updateOne({runId: "native-one"}, {$set: {"summaryProjection.summarySha256": "f".repeat(64)}});
     expect((await new TestHistoryService().list()).entries[0]).toMatchObject({kind: "unavailable", id: payload.suiteId});
   });
 
-  test("standalone missing and enriched projections retain the remaining page deadline", async () => {
+  test("standalone summaries avoid detail reads and reject missing compact projections", async () => {
     const payload = run("deadline-run"), payloadSha256 = requestInputDigest(payload);
     let now = Date.parse(at);
     const clock = spyOn(Date, "now").mockImplementation(() => now);
@@ -370,8 +378,8 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
           return [[{historyKind: "run", historyId: payload.requestId, historyStartedAt: new Date(at), requestId: payload.requestId,
             payloadSha256, uploadsComplete: true, ...(enrichment ? {summaryProjection: projection} : {})}], []];
         });
-        expect((await service.list()).entries[0]).toMatchObject({kind: "run", outcome: "pass"});
-        expect(budgets).toEqual([1000, 800]);
+        expect((await service.list()).entries[0]).toMatchObject(enrichment ? {kind: "run", outcome: "pass"} : {kind: "unavailable"});
+        expect(budgets).toEqual([]);
       }
     } finally {clock.mockRestore(); find.mockRestore(); update.mockRestore();}
   });
@@ -685,7 +693,7 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
       payload.finishedAt = new Date(base - index * 1000 + 100).toISOString();
       payload.result.timing.startedAt = payload.startedAt; payload.result.finishedAt = payload.finishedAt;
       return {runId: payload.requestId, requestId: payload.requestId, routineId: payload.routineId, platform: payload.platform,
-        startedAt: new Date(payload.startedAt), payload, outcome: "pass", uploadsComplete: true};
+        startedAt: new Date(payload.startedAt), resultSchemaVersion: 1, build: payload.build, outcome: "pass", uploadsComplete: true};
     });
     await TestRunModel.collection.insertMany(runs);
     await TestSuiteModel.collection.insertMany(Array.from({length: 500}, (_, index) => {
@@ -732,6 +740,23 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     } finally {aggregate.mockRestore(); clock.mockRestore();}
   });
 
+  test("linked history rows use the accepted original root for canonical follow-up lookup", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({});
+    const childId = "follow-up-linked-child", rootKey = rerunRootKey({suiteId: "failed-suite"}, "failed-member");
+    await saveRun(run(childId));
+    await TestRerunModel.collection.insertOne({rerunId: "follow-up-linked", state: "accepted", plan: {
+      parent: {suiteId: "failed-suite"}, members: [{requestId: childId, memberId: "failed-member", rootKey}],
+    }});
+    const enabled = process.env.ROUTINE_CASE_API_ENABLED; process.env.ROUTINE_CASE_API_ENABLED = "true";
+    const calls: string[][] = [], read = spyOn(routineCaseRepository, 'byRoots').mockImplementation(async keys => {calls.push(keys); return []});
+    try {
+      const history = new TestHistoryService(undefined, undefined, {async latestAttempts(){return new Map()}});
+      const page = await history.list({includeReruns: "true"});
+      expect(page.entries[0]).toMatchObject({kind: "run", requestId: childId, rerun: {rootKey}});
+      expect(calls).toEqual([[rootKey]]);
+    } finally {read.mockRestore(); if(enabled===undefined)delete process.env.ROUTINE_CASE_API_ENABLED; else process.env.ROUTINE_CASE_API_ENABLED=enabled;}
+  });
+
   test("native history exhausts a short page without scanning retained legacy results", async () => {
     await TestRunModel.deleteMany({});
     await TestSuiteModel.deleteMany({});
@@ -776,4 +801,73 @@ test("optional PR metadata failure and timeout preserve readable entries", async
   for (const error of [new Error("lookup failed"), Object.assign(new Error("timed out"), {code: 50})]) {
     expect(await enrichHistoryPrBuilds(entries, async () => {throw error;}, new Map([[suite.suiteId, suite]]))).toBe(entries);
   }
+});
+
+test('history batches latest linked status projections and preserves original suite failures',async()=>{
+ const suite={suiteId:'comparison-suite',channel:'dev',trigger:'nightly',startedAt:'2026-10-12T10:00:00Z',outcome:'failed',passed:1,build:{headSha:'a'.repeat(40)},members:[
+  {memberId:'first',routineId:'one',platform:'android',status:'failed',publicationComplete:true},
+  {memberId:'second',routineId:'two',platform:'android',status:'pass',publicationComplete:true}]}
+ let calls=0
+ const service=new TestHistoryService(summaryReader(async()=>suite),async()=>[[],[{historyKind:'suite',historyId:suite.suiteId,historyStartedAt:new Date(suite.startedAt),rerunCount:1}]],{async latestAttempts(ids){calls++;expect(ids).toEqual([{parent:{suiteId:suite.suiteId},memberId:'first'},{parent:{suiteId:suite.suiteId},memberId:'second'}]);const {rerunRootKey}=await import('./test-rerun.service');return new Map([[rerunRootKey({suiteId:suite.suiteId},'first'),{attemptId:'latest',attemptNumber:1,parent:{suiteId:suite.suiteId},memberId:'first',status:'pass',publicationComplete:true}]])}})
+ expect((await service.list()).entries[0]).toMatchObject({outcome:'failed',failedCount:1,comparison:{original:{failed:1,total:2},latest:{failed:0,total:2,pending:0}}});expect(calls).toBe(1)
+})
+
+
+test('accepted suite reruns are visible before any child is admitted', async () => {
+  const suite = {suiteId: 'waiting-suite', channel: 'dev', trigger: 'nightly', startedAt: '2026-10-12T10:00:00Z',
+    outcome: 'failed', passed: 0, build: {headSha: 'a'.repeat(40)}, members: [
+      {memberId: 'original', routineId: 'one', platform: 'android', status: 'failed', publicationComplete: true}]};
+  const service = new TestHistoryService(summaryReader(async () => suite), async () => [[], [{historyKind: 'suite',
+    historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt), rerunCount: 0}]], {async latestAttempts(ids) {
+    expect(ids).toEqual([{parent: {suiteId: suite.suiteId}, memberId: 'original'}]);
+    const {rerunRootKey} = await import('./test-rerun.service');
+    return new Map([[rerunRootKey({suiteId: suite.suiteId}, 'original'), {attemptId: 'accepted', attemptNumber: 1,
+      parent: {suiteId: suite.suiteId}, memberId: 'original', status: 'queued', publicationComplete: false}]]);
+  }});
+  expect((await service.list()).entries[0]).toMatchObject({rerunCount: 0, outcome: 'failed',
+    comparison: {original: {failed: 1, total: 1}, latest: {failed: 0, total: 1, pending: 1}}});
+});
+
+test('accepted standalone reruns are visible before any child is admitted', async () => {
+  const payload = frameworkRunSchema.parse({schemaVersion: 1, routineSource: testRoutineSource('b'.repeat(40)),
+    frameworkBinding: testFrameworkBinding(), hostId: 'mini', requestId: 'original', routineId: 'notes',
+    definitionRevision: 'b'.repeat(40), platform: 'ios-on-mac', laneId: 'mac',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'a'.repeat(40)},
+    startedAt: '2026-10-03T19:00:00Z', finishedAt: '2026-10-03T19:01:00Z', assets: [],
+    result: {runId: 'original', finishedAt: '2026-10-03T19:01:00Z', setup: {status: 'passed'}, test: 'passed',
+      steps: [{id: 'required', status: 'passed', durationMs: 1}],
+      teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [],
+      timing: {startedAt: '2026-10-03T19:00:00Z', setupMs: 1, testMs: 1, teardownMs: 1}}});
+  const digest = requestInputDigest(payload);
+  const service = new TestHistoryService(summaryReader(async () => {throw new Error('no suite');}), async () => [[{
+    historyKind: 'run', historyId: 'original', historyStartedAt: new Date(payload.startedAt), requestId: 'original',
+    payloadSha256: digest, uploadsComplete: true, rerunCount: 0,
+    summaryProjection: createFrameworkRunSummaryProjection(payload, digest)}], []], {async latestAttempts(ids) {
+    expect(ids).toEqual([{parent: {requestId: 'original'}, memberId: 'original'}]);
+    const {rerunRootKey} = await import('./test-rerun.service');
+    return new Map([[rerunRootKey({requestId: 'original'}, 'original'), {attemptId: 'accepted', attemptNumber: 1,
+      parent: {requestId: 'original'}, memberId: 'original', status: 'queued', publicationComplete: false}]]);
+  }});
+  expect((await service.list()).entries[0]).toMatchObject({kind: 'run', rerunCount: 0, outcome: 'pass', latest: {status: 'queued'}});
+});
+
+test('suite history projects original evidence failure and incomplete coverage without reruns', async () => {
+  const suite = {suiteId: 'evidence-suite', channel: 'dev', trigger: 'nightly', startedAt: '2026-10-12T10:00:00Z',
+    outcome: 'failed', passed: 0, build: {headSha: 'a'.repeat(40)}, members: [
+      {memberId: 'evidence', routineId: 'one', platform: 'android', status: 'pass', evidenceStatus: 'failed', publicationComplete: false},
+      {memberId: 'publishing', routineId: 'two', platform: 'android', status: 'pass', publicationComplete: false},
+      {memberId: 'cancelled', routineId: 'three', platform: 'android', status: 'cancelled', publicationComplete: false}]};
+  const service = new TestHistoryService(summaryReader(async () => suite), async () => [[], [{historyKind: 'suite',
+    historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt), rerunCount: 0}]], {async latestAttempts() {return new Map()}});
+  expect((await service.list()).entries[0]).toMatchObject({rerunCount: 0, outcome: 'failed', failedCount: 1,
+    comparison: {original: {failed: 1, total: 3, skipped: 0, pending: 1, incomplete: 1}}});
+  expect((await service.list()).entries[0]).not.toHaveProperty('comparison.latest');
+});
+
+
+test('history latest comparisons share the original page deadline and preserve originals on timeout',async()=>{
+ const suite={suiteId:'deadline-suite',channel:'dev',trigger:'nightly',startedAt:'2026-10-12T10:00:00Z',outcome:'failed',passed:0,build:{headSha:'a'.repeat(40)},members:[{memberId:'one',routineId:'one',platform:'android',status:'failed',publicationComplete:true}]};
+ let pageDeadline=0;
+ const service=new TestHistoryService({async summaries(_ids,deadline){expect(deadline).toBe(pageDeadline);return new Map([[suite.suiteId,suite as any]])}},async(_query,deadline)=>{pageDeadline=deadline;return[[],[{historyKind:'suite',historyId:suite.suiteId,historyStartedAt:new Date(suite.startedAt)}]]},{async latestAttempts(_ids,deadline){expect(deadline).toBe(pageDeadline);throw new TestRunError(503,'Rerun summary query timed out')}});
+ expect((await service.list()).entries[0]).toMatchObject({outcome:'failed',failedCount:1,latestUnavailable:true,comparison:{original:{failed:1,total:1}}});
 });

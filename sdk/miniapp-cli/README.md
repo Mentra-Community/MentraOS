@@ -43,7 +43,7 @@ What it does:
 
 Default `port` is `3000`; override the starting point with a `"port": <n>` field in `miniapp.json`. If that port or its sidecar neighbor is busy, `dev` scans upward until it finds a free adjacent pair.
 
-**On the phone:** open the Mentra App → **Settings → Developer settings → Mini App Development → Scan Mini App QR Code**. Phone and laptop must be on the same Wi-Fi, unless you use `--usb` (below).
+**On the phone:** open the Mentra App → **Settings → Miniapp Developer Settings → Scan Miniapp QR Code**. Phone and laptop must be on the same Wi-Fi, unless you use `--usb` (below).
 
 `dev` is live and temporary. Keep the CLI and computer running because the
 Mentra App loads the runtime bundle from that LAN server. Dev miniapps are keyed
@@ -107,7 +107,9 @@ Flow:
 
 `Ctrl+C` to stop the server.
 
-**On the phone:** the Mentra App's QR scanner branches on `miniapp://release` and uses the dev composer to download + install the bundle. The miniapp lands in `lmas/<package>/<version>/` and behaves like any installed local miniapp — runs offline, persists across restarts, no laptop required after install.
+**On the phone:** the Mentra App's QR scanner branches on `miniapp://release` and uses the dev composer to download + install the bundle, then opens the miniapp. The miniapp lands in `lmas/<package>/<version>/` and behaves like any installed local miniapp — runs offline, persists across restarts, no laptop required after install.
+
+A release install is a fixed snapshot, like a React Native release build: each change needs another `release` and another scan. Use [`dev`](#dev) while developing; it reloads every saved change without a rescan.
 
 > **Why "release" and not "install":** `install` collides with package managers (`bun run install` is reserved). Naming the action after the artifact you're producing avoids that collision and matches Android's `installRelease` mental model.
 

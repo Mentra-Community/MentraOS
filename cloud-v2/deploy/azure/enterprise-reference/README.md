@@ -13,26 +13,26 @@ for the workspace hostname, and the served deployment manifest. The Runtime
 profile does not start Redis, UDP, cloud audio, camera, Cloudflare, speech,
 maps, Store, or reporting dependencies.
 
-The Acme demo deployment differs in one way, for the Enterprise Demo miniapp it
-adds from [demo-miniapps.json](./demo-miniapps.json). With `cloudSpeechAndPhotos`
+The Acme demo stacks differ in one way, for the Enterprise Demo miniapp they
+add from [demo-miniapps.json](./demo-miniapps.json). With `cloudSpeechAndPhotos`
 on, Runtime also runs speech-to-text (Soniox), text-to-speech (ElevenLabs) and
 glasses photos, stored on the replica, with a Redis sidecar. Speech and questions
 then leave the stack for Soniox, ElevenLabs and the miniapp's hosted backend. The
 installer doesn't offer this. Its keys are the `soniox-api-key` and
 `elevenlabs-api-key` secrets in the stack's Key Vault, copied from Doppler
 `cloud-v2/dev`. As with the Graph client secret below, CI can't grant Key Vault
-access, so an Owner stores them and runs `access.bicep` once:
+access, so an Owner stores them and runs `access.bicep` once per stack:
 
 ```bash
 for pair in SONIOX_API_KEY:soniox-api-key ELEVENLABS_API_KEY:elevenlabs-api-key; do
   # --plain ends with a newline that must not reach the key.
   printf %s "$(doppler secrets get "${pair%%:*}" --project cloud-v2 --config dev --plain)" |
-    az keyvault secret set --vault-name kv-mentra-enterprise-ref --name "${pair#*:}" --file /dev/stdin --output none
+    az keyvault secret set --vault-name <key-vault> --name "${pair#*:}" --file /dev/stdin --output none
 done
-az deployment group create --resource-group rg-mentra-enterprise-reference \
+az deployment group create --resource-group <resource-group> \
   --template-file cloud-v2/deploy/azure/enterprise-reference/access.bicep \
-  --parameters keyVaultName=kv-mentra-enterprise-ref cloudSpeechAndPhotos=true \
-    teamsGraphClientId=<ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID>
+  --parameters keyVaultName=<key-vault> coreIdentityName=<core-identity> runtimeIdentityName=<runtime-identity> \
+    cloudSpeechAndPhotos=true teamsGraphClientId=<ENTERPRISE_DEMO_TEAMS_GRAPH_CLIENT_ID>
 ```
 
 Core's report API is available independently of Runtime and consumer telemetry.
@@ -42,7 +42,8 @@ for existing admin org API-key authorization and the attachment-storage lifecycl
 The Enterprise Demo manifest enables the built-in Give Feedback miniapp alongside
 Settings. Reports go to the selected Enterprise Core, including phone logs and
 screenshots for bug reports. The confirmation provides a copyable report ID.
-Re-select the workspace to refresh a previously cached manifest; Settings → Give
+The Mentra App picks up manifest changes within 15 minutes, or when it next
+opens; Settings → Give
 Feedback also opens the same form.
 
 ## Reference identities
@@ -51,14 +52,21 @@ Feedback also opens the same form.
 - Mobile public client: `95ad08c2-7837-4ddf-933c-1fce3d6d2799`
 - Core API: `20424d9e-4b99-44e8-82c9-0ad06f08a8db`
 - Core scope: `api://20424d9e-4b99-44e8-82c9-0ad06f08a8db/mentra.session`
-- Workspace: `https://demo.acmeworkspace.com`
 
-The demo workspace is branded **Acme Industries**. The earlier
-`https://mentra.acmeworkspace.com` and `https://enterprisedev.mentraglass.com`
-remain HTTPS aliases for existing installs. All three addresses serve the same
-deployment, with discovery URLs matching the address used to enroll. The deployment ID, Core origin, Entra tenant, and existing sessions
-are preserved. `acmeworkspace.com` is also verified as an Entra sign-in domain;
-demo employee accounts still require their own assignment and Teams license.
+Two Acme demo stacks share this tenant, its Entra apps and the Teams Graph app.
+Each has its own resource group, Core, database, Key Vault and Runtime:
+
+| Workspace | Deploys | Resource group | Key Vault | Deployer |
+| --- | --- | --- | --- | --- |
+| `https://demo.acmeworkspace.com`, **Acme Industries** (the sales demo) | staging releases | `rg-mentra-enterprise-reference` | `kv-mentra-enterprise-ref` | `MentraOS Enterprise Demo GitHub Deploy` |
+| `https://demo-dev.acmeworkspace.com`, **Acme Industries (dev)** | dev releases | `rg-mentra-enterprise-demo-dev` | `kv-mentra-ent-demo-dev` | `MentraOS Enterprise Demo Dev GitHub Deploy` |
+
+For the sales demo, the earlier `https://mentra.acmeworkspace.com` and
+`https://enterprisedev.mentraglass.com` remain HTTPS aliases for existing
+installs. All three addresses serve the same deployment, with discovery URLs
+matching the address used to enroll. `acmeworkspace.com` is also verified as an
+Entra sign-in domain; demo employee accounts still require their own assignment
+and Teams license. An employee can enroll in either workspace.
 
 The Mobile enterprise application is assignment-required. Its public-client
 redirects cover iOS, the Mentra-signed Android APK, and Google Play signing.
@@ -87,31 +95,48 @@ Application Administrator or Cloud Application Administrator, then records the
 resulting IDs with `setup.sh configure-entra --core-client-id ... --mobile-client-id ...`
 (see [entra-setup.md](./entra-setup.md#guided-setup)).
 
-## Coordinated reference deployment
+## Coordinated demo deployments
 
-The `dev` coordinated release:
+Each coordinated release deploys its channel's demo stack
+(`.github/workflows/private-deployment.yml`): `dev` releases deploy
+demo-dev, and `staging` releases deploy the sales demo. The release:
 
 1. builds `ghcr.io/mentra-community/mentra-cloud` from the exact release commit;
 2. signs build provenance and an SPDX SBOM;
-3. imports that digest into the reference ACR;
+3. imports that digest into the stack's ACR;
 4. deploys Core and Runtime from the same imported digest;
 5. verifies Core health/readiness/JWKS and Runtime health/readiness/version/
    manifest/legal/branding/auth boundaries; and
 6. records both revisions and the immutable digest in release evidence.
 
-Mentra Cloud's existing deployment job is unchanged. The reference stack has no
-independent push trigger, so it cannot drift from the coordinated `dev` release.
+The channel's Private Cloud download (`dev` or `beta`) then moves to that
+release. Neither stack has an independent push trigger, so neither can drift
+from its branch's coordinated release.
+
+To hold the sales demo on its current release, for example during a week of
+sales demos, set the `ENTERPRISE_DEMO_FROZEN` repository variable to `true`
+(`gh variable set ENTERPRISE_DEMO_FROZEN --body true`). Staging releases then
+skip its deployment, and the `beta` download stays on the last release it
+verified. Dev releases still deploy demo-dev. Delete the variable to resume;
+the next `staging` push deploys that release.
 
 The `ghcr.io/mentra-community/mentra-cloud` package is public, so customer registries import
 releases anonymously; no registry credential is needed.
 
 Signing keys, the refresh pepper, the Graph client secret and, with admin
-portal sign-in on, its client secret (`entra-browser-client-secret`) live in the
-stack's Key Vault (`kv-mentra-enterprise-ref`), which `bootstrap.bicep` created
-once with Owner rights, together with `access.bicep`'s per-secret grants. Each
-Container App reads only its own secrets with its own identity, so the
-Contributor-only CI deployment passes just the vault name. Customer
-deployments get their own vault the same way.
+portal sign-in on, its client secret (`entra-browser-client-secret`) live in
+each stack's Key Vault, which `bootstrap.bicep` created once with Owner rights,
+together with `access.bicep`'s per-secret grants. Each Container App reads only
+its own secrets with its own identity, so the CI deployment passes just the
+vault name. Customer deployments get their own vault the same way.
+
+Each stack's deployer is federated to its branch only, and is Contributor on
+its resource group plus **Key Vault Secrets User** on that vault's
+`mentra-admin-key`, the operator key CI uses to check Core's admin report
+route. The workflow reads no repository secrets. Azure login uses the
+`ENTERPRISE_DEMO_AZURE_CLIENT_ID` (sales demo) or
+`ENTERPRISE_DEMO_DEV_AZURE_CLIENT_ID` (demo-dev) and
+`ENTERPRISE_DEMO_AZURE_SUBSCRIPTION_ID` repository variables.
 
 Core also serves the admin portal on its own host. With `adminPortalSignIn` on,
 Organization Admins sign in there with their Entra account; guided setup turns
@@ -160,16 +185,16 @@ See [Graph consent and Teams access policy](./entra-setup.md#meeting-creation).
 Leaving these inputs empty preserves join-only server behavior; creation returns
 a configuration error.
 
-The reference CI deployment reads GitHub variables
-`ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID` and `ENTERPRISE_DEV_TEAMS_GRAPH_ORGANIZER_ID`;
-its client secret is `teams-graph-client-secret-<client ID>` in the stack's Key
+Both demo stacks' CI deployments read GitHub variables
+`ENTERPRISE_DEMO_TEAMS_GRAPH_CLIENT_ID` and `ENTERPRISE_DEMO_TEAMS_GRAPH_ORGANIZER_ID`;
+the client secret is `teams-graph-client-secret-<client ID>` in each stack's Key
 Vault. Only Runtime references it; neither Core nor the deployment manifest receives it.
-CI deploys with Contributor only, so it cannot grant or revoke Key Vault access.
-To switch the reference stack to another Graph app, an Owner stores the new
-app's secret, runs `scripts/deploy.sh` once with the new client ID (it grants
-Runtime the new secret and, once the switch is live, revokes the old one), and
-then updates `ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID`. Until then CI's deployment
-fails because Runtime cannot read the new app's secret.
+CI cannot grant or revoke Key Vault access. To switch the demos to another Graph
+app, an Owner stores the new app's secret in both vaults, runs
+`scripts/deploy.sh` once per stack with the new client ID (it grants Runtime the
+new secret and, once the switch is live, revokes the old one), and then updates
+`ENTERPRISE_DEMO_TEAMS_GRAPH_CLIENT_ID`. Until then a stack's CI deployment fails
+because its Runtime cannot read the new app's secret.
 
 ### Custom hostname
 
@@ -232,7 +257,7 @@ Treat this as a documented tradeoff, not a production network posture; see
 ## Smoke test
 
 ```bash
-export MENTRA_WORKSPACE=https://demo.acmeworkspace.com
+export MENTRA_WORKSPACE=https://demo-dev.acmeworkspace.com
 cloud-v2/deploy/azure/enterprise-reference/scripts/smoke-test.sh "$MENTRA_WORKSPACE"
 ```
 
@@ -246,13 +271,17 @@ literal zero-internet air-gapped profile.
 
 ## Mentra Call
 
-The reference manifest (`mentra-deployment.json`) pins the Mentra Call version. Its
-ZIP is included in the Runtime image under `miniapps/` and is byte-identical to the Mentra App's bundled ZIP.
-The coordinated deployment passes that managed list to Bicep and verifies the
-served bundle's SHA-256. `scripts/sync-miniapp.mjs` updates only the Mentra App
-copy and generated bundle list. For each Call update, mirror the same ZIP to
+The reference manifest (`mentra-deployment.json`) pins its own Mentra Call build,
+independent of the Call that the Mentra App bundles, so its private-workspace
+behavior changes only when the pin does. The pinned ZIP is included in the Runtime
+image under `miniapps/`, and the manifest's `version`, `bundleUrl`, and SHA-256 must
+match that ZIP. The Runtime test checks the SHA-256, the file name, and the package
+and version in the ZIP's `miniapp.json`. The coordinated deployment passes the
+managed list to Bicep and verifies the served bundle's SHA-256. The reference adopts
+a newer Call deliberately: put the new ZIP in
 `cloud-v2/deploy/azure/enterprise-reference/miniapps/` and update the version,
-`bundleUrl`, and SHA-256 pin in `mentra-deployment.json`.
+`bundleUrl`, and SHA-256 together. `scripts/sync-miniapp.mjs` updates only the
+Mentra App copy and generated bundle list, never the reference.
 
 Use the matching Mentra App native build from this change, then re-select the
 workspace to refresh an already cached deployment manifest. Call uses the selected

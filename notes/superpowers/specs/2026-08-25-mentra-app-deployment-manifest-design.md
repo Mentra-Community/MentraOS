@@ -874,9 +874,10 @@ Rules:
   bundled miniapps are installed and before local miniapps autostart. That
   path runs from `mantle.init()` on every app boot, and a deployment change
   tears Mantle down and re-enters the same boot route, so activation is
-  covered by the same call. A customer manifest change is picked up when the
-  workspace is selected again; background manifest refresh is explicitly later
-  work.
+  covered by the same call. Each launch re-reads the selected workspace's
+  manifest (`mobile/src/services/deployment/refresh.ts`); a running session
+  applies its miniapp catalog through `engine.updateMiniappPolicy` and the same
+  sync, and the rest at the next engine start.
 - A non-approved system miniapp is not installed, registered, shown in the
   system miniapp catalog, autostarted, or launched from a primary system-miniapp
   surface even though its code may exist in the shared binary. Comprehensive

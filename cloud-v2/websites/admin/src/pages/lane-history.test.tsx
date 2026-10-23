@@ -1,4 +1,4 @@
-import {expect, test} from "bun:test";
+import {afterEach, beforeEach, expect, spyOn, test} from "bun:test";
 import {renderToStaticMarkup} from "react-dom/server";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
 import {LaneHistoryPage} from "./lane-history";
@@ -21,8 +21,12 @@ function fixture() {
   client.setQueryData(["lane-overview"], {hosts: [host, {...host, hostId: "foreign-host"}], freshForMs: 120000});
   client.setQueryData(["lane-restoration", "mini"], {hosts: [host], freshForMs: 120000});
   client.setQueryData(["lane-runs", "mini", "mac"], {pages: [{runs: [run("first")], nextCursor: "next"}, {runs: [run("second")], nextCursor: "third"}], pageParams: [undefined, "next"]});
-  return {client, render: () => renderToStaticMarkup(<QueryClientProvider client={client}><LaneHistoryPage selection={selection} now={now}/></QueryClientProvider>)};
+  return {client, render: () => renderToStaticMarkup(<QueryClientProvider client={client}><LaneHistoryPage selection={selection} /></QueryClientProvider>)};
 }
+let clock: ReturnType<typeof spyOn<typeof Date, 'now'>>;
+beforeEach(() => {clock = spyOn(Date, 'now').mockReturnValue(now);});
+afterEach(() => {clock.mockRestore();});
+
 test("lane links retain exact host and lane identities and reject incomplete or duplicate scope", () => {
   expect(readLaneSelection(new URL(laneHistoryHref("host:one", "lane:two"), "https://admin.example").search)).toEqual({hostId: "host:one", laneId: "lane:two"});
   for (const search of ["?systemHealth=1&laneId=mac", "?systemHealth=1&hostId=mini", "?systemHealth=1&hostId=mini&laneId=mac&laneId=android", "?hostId=mini&laneId=mac", "?systemHealth=1&hostId=mini&laneId="]) expect(readLaneSelection(search)).toBeNull();
@@ -36,7 +40,7 @@ test("lane history shows only the selected controller/lane, paginated runs and r
 });
 test("run pagination always requests both host and lane and preserves its cursor", async () => {
   const {client} = fixture();
-  renderToStaticMarkup(<QueryClientProvider client={client}><LaneHistoryPage selection={selection} now={now}/></QueryClientProvider>);
+  renderToStaticMarkup(<QueryClientProvider client={client}><LaneHistoryPage selection={selection} /></QueryClientProvider>);
   const query = client.getQueryCache().find({queryKey: ["lane-runs", "mini", "mac"]})!;
   const original = globalThis.fetch; let url = "";
   globalThis.fetch = (async input => {url = String(input); return Response.json({runs: [], nextCursor: null});}) as typeof fetch;
@@ -78,13 +82,13 @@ test("cached refresh failures keep history but current lane status becomes unkno
 });
 test("an unknown lane cannot display another lane's restoration history", () => {
   const {client} = fixture();
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LaneHistoryPage selection={{hostId: "mini", laneId: "missing"}} now={now}/></QueryClientProvider>);
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LaneHistoryPage selection={{hostId: "mini", laneId: "missing"}} /></QueryClientProvider>);
   expect(html).toContain("No controller report is available for this lane"); expect(html).not.toContain("resume:mac"); client.clear();
 });
 
 test("a fresh lane visit shows restoration loading until controller reports settle", () => {
   const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
-  const render = () => renderToStaticMarkup(<QueryClientProvider client={client}><LaneHistoryPage selection={selection} now={now}/></QueryClientProvider>);
+  const render = () => renderToStaticMarkup(<QueryClientProvider client={client}><LaneHistoryPage selection={selection} /></QueryClientProvider>);
   const loading = render();
   expect(loading).toContain("Loading restoration history");
   expect(loading).toContain('animate-spin');

@@ -7,10 +7,9 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, buttonVariants, Input, Label, Spinner } from "@mentra/workspace-ui";
+import { Button, buttonVariants, Input, Label, Spinner, type NavGroup } from "@mentra/workspace-ui";
 import { Building2, Clock, Fingerprint, Globe2, Loader2, Mail, Plus, ShieldCheck, ToggleLeft, ToggleRight, Users } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { NavGroup } from "@/components/app-shell";
 import { PortalShell } from "@/components/portal-shell";
 import { api, type EnterpriseOrg, type PortalMe, type PortalUser } from "@/lib/api";
 import { enterprisePath, type EnterprisePage } from "@/lib/routes";

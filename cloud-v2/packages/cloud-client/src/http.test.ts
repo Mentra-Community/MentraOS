@@ -12,6 +12,62 @@ const logger = {
 };
 
 describe("createHttpClient", () => {
+  test("retains only fixed native failure categories in warnings and still rejects the report POST once", async () => {
+    const codes = ["DNS", "CONNECT", "TIMEOUT", "TLS", "SOCKET", "INTERRUPTED", "IO", "OTHER"];
+    for (const category of codes) {
+      const warnings: Array<{ message: string; meta?: object }> = [];
+      let calls = 0;
+      const http = createHttpClient({
+        baseUrl: "https://private.example",
+        logger: { ...logger, warn: (message, meta) => warnings.push({ message, meta }) },
+        fetch: async () => {
+          calls += 1;
+          throw Object.assign(new Error("Bearer PRIVATE_TOKEN https://private.example SSID PRIVATE_SSID"), {
+            code: `E_NATIVE_HTTP_${category}`,
+            nativeStackAndroid: "PRIVATE_STACK",
+            userInfo: { url: "PRIVATE_URL" },
+          });
+        },
+      });
+      const error = await http.post("/api/client/reports", { privateBody: "PRIVATE_PAYLOAD" }).catch((error) => error);
+      expect(error).toBeInstanceOf(HttpError);
+      if (!(error instanceof HttpError)) throw error;
+      expect(error.code).toBe("NETWORK_ERROR");
+      expect(error.message).toBe("Network request failed: POST /api/client/reports");
+      expect(calls).toBe(1);
+      expect(warnings).toEqual([
+        {
+          message: "http network error",
+          meta: { method: "POST", path: "/api/client/reports", attempt: 0, nativeCode: `E_NATIVE_HTTP_${category}` },
+        },
+      ]);
+      expect(JSON.stringify(warnings)).not.toContain("PRIVATE_");
+      expect(JSON.stringify(error)).not.toContain("PRIVATE_");
+    }
+  });
+
+  test("does not log arbitrary or malformed transport error codes", async () => {
+    for (const code of [
+      "Bearer PRIVATE_TOKEN",
+      "E_NATIVE_HTTP_DNS PRIVATE_TOKEN",
+      "E_NATIVE_HTTP",
+      123,
+      null,
+      { secret: "PRIVATE_TOKEN" },
+    ]) {
+      const warnings: object[] = [];
+      const http = createHttpClient({
+        baseUrl: "https://private.example",
+        logger: { ...logger, warn: (_message, meta) => warnings.push(meta!) },
+        fetch: async () => {
+          throw Object.assign(new Error("PRIVATE_MESSAGE"), { code });
+        },
+      });
+      await expect(http.post("/api/client/reports", {})).rejects.toBeInstanceOf(HttpError);
+      expect(warnings).toEqual([{ method: "POST", path: "/api/client/reports", attempt: 0 }]);
+    }
+  });
+
   test("a pre-aborted request skips authentication and fetch for JSON and form requests", async () => {
     const controller = new AbortController();
     const reason = new Error("collection deadline reached");
@@ -399,7 +455,7 @@ describe("createHttpClient", () => {
       new Response(
         JSON.stringify({
           code: "NOT_FOUND",
-          message: "bundle missing",
+          message: "report missing",
         }),
         { status: 404, headers: { "Content-Type": "application/json" } },
       )) as unknown as typeof fetch;
@@ -407,7 +463,7 @@ describe("createHttpClient", () => {
     try {
       const http = createHttpClient({ baseUrl: "https://core.test", logger });
       try {
-        await http.get("/api/client/miniapps/demo/bundle");
+        await http.get("/api/client/reports/rep_demo");
         throw new Error("expected request to fail");
       } catch (err) {
         expect(err).toBeInstanceOf(HttpError);
@@ -415,11 +471,48 @@ describe("createHttpClient", () => {
         expect(httpError.status).toBe(404);
         expect(httpError.code).toBe("NOT_FOUND");
         expect(httpError.message).toBe(
-          "HTTP 404 on GET /api/client/miniapps/demo/bundle: bundle missing",
+          "HTTP 404 on GET /api/client/reports/rep_demo: report missing",
         );
       }
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+  describe("Retry-After on error responses", () => {
+    async function errorFor(status: number, headers: Record<string, string>): Promise<HttpError> {
+      const http = createHttpClient({
+        baseUrl: "https://core.test",
+        logger,
+        fetch: async () => new Response(JSON.stringify({ error: "slow_down" }), { status, headers }),
+      });
+      const error = await http.get("/api/client/anything", { idempotent: false }).catch((e) => e);
+      expect(error).toBeInstanceOf(HttpError);
+      return error as HttpError;
+    }
+
+    test("reads delta-seconds into HttpError.retryAfterSeconds", async () => {
+      expect((await errorFor(503, { "Retry-After": "30" })).retryAfterSeconds).toBe(30);
+      expect((await errorFor(429, { "Retry-After": "0" })).retryAfterSeconds).toBe(0);
+      expect((await errorFor(429, { "Retry-After": " 15 " })).retryAfterSeconds).toBe(15);
+    });
+
+    test("leaves retryAfterSeconds undefined when absent, an HTTP-date, or garbage", async () => {
+      expect((await errorFor(503, {})).retryAfterSeconds).toBeUndefined();
+      expect((await errorFor(503, { "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT" })).retryAfterSeconds).toBeUndefined();
+      for (const value of ["", "soon", "-1", "+5", "1.5", "1e3", "99999999999999999999"]) {
+        expect((await errorFor(503, { "Retry-After": value })).retryAfterSeconds).toBeUndefined();
+      }
+    });
+
+    test("keeps status and code mapping unchanged", async () => {
+      const error = await errorFor(503, { "Retry-After": "30" });
+      expect(error.status).toBe(503);
+      expect(error.code).toBe("slow_down");
+    });
+
+    test("a plain HttpError has no retryAfterSeconds and accepts it as an optional fourth argument", () => {
+      expect(new HttpError("x", 503, "code").retryAfterSeconds).toBeUndefined();
+      expect(new HttpError("x", 503, "code", 9).retryAfterSeconds).toBe(9);
+    });
   });
 });

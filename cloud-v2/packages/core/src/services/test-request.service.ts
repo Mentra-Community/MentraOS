@@ -1,4 +1,4 @@
-import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
+import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
 import {TestRunError} from "./test-result-error";
 import {testWriteConcern} from "../models/test-write-concern";
 import {createHash} from "node:crypto";
@@ -6,8 +6,22 @@ import {TestRequestModel} from "../models/test-request.model";
 import {z} from "zod";
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
 import {RoutineDefinitionModel} from '../models/routine-definition.model';
-import {routineDispatchIntentSchema, preparationStatusSchema, preparationRejectionSchema, type RoutineDispatchIntent} from '../types/routine-dispatch.types';
+import {routineDispatchIntentSchema, preparationStatusSchema, preparationRejectionSchema, type RoutineDispatchIntent, type PreparationFrameworkEffect} from '../types/routine-dispatch.types';
 import {hostRequestDeliveryFilter, hostCancellationDeliveryFilter} from './test-request-activity';
+import {fleetExclusiveDeliverySchema, type FleetExclusiveReservation, type FleetExclusiveExecutionBinding, type FleetResourceAdmission} from '../types/resource-reservations.types';
+import {fleetResourceExecutionBinding, assertFleetResourceAdmission} from './fleet-resource-binding';
+import {backendConnectivityObservationMatches, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types';
+import {permissionContext} from '../types/resource-permissions.types';
+import {TestHostStateService} from './test-host-state.service';
+import {frameworkBindingSchema, frameworkVersionSchema, type FrameworkBinding} from '../types/framework-version.types';
+
+interface FleetClaimReceipts {
+  fleetSelection?: unknown;
+  fleetPreparation?: {requirements: {resources: {kind: string; capabilities: string[]}[]}};
+  fleetResourceAdmission?: FleetResourceAdmission;
+  fleetExclusiveReservation?: FleetExclusiveReservation;
+  fleetExclusiveExecutionBinding?: FleetExclusiveExecutionBinding;
+}
 
 export type RequestState = "queued" | "accepted" | "running" | "terminal";
 export interface HostAcceptance {
@@ -26,7 +40,7 @@ export const hostCancellationSchema = z.object({requestId: frameworkIdentitySche
 export type HostCancellation = z.infer<typeof hostCancellationSchema>;
 type QueueCursor = {createdAt: Date; requestId: string};
 type CancellationCursor = {requestedAt: string; requestId: string};
-export interface StoredTestRequest {
+export interface StoredTestRequest extends FleetClaimReceipts {
   requestId: string;
   inputSha256: string;
   input: unknown;
@@ -44,13 +58,13 @@ export interface StoredTestRequest {
   dispatchIntent?: RoutineDispatchIntent;
   dispatchIntentSha256?: string;
 }
-export interface StoredPreparingRequest {
+export interface StoredPreparingRequest extends FleetClaimReceipts {
   requestId: string; hostId: string; state: 'preparing' | 'terminal';
   dispatchIntent: RoutineDispatchIntent; dispatchIntentSha256: string;
   input?: never; inputSha256?: never; hostReceipt?: never; hostRejection?: never; hostCancellation?: never;
   runId?: never; cancellationAcknowledged?: never; catalogEligible?: never;
   terminalStatus?: string; createdAt?: Date;
-  preparation?: {code: string; reason: string; observedAt: string};
+  preparation?: Omit<z.infer<typeof preparationStatusSchema>, 'dispatchIntentSha256'>;
   preparationCancellation?: {requestedAt: string; reason: string};
   preparationRejection?: z.infer<typeof preparationRejectionSchema>;
 }
@@ -66,18 +80,26 @@ export interface TestRequestRepository {
   queued(hostId: string, after: QueueCursor | null, limit: number): Promise<StoredTestRequest[]>;
   cancellations(hostId: string, after: CancellationCursor | null, limit: number): Promise<StoredTestRequest[]>;
   insertPreparation?(request: StoredPreparingRequest): Promise<void>;
-  preparations?(hostId: string, limit: number): Promise<StoredPreparingRequest[]>;
-  completePreparation?(requestId: string, hostId: string, intentSha256: string, input: unknown, inputSha256: string): Promise<StoredTestRequest | null>;
+  preparations?(hostId: string, limit: number, frameworkVersion?: number): Promise<StoredPreparingRequest[]>;
+  preparationFrameworkMinimum?(hostId: string): Promise<number | null>;
+  completePreparation?(requestId: string, hostId: string, intentSha256: string, input: unknown, inputSha256: string,
+    exclusive?: {reservation: FleetExclusiveReservation; binding: FleetExclusiveExecutionBinding}, admission?: FleetResourceAdmission,
+    frameworkFence?: Record<string, unknown>): Promise<StoredTestRequest | null>;
   updatePreparation?(requestId: string, hostId: string, intentSha256: string, value: StoredPreparingRequest['preparation']): Promise<StoredPreparingRequest | null>;
   cancelPreparation?(requestId: string, intentSha256: string, value: NonNullable<StoredPreparingRequest['preparationCancellation']>): Promise<StoredPreparingRequest | null>;
   pendingDispatchCompletions?(hostId: string, limit: number): Promise<StoredTestRequest[]>;
   cancelFleet?(requestId: string, selectionSha256: string, value: {requestedAt: string; reason: string}): Promise<StoredRequest | null>;
-  rejectPreparation?(requestId: string, hostId: string, intentSha256: string, value: NonNullable<StoredPreparingRequest['preparationRejection']>): Promise<StoredPreparingRequest | null>;
+  rejectPreparation?(requestId: string, hostId: string, intentSha256: string, value: NonNullable<StoredPreparingRequest['preparationRejection']>,
+    frameworkFence?: Record<string, unknown>): Promise<StoredPreparingRequest | null>;
 }
 export class TestRequestConflict extends Error {}
+/** The same preparation changed while cached-source reconciliation was evaluating it. */
+export class PreparationRequestChanged extends TestRunError {
+  constructor(message: string) {super(409, message);}
+}
 
 /** Sort object keys before hashing: transport formatting cannot change identity. */
-export function requestInputDigest(input: unknown): string {
+export function requestInputJson(input: unknown): string {
   const canonical = (value: unknown): unknown => {
     if (value === null || typeof value === "boolean" || typeof value === "string") return value;
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -86,25 +108,40 @@ export function requestInputDigest(input: unknown): string {
       return Object.fromEntries(Object.keys(value as object).sort().map(key => [key, canonical((value as Record<string, unknown>)[key])]));
     throw new TestRequestConflict("Request input must be finite JSON");
   };
-  return createHash("sha256").update(JSON.stringify(canonical(input))).digest("hex");
+  return JSON.stringify(canonical(input));
+}
+export function requestInputDigest(input: unknown): string {
+  return createHash("sha256").update(requestInputJson(input)).digest("hex");
 }
 
 const mongoRepository: TestRequestRepository = {
   async insert(request) {await TestRequestModel.create([request], {writeConcern: testWriteConcern});},
   async get(requestId) {return await TestRequestModel.findOne({requestId}).read("primary").readConcern("majority").lean() as StoredRequest | null;},
   async insertPreparation(request) {await TestRequestModel.create([request], {writeConcern: testWriteConcern});},
-  async preparations(hostId, limit) {
-    const rows = await TestRequestModel.find({hostId, state: 'preparing'}).sort({preparationCheckedAt: 1, createdAt: 1, requestId: 1})
+  async preparations(hostId, limit, frameworkVersion = 0) {
+    const rows = await TestRequestModel.find({hostId, state: 'preparing', $or: [
+      {'dispatchIntent.minimumFrameworkVersion': {$exists: false}}, {'dispatchIntent.minimumFrameworkVersion': {$lte: frameworkVersion}},
+    ]}).sort({preparationCheckedAt: 1, createdAt: 1, requestId: 1})
       .limit(limit).read('primary').readConcern('majority').lean() as unknown as StoredPreparingRequest[];
     if (rows.length) await TestRequestModel.updateMany({hostId, state: 'preparing', requestId: {$in: rows.map(row => row.requestId)}},
       {$set: {preparationCheckedAt: new Date()}}, {writeConcern: testWriteConcern});
     return rows;
   },
-  async completePreparation(requestId, hostId, dispatchIntentSha256, input, inputSha256) {
+  async preparationFrameworkMinimum(hostId) {
+    const row = await TestRequestModel.findOne({hostId, state: 'preparing',
+      'dispatchIntent.minimumFrameworkVersion': {$exists: true}}).select({'dispatchIntent.minimumFrameworkVersion': 1, _id: 0})
+      .sort({'dispatchIntent.minimumFrameworkVersion': -1}).read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean();
+    return row ? frameworkVersionSchema.parse(row.dispatchIntent?.minimumFrameworkVersion) : null;
+  },
+  async completePreparation(requestId, hostId, dispatchIntentSha256, input, inputSha256, exclusive, admission, frameworkFence) {
     // Mongoose immutable fields stay protected for every ordinary update. This one guarded transition fills absent input once.
-    return await TestRequestModel.collection.findOneAndUpdate({requestId, hostId, dispatchIntentSha256, state: 'preparing',
-      input: {$exists: false}, inputSha256: {$exists: false}, preparationCancellation: {$exists: false}, preparationRejection: {$exists: false}, fleetCancellation: {$exists: false}},
-      {$set: {state: 'queued', input, inputSha256, updatedAt: new Date()}, $unset: {preparation: '', preparationCheckedAt: ''}},
+    const identity = {...frameworkFence, requestId, hostId, dispatchIntentSha256, state: 'preparing', input: {$exists: false}, inputSha256: {$exists: false},
+      preparationCancellation: {$exists: false}, preparationRejection: {$exists: false}, fleetCancellation: {$exists: false},
+      fleetResourceAdmission: admission ?? {$exists: false},
+      ...(exclusive ? {fleetExclusiveReservation: exclusive.reservation, fleetExclusiveExecutionBinding: {$exists: false}} : {})};
+    return await TestRequestModel.collection.findOneAndUpdate(identity,
+      {$set: {state: 'queued', input, inputSha256, ...(exclusive ? {fleetExclusiveExecutionBinding: exclusive.binding} : {}), updatedAt: new Date()},
+        $unset: {preparation: '', preparationCheckedAt: ''}},
       {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredTestRequest | null;
   },
   async updatePreparation(requestId, hostId, dispatchIntentSha256, preparation) {
@@ -116,8 +153,8 @@ const mongoRepository: TestRequestRepository = {
       {$set: {state: 'terminal', terminalStatus: 'cancelled', preparationCancellation}},
       {new: true, writeConcern: testWriteConcern}).lean() as unknown as StoredPreparingRequest | null;
   },
-  async rejectPreparation(requestId, hostId, dispatchIntentSha256, preparationRejection) {
-    return await TestRequestModel.findOneAndUpdate({requestId, hostId, dispatchIntentSha256, state: 'preparing', input: {$exists: false}},
+  async rejectPreparation(requestId, hostId, dispatchIntentSha256, preparationRejection, frameworkFence) {
+    return await TestRequestModel.findOneAndUpdate({...frameworkFence, requestId, hostId, dispatchIntentSha256, state: 'preparing', input: {$exists: false}},
       {$set: {state: 'terminal', terminalStatus: 'not-run', preparationRejection}},
       {new: true, writeConcern: testWriteConcern}).lean() as unknown as StoredPreparingRequest | null;
   },
@@ -185,7 +222,7 @@ const mongoRepository: TestRequestRepository = {
   },
 };
 
-const enrolledRequest = async (input: z.infer<typeof frameworkRequestInputSchema>) => {
+export const assertEnrolledRequest = async (input: z.infer<typeof frameworkRequestInputSchema>) => {
   const row = await RoutineDefinitionModel.findOne({routineId: input.routineId, platform: input.platform,
     definitionRevision: input.definitionRevision}).read('primary').readConcern('majority').lean();
   const permitted = input.verification ? (row?.candidateBindings ?? []).some(value =>
@@ -198,9 +235,14 @@ export class TestRequestService {
   constructor(private readonly repository: TestRequestRepository = mongoRepository,
     private readonly candidates: CandidateAuthorization = new CandidateVerificationService(),
     private readonly enrolled: ((input: z.infer<typeof frameworkRequestInputSchema>) => Promise<void>) | null =
-      repository === mongoRepository ? enrolledRequest : null) {}
+      repository === mongoRepository ? assertEnrolledRequest : null,
+    private readonly frameworks: (Pick<TestHostStateService, 'frameworkObservation'> & Partial<Pick<TestHostStateService, 'admitPreparationFramework' | 'preparationFrameworkAdmission'>>) | null = repository === mongoRepository ? new TestHostStateService() : null,
+    private readonly now: () => number = Date.now,
+    private readonly backendHosts: Pick<TestHostStateService, 'get'> | null = repository === mongoRepository ? new TestHostStateService() : null) {}
 
   get(requestId: string) {return this.repository.get(requestId);}
+  /** An opt-in updater hint includes withheld work and disappears when its same request returns or is cancelled. */
+  async preparationFrameworkMinimum(hostId: string) {return await this.repository.preparationFrameworkMinimum?.(hostId) ?? null;}
 
   async queued(hostId: string, cursor: string | undefined, limit: number) {
     this.validatePageLimit(limit);
@@ -209,9 +251,60 @@ export class TestRequestService {
     const found = await this.repository.queued(hostId, after, limit + 1), requests = found.slice(0, limit), last = requests.at(-1);
     const dispatchCompletions = (await this.repository.pendingDispatchCompletions?.(hostId, limit) ?? []).map(row => ({
       requestId: row.requestId, hostId: row.hostId, inputSha256: row.inputSha256, laneId: (row.input as {laneId: string}).laneId}));
-    const preparations = (await this.repository.preparations?.(hostId, limit) ?? []).map(row => ({requestId: row.requestId,
+    const binding = await this.currentPreparationFramework(hostId);
+    const preparations = (await this.repository.preparations?.(hostId, limit, binding?.version ?? 0) ?? [])
+      .filter(row => row.dispatchIntent.minimumFrameworkVersion === undefined || binding && binding.version >= row.dispatchIntent.minimumFrameworkVersion)
+      .map(row => ({requestId: row.requestId,
       hostId: row.hostId, dispatchIntentSha256: row.dispatchIntentSha256, dispatchIntent: row.dispatchIntent}));
-    return {requests, preparations, dispatchCompletions, nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "createdAt", last.createdAt!.toISOString()) : null};
+    return {requests: requests.map(row => ({...row, ...(row.fleetExclusiveReservation ? {fleetExclusive: fleetExclusiveDeliverySchema.parse({
+      reservation: row.fleetExclusiveReservation, binding: row.fleetExclusiveExecutionBinding})} : {})})), preparations, dispatchCompletions,
+      nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "createdAt", last.createdAt!.toISOString()) : null};
+  }
+  private async currentPreparationFramework(hostId: string): Promise<FrameworkBinding | undefined> {
+    const observation = await this.frameworks?.frameworkObservation(hostId);
+    if (!observation) return undefined;
+    const now = this.now(), receivedAt = Date.parse(observation.receivedAt), observedAt = Date.parse(observation.observedAt);
+    if (![receivedAt, observedAt].every(time => Number.isFinite(time) && time <= now && now - time <= 120_000)) return undefined;
+    return frameworkBindingSchema.parse(observation.binding);
+  }
+  /** A delayed response from an older provider cannot acquire the successor's framework authority. */
+  async assertPreparationFramework(row: StoredRequest, responseBinding?: FrameworkBinding, requireResponse = false) {
+    const minimum = row.dispatchIntent?.minimumFrameworkVersion;
+    if (row.state !== 'preparing' || minimum === undefined) return;
+    const current = await this.currentPreparationFramework(row.hostId);
+    if (requireResponse && !responseBinding) throw new TestRunError(409, `Waiting for framework ${minimum}: source preparation requires its exact response binding`);
+    if (current && current.version >= minimum && (!responseBinding || requestInputDigest(responseBinding) === requestInputDigest(current))) return;
+    const admitted = await this.frameworks?.preparationFrameworkAdmission?.(row.hostId, row.requestId);
+    if (admitted && admitted.effect.kind === 'complete' && admitted.dispatchIntentSha256 === row.dispatchIntentSha256 &&
+      admitted.requestFenceSha256 === this.preparationFrameworkFenceDigest(row) && admitted.binding.version >= minimum &&
+      (!responseBinding || requestInputDigest(admitted.binding) === requestInputDigest(responseBinding))) return;
+    throw new TestRunError(409, `Waiting for framework ${minimum}: source preparation requires the current accepted framework and its exact response binding`);
+  }
+  private preparationFrameworkFence(row: StoredRequest): Record<string, unknown> {
+    const source = row as unknown as Record<string, unknown>, fence: Record<string, unknown> = {};
+    for (const field of ['dispatchIntent', 'fleetSelectionSha256', 'fleetSelection', 'fleetTarget', 'fleetBinding', 'fleetInputSha256', 'fleetDeadline'])
+      fence[field] = source[field] ?? {$exists: false};
+    for (const field of ['preparationCancellation', 'preparationRejection', 'fleetCancellation', 'hostCancellation', 'hostRejection', 'dispatchCompletion', 'terminalStatus'])
+      fence[field] = {$exists: false};
+    return fence;
+  }
+  private preparationFrameworkFenceDigest(row: StoredRequest) {
+    return requestInputDigest(JSON.parse(JSON.stringify(this.preparationFrameworkFence(row))));
+  }
+  private async admitPreparationFramework(row: StoredRequest, effect: PreparationFrameworkEffect, responseBinding?: FrameworkBinding, requireResponse = false) {
+    if (row.dispatchIntent?.minimumFrameworkVersion === undefined) return undefined;
+    const current = await this.preparation(row.requestId, row.hostId, row.dispatchIntentSha256);
+    const source = current as unknown as {fleetDeadline?: Date; fleetCancellation?: unknown};
+    if (current.state !== 'preparing' || source.fleetCancellation || source.fleetDeadline && source.fleetDeadline.getTime() <= this.now())
+      throw new PreparationRequestChanged('Framework preparation effect is cancelled, withdrawn or past its original deadline');
+    const fence = this.preparationFrameworkFence(row);
+    if (this.preparationFrameworkFenceDigest(row) !== this.preparationFrameworkFenceDigest(current))
+      throw new PreparationRequestChanged('Framework preparation effect changed its original request selection');
+    if (requireResponse && !responseBinding) throw new TestRunError(409, 'Framework preparation effect requires its original response binding');
+    if (!this.frameworks?.admitPreparationFramework) throw new TestRunError(503, 'Framework preparation authority is unavailable');
+    await this.frameworks.admitPreparationFramework(row.hostId, row.requestId, row.dispatchIntentSha256!, this.preparationFrameworkFenceDigest(row),
+      row.dispatchIntent.minimumFrameworkVersion, effect, responseBinding);
+    return {...fence, ...(source.fleetDeadline ? {$and: [{fleetDeadline: source.fleetDeadline}, {fleetDeadline: {$gt: new Date(this.now())}}]} : {})};
   }
   async prepare(hostId: string, input: unknown): Promise<StoredRequest> {
     const intent = routineDispatchIntentSchema.parse(input);
@@ -242,6 +335,13 @@ export class TestRequestService {
     const existing = await this.preparation(requestId, hostId, row.dispatchIntentSha256);
     return await this.cancel(requestId, requestedAt, reason) ?? existing;
   }
+  async preparationView(requestId: string, hostId: string) {
+    const row = await this.repository.get(requestId), candidate = row as unknown as import('../types/routine-job.types').StoredRoutineJob | null;
+    if (candidate && candidate.state === 'awaiting-runner' && !candidate.hostId && !candidate.fleetBinding &&
+      candidate.fleetCandidatePreparation?.hostId === hostId) return candidate;
+    if (candidate && (await import('./backend-candidate-preparation')).completedCandidatePreparationForHost(candidate, hostId)) return candidate;
+    return this.preparation(requestId, hostId);
+  }
   async preparation(requestId: string, hostId: string, intentSha256?: string) {
     const row = await this.repository.get(requestId);
     if (!row || row.hostId !== hostId) throw new TestRunError(404, 'Assigned routine request was not found');
@@ -250,21 +350,93 @@ export class TestRequestService {
       throw new TestRequestConflict('Preparation differs from the immutable dispatch intent');
     return row;
   }
-  async completePreparation(requestId: string, hostId: string, intentSha256: string, input: unknown): Promise<StoredRequest> {
+  async completePreparation(requestId: string, hostId: string, intentSha256: string, input: unknown, responseBinding?: FrameworkBinding,
+    trustedCachedSource = false): Promise<StoredRequest> {
     const row = await this.preparation(requestId, hostId, intentSha256), intent = row.dispatchIntent!;
     const frozen = frameworkRequestInputSchema.parse(input), digest = requestInputDigest(frozen);
+    if (row.fleetSelection) {
+      if (!row.fleetResourceAdmission) throw new TestRequestConflict('Fleet execution requires its original staged resource admission');
+      assertFleetResourceAdmission(row.fleetResourceAdmission, requestId, hostId, frozen, row.fleetExclusiveReservation);
+    }
+    const exclusive = row.fleetExclusiveReservation ? {reservation: row.fleetExclusiveReservation,
+      binding: fleetResourceExecutionBinding(row.fleetExclusiveReservation, requestId, hostId, intentSha256, frozen, digest)} : undefined;
     if (frozen.routineId !== intent.routineId || frozen.platform !== intent.platform || frozen.definitionRevision !== intent.routineRevision ||
       frozen.laneId !== intent.laneId || frozen.minimumFrameworkVersion !== intent.minimumFrameworkVersion ||
-      requestInputDigest(frozen.build) !== requestInputDigest(intent.build) || intent.routineSource && requestInputDigest(frozen.routineSource) !== requestInputDigest(intent.routineSource))
+      requestInputDigest(frozen.build) !== requestInputDigest(frameworkExecutableBuild(intent.build, frozen.glassesModel)) || intent.routineSource && requestInputDigest(frozen.routineSource) !== requestInputDigest(intent.routineSource))
       throw new TestRequestConflict('Prepared executable input contradicts its original dispatch intent');
     if (isExecutableRequest(row)) {
       if (row.inputSha256 !== digest) throw new TestRequestConflict('Prepared executable input changed after its first commit');
+      if (exclusive && requestInputDigest(row.fleetExclusiveExecutionBinding) !== requestInputDigest(exclusive.binding))
+        throw new TestRequestConflict('Prepared executable resource binding changed after its first commit');
       return row;
     }
     if (row.state !== 'preparing') return row;
     await this.enrolled?.(frozen);
+    let frameworkFence: Record<string, unknown> | undefined = await this.admitPreparationFramework(row, {kind: 'complete', inputSha256: digest}, responseBinding, !trustedCachedSource);
+    if (frozen.platform === 'android' && row.fleetPreparation?.requirements.resources.some(resource =>
+      resource.kind === 'phone' && resource.capabilities.includes('backend-connectivity'))) {
+      const {qualifiedCandidate} = await import('./backend-candidate-preparation');
+      const candidateSource = row as unknown as import('../types/routine-job.types').StoredRoutineJob,
+        candidateHost = candidateSource.fleetCandidatePreparations ? await this.backendHosts?.get(hostId) : undefined,
+        candidate = candidateHost && qualifiedCandidate(candidateSource, candidateHost, frozen.laneId, this.now(), candidateHost.receivedAt);
+      if (candidate) {
+        if (!candidate || requestInputDigest(candidate.target.proposedInput) !== digest || candidateSource.fleetCandidatePreparation ||
+          !candidateSource.fleetPreparation || candidateSource.fleetDeadline.getTime() <= this.now())
+          throw new TestRunError(409, 'Prepared executable requires the exact returned pre-binding phone candidate');
+        const current = await this.preparation(requestId, hostId, intentSha256), currentHost = await this.backendHosts?.get(hostId);
+        if (!currentHost || !qualifiedCandidate(current as unknown as import('../types/routine-job.types').StoredRoutineJob, currentHost, frozen.laneId, this.now(), currentHost.receivedAt) ||
+          requestInputDigest((current as unknown as import('../types/routine-job.types').StoredRoutineJob).fleetCandidatePreparations) !== requestInputDigest(candidateSource.fleetCandidatePreparations) ||
+          (current as unknown as import('../types/routine-job.types').StoredRoutineJob).fleetCancellation ||
+          (current as unknown as import('../types/routine-job.types').StoredRoutineJob).preparationCancellation ||
+          (current as unknown as import('../types/routine-job.types').StoredRoutineJob).preparationRejection)
+          throw new PreparationRequestChanged('Original pre-binding phone candidate changed before executable admission');
+        frameworkFence = {...frameworkFence, ...this.preparationFrameworkFence(row), fleetCandidatePreparation: {$exists: false},
+          fleetCandidatePreparations: candidateSource.fleetCandidatePreparations, fleetCandidateSelection: candidateSource.fleetCandidateSelection,
+          fleetPreparation: candidateSource.fleetPreparation,
+          $and: [{fleetDeadline: candidateSource.fleetDeadline}, {fleetDeadline: {$gt: new Date(this.now())}}]};
+      } else {
+      const {preparingQualificationReceipt,recorderCapacityRequirements} = await import('./routine-job.service');
+      const host = await this.backendHosts?.get(hostId), lane = host?.lanes.find(value => value.id === frozen.laneId),
+        phone = lane?.resources.find(value => value.kind === 'phone'), preparing = host && lane && preparingQualificationReceipt(row as unknown as import('../types/routine-job.types').StoredRoutineJob, hostId, lane),
+        qualification = phone?.backendConnectivity?.qualification, context = host && permissionContext(host.frameworkBinding, intent.build, this.now());
+      if (!host || !phone || !context || !preparing || !qualification || qualification.local || !qualification.preparing || qualification.jobId !== requestId ||
+        qualification.inputSha256 !== digest || requestInputDigest(qualification.preparing) !== requestInputDigest(preparing) ||
+        phone.backendConnectivity!.check.operationId !== `backend-prerequisite:${qualification.targetInputSha256}` ||
+        !host.authorityReservations || host.authorityReservations.some(claim => 'kind' in claim && claim.prerequisite && claim.resourceId === phone.id) ||
+        !host.authorityReservations.some(claim => !('kind' in claim) && requestInputDigest(claim) === requestInputDigest((row as unknown as {fleetResourceReservation:unknown}).fleetResourceReservation)) ||
+        host.frameworkBinding!.routineApiVersion < BACKEND_CONNECTIVITY_ROUTINE_API_VERSION ||
+        Date.parse(host.receivedAt) > this.now() || this.now() - Date.parse(host.receivedAt) > 120_000 ||
+        !backendConnectivityObservationMatches(phone.backendConnectivity, phone.id, {...context, backend: {
+          hostId, incarnation: host.incarnation!, generation: host.incarnationGeneration!, resourceGenerations:
+            host.resourceLifecycle?.subjects.map(subject => ({resourceId: subject.subject.id, generation: subject.generation,
+              current: subject.current && subject.subject.authorityHostId === hostId, unowned: subject.owner === null})) ?? []}}))
+        throw new TestRunError(409, 'Prepared executable requires the current settled phone backend prerequisite');
+      const current = await this.preparation(requestId, hostId, intentSha256), source = row as unknown as import('../types/routine-job.types').StoredRoutineJob,
+        currentSource = current as unknown as import('../types/routine-job.types').StoredRoutineJob;
+      const target = {jobId: requestId,hostId,laneId:frozen.laneId,deadline:source.fleetDeadline.toISOString(),
+        selection:{...source.fleetSelection,routineSource:source.fleetPreparation!.routineSource},
+        requirements:recorderCapacityRequirements(source.fleetPreparation!),preparing,proposedInput:frozen,
+        purpose:{kind:'backend-connectivity',resourceId:phone.id},acceptedBinding:host.frameworkBinding,
+        target:{hostId,laneId:frozen.laneId}};
+      if (current.state !== 'preparing' || !source.fleetDeadline || source.fleetDeadline.getTime() <= this.now() ||
+        qualification.targetInputSha256 !== requestInputDigest(target) ||
+        this.now()-Date.parse(phone.backendConnectivity!.observedAt)>120_000 || this.now()-Date.parse(host.receivedAt)>120_000 ||
+        this.preparationFrameworkFenceDigest(current) !== this.preparationFrameworkFenceDigest(row) ||
+        requestInputDigest(currentSource.fleetPreparation) !== requestInputDigest(source.fleetPreparation) ||
+        requestInputDigest(currentSource.fleetResourceReservation) !== requestInputDigest(source.fleetResourceReservation) ||
+        requestInputDigest(currentSource.fleetResourceAdmission) !== requestInputDigest(source.fleetResourceAdmission) ||
+        currentSource.fleetCancellation || current.preparationCancellation || current.preparationRejection)
+        throw new PreparationRequestChanged('Original phone prerequisite preparation changed before executable admission');
+      // One request-row CAS adopts this exact selected preparation. No cross-document transaction or fallback.
+      frameworkFence = {...frameworkFence, ...this.preparationFrameworkFence(row),
+        fleetPreparation: source.fleetPreparation, fleetResourceReservation: source.fleetResourceReservation,
+        fleetCandidatePreparation: {$exists: false}, fleetCandidatePreparations: source.fleetCandidatePreparations ?? {$exists: false},
+        fleetCandidateSelection: source.fleetCandidateSelection ?? {$exists: false},
+        $and: [{fleetDeadline: source.fleetDeadline}, {fleetDeadline: {$gt: new Date(this.now())}}]};
+      }
+    }
     if (!this.repository.completePreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
-    const saved = await this.repository.completePreparation(requestId, hostId, intentSha256, frozen, digest) ??
+    const saved = await this.repository.completePreparation(requestId, hostId, intentSha256, frozen, digest, exclusive, row.fleetResourceAdmission, frameworkFence) ??
       await this.preparation(requestId, hostId, intentSha256);
     if (isExecutableRequest(saved) && saved.inputSha256 !== digest)
       throw new TestRequestConflict('Prepared executable input changed after its first commit');
@@ -275,15 +447,17 @@ export class TestRequestService {
     if (row.state !== 'preparing') return row;
     if (!this.repository.updatePreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
     return await this.repository.updatePreparation(requestId, hostId, value.dispatchIntentSha256,
-      {code: value.code, reason: value.reason, observedAt: value.observedAt}) ?? await this.preparation(requestId, hostId, value.dispatchIntentSha256);
+      {code: value.code, reason: value.reason, observedAt: value.observedAt,
+        ...(value.frameworkBinding ? {frameworkBinding: value.frameworkBinding} : {})}) ?? await this.preparation(requestId, hostId, value.dispatchIntentSha256);
   }
   async rejectPreparation(requestId: string, hostId: string, input: unknown): Promise<StoredRequest> {
     const value = preparationRejectionSchema.parse(input), row = await this.preparation(requestId, hostId, value.dispatchIntentSha256);
     if (!isExecutableRequest(row) && row.preparationRejection && requestInputDigest(row.preparationRejection) !== requestInputDigest(value))
       throw new TestRequestConflict('Preparation rejection changed its original receipt');
     if (row.state !== 'preparing') return row;
+    const frameworkFence = await this.admitPreparationFramework(row, {kind: 'reject', rejectionSha256: requestInputDigest(value)}, value.frameworkBinding, true);
     if (!this.repository.rejectPreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
-    const saved = await this.repository.rejectPreparation(requestId, hostId, value.dispatchIntentSha256, value) ??
+    const saved = await this.repository.rejectPreparation(requestId, hostId, value.dispatchIntentSha256, value, frameworkFence) ??
       await this.preparation(requestId, hostId, value.dispatchIntentSha256);
     if (!isExecutableRequest(saved) && saved.preparationRejection && requestInputDigest(saved.preparationRejection) !== requestInputDigest(value))
       throw new TestRequestConflict('Preparation rejection changed its original receipt');
@@ -294,7 +468,9 @@ export class TestRequestService {
     const parsed = this.decodeCursor(hostId, cursor, "requestedAt");
     const after = parsed ? {requestedAt: parsed.timestamp, requestId: parsed.requestId} : null;
     const found = await this.repository.cancellations(hostId, after, limit + 1), requests = found.slice(0, limit), last = requests.at(-1);
-    return {requests, nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "requestedAt", last.hostCancellation!.requestedAt) : null};
+    return {requests: requests.map(row => ({...row, ...(row.fleetExclusiveReservation ? {fleetExclusive: fleetExclusiveDeliverySchema.parse({
+      reservation: row.fleetExclusiveReservation, binding: row.fleetExclusiveExecutionBinding})} : {})})),
+      nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "requestedAt", last.hostCancellation!.requestedAt) : null};
   }
   private validatePageLimit(limit: number) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
@@ -331,7 +507,7 @@ export class TestRequestService {
     await this.enrolled?.(selected);
     if (selected.verification) {
       if (authenticatedHostId !== hostId) throw new TestRequestConflict('Candidate admission requires the authenticated assigned host');
-      await this.candidates.authorize(selected.verification, authenticatedHostId, selected);
+      await this.candidates.authorize(selected.verification, authenticatedHostId, {...selected,requestId});
     }
     try {await this.repository.insert(request); return request;}
     catch (error) {
@@ -374,7 +550,7 @@ export class TestRequestService {
     const original = await this.repository.get(receipt.requestId);
     if (!original) {
       await this.enrolled?.(selected);
-      if (selected.verification) await this.candidates.authorize(selected.verification, authenticatedHostId, selected);
+      if (selected.verification) await this.candidates.authorize(selected.verification, authenticatedHostId, {...selected,requestId:receipt.requestId});
     }
     const row: StoredTestRequest = {requestId: receipt.requestId, hostId: authenticatedHostId, input,
       inputSha256: receipt.inputSha256, state: "accepted", hostReceipt: receipt,

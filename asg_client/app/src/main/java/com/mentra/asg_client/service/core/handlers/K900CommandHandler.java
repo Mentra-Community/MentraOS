@@ -62,6 +62,17 @@ public class K900CommandHandler {
             String command = json.optString("C", "");
             JSONObject bData = json.optJSONObject("B");
             Log.d(TAG, "📦 Received K900 command: " + command);
+            if ("hm_pairlog".equals(command) || "hm_pairexit".equals(command) || "hm_spkcode".equals(command)) {
+                JSONObject logData = bData;
+                // hm_spkcode carries the 4-char secure pairing code (B.code). It must never reach
+                // logcat at INFO or above (release-hygiene invariant NEW-9), so redact the code
+                // field on a copy before dumping — never mutate bData, which McuEventParser reads.
+                if ("hm_spkcode".equals(command) && bData != null && bData.has("code")) {
+                    logData = new JSONObject(bData.toString());
+                    logData.put("code", "<redacted>");
+                }
+                Log.i("PAIRFLOW", command + " " + (logData != null ? logData.toString() : "{}"));
+            }
 
             // sr_log is consumed here directly: packets are reassembled into the BES log session
             // owned by the outgoing mh_logs request flow (requestBesLogs*), which lives in this
@@ -177,8 +188,9 @@ public class K900CommandHandler {
      *     ServerConfigUtil (only used when {@code relayFirmwareJson} is null)
      * @param relayFirmwareJson if non-null, assembled BES logs are passed to this consumer as
      *     glasses_firmware JSON instead of HTTP upload
+     * @return the exact started capture session, or null if no capture started
      */
-    public void requestBesLogs(
+    public BesLogManager requestBesLogs(
             String incidentId,
             Context context,
             IConfigurationManager configManager,
@@ -201,7 +213,7 @@ public class K900CommandHandler {
             Log.i(TAG, "📋 BES logs for incident " + incidentId + " from the TRACE store ("
                     + lines.size() + " lines)");
             session.deliverStored(BesTraceStore.toEntries(lines));
-            return;
+            return session;
         }
         Log.i(TAG, "📋 Requesting BES logs (mh_logs) for incident: " + incidentId);
 
@@ -210,7 +222,7 @@ public class K900CommandHandler {
             if (relayFirmwareJson != null) {
                 relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
             }
-            return;
+            return null;
         }
 
         if (!serviceManager.getBluetoothManager().isConnected()) {
@@ -218,13 +230,15 @@ public class K900CommandHandler {
             if (relayFirmwareJson != null) {
                 relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
             }
-            return;
+            return null;
         }
 
+        // Replace any stale session from a previous request
         BesLogManager session =
                 (relayFirmwareJson != null)
                         ? new BesLogManager(incidentId, context, configManager, relayFirmwareJson)
                         : new BesLogManager(incidentId, context, configManager, apiBaseUrl);
+        mBesLogSession = session;
 
         // The UART log channel is shared with the crash dump pull and the TRACE tail. A bug report
         // that starts during a pull waits (up to BesLogManager's own overall timeout) instead of
@@ -237,11 +251,10 @@ public class K900CommandHandler {
             Thread.currentThread().interrupt();
             session.abort();
             deliverEmptyRelay(relayFirmwareJson);
-            return;
+            return null;
         }
         if (acquired) {
-            startBesLogSession(session, relayFirmwareJson);
-            return;
+            return startBesLogSession(session, relayFirmwareJson);
         }
         Log.i(TAG, "⏳ BES log channel busy (" + lock.current() + ") — bug report waits for it");
         new Thread(
@@ -265,6 +278,9 @@ public class K900CommandHandler {
                         },
                         "bes-logs-wait")
                 .start();
+        // The caller awaits this exact session. It settles when the stream ends or the lock wait
+        // gives up and aborts it.
+        return session;
     }
 
     private static void deliverEmptyRelay(java.util.function.Consumer<String> relayFirmwareJson) {
@@ -278,8 +294,13 @@ public class K900CommandHandler {
      * releases the lock when its UART stream ends; a stale session that was replaced by a newer
      * request must not release the newer one's lock.
      */
-    private void startBesLogSession(
+    private BesLogManager startBesLogSession(
             BesLogManager session, java.util.function.Consumer<String> relayFirmwareJson) {
+        if (session.isFinished()) {
+            // The caller's deadline ended this session while it waited for the lock.
+            BesLogTransferLock.get().release(BesLogTransferLock.Owner.USER_MH_LOGS);
+            return null;
+        }
         // Replace any stale session from a previous request
         mBesLogSession = session;
         session.setOnFinished(
@@ -310,6 +331,7 @@ public class K900CommandHandler {
             if (sent) {
                 Log.i(TAG, "✅ mh_logs sent — starting BES log collection timeouts");
                 session.startTimeouts();
+                return session;
             } else {
                 Log.e(TAG, "❌ Failed to send mh_logs");
                 failBesLogSession(session, relayFirmwareJson);
@@ -318,6 +340,7 @@ public class K900CommandHandler {
             Log.e(TAG, "💥 Error building mh_logs command", e);
             failBesLogSession(session, relayFirmwareJson);
         }
+        return null;
     }
 
     private void failBesLogSession(

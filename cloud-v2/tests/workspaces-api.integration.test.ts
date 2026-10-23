@@ -27,7 +27,10 @@ import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
+import {LicenseModel} from "../packages/core/src/models/license.model"
+import {SigninIdentityModel} from "../packages/core/src/models/signin-identity.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -35,10 +38,13 @@ import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {createPortalSession} from "../packages/core/src/services/signin/browser-session.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
+import {clearDeletionHold, setDeletionHold} from "../packages/core/src/services/workspaces/deletion-hold.service"
 import {OPERATOR_KEY_SCOPES, ORGANIZATION_CAPABILITIES} from "../packages/workspace-contract/src/index"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {nextHoldAsOf} from "./support/hold-as-of"
 import {
+  coreAccessToken,
   ADMIN_COOKIE,
   ADMIN_EMAIL,
   ADMIN_ORIGIN,
@@ -57,7 +63,10 @@ setDefaultTimeout(30_000)
 const MODELS = [
   AccessCredentialModel,
   BrowserSessionModel,
+  LicenseModel,
+  SigninIdentityModel,
   UserModel,
+  WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
   WorkspaceInvitationModel,
   WorkspaceMembershipModel,
@@ -112,9 +121,27 @@ async function person(key: string, options: {email?: string; emailVerified?: boo
   const email = options.email ?? `${key}@example.test`
   const emailVerified = options.emailVerified ?? true
   idp.registerUser({sub, email, emailConfirmed: emailVerified})
-  const bearer = await idp.mint({sub, aud: "authenticated", client_id: "console-client", email})
+  const bearer = await coreAccessToken({sub, email, emailVerified})
   const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: sub})
   return {sub, email, emailVerified, bearer, mentraUserId}
+}
+
+/**
+ * Set the name Core holds from `who`'s sign-ins through its provider (`signin_identities`), the row the member
+ * list reads names from, and, when given, the email that sign-in carried. `person()` already records a
+ * sign-in, with no name, as `coreAccessToken` does.
+ */
+async function signedInAs(who: Person, name: string | null, options: {email?: string} = {}) {
+  const updated = await SigninIdentityModel.updateOne(
+    {mentraUserId: who.mentraUserId},
+    {$set: {name, ...(options.email ? {email: options.email} : {})}},
+  )
+  expect(updated.matchedCount).toBe(1)
+}
+
+/** Take `who`'s sign-in identity away, as it is for a person who has never signed in through Core's provider. */
+async function neverSignedIn(who: Person) {
+  await SigninIdentityModel.deleteOne({mentraUserId: who.mentraUserId})
 }
 
 /** A signed-in session of `who` on the workspace portal (`portal`) or the admin portal (`admin`). */
@@ -430,25 +457,19 @@ describe("authentication", () => {
     expect(await WorkspaceModel.countDocuments({})).toBe(1)
   })
 
-  test("a malformed or unknown Core key, or a token the identity provider did not sign, is 401", async () => {
+  test("a malformed or unknown Core key, or a token Core's sign-in server did not sign, is 401", async () => {
     expect((await call("POST", "/api/workspaces", {as: "msk_local_notakey", body: {name: "X"}})).status).toBe(401)
     expect((await call("GET", "/api/workspaces", {as: "mak_local_notakey"})).status).toBe(401)
-    const forged = await idp.mint(
-      {sub: "supa-forger", aud: "authenticated", client_id: "console-client"},
-      {alg: "RS256", key: "attacker"},
-    )
+    const forged = await idp.mint({sub: "supa-forger", aud: "authenticated"}, {alg: "RS256", key: "attacker"})
     expect((await call("GET", "/api/workspaces", {as: forged})).status).toBe(401)
     expect(await WorkspaceModel.countDocuments({})).toBe(0)
   })
 
-  test("an identity provider that cannot be asked is 503 temporarily_unavailable, never a guess", async () => {
-    const someone = await person("someone")
-    idp.outage = true
-
-    const reply = await call("GET", "/api/workspaces", {as: someone})
-
-    expect(reply.status).toBe(503)
-    expect(reply.json.error).toBe("temporarily_unavailable")
+  test("a Core access token from another environment's sign-in server is 401", async () => {
+    const restore = applyEnv({CLOUD_CORE_OIDC_ISSUER: "https://account.staging.test"})
+    const other = await coreAccessToken({sub: "supa-elsewhere", email: "elsewhere@example.test"})
+    restore()
+    expect((await call("GET", "/api/workspaces", {as: other})).status).toBe(401)
   })
 
   test("GET /api/organization is open to Core keys and reports what they may do", async () => {
@@ -828,6 +849,72 @@ describe("workspaces", () => {
         (await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {as: orgAdmin, body: {confirmName: "Acme"}})).status,
       ).toBe(204)
     })
+
+    test("a workspace a service holds is refused with 409 workspace_has_holds and the holds, on every route group, to an owner and an Organization Admin alike", async () => {
+      const ws = await newWorkspace()
+      await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 3, asOf: nextHoldAsOf()})
+      const orgAdmin = await person("org-admin", {email: ADMIN_EMAIL})
+      const callers: Array<[string, Person | Session]> = [
+        ["/api/workspaces", ws.owner],
+        ["/api/workspaces", orgAdmin],
+        ["/api/portal/workspaces", await session("portal", ws.owner)],
+        ["/api/portal/workspaces", await session("portal", orgAdmin)],
+        ["/api/admin/workspaces", await session("admin", orgAdmin)],
+      ]
+
+      for (const [base, as] of callers) {
+        const reply = await call("DELETE", `${base}/${ws.workspaceId}`, {as, body: {confirmName: "Acme"}})
+        expect({base, status: reply.status, body: reply.json}).toEqual({
+          base,
+          status: 409,
+          body: {
+            error: "workspace_has_holds",
+            error_description: "This workspace still owns 3 miniapps. Delete them in the Developer Console first.",
+            holds: [{service: "store", reason: "owns_miniapps", count: 3}],
+          },
+        })
+      }
+      expect((await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner})).status).toBe(200)
+      expect(await WorkspaceAuditEventModel.countDocuments({workspaceId: ws.workspaceId, action: "workspace.deleted"})).toBe(0)
+
+      // The Store clears its hold once the workspace owns no miniapp; then the delete goes through.
+      await clearDeletionHold("store", ws.workspaceId, {asOf: nextHoldAsOf()})
+      expect(
+        (await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner, body: {confirmName: "Acme"}})).status,
+      ).toBe(204)
+    })
+
+    test("someone who may not delete is refused as before, and learns nothing about the holds", async () => {
+      const ws = await newWorkspace()
+      await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 3, asOf: nextHoldAsOf()})
+
+      const reply = await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {as: ws.admin, body: {confirmName: "Acme"}})
+      expect(reply.status).toBe(403)
+      expect(reply.json.holds).toBeUndefined()
+    })
+  })
+
+  test("GET /:workspaceId says what holds the workspace from deletion", async () => {
+    const ws = await newWorkspace()
+    const holdsSeenBy = async (as: Person) => (await call("GET", `/api/workspaces/${ws.workspaceId}`, {as})).json.deletionHolds
+
+    expect(await holdsSeenBy(ws.owner)).toEqual([])
+    await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 2, asOf: nextHoldAsOf()})
+    await setDeletionHold("fleet", ws.workspaceId, {reason: "manages_devices", asOf: nextHoldAsOf()})
+    const expected = [
+      {service: "fleet", reason: "manages_devices"},
+      {service: "store", reason: "owns_miniapps", count: 2},
+    ]
+    expect(await holdsSeenBy(ws.owner)).toEqual(expected)
+    expect(await holdsSeenBy(ws.developer)).toEqual(expected)
+    // A rename answers the same detail, holds included.
+    const renamed = await call("PATCH", `/api/workspaces/${ws.workspaceId}`, {
+      as: ws.owner,
+      body: {name: "Beta", expectedRevision: await revisionOf(ws.workspaceId, ws.owner)},
+    })
+    expect(renamed.json.deletionHolds).toEqual(expected)
+    // A new workspace has none.
+    expect((await createWorkspace(ws.stranger, "Fresh") as {deletionHolds?: unknown}).deletionHolds).toEqual([])
   })
 })
 
@@ -858,9 +945,163 @@ describe("members", () => {
       ws.memberMembershipId,
     ])
     for (const item of reply.json.items) {
-      expect(Object.keys(item).sort()).toEqual(["email", "membershipId", "mentraUserId", "role", "startedAt"].sort())
+      expect(Object.keys(item).sort()).toEqual(
+        ["email", "membershipId", "mentraUserId", "name", "pending", "role", "startedAt"].sort(),
+      )
+      expect(item.pending).toBe(false)
       expect(Number.isNaN(Date.parse(item.startedAt))).toBe(false)
     }
+  })
+
+  test("a member imported from the Store who has not signed in yet is listed as pending, with no user id", async () => {
+    const ws = await newWorkspace()
+    const startedAt = new Date("2026-01-05T10:00:00.000Z")
+    await WorkspaceMembershipModel.create({
+      membershipId: "wm_imported_pending",
+      workspaceId: ws.workspaceId,
+      mentraUserId: null,
+      pendingWorkosUserId: "user_01PENDING",
+      email: "dev@acme.example",
+      role: "developer",
+      roleHistory: [{role: "developer", from: startedAt, authorizationRevision: 0}],
+      status: "active",
+      startedAt,
+    })
+
+    for (const [base, as] of [
+      ["/api/workspaces", ws.owner],
+      ["/api/admin/workspaces", await session("admin", await person("orgadmin", {email: ADMIN_EMAIL}))],
+    ] as const) {
+      const reply = await call("GET", `${base}/${ws.workspaceId}/members`, {as})
+      expect(reply.status).toBe(200)
+      const pending = reply.json.items.find((item: any) => item.membershipId === "wm_imported_pending")
+      // The WorkOS id is the Store's identifier, never shown. Nobody has signed in, so there is no name.
+      expect(pending).toEqual({
+        membershipId: "wm_imported_pending",
+        mentraUserId: null,
+        email: "dev@acme.example",
+        name: null,
+        role: "developer",
+        startedAt: startedAt.toISOString(),
+        pending: true,
+      })
+      expect(reply.json.items.filter((item: any) => item.pending)).toHaveLength(1)
+    }
+  })
+
+  test("a member who signed in through Core's provider with a name has it; every other member has name null", async () => {
+    const ws = await newWorkspace()
+    // The owner and the member signed in with a name, the admin with none, the developer has not signed in at all.
+    // The owner's sign-in carried another email than the one the membership was made for.
+    await signedInAs(ws.owner, "Olivia Owner", {email: "olivia@personal.example"})
+    await signedInAs(ws.admin, null)
+    await signedInAs(ws.member, "Mel Member")
+    await neverSignedIn(ws.developer)
+    await WorkspaceMembershipModel.create({
+      membershipId: "wm_name_pending",
+      workspaceId: ws.workspaceId,
+      mentraUserId: null,
+      pendingWorkosUserId: "user_01NAMELESS",
+      email: "waiting@acme.example",
+      role: "developer",
+      roleHistory: [{role: "developer", from: new Date("2026-01-05T10:00:00.000Z"), authorizationRevision: 0}],
+      status: "active",
+      startedAt: new Date("2026-01-05T10:00:00.000Z"),
+    })
+
+    const reply = await call("GET", `/api/workspaces/${ws.workspaceId}/members`, {as: ws.admin})
+
+    expect(reply.status).toBe(200)
+    const nameOf = new Map<string, unknown>(reply.json.items.map((item: any) => [item.membershipId, item.name]))
+    expect(nameOf.get(ws.ownerMembershipId)).toBe("Olivia Owner")
+    expect(nameOf.get(ws.memberMembershipId)).toBe("Mel Member")
+    // Signed in without a name: null, not absent, not the email.
+    expect(nameOf.get(ws.adminMembershipId)).toBeNull()
+    // Never signed in through the provider.
+    expect(nameOf.get(ws.developerMembershipId)).toBeNull()
+    // Imported and unclaimed: no Core user to look up.
+    expect(nameOf.get("wm_name_pending")).toBeNull()
+    expect(nameOf.size).toBe(5)
+    // The email stays what the membership holds, whatever the sign-in says.
+    expect(ws.owner.email).not.toBe("olivia@personal.example")
+    expect(reply.json.items.find((item: any) => item.membershipId === ws.ownerMembershipId).email).toBe(ws.owner.email)
+  })
+
+  test("a list of 50 members reads signin_identities once", async () => {
+    const ws = await newWorkspace()
+    await signedInAs(ws.owner, "Olivia Owner")
+    // The owner, an admin, a developer and a member are 4; forty-six more, written directly, make 50.
+    const startedAt = new Date("2026-02-01T10:00:00.000Z")
+    const roster = Array.from({length: 46}, (_, index) => `mu_roster_${String(index).padStart(2, "0")}`)
+    await WorkspaceMembershipModel.insertMany(
+      roster.map((mentraUserId, index) => ({
+        membershipId: `wm_roster_${String(index).padStart(2, "0")}`,
+        workspaceId: ws.workspaceId,
+        mentraUserId,
+        email: `${mentraUserId}@acme.example`,
+        role: "member",
+        roleHistory: [{role: "member", from: startedAt, authorizationRevision: 0}],
+        status: "active",
+        startedAt: new Date(startedAt.getTime() + index),
+      })),
+    )
+    await SigninIdentityModel.insertMany(
+      roster.slice(0, 40).map(mentraUserId => ({
+        mentraUserId,
+        tenantId: "mentra",
+        sourceId: "mentra",
+        subject: `supa-${mentraUserId}`,
+        email: `${mentraUserId}@acme.example`,
+        emailVerified: true,
+        name: `Person ${mentraUserId}`,
+        signedInAt: startedAt,
+      })),
+    )
+    const many = spyOn(SigninIdentityModel, "find")
+    const one = spyOn(SigninIdentityModel, "findOne")
+    try {
+      const reply = await call("GET", `/api/workspaces/${ws.workspaceId}/members`, {as: ws.owner})
+
+      expect(reply.status).toBe(200)
+      expect(reply.json.items).toHaveLength(50)
+      // One read for the whole list, not one per row; it asks for exactly the 50 people on the page. The only
+      // single-row lookup is the sign-in check on the caller's own bearer token, never a member of the list.
+      for (const lookup of one.mock.calls) {
+        expect((lookup[0] as {mentraUserId: string}).mentraUserId).toBe(ws.owner.mentraUserId)
+      }
+      expect(many).toHaveBeenCalledTimes(1)
+      const filter = many.mock.calls[0]![0] as {mentraUserId: {$in: string[]}}
+      expect(new Set(filter.mentraUserId.$in).size).toBe(50)
+      expect(filter.mentraUserId.$in).toContain(ws.owner.mentraUserId)
+      expect(filter.mentraUserId.$in).toContain("mu_roster_45")
+      const nameOf = new Map<string, unknown>(reply.json.items.map((item: any) => [item.mentraUserId, item.name]))
+      expect(nameOf.get("mu_roster_07")).toBe("Person mu_roster_07")
+      expect(nameOf.get("mu_roster_39")).toBe("Person mu_roster_39")
+      expect(nameOf.get("mu_roster_40")).toBeNull()
+      expect(nameOf.get(ws.owner.mentraUserId)).toBe("Olivia Owner")
+    } finally {
+      many.mockRestore()
+      one.mockRestore()
+    }
+  })
+
+  test("the admin API's member list carries the same names", async () => {
+    const ws = await newWorkspace()
+    await signedInAs(ws.owner, "Olivia Owner")
+    await signedInAs(ws.developer, "Dev Eloper")
+    const orgAdmin = await person("orgadmin", {email: ADMIN_EMAIL})
+
+    const fromWorkspace = await call("GET", `/api/workspaces/${ws.workspaceId}/members`, {as: ws.owner})
+    const fromAdmin = await call("GET", `/api/admin/workspaces/${ws.workspaceId}/members`, {
+      as: await session("admin", orgAdmin),
+    })
+
+    expect(fromAdmin.status).toBe(200)
+    expect(fromAdmin.json).toEqual(fromWorkspace.json)
+    const nameOf = new Map<string, unknown>(fromAdmin.json.items.map((item: any) => [item.membershipId, item.name]))
+    expect(nameOf.get(ws.ownerMembershipId)).toBe("Olivia Owner")
+    expect(nameOf.get(ws.developerMembershipId)).toBe("Dev Eloper")
+    expect(nameOf.get(ws.adminMembershipId)).toBeNull()
   })
 
   test("a developer or a plain member gets 403", async () => {
@@ -1005,12 +1246,11 @@ describe("members", () => {
 describe("invitations", () => {
   test("an admin whose email is not verified cannot invite", async () => {
     const ws = await newWorkspace()
-    // The account's address loses its confirmation; Core learns it on the next lookup.
-    idp.registerUser({sub: ws.admin.sub, email: ws.admin.email, emailConfirmed: false})
-    resetIdpTokenCaches()
+    // The account's address lost its confirmation; Core records it at the admin's next sign-in.
+    const unverified = await coreAccessToken({sub: ws.admin.sub, email: ws.admin.email, emailVerified: false})
 
     const reply = await call("POST", `/api/workspaces/${ws.workspaceId}/invitations`, {
-      as: ws.admin,
+      as: unverified,
       body: {email: "someone@example.test", role: "developer"},
     })
 
@@ -1139,10 +1379,9 @@ describe("invitations", () => {
     expect(unverified.status).toBe(403)
     expect(unverified.json.error).toBe("email_mismatch")
 
-    // Once the account confirms the address, the same link works.
-    idp.registerUser({sub: invitee.sub, email: invitee.email, emailConfirmed: true})
-    resetIdpTokenCaches()
-    expect((await call("POST", "/api/workspaces/invitations/accept", {as: invitee, body: {token}})).status).toBe(200)
+    // Once the account confirms the address and the invitee signs in again, the same link works.
+    const confirmed = await coreAccessToken({sub: invitee.sub, email: invitee.email, emailVerified: true})
+    expect((await call("POST", "/api/workspaces/invitations/accept", {as: confirmed, body: {token}})).status).toBe(200)
   })
 
   test("the link defaults to the workspace portal's accept page; with neither setting, inviting fails and writes nothing", async () => {
@@ -1510,6 +1749,229 @@ describe("the workspace portal route group", () => {
 })
 
 // --- Organization ----------------------------------------------------------
+
+describe("the automatic workspace", () => {
+  const ENSURE = "/api/portal/workspaces/ensure"
+
+  async function countRows() {
+    return {
+      workspaces: await WorkspaceModel.countDocuments({}),
+      memberships: await WorkspaceMembershipModel.countDocuments({status: "active"}),
+    }
+  }
+
+  test("a person in no workspace gets 201 and their automatic workspace, then 200 and the same one", async () => {
+    const dana = await person("dana")
+    await signedInAs(dana, "Dana Reyes")
+    const portal = await session("portal", dana)
+
+    const created = await call("POST", ENSURE, {as: portal})
+
+    expect(created.status).toBe(201)
+    expect(created.json).toEqual({
+      workspaceId: expect.stringMatching(/^ws_/),
+      name: "Dana Reyes's Workspace",
+      status: "active",
+      authorizationRevision: 0,
+      membership: {membershipId: expect.stringMatching(/^wm_/), role: "owner"},
+      capabilities: expect.arrayContaining(["workspace.delete", "workspace.billing.manage"]),
+      organizationAdmin: false,
+      deletionHolds: [],
+    })
+    const workspaceId: string = created.json.workspaceId
+    expect(await WorkspaceModel.findOne({workspaceId}).lean()).toMatchObject({automatic: true})
+    const audit = await call("GET", `/api/workspaces/${workspaceId}/audit`, {as: dana})
+    expect(audit.json.items.map((item: any) => [item.action, item.after])).toEqual([
+      ["workspace.created", {name: "Dana Reyes's Workspace", role: "owner", automatic: true}],
+    ])
+
+    // Asking again, from this tab or another, or as a retry whose first answer was lost.
+    const again = await call("POST", ENSURE, {as: portal})
+    expect(again.status).toBe(200)
+    expect(again.json).toEqual(created.json)
+    expect((await call("POST", "/api/workspaces/ensure", {as: dana})).json.workspaceId).toBe(workspaceId)
+    expect(await countRows()).toEqual({workspaces: 1, memberships: 1})
+  })
+
+  test("without a sign-in name the workspace is named from the verified email", async () => {
+    const john = await person("john", {email: "john.smith+test@example.com"})
+    const reply = await call("POST", ENSURE, {as: await session("portal", john)})
+    expect(reply.status).toBe(201)
+    expect(reply.json.name).toBe("John Smith's Workspace")
+  })
+
+  test("a person already in a workspace gets 200 and it, with their role and its holds, making nothing", async () => {
+    const ws = await newWorkspace()
+    await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 2, asOf: nextHoldAsOf()})
+    const before = await countRows()
+
+    const asDeveloper = await call("POST", ENSURE, {as: await session("portal", ws.developer)})
+
+    expect(asDeveloper.status).toBe(200)
+    expect(asDeveloper.json).toMatchObject({
+      workspaceId: ws.workspaceId,
+      name: "Acme",
+      membership: {membershipId: ws.developerMembershipId, role: "developer"},
+      organizationAdmin: false,
+      deletionHolds: [{service: "store", reason: "owns_miniapps", count: 2}],
+    })
+    expect(asDeveloper.json.capabilities).toContain("miniapps.publish")
+    expect(asDeveloper.json.capabilities).not.toContain("workspace.settings.manage")
+    expect((await call("POST", ENSURE, {as: await session("portal", ws.owner)})).json.workspaceId).toBe(ws.workspaceId)
+    expect(await countRows()).toEqual(before)
+  })
+
+  test("concurrent ensures over real connections make exactly one workspace, and every answer names it", async () => {
+    const server = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: request => app.fetch(request)})
+    try {
+      for (let round = 0; round < 3; round++) {
+        const racer = await person(`racer-${round}`)
+        const portal = await session("portal", racer)
+        const ensure = () =>
+          fetch(`http://127.0.0.1:${server.port}${ENSURE}`, {
+            method: "POST",
+            headers: {cookie: portal.cookie, origin: portal.origin},
+          }).then(async response => ({status: response.status, json: (await response.json()) as any}))
+
+        // Several tabs at once.
+        const answers = await Promise.all([ensure(), ensure(), ensure(), ensure()])
+
+        expect(answers.map(answer => answer.status).sort()).toEqual([200, 200, 200, 201])
+        expect(new Set(answers.map(answer => answer.json.workspaceId)).size).toBe(1)
+        expect(new Set(answers.map(answer => answer.json.membership.membershipId)).size).toBe(1)
+        expect(await WorkspaceModel.countDocuments({createdByMentraUserId: racer.mentraUserId})).toBe(1)
+        const active = {mentraUserId: racer.mentraUserId, status: "active"}
+        expect(await WorkspaceMembershipModel.countDocuments(active)).toBe(1)
+      }
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test("a retry after a lost answer gives the workspace the first ensure made", async () => {
+    const server = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: request => app.fetch(request)})
+    try {
+      const dana = await person("dana")
+      const portal = await session("portal", dana)
+      const ensure = () =>
+        fetch(`http://127.0.0.1:${server.port}${ENSURE}`, {
+          method: "POST",
+          headers: {cookie: portal.cookie, origin: portal.origin},
+        })
+
+      // The first ensure goes through, and its answer is never read.
+      const lost = await ensure()
+      await lost.body?.cancel()
+      const made = await WorkspaceModel.find({createdByMentraUserId: dana.mentraUserId}).lean()
+      expect(made).toHaveLength(1)
+
+      const retried = await ensure()
+
+      expect(retried.status).toBe(200)
+      expect(((await retried.json()) as any).workspaceId).toBe(made[0]!.workspaceId)
+      expect(await countRows()).toEqual({workspaces: 1, memberships: 1})
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test("an unverified email gets 403 email_unverified, and nothing is made", async () => {
+    const unverified = await person("unverified", {emailVerified: false})
+    const reply = await call("POST", ENSURE, {as: await session("portal", unverified)})
+    expect(reply.status).toBe(403)
+    expect(reply.json.error).toBe("email_unverified")
+    expect(await countRows()).toEqual({workspaces: 0, memberships: 0})
+  })
+
+  test("under organization-admins creation a non-admin gets 403 forbidden, an Organization Admin theirs", async () => {
+    process.env.CLOUD_CORE_WORKSPACE_CREATION = "organization-admins"
+    const someone = await person("someone")
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+
+    const refused = await call("POST", ENSURE, {as: await session("portal", someone)})
+    expect(refused.status).toBe(403)
+    expect(refused.json.error).toBe("forbidden")
+    expect(await countRows()).toEqual({workspaces: 0, memberships: 0})
+
+    const allowed = await call("POST", ENSURE, {as: await session("portal", admin)})
+    expect(allowed.status).toBe(201)
+    expect(allowed.json).toMatchObject({membership: {role: "owner"}, organizationAdmin: true})
+  })
+
+  test("a deleted account and a Core key are refused, and nothing is made", async () => {
+    const gone = await person("gone")
+    const portal = await session("portal", gone)
+    await UserModel.updateOne({mentraUserId: gone.mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+    expect((await call("POST", ENSURE, {as: portal})).status).toBe(401)
+    expect((await call("POST", "/api/workspaces/ensure", {as: gone})).status).toBe(401)
+
+    const owner = await person("owner")
+    const {workspaceId} = await createWorkspace(owner)
+    const credentials = `/api/workspaces/${workspaceId}/credentials`
+    const key: string = (await call("POST", credentials, {as: owner, body: {name: "ci"}})).json.token
+    const keyed = await call("POST", "/api/workspaces/ensure", {as: key})
+    expect(keyed.status).toBe(403)
+    expect(await countRows()).toEqual({workspaces: 1, memberships: 1})
+  })
+
+  test("GET /workspaces marks the automatic workspace replaceable only while it holds nothing", async () => {
+    const holds: Array<[string, (workspaceId: string, owner: Person) => Promise<unknown>]> = [
+      ["a second member", (workspaceId, owner) => join(workspaceId, owner, joiner, "member")],
+      ["a pending invitation", (workspaceId, owner) =>
+        call("POST", `/api/workspaces/${workspaceId}/invitations`, {
+          as: owner,
+          body: {email: "invitee@example.test", role: "member"},
+        })],
+      ["a key", (workspaceId, owner) =>
+        call("POST", `/api/workspaces/${workspaceId}/credentials`, {as: owner, body: {name: "ci"}})],
+      ["a license", workspaceId =>
+        LicenseModel.create({
+          _id: `01LICENSE${workspaceId.slice(-17)}`,
+          owner: {type: "workspace", workspaceId},
+          product: "mentra.call.unlimited",
+          quantity: 1,
+          validFrom: new Date(Date.now() - 60_000),
+          paidThrough: new Date(Date.now() + 86_400_000),
+          revision: 1,
+        })],
+      ["a deletion hold", workspaceId =>
+        setDeletionHold("store", workspaceId, {reason: "owns_miniapps", count: 1, asOf: nextHoldAsOf()})],
+    ]
+    let joiner!: Person
+    for (const [what, hold] of holds) {
+      await Promise.all(MODELS.map(model => model.deleteMany({})))
+      const owner = await person("owner")
+      joiner = await person("joiner")
+      const portal = await session("portal", owner)
+      const {workspaceId} = (await call("POST", ENSURE, {as: portal})).json
+      const listed = async () => (await call("GET", "/api/portal/workspaces", {as: portal})).json.items
+      const marked = (replaceable: boolean) => ({what, items: [expect.objectContaining({workspaceId, replaceable})]})
+      expect({what, items: await listed()}).toEqual(marked(true))
+
+      await hold(workspaceId, owner)
+
+      expect({what, items: await listed()}).toEqual(marked(false))
+    }
+  })
+
+  test("a workspace made with POST / is never replaceable, and nor is one the caller only joined", async () => {
+    const owner = await person("owner")
+    const made = await createWorkspace(owner, "Made")
+    expect((await call("GET", "/api/workspaces", {as: owner})).json.items).toEqual([
+      expect.objectContaining({workspaceId: made.workspaceId, replaceable: false}),
+    ])
+    expect((await call("POST", ENSURE, {as: owner})).status).toBe(200)
+
+    const someone = await person("someone")
+    const theirs = (await call("POST", "/api/workspaces/ensure", {as: someone})).json.workspaceId
+    await join(theirs, someone, owner, "admin")
+    const items = (await call("GET", "/api/workspaces", {as: owner})).json.items
+    expect(items.map((item: any) => [item.workspaceId, item.replaceable])).toEqual([
+      [made.workspaceId, false],
+      [theirs, false],
+    ])
+  })
+})
 
 describe("organization workspaces", () => {
   test("an organization admin lists every workspace, paged; a non-admin gets 403", async () => {

@@ -1,5 +1,5 @@
 /**
- * @fileoverview The workspace audit trail.
+ * @fileoverview The workspace audit trail and the change feed built on it.
  *
  * Every workspace mutation records one audit event in the same transaction as
  * the change itself, so the trail never disagrees with the data. Operator-key
@@ -8,18 +8,44 @@
  * Cloud uses cannot run one across collections) and their audit event follows
  * as a separate write (`recordOrganizationEvent`).
  *
- * `eventId` is a ULID from one monotonic source per process and identifies the
- * event; a workspace's audit page reads newest first by it. Each event's
- * `requestId` is the id of the request that caused it (`currentRequestId`),
- * unless the caller supplies one. Records never carry a secret: credentials are
- * identified by id and name, never by token or hash.
+ * Each event has two ids. `eventId` is a ULID (from one monotonic source per
+ * process) and identifies the event; a workspace's audit page reads newest first
+ * by it. `seq` is its position in the change feed and is the feed cursor. `seq`
+ * comes from a single counter document incremented inside the recording
+ * transaction, so concurrent recorders conflict on it: a transaction can only
+ * take `seq` N+1 after the one holding N has committed (or aborted and rolled its
+ * increment back). Sequence order is therefore commit order with no gaps, and a
+ * poller that has read up to `seq` N can never later see an event with a lower
+ * `seq` appear. A process-local ULID cannot promise that: two transactions can
+ * mint ids in one order and commit in the other, or run in different Core
+ * processes. The cost is that audited mutations serialize on the counter: it is
+ * held from the transaction's first event until it commits or aborts, and other
+ * recorders retry meanwhile. They are rare admin operations; a transaction that
+ * records several events (ending many memberships, an import) holds the counter
+ * for the rest of its run, so a caller should record its first event as late in
+ * its transaction as it can. One that has many events to record at once (a bulk
+ * seat assignment) records them together (`recordWorkspaceEvents`): one
+ * increment of the counter and one insert, whatever their number.
+ *
+ * The change feed services read (`listChanges`) is this trail's events that have
+ * a `seq`: workspace-scoped events and user-level tombstones (`user.deleted`).
+ * Organization-level events have no `seq`, and neither do events recorded before
+ * the feed existed: a range read of `seq` never matches a document without one,
+ * so they cannot appear in the feed or disturb its paging. Nothing is pruned, so
+ * a service can replay the whole feed at any time. Each event's `requestId`
+ * is the id of the request that caused it (`currentRequestId`), unless the caller
+ * supplies one. Records never carry a secret: credentials are identified by id
+ * and name, never by token or hash.
  */
 
 import {createLogger} from "@mentra/cloud-shared"
+import {USER_DELETED_ACTION, type WorkspaceChangeEvent} from "@mentra/workspace-contract"
 import type {ClientSession} from "mongoose"
 import {monotonicFactory} from "ulid"
+import {WORKSPACE_AUDIT_COUNTER_ID, WorkspaceAuditCounterModel} from "../../models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel, type WorkspaceAuditEventRow} from "../../models/workspace-audit-event.model"
 import {currentRequestId} from "../request-context"
+import {fail} from "./workspace-error"
 
 const logger = createLogger("core").child({service: "workspace-audit"})
 
@@ -27,48 +53,182 @@ const nextEventId = monotonicFactory()
 
 const MAX_PAGE_SIZE = 500
 
+/** The change feed's page size when the caller names none. */
+const DEFAULT_CHANGES_LIMIT = 100
+
 /** Keys whose values are credential material, redacted from every snapshot shown outside this service. */
 const SECRET_KEY = /token|secret|hash|password/i
 
 /**
  * What a caller supplies for an audit event: everything except what this
- * service stamps itself (`eventId`, `occurredAt`) and what Mongoose manages
- * (`createdAt`, `updatedAt`). `requestId` may be omitted.
+ * service stamps itself (`eventId`, `seq`, `occurredAt`) and what Mongoose
+ * manages (`createdAt`, `updatedAt`). `requestId` may be omitted.
  */
 export type WorkspaceAuditEventInput = Omit<
   WorkspaceAuditEventRow,
-  "eventId" | "occurredAt" | "createdAt" | "updatedAt" | "requestId"
+  "eventId" | "seq" | "occurredAt" | "createdAt" | "updatedAt" | "requestId"
 > & {requestId?: string | null}
 
 /**
- * Append an audit event inside the caller's transaction (or, with `session`
- * null, on its own) and return its `eventId`. The id and timestamp are assigned
- * here, so a retried transaction callback records a fresh event rather than
+ * Append an audit event inside the caller's transaction and return its `eventId`. The ids and
+ * timestamp are assigned here, so a retried transaction callback records a fresh event rather than
  * reusing a rolled-back one.
+ *
+ * This takes the feed's sequence counter and holds it until the transaction ends; every other
+ * recorder retries meanwhile. Record the first event as late in the transaction as you can.
  */
-export async function recordWorkspaceEvent(
-  session: ClientSession | null,
-  event: WorkspaceAuditEventInput,
-): Promise<string> {
-  const eventId = nextEventId()
-  await WorkspaceAuditEventModel.create(
-    [{...event, requestId: event.requestId ?? currentRequestId(), eventId, occurredAt: new Date()}],
-    session ? {session} : {},
-  )
-  return eventId
+export async function recordWorkspaceEvent(session: ClientSession, event: WorkspaceAuditEventInput): Promise<string> {
+  return appendEvent(session, event, await takeSeqs(session, 1))
+}
+
+/**
+ * Append `events` inside the caller's transaction, in order, and return their `eventId`s in that order.
+ * The events are the ones {@link recordWorkspaceEvent} would record for each in turn: the same
+ * documents, with contiguous `seq` in the same order and `eventId`s minted in it. They take two writes
+ * whatever their number, one increment of the feed's counter by `events.length` and then one insert. As
+ * with {@link recordWorkspaceEvent}, the counter is held from that increment until the transaction ends,
+ * so record the batch as late as you can: as the transaction's last write, only its insert and the commit
+ * hold the counter, rather than a pair of writes per event. An empty list writes nothing and takes no
+ * counter.
+ */
+export async function recordWorkspaceEvents(
+  session: ClientSession,
+  events: WorkspaceAuditEventInput[],
+): Promise<string[]> {
+  if (events.length === 0) return []
+  const last = await takeSeqs(session, events.length)
+  const documents = events.map((event, index) => eventDocument(event, last - events.length + 1 + index))
+  await WorkspaceAuditEventModel.insertMany(documents, {session})
+  return documents.map((document) => document.eventId)
 }
 
 /**
  * Record the audit event of an organization-level change already written on its own (an operator
- * key). A failure is logged, never thrown: the change has happened, and reporting it as failed would
- * invite a retry that repeats it.
+ * key). It takes no `seq` and is not in the change feed. A failure is logged, never thrown: the
+ * change has happened, and reporting it as failed would invite a retry that repeats it.
  */
 export async function recordOrganizationEvent(event: WorkspaceAuditEventInput): Promise<void> {
   try {
-    await recordWorkspaceEvent(null, event)
+    await appendEvent(null, event, undefined)
   } catch (err) {
     logger.error({err, action: event.action, target: redactSecrets(event.target ?? null)}, "could not record an audit event")
   }
+}
+
+/**
+ * Record a change-feed event without a transaction, for the one writer that must still work on a
+ * database that is known to be unable to run one: a standalone mongod, or Azure Cosmos DB for
+ * MongoDB, which fails a transaction across two collections (the `user.deleted` tombstone of a
+ * person who belongs to no workspace; see `isTransactionsUnsupportedError` and
+ * `isCrossCollectionTransactionUnsupported`). Never use it for a transient failure on a database
+ * that can run transactions: its `seq` is unique and increasing but, unlike
+ * {@link recordWorkspaceEvent}'s, not ordered against concurrent writers: reserving the number and
+ * inserting the event are two writes, so a concurrent writer can take the next number and have its
+ * event become readable between them, and a poller would pass the number whose event is not written
+ * yet. A database that cannot run transactions has no other feed writer (workspace writes need
+ * them), so only two tombstones written within milliseconds of each other can meet that.
+ *
+ * Core does not prevent this. The contract is the consumer's: on every poll it re-reads an overlap
+ * behind its cursor (for example the last 100 `seq`) and processes events idempotently. See "Order
+ * and gaps" and "Re-read an overlap" in `cloud-v2/docs/fleet-integration.md`. On a replica set with
+ * transactions this never happens.
+ */
+export async function recordFeedEventWithoutTransaction(event: WorkspaceAuditEventInput): Promise<string> {
+  return appendEvent(null, event, await takeSeqs(null, 1))
+}
+
+async function appendEvent(
+  session: ClientSession | null,
+  event: WorkspaceAuditEventInput,
+  seq: number | undefined,
+): Promise<string> {
+  const document = eventDocument(event, seq)
+  await WorkspaceAuditEventModel.create([document], session ? {session} : {})
+  return document.eventId
+}
+
+/** The event as it is stored: the caller's fields, with its ids, its `seq` (when it has one) and its time. */
+function eventDocument(event: WorkspaceAuditEventInput, seq: number | undefined) {
+  return {
+    ...event,
+    requestId: event.requestId ?? currentRequestId(),
+    eventId: nextEventId(),
+    ...(seq === undefined ? {} : {seq}),
+    occurredAt: new Date(),
+  }
+}
+
+/**
+ * Take the feed's next `count` sequence numbers by incrementing the counter by `count`, in the caller's
+ * transaction when there is one, and return the last of them: the numbers taken are the `count` up to
+ * and including it. The first event ever recorded upserts the counter; if another transaction creates
+ * it in the meantime, the server answers the loser with a transient write conflict and
+ * `withTransaction` retries, so that race needs no handling here.
+ */
+async function takeSeqs(session: ClientSession | null, count: number): Promise<number> {
+  const counter = await WorkspaceAuditCounterModel.findOneAndUpdate(
+    {_id: WORKSPACE_AUDIT_COUNTER_ID},
+    {$inc: {seq: count}},
+    {upsert: true, new: true, setDefaultsOnInsert: false, ...(session ? {session} : {})},
+  ).lean()
+  return counter!.seq
+}
+
+/**
+ * Feed events after the cursor, oldest first: every workspace-scoped event and every user-level
+ * tombstone, never an organization-level one (operator keys stay in Core's own audit). `after` is
+ * the `seq` of the last event already seen as a decimal string (`null` or omitted starts from the
+ * beginning); `limit` is clamped to between 1 and 500 and defaults to 100. `next` is the last
+ * event's `seq` as a decimal string when the page is full and there may be more, otherwise null.
+ * Leaving events out means consecutive feed events can skip `seq` numbers.
+ *
+ * Each event carries its ids, `seq`, workspace, action, time, and `target`, `before` and `after`
+ * (null when it has none) with credential-looking keys removed at any depth, so the feed can be
+ * handed to another service. The actor and the request id are not part of it.
+ *
+ * An event without a `seq` (organization-level, or recorded before the feed existed) is never
+ * matched by the range `seq > cursor`, whatever the cursor.
+ */
+export async function listChanges(opts: {
+  after?: string | null
+  limit?: number | undefined
+}): Promise<{events: WorkspaceChangeEvent[]; next: string | null}> {
+  const cursor = parseCursor(opts.after ?? null)
+  const size = opts.limit === undefined ? DEFAULT_CHANGES_LIMIT : clampPageSize(opts.limit)
+  const rows = await WorkspaceAuditEventModel.find({
+    seq: {$gt: cursor},
+    $or: [{workspaceId: {$type: "string"}}, {action: USER_DELETED_ACTION}],
+  })
+    .select({_id: 0, eventId: 1, seq: 1, workspaceId: 1, action: 1, occurredAt: 1, target: 1, before: 1, after: 1})
+    .sort({seq: 1})
+    .limit(size)
+    .lean<Array<WorkspaceAuditEventRow & {seq: number}>>()
+  const events = rows.map<WorkspaceChangeEvent>(row => ({
+    eventId: row.eventId,
+    seq: row.seq,
+    workspaceId: row.workspaceId ?? null,
+    action: row.action,
+    occurredAt: row.occurredAt.toISOString(),
+    target: snapshot(row.target),
+    before: snapshot(row.before),
+    after: snapshot(row.after),
+  }))
+  return {events, next: events.length === size ? String(events[events.length - 1]!.seq) : null}
+}
+
+/** A stored `target`/`before`/`after` snapshot for another service: null when absent, credential-looking keys removed. */
+function snapshot(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (redactSecrets(value) as Record<string, unknown>)
+    : null
+}
+
+/** `after` as a sequence number: a decimal string without sign, fraction or leading zero. */
+function parseCursor(after: string | null): number {
+  if (after === null) return 0
+  const seq = typeof after === "string" && /^(0|[1-9]\d*)$/.test(after) ? Number(after) : NaN
+  if (!Number.isSafeInteger(seq)) fail("invalid_request", "after must be a change sequence number")
+  return seq
 }
 
 /** One workspace's audit events, newest first, strictly older than `before` when given. */

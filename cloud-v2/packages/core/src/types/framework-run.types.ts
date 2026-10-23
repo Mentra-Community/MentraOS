@@ -203,7 +203,29 @@ export interface FrameworkFailureScreen {
   actionId: string;
   assetId?: string;
   desktopAssetId?: string;
+  failureObservedAt?: string;
+  phoneProcessWitness?: FailurePhoneProcessWitness;
+  precedingAppImage?: FailurePrecedingAppImage;
+  currentPhoneImage?: FailureCurrentPhoneImage;
+  desktopImages?: FailureDesktopImage[];
 }
+
+export interface FailurePhoneProcessIdentity {
+  pid: number; startSeq: number; bootId: string; apkSha256: string; build: string;
+}
+export interface FailurePhoneProcessWitness {
+  original?: FailurePhoneProcessIdentity;
+  state: 'same' | 'ceased' | 'replaced' | 'unknown';
+  observedAt: string;
+  current?: {pid: number; startSeq: number};
+}
+export interface FailureImageInterval {assetId: string; captureStartedAt: string; captureFinishedAt: string}
+export interface FailurePrecedingAppImage extends FailureImageInterval {
+  boundary: 'before-email-input' | 'before-password-input' | 'before-login-submit';
+  original: FailurePhoneProcessIdentity;
+}
+export interface FailureCurrentPhoneImage extends FailureImageInterval {source: 'original-app' | 'system'}
+export interface FailureDesktopImage extends FailureImageInterval {displayId: number; capturedAt?: string}
 
 export function frameworkRunOutcome(run: RecordedFrameworkRun) {
   if (run.result.setup.status === "failed") return "setup-failed";

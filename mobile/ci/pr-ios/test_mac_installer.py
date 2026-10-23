@@ -3,6 +3,7 @@ import io
 import json
 from pathlib import Path
 import plistlib
+import platform
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,18 @@ class MacInstallerPackagingTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+
+    @unittest.skipUnless(platform.system() == "Darwin", "Swift launcher validation requires Darwin")
+    def test_nimo_bootstrap_launcher_validation_without_launching_an_app(self):
+        repository = Path(__file__).resolve().parents[3]
+        executable = self.root / "nimo-bootstrap-launch-tests"
+        subprocess.run([
+            "swiftc", "-D", "MENTRA_LAUNCHER_UNIT_TEST", "-parse-as-library",
+            str(repository / "mobile/scripts/launch-ios-on-mac.swift"),
+            str(repository / "mobile/test/native/MacNimoBootstrapLaunchTests.swift"),
+            "-o", str(executable),
+        ], check=True, capture_output=True, text=True, timeout=120)
+        subprocess.run([str(executable)], check=True, capture_output=True, text=True, timeout=20)
 
     def test_missing_credentials_fail_before_importing_or_building(self):
         with patch.object(installer, "run") as command:

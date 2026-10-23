@@ -1,11 +1,12 @@
 {
   "name": "@mentra/release-family",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "private": true,
   "workspaces": [
     "cloud-v2/packages/*",
     "!cloud-v2/packages/workspace-ui",
     "miniapps/*",
+    "examples/miniapp",
     "sdk/miniapp-cli",
     "mobile/modules/miniapp"
   ],

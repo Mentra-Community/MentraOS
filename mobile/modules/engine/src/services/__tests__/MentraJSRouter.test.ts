@@ -477,6 +477,52 @@ describe("MentraJSRouter", () => {
     expect(crust.spawnCalls).toHaveLength(0)
   })
 
+  describe("crash respawn on the injected timer", () => {
+    const RESPAWN_MS = 2_000
+    let armed: Array<{id: number; ms: number; callback: () => void}>
+    let cleared: number[]
+
+    beforeEach(async () => {
+      const {MentraJSCrashController} = await import("../MentraJSCrashController")
+      router.crashController = new MentraJSCrashController({now: () => 0, backoffMs: [RESPAWN_MS], maxRetries: 3})
+      armed = []
+      cleared = []
+      // Plain JS timers pause while the Android app is backgrounded, so the
+      // respawn must use the engine's BgTimer. Native timer ids can be 0.
+      router.timer = {
+        setTimeout(callback, ms) {
+          const id = ms === RESPAWN_MS ? 0 : armed.length + 1
+          armed.push({id, ms, callback})
+          return id
+        },
+        clearTimeout(id) {
+          cleared.push(id)
+        },
+      }
+      router.start()
+      await router.spawnAndRegister("com.foo", "/* miniapp js */")
+      crust.spawnCalls.length = 0
+    })
+
+    test("a liveness-timeout respawn is scheduled on it", async () => {
+      ;(runtimeMock.runtime as unknown as {onLivenessTimeout: (p: string) => void}).onLivenessTimeout("com.foo")
+      const respawns = armed.filter((entry) => entry.ms === RESPAWN_MS)
+      expect(respawns).toHaveLength(1)
+      expect(crust.spawnCalls).toHaveLength(0)
+
+      respawns[0]!.callback()
+      await new Promise((r) => setTimeout(r, 20))
+      expect(crust.spawnCalls).toHaveLength(1)
+      expect(crust.dispatchCalls.at(-1)).toMatchObject({packageName: "com.foo", envelope: {kind: "init"}})
+    })
+
+    test("unregister cancels a pending respawn whose id is 0", async () => {
+      ;(runtimeMock.runtime as unknown as {onLivenessTimeout: (p: string) => void}).onLivenessTimeout("com.foo")
+      await router.unregister("com.foo")
+      expect(cleared).toContain(0)
+    })
+  })
+
   test("liveness timeout respawn re-registers the runtime app", async () => {
     const {MentraJSCrashController} = await import("../MentraJSCrashController")
     const controller = new MentraJSCrashController({

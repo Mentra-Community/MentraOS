@@ -8,6 +8,7 @@ import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
+import {usePairingReconnectHold} from "@/hooks/usePairingReconnectHold"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 
 export const ConnectDeviceButton = () => {
@@ -25,7 +26,17 @@ export const ConnectDeviceButton = () => {
   const pairingReadiness = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
     engine.pairing.onReadiness(onChange),
   )
-  const busy = isSearching || pairingReadiness.nativeLinkBusy
+  const inPairingMode =
+    pairedModel === DeviceTypes.LIVE && !glassesConnected && glassesStatus.pairingState?.state === "pairing_mode"
+  const pairingRejected =
+    pairedModel === DeviceTypes.LIVE && !glassesConnected && glassesStatus.pairingState?.state === "pairing_rejected"
+  const holdReconnectAfterPairing = usePairingReconnectHold({
+    inPairingMode,
+    connected: glassesConnected,
+    rejected: pairingRejected,
+    linkBusy: isSearching || pairingReadiness.nativeLinkBusy,
+  })
+  const busy = isSearching || pairingReadiness.nativeLinkBusy || inPairingMode || holdReconnectAfterPairing
 
   if (glassesConnected) {
     return null

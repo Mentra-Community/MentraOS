@@ -18,7 +18,7 @@ Roles are cumulative: each holds everything the one before it holds.
 | --- | --- | --- | --- | --- |
 | `workspace.read`, `miniapps.access` | Yes | Yes | Yes | Yes |
 | `miniapps.publish`, `miniapps.credentials.create` | | Yes | Yes | Yes |
-| `workspace.members.read`, `workspace.members.manage`, `workspace.settings.manage`, `workspace.audit.read`, `workspace.credentials.revoke`, `fleet.read`, `fleet.devices.manage`, `miniapps.assign` | | | Yes | Yes |
+| `workspace.members.read`, `workspace.members.manage`, `workspace.settings.manage`, `workspace.audit.read`, `workspace.credentials.revoke`, `fleet.read`, `fleet.devices.manage`, `miniapps.assign`, `workspace.licenses.read`, `workspace.licenses.assign`, `workspace.billing.manage` | | | Yes | Yes |
 | `workspace.roles.managePrivileged`, `workspace.delete` | | | | Yes |
 
 - Admins invite, remove and change Members and Developers. Only Owners grant,
@@ -31,13 +31,24 @@ Roles are cumulative: each holds everything the one before it holds.
   `409 membership_changed`.
 - Membership rows are never deleted. Leaving or removal ends the membership and
   keeps it as history, with every role it held; rejoining starts a new one.
+- The member list (`GET /:workspaceId/members`, the same on the workspace and
+  admin portals' routes) names each member. `name` is the last one a sign-in
+  through Core's provider carried, trimmed, read for the whole list in one
+  query; a sign-in that carries no name keeps the one Core has. It is `null`
+  when no sign-in has carried a name, when the person has not signed in through
+  the provider, and for a pending imported membership; the `email` stays the
+  one the membership was made for.
+- Every member sees the licenses they hold; Admins and Owners see every product and
+  assign its licenses ([Licenses](licenses.md)). Ending a membership frees
+  its licenses, and deleting a workspace ends its products.
 
 **Organization Admins** are the people whose verified email is on
 `CLOUD_CORE_ADMIN_EMAILS` or in a domain on `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`.
 They hold every organization capability (`organization.workspaces.administer`,
 `organization.credentials.manage`, `organization.incidents.read`,
 `organization.supportProfiles.read`, `organization.testing.read`,
-`organization.testing.manage`) and act as Owner in every workspace, which is how
+`organization.testing.manage`, `organization.fleet.administer`,
+`organization.licenses.read`) and act as Owner in every workspace, which is how
 they recover a workspace whose Owners are gone. Recovery names an existing
 account; a deleted account is refused (`404 user_not_found`).
 
@@ -46,25 +57,124 @@ account; a deleted account is refused (`404 user_not_found`).
 The workspace portal (`websites/portal`) is centred on the current workspace. A switcher at
 the top of the sidebar shows it and your role (your membership's; "Member · Organization
 Admin" when an Organization Admin's powers go beyond it), and lists your other workspaces,
-**Create workspace** and your pending invitations with **Accept** and **Dismiss**. Every
-page carries its workspace:
-`/w/<workspaceId>/members` (members, with pending invitations under them),
-`/w/<workspaceId>/settings` and `/w/<workspaceId>/audit`; the sidebar offers only what your
-role opens. `/` opens your last-used workspace (remembered in the browser, never an
-authority), else your first, else the first run: your pending invitations if you have any
-you can accept, otherwise **Create your workspace**. An invitation link lands on
-`/invitation`, which reads the token from the tab's session storage. A link Core reports
-as no longer valid is shown as such once and then forgotten. Pending invitations are the
-link's and those addressed to your verified email, each shown once; **Dismiss** hides one
-in this browser only (Core does not record a refusal, and its link keeps working). Company sign-in
+**Create workspace** and your pending invitations with **Accept** and **Dismiss**.
+
+**Addresses.** Your own workspace is never in the address: `/members` (members, with pending
+invitations under them), `/settings`, `/audit` and `/licenses`
+([Licenses](licenses.md#in-the-workspace-portal)) are its pages, and the sidebar offers only
+what your role opens. `/` opens the current workspace's first page. Another workspace is named
+by `?workspace=<workspaceId>` on any of them, which is how an Organization Admin opens a
+customer's; the sidebar's links carry it exactly when the workspace is not the one the bare
+address opens, and a `?workspace=` that names the bare address is dropped from the address in
+place. A `?workspace=` you cannot open is "Workspace not found". The older
+`/w/<workspaceId>[/<page>]` addresses redirect to these, keeping their query
+(`?purchase=`, `?fleet=`). There is no personal page: `/account/billing` is "Page not found".
+
+**The current workspace** is `?workspace=` when the address has one; else the workspace this
+browser tab last opened from your own list while it is still there (remembered in the browser,
+never an authority, and another tab's pick does not move this one); else your first (oldest)
+workspace; else none. A workspace you reach only as an Organization Admin is never remembered.
+
+**The first run.** With no current workspace, the portal shows the invitations you can accept in
+place, at the address you came to; another account's invitation does not count. With none, it
+asks Core for your workspace (`POST /api/portal/workspaces/ensure`) and shows "Setting up your
+workspace" while it does, then opens it at the same address, so a `?buy=` link survives.
+Core answers with your workspace if you have one and makes one named for you ("Dana Reyes's
+Workspace") if not. If that fails, or Core answers but your list still has no workspace, the page
+says "Couldn't set up your workspace." with **Try again**. Nothing is made while the portal cannot
+tell whether an invitation waits (a dropped connection or a server error reading your invitations
+or the link's): the page says so, with **Try again**, and **Dismiss** for a link. Someone who may
+not have a workspace (an unverified email, or a deployment where only Organization Admins create
+them), or whom Core refuses with a `403` because the rules changed after the page loaded, sees
+"You're not in a workspace yet." with the reason ("You can't create a workspace with this
+account." when Core gave none) and "Open an invitation link someone sent you to join their
+workspace." Accepting an invitation from the first run keeps
+the address, now in the joined workspace.
+
+An invitation link lands on `/invitation`, which reads the token from the tab's session storage.
+A link Core reports as no longer valid is shown as such once and then forgotten. Pending
+invitations are the link's and those addressed to your verified email, each shown once;
+**Dismiss** hides one in this browser only (Core does not record a refusal, and its link keeps
+working). Above your account, the sidebar links to the environment's Developer Console in a new
+tab; a Private Cloud, which has no Developer Console, shows no link. Company sign-in
 (enterprise orgs and trusted issuers) is not in the navigation; its pages stay reachable
 at `/enterprise` until it returns as workspace settings.
+
+The sign-in page says "Use the same account you sign in to the Mentra App with."
+
+**Members** lists each member by name over email (the email alone where Core has no
+name), with a "You" mark on your own row, "Pending first sign-in" on an imported
+membership, their role, the licenses they hold and when they joined (the date is left
+out on a tablet or a phone, where each row stacks). Nothing on a row opens anything;
+licenses are assigned from the Licenses page.
+
+- **Licenses.** Where billing's catalog can be read, and you hold
+  `workspace.licenses.read` in a workspace with a product that has not ended, the list
+  has a Licenses column: a chip per product the member holds a license for (three chips
+  and "+n" past four), "None", or "After first sign-in" for a pending membership. The
+  chips only show: licenses are assigned from the Licenses page ([the portal's
+  Licenses](licenses.md#in-the-workspace-portal), [Assigning
+  licenses](licenses.md#assigning-licenses)). Without the catalog, and on a Private
+  Cloud, the list has no column.
+- **The row's menu** ("…", named for the member, with `workspace.members.manage`) holds
+  Change role to each role you may move that member to, and Remove from workspace,
+  which asks first in a dialog ("Remove <name> from this workspace?", Cancel and a
+  destructive Remove; a refusal is shown inside it). Neither is offered on your own
+  row (you leave in Settings, and another Owner or an Organization Admin changes your
+  role), and a row has no menu where neither is yours to do. Both carry the revision
+  you last saw (`409 membership_changed`), and a role change that fails says so above
+  the list.
+- **The admin portal** has the same list and menu, so role changes and Remove are
+  there too, with each member's Mentra user id and a Copy id button for recovering a
+  workspace's ownership. It has no Licenses column.
 
 ## Creating and joining
 
 - Anyone signed in with a verified email may create a workspace and becomes its
   Owner. A Private Cloud may limit creation to Organization Admins with
   `CLOUD_CORE_WORKSPACE_CREATION=organization-admins`.
+- **The automatic workspace.** `POST /ensure` (no body) answers the caller's
+  workspace as a workspace detail: `200` with their oldest workspace (the first
+  `GET /` gives: the one created first), whatever made it, or, when they have none, `201` with a
+  new one made for them, with them as its Owner. The same rules as creating
+  apply to that one (`403 email_unverified`, and `403 forbidden` for a
+  non-admin under `organization-admins`); someone with a workspace gets it
+  either way. The new workspace is marked automatic, and its
+  `workspace.created` event carries `after.automatic: true`. Its name is the
+  person's last sign-in name, trimmed with inner whitespace collapsed, and
+  "'s Workspace" ("Dana Reyes's Workspace"). Without a name it is made from the
+  verified email's local part, any `+tag` dropped, split on `.`, `_` and `-`,
+  each word capitalized ("john.smith+x@…" is "John Smith's Workspace"); without
+  either it is "My Workspace". The person's part is cut so the whole is at most
+  80 characters; invisible format characters (zero-width spaces, bidi marks)
+  are dropped, and the cut never splits a character or an emoji sequence. Each ensure writes the person's `users` row
+  (`portalWorkspaceAt`) in its transaction before it looks for their
+  memberships, so two at once (two tabs, or a retry racing its first try)
+  conflict there, the one retried finds the other's workspace, and the person
+  ends with one. A join (below) writes that row too, so an ensure never answers
+  a workspace a join is deleting. Core does not look at invitations here: the portal decides
+  when to ask.
+- An automatic workspace **holds nothing** while its Owner is its only member
+  (an imported membership waiting for sign-in counts as another) and it has no
+  pending invitation, unrevoked key, license that has not ended, or deletion
+  hold. `GET /` marks each of the caller's workspaces `replaceable`: `true`
+  only for their own automatic workspace, which they own, while it holds
+  nothing. A workspace made with `POST /` never is.
+- **Giving way.** In the transaction that gives a person a membership in
+  another workspace, their automatic workspaces that hold nothing are deleted
+  (`yieldAutomaticWorkspace`): accepting an invitation (by token or by id,
+  after its checks), claiming an imported membership (`claimPendingMemberships`,
+  when it moves a membership to the person rather than merging it into one they
+  hold), and `recoverOwnership` when it creates the membership. The deletion is
+  the workspace deletion's own steps without the typed name: the memberships
+  end (`workspace_deleted`), `workspace.deleted` is recorded with
+  `after.reason: "joined_another_workspace"` (for the person, or for the system
+  in a claim), and the deletion and the join commit together or not at all, so
+  both are on the change feed or neither is. The workspace being joined is never
+  the one deleted. A workspace that holds anything is kept, as is any the person
+  did not make for themselves: one where they are a Member or share ownership,
+  or one made with `POST /`. The join then succeeds as it would for anyone, and
+  the person has both memberships.
 - An invitation names an email, a role and an expiry (14 days). Admins invite
   Members and Developers, Owners anyone. Core stores only a hash of the
   invitation token; the link carries the token. The email names the inviter.
@@ -82,10 +192,24 @@ at `/enterprise` until it returns as workspace settings.
   and revoked when their account is deleted. A person may send 100 invitations
   an hour, and a workspace hold 200 pending ones; replacing the pending
   invitation to an address does not count against that.
+- Memberships imported from the Mentra Miniapp Store's developer organizations
+  ([Store integration](store-integration.md#moving-developer-organizations-from-the-store))
+  wait for their person's first sign-in with a matching verified email. Until
+  then the member list shows them as pending (`pending: true`, `mentraUserId`
+  and `name` null), and the portals mark them "Pending first sign-in". They
+  hold their role meanwhile: a pending Owner counts toward the last Owner while
+  a verified email can still claim it (its legacy identity exists), Admins
+  change or remove them like any other member, and the keys they created
+  validate.
 - Deleting a workspace ends its memberships and revokes its keys and
-  invitations at once, without asking any other service. Miniapps it publishes
-  in the Mentra Miniapp Store stay published until a Store operator assigns
-  them to another workspace.
+  invitations at once. It is refused (`409 workspace_has_holds`) while a
+  service holds the workspace, whoever asks, Organization Admins included: the
+  Mentra Miniapp Store holds a workspace while it owns any miniapp that is not
+  deleted, a draft included, and the portals say so where the delete is ("This
+  workspace still owns 3 miniapps. Delete them in the Developer Console
+  first."). Once the miniapps are deleted, the Store clears its hold and the
+  workspace can be deleted ([Store
+  integration](store-integration.md#deletion-holds)).
 - Deleting a Mentra account first marks it deleted, which makes it no
   principal at all (see `signin.md`), so it can neither create nor join a
   workspace, and its owner memberships never count toward the last Owner. It
@@ -95,7 +219,9 @@ at `/enterprise` until it returns as workspace settings.
   rows, the creator's email and user id on their keys, their address on keys a
   service issued at their request, and the inviter's email and user id on their
   invitations. Membership rows keep the opaque user id their history is keyed
-  by, and audit events keep what they recorded.
+  by, and audit events keep what they recorded. The last write of the transaction
+  that ends the memberships is a `user.deleted` event, on the change feed services
+  read ([Fleet integration](fleet-integration.md#account-deletion)).
 
 ## Keys
 
@@ -132,16 +258,20 @@ session authenticates only its own routes:
 | Route group | Who | Authenticates with |
 | --- | --- | --- |
 | `/api/portal/workspaces/*` | The workspace portal | Its session, or a bearer |
+| `/api/portal/billing/*` | The workspace portal | Its session, or a bearer; forwarded to the billing module ([Portal modules](portal-modules.md)) |
 | `/api/admin/workspaces/*`, `/api/admin/organization/*` | The admin portal | Its session, or a bearer |
 | `/api/workspaces/*`, `/api/organization/*` | Servers and tools | Identity-provider access tokens and Core keys |
 
-Workspace routes (`GET`/`POST /`, `GET`/`PATCH`/`DELETE /:workspaceId`,
+Workspace routes (`GET`/`POST /`, `POST /ensure`, `GET`/`PATCH`/`DELETE /:workspaceId`,
 `/members`, `/invitations`, `/invitations/mine`, `/invitations/peek`, `/invitations/accept`
-(by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`) are for people; a key
-gets 403. A workspace's detail says whether the caller is an Organization Admin
+(by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`, and `/licenses` with
+its seats and `/seat-assignments`, [Licenses](licenses.md#assigning-licenses)) are for people;
+a key gets 403. A workspace's detail says whether the caller is an Organization Admin
 (`organizationAdmin`). Audit events name their subject: `target.email` for memberships and
 invitations, `target.name` for keys. Each checks
-the caller's capability in that workspace. `GET /api/organization` tells any
+the caller's capability in that workspace. A workspace's detail lists what holds it
+from deletion (`deletionHolds`), and `DELETE /:workspaceId` answers
+`409 workspace_has_holds` with those holds while there are any. `GET /api/organization` tells any
 caller, a key included, its organization capabilities and whether it may create
 a workspace. `/api/organization/workspaces` lists every workspace and
 `/api/organization/workspaces/:workspaceId/owners` makes a person (by Core user
@@ -153,8 +283,18 @@ person.
 (`organization.incidents.read`), support profiles
 (`organization.supportProfiles.read`), test runs, the routine catalog and
 system health (`organization.testing.read`, and `organization.testing.manage`
-to write). `/api/admin/me` answers any caller with its capabilities. The Store
-calls Core through a signed service API ([Store integration](store-integration.md)).
+to write). `/api/admin/me` answers any caller with its capabilities and whether
+Fleet is installed on this Core (`fleet.installed`). `/api/admin/fleet/*` forwards
+to the optional Fleet service for a person holding `organization.fleet.administer`
+(an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).
+The Store calls Core through a signed service API ([Store integration](store-integration.md)),
+and its billing module writes licenses through it ([Licenses](licenses.md)).
+`/api/portal/billing/*` forwards the workspace portal's billing requests
+to that module for a signed-in person, with the workspace or the person's own
+account as the scope Core decides ([Portal modules](portal-modules.md)).
+`/api/portal/me` says whether to offer it (`modules.billing`) and whether its catalog
+can be read (`modules.billingCatalog`), which names the licenses on the Members list for
+everyone who may see them.
 
 ## Configuration
 
@@ -164,7 +304,9 @@ calls Core through a signed service API ([Store integration](store-integration.m
 | `CLOUD_CORE_WORKSPACE_CREATION` | Optional. `open` (default) or `organization-admins`. Any other value stops Core at startup. |
 | `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE` | Optional. The invitation link, an absolute URL containing `{token}`. Default `<CLOUD_CORE_ENTERPRISE_PORTAL_URL origin>/?workspaceInvite={token}`, the workspace portal. With neither set, inviting answers `503 invitations_unavailable`. |
 | `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` | Optional. Comma-separated environment labels keys may carry; the first is the one new keys get. Default: this Core's own label (`CLOUD_CORE_ENVIRONMENT`, else derived from `CONSOLE2_URL`, else `local`), which is the label existing keys carry. |
-| `CLOUD_CORE_SERVICE_SECRETS` | Optional. The signed service API's secrets, `{"store": ["<newest>", "<older>"]}`. Unset: every service call is refused. |
+| `CLOUD_CORE_SERVICE_SECRETS` | Optional. The signed service API's secrets by service (`store`, `fleet`), `{"store": ["<newest>", "<older>"], "fleet": ["<newest>"]}`. Unset: every service call is refused. |
+| `CLOUD_CORE_FLEET_URL`, `CLOUD_CORE_FLEET_SECRET`, `CLOUD_CORE_ENABLED_FEATURES` | Optional. The Fleet service Core forwards to, its shared secret, and (on a Private Cloud) the features the deployment has bought, which must list `fleet.managed` (case-sensitive). Unset: Fleet is not installed. See [Fleet integration](fleet-integration.md). |
+| `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | Optional, hosted Core only. The billing module Core forwards to, and its shared secret. Unset: billing is not installed. Outside `CLOUD_CORE_ENVIRONMENT=prod` its pages are visible to Organization Admins only, and its catalog stays readable by members. See [Portal modules](portal-modules.md). |
 | `RESEND_API_KEY`, `EMAIL_SENDER` | Invitation emails. Without them, inviting still works and returns the link to copy. |
 
 Workspace writes use multi-document transactions across collections, so they

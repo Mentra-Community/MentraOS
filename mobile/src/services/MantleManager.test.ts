@@ -7,7 +7,7 @@ import {router} from "expo-router"
 
 import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
-import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
+import {miniappUpdateScheduler} from "@/services/miniapps/miniappUpdateScheduler"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {linkLingoPackageName, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
 import {deploymentStore} from "@/services/deployment/store"
@@ -169,7 +169,7 @@ describe("MantleManager", () => {
   })
 
   afterAll(() => {
-    storeUpdateScheduler.stop()
+    miniappUpdateScheduler.stop()
     jest.clearAllTimers()
     jest.useRealTimers()
   })
@@ -186,7 +186,7 @@ describe("MantleManager", () => {
         contextual_dashboard: true,
         auth_email: "from-server@example.com",
         power_saving_mode: false,
-        voice_activity_detection_enabled: true,
+        voice_activity_detection_enabled: false,
       }),
     )
     expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
@@ -242,13 +242,13 @@ describe("MantleManager", () => {
     useGlassesStore.getState().setGlassesInfo({deviceModel: "Even Realities G1"})
     ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
     await useSettingsStore.getState().setSetting(SETTINGS.core_token.key, "new-token", false)
-    await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, false)
+    await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, true, false)
     // Setting pushes are debounced (300ms) and merged into one native write.
     jest.runOnlyPendingTimers()
     expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         core_token: "new-token",
-        voice_activity_detection_enabled: false,
+        voice_activity_detection_enabled: true,
       }),
     )
   })
@@ -310,7 +310,7 @@ describe("MantleManager", () => {
     expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalled()
 
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("power_saving_mode")
-    expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("voice_activity_detection_enabled", true)
+    expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("voice_activity_detection_enabled", false)
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("metric_system")
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("twelve_hour_time")
     ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
@@ -659,59 +659,48 @@ describe("MantleManager", () => {
     })
   })
 
-  it("keeps a bundled Store background-only and assigns it the build's bundled miniapps", () => {
-    expect(miniappConfig.isMiniappAvailable("com.mentra.store", "interactive")).toBe(false)
-    expect(miniappConfig.isMiniappAvailable("com.mentra.store", "background")).toBe(true)
-    expect(miniappConfig.isMiniappAvailable("com.mentra.notes", "interactive")).toBe(true)
-    expect(miniappConfig.bundledStoreMiniappPackages).toEqual(["com.mentra.store"])
-    expect(miniappConfig.bundledSystemMiniappStoreOwners["com.mentra.notes"]).toBe("com.mentra.store")
+  it("configures the build's bundled miniapps and its miniapp SDK range", () => {
+    expect(miniappConfig.bundledStoreMiniappPackages).toBeUndefined()
+    expect(miniappConfig.bundledSystemMiniappStoreOwners).toBeUndefined()
+    expect(miniappConfig.isMiniappAvailable).toBeUndefined()
     expect(miniappConfig.supportedMiniappSdkRange).toBe(">=0.3.0 <4.0.0")
   })
 
-  it("clears a Store's Home, glasses-menu and autostart state without stopping background maintenance", async () => {
-    const instance = mantle as unknown as {prepareBackgroundStores: () => Promise<void>}
-    await engine.settings.set(SETTINGS.menu_apps.key, [
-      {name: "Store", packageName: "com.mentra.store", running: true},
-      {name: "Notes", packageName: "com.mentra.notes", running: false},
-    ])
-    await instance.prepareBackgroundStores()
-    expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.store", true)
-    expect(saveLocalAppRunningState).toHaveBeenCalledWith("com.mentra.store", false)
-    expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual([
-      {name: "Notes", packageName: "com.mentra.notes", running: false},
-    ])
-    // A hidden maintenance context is left alone; a user-visible one (an older build's Store UI) is stopped.
-    expect(miniappLauncher.stop).not.toHaveBeenCalled()
-    ;(miniappLauncher.isProjectedRunning as jest.Mock).mockReturnValueOnce(true)
-    await instance.prepareBackgroundStores()
-    expect(miniappLauncher.stop).toHaveBeenCalledWith("com.mentra.store")
-  })
-
-  it("starts background updates after restoring sessions, for the Stores this deployment allows", async () => {
+  it("starts miniapp updates after restoring sessions", async () => {
     const instance = mantle as unknown as {
       restoreMiniapps: () => Promise<void>
       installBundledMiniapps: () => Promise<void>
     }
-    const start = jest.spyOn(storeUpdateScheduler, "start").mockResolvedValue()
+    const start = jest.spyOn(miniappUpdateScheduler, "start").mockResolvedValue()
     const install = jest.spyOn(instance, "installBundledMiniapps").mockResolvedValue()
     const sync = jest.spyOn(deploymentManagedMiniappSync, "sync").mockResolvedValue()
-    const installed = jest.mocked(appRegistry.getInstalledMiniapps)
-    installed.mockResolvedValue([{packageName: "com.mentra.store"} as any])
     const autostart = miniappLauncher.autostartLocalMiniapps as jest.Mock
     try {
       await instance.restoreMiniapps()
-      expect(installed).toHaveBeenLastCalledWith({includeBackgroundOnly: true})
-      expect(start).toHaveBeenLastCalledWith(["com.mentra.store"])
+      expect(start).toHaveBeenCalledTimes(1)
       expect(autostart.mock.invocationCallOrder.at(-1)).toBeLessThan(start.mock.invocationCallOrder.at(-1)!)
-
-      installed.mockResolvedValue([])
-      await instance.restoreMiniapps()
-      expect(start).toHaveBeenLastCalledWith([])
     } finally {
       start.mockRestore()
       install.mockRestore()
       sync.mockRestore()
-      installed.mockResolvedValue([])
+    }
+  })
+
+  it("never installs a bundled release over an open miniapp", async () => {
+    const deployment = jest.spyOn(deploymentStore, "getActive").mockReturnValue(createConsumerDeployment())
+    const originalVersions = appRegistry.getInstalledVersions
+    const originalInstall = appRegistry.installFromLocalZip
+    const install = jest.fn()
+    Object.assign(appRegistry, {getInstalledVersions: () => ["0.9.0"], installFromLocalZip: install})
+    ;(miniappLauncher.isRunning as jest.Mock).mockReturnValueOnce(true)
+    const asset = {name: "com.mentra.notes-1.0.0.zip", downloadAsync: jest.fn()} as unknown as Asset
+    try {
+      await (mantle as unknown as {installBundledMiniapp: (asset: Asset) => Promise<void>}).installBundledMiniapp(asset)
+      expect(asset.downloadAsync).not.toHaveBeenCalled()
+      expect(install).not.toHaveBeenCalled()
+    } finally {
+      Object.assign(appRegistry, {getInstalledVersions: originalVersions, installFromLocalZip: originalInstall})
+      deployment.mockRestore()
     }
   })
 
@@ -1295,6 +1284,19 @@ describe("runtime recovery initialization", () => {
     await manager.waitForMiniapps()
     expect(engine.start).toHaveBeenCalledTimes(2)
     expect(manager.initialized).toBe(true)
+  })
+
+  it("restores miniapps only after engine.start() has resolved, so Fleet's collector hears their launches", async () => {
+    const start = deferred()
+    jest.spyOn(engine, "start").mockReturnValueOnce(start.promise)
+    const autostart = miniappLauncher.autostartLocalMiniapps as jest.Mock
+    const activity = manager.init()
+    await jest.advanceTimersByTimeAsync(10_000)
+    expect(autostart).not.toHaveBeenCalled()
+    start.resolve()
+    await activity
+    await manager.waitForMiniapps()
+    expect(autostart).toHaveBeenCalledTimes(1)
   })
 
   it("retries failed foreground reconciliation without restarting the runtime", async () => {

@@ -167,7 +167,7 @@ export class Auth implements AuthModule {
   constructor(deps: { http: HttpClient; store: TokenStore; config: AuthConfig; logger: Logger })
   getRuntimeToken(): Promise<string>                                  // cloud-runtime audience
   getCoreToken(): Promise<string>                                     // cloud-core audience
-  getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>
+  getMiniappToken(packageName: string, opts?: { minTtlMs?: number; fresh?: boolean }): Promise<{ token: string; expiresAt: number }>
   get identity(): { mentraUserId: string; tenantId: string }
   onExpired(handler: () => void): () => void
 }
@@ -327,6 +327,7 @@ export const noopLogger: Logger
 export class CloudClientError extends Error {}
 export class HttpError extends CloudClientError { status!: number; code?: string }
 export class AuthExpiredError extends CloudClientError {}
+export class AuthUnavailableError extends CloudClientError { status?: number }
 ```
 
 **`react-native/index.ts`** and **`node/index.ts`**: the only platform-specific
@@ -398,16 +399,39 @@ without configuring Core at all.
 3. If two callers ask at once, only **one** refresh request goes out and both get its
    result (a single-flight lock). Without this, a reconnect storm would fire many
    refreshes at once.
-4. If refresh fails (the refresh token is dead or revoked), clear it. If the
-   host configured `getSubjectToken()`, exchange one fresh subject token and
-   continue; otherwise fire `onExpired` so the host can send the user back
-   through login. Don't retry forever.
+4. If Core definitively rejects the refresh token (HTTP 400 or 401 with the OAuth
+   error `invalid_grant` or `unauthorized_client`: unknown, expired, already used,
+   deleted account, or a disabled tenant), clear it. If the host configured
+   `getSubjectToken()`, exchange one fresh subject token and continue; otherwise
+   fire `onExpired` so the host can send the user back through login. Don't retry
+   forever.
+5. Any other refresh failure (a network error, a timeout, 408, 429, 5xx, an answer
+   that is not Core's JSON, any other 4xx) says nothing about the token. Keep it,
+   don't fire `onExpired`, don't exchange, and throw `AuthUnavailableError`; the
+   next call refreshes again with the same refresh token.
+6. Exchanges are classified the same way. Only Core's own refusal of the subject
+   token (HTTP 400 or 401 with `invalid_grant`, `unauthorized_client` or
+   `invalid_request`) is an `AuthExpiredError`, and `onExpired` fires only when
+   such a refusal answers the fresh exchange that follows a rejected refresh
+   token. A network error, timeout, 408, 429, 5xx, a body that is not Core's
+   JSON, or the host's `getSubjectToken` throwing is an `AuthUnavailableError`
+   that clears and notifies nothing. An answer that arrives after
+   `clearSession()` notifies no one and restores nothing.
 
 **`getMiniappToken(packageName)`:** calls `POST /api/client/auth/miniapp-token` with
 the Core token as the Bearer, and caches the result per packageName with its
 expiry. A second call for the same packageName returns the cached token until it's
-near expiry, then re-mints (single-flight, same as above). This is what the on-device
-runtime calls at miniapp launch and on refresh.
+near expiry, then re-mints. `{ fresh: true }` skips the cache and always reaches Core,
+so the token reflects what Core knows now (the features the user holds). Mints for one
+packageName run one at a time. A fresh call shares an in-flight mint only while that
+mint's request has not been sent; once it has, the call waits for it and starts the
+next mint, which later fresh calls share. This is what the on-device runtime calls, fresh,
+at miniapp launch, when the miniapp returns to the foreground, and when its scheduled
+refresh before expiry falls due. If the launch mint fails, the runtime retries through
+the default path with backoff, so a still-valid cached token serves the miniapp while
+Core is unreachable; the foreground and scheduled mints then pick up anything newer.
+A scheduled refresh that fails is retried with the same backoff until a new token
+arrives.
 
 **`identity`:** Core/runtime tokens are JWTs, so claims like `sub` and `tenantId` are
 base64 JSON inside them. `identity` reads them straight off the active token path.
@@ -534,10 +558,12 @@ cooperate:
 - If the cloud rejects the live socket with `AUTH_EXPIRED` anyway (clock skew, a
   revoke mid-session), `cloud.runtime` asks `cloud.auth` for a fresh runtime token,
   then reopens with the new token.
-- If token refresh itself fails, `cloud.auth` falls back to one fresh
-  `getSubjectToken()` exchange when available. If that is unavailable or also
-  fails, `cloud.auth.onExpired` fires once and the host decides what to do
-  (usually: send the user back through login).
+- If Core definitively rejects the refresh token, `cloud.auth` falls back to one
+  fresh `getSubjectToken()` exchange when available. If that is unavailable or
+  also fails, `cloud.auth.onExpired` fires once and the host decides what to do
+  (usually: send the user back through login). A refresh that fails for any other
+  reason (network, timeout, 5xx) keeps the refresh token and throws
+  `AuthUnavailableError` for the caller to retry.
 
 ## Errors and logging
 

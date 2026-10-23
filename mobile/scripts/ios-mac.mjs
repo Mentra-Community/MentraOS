@@ -8,14 +8,12 @@ import {writeMacXcodeEnvironment} from "./ios-mac-environment.mjs"
 
 const args = process.argv.slice(2)
 if (args.includes("--help")) {
-  console.log(`Usage: bun ios:mac [--debug] [--build-only] [--e2e-host-network]
+  console.log(`Usage: bun ios:mac [--debug] [--build-only]
 
 Build the iOS app for this Apple Silicon Mac, then launch it in the background.
 Release is the default: JavaScript is bundled, so Metro is unnecessary.
 --debug uses Metro; start bun start in a separate terminal.
 --build-only archives the build and leaves the installed app untouched.
---e2e-host-network compiles the test-only Mac network lease adapter. Runs using
-  this adapter test real media but do not qualify native iPhone Wi-Fi association.
 Set EXPO_PUBLIC_ASG_OTA_VERSION_URL to an explicitly selected public manifest
   to enable glasses OTA. Without a manifest, local builds keep OTA disabled.
 Uses the existing Xcode account, development signing, and mobile/.env.
@@ -23,19 +21,15 @@ Does not archive, export an IPA, or upload to TestFlight.`)
   process.exit(0)
 }
 for (const arg of args) {
-  if (!["--debug", "--build-only", "--e2e-host-network"].includes(arg)) throw new Error(`Unknown argument: ${arg}`)
+  if (!["--debug", "--build-only"].includes(arg)) throw new Error(`Unknown argument: ${arg}`)
 }
 if (process.platform !== "darwin" || process.arch !== "arm64") {
   throw new Error("ios:mac requires an Apple Silicon Mac.")
 }
 
 const configuration = args.includes("--debug") ? "Debug" : "Release"
-const e2eHostNetwork = args.includes("--e2e-host-network")
 const projectRoot = process.cwd()
 const derivedData = path.resolve("build/ios-mac")
-if (e2eHostNetwork) {
-  await fs.access("modules/glasses-media/ios/CoreKit/Sources/GlassesMediaCore/MacE2EHotspotLease.swift")
-}
 await setBuildEnv()
 // A copied .env may still name an old release. The repository root owns the
 // local version, including the value Metro embeds in the Settings screen.
@@ -93,7 +87,6 @@ const common = [
   // Xcode 27 treats old Pod deployment targets as errors for iOS-on-Mac.
   // Compile all targets with the app's configured minimum, preserving its support floor.
   `IPHONEOS_DEPLOYMENT_TARGET=${deploymentTarget}`,
-  ...(e2eHostNetwork ? ["SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) MENTRA_E2E"] : []),
 ]
 
 console.log(`Building ${configuration} for this Mac (${id}).`)
@@ -129,7 +122,6 @@ const manifest = {
   sourceStatus: sourceBefore.status,
   sourceDiffSha256: createHash("sha256").update(sourceBefore.diff).digest("hex"),
   configuration,
-  networkAdapter: e2eHostNetwork ? "mac-host-verified-test-only" : "native",
   otaManifestUrl: process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL?.trim() || null,
   destination,
   app,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AuditEventView } from "@mentra/workspace-contract";
-import { actorLabel, describeAuditEvent, plainText, rawLines, readableChanges } from "./lib/audit";
+import { actionLabel, actorLabel, describeAuditEvent, plainText, rawLines, readableChanges } from "./lib/audit";
 import { formatDate } from "./lib/format";
 
 const ALEX = { kind: "user" as const, email: "alex@acme.test", credentialId: null, service: null };
@@ -156,6 +156,25 @@ describe("audit events as sentences", () => {
     );
   });
 
+  test("deletion holds say what holds the workspace, by the service that holds it", () => {
+    const STORE = { kind: "service" as const, email: null, credentialId: null, service: "store" };
+    const target = { workspaceId: "ws_1", service: "store" };
+    const held = (after: Record<string, unknown>, before: Record<string, unknown> | null = null) =>
+      event("workspace.deletion_hold_set", { actor: STORE, target, before, after });
+    expect(say(held({ reason: "owns_miniapps", count: 3 }))).toBe("Held the workspace from deletion for 3 miniapps");
+    expect(say(held({ reason: "owns_miniapps", count: 1 }, { reason: "owns_miniapps", count: 2 }))).toBe(
+      "Held the workspace from deletion for 1 miniapp",
+    );
+    expect(say(held({ reason: "owns_miniapps", count: null }))).toBe("Held the workspace from deletion for its miniapps");
+    expect(
+      say(event("workspace.deletion_hold_set", { actor: STORE, target: { ...target, service: "fleet" }, after: { reason: "manages_devices", count: 4 } })),
+    ).toBe("Held the workspace from deletion (manages devices: 4)");
+    expect(
+      say(event("workspace.deletion_hold_cleared", { actor: STORE, target, before: { reason: "owns_miniapps", count: 1 }, after: null })),
+    ).toBe("Stopped holding the workspace from deletion");
+    expect(actorLabel(STORE)).toBe("Store service");
+  });
+
   test("names are marked to stand out, and nothing internal shows in the sentence", () => {
     const { summary } = describeAuditEvent(
       event("membership.role_changed", {
@@ -184,6 +203,24 @@ describe("audit events as sentences", () => {
     expect(lines.join("\n")).not.toContain("wm_");
     expect(lines.join("\n")).not.toContain("Same");
     expect(readableChanges({ before: { role: "member" }, after: { role: null } })).toEqual(["Role: Member (removed)"]);
+  });
+
+  test("product and license events read as plain labels, not their action names", () => {
+    expect(["license.written", "license.ended", "seat.assigned", "seat.released"].map(actionLabel)).toEqual([
+      "Licenses bought or changed",
+      "Licenses ended",
+      "License assigned",
+      "License released",
+    ]);
+    const assigned = event("seat.assigned", {
+      target: { licenseId: "lic_1", membershipId: "wm_1", mentraUserId: "mu_1", email: "priya@acme.test" },
+      after: { assignedAt: "2026-10-12T10:00:00.000Z", seatsUsed: 1, quantity: 5 },
+    });
+    expect(say(assigned)).toBe("License assigned");
+    // The field is `seatsUsed`; the person reads "Licenses assigned".
+    expect(notes(assigned)).toEqual(expect.arrayContaining(["Licenses assigned: 1", "Quantity: 5"]));
+    expect([...notes(assigned), say(assigned)].filter((line) => /\bseats?\b/i.test(line))).toEqual([]);
+    expect(notes(assigned).join("\n")).not.toContain("wm_");
   });
 
   test("the raw details keep everything as recorded", () => {

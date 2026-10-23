@@ -13,11 +13,23 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.app.Application;
-
+import com.mentra.asg_client.io.bes.log.BesLogManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
-
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import org.json.JSONObject;
 import org.junit.Before;
 import org.junit.Test;
@@ -26,16 +38,6 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLog;
-
-import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Queue;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
 
 /** Independent incident log sources share one sequential, bounded BLE transport. */
 @RunWith(RobolectricTestRunner.class)
@@ -61,12 +63,18 @@ public class UploadIncidentLogsCommandHandlerTest {
         when(bluetooth.isFileTransferInProgress()).thenAnswer(invocation -> active.get());
         doAnswer(
                         invocation -> {
-                            Consumer<String> callback = invocation.getArgument(3);
-                            callback.accept("{\"source\":\"glasses_firmware\",\"entries\":[]}");
-                            return null;
+                            Consumer<String> callback = invocation.getArgument(4);
+                            BesLogManager session =
+                                    new BesLogManager(
+                                            invocation.getArgument(0),
+                                            RuntimeEnvironment.getApplication(),
+                                            configuration,
+                                            callback);
+                            session.onLogPacketReceived(255, "end");
+                            return session;
                         })
                 .when(bes)
-                .requestBesLogs(anyString(), any(), eq(configuration), any(Consumer.class));
+                .requestBesLogs(anyString(), any(), eq(configuration), eq(""), any(Consumer.class));
         when(bluetooth.sendFile(anyString()))
                 .thenAnswer(
                         invocation -> {
@@ -342,6 +350,386 @@ public class UploadIncidentLogsCommandHandlerTest {
         } finally {
             Thread.interrupted();
         }
+    }
+
+    @Test
+    public void concurrentReportsKeepBesCaptureAndBothFilesCorrelated() throws Exception {
+        assertConcurrentReportsRemainSequential(false, false);
+    }
+
+    @Test
+    public void failedFirstReportFirmwareStillAllowsTheNextWholeReport() throws Exception {
+        assertConcurrentReportsRemainSequential(true, false);
+    }
+
+    @Test
+    public void httpReportCannotReplaceAnEarlierBleCaptureOrInterruptItsFiles() throws Exception {
+        assertConcurrentReportsRemainSequential(false, true);
+    }
+
+    @Test
+    public void httpCaptureHoldsTheSameOwnershipUntilItsStreamSettles() throws Exception {
+        BesLogManager session = mock(BesLogManager.class);
+        CountDownLatch captureWaiting = new CountDownLatch(1);
+        CountDownLatch releaseCapture = new CountDownLatch(1);
+        CountDownLatch secondAttempting = new CountDownLatch(1);
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        when(bes.requestBesLogs(
+                        eq("rep_http"),
+                        any(),
+                        eq(configuration),
+                        eq("https://core.example"),
+                        org.mockito.ArgumentMatchers.isNull()))
+                .thenReturn(session);
+        when(session.awaitCollection(25, TimeUnit.SECONDS))
+                .thenAnswer(
+                        invocation -> {
+                            captureWaiting.countDown();
+                            assertThat(releaseCapture.await(5, TimeUnit.SECONDS)).isTrue();
+                            return true;
+                        });
+        starts.add(true);
+        starts.add(true);
+        waits.add(true);
+        waits.add(true);
+        Thread http =
+                new Thread(
+                        () -> {
+                            try {
+                                handler.captureBesLogsOverHttp("rep_http", "https://core.example");
+                            } catch (Throwable failure) {
+                                error.compareAndSet(null, failure);
+                            }
+                        });
+        Thread ble = relayThread("rep_after_http", secondAttempting, error);
+        try {
+            http.start();
+            assertThat(captureWaiting.await(5, TimeUnit.SECONDS)).isTrue();
+            ble.start();
+            assertThat(secondAttempting.await(5, TimeUnit.SECONDS)).isTrue();
+            awaitBlocked(ble);
+            verify(bes, org.mockito.Mockito.never())
+                    .requestBesLogs(
+                            anyString(), any(), eq(configuration), eq(""), any(Consumer.class));
+        } finally {
+            releaseCapture.countDown();
+            http.join(5_000);
+            ble.join(5_000);
+        }
+        assertThat(http.isAlive()).isFalse();
+        assertThat(ble.isAlive()).isFalse();
+        assertThat(error.get()).isNull();
+        assertThat(sentSources).containsExactly("glasses_firmware", "glasses");
+        assertFilesRemoved();
+    }
+
+    @Test
+    public void captureWaitFinalizesTheExactSessionOnTimeoutAndInterruption() throws Exception {
+        CountDownLatch partialDelivered = new CountDownLatch(1);
+        AtomicInteger deliveries = new AtomicInteger();
+        AtomicReference<String> partial = new AtomicReference<>();
+        BesLogManager timedOut =
+                new BesLogManager(
+                        "",
+                        RuntimeEnvironment.getApplication(),
+                        configuration,
+                        json -> {
+                            partial.set(json);
+                            deliveries.incrementAndGet();
+                            partialDelivered.countDown();
+                        });
+        timedOut.onLogPacketReceived(0, "partial trace");
+        assertThat(timedOut.awaitCollection(0, TimeUnit.SECONDS)).isFalse();
+        assertThat(timedOut.isFinished()).isTrue();
+        assertThat(timedOut.awaitCollection(0, TimeUnit.SECONDS)).isTrue();
+        assertThat(partialDelivered.await(5, TimeUnit.SECONDS)).isTrue();
+        timedOut.onLogPacketReceived(255, "end");
+        assertThat(deliveries.get()).isEqualTo(1);
+        assertThat(
+                        new JSONObject(partial.get())
+                                .getJSONArray("entries")
+                                .getJSONObject(0)
+                                .getString("message"))
+                .isEqualTo("partial trace");
+        BesLogManager interrupted =
+                new BesLogManager("", RuntimeEnvironment.getApplication(), configuration);
+        Thread.currentThread().interrupt();
+        try {
+            org.junit.Assert.assertThrows(
+                    InterruptedException.class,
+                    () -> interrupted.awaitCollection(25, TimeUnit.SECONDS));
+            assertThat(interrupted.isFinished()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        BesLogManager complete =
+                new BesLogManager("", RuntimeEnvironment.getApplication(), configuration);
+        complete.onLogPacketReceived(255, "end");
+        assertThat(complete.awaitCollection(0, TimeUnit.SECONDS)).isTrue();
+    }
+
+    @Test
+    public void interruptedHttpCaptureSettlesItsSessionAndPreservesInterruption() {
+        BesLogManager session =
+                new BesLogManager("", RuntimeEnvironment.getApplication(), configuration);
+        when(bes.requestBesLogs(
+                        eq("rep_interrupted_http"),
+                        any(),
+                        eq(configuration),
+                        eq("https://core.example"),
+                        org.mockito.ArgumentMatchers.isNull()))
+                .thenReturn(session);
+        Thread.currentThread().interrupt();
+        try {
+            handler.captureBesLogsOverHttp("rep_interrupted_http", "https://core.example");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(session.isFinished()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
+    public void bleCaptureExpirySettlesExactSessionBeforeFilesAndRetainsPartialLogs()
+            throws Exception {
+        CountDownLatch callbackEntered = new CountDownLatch(1);
+        CountDownLatch releaseCallback = new CountDownLatch(1);
+        CountDownLatch callbackFinished = new CountDownLatch(1);
+        AtomicInteger deliveries = new AtomicInteger();
+        BesLogManager session =
+                spy(
+                        new BesLogManager(
+                                "rep_expired_ble",
+                                RuntimeEnvironment.getApplication(),
+                                configuration,
+                                json -> {
+                                    callbackEntered.countDown();
+                                    try {
+                                        releaseCallback.await();
+                                        deliveries.incrementAndGet();
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                    } finally {
+                                        callbackFinished.countDown();
+                                    }
+                                }));
+        session.onLogPacketReceived(0, "retained partial firmware");
+        // Model an expired ownership deadline with the native main-loop watchdog still delayed.
+        doAnswer(invocation -> session.awaitCollection(0, TimeUnit.SECONDS))
+                .when(session)
+                .awaitCollection(25, TimeUnit.SECONDS);
+        when(bes.requestBesLogs(
+                        eq("rep_expired_ble"),
+                        any(),
+                        eq(configuration),
+                        eq(""),
+                        any(Consumer.class)))
+                .thenReturn(session);
+        AtomicReference<String> transferredFirmware = new AtomicReference<>();
+        doAnswer(
+                        invocation -> {
+                            assertThat(session.isFinished())
+                                    .as("capture settles before any file starts")
+                                    .isTrue();
+                            File file = new File(invocation.getArgument(0, String.class));
+                            JSONObject payload =
+                                    new JSONObject(
+                                            new String(
+                                                    Files.readAllBytes(file.toPath()),
+                                                    StandardCharsets.UTF_8));
+                            if (payload.getString("source").equals("glasses_firmware")) {
+                                transferredFirmware.set(
+                                        payload.getJSONArray("entries")
+                                                .getJSONObject(0)
+                                                .getString("message"));
+                            }
+                            active.set(true);
+                            return true;
+                        })
+                .when(bluetooth)
+                .sendFile(anyString());
+        waits.add(true);
+        waits.add(true);
+        try {
+            handler.relayLogsViaBle("rep_expired_ble");
+            assertThat(callbackEntered.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(callbackFinished.getCount()).isEqualTo(1);
+            assertThat(transferredFirmware.get()).isEqualTo("retained partial firmware");
+            verify(bluetooth, times(2)).sendFile(anyString());
+            session.onLogPacketReceived(255, "end");
+        } finally {
+            releaseCallback.countDown();
+        }
+        assertThat(callbackFinished.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(deliveries.get()).isEqualTo(1);
+    }
+
+    @Test
+    public void interruptedBleCaptureSettlesItsSessionBeforeOwnershipReturnsAndNextReportRuns()
+            throws Exception {
+        CountDownLatch delivered = new CountDownLatch(1);
+        AtomicInteger deliveries = new AtomicInteger();
+        BesLogManager session =
+                new BesLogManager(
+                        "rep_interrupted_ble",
+                        RuntimeEnvironment.getApplication(),
+                        configuration,
+                        json -> {
+                            deliveries.incrementAndGet();
+                            delivered.countDown();
+                        });
+        when(bes.requestBesLogs(
+                        eq("rep_interrupted_ble"),
+                        any(),
+                        eq(configuration),
+                        eq(""),
+                        any(Consumer.class)))
+                .thenReturn(session);
+        Thread.currentThread().interrupt();
+        try {
+            handler.relayLogsViaBle("rep_interrupted_ble");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(session.isFinished()).isTrue();
+            verify(bluetooth, org.mockito.Mockito.never()).sendFile(anyString());
+        } finally {
+            Thread.interrupted();
+        }
+        assertThat(delivered.await(5, TimeUnit.SECONDS)).isTrue();
+        session.onLogPacketReceived(255, "end");
+        assertThat(deliveries.get()).isEqualTo(1);
+        starts.add(true);
+        starts.add(true);
+        waits.add(true);
+        waits.add(true);
+        handler.relayLogsViaBle("rep_after_interrupted_ble");
+        assertThat(sentSources).containsExactly("glasses_firmware", "glasses");
+        assertFilesRemoved();
+    }
+
+    private void assertConcurrentReportsRemainSequential(
+            boolean firstFirmwareRefused, boolean secondUsesHttp) throws Exception {
+        CountDownLatch firstCapturing = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        CountDownLatch secondAttempting = new CountDownLatch(1);
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        List<String> capturedReports = new ArrayList<>();
+        doAnswer(
+                        invocation -> {
+                            String report = invocation.getArgument(0);
+                            capturedReports.add(report);
+                            if (report.equals("rep_first_concurrent_report")) {
+                                firstCapturing.countDown();
+                                assertThat(releaseFirst.await(5, TimeUnit.SECONDS)).isTrue();
+                            }
+                            Consumer<String> callback = invocation.getArgument(4);
+                            BesLogManager session =
+                                    new BesLogManager(
+                                            invocation.getArgument(0),
+                                            RuntimeEnvironment.getApplication(),
+                                            configuration,
+                                            callback);
+                            session.onLogPacketReceived(255, "end");
+                            return session;
+                        })
+                .when(bes)
+                .requestBesLogs(anyString(), any(), eq(configuration), eq(""), any(Consumer.class));
+        BesLogManager httpSession = mock(BesLogManager.class);
+        when(httpSession.awaitCollection(25, TimeUnit.SECONDS)).thenReturn(true);
+        when(bes.requestBesLogs(
+                        eq("rep_second_concurrent_report"),
+                        any(),
+                        eq(configuration),
+                        eq("https://core.example"),
+                        org.mockito.ArgumentMatchers.isNull()))
+                .thenAnswer(
+                        invocation -> {
+                            capturedReports.add("rep_second_concurrent_report");
+                            return httpSession;
+                        });
+        starts.add(!firstFirmwareRefused);
+        starts.add(true);
+        if (!secondUsesHttp) {
+            starts.add(true);
+            starts.add(true);
+        }
+        int transferCount = (firstFirmwareRefused ? 1 : 2) + (secondUsesHttp ? 0 : 2);
+        for (int i = 0; i < transferCount; i++) {
+            waits.add(true);
+        }
+        Thread first = relayThread("rep_first_concurrent_report", null, error);
+        Thread second =
+                secondUsesHttp
+                        ? new Thread(
+                                () -> {
+                                    secondAttempting.countDown();
+                                    handler.captureBesLogsOverHttp(
+                                            "rep_second_concurrent_report", "https://core.example");
+                                })
+                        : relayThread("rep_second_concurrent_report", secondAttempting, error);
+        try {
+            first.start();
+            assertThat(firstCapturing.await(5, TimeUnit.SECONDS)).isTrue();
+            second.start();
+            assertThat(secondAttempting.await(5, TimeUnit.SECONDS)).isTrue();
+            awaitBlocked(second);
+            verify(bes, times(1))
+                    .requestBesLogs(
+                            anyString(), any(), eq(configuration), eq(""), any(Consumer.class));
+        } finally {
+            releaseFirst.countDown();
+            first.join(5_000);
+            second.join(5_000);
+        }
+        assertThat(first.isAlive()).isFalse();
+        assertThat(second.isAlive()).isFalse();
+        assertThat(error.get()).isNull();
+        assertThat(capturedReports)
+                .containsExactly("rep_first_concurrent_report", "rep_second_concurrent_report");
+        assertThat(sentSources)
+                .containsExactlyElementsOf(
+                        secondUsesHttp
+                                ? List.of("glasses_firmware", "glasses")
+                                : List.of(
+                                        "glasses_firmware",
+                                        "glasses",
+                                        "glasses_firmware",
+                                        "glasses"));
+        assertThat(sentFiles)
+                .extracting(File::getName)
+                .containsExactlyElementsOf(
+                        secondUsesHttp
+                                ? List.of("Brep_first_concu", "Lrep_first_concu")
+                                : List.of(
+                                        "Brep_first_concu",
+                                        "Lrep_first_concu",
+                                        "Brep_second_conc",
+                                        "Lrep_second_conc"));
+        assertFilesRemoved();
+    }
+
+    private void awaitBlocked(Thread thread) {
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (thread.getState() != Thread.State.BLOCKED
+                && thread.isAlive()
+                && System.nanoTime() < until) {
+            Thread.yield();
+        }
+        assertThat(thread.getState())
+                .as("incident waits for the entire prior capture/relay")
+                .isEqualTo(Thread.State.BLOCKED);
+    }
+
+    private Thread relayThread(
+            String report, CountDownLatch attempting, AtomicReference<Throwable> error) {
+        return new Thread(
+                () -> {
+                    try {
+                        if (attempting != null) attempting.countDown();
+                        handler.relayLogsViaBle(report);
+                    } catch (Throwable failure) {
+                        error.compareAndSet(null, failure);
+                    }
+                });
     }
 
     private void assertFilesRemoved() {

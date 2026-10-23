@@ -8,7 +8,14 @@ apply plugin: 'signing'
 def packageJson = new JsonSlurper().parse(file("../package.json"))
 def mavenGroupId = 'com.mentraglass'
 def mavenPublishVersion = (findProperty('mentraMavenVersion') ?: System.getenv('MENTRA_MAVEN_VERSION') ?: packageJson.version).toString()
-def publicMavenSdk = (findProperty('mentraPublicSdk') ?: System.getenv('MENTRA_PUBLIC_SDK') ?: 'false').toString().toBoolean()
+// Inside an Expo host such as the MentraOS app, autolinking provides
+// :expo-modules-core. Without it, this directory is the root of a standalone
+// build (settings.gradle), for example a composite build in a plain Android app.
+// expo-modules-core has no prebuilt Android artifact to resolve instead, so a
+// standalone build leaves out the Expo adapter classes and defaults to the
+// public Maven artifact's dependency shape.
+def standaloneBuild = findProject(':expo-modules-core') == null
+def publicMavenSdk = (findProperty('mentraPublicSdk') ?: System.getenv('MENTRA_PUBLIC_SDK') ?: standaloneBuild.toString()).toString().toBoolean()
 
 // Download Sherpa-ONNX Android AAR from the upstream GitHub release and stage
 // it as a Maven artifact in a tiny on-disk repository under libs/maven/.
@@ -181,10 +188,35 @@ gradle.taskGraph.whenReady {
   }
 }
 
-def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
-apply from: expoModulesCorePlugin
-applyKotlinExpoModulesCorePlugin()
-useExpoPublishing()
+if (standaloneBuild) {
+  apply plugin: 'kotlin-android'
+  // Java 17 bytecode, as in the MentraOS app build.
+  android {
+    compileOptions {
+      sourceCompatibility JavaVersion.VERSION_17
+      targetCompatibility JavaVersion.VERSION_17
+    }
+  }
+  kotlin {
+    compilerOptions {
+      jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+  }
+  // Expo adapters, compiled only inside an Expo host (see expo-module.config.json).
+  tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+    exclude(
+      '**/com/mentra/bluetoothsdk/BluetoothSdkModule.kt',
+      '**/com/mentra/bluetoothsdk/MentraLocalNetworkModule.kt',
+      '**/com/mentra/bluetoothsdk/otaserver/MentraOtaServerModule.kt',
+      '**/com/mentra/bluetoothsdk/photoreceiver/MentraPhotoReceiverModule.kt'
+    )
+  }
+} else {
+  def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+  apply from: expoModulesCorePlugin
+  applyKotlinExpoModulesCorePlugin()
+  useExpoPublishing()
+}
 
 // Hosts that embed @mentra/crust compile with Kotlin 2.3 (its QuickJS library
 // requires it). Keep the public Maven artifact usable from Kotlin 2.1 builds:
@@ -225,6 +257,9 @@ if (useManagedAndroidSdkVersions) {
 
 android {
   namespace "com.mentra.bluetoothsdk"
+  buildFeatures {
+    buildConfig true
+  }
   defaultConfig {
     versionCode 1
     versionName project.version
@@ -255,7 +290,9 @@ android {
 dependencies {
   // Expo adapter class is compiled into the MentraOS module, but the bare SDK
   // artifact should not expose Expo as a runtime dependency.
-  compileOnly project(':expo-modules-core')
+  if (!standaloneBuild) {
+    compileOnly project(':expo-modules-core')
+  }
 
   // Kotlin standard library (explicitly added for IDE support)
   // Version is managed by Expo modules, but explicit dependency helps IDE indexing

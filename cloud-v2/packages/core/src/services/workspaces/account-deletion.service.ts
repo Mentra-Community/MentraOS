@@ -5,10 +5,16 @@
  *  - ends every active membership the user holds with `endedReason:
  *    "account_deleted"`. Each ends as removal does (`endMembership`): the
  *    workspace's revision is bumped, the credentials and pending invitations
- *    that membership created are revoked, and one `membership.removed` event is
- *    recorded;
+ *    that membership created are revoked, the licenses assigned to it are freed
+ *    (`seat.released`, reason `account_deleted`), and one `membership.removed`
+ *    event is recorded. No license ends: a license is always a workspace's;
  *  - revokes every other pending invitation the user sent, such as one sent as
- *    an Organization Admin (`invitation.revoked`, reason `inviter_account_deleted`).
+ *    an Organization Admin (`invitation.revoked`, reason `inviter_account_deleted`);
+ *  - records the `user.deleted` tombstone last: `workspaceId` null, target
+ *    `{mentraUserId}`. It is on the change feed after the removals above, so a
+ *    service holding data keyed by this person (Fleet) knows to delete it. It is
+ *    recorded for everyone, including a person who belongs to no workspace, and
+ *    once: a deletion that runs again finds it.
  * Then the operator keys the person created are revoked (a deleted account is no
  * Organization Admin), and the person's identity is cleared from what stays as
  * history: the email copied onto their membership rows, the creator's email and
@@ -28,20 +34,35 @@
  * member's or invitee's they name: the audit trail is the record of who did what.
  */
 
+import {createLogger} from "@mentra/cloud-shared"
+import {USER_DELETED_ACTION} from "@mentra/workspace-contract"
 import type {ClientSession} from "mongoose"
-import {withTransaction} from "../../connections/mongo.connection"
+import {
+  isCrossCollectionTransactionUnsupported,
+  isTransactionsUnsupportedError,
+  withTransaction,
+} from "../../connections/mongo.connection"
 import {AccessCredentialModel, type AccessCredentialRow} from "../../models/access-credential.model"
+import {WorkspaceAuditEventModel} from "../../models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../../models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
+import {
+  recordFeedEventWithoutTransaction,
+  recordWorkspaceEvent,
+  type WorkspaceAuditEventInput,
+} from "./audit.service"
 import {markRevoked} from "./credential.service"
 import {revokeInvitationsSentBy} from "./invitation.service"
 import {auditActor, endMembership, isId, type Actor, type MembershipRow} from "./workspace.service"
 
+const logger = createLogger("core").child({service: "account-deletion"})
+
 /**
- * End the deleted user's workspace memberships and revoke the invitations they sent (in one
- * transaction), revoke the operator keys they created and clear their identity from the rows that
- * stay. Safe to run again: a second run finds nothing left to end or revoke.
+ * End the deleted user's workspace memberships, freeing the licenses assigned to them, and revoke the
+ * invitations they sent (in one transaction that ends with the `user.deleted` tombstone), revoke the operator keys they
+ * created and clear their identity from the rows that stay. Safe to run again: a second run finds
+ * nothing left to end or revoke, and the tombstone already recorded.
  */
 export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Promise<{
   endedMembershipIds: string[]
@@ -51,17 +72,52 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
   // A missing id must not become a `null` filter.
   if (!isId(mentraUserId)) throw new Error("mentraUserId is required")
   const actor: Actor = {kind: "user", mentraUserId, email: null, emailVerified: false, isOrganizationAdmin: false}
-  // Most accounts belong to no workspace and sent no invitation; they need no transaction (nor a replica set).
-  const workspaceState =
+  // Most accounts belong to no workspace and sent no invitation: nothing to end for them, only the tombstone.
+  const workspaceState = Boolean(
     (await WorkspaceMembershipModel.exists({status: "active", mentraUserId})) ||
-    (await WorkspaceInvitationModel.exists({status: "pending", invitedByMentraUserId: mentraUserId}))
-  const {endedMembershipIds, revokedInvitationIds} = workspaceState
-    ? await withTransaction(async session => ({
-        endedMembershipIds: await endMemberships(session, mentraUserId, actor),
-        revokedInvitationIds: await revokeInvitationsSentBy(session, mentraUserId, actor, "inviter_account_deleted"),
-      }))
-    : {endedMembershipIds: [], revokedInvitationIds: []}
-
+      (await WorkspaceInvitationModel.exists({status: "pending", invitedByMentraUserId: mentraUserId})),
+  )
+  const tombstone: WorkspaceAuditEventInput = {
+    workspaceId: null,
+    action: USER_DELETED_ACTION,
+    actor: auditActor(actor),
+    target: {mentraUserId},
+  }
+  let endedMembershipIds: string[] = []
+  let revokedInvitationIds: string[] = []
+  // A repeat finds the tombstone and, with nothing left to end, does not even open a transaction.
+  if (workspaceState || !(await tombstoneRecorded(mentraUserId, null))) {
+    try {
+      // The tombstone is the transaction's last write: the removals before it are on the feed before it.
+      // Checked again inside, so two runs at once record it once.
+      await withTransaction(async session => {
+        endedMembershipIds = workspaceState ? await endMemberships(session, mentraUserId, actor) : []
+        revokedInvitationIds = workspaceState
+          ? await revokeInvitationsSentBy(session, mentraUserId, actor, "inviter_account_deleted")
+          : []
+        if (!(await tombstoneRecorded(mentraUserId, session))) await recordWorkspaceEvent(session, tombstone)
+      })
+    } catch (err) {
+      // Only a database positively known to be unable to run this transaction has no workspace state to
+      // end, because workspace writes fail there: a standalone mongod (`isTransactionsUnsupportedError`)
+      // or Azure Cosmos DB for MongoDB, which fails a transaction across two collections
+      // (`isCrossCollectionTransactionUnsupported`). Deleting such an account must not start failing, and
+      // its tombstone is still owed to the services that hold data about the person. Any other failure
+      // propagates: on a replica set the sweep retries in a minute, whereas a tombstone written outside
+      // the transaction while other recorders are active could be passed over by a poller and never seen.
+      if (workspaceState || !(isTransactionsUnsupportedError(err) || isCrossCollectionTransactionUnsupported(err))) {
+        throw err
+      }
+      // Expected, and on Azure Cosmos DB for MongoDB it happens at every deletion of a person with no
+      // workspace state: routine, so info, naming which signature matched rather than carrying the
+      // database's error (long, and its text is not Core's to repeat on every deletion).
+      logger.info(
+        {mentraUserId, reason: isTransactionsUnsupportedError(err) ? "transactions_unsupported" : "cross_collection_transaction_unsupported"},
+        "transactions are unsupported here; recording the user.deleted tombstone without one",
+      )
+      if (!(await tombstoneRecorded(mentraUserId, null))) await recordFeedEventWithoutTransaction(tombstone)
+    }
+  }
   // An operator key is one document: revoked one by one, without a transaction.
   const operatorKeys = await AccessCredentialModel.find({
     credentialKind: "organization",
@@ -91,6 +147,16 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
   )
   await WorkspaceMembershipModel.updateMany({mentraUserId, email: {$ne: null}}, {$set: {email: null}})
   return {endedMembershipIds, revokedInvitationIds, revokedOperatorKeyIds: operatorKeys.map(key => key.credentialId)}
+}
+
+/** Whether the change feed already carries this person's `user.deleted` tombstone. */
+async function tombstoneRecorded(mentraUserId: string, session: ClientSession | null): Promise<boolean> {
+  const found = WorkspaceAuditEventModel.exists({
+    workspaceId: null,
+    action: USER_DELETED_ACTION,
+    "target.mentraUserId": mentraUserId,
+  })
+  return Boolean(await (session ? found.session(session) : found))
 }
 
 /**

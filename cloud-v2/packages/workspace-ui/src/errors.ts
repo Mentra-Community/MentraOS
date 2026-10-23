@@ -1,11 +1,21 @@
 /** The error every `WorkspaceApi` call throws, and how the screens put one into words. */
 
-/** A failed workspace API call. `status` is 0 when the request never reached the server. */
+import {
+  describeDeletionHolds,
+  WORKSPACE_HAS_HOLDS_ERROR,
+  type WorkspaceDeletionHold,
+} from "@mentra/workspace-contract";
+
+/**
+ * A failed workspace API call. `status` is 0 when the request never reached the server. `holds` are what
+ * a 409 `workspace_has_holds` said holds the workspace from deletion; empty for every other failure.
+ */
 export class WorkspaceApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly holds: WorkspaceDeletionHold[] = [],
   ) {
     super(message);
     this.name = "WorkspaceApiError";
@@ -20,6 +30,23 @@ export function isWorkspaceChangedError(error: unknown): error is WorkspaceApiEr
   return error instanceof WorkspaceApiError && error.status === 409 && error.code === "membership_changed";
 }
 
+/** Whether `error` is the 409 `workspace_has_holds`: a service still needs the workspace, so it cannot be deleted. */
+export function isWorkspaceHeldError(error: unknown): error is WorkspaceApiError {
+  return error instanceof WorkspaceApiError && error.status === 409 && error.code === WORKSPACE_HAS_HOLDS_ERROR;
+}
+
+/**
+ * Whether `error` says a license changed under the caller: every seat was taken before theirs (409
+ * `no_seats_available`), or the license is gone (404 `license_not_found`). The view they acted on is stale.
+ */
+export function isLicenseChangedError(error: unknown): error is WorkspaceApiError {
+  return (
+    error instanceof WorkspaceApiError &&
+    ((error.status === 409 && error.code === "no_seats_available") ||
+      (error.status === 404 && error.code === "license_not_found"))
+  );
+}
+
 /** Codes the server sends with no description of their own. */
 const CODE_MESSAGES: Record<string, string> = {
   unauthorized: "Your session has expired. Sign in again.",
@@ -27,7 +54,7 @@ const CODE_MESSAGES: Record<string, string> = {
   workspace_not_found: "This workspace no longer exists or you no longer have access to it.",
   temporarily_unavailable: "Sign-in is temporarily unavailable. Try again in a moment.",
   server_error: "The server ran into a problem. Try again.",
-  workspace_has_miniapps: "Move or delete this workspace's miniapps before deleting it.",
+  workspace_has_miniapps: "Delete this workspace's miniapps before deleting the workspace.",
 };
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
@@ -35,6 +62,8 @@ const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1
 /** A sentence for the person looking at the screen. Server explanations are kept; codes and stack noise are not. */
 export function errorMessage(error: unknown): string {
   if (isWorkspaceChangedError(error)) return WORKSPACE_CHANGED_MESSAGE;
+  // Holds are put in words here, the same words the settings screen shows before anyone tries.
+  if (isWorkspaceHeldError(error) && error.holds.length > 0) return describeDeletionHolds(error.holds);
   if (error instanceof WorkspaceApiError) {
     if (error.code === "network_error") return "Could not reach the server. Check your connection and try again.";
     const known = CODE_MESSAGES[error.code];

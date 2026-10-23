@@ -49,6 +49,7 @@ import {
   SettingsAckSuccessEvent,
   StreamStartRequest,
   StreamStatusEvent,
+  TouchGesture,
   VideoRecordingStartedStatusEvent,
   VideoRecordingSettings,
   VideoRecordingStoppedStatusEvent,
@@ -92,6 +93,9 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Connection Commands
   requestStatus(): Promise<void>
+  /** Mac-only explicit fixture launch. Strict nimo-macos-resource-v1 Codable
+   * request/receipt JSON; ordinary launches refuse. No packet/path commands. */
+  nimoResourceSession?(requestJSON: string): Promise<string>
   connectDefault(options?: ConnectOptions): Promise<void>
   connectDefaultWithOptions(options: Required<ConnectOptions>): Promise<void>
   setDefaultDevice(device: Device | null): Promise<void>
@@ -141,7 +145,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   forgetWifiNetwork(ssid: string): Promise<WifiForgetResult>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
-  setWifiAdbState(enabled: boolean): Promise<void>
+  setWifiAdbState(enabled: boolean, expectedBluetoothMac?: string): Promise<void>
   /** Set the glasses system clock when phone detects clock skew (Mentra Live and G2). */
   setSystemTime(timestampMs: number): Promise<void>
   /** Logs current WiFi frequency (MHz) and 5 GHz band to Android logcat. */
@@ -149,6 +153,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Gallery Commands
   setGalleryServerEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
+  setTouchGestureDefaultBehaviorEnabled(gesture: TouchGesture, enabled: boolean): Promise<SettingsAckSuccessEvent>
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   /** Mentra Live center-mic loudness / Barrier gate (cs_swit type 10). */
@@ -362,6 +367,7 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
   saveAsDefault: true,
   cancelExistingConnectionAttempt: true,
   requiresAncs: true,
+  enableTransportBridging: true,
 }
 
 const DEFAULT_SCAN_TIMEOUT_MS = 15_000

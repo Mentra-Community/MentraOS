@@ -48,7 +48,11 @@ For UI or system-sheet failures, inspect the saved failure screenshot or relevan
 recording interval alongside the accessibility tree before concluding the cause.
 Use existing video when no screenshot was captured, and record missing or failed
 captures. A missing screenshot alone does not justify replaying inputs or asking
-the human for a photo.
+the human for a photo. For permission or preflight stalls, first inspect both app
+and full-desktop captures and follow
+[the permission diagnosis guidance](../investigate-routine-failure/SKILL.md#inspect-permission-stalls-before-another-attempt).
+Report the exact observed host/dialog/action promptly and verify the blocked
+operation after a grant; selected-app AX and worker readiness are insufficient.
 
 For network failures, distinguish glasses station Wi-Fi from the glasses SoftAP,
 phone Internet and host routing. API33 station-Wi-Fi routines declare
@@ -77,6 +81,26 @@ check the recorded destination for the bug and propose a follow-up there. Missin
 contradictory or unwritable destination information is an explicit routing gap;
 do not substitute `dev`. Do not create staging commits just to test this system.
 
+## Record the canonical follow-up
+
+Inspect the original run's follow-up before starting another fix. The authenticated
+Admin facade under `/api/admin/test-runs/follow-ups` creates or finds the existing
+canonical case, accepts revision-fenced updates and reads activity/attempt pages.
+It is explicitly unavailable until the finite old-writer cutover is verified;
+do not replace it with another inbox or write to Mongo directly. Agent-assigned
+work uses the existing authenticated host claim contract with the exact case,
+generation, branch anchor and token. Expiry does not authorize another owner.
+
+Record classification, evidence, diagnosis, owner, next action and intended PRs.
+Group occurrences only when evidence demonstrates their common cause, with the
+current canonical revision and grouping explanation. Keep input questions and
+recipients explicit. Record a complete published linked pass for the same
+occurrence, or close it with an explicit reason. A case stage, a merged PR and a
+version difference do not prove a successful fix. Preserve original and latest
+outcomes and distinguish exact component inclusion from unavailable deployment
+or device evidence. Follow the caller's verification policy; no fixed retry count
+is part of this employee workflow.
+
 ## Fix, publish and review
 
 1. Classify the failure before editing: app bug, routine bug, framework bug, machine or fixture
@@ -99,9 +123,12 @@ do not substitute `dev`. Do not create staging commits just to test this system.
    `author.login` of the exact failed build's source HEAD, deduplicated. Record an
    unmapped author or rejected self-review request; do not guess from email,
    committer or workflow actor. Never add AI attribution trailers.
-4. Use [select-pr-routines](../select-pr-routines/SKILL.md): retain the failed
-   routine's applicable `routine:<id>` label and select any additional relevant
-   coverage. Preserve existing labels and state gaps. Label each fix PR for the
+4. Use [select-pr-routines](../select-pr-routines/SKILL.md): on a MentraOS fixing
+   PR, copy the affected original's rerun label from Admin so the existing check
+   verifies that lineage against the PR build. Select additional `routine:<id>`
+   coverage separately. Routine/framework-only fixes use their exact reviewed
+   source through the normal linked-rerun API; do not claim a mobile PR build
+   deploys those sources or the backend. Preserve existing labels and state gaps. Label each fix PR for the
    component it actually fixes: `bug:app` for product app behavior,
    `bug:routine` for wrong routine actions, expectations or routine fixtures, and
    `bug:framework` for shared execution, orchestration, recording or test
@@ -201,7 +228,10 @@ using their existing controller progress and budget mechanics below.
 For supported PR targets, labels may start CI and testing while review is still running. Adopt an
 existing request for the exact new head instead of dispatching duplicates. After
 review passes, request any missing selected routines using that head's CI
-artifacts through the existing dispatch path. Qualification requires both an
+artifacts through the existing dispatch path. Keep the fixing PR open until its
+check-owned runs finish; [PR check sequencing](../select-pr-routines/SKILL.md#verify-a-fix-against-its-original-failure)
+explains cancellation on close/merge and accepted cleanup before replacement.
+Qualification requires both an
 independent approval and passing routine results for that same head, regardless
 of which finishes first. Never SSH into fixtures to bypass the routine worker.
 For an already implemented, reviewed correction, begin with ordinary full recorded

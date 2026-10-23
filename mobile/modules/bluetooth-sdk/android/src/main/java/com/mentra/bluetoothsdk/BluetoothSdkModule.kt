@@ -314,7 +314,9 @@ class BluetoothSdkModule : Module() {
                 }
 
                 override fun onError(error: BluetoothError) {
-                    sendEvent("pair_failure", mapOf("error" to error.message))
+                    val body = mutableMapOf<String, Any>("error" to error.message)
+                    error.failureCode?.let { body["code"] = it }
+                    sendEvent("pair_failure", body)
                 }
 
                 override fun onRawEvent(eventName: String, values: Map<String, Any>) {
@@ -383,6 +385,9 @@ class BluetoothSdkModule : Module() {
             "pair_failure",
             "pairing_info",
             "entering_pairing_mode",
+            "pairing_mode_ended",
+            "pairing_state_changed",
+            "audio_setup_changed",
             "owner_replaced",
             "audio_pairing_needed",
             "audio_connected",
@@ -661,8 +666,9 @@ class BluetoothSdkModule : Module() {
             requireSdk().setHotspotState(enabled).values
         }
 
-        SdkAsyncFunction("setWifiAdbState") { enabled: Boolean ->
-            sdk?.setWifiAdbState(enabled)
+        SdkAsyncFunction("setWifiAdbState") { enabled: Boolean, expectedBluetoothMac: String? ->
+            val current = sdk ?: throw BluetoothSdkException("glasses_not_connected", "Bluetooth SDK is unavailable.")
+            current.setWifiAdbState(enabled, expectedBluetoothMac)
         }
 
         SdkAsyncFunction("setSystemTime") { timestampMs: Double ->
@@ -673,6 +679,10 @@ class BluetoothSdkModule : Module() {
 
         SdkCoroutineFunction("setGalleryServerEnabled") { enabled: Boolean ->
             requireSdk().setGalleryServerEnabled(enabled).values
+        }
+
+        SdkCoroutineFunction("setTouchGestureDefaultBehaviorEnabled") { gesture: String, enabled: Boolean ->
+            requireSdk().setTouchGestureDefaultBehaviorEnabled(TouchGesture.fromWireName(gesture), enabled).values
         }
 
         SdkCoroutineFunction("setGalleryModeEnabled") { enabled: Boolean ->

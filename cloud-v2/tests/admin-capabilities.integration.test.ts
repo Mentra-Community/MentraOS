@@ -14,10 +14,10 @@
  * What it pins: `/me` answers any principal (401 only without one); every
  * other admin route needs the organization capability its area is gated by; an
  * operator key carries only the scopes it was created with; a workspace key and
- * a person who is not an Organization Admin have none. Core's built-in Store
- * administration (`/submissions`, `/preinstalled/*`, `/audit-log`) and the
- * organization API under `/api/admin/organization` need an Organization Admin
- * who is a person, and refuse every key.
+ * a person who is not an Organization Admin have none. The audit log
+ * (`/audit-log`) and the organization API under `/api/admin/organization` need
+ * an Organization Admin who is a person, and refuse every key. Core's former
+ * built-in Store administration (`/submissions`, `/preinstalled/*`) is gone.
  *
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random
  * database name, ignores `MONGO_URL`) and asserts the live connection is on
@@ -36,6 +36,7 @@ import {BrowserSessionModel} from "../packages/core/src/models/browser-session.m
 import {ReportAssetModel} from "../packages/core/src/models/report-asset.model"
 import {ReportModel} from "../packages/core/src/models/report.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -52,6 +53,7 @@ import {
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {
+  coreAccessToken,
   ADMIN_COOKIE,
   ADMIN_EMAIL,
   ADMIN_ORIGIN,
@@ -72,6 +74,7 @@ const MODELS = [
   ReportAssetModel,
   ReportModel,
   UserModel,
+  WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
   WorkspaceInvitationModel,
   WorkspaceMembershipModel,
@@ -120,7 +123,7 @@ async function person(key: string, options: {email?: string; emailVerified?: boo
   const email = options.email ?? `${key}@example.test`
   const emailVerified = options.emailVerified ?? true
   idp.registerUser({sub, email, emailConfirmed: emailVerified})
-  const bearer = await idp.mint({sub, aud: "authenticated", client_id: "console-client", email})
+  const bearer = await coreAccessToken({sub, email, emailVerified})
   const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: sub})
   const {cookieValue} = await createPortalSession("admin", {
     mentraUserId,
@@ -272,6 +275,10 @@ describe("GET /api/admin/me", () => {
       credential: null,
       organization: {capabilities: [...ORGANIZATION_CAPABILITIES]},
       workspaces: [],
+      // This suite sets no Fleet URL.
+      fleet: {installed: false},
+      // No billing and no license.
+      licenses: {available: false},
     }
 
     const bySession = await call("GET", "/api/admin/me", {as: admin})
@@ -331,6 +338,10 @@ describe("GET /api/admin/me", () => {
         capabilities: ["organization.incidents.read", "organization.testing.read"],
       },
       workspaces: [],
+      // This suite sets no Fleet URL.
+      fleet: {installed: false},
+      // No billing and no license.
+      licenses: {available: false},
     })
     expect(reply.text).not.toContain(key.token)
   })
@@ -347,6 +358,10 @@ describe("GET /api/admin/me", () => {
       credential: {credentialId: ws.credentialId, credentialKind: "workspace", label: "ci"},
       organization: {capabilities: []},
       workspaces: [],
+      // This suite sets no Fleet URL.
+      fleet: {installed: false},
+      // No billing and no license.
+      licenses: {available: false},
     })
     expect(reply.text).not.toContain(ws.token)
   })
@@ -532,31 +547,24 @@ describe("support profiles", () => {
   })
 })
 
-// --- Core's built-in Store -------------------------------------------------
+// --- The audit log ---------------------------------------------------------
 
-describe("Core's built-in Store administration", () => {
-  const READS = [
-    "/api/admin/submissions",
-    "/api/admin/preinstalled/registries",
-    "/api/admin/preinstalled/releases",
-    "/api/admin/audit-log",
-  ]
-  const WRITES: Array<[method: string, path: string, body: unknown]> = [
-    ["POST", "/api/admin/submissions/rel_1/approve", {}],
-    ["POST", "/api/admin/submissions/rel_1/reject", {}],
-    ["POST", "/api/admin/submissions/rel_1/publish", {}],
-    ["POST", "/api/admin/preinstalled/registries", {environment: "dev"}],
-    ["POST", "/api/admin/preinstalled/registries/reg_1/revisions", {entries: []}],
-    ["POST", "/api/admin/preinstalled/registries/reg_1/revisions/rev_1/promote", {}],
-  ]
+describe("the audit log", () => {
+  const AUDIT_LOG = "/api/admin/audit-log"
 
   test("an Organization Admin who is a person reads it, by session or bearer", async () => {
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    await AdminActionAuditLogModel.create({
+      adminId: ADMIN_EMAIL,
+      action: "support_profile.read",
+      targetType: "user_support_profile",
+      targetId: "email_lookup_miss",
+    })
 
     for (const via of ["session", "bearer"] as const) {
-      for (const path of READS) {
-        expect([via, path, (await call("GET", path, {as: admin, via})).status]).toEqual([via, path, 200])
-      }
+      const reply = await call("GET", AUDIT_LOG, {as: admin, via})
+      expect([via, reply.status]).toEqual([via, 200])
+      expect(reply.json.events).toMatchObject([{adminId: ADMIN_EMAIL, action: "support_profile.read"}])
     }
   })
 
@@ -571,16 +579,27 @@ describe("Core's built-in Store administration", () => {
       ["workspace owner", ws.owner],
       ["unverified allowlisted address", claimed],
     ] as const) {
-      for (const path of READS) {
-        const reply = await call("GET", path, {as: caller})
-        expect([label, path, reply.status]).toEqual([label, path, 403])
-        expect(reply.json.error).toBe("forbidden")
-      }
-      for (const [method, path, body] of WRITES) {
-        expect([label, path, (await call(method, path, {as: caller, body})).status]).toEqual([label, path, 403])
-      }
+      const reply = await call("GET", AUDIT_LOG, {as: caller})
+      expect([label, reply.status]).toEqual([label, 403])
+      expect(reply.json.error).toBe("forbidden")
     }
-    for (const path of READS) expect([path, (await call("GET", path)).status]).toEqual([path, 401])
+    expect((await call("GET", AUDIT_LOG)).status).toBe(401)
+  })
+
+  test("the former built-in Store's administration is gone, even for an Organization Admin", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    for (const [method, path] of [
+      ["GET", "/api/admin/submissions"],
+      ["POST", "/api/admin/submissions/rel_1/approve"],
+      ["POST", "/api/admin/submissions/rel_1/publish"],
+      ["GET", "/api/admin/preinstalled/registries"],
+      ["POST", "/api/admin/preinstalled/registries"],
+      ["GET", "/api/admin/preinstalled/releases"],
+      ["POST", "/api/admin/preinstalled/registries/reg_1/revisions/rev_1/promote"],
+    ] as const) {
+      const body = method === "POST" ? {} : undefined
+      expect([method, path, (await call(method, path, {as: admin, body})).status]).toEqual([method, path, 404])
+    }
     expect(await AdminActionAuditLogModel.countDocuments({})).toBe(0)
   })
 })

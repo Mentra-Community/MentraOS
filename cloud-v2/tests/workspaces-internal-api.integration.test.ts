@@ -1,7 +1,7 @@
 /**
  * @fileoverview Internal workspace service API tests (`/api/internal/workspaces`).
  *
- * The Store calls this API with the contract's `createCoreWorkspaceClient`.
+ * The Store and Fleet call this API with the contract's `createCoreWorkspaceClient`.
  * Most tests drive that real client with a `fetch` that hands each request to
  * the real app, so signing, verification, the routes and the response checks
  * the client makes are exercised end to end. Tests of what a client never
@@ -29,23 +29,28 @@ import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefault
 import * as jose from "jose"
 
 import {createApp} from "../packages/core/src/api/app"
-import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
+import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {RefreshTokenModel} from "../packages/core/src/models/refresh-token.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {createSession} from "../packages/core/src/services/session.service"
+import {recordOrganizationEvent, recordWorkspaceEvent} from "../packages/core/src/services/workspaces/audit.service"
 import {resetCoreKeyCaches} from "./support/key-caches"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {createWorkspaceCredential, revokeCredential} from "../packages/core/src/services/workspaces/credential.service"
 import {
+  changeRole,
   createWorkspace,
   deleteWorkspace,
+  getWorkspace,
   leaveWorkspace,
+  removeMember,
   type Actor,
 } from "../packages/core/src/services/workspaces/workspace.service"
 import {
@@ -57,9 +62,11 @@ import {
 } from "../packages/workspace-contract/src/server"
 import {capabilitiesForRole} from "../packages/workspace-contract/src/index"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
+import {nextHoldAsOf} from "./support/hold-as-of"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {membershipRow} from "./support/membership-row"
 import {
+  coreAccessToken,
   ADMIN_EMAIL,
   applyEnv,
   HOSTED_ENV,
@@ -76,17 +83,18 @@ const MODELS = [
   AccessCredentialModel,
   RefreshTokenModel,
   UserModel,
+  WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
   WorkspaceInvitationModel,
   WorkspaceMembershipModel,
   WorkspaceModel,
 ]
 
-const SERVICE_SECRETS = {store: ["store-s1", "store-s0"]}
+const SERVICE_SECRETS = {store: ["store-s1", "store-s0"], fleet: ["fleet-f1", "fleet-f0"]}
 const BASE = "https://core.test"
 const API = "/api/internal/workspaces"
-/** A web client of this deployment (`CLOUD_CORE_WEB_CLIENT_IDS`), as the Developer Console's server is. */
-const WEB_CLIENT = "console-client"
+/** A first-party client of Core's sign-in server, as the Developer Console's server is. */
+const WEB_CLIENT = "console"
 /** The contract's principal for a person: nothing of Core's own (`tenantId`, `via`). */
 const USER_PRINCIPAL_KEYS = ["email", "emailVerified", "isOrganizationAdmin", "kind", "mentraUserId"]
 
@@ -101,7 +109,7 @@ let restoreEnv: () => void = () => {}
 // --- Fixtures --------------------------------------------------------------
 
 interface Person {
-  /** A Supabase access token issued to a web client, as the Store receives it. */
+  /** A Core access token from Core's sign-in server, as the Store receives it. */
   bearer: string
   sub: string
   email: string
@@ -109,14 +117,14 @@ interface Person {
 }
 
 /**
- * A person with a Supabase account (confirmed email unless told otherwise) and a bearer token for a
- * web client. Their Core user is the one the phone has: `("mentra", sub)`.
+ * A person with a Supabase account (confirmed email unless told otherwise), signed in through Core's
+ * sign-in server, and their Core access token. Their Core user is the one the phone has: `("mentra", sub)`.
  */
 async function person(key: string, options: {email?: string; emailConfirmed?: boolean} = {}): Promise<Person> {
   const sub = `supa-${key}`
   const email = options.email ?? `${key}@example.test`
   idp.registerUser({sub, email, emailConfirmed: options.emailConfirmed ?? true})
-  const bearer = await idp.mint({sub, aud: "authenticated", client_id: WEB_CLIENT, email})
+  const bearer = await coreAccessToken({sub, email, emailVerified: options.emailConfirmed ?? true, clientId: WEB_CLIENT})
   const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: sub})
   return {bearer, sub, email, mentraUserId}
 }
@@ -203,6 +211,7 @@ function clientFor(service: string, options: {secret?: string} = {}): CoreWorksp
 }
 
 const store = () => clientFor("store")
+const fleet = () => clientFor("fleet", {secret: "fleet-f1"})
 
 async function expectClientError(promise: Promise<unknown>, code: CoreWorkspaceClientError["code"], status?: number) {
   const error = await promise.then(
@@ -239,7 +248,7 @@ interface RawOptions {
 }
 
 /** One hand-signed request through the real app. */
-async function raw(method: "GET" | "POST", pathWithQuery: string, options: RawOptions = {}): Promise<Reply> {
+async function raw(method: "GET" | "POST" | "PUT" | "DELETE", pathWithQuery: string, options: RawOptions = {}): Promise<Reply> {
   const service = options.service ?? "store"
   const body = options.rawBody ?? (options.body === undefined ? "" : JSON.stringify(options.body))
   const timestampMs = options.timestampMs ?? Date.now()
@@ -256,8 +265,9 @@ async function raw(method: "GET" | "POST", pathWithQuery: string, options: RawOp
     ...options.headers,
   }
   for (const header of options.omit ?? []) delete headers[SERVICE_HEADERS[header]]
-  if (method === "POST") headers["content-type"] = "application/json"
-  return send(method, pathWithQuery, headers, method === "POST" ? body : undefined)
+  const hasBody = method === "POST" || method === "PUT" || body !== ""
+  if (hasBody) headers["content-type"] = "application/json"
+  return send(method, pathWithQuery, headers, hasBody ? body : undefined)
 }
 
 async function send(method: string, pathWithQuery: string, headers: Record<string, string>, body?: string) {
@@ -348,6 +358,7 @@ describe("service authentication", () => {
       ["POST", `${API}/credentials`],
       ["POST", `${API}/users/resolve-email`],
       ["GET", `${API}/workspaces/ws_1`],
+      ["GET", `${API}/changes`],
       ["GET", `${API}/no-such-route`],
     ] as const) {
       const reply = await send(method, path, {}, method === "POST" ? "{}" : undefined)
@@ -401,7 +412,7 @@ describe("service authentication", () => {
   })
 
   test("an unknown service is 401, even with a valid Store secret", async () => {
-    for (const service of ["other", "fleet", "core", "STORE", "", "__proto__", "constructor", "toString"]) {
+    for (const service of ["other", "core", "STORE", "FLEET", "", "__proto__", "constructor", "toString"]) {
       const reply = await probe({service, secret: "store-s1"})
       expect({service, status: reply.status, body: reply.json}).toEqual({
         service,
@@ -409,7 +420,31 @@ describe("service authentication", () => {
         body: {error: "service_unauthorized"},
       })
     }
-    await expectClientError(clientFor("fleet").getWorkspace("ws_1"), "service_unauthorized", 401)
+    await expectClientError(clientFor("other", {secret: "store-s1"}).getWorkspace("ws_1"), "service_unauthorized", 401)
+  })
+
+  test("Fleet authenticates with its own secrets; neither service's secret works under the other's name", async () => {
+    expect((await probe({service: "fleet", secret: "fleet-f1"})).status).toBe(200)
+    expect((await probe({service: "fleet", secret: "fleet-f0"})).status).toBe(200)
+    expect(await fleet().checkMemberships("mu_probe", [])).toEqual({})
+
+    const storeAsFleet = await probe({service: "fleet", secret: "store-s1"})
+    const fleetAsStore = await probe({service: "store", secret: "fleet-f1"})
+    expect(storeAsFleet.status).toBe(401)
+    expect(storeAsFleet.json).toEqual({error: "service_unauthorized"})
+    expect(fleetAsStore.status).toBe(401)
+    await expectClientError(clientFor("fleet", {secret: "store-s1"}).getWorkspace("ws_1"), "service_unauthorized", 401)
+  })
+
+  test("Fleet is a service Core knows only when it has a secret for it", async () => {
+    process.env.CLOUD_CORE_SERVICE_SECRETS = JSON.stringify({store: ["store-s1"]})
+
+    expect((await probe({service: "fleet", secret: "fleet-f1"})).status).toBe(401)
+    expect((await probe()).status).toBe(200)
+
+    process.env.CLOUD_CORE_SERVICE_SECRETS = JSON.stringify({fleet: ["fleet-f1"]})
+    expect((await probe({service: "fleet", secret: "fleet-f1"})).status).toBe(200)
+    expect((await probe()).status).toBe(401)
   })
 
   test("a request signed for another body, path, query or method is 401", async () => {
@@ -481,8 +516,8 @@ describe("service authentication", () => {
   test("a service name Core does not know in the configuration is ignored, not used", async () => {
     process.env.CLOUD_CORE_SERVICE_SECRETS = JSON.stringify({store: ["store-s1"], fleet: ["fleet-f1"], other: ["o-1"]})
 
-    expect((await probe({service: "fleet", secret: "fleet-f1"})).status).toBe(401)
     expect((await probe({service: "other", secret: "o-1"})).status).toBe(401)
+    expect((await probe({service: "fleet", secret: "fleet-f1"})).status).toBe(200)
     expect((await probe()).status).toBe(200)
   })
 
@@ -713,13 +748,12 @@ describe("POST /authorize", () => {
   test("an allowlisted email the account directory has not confirmed is no Organization Admin, whatever the token claims", async () => {
     const {workspaceId} = await newWorkspace()
     const claimant = await person("claimant", {email: ADMIN_EMAIL, emailConfirmed: false})
-    const claiming = await idp.mint({
+    const claiming = await coreAccessToken({
       sub: claimant.sub,
-      aud: "authenticated",
-      client_id: WEB_CLIENT,
       email: ADMIN_EMAIL,
-      email_verified: true,
-      user_metadata: {email_verified: true},
+      emailVerified: false,
+      clientId: WEB_CLIENT,
+      claims: {email: ADMIN_EMAIL, email_verified: true},
     })
 
     for (const token of [claimant.bearer, claiming]) {
@@ -844,31 +878,6 @@ describe("POST /authorize", () => {
     }
   })
 
-  test("an identity provider that cannot be asked is 503 temporarily_unavailable, retryable", async () => {
-    const {workspaceId} = await newWorkspace()
-    const newcomer = await person("newcomer")
-    idp.outage = true
-
-    const reply = await raw("POST", `${API}/authorize`, {
-      body: {credential: {type: "bearer", token: newcomer.bearer}, workspaceId},
-    })
-
-    expect(reply.status).toBe(503)
-    expect(reply.json).toMatchObject({error: "temporarily_unavailable"})
-    await expectClientError(
-      store().authorize({credential: {type: "bearer", token: newcomer.bearer}, workspaceId}),
-      "core_unavailable",
-      503,
-    )
-
-    // Once the provider answers, the same token works.
-    idp.outage = false
-    expect(await store().authorize({credential: {type: "bearer", token: newcomer.bearer}, workspaceId})).toMatchObject({
-      allowed: false,
-      reason: "not_a_member",
-    })
-  })
-
   test("an authorize answer has exactly the contract's fields, at every level", async () => {
     const {workspaceId, developer} = await newWorkspace()
 
@@ -916,14 +925,14 @@ describe("POST /principal", () => {
     expect(Object.keys(reply.json.principal).sort()).toEqual(USER_PRINCIPAL_KEYS)
   })
 
-  test("the person is the phone's Core user, created on first sight of the token", async () => {
-    idp.registerUser({sub: "supa-first-sight", email: "first@example.test", emailConfirmed: true})
-    const bearer = await idp.mint({sub: "supa-first-sight", aud: "authenticated", client_id: WEB_CLIENT})
-    expect(await UserModel.countDocuments({tenantUserId: "supa-first-sight"})).toBe(0)
+  test("the person is the phone's Core user", async () => {
+    const phoneUser = await findOrCreateUser({tenantId: "mentra", tenantUserId: "supa-first-sight"})
+    const bearer = await coreAccessToken({sub: "supa-first-sight", email: "first@example.test", clientId: WEB_CLIENT})
 
     const resolved = await store().resolvePrincipal(bearer)
 
     const user = await UserModel.findOne({tenantId: "mentra", tenantUserId: "supa-first-sight"}).lean()
+    expect(user!.mentraUserId).toBe(phoneUser.mentraUserId)
     expect(resolved?.principal).toEqual({
       kind: "user",
       mentraUserId: user!.mentraUserId,
@@ -948,15 +957,14 @@ describe("POST /principal", () => {
     })
   })
 
-  test("email verification comes from the account directory, never from the token", async () => {
+  test("email verification is what Core recorded at sign-in, never the token's claims", async () => {
     const unconfirmed = await person("unconfirmed", {email: ADMIN_EMAIL, emailConfirmed: false})
-    const claiming = await idp.mint({
+    const claiming = await coreAccessToken({
       sub: unconfirmed.sub,
-      aud: "authenticated",
-      client_id: WEB_CLIENT,
       email: ADMIN_EMAIL,
-      email_verified: true,
-      user_metadata: {email_verified: true},
+      emailVerified: false,
+      clientId: WEB_CLIENT,
+      claims: {email: ADMIN_EMAIL, email_verified: true},
     })
 
     for (const token of [unconfirmed.bearer, claiming]) {
@@ -991,10 +999,14 @@ describe("POST /principal", () => {
       "   ",
       "msk_local_garbage",
       `mak_local_${"0".repeat(26)}.${"A".repeat(43)}`,
-      // Signed with a key the provider never published.
-      await idp.mint({sub: "supa-owner", aud: "authenticated", client_id: WEB_CLIENT}, {alg: "RS256", key: "attacker"}),
+      // Signed with a key Core never published.
+      await new jose.SignJWT({client_id: WEB_CLIENT, sub: "mu_forged", aud: "urn:mentra:core", iss: process.env.CLOUD_CORE_OIDC_ISSUER})
+        .setProtectedHeader({alg: "EdDSA", kid: "mentra-oidc-1", typ: "at+jwt"})
+        .setIssuedAt()
+        .setExpirationTime("1h")
+        .sign((await jose.generateKeyPair("EdDSA")).privateKey),
       // Expired.
-      await idp.mint({sub: "supa-owner", aud: "authenticated", client_id: WEB_CLIENT, iat: Math.floor(Date.now() / 1000) - 7200}),
+      await coreAccessToken({sub: "supa-owner", email: "owner@example.test", clientId: WEB_CLIENT, iat: Math.floor(Date.now() / 1000) - 7200}),
     ]
     for (const token of tokens) {
       const reply = await raw("POST", `${API}/principal`, {body: {token}})
@@ -1023,15 +1035,21 @@ describe("POST /principal", () => {
     })
   })
 
-  test("an ID token, a phone's Supabase session token and another client's token are refused with 401 invalid_token", async () => {
+  test("an ID token, Supabase tokens, an unknown client's and another environment's tokens are refused with 401 invalid_token", async () => {
     const owner = await person("owner")
+    const restore = applyEnv({CLOUD_CORE_OIDC_ISSUER: "https://account.staging.test"})
+    const otherEnvironment = await coreAccessToken({sub: owner.sub, email: owner.email, clientId: WEB_CLIENT})
+    restore()
     const refused = {
-      // An ID token is addressed to the client, not to Supabase's API.
-      idToken: await idp.mint({sub: owner.sub, aud: WEB_CLIENT, client_id: WEB_CLIENT, email: owner.email}),
-      // A phone's Supabase session: no client, so it is only good for the phone's token exchange.
+      // An ID token is addressed to the client, not to Core's API.
+      idToken: await coreAccessToken({sub: owner.sub, email: owner.email, clientId: WEB_CLIENT, claims: {aud: WEB_CLIENT}}),
+      // A phone's Supabase session: only good for the phone's token exchange.
       phoneSession: await idp.mint({sub: owner.sub, aud: "authenticated", role: "authenticated", email: owner.email}),
-      // A client that is not one of this deployment's web clients.
-      otherClient: await idp.mint({sub: owner.sub, aud: "authenticated", client_id: "mobile-client", email: owner.email}),
+      // A Supabase OAuth token: Supabase's OAuth server is not Core's sign-in server.
+      supabaseOAuth: await idp.mint({sub: owner.sub, aud: "authenticated", client_id: WEB_CLIENT, email: owner.email}),
+      // A client that is not registered at Core's sign-in server.
+      otherClient: await coreAccessToken({sub: owner.sub, email: owner.email, clientId: "mobile-client"}),
+      otherEnvironment,
     }
 
     for (const [kind, token] of Object.entries(refused)) {
@@ -1047,17 +1065,6 @@ describe("POST /principal", () => {
       const reply = await raw("POST", `${API}/principal`, {body})
       expect({body, status: reply.status, error: reply.json?.error}).toEqual({body, status: 400, error: "invalid_request"})
     }
-  })
-
-  test("an identity provider that cannot be asked is 503 temporarily_unavailable, not a 401 that reads as a bad token", async () => {
-    const newcomer = await person("newcomer")
-    idp.outage = true
-
-    const reply = await raw("POST", `${API}/principal`, {body: {token: newcomer.bearer}})
-
-    expect(reply.status).toBe(503)
-    expect(reply.json).toMatchObject({error: "temporarily_unavailable"})
-    await expectClientError(store().resolvePrincipal(newcomer.bearer), "core_unavailable", 503)
   })
 
   test("a service-level 401 is not reported as an invalid token", async () => {
@@ -1388,8 +1395,314 @@ describe("POST /credentials", () => {
       "service_unauthorized",
       401,
     )
-    await expectClientError(clientFor("fleet").mintServiceCredential(input(workspaceId)), "service_unauthorized", 401)
+    await expectClientError(
+      clientFor("fleet", {secret: "store-s1"}).mintServiceCredential(input(workspaceId)),
+      "service_unauthorized",
+      401,
+    )
     expect(await AccessCredentialModel.countDocuments({})).toBe(0)
+  })
+
+  test("Fleet, though it authenticates, may not mint: 403 forbidden", async () => {
+    const {workspaceId} = await newWorkspace()
+
+    await expectClientError(fleet().mintServiceCredential(input(workspaceId)), "forbidden", 403)
+    const reply = await raw("POST", `${API}/credentials`, {
+      service: "fleet",
+      secret: "fleet-f1",
+      body: input(workspaceId, {issuedBy: {service: "fleet", actorEmail: "staff@example.test"}}),
+    })
+    expect({status: reply.status, body: reply.json}).toEqual({status: 403, body: {error: "forbidden"}})
+    expect(await AccessCredentialModel.countDocuments({})).toBe(0)
+  })
+})
+
+// --- Deletion holds --------------------------------------------------------
+
+describe("PUT and DELETE /workspaces/:workspaceId/deletion-holds/:service", () => {
+  const OWNS = "owns_miniapps"
+  const holdPath = (workspaceId: string, service = "store") => `${API}/workspaces/${workspaceId}/deletion-holds/${service}`
+  const holdEvents = (workspaceId: string) =>
+    WorkspaceAuditEventModel.find({workspaceId, action: /^workspace\.deletion_hold_/}).sort({seq: 1}).lean()
+  const storedHolds = async (workspaceId: string) =>
+    (await WorkspaceModel.findOne({workspaceId}).lean())?.deletionHolds ?? []
+  /** The next `asOf` for a client call, later than every one before. */
+  const now = () => new Date(nextHoldAsOf())
+  /** The next `asOf` for a raw request body. */
+  const asOf = nextHoldAsOf
+
+  test("the Store holds a workspace, replaces its hold and clears it, through the contract's client", async () => {
+    const {workspaceId} = await newWorkspace()
+
+    expect(await store().setDeletionHold(workspaceId, {reason: OWNS, count: 3, asOf: now()})).toEqual({
+      workspaceId,
+      holds: [{service: "store", reason: OWNS, count: 3}],
+      ignored: false,
+    })
+    expect(await store().setDeletionHold(workspaceId, {reason: OWNS, count: 1, asOf: now()})).toEqual({
+      workspaceId,
+      holds: [{service: "store", reason: OWNS, count: 1}],
+      ignored: false,
+    })
+    // Idempotent: the same hold again changes and records nothing.
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 1, asOf: now()})
+    expect(await store().clearDeletionHold(workspaceId, {asOf: now()})).toEqual({workspaceId, holds: [], ignored: false})
+    expect(await store().clearDeletionHold(workspaceId, {asOf: now()})).toEqual({workspaceId, holds: [], ignored: false})
+
+    expect((await holdEvents(workspaceId)).map(event => [event.action, event.actor.service, event.after])).toEqual([
+      ["workspace.deletion_hold_set", "store", {reason: OWNS, count: 3}],
+      ["workspace.deletion_hold_set", "store", {reason: OWNS, count: 1}],
+      ["workspace.deletion_hold_cleared", "store", null],
+    ])
+  })
+
+  test("the answer is exactly {workspaceId, holds, ignored}", async () => {
+    const {workspaceId} = await newWorkspace()
+    const set = await raw("PUT", holdPath(workspaceId), {body: {reason: OWNS, count: 2, asOf: asOf()}})
+    expect(set.status).toBe(200)
+    expect(set.json).toEqual({workspaceId, holds: [{service: "store", reason: OWNS, count: 2}], ignored: false})
+    const cleared = await raw("DELETE", holdPath(workspaceId), {body: {asOf: asOf()}})
+    expect(cleared.status).toBe(200)
+    expect(cleared.json).toEqual({workspaceId, holds: [], ignored: false})
+  })
+
+  test("a late call, older than one Core applied, is ignored: 200 with the holds Core keeps, and nothing changes", async () => {
+    const {workspaceId} = await newWorkspace()
+    // Computed first, applied last: the call a Store timeout leaves behind.
+    const lateClear = new Date(Date.now() - 120_000)
+    const lateSet = new Date(Date.now() - 60_000)
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 2, asOf: now()})
+
+    expect(await store().clearDeletionHold(workspaceId, {asOf: lateClear})).toEqual({
+      workspaceId,
+      holds: [{service: "store", reason: OWNS, count: 2}],
+      ignored: true,
+    })
+    expect(await storedHolds(workspaceId)).toEqual([{service: "store", reason: OWNS, count: 2}])
+
+    // After a newer clear, a late set does not bring the hold back.
+    await store().clearDeletionHold(workspaceId, {asOf: now()})
+    const set = await raw("PUT", holdPath(workspaceId), {body: {reason: OWNS, count: 5, asOf: lateSet.toISOString()}})
+    expect([set.status, set.json]).toEqual([200, {workspaceId, holds: [], ignored: true}])
+    expect(await storedHolds(workspaceId)).toEqual([])
+
+    expect((await holdEvents(workspaceId)).map(event => event.action)).toEqual([
+      "workspace.deletion_hold_set",
+      "workspace.deletion_hold_cleared",
+    ])
+  })
+
+  test("a newer call is applied; the same call again with the same asOf is answered as applied", async () => {
+    const {workspaceId} = await newWorkspace()
+    const first = now()
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 2, asOf: first})
+    const retried = await store().setDeletionHold(workspaceId, {reason: OWNS, count: 2, asOf: first})
+    expect(retried).toEqual({workspaceId, holds: [{service: "store", reason: OWNS, count: 2}], ignored: false})
+    const conflicting = await store().setDeletionHold(workspaceId, {reason: OWNS, count: 3, asOf: first})
+    expect(conflicting.ignored).toBe(true)
+
+    expect(await store().setDeletionHold(workspaceId, {reason: OWNS, count: 3, asOf: now()})).toEqual({
+      workspaceId,
+      holds: [{service: "store", reason: OWNS, count: 3}],
+      ignored: false,
+    })
+  })
+
+  test("a missing, malformed or far-future asOf is 400 invalid_request and writes nothing", async () => {
+    const {workspaceId} = await newWorkspace()
+    const tooLate = new Date(Date.now() + 10 * 60_000)
+    await expectClientError(store().setDeletionHold(workspaceId, {reason: OWNS, count: 1, asOf: tooLate}), "bad_request", 400)
+    await expectClientError(store().clearDeletionHold(workspaceId, {asOf: tooLate}), "bad_request", 400)
+    for (const body of [{}, {asOf: "2026-10-14"}, {asOf: "2026-10-14T12:00:00+02:00"}, {asOf: 1760000000000}]) {
+      const set = await raw("PUT", holdPath(workspaceId), {body: {reason: OWNS, ...body}})
+      const clear = await raw("DELETE", holdPath(workspaceId), {body})
+      expect({body, set: [set.status, set.json?.error], clear: [clear.status, clear.json?.error]}).toEqual({
+        body,
+        set: [400, "invalid_request"],
+        clear: [400, "invalid_request"],
+      })
+    }
+    // A clear with no body at all names no asOf.
+    const empty = await raw("DELETE", holdPath(workspaceId))
+    expect([empty.status, empty.json?.error]).toEqual([400, "invalid_request"])
+    expect(await storedHolds(workspaceId)).toEqual([])
+    expect(await holdEvents(workspaceId)).toEqual([])
+  })
+
+  test("a held workspace is refused deletion, and deletes once the hold is cleared", async () => {
+    const {workspaceId, owner} = await newWorkspace()
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 3, asOf: now()})
+
+    const refused = await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: "Acme"}).catch(err => err)
+    expect({code: refused.code, status: refused.status}).toEqual({code: "workspace_has_holds", status: 409})
+
+    await store().clearDeletionHold(workspaceId, {asOf: now()})
+    await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: "Acme"})
+    expect((await getWorkspace(workspaceId))!.status).toBe("deleted")
+  })
+
+  test("Fleet holds a workspace under its own name, beside the Store's", async () => {
+    const {workspaceId} = await newWorkspace()
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 1, asOf: now()})
+
+    expect(await fleet().setDeletionHold(workspaceId, {reason: "manages_devices", asOf: now()})).toEqual({
+      workspaceId,
+      holds: [
+        {service: "fleet", reason: "manages_devices"},
+        {service: "store", reason: OWNS, count: 1},
+      ],
+      ignored: false,
+    })
+    // Clearing its own leaves the Store's.
+    expect(await fleet().clearDeletionHold(workspaceId, {asOf: now()})).toEqual({
+      workspaceId,
+      holds: [{service: "store", reason: OWNS, count: 1}],
+      ignored: false,
+    })
+  })
+
+  test("a service may set or clear only its own hold: another service's name is 403 and changes nothing", async () => {
+    const {workspaceId} = await newWorkspace()
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 1, asOf: now()})
+
+    for (const [service, secret, named] of [
+      ["fleet", "fleet-f1", "store"],
+      ["store", "store-s1", "fleet"],
+      ["store", "store-s1", "core"],
+      ["store", "store-s1", "Store"],
+    ] as const) {
+      for (const method of ["PUT", "DELETE"] as const) {
+        const reply = await raw(method, holdPath(workspaceId, named), {
+          service,
+          secret,
+          body: method === "PUT" ? {reason: "manages_devices", asOf: asOf()} : {asOf: asOf()},
+        })
+        expect({service, named, method, status: reply.status, error: reply.json?.error}).toEqual({
+          service,
+          named,
+          method,
+          status: 403,
+          error: "forbidden",
+        })
+      }
+    }
+    expect(await storedHolds(workspaceId)).toEqual([{service: "store", reason: OWNS, count: 1}])
+    expect((await holdEvents(workspaceId)).map(event => event.action)).toEqual(["workspace.deletion_hold_set"])
+  })
+
+  test("only a signed request from a service Core knows reaches it", async () => {
+    const {workspaceId} = await newWorkspace()
+
+    await expectClientError(
+      clientFor("store", {secret: "not-a-store-secret"}).setDeletionHold(workspaceId, {reason: OWNS, asOf: now()}),
+      "service_unauthorized",
+      401,
+    )
+    await expectClientError(
+      clientFor("fleet", {secret: "store-s1"}).clearDeletionHold(workspaceId, {asOf: now()}),
+      "service_unauthorized",
+      401,
+    )
+    // No signature at all: a person's request, or anyone's.
+    for (const method of ["PUT", "DELETE"]) {
+      const unsigned = await send(
+        method,
+        holdPath(workspaceId),
+        {"content-type": "application/json"},
+        JSON.stringify({reason: OWNS, asOf: asOf()}),
+      )
+      expect({method, status: unsigned.status, body: unsigned.json}).toEqual({
+        method,
+        status: 401,
+        body: {error: "service_unauthorized"},
+      })
+    }
+    // A service Core has no secret for, even with a valid Store secret.
+    const unknown = await raw("PUT", holdPath(workspaceId, "billing"), {service: "billing", body: {reason: OWNS, asOf: asOf()}})
+    expect(unknown.status).toBe(401)
+    // A signed PUT replayed as a DELETE does not verify.
+    const body = JSON.stringify({reason: OWNS, asOf: asOf()})
+    const replayed = await send("DELETE", holdPath(workspaceId), signedHeaders("PUT", holdPath(workspaceId), body), body)
+    expect(replayed.status).toBe(401)
+    expect(await storedHolds(workspaceId)).toEqual([])
+  })
+
+  test("a malformed hold is 400 invalid_request and writes nothing", async () => {
+    const {workspaceId} = await newWorkspace()
+    const bad: unknown[] = [
+      {asOf: asOf()},
+      {reason: "", asOf: asOf()},
+      {reason: "Owns Miniapps", asOf: asOf()},
+      {reason: 5, asOf: asOf()},
+      {reason: OWNS, count: 0, asOf: asOf()},
+      {reason: OWNS, count: 2.5, asOf: asOf()},
+      {reason: OWNS, count: "3", asOf: asOf()},
+      [],
+    ]
+    for (const body of bad) {
+      const reply = await raw("PUT", holdPath(workspaceId), {body})
+      expect({body, status: reply.status, error: reply.json?.error}).toEqual({body, status: 400, error: "invalid_request"})
+    }
+    for (const rawBody of ["", "{nope"]) {
+      for (const method of ["PUT", "DELETE"] as const) {
+        const reply = await raw(method, holdPath(workspaceId), {rawBody})
+        expect({rawBody, method, status: reply.status}).toEqual({rawBody, method, status: 400})
+      }
+    }
+    expect(await storedHolds(workspaceId)).toEqual([])
+  })
+
+  test("an unknown workspace is 404 workspace_not_found; a deleted one takes no hold (410) and has none to clear", async () => {
+    const missingSet = await raw("PUT", holdPath("ws_missing"), {body: {reason: OWNS, asOf: asOf()}})
+    const missingClear = await raw("DELETE", holdPath("ws_missing"), {body: {asOf: asOf()}})
+    expect([missingSet.status, missingSet.json?.error]).toEqual([404, "workspace_not_found"])
+    expect([missingClear.status, missingClear.json?.error]).toEqual([404, "workspace_not_found"])
+    await expectClientError(store().setDeletionHold("ws_missing", {reason: OWNS, asOf: now()}), "bad_request", 404)
+
+    const {workspaceId, owner} = await newWorkspace()
+    await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: "Acme"})
+    const deleted = await raw("PUT", holdPath(workspaceId), {body: {reason: OWNS, count: 1, asOf: asOf()}})
+    expect([deleted.status, deleted.json?.error]).toEqual([410, "workspace_deleted"])
+    expect(await store().clearDeletionHold(workspaceId, {asOf: now()})).toEqual({workspaceId, holds: [], ignored: false})
+  })
+
+  test("an id that needs escaping in the path is found, and still verifies", async () => {
+    const {workspaceId} = await newWorkspace()
+    await WorkspaceModel.updateOne({workspaceId}, {$set: {workspaceId: "ws odd/id"}})
+    await WorkspaceMembershipModel.updateMany({workspaceId}, {$set: {workspaceId: "ws odd/id"}})
+
+    expect(await store().setDeletionHold("ws odd/id", {reason: OWNS, asOf: now()})).toEqual({
+      workspaceId: "ws odd/id",
+      holds: [{service: "store", reason: OWNS}],
+      ignored: false,
+    })
+  })
+
+  test("setting and clearing a hold are on the change feed as the contract describes them; an ignored call is not", async () => {
+    const {workspaceId} = await newWorkspace()
+    const late = new Date(Date.now() - 120_000)
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 2, asOf: now()})
+    await store().clearDeletionHold(workspaceId, {asOf: now()})
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 9, asOf: late})
+
+    const {events} = await fleet().listChanges({})
+    const holds = events.filter(event => event.action.startsWith("workspace.deletion_hold_") && event.workspaceId === workspaceId)
+    expect(holds.map(({action, workspaceId: id, target, before, after}) => ({action, id, target, before, after}))).toEqual([
+      {
+        action: "workspace.deletion_hold_set",
+        id: workspaceId,
+        target: {workspaceId, service: "store"},
+        before: null,
+        after: {reason: OWNS, count: 2},
+      },
+      {
+        action: "workspace.deletion_hold_cleared",
+        id: workspaceId,
+        target: {workspaceId, service: "store"},
+        before: {reason: OWNS, count: 2},
+        after: null,
+      },
+    ])
   })
 })
 
@@ -1478,7 +1791,12 @@ describe("POST /users/resolve-email", () => {
   })
 
   test("only a signed request from the Store may ask", async () => {
-    await expectClientError(clientFor("fleet").resolveEmail("verified@example.test"), "service_unauthorized", 401)
+    await expectClientError(fleet().resolveEmail("verified@example.test"), "forbidden", 403)
+    await expectClientError(
+      clientFor("fleet", {secret: "store-s1"}).resolveEmail("verified@example.test"),
+      "service_unauthorized",
+      401,
+    )
     await expectClientError(
       clientFor("store", {secret: "not-a-store-secret"}).resolveEmail("verified@example.test"),
       "service_unauthorized",
@@ -1498,6 +1816,238 @@ describe("POST /users/resolve-email", () => {
       })
     }
     expect(lookups).toEqual([])
+  })
+})
+
+// --- GET /changes ----------------------------------------------------------
+
+describe("GET /changes", () => {
+  /**
+   * A workspace and three membership changes: the developer is made an admin, the member is removed and
+   * the admin leaves. With the workspace's creation, the feed holds four events, in this order.
+   */
+  async function threeMembershipChanges() {
+    const w = await newWorkspace()
+    const revision = async () => (await getWorkspace(w.workspaceId))!.authorizationRevision
+    const idOf = async (p: Person) =>
+      (await WorkspaceMembershipModel.findOne({workspaceId: w.workspaceId, mentraUserId: p.mentraUserId}).lean())!.membershipId
+    await changeRole(actorOf(w.owner), w.workspaceId, await idOf(w.developer), "admin", await revision())
+    await removeMember(actorOf(w.owner), w.workspaceId, await idOf(w.member), await revision())
+    await leaveWorkspace(actorOf(w.admin), w.workspaceId)
+    return {...w, idOf}
+  }
+
+  const feedActions = ["workspace.created", "membership.role_changed", "membership.removed", "membership.left"]
+
+  test("three membership changes appear in seq order, as the contract describes them", async () => {
+    const w = await threeMembershipChanges()
+
+    const {events, next} = await fleet().listChanges({})
+
+    expect(events.map(event => [event.seq, event.action])).toEqual(feedActions.map((action, i) => [i + 1, action]))
+    expect(next).toBeNull()
+    expect(events.every(event => event.workspaceId === w.workspaceId)).toBe(true)
+    expect(events[1]).toMatchObject({
+      target: {mentraUserId: w.developer.mentraUserId},
+      before: {role: "developer"},
+      after: {role: "admin"},
+    })
+    expect(events[2]).toMatchObject({
+      target: {mentraUserId: w.member.mentraUserId},
+      before: {role: "member", status: "active"},
+      after: {status: "ended", endedReason: "removed"},
+    })
+    expect(events[3]).toMatchObject({target: {mentraUserId: w.admin.mentraUserId}, after: {endedReason: "left"}})
+    for (const event of events) {
+      expect(Object.keys(event).sort()).toEqual(
+        ["action", "after", "before", "eventId", "occurredAt", "seq", "target", "workspaceId"],
+      )
+      expect(new Date(event.occurredAt).toISOString()).toBe(event.occurredAt)
+    }
+    // The wire form is what the client returned: JSON of the same events.
+    const reply = await raw("GET", `${API}/changes`, {service: "fleet", secret: "fleet-f1"})
+    expect(reply.status).toBe(200)
+    expect(reply.json).toEqual({events: JSON.parse(JSON.stringify(events)), next: null})
+  })
+
+  test("the Store may read the feed too", async () => {
+    await threeMembershipChanges()
+
+    expect((await store().listChanges({})).events.map(event => event.action)).toEqual(feedActions)
+  })
+
+  test("after pages through the feed without skipping or repeating an event", async () => {
+    await threeMembershipChanges()
+
+    const first = await fleet().listChanges({limit: 3})
+    const second = await fleet().listChanges({after: first.next, limit: 3})
+    const beyond = await fleet().listChanges({after: "4", limit: 3})
+    const middle = await fleet().listChanges({after: "2"})
+
+    expect(first.events.map(event => event.seq)).toEqual([1, 2, 3])
+    expect(first.next).toBe("3")
+    expect(second.events.map(event => event.seq)).toEqual([4])
+    expect(second.next).toBeNull()
+    expect(beyond).toEqual({events: [], next: null})
+    expect(middle.events.map(event => event.action)).toEqual(feedActions.slice(2))
+    // One event at a time reaches the same end.
+    const walked: number[] = []
+    let after: string | null = null
+    do {
+      const page = await fleet().listChanges({after, limit: 1})
+      walked.push(...page.events.map(event => event.seq))
+      after = page.next
+    } while (after !== null)
+    expect(walked).toEqual([1, 2, 3, 4])
+  })
+
+  test("limit defaults to 100 and is clamped to between 1 and 500", async () => {
+    const docs = Array.from({length: 600}, (_, i) => ({
+      eventId: `01J${String(i).padStart(23, "0")}`,
+      seq: i + 1,
+      workspaceId: "ws_bulk",
+      action: "bulk.event",
+      actor: {kind: "system"},
+      requestId: null,
+      occurredAt: new Date(),
+    }))
+    await WorkspaceAuditEventModel.collection.insertMany(docs)
+    const count = async (query: string) => (await raw("GET", `${API}/changes${query}`, {service: "fleet", secret: "fleet-f1"})).json.events.length
+
+    expect(await count("")).toBe(100)
+    expect(await count("?limit=1")).toBe(1)
+    expect(await count("?limit=0")).toBe(1)
+    expect(await count("?limit=-7")).toBe(1)
+    expect(await count("?limit=500")).toBe(500)
+    expect(await count("?limit=501")).toBe(500)
+    expect(await count("?limit=100000")).toBe(500)
+    expect((await fleet().listChanges({after: "550", limit: 100000})).next).toBeNull()
+  })
+
+  test("a limit or cursor that is not a number is 400 invalid_request", async () => {
+    for (const query of [
+      "?limit=abc",
+      "?limit=",
+      "?limit=1.5",
+      "?limit=1e2",
+      "?limit=0x10",
+      "?limit=%201",
+      "?after=abc",
+      "?after=",
+      "?after=-1",
+      "?after=1.5",
+      "?after=01",
+      "?after=9007199254740993",
+    ]) {
+      const reply = await raw("GET", `${API}/changes${query}`, {service: "fleet", secret: "fleet-f1"})
+      expect({query, status: reply.status, error: reply.json?.error}).toEqual({
+        query,
+        status: 400,
+        error: "invalid_request",
+      })
+    }
+  })
+
+  test("an unsigned request is 401, as is one signed with another service's secret", async () => {
+    await threeMembershipChanges()
+
+    const unsigned = await send("GET", `${API}/changes`, {})
+    const wrongSecret = await raw("GET", `${API}/changes`, {service: "fleet", secret: "store-s1"})
+    const unknownSecret = await raw("GET", `${API}/changes`, {service: "fleet", secret: "not-a-secret"})
+    const tampered = await raw("GET", `${API}/changes?after=0`, {
+      service: "fleet",
+      secret: "fleet-f1",
+      signedPath: `${API}/changes?after=3`,
+    })
+
+    for (const reply of [unsigned, wrongSecret, unknownSecret, tampered]) {
+      expect({status: reply.status, body: reply.json}).toEqual({status: 401, body: {error: "service_unauthorized"}})
+    }
+    await expectClientError(
+      clientFor("fleet", {secret: "not-a-secret"}).listChanges({}),
+      "service_unauthorized",
+      401,
+    )
+  })
+
+  test("credential-looking keys are removed at any depth, and the stored event is not changed", async () => {
+    const {workspaceId} = await newWorkspace()
+    await withTransaction(session =>
+      recordWorkspaceEvent(session, {
+        workspaceId,
+        action: "test.secrets",
+        actor: {kind: "system"},
+        target: {credentialId: "c_1", token: "msk_t.s", inner: {list: [{password: "p", hashed: "h", keep: "yes"}]}},
+        before: {secretValue: "s", role: "member"},
+        after: {deep: {deeper: {deepest: {Token: "t", ok: 1}}}},
+      }),
+    )
+
+    const reply = await raw("GET", `${API}/changes?limit=500`, {service: "fleet", secret: "fleet-f1"})
+    const event = reply.json.events.find((e: {action: string}) => e.action === "test.secrets")
+
+    expect(event).toMatchObject({
+      target: {credentialId: "c_1", inner: {list: [{keep: "yes"}]}},
+      before: {role: "member"},
+      after: {deep: {deeper: {deepest: {ok: 1}}}},
+    })
+    for (const secret of ["msk_t", "password", "hashed", "secretValue", "Token"]) expect(reply.text).not.toContain(secret)
+    const stored = await WorkspaceAuditEventModel.findOne({action: "test.secrets"}).lean()
+    expect(JSON.stringify(stored)).toContain("msk_t.s")
+  })
+
+  test("events from before the feed and organization-level events are never listed", async () => {
+    await WorkspaceAuditEventModel.collection.insertOne({
+      eventId: "01H00000000000000000000001",
+      workspaceId: "ws_old",
+      action: "workspace.created",
+      actor: {kind: "system"},
+      requestId: null,
+      occurredAt: new Date("2026-01-01T00:00:00.000Z"),
+    })
+    await recordOrganizationEvent({workspaceId: null, action: "credential.created", actor: {kind: "system"}, target: {}})
+    const w = await newWorkspace()
+
+    const {events, next} = await fleet().listChanges({limit: 1})
+
+    expect(events.map(event => [event.seq, event.workspaceId, event.action])).toEqual([
+      [1, w.workspaceId, "workspace.created"],
+    ])
+    expect(next).toBe("1")
+    expect(await fleet().listChanges({after: next, limit: 1})).toEqual({events: [], next: null})
+  })
+
+  test("a user.deleted tombstone is listed with no workspace and no snapshots", async () => {
+    // Account deletion itself is exercised in account-deletion.integration.test.ts; this is the route's view of it.
+    await withTransaction(session =>
+      recordWorkspaceEvent(session, {
+        workspaceId: null,
+        action: "user.deleted",
+        actor: {kind: "user", mentraUserId: "mu_gone"},
+        target: {mentraUserId: "mu_gone"},
+      }),
+    )
+
+    const {events} = await fleet().listChanges({})
+
+    expect(events).toEqual([
+      {
+        eventId: expect.any(String),
+        seq: 1,
+        workspaceId: null,
+        action: "user.deleted",
+        occurredAt: expect.any(String),
+        target: {mentraUserId: "mu_gone"},
+        before: null,
+        after: null,
+      },
+    ])
+  })
+
+  test("is a read: other methods are not routed", async () => {
+    const reply = await raw("POST", `${API}/changes`, {service: "fleet", secret: "fleet-f1", body: {}})
+
+    expect(reply.status).toBe(404)
   })
 })
 

@@ -12,13 +12,16 @@
     "@mentra/cloud-protocol": "workspace:*",
     "@mentra/cloud-shared": "workspace:*",
     "@mentra/workspace-contract": "workspace:*",
-    "@workos-inc/node": "^10.3.0",
     "fflate": "0.8.2",
     "hono": "^4.11.1",
     "jose": "^5.9.6",
     "mongoose": "^8.8.4",
+    "oidc-provider": "9.12.2",
     "openid-client": "6.8.8",
     "ulid": "^3.0.2",
     "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/oidc-provider": "9.12.1"
   }
 }

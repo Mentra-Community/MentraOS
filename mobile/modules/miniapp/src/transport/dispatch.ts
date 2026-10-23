@@ -43,6 +43,8 @@ export class DispatchTransport implements Transport {
   private messageHandler: TransportMessageHandler | null = null
   private disconnectHandler: TransportDisconnectHandler | null = null
   private open_ = false
+  /** The delivery hook this transport installed; another transport may own the global later. */
+  private deliverHook: ((raw: string) => void) | null = null
 
   /** True iff `__dispatch` is bound on the current globalThis. */
   static isAvailable(): boolean {
@@ -57,9 +59,10 @@ export class DispatchTransport implements Transport {
     // route bridge frames here. Installed lazily so multiple transports
     // can share the same global if a test spins up two.
     const g = globalThis as unknown as BridgeDeliverGlobal
-    g.__mentraDeliverBridgeRaw = (raw: string) => {
+    this.deliverHook = (raw: string) => {
       if (this.messageHandler) this.messageHandler(raw)
     }
+    g.__mentraDeliverBridgeRaw = this.deliverHook
     this.open_ = true
   }
 
@@ -95,9 +98,11 @@ export class DispatchTransport implements Transport {
   close(): void {
     this.open_ = false
     const g = globalThis as unknown as BridgeDeliverGlobal
-    if (g.__mentraDeliverBridgeRaw) {
+    // A replacement session's transport may have installed its own hook since.
+    if (this.deliverHook && g.__mentraDeliverBridgeRaw === this.deliverHook) {
       delete g.__mentraDeliverBridgeRaw
     }
+    this.deliverHook = null
   }
 
   isOpen(): boolean {

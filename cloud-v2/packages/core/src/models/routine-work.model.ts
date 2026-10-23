@@ -21,6 +21,7 @@ const schema = new Schema(
     dispatchCompletion: {type: Schema.Types.Mixed, immutable: true},
     acceptance: {type: Schema.Types.Mixed},
     status: {type: Schema.Types.Mixed},
+    verification: {type: Schema.Types.Mixed},
     statusReceipts: {type: [{_id: false, eventId: String, sequence: Number, sha256: String}], default: []},
     reporting: {type: Schema.Types.Mixed},
   },

@@ -1,4 +1,5 @@
 import {z} from 'zod'
+import {nimoCommissioningPlanSchema} from './nimo-commissioning.types'
 import {frameworkIdentitySchema} from './framework-request.types'
 import {routineIdentitySchema, routineResourceRequirementSchema} from './routine-definition.types'
 import {routineJobTargetSchema, portableRequirementsSchema} from './routine-job.types'
@@ -67,6 +68,7 @@ const pin = z.object({url: z.string().url(), sha256: workHashSchema, size: z.num
 export const routineWorkBuildSchema = z
   .object({
     kind: z.enum(['mac-ci-package', 'android-apk']),
+    diagnostic: z.literal('nimo-resource-v1').optional(),
     repository: z.literal('Mentra-Community/MentraOS'),
     headSha: sha,
     channel: z.enum(['dev', 'staging', 'pr']),
@@ -97,17 +99,29 @@ export const routineWorkBuildSchema = z
       (value.manifest && value.manifest.sha256 !== value.manifestSha256)
     )
       ctx.addIssue({code: 'custom', message: 'Build manifest digest differs'})
+    if (value.diagnostic && (value.kind !== 'android-apk' || value.channel !== 'pr')) ctx.addIssue({code: 'custom', message: 'Diagnostic build requires Android PR authoring'})
     if (!value.archive.name.endsWith(value.kind === 'android-apk' ? '.apk' : '.zip'))
       ctx.addIssue({code: 'custom', message: 'Build archive and platform differ'})
   })
 export const routineWorkRequestSchema = z.object({...fields,
   source: fields.source.partial({revision: true}), target: routineJobTargetSchema.optional(),
   requirements: routineWorkPortableRequirementsSchema,
+  diagnostic: z.literal('nimo-resource-v1').optional(),
   buildSource: testBuildSourceSchema, deadline: z.string().datetime({offset: true}).optional(),
-}).strict()
+}).strict().refine(value => !value.diagnostic || value.requirements.platform === 'android' && value.requirements.glasses.length === 1 && value.requirements.glasses[0] === 'nimo' && value.requirements.resources.some(resource => resource.kind === 'glasses'), 'NIMO diagnostic requires exact Android NIMO authoring')
 export const authoringWorkSchema = z
-  .object({...fields, origin: fields.origin.optional(), build: routineWorkBuildSchema})
+  .object({...fields, origin: fields.origin.optional(), build: routineWorkBuildSchema,nimoCommissioning:nimoCommissioningPlanSchema.optional()})
   .strict()
+  .superRefine((work,ctx)=>{
+    if(!work.nimoCommissioning)return
+    const plan=work.nimoCommissioning
+    const ordered=(value:unknown):unknown=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,child])=>[key,ordered(child)])):value
+    if(work.requirements.platform!=='mac'||work.requirements.glasses.length!==1||work.requirements.glasses[0]!=='nimo'||
+      work.target.hostId!==plan.hostId||work.target.laneId!==plan.mac.laneId||work.source.revision!==plan.source.revision||
+      JSON.stringify(ordered(work.build))!==JSON.stringify(ordered(plan.mac.build)))
+      ctx.addIssue({code:'custom',message:'NIMO commissioning work differs from its exact Mac plan/source/build/host/target'})
+  })
+  .refine(value => !value.build.diagnostic || value.requirements.platform === 'android' && value.requirements.glasses.length === 1 && value.requirements.glasses[0] === 'nimo', 'Diagnostic build requires exact NIMO authoring')
   .refine((value) => Buffer.byteLength(JSON.stringify(value)) <= 256 * 1024, 'Work envelope exceeds its byte limit')
   .refine(
     (value) => value.build.kind === (value.requirements.platform === 'mac' ? 'mac-ci-package' : 'android-apk'),
@@ -116,7 +130,7 @@ export const authoringWorkSchema = z
 export const portableAuthoringWorkSchema = z.object({...fields, target: routineJobTargetSchema.optional(),
   requirements: routineWorkPortableRequirementsSchema,
   build: routineWorkBuildSchema,
-}).strict()
+}).strict().refine(value => !value.build.diagnostic || value.requirements.platform === 'android' && value.requirements.glasses.length === 1 && value.requirements.glasses[0] === 'nimo', 'Diagnostic build requires exact NIMO authoring')
 export type PortableAuthoringWork = z.infer<typeof portableAuthoringWorkSchema>
 export type RoutineWorkRequest = z.infer<typeof routineWorkRequestSchema>
 export type AuthoringWork = z.infer<typeof authoringWorkSchema>
@@ -291,3 +305,28 @@ export const routineWorkStatusSchema = z
   })
 export type RoutineWorkStatus = z.infer<typeof routineWorkStatusSchema>
 export type RoutineWorkProgress = z.infer<typeof routineWorkProgressSchema>
+
+/** A bounded completion retry has its own identity; original terminal status stays immutable. */
+export const routineWorkVerificationIdentitySchema = z.object({
+  decisionId: frameworkIdentitySchema, inputSha256: workHashSchema,
+  acceptedAt: z.string().datetime({offset:true}), deadline: z.string().datetime({offset:true}),
+  failureEventId: frameworkIdentitySchema, failureSha256: workHashSchema,
+  previousFailure: z.object({code:z.enum(['recording-response','permission-required','completion-operation-failed','workspace-generated-unaccounted','authoring-detail-limit']),reason:publicText}).strict(),
+  admission: z.object({requestId:frameworkIdentitySchema,originalAdmissionExpiresAt:z.number().int().positive()}).strict().optional(),
+  finalization: z.object({requestId:frameworkIdentitySchema,sourceRevision:sha,runInputSha256:workHashSchema,operationId:frameworkIdentitySchema,
+    originalDeadline:z.string().datetime({offset:true}),completionSha256:workHashSchema,cacheProofSha256:workHashSchema,
+    candidateSha256:workHashSchema,recordingSha256:workHashSchema,restorationSha256:workHashSchema}).strict().optional(),
+  reconciliation: z.object({parentIdentitySha256:workHashSchema,parentFailureEventId:frameworkIdentitySchema,
+    parentFailureSequence:z.number().int().positive().safe(),parentFailureSha256:workHashSchema}).strict().optional(),
+}).strict().refine(value => Date.parse(value.deadline)>Date.parse(value.acceptedAt) &&
+  Date.parse(value.deadline)-Date.parse(value.acceptedAt)<=30*60*1000,'Verification retry requires its bounded original window')
+  .refine(value=>value.previousFailure.code==='permission-required' ? Boolean(value.admission&&
+    /^local:([0-9]{13}):([A-Za-z0-9_-]{1,120})$/.exec(value.admission.requestId)?.[1]===String(value.admission.originalAdmissionExpiresAt)) :
+    value.admission===undefined,'Pre-admission retry requires its original finite local request identity')
+  .refine(value=>['completion-operation-failed','workspace-generated-unaccounted','authoring-detail-limit'].includes(value.previousFailure.code)
+    ? Boolean(value.finalization&&!value.admission&&Date.parse(value.deadline)<=Date.parse(value.finalization.originalDeadline))
+    : value.finalization===undefined,'Finalization retry requires the original passed candidate and cannot extend its deadline')
+  .refine(value=>value.previousFailure.code==='authoring-detail-limit' ? Boolean(value.reconciliation&&value.finalization&&!value.admission)
+    : value.reconciliation===undefined,'Finalization reconciliation requires its one exact failed predecessor')
+export const routineWorkVerificationSchema = z.object({identity:routineWorkVerificationIdentitySchema,event:routineWorkStatusSchema}).strict()
+export type RoutineWorkVerification = z.infer<typeof routineWorkVerificationSchema>

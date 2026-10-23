@@ -31,6 +31,7 @@ import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.media.utils.MediaStorage;
+import com.mentra.asg_client.io.network.interfaces.HotspotState;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
@@ -646,6 +647,15 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         }
     }
 
+    /**
+     * Sends one UART JSON command to BES through the existing companion transport.
+     *
+     * @return true if the transport accepted the bytes
+     */
+    public boolean sendBesUartCommand(String payload) {
+        return sendK900Command(payload);
+    }
+
     private boolean sendK900Command(String payload) {
         if (serviceInitializer == null || serviceInitializer.getServiceManager() == null) {
             Log.w(TAG, "ServiceInitializer not initialized; cannot send I2S command");
@@ -990,7 +1000,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     }
 
     @Override
-    public void onHotspotStateChanged(boolean isEnabled) {
+    public void onHotspotStateChanged(HotspotState state) {
+        boolean isEnabled = state.enabled();
         Log.i(TAG, "📡 Hotspot state changed: " + (isEnabled ? "ENABLED" : "DISABLED"));
 
         // Send hotspot status update to phone
@@ -999,20 +1010,18 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 var serviceManager = serviceInitializer.getServiceManager();
                 serviceManager.setWebServerEnabled(isEnabled);
 
-                var networkManager = serviceManager.getNetworkManager();
                 var commManager = serviceInitializer.getCommunicationManager();
 
-                if (networkManager != null && commManager != null) {
+                if (commManager != null) {
                     // Build hotspot status JSON
                     JSONObject hotspotStatus = new JSONObject();
                     hotspotStatus.put("type", "hotspot_status_update");
                     hotspotStatus.put("hotspot_enabled", isEnabled);
 
                     if (isEnabled) {
-                        hotspotStatus.put("hotspot_ssid", networkManager.getHotspotSsid());
-                        hotspotStatus.put("hotspot_password", networkManager.getHotspotPassword());
-                        hotspotStatus.put(
-                                "hotspot_gateway_ip", networkManager.getHotspotGatewayIp());
+                        hotspotStatus.put("hotspot_ssid", state.ssid());
+                        hotspotStatus.put("hotspot_password", state.password());
+                        hotspotStatus.put("hotspot_gateway_ip", state.gatewayIp());
                     }
 
                     Log.d(TAG, "📡 🔥 Sending hotspot status update: " + hotspotStatus.toString());

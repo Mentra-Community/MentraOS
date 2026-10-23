@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Export registered-device downloads from the coordinated store IPA, without compiling."""
 import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).parent / 'pr-ios'))
-from artifacts import BUNDLE_ID, configure, digest, package_mac_app, read_profile, run, validate_profile
+from artifacts import optional_nimo_capability, BUNDLE_ID, configure, digest, package_mac_app, read_profile, run, unsigned_executable_bytes, validate_profile
 from repackage import unpack
 
 
@@ -32,6 +33,30 @@ def validate_app(app, plan, ota_url):
     run('codesign', '--verify', '--deep', '--strict', app)
     run('codesign', '--verify', '-R', '=anchor apple generic', app)
     return info
+
+
+def verify_compiled_code(source, exported, executable, root, diagnostics):
+    binaries = []
+    for name, original in [('store', source), ('adhoc', exported)]:
+        binary = root / name / 'unsigned-executable'
+        binaries.append(unsigned_executable_bytes(original / executable, binary))
+    if binaries[0] == binaries[1]:
+        return
+    # Keep the exact signed pair before TemporaryDirectory removes the export.
+    # These are failure-only Actions artifacts, never runnable release downloads.
+    diagnostics.mkdir(parents=True, exist_ok=True)
+    facts = {}
+    for (name, original), binary in zip([('store', source), ('adhoc', exported)], binaries):
+        shutil.copy2(original / executable, diagnostics / f'{name}-executable')
+        facts[name] = {'signedSize': (original / executable).stat().st_size,
+                       'signedSha256': digest(original / executable), 'unsignedSize': len(binary),
+                       'unsignedSha256': hashlib.sha256(binary).hexdigest()}
+    facts['firstDifferingOffset'] = next((i for i, (before, after) in enumerate(zip(*binaries))
+                                         if before != after), min(map(len, binaries)))
+    facts['compiledCodeAccepted'] = False
+    facts['exportOptions'] = plistlib.loads((root / 'signing/ExportOptions.plist').read_bytes())
+    (diagnostics / 'comparison.json').write_text(json.dumps(facts, indent=2) + '\n')
+    raise ValueError('Export changed compiled iOS code; exact executables preserved in export-diagnostics')
 
 
 def package(plan_path, ipa, output):
@@ -71,12 +96,7 @@ def package(plan_path, ipa, output):
         team = validate_profile(profile)
         if (source / 'main.jsbundle').read_bytes() != (app / 'main.jsbundle').read_bytes():
             raise ValueError('Export changed the JavaScript bundle')
-        for name, original in [('store', source), ('adhoc', app)]:
-            binary = root / name / 'unsigned-executable'
-            shutil.copy2(original / info['CFBundleExecutable'], binary)
-            run('codesign', '--remove-signature', binary)
-        if (root / 'store/unsigned-executable').read_bytes() != (root / 'adhoc/unsigned-executable').read_bytes():
-            raise ValueError('Export changed compiled iOS code')
+        verify_compiled_code(source, app, info['CFBundleExecutable'], root, output / 'export-diagnostics')
         manifest = {'bundleId': BUNDLE_ID, 'app': 'Mentra.app', 'headSha': plan['sourceCommit'],
             'buildSha': plan['sourceCommit'], 'releaseIdentity': plan['releaseIdentity'],
             'backend': 'dev' if plan['channel'] == 'dev' else 'staging', 'otaManifestUrl': ota_url,
@@ -84,6 +104,9 @@ def package(plan_path, ipa, output):
             'executableSha256': digest(app / info['CFBundleExecutable']),
             'javascriptSha256': digest(app / 'main.jsbundle'), 'profileUUID': profile['UUID'],
             'profileExpires': profile['ExpirationDate'].isoformat(), 'teamId': team}
+        capability = optional_nimo_capability(app / info['CFBundleExecutable'], Path(__file__).resolve().parents[2], plan['sourceCommit'])
+        if capability is not None:
+            manifest['nativeCapabilities'] = {'nimoMacSession': capability}
         files = {'iphone': f'{prefix}-iphone.ipa', 'mac': f'{prefix}-mac.zip'}
         shutil.copy2(exported[0], output / files['iphone'])
         package_mac_app(app, output / files['mac'], manifest, folder_name='Mentra Release', readme=f'''# Mentra {plan['releaseIdentity']}

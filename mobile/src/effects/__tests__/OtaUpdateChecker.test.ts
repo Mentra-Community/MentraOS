@@ -7,8 +7,13 @@ import {
 } from "@/effects/OtaUpdateChecker"
 
 describe("getPendingUpdatePromptAction", () => {
-  it("waits until the glasses WiFi status is known", () => {
-    expect(getPendingUpdatePromptAction(true, false, false, true)).toBeNull()
+  it("waits for WiFi status on glasses without hotspot OTA", () => {
+    expect(getPendingUpdatePromptAction(true, false, false, false)).toBeNull()
+  })
+
+  it("prompts for hotspot OTA without waiting for WiFi status", () => {
+    expect(getPendingUpdatePromptAction(true, false, false, true)).toBe("install")
+    expect(getPendingUpdatePromptAction(false, false, true, true)).toBe("install")
   })
 
   it("prompts for WiFi when returning home with an old ASG and no glasses WiFi", () => {

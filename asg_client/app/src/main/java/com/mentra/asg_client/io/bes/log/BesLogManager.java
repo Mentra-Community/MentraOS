@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -68,6 +69,9 @@ public class BesLogManager {
   private boolean mIsReceiving = false;
   private final AtomicBoolean mFinished = new AtomicBoolean(false);
   private volatile Runnable mOnFinished;
+  private final CountDownLatch mCollectionFinished = new CountDownLatch(1);
+  private String mCollectedLog;
+  private volatile String mCollectedFirmwareJson;
 
   private final Runnable mFirstPacketTimeout;
   private final Runnable mOverallTimeout;
@@ -166,6 +170,11 @@ public class BesLogManager {
     mHandler.removeCallbacks(mFirstPacketTimeout);
     mHandler.removeCallbacks(mOverallTimeout);
     runOnFinished();
+    // Settle the capture so awaitCollection() returns at once instead of waiting out its deadline.
+    synchronized (this) {
+      mCollectedLog = mLogBuffer.toString();
+    }
+    mCollectionFinished.countDown();
   }
 
   private void runOnFinished() {
@@ -181,12 +190,37 @@ public class BesLogManager {
   }
 
   /**
+   * Wait for capture settlement only; the independent HTTP upload can still be running.
+   * A caller deadline or interruption finalizes this capture through the same partial-log path
+   * as its watchdog, so another incident cannot replace a still-active session.
+   */
+  public boolean awaitCollection(long timeout, TimeUnit unit) throws InterruptedException {
+    try {
+      boolean completed = mCollectionFinished.await(timeout, unit);
+      if (!completed) finish("incident_capture_wait_expired");
+      return completed;
+    } catch (InterruptedException e) {
+      finish("incident_capture_interrupted");
+      throw e;
+    }
+  }
+
+  /** Return the frozen firmware payload after collection settlement, without waiting for callbacks. */
+  public String getCollectedFirmwareJson() {
+    if (mCollectionFinished.getCount() != 0) {
+      throw new IllegalStateException("BES collection has not settled");
+    }
+    String stored = mCollectedFirmwareJson;
+    return stored != null ? stored : buildFirmwareUploadJson(mCollectedLog);
+  }
+
+  /**
    * Process one incoming {@code sr_log} packet.
    *
    * @param cur  packet sequence number; 255 signals end of stream
    * @param body log text chunk, or {@code "end"} for the terminator packet
    */
-  public void onLogPacketReceived(int cur, String body) {
+  public synchronized void onLogPacketReceived(int cur, String body) {
     if (mFinished.get()) return;
 
     if (!mIsReceiving) {
@@ -215,13 +249,15 @@ public class BesLogManager {
    *
    * @param timeoutReason null on normal completion, otherwise a reason string
    */
-  private void finish(String timeoutReason) {
+  private synchronized void finish(String timeoutReason) {
     if (!mFinished.compareAndSet(false, true)) return;
     mHandler.removeCallbacks(mFirstPacketTimeout);
     mHandler.removeCallbacks(mOverallTimeout);
     runOnFinished();
 
     String fullLog = mLogBuffer.toString();
+    mCollectedLog = fullLog;
+    mCollectionFinished.countDown();
 
     if (timeoutReason != null) {
       Log.w(TAG, "⚠️ BES log collection ended due to: " + timeoutReason
@@ -265,6 +301,9 @@ public class BesLogManager {
   public void deliverStored(JSONArray entries) {
     if (!mFinished.compareAndSet(false, true)) return;
     final String json = buildFirmwareUploadJson(entries);
+    // Stored TRACE is already complete: settle the capture so awaitCollection() returns at once.
+    mCollectedFirmwareJson = json;
+    mCollectionFinished.countDown();
     if (mRelayJsonCallback != null) {
       new Thread(() -> {
         try {

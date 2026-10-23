@@ -45,6 +45,11 @@ data class BluetoothError(
     val code: String,
     val message: String,
     val cause: Throwable? = null,
+    /**
+     * Stable machine-readable cause within [code], when the SDK can classify it. For
+     * `pair_failure`: `ios_forget_pairing` (iOS only).
+     */
+    val failureCode: String? = null,
 )
 
 enum class ScanStopReason {

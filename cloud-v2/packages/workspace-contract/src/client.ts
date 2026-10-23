@@ -1,13 +1,30 @@
 /**
- * Signed client for Core's internal workspace service API (`/api/internal/workspaces/*`), for a service
- * that shares a secret with its Core (the Store). Every request is signed over its timestamp, method,
- * path and body hash (`service-signature.ts`); no request names an organization.
+ * Signed client for Core's internal service API (`/api/internal/workspaces/*`, and the Store's
+ * `/api/internal/licenses/*`), for a service that shares a secret with its Core (the Store, Fleet). Every
+ * request is signed over its timestamp, method, path and body hash (`service-signature.ts`); no request
+ * names an organization.
  */
+import {isWorkspaceDeletionHold} from "./deletion-holds"
+import {OWNER_NOT_FOUND_ERROR, STALE_REVISION_ERROR} from "./licenses"
+import type {LicensesResponse, LicenseView, LicenseWrite, LicenseWriteResponse} from "./licenses"
 import {SERVICE_HEADERS, signServiceRequest} from "./service-signature"
 import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR, USER_NOT_FOUND_ERROR, WORKSPACE_NOT_FOUND_ERROR} from "./types"
-import type {AuthorizeRequest, AuthorizeResponse, MembershipCheckEntry, PrincipalResponse, WorkspaceSummary} from "./types"
+import type {
+  AuthorizeRequest,
+  AuthorizeResponse,
+  DeletionHoldsResponse,
+  DeletionHoldUpdate,
+  MembershipCheckEntry,
+  PrincipalResponse,
+  WorkspaceChangeEvent,
+  WorkspaceChangesResponse,
+  WorkspaceSummary,
+} from "./types"
 
 const API_PREFIX = "/api/internal/workspaces"
+const LICENSES_PREFIX = "/api/internal/licenses"
+/** A feed cursor: a `seq` as a decimal string, with no sign, leading zero or fraction. */
+const CURSOR = /^[1-9]\d*$/
 const DEFAULT_TIMEOUT_MS = 5_000
 
 export type CoreWorkspaceClientErrorCode =
@@ -19,6 +36,10 @@ export type CoreWorkspaceClientErrorCode =
   | "unauthorized"
   /** This service is not allowed to call the endpoint (HTTP 403). */
   | "forbidden"
+  /** A license write older than the one Core has (HTTP 409 `stale_revision`): Core has the newer one. */
+  | "stale_revision"
+  /** A license write for an owner that is deleted or never existed (HTTP 404 `owner_not_found`): retrying cannot help. */
+  | "owner_not_found"
   /** Core rejected the request itself (other 4xx). */
   | "bad_request"
   /** The response was not valid JSON or did not have the documented shape. */
@@ -43,6 +64,13 @@ export interface CoreWorkspaceClient {
   checkMemberships(mentraUserId: string, workspaceIds: string[]): Promise<Record<string, MembershipCheckEntry | null>>
   /** Null only when Core says the workspace does not exist (HTTP 404 `workspace_not_found`); any other 404 throws. */
   getWorkspace(workspaceId: string): Promise<WorkspaceSummary | null>
+  /**
+   * One page of the change feed, oldest first. `after` is the `seq` of the last event already
+   * processed, as a decimal string (omitted or null starts from the beginning); `limit` is at most 500
+   * (Core's default when omitted is 100). `next` is the cursor for the following page, or null when
+   * the page was not full. Store a cursor only after the events up to it are processed.
+   */
+  listChanges(input: {after?: string | null; limit?: number}): Promise<WorkspaceChangesResponse>
   mintServiceCredential(input: {
     workspaceId: string
     name: string
@@ -54,10 +82,42 @@ export interface CoreWorkspaceClient {
    * first use). Null only when Core says no account has it verified (HTTP 404 `user_not_found`).
    */
   resolveEmail(email: string): Promise<string | null>
+  /**
+   * Hold the workspace from deletion for this service, replacing its previous hold: while any service
+   * holds a workspace, Core refuses to delete it (409 `workspace_has_holds`). `reason` is a lowercase
+   * code (`owns_miniapps`); `count`, when given, is a positive whole number of what the reason names.
+   * `asOf` is when the service computed the hold, taken just before reading what it counts and later
+   * than the service's previous `asOf` for the workspace: Core ignores the call (`ignored: true`,
+   * changing nothing) when it has applied a newer one from this service, so a late call never
+   * overwrites a newer hold. A caller that needs the workspace held must find its own hold in the
+   * answer's `holds`, which an ignored call does not promise. Setting the hold the service already has
+   * changes no hold. Resolves to every hold on the workspace afterwards. Core refuses an unknown
+   * workspace (404), a deleted one (410) and an `asOf` more than five minutes ahead of its clock
+   * (400). An invalid `asOf` throws a `RangeError` before anything is sent.
+   */
+  setDeletionHold(workspaceId: string, hold: {reason: string; count?: number; asOf: Date}): Promise<DeletionHoldsResponse>
+  /**
+   * Clear this service's hold, if it has one (clearing nothing changes no hold, on a deleted workspace
+   * too). `asOf` is as for `setDeletionHold`: Core remembers it after the clear, so a set computed
+   * before it and applied late is ignored too. Resolves to the holds left on the workspace. Core
+   * refuses an unknown workspace (404).
+   */
+  clearDeletionHold(workspaceId: string, update: {asOf: Date}): Promise<DeletionHoldsResponse>
+  /**
+   * Write a license as billing last computed it (the Store only). Core applies it when `revision` is newer
+   * than the one it has (`applied: true`) and answers a repeat of the revision it has with `applied:
+   * false`. An older revision throws `stale_revision` (409): Core already has a newer one, so the write
+   * counts as delivered. A workspace that is deleted or never existed throws `owner_not_found` (404): stop
+   * sending it. A Core that cannot answer throws `core_unavailable` (5xx, or no answer): send it again.
+   * Any other refusal is a malformed write (`bad_request`).
+   */
+  putLicense(write: LicenseWrite): Promise<LicenseWriteResponse>
+  /** One workspace's licenses, ended ones included, each with how many seats are assigned (the Store only). */
+  listLicenses(workspaceId: string): Promise<LicensesResponse>
 }
 
 export interface CoreWorkspaceClientOptions {
-  /** Core's origin, e.g. `https://core.example.com`. Signed paths start at `/api/internal/workspaces`. */
+  /** Core's origin, e.g. `https://core.example.com`. Signed paths start at `/api/internal/`. */
   baseUrl: string
   /** Sent as `x-mentra-service`; must be a service Core has a secret for. */
   service: string
@@ -92,15 +152,71 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
     return principal
   }
 
+  /** A record or null: the shape of an event's `target`, `before` and `after`. */
+  function checkSnapshot(path: string, value: unknown, what: string): void {
+    if (value !== null) checkRecord(path, value, what)
+  }
+
+  function checkChangeEvent(path: string, value: unknown): WorkspaceChangeEvent {
+    const event = checkRecord(path, value, "an event")
+    if (typeof event.eventId !== "string" || !event.eventId) throw badResponse(path, "an event has no eventId")
+    if (typeof event.seq !== "number" || !Number.isSafeInteger(event.seq) || event.seq < 1) {
+      throw badResponse(path, "an event has no positive integer seq")
+    }
+    if (typeof event.action !== "string" || !event.action) throw badResponse(path, "an event has no action")
+    if (event.workspaceId !== null && typeof event.workspaceId !== "string") {
+      throw badResponse(path, "an event's workspaceId is neither a string nor null")
+    }
+    if (typeof event.occurredAt !== "string") throw badResponse(path, "an event has no occurredAt")
+    checkSnapshot(path, event.target, "an event's target")
+    checkSnapshot(path, event.before, "an event's before")
+    checkSnapshot(path, event.after, "an event's after")
+    return event as unknown as WorkspaceChangeEvent
+  }
+
   function checkWorkspace(path: string, value: unknown, what: string): Json {
     const workspace = checkRecord(path, value, what)
     if (typeof workspace.workspaceId !== "string") throw badResponse(path, `${what} has no workspaceId`)
     return workspace
   }
 
+  /** A license as Core lists it: the fields a caller relies on, each of its type. */
+  function checkLicense(path: string, value: unknown): LicenseView {
+    const license = checkRecord(path, value, "a license")
+    if (typeof license.licenseId !== "string" || !license.licenseId) throw badResponse(path, "a license has no licenseId")
+    if (!isRecord(license.owner) || typeof license.owner.type !== "string") throw badResponse(path, "a license has no owner")
+    for (const field of ["revision", "quantity", "seatsUsed"] as const) {
+      if (typeof license[field] !== "number" || !Number.isSafeInteger(license[field])) {
+        throw badResponse(path, `a license's ${field} is not a whole number`)
+      }
+    }
+    if (typeof license.product !== "string" || !Array.isArray(license.features)) {
+      throw badResponse(path, "a license has no product or features")
+    }
+    if (typeof license.validFrom !== "string" || typeof license.paidThrough !== "string") {
+      throw badResponse(path, "a license has no term")
+    }
+    if (license.endedAt !== null && typeof license.endedAt !== "string") {
+      throw badResponse(path, "a license's endedAt is neither a time nor null")
+    }
+    return license as unknown as LicenseView
+  }
+
+  /** Every hold on a workspace, as `PUT` and `DELETE` on a deletion hold answer it. */
+  function checkHolds(path: string, value: unknown): DeletionHoldsResponse {
+    const raw = checkRecord(path, value, "the deletion holds")
+    if (typeof raw.workspaceId !== "string") throw badResponse(path, "the deletion holds have no workspaceId")
+    if (!Array.isArray(raw.holds) || !raw.holds.every(isWorkspaceDeletionHold)) {
+      throw badResponse(path, "holds is not a list of deletion holds")
+    }
+    // Fail closed on a Core that does not say: one that predates `asOf` would apply a late call.
+    if (typeof raw.ignored !== "boolean") throw badResponse(path, "ignored is not a boolean")
+    return {workspaceId: raw.workspaceId, holds: raw.holds, ignored: raw.ignored}
+  }
+
   /** Sends one signed request. Resolves to the parsed JSON body, or null when `nullOn` accepts the failure. */
   async function call(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     pathWithQuery: string,
     payload?: unknown,
     nullOn?: (status: number, error: string | undefined) => boolean,
@@ -119,7 +235,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
         timestampMs,
       }),
     }
-    if (method === "POST") headers["content-type"] = "application/json"
+    if (payload !== undefined) headers["content-type"] = "application/json"
 
     let status: number
     let text: string
@@ -127,7 +243,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       const response = await doFetch(`${baseUrl}${pathWithQuery}`, {
         method,
         headers,
-        body: method === "POST" ? body : undefined,
+        body: payload === undefined ? undefined : body,
         redirect: "error",
         signal: AbortSignal.timeout(timeoutMs),
       })
@@ -169,6 +285,9 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       return new CoreWorkspaceClientError(code, message, status)
     }
     if (status === 403) return new CoreWorkspaceClientError("forbidden", message, status)
+    // Only Core's own codes say something about the license; a bare 404 or 409 from anything else does not.
+    if (status === 409 && error === STALE_REVISION_ERROR) return new CoreWorkspaceClientError("stale_revision", message, status)
+    if (status === 404 && error === OWNER_NOT_FOUND_ERROR) return new CoreWorkspaceClientError("owner_not_found", message, status)
     return new CoreWorkspaceClientError("bad_request", message, status)
   }
 
@@ -218,6 +337,31 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       return checkWorkspace(path, raw, "the workspace") as unknown as WorkspaceSummary
     },
 
+    async listChanges(input) {
+      const query = new URLSearchParams()
+      if (input.after !== undefined && input.after !== null) query.set("after", input.after)
+      if (input.limit !== undefined) query.set("limit", String(input.limit))
+      const queryString = query.toString()
+      const path = `${API_PREFIX}/changes${queryString ? `?${queryString}` : ""}`
+      const raw = checkRecord(path, await call("GET", path), "the change page")
+      if (!Array.isArray(raw.events)) throw badResponse(path, "missing events")
+      if (raw.next !== null && (typeof raw.next !== "string" || !CURSOR.test(raw.next))) {
+        throw badResponse(path, "next is neither a sequence number nor null")
+      }
+      let previous = 0
+      for (const event of raw.events) {
+        const checked = checkChangeEvent(path, event)
+        if (checked.seq <= previous) throw badResponse(path, "events are not in strictly increasing seq order")
+        previous = checked.seq
+      }
+      // The cursor a poller stores is the last event's seq: one that points anywhere else skips or repeats events.
+      const last = raw.events[raw.events.length - 1] as WorkspaceChangeEvent | undefined
+      if (raw.next !== null && String(last?.seq) !== raw.next) {
+        throw badResponse(path, "next is not the seq of the last event")
+      }
+      return {events: raw.events as WorkspaceChangeEvent[], next: raw.next}
+    },
+
     async mintServiceCredential(input) {
       const path = `${API_PREFIX}/credentials`
       const raw = checkRecord(path, await call("POST", path, input), "the credential")
@@ -236,5 +380,41 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       }
       return raw.mentraUserId
     },
+
+    async setDeletionHold(workspaceId, hold) {
+      const path = deletionHoldPath(workspaceId)
+      const asOf = hold.asOf.toISOString()
+      // Only what was given: an absent count is "no count", never a null Core would have to read.
+      const body = hold.count === undefined ? {reason: hold.reason, asOf} : {reason: hold.reason, count: hold.count, asOf}
+      return checkHolds(path, await call("PUT", path, body))
+    },
+
+    async clearDeletionHold(workspaceId, update) {
+      const path = deletionHoldPath(workspaceId)
+      const body: DeletionHoldUpdate = {asOf: update.asOf.toISOString()}
+      return checkHolds(path, await call("DELETE", path, body))
+    },
+
+    async putLicense(write) {
+      const path = `${LICENSES_PREFIX}/${encodeURIComponent(write.licenseId)}`
+      const raw = checkRecord(path, await call("PUT", path, write), "the license write")
+      if (typeof raw.applied !== "boolean" || typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision)) {
+        throw badResponse(path, "missing applied or a whole revision")
+      }
+      return {applied: raw.applied, revision: raw.revision}
+    },
+
+    async listLicenses(workspaceId) {
+      const query = new URLSearchParams({ownerType: "workspace", ownerId: workspaceId})
+      const path = `${LICENSES_PREFIX}?${query.toString()}`
+      const raw = checkRecord(path, await call("GET", path), "the license list")
+      if (!Array.isArray(raw.licenses)) throw badResponse(path, "licenses is not a list")
+      return {licenses: raw.licenses.map(license => checkLicense(path, license))}
+    },
+  }
+
+  /** This service's own hold on a workspace: the service in the path is always the one that signs. */
+  function deletionHoldPath(workspaceId: string): string {
+    return `${API_PREFIX}/workspaces/${encodeURIComponent(workspaceId)}/deletion-holds/${encodeURIComponent(opts.service)}`
   }
 }

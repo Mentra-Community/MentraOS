@@ -30,6 +30,8 @@ on:
       - "mobile/ci/pr-ios/test_mac_installer.py"
       - ".github/workflows/e2e-setup-checks.yml"
       - ".agents/skills/investigate-routine-failure/**"
+      - "scripts/unpack-diagnostic-bundle*"
+      - "scripts/fetch-incident-logs*"
   push:
     branches: [dev]
     paths:
@@ -60,6 +62,8 @@ on:
       - "mobile/ci/pr-ios/test_mac_installer.py"
       - ".github/workflows/e2e-setup-checks.yml"
       - ".agents/skills/investigate-routine-failure/**"
+      - "scripts/unpack-diagnostic-bundle*"
+      - "scripts/fetch-incident-logs*"
 
 permissions:
   contents: read
@@ -80,6 +84,8 @@ jobs:
       - name: Verify request publication, dispatch and build links
         run: >-
           node --test
+          scripts/unpack-diagnostic-bundle.test.mjs
+          scripts/fetch-incident-logs.test.mjs
           .agents/skills/investigate-routine-failure/scripts/fetch-run.test.mjs
           .github/scripts/request-e2e-routine.test.mjs
           .github/scripts/dispatch-device-routine.test.mjs

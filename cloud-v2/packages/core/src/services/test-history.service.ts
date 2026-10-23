@@ -1,4 +1,5 @@
 import type {PipelineStage} from "mongoose";
+import {readCaseFollowUpSummaries} from './routine-case-projection.service';
 import {z} from "zod";
 import {createLogger} from "@mentra/cloud-shared";
 import {TestRequestModel} from "../models/test-request.model";
@@ -11,6 +12,8 @@ import {TestSuiteModel} from "../models/test-suite.model";
 import {frameworkRunIdSchema} from "../types/framework-run.types";
 import type {TestHistoryEntry, TestHistoryPage, TestHistoryOrigin} from "../types/test-history.types";
 import {nativeRunFilter, readFrameworkRunSummary, type StoredSummaryRow} from "./framework-run-summary.service";
+import {TestRerunService, rerunRootKey} from "./test-rerun.service";
+import {comparedSuiteCounts, testStatusCounts} from "../types/test-status-comparison";
 import {TestRunError} from "./test-result-error";
 import {TestSuiteService, type SuiteSummaryRead} from "./test-suite.service";
 const logger = createLogger("core").child({component: "test-history"});
@@ -24,7 +27,7 @@ const querySchema = z.object({origin: z.enum(["pr", "nightly", "other"]).optiona
 export interface StoredHistoryRow {
   historyKind: "run" | "suite"; historyId: string; historyStartedAt: Date;
   requestId?: string; payloadSha256?: string; summaryProjection?: unknown; uploadsComplete?: boolean;
-  historySuppressed?: boolean; rerunCount?: number; rerun?: {rerunId: string; parentSuiteId?: string};
+  historySuppressed?: boolean; rerunCount?: number; rerun?: {rerunId: string; parentSuiteId?: string; rootKey?: string};
 }
 export interface HistorySourceQueries {runs: PipelineStage[]; suites: PipelineStage[]; after: HistoryCursor | null; limit: number; includeReruns: boolean; origin?: TestHistoryOrigin}
 const RAW_HISTORY_BATCH_SIZE = 256;
@@ -55,9 +58,9 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
     {$match: {...nativeRunFilter, ...sourceCursor(after, "run", "runId")}},
     {$sort: {startedAt: -1, runId: -1}},
     {$limit: RAW_HISTORY_BATCH_SIZE},
-    {$lookup: {from: TestSuiteModel.collection.name, localField: "payload.requestId", foreignField: "payload.members.requestId",
-      let: {requestId: "$payload.requestId", routineId: "$payload.routineId", platform: "$payload.platform",
-        channel: "$payload.build.channel", headSha: "$payload.build.headSha"},
+    {$lookup: {from: TestSuiteModel.collection.name, localField: "requestId", foreignField: "payload.members.requestId",
+      let: {requestId: "$requestId", routineId: "$routineId", platform: "$platform",
+        channel: "$build.channel", headSha: "$build.headSha"},
       pipeline: [{$match: {"payload.members.1": {$exists: true}, startedAt: {$type: "date"}, $expr: {$and: [
         {$eq: ["$payload.channel", "$$channel"]},
         {$anyElementTrue: [{$map: {input: "$payload.members", as: "member", in: {$and: [
@@ -66,12 +69,14 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
           {$eq: [{$ifNull: ["$$member.headSha", "$payload.build.headSha"]}, "$$headSha"]},
         ]}}}]},
       ]}}}, {$limit: 1}], as: "historySuites"}},
-    {$lookup: {from: TestRerunModel.collection.name, localField: "payload.requestId", foreignField: "plan.members.requestId",
-      pipeline: [{$match: {state: "accepted"}}, {$limit: 1}, {$project: {_id: 0, rerunId: 1, parentSuiteId: "$plan.parent.suiteId"}}],
+    {$lookup: {from: TestRerunModel.collection.name, localField: "requestId", foreignField: "plan.members.requestId",
+      let: {requestId: "$requestId"}, pipeline: [{$match: {state: "accepted"}}, {$limit: 1},
+        {$set: {member: {$arrayElemAt: [{$filter: {input: "$plan.members", as: "member", cond: {$eq: ["$$member.requestId", "$$requestId"]}}}, 0]}}},
+        {$project: {_id: 0, rerunId: 1, parentSuiteId: "$plan.parent.suiteId", rootKey: "$member.rootKey"}}],
       as: "historyReruns"}},
-    {$lookup: {from: TestSuiteModel.collection.name, localField: 'payload.requestId', foreignField: 'nightlyPlan.members.requestId',
-      let: {requestId: "$payload.requestId", routineId: "$payload.routineId", platform: "$payload.platform"},
-      pipeline: [{$match: {$expr: {$anyElementTrue: [{$map: {input: "$nightlyPlan.members", as: "member", in: {$and: [
+    {$lookup: {from: TestSuiteModel.collection.name, localField: 'requestId', foreignField: 'nightlyPlan.members.requestId',
+      let: {requestId: "$requestId", routineId: "$routineId", platform: "$platform"},
+      pipeline: [{$match: {$expr: {$anyElementTrue: [{$map: {input: {$ifNull: ["$nightlyPlan.members", []]}, as: "member", in: {$and: [
         {$eq: ["$$member.requestId", "$$requestId"]}, {$eq: ["$$member.routineId", "$$routineId"]},
         {$eq: ["$$member.platform", "$$platform"]},
       ]}}}]}}}, {$limit: 1}, {$project: {_id: 0, suiteId: 1,
@@ -81,7 +86,7 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
       rerun: {$arrayElemAt: ["$historyReruns", 0]},
       origin: {$cond: [{$gt: [{$size: '$historyReruns'}, 0]}, 'other', {$cond: [{$or: [{$gt: [{$size: '$historyNightly'}, 0]},
         {$anyElementTrue: [{$map: {input: '$historySuites', as: 'suite', in: {$eq: ['$$suite.payload.trigger', 'nightly']}}}]}]},
-        'nightly', {$cond: [{$eq: ['$payload.build.channel', 'pr']}, 'pr', 'other']}]}]},
+        'nightly', {$cond: [{$eq: ['$build.channel', 'pr']}, 'pr', 'other']}]}]},
       historySuppressed: {$or: [{$gt: [{$size: "$historySuites"}, 0]},
         // Declared membership groups late evidence without changing the frozen verdict.
         {$anyElementTrue: [{$map: {input: "$historyNightly", as: "suite", in: "$$suite.listable"}}]},
@@ -131,7 +136,7 @@ export class TestHistoryService {
         after = {startedAt: scan.last.historyStartedAt.toISOString(), kind: "run", id: scan.last.historyId};
       }
       return [runs, suites];
-    }) {}
+    }, private readonly reruns: Pick<TestRerunService, "latestAttempts"> = new TestRerunService()) {}
 
   async list(input: Record<string, string> = {}): Promise<TestHistoryPage> {
     const query = querySchema.safeParse(input);
@@ -175,12 +180,13 @@ export class TestHistoryService {
           return {routineId: member.routineId, platform: member.platform,
             ...(laneId ? {laneId} : {}), ...(source.hostId ? {hostId: source.hostId} : {})};
         });
+        const original = testStatusCounts(suite.members.map(member => ({...member, publicationComplete: member.publicationComplete === true})));
         return {kind: "suite", suiteId: suite.suiteId, channel: suite.channel, trigger: suite.trigger,
           startedAt: suite.startedAt, ...(suite.finishedAt ? {finishedAt: suite.finishedAt} : {}),
           outcome: suite.outcome, expectedCount: suite.members.length, passed: suite.passed, build: suite.build,
           skipped: suite.members.filter(member => member.status === "not-run").length,
           rerunCount: row.rerunCount ?? 0,
-          failedCount: suite.members.filter(member => ["failed", "setup-failed", "teardown-failed"].includes(member.status)).length,
+          failedCount: original.failed, comparison: {original},
           lanes: [...new Map(members.flatMap(member => member.hostId && member.laneId
             ? [[JSON.stringify([member.hostId, member.laneId]), {hostId: member.hostId, laneId: member.laneId}] as const] : [])).values()]
             .sort((a, b) => a.hostId.localeCompare(b.hostId) || a.laneId.localeCompare(b.laneId)), members};
@@ -201,6 +207,44 @@ export class TestHistoryService {
         .select({requestId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1})
         .limit(ids.length + 1).read("primary").readConcern("majority").setOptions({timeoutMS, maxTimeMS: timeoutMS}).lean();
     }, suiteSummaries);
+    // Acceptance is independent of child admission. A queued accepted rerun is already the latest attempt.
+    const originals = enriched.filter(entry => entry.kind !== 'unavailable');
+    const identities = originals.flatMap<Parameters<TestRerunService["latestAttempts"]>[0][number]>(entry => entry.kind === 'run' ? [{parent: {requestId: entry.requestId}, memberId: entry.requestId}]
+      : entry.kind === 'suite' ? (suiteSummaries.get(entry.suiteId) as Exclude<SuiteSummaryRead, Error> | undefined)?.members.map(member => ({parent: {suiteId: entry.suiteId}, memberId: member.memberId})) ?? [] : []);
+    try {
+      const latest = identities.length ? await this.reruns.latestAttempts(identities, deadline) : new Map();
+      for (const entry of originals) {
+        if (entry.kind === 'run') entry.latest = latest.get(rerunRootKey({requestId: entry.requestId}, entry.requestId));
+        else if (entry.kind === 'suite') {
+          const summary = suiteSummaries.get(entry.suiteId);
+          if (summary && !(summary instanceof Error)) {
+            const byMember = new Map(summary.members.flatMap(member => {
+              const attempt = latest.get(rerunRootKey({suiteId: entry.suiteId}, member.memberId));
+              return attempt ? [[member.memberId, attempt] as const] : [];
+            }));
+            const comparison = comparedSuiteCounts(summary.members.map(member => ({...member, publicationComplete: member.publicationComplete === true})), byMember);
+            if (comparison.hasReruns) entry.comparison = comparison;
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn({err: error}, 'Latest linked statuses unavailable; original outcomes remain readable');
+      for (const entry of originals) entry.latestUnavailable = true;
+    }
+    const roots: Array<{entry: TestHistoryEntry; key: string}> = [];
+    for (const entry of enriched) {
+      if (entry.kind === 'run') {const key = entry.rerun ? entry.rerun.rootKey : rerunRootKey({requestId: entry.requestId}, entry.requestId); if (key) roots.push({entry, key});}
+      else if (entry.kind === 'suite') {const suite = suiteSummaries.get(entry.suiteId);
+        if (suite && !(suite instanceof Error)) for (const member of suite.members) roots.push({entry, key: rerunRootKey({suiteId: entry.suiteId}, member.memberId)});
+      }
+    }
+    try {
+      const summaries = await readCaseFollowUpSummaries(roots.map(row => row.key), undefined, undefined, deadline);
+      for (const {entry, key} of roots) {const followUp = summaries.get(key); if (!followUp) continue;
+        if (entry.kind === 'run') entry.followUp = followUp;
+        else if (entry.kind === 'suite') {entry.followUps ??= []; if (!entry.followUps.some(row => row.caseId === followUp.caseId)) entry.followUps.push(followUp);}
+      }
+    } catch { /* Follow-up availability never changes independent original result visibility. */ }
     return {entries: enriched, nextCursor};
   }
 }

@@ -10,3 +10,9 @@ secret:
     # SHA-256 of the earlier StreamPreview harness token fixture (GitGuardian incident 37534669).
     - name: StreamPreview harness test token
       match: 179000782ca9d7475329a9854944b5f098f0e19ebabc661c57c4740a4b249ee0
+    # Fake JWT-shaped bearer in the Fleet forwarding test that proves a non-phone token is refused
+    # (GitGuardian incident 38182527); never a credential. The token and the full header value.
+    - name: Fleet forwarding test fake bearer
+      match: 6d2b831308f7bb5ef4664386114f6fd98035c1e59a9ea1b142b7cede124841eb
+    - name: Fleet forwarding test fake bearer header
+      match: 57f669403d6e766c8abade9c2085778e6e81e94ec0f0dc84bd712d7c8706ab20

@@ -69,6 +69,25 @@ const MAX_RETRIES = 2;
 /** Base backoff in milliseconds; doubles per attempt (250, 500, ...). */
 const RETRY_BASE_MS = 250;
 
+/** Recognize only fixed native categories; never log an exception message, stack or arbitrary code. */
+function nativeFailureCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  const code = error.code;
+  return typeof code === "string" &&
+    [
+      "E_NATIVE_HTTP_DNS",
+      "E_NATIVE_HTTP_CONNECT",
+      "E_NATIVE_HTTP_TIMEOUT",
+      "E_NATIVE_HTTP_TLS",
+      "E_NATIVE_HTTP_SOCKET",
+      "E_NATIVE_HTTP_INTERRUPTED",
+      "E_NATIVE_HTTP_IO",
+      "E_NATIVE_HTTP_OTHER",
+    ].includes(code)
+    ? code
+    : undefined;
+}
+
 /**
  * Join a base URL and a path without producing a double slash or dropping one.
  *
@@ -94,6 +113,19 @@ function throwIfAborted(signal?: AbortSignal): void {
 
 function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
+}
+
+/**
+ * Read a `Retry-After` header in its delta-seconds form (a non-negative whole
+ * number of seconds). The HTTP-date form, signs, fractions, exponents and any
+ * other text are ignored: a caller that wants a delay gets a number or nothing,
+ * never a guess. A value too large to be an exact integer is also ignored.
+ */
+function parseRetryAfterSeconds(headers: Headers | undefined): number | undefined {
+  const raw = headers?.get("Retry-After")?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return undefined;
+  const seconds = Number(raw);
+  return Number.isSafeInteger(seconds) ? seconds : undefined;
 }
 
 export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
@@ -186,7 +218,8 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
         throwIfAborted(signal);
         if (isAbortError(error)) throw error;
         // Transient network failure: let the loop retry.
-        logger.warn("http network error", { method, path, attempt });
+        const nativeCode = nativeFailureCode(error);
+        logger.warn("http network error", { method, path, attempt, ...(nativeCode ? { nativeCode } : {}) });
         continue;
       }
 
@@ -284,7 +317,12 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
       // No JSON body, or unparseable: fall back to status alone.
     }
     throwIfAborted(signal);
-    return new HttpError(`HTTP ${res.status} on ${method} ${path}${detail}`, res.status, code);
+    return new HttpError(
+      `HTTP ${res.status} on ${method} ${path}${detail}`,
+      res.status,
+      code,
+      parseRetryAfterSeconds(res.headers),
+    );
   }
 
   /**

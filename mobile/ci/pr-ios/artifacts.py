@@ -14,6 +14,7 @@ import sys
 import subprocess
 import tempfile
 import zipfile
+from nimo_capability import optional_nimo_capability
 from mac_installer import DEVELOPER_ID_REQUIREMENT, package_installer
 
 BUNDLE_ID = "com.mentra.mentra"
@@ -33,6 +34,16 @@ def digest(file):
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             value.update(chunk)
     return value.hexdigest()
+
+
+def unsigned_executable_bytes(source, scratch):
+    """Compare compiled bytes without signature allocation left by different signers."""
+    shutil.copy2(source, scratch)
+    # Removal alone can leave a different __LINKEDIT vmsize. Normalize only
+    # disposable copies; shipped Apple signatures and compiled code stay intact.
+    run('codesign', '--force', '--sign', '-', scratch)
+    run('codesign', '--remove-signature', scratch)
+    return scratch.read_bytes()
 
 
 def read_profile(file):
@@ -181,7 +192,9 @@ def configure(output, keychain):
                       "signingCertificate": certificate, "teamID": team,
                       "provisioningProfiles": {BUNDLE_ID: profile["UUID"]},
                       "thinning": "<none>", "manageAppVersionAndBuildNumber": False,
-                      "uploadSymbols": False}, stream)
+                      # Re-export preserves compiled code, including its symbols.
+                      # Xcode otherwise defaults to another Swift symbol strip.
+                      "stripSwiftSymbols": False, "uploadSymbols": False}, stream)
     print(f"Validated ad hoc profile {profile['Name']}, expires {profile['ExpirationDate']}, {len(profile['ProvisionedDevices'])} devices")
 
 
@@ -258,6 +271,9 @@ def package(ipa, output, mac_signing):
                     "version": info["CFBundleShortVersionString"], "build": info["CFBundleVersion"],
                     "executableSha256": digest(executable), "javascriptSha256": digest(app / "main.jsbundle"),
                     "profileUUID": profile["UUID"], "profileExpires": profile["ExpirationDate"].isoformat(), "teamId": team}
+        capability = optional_nimo_capability(executable, HERE.parents[2], compilation["mobileSourceCommit"])
+        if capability is not None:
+            manifest["nativeCapabilities"] = {"nimoMacSession": capability}
         mac = root / "Mentra PR"
         mac.mkdir()
         run("ditto", app, mac / "Mentra.app")

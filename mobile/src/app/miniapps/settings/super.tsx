@@ -10,11 +10,15 @@ import {SETTINGS, useSetting} from "@mentra/engine"
 import {micSessionManager} from "@mentra/engine-host-internal"
 import {SettingsCommandButton} from "@/components/glasses/settings/SettingsCommandButton"
 import {UnwornPowerOffSetting} from "@/components/glasses/settings/UnwornPowerOffSetting"
+import {WifiAdbCommands} from "@/components/glasses/settings/WifiAdbCommands"
 import {RouteButton} from "@/components/ui/RouteButton"
+import {useDeployment} from "@/services/deployment"
+import {isMiniappDevelopmentAllowed} from "@/services/deployment/miniappDevelopmentPolicy"
 
 export default function SuperSettingsScreen() {
   const {goBack, push} = useNavigationStore.getState()
   const [superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
+  const {activeDeployment} = useDeployment()
   const [useNativeDashboard, setUseNativeDashboard] = useSetting(SETTINGS.use_native_dashboard.key)
   const [debugNavigationHistoryEnabled, setDebugNavigationHistoryEnabled] = useSetting(
     SETTINGS.debug_navigation_history.key,
@@ -37,7 +41,7 @@ export default function SuperSettingsScreen() {
     <Screen preset="fixed">
       <Header title="Super Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
 
-      <ScrollView className="flex px-6 -mx-6">
+      <ScrollView testID="glasses.settings.super" className="flex px-6 -mx-6">
         <View className="flex gap-6 mt-6">
           <Group title="Settings">
             <ToggleSetting
@@ -79,6 +83,7 @@ export default function SuperSettingsScreen() {
           </Group>
 
           <Group title="Mentra Live">
+            {superMode && <WifiAdbCommands />}
             <UnwornPowerOffSetting />
             <RouteButton label="Mic Tuning" onPress={() => push("/miniapps/settings/mic-tuning")} />
             <SettingsCommandButton
@@ -93,7 +98,9 @@ export default function SuperSettingsScreen() {
           </Group>
 
           <Group title="Miniapps">
-            <RouteButton label="Miniapp Developer" onPress={() => push("/miniapps/settings/miniapp-dev")} />
+            {isMiniappDevelopmentAllowed(activeDeployment) && (
+              <RouteButton label="Miniapp Developer" onPress={() => push("/miniapps/settings/miniapp-dev")} />
+            )}
           </Group>
         </View>
         <View className="flex h-16" />

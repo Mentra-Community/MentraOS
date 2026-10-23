@@ -7,19 +7,8 @@ const sites = {
   account: "mentra-account",
 } as const;
 
-type Environment = typeof environments[number];
+export type Environment = typeof environments[number];
 type Site = keyof typeof sites;
-
-const env = process.argv[2] as Environment | undefined;
-const requestedSite = process.argv[3] as Site | "all" | undefined;
-
-if (!env || !environments.includes(env)) {
-  fail(`Usage: bun scripts/deploy-pages.ts <${environments.join("|")}> [${Object.keys(sites).join("|")}|all]`);
-}
-
-if (requestedSite && requestedSite !== "all" && !(requestedSite in sites)) {
-  fail(`Unknown site "${requestedSite}"`);
-}
 
 const coreUrls: Record<Environment, string> = {
   dev: "https://core.dev.us-west-2.mentraglass.com",
@@ -27,38 +16,76 @@ const coreUrls: Record<Environment, string> = {
   prod: "https://core.mentraglass.com",
 };
 
-// Mentra's sign-in page (account.mentraglass.com) is one Pages project that
-// serves dev, staging and prod: one Supabase project backs all three. It ships
-// like production, from main (the prod deployment) only, and is built with its
-// public configuration rather than a Core URL:
+// Each environment has its own sign-in site, the issuer of its Core's sign-in
+// server: account.dev.mentraglass.com, account.staging.mentraglass.com and
+// account.mentraglass.com. Each is the same static sign-in page, with a Pages
+// Function that relays the provider's routes to that environment's Core
+// (CORE_URL), and the shared Supabase project's public values:
 //   ACCOUNT_SUPABASE_URL             the Supabase project URL
 //   ACCOUNT_SUPABASE_PUBLISHABLE_KEY the project's publishable key
-//   ACCOUNT_FIRST_PARTY_CLIENT_IDS   every environment's first-party client IDs
+// Prod's project keeps its original name, mentra-account.
+const accountProjects: Record<Environment, string> = {
+  dev: "mentra-account-dev",
+  staging: "mentra-account-staging",
+  prod: "mentra-account",
+};
 const accountConfig = {
   SUPABASE_URL: process.env.ACCOUNT_SUPABASE_URL?.trim() ?? "",
   SUPABASE_ANON_KEY: process.env.ACCOUNT_SUPABASE_PUBLISHABLE_KEY?.trim() ?? "",
-  FIRST_PARTY_CLIENT_IDS: process.env.ACCOUNT_FIRST_PARTY_CLIENT_IDS?.trim() ?? "",
 };
 const accountConfigured = Object.values(accountConfig).every(Boolean);
 
-const selectedSites: Site[] = [];
-if (requestedSite && requestedSite !== "all") {
-  selectedSites.push(requestedSite);
-} else {
-  selectedSites.push("admin", "portal");
-  if (env === "prod") {
+// The Developer Console each environment's workspace portal links to from its
+// sidebar, given to the portal's build as DEVELOPER_CONSOLE_URL.
+export const developerConsoleUrls: Record<Environment, string> = {
+  dev: "https://console.dev.mentraglass.com",
+  staging: "https://console.staging.mentraglass.com",
+  prod: "https://console.mentraglass.com",
+};
+
+/** The public build-time configuration of the workspace portal for `env`. */
+export function portalBuildConfig(env: Environment): Record<string, string> {
+  return { DEVELOPER_CONSOLE_URL: developerConsoleUrls[env] };
+}
+
+if (import.meta.main) main();
+
+function main() {
+  const env = process.argv[2] as Environment | undefined;
+  const requestedSite = process.argv[3] as Site | "all" | undefined;
+
+  if (!env || !environments.includes(env)) {
+    fail(`Usage: bun scripts/deploy-pages.ts <${environments.join("|")}> [${Object.keys(sites).join("|")}|all]`);
+  }
+
+  if (requestedSite && requestedSite !== "all" && !(requestedSite in sites)) {
+    fail(`Unknown site "${requestedSite}"`);
+  }
+
+  const selectedSites: Site[] = [];
+  if (requestedSite && requestedSite !== "all") {
+    selectedSites.push(requestedSite);
+  } else {
+    selectedSites.push("admin", "portal");
     if (accountConfigured) selectedSites.push("account");
     else console.log("Skipping the account site: its ACCOUNT_* configuration is not set.");
   }
+
+  for (const site of selectedSites) {
+    deploySite(site, env);
+  }
 }
 
-for (const site of selectedSites) {
+function deploySite(site: Site, env: Environment) {
+  const project = site === "account" ? accountProjects[env] : `${sites[site]}-${env}`;
   if (site === "account") {
-    deployAccount();
-    continue;
+    if (!accountConfigured) fail("The account site needs ACCOUNT_SUPABASE_URL and ACCOUNT_SUPABASE_PUBLISHABLE_KEY.");
+    run(["bun", "--cwd", "websites/account", "build"], { env: accountConfig });
+  } else if (site === "portal") {
+    run(["bun", "--cwd", "websites/portal", "build"], { env: portalBuildConfig(env) });
+  } else {
+    run(["bun", "--cwd", `websites/${site}`, "build"]);
   }
-  const project = `${sites[site]}-${env}`;
-  run(["bun", "--cwd", `websites/${site}`, "build"]);
   run([
     "bunx",
     "wrangler",
@@ -70,15 +97,6 @@ for (const site of selectedSites) {
     project,
   ], { cwd: `websites/${site}`, input: coreUrls[env] });
   deploy(site, project);
-}
-
-function deployAccount() {
-  if (env !== "prod") fail("The account site serves every environment and deploys with prod only.");
-  if (!accountConfigured) {
-    fail("The account site needs ACCOUNT_SUPABASE_URL, ACCOUNT_SUPABASE_PUBLISHABLE_KEY and ACCOUNT_FIRST_PARTY_CLIENT_IDS.");
-  }
-  run(["bun", "--cwd", "websites/account", "build"], { env: accountConfig });
-  deploy("account", sites.account);
 }
 
 function deploy(site: Site, project: string) {

@@ -69,6 +69,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "pair_failure",
             "pairing_info",
             "entering_pairing_mode",
+            "pairing_mode_ended",
+            "pairing_state_changed",
+            "audio_setup_changed",
             "owner_replaced",
             "audio_pairing_needed",
             "audio_connected",
@@ -161,6 +164,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("setDashboardContent") { (content: String) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             await sdk.setDashboardContent(content)
+        }
+
+        // Fixed typed fixture protocol; native schema/launch/peer authority is
+        // validated before effects. Ordinary launches return fixture-unavailable.
+        AsyncFunction("nimoResourceSession") { (requestJSON: String) async throws -> String in
+            try await NimoResourceFixtureBridge.execute(requestJSON)
         }
 
         // MARK: - Connection Commands
@@ -435,9 +444,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        AsyncFunction("setWifiAdbState") { (enabled: Bool) in
+        AsyncFunction("setWifiAdbState") { (enabled: Bool, expectedBluetoothMac: String?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            try await sdk.setWifiAdbState(enabled: enabled)
+            try await sdk.setWifiAdbState(enabled: enabled, expectedBluetoothMac: expectedBluetoothMac)
         }
 
         AsyncFunction("setSystemTime") { (timestampMs: Double) in
@@ -462,6 +471,14 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("setGalleryServerEnabled") { (enabled: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setGalleryServerEnabled(enabled).values
+        }
+
+        AsyncFunction("setTouchGestureDefaultBehaviorEnabled") { (gesture: String, enabled: Bool) in
+            guard let gesture = TouchGesture(rawValue: gesture) else {
+                throw BluetoothSdkError(code: "invalid_touch_gesture", message: "Unknown touch gesture: \(gesture)")
+            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setTouchGestureDefaultBehaviorEnabled(gesture, enabled: enabled).values
         }
 
         AsyncFunction("setGalleryModeEnabled") { (enabled: Bool) in
@@ -1038,7 +1055,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
     @MainActor
     public func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothSdkError) {
-        sendEvent("pair_failure", ["error": error.message])
+        var body: [String: Any] = ["error": error.message]
+        if let failureCode = error.failureCode { body["code"] = failureCode }
+        sendEvent("pair_failure", body)
     }
 }
 
@@ -1075,7 +1094,8 @@ private extension ConnectOptions {
         self.init(
             saveAsDefault: values?["saveAsDefault"] as? Bool ?? true,
             cancelExistingConnectionAttempt: values?["cancelExistingConnectionAttempt"] as? Bool ?? true,
-            requiresAncs: values?["requiresAncs"] as? Bool ?? true
+            requiresAncs: values?["requiresAncs"] as? Bool ?? true,
+            enableTransportBridging: values?["enableTransportBridging"] as? Bool ?? true
         )
     }
 }

@@ -1,7 +1,7 @@
 import {expect,test} from 'bun:test';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
-import {readRerunId,AttemptLine,AttemptHistory,AttemptHistoryView,RerunForm,RerunPreviewMembers,TestRerunPage,RunRerunLinks} from './test-reruns';
+import {readRerunId,AttemptLine,AttemptHistory,AttemptHistoryView,RerunForm,RerunPreviewMembers,TestRerunPage,RunRerunLinks,RunLatestStatus} from './test-reruns';
 import type {RerunPlan} from '../../../../packages/core/src/types/test-rerun.types';
 import {TestSuitePage} from './test-suites';
 const attempt={attemptId:'request',requestId:'request',attemptNumber:1,status:'pass',publicationComplete:false,parent:{suiteId:'nightly'},memberId:'item',rerunId:'repair',build:{headSha:'b'.repeat(40),channel:'dev' as const,repository:'Mentra-Community/MentraOS',source:{channel:'dev' as const,buildRunId:123,publicationAttempt:1}}};
@@ -20,10 +20,10 @@ test('portable preview shows the frozen app and definition before lane assignmen
  expect(html).toContain('Lane assigned when dispatched');expect(html).not.toContain('undefined');
 });
 test('suite original verdict stays failed while latest attempt and inline history are visible',()=>{
- const client=new QueryClient();client.setQueryData(['test-suite-summary','nightly'],{suiteId:'nightly',channel:'dev' as const,trigger:'nightly',startedAt:'2026-10-06T10:00:00Z',outcome:'failed',passed:1,failedRoutines:['captions'],build:{headSha:'a'.repeat(40)},members:[{memberId:'item',routineId:'captions',platform:'android',status:'failed'},{memberId:'passing',routineId:'long-test',platform:'android',status:'pass'}]});
+ const client=new QueryClient();client.setQueryData(['test-suite-summary','nightly'],{suiteId:'nightly',channel:'dev' as const,trigger:'nightly',startedAt:'2026-10-06T10:00:00Z',outcome:'failed',passed:1,failedRoutines:['captions'],build:{headSha:'a'.repeat(40)},members:[{memberId:'item',routineId:'captions',platform:'android',status:'failed'},{memberId:'passing',routineId:'long-test',platform:'android',status:'pass',publicationComplete:true}]});
  client.setQueryData(['rerun-progress','nightly'],{members:[{memberId:'item',latest:{...attempt,publicationComplete:true}},{memberId:'passing',latest:null}],children:[{rerunId:'repair',reason:'Fix'}]});
  client.setQueryData(['rerun-history','nightly','item',null],{original:{...attempt,attemptNumber:0},attempts:[attempt],nextBefore:null});
- const html=render(<TestSuitePage suiteId="nightly"/>,client);expect(html).toContain('1/2 passed');expect(html).toContain('1 passed on rerun');expect(html).toContain('Original verdict remains failed');expect(html).toContain('Attempt history');expect(html).toContain('Rerun failures');
+ const html=render(<TestSuitePage suiteId="nightly"/>,client);expect(html).toContain('1/2 failed');expect(html).toContain('0/2 failed');expect(html).toContain('Original → Latest');expect(html).toContain('Attempt history');expect(html).toContain('Rerun failures');
 });
 test('one-member rerun links back to its original suite',()=>{
  const client=new QueryClient();client.setQueryData(['test-rerun','repair'],{parent:{suiteId:'nightly'},reason:'Fix',outcome:'failed',passed:0,attempts:[attempt],state:'accepted'});
@@ -64,3 +64,11 @@ test('older history loading and errors keep disclosure, previous attempts and la
  expect(view(null,false,undefined,olderEmpty)).toBe('');
  expect(view(null)).toContain('Older attempts');
 });
+
+
+test('opening a failed successor shows its own failure even after a later passing successor',()=>{
+ const client=new QueryClient(); client.setQueryData(['rerun-lineage','failed-current'],{lineage:{parent:{requestId:'root'},memberId:'root'}})
+ client.setQueryData(['rerun-history','root','root',null],{original:{...attempt,status:'pass',publicationComplete:true,attemptNumber:0},attempts:[{...attempt,status:'pass',publicationComplete:true}],nextBefore:null})
+ const html=render(<RunLatestStatus requestId="failed-current" original="failed"/>,client)
+ expect(html).toContain('title="This run"');expect(html).toContain('>Failed</span>');expect(html.match(/>Passed<\/span>/g)).toHaveLength(2)
+})

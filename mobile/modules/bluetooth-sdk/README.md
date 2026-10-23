@@ -448,6 +448,51 @@ await BluetoothSdk.clearDefaultDevice()
 await saveDeviceToYourAppStorage(null)
 ```
 
+## Mentra Live pairing
+
+`confirmReplaceOwner()` and `confirm_replace_owner_result` are removed. `owner_replaced` is deprecated and is never emitted. The replacement is `GlassesStatus.pairingState`, also delivered as `pairing_state_changed`. Full steps are in [MIGRATION.md](./MIGRATION.md). The version stays `3.3.0` in `package.json` (podspec and Gradle read it). npm still publishes `3.2.1`.
+
+On supported Mentra Live firmware, three power-button presses open one 120-second window and the glasses speak a 4-character code. Three presses again cancel it. The phone that was already paired pauses automatic reconnect for that window plus a 30-second margin (`pairingState.endsAtMs`), then reconnects after `pairing_mode_ended` with `reason` `"timeout"` or `"cancelled"`. If the glasses stop accepting this phone (another phone paired, or repeated authentication rejections on secure-pairing firmware), this phone's state becomes `pairing_rejected`: reconnect stops, and the UI should show Pair Again. That state clears only after a successful explicit pair or `forget()`.
+
+`useMentraBluetooth().glasses` does not include `pairingState`. Read `getGlassesStatus()`, `subscribeGlassesStatus()`, or:
+
+```ts
+BluetoothSdk.addListener("pairing_state_changed", (event) => {
+  if (event.state.state === "pairing_rejected") showPairAgain()
+})
+
+BluetoothSdk.addListener("pair_failure", (event) => {
+  if (event.code === "ios_forget_pairing") {
+    // iOS still has a Bluetooth pairing for these glasses.
+    // Settings > Bluetooth > Forget This Device, then pair again.
+  }
+})
+```
+
+`entering_pairing_mode` includes `window_id`. `pairing_info` includes `auto_audio` and no longer includes `awaiting_confirm` or `retained_owner_link`. Do not use the word "owner" in user-facing sample copy.
+
+## Glasses audio setup
+
+`GlassesStatus.audioSetup`, also delivered as `audio_setup_changed` (`{state}`), says whether the user has to do anything to get glasses audio working. The SDK decides it for every glasses model. Render it; do not add your own audio timers or platform checks.
+
+| `audioSetup.state` | Meaning | What to show |
+| --- | --- | --- |
+| `idle` | No glasses session | Nothing |
+| `not_applicable` | No audio step (Android attaches audio from the BLE bond; glasses without Classic audio) | Nothing |
+| `connecting` | Glasses connected, audio expected to come up on its own | A "connecting" state |
+| `connected` | Classic audio (A2DP or HFP) is up | Nothing |
+| `needs_user` | Audio did not come up on its own (`action: "connect_in_settings"`) | Ask the user to connect the glasses in Settings > Bluetooth |
+
+On iPhone, after a pair the SDK waits up to 8 seconds on firmware that brings audio up from the BLE pair and reports `needs_user` at once on older firmware. After a reconnect it waits 10 seconds. The state moves to `connected` as soon as audio comes up. Mentra Live firmware that reports its own audio link (`classic_link`) is preferred over the phone's audio route, which is wrong while another Bluetooth audio device holds it.
+
+```ts
+BluetoothSdk.addListener("audio_setup_changed", (event) => {
+  if (event.state.state === "needs_user") showConnectAudioInSettings()
+})
+```
+
+`useMentraBluetooth().glasses` does not include `audioSetup`. Read `getGlassesStatus()`, `subscribeGlassesStatus()`, or the event.
+
 ## Native notification controls
 
 G2 exposes firmware-owned notification history and popups. `getNativeNotificationStatus()` reports support, source (`phone` on Android or `ancs` on iOS), authorization, the desired controls, and submission/failure state. `submitted` means the controls were queued for the glasses, not that firmware acknowledged them. Unsupported drivers reject configuration instead of silently succeeding.
@@ -619,7 +664,7 @@ Engine coordinator:
 
 Release CI embeds an immutable manifest URL and checksum into every published
 SDK distribution. The completed coordinated release record correlates the SDK
-package with its exact manifest and OTA bundle. A completed release is available at
+package with its exact manifest and, for beta and stable releases, its OTA bundle. A completed release is available at
 `https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v<releaseIdentity>`
 and contains `mentra-release-<releaseIdentity>.json`, which records the exact
 package coordinates, asset URLs, sizes, checksums, and build provenance.
@@ -634,10 +679,11 @@ Android/iOS OTA contract or infrastructure beneath a coordinator. React Native
 application pages should render Mentra Engine's semantic controller state
 instead of sequencing raw events.
 
-Each coordinated prerelease publishes a portable OTA bundle. Stable releases
-promote the exact beta-tested OTA bytes, so always resolve the bundle coordinate
-and URL from `mentra-release-<releaseIdentity>.json` rather than constructing a
-filename. The selected archive contains
+Each beta release publishes a portable OTA bundle; development releases do not.
+A stable release publishes byte-identical copies of the promoted beta's OTA
+manifest and bundle under its own names, so always resolve the bundle
+coordinate and URL from `mentra-release-<releaseIdentity>.json` rather than
+constructing a filename. The selected archive contains
 `version.template.json`, every referenced ASG/MTK/BES artifact, `SHA256SUMS`,
 and a dependency-free configuration script. After unpacking it, generate the
 final manifest for its exact hosting URL:
@@ -751,6 +797,39 @@ export function HardwareEventLogger() {
 
 For non-React modules, `BluetoothSdk.addListener(...)` is the low-level subscription API. Keep the returned subscription and call `remove()` when the listener is no longer needed.
 
+Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `wifi_scan_result`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `version_info`, `stream_status`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `mic_health`, `local_transcription`, `rgb_led_control_response`, `pair_failure`, `pairing_info`, `entering_pairing_mode`, `pairing_mode_ended`, `pairing_state_changed`, `audio_connected`, `audio_disconnected`, and `log`. `owner_replaced` remains in the type map and is never emitted.
+
+### Claiming touchpad gestures
+
+On Mentra Live, disable a gesture's stock action before using it in your app:
+
+```ts
+await BluetoothSdk.setTouchGestureDefaultBehaviorEnabled("double_tap", false)
+// double_tap events still reach useBluetoothEvent("touch_event", ...).
+// Restore play/pause when your app releases the gesture:
+await BluetoothSdk.setTouchGestureDefaultBehaviorEnabled("double_tap", true)
+```
+
+The supported names are `single_tap`, `double_tap`, `triple_tap`, `long_press`,
+`forward_swipe`, `backward_swipe`, `up_swipe`, and `down_swipe`. Each setting
+changes only that gesture. Stock media actions (play/pause, volume, previous/next
+track) and gesture feedback are suppressed; the gesture event itself is still
+sent. This applies on both Android and iOS, without claiming a phone media player
+or relying on remote media-key interception.
+
+Overrides are RAM-only on the glasses and reset to the normal stock behavior on
+BLE disconnect or reboot. Set them again after reconnecting. They do not change
+camera-button behavior or gallery mode. Gestures without a stock action still
+produce events. On native Android use `TouchGesture.DOUBLE_TAP`; on native iOS
+use `.doubleTap` with `setTouchGestureDefaultBehaviorEnabled(_:enabled:)`.
+
+This requires BES firmware implementing `cs_tpdef` / `sr_tpdef`. The promise
+resolves only after the matching firmware `settings_ack` with
+`setting: "touch_gesture_default"`, `gesture`, and `enabled`. Unsupported devices
+and invalid gesture names reject. Older firmware cannot suppress these actions
+and will time out; do not treat that timeout as success. A release containing this
+SDK API alone does not update BES firmware.
+
 Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `wifi_scan_result`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `version_info`, `stream_status`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `mic_health`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, and `log`.
 
 React Native event payload fields usually use camelCase. OTA events intentionally mirror the glasses firmware field names, such as `overall_percent` and `version_name`. For example, `touch_event` includes `gestureName`, `wifi_scan_result` includes `networks` and `scanComplete`, `version_info` matches the `requestVersionInfo()` result shape, `photo_response` success includes `uploadUrl` and may include webhook-returned `photoUrl`, `statusUrl`, `contentType`, and `fileSizeBytes`, and `gallery_status` includes `hasContent`, `cameraBusy`, and optional `cameraBusyReason`. `photo_status` reports intermediate photo states such as `accepted`, `queued`, `configuring`, `capturing`, `captured`, `compressing`, `ble_fallback_compression`, `uploading`, `ready_for_transfer`, `transferring`, and `failed`; the `configuring` event includes `resolvedConfig` with the effective JPEG dimensions, quality, requested size, transfer method, compression, and manual exposure fields when present. The `capturing` event may include `requestedCaptureConfig` and `meteredPreview`; the `captured` event may include `captureMetadata` with the HAL-applied exposure, ISO, frame duration, and AE state. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
@@ -787,10 +866,28 @@ MentraOS repo root:
 ./scripts/check-android-compile.sh bluetooth-sdk
 ```
 
-The `android/` folder in this package is source for the generated Expo Android
-project, not the local Gradle entrypoint. The check script prepares
-`mobile/android` and uses its Gradle wrapper with `-PmentraPublicSdk=true`,
-matching the CI release workflow's public SDK dependency mode.
+The check script prepares `mobile/android` and uses its Gradle wrapper with
+`-PmentraPublicSdk=true`, matching the CI release workflow's public SDK
+dependency mode. Inside an Expo app, the `android/` folder in this package is
+included by autolinking as `:mentra-bluetooth-sdk`.
+
+A plain Android app can also build the native SDK from a MentraOS checkout,
+without publishing it to Maven local, through a Gradle composite build. In the
+app's `settings.gradle.kts`:
+
+```kotlin
+includeBuild("/path/to/MentraOS/mobile/modules/bluetooth-sdk/android") {
+    dependencySubstitution {
+        substitute(module("com.mentraglass:bluetooth-sdk")).using(project(":"))
+    }
+}
+```
+
+The app keeps its `com.mentraglass:bluetooth-sdk` dependency; Gradle replaces it
+with the source build. This standalone build has the same dependencies as the
+Maven Central artifact (`-PmentraPublicSdk=true` is its default) and leaves out
+the Expo adapter classes, which need an Expo host. It needs the Android NDK for
+`lc3Lib`.
 
 For bare native iOS or macOS apps, use the public SwiftPM repository:
 
@@ -800,7 +897,7 @@ https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 
 Select a coordinated SDK version that includes your target platform, then add
 the `MentraBluetoothSDK` product to your app target. Native macOS support is new
-on `dev`; use the local source override until a supporting release is published.
+on `dev`; use the local package below until a supporting release is published.
 
 For local SDK development, add this package folder directly in Xcode:
 
@@ -816,7 +913,8 @@ permission/audio-input capability for host microphone capture and network-server
 capability for local SDK servers. macOS uses CoreAudio instead of
 `AVAudioSession`; it does not provide iOS background modes or ANCS relay. See
 [the macOS integration guide](../../../mintlify-docs/bluetooth-sdk/macos.mdx)
-and the Starter Kit's `examples/macos` and `examples/react-native-macos` hosts.
+and the [`examples/bluetooth/macos`](../../../examples/bluetooth/macos/README.md) and
+[`examples/bluetooth/react-native-macos`](../../../examples/bluetooth/react-native-macos/README.md) hosts.
 
 Maintainers publishing the public SwiftPM mirror should follow
 [RELEASING_IOS_SPM.md](./RELEASING_IOS_SPM.md).

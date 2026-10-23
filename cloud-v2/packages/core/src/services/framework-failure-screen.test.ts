@@ -9,6 +9,8 @@ import {TestAssetService} from './test-asset.service';
 import {StorageService} from './storage/storage.service';
 import {S3StorageProvider} from './storage/providers/s3-storage.provider';
 import {TestAssetModel} from '../models/test-run.model';
+import producerTerminal from '../testing/android-crashed-app-terminal.fixture';
+import {recordedFailureImageProvenance} from './framework-failure-image-provenance';
 
 const failure = {phase: 'test' as const, actionId: 'update', message: 'Update Failed'};
 const screenshot = {id: 'failure-screen', kind: 'screenshot' as const, path: 'screenshots/opaque.png',
@@ -30,6 +32,84 @@ function fixture(platform: 'android' | 'ios-on-mac' = 'android') {
 }
 const association = [{phase: failure.phase, actionId: failure.actionId, assetId: screenshot.id}];
 
+function crashWitnessFixture() {
+  const run = fixture(), preceding = {...screenshot, id: 'preceding-app', path: 'screenshots/preceding.png'},
+    system = {...screenshot, id: 'current-system', path: 'screenshots/system.png'},
+    desktop = {...screenshot, id: 'failure-desktop', path: 'screenshots/desktop.png'};
+  const original = {pid: 29776, startSeq: 7632, bootId: 'f37d778b-baa3-4c56-a4a8-bc88bd207464', apkSha256: '9'.repeat(64), build: '991'};
+  const row = {command: 'failure', state: 'error', ...failure, error: {message: failure.message},
+    failureObservedAt: '2026-10-03T19:00:10Z',
+    phoneProcessWitness: {original, state: 'replaced' as const, observedAt: '2026-10-03T19:00:11Z', current: {pid: 30444, startSeq: 7635}},
+    precedingAppImage: {assetId: preceding.id, boundary: 'before-password-input' as const, original,
+      captureStartedAt: '2026-10-03T19:00:08Z', captureFinishedAt: '2026-10-03T19:00:09Z'},
+    currentPhoneImage: {assetId: system.id, source: 'system' as const, captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:13Z'},
+    desktopAssetIds: [desktop.id], desktopImages: [{assetId: desktop.id, displayId: 0,
+      captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:14Z'}]};
+  return {run: {...run, assets: [...run.assets, preceding, system, desktop]}, row, preceding, system, desktop};
+}
+
+test('a ceased or replaced original app preserves preceding and system images without claiming either is the failure app', () => {
+  const {run, row, desktop} = crashWitnessFixture(), frozen = JSON.stringify(run);
+  const {command: _command, state: _state, phase, actionId, message: _message, error: _error, desktopAssetIds: _ids, ...metadata} = row;
+  expect(recordedFailureScreens(run, [row])).toEqual([{phase, actionId, desktopAssetId: desktop.id, ...metadata}]);
+  expect(recordedFailureScreens(run, [row, structuredClone(row)])).toEqual(recordedFailureScreens(run, [row]));
+  const ceased = {...row, phoneProcessWitness: {...row.phoneProcessWitness, state: 'ceased', current: undefined}};
+  expect(recordedFailureScreens(run, [ceased])[0]?.phoneProcessWitness?.state).toBe('ceased');
+  expect(recordedFailureScreens(run, [{...row, currentPhoneImage: undefined}])[0]?.precedingAppImage).toEqual(row.precedingAppImage);
+  expect(JSON.stringify(run)).toBe(frozen);
+});
+
+test('contradictory phone provenance refuses its images while independent recorded desktop evidence survives', () => {
+  const {run, row, desktop, preceding} = crashWitnessFixture();
+  const desktopOnly = [{phase: failure.phase, actionId: failure.actionId, desktopAssetId: desktop.id}];
+  for (const changed of [
+    {failureObservedAt: '2026-10-03T19:02:00Z'},
+    {phoneProcessWitness: {...row.phoneProcessWitness, observedAt: '2026-10-03T19:00:09Z'}},
+    {phoneProcessWitness: {...row.phoneProcessWitness, state: 'same'}},
+    {phoneProcessWitness: {...row.phoneProcessWitness, state: 'ceased'}},
+    {phoneProcessWitness: {...row.phoneProcessWitness, state: 'unknown', original: undefined}},
+    {precedingAppImage: {...row.precedingAppImage, captureFinishedAt: '2026-10-03T19:00:11Z'}},
+    {precedingAppImage: {...row.precedingAppImage, original: {...row.precedingAppImage.original, pid: 30444}}},
+    {precedingAppImage: {...row.precedingAppImage, assetId: 'foreign'}},
+    {screenshotAssetId: preceding.id},
+    {currentPhoneImage: {...row.currentPhoneImage, source: 'original-app'}, screenshotAssetId: row.currentPhoneImage.assetId},
+    {desktopImages: [{...row.desktopImages[0]!, capturedAt: '2026-10-03T19:00:15Z'}]},
+  ]) expect(recordedFailureScreens(run, [{...row, ...changed}])).toEqual(desktopOnly);
+  const sibling = {...row, precedingAppImage: {...row.precedingAppImage, boundary: 'before-email-input'}};
+  expect(recordedFailureScreens(run, [row, sibling])).toEqual(desktopOnly);
+  const legacy = {command: row.command, state: row.state, phase: row.phase, actionId: row.actionId, error: row.error, desktopAssetIds: ['foreign']};
+  expect(recordedFailureScreens(run, [row, legacy])[0]?.desktopImages).toBeUndefined();
+  const earlier = {...failure, message: 'Earlier failure without recorded capture'};
+  expect(recordedFailureScreens({...run, result: {...run.result, failures: [earlier, failure]}}, [row])).toEqual([]);
+  expect(recordedFailureScreens({...run, build: {...run.build, archive: {sha256: '8'.repeat(64)}}}, [row])).toEqual(desktopOnly);
+});
+
+test('new current app evidence requires the original process and capture interval, not just a matching APK', () => {
+  const {run, row} = crashWitnessFixture();
+  const same = {...row, phoneProcessWitness: {...row.phoneProcessWitness, state: 'same', current: {pid: 29776, startSeq: 7632}},
+    screenshotAssetId: screenshot.id, currentPhoneImage: {...row.currentPhoneImage, source: 'original-app', assetId: screenshot.id}};
+  expect(recordedFailureScreens(run, [same])[0]?.assetId).toBe(screenshot.id);
+  const changed = {...same, phoneProcessWitness: {...same.phoneProcessWitness, current: {pid: 30444, startSeq: 7635}}};
+  expect(recordedFailureScreens(run, [changed])[0]?.assetId).toBeUndefined();
+});
+
+test('the actual Harness crash A to B terminal fixture preserves all images and its final postcapture process witness', () => {
+  const original = {...failure, phase: producerTerminal.phase as 'setup', actionId: producerTerminal.actionId, message: producerTerminal.error.message};
+  const ids = [producerTerminal.precedingAppImage.assetId, producerTerminal.currentPhoneImage.assetId, ...producerTerminal.desktopAssetIds];
+  const base = fixture(), run = {...base, startedAt: '2026-10-19T03:26:00Z', finishedAt: '2026-10-19T03:26:03Z',
+    build: {...base.build, kind: 'android-apk', archive: {sha256: producerTerminal.phoneProcessWitness.original.apkSha256}},
+    assets: ids.map(id => ({...screenshot, id, path: id})), result: {...base.result, failures: [original]}};
+  const [display] = recordedFailureScreens(run, [producerTerminal]);
+  const expected = recordedFailureImageProvenance(run, producerTerminal);
+  expect(expected).toBeDefined();
+  expect(display?.precedingAppImage).toEqual(expected!.precedingAppImage);
+  expect(display?.currentPhoneImage).toEqual(expected!.currentPhoneImage);
+  expect(display?.phoneProcessWitness).toEqual(expected!.phoneProcessWitness);
+  expect(display?.desktopImages).toEqual(expected!.desktopImages);
+  expect(display?.assetId).toBeUndefined();
+  expect(display?.desktopAssetId).toBeUndefined();
+});
+
 test('Android failure image requires its exact recorded phase, action, message and declared image', () => {
   const run = fixture();
   expect(recordedFailureScreens(run, diagnostic)).toEqual(association);
@@ -45,6 +125,58 @@ test('Android failure image requires its exact recorded phase, action, message a
     result: {...run.result, failures: [failure, other]}};
   expect(recordedFailureScreens(conflicting, [...diagnostic,
     {...diagnostic[0], error: {message: other.message}, screenshotAssetId: 'other-screen'}])).toEqual([]);
+});
+
+test.each(['setup', 'test', 'teardown'] as const)('Android %s terminal row projects app and desktop captures independently', phase => {
+  const original = {...failure, phase}, app = {...screenshot, id: 'screenshots/phone-opaque.png', path: 'screenshots/phone-opaque.png'},
+    desktop = {...screenshot, id: 'screenshots/desktop-opaque.png', path: 'screenshots/desktop-opaque.png'};
+  const run = {...fixture(), assets: [app, desktop], result: {...fixture().result, failures: [original]}};
+  // This is the producer's terminal diagnostic shape, not nearby capture rows.
+  const row = {at: '2026-10-03T19:01:00Z', command: 'failure', state: 'error', phase, actionId: original.actionId,
+    screenshotAssetId: app.id, desktopAssetIds: [desktop.id], error: {message: original.message}};
+  const both = [{phase, actionId: original.actionId, assetId: app.id, desktopAssetId: desktop.id}];
+  const desktopOnly = [{phase, actionId: original.actionId, desktopAssetId: desktop.id}];
+  expect(recordedFailureScreens(run, {records: [row]})).toEqual(both);
+  expect(recordedFailureScreens(run, [row, row])).toEqual(both);
+  expect(recordedFailureScreens(run, [{...row, screenshotAssetId: undefined}])).toEqual(desktopOnly);
+  expect(recordedFailureScreens({...run, assets: [desktop]}, [row])).toEqual(desktopOnly);
+  expect(recordedFailureScreens(run, [{...row, screenshotAssetId: 'foreign'}])).toEqual(desktopOnly);
+  for (const changed of [{phase: phase === 'setup' ? 'test' : 'setup'}, {actionId: 'foreign'},
+    {error: {message: 'Other failure'}}, {state: 'complete'}, {command: 'failure-desktop'}])
+    expect(recordedFailureScreens(run, [{...row, ...changed}])).toEqual([]);
+  for (const ids of [['foreign'], [desktop.id, 'foreign'], [], Array(5).fill(desktop.id), [desktop.id, 1], desktop.id])
+    expect(recordedFailureScreens(run, [{...row, desktopAssetIds: ids}]))
+      .toEqual([{phase, actionId: original.actionId, assetId: app.id}]);
+  for (const changed of [{kind: 'diagnostic' as const}, {mimeType: 'application/json' as const}])
+    expect(recordedFailureScreens({...run, assets: [app, {...desktop, ...changed}]}, [row]))
+      .toEqual([{phase, actionId: original.actionId, assetId: app.id}]);
+  expect(recordedFailureScreens({...run, assets: [app, desktop, {...desktop, path: 'screenshots/duplicate.png'}]}, [row]))
+    .toEqual([{phase, actionId: original.actionId, assetId: app.id}]);
+  const second = {...desktop, id: 'second-display', path: 'screenshots/second-display.png'};
+  expect(recordedFailureScreens({...run, assets: [...run.assets, second]}, [{...row, desktopAssetIds: [desktop.id, second.id]}]))
+    .toEqual([{phase, actionId: original.actionId, assetId: app.id}]);
+  expect(recordedFailureScreens(run, [row, {...row, desktopAssetIds: ['foreign']}]))
+    .toEqual([{phase, actionId: original.actionId, assetId: app.id}]);
+  const sibling = {...original, message: 'Different terminal failure'};
+  expect(recordedFailureScreens({...run, result: {...run.result, failures: [original, sibling]}},
+    [row, {...row, error: {message: sibling.message}, desktopAssetIds: ['foreign']}]))
+    .toEqual([{phase, actionId: original.actionId, assetId: app.id}]);
+});
+
+test('Android desktop-only producer evidence passes the existing frozen diagnostic read and preserves the result', async () => {
+  const run = fixture(), desktop = {...screenshot, id: 'desktop-original', path: 'screenshots/desktop.png'};
+  const row = {at: run.finishedAt, command: 'failure', state: 'error', phase: failure.phase, actionId: failure.actionId,
+    desktopAssetIds: [desktop.id], error: {message: failure.message}};
+  const json = jsonAsset('desktop-diagnostic', 'setup-evidence/setup-diagnostics.json', {records: [row]});
+  const selected = {...run, assets: [desktop, json.asset]}, frozen = JSON.stringify(selected);
+  expect(await readFailureScreens(selected, async () => new Response(json.body)))
+    .toEqual([{phase: failure.phase, actionId: failure.actionId, desktopAssetId: desktop.id}]);
+  expect(JSON.stringify(selected)).toBe(frozen);
+  const nearby = jsonAsset('desktop-diagnostic', 'setup-evidence/setup-diagnostics.json', {records: [
+    {command: 'failure-desktop', state: 'complete', phase: failure.phase, actionId: failure.actionId,
+      assetId: desktop.id, path: desktop.path, displayId: 1, redacted: true},
+  ]});
+  expect(await readFailureScreens({...run, assets: [desktop, nearby.asset]}, async () => new Response(nearby.body))).toEqual([]);
 });
 
 test('a retained Mac reporter failure cannot establish a terminal screenshot association', () => {
@@ -132,7 +264,7 @@ test('the real diagnostic media path aborts stalled S3 HEAD at the display deadl
 
 test('a delayed frozen declaration cannot start an upload lookup or storage read after its deadline', async () => {
   const run = fixture();
-  let finishDeclaration!: (value: {runId: string; asset: typeof run.assets[number]}) => void;
+  let finishDeclaration!: (value: {runId: string; asset: typeof run.assets[number]; accepted: null}) => void;
   const service = new FrameworkResultService({async insert() {}, async getByRequest() {return null;}, async getByRun() {return null;},
     getAsset() {return new Promise(resolve => {finishDeclaration = resolve;});}});
   const upload = spyOn(TestAssetModel, 'findOne');
@@ -140,7 +272,7 @@ test('a delayed frozen declaration cannot start an upload lookup or storage read
     const reading = readFailureScreens(run, (asset, signal) => service.mediaByRun(run.result.runId, asset.id,
       new Request('http://localhost/diagnostic', {signal})));
     expect(await reading).toEqual([]);
-    finishDeclaration({runId: run.result.runId, asset: run.assets[1]!});
+    finishDeclaration({runId: run.result.runId, asset: run.assets[1]!, accepted: null});
     await Bun.sleep(20);
     expect(upload).not.toHaveBeenCalled();
   } finally {upload.mockRestore();}

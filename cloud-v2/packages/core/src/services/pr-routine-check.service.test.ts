@@ -32,13 +32,13 @@ function fixture() {
     async eventsDue(date) {return [...controls.values()].filter(row=>!processed.has(row.deliveryId)&&row.nextAt<=date)}, async eventSettled(id,nextAt) {if(nextAt) controls.get(id)!.nextAt=nextAt;else processed.add(id)}, async event(id, hash, _gateId, control) {if (events.has(id) && events.get(id) !== hash) throw Error('conflict'); events.set(id, hash); if(control && !controls.has(id)) controls.set(id,{deliveryId:id,digest:hash,control:structuredClone(control),nextAt:new Date(now)})},
   }
   let builds: any[] = [], history: any[] = [], failSubmit = false, failHistory = false, failCancellation: string | undefined, holdCancellation: Promise<void> | undefined, dispatchFailure: boolean | undefined
-  const buildCalls: string[] = []
+  const buildCalls: string[] = [], retainedProducerIds: Array<number | undefined> = []
   let producerReceipt: {id: number; failed: boolean} | undefined, findCalls = 0
   const previews: any[] = [], rerunSubmits: any[] = []
   const definition = {id: 'login', title: 'Account login', steps: [{id: 'open', instruction: 'Open account'}, {id: 'check', instruction: 'Verify login'}], platforms: ['android']}
   const createService = () => new PrRoutineCheckService(rows, {
     async context() {contextCalls++; return structuredClone(context)}, async permission() {return canWrite}, async ownedCheck() {return true},
-    async findCheck(payload) {findCalls++; return !lostDelivery ? nativeIds.get(payload.external_id) : undefined}, async producer() {return producerReceipt}, async deliver(_id, payload) {if (unavailableDelivery) throw Error('outage'); deliveries++; checkPayloads.push(structuredClone(payload)); if (!nativeIds.has(payload.external_id)) nativeIds.set(payload.external_id, 99 + nativeIds.size); if (lostDelivery) {lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false; throw Error('lost')} return nativeIds.get(payload.external_id)!}, async requestBuild(platform) {buildCalls.push(platform); if (dispatchFailure !== undefined) throw new PrBuildDispatchFailure(dispatchFailure)},
+    async findCheck(payload) {findCalls++; return !lostDelivery ? nativeIds.get(payload.external_id) : undefined}, async producer(_platform, _context, _operationId, retainedRunId) {retainedProducerIds.push(retainedRunId); return producerReceipt}, async deliver(_id, payload) {if (unavailableDelivery) throw Error('outage'); deliveries++; checkPayloads.push(structuredClone(payload)); if (!nativeIds.has(payload.external_id)) nativeIds.set(payload.external_id, 99 + nativeIds.size); if (lostDelivery) {lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false; throw Error('lost')} return nativeIds.get(payload.external_id)!}, async requestBuild(platform) {buildCalls.push(platform); if (dispatchFailure !== undefined) throw new PrBuildDispatchFailure(dispatchFailure)},
   }, {
     async freezeSelection(value: any) {return {...value, build: {repository: 'Mentra-Community/MentraOS', kind: 'android-apk', channel: 'pr', headSha: context.headSha, source: value.source,
       archive: {name: 'app.apk', url: 'https://artifactscdn.mentraglass.com/app.apk', size: 10, sha256: 'd'.repeat(64)}, receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 1, sha256: 'e'.repeat(64)}}} as any},
@@ -53,7 +53,7 @@ function fixture() {
     routineSource: testRoutineSource(), definition} as any}}, {async inventory() {return structuredClone(builds)}},
   {async get(id) {return requests.get(id) ?? null}}, {async summary(id) {if (!results.has(id)) throw new TestRunError(404, 'missing'); return results.get(id)}},
   {async create() {return {} as any}, async bind() {return {} as any}, async complete() {return {} as any}},
-  {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async cancelRequest() {return false}, async detail() {return {state: 'accepted'} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
+  {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async cancelRequest() {return false}, async cancelPlan() {return false}, async detail() {return {state: 'accepted'} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
   {async get() {return null}}, () => now, {async resolve() {resolveCount++; return 'a'.repeat(40)}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
@@ -62,6 +62,7 @@ function fixture() {
     gate: () => stored.get(gateId)!.payload, advance(ms = 30000) {now += ms}, get now() {return now},
     get contextCalls() {return contextCalls}, get resolves() {return resolveCount}, get deliveries() {return deliveries}, get findCalls() {return findCalls}, outage(value = true) {unavailableDelivery = value}, crashAtCreation() {crashCreation = true}, crashAtProducer() {crashProducer = true}, receipt(value: typeof producerReceipt) {producerReceipt = value}, loseDelivery() {lostDelivery = true},
     inventory(value: any[]) {builds = value},
+    retainedProducerIds,
     build() {builds = [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}]},
     async intake(event = 'event-one') {await service.intake(12, event, requestInputDigest(event)); await service.tick()},
     async drain(count = 6) {for (let i = 0; i < count; i++) {now += 30000; await service.tick()}}
@@ -155,7 +156,7 @@ function control(f: ReturnType<typeof fixture>, deliveryId: string, kind: 'rerun
 test('duplicate native rerun retains one generation and fresh absolute deadline', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); await complete(f)
   const command = control(f, 'rerun-event'), accepted = f.now
-  await f.service.control(command); await f.service.control(command); await f.drain(1)
+  await f.service.control(command); await f.service.control(command); await f.drain(2)
   expect(f.gate().attempt.generation).toBe(2); expect(f.gate().controls).toHaveLength(1)
   expect(f.gate().attempt.deadline).toBe(new Date(accepted + 3 * 3600000).toISOString())
   expect(f.previews[0].deadline).toBe(f.gate().attempt.deadline)
@@ -163,12 +164,12 @@ test('duplicate native rerun retains one generation and fresh absolute deadline'
 
 test('linked native rerun IDs remain distinct when a new same-head coverage generation restarts attempt numbering', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); await complete(f);
-  await f.service.control(control(f, 'coverage-one-rerun')); await f.drain(1);
+  await f.service.control(control(f, 'coverage-one-rerun')); await f.drain(2);
   const first = f.gate().attempt.rerun!.id; expect(f.previews.at(-1)!.rerunId.startsWith(first)).toBe(true);
   f.gate().attempt.conclusion = 'failure'; f.gate().attempt.members[0]!.settled = true;
   f.context.baseRef = 'staging'; await f.intake('new-coverage'); await f.drain(6); await complete(f);
   expect(f.gate().coverageGeneration).toBe(2); expect(f.gate().attempt.generation).toBe(1);
-  await f.service.control(control(f, 'coverage-two-rerun')); await f.drain(1);
+  await f.service.control(control(f, 'coverage-two-rerun')); await f.drain(2);
   expect(f.gate().attempt.generation).toBe(2); expect(f.gate().attempt.rerun!.id).not.toBe(first);
   expect(f.previews).toHaveLength(2); expect(f.previews[1]!.rerunId).not.toBe(f.previews[0]!.rerunId);
 });
@@ -191,7 +192,7 @@ test('late old-head success intent cannot publish green after head changes', asy
   const before = f.checkPayloads.length; f.context.headSha = 'c'.repeat(40)
   f.stored.get(gate.gateId)!.nextAt = new Date(f.now); await f.drain(1)
   expect(f.checkPayloads.slice(before).some(value => value.conclusion === 'success')).toBe(false)
-  await f.drain(2); expect(f.gate().attempt.conclusion).toBe('cancelled')
+  await f.drain(2); expect(f.gate().attempt.conclusion).toBe('success')
 })
 test('active rerun and stale context control do not create replacement requests', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain()
@@ -257,20 +258,20 @@ test('coverage replacement settles never-admitted members but keeps mixed admitt
   }
 })
 
-test('cancellation failure on one linked child does not starve the other children or original', async () => {
+test('cancellation ignores unrelated descendants and still cancels its owned request', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); const requestId = f.gate().attempt.members[0]!.requestId!;
   for (const child of ['child-a', 'child-b']) f.requests.set(child, {requestId: child, fleetBinding: {hostId: 'testing-air-1'}, state: 'running'});
   f.history([{requestId: 'child-a', attemptNumber: 1}, {requestId: 'child-b', attemptNumber: 2}]); f.failCancellation('child-a');
   await f.service.control(control(f, 'cancel-independent-children', 'cancel')); await f.drain(1);
-  expect(f.cancellations).toContain('child-a'); expect(f.cancellations).toContain('child-b'); expect(f.cancellations).toContain(requestId);
+  expect(f.cancellations).not.toContain('child-a'); expect(f.cancellations).not.toContain('child-b'); expect(f.cancellations).toContain(requestId);
   expect(f.gate().attempt.conclusion).toBeUndefined(); expect(f.gate().attempt.members[0]!.settled).toBe(false);
 })
-test('cancel reaches linked child and requires its independent custody receipt', async () => {
+test('foreign running rerun does not block cancellation of a settled check', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); await complete(f)
   f.requests.set('child', {requestId: 'child', fleetBinding: {hostId: 'testing-air-1'}, state: 'running'})
   f.history([{requestId: 'child', attemptNumber: 1}]); f.gate().attempt.conclusion = undefined
   await f.service.control(control(f, 'cancel-linked', 'cancel')); await f.drain(1)
-  expect(f.cancellations).toContain('child'); expect(f.gate().attempt.conclusion).toBeUndefined()
+  expect(f.cancellations).not.toContain('child'); expect(f.gate().attempt.conclusion).toBe('cancelled')
   f.requests.get('child').dispatchCompletion = {disposition: 'clean'}
   await f.drain(2); expect(f.gate().attempt.conclusion).toBe('cancelled')
 })
@@ -323,6 +324,25 @@ test('late producer acknowledgement adopts exact run and failed requested produc
   expect(f.buildCalls).toEqual(['asg']); f.receipt({id: 71, failed: true}); await f.drain(2)
   expect(f.buildCalls).toEqual(['asg']); expect(f.gate().attempt.members[0]!.status).toBe('not-run')
   expect(f.gate().attempt.conclusion).toBe('failure'); expect(f.gate().buildRequests!.asg!.runId).toBe(71)
+})
+
+test('initial routine intake adopts an existing native producer without another dispatch across restart', async () => {
+  const f = fixture(); f.receipt({id: 71, failed: false}); await f.intake(); await f.drain(4)
+  expect(f.buildCalls).toHaveLength(0)
+  expect(f.gate().buildRequests!.asg).toMatchObject({state: 'answered', runId: 71})
+  f.restart(); await f.drain(3)
+  expect(f.buildCalls).toHaveLength(0)
+  expect(f.gate().attempt.members[0]!.settled).toBe(false)
+})
+test('adopted running producer fails coverage promptly after restart instead of waiting for its deadline', async () => {
+  const f = fixture(); f.receipt({id: 71, failed: false}); await f.intake(); await f.drain(4)
+  expect(f.gate().buildRequests!.asg).toMatchObject({state: 'answered', runId: 71})
+  const before = f.retainedProducerIds.length
+  f.restart(); f.receipt({id: 71, failed: true}); await f.drain(2)
+  expect(f.retainedProducerIds.slice(before)).toEqual([71])
+  expect(f.gate().attempt.conclusion).toBe('failure')
+  expect(f.gate().attempt.members[0]).toMatchObject({status: 'not-run', settled: true, waitReason: 'Glasses build failed or was cancelled'})
+  expect(f.buildCalls).toHaveLength(0)
 })
 test('delivery outage cannot starve timeout, head supersession or linked cancellation custody', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); const requestId = f.gate().attempt.members[0]!.requestId!
@@ -430,14 +450,57 @@ test('public progress renders observed completed test counts across named lifecy
  }
 });
 
-test('closed and superseded terminal delivery keeps its first timestamp and parks after all custody settles', async () => {
- for (const changed of ['closed','head']) {
-  const f=fixture(); f.context.labels=[]; await f.intake(); await f.drain(3);
+test('closing or advancing a PR preserves its already delivered settled verdict and timestamp', async () => {
+ for (const outcome of ['pass', 'failed']) for (const changed of ['closed','head']) {
+  const f=fixture(); await f.intake(); f.build(); await f.drain(); await complete(f,outcome);
+  const finished=f.gate().attempt.finishedAt, payload=requestInputDigest(routineCheckPayload(f.gate(),f.now)), delivered=f.deliveries;
   if(changed==='closed') f.context.open=false; else f.context.headSha='c'.repeat(40);
-  await f.service.reconcile(f.gate().gateId); const finished=f.gate().attempt.finishedAt, payload=requestInputDigest(routineCheckPayload(f.gate(),f.now)), delivered=f.deliveries;
-  expect(f.gate().attempt.conclusion).toBe('cancelled'); expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+  await f.service.reconcile(f.gate().gateId);
+  expect(f.gate().attempt.conclusion).toBe(outcome==='pass'?'success':'failure'); expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+  expect(f.gate().attempt.cancellation).toBeUndefined(); expect(f.cancellations).toHaveLength(0);
   for(let i=0;i<3;i++) {f.advance();await f.service.reconcile(f.gate().gateId)}
   expect(f.gate().attempt.finishedAt).toBe(finished); expect(requestInputDigest(routineCheckPayload(f.gate(),f.now))).toBe(payload); expect(f.deliveries).toBe(delivered);
+ }
+})
+
+test('terminal progress duration stays frozen across freshness expiry and later PR closure', async () => {
+ for(const outcome of ['pass','failed']) for(const changed of ['closed','head']) {
+ const f=fixture();await f.intake();f.build();await f.drain();await complete(f,outcome);
+ const member=f.gate().attempt.members[0]!;
+ member.progress={requestId:member.requestId!,requestDigest:'d'.repeat(64),ownerGeneration:1,controllerIncarnation:'controller',sequence:1,
+  phase:'publication',completedSteps:2,totalSteps:2,startedAt:new Date(f.now-30000).toISOString(),lastProgressAt:new Date(f.now).toISOString(),observedAt:new Date(f.now).toISOString()};
+ await f.service.reconcile(f.gate().gateId);
+ const payload=requestInputDigest(routineCheckPayload(f.gate(),f.now)),finished=f.gate().attempt.finishedAt,delivered=f.deliveries;
+ f.advance(10000);expect(requestInputDigest(routineCheckPayload(f.gate(),f.now))).toBe(payload);
+ f.advance(120000);expect(requestInputDigest(routineCheckPayload(f.gate(),f.now))).toBe(payload);
+ f.restart();if(changed==='closed') f.context.open=false;else f.context.headSha='c'.repeat(40);
+ await f.service.reconcile(f.gate().gateId);
+ expect(f.gate().attempt.conclusion).toBe(outcome==='pass'?'success':'failure');expect(f.gate().attempt.finishedAt).toBe(finished);expect(f.deliveries).toBe(delivered);
+ }
+})
+
+test('closing a PR still contains a pass with unsettled custody before reaching a cancelled verdict', async () => {
+ const f=fixture(); await f.intake(); f.build(); await f.drain();
+ const requestId=f.gate().attempt.members[0]!.requestId!, request=f.requests.get(requestId);
+ request.state='terminal';request.terminalStatus='pass';
+ f.results.set(requestId,{routineId:'login',platform:'android',definitionRevision:'a'.repeat(40),
+  build:{headSha:f.context.headSha},outcome:'pass',uploadsComplete:true,evidenceStatus:'complete'});
+ await f.drain(1);expect(f.gate().attempt.conclusion).toBeUndefined();
+ f.context.open=false;await f.drain(1);
+ expect(f.cancellations).toContain(requestId);expect(f.gate().attempt.conclusion).toBeUndefined();
+ request.dispatchCompletion={disposition:'repair'};await f.drain(2);
+ expect(f.gate().attempt.conclusion).toBe('cancelled');
+})
+
+test('an undelivered success cannot become a new green check after closure or source change', async () => {
+ for(const changed of ['closed','head']) {
+  const f=fixture();await f.intake();f.build();await f.drain();f.outage();await complete(f,'pass');
+  expect(f.gate().attempt.conclusion).toBe('success');expect(f.gate().reporting.intended).toBeDefined();
+  const delivered=f.deliveries;
+  if(changed==='closed') f.context.open=false;else f.context.headSha='c'.repeat(40);
+  f.outage(false);await f.drain(2);
+  expect(f.gate().attempt.conclusion).toBe('cancelled');
+  expect(f.checkPayloads.slice(delivered).some(value=>value.conclusion==='success')).toBe(false);
  }
 })
 
@@ -455,7 +518,7 @@ test('persisted native Re-run wakes a parked gate within its event tick and reta
  const f=fixture(); await f.intake(); f.build(); await f.drain(); await complete(f,'failed');
  expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined(); const old=f.gate().attempt.generation;
  await f.service.receiveControl(control(f,'parked-native-rerun')); await f.service.tick();
- expect(f.gate().attempt.generation).toBe(old+1); expect(f.previews.length).toBeGreaterThan(0);
+ expect(f.gate().attempt.generation).toBe(old+1); expect(f.gate().attempt.rerun!.groups).toBeDefined(); await f.drain(1); expect(f.previews.length).toBeGreaterThan(0);
  await f.drain(2); expect(f.gate().controls.filter(row=>row.id==='parked-native-rerun')).toHaveLength(1);
 })
 

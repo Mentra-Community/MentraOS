@@ -40,6 +40,8 @@ export function TranscriptItem({
 
   return (
     <div
+      role="group"
+      aria-label="Caption"
       className={`self-stretch p-4 bg-white/80 dark:bg-zinc-900/80 rounded-md flex flex-col gap-1.5
         ${transcript.isFinal ? "opacity-100" : "opacity-80"}
         ${isFirst ? "rounded-t-2xl" : ""}
@@ -80,6 +82,8 @@ export function TranscriptItem({
 
       {/* Transcript text */}
       <p
+        role="group"
+        aria-label="Caption text"
         className={`selectable-text self-stretch text-gray-800 dark:text-zinc-200 text-base font-normal font-['Red_Hat_Display'] leading-6 ${
           transcript.isFinal ? "" : "italic"
         }`}

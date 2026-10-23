@@ -17,14 +17,19 @@
  * state written mid-pass queues a follow-up pass — the same way a setState
  * during React effects scheduled a re-render after the current effect batch.
  */
+import {Platform} from "react-native"
 import BluetoothSdk, {type OtaProgress, type OtaStatus} from "@mentra/bluetooth-sdk"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
-import type {OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
+import {OTA_ERROR_ENGLISH_COPY, phoneOtaErrorCopyKey} from "./OtaErrorMapping"
+import type {OtaArtifactFailure} from "./OtaArtifactFailure"
+import {waitForOtaInternet} from "./OtaInternetRecovery"
+import {submitOtaFailureReport, type OtaFailureReason} from "./OtaFailureReportService"
+import {OtaArtifactError, type OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
 import {otaDeviceSessionRevision, subscribeOtaDeviceSession} from "./OtaDeviceSession"
-import {isOtaCheckForCurrentDevice} from "./OtaUpdateCheckService"
+import {checkCurrentGlassesForUpdate, isOtaCheckForCurrentDevice} from "./OtaUpdateCheckService"
 import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
@@ -64,28 +69,6 @@ function isTerminalForWatchdog(d: DisplayState): boolean {
   return d === "complete" || d === "failed" || d === "restarting"
 }
 
-function hotspotPreflightErrorMessage(error: unknown): string {
-  const code =
-    typeof error === "object" && error !== null && "code" in error ? String((error as {code: unknown}).code) : ""
-  switch (code) {
-    case "artifact_download_failed":
-      return OtaProgressMessages.hotspotArtifactDownloadFailed
-    case "artifact_verify_failed":
-    case "manifest_invalid":
-      return OtaProgressMessages.hotspotArtifactVerifyFailed
-    case "hotspot_wifi_permission_denied":
-      return OtaProgressMessages.hotspotWifiPermissionDenied
-    case "hotspot_start_failed":
-      return OtaProgressMessages.hotspotStartFailed
-    case "hotspot_join_failed":
-      return OtaProgressMessages.hotspotJoinFailed
-    case "hotspot_server_failed":
-      return OtaProgressMessages.hotspotServerFailed
-    default:
-      return OtaProgressMessages.hotspotServerFailed
-  }
-}
-
 /** Non-empty when glasses are actively reporting work — drives stall timeout reset. */
 function buildProgressStalenessSignature(
   otaStatus: OtaStatus | null,
@@ -96,16 +79,10 @@ function buildProgressStalenessSignature(
   if (otaStatus && (otaStatus.status === "in_progress" || otaStatus.status === "step_complete")) {
     return `s:${otaStatus.sessionId}|${otaStatus.status}|${otaStatus.phase}|${otaStatus.stepType}|${otaStatus.stepPercent}|${otaStatus.overallPercent}`
   }
-  // Legacy-shaped BES download FINISHED (WP 8C): the legacy screen kept a progress
-  // watchdog armed while waiting for the BES install events to start; keep the stall
-  // watchdog armed here too so a wedged flash still fails instead of hanging.
-  if (
-    isLegacyShapedOtaStatus(otaStatus) &&
-    otaStatus?.stepType === "bes" &&
-    otaStatus.phase === "download" &&
-    otaStatus.status === "complete"
-  ) {
-    return "s:legacy-bes-download-complete-await-install"
+  // BES download completion still waits for install events. Keep the stall
+  // watchdog armed for both protocols so a missing handoff cannot hang forever.
+  if (otaStatus?.stepType === "bes" && otaStatus.phase === "download" && otaStatus.status === "complete") {
+    return "s:bes-download-complete-await-install"
   }
   if (otaProgress && (otaProgress.status === "PROGRESS" || otaProgress.status === "STARTED")) {
     return `p:${otaProgress.currentUpdate}|${otaProgress.stage}|${otaProgress.status}|${otaProgress.progress}`
@@ -152,6 +129,7 @@ function hasRecoveringOtaReply(otaStatus: OtaStatus | null, otaProgress: OtaProg
 export interface OtaInstallSnapshot {
   displayState: DisplayState
   errorMsg: string
+  errorCopyKey?: string | null
   continueButtonDisabled: boolean
   connected: boolean
   otaStatus: OtaStatus | null
@@ -186,6 +164,9 @@ type OtaStartOutcome = "pending" | "acknowledged" | "rejected"
 interface OtaStartOwnership {
   outcome: OtaStartOutcome
   promise: Promise<void>
+  // The existing session cap belongs to the attempt, not the mounted view.
+  deadlineAt: number
+  versionChangeTarget?: number
 }
 
 class OtaInstallCoordinator {
@@ -220,6 +201,10 @@ class OtaInstallCoordinator {
 
   // Genuinely session-local state (was component state/refs).
   private errorMsg = ""
+  private errorCopyKey: string | null = null
+  private reportAttemptId = `${Date.now()}-0`
+  private reportAttemptSequence = 0
+  private finishCompletion: {attemptId: string; deviceRevision: number; promise: Promise<void>} | null = null
   private versionChangeReconnected = false
   private sawReconnectEdge = false
   private continueButtonDisabled = false
@@ -322,16 +307,17 @@ class OtaInstallCoordinator {
   prepare(checkResult: OtaCheckCurrentGlassesResult): "wifi" | "hotspot" {
     if (!isOtaCheckForCurrentDevice(checkResult)) throw new Error("The checked glasses have changed")
     const state = useGlassesStore.getState()
-    if (!state.wifiStatusKnown) {
+    const hotspotSupported = state.hotspotOtaVersion === 1
+    if (!hotspotSupported && !state.wifiStatusKnown) {
       throw new Error("Glasses Wi-Fi status is not available")
     }
-    const hotspotSupported = state.hotspotOtaVersion === 1
     const wifiConnected = state.wifi.state === "connected"
     if (!wifiConnected && !hotspotSupported) {
       throw new Error("Connected glasses require Wi-Fi for OTA")
     }
+    this.reportAttemptId = `${Date.now()}-${++this.reportAttemptSequence}`
     this.preparedCheckResult = checkResult
-    this.selectedTransport = wifiConnected ? "wifi" : "hotspot"
+    this.selectedTransport = hotspotSupported ? "hotspot" : "wifi"
     this.observedTransport = this.selectedTransport
     this.hotspotManifestUrl = null
     this.hotspotPhase = "idle"
@@ -339,6 +325,18 @@ class OtaInstallCoordinator {
     this.hotspotArtifact = null
     this.emitInternalChange()
     return this.selectedTransport
+  }
+
+  private initializeCheckedInstall(selected: OtaCheckCurrentGlassesResult["updateInfo"]): void {
+    const target =
+      selected?.isDowngrade && typeof selected.versionCode === "number" && selected.versionCode > 0
+        ? selected.versionCode
+        : null
+    this.versionChangeSession = target !== null
+    this.versionChangeTarget = target
+    if (target !== null) {
+      console.log(`[OTA_PROGRESS] version-change (downgrade) session, target=${target}`)
+    }
   }
 
   /**
@@ -353,15 +351,24 @@ class OtaInstallCoordinator {
     this.resetSessionState()
     const initialState = useGlassesStore.getState()
     this.protocolProfile = selectOtaProtocolProfile(
-      initialState.otaStatus,
-      initialState.otaProgress,
+      this.otaStatusForAttempt(initialState.otaStatus),
+      this.otaProgressForAttempt(initialState.otaProgress),
       initialState.buildNumber,
     )
-    const selected = initialState.otaUpdateAvailable
-    if (selected?.isDowngrade && typeof selected.versionCode === "number" && selected.versionCode > 0) {
+    // A late completion from the previous OTA step can clear the store's offer
+    // between check and mount. Keep this install bound to its prepared check.
+    const selected = this.preparedCheckResult ? this.preparedCheckResult.updateInfo : initialState.otaUpdateAvailable
+    this.initializeCheckedInstall(selected)
+    const recoveryTarget = this.otaStartOwnership?.versionChangeTarget
+    if (this.otaStartOwnership?.outcome === "acknowledged" && recoveryTarget !== undefined) {
+      // The progress route is an observer of this acknowledged install. A remount
+      // must retain its exact target and original deadline even after ASG reports idle.
       this.versionChangeSession = true
-      this.versionChangeTarget = selected.versionCode
-      console.log(`[OTA_PROGRESS] version-change (downgrade) session, target=${selected.versionCode}`)
+      this.versionChangeTarget = recoveryTarget
+      this.versionChangeInstallStarted = true
+      this.hasFirstActivity = true
+      this.hasFirstNonZeroProgress = true
+      this.maybeStartGlobalTimeout()
     }
     this.prevConnected = isGlassesConnected(useGlassesStore.getState().connection)
     this.storeUnsubscribe = useGlassesStore.subscribe(() => this.react())
@@ -380,9 +387,9 @@ class OtaInstallCoordinator {
   }
 
   /**
-   * Unbind on screen unmount: clears ALL timers/subscriptions/listeners and
-   * resets the session-local state (the old component state died with the
-   * component) so a re-attach is a fresh session.
+   * Unbind the progress view and clear its timers/subscriptions/listeners.
+   * Pending native commands and acknowledged downgrade recovery ownership
+   * survive a same-process remount; other rendering state is reset.
    */
   detach(): void {
     if (!this.attached) return
@@ -396,9 +403,9 @@ class OtaInstallCoordinator {
     GlobalEventEmitter.off("glasses_session_changed", this.handleGlassesSessionChanged)
     this.clearAllOtaTimers()
     this.clearContinueLockoutTimer()
-    // Only native command ownership survives a remount. Once the command has
-    // settled, the glasses store/durable ota_status is the session authority.
-    if (this.otaStartOwnership?.outcome !== "pending") {
+    // A downgrade recovery worker can outlive both the command and its wiped ASG
+    // status. Keep that acknowledged attempt until exact-target convergence.
+    if (this.otaStartOwnership?.outcome !== "pending" && !this.isInVersionChangeDetour()) {
       this.otaStartOwnership = null
     }
     this.resetSessionState()
@@ -491,7 +498,39 @@ class OtaInstallCoordinator {
    * stays in the screen): clear the selected update, and after an APK step
    * clear the stale build number so the next check re-reads version_info.
    */
-  async finish(): Promise<void> {
+  finish(): Promise<void> {
+    const deviceRevision = otaDeviceSessionRevision()
+    const attemptId = this.reportAttemptId
+    const existing = this.finishCompletion
+    if (existing?.attemptId === attemptId && existing.deviceRevision === deviceRevision) return existing.promise
+
+    const usedHotspot = this.selectedTransport === "hotspot" || this.hotspotManifestUrl !== null
+    let resolve!: () => void
+    let reject!: (error: unknown) => void
+    const promise = new Promise<void>((done, failed) => {
+      resolve = done
+      reject = failed
+    })
+    const completion = {attemptId, deviceRevision, promise}
+    // Publish before cleanup notifies subscribers, so every completion caller
+    // shares this install's teardown and single Internet recovery deadline.
+    this.finishCompletion = completion
+    const isCurrent = () =>
+      this.finishCompletion === completion &&
+      this.reportAttemptId === attemptId &&
+      otaDeviceSessionRevision() === deviceRevision
+    void (async () => {
+      await this.cleanupFinishedInstall()
+      // Recovery does not imply request success: the final check owns its result.
+      if (usedHotspot && Platform.OS === "android") await waitForOtaInternet(isCurrent)
+    })().then(resolve, (error) => {
+      if (this.finishCompletion === completion) this.finishCompletion = null
+      reject(error)
+    })
+    return promise
+  }
+
+  private async cleanupFinishedInstall(): Promise<void> {
     if (this.otaStartOwnership?.outcome !== "pending") {
       this.otaStartOwnership = null
       this.observedTransport = null
@@ -501,8 +540,6 @@ class OtaInstallCoordinator {
     if (this.apkStepSeen) {
       useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
     }
-    // The post-install check needs internet again. Do not let callers leave the
-    // terminal screen while Android still owns the no-internet hotspot route.
     await this.teardownHotspotTransport()
   }
 
@@ -514,7 +551,10 @@ class OtaInstallCoordinator {
    */
   async discard(): Promise<void> {
     const deviceRevision = otaDeviceSessionRevision()
-    await this.finish()
+    // Abandonment has no final Internet check. Cancel any pending recovery and
+    // wait only for local transport cleanup before leaving the install screen.
+    this.finishCompletion = null
+    await this.cleanupFinishedInstall()
     if (deviceRevision !== otaDeviceSessionRevision()) return
     const store = useGlassesStore.getState()
     store.setOtaStatus(null)
@@ -524,8 +564,8 @@ class OtaInstallCoordinator {
   snapshot(): OtaInstallSnapshot {
     const state = useGlassesStore.getState()
     const connected = isGlassesConnected(state.connection)
-    const otaStatus = state.otaStatus
-    const otaProgress = state.otaProgress
+    const otaStatus = this.otaStatusForAttempt(state.otaStatus)
+    const otaProgress = this.otaProgressForAttempt(state.otaProgress)
     return {
       displayState: deriveDisplayState({
         otaStatus,
@@ -540,6 +580,7 @@ class OtaInstallCoordinator {
         versionChangeSession: this.versionChangeSession,
       }),
       errorMsg: this.errorMsg,
+      errorCopyKey: this.errorCopyKey,
       // Keep Continue disabled while the expected BES reboot is still in flight.
       continueButtonDisabled: this.continueButtonDisabled || this.besRestartRecovery === "awaiting",
       connected,
@@ -566,6 +607,18 @@ class OtaInstallCoordinator {
    */
   private isInVersionChangeDetour(): boolean {
     return this.versionChangeSession && this.versionChangeInstallStarted && !this.versionChangeConverged
+  }
+
+  private otaStatusForAttempt(status: OtaStatus | null): OtaStatus | null {
+    const updates = this.preparedCheckResult?.updateInfo?.updates
+    // Late terminal traffic from an unselected firmware step is not authority
+    // for this checked install. Preserve the raw store for other observers.
+    return status && status.status !== "idle" && updates && !updates.includes(status.stepType) ? null : status
+  }
+
+  private otaProgressForAttempt(progress: OtaProgress | null): OtaProgress | null {
+    const updates = this.preparedCheckResult?.updateInfo?.updates
+    return progress && updates && !updates.includes(progress.currentUpdate) ? null : progress
   }
 
   /** Downgrade-detour sub-phase for the progress narrative (see OtaInstallSnapshot). */
@@ -600,7 +653,9 @@ class OtaInstallCoordinator {
   // --- internal state plumbing ---
 
   private resetSessionState(): void {
+    this.finishCompletion = null
     this.errorMsg = ""
+    this.errorCopyKey = null
     this.versionChangeReconnected = false
     this.sawReconnectEdge = false
     this.continueButtonDisabled = false
@@ -642,6 +697,7 @@ class OtaInstallCoordinator {
       return false
     }
     this.otaStartOwnership = null
+    this.reportAttemptId = `${Date.now()}-${++this.reportAttemptSequence}`
     this.downloadStepKey = ""
     this.downloadByteHighWater = 0
     this.hasFirstActivity = false
@@ -664,9 +720,39 @@ class OtaInstallCoordinator {
 
   // Setters mirror the old setState calls: bail on identical values (React's
   // setState bailout), notify snapshot subscribers, and queue a reaction pass.
-  private setErrorMsg(next: string): void {
-    if (this.errorMsg === next) return
+  private reportFailure(reason: OtaFailureReason, artifactFailure?: OtaArtifactFailure): void {
+    const state = useGlassesStore.getState()
+    void submitOtaFailureReport({
+      attemptId: this.reportAttemptId,
+      deviceRevision: otaDeviceSessionRevision(),
+      reason,
+      artifactFailure,
+      transport: this.observedTransport,
+      hotspotPhase: this.hotspotPhase,
+      connected: isGlassesConnected(state.connection),
+      wifiState: state.wifi.state,
+      buildNumber: state.buildNumber,
+      besFirmwareVersion: state.besFirmwareVersion,
+      mtkFirmwareVersion: state.mtkFirmwareVersion,
+      targetBesVersion: this.preparedCheckResult?.besVersion ?? null,
+      targetRelease: this.preparedCheckResult?.releaseVersion ?? null,
+      targetBuild: this.preparedCheckResult?.latestVersionInfo?.versionCode ?? null,
+      updates: this.preparedCheckResult?.updates ?? [],
+      retryCount: this.retryCount,
+      sawReconnectEdge: this.sawReconnectEdge,
+      besRestartExpected: this.besRestartExpected,
+      besRestartDisconnectObserved: this.besRestartDisconnectObserved,
+      versionChangeInstallStarted: this.versionChangeInstallStarted,
+      otaStatus: state.otaStatus,
+      otaProgress: state.otaProgress,
+    })
+  }
+
+  private setErrorMsg(next: string, failureReason?: OtaFailureReason, copyKey: string | null = null): void {
+    if (this.errorMsg === next && this.errorCopyKey === copyKey) return
     this.errorMsg = next
+    this.errorCopyKey = copyKey
+    if (next && failureReason) this.reportFailure(failureReason)
     this.emitInternalChange()
     this.react()
   }
@@ -747,8 +833,8 @@ class OtaInstallCoordinator {
   private runPass(isMount: boolean): void {
     const state = useGlassesStore.getState()
     const connected = isGlassesConnected(state.connection)
-    const otaStatus = state.otaStatus
-    const otaProgress = state.otaProgress
+    const otaStatus = this.otaStatusForAttempt(state.otaStatus)
+    const otaProgress = this.otaProgressForAttempt(state.otaProgress)
     const buildNumber = state.buildNumber
 
     const connectedChanged = isMount || connected !== this.lastConnected
@@ -799,6 +885,9 @@ class OtaInstallCoordinator {
       versionChangeConverged: this.versionChangeConverged,
       versionChangeSession: this.versionChangeSession,
     })
+    if (otaStatusChanged && otaStatus?.status === "failed") this.reportFailure("device_failed")
+    else if (otaProgressChanged && !otaStatus && otaProgress?.status === "FAILED") this.reportFailure("device_failed")
+
     const stallSig = buildProgressStalenessSignature(otaStatus, otaProgress, displayState)
     // Percent is a UI projection, not transfer liveness. Repeated status replies (including
     // older replies without bytes) must not keep a stalled download alive.
@@ -897,6 +986,7 @@ class OtaInstallCoordinator {
     ) {
       console.log("[OTA_PROGRESS] version-change: apk install started — entering detour wait")
       this.versionChangeInstallStarted = true
+      this.otaStartOwnership.versionChangeTarget = this.versionChangeTarget ?? undefined
       this.emitInternalChange()
     }
 
@@ -939,6 +1029,9 @@ class OtaInstallCoordinator {
         this.setErrorMsg("")
         this.versionChangeConverged = true
         this.emitInternalChange()
+        // Derivation ran before convergence. Queue the complete-state pass so
+        // transport cleanup happens even when no subsequent store event arrives.
+        this.react()
       }
     }
 
@@ -1054,7 +1147,7 @@ class OtaInstallCoordinator {
           this.progressTimeout = null
           if (isTerminalForWatchdog(this.computeDisplayStateNow())) return
           console.log(`[OTA_PROGRESS] watchdog: progress stalled for ${duration}ms, failing`)
-          this.setErrorMsg(OtaProgressMessages.stalledOrStuck)
+          this.setErrorMsg(OtaProgressMessages.stalledOrStuck, "progress_stalled")
         }, duration)
       }
     }
@@ -1075,7 +1168,7 @@ class OtaInstallCoordinator {
         this.restartRecoveryTimeout = null
         if (this.computeDisplayStateNow() !== "restarting") return
         console.log(`[OTA_PROGRESS] watchdog: glasses did not finish restarting in ${restartTimeoutMs}ms`)
-        this.setErrorMsg(OtaProgressMessages.restartTimeout)
+        this.setErrorMsg(OtaProgressMessages.restartTimeout, "restart_timeout")
       }, restartTimeoutMs)
     } else if (displayStateChanged) {
       this.clearRestartRecoveryTimeout()
@@ -1124,6 +1217,14 @@ class OtaInstallCoordinator {
     this.clearQueryReplyTimeout()
     this.setSawReconnectEdge(true)
 
+    // Both a physical reconnect and an ASG session change can enter here while
+    // the recovery worker installs the pinned downgrade. Idle is expected after
+    // its restart; query/fallback must not re-drive the old hotspot endpoint.
+    if (this.isInVersionChangeDetour() || this.versionChangeConverged) {
+      console.log(`[OTA_PROGRESS] ${label}: reconnect during version-change detour — no query (expected)`)
+      return true
+    }
+
     if (this.besRestartDisconnectObserved) {
       console.log(`[OTA_PROGRESS] ${label}: BES reboot reconnect observed — no ota_query_status`)
       this.completeBesRestartRecovery()
@@ -1139,6 +1240,7 @@ class OtaInstallCoordinator {
     }
 
     console.log(`[OTA_PROGRESS] ${label}: reconnected, sending ota_query_status`)
+    this.maybeStartGlobalTimeout()
     if (this.otaStartOwnership?.outcome === "pending") {
       void this.sendOtaStartWithWatchdogs()
     }
@@ -1171,21 +1273,24 @@ class OtaInstallCoordinator {
     // factory build would treat the pin as a plain upgrade and start a redundant
     // download racing the recovery worker. Convergence (buildNumber === target) is
     // detected in the reaction pass; here we simply take no action.
-    if (this.versionChangeSession && this.versionChangeInstallStarted && !this.versionChangeConverged) {
+    if (this.versionChangeSession && this.versionChangeInstallStarted) {
       console.log("[OTA_PROGRESS] connect-edge: reconnect during version-change detour — no query (expected)")
       return
     }
 
     const storeState = useGlassesStore.getState()
+    const otaStatus = this.otaStatusForAttempt(storeState.otaStatus)
+    const otaProgress = this.otaProgressForAttempt(storeState.otaProgress)
 
     // Initial mount (prev === current === true). If no session yet, kick off ota_start.
     // An idle ota_status has an empty sessionId; treat it as no session so ota_start
     // still begins an explicit install.
-    const isIdleStatus = !!storeState.otaStatus && storeState.otaStatus.sessionId === ""
-    const noSessionYet = (!storeState.otaStatus && !storeState.otaProgress) || isIdleStatus
+    const isIdleStatus = !!otaStatus && otaStatus.sessionId === ""
+    const noSessionYet = (!otaStatus && !otaProgress) || isIdleStatus
     if (noSessionYet) {
       if (!isIdleStatus && this.otaStartOwnership?.outcome === "acknowledged") {
         console.log("[OTA_PROGRESS] initial mount, acknowledged session has no cached status — reconciling")
+        this.maybeStartGlobalTimeout()
         void BluetoothSdk.queryOtaStatus().catch(() => {})
         this.armQueryReplyFallback("initial-mount")
         return
@@ -1202,6 +1307,7 @@ class OtaInstallCoordinator {
       void this.sendOtaStartWithWatchdogs()
     } else {
       console.log("[OTA_PROGRESS] initial mount, session exists, sending ota_query_status")
+      this.maybeStartGlobalTimeout()
       void BluetoothSdk.queryOtaStatus().catch(() => {})
       this.armQueryReplyFallback("initial-mount")
     }
@@ -1386,8 +1492,8 @@ class OtaInstallCoordinator {
   private computeDisplayStateNow(): DisplayState {
     const state = useGlassesStore.getState()
     return deriveDisplayState({
-      otaStatus: state.otaStatus,
-      otaProgress: state.otaProgress,
+      otaStatus: this.otaStatusForAttempt(state.otaStatus),
+      otaProgress: this.otaProgressForAttempt(state.otaProgress),
       connected: isGlassesConnected(state.connection),
       errorMsg: this.errorMsg,
       sawReconnectEdge: this.sawReconnectEdge,
@@ -1474,8 +1580,8 @@ class OtaInstallCoordinator {
       // errorMsg outranks them in the projection, and retry()/last-write-wins reset them).
       this.clearLegacyApkSettleTimer()
       this.clearMtkSimulationTimers()
-      this.setErrorMsg(OtaProgressMessages.globalTimeout)
-    }, globalTimeoutMs)
+      this.setErrorMsg(OtaProgressMessages.globalTimeout, "session_timeout")
+    }, Math.max(0, (this.otaStartOwnership?.deadlineAt ?? Date.now() + globalTimeoutMs) - Date.now()))
   }
 
   private armStuckWatchdogOnly(): void {
@@ -1497,7 +1603,7 @@ class OtaInstallCoordinator {
       if (pct !== 0) return
       console.log(`[OTA_PROGRESS] watchdog: stuck at 0% for ${stuckTimeoutMs}ms, failing`)
       this.clearRetryTimeout()
-      this.setErrorMsg(OtaProgressMessages.stalledOrStuck)
+      this.setErrorMsg(OtaProgressMessages.stalledOrStuck, "download_stuck")
     }, stuckTimeoutMs)
   }
 
@@ -1536,14 +1642,21 @@ class OtaInstallCoordinator {
     if (existingOwnership?.outcome === "rejected" && !this.prepareFreshOtaStartAttempt()) {
       return Promise.resolve()
     }
-    this.maybeStartGlobalTimeout()
-    if (this.selectedTransport === "wifi" || this.hotspotManifestUrl) this.maybeArmStuckWatchdog()
-
+    // Capability is cleared on link loss before version_info returns. Preserve
+    // hotspot selection for these paired glasses; the device boundary resets it.
+    if (useGlassesStore.getState().hotspotOtaVersion === 1) this.selectedTransport = "hotspot"
     const ownership: OtaStartOwnership = {
       outcome: "pending",
       promise: Promise.resolve(),
+      deadlineAt:
+        Date.now() +
+        (this.versionChangeSession || this.isLegacySessionShapeNow()
+          ? LEGACY_GLOBAL_OTA_TIMEOUT_MS
+          : GLOBAL_OTA_TIMEOUT_MS),
     }
     this.otaStartOwnership = ownership
+    this.maybeStartGlobalTimeout()
+    if (this.selectedTransport === "wifi" || this.hotspotManifestUrl) this.maybeArmStuckWatchdog()
     ownership.promise = this.performOtaStart(ownership)
     return ownership.promise
   }
@@ -1558,7 +1671,20 @@ class OtaInstallCoordinator {
       if (this.selectedTransport === "hotspot") {
         if (!this.hotspotManifestUrl) {
           if (!this.preparedCheckResult) {
-            throw new Error("No selected OTA check is available for hotspot staging")
+            const result = await checkCurrentGlassesForUpdate()
+            if (!isCurrentAttempt()) return
+            if (!result.hasCheckCompleted || !result.updateAvailable || !result.manifestBody) {
+              throw new Error("No selected OTA check is available for hotspot staging")
+            }
+            this.preparedCheckResult = result
+            this.initializeCheckedInstall(result.updateInfo)
+            // The recovery check can reveal a downgrade after the start attempt
+            // was created. Give that detour its full bounded recovery deadline.
+            if (this.versionChangeSession) {
+              ownership.deadlineAt = Date.now() + LEGACY_GLOBAL_OTA_TIMEOUT_MS
+              this.clearGlobalTimeout()
+              this.maybeStartGlobalTimeout()
+            }
           }
           const manifestUrl = await hotspotOtaTransport.prepare(this.preparedCheckResult, (progress) => {
             if (!isCurrentAttempt()) return
@@ -1596,9 +1722,13 @@ class OtaInstallCoordinator {
       if (this.selectedTransport === "hotspot" && !nativeStartAttempted) {
         ownership.outcome = "rejected"
         this.clearStuckTimeout()
+        this.reportFailure("hotspot_preflight_failed", err instanceof OtaArtifactError ? err.failure : undefined)
         await this.teardownHotspotTransport()
         if (!isCurrentAttempt()) return
-        if (this.attached) this.setErrorMsg(hotspotPreflightErrorMessage(err))
+        if (this.attached) {
+          const copyKey = phoneOtaErrorCopyKey(err)
+          this.setErrorMsg(OTA_ERROR_ENGLISH_COPY[copyKey], undefined, copyKey)
+        }
         return
       }
 
@@ -1640,7 +1770,7 @@ class OtaInstallCoordinator {
         }, retryIntervalMs)
       } else {
         console.log("[OTA_PROGRESS] sendOtaStart failed after max retries, failing session")
-        this.setErrorMsg(OtaProgressMessages.sendOtaStartFailed)
+        this.setErrorMsg(OtaProgressMessages.sendOtaStartFailed, "start_failed")
       }
     }
   }
@@ -1681,8 +1811,10 @@ class OtaInstallCoordinator {
       // leftover, not a reply — a NEW legacy event would have cleared this timer
       // through the reaction pass. Only a unified reply suppresses the fallback.
       const legacySession = this.isLegacySessionShapeNow()
-      if (!legacySession && hasRecoveringOtaReply(state.otaStatus, state.otaProgress)) return
-      const explicitIdle = state.otaStatus?.status === "idle"
+      const otaStatus = this.otaStatusForAttempt(state.otaStatus)
+      const otaProgress = this.otaProgressForAttempt(state.otaProgress)
+      if (!legacySession && hasRecoveringOtaReply(otaStatus, otaProgress)) return
+      const explicitIdle = otaStatus?.status === "idle"
       const rejectedStart = this.otaStartOwnership?.outcome === "rejected"
       if (!legacySession && !explicitIdle && !rejectedStart) {
         console.log(

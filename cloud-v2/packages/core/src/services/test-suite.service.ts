@@ -1,3 +1,4 @@
+import {verifiedFrameworkRunSummaryProjection} from './framework-run-summary.service';
 import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunIdSchema, recordedFrameworkRunSchema} from "../types/framework-run.types";
 import type {PipelineStage} from "mongoose";
 import {createLogger} from "@mentra/cloud-shared";
@@ -89,6 +90,7 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
       ...("dispatchIntent" in receipt && receipt.dispatchIntent ? {dispatchIntent: receipt.dispatchIntent} : {}),
       ...(input?.routineSource ? {routineSource: input.routineSource} : {}), ...(build ? {build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
       publicationComplete: receipt.publicationComplete,
+      ...(receipt.evidenceStatus ? {evidenceStatus: receipt.evidenceStatus} : {}),
       ...(unavailableReason ? {unavailableReason} : {}),
       ...(receipt.runId ? {runId: receipt.runId, startedAt: receipt.runStartedAt, finishedAt: receipt.runFinishedAt} : {})};
   });
@@ -185,6 +187,7 @@ const compactNightlyMember = {
   hostId: "$$member.hostId", binding: "$$member.binding", portable: {$ne: [{$ifNull: ["$$member.selection", null]}, null]}, laneId: {$ifNull: ["$$member.dispatchIntent.laneId", "$$member.input.laneId"]},
   unavailableReason: "$$member.unavailableReason", rejectedAt: "$$member.rejectedAt",
   preparedLaneId: "$$member.input.laneId", status: "$$member.status", publicationComplete: "$$member.publicationComplete",
+  evidenceStatus: "$$member.evidenceStatus",
   runId: "$$member.runId", runStartedAt: "$$member.runStartedAt", runFinishedAt: "$$member.runFinishedAt",
   build: {$let: {vars: {build: {$ifNull: ["$$member.build", "$$member.input.build"]}},
     in: {$cond: [{$eq: [{$ifNull: ["$$build", null]}, null]}, "$$REMOVE",
@@ -201,7 +204,7 @@ export const suiteHistoryProjection: PipelineStage.Project = {$project: {suiteId
 interface CompactNightlyMember {
   memberId: string; requestId: string; routineId: string; platform: string; definitionRevision: string; routineRevision?: string;
   hostId?: string; laneId?: string; portable?: boolean; binding?: NightlyPlan["members"][number]["binding"]; preparedLaneId?: string; build?: {repository?: string; channel?: string; headSha?: string; prNumber?: number};
-  status?: string; publicationComplete?: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string; unavailableReason?: string; rejectedAt?: string;
+  status?: string; publicationComplete?: boolean; evidenceStatus?: 'complete' | 'failed'; runId?: string; runStartedAt?: string; runFinishedAt?: string; unavailableReason?: string; rejectedAt?: string;
 }
 interface CompactNightlyReceipt {suiteId: string; occurrenceId: string; startedAt: string; trigger: string;
   finishedAt?: string; expectedCount?: number; members: CompactNightlyMember[]}
@@ -238,6 +241,8 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
       || !expected.portable && expected.laneId !== receipt.laneId || receipt.preparedLaneId && receipt.preparedLaneId !== (expected.portable ? receipt.binding?.laneId : expected.laneId)
       || !["pass", "failed", "setup-failed", "teardown-failed", "cancelled", "incomplete", "not-run", ...(!result.finishedAt ? ["waiting"] : [])].includes(receipt.status ?? "")
       || typeof receipt.publicationComplete !== "boolean"
+      || receipt.evidenceStatus !== undefined && !['complete', 'failed'].includes(receipt.evidenceStatus)
+      || receipt.publicationComplete && receipt.evidenceStatus === 'failed'
       || ["pass", "failed", "setup-failed", "teardown-failed", "cancelled"].includes(receipt.status ?? "") && !receipt.runId
       || receipt.runId && (!expected.build || !(expected.portable ? receipt.binding?.hostId : expected.hostId) || !(expected.portable ? receipt.binding?.laneId : expected.laneId))
       || expected.portable && receipt.binding && (!routineJobBindingSchema.safeParse(receipt.binding).success || receipt.binding.jobId !== expected.requestId || receipt.binding.requestId !== expected.requestId
@@ -250,7 +255,7 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
       observedAt: result.finishedAt, unassigned: !!expected!.portable && !receipt!.binding && !receipt!.hostId
         && !receipt!.runId && ["incomplete", "not-run"].includes(receipt!.status!)});
     return {...member, requestId: expected!.requestId, status: receipt!.status === "incomplete" ? "not-run" : receipt!.status!,
-      publicationComplete: receipt!.publicationComplete, ...(unavailableReason ? {unavailableReason} : {}),
+      publicationComplete: receipt!.publicationComplete, ...(receipt!.evidenceStatus ? {evidenceStatus: receipt!.evidenceStatus} : {}), ...(unavailableReason ? {unavailableReason} : {}),
       ...(receipt!.rejectedAt ? {rejectedAt: receipt!.rejectedAt} : {}), ...((receipt!.hostId ?? expected!.hostId) ? {hostId: receipt!.hostId ?? expected!.hostId} : {}),
       ...((receipt!.laneId ?? expected!.laneId) ? {laneId: receipt!.laneId ?? expected!.laneId} : {}),
       ...(receipt!.runId ? {runId: receipt!.runId, startedAt: receipt!.runStartedAt, finishedAt: receipt!.runFinishedAt} : {})};
@@ -263,7 +268,7 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
 }
 
 const SUITE_SUMMARY_BATCH_SIZE = 5;
-const SUITE_SUMMARY_CONCURRENCY = 5;
+const SUITE_SUMMARY_CONCURRENCY = 10;
 
 export class TestSuiteService {
   constructor(private readonly lanes: Pick<LaneRestorationService, "overview"> = new LaneRestorationService()) {}
@@ -296,17 +301,18 @@ export class TestSuiteService {
     const rows: SummaryRow[] = [];
     // Large nightly receipts make one page-sized response exceed the history deadline.
     // Bound both response size and concurrency while retaining the same projection and deadline.
-    const windowSize = SUITE_SUMMARY_BATCH_SIZE * SUITE_SUMMARY_CONCURRENCY;
-    for (let offset = 0; offset < suiteIds.length; offset += windowSize) {
-      const window = suiteIds.slice(offset, offset + windowSize);
-      const batches = await Promise.all(Array.from({length: Math.ceil(window.length / SUITE_SUMMARY_BATCH_SIZE)}, (_, index) => {
-        const ids = window.slice(index * SUITE_SUMMARY_BATCH_SIZE, (index + 1) * SUITE_SUMMARY_BATCH_SIZE);
-        return TestSuiteModel.aggregate<SummaryRow>([
+    const batches = Array.from({length: Math.ceil(suiteIds.length / SUITE_SUMMARY_BATCH_SIZE)}, (_, index) =>
+      suiteIds.slice(index * SUITE_SUMMARY_BATCH_SIZE, (index + 1) * SUITE_SUMMARY_BATCH_SIZE));
+    let nextBatch = 0;
+    await Promise.all(Array.from({length: Math.min(SUITE_SUMMARY_CONCURRENCY, batches.length)}, async () => {
+      while (nextBatch < batches.length) {
+        const ids = batches[nextBatch++]!;
+        const batch = await TestSuiteModel.aggregate<SummaryRow>([
           {$match: {suiteId: {$in: ids}}}, {$limit: ids.length + 1}, suiteHistoryProjection,
         ]).read("primary").readConcern("majority").option(remaining()).exec();
-      }));
-      rows.push(...batches.flat());
-    }
+        rows.push(...batch);
+      }
+    }));
     if (rows.length > suiteIds.length || new Set(rows.map(row => row.suiteId)).size !== rows.length)
       throw new TestRunError(503, "Suite identity is ambiguous");
     const membersToRead = (row: typeof rows[number]) => {
@@ -475,18 +481,16 @@ export class TestSuiteService {
       return nightlySuiteProjection(suite, plan, result);
     }
     const rows = await TestRunModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])}})
-      .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
+      .select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
     if (rows.length > 200) throw new TestRunError(503, "suite result history exceeds the query bound; no verdict available");
-    const runs: SuiteRun[] = rows.map(row => {
-      const framework = recordedFrameworkRunSchema.safeParse(row.payload);
-      if (!framework.success) throw new TestRunError(503, "Suite member is not a valid framework result");
-      const run = framework.data;
-      return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform, definitionRevision: run.definitionRevision,
-        hostId: run.hostId, laneId: run.laneId,
+    const runs: SuiteRun[] = await Promise.all(rows.map(async row => {
+      const projection = verifiedFrameworkRunSummaryProjection(row), run = projection.summary;
+      return {runId: run.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform,
+        definitionRevision: projection.definitionRevision, hostId: run.hostId, laneId: run.laneId,
         channel: run.build.channel, provenance: {headSha: run.build.headSha},
-        startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
-        publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run)};
-    });
+        startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: run.outcome,
+        publicationComplete: row.uploadsComplete === true && run.evidenceStatus === 'complete', evidenceStatus: run.evidenceStatus};
+    }));
     const requests = await boundSuiteRequests(suite.members.flatMap(member => member.requestId ? [member.requestId] : []));
     const rejections = suiteRejections(requests);
     return withRequestLanes(summarizeSuite(suite, runs, row.finishedAt ?? undefined, rejections), requests);

@@ -3,11 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Shared React workspace screens (picker, members, invitations, credentials, settings, audit) for the workspace portal, the admin portal and the Developer Console.",
+  "description": "Shared React workspace screens (picker, members, invitations, credentials, settings, audit), and the workspace portal's shell and controls, for the workspace portal, the admin portal and the Developer Console.",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./mentra.css": "./styles/mentra.css"
+    "./mentra.css": "./styles/mentra.css",
+    "./test-dom": "./src/test-dom.tsx"
   },
   "sideEffects": ["*.css"],
   "scripts": {
@@ -29,8 +30,10 @@
     "react-dom": "^19"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^21.0.4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "happy-dom": "^21.0.4",
     "typescript": "^5.7.0"
   }
 }

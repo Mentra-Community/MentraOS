@@ -75,7 +75,7 @@ test('authoring intake retains typed operations and rejects missing, duplicate o
     resources: [
       {kind: 'app', capabilities: ['relaunch']},
       {kind: 'recorder', capabilities: []},
-      {kind: 'phone', capabilities: ['bluetooth-toggle', 'dialogs', 'trace']},
+      {kind: 'phone', capabilities: ['bluetooth-toggle', 'dialogs', 'trace', 'backend-connectivity']},
       {kind: 'glasses', capabilities: ['glasses-ble', 'connection', 'software']},
     ],
   }
@@ -96,6 +96,21 @@ test('authoring intake retains typed operations and rejects missing, duplicate o
     {kind: 'app', capabilities: []}, {kind: 'recorder', capabilities: []},
   ]}}
   assert.deepEqual(parseRoutineWorkBrief(body(mac), 'edit'), mac)
+})
+
+test('create/edit intake preserves Quiet room on existing recorders and rejects other kinds or duplicate capabilities', () => {
+  for (const kind of ['create', 'edit']) for (const platform of ['mac', 'android']) {
+    const resources = ['app', 'recorder', ...(platform === 'android' ? ['phone'] : [])].map(kind => ({kind, capabilities: []}))
+    const request = {...input, kind, requirements: {...input.requirements, platform, resources}}
+    const replace = resource => ({...request, requirements: {...request.requirements,
+      resources: resources.some(value => value.kind === resource.kind)
+        ? resources.map(value => value.kind === resource.kind ? resource : value) : [...resources, resource]}})
+    const recorder = {kind: 'recorder', capabilities: ['quiet-room']}
+    assert.deepEqual(parseRoutineWorkBrief(body(replace(recorder)), kind).requirements.resources.find(value => value.kind === 'recorder'), recorder)
+    assert.throws(() => parseRoutineWorkBrief(body(replace({...recorder, capabilities: ['quiet-room', 'quiet-room']})), kind), /resource requirements/)
+    for (const resourceKind of ['app', 'phone', 'glasses', 'audio', 'browser', 'network', 'fixture-data', 'workspace', 'quiet-room'])
+      assert.throws(() => parseRoutineWorkBrief(body(replace({kind: resourceKind, capabilities: ['quiet-room']})), kind), /resource requirements/)
+  }
 })
 
 test('authoring accepts declared audio recognition and refuses playback or recognition on another resource', () => {

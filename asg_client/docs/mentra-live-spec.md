@@ -75,7 +75,17 @@ For some outbound commands, `B` is a JSON object serialized as a string inside t
 - `asg_client` exposes phone-facing commands and responses through the BLE command protocol.
 - The phone is the user's primary UI for setup, WiFi configuration, gallery sync, app routing, and settings.
 - Button/touch events are forwarded to the phone so apps can react even when the glasses also perform local actions.
-- Secure owner-exclusive pairing is release-gated on both the Mentra App and BES and defaults off for Mentra 3.1. When enabled, three power-button presses enter pairing mode. ASG speaks “Connect to your Mentra Live in the app. Your code is:” plus the four-character code as one WAV, repeated by BES every 30 seconds, and speaks “Pairing mode ended.” when BES reports the window closing.
+- Secure owner-exclusive pairing is enabled for Mentra 3.3 (OS-2055) by the BES build flag `MENTRA_SECURE_PAIRING`. The Mentra App has no flag: it follows each unit's secure-pairing advertisement, so glasses without it keep the legacy flow. The BES source of truth is `docs/pairing-spec.md` in `mentra-live-bes`.
+  - Three power-button presses enter pairing mode, but only after MTK readiness (the first valid MTK→BES UART frame). Earlier presses play "not ready". Short press (battery readout) and the ~2 s power-off are unchanged.
+  - Glasses with no bonded phone enter pairing mode automatically once per boot when MTK becomes ready. A bonded phone that is merely absent never triggers this.
+  - Pairing mode is one 120 s window (up to 30 s longer only while another phone is mid-pairing). Triple-press again cancels it; a single press repeats the code. Entering pairing mode forgets nothing. Bonds change only when a new phone's pairing completes: the new phone becomes the sole owner, the previous owner's BLE entries and its older Classic records are removed, and any open link from the previous phone is closed. Timeout and cancel leave every bond untouched. Outside pairing mode only the owner connects. Media is never wiped by pairing or ownership change. The firmware contract is in `docs/pairing-spec.md` ("Ownership transfer v4") in `mentra-live-bes`.
+  - Ownership transfer defaults on in firmware (`MENTRA_OWNERSHIP_TRANSFER=1`) and has no separate app flag or confirm screen. Set the firmware flag to 0 for the forget-on-entry image.
+  - ASG speaks “Connect to your Mentra Live in the app. Your code is:” plus the four-character code as one WAV, once per pairing entry. A single press while pairing mode is open speaks it again. When BES reports the window closing, ASG speaks “Pairing mode ended. No new phone paired.” for a timeout and “Pairing cancelled.” for a cancel. A successful pair says only “Mentra connected.”
+  - Upgrading from flag-off firmware keeps the existing owner. An iPhone that only has a Classic bond attaches its BLE identity once while its Classic link is up, with no re-pair.
+  - The phone that owned the glasses when pairing mode opens shows a one-time popup ("Your glasses are in pairing mode", "Press the power button 3 times to exit.") and pauses automatic reconnect for the window. After a timeout or cancel it reconnects on its own. If another phone took over, it shows only a **Pair Again** button on Home.
+  - Button gestures can be injected for tests with `adb shell am broadcast -a com.mentra.BES_BUTTON -p com.mentra.asg_client --es gesture <single|double|triple|long>` (protected by `android.permission.DUMP`, so only adb or privileged holders can send it).
+  - In 3.3 the BLE bond completes, and BES CTKD is compiled in (`CTKD_ENABLE ?= 1`). After `GAPC_PAIRING_SUCCEED`, `clac_linkKey` in `nvrecord_ble.c` derives a Classic link key and stores it under the peer's BLE address via `ddbif_add_record`. That is not one-step iOS pairing. The Mentra App still shows Pair Audio (Open Settings) if Classic profiles are not detected within an 8 s settle window. The BES write-up is `docs/pairing-spec.md` in `mentra-live-bes`.
+  - The Mentra App is adding a visible "Connecting audio" state and a three-state audio readiness model (Classic profiles connected, audio routed to the glasses, and the legacy combined flag). An opt-in iOS transport-bridging connect option (`CBConnectPeripheralOptionEnableTransportBridgingKey`) is default off pending a test. Firmware key re-keying is not being done unless a baseline trace proves the CTKD key is stored under the wrong address. H1 (iOS not initiating Classic), H2 (key stored or associated wrongly), and H3 (the app misdetects Classic) are TBD (pending Run A/Run B trace). Production BES builds are gating LTK, IRK, and link-key `DUMP8` logging off behind `MENTRA_KEY_LOG`.
 
 ### Camera capture
 
@@ -282,10 +292,17 @@ Camera and streaming features must leave LEDs in a safe state on stop, error, se
 - Touch/swipe events are forwarded to the phone as status or input events.
 - Power-button short press can trigger battery-level audio feedback.
 - Power-button hold/graceful shutdown should finalize active recordings before powering down to avoid corrupt media.
-- Automated device setup can explicitly disable BES's unworn auto power-off using
-  `disable_unworn_auto_power_off`. ASG waits for the current UART session's persisted-switch
-  acknowledgment and exposes a correlated result for either phone platform's shared setup.
-  This command has no app UI, retry, reset, or firmware update side effects.
+
+The Bluetooth SDK can independently enable or disable the stock action for
+`single_tap`, `double_tap`, `triple_tap`, `long_press`, `forward_swipe`,
+`backward_swipe`, `up_swipe`, and `down_swipe`. Disabling a gesture suppresses its
+stock media/volume and feedback actions on BES while retaining input events for
+the phone and factory diagnostics. The direct BES `cs_tpdef` command requires a
+correlated `sr_tpdef` settings acknowledgement before the caller reports success.
+BES 26.10.16.0 or newer supports this contract; older firmware times out rather
+than acknowledging suppression. Overrides are RAM-only, default to all enabled,
+and reset on BLE disconnect or reboot. Apps reapply desired overrides after
+reconnecting; existing global control switches still apply to enabled gestures.
 
 ### WiFi and hotspot management
 
@@ -293,7 +310,7 @@ The phone can configure WiFi behavior through `asg_client`. Mentra Live-specific
 
 The phone can request saved SSIDs with a correlated request/response and can ask the glasses to forget a network. Modern commands require the complete `protocolVersion: 1`, nonempty `requestId`, and current process `sid` tuple. Partial, malformed, and future versions are rejected before a backend read or mutation. Legacy forget commands omit all three fields. Native SDKs negotiate from `version_info_1` under one bounded request deadline; modern operations never fall back to `wifi_status`. Legacy requests resolve immediately as `legacy_unverified` once an active native transport accepts dispatch, without waiting for a link-state change. K900's current vendor API only dispatches an asynchronous SystemUI broadcast: its correlated forget outcome is `dispatched`, not verified credential removal. The current WiFi link snapshot is included separately because Android may propagate disconnection later. K900 saved-network enumeration is explicitly unsupported until the vendor API exposes a response path; do not substitute the potentially empty/stale framework configured-network list.
 
-When the phone requests the Mentra Live hotspot, `asg_client` starts the K900 firmware hotspot through the SmartXY `ap_start` intent. It waits for the AP gateway and firmware-configured SSID/password before returning them to the phone over BLE. Clients must use the latest BLE status rather than assume fixed credentials. The hotspot remains active while the local HTTP server is receiving requests or streaming response data, or while a hotspot-local stream owns an active session. Stream activity is refreshed locally, independently of phone/cloud heartbeats. It automatically stops after 120 seconds without any of those activity signals.
+When the phone requests the Mentra Live hotspot, `asg_client` starts the K900 firmware hotspot through the SmartXY `ap_start` intent. It waits for the AP gateway and firmware-configured SSID/password before returning them to the phone over BLE. SystemUI owns the AP across ASG APK replacement. An already ready hotspot is adopted without restarting it. Before a fresh startup, the K900 manager explicitly stops the previous vendor AP and waits for native disabled state and no AP gateway before enabling the radio and sending one start command, all within the existing 12-second startup deadline. A stop request always reaches that manager even if the restarted ASG process remembers no active hotspot; it cancels pending startup callbacks. Saved station networks stay paused through AP stop/restart reconciliation and are restored on terminal stop or failure. Once an APK downgrade has staged and verified all bytes, the service's existing network manager stops and waits for native AP-disabled state and no gateway before handing ownership to recovery's destructive uninstall/install. This wait uses the existing hotspot deadline and refuses the handoff if native cleanup fails. The same network owner refuses new hotspot starts from preparation until destructive replacement, or until a definitive pre-handoff failure or authenticated idle recovery status releases that admission. A fresh service network owner restores that admission from the existing pending downgrade transaction before command consumers bind, including after process death; authenticated idle releases it. An already accepted recovery transaction is only observed, never stopped again. Hotspot listener notifications run outside the K900 lifecycle lock so service cleanup cannot deadlock against them. Each event contains one immutable enablement/SSID/password/gateway snapshot; the service consumes that event without rereading mutable credentials, and queued stopped events follow any already delivering ready event. Clients must use the latest BLE status rather than assume fixed credentials. The hotspot remains active while the local HTTP server is receiving requests or streaming response data, or while a hotspot-local stream owns an active session. Stream activity is refreshed locally, independently of phone/cloud heartbeats. It automatically stops after 120 seconds without any of those activity signals.
 
 ### OTA and updates
 
@@ -336,6 +353,10 @@ The supported-source invariant must continue to hold when the floor increases. E
 floor overrides used by tests do not change this release policy.
 
 Update flows must preserve device recoverability, report progress where possible, and avoid interrupting active media operations without cleanup.
+BES artifact downloads publish received bytes and throttled progress to the phone on both
+Wi-Fi and phone-served hotspot paths, including when Content-Length is unknown. Download
+completion waits for integrity verification and remains an in-flight state until install
+progress arrives; only BES install completion can establish an expected restart.
 
 An `ota_query_status` with `include_activity: true` and a bounded `request_id`
 also records a read-only activity snapshot in local diagnostics. It identifies
@@ -437,6 +458,12 @@ restart signal. On observing it, the phone re-runs its readiness flow (`phone_re
 without the field get the phone's legacy behavior; the field first appearing right after
 an update from such a build is itself treated as a restart (that transition is the
 upgrade OTA completing).
+
+### Readiness exchange
+
+Each `phone_ready` carries a `readyId` that names one readiness exchange. The phone repeats the same `readyId` on every retry until a matching `glasses_ready` arrives. It starts a new exchange for a new BLE session, and when an `asg_client` restart calls for one.
+
+`asg_client` resets the phone transport once per exchange and echoes the `readyId` in `glasses_ready`. Copies the BES buffered while MTK booted, and retries after a lost reply, are answered without another reset. The phone acts only on the answer to the exchange it is waiting on, plus answers from a different `sid`. A phone that omits `readyId` gets a transport reset and a fresh answer for every `phone_ready`.
 
 ### Camera button photo flow
 

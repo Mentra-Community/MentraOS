@@ -96,6 +96,12 @@ media tools, starting at the failed step's `recordingLocation.startOffsetMs`.
 Keep personal transcript/audio, raw logs and recordings local; quote only needed
 redacted excerpts.
 
+Command diagnostics may be grouped in lossless JSON bundles. The helper verifies
+and extracts these automatically to `diagnostic-bundle-<sha256>/`; its
+`manifest.json` maps original asset IDs/paths to the extracted files, sizes and
+digests. Search those files rather than trying to interpret base64. Setup
+snapshots, failure screenshots and Mac action journals remain separate assets.
+
 4. If the exact definition is missing or an assertion/helper needs explanation,
    use the existing `gh` login to read `run.routineSource.repository`, `.commit`
    and declared files at that commit. For published definitions, start with
@@ -114,6 +120,44 @@ IDs from a release name. Compare current source only after explaining the
 recorded revision. If a relevant `rep_...` incident is linked, standalone
 investigators use [investigate-incident](../investigate-incident/SKILL.md) with the
 same environment/token; assigned agents use their scoped case diagnostics.
+
+## Inspect permission stalls before another attempt
+
+For a permission/preflight timeout, system-sheet refusal or unexplained blocked UI,
+first open both the app screenshot and the full-desktop failure screenshot,
+alongside the app accessibility tree and available system-alert observation. In
+the helper's `detail.json`, match `failureScreens[]` by `phase`/`actionId` and
+fetch its `assetId` (app) and `desktopAssetId` (desktop) with `--asset`. Check the
+current result envelope if the projection is absent; do not guess an asset ID.
+The raw worker journal separately names `desktopScreenshot`,
+`desktopScreenshotObservedAt` and `desktopCaptureError`; use that verified journal
+for timing or capture errors, not as the Admin asset association. The desktop
+image can show a macOS dialog omitted from the app-only screenshot and tree.
+A missing or refused capture is an evidence gap, never proof that no prompt exists.
+Inspect existing captures before asking a human for a photo.
+
+A passing driver `doctor` checks automation access, not every Mentra App grant.
+Worker permissions and Mentra App permissions are separate and belong to the exact
+host, executable/signing identity and app instance. An enabled settings switch or
+another host's success does not prove the currently blocked operation can finish.
+Use the existing read-only system-alert API when the recorded framework provides
+it; distinguish an observed prompt, confirmed absence and an unknown or ambiguous
+read. Do not query the helper's permission status and attribute it to Mentra.
+
+When a current prompt needs human input, immediately state the machine, exact
+observed dialog/app, button or settings action, capture time/link and blocked
+operation. Report what is actually visible; an unknown-alert error alone is not
+an actionable diagnosis. If the original capture is stale, coordinate a fresh
+read-only desktop and system observation with the lane's current owner. Keep
+other lanes moving while that input is pending, and forecast likely remaining
+permission boundaries when the user asks whether they can leave.
+
+After a grant, inspect the current screen and verify the actual blocked operation
+through its owning API/session before claiming recovery. Preserve the original
+failure and normal teardown. Do not blindly repeat product or firmware inputs,
+click a generic Allow, bypass an automation rejection through another tool, or
+edit TCC state. A visible prompt can explain a blocked operation, but it does not
+prove every failure in that run had the same cause.
 
 ## Explain the finding and its source
 

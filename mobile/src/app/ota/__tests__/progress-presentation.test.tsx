@@ -56,6 +56,42 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks())
 const flow = () => <MentraLiveOtaFlow onFinished={jest.fn()} onOpenWifiSetup={jest.fn()} />
 
+test.each([
+  ["ota:errorPhoneInternet", "Your phone could not connect to the internet. Check its connection and try again."],
+  ["ota:errorPhoneDownload", "The update could not be downloaded to your phone. Please try again."],
+  ["ota:errorPhoneStorage", "There is not enough space on your phone for the update. Free up space and try again."],
+  ["ota:errorInstallFailed", "The update could not be installed on your glasses. Please try again."],
+  ["ota:errorGeneric", "Something went wrong. Please try again."],
+])("renders plain failure copy for %s without a technical code", (copyKey, message) => {
+  state = {
+    ...baseState,
+    screen: "failed",
+    canRetry: true,
+    error: {code: "install_failed", message, copyKey, glassesCode: "private_native_code"},
+  }
+  const screen = render(flow())
+  expect(screen.getByText(message)).toBeDefined()
+  expect(screen.queryByTestId("ota-error-code")).toBeNull()
+  expect(screen.queryByText("private_native_code")).toBeNull()
+})
+
+test("uses the host translation for a classified phone failure", () => {
+  state = {
+    ...baseState,
+    screen: "failed",
+    error: {code: "install_failed", message: "English fallback", copyKey: "ota:errorPhoneDownload"},
+  }
+  const screen = render(
+    <MentraLiveOtaFlow
+      onFinished={jest.fn()}
+      onOpenWifiSetup={jest.fn()}
+      translate={(key) => (key === "ota:errorPhoneDownload" ? "Translated download failure" : key)}
+    />,
+  )
+  expect(screen.getByText("Translated download failure")).toBeDefined()
+  expect(screen.queryByText("English fallback")).toBeNull()
+})
+
 test("identifies each phone download when its percentage starts over", () => {
   state.hotspotArtifact = {kind: "apk", index: 0, totalCount: 3}
   const screen = render(flow())
@@ -127,16 +163,16 @@ test("keeps the direct Wi-Fi download label", () => {
 })
 
 test.each(["starting", "preparing_hotspot", "updating", "restarting", "verifying", "complete", "failed"] as const)(
-  "exposes the selected transport during %s without deriving it from current Wi-Fi state",
+  "omits the transport header during %s for either transport",
   (screenName) => {
     state = {...state, screen: screenName, transport: "hotspot", wifiConnected: true}
     const screen = render(flow())
-    expect(screen.getByTestId("ota.transport.hotspot").props.accessibilityLabel).toBe("Using glasses hotspot")
+    expect(screen.queryByText("Using glasses hotspot")).toBeNull()
     expect(screen.queryByTestId("ota.transport.wifi")).toBeNull()
 
     state = {...state, transport: "wifi", wifiConnected: false}
     screen.rerender(flow())
-    expect(screen.getByTestId("ota.transport.wifi").props.accessibilityLabel).toBe("Using Wi-Fi")
+    expect(screen.queryByText("Using Wi-Fi")).toBeNull()
     expect(screen.queryByTestId("ota.transport.hotspot")).toBeNull()
   },
 )

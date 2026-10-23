@@ -3,8 +3,8 @@ import {z} from "zod";
 import {createLogger} from "@mentra/cloud-shared";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {testWriteConcern} from "../models/test-write-concern";
-import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
-import type {RoutineEnrollment} from "../types/routine-definition.types";
+import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
+import {routineResourceKindSchema, type RoutineEnrollment} from "../types/routine-definition.types";
 import {routineDispatchIntentSchema, type RoutineDispatchIntent} from "../types/routine-dispatch.types";
 import {GithubRoutineSourceGateway} from "./routine-source-selection.service";
 import {selectedBuildInput, type TestBuild, type TestBuildPlatform} from "../types/test-build.types";
@@ -14,8 +14,8 @@ import {GithubTestBuildGateway, TestDispatchError} from "./test-builds.service";
 import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest} from "./test-request.service";
 import {FrameworkResultService} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
-import {portableRoutineSelectionSchema, routineJobBindingSchema, routinePublicationFailureSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
-import {RoutineJobService} from "./routine-job.service";
+import {portableRoutineSelectionSchema, routineJobBindingSchema, routineJobPreparationSchema, routinePublicationFailureSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
+import {RoutineJobService, routineJobInputDigest} from "./routine-job.service";
 import {NIGHTLY_COMPLETION_BOUNDARY_REASON, nightlyUnassignedReason} from "./nightly-deadline-reason";
 
 export const nightlyOccurrenceSchema = z.object({occurrenceId: frameworkIdentitySchema,
@@ -24,6 +24,7 @@ type Occurrence = z.infer<typeof nightlyOccurrenceSchema>;
 const nightlyCancellationSchema = z.object({requestedAt: z.string().datetime({offset: true}), reason: z.string().min(1).max(2000)}).strict();
 export type NightlyCancellation = z.infer<typeof nightlyCancellationSchema>;
 type RequestInput = z.infer<typeof frameworkRequestInputSchema>;
+type RoutineResourceKind = z.infer<typeof routineResourceKindSchema>;
 export interface NightlySelectionError {stage: "build" | "host" | "admission"; status?: number; message: string}
 type PlatformSelection = {build?: TestBuild; errors: NightlySelectionError[]};
 const logger = createLogger("core").child({service: "nightly-routine"});
@@ -43,7 +44,7 @@ export interface NightlyPlanRepository {
   requestCancellation(suiteId: string, cancellation: NightlyCancellation): Promise<NightlyCancellation>;
 }
 export interface NightlyResult {occurrenceId: string; suiteId: string; startedAt: string; trigger: Occurrence["trigger"];
-  members: (NightlyMember & {input?: RequestInput; inputSha256?: string; status: string; publicationComplete: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string})[];
+  members: (NightlyMember & {input?: RequestInput; inputSha256?: string; requiredResourceKinds?: RoutineResourceKind[]; assignmentEvidence?: 'invalid'; status: string; publicationComplete: boolean; evidenceStatus?: 'complete' | 'failed'; runId?: string; runStartedAt?: string; runFinishedAt?: string})[];
   expectedCount: number; passed: number; status: string; resultUrl?: string; finishedAt?: string; cancellation?: NightlyCancellation}
 export const nightlyPlanRepository: NightlyPlanRepository = {
   async get(suiteId) {
@@ -92,10 +93,25 @@ export function nightlyPreparedInput(member: NightlyMember, value: unknown, dige
     || input.data.platform !== intent.platform || input.data.definitionRevision !== intent.routineRevision
     || member.dispatchIntent && input.data.laneId !== member.dispatchIntent.laneId
     || member.binding && input.data.laneId !== member.binding.laneId || input.data.minimumFrameworkVersion !== intent.minimumFrameworkVersion
-    || requestInputDigest(input.data.build) !== requestInputDigest(intent.build)
+    || requestInputDigest(input.data.build) !== requestInputDigest(frameworkExecutableBuild(intent.build, input.data.glassesModel))
     || intent.routineSource && requestInputDigest(input.data.routineSource) !== requestInputDigest(intent.routineSource))
     throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
   return input.data;
+}
+
+/** Never-bound context comes only from the original digest-checked preparation. */
+export function nightlyRequiredResourceKinds(member: NightlyMember, job: StoredRoutineJob): RoutineResourceKind[] | undefined {
+  try {
+    const prepared = routineJobPreparationSchema.safeParse(job.fleetPreparation);
+    if (!prepared.success || !member.selection || job.requestId !== member.requestId || job.fleetBinding ||
+      requestInputDigest(job.fleetSelection) !== requestInputDigest(member.selection) ||
+      job.fleetSelectionSha256 !== requestInputDigest(member.selection) || routineJobInputDigest(job) !== job.fleetInputSha256 ||
+      requestInputDigest(prepared.data.definition) !== prepared.data.definitionSha256 ||
+      prepared.data.requirements.platform !== member.platform || prepared.data.definition.id !== member.routineId ||
+      prepared.data.routineSource.commit !== member.routineRevision || prepared.data.definition.source.revision !== member.routineRevision ||
+      member.selection.routineSource && requestInputDigest(prepared.data.routineSource) !== requestInputDigest(member.selection.routineSource)) return undefined;
+    return prepared.data.requirements.resources.map(resource => resource.kind);
+  } catch {return undefined;}
 }
 
 /** One immutable occurrence selects the catalog once; host controllers own execution and resource allocation. */
@@ -156,7 +172,7 @@ export class NightlyRoutineService {
     const catalog = (await this.catalog.list()).filter(row => row.nightlyEnabled !== false)
       .map(row => ({routineId: row.routineId, platform: row.platform}));
     if (catalog.length > 100) throw new TestRunError(503, "Nightly catalog exceeds the occurrence bound; no members were selected");
-    const routineRevision = catalog.length ? await this.sources.resolve() : undefined;
+    const routineRevision = catalog.length ? await this.sources.resolve(undefined, occurrence.startedAt) : undefined;
     const platforms = [...new Set(catalog.map(row => row.platform))].sort();
     const selected = new Map<TestBuildPlatform, PlatformSelection>();
     let anchor: TestBuild | null = null;
@@ -279,7 +295,9 @@ export class NightlyRoutineService {
           return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Request identity differs from the frozen selection."};
         if (!job.fleetBinding) {
           const recordedWaitingReason = job.preparation?.reason ?? job.fleetDispatch?.error;
+          const requiredResourceKinds = nightlyRequiredResourceKinds(member, job);
           return {...member, status: job.fleetCancellation ? "incomplete" : "waiting", publicationComplete: false,
+            ...(requiredResourceKinds ? {requiredResourceKinds} : {}),
             unavailableReason: nightlyUnassignedReason({reason: job.fleetCancellation?.reason ?? recordedWaitingReason
               ?? (job.state === "awaiting-source" ? "Awaiting exact routine source preparation." : "Awaiting compatible runner."),
               startedAt: plan.startedAt, observedAt: job.fleetCancellation?.requestedAt, unassigned: true, recordedWaitingReason})};
@@ -287,11 +305,11 @@ export class NightlyRoutineService {
         const binding = routineJobBindingSchema.safeParse(job.fleetBinding), intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
         if (!binding.success || !intent.success || binding.data.jobId !== member.requestId || binding.data.requestId !== member.requestId || request.hostId !== binding.data.hostId || intent.data.laneId !== binding.data.laneId
           || request.dispatchIntentSha256 !== requestInputDigest(intent.data) || job.fleetPreparation && requestInputDigest(intent.data.routineSource) !== requestInputDigest(job.fleetPreparation.routineSource))
-          return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Bound request identity differs from its assignment."};
+          return {...member, assignmentEvidence: 'invalid', status: "incomplete", publicationComplete: false, unavailableReason: "Bound request identity differs from its assignment."};
         const {laneId: _lane, routineSource: _source, ...boundSelection} = intent.data;
         const {routineSource: selectedSource, ...expectedSelection} = member.selection;
         if (requestInputDigest(boundSelection) !== requestInputDigest(expectedSelection) || selectedSource && requestInputDigest(_source) !== requestInputDigest(selectedSource))
-          return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Bound request source differs from the frozen selection."};
+          return {...member, assignmentEvidence: 'invalid', status: "incomplete", publicationComplete: false, unavailableReason: "Bound request source differs from the frozen selection."};
         boundMember = {...member, hostId: binding.data.hostId, binding: binding.data, dispatchIntent: intent.data};
       } else if (request.requestId !== member.requestId || request.hostId !== member.hostId || request.dispatchIntentSha256 !== requestInputDigest(member.dispatchIntent)
         || !request.dispatchIntent || requestInputDigest(request.dispatchIntent) !== request.dispatchIntentSha256)
@@ -311,7 +329,7 @@ export class NightlyRoutineService {
           || !run.routineSource || requestInputDigest(run.routineSource) !== requestInputDigest(input.routineSource))
           return {...prepared, status: "incomplete", publicationComplete: false, unavailableReason: "Result identity differs from the frozen request."};
         if (result.uploadsComplete) settledUploads.add(member.requestId);
-        return {...prepared, status: result.outcome, publicationComplete: result.uploadsComplete && result.evidenceStatus === "complete",
+        return {...prepared, status: result.outcome, publicationComplete: result.uploadsComplete && result.evidenceStatus === "complete", evidenceStatus: result.evidenceStatus,
           runId: run.runId, runStartedAt: run.startedAt, runFinishedAt: run.finishedAt};
       } catch (error) {
         if (!(error instanceof TestRunError) || error.status !== 404) return {...this.unavailableEvidence(boundMember, error, "Result"), input, inputSha256: request.inputSha256};

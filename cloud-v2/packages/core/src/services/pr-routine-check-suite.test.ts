@@ -1,5 +1,6 @@
 import {afterEach, expect, spyOn, test} from 'bun:test'
 import {TestSuiteModel} from '../models/test-suite.model'
+import {createRecordedFrameworkRunSummaryProjection} from './framework-run-summary.service'
 import {TestRunModel} from '../models/test-run.model'
 import {TestRequestModel} from '../models/test-request.model'
 import {PrRoutineCheckService, prRoutineGateId} from './pr-routine-check.service'
@@ -11,16 +12,20 @@ import {requestInputDigest} from './test-request.service'
 import {testRoutineSource} from '../testing/framework-fixtures'
 import type {PrRoutineCheckRepository} from './pr-routine-check.repository'
 import type {PrRoutineCheckRow, PrRoutineContext} from '../types/pr-routine-check.types'
+import {PrRerunReferenceService} from './pr-rerun-reference.service'
+import {matchesLabelReference} from '../types/pr-rerun-label.types'
 
 const mocks: Array<{mockRestore(): void}> = []
 afterEach(() => {for (const mock of mocks.splice(0)) mock.mockRestore()})
 const query = (read: () => unknown) => ({select() {return this}, limit() {return this}, read() {return this}, readConcern() {return this}, setOptions() {return this}, async lean() {return structuredClone(read())}})
 
 function fixture() {
-  let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, available = true, lostRerunCommit = false, failedAdmission: string | undefined
+  let labelActor = "operator", labelEvent = 1, mayWrite = true
+  let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, available = true, buildRunId = 44, lostRerunCommit = false, lostPreviewCheckpoint = false, failedAdmission: string | undefined
   const gates = new Map<string, PrRoutineCheckRow>(), suites = new Map<string, any>(), requests = new Map<string, any>(), runs = new Map<string, any>(), reruns = new Map<string, RerunRecord>(), claims = new Set<string>()
-  const submitted: string[] = [], cancelled: string[] = []
-  const context: PrRoutineContext = {number: 12, headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'dev', open: true, sameRepository: true, labels: ['routine:one', 'routine:two'], peers: [12]}
+  const submitted: string[] = [], cancelled: string[] = [], followUpCalls: Array<{requestId:string;actor:string;pr:unknown}> = []
+  let failFollowUp=false
+  const context: PrRoutineContext = {number: 12, headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'dev', open: true, sameRepository: true, labels: ['routine:one', 'routine:two'], peers: [12], labelActors: {}}
   const ids = (filter: any) => filter.requestId?.$in ?? []
   mocks.push(spyOn(TestSuiteModel, 'findOne').mockImplementation((filter: any) => query(() => suites.get(filter.suiteId) ?? null) as any))
   mocks.push(spyOn(TestSuiteModel, 'create').mockImplementation((async (rows: any[]) => {const row = rows[0]; if (suites.has(row.suiteId)) throw Object.assign(Error('duplicate'), {code: 11000}); suites.set(row.suiteId, structuredClone(row)); return rows}) as any))
@@ -36,7 +41,7 @@ function fixture() {
   const rows: PrRoutineCheckRepository = {
     async get(id) {return structuredClone(gates.get(id) ?? null)}, async insert(payload, nextAt) {if (!gates.has(payload.gateId)) gates.set(payload.gateId, {gateId: payload.gateId, revision: 0, payload: structuredClone(payload), nextAt})},
     async claim(id) {const row = gates.get(id); if (!row || row.lease) return null; row.lease = {id: String(++lease), expiresAt: new Date(now + 120000)}; return structuredClone(row)},
-    async save(row, payload, nextAt) {const old = gates.get(row.gateId)!; if (old.revision !== row.revision || old.lease?.id !== row.lease?.id) return false; if (lostRerunCommit && payload.attempt.rerun?.groups?.some(group => group.previewDigest)) {lostRerunCommit=false; delete old.lease; return false}; gates.set(row.gateId, {gateId: row.gateId, revision: row.revision + 1, payload: structuredClone(payload), ...(nextAt ? {nextAt} : {})}); return true},
+    async save(row, payload, nextAt) {const old = gates.get(row.gateId)!; if (old.revision !== row.revision || old.lease?.id !== row.lease?.id) return false; if (lostRerunCommit && payload.attempt.members.some(member => member.requestId?.startsWith('rerun-') && member.status === 'running')) {lostRerunCommit=false; delete old.lease; return false}; if (lostPreviewCheckpoint && payload.attempt.members.some(member => member.requestId?.startsWith('rerun-') && !requests.has(member.requestId))) {lostPreviewCheckpoint=false; delete old.lease; return false}; gates.set(row.gateId, {gateId: row.gateId, revision: row.revision + 1, payload: structuredClone(payload), ...(nextAt ? {nextAt} : {})}); return true},
     async wake(id,date) {const row=gates.get(id); if(row && (!row.nextAt||row.nextAt>date)) row.nextAt=date},
     async due(date) {return [...gates.values()].filter(row => row.nextAt && row.nextAt <= date).map(row => row.gateId)}, async predecessors() {return []}, async eventsDue() {return []}, async event() {}, async eventSettled() {},
   }
@@ -44,7 +49,7 @@ function fixture() {
   const store: RerunRepository = {
     async get(id) {return structuredClone(reruns.get(id) ?? null)}, async insert(row) {if (reruns.has(row.rerunId)) throw Object.assign(Error('duplicate'), {code: 11000}); reruns.set(row.rerunId, structuredClone(row))},
     async accept(id, digest, keys, acceptedAt) {const row = reruns.get(id)!; if (row.state === 'accepted') return null; if (keys.some(key => claims.has(key))) throw Object.assign(Error('claimed'), {code: 11000}); keys.forEach(key => claims.add(key)); row.state = 'accepted'; row.acceptedAt = acceptedAt; return structuredClone(row)},
-    async history(root, before, limit) {return [...reruns.values()].filter(row => row.state === 'accepted' && row.plan.members.some(member => member.rootKey === root && member.attemptNumber < before)).sort((a,b) => b.plan.members.find(member => member.rootKey === root)!.attemptNumber - a.plan.members.find(member => member.rootKey === root)!.attemptNumber).slice(0,limit).map(row => structuredClone(row))},
+    async latest(roots:string[]){return [...reruns.values()].filter(row=>row.state==='accepted'&&row.plan.members.some(member=>roots.includes(member.rootKey))).map(row=>structuredClone(row))},async history(root, before, limit) {return [...reruns.values()].filter(row => row.state === 'accepted' && row.plan.members.some(member => member.rootKey === root && member.attemptNumber < before)).sort((a,b) => b.plan.members.find(member => member.rootKey === root)!.attemptNumber - a.plan.members.find(member => member.rootKey === root)!.attemptNumber).slice(0,limit).map(row => structuredClone(row))},
     async children() {return []}, async byRequest(id) {return [...reruns.values()].find(row => row.state === 'accepted' && row.plan.members.some(member => member.requestId === id)) ?? null},
   }
   const jobs = {
@@ -55,18 +60,20 @@ function fixture() {
   }
   const suite = new TestSuiteService(), results = {async summary(id: string) {const run=runs.get(id)?.payload; if(!run) throw new TestRunError(404, 'no published result'); return {...run,runId:id,outcome:run.result.test==='passed'?'pass':'failed',uploadsComplete:true,evidenceStatus:'complete'}}}, requestReader = {async get(id: string) {return requests.get(id) ?? null}}
   const rerun = new TestRerunService(store, suite, jobs as any, requestReader as any, results as any, () => now)
-  const createService = () => new PrRoutineCheckService(rows, {async context() {return structuredClone(context)}, async permission() {return true}, async ownedCheck() {return true}, async findCheck() {return 99}, async deliver() {return 99}, async producer() {return undefined}, async requestBuild() {}}, jobs as any,
+  const references = new PrRerunReferenceService({async suites(ref) {return [...suites.keys()].filter(id => matchesLabelReference(ref, id))},
+    async requests(ref) {return [...requests.keys()].filter(id => matchesLabelReference(ref, id))}}, rerun)
+  const createService = () => new PrRoutineCheckService(rows, {async context() {return {...structuredClone(context),labelActors:Object.fromEntries(context.labels.filter(label=>label.startsWith('rerun:')).map(label=>[label,labelActor])),labelEvents:Object.fromEntries(context.labels.filter(label=>label.startsWith('rerun:')).map(label=>[label,labelEvent]))}}, async permission() {return mayWrite}, async ownedCheck() {return true}, async findCheck() {return 99}, async deliver() {return 99}, async producer() {return undefined}, async requestBuild() {}}, jobs as any,
     {async catalog(revision) {return {routineRevision: revision!, routines: ['one','two'].map(routineId => ({routineId, platforms: ['android']}))}}},
     {async getExact(id: string) {const definition = {id, title: id, steps: [{id: 'observe', instruction: 'Observe'}], platforms: ['android']}; return {definition, definitionSha256: requestInputDigest(definition)} as any}},
-    {async inventory() {return available ? [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}] as any : []}}, requestReader as any, results as any, suite, rerun, {async get() {return null}}, () => now, {async resolve() {return 'a'.repeat(40)}})
+    {async inventory() {return available ? [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId, publicationAttempt: 1}}] as any : []}}, requestReader as any, results as any, suite, rerun, {async get() {return null}}, () => now, {async resolve() {return 'a'.repeat(40)}}, references,{async attach(requestId,pr,actor){followUpCalls.push({requestId,pr,actor});if(failFollowUp)throw Error('case archive unavailable');return{caseId:'mfc_'+'1'.repeat(64)}}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
-  return {get service() {return service}, restart() {service=createService()}, loseRerunCommit() {lostRerunCommit=true}, failedAdmission(value?: string) {failedAdmission=value}, reruns, suite, rerun, requests, submitted, cancelled, suites, context, gate: () => gates.get(gateId)!.payload, advance(ms: number) {now += ms}, available(value: boolean) {available = value},
+  return {followUpCalls,failFollowUp(value:boolean){failFollowUp=value},authority(actor: string, event: number, write: boolean) {labelActor=actor;labelEvent=event;mayWrite=write}, get service() {return service}, restart() {service=createService()}, references, loseRerunCommit() {lostRerunCommit=true}, losePreviewCheckpoint() {lostPreviewCheckpoint=true}, failedAdmission(value?: string) {failedAdmission=value}, reruns, suite, rerun, requests, submitted, cancelled, suites, context, gate: () => gates.get(gateId)!.payload, advance(ms: number) {now += ms}, available(value: boolean) {available = value}, buildRun(value: number) {buildRunId = value},
     async start() {await service.intake(12,'event','c'.repeat(64)); for (let i=0;i<6;i++) {now+=30000; await service.tick()}},
     async drain(count=3) {for (let i=0;i<count;i++) {now+=30000; await service.tick()}},
     control(deliveryId: string) {const gate = gates.get(gateId)!.payload; return {deliveryId, digest: 'c'.repeat(64), gateId, checkId: 99, externalId: gate.checkExternalId, headSha: context.headSha, kind: 'rerun' as const, actor: 'operator'}},
-    publishPass(id: string) {const request=requests.get(id), selection=request.fleetSelection, timestamp=new Date(now).toISOString(); runs.set(id,{uploadsComplete:true,payload:{schemaVersion:1,hostId:request.hostId,requestId:id,routineId:selection.routineId,routineSource:selection.routineSource,definitionRevision:selection.routineRevision,platform:selection.platform,laneId:'android',build:selection.build,startedAt:timestamp,finishedAt:timestamp,assets:[],result:{runId:id,finishedAt:timestamp,setup:{status:'passed'},test:'passed',steps:[{id:'observe',status:'passed',durationMs:1}],teardown:{ready:true,outcomes:[],errors:[],unavailableResources:[]},failures:[],evidence:[],timing:{startedAt:timestamp,setupMs:0,testMs:1,teardownMs:0}}}}); request.state='terminal';request.terminalStatus='pass';request.dispatchCompletion={disposition:'clean'}},
-    publishFailed(id: string) {this.publishPass(id); const run=runs.get(id)!.payload; run.result.test='failed'; run.result.steps[0].status='failed'; run.result.failures=[{phase:'test',actionId:'observe',message:'Expected test observation absent'}]; requests.get(id)!.terminalStatus='failed'},
+    publishPass(id: string) {const request=requests.get(id), selection=request.fleetSelection, timestamp=new Date(now).toISOString(); runs.set(id,{uploadsComplete:true,payload:{schemaVersion:1,hostId:request.hostId,requestId:id,routineId:selection.routineId,routineSource:selection.routineSource,definitionRevision:selection.routineRevision,platform:selection.platform,laneId:'android',build:selection.build,startedAt:timestamp,finishedAt:timestamp,assets:[],result:{runId:id,finishedAt:timestamp,setup:{status:'passed'},test:'passed',steps:[{id:'observe',status:'passed',durationMs:1}],teardown:{ready:true,outcomes:[],errors:[],unavailableResources:[]},failures:[],evidence:[],timing:{startedAt:timestamp,setupMs:0,testMs:1,teardownMs:0}}}}); const row=runs.get(id),payload=row.payload,payloadSha256=requestInputDigest(payload); Object.assign(row,{runId:id,requestId:id,build:payload.build,payloadSha256,summaryProjection:createRecordedFrameworkRunSummaryProjection(payload,payloadSha256)}); request.state='terminal';request.terminalStatus='pass';request.dispatchCompletion={disposition:'clean'}},
+    publishFailed(id: string) {this.publishPass(id); const run=runs.get(id)!.payload; run.result.test='failed'; run.result.steps[0].status='failed'; run.result.failures=[{phase:'test',actionId:'observe',message:'Expected test observation absent'}]; const row=runs.get(id),payloadSha256=requestInputDigest(run);Object.assign(row,{payloadSha256,summaryProjection:createRecordedFrameworkRunSummaryProjection(run,payloadSha256)});requests.get(id)!.terminalStatus='failed'},
     settle() {for (const request of requests.values()) {request.state='terminal'; request.terminalStatus='cancelled'; request.dispatchCompletion={disposition:'clean'}}},
   }
 }
@@ -144,9 +151,9 @@ test('cancelled waiting-build coverage uses ordinary completed suite records wit
 
 test('restart after actual linked acceptance reuses the accepted plan and exact child IDs when the gate commit was lost', async () => {
   const f=fixture(); await f.start(); f.settle(); await f.drain();
-  await f.service.control(f.control('restart-rerun')); f.loseRerunCommit(); await f.drain(1);
+  await f.service.control(f.control('restart-rerun')); f.loseRerunCommit(); await f.drain(3);
   const accepted=[...f.reruns.values()].find(row=>row.state==='accepted')!; const children=accepted.plan.members.map(member=>member.requestId);
-  expect(children.every(id=>f.requests.has(id))).toBe(true); expect(f.gate().attempt.rerun!.groups).toBeUndefined();
+  expect(children.every(id=>f.requests.has(id))).toBe(true); expect(f.gate().attempt.rerun!.groups![0]!.previewDigest).toBeDefined();
   f.restart(); await f.drain(3);
   expect(f.reruns.size).toBe(1); expect(f.gate().attempt.members.map(member=>member.requestId).sort()).toEqual(children.sort());
   expect(new Set(f.submitted.filter(id=>id.startsWith('rerun-'))).size).toBe(2);
@@ -158,9 +165,9 @@ test('a positively expired unaccepted ordinary preview renews after restart with
   for (const lostCommit of [false,true]) {
     const f=fixture(); await f.start(); f.settle(); await f.drain(); await f.service.control(f.control(`preview-crash-${lostCommit}`));
     const deadline=f.gate().attempt.deadline; const submit=spyOn(f.rerun,'submit').mockRejectedValue(new TestRunError(503,'Process stopped before submit')); mocks.push(submit);
-    if (lostCommit) f.loseRerunCommit(); await f.drain(1); submit.mockRestore();
+    await f.drain(1); if (lostCommit) f.losePreviewCheckpoint(); await f.drain(1); submit.mockRestore();
     const original=[...f.reruns.values()][0]!; expect(original.state).toBe('preview'); expect(f.requests.size).toBe(2);
-    f.advance(11*60000); f.restart(); await f.drain(4);
+    f.advance(11*60000); f.restart(); await f.drain(5);
     expect(f.reruns.get(original.rerunId)!.state).toBe('preview'); expect([...f.reruns.values()].filter(row=>row.state==='accepted')).toHaveLength(1);
     expect(f.gate().attempt.deadline).toBe(deadline); expect(f.gate().attempt.members.every(member=>member.status==='running')).toBe(true);
     expect(new Set(f.submitted.filter(id=>id.startsWith('rerun-'))).size).toBe(2);
@@ -172,7 +179,7 @@ test('partial ordinary linked admission resumes the failed member without replac
   const submit=spyOn(f.rerun,'submit'); submit.mockImplementation(async input=>{
     const row=f.reruns.get((input as {rerunId:string}).rerunId)!; f.failedAdmission(row.plan.members[1]!.requestId);
     submit.mockRestore(); return f.rerun.submit(input);
-  }); mocks.push(submit); await f.drain(1);
+  }); mocks.push(submit); await f.drain(3);
   const accepted=[...f.reruns.values()][0]!; expect(accepted.state).toBe('accepted'); expect(f.gate().attempt.members.filter(member=>member.status==='running')).toHaveLength(1);
   f.failedAdmission(); f.restart(); await f.drain(3);
   expect(f.reruns.size).toBe(1); expect(f.gate().attempt.members.every(member=>member.status==='running')).toBe(true);
@@ -196,7 +203,7 @@ test('unavailable suite-group preview does not suppress an independent request-p
   const originalPreview=f.rerun.preview.bind(f.rerun), preview=spyOn(f.rerun,'preview').mockImplementation(async(input,actor)=>{
     if ('suiteId' in (input as {parent:object}).parent) throw new TestRunError(503,'Suite history temporarily unavailable');
     return originalPreview(input,actor);
-  }); mocks.push(preview); await f.drain(1);
+  }); mocks.push(preview); await f.drain(3);
   expect(f.gate().attempt.members[1]!.requestId).toMatch(/^rerun-/); expect(f.gate().attempt.members[1]!.status).toBe('running');
   expect(f.gate().attempt.conclusion).toBeUndefined(); expect(f.gate().attempt.rerun!.groups).toHaveLength(2);
   preview.mockRestore(); await f.drain(3); expect(f.gate().attempt.members.every(member=>member.status==='running')).toBe(true);
@@ -208,7 +215,7 @@ test('cancelled accepted rerun fences a child whose ordinary admission failed be
   const submit=spyOn(f.rerun,'submit').mockImplementation(async input=>{
     const row=f.reruns.get((input as {rerunId:string}).rerunId)!; f.failedAdmission(row.plan.members[1]!.requestId);
     submit.mockRestore(); return f.rerun.submit(input);
-  }); mocks.push(submit); await f.drain(1);
+  }); mocks.push(submit); await f.drain(3);
   const accepted=[...f.reruns.values()][0]!, absent=accepted.plan.members[1]!.requestId;
   expect(f.requests.has(absent)).toBe(false);
   await f.service.cancelFromAdmin(f.gate().gateId,{operationId:'00000000-0000-4000-8000-000000000002',coverageGeneration:1,attemptGeneration:2},'admin:operator');
@@ -221,7 +228,7 @@ test('cancelled accepted rerun fences a child whose ordinary admission failed be
 
 test('cancellation fences a retained unaccepted preview before its later submit can claim and admit jobs', async () => {
   const f=fixture(); await f.start(); f.settle(); await f.drain(); await f.service.control(f.control('cancel-retained-preview'));
-  const submit=spyOn(f.rerun,'submit').mockRejectedValue(new TestRunError(503,'Stopped before acceptance')); mocks.push(submit); await f.drain(1); submit.mockRestore();
+  const submit=spyOn(f.rerun,'submit').mockRejectedValue(new TestRunError(503,'Stopped before acceptance')); mocks.push(submit); await f.drain(2); submit.mockRestore();
   const preview=[...f.reruns.values()][0]!; expect(preview.state).toBe('preview'); expect(f.gate().attempt.members.every(member=>!f.requests.has(member.requestId!))).toBe(true);
   await f.service.cancelFromAdmin(f.gate().gateId,{operationId:'00000000-0000-4000-8000-000000000002',coverageGeneration:1,attemptGeneration:2},'admin:operator'); await f.drain();
   expect(f.gate().attempt.conclusion).toBe('cancelled'); expect(preview.plan.members.every(member=>f.requests.get(member.requestId)?.fleetCancellation)).toBe(true);
@@ -236,4 +243,144 @@ test('cancel immediately after native rerun acceptance retains the predecessor o
  expect(f.gate().attempt.deadline).not.toBe(f.requests.get(originalIds[0]!)!.fleetDeadline.toISOString());
  await f.service.cancelFromAdmin(f.gate().gateId,{operationId:'00000000-0000-4000-8000-000000000002',coverageGeneration:1,attemptGeneration:2},'admin:operator'); await f.drain();
  expect(f.gate().attempt.conclusion).toBe('cancelled'); expect(f.reruns.size).toBe(0); expect(f.requests.size).toBe(2);
+})
+
+test('tagged suite rerun becomes the existing check and preserves original source and verdict across restart', async () => {
+ const f=fixture();await f.start();const originalIds=f.gate().attempt.members.map(member=>member.requestId!);
+ for (const id of originalIds) f.publishFailed(id);await f.drain();const originalSuite=f.gate().attempt.suiteId!;
+ const label=(await f.references.copy('one','s',originalSuite)).label;
+ f.context.labels=[label];await f.service.intake(12,'tagged-suite','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId, structuredClone(f.context));await f.drain(5);
+ const member=f.gate().attempt.members[0]!;
+ expect(member.followUp).toEqual({caseId:'mfc_'+'1'.repeat(64)});expect(f.followUpCalls[0]).toEqual({requestId:originalIds[0],pr:{repository:'Mentra-Community/MentraOS',number:12},actor:'operator'});
+ expect(member.linkedTarget).toMatchObject({parent:{suiteId:originalSuite},memberId:'one.android'});
+ expect(member.selection!.routineRevision).toBe('a'.repeat(40));expect(member.selection!.source.channel).toBe('pr');
+ expect(member.requestId).toMatch(/^rerun-/);expect(f.gate().attempt.suiteId).toBeUndefined();
+ const accepted=member.requestId!;f.restart();await f.drain(2);expect(f.gate().attempt.members[0]!.requestId).toBe(accepted);
+ expect(new Set(f.submitted.filter(id=>id===accepted)).size).toBe(1);
+ f.publishPass(accepted);await f.drain();expect(f.gate().attempt.conclusion).toBe('success');
+ expect((await f.suite.detail(originalSuite)).members.map(member=>member.status)).toEqual(['failed','failed']);
+ await f.service.control(f.control('tagged-rerun-control'));await f.drain();
+ const next=f.gate().attempt.members[0]!.requestId!;expect(next).not.toBe(accepted);expect(f.gate().attempt.members[0]!.selection!.build).toEqual(member.selection!.build);
+})
+
+test('native tagged rerun freezes a rebuilt exact-head artifact while preserving the failed attempt and delivery identity', async () => {
+ const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain();
+ const originalSuite=f.gate().attempt.suiteId!;
+ f.context.labels=[(await f.references.copy('one','s',originalSuite)).label];
+ await f.service.intake(12,'rebuilt-tagged','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId);await f.drain(6);
+ const failed=structuredClone(f.gate().attempt.members[0]!);expect(failed.selection!.source.buildRunId).toBe(44);
+ f.publishFailed(failed.requestId!);await f.drain();expect(f.gate().attempt.conclusion).toBe('failure');
+ f.buildRun(45);const control=f.control('rebuilt-tagged-retry');await f.service.control(control);await f.drain(5);
+ const retry=structuredClone(f.gate().attempt.members[0]!);
+ expect(retry.requestId).not.toBe(failed.requestId);expect(retry.selection!.source.buildRunId).toBe(45);
+ expect(f.requests.get(retry.requestId!).fleetSelection.build.source.buildRunId).toBe(45);
+ expect(f.gate().retired.at(-1)!.members[0]!.selection).toEqual(failed.selection);
+ expect(f.gate().retired.at(-1)!.conclusion).toBe('failure');
+ f.buildRun(46);f.restart();await f.service.control(control);await f.drain(3);
+ expect(f.gate().attempt.generation).toBe(2);expect(f.gate().attempt.members[0]!.selection).toEqual(retry.selection);
+ expect(new Set(f.submitted.filter(id=>id===retry.requestId)).size).toBe(1);
+ expect((await f.suite.detail(originalSuite)).members.map(member=>member.status)).toEqual(['failed','failed']);
+})
+
+test('individual successor label stays in its original suite and outside reruns cannot qualify or be cancelled', async () => {
+ const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain();
+ const originalSuite=f.gate().attempt.suiteId!;const first=await f.rerun.preview({rerunId:'outside-initial',parent:{suiteId:originalSuite},selection:{memberIds:['one.android']},reason:'Manual verification'},'employee');
+ await f.rerun.submit({rerunId:first.rerunId,previewDigest:first.previewDigest});const earlier=first.plan.members[0]!.requestId;f.publishFailed(earlier);
+ f.context.labels=[(await f.references.copy('one','r',earlier)).label];await f.service.intake(12,'tagged-individual','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId, structuredClone(f.context));await f.drain(5);
+ const owned=f.gate().attempt.members[0]!.requestId!;expect(f.gate().attempt.members[0]!.linkedTarget!.parent).toEqual({suiteId:originalSuite});
+ f.publishFailed(owned);await f.drain();const outside=await f.rerun.preview({rerunId:'outside-later',parent:{suiteId:originalSuite},selection:{memberIds:['one.android']},reason:'Other employee'},'employee');
+ await f.rerun.submit({rerunId:outside.rerunId,previewDigest:outside.previewDigest});const foreign=outside.plan.members[0]!.requestId;f.publishPass(foreign);
+ await f.drain();expect(f.gate().attempt.conclusion).toBe('failure');expect(f.gate().attempt.members[0]!.requestId).toBe(owned);
+ f.gate().attempt.conclusion=undefined;await f.service.cancelFromAdmin(f.gate().gateId,{operationId:'00000000-0000-4000-8000-000000000003',coverageGeneration:2,attemptGeneration:1},'admin:operator');await f.drain();
+ expect(f.cancelled).not.toContain(foreign);expect(f.cancelled).not.toContain(earlier);
+})
+
+
+test('native rerun of mixed tagged results preserves the passing request and admits only the failed member', async () => {
+ const f=fixture(); await f.start(); for (const member of f.gate().attempt.members) f.publishFailed(member.requestId!); await f.drain();
+ const originalSuite=f.gate().attempt.suiteId!;
+ f.context.labels=await Promise.all(['one','two'].map(async routineId=>(await f.references.copy(routineId,'s',originalSuite)).label));
+ await f.service.intake(12,'mixed-tags','d'.repeat(64),structuredClone(f.context)); await f.service.reconcile(f.gate().gateId); await f.drain(6);
+ const passed=f.gate().attempt.members.find(member=>member.routineId==='one')!.requestId!, failed=f.gate().attempt.members.find(member=>member.routineId==='two')!.requestId!;
+ f.publishPass(passed); f.publishFailed(failed); await f.drain();
+ const originalDeadline=f.requests.get(passed).fleetDeadline.toISOString(), before=f.submitted.filter(id=>id===passed).length;
+ f.buildRun(45);
+ await f.service.control(f.control('mixed-tagged-retry')); await f.drain(5);
+ expect(f.gate().attempt.members.find(member=>member.routineId==='one')!.requestId).toBe(passed);
+ expect(f.submitted.filter(id=>id===passed)).toHaveLength(before);
+ expect(f.requests.get(passed).fleetDeadline.toISOString()).toBe(originalDeadline);
+ expect(f.gate().attempt.members.find(member=>member.routineId==='one')!.selection!.source.buildRunId).toBe(44);
+ expect(f.gate().attempt.members.find(member=>member.routineId==='two')!.selection!.source.buildRunId).toBe(45);
+ const retry=f.gate().attempt.members.find(member=>member.routineId==='two')!.requestId!;
+ expect(retry).not.toBe(failed); f.publishPass(retry); await f.drain(); expect(f.gate().attempt.conclusion).toBe('success');
+});
+
+test('lost tagged preview checkpoint admits no job and immediate cancellation leaves no running child', async () => {
+ const f=fixture(); await f.start(); for (const member of f.gate().attempt.members) f.publishFailed(member.requestId!); await f.drain();
+ f.context.labels=[(await f.references.copy('one','s',f.gate().attempt.suiteId!)).label];
+ await f.service.intake(12,'lost-tagged-preview','d'.repeat(64),structuredClone(f.context)); await f.service.reconcile(f.gate().gateId); await f.drain(2);
+ f.losePreviewCheckpoint(); await f.drain(1);
+ const preview=[...f.reruns.values()].find(row=>row.plan.rerunId.startsWith('pr-linked-'))!;
+ expect(preview.state).toBe('preview'); expect(preview.plan.members.every(member=>!f.requests.has(member.requestId))).toBe(true);
+ await f.service.cancelFromAdmin(f.gate().gateId,{operationId:'00000000-0000-4000-8000-000000000004',coverageGeneration:2,attemptGeneration:1},'admin:operator');
+ f.restart(); await f.drain(); expect(f.gate().attempt.conclusion).toBe('cancelled');
+ expect(preview.plan.members.every(member=>f.requests.get(member.requestId)?.fleetCancellation)).toBe(true);
+ await f.rerun.submit({rerunId:preview.rerunId,previewDigest:preview.previewDigest});
+ expect(preview.plan.members.every(member=>f.requests.get(member.requestId)?.state==='terminal')).toBe(true);
+});
+
+test('tagged submit retains durable request identity if the following check commit is lost and cancellation contains it', async () => {
+ const f=fixture(); await f.start(); for (const member of f.gate().attempt.members) f.publishFailed(member.requestId!); await f.drain();
+ f.context.labels=[(await f.references.copy('one','s',f.gate().attempt.suiteId!)).label];
+ await f.service.intake(12,'lost-tagged-submit','d'.repeat(64),structuredClone(f.context)); await f.service.reconcile(f.gate().gateId); await f.drain(3);
+ const retained=f.gate().attempt.members[0]!.requestId!; expect(retained).toMatch(/^rerun-/); expect(f.requests.has(retained)).toBe(false);
+ f.loseRerunCommit(); await f.drain(1); expect(f.requests.has(retained)).toBe(true); expect(f.gate().attempt.members[0]!.requestId).toBe(retained);
+ await f.service.cancelFromAdmin(f.gate().gateId,{operationId:'00000000-0000-4000-8000-000000000005',coverageGeneration:2,attemptGeneration:1},'admin:operator');
+ f.restart(); await f.drain(1); expect(f.cancelled).toContain(retained); expect(f.gate().attempt.conclusion).toBeUndefined();
+ f.settle(); await f.drain(); expect(f.gate().attempt.conclusion).toBe('cancelled');
+});
+
+
+test('same-label reapplication changes authority generation and cannot retain another employee approval',async()=>{
+ const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain();
+ f.context.labels=[(await f.references.copy('one','s',f.gate().attempt.suiteId!)).label];await f.service.intake(12,'authority-start','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId);await f.drain(6);
+ const accepted=f.gate().attempt.members[0]!.requestId!;f.publishPass(accepted);await f.drain();expect(f.gate().attempt.conclusion).toBe('success');
+ f.authority('triage-user',2,false);await f.service.reconcile(f.gate().gateId);await f.drain(3);
+ expect(f.gate().coverageGeneration).toBe(3);expect(f.gate().selectionError).toContain('repository writer');expect(f.gate().attempt.conclusion).toBe('failure');
+ f.authority('operator',3,true);await f.service.reconcile(f.gate().gateId);await f.drain(6);
+ expect(f.gate().coverageGeneration).toBe(4);expect(f.gate().selectionError).toBeUndefined();expect(f.gate().attempt.members[0]!.requestId).not.toBe(accepted);
+});
+
+test('lost tagged child checkpoint renews only a positively expired unaccepted preview',async()=>{
+ const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain();
+ f.context.labels=[(await f.references.copy('one','s',f.gate().attempt.suiteId!)).label];await f.service.intake(12,'expired-checkpoint','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId);await f.drain(2);
+ f.losePreviewCheckpoint();await f.drain(1);const preview=[...f.reruns.values()][0]!;expect(preview.state).toBe('preview');
+ f.advance(11*60000);f.restart();await f.drain(5);
+ expect(f.reruns.get(preview.rerunId)!.state).toBe('preview');expect([...f.reruns.values()].filter(row=>row.state==='accepted')).toHaveLength(1);
+ expect(f.gate().attempt.members[0]!.status).toBe('running');expect(f.gate().attempt.members[0]!.linkedPreview!.renewals).toBe(1);
+});
+
+test('intended-fix outage keeps the preview identity and independent jobs moving until association is recorded',async()=>{
+ const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain()
+ const suiteId=f.gate().attempt.suiteId!,original=f.gate().attempt.members[0]!.requestId!
+ f.context.labels=[(await f.references.copy('one','s',suiteId)).label,'routine:two'];f.failFollowUp(true)
+ await f.service.intake(12,'case-outage','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId);await f.drain(12)
+ const member=f.gate().attempt.members.find(row=>row.linkedTarget)!,retained=member.requestId!
+ expect(retained).toMatch(/^rerun-/);expect(f.requests.has(retained)).toBe(false)
+ expect(member.waitReason).toContain('intended fix');expect(f.gate().attempt.members.find(row=>!row.linkedTarget)?.originalRequestId).toBeDefined()
+ f.restart();f.failFollowUp(false);await f.drain(3)
+ expect(f.gate().attempt.members.find(row=>row.linkedTarget)!.requestId).toBe(retained);expect(f.requests.has(retained)).toBe(true)
+ expect(f.followUpCalls.every(row=>row.requestId===original)).toBe(true)
+})
+
+test('mixed labelled linked and ordinary coverage omits only request identity from finite selection deduplication',async()=>{
+ const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain()
+ const originalSuite=f.gate().attempt.suiteId!
+ f.context.labels=[(await f.references.copy('one','s',originalSuite)).label,'routine:one','routine:two']
+ await f.service.intake(12,'mixed-linked-ordinary','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId);await f.drain(6)
+ expect(f.gate().attempt.members).toHaveLength(2)
+ expect(f.gate().attempt.members.find(member=>member.linkedTarget)?.requestId).toMatch(/^rerun-/)
+ expect(f.gate().attempt.members.find(member=>!member.linkedTarget)?.routineId).toBe('two')
+ expect(f.gate().attempt.members.every(member=>!!member.originalRequestId&&f.requests.has(member.requestId!))).toBe(true)
+ expect(f.gate().reporting.error).toBeUndefined()
 })

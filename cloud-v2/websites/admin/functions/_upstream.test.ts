@@ -19,7 +19,7 @@ test("the relay passes Set-Cookie and a 302 Location unchanged", async () => {
   const upstream = new Response(null, {
     status: 302,
     headers: [
-      ["location", "https://ref.supabase.co/auth/v1/oauth/authorize?client_id=x"],
+      ["location", "https://account.dev.mentraglass.com/oidc/auth?client_id=x"],
       ["set-cookie", "__Host-mentra_client_tx=abc; Path=/; HttpOnly; Secure; SameSite=Lax"],
       ["set-cookie", "__Host-mentra_admin_session=def; Path=/; HttpOnly; Secure; SameSite=Lax"],
     ],
@@ -30,7 +30,7 @@ test("the relay passes Set-Cookie and a 302 Location unchanged", async () => {
     env: { CORE_URL: "https://core.test" },
   });
   expect(response.status).toBe(302);
-  expect(response.headers.get("location")).toBe("https://ref.supabase.co/auth/v1/oauth/authorize?client_id=x");
+  expect(response.headers.get("location")).toBe("https://account.dev.mentraglass.com/oidc/auth?client_id=x");
   expect(response.headers.getSetCookie()).toHaveLength(2);
 });
 

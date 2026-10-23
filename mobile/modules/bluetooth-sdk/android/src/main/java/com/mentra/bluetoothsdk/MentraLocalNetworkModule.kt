@@ -41,6 +41,30 @@ class MentraLocalNetworkModule : Module() {
         Name("MentraLocalNetwork")
         Events("downloadProgress", "networkLost")
 
+        Function("getNetworkDiagnostics") {
+            val manager = connectivityManager()
+            // Sample time marks the beginning of these sequential local OS reads.
+            val sampledAtMs = System.currentTimeMillis()
+            networkDiagnostics(
+                sampledAtMs,
+                manager.boundNetworkForProcess,
+                manager.activeNetwork,
+                synchronized(lock) { localNetwork },
+            ) { network ->
+                manager.getNetworkCapabilities(network)?.let { capabilities ->
+                    mapOf(
+                        "wifi" to capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
+                        "cellular" to capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
+                        "ethernet" to capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET),
+                        "vpn" to capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN),
+                        "internet" to capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                        "validated" to capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+                        "captivePortal" to capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL),
+                    )
+                }
+            }
+        }
+
         AsyncFunction("connect") { ssid: String, password: String, promise: Promise ->
             connect(ssid, password, promise)
         }

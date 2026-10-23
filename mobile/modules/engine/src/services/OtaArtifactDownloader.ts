@@ -1,4 +1,5 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
+import {otaArtifactFailure, type OtaArtifactFailure} from "./OtaArtifactFailure"
 import type {OtaCheckCurrentGlassesResult, VersionJson} from "./OtaUpdateCheckService"
 
 /**
@@ -45,10 +46,31 @@ export class OtaArtifactError extends Error {
   constructor(
     public readonly code: "artifact_download_failed" | "artifact_verify_failed" | "manifest_invalid",
     message: string,
+    public readonly failure?: OtaArtifactFailure,
+    cause?: unknown,
   ) {
     super(message)
     this.name = "OtaArtifactError"
+    // Native Errors may contain URLs and paths. Keep the original available locally,
+    // but only the bounded, redacted failure snapshot can enter JSON/incident evidence.
+    if (cause !== undefined) Object.defineProperty(this, "cause", {value: cause})
   }
+}
+
+function artifactPreparationError(
+  error: unknown,
+  context: Omit<OtaArtifactFailure, "category" | "nativeErrors">,
+): OtaArtifactError {
+  return new OtaArtifactError(
+    error instanceof OtaArtifactError
+      ? error.code
+      : context.stage === "verify"
+      ? "artifact_verify_failed"
+      : "artifact_download_failed",
+    error instanceof OtaArtifactError ? error.message : "Preparing the update artifact failed",
+    otaArtifactFailure(error, context),
+    error,
+  )
 }
 
 const ASG_PACKAGE = "com.mentra.asg_client"
@@ -135,7 +157,16 @@ export async function prepareArtifacts(
   ) => Promise<{statusCode: number}>,
 ): Promise<PreparedOtaArtifact[]> {
   const directory = otaArtifactsDirectory()
-  await RNFS.mkdir(directory, {NSURLIsExcludedFromBackupKey: true})
+  try {
+    await RNFS.mkdir(directory, {NSURLIsExcludedFromBackupKey: true})
+  } catch (error) {
+    throw artifactPreparationError(error, {
+      artifact: null,
+      stage: "save",
+      bytesWritten: 0,
+      contentLength: 0,
+    })
+  }
 
   const prepared: PreparedOtaArtifact[] = []
   for (let index = 0; index < plan.length; index++) {
@@ -152,19 +183,34 @@ export async function prepareArtifacts(
     })
 
     const cachedPath = `${directory}/${entry.sha256}`
-    if (await RNFS.exists(cachedPath)) {
-      const cachedHash = (await RNFS.hash(cachedPath, "sha256")).toLowerCase()
-      if (cachedHash === entry.sha256) {
-        prepared.push({...entry, filePath: cachedPath})
-        continue
+    try {
+      if (await RNFS.exists(cachedPath)) {
+        const cachedHash = (await RNFS.hash(cachedPath, "sha256")).toLowerCase()
+        if (cachedHash === entry.sha256) {
+          prepared.push({...entry, filePath: cachedPath})
+          continue
+        }
+        await safeUnlink(cachedPath)
       }
-      await safeUnlink(cachedPath)
+    } catch (error) {
+      throw artifactPreparationError(error, {
+        artifact: entry.kind,
+        stage: "verify",
+        bytesWritten: 0,
+        contentLength: 0,
+      })
     }
 
     const partPath = `${directory}/download-${index}.part`
     await safeUnlink(partPath)
+    let stage: OtaArtifactFailure["stage"] = "download"
+    let bytesWritten = 0
+    let contentLength = 0
+    let httpStatus: number | undefined
     try {
-      const reportProgress = (bytesWritten: number, contentLength: number) => {
+      const reportProgress = (written: number, length: number) => {
+        bytesWritten = written
+        contentLength = length
         onProgress?.({
           kind: entry.kind,
           index,
@@ -182,17 +228,25 @@ export async function prepareArtifacts(
             connectionTimeout: 30_000,
             readTimeout: 30_000,
             progressDivider: 5,
+            begin: (res) => {
+              httpStatus = res.statusCode
+              contentLength = res.contentLength
+            },
             progress: (res: RNFS.DownloadProgressCallbackResultT) => {
               reportProgress(res.bytesWritten, res.contentLength)
             },
           }).promise
-      if (downloadResult.statusCode !== 200) {
+      httpStatus = downloadResult.statusCode
+      // A resumed native download can finish with 206. Accept it only through
+      // the same full-file manifest SHA256 verification below.
+      if (downloadResult.statusCode !== 200 && downloadResult.statusCode !== 206) {
         throw new OtaArtifactError(
           "artifact_download_failed",
           `Download of ${entry.kind} artifact failed with HTTP ${downloadResult.statusCode}`,
         )
       }
 
+      stage = "verify"
       const actualSha256 = (await RNFS.hash(partPath, "sha256")).toLowerCase()
       if (actualSha256 !== entry.sha256) {
         throw new OtaArtifactError(
@@ -201,19 +255,14 @@ export async function prepareArtifacts(
         )
       }
 
+      stage = "save"
       const finalPath = `${directory}/${entry.sha256}`
       await safeUnlink(finalPath)
       await RNFS.moveFile(partPath, finalPath)
       prepared.push({...entry, filePath: finalPath})
     } catch (error) {
       await safeUnlink(partPath)
-      if (error instanceof OtaArtifactError) {
-        throw error
-      }
-      throw new OtaArtifactError(
-        "artifact_download_failed",
-        `Download of ${entry.kind} artifact failed: ${error instanceof Error ? error.message : String(error)}`,
-      )
+      throw artifactPreparationError(error, {artifact: entry.kind, stage, httpStatus, bytesWritten, contentLength})
     }
   }
   return prepared

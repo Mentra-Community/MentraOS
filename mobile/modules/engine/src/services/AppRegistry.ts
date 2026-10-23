@@ -41,13 +41,13 @@ import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {sha256Hex} from "../utils/sha256"
 import {
+  assertMiniappDevelopmentAllowed,
   getConfigValues,
   isDevMiniappAllowed,
   isInstalledMiniappAllowed,
   isMiniappAvailable,
   isOfflineSystemMiniappAllowed,
 } from "../runtime/bootstrap"
-import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {
   type ActivatedInstall,
   type ActivationArtifact,
@@ -152,9 +152,10 @@ interface InstalledLma {
 
 export interface MiniappReleaseIdentity {
   /**
-   * `store`: installed by a bundled Store. `system_store`: a bundled package
-   * updated by the Store the build assigns to it. `preinstalled_registry`:
-   * installed by Core's retired preinstall registry (read for existing installs).
+   * `url`: installed from the miniapp's own URL (`sourceUrl`). `store`:
+   * installed by a bundled Store. `system_store`: a bundled package updated by
+   * the Store the build assigns to it. `preinstalled_registry`: installed by
+   * Core's retired preinstall registry (read for existing installs).
    */
   source:
     | "direct_download"
@@ -162,8 +163,11 @@ export interface MiniappReleaseIdentity {
     | "preinstalled_registry"
     | "deployment_manifest"
     | "dev_snapshot"
+    | "url"
     | "store"
     | "system_store"
+  /** The miniapp URL (`url` releases): the base that serves `miniapp.json`, ending in `/`. */
+  sourceUrl?: string
   releaseId?: string
   bundleSha256?: string
   channel?: string
@@ -1562,21 +1566,27 @@ class AppRegistry {
     }
   }
 
+  /** A `dev-*` snapshot or a release a developer installed from a release QR. */
+  private isDeveloperVersion(packageName: string, version: string): boolean {
+    return version.startsWith("dev-") || this.getReleaseIdentity(packageName, version)?.source === "direct_download"
+  }
+
   public async getActiveVersion(packageName: string): Promise<string | undefined> {
     let versions = this.getInstalledVersions(packageName)
-    // A scanned build only stands in for a workspace miniapp while super mode
-    // allows it. Leaving the stored pointer alone lets turning super mode on
-    // bring that scan back; until then the released version stays on screen.
-    const devAllowed = isDevMiniappAllowed(
-      packageName,
-      useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true,
-    )
+    // A developer build only stands in while the deployment allows development.
+    // A stored dev snapshot pointer is left alone so re-allowing it brings that
+    // scan back; until then a released version stays on screen.
+    const devAllowed = isDevMiniappAllowed(packageName)
     const selectedSnapshot = devAllowed ? this.getSelectedDevSnapshot(packageName) : null
     if (selectedSnapshot) return selectedSnapshot
     // Treat MMKV as a hint, not authority. A stored version may have been
     // GC'd off disk without this pointer being updated.
     const res = storage.load<string>(`${packageName}_active_version`)
-    if (res.is_ok() && versions.includes(res.value) && (!res.value.startsWith("dev-") || devAllowed)) {
+    if (
+      res.is_ok() &&
+      versions.includes(res.value) &&
+      (devAllowed || !this.isDeveloperVersion(packageName, res.value))
+    ) {
       return res.value
     }
     // Dev versions take precedence over semver-installed versions.
@@ -1593,8 +1603,13 @@ class AppRegistry {
     versions = versions.filter((v) => semver.valid(v))
     versions.sort((a, b) => semver.rcompare(a, b))
     if (!versions.length) return undefined
-    if (!(res.is_ok() && res.value.startsWith("dev-"))) this.setActiveVersion(packageName, versions[0])
-    return versions[0]
+    // The newest release the deployment allows, e.g. a workspace's managed
+    // release over a newer release-QR or Store install that it does not.
+    const active =
+      versions.find((v) => isInstalledMiniappAllowed(packageName, v, this.getReleaseIdentity(packageName, v))) ??
+      versions[0]
+    if (!(res.is_ok() && res.value.startsWith("dev-"))) this.setActiveVersion(packageName, active)
+    return active
   }
 
   public setActiveVersion(packageName: string, version: string): Result<void, Error> {
@@ -1672,15 +1687,17 @@ class AppRegistry {
   private mergeProjectedApps(diskApps: ClientApp[], includeBackgroundOnly = false): ClientApp[] {
     const offline = this.projectOfflineApps().filter((app) => isOfflineSystemMiniappAllowed(app.packageName))
     const offlinePackages = new Set(offline.map((app) => app.packageName))
-    const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true
     const dev = this.projectDevApps().filter(
-      (app) => isDevMiniappAllowed(app.packageName, superMode) && !offlinePackages.has(app.packageName) && !this.getSelectedDevSnapshot(app.packageName),
+      (app) =>
+        isDevMiniappAllowed(app.packageName) &&
+        !offlinePackages.has(app.packageName) &&
+        !this.getSelectedDevSnapshot(app.packageName),
     )
     const devPackages = new Set(dev.map((app) => app.packageName))
     const installed = diskApps.filter(
       (app) =>
         (app.version?.startsWith("dev-")
-          ? isDevMiniappAllowed(app.packageName, superMode)
+          ? isDevMiniappAllowed(app.packageName)
           : isInstalledMiniappAllowed(
               app.packageName,
               app.version,
@@ -2126,12 +2143,14 @@ function readStoredMdnsHost(packageName: string): string | undefined {
 }
 
 /**
- * Whether live development code may run under `packageName`. A dev build is the
- * package itself, served unsigned, so it is refused while the installed package
- * carries a publisher signature; uninstalling clears that signature. Throws
- * {@link SignedMiniappDevBuildError} when refused.
+ * Whether live development code may run under `packageName`. The deployment
+ * must allow miniapp development. A dev build is the package itself, served
+ * unsigned, so it is also refused while the installed package carries a
+ * publisher signature (throwing {@link SignedMiniappDevBuildError});
+ * uninstalling clears that signature.
  */
 export function assertDevBuildAllowed(packageName: string): void {
+  assertMiniappDevelopmentAllowed()
   assertUnsignedDevBuildAllowed({
     packageName,
     installedFingerprint: appRegistry.getPublisherKeyFingerprint(packageName),

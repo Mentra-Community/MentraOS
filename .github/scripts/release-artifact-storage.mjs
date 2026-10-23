@@ -237,7 +237,7 @@ export async function sha256File(file) {
   return hash.digest("hex")
 }
 
-export async function downloadAsset(repository, asset, file) {
+export async function downloadAsset(repository, asset, file, {store} = {}) {
   await mkdir(path.dirname(path.resolve(file)), {recursive: true})
   const temporary = `${file}.${randomUUID()}.part`
   try {
@@ -246,9 +246,29 @@ export async function downloadAsset(repository, asset, file) {
       if (!key.startsWith(`${repository}/releases/`) || key.split("/").some((part) => part === ".." || part === ".")) {
         throw new Error("R2 asset belongs to a different repository")
       }
-      const response = await fetch(keyUrl(key), {signal: AbortSignal.timeout(15 * 60_000)})
-      if (!response.ok) throw new Error(`Downloading ${asset.name || key} failed with HTTP ${response.status}`)
-      await pipeline(Readable.fromWeb(response.body), createWriteStream(temporary))
+      if (store) {
+        const parts = key.split("/")
+        if (parts.length !== 5 || artifactKey(repository, parts[3], parts[4]) !== key)
+          throw new Error("Invalid R2 asset ID")
+        const signal = AbortSignal.timeout(15 * 60_000)
+        const object = await store.get(key, {signal})
+        if (!object) throw new Error(`R2 artifact ${key} is missing`)
+        try {
+          // Internal release recovery reads the authoritative object, not its
+          // public CDN projection. Verify its immutable metadata and bytes.
+          const record = recordFromObject(repository, parts[3], parts[4], object)
+          if ((asset.size !== undefined && asset.size !== record.size) || (asset.digest && asset.digest !== record.digest))
+            throw new Error("R2 artifact metadata does not match its record")
+          asset = record
+          await pipeline(object.Body, createWriteStream(temporary), {signal})
+        } finally {
+          object.Body?.destroy()
+        }
+      } else {
+        const response = await fetch(keyUrl(key), {signal: AbortSignal.timeout(15 * 60_000)})
+        if (!response.ok) throw new Error(`Downloading ${asset.name || key} failed with HTTP ${response.status}`)
+        await pipeline(Readable.fromWeb(response.body), createWriteStream(temporary))
+      }
     } else {
       if (!/^\d+$/.test(String(asset.id))) throw new Error("Invalid GitHub asset ID")
       const {openSync, closeSync} = await import("node:fs")
@@ -316,7 +336,7 @@ export async function createR2Store(env = process.env) {
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
   })
-  const send = (command, input) => client.send(new sdk[command]({Bucket: bucket, ...input}))
+  const send = (command, input, options) => client.send(new sdk[command]({Bucket: bucket, ...input}), options)
   return {
     async list(prefix) {
       const objects = []
@@ -336,14 +356,17 @@ export async function createR2Store(env = process.env) {
         throw error
       }
     },
-    async read(key) {
+    async get(key, {signal} = {}) {
       try {
-        const result = await send("GetObjectCommand", {Key: key})
-        return {etag: result.ETag, body: await result.Body.transformToString()}
+        return await send("GetObjectCommand", {Key: key}, {abortSignal: signal})
       } catch (error) {
         if (error.$metadata?.httpStatusCode === 404) return null
         throw error
       }
+    },
+    async read(key) {
+      const result = await this.get(key)
+      return result ? {etag: result.ETag, body: await result.Body.transformToString()} : null
     },
     put(key, body, options = {}) {
       return send("PutObjectCommand", {Key: key, Body: body, ...options})
@@ -450,6 +473,8 @@ export async function publishR2Artifact({
 }) {
   if (usesPrivateArtifactStorage(release))
     throw new Error("Refusing to publish private draft artifacts in the public R2 bucket")
+  if (replace && release.tag_name === "pr-builds" && /^(?:asg-pr-|ota-pr-)/.test(name))
+    throw new Error("Exact PR ASG artifacts cannot be replaced; reuse the committed publication")
   if (replace && !["pr-builds", "oem-app-builds"].includes(release.tag_name))
     throw new Error("Replacement is only allowed for rolling PR/OEM builds")
   if (fingerprint && !/^[a-f0-9]{64}$/.test(fingerprint)) throw new Error("Invalid mobile build fingerprint")

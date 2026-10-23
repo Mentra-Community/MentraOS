@@ -1,3 +1,9 @@
+import {advanceResourceLifecycleCursor} from './resource-lifecycle.service'
+import {resourceIdleContractSchema,resourceLifecycleSchema} from '../types/resource-lifecycle.types'
+import {recorderStorageObservationSchema} from '../types/recorder-storage.types'
+import {exclusiveResourceDependenciesSchema, hostResourceReservationsSchema, resourceReservationObservationSchema, type HostResourceReservation} from '../types/resource-reservations.types'
+import {laneControlExchangeSchema} from '../types/lane-control.types'
+import type {ResourceReadinessAuthority} from './resource-readiness'
 import {z} from "zod"
 import {TestHostStateModel} from "../models/test-host-state.model"
 import {testWriteConcern} from "../models/test-write-concern"
@@ -12,17 +18,30 @@ import {
   laneActivitySchema,
 } from "../types/lane-restoration.types"
 import {frameworkBindingSchema} from "../types/framework-version.types"
+import {permissionObservationsSchema} from "../types/resource-permissions.types"
+import {backendConnectivityObservationSchema} from '../types/backend-connectivity.types'
+import {routineQualificationTargetSchema} from '../types/routine-job.types'
 import {TestRunError} from "./test-result-error"
-import {routineProgressSchema} from '../types/routine-progress.types'
+import {routineQueuedBlockSchema, routineProgressSchema} from '../types/routine-progress.types'
 import {TestRequestModel} from '../models/test-request.model'
+import {isDeepStrictEqual} from 'node:util'
+import {preparationFrameworkAdmissionSchema, type PreparationFrameworkAdmission, type PreparationFrameworkEffect} from '../types/routine-dispatch.types'
 const resource = z
   .object({
     id: frameworkIdentitySchema,
     kind: z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]),
     laneId: frameworkIdentitySchema.optional(),
     capabilities: z.array(routineIdentitySchema).max(30).optional(),
+    permissionObservations: permissionObservationsSchema.optional(),
+    backendConnectivity: backendConnectivityObservationSchema.optional(),
+    storage: recorderStorageObservationSchema.optional(),
+    idleContract: resourceIdleContractSchema.optional(),
+    exclusiveDependencies: exclusiveResourceDependenciesSchema.optional(),
   })
-  .strict()
+  .strict().refine(value => !value.exclusiveDependencies || value.exclusiveDependencies.every(dependency =>
+    value.capabilities?.includes(dependency.capability)), 'Exclusive dependencies must name an offered capability')
+  .refine(value => !value.backendConnectivity || value.kind === 'phone' && value.backendConnectivity.phoneResourceId === value.id &&
+    value.capabilities?.includes('backend-connectivity'), 'Backend observation must identify its installed phone capability')
 export const glassesInventorySchema = z
   .object({
     resourceId: frameworkIdentitySchema,
@@ -35,6 +54,94 @@ export const glassesInventorySchema = z
     (value) => new Set(value.capabilities).size === value.capabilities.length,
     "Offered glasses capabilities must be unique",
   )
+const routingLaneSchema = z.object({
+  id: frameworkIdentitySchema,
+  descriptorRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  platform: routinePlatformSchema,
+  dispatchMode: z.enum(['automatic', 'authoring', 'paused']),
+  state: z.enum(['idle', 'running', 'reserved', 'in-repair', 'out-of-service', 'offline']),
+  resources: z.array(resource),
+  glasses: z.array(glassesInventorySchema).max(1).optional(),
+}).strict().superRefine(validateLaneResources)
+function validateLaneResources(lane: {resources: z.infer<typeof resource>[]; glasses?: z.infer<typeof glassesInventorySchema>[]}, ctx: z.RefinementCtx) {
+  for (const resource of lane.resources) if (new Set(resource.capabilities ?? []).size !== (resource.capabilities ?? []).length)
+    ctx.addIssue({code: "custom", message: "Resource capabilities must be unique"})
+  if(new Set(lane.resources.map(resource=>resource.kind)).size!==lane.resources.length)
+    ctx.addIssue({code:"custom",message:"A dispatch lane offers one provider per resource kind"})
+  const ids = lane.resources.map((ref) => ref.id)
+  if (new Set(ids).size !== ids.length)
+    ctx.addIssue({code: "custom", message: "Duplicate lane resource identity"})
+  if (lane.glasses === undefined && lane.resources.some((ref) => ref.kind === "glasses"))
+    ctx.addIssue({code: "custom", message: "Declared glasses resources require physical inventory"})
+  if (lane.glasses !== undefined) {
+    const offered = lane.glasses.map((value) => value.resourceId)
+    if (
+      new Set(offered).size !== offered.length ||
+      new Set(lane.glasses.map((value) => value.deviceId)).size !== offered.length
+    )
+      ctx.addIssue({code: "custom", message: "Duplicate lane glasses identity"})
+    if (
+      lane.resources.filter((ref) => ref.kind === "glasses").some((ref) => !offered.includes(ref.id)) ||
+      lane.glasses.some(
+        (value) => !lane.resources.some((ref) => ref.id === value.resourceId && ref.kind === "glasses"),
+      )
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Glasses inventory must exactly identify declared glasses resources",
+      })
+  }
+}
+function validateHostLaneInventory(snapshot: {lanes: z.infer<typeof routingLaneSchema>[]; resources?: z.infer<typeof resource>[]}, ctx: z.RefinementCtx) {
+  const independent = snapshot.resources ?? [];
+  if (new Set(independent.map(value => value.id)).size !== independent.length ||
+    independent.some(value => value.laneId !== undefined || snapshot.lanes.some(lane => lane.resources.some(member => member.id === value.id))))
+    ctx.addIssue({code: 'custom', message: 'Independent canonical resource inventory must be unique and have no lane membership'});
+  if (new Set(snapshot.lanes.map((lane) => lane.id)).size !== snapshot.lanes.length)
+    ctx.addIssue({code: "custom", message: "Duplicate host lane identity"})
+  const byResource = new Map<string, string>(),
+    byDevice = new Map<string, string>()
+  const authorityByDependency = new Map<string, string>()
+  for (const lane of snapshot.lanes) for (const resource of lane.resources) for (const dependency of resource.exclusiveDependencies ?? []) {
+    const previous = authorityByDependency.get(dependency.resourceId)
+    if (previous && previous !== dependency.authorityHostId)
+      ctx.addIssue({code: 'custom', message: 'Shared resource must retain one authority across host lanes'})
+    authorityByDependency.set(dependency.resourceId, dependency.authorityHostId)
+  }
+  for (const lane of snapshot.lanes)
+    for (const glasses of lane.glasses ?? []) {
+      const identity = JSON.stringify({deviceId: glasses.deviceId, model: glasses.model})
+      if (
+        (byResource.has(glasses.resourceId) && byResource.get(glasses.resourceId) !== identity) ||
+        (byDevice.has(glasses.deviceId) && byDevice.get(glasses.deviceId) !== glasses.resourceId)
+      )
+        ctx.addIssue({
+          code: "custom",
+          message: "Shared physical glasses must retain one resource, device and model identity across lanes",
+        })
+      byResource.set(glasses.resourceId, identity)
+      byDevice.set(glasses.deviceId, glasses.resourceId)
+    }
+}
+const routingHostSchema = z.object({
+  hostId: frameworkIdentitySchema,
+  incarnation: frameworkIdentitySchema.optional(),
+  incarnationGeneration: z.number().int().positive().safe().optional(),
+  frameworkBinding: frameworkBindingSchema.optional(),
+  resourceLifecycle: resourceLifecycleSchema.optional(),
+  observedAt: z.string().datetime({offset: true}).optional(),
+  laneControls: laneControlExchangeSchema.optional(),
+  resources: z.array(resource).max(100).optional(),
+  lanes: z.array(routingLaneSchema).max(100),
+}).strict().superRefine(validateHostLaneInventory)
+export type RoutingTestHostState = z.infer<typeof routingHostSchema> & ResourceReadinessAuthority & {receivedAt: string; authorityReservations?: HostResourceReservation[]}
+// Permission observations remain fresh; only diagnostic/history fields are excluded at the database.
+const routingStateProjection = {hostId: 1, receivedAt: 1, resourceReservations: 1, laneControls: 1, resourceLifecycleCursor: 1,
+  'snapshot.observedAt': 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+  'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle': 1, 'snapshot.resources': 1,
+  'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
+  'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
+  'snapshot.lanes.glasses': 1, _id: 0} as const
 const routineAvailability = z
   .object({
     routineId: routineIdentitySchema,
@@ -50,6 +157,7 @@ export const hostStateSchema = z
     incarnationGeneration: z.number().int().positive().safe(),
     sequence: z.number().int().nonnegative().safe(),
     observedAt: z.string().datetime({offset: true}),
+    resources: z.array(resource).max(100).optional(),
     lanes: z
       .array(
         z
@@ -61,6 +169,7 @@ export const hostStateSchema = z
             state: z.enum(["idle", "running", "reserved", "in-repair", "out-of-service", "offline"]),
             activity: laneActivitySchema.optional(),
             progress: routineProgressSchema.optional(),
+            waiting: z.array(routineQueuedBlockSchema).max(100).optional(),
             resources: z.array(resource),
             glasses: z.array(glassesInventorySchema).max(1).optional(),
             routineAvailability: z.array(routineAvailability).max(1000).optional(),
@@ -75,36 +184,13 @@ export const hostStateSchema = z
             const keys = lane.routineAvailability?.map((row) => `${row.routineId}:${row.definitionRevision}`) ?? []
             if (new Set(keys).size !== keys.length)
               ctx.addIssue({code: "custom", message: "Duplicate lane routine availability identity"})
-            for (const resource of lane.resources) if (new Set(resource.capabilities ?? []).size !== (resource.capabilities ?? []).length)
-              ctx.addIssue({code: "custom", message: "Resource capabilities must be unique"})
-            if(new Set(lane.resources.map(resource=>resource.kind)).size!==lane.resources.length)
-              ctx.addIssue({code:"custom",message:"A dispatch lane offers one provider per resource kind"})
-            const ids = lane.resources.map((ref) => ref.id)
-            if (new Set(ids).size !== ids.length)
-              ctx.addIssue({code: "custom", message: "Duplicate lane resource identity"})
-            if (lane.glasses === undefined && lane.resources.some((ref) => ref.kind === "glasses"))
-              ctx.addIssue({code: "custom", message: "Declared glasses resources require physical inventory"})
-            if (lane.glasses !== undefined) {
-              const offered = lane.glasses.map((value) => value.resourceId)
-              if (
-                new Set(offered).size !== offered.length ||
-                new Set(lane.glasses.map((value) => value.deviceId)).size !== offered.length
-              )
-                ctx.addIssue({code: "custom", message: "Duplicate lane glasses identity"})
-              if (
-                lane.resources.filter((ref) => ref.kind === "glasses").some((ref) => !offered.includes(ref.id)) ||
-                lane.glasses.some(
-                  (value) => !lane.resources.some((ref) => ref.id === value.resourceId && ref.kind === "glasses"),
-                )
-              )
-                ctx.addIssue({
-                  code: "custom",
-                  message: "Glasses inventory must exactly identify declared glasses resources",
-                })
-            }
+            validateLaneResources(lane, ctx)
           }),
       )
       .max(100),
+    resourceLifecycle: resourceLifecycleSchema.optional(),
+    laneControls: laneControlExchangeSchema.optional(),
+    resourceReservations: resourceReservationObservationSchema.optional(),
     restoration: laneRestorationProjectionSchema.optional(),
     frameworkBinding: frameworkBindingSchema.optional(),
     frameworkAcceptedAt: z.string().datetime({offset: true}).optional(),
@@ -140,26 +226,26 @@ export const hostStateSchema = z
     for (const lane of snapshot.lanes) if (lane.progress && (lane.progress.controllerIncarnation !== snapshot.incarnation ||
         lane.progress.sequence !== snapshot.sequence || lane.progress.observedAt !== snapshot.observedAt))
       ctx.addIssue({code: 'custom', message: 'Routine progress differs from its controller observation'})
-    if (new Set(snapshot.lanes.map((lane) => lane.id)).size !== snapshot.lanes.length)
-      ctx.addIssue({code: "custom", message: "Duplicate host lane identity"})
     if (snapshot.restoration?.attempts.some((attempt) => !snapshot.lanes.some((lane) => lane.id === attempt.laneId)))
       ctx.addIssue({code: "custom", message: "Restoration attempt names an unknown host lane"})
-    const byResource = new Map<string, string>(),
-      byDevice = new Map<string, string>()
-    for (const lane of snapshot.lanes)
-      for (const glasses of lane.glasses ?? []) {
-        const identity = JSON.stringify({deviceId: glasses.deviceId, model: glasses.model})
-        if (
-          (byResource.has(glasses.resourceId) && byResource.get(glasses.resourceId) !== identity) ||
-          (byDevice.has(glasses.deviceId) && byDevice.get(glasses.deviceId) !== glasses.resourceId)
-        )
-          ctx.addIssue({
-            code: "custom",
-            message: "Shared physical glasses must retain one resource, device and model identity across lanes",
-          })
-        byResource.set(glasses.resourceId, identity)
-        byDevice.set(glasses.deviceId, glasses.resourceId)
-      }
+    const storage = snapshot.lanes.flatMap(lane => lane.resources.flatMap(resource => resource.storage ? [resource.storage] : []))
+    if (storage.some(value => Date.parse(value.observedAt) > Date.parse(snapshot.observedAt) || JSON.stringify(value) !== JSON.stringify(storage[0])))
+      ctx.addIssue({code: 'custom', message: 'Recorder offers must share one measured host disk pool'})
+    for (const lane of snapshot.lanes) if (lane.waiting?.some(value => Date.parse(value.observedAt) > Date.parse(snapshot.observedAt)) ||
+      new Set(lane.waiting?.map(value => value.requestId)).size !== (lane.waiting?.length ?? 0))
+      ctx.addIssue({code: 'custom', message: 'Queued blocker observations must have unique identities and actual past timestamps'})
+    if (snapshot.resourceLifecycle && [...snapshot.resourceLifecycle.subjects.map(subject=>subject.observedAt),
+        ...snapshot.resourceLifecycle.history.map(event=>event.at)].some(at=>at!==null && Date.parse(at)>Date.parse(snapshot.observedAt)))
+      ctx.addIssue({code: 'custom', message: 'Resource observation is newer than host observation'})
+    if (snapshot.resourceLifecycle?.subjects.some(subject => subject.subject.authorityHostId !== snapshot.hostId))
+      ctx.addIssue({code: "custom", message: "Resource lifecycle must be reported by its authority host"})
+    const local = (snapshot.resourceReservations?.localPrerequisites ?? []).map(value => routineQualificationTargetSchema.safeParse(value))
+    if (local.some(value => !value.success || !value.data.local || value.data.hostId !== snapshot.hostId ||
+      !snapshot.lanes.some(lane => lane.id === value.data.laneId && lane.platform === 'android')) ||
+      new Set(local.flatMap(value => value.success ? [value.data.jobId] : [])).size !== local.length ||
+      new Set(local.flatMap(value => value.success ? [value.data.laneId] : [])).size !== local.length)
+      ctx.addIssue({code: 'custom', message: 'Local prerequisites must retain unique original inputs on their authority host'})
+    validateHostLaneInventory(snapshot, ctx)
   })
 export type TestHostState = z.infer<typeof hostStateSchema>
 const frameworkStopSchema = z.object({
@@ -195,11 +281,14 @@ export const updaterDeploymentSchema = z
     stopped: frameworkStopSchema.optional(),
   })
   .strict()
-export type ReceivedTestHostState = TestHostState & {receivedAt: string; frameworkHistory?: FrameworkHistoryEntry[]}
+export type ReceivedTestHostState = TestHostState & ResourceReadinessAuthority & {receivedAt: string; frameworkHistory?: FrameworkHistoryEntry[]; authorityReservations?: HostResourceReservation[]}
 const deploymentCursor = (row: {deploymentGeneration?: number; deploymentSequence?: number}) => ({
   deploymentGeneration: row.deploymentGeneration ?? {$exists: false},
   deploymentSequence: row.deploymentSequence ?? {$exists: false},
 })
+// Host snapshots contain repair diagnostics; reporting needs only their accepted cursor and history.
+const reportingStateProjection = {hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1,
+  deploymentGeneration: 1, deploymentSequence: 1, frameworkHistory: 1, frameworkStopReceipts: 1, 'snapshot.resourceLifecycle': 1, resourceLifecycleCursor: 1} as const
 async function retryHostStateWrite<T>(write: () => Promise<T | undefined>, conflict: string): Promise<T> {
   // Only an atomic write collision returns undefined; semantic conflicts and database errors propagate.
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -219,6 +308,13 @@ export class TestHostStateService {
   }
   private async reportSnapshot(snapshot: TestHostState, hostId: string) {
     if (snapshot.hostId !== hostId) throw new TestRunError(409, "Host snapshot differs from authenticated controller")
+    for (const lane of snapshot.lanes) for (const waiting of lane.waiting ?? []) {
+      const request = await TestRequestModel.findOne({requestId: waiting.requestId, hostId, inputSha256: waiting.requestDigest,
+        'input.laneId': lane.id, 'hostReceipt.requestId': waiting.requestId, 'hostReceipt.hostId': hostId,
+        'hostReceipt.inputSha256': waiting.requestDigest, 'hostReceipt.acceptedAt': waiting.acceptedAt}).select({requestId: 1})
+        .read('primary').readConcern('majority').setOptions({timeoutMS: 10_000}).lean()
+      if (!request) throw new TestRunError(409, 'Queued blocker differs from its authenticated accepted request')
+    }
     for (const lane of snapshot.lanes) if (lane.progress) {
       const request = await TestRequestModel.findOne({requestId: lane.progress.requestId, hostId,
         inputSha256: lane.progress.requestDigest, 'input.laneId': lane.id,
@@ -227,7 +323,7 @@ export class TestHostStateService {
         .read('primary').readConcern('majority').setOptions({timeoutMS: 10_000}).lean()
       if (!request) throw new TestRunError(409, 'Routine progress differs from its authenticated accepted request')
     }
-    const current = await TestHostStateModel.findOne({hostId}).lean()
+    const current = await TestHostStateModel.findOne({hostId}).select(reportingStateProjection).lean()
     if (current) {
       if (
         snapshot.incarnationGeneration === current.incarnationGeneration &&
@@ -245,6 +341,9 @@ export class TestHostStateService {
           sequence: current.sequence,
         }
     }
+    const resourceLifecycleCursor = advanceResourceLifecycleCursor(
+      current?.resourceLifecycleCursor ?? current?.snapshot?.resourceLifecycle, snapshot.resourceLifecycle,
+    )
     const filter = current
       ? {
           hostId,
@@ -344,10 +443,11 @@ export class TestHostStateService {
             receivedAt: new Date(this.now()),
             snapshot,
             frameworkHistory: history.slice(-100),
+            ...(resourceLifecycleCursor ? {resourceLifecycleCursor} : {}),
           },
         },
         {upsert: !current, new: true, writeConcern: testWriteConcern},
-      ).lean()
+      ).select({hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1}).lean()
       if (!saved) return undefined
       return {
         hostId,
@@ -361,26 +461,132 @@ export class TestHostStateService {
       throw error
     }
   }
-  async list(): Promise<ReceivedTestHostState[]> {
+  /** Routing needs current offers, not controller repair history or run progress. */
+  async list(): Promise<RoutingTestHostState[]> {
     let credentials: unknown;
     try {credentials = JSON.parse(process.env.TEST_HOST_TOKENS ?? 'null')} catch {credentials = null}
     if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)) return [];
     const hostIds = Object.entries(credentials).filter(([hostId, token]) => frameworkIdentitySchema.safeParse(hostId).success &&
       typeof token === 'string' && token.length >= 32).map(([hostId]) => hostId);
     if (hostIds.length > 100) throw new TestRunError(503, 'Enrolled host inventory exceeds its bound');
-    const rows = await TestHostStateModel.find({hostId: {$in: hostIds}}).limit(100).read('primary').readConcern('majority').lean();
-    return rows.map(row => ({...hostStateSchema.parse(row.snapshot), receivedAt: row.receivedAt.toISOString(),
-      frameworkHistory: (row.frameworkHistory ?? []).map(value => frameworkHistoryEntrySchema.parse(value))}));
+    const rows = await TestHostStateModel.find({hostId: {$in: hostIds}}).select(routingStateProjection).limit(100)
+      .read('primary').readConcern('majority').lean();
+    return rows.map(row => {
+      const snapshot = routingHostSchema.parse(row.snapshot);
+      if (snapshot.hostId !== row.hostId) throw new TestRunError(503, 'Routing snapshot differs from enrolled host');
+      // The existing authority retains selected, preparing and unknown custody until
+      // its normal reconciliation proves return. No request-history scan is needed.
+      const authorityReservations = hostResourceReservationsSchema.parse(row.resourceReservations ?? []);
+      return {...snapshot, receivedAt: z.date().parse(row.receivedAt).toISOString(), authorityReservations,
+        ...(row.laneControls === undefined ? {} : {resourceControlRecords: row.laneControls}),
+        ...(row.resourceLifecycleCursor === undefined ? {} : {resourceLifecycleCursor: row.resourceLifecycleCursor})};
+    });
   }
   async get(hostId: string): Promise<ReceivedTestHostState | null> {
     const row = await TestHostStateModel.findOne({hostId}).lean()
     return row
       ? {
           ...hostStateSchema.parse(row.snapshot),
+          authorityReservations: hostResourceReservationsSchema.parse(row.resourceReservations ?? []),
+          ...(row.laneControls === undefined ? {} : {resourceControlRecords: row.laneControls}),
+          ...(row.resourceLifecycleCursor === undefined ? {} : {resourceLifecycleCursor: row.resourceLifecycleCursor}),
           receivedAt: row.receivedAt.toISOString(),
           frameworkHistory: (row.frameworkHistory ?? []).map((value) => frameworkHistoryEntrySchema.parse(value)),
         }
       : null
+  }
+  /** Source preparation needs the accepted current framework, without device or repair diagnostics. */
+  async frameworkObservation(hostId: string) {
+    const row = await TestHostStateModel.findOne({hostId}).select({hostId: 1, receivedAt: 1,
+      'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.observedAt': 1, 'snapshot.frameworkBinding': 1,
+      'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1, frameworkHistory: 1, _id: 0})
+      .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean();
+    const parsed = z.object({hostId: frameworkIdentitySchema, receivedAt: z.date(), snapshot: z.object({
+      hostId: frameworkIdentitySchema, incarnation: frameworkIdentitySchema, observedAt: z.string().datetime({offset: true}),
+      frameworkBinding: frameworkBindingSchema, frameworkAcceptedAt: z.string().datetime({offset: true}),
+      frameworkProcess: frameworkProcessSchema}), frameworkHistory: z.array(frameworkHistoryEntrySchema).max(100)}).safeParse(row);
+    if (!parsed.success || parsed.data.hostId !== hostId || parsed.data.snapshot.hostId !== hostId) return null;
+    const {snapshot, frameworkHistory, receivedAt} = parsed.data, current = frameworkHistory.at(-1);
+    if (!current || current.endedAt || current.incarnation !== snapshot.incarnation ||
+      JSON.stringify(current.binding) !== JSON.stringify(snapshot.frameworkBinding) ||
+      JSON.stringify(current.process) !== JSON.stringify(snapshot.frameworkProcess) || current.effectiveAt !== snapshot.frameworkAcceptedAt) return null;
+    return {binding: snapshot.frameworkBinding, receivedAt: receivedAt.toISOString(), observedAt: snapshot.observedAt};
+  }
+  async preparationFrameworkAdmission(hostId: string, requestId: string) {
+    const row = await TestHostStateModel.findOne({hostId}).select({preparationFrameworkAdmissions: 1, _id: 0})
+      .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean();
+    return z.array(preparationFrameworkAdmissionSchema).max(100).parse(row?.preparationFrameworkAdmissions ?? [])
+      .find(value => value.requestId === requestId);
+  }
+  /** The host CAS admits a floor observation; the separate request CAS remains effect/cancellation authority. */
+  async admitPreparationFramework(hostId: string, requestId: string, dispatchIntentSha256: string,
+    requestFenceSha256: string, minimum: number, effect: PreparationFrameworkEffect, responseBinding?: z.infer<typeof frameworkBindingSchema>) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const row = await TestHostStateModel.findOne({hostId}).select({hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1,
+        deploymentGeneration: 1, deploymentSequence: 1, receivedAt: 1,
+        'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.sequence': 1,
+        'snapshot.observedAt': 1, 'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1, frameworkHistory: 1,
+        preparationFrameworkAdmissions: 1, preparationFrameworkAdmissionVersion: 1})
+        .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean();
+      const admissions = z.array(preparationFrameworkAdmissionSchema).max(100).parse(row?.preparationFrameworkAdmissions ?? []);
+      const existing = admissions.find(value => value.requestId === requestId);
+      if (existing) {
+        if (existing.dispatchIntentSha256 !== dispatchIntentSha256 || existing.requestFenceSha256 !== requestFenceSha256 ||
+          !isDeepStrictEqual(existing.effect, effect) || responseBinding && !isDeepStrictEqual(existing.binding, responseBinding))
+          throw new TestRunError(409, 'Framework preparation admission changed its original request effect');
+        return existing;
+      }
+      const snapshot = z.object({hostId: frameworkIdentitySchema, incarnation: frameworkIdentitySchema,
+        incarnationGeneration: z.number().int().positive().safe(), sequence: z.number().int().nonnegative().safe(),
+        observedAt: z.string().datetime({offset: true}), frameworkBinding: frameworkBindingSchema,
+        frameworkAcceptedAt: z.string().datetime({offset: true}), frameworkProcess: frameworkProcessSchema}).safeParse(row?.snapshot),
+        receivedAt = z.date().safeParse(row?.receivedAt);
+      const history = z.array(frameworkHistoryEntrySchema).max(100).safeParse(row?.frameworkHistory), current = history.success ? history.data.at(-1) : undefined;
+      const now = this.now();
+      if (!row || !snapshot.success || !receivedAt.success || snapshot.data.hostId !== hostId ||
+        row.incarnation !== snapshot.data.incarnation || row.incarnationGeneration !== snapshot.data.incarnationGeneration || row.sequence !== snapshot.data.sequence ||
+        !snapshot.data.frameworkBinding || snapshot.data.frameworkBinding.version < minimum || !current || current.endedAt ||
+        current.incarnation !== row.incarnation || !isDeepStrictEqual(current.binding, snapshot.data.frameworkBinding) ||
+        !isDeepStrictEqual(current.process, snapshot.data.frameworkProcess) || current.effectiveAt !== snapshot.data.frameworkAcceptedAt ||
+        responseBinding && !isDeepStrictEqual(responseBinding, snapshot.data.frameworkBinding) ||
+        ![receivedAt.data.getTime(), Date.parse(snapshot.data.observedAt)].every(at => Number.isFinite(at) && at <= now && now - at <= 120_000))
+        throw new TestRunError(409, `Waiting for framework ${minimum}: preparation requires its fresh accepted host binding`);
+      // Only authoritative request settlement releases a reconciliation slot; age never does.
+      const settled = admissions.length ? await TestRequestModel.find({requestId: {$in: admissions.map(value => value.requestId)},
+        state: {$in: ['queued', 'accepted', 'running', 'terminal']}}).select({requestId: 1, hostId: 1, dispatchIntentSha256: 1}).limit(100)
+        .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() : [];
+      const retained = admissions.filter(value => !settled.some(request => request.requestId === value.requestId &&
+        request.hostId === hostId && request.dispatchIntentSha256 === value.dispatchIntentSha256));
+      if (retained.length >= 100) throw new TestRunError(409, 'Waiting for framework preparation reconciliation: 100 original requests remain unresolved');
+      const admission: PreparationFrameworkAdmission = preparationFrameworkAdmissionSchema.parse({requestId, dispatchIntentSha256,
+        requestFenceSha256, effect, binding: snapshot.data.frameworkBinding, incarnation: row.incarnation,
+        incarnationGeneration: row.incarnationGeneration, sequence: row.sequence,
+        ...(row.deploymentGeneration !== undefined ? {deploymentGeneration: row.deploymentGeneration} : {}),
+        ...(row.deploymentSequence !== undefined ? {deploymentSequence: row.deploymentSequence} : {}),
+        receivedAt: receivedAt.data.toISOString(), observedAt: snapshot.data.observedAt, admittedAt: new Date(now).toISOString()});
+      const saved = await TestHostStateModel.findOneAndUpdate({hostId, incarnation: row.incarnation,
+        incarnationGeneration: row.incarnationGeneration, sequence: row.sequence, ...deploymentCursor(row),
+        frameworkHistory: row.frameworkHistory, receivedAt: row.receivedAt,
+        preparationFrameworkAdmissionVersion: row.preparationFrameworkAdmissionVersion ?? {$exists: false}},
+        {$set: {preparationFrameworkAdmissions: [...retained, admission]}, $inc: {preparationFrameworkAdmissionVersion: 1}},
+        {new: true, writeConcern: testWriteConcern}).select({hostId: 1}).setOptions({timeoutMS: 5000}).lean();
+      if (saved) return admission;
+    }
+    throw new TestRunError(409, 'Framework preparation observation advanced concurrently; retry the unchanged effect');
+  }
+  /** Run details need one lane's observation, never the host's repair history or diagnostics. */
+  async progressObservation(hostId: string, laneId: string) {
+    const row = await TestHostStateModel.findOne({hostId}).select({'snapshot.incarnation': 1, 'snapshot.sequence': 1,
+      'snapshot.lanes.id': 1, 'snapshot.lanes.activity': 1, 'snapshot.lanes.progress': 1, 'snapshot.lanes.waiting': 1, receivedAt: 1, _id: 0})
+      .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean()
+    const parsed = z.object({incarnation: frameworkIdentitySchema, sequence: z.number().int().nonnegative().safe(),
+      lanes: z.array(z.object({id: frameworkIdentitySchema, activity: laneActivitySchema.optional(),
+        progress: routineProgressSchema.optional(), waiting: z.array(routineQueuedBlockSchema).max(100).optional()})).max(100)}).safeParse(row?.snapshot)
+    const receivedAt = z.date().safeParse(row?.receivedAt)
+    if (!parsed.success || !receivedAt.success) return null
+    const lane = parsed.data.lanes.find(value => value.id === laneId)
+    return lane ? {incarnation: parsed.data.incarnation, sequence: parsed.data.sequence,
+      receivedAt: receivedAt.data.toISOString(), lane} : null
   }
   async reportDeployment(input: unknown, hostId: string) {
     const observation = updaterDeploymentSchema.parse(input)
@@ -392,7 +598,7 @@ export class TestHostStateService {
   private async reportDeploymentObservation(observation: z.infer<typeof updaterDeploymentSchema>, hostId: string) {
     if (observation.hostId !== hostId)
       throw new TestRunError(409, "Deployment observation differs from authenticated host")
-    const current = await TestHostStateModel.findOne({hostId}).lean()
+    const current = await TestHostStateModel.findOne({hostId}).select(reportingStateProjection).lean()
     if (!current) throw new TestRunError(409, "Controller host enrollment must exist before updater observations")
     if (
       observation.generation < (current.deploymentGeneration ?? 0) ||
@@ -427,7 +633,7 @@ export class TestHostStateService {
         },
       },
       {new: true, writeConcern: testWriteConcern},
-    ).lean()
+    ).select({deploymentGeneration: 1, deploymentSequence: 1}).lean()
     if (!saved) return undefined
     return {hostId, generation: saved.deploymentGeneration ?? 0, sequence: saved.deploymentSequence ?? 0}
   }
