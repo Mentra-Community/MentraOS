@@ -236,8 +236,8 @@ async function workspaceLicense(workspaceId: string, overrides: Partial<LicenseW
 
 /** The license as Core shows it, without seats. */
 function viewOf(write: LicenseWrite, fields: {seatsUsed: number; endedAt?: string | null}): LicenseView {
-  // Whom billing named to assign is the write's, not the license's.
-  const {licenseId, assignTo: _assignTo, ...rest} = write
+  // Whom billing named to assign, and a seat request, are the write's, not the license's.
+  const {licenseId, assignTo: _assignTo, seatRequest: _seatRequest, ...rest} = write
   return {licenseId, ...rest, seatsUsed: fields.seatsUsed, endedAt: fields.endedAt ?? null}
 }
 
@@ -2054,5 +2054,384 @@ describe("the buyer's license", () => {
       expect(await seatsOf(write.licenseId)).toEqual([])
       expect(await licenseRow(write.licenseId)).toMatchObject({seatsUsed: 0})
     }
+  })
+})
+
+// --- A license added for oneself -------------------------------------------
+
+describe("a license added for oneself", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000
+  /** A term from `fromDays` to `toDays` days around the real clock's now, which is what "in its term" asks about. */
+  const term = (fromDays: number, toDays: number) => ({
+    validFrom: new Date(Date.now() + fromDays * DAY_MS).toISOString(),
+    paidThrough: new Date(Date.now() + toDays * DAY_MS).toISOString(),
+  })
+  const inTerm = () => term(-1, 30)
+  const ownerOf = (workspaceId: string): LicenseOwner => ({type: "workspace", workspaceId})
+  /** A request billing recorded when `who` opened an add-one session, expecting the license to reach `quantity`. */
+  const request = (who: {mentraUserId: string}, quantity: number) => ({
+    seatRequest: {requestId: newLicenseId(), mentraUserId: who.mentraUserId, quantity},
+  })
+  /** Every audit event of one license, in commit order. */
+  const eventsOf = (licenseId: string) =>
+    WorkspaceAuditEventModel.find({"target.licenseId": licenseId}).sort({seq: 1}).lean()
+  const seatAssigned = async (licenseId: string) =>
+    (await eventsOf(licenseId)).filter((event) => event.action === "seat.assigned")
+  const holders = async (licenseId: string) => (await seatsOf(licenseId)).map((seat) => seat.mentraUserId)
+  const requestsOf = async (licenseId: string) => (await licenseRow(licenseId))!.seatRequests
+
+  /**
+   * A workspace with a license of `quantity` (revision 1, in its term) whose every seat is assigned, by an
+   * Admin, to members other than `asker`, an active member who holds none.
+   */
+  async function fullLicense(quantity = 5, overrides: Partial<LicenseWrite> = {}) {
+    const ws = await newWorkspace()
+    const asker = await person("asker")
+    const askerMembershipId = await addMember(ws.workspaceId, asker, "member")
+    const license = await workspaceLicense(ws.workspaceId, {quantity, ...inTerm(), ...overrides})
+    const members = [ws.ownerMembershipId, ws.adminMembershipId, ws.developerMembershipId, ws.memberMembershipId]
+    members.push(...(await addMembers(ws.workspaceId, Math.max(0, quantity - members.length))))
+    const seated = members.slice(0, quantity)
+    if (seated.length > 0) {
+      await assignSeats(
+        actorOf(ws.admin),
+        ws.workspaceId,
+        seated.map((membershipId) => ({licenseId: license.licenseId, membershipId})),
+      )
+    }
+    expect(await licenseRow(license.licenseId)).toMatchObject({quantity, seatsUsed: quantity})
+    return {ws, asker, askerMembershipId, license}
+  }
+
+  test("the write that raises the quantity to the request's gives its person one, recorded after the write, by the Store", async () => {
+    const {ws, asker, askerMembershipId, license} = await fullLicense(5)
+    const added = {...license, revision: 2, quantity: 6, ...request(asker, 6)}
+
+    expect(await store().putLicense(added)).toEqual({applied: true, revision: 2})
+
+    expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 6, seatsUsed: 6})
+    expect(await requestsOf(license.licenseId)).toEqual([added.seatRequest.requestId])
+    expect((await seatsOf(license.licenseId)).find((seat) => seat.mentraUserId === asker.mentraUserId)).toMatchObject({
+      workspaceId: ws.workspaceId,
+      membershipId: askerMembershipId,
+      assignedBy: null,
+    })
+    // What Core shows of the license names no request.
+    expect(await store().listLicenses(ws.workspaceId)).toEqual({licenses: [viewOf(added, {seatsUsed: 6})]})
+    // The person sees it as their own.
+    const mine = await call("GET", `/api/workspaces/${ws.workspaceId}/licenses`, asker)
+    expect((mine.json.items as LicenseView[]).map((view) => [view.licenseId, view.seats?.map((s) => s.membershipId)])).toEqual(
+      [[license.licenseId, [askerMembershipId]]],
+    )
+
+    // After the Admin's five: `license.written`, then the request's `seat.assigned`, next to each other, both the Store's.
+    const events = (await eventsOf(license.licenseId)).slice(-2)
+    expect(events.map((event) => [event.action, event.actor])).toEqual([
+      ["license.written", {kind: "service", service: "store"}],
+      ["seat.assigned", {kind: "service", service: "store"}],
+    ])
+    expect(events[1]!.seq).toBe(events[0]!.seq! + 1)
+    expect(events[0]).toMatchObject({before: {quantity: 5}, after: {revision: 2, quantity: 6}})
+    expect(events[1]).toMatchObject({
+      workspaceId: ws.workspaceId,
+      target: {licenseId: license.licenseId, membershipId: askerMembershipId, mentraUserId: asker.mentraUserId},
+      before: null,
+      after: {seatsUsed: 6, quantity: 6},
+    })
+  })
+
+  test("a request on the write that creates a license is a raise from 0, and gives its person one", async () => {
+    const ws = await newWorkspace()
+    const write = licenseWrite(ownerOf(ws.workspaceId), {quantity: 1, ...inTerm(), ...request(ws.member, 1)})
+
+    expect(await store().putLicense(write)).toEqual({applied: true, revision: 1})
+
+    expect(await holders(write.licenseId)).toEqual([ws.member.mentraUserId])
+    expect(await requestsOf(write.licenseId)).toEqual([write.seatRequest!.requestId])
+  })
+
+  test("a request is decided once: a repeat, and later revisions still carrying it, give nothing, also after the person is unassigned", async () => {
+    const {ws, asker, askerMembershipId, license} = await fullLicense(5)
+    const added = {...license, revision: 2, quantity: 6, ...request(asker, 6)}
+    await store().putLicense(added)
+    expect(await licenseRow(license.licenseId)).toMatchObject({seatsUsed: 6})
+
+    // Billing sends revision 2 again.
+    expect(await store().putLicense(added)).toEqual({applied: false, revision: 2})
+    expect(await licenseRow(license.licenseId)).toMatchObject({seatsUsed: 6})
+    // Revision 3 still carries the request: nothing more.
+    expect(await store().putLicense({...added, revision: 3})).toEqual({applied: true, revision: 3})
+    expect(await licenseRow(license.licenseId)).toMatchObject({seatsUsed: 6})
+
+    // An Admin unassigns them; revision 4 still carries the request and gives it back to no one.
+    await releaseSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, askerMembershipId)
+    expect(await store().putLicense({...added, revision: 4})).toEqual({applied: true, revision: 4})
+    expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 6, seatsUsed: 5})
+    // Even a write that raises the quantity to the request's again: the quantity dips to 5 and comes back to 6.
+    await store().putLicense({...added, revision: 5, quantity: 5})
+    await store().putLicense({...added, revision: 6, quantity: 6})
+    expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 6, seatsUsed: 5})
+    expect(await holders(license.licenseId)).not.toContain(asker.mentraUserId)
+    expect(await seatAssigned(license.licenseId)).toHaveLength(6)
+    expect(await requestsOf(license.licenseId)).toEqual([added.seatRequest.requestId])
+  })
+
+  test("the raising write delivered many times at once gives one license", async () => {
+    for (let round = 0; round < 3; round++) {
+      const {asker, license} = await fullLicense(5)
+      const added = {...license, revision: 2, quantity: 6, ...request(asker, 6)}
+
+      const results = await Promise.all(Array.from({length: 8}, () => store().putLicense(added)))
+
+      expect(results.filter((result) => result.applied)).toHaveLength(1)
+      expect(results.every((result) => result.revision === 2)).toBe(true)
+      expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 6, seatsUsed: 6})
+      expect((await holders(license.licenseId)).filter((id) => id === asker.mentraUserId)).toHaveLength(1)
+      expect((await seatAssigned(license.licenseId)).filter((e) => e.actor.kind === "service")).toHaveLength(1)
+      expect(await requestsOf(license.licenseId)).toEqual([added.seatRequest.requestId])
+    }
+  })
+
+  test("the creating write with a request, delivered many times at once, gives one license", async () => {
+    for (let round = 0; round < 3; round++) {
+      const ws = await newWorkspace()
+      const write = licenseWrite(ownerOf(ws.workspaceId), {quantity: 3, ...inTerm(), ...request(ws.member, 3)})
+
+      const results = await Promise.all(Array.from({length: 8}, () => store().putLicense(write)))
+
+      expect(results.filter((result) => result.applied)).toHaveLength(1)
+      expect(await licenseRow(write.licenseId)).toMatchObject({seatsUsed: 1})
+      expect(await holders(write.licenseId)).toEqual([ws.member.mentraUserId])
+      expect(await seatAssigned(write.licenseId)).toHaveLength(1)
+    }
+  })
+
+  test("out of order and at once, revisions that all carry the request give one license", async () => {
+    for (let round = 0; round < 3; round++) {
+      const {asker, license} = await fullLicense(5)
+      const added = {...license, revision: 2, quantity: 6, ...request(asker, 6)}
+      const later = {...added, revision: 3}
+      const writes = [later, added, later, added, added, later]
+
+      await Promise.allSettled(writes.map((write) => store().putLicense(write)))
+
+      expect(await licenseRow(license.licenseId)).toMatchObject({revision: 3, quantity: 6, seatsUsed: 6})
+      expect((await holders(license.licenseId)).filter((id) => id === asker.mentraUserId)).toHaveLength(1)
+      expect((await seatAssigned(license.licenseId)).filter((e) => e.actor.kind === "service")).toHaveLength(1)
+      expect(await requestsOf(license.licenseId)).toEqual([added.seatRequest.requestId])
+    }
+    // The later revision first, then the earlier one: the later decides, and the earlier is stale.
+    const {asker, license} = await fullLicense(5)
+    const added = {...license, revision: 2, quantity: 6, ...request(asker, 6)}
+    expect(await store().putLicense({...added, revision: 3})).toEqual({applied: true, revision: 3})
+    await expectClientError(store().putLicense(added), "stale_revision", 409)
+    expect(await licenseRow(license.licenseId)).toMatchObject({revision: 3, seatsUsed: 6})
+    expect((await holders(license.licenseId)).filter((id) => id === asker.mentraUserId)).toHaveLength(1)
+  })
+
+  test("a stale write carrying a request decides nothing: the next newer one still can", async () => {
+    const {asker, license} = await fullLicense(5)
+    await store().putLicense({...license, revision: 3})
+    const stale = {...license, revision: 2, quantity: 6, ...request(asker, 6)}
+
+    await expectClientError(store().putLicense(stale), "stale_revision", 409)
+    expect(await licenseRow(license.licenseId)).toMatchObject({revision: 3, quantity: 5, seatsUsed: 5})
+    expect(await requestsOf(license.licenseId)).toBeUndefined()
+
+    expect(await store().putLicense({...stale, revision: 4})).toEqual({applied: true, revision: 4})
+    expect(await holders(license.licenseId)).toContain(asker.mentraUserId)
+  })
+
+  test("no license from a write that doesn't raise the quantity to the request's, and the request is decided", async () => {
+    // Core already has 6: revision 2 at 6 is no raise.
+    const already = await fullLicense(6)
+    const unchanged = {...already.license, revision: 2, quantity: 6, ...request(already.asker, 6)}
+    await store().putLicense(unchanged)
+    expect(await licenseRow(already.license.licenseId)).toMatchObject({quantity: 6, seatsUsed: 6})
+    expect(await requestsOf(already.license.licenseId)).toEqual([unchanged.seatRequest.requestId])
+
+    // A request for 7 on a write of 6.
+    const short = await fullLicense(5)
+    const toSix = {...short.license, revision: 2, quantity: 6, ...request(short.asker, 7)}
+    await store().putLicense(toSix)
+    expect(await licenseRow(short.license.licenseId)).toMatchObject({quantity: 6, seatsUsed: 5})
+    expect(await requestsOf(short.license.licenseId)).toEqual([toSix.seatRequest.requestId])
+    // Decided: the write that does reach 7 later, still carrying it, gives nothing either.
+    await store().putLicense({...toSix, revision: 3, quantity: 7})
+    expect(await licenseRow(short.license.licenseId)).toMatchObject({quantity: 7, seatsUsed: 5})
+    expect(await holders(short.license.licenseId)).not.toContain(short.asker.mentraUserId)
+
+    // A lowered quantity is no raise either.
+    const lowered = await fullLicense(5)
+    await store().putLicense({...lowered.license, revision: 2, quantity: 4, ...request(lowered.asker, 4)})
+    expect(await holders(lowered.license.licenseId)).not.toContain(lowered.asker.mentraUserId)
+  })
+
+  test("no license for someone who is not an active member: never joined, left, or an Organization Admin outside it", async () => {
+    const orgAdmin = await person("org-admin", {email: ADMIN_EMAIL})
+    const leaver = await person("leaver")
+    const elsewhere = await newWorkspace("Elsewhere")
+
+    for (const who of ["stranger", "leaver", "orgAdmin", "elsewhere", "never"] as const) {
+      const {ws, license} = await fullLicense(5)
+      if (who === "leaver") {
+        await addMember(ws.workspaceId, leaver, "member")
+        await leaveWorkspace(actorOf(leaver), ws.workspaceId)
+      }
+      const named = {
+        stranger: ws.stranger,
+        leaver,
+        orgAdmin,
+        elsewhere: elsewhere.member,
+        never: {mentraUserId: "mu_never"},
+      }[who]
+      const added = {...license, revision: 2, quantity: 6, ...request(named, 6)}
+      expect(await store().putLicense(added)).toEqual({applied: true, revision: 2})
+      expect([who, await licenseRow(license.licenseId)]).toMatchObject([who, {quantity: 6, seatsUsed: 5}])
+      expect(await requestsOf(license.licenseId)).toEqual([added.seatRequest.requestId])
+      expect(await LicenseSeatModel.countDocuments({mentraUserId: named.mentraUserId})).toBe(0)
+    }
+  })
+
+  test("no second license of a product the person already holds there in its term; an expired one or another product doesn't count", async () => {
+    const {ws, asker, askerMembershipId, license} = await fullLicense(5)
+    const held = await workspaceLicense(ws.workspaceId, inTerm())
+    await assignSeat(actorOf(ws.admin), ws.workspaceId, held.licenseId, askerMembershipId)
+
+    const added = {...license, revision: 2, quantity: 6, ...request(asker, 6)}
+    await store().putLicense(added)
+    expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 6, seatsUsed: 5})
+    expect(await requestsOf(license.licenseId)).toEqual([added.seatRequest.requestId])
+
+    // Another product, and an expired license of this one, don't count.
+    const other = await fullLicense(5)
+    const fleet = await workspaceLicense(other.ws.workspaceId, {product: "mentra.fleet", ...inTerm()})
+    await assignSeat(actorOf(other.ws.admin), other.ws.workspaceId, fleet.licenseId, other.askerMembershipId)
+    const expired = await workspaceLicense(other.ws.workspaceId, term(-60, -30))
+    await assignSeat(actorOf(other.ws.admin), other.ws.workspaceId, expired.licenseId, other.askerMembershipId)
+    await store().putLicense({...other.license, revision: 2, quantity: 6, ...request(other.asker, 6)})
+    expect(await holders(other.license.licenseId)).toContain(other.asker.mentraUserId)
+  })
+
+  test("a person who already holds this license's seat gets no second one, in its term or not", async () => {
+    // The license hasn't started yet, so the seat they hold isn't an in-term one.
+    const upcoming = term(10, 40)
+    const {ws, asker, askerMembershipId, license} = await fullLicense(5, upcoming)
+    await releaseSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, ws.memberMembershipId)
+    await assignSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, askerMembershipId)
+
+    const added = {...license, revision: 2, quantity: 6, ...request(asker, 6)}
+    expect(await store().putLicense(added)).toEqual({applied: true, revision: 2})
+    expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 6, seatsUsed: 5})
+    expect((await holders(license.licenseId)).filter((id) => id === asker.mentraUserId)).toHaveLength(1)
+    expect(await requestsOf(license.licenseId)).toEqual([added.seatRequest.requestId])
+  })
+
+  test("no license when no seat is free: seats used were already past the raised quantity", async () => {
+    const {asker, license} = await fullLicense(6)
+    // Billing lowers it to 5, which frees no seat, then the request's write brings it back to 6.
+    await store().putLicense({...license, revision: 2, quantity: 5})
+    expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 5, seatsUsed: 6})
+
+    const added = {...license, revision: 3, quantity: 6, ...request(asker, 6)}
+    expect(await store().putLicense(added)).toEqual({applied: true, revision: 3})
+    expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 6, seatsUsed: 6})
+    expect(await holders(license.licenseId)).not.toContain(asker.mentraUserId)
+    expect(await requestsOf(license.licenseId)).toEqual([added.seatRequest.requestId])
+  })
+
+  test("the raising write racing an Admin's assignment of the new seat never passes the quantity", async () => {
+    for (let round = 0; round < 5; round++) {
+      const {ws, asker, license} = await fullLicense(5)
+      const [other] = await addMembers(ws.workspaceId, 1)
+      const added = {...license, revision: 2, quantity: 6, ...request(asker, 6)}
+
+      const [written] = await Promise.allSettled([
+        store().putLicense(added),
+        assignSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, other!),
+      ])
+
+      expect(written.status).toBe("fulfilled")
+      const row = (await licenseRow(license.licenseId))!
+      expect(row.quantity).toBe(6)
+      expect(row.seatsUsed).toBeLessThanOrEqual(6)
+      expect(await seatsOf(license.licenseId)).toHaveLength(row.seatsUsed)
+      expect((await holders(license.licenseId)).filter((id) => id === asker.mentraUserId).length).toBeLessThanOrEqual(1)
+    }
+  })
+
+  test("the raising write racing the person's removal never leaves a seat behind the ended membership", async () => {
+    for (let round = 0; round < 5; round++) {
+      const {ws, asker, askerMembershipId, license} = await fullLicense(5)
+      const added = {...license, revision: 2, quantity: 6, ...request(asker, 6)}
+
+      const [written] = await Promise.allSettled([
+        store().putLicense(added),
+        removeMember(actorOf(ws.owner), ws.workspaceId, askerMembershipId, await revisionOf(ws.workspaceId)),
+      ])
+
+      expect(written.status).toBe("fulfilled")
+      expect((await WorkspaceMembershipModel.findOne({membershipId: askerMembershipId}).lean())!.status).toBe("ended")
+      expect(await LicenseSeatModel.countDocuments({membershipId: askerMembershipId})).toBe(0)
+      expect(await licenseRow(license.licenseId)).toMatchObject({seatsUsed: 5})
+    }
+  })
+
+  test("never the buyer again: after the buyer is unassigned, a later write naming them assigns no one", async () => {
+    const ws = await newWorkspace()
+    const purchase = licenseWrite(ownerOf(ws.workspaceId), {
+      quantity: 1,
+      ...inTerm(),
+      assignTo: {mentraUserId: ws.owner.mentraUserId},
+    })
+    await store().putLicense(purchase)
+    expect(await holders(purchase.licenseId)).toEqual([ws.owner.mentraUserId])
+
+    await releaseSeat(actorOf(ws.admin), ws.workspaceId, purchase.licenseId, ws.ownerMembershipId)
+    expect(await store().putLicense({...purchase, revision: 2, quantity: 3})).toEqual({applied: true, revision: 2})
+    expect(await licenseRow(purchase.licenseId)).toMatchObject({quantity: 3, seatsUsed: 0})
+
+    // A request names whoever opened the session, never the buyer billing names alongside it.
+    const added = {...purchase, revision: 3, quantity: 4, ...request(ws.member, 4)}
+    await store().putLicense(added)
+    expect(await holders(purchase.licenseId)).toEqual([ws.member.mentraUserId])
+    expect((await eventsOf(purchase.licenseId)).map((event) => event.action)).toEqual([
+      "license.written",
+      "seat.assigned",
+      "seat.released",
+      "license.written",
+      "license.written",
+      "seat.assigned",
+    ])
+  })
+
+  test("a write without a request behaves as before, and leaves no request list on the license", async () => {
+    const {license} = await fullLicense(5)
+    expect(await store().putLicense({...license, revision: 2, quantity: 6})).toEqual({applied: true, revision: 2})
+
+    const row = (await licenseRow(license.licenseId))!
+    expect(row).toMatchObject({quantity: 6, seatsUsed: 5})
+    expect("seatRequests" in row).toBe(false)
+    const fresh = await workspaceLicense(license.owner.workspaceId, inTerm())
+    expect("seatRequests" in (await licenseRow(fresh.licenseId))!).toBe(false)
+  })
+
+  test("a malformed seatRequest is 400 invalid_request, and Core keeps nothing of the write", async () => {
+    const {asker, license} = await fullLicense(5)
+    for (const seatRequest of [
+      null,
+      {mentraUserId: asker.mentraUserId, quantity: 6},
+      {requestId: "r1", mentraUserId: " ", quantity: 6},
+      {requestId: "r1", mentraUserId: asker.mentraUserId, quantity: 0},
+      {requestId: "r1", mentraUserId: asker.mentraUserId, quantity: 1.5},
+      {requestId: "r1", mentraUserId: asker.mentraUserId, quantity: "6"},
+    ]) {
+      const body = {...license, revision: 2, quantity: 6, seatRequest}
+      expect(await signed("PUT", `${LICENSES}/${license.licenseId}`, {body})).toMatchObject({
+        status: 400,
+        json: {error: "invalid_request"},
+      })
+    }
+    expect(await licenseRow(license.licenseId)).toMatchObject({revision: 1, quantity: 5, seatsUsed: 5})
   })
 })
