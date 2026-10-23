@@ -292,10 +292,6 @@ Camera and streaming features must leave LEDs in a safe state on stop, error, se
 - Touch/swipe events are forwarded to the phone as status or input events.
 - Power-button short press can trigger battery-level audio feedback.
 - Power-button hold/graceful shutdown should finalize active recordings before powering down to avoid corrupt media.
-- Automated device setup can explicitly disable BES's unworn auto power-off using
-  `disable_unworn_auto_power_off`. ASG waits for the current UART session's persisted-switch
-  acknowledgment and exposes a correlated result for either phone platform's shared setup.
-  This command has no app UI, retry, reset, or firmware update side effects.
 
 The Bluetooth SDK can independently enable or disable the stock action for
 `single_tap`, `double_tap`, `triple_tap`, `long_press`, `forward_swipe`,
