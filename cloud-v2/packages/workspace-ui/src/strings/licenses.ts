@@ -58,8 +58,6 @@ export function refusalMessage(code: string, context: RefusalContext = {}): stri
       return `Someone else is adding ${product ? `a ${product} license` : "a license"} right now. Try again in a few minutes.`;
     case "checkout_in_progress":
       return `A purchase of ${product ?? "that"} is already under way. Finish it, or try again in a minute.`;
-    case "seat_request_pending":
-      return `Someone else is adding a${product ? ` ${product}` : ""} license right now. Try again in a few minutes.`;
     case "owner_ended":
       return "This workspace has been deleted, so billing can't change it.";
     case "billing_unavailable":
