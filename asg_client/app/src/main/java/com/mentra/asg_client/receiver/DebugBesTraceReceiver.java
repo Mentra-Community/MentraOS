@@ -40,6 +40,10 @@ public class DebugBesTraceReceiver extends BroadcastReceiver {
             // asking the BES for a fresh sr_syvr, which re-evaluates the caps.
             boolean on = intent.getBooleanExtra("delivery", false);
             BesLogDeliveryGate.setOverride(context, on);
+            // Switching off must also send mh_rlog_sub {on:0} while the subscription is still
+            // known: the later onWireCaps(null) forgets it without telling the BES, which would
+            // keep sending delivery status lines.
+            BesTraceTail.get().setEnabled(on);
             Log.i(TAG, "BES log delivery " + (on ? "enabled" : "disabled"));
             AsgClientService svc = AsgClientService.getInstance();
             CommandProcessor proc = svc != null ? svc.getCommandProcessor() : null;
