@@ -225,6 +225,12 @@ jobs:
             tests/legacy-identity-claim.integration.test.ts \
             tests/legacy-miniapp-registry.integration.test.ts
 
+      - name: Verify nightly selection-result projection
+        working-directory: cloud-v2
+        env:
+          TEST_HISTORY_MONGO_URI: mongodb://127.0.0.1:27017
+        run: bun test --max-concurrency=1 --timeout 30000 packages/core/src/services/nightly-selection-result.test.ts
+
       - name: Show Mongo logs after a failure
         if: failure()
         run: docker logs cloud-v2-test-mongo

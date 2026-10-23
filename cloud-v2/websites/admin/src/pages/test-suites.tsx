@@ -18,7 +18,7 @@ import {CopyRerunLabel} from '../components/copy-rerun-label';
 
 export interface TestSuiteResult {
   suiteId: string; channel: string; trigger: string; startedAt: string; finishedAt?: string;
-  build: {headSha: string; release?: string; producerUrl?: string};
+  build?: {headSha: string; release?: string; producerUrl?: string};
   outcome: "running" | "passed" | "failed"; passed: number; failedRoutines: string[];
   members: {memberId: string; requestId?: string; routineId: string; platform: string; status: string; hostId?: string; laneId?: string; publicationComplete?: boolean; evidenceStatus?: 'complete' | 'failed'; publicationFailed?: boolean; runId?: string; startedAt?: string; finishedAt?: string; unavailableReason?: string; rejectedAt?: string}[];
 }
@@ -56,7 +56,7 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
   const latestAttempt = (memberId: string) => progress.data?.members.find(member => member.memberId === memberId)?.latest;
   const canRerun = (member: TestSuiteResult["members"][number]) => {
     const observed = progress.data?.members.find(value => value.memberId === member.memberId);
-    return !!observed && (rerunTerminalStatuses as readonly string[]).includes(member.status) &&
+    return !!suite.build && !!observed && (rerunTerminalStatuses as readonly string[]).includes(member.status) &&
       (!observed.latest || (rerunTerminalStatuses as readonly string[]).includes(observed.latest.status));
   };
   const rerunnableFailures = members.filter(member => isFailure(observedMemberStatus(member)) && canRerun(member));
@@ -75,13 +75,14 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
     <a className={`${TESTING_LINK} text-sm`} href="/?testRuns=1">All test runs</a>
     <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
       <div><h2 className="text-xl font-bold">{suite.channel === "dev" ? "Dev" : suite.channel} {suite.trigger} test suite</h2>
-        <p className="mt-1 text-sm text-[#68746d]">{suite.build.release ?? suite.build.headSha.slice(0, 10)} · {suite.build.headSha.slice(0, 10)}</p></div>
+        <p className="mt-1 text-sm text-[#68746d]">{suite.build ? `${suite.build.release ?? suite.build.headSha.slice(0, 10)} · ${suite.build.headSha.slice(0, 10)}` : "No build selected"}</p></div>
       <div className="space-y-2 text-right"><HistoryStatus outcome={suiteDisplayStatus(suite.outcome, comparisons.original.failed)}/>
         <div><SuiteCountComparison original={comparisons.original} latest={comparisons.hasReruns ? comparisons.latest : undefined}/></div></div>
     </div>
+    {!suite.build && <p className="mt-3 text-sm">{suite.members.length} incomplete · 0 executed. The testing system could not retrieve build information, so no tests started.</p>}
     <p className="mt-3 text-xs text-[#747780]">{pendingPassCount(suite) > 0 && `${pendingPassCount(suite)} passed · evidence pending`}</p>
     <p className="my-4 text-sm">Started {new Date(suite.startedAt).toLocaleString()}{suite.finishedAt ? ` · Finished ${new Date(suite.finishedAt).toLocaleString()} · ${runDuration(suite.startedAt, suite.finishedAt)}` : " · Refreshes every 15 seconds"}</p>
-    {suite.build.producerUrl ? <a className={`${TESTING_LINK} text-sm`} href={suite.build.producerUrl} target="_blank" rel="noreferrer">Dispatched job / build in GitHub</a> : null}
+    {suite.build?.producerUrl ? <a className={`${TESTING_LINK} text-sm`} href={suite.build.producerUrl} target="_blank" rel="noreferrer">Dispatched job / build in GitHub</a> : null}
     <div className="my-4"><TestingButton disabled={!rerunnableFailures.length} onClick={()=>setDispatchMembers(rerunnableFailures.map(member=>member.memberId))}>Rerun failures</TestingButton></div>
     {dispatchMembers && <RerunForm key={dispatchMembers.join(",")} suiteId={suiteId} memberIds={dispatchMembers} onClose={()=>setDispatchMembers(null)}/>}
 
@@ -92,16 +93,16 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
         <thead className="bg-[#f6f8fa]"><tr className="border-b text-xs font-medium text-[#747780]"><th>Started</th><th>Name</th><th>Duration</th><th>Lane</th><th>Tested build</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
         <tbody>{members.map(member => <tr key={member.memberId} className="border-b last:border-0 hover:bg-[#fafbfa]">
           <td className="whitespace-nowrap tabular-nums">{member.startedAt ? <time dateTime={member.startedAt}>{new Date(member.startedAt).toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})}</time> : "—"}</td>
-          <td className="min-w-48">{member.runId || member.requestId
+          <td className="min-w-48">{suite.build && (member.runId || member.requestId)
             ? <a className={TESTING_LINK} href={frameworkRunHref(member.runId ?? member.requestId!)}>{member.routineId.replace(/[-_]+/g, " ")}</a>
-            : <><span className="font-medium">{member.routineId.replace(/[-_]+/g, " ")}</span><p className="mt-1 text-xs text-[#747780]">Not available yet</p></>}
+            : <><span className="font-medium">{member.routineId.replace(/[-_]+/g, " ")}</span><p className="mt-1 text-xs text-[#747780]">{suite.build ? "Not available yet" : "Execution did not start"}</p></>}
             {latestAttempt(member.memberId) && <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Latest rerun · {memberStatus({...member, ...latestAttempt(member.memberId)!}).replaceAll("-", " ")}</summary>
               <AttemptLine attempt={latestAttempt(member.memberId)!}/><AttemptHistory suiteId={suiteId} memberId={member.memberId}/>
             </details>}
           </td>
           <td className="whitespace-nowrap tabular-nums">{runDuration(member.startedAt, member.finishedAt) ?? "—"}</td>
           <td><TestLaneBadges lanes={member.hostId && member.laneId ? [{hostId: member.hostId, laneId: member.laneId}] : []}/></td>
-          <td className="whitespace-nowrap text-xs" title={suite.build.headSha}>{suite.build.release ?? suite.build.headSha.slice(0, 10)}</td>
+          <td className="whitespace-nowrap text-xs" title={suite.build?.headSha}>{suite.build ? suite.build.release ?? suite.build.headSha.slice(0, 10) : "No build selected"}</td>
           <td><OriginalLatestStatus original={observedTestStatus({...member, publicationComplete: member.publicationComplete === true})} latest={latestAttempt(member.memberId)}/>
             {member.status === "not-run" && <span className="sr-only">Did not run</span>}
             {followUps.data?.members.find(row => row.memberId === member.memberId)?.followUp && <CompactFollowUp row={followUps.data.members.find(row => row.memberId === member.memberId)!.followUp!}/>}
@@ -122,9 +123,9 @@ export function RecentTestSuites() {
   if (result.isPending) return null;
   if (result.error) return <p className="text-sm text-red-700">Test suites could not refresh. <TestingButton onClick={() => result.refetch()}>Retry</TestingButton></p>;
   if (!result.data?.suites.length) return null;
-  return <section className={panel}><h2 className="text-xl font-bold">Recent test suites</h2><p className="my-2 text-sm text-[#68746d]">One dispatched job, with all of its routine results.</p>
+  return <section className={panel}><h2 className="text-xl font-bold">Recent test suites</h2><p className="my-2 text-sm text-[#68746d]">One original occurrence, with all of its routine results.</p>
     {result.data.suites.map(suite => <a key={suite.suiteId} className="flex justify-between gap-4 border-b py-3 last:border-0" href={`/?testSuite=${encodeURIComponent(suite.suiteId)}`}>
-      <span>{suite.channel} · {suite.trigger} · {suite.build.release ?? suite.build.headSha.slice(0, 10)}<span className="ml-3 text-xs text-[#68746d]">{new Date(suite.startedAt).toLocaleString()}</span></span>
+      <span>{suite.channel} · {suite.trigger} · {suite.build ? suite.build.release ?? suite.build.headSha.slice(0, 10) : "No build selected"}<span className="ml-3 text-xs text-[#68746d]">{new Date(suite.startedAt).toLocaleString()}</span></span>
       <span className="space-y-1 text-right"><HistoryStatus outcome={suiteDisplayStatus(suite.outcome, testStatusCounts(suite.members.map(member=>({...member,publicationComplete:member.publicationComplete===true}))).failed)}/><span className="block"><SuiteCountComparison original={testStatusCounts(suite.members.map(member=>({...member,publicationComplete:member.publicationComplete===true})))}/></span></span></a>)}
   </section>;
 }

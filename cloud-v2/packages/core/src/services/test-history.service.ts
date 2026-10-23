@@ -80,7 +80,7 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
         {$eq: ["$$member.requestId", "$$requestId"]}, {$eq: ["$$member.routineId", "$$routineId"]},
         {$eq: ["$$member.platform", "$$platform"]},
       ]}}}]}}}, {$limit: 1}, {$project: {_id: 0, suiteId: 1,
-        listable: {$and: [{$gte: [{$size: {$ifNull: ["$payload.members", []]}}, 2]}, {$eq: [{$type: "$startedAt"}, "date"]}]}}}], as: 'historyNightly'}},
+        listable: {$and: [{$gte: [{$size: {$ifNull: ["$payload.members", {$ifNull: ["$nightlyPlan.members", []]}]}}, 2]}, {$eq: [{$type: "$startedAt"}, "date"]}]}}}], as: 'historyNightly'}},
     {$project: {_id: 0, historyKind: {$literal: "run"}, historyId: "$runId",
       historyStartedAt: "$startedAt", runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1,
       rerun: {$arrayElemAt: ["$historyReruns", 0]},
@@ -98,7 +98,7 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
       scan: [{$group: {_id: null, count: {$sum: 1}, last: {$last: {historyKind: "$historyKind", historyId: "$historyId", historyStartedAt: "$historyStartedAt"}}}}]}},
   ];
   const suites: PipelineStage[] = [
-      {$match: {"payload.members.1": {$exists: true}, startedAt: {$type: "date"}, ...sourceCursor(after, "suite", "suiteId"),
+      {$match: {$and: [{$or: [{"payload.members.1": {$exists: true}}, {"nightlyPlan.members.1": {$exists: true}}]}], startedAt: {$type: "date"}, ...sourceCursor(after, "suite", "suiteId"),
         ...(origin ? {$expr: {$eq: [suiteOrigin, origin]}} : {})}},
       {$sort: {startedAt: -1, suiteId: -1}},
       {$limit: limit + 1},
@@ -250,8 +250,9 @@ export class TestHistoryService {
 }
 
 /** Only a digest-verified, member-bound request can supply a missing PR identity. */
-export function historySuiteBuild(suite: {channel: string; build: {headSha: string}; members: {requestId?: string; routineId: string; platform: string; headSha?: string; definitionRevision?: string}[]}, requests: {requestId: string; input?: unknown; inputSha256?: unknown; dispatchIntent?: unknown; dispatchIntentSha256?: unknown}[]) {
-  if (suite.channel !== "pr") return suite.build;
+export function historySuiteBuild(suite: {channel: string; build?: {headSha: string}; members: {requestId?: string; routineId: string; platform: string; headSha?: string; definitionRevision?: string}[]}, requests: {requestId: string; input?: unknown; inputSha256?: unknown; dispatchIntent?: unknown; dispatchIntentSha256?: unknown}[]) {
+  if (suite.channel !== "pr" || !suite.build) return suite.build;
+  const suiteBuild = suite.build;
   const builds = suite.members.flatMap(member => {
     const rows = requests.filter(request => request.requestId === member.requestId);
     if (rows.length !== 1) return [];
@@ -263,7 +264,7 @@ export function historySuiteBuild(suite: {channel: string; build: {headSha: stri
       || member.definitionRevision && ("definitionRevision" in parsed.data ? parsed.data.definitionRevision : parsed.data.routineRevision) !== member.definitionRevision
       || parsed.data.routineId !== member.routineId
       || parsed.data.platform !== member.platform || parsed.data.build.channel !== "pr"
-      || parsed.data.build.headSha !== (member.headSha ?? suite.build.headSha)) return [];
+      || parsed.data.build.headSha !== (member.headSha ?? suiteBuild.headSha)) return [];
     return [parsed.data.build];
   });
   const numbers = [...new Set(builds.map(build => build.prNumber))];
