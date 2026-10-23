@@ -15,6 +15,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {engine, useApps, useRefresh} from "@mentra/engine"
+import {hasAssignmentReason} from "@mentra/engine-host-internal"
 
 import {SYSTEM_APPS} from "@/constants/miniapps"
 import {ThemedStyle} from "@/theme"
@@ -83,6 +84,8 @@ export default function AppSettings() {
   }, [appsLoaded, appInfo, packageName, replaceAll])
 
   const uninstallable = !SYSTEM_APPS.includes(packageName)
+  // A miniapp a workspace assigned shows no Uninstall anywhere on the phone, and no explanation.
+  const managed = hasAssignmentReason(packageName)
 
   const viewShotRef = useRef(null)
   const saveScreenshot = async () => {
@@ -279,20 +282,22 @@ export default function AppSettings() {
           </View>
 
           {/* Uninstall Button at the bottom */}
-          <RouteButton
-            label={translate("appSettings:uninstall")}
-            preset="destructive"
-            onPress={() => {
-              if (uninstallable) {
-                handleUninstallApp()
-              } else {
-                showAlert(translate("appSettings:cannotUninstall"), translate("appSettings:cannotUninstallMessage"), [
-                  {text: translate("common:ok"), style: "default"},
-                ])
-              }
-            }}
-            disabled={!uninstallable}
-          />
+          {!managed && (
+            <RouteButton
+              label={translate("appSettings:uninstall")}
+              preset="destructive"
+              onPress={() => {
+                if (uninstallable) {
+                  handleUninstallApp()
+                } else {
+                  showAlert(translate("appSettings:cannotUninstall"), translate("appSettings:cannotUninstallMessage"), [
+                    {text: translate("common:ok"), style: "default"},
+                  ])
+                }
+              }}
+              disabled={!uninstallable}
+            />
+          )}
 
           {/* Bottom safe area padding */}
           <View style={{height: Math.max(40, insets.bottom + 20)}} />

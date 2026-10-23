@@ -28,6 +28,7 @@ const MANIFESTS: Record<string, {name: string; version: string}> = {
 mock.module("../AppRegistry", () => ({
   default: {
     getInstalledMiniapps: async () => installed,
+    isMiniappAccessRevoked: () => false,
     getActiveVersion: async (packageName: string) => MANIFESTS[packageName]?.version ?? "1.0.0",
     getPublisherKeyFingerprint: () => null,
     getSelectedDevSnapshot: () => null,

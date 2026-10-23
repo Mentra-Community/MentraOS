@@ -6,7 +6,8 @@
   "workspaces": [
     "modules/*",
     "../cloud-v2/packages/cloud-client",
-    "../cloud-v2/packages/protocol"
+    "../cloud-v2/packages/protocol",
+    "../cloud-v2/packages/workspace-contract"
   ],
   "scripts": {
     "preinstall": "zx ./scripts/preinstall.mjs",

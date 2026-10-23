@@ -4,13 +4,12 @@
  * When a newer release is staged for a miniapp the user is running, the
  * engine asks before stopping it. The host renders the prompt (its copy and
  * buttons) and answers it; the engine owns when a prompt may appear: only
- * while the Mentra App is in the foreground, one at a time, and once per run
- * of a miniapp. After "Not now" it asks again the next time the miniapp is
- * opened, and not before.
+ * while the Mentra App is in the foreground, one at a time. After Not now it
+ * asks again the next time the person opens that miniapp, and not before.
  */
 import {AppState} from "react-native"
 
-import {miniappRunningRegistry} from "./MiniappRunningRegistry"
+import {storage} from "../utils/storage/storage"
 
 export interface RunningUpdatePromptRequest {
   packageName: string
@@ -35,51 +34,73 @@ export interface RunningUpdateFailure {
 
 export interface RunningUpdatePromptEnvironment {
   isForeground(): boolean
-  /** Whether this run of the miniapp was already asked about an update. */
-  wasPromptedThisRun(packageName: string): boolean
-  recordPrompted(packageName: string): void
+  /** The person answered Not now and has not opened the miniapp since. Survives restarts. */
+  isDeclined(packageName: string): boolean
+  setDeclined(packageName: string, declined: boolean): void
 }
 
-/** Miniapps asked during their current run. A miniapp leaves the set when it stops. */
-const promptedRuns = new Set<string>()
-let unsubscribeRunTracking: (() => void) | null = null
-
-function forgetStoppedRuns(): void {
-  for (const packageName of [...promptedRuns]) {
-    if (!miniappRunningRegistry.has(packageName)) promptedRuns.delete(packageName)
-  }
-  if (promptedRuns.size === 0) {
-    unsubscribeRunTracking?.()
-    unsubscribeRunTracking = null
-  }
-}
+const declinedKey = (packageName: string) => `miniapp_update_declined:${packageName}`
 
 const defaultEnvironment: RunningUpdatePromptEnvironment = {
   isForeground: () => AppState.currentState === "active",
-  wasPromptedThisRun: (packageName) => promptedRuns.has(packageName),
-  recordPrompted: (packageName) => {
-    promptedRuns.add(packageName)
-    unsubscribeRunTracking ??= miniappRunningRegistry.subscribe(forgetStoppedRuns)
+  isDeclined: (packageName) => {
+    const stored = storage.load<boolean>(declinedKey(packageName))
+    return stored.is_ok() && stored.value === true
+  },
+  setDeclined: (packageName, declined) => {
+    if (declined) storage.save(declinedKey(packageName), true)
+    else storage.remove(declinedKey(packageName))
   },
 }
 
 let environment = defaultEnvironment
 const promptListeners = new Set<(prompt: PendingRunningUpdatePrompt) => void>()
 const failureListeners = new Set<(failure: RunningUpdateFailure) => void>()
+const dueListeners = new Set<(packageName: string) => void>()
 let openPrompt: string | null = null
-const openSettlers = new Set<(answer: RunningUpdatePromptAnswer) => void>()
+/** Each open prompt's settle function, with its package. */
+const openSettlers = new Map<(answer: RunningUpdatePromptAnswer) => void, string>()
 
 /** Whether a prompt for this miniapp would be shown right now. */
 export function canShowRunningUpdatePrompt(packageName: string): boolean {
   if (promptListeners.size === 0 || openPrompt !== null || !environment.isForeground()) return false
-  return !environment.wasPromptedThisRun(packageName)
+  return !environment.isDeclined(packageName)
+}
+
+/**
+ * The person opened `packageName`. After Not now, its waiting update may ask again now: updaters listening with
+ * {@link onRunningUpdatePromptDue} try it again.
+ */
+export function noteMiniappOpened(packageName: string): void {
+  if (!environment.isDeclined(packageName)) return
+  environment.setDeclined(packageName, false)
+  for (const listener of [...dueListeners]) {
+    try {
+      listener(packageName)
+    } catch (error) {
+      console.warn("Update prompt due listener threw", error)
+    }
+  }
+}
+
+/** The update the person put off has installed: a later update asks afresh. */
+export function forgetRunningUpdateDecline(packageName: string): void {
+  if (environment.isDeclined(packageName)) environment.setDeclined(packageName, false)
+}
+
+/** Called with a miniapp opened again after Not now, whose waiting update may now ask. Returns an unsubscribe. */
+export function onRunningUpdatePromptDue(listener: (packageName: string) => void): () => void {
+  dueListeners.add(listener)
+  return () => {
+    dueListeners.delete(listener)
+  }
 }
 
 /**
  * Ask the user whether to update a running miniapp now. Resolves "not_shown"
  * without asking when the Mentra App is in the background, another prompt is
- * open, no host listener is registered, or this run of the miniapp was
- * already asked.
+ * open, no host listener is registered, or the person answered Not now for
+ * this miniapp and has not opened it since.
  */
 export function requestRunningUpdatePrompt(request: RunningUpdatePromptRequest): Promise<RunningUpdatePromptAnswer> {
   if (!canShowRunningUpdatePrompt(request.packageName)) return Promise.resolve("not_shown")
@@ -91,9 +112,10 @@ export function requestRunningUpdatePrompt(request: RunningUpdatePromptRequest):
       settled = true
       openSettlers.delete(settle)
       openPrompt = null
+      if (answer === "not_now") environment.setDeclined(request.packageName, true)
       resolve(answer)
     }
-    openSettlers.add(settle)
+    openSettlers.set(settle, request.packageName)
     const pending: PendingRunningUpdatePrompt = {
       ...request,
       answer: (choice) => settle(choice === "update" ? "update" : "not_now"),
@@ -103,9 +125,7 @@ export function requestRunningUpdatePrompt(request: RunningUpdatePromptRequest):
     } catch (error) {
       console.warn(`Update prompt for ${request.packageName} could not be shown`, error)
       settle("not_shown")
-      return
     }
-    environment.recordPrompted(request.packageName)
   })
 }
 
@@ -115,7 +135,12 @@ export function requestRunningUpdatePrompt(request: RunningUpdatePromptRequest):
  * prompt still on screen is ignored.
  */
 export function dismissRunningUpdatePrompts(): void {
-  for (const settle of [...openSettlers]) settle("not_shown")
+  for (const settle of [...openSettlers.keys()]) settle("not_shown")
+}
+
+/** Settle the open prompt of `packageName`, if any, as "not_shown": the install that asked no longer wants it. */
+export function dismissRunningUpdatePrompt(packageName: string): void {
+  for (const [settle, prompted] of [...openSettlers]) if (prompted === packageName) settle("not_shown")
 }
 
 /** Host UI: render each prompt and answer it. Returns an unsubscribe function. */
@@ -144,14 +169,12 @@ export function emitRunningUpdateFailed(failure: RunningUpdateFailure): void {
   }
 }
 
-/** Tests only: replace the foreground and run-tracking seams. */
+/** Tests only: replace the foreground, clock and persistence seams. */
 export function setRunningUpdatePromptEnvironmentForTests(next: RunningUpdatePromptEnvironment | null): void {
   environment = next ?? defaultEnvironment
-  promptedRuns.clear()
-  unsubscribeRunTracking?.()
-  unsubscribeRunTracking = null
   openPrompt = null
   openSettlers.clear()
   promptListeners.clear()
   failureListeners.clear()
+  dueListeners.clear()
 }

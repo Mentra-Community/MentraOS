@@ -332,11 +332,11 @@ describe("createWorkspace", () => {
     })
     await withCreationPolicy("open", async () => {
       expect(workspaceCreationPolicy()).toBe("open")
-      expect((await createWorkspace(user("mu_plain"), {name: "Open"})).name).toBe("Open")
+      expect((await createWorkspace(user("mu_plain_open"), {name: "Open"})).name).toBe("Open")
     })
     await withCreationPolicy(undefined, async () => {
       expect(workspaceCreationPolicy()).toBe("open")
-      expect((await createWorkspace(user("mu_plain"), {name: "Default"})).name).toBe("Default")
+      expect((await createWorkspace(user("mu_plain_default"), {name: "Default"})).name).toBe("Default")
     })
     const names = (await WorkspaceModel.find({}).sort({_id: 1}).lean()).map(row => row.name)
     expect(names).toEqual(["Allowed", "Open", "Default"])
@@ -436,7 +436,8 @@ describe("the automatic workspace", () => {
   async function counts() {
     return {
       workspaces: await WorkspaceModel.countDocuments({}),
-      memberships: await WorkspaceMembershipModel.countDocuments({}),
+      // The one-workspace guard shares the collection and has no workspaceId.
+      memberships: await WorkspaceMembershipModel.countDocuments({workspaceId: {$exists: true}}),
       events: await WorkspaceAuditEventModel.countDocuments({}),
     }
   }
@@ -724,10 +725,11 @@ describe("the automatic workspace", () => {
       expect((await replaceableWorkspaces("mu_me", [theirs, "ws_missing", ""])).size).toBe(0)
 
       // Recovered by someone else, the person's automatic workspace has another member: it holds something.
+      const rescuer = await account(user("mu_rescuer"))
       const mine = await automaticOf(user("mu_mine"))
-      await recoverOwnership(system, mine, "mu_me")
+      await recoverOwnership(system, mine, "mu_rescuer")
       expect(await replaceable(user("mu_mine"), mine)).toBe(false)
-      expect(await replaceable(me, mine)).toBe(false)
+      expect(await replaceable(rescuer, mine)).toBe(false)
     })
 
     test("a deleted workspace holds nothing for nobody: it is not replaceable", async () => {
@@ -747,8 +749,11 @@ describe("the automatic workspace", () => {
         spyOn(LicenseModel, "distinct"),
       ]
       try {
+        // Several workspaces are only ever legacy data now (one workspace per person), so they are made for
+        // others and handed to the person directly.
         await createWorkspace(me, {name: "One"})
-        await createWorkspace(me, {name: "Two"})
+        const two = await createWorkspace(await account(user("mu_two")), {name: "Two"})
+        await WorkspaceMembershipModel.updateMany({workspaceId: two.workspaceId}, {$set: {mentraUserId: "mu_me"}})
         for (const read of reads) read.mockClear()
         const plain = await listWorkspacesForUser("mu_me")
         expect(plain.map(item => item.replaceable)).toEqual([false, false])
@@ -839,7 +844,7 @@ describe("the automatic workspace", () => {
       expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.deleted"})).toBe(0)
     })
 
-    test("an automatic workspace that holds something, or one made with createWorkspace, is kept", async () => {
+    test("an automatic workspace that holds something, or one made with createWorkspace, is kept, and the recovery refused", async () => {
       const holds: Array<[string, (workspaceId: string) => Promise<unknown>]> = [
         ["a second member", ws => addMember(ws, "mu_second", "member")],
         ["a key", ws => seedCredential(ws, null)],
@@ -862,20 +867,21 @@ describe("the automatic workspace", () => {
         await hold(automaticId)
         const target = await newWorkspace(user("mu_owner"), "Target")
 
-        await recoverOwnership(orgAdmin, target, "mu_me")
+        // One workspace per person: the kept workspace refuses the recovery.
+        await expectError(() => recoverOwnership(orgAdmin, target, "mu_me"), "already_in_workspace", 409)
 
         expect({what, status: (await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status}).toEqual({
           what,
           status: "active",
         })
-        expect(await getActiveMembership(target, "mu_me")).toMatchObject({role: "owner"})
+        expect(await getActiveMembership(target, "mu_me")).toBeNull()
       }
 
       await Promise.all(MODELS.map(model => model.deleteMany({})))
       const me = await account(user("mu_me"))
       const made = await createWorkspace(me, {name: "Made"})
       const target = await newWorkspace(user("mu_owner"), "Target")
-      await recoverOwnership(orgAdmin, target, "mu_me")
+      await expectError(() => recoverOwnership(orgAdmin, target, "mu_me"), "already_in_workspace", 409)
       expect((await WorkspaceModel.findOne({workspaceId: made.workspaceId}).lean())!.status).toBe("active")
     })
 
@@ -886,7 +892,7 @@ describe("the automatic workspace", () => {
       await addMember(hostWs, "mu_me", "member")
       const target = await newWorkspace(user("mu_owner"), "Target")
 
-      await recoverOwnership(orgAdmin, target, "mu_me")
+      await expectError(() => recoverOwnership(orgAdmin, target, "mu_me"), "already_in_workspace", 409)
       expect((await WorkspaceModel.findOne({workspaceId: hostWs}).lean())!.status).toBe("active")
 
       // Recovering the host workspace's owner role for a member of it deletes nothing either: no membership is made.
@@ -1915,9 +1921,10 @@ describe("deletion holds", () => {
 
   test("a hold and a delete at the same time: exactly one wins, and a deleted workspace never holds anything", async () => {
     for (let round = 0; round < 6; round++) {
-      const ws = await newWorkspace(user("mu_owner"), "Acme")
+      // One workspace per person: a round whose hold wins leaves its workspace, so each round has its own owner.
+      const ws = await newWorkspace(user(`mu_owner_${round}`), "Acme")
       const [deleted, held] = await Promise.allSettled([
-        deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"}),
+        deleteWorkspace(user(`mu_owner_${round}`), ws, {confirmName: "Acme"}),
         setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: asOf()}),
       ])
       const status = (await getWorkspace(ws))!.status
@@ -1938,10 +1945,10 @@ describe("deletion holds", () => {
 
   test("a delete and a newer copy of the hold the workspace already has: the delete still waits for the hold", async () => {
     for (let round = 0; round < 4; round++) {
-      const ws = await newWorkspace(user("mu_owner"), "Acme")
+      const ws = await newWorkspace(user(`mu_owner_${round}`), "Acme")
       await setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: asOf()})
       const [deleted, held] = await Promise.allSettled([
-        deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"}),
+        deleteWorkspace(user(`mu_owner_${round}`), ws, {confirmName: "Acme"}),
         setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: asOf()}),
       ])
       expect(deleted.status).toBe("rejected")
@@ -2012,12 +2019,12 @@ describe("queries", () => {
   test("listWorkspacesForUser uses only active memberships of non-deleted workspaces", async () => {
     await newWorkspace(user("mu_owner"), "First")
     const second = await newWorkspace(user("mu_other"), "Second")
-    const third = await newWorkspace(user("mu_other"), "Third")
-    const gone = await newWorkspace(user("mu_other"), "Gone")
+    const third = await newWorkspace(user("mu_other_third"), "Third")
+    const gone = await newWorkspace(user("mu_other_gone"), "Gone")
     await addMember(second, "mu_me", "developer")
     await addMember(third, "mu_me", "member", {status: "ended", endedReason: "removed", endedAt: new Date()})
     await addMember(gone, "mu_me", "admin")
-    await deleteWorkspace(user("mu_other"), gone, {confirmName: "Gone"})
+    await deleteWorkspace(user("mu_other_gone"), gone, {confirmName: "Gone"})
 
     const listed = await listWorkspacesForUser("mu_me")
 

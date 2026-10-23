@@ -18,6 +18,7 @@ import {fetchHostedManifest, MiniappUrlUpdater} from "../services/miniappUrlUpda
 import {
   onRunningUpdateFailed,
   onRunningUpdatePrompt,
+  onRunningUpdatePromptDue,
   type PendingRunningUpdatePrompt,
   type RunningUpdateFailure,
 } from "../services/runningUpdatePrompt"
@@ -116,16 +117,25 @@ export const miniapps = {
   },
   /**
    * Render "update now?" prompts for running miniapps and answer each one. The
-   * engine decides when one may appear (foreground, one at a time, once per
-   * run of a miniapp). Returns an unsubscribe.
+   * engine decides when one may appear (foreground, one at a time; after Not
+   * now, only once the person opens that miniapp again). Returns an unsubscribe.
    */
   onUpdatePrompt: (listener: (prompt: PendingRunningUpdatePrompt) => void): (() => void) =>
     onRunningUpdatePrompt(listener),
   /** An accepted update failed; the installed version was started again. Returns an unsubscribe. */
   onUpdateFailed: (listener: (failure: RunningUpdateFailure) => void): (() => void) => onRunningUpdateFailed(listener),
-  /** A miniapp whose automatic update waited for it has stopped. Returns an unsubscribe. */
-  onDeferredUpdateReady: (listener: (packageName: string) => void): (() => void) =>
-    onDeferredMiniappUpdateReady(listener),
+  /**
+   * A miniapp whose automatic update waited for it has stopped, or was opened again after Not now so its update may
+   * ask again: run the updater for it. Returns an unsubscribe.
+   */
+  onDeferredUpdateReady: (listener: (packageName: string) => void): (() => void) => {
+    const unsubscribeStopped = onDeferredMiniappUpdateReady(listener)
+    const unsubscribeDue = onRunningUpdatePromptDue(listener)
+    return () => {
+      unsubscribeStopped()
+      unsubscribeDue()
+    }
+  },
   /** Stop all running miniapps. */
   stopAll: () => useAppStatusStore.getState().stopAll(),
   /** Install a miniapp from a bundle URL. */

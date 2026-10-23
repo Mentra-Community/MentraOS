@@ -1438,6 +1438,55 @@ const en = {
     deviceSettings: "Device settings",
     appSettings: "App Settings",
   },
+  fleet: {
+    // Words from the Fleet design board (round 2, UPDATE-2026-10-20.md): the invitation, the notice, Settings.
+    invitationTitle: "{{workspace}} invited you to join their workspace",
+    invitationTerms: "If you join, they manage your device and can install miniapps on your phone.",
+    invitationJoin: "Join",
+    invitationDecline: "Decline",
+    invitationLeaveFirst: "You're in {{current}}. Leave it to join {{workspace}}.",
+    invitationLeaveCurrent: "Leave {{current}}",
+    canSeeTitle: "Your workspace can see",
+    canSeeGlassesAndPhones: "Your glasses and phones",
+    canSeeMiniapps: "Miniapps you use",
+    cantSeeTitle: "Your workspace can't see",
+    cantSeePhotosAndVideos: "Your photos and videos",
+    cantSeeSpeech: "What you say and hear",
+    cantSeePasswords: "Your passwords",
+    leaveConfirmTitle: "Leave {{workspace}}?",
+    leaveConfirmMessage: "Its miniapps come off this phone.",
+    leaveConfirmLeave: "Leave",
+    leaveConfirmCancel: "Cancel",
+    noticeTitle: "You've now joined the {{workspace}} workspace",
+    noticeBody: "By joining the {{workspace}} workspace, you agree to let them manage your device.",
+    noticeOk: "OK",
+    managementTitle: "Mentra Fleet Management",
+    managementSubtitle: "Managed by your workspace's admins",
+    settingsGroup: "Workspace",
+    pageTitle: "Workspace",
+    leaveWorkspace: "Leave workspace",
+    roleMember: "Member",
+    // Not drawn on the board; recorded in the Fleet Phase 11 plan ("Engineering choices recorded").
+    lastOwner:
+      "You're this workspace's only Owner. Hand over ownership or delete the workspace in Mentra Portal first.",
+    somethingWentWrong: "Something went wrong. Try again.",
+    // The update prompt for a running miniapp (UPDATE-2026-10-20.md); the Fleet Phase 11 plan fixes the wording.
+    updatePromptTitle: "Update {{name}}?",
+    updatePromptMessage: "{{name}} will restart.",
+    updatePromptNotNow: "Not now",
+    updatePromptUpdate: "Update",
+    // The toast after an accepted update fails (provisioning spec, "Running miniapps and update UI").
+    updateFailed: "Couldn't update {{name}}. You're still on version {{version}}.",
+    // Not worded by the spec or the board. The phone shows the roles with the words of Mentra Portal
+    // (`ROLE_LABELS` in `cloud-v2/packages/workspace-ui/src/roles.ts`), so a person sees one name for their role.
+    roleDeveloper: "Developer",
+    roleAdmin: "Admin",
+    roleOwner: "Owner",
+    // Not worded by the spec or the board (Mentra Portal says "Invitation no longer valid"): an open decision.
+    invitationExpired: "This invitation has expired.",
+    // Not worded by the spec or the board: an open decision.
+    accessRevoked: "You no longer have access to {{name}}.",
+  },
   appSettings: {
     noDescription: "No description available.",
     noSettings: "No settings available for this app",

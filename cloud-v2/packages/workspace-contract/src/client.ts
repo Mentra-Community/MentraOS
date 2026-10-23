@@ -4,6 +4,7 @@
  * request is signed over its timestamp, method, path and body hash (`service-signature.ts`); no request
  * names an organization.
  */
+import {WORKSPACE_ROLES} from "./capabilities"
 import {isWorkspaceDeletionHold} from "./deletion-holds"
 import {OWNER_NOT_FOUND_ERROR, STALE_REVISION_ERROR} from "./licenses"
 import type {LicensesResponse, LicenseView, LicenseWrite, LicenseWriteResponse} from "./licenses"
@@ -15,9 +16,12 @@ import type {
   DeletionHoldsResponse,
   DeletionHoldUpdate,
   MembershipCheckEntry,
+  MembershipInterval,
+  MembershipIntervalsResponse,
   PrincipalResponse,
   WorkspaceChangeEvent,
   WorkspaceChangesResponse,
+  WorkspaceMembersResponse,
   WorkspaceSummary,
 } from "./types"
 
@@ -71,6 +75,15 @@ export interface CoreWorkspaceClient {
    * the page was not full. Store a cursor only after the events up to it are processed.
    */
   listChanges(input: {after?: string | null; limit?: number}): Promise<WorkspaceChangesResponse>
+  /**
+   * One page of membership interval history (Fleet only). Every interval overlapping the lookback window is
+   * returned, including an open one that started before it. `after` is the previous page's opaque `next`
+   * (omitted or null starts from the beginning); `limit` is at most 500. The response's `feedSeq` is the change-feed
+   * position the read is consistent with, so a consumer then applies feed events after it.
+   */
+  listMembershipIntervals(input: {after?: string | null; limit?: number}): Promise<MembershipIntervalsResponse>
+  /** Who is in a workspace now, with names (Fleet only). An unknown or deleted workspace is `workspace_not_found`. */
+  listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMembersResponse>
   mintServiceCredential(input: {
     workspaceId: string
     name: string
@@ -172,6 +185,58 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
     checkSnapshot(path, event.before, "an event's before")
     checkSnapshot(path, event.after, "an event's after")
     return event as unknown as WorkspaceChangeEvent
+  }
+
+  const INTERVAL_END_REASONS = ["left", "removed", "workspace_deleted", "account_deleted"]
+
+  /** An interval as Core lists it: a closed one names why it ended, an open one does not. */
+  function checkInterval(path: string, value: unknown): MembershipInterval {
+    const interval = checkRecord(path, value, "an interval")
+    for (const field of ["membershipId", "workspaceId", "mentraUserId", "role"] as const) {
+      if (typeof interval[field] !== "string" || !interval[field]) throw badResponse(path, `an interval has no ${field}`)
+    }
+    if (typeof interval.start !== "string" || Number.isNaN(Date.parse(interval.start))) {
+      throw badResponse(path, "an interval's start is not a time")
+    }
+    if (interval.end === null) {
+      if (interval.endReason !== null) throw badResponse(path, "an open interval names an endReason")
+    } else {
+      if (typeof interval.end !== "string" || Number.isNaN(Date.parse(interval.end))) {
+        throw badResponse(path, "an interval's end is neither a time nor null")
+      }
+      if (Date.parse(interval.end) < Date.parse(interval.start)) throw badResponse(path, "an interval ends before it starts")
+      if (typeof interval.endReason !== "string" || !INTERVAL_END_REASONS.includes(interval.endReason)) {
+        throw badResponse(path, "a closed interval has no known endReason")
+      }
+    }
+    checkRoleIntervals(path, interval)
+    return interval as unknown as MembershipInterval
+  }
+
+  /** An interval's role intervals: at least one, in order, inside the interval, only the last one open. */
+  function checkRoleIntervals(path: string, interval: Json): void {
+    const roles = interval.roles
+    if (!Array.isArray(roles) || roles.length === 0) throw badResponse(path, "an interval has no role intervals")
+    const start = Date.parse(interval.start as string)
+    const end = interval.end === null ? null : Date.parse(interval.end as string)
+    let previousEnd = start
+    roles.forEach((value, index) => {
+      const entry = checkRecord(path, value, "a role interval")
+      if (typeof entry.role !== "string" || !(WORKSPACE_ROLES as readonly string[]).includes(entry.role)) {
+        throw badResponse(path, "a role interval has no known role")
+      }
+      const from = typeof entry.start === "string" ? Date.parse(entry.start) : NaN
+      if (Number.isNaN(from) || from < previousEnd) throw badResponse(path, "a role interval starts out of order")
+      const last = index === roles.length - 1
+      if (entry.end === null) {
+        if (!last || end !== null) throw badResponse(path, "only the last role of an open interval is open")
+        return
+      }
+      const to = typeof entry.end === "string" ? Date.parse(entry.end) : NaN
+      if (Number.isNaN(to) || to < from || (end !== null && to > end)) throw badResponse(path, "a role interval's end is out of range")
+      if (last && end === null) throw badResponse(path, "the last role of an open interval is still held")
+      previousEnd = to
+    })
   }
 
   function checkWorkspace(path: string, value: unknown, what: string): Json {
@@ -360,6 +425,54 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
         throw badResponse(path, "next is not the seq of the last event")
       }
       return {events: raw.events as WorkspaceChangeEvent[], next: raw.next}
+    },
+
+    async listWorkspaceMembers(workspaceId) {
+      const path = `${API_PREFIX}/workspaces/${encodeURIComponent(workspaceId)}/members`
+      const raw = checkRecord(path, await call("GET", path), "the member list")
+      if (!Array.isArray(raw.members)) throw badResponse(path, "missing members")
+      for (const entry of raw.members) {
+        const member = checkRecord(path, entry, "a member")
+        if (typeof member.membershipId !== "string" || !member.membershipId) throw badResponse(path, "a member has no membershipId")
+        if (typeof member.role !== "string" || !member.role) throw badResponse(path, "a member has no role")
+        for (const field of ["mentraUserId", "email"] as const) {
+          if (member[field] !== null && typeof member[field] !== "string") throw badResponse(path, `a member's ${field} is not text or null`)
+        }
+        if (member.name !== undefined && member.name !== null && typeof member.name !== "string") {
+          throw badResponse(path, "a member's name is not text or null")
+        }
+      }
+      return {members: raw.members as WorkspaceMembersResponse["members"]}
+    },
+
+    async listMembershipIntervals(input) {
+      const query = new URLSearchParams()
+      if (input.after !== undefined && input.after !== null) query.set("after", input.after)
+      if (input.limit !== undefined) query.set("limit", String(input.limit))
+      const queryString = query.toString()
+      const path = `${API_PREFIX}/membership-intervals${queryString ? `?${queryString}` : ""}`
+      const raw = checkRecord(path, await call("GET", path), "the interval page")
+      if (typeof raw.lookbackDays !== "number" || !Number.isSafeInteger(raw.lookbackDays) || raw.lookbackDays < 1) {
+        throw badResponse(path, "lookbackDays is not a positive whole number")
+      }
+      if (typeof raw.windowStart !== "string" || Number.isNaN(Date.parse(raw.windowStart))) {
+        throw badResponse(path, "windowStart is not a time")
+      }
+      if (typeof raw.feedSeq !== "number" || !Number.isSafeInteger(raw.feedSeq) || raw.feedSeq < 0) {
+        throw badResponse(path, "feedSeq is not a whole number")
+      }
+      if (!Array.isArray(raw.intervals)) throw badResponse(path, "missing intervals")
+      if (raw.next !== null && (typeof raw.next !== "string" || raw.next.length === 0)) {
+        throw badResponse(path, "next is neither a cursor nor null")
+      }
+      const intervals = raw.intervals.map(value => checkInterval(path, value))
+      return {
+        lookbackDays: raw.lookbackDays,
+        windowStart: raw.windowStart,
+        feedSeq: raw.feedSeq,
+        intervals,
+        next: raw.next,
+      }
     },
 
     async mintServiceCredential(input) {

@@ -28,6 +28,7 @@ import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
 import {nativeMiniappExecution} from "../services/NativeMiniappExecution"
+import {noteMiniappOpened} from "../services/runningUpdatePrompt"
 import {isMiniappAvailable} from "../runtime/bootstrap"
 import {isStoreMiniappPackage} from "../services/SystemMiniappPolicy"
 import {resolveHiddenStatus} from "./appVisibility"
@@ -66,6 +67,8 @@ export interface AppStoreHooks {
    * alert / settings navigation here.
    */
   onMissingSpeechModel?: (app: ClientApp) => void
+  /** A start was refused because the miniapp's server no longer admits this account; the host explains why. */
+  onAccessRevoked?: (app: ClientApp) => void
   /**
    * An open request passed the gates — fired on EVERY open, including
    * re-opening an already-running app, so the host's navigation / open
@@ -411,6 +414,10 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       hostHooks.onUpdateBlocked?.(app)
       return false
     }
+    if (app.local && appRegistry.isMiniappAccessRevoked(packageName)) {
+      hostHooks.onAccessRevoked?.(app)
+      return false
+    }
 
     // Skip spawning a NEW app while another is mid-launch — concurrent spawns
     // race the foreground-only-one teardown. This is checked BEFORE the gates
@@ -580,6 +587,10 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       hostHooks.onUpdateBlocked?.(app)
       return
     }
+    if (app.local && appRegistry.isMiniappAccessRevoked(packageName)) {
+      hostHooks.onAccessRevoked?.(app)
+      return
+    }
 
     // Flip the foreground flag synchronously so the Compositor's open
     // animation starts on the same frame as the tap. We do NOT await start()
@@ -592,6 +603,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       foregroundedPackage: packageName,
       apps: s.apps.map((a) => ({...a, foregrounded: a.packageName === packageName})),
     }))
+    noteMiniappOpened(packageName)
 
     // Ensure the JSContext exists. start() is idempotent for an
     // already-running app and enforces the foreground-only-one rule for

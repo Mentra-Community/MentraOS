@@ -34,6 +34,18 @@ function render(ui: ReactElement, seed: { everyone?: WorkspaceSummary[]; details
   }
 }
 
+describe("the Fleet Management link on the Workspaces page", () => {
+  // The open workspace is state, so a server render shows the list only; the link itself is tested through its URL.
+  test("points at the workspace's Fleet overview in the workspace portal, and only where there is a portal", async () => {
+    const { fleetOverviewUrl, workspacePortalUrl } = await import("../lib/config");
+    expect(fleetOverviewUrl("https://portal.test", "ws_acme")).toBe("https://portal.test/w/ws_acme/fleet?fleet=overview");
+    expect(fleetOverviewUrl("https://portal.test", "ws/odd id")).toBe("https://portal.test/w/ws%2Fodd%20id/fleet?fleet=overview");
+    expect(fleetOverviewUrl(null, "ws_acme")).toBeNull();
+    expect(workspacePortalUrl("https://portal.test/")).toBe("https://portal.test");
+    for (const bad of [undefined, "", "  ", "javascript:alert(1)", "not a url"]) expect(workspacePortalUrl(bad)).toBeNull();
+  });
+});
+
 describe("the Workspaces page", () => {
   test("lists every workspace with Open and Recover ownership, and asks to open one", () => {
     const markup = render(<WorkspacesPage />, { everyone });

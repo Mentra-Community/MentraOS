@@ -1,10 +1,16 @@
 /**
  * Phone-local SimpleStorage for bundled miniapps.
  *
- * Keys are scoped to the stable Mentra user id and package name. Access tokens
- * must never be part of the namespace: Core access tokens rotate and are held
- * in memory only, so using one makes every app restart look like a new user.
+ * Keys are scoped to a data partition (one account on one Core, and the
+ * account's personal data or one workspace's private data; see
+ * `miniappDataPartition.ts`) and the package name. Access tokens must never
+ * be part of the namespace: Core access tokens rotate and are held in memory
+ * only, so using one makes every app restart look like a new user.
+ *
+ * Values written before partitions existed were scoped by user id alone. They
+ * move into that account's personal partition the first time it is read.
  */
+import type {MiniappDataPartition} from "./miniappDataPartition"
 
 export interface LocalMiniappStorageBackend {
   get(key: string): unknown | null
@@ -15,11 +21,14 @@ export interface LocalMiniappStorageBackend {
 }
 
 export interface LocalMiniappStorageHooks {
-  getUserId: () => Promise<string>
+  /** The partition `packageName` reads and writes now. Rejects while no account is known. */
+  getPartition: (packageName: string) => Promise<MiniappDataPartition>
   backend: LocalMiniappStorageBackend
 }
 
-const KEY_ROOT = "mentraos_localstorage_"
+const KEY_ROOT = "mentraos_miniappdata/"
+const LEGACY_KEY_ROOT = "mentraos_localstorage_"
+const MIGRATED_ROOT = "mentraos_miniappdata_migrated/"
 
 export class LocalMiniappStorage {
   constructor(private readonly hooks: LocalMiniappStorageHooks) {}
@@ -75,8 +84,24 @@ export class LocalMiniappStorage {
   }
 
   private async prefix(packageName: string): Promise<string> {
-    const userId = (await this.hooks.getUserId()).trim()
-    if (!userId) throw new Error("Mentra user identity is unavailable")
-    return `${KEY_ROOT}${userId}_${packageName}_`
+    const partition = await this.hooks.getPartition(packageName)
+    if (!partition.id) throw new Error("Mentra user identity is unavailable")
+    const prefix = `${KEY_ROOT}${partition.id}/${packageName}/`
+    if (partition.personalUserId) this.migrateLegacy(partition.personalUserId, packageName, prefix)
+    return prefix
+  }
+
+  private migrateLegacy(userId: string, packageName: string, prefix: string): void {
+    const marker = `${MIGRATED_ROOT}${userId}/${packageName}`
+    const {backend} = this.hooks
+    if (backend.has(marker)) return
+    const legacyPrefix = `${LEGACY_KEY_ROOT}${userId}_${packageName}_`
+    for (const key of backend.keys()) {
+      if (!key.startsWith(legacyPrefix)) continue
+      const target = prefix + key.slice(legacyPrefix.length)
+      if (!backend.has(target)) backend.set(target, backend.get(key))
+      backend.remove(key)
+    }
+    backend.set(marker, true)
   }
 }

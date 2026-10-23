@@ -24,6 +24,7 @@ let verifyFailure: string | undefined
 let downloadFailure: string | undefined
 let activationFailure: string | undefined
 let downloadGate: Promise<void> | undefined
+let notInstalled = false
 const stored = new Map<string, unknown>()
 // Like the real registry, the running flag projects the running-app registry.
 let isProjected: (packageName: string) => boolean = () => false
@@ -48,6 +49,7 @@ mock.module("../../utils/storage/storage", () => ({
 }))
 
 const registry = {
+  isMiniappAccessRevoked: () => false,
   getInstalledMiniapps: async (): Promise<ClientApp[]> => [
     {
       packageName: pkg,
@@ -68,7 +70,7 @@ const registry = {
     },
   ],
   getActiveVersion: async () => active,
-  getInstalledVersions: () => [active],
+  getInstalledVersions: () => (notInstalled ? [] : [active]),
   assertCanInstallVersion: (packageName: string, version: string) =>
     assertMiniappUpdateVersion(packageName, version, [active]),
   getReleaseIdentity: () => ({source: "bundled_asset"}),
@@ -91,6 +93,7 @@ const registry = {
   },
 }
 const localZips: string[] = []
+const installReasons: (string | undefined)[] = []
 
 async function stagedInstall(first: "download" | "read", options: InstallBundleOptions) {
   calls.push(first)
@@ -107,6 +110,8 @@ async function stagedInstall(first: "download" | "read", options: InstallBundleO
     calls.push("activate")
     if (activationFailure) throw new Error(activationFailure)
     active = options.expectedVersion!
+    notInstalled = false
+    installReasons.push(options.installReason)
     return Res.ok(undefined)
   } catch (error) {
     return Res.error(error as Error)
@@ -146,7 +151,8 @@ mock.module("expo-file-system", () => ({
   },
 }))
 
-const {installMiniappRelease, MiniappInstallCancelledError} = await import("../miniappReleaseInstall")
+const {classifyManagedInstallError, installMiniappRelease, MiniappInstallCancelledError} =
+  await import("../miniappReleaseInstall")
 const {miniappLauncher} = await import("../MiniappLauncher")
 const {miniappRunningRegistry} = await import("../MiniappRunningRegistry")
 isProjected = (packageName) => miniappRunningRegistry.has(packageName)
@@ -216,6 +222,8 @@ beforeEach(async () => {
   downloadFailure = undefined
   activationFailure = undefined
   downloadGate = undefined
+  notInstalled = false
+  installReasons.length = 0
   foreground = true
   answer = "update"
   prompts.length = 0
@@ -225,8 +233,9 @@ beforeEach(async () => {
   deferredUpdates.resetDeferredMiniappUpdatesForTests()
   prompt.setRunningUpdatePromptEnvironmentForTests({
     isForeground: () => foreground,
-    wasPromptedThisRun: (packageName) => stored.has(`prompted:${packageName}`),
-    recordPrompted: (packageName) => stored.set(`prompted:${packageName}`, true),
+    isDeclined: (packageName) => stored.get(`declined:${packageName}`) === true,
+    setDeclined: (packageName, value) =>
+      void (value ? stored.set(`declined:${packageName}`, true) : stored.delete(`declined:${packageName}`)),
   })
   prompt.onRunningUpdatePrompt((pending) => {
     prompts.push(pending)
@@ -335,18 +344,26 @@ describe("update prompt for a running miniapp", () => {
     await release()
     expect(calls).toEqual(["download", "verify", "unpack", "activate"])
     expect(active).toBe("1.1.0")
+    // The put-off update installed: the next one asks without waiting for an open.
+    expect(prompt.canShowRunningUpdatePrompt(pkg)).toBe(true)
   })
 
-  test("asks once per run of a miniapp, without downloading while it may not ask", async () => {
+  test("after Not now asks again only once the person opens the miniapp, without downloading before", async () => {
     answer = "not_now"
     await runApp({open: false})
+    const ready: string[] = []
+    deferredUpdates.onDeferredMiniappUpdateReady((packageName) => ready.push(packageName))
+    const due: string[] = []
+    prompt.onRunningUpdatePromptDue((packageName) => due.push(packageName))
     await expect(release()).rejects.toBeInstanceOf(MiniappRunningError)
     calls.length = 0
     await expect(release()).rejects.toBeInstanceOf(MiniappRunningError)
     expect(calls).toEqual([])
     expect(prompts).toHaveLength(1)
-    // The next time it is opened, it asks again.
-    stored.delete(`prompted:${pkg}`)
+
+    await useAppStatusStore.getState().setForeground(pkg)
+    expect(due).toEqual([pkg])
+    expect(ready).toEqual([])
     answer = "update"
     await release()
     expect(prompts).toHaveLength(2)
@@ -477,6 +494,19 @@ describe("an update whose session ends (sign-out or a deployment switch)", () =>
     expect(miniappRunningRegistry.has(pkg)).toBe(true)
   })
 
+  test("tells its caller when it waits for an answer; dismissing that one prompt defers the update", async () => {
+    answer = "hold"
+    await runApp({open: true})
+    const asked: string[] = []
+    const update = release({onAsking: () => asked.push(calls.at(-1)!)})
+    while (!calls.includes("prompt")) await Promise.resolve()
+    expect(asked).toEqual(["unpack"])
+    prompt.dismissRunningUpdatePrompt("com.acme.other")
+    prompt.dismissRunningUpdatePrompt(pkg)
+    await expect(update).rejects.toBeInstanceOf(MiniappRunningError)
+    expect(active).toBe("1.0.0")
+  })
+
   test("after Update it neither activates nor restarts the miniapp, and shows no failure", async () => {
     await runApp({open: true})
     await expect(release({isCancelled: () => calls.includes(`stop:${pkg}`)})).rejects.toBeInstanceOf(
@@ -485,5 +515,81 @@ describe("an update whose session ends (sign-out or a deployment switch)", () =>
     expect(calls).toEqual(["download", "verify", "unpack", "prompt", `stop:${pkg}`])
     expect(active).toBe("1.0.0")
     expect(failures).toEqual([])
+  })
+})
+
+describe("a managed first install", () => {
+  test("installs a package that is not installed, silently", async () => {
+    notInstalled = true
+    const states: boolean[] = []
+    const unsubscribe = useAppStatusStore.subscribe((state) => states.push(Boolean(state.apps[0]?.updating)))
+    await release({firstInstall: true, installReason: "assignment"})
+    unsubscribe()
+    expect(calls).toEqual(["download", "verify", "unpack", "activate"])
+    expect(active).toBe("1.1.0")
+    expect(states).not.toContain(true)
+    expect(prompts).toHaveLength(0)
+    expect(failures).toEqual([])
+    expect(installReasons).toEqual(["assignment"])
+  })
+
+  test("without firstInstall an automatic update still refuses a package that is not installed", async () => {
+    notInstalled = true
+    await expect(release()).rejects.toThrow()
+    expect(calls).toEqual([])
+  })
+
+  test("a context change while it downloads commits nothing", async () => {
+    notInstalled = true
+    let cancelled = false
+    const download = deferred()
+    downloadGate = download.promise
+    const install = release({firstInstall: true, isCancelled: () => cancelled})
+    await Promise.resolve()
+    cancelled = true
+    download.resolve()
+    await expect(install).rejects.toBeInstanceOf(MiniappInstallCancelledError)
+    expect(calls).not.toContain("activate")
+    expect(notInstalled).toBe(true)
+  })
+
+  test("an installed package updates as usual, with the updating state", async () => {
+    await runApp({open: true})
+    await release({firstInstall: true})
+    expect(calls).toEqual(["download", "verify", "unpack", "prompt", `stop:${pkg}`, "activate", `start:${pkg}@1.1.0`])
+  })
+})
+
+describe("installation reasons", () => {
+  test("an explicit install records the user's reason; an automatic update records none", async () => {
+    await installMiniappRelease("https://store.example/notes-1.1.0.zip", {
+      expectedPackageName: pkg,
+      expectedVersion: "1.1.0",
+      releaseIdentity: {source: "store"},
+    })
+    active = "1.1.0"
+    await release({expectedVersion: "1.2.0"})
+    expect(installReasons).toEqual(["explicit", undefined])
+  })
+})
+
+describe("classifying a managed install failure", () => {
+  test.each([
+    ["Cannot install com.acme.notes@1.0.0: version 2.0.0 is already installed", "newer_version_installed", false],
+    ["Requires Mentra App 9.0.0+; this host is 3.0.0.", "incompatible_host", false],
+    ["Built for SDK 9.0.0; this Mentra App supports ^1.0.0.", "incompatible_host", false],
+    ["Publisher signature mismatch for com.acme.notes", "signature_invalid", false],
+    ["Unsigned bundle cannot replace signed miniapp com.acme.notes", "signature_invalid", false],
+    ["ENOSPC: no space left on device", "storage_full", true],
+    ["bundle package mismatch: expected a, got b", "not_a_miniapp", false],
+    ["bundle version mismatch: expected 1.0.0, got 1.0.1", "download_failed", true],
+    ["bundle download timed out after 45000ms", "download_failed", true],
+  ] as const)("%s", (message, kind, retryable) => {
+    expect(classifyManagedInstallError(new Error(message))).toEqual({kind, retryable})
+  })
+
+  test("a running miniapp waits and a superseded install is cancelled", () => {
+    expect(classifyManagedInstallError(new MiniappRunningError(pkg)).kind).toBe("running")
+    expect(classifyManagedInstallError(new MiniappInstallCancelledError(pkg)).kind).toBe("cancelled")
   })
 })

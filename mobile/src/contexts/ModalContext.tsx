@@ -80,9 +80,21 @@ interface AlertHost {
 }
 
 let host: AlertHost | null = null
+/** Callers of `waitForAlertHost` that came before the sheet was mounted. */
+let hostWaiters: Array<() => void> = []
 
 /** Whether the sheet is mounted. Before it is (early startup, some tests) callers fall back on their own. */
 export const hasAlertHost = () => host !== null
+
+/**
+ * Resolves once the sheet is mounted, at once when it already is. A caller that must not fall back on a
+ * system alert (the Fleet sheets, which run at startup, before the provider mounts) waits here, then
+ * calls `showAlert`.
+ */
+export function waitForAlertHost(): Promise<void> {
+  if (host) return Promise.resolve()
+  return new Promise<void>((resolve) => hostWaiters.push(resolve))
+}
 
 /**
  * Closes the alert titled `title` without running any of its buttons, and drops queued alerts with that
@@ -296,6 +308,9 @@ export function ModalProvider({children}: {children: ReactNode}) {
         else rerender()
       },
     }
+    const waiting = hostWaiters
+    hostWaiters = []
+    waiting.forEach((resolve) => resolve())
     return () => {
       host = null
     }
@@ -370,7 +385,7 @@ export function ModalProvider({children}: {children: ReactNode}) {
               className="absolute bottom-0 left-0 right-0 rounded-t-3xl bg-background px-6"
               testID="alert.sheet">
               <View className="h-6 items-center justify-center">
-                {dismissible && <View className="h-1.5 w-10 rounded-full bg-border" />}
+                {dismissible && <View className="h-1.5 w-10 rounded-full bg-border" testID="alert.handle" />}
               </View>
               <ScrollView
                 className="grow-0"

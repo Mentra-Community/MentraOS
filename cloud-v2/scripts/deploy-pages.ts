@@ -43,6 +43,19 @@ export const developerConsoleUrls: Record<Environment, string> = {
   prod: "https://console.mentraglass.com",
 };
 
+// The workspace portal each environment's admin portal deep-links to (Workspaces, Fleet Management), given to
+// the admin portal's build as PORTAL_URL.
+export const portalUrls: Record<Environment, string> = {
+  dev: "https://portal.dev.mentraglass.com",
+  staging: "https://portal.staging.mentraglass.com",
+  prod: "https://portal.mentraglass.com",
+};
+
+/** The public build-time configuration of the admin portal for `env`. */
+export function adminBuildConfig(env: Environment): Record<string, string> {
+  return { PORTAL_URL: portalUrls[env] };
+}
+
 /** The public build-time configuration of the workspace portal for `env`. */
 export function portalBuildConfig(env: Environment): Record<string, string> {
   return { DEVELOPER_CONSOLE_URL: developerConsoleUrls[env] };
@@ -83,6 +96,8 @@ function deploySite(site: Site, env: Environment) {
     run(["bun", "--cwd", "websites/account", "build"], { env: accountConfig });
   } else if (site === "portal") {
     run(["bun", "--cwd", "websites/portal", "build"], { env: portalBuildConfig(env) });
+  } else if (site === "admin") {
+    run(["bun", "--cwd", "websites/admin", "build"], { env: adminBuildConfig(env) });
   } else {
     run(["bun", "--cwd", `websites/${site}`, "build"]);
   }

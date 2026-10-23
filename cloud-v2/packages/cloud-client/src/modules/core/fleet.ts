@@ -1,8 +1,16 @@
-import {FLEET_NOT_INSTALLED, FLEET_SCHEMA_VERSION, type FleetReport} from "@mentra/cloud-protocol"
+import {
+  FLEET_NOT_INSTALLED,
+  FLEET_SCHEMA_VERSION,
+  FleetDesiredStateSchema,
+  type FleetDesiredState,
+  type FleetReport,
+} from "@mentra/cloud-protocol"
 import {AuthExpiredError, HttpError} from "../../errors"
 import type {HttpClient} from "../../http"
+import {AccountCaller, CoreResponseError, type AccountCallOptions, type CoreTokenSource} from "./account-call"
 
 const FLEET_REPORT_PATH = "/api/client/fleet/report"
+const FLEET_DESIRED_STATE_PATH = "/api/client/fleet/desired-state"
 
 /** Core's whole-response error codes are short snake_case words; anything else is not safe to surface. */
 const ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
@@ -27,6 +35,8 @@ export interface FleetAckResult {
 export interface FleetAck {
   schemaVersion: typeof FLEET_SCHEMA_VERSION
   results: FleetAckResult[]
+  /** The account's desired-state revision at the time of the answer (Phase 11). Absent from an older Fleet. */
+  revision?: number
 }
 
 /**
@@ -96,7 +106,45 @@ function outcomeForHttpError(error: HttpError): FleetReportOutcome {
 }
 
 export class Fleet {
-  constructor(private readonly http: HttpClient) {}
+  private readonly caller: AccountCaller
+
+  constructor(
+    private readonly http: HttpClient,
+    auth?: CoreTokenSource,
+  ) {
+    this.caller = new AccountCaller(auth)
+  }
+
+  /**
+   * Fetches the account's desired state (`GET /api/client/fleet/desired-state`), validated against
+   * `FleetDesiredStateSchema`.
+   *
+   * Resolves only with a complete, valid `managed` or `unmanaged` answer. Everything else rejects, so a failure can
+   * never be read as "nothing assigned" or "unmanaged" and make the phone drop what it holds:
+   *  - `CoreRequestError`: any non-success answer (the status and Core's code are kept: 503 `fleet_unavailable`,
+   *    404 `fleet_not_installed`, 403, 429, ...) and a network failure (`status` 0, code `network_error`).
+   *  - `CoreResponseError`: Core answered 2xx but the body is not desired state: no body, a missing field (an entry
+   *    without `url`, a managed answer without `workspace`), an unknown key, or a `status` this client does not know
+   *    (`reason: "unknown_status"`, for example a later `paused`).
+   *  - `SessionChangedError`: the account changed while the request was out; the answer is dropped.
+   *  - `AuthExpiredError` / `AuthUnavailableError` from the token source, and the abort reason on abort.
+   *
+   * A 401 refreshes the Core token once and sends again. `opts.expectedAccount` refuses the call when the client
+   * holds another account's token.
+   */
+  async desiredState(opts?: AccountCallOptions): Promise<FleetDesiredState> {
+    const body = await this.caller.run(
+      bearer =>
+        this.http.get<unknown>(FLEET_DESIRED_STATE_PATH, {bearer, ...(opts?.signal ? {signal: opts.signal} : {})}),
+      opts,
+    )
+    const parsed = FleetDesiredStateSchema.safeParse(body)
+    if (parsed.success) return parsed.data
+    const status = typeof body === "object" && body !== null && "status" in body ? body.status : undefined
+    throw new CoreResponseError(
+      typeof status === "string" && status !== "managed" && status !== "unmanaged" ? "unknown_status" : "invalid_shape",
+    )
+  }
 
   /**
    * Reports one batch of Fleet records to the phone's own Core.
@@ -171,5 +219,8 @@ function readAck(body: unknown): FleetAck | null {
     if (isWholeNumber(raw.retryAfterSeconds)) result.retryAfterSeconds = raw.retryAfterSeconds
     results.push(result)
   }
-  return {schemaVersion: FLEET_SCHEMA_VERSION, results}
+  const ack: FleetAck = {schemaVersion: FLEET_SCHEMA_VERSION, results}
+  // A newer Fleet's revision tells the phone to fetch desired state. Anything but a whole number of 1 or more is not one.
+  if (typeof body.revision === "number" && Number.isSafeInteger(body.revision) && body.revision >= 1) ack.revision = body.revision
+  return ack
 }

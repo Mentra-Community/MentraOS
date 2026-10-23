@@ -755,9 +755,10 @@ describe("validateCredentialToken", () => {
   })
 
   test("deleting the creator's account ends their workspace keys everywhere, and their operator key", async () => {
+    // One workspace per person goes through the services; a second membership is legacy data, written directly.
+    const own = (await createWorkspace(orgAdmin, {name: "Own"})).workspaceId
     const {workspaceId} = await newWorkspace()
     await addMember(workspaceId, orgAdmin.mentraUserId, "developer")
-    const own = (await createWorkspace(orgAdmin, {name: "Own"})).workspaceId
     const inShared = await createWorkspaceCredential(orgAdmin, workspaceId, {name: "shared"})
     const inOwn = await createWorkspaceCredential(orgAdmin, own, {name: "own"})
     const operator = await createOperatorKey(orgAdmin, {name: "ops", scopes: ["organization.incidents.read"]})

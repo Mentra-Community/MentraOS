@@ -836,6 +836,8 @@ const mockIslandEntries = () => {
     SignedMiniappDevBuildError: jest.requireActual("./modules/engine/src/services/publisherIdentityPolicy")
       .SignedMiniappDevBuildError,
     installMiniappFromJsonUrl: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
+    // Fleet's managed/unmanaged answer: a pure module, so tests drive the real one (`setFleetManagementState`).
+    ...jest.requireActual("./modules/engine/src/services/fleet/fleetManagementState"),
     __esModule: true,
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
     // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates)

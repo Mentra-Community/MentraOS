@@ -267,7 +267,7 @@ export class CloudClient {
     })
 
     // Core is last: stateless REST on the core service, Bearer from auth.
-    const core = coreHttp ? new Core({http: coreHttp}) : undefined
+    const core = coreHttp ? new Core({http: coreHttp, auth}) : undefined
 
     this.auth = auth
     this.runtime = runtime

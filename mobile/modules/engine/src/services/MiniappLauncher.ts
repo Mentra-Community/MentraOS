@@ -50,6 +50,14 @@ import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniapp
 import type {MentraJSRouter} from "./MentraJSRouter"
 import {isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
 
+/** The miniapp's server no longer admits this account (Fleet revocation): it cannot launch until access returns. */
+export class MiniappAccessRevokedError extends Error {
+  constructor(readonly packageName: string) {
+    super(`MiniappLauncher: access to ${packageName} was revoked`)
+    this.name = "MiniappAccessRevokedError"
+  }
+}
+
 interface LauncherDeps {
   /** The host-constructed router (needs the native Crust binding). */
   router: MentraJSRouter
@@ -378,6 +386,7 @@ class MiniappLauncher {
     ) {
       throw new Error(`MiniappLauncher: ${packageName} is disabled by deployment policy`)
     }
+    if (appRegistry.isMiniappAccessRevoked(packageName)) throw new MiniappAccessRevokedError(packageName)
     const router = this.requireRouter()
     const projectRunning = runtimeOptions?.projectRunning ?? true
 

@@ -13,6 +13,8 @@
  *   /api/client/reports/*       — device-filed reports
  *   /api/client/bluetooth-sdk/* — Bluetooth SDK startup update check,
  *                                 unauthenticated (called from customer apps)
+ *   /api/client/workspaces/*    — the Mentra App's workspace: mine, invitations (accept,
+ *                                 decline), leave
  *   /api/client/fleet/*         — a phone's Fleet reports, forwarded to the optional Fleet
  *                                 service (404 fleet_not_installed without one)
  *   /api/client/miniapps/*      — LEGACY: the frozen preinstalled catalog that
@@ -75,6 +77,7 @@ import testHostObservations from "./internal/test-host-observations.api";
 import clientAuth from "./client/auth.api";
 import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
+import clientWorkspaces from "./client/workspaces.api";
 import clientMiniapps from "./client/miniapps.api";
 import clientBluetoothSdk from "./client/bluetooth-sdk.api";
 import { clientFleetApi } from "./fleet/fleet-forwarding";
@@ -142,6 +145,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/auth", clientAuth);
   app.route("/api/client/reports", clientReports);
   app.route("/api/client/support-profile", clientSupportProfile);
+  app.route("/api/client/workspaces", clientWorkspaces);
   app.route("/api/client/bluetooth-sdk", clientBluetoothSdk);
   // Fleet is optional and lives in its own service; Core authenticates the phone (its own gate) and forwards.
   app.route("/api/client/fleet", clientFleetApi);

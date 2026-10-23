@@ -14,7 +14,8 @@ import { usePortal } from "@/lib/portal";
 
 /**
  * A host for a portal module's UI: a screen that a separately deployed service brings to the portal and Core
- * serves (`/api/portal/<module>/ui/entry.js`), such as Fleet Management. The same approach as the admin portal's Fleet
+ * serves (`/api/portal/<module>/workspaces/<id>/ui/entry.js` for a workspace's page, `/api/portal/<module>/ui/entry.js` for
+ * the person's own), such as Fleet Management. The same approach as the admin portal's Fleet
  * page: the page imports the module from this origin, checks that it speaks this page's contract version
  * (`@mentra/workspace-contract/portal-module-ui`), and mounts it into an open shadow root, which keeps the
  * module's styles and the portal's apart. The module calls its API through `apiBase`, with the portal's session
@@ -39,14 +40,22 @@ const MODULE_LABELS: Record<PortalModuleName, string> = {
 
 type ModuleRoute = PortalModuleContext["route"];
 
-/** Where the module's API is, as it is told it. Core forwards it to the module for the people it is offered to. */
-export function portalModuleApiBase(name: PortalModuleName): string {
-  return `/api/portal/${name}`;
+/**
+ * Where the module's API is, as it is told it. Core forwards it to the module for the people it is offered to; for
+ * a workspace's page it names that workspace, so Core takes the scope from the path and never from the module.
+ */
+export function portalModuleApiBase(name: PortalModuleName, scope: PortalModuleScope): string {
+  const base = `/api/portal/${name}`;
+  return scope.kind === "workspace" ? `${base}/workspaces/${encodeURIComponent(scope.workspaceId)}` : base;
 }
 
-/** The module's entry, served by Core from the module's service. Same origin, never a client-chosen URL. */
-export function portalModuleEntryUrl(name: PortalModuleName): string {
-  return `${portalModuleApiBase(name)}/ui/entry.js`;
+/**
+ * The module's entry, served by Core from the module's service behind the same checks as its API (for Fleet,
+ * `fleet.read` in that workspace). Same origin, never a client-chosen URL. What the entry loads (chunks, CSS) is
+ * relative to it, so it comes from the same `ui/` folder under the same checks.
+ */
+export function portalModuleEntryUrl(name: PortalModuleName, scope: PortalModuleScope): string {
+  return `${portalModuleApiBase(name, scope)}/ui/entry.js`;
 }
 
 /**
@@ -98,8 +107,9 @@ export const importModuleEntry: ModuleEntryImporter = specifier => import(specif
  * import by URL (a loaded module in every browser, a failed one in some), so without it Retry would be answered
  * from that memory and could never pick up a module that has come back or been upgraded.
  */
-function entryUrl(name: PortalModuleName, retry: number | undefined): string {
-  return retry === undefined ? portalModuleEntryUrl(name) : `${portalModuleEntryUrl(name)}?retry=${retry}`;
+function entryUrl(name: PortalModuleName, scope: PortalModuleScope, retry: number | undefined): string {
+  const url = portalModuleEntryUrl(name, scope);
+  return retry === undefined ? url : `${url}?retry=${retry}`;
 }
 
 /**
@@ -109,13 +119,14 @@ function entryUrl(name: PortalModuleName, retry: number | undefined): string {
  */
 export async function loadPortalModule(
   name: PortalModuleName,
+  scope: PortalModuleScope,
   importEntry: ModuleEntryImporter = importModuleEntry,
   retry?: number,
 ): Promise<PortalModule> {
   const label = MODULE_LABELS[name];
   let entry: unknown;
   try {
-    entry = await importEntry(entryUrl(name, retry));
+    entry = await importEntry(entryUrl(name, scope, retry));
   } catch (cause) {
     throw new PortalModuleUnavailableError(`The ${label} module could not be loaded.`, { cause });
   }
@@ -196,7 +207,7 @@ export function createPortalModuleHost(options: {
       // attachShadow throws on an element that has one, so a shadow root from an earlier mount is reused.
       shadow = element.shadowRoot ?? element.attachShadow({ mode: "open" });
       const context: PortalModuleContext = {
-        apiBase: portalModuleApiBase(name),
+        apiBase: portalModuleApiBase(name, scope),
         me: portalModuleMe(inputs().me),
         scope,
         route,
@@ -235,7 +246,7 @@ export function createPortalModuleHost(options: {
     loading = true;
     onPhase(LOADING);
     try {
-      const module = await loadPortalModule(name, importEntry, retry);
+      const module = await loadPortalModule(name, scope, importEntry, retry);
       if (!live) return;
       loaded = module;
       mountLoaded(module);

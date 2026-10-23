@@ -102,6 +102,12 @@ import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./Minia
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
 import {
+  configureMiniappDataPartitions,
+  miniappDataSessionOf,
+  resolveMiniappDataPartition,
+} from "./miniappDataPartition"
+import {sameCoreUrl} from "./fleet/coreUrl"
+import {
   automaticUpdateOwner,
   canStoreUpdateSystemMiniapp,
   isHostTrustedSystemMiniapp,
@@ -353,6 +359,19 @@ const localMiniappStorageBackend = {
     return mmkvStorage.getAllKeys()
   },
 }
+
+configureMiniappDataPartitions({
+  getSession: () =>
+    miniappDataSessionOf(cloudClientService.getCoreSession(), cloudClientService.getDeploymentUserId()),
+  assignedWorkspace: (packageName, session) => {
+    const assignment = appRegistry.getMiniappAssignment(packageName)
+    return assignment &&
+      assignment.mentraUserId === session.mentraUserId &&
+      sameCoreUrl(assignment.coreUrl, session.coreUrl)
+      ? assignment.workspaceId
+      : null
+  },
+})
 
 // =============================================================================
 // Declared-permission record helper (for CONNECT_ACK / PERMISSIONS_UPDATE)
@@ -3043,13 +3062,16 @@ class LocalMiniappRuntime {
   private readonly blobStore = new BlobStore({
     sendResult: (packageName, requestId, ok, result, error) =>
       this.sendResult(packageName, requestId, ok, result, error),
-    getUserId: () => cloudClientService.getMentraUserId(),
+    getPartition: (packageName) => resolveMiniappDataPartition(packageName),
   })
   private readonly blobRequestQueues = new Map<string, Promise<void>>()
 
   private readonly simpleStorage = new LocalMiniappStorage({
     backend: localMiniappStorageBackend,
-    getUserId: () => cloudClientService.resolveMentraUserId(),
+    getPartition: async (packageName) => {
+      await cloudClientService.resolveMentraUserId()
+      return resolveMiniappDataPartition(packageName)
+    },
   })
 
   /**

@@ -4,8 +4,10 @@
  *  - the first run (`/` with no workspace) where the portal makes none: the person's valid invitations, from a
  *    link or addressed to their verified email; with none they can accept, why they have no workspace and the way
  *    into one. Where the portal can make a workspace it does (App.tsx), so this is never the screen for that.
- *  - an invitation link (`/invitation`): that invitation alone, with Accept and Dismiss, or Switch account
- *    when it is for someone else. A link Core says is no longer valid says so once, with the way on.
+ *  - the invitations page (`/invitation`, also where an invitation link lands): every invitation the person
+ *    can answer, the link's first, each with Accept and Decline, or "Leave it to join" for someone already in
+ *    a workspace that does not give way (an automatic one holding nothing does), or Switch account when it is
+ *    for someone else. A link Core says is no longer valid says so once, with the way on.
  *
  * Accepting opens the workspace joined, at the address the person came to.
  */
@@ -15,7 +17,6 @@ import {
   buttonVariants,
   Count,
   InvitationAcceptCard,
-  isInvitationForOtherAccount,
   Spinner,
   workspaceListQuery,
 } from "@mentra/workspace-ui";
@@ -150,7 +151,7 @@ export function InvitationsUnavailable({ unavailable }: { unavailable: Unavailab
   );
 }
 
-/** `/invitation`: the invitation link this tab holds, or once, that it is no longer valid. */
+/** `/invitation`: the person's invitations (the link's first), or once, that the link is no longer valid. */
 export function InvitationScreen() {
   const portal = usePortal();
   const { link } = portal;
@@ -202,22 +203,25 @@ export function InvitationScreen() {
     );
   }
 
-  if (link.status !== "valid") return null;
-  const invitation: PendingInvitation = {
-    preview: link.preview,
-    token: link.token,
-    forOtherAccount: isInvitationForOtherAccount(link.preview, portal.accountEmail),
-  };
+  const invitations = portal.invitations ?? [];
+  if (link.status === "checking" || invitations.length === 0) return null;
+  const forOther = invitations.some(invitation => invitation.forOtherAccount);
   return (
     <PortalCenteredLayout>
-      {invitation.forOtherAccount ? (
+      {forOther && invitations.length === 1 ? (
         <Heading title="Switch accounts to accept">This invitation was sent to a different email address.</Heading>
       ) : firstRun ? (
-        <Heading title="Welcome to Mentra">Join the workspace you were invited to.</Heading>
+        <Heading title="Welcome to Mentra">
+          {invitations.length === 1 ? "Join the workspace you were invited to." : "Join one of the workspaces you were invited to."}
+        </Heading>
       ) : (
-        <Heading title="You're invited">Accept to join the workspace with the account you're signed in with.</Heading>
+        <Heading title={invitations.length === 1 ? "You're invited" : "Your invitations"}>
+          {home && !home.replaceable
+            ? `You belong to one workspace at a time. Leave ${home.name} in Settings to join another.`
+            : "Accept to join the workspace with the account you're signed in with."}
+        </Heading>
       )}
-      <InvitationList invitations={[invitation]} />
+      <InvitationList invitations={invitations} />
       {home ? <BackHome name={home.name} /> : null}
     </PortalCenteredLayout>
   );

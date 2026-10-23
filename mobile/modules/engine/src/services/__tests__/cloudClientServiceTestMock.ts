@@ -14,6 +14,7 @@ export const cloudClientService: Record<string, unknown> = {
   startManagedPhoto: mock(async () => ({})),
   awaitManagedPhotoReady: mock(async () => ({})),
   getCoreSession: () => null,
+  getDeploymentUserId: () => null,
   resolveCoreSession: async () => null,
   onCoreSessionChanged: () => () => {},
   core: {

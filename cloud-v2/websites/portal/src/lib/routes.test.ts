@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   currentWorkspace,
+  fleetItemOf,
+  fleetPath,
   forgetWorkspace,
   invitationLanding,
   joinedAddress,
@@ -19,14 +21,14 @@ describe("addresses", () => {
     expect(parseRoute("/")).toEqual({ kind: "home" });
     expect(parseRoute("/members")).toEqual({ kind: "section", section: "members" });
     expect(parseRoute("/settings/")).toEqual({ kind: "section", section: "settings" });
-    expect(parseRoute("/audit")).toEqual({ kind: "section", section: "audit" });
     expect(parseRoute("/licenses")).toEqual({ kind: "section", section: "licenses" });
+    expect(parseRoute("/fleet")).toEqual({ kind: "section", section: "fleet" });
   });
 
   test("an older /w/<id> address is a legacy workspace address; an unknown section has none", () => {
     expect(parseRoute("/w/ws_1")).toEqual({ kind: "legacy-workspace", workspaceId: "ws_1", section: null });
     expect(parseRoute("/w/ws_1/members")).toEqual({ kind: "legacy-workspace", workspaceId: "ws_1", section: "members" });
-    expect(parseRoute("/w/ws_1/fleet")).toEqual({ kind: "legacy-workspace", workspaceId: "ws_1", section: null });
+    expect(parseRoute("/w/ws_1/fleet")).toEqual({ kind: "legacy-workspace", workspaceId: "ws_1", section: "fleet" });
     expect(parseRoute("/w/ws%2Fodd%20id/settings")).toEqual({ kind: "legacy-workspace", workspaceId: "ws/odd id", section: "settings" });
   });
 
@@ -34,6 +36,24 @@ describe("addresses", () => {
     for (const path of ["/account", "/account/", "/account/billing", "/account/billing/", "/account/other"]) {
       expect(parseRoute(path)).toEqual({ kind: "not-found" });
     }
+  });
+
+  test("the workspace audit log is gone: /audit is not found, and an older /w/<id>/audit opens the first section", () => {
+    expect(parseRoute("/audit")).toEqual({ kind: "not-found" });
+    expect(parseRoute("/w/ws_1/audit")).toEqual({ kind: "legacy-workspace", workspaceId: "ws_1", section: null });
+  });
+
+  test("fleet is a workspace section whose items live in ?fleet=", () => {
+    expect(fleetPath("ws_1", "ws_1")).toBe("/fleet?fleet=overview");
+    expect(fleetPath("ws_1", "ws_1", "people")).toBe("/fleet?fleet=people");
+    expect(fleetPath("ws/odd id", "ws_1", "devices")).toBe("/fleet?workspace=ws%2Fodd%20id&fleet=devices");
+    expect(fleetPath("ws_1", null, "miniapps")).toBe("/fleet?workspace=ws_1&fleet=miniapps");
+    expect(fleetItemOf("?fleet=people")).toBe("people");
+    expect(fleetItemOf("?fleet=/devices?tab=phones")).toBe("devices");
+    expect(fleetItemOf("?fleet=phones%2Fphone-1")).toBe("devices");
+    expect(fleetItemOf("?fleet=/miniapps/com.acme.app")).toBe("miniapps");
+    expect(fleetItemOf("?workspace=ws_1&fleet=people")).toBe("people");
+    for (const search of ["", "?fleet=", "?fleet=nope", "?x=1"]) expect(fleetItemOf(search)).toBe("overview");
   });
 
   test("the invitation screen and the enterprise pages have their own addresses", () => {
@@ -96,7 +116,7 @@ describe("links carry the workspace exactly when the bare address would not open
   test("any other workspace is named, encoded", () => {
     expect(sectionHref("members", "ws_X", "ws_a")).toBe("/members?workspace=ws_X");
     expect(sectionHref(null, "ws_X", "ws_a")).toBe("/?workspace=ws_X");
-    expect(sectionHref("audit", "ws_X", null)).toBe("/audit?workspace=ws_X");
+    expect(sectionHref("fleet", "ws_X", null)).toBe("/fleet?workspace=ws_X");
     expect(sectionHref("settings", "ws/odd id", "ws_a")).toBe("/settings?workspace=ws%2Fodd%20id");
   });
 });

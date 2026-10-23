@@ -3,7 +3,6 @@ import type { OrganizationCapability, PrincipalResponse } from "@mentra/workspac
 /** The admin portal's pages, in navigation order. */
 export type AdminPageKey =
   | "incidents"
-  | "fleet"
   | "test-runs"
   | "routine-catalog"
   | "system-health"
@@ -20,8 +19,9 @@ export interface AdminMe {
   organization: { capabilities: OrganizationCapability[] };
   workspaces: PrincipalResponse["workspaces"];
   /**
-   * Whether Fleet is installed on this Core, true for an install whose settings are unusable too (the Fleet page
-   * then says Fleet is unavailable). Absent from a Core that predates Fleet, which reads as not installed.
+   * Whether Fleet is installed on this Core, true for an install whose settings are unusable too. The Workspaces
+   * page then links each workspace to its Fleet Management in the workspace portal; the admin portal has no Fleet
+   * page of its own. Absent from a Core that predates Fleet, which reads as not installed.
    */
   fleet?: { installed: boolean };
   /**
@@ -34,7 +34,6 @@ export interface AdminMe {
 /** The pages in navigation order. The first one a principal can see is their default page. */
 export const PAGE_ORDER: readonly AdminPageKey[] = [
   "incidents",
-  "fleet",
   "test-runs",
   "routine-catalog",
   "system-health",
@@ -47,7 +46,6 @@ export const PAGE_ORDER: readonly AdminPageKey[] = [
 /** The organization capability each other page needs. */
 const PAGE_CAPABILITY: Partial<Record<AdminPageKey, OrganizationCapability>> = {
   incidents: "organization.incidents.read",
-  fleet: "organization.fleet.administer",
   "test-runs": "organization.testing.read",
   "routine-catalog": "organization.testing.read",
   "system-health": "organization.testing.read",
@@ -58,17 +56,16 @@ const PAGE_CAPABILITY: Partial<Record<AdminPageKey, OrganizationCapability>> = {
 
 /**
  * The pages this principal may open. There is no blanket admin gate: each page needs its own capability,
- * the audit log needs an Organization Admin who is a person, the Fleet page also needs Fleet installed on this
- * Core, and the Licenses page also needs billing or a license on this Core. Core checks every request anyway;
+ * the audit log needs an Organization Admin who is a person, and the Licenses page also needs billing or a license
+ * on this Core. There is no Fleet page: Fleet Management is opened in the workspace portal from Workspaces. Core
+ * checks every request anyway;
  * this only keeps the portal from offering what would be refused or empty.
  */
-export function visiblePages(me: Pick<AdminMe, "organization" | "user" | "fleet" | "licenses">): AdminPageKey[] {
+export function visiblePages(me: Pick<AdminMe, "organization" | "user" | "licenses">): AdminPageKey[] {
   const held = new Set<OrganizationCapability>(me.organization.capabilities);
   return PAGE_ORDER.filter(page => {
     // No capability opens the audit log, so no operator key sees it.
     if (page === "audit") return me.user?.isOrganizationAdmin === true;
-    // Without Fleet on this Core there is nothing to open, whatever the principal holds.
-    if (page === "fleet" && me.fleet?.installed !== true) return false;
     // With no billing and no license on this Core there is nothing to list.
     if (page === "licenses" && me.licenses?.available !== true) return false;
     const needed = PAGE_CAPABILITY[page];
