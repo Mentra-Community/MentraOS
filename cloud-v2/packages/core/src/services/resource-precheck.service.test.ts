@@ -479,3 +479,75 @@ test('claimless repair cannot invent a root from stale or incomplete current lif
     expect(f.host.resourceReservations).toEqual([])
   }
 })
+
+function targetDependency(f: Awaited<ReturnType<typeof originalGlassesRepair>>, mode: 'lifecycle' | 'contract' | 'exclusive' | 'transitive') {
+  const phone = f.subject(), ref = f.host.snapshot.lanes[0]!.resources[0]!
+  if (mode === 'lifecycle') phone.resource.dependencies = ['glasses-exact']
+  if (mode === 'contract') ref.idleContract!.dependencies = ['glasses-exact']
+  if (mode === 'exclusive') {ref.capabilities = ['resource-idle']; ref.exclusiveDependencies = [{resourceId: 'glasses-exact', authorityHostId: 'mini', capability: 'resource-idle'}]}
+  if (mode === 'transitive') {
+    const dependency = structuredClone(phone); dependency.subject.id = 'phone-dependency'; dependency.resource.kind = 'fixture-data'; dependency.resource.memberships = []; dependency.resource.dependencies = ['glasses-exact']
+    f.host.snapshot.resourceLifecycle!.subjects.push(dependency)
+    f.host.snapshot.resources = [{...structuredClone(ref), id: dependency.subject.id, kind: 'fixture-data'}]
+    phone.resource.dependencies = [dependency.subject.id]
+  }
+}
+for (const claimless of [false, true]) for (const mode of ['lifecycle', 'contract', 'exclusive', 'transitive'] as const)
+test(`target complete baseline scope refuses ${mode} overlap with repair: claimless=${claimless}`, async () => {
+    const f = await originalGlassesRepair()
+    if (claimless) {f.host.resourceReservations = []; f.host.snapshot.resourceReservations!.resourceChecks!.splice(1)}
+    targetDependency(f, mode)
+    const prior = structuredClone(f.host.resourceReservations), result = await f.service.acquire(f.intent, 'mini')
+    expect(result.status).toBe('unknown'); expect(f.writes).toHaveLength(1)
+    expect(f.host.resourceReservations).toEqual(prior); expect(f.subject().owner).toBeNull()
+})
+for (const claimless of [false, true])
+test(`target dependency appearing before host CAS cannot acquire beside repair: claimless=${claimless}`, async () => {
+    const f = await originalGlassesRepair()
+    if (claimless) {f.host.resourceReservations = []; f.host.snapshot.resourceReservations!.resourceChecks!.splice(1)}
+    const prior = structuredClone(f.host.resourceReservations)
+    f.beforeWrite(async () => {f.advance(); targetDependency(f, 'contract')})
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(f.writes).toHaveLength(1)
+    expect(f.host.resourceReservations).toEqual(prior)
+})
+
+test('a resolved current target dependency disjoint from original repair preserves baseline eligibility', async () => {
+  const f = await originalGlassesRepair(), dependency = structuredClone(f.subject())
+  dependency.subject.id = 'free-dependency'; dependency.resource.kind = 'fixture-data'; dependency.resource.memberships = []; dependency.generation = 2; dependency.status = 'idle'
+  dependency.idle.outcome = 'passed'; dependency.idle.acceptedCheck = {operationId: 'dependency-check', subjectGeneration: 2, resultSha256: hash, acceptedAt: dependency.observedAt!}
+  f.host.snapshot.resourceLifecycle!.subjects.push(dependency)
+  f.host.snapshot.resources = [{...structuredClone(f.host.snapshot.lanes[0]!.resources[0]!), id: dependency.subject.id, kind: 'fixture-data'}]
+  f.subject().resource.dependencies = [dependency.subject.id]
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('reserved'); expect(f.writes).toHaveLength(2)
+  expect(f.host.resourceReservations).toContainEqual(f.claim); expect(dependency.owner).toBeNull()
+})
+test('unresolved foreign cyclic or noncurrent target dependency cannot prove disjoint repair scope', async () => {
+  for (const mode of ['unresolved', 'foreign', 'cycle', 'noncurrent', 'owned']) {
+    const f = await originalGlassesRepair(), ref = f.host.snapshot.lanes[0]!.resources[0]!
+    if (mode === 'unresolved') f.subject().resource.dependencies = ['absent-dependency']
+    if (mode === 'foreign') {ref.capabilities = ['resource-idle']; ref.exclusiveDependencies = [{resourceId: 'foreign-dependency', authorityHostId: 'foreign', capability: 'resource-idle'}]}
+    if (mode === 'cycle') f.subject().resource.dependencies = ['phone-exact']
+    if (mode === 'noncurrent' || mode === 'owned') {
+      const dependency = structuredClone(f.subject()); dependency.subject.id = 'unknown-dependency'; dependency.resource.kind = 'fixture-data'; dependency.resource.memberships = []
+      if (mode === 'noncurrent') dependency.current = false
+      else dependency.owner = {id: 'foreign-holder', kind: 'fixer', generation: 1, hostId: 'mini', laneId: 'android'}
+      f.host.snapshot.resourceLifecycle!.subjects.push(dependency)
+      f.host.snapshot.resources = [{...structuredClone(ref), id: dependency.subject.id, kind: 'fixture-data'}]
+      f.subject().resource.dependencies = [dependency.subject.id]
+    }
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(f.writes).toHaveLength(1)
+    expect(f.host.resourceReservations).toEqual([f.claim])
+  }
+})
+test('a secondary target dependency claim on another lane still blocks baseline during scoped repair', async () => {
+  const f = await originalGlassesRepair(), dependency = structuredClone(f.subject())
+  dependency.subject.id = 'claimed-dependency'; dependency.resource.kind = 'fixture-data'; dependency.resource.memberships = []
+  f.host.snapshot.resourceLifecycle!.subjects.push(dependency)
+  f.host.snapshot.resources = [{...structuredClone(f.host.snapshot.lanes[0]!.resources[0]!), id: dependency.subject.id, kind: 'fixture-data'}]
+  f.subject().resource.dependencies = [dependency.subject.id]
+  const held = {...structuredClone(f.claim), id: randomUUID(), resourceId: dependency.subject.id, laneId: 'another-lane',
+    resourceCheck: undefined, owner: {id: 'other-run', kind: 'run' as const}, operationId: 'other-run-operation'}
+  f.host.resourceReservations = [...hostResourceReservationsSchema.parse(f.host.resourceReservations), held]
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(f.writes).toHaveLength(1)
+  expect(f.host.resourceReservations).toContainEqual(held); expect(f.host.resourceReservations).toContainEqual(f.claim)
+})

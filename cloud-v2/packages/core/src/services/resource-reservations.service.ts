@@ -697,8 +697,28 @@ export class ResourceReservationsService {
         [...ref.idleContract.dependencies ?? [], ...subject.resource.dependencies].some(id => !ids.has(id)) ||
         ref.exclusiveDependencies?.some(dependency => dependency.authorityHostId !== host.hostId || !ids.has(dependency.resourceId))
     })) return undefined
-    const claims = hostResourceReservationsSchema.parse(host.resourceReservations ?? []).filter(isExclusiveHostReservation)
-      .filter(claim => claim.borrowerHostId === host.hostId && claim.laneId === lane.id)
+    // The target's own declared scope must also be disjoint. A scarce claim ID
+    // alone cannot exclude a secondary or transitive baseline dependency.
+    const visited = new Set<string>(), visiting = new Set<string>()
+    const targetDisjoint = (id: string): boolean => {
+      if (ids.has(id) || visiting.has(id)) return false
+      if (visited.has(id)) return true
+      const ref = installed.find(value => value.id === id), subject = lifecycle.subjects.find(value => value.subject.id === id)
+      if (!ref?.idleContract || !subject?.current || subject.subject.authorityHostId !== host.hostId ||
+        ref.kind !== subject.resource.kind || subject.owner || !subject.observedAt ||
+        Date.parse(subject.observedAt) > Date.parse(host.snapshot.observedAt) ||
+        !fresh({...host, snapshot: {...host.snapshot, observedAt: subject.observedAt}}, now) ||
+        ref.exclusiveDependencies?.some(dependency => dependency.authorityHostId !== host.hostId)) return false
+      visiting.add(id)
+      const disjoint = [...ref.idleContract.dependencies ?? [], ...subject.resource.dependencies,
+        ...ref.exclusiveDependencies?.map(dependency => dependency.resourceId) ?? []].every(targetDisjoint)
+      visiting.delete(id); if (disjoint) visited.add(id)
+      return disjoint
+    }
+    if (!targetDisjoint(intent.resourceCheck!.resourceId)) return undefined
+    const retained = hostResourceReservationsSchema.parse(host.resourceReservations ?? []).filter(isExclusiveHostReservation)
+    if (retained.some(claim => visited.has(claim.resourceId))) return undefined
+    const claims = retained.filter(claim => claim.borrowerHostId === host.hostId && claim.laneId === lane.id)
     // Operator checks have no Core preclaim, but their exact failed-check repair
     // still supplies the same current resource lifecycle transfer authority.
     const roots = owned.filter(subject => lifecycle.history.some(event => event.resourceId === subject.subject.id &&
