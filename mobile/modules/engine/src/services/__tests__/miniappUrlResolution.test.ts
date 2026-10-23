@@ -115,6 +115,20 @@ describe("resolving a miniapp URL", () => {
     expect(await resolveMiniappUrl("https://notes.acme.example", serve(status))).toEqual({ok: false, reason})
   })
 
+  test("the request carries no token, and a sign-in challenge is not answered", async () => {
+    const requests: RequestInit[] = []
+    const challenge = (async (_url: string, init: RequestInit) => {
+      requests.push(init)
+      return new Response(null, {status: 401, headers: {"WWW-Authenticate": 'Bearer realm="miniapp"'}})
+    }) as unknown as typeof fetch
+    expect(await resolveMiniappUrl("https://notes.acme.example/app", challenge)).toEqual({
+      ok: false,
+      reason: "access_denied",
+    })
+    expect(requests).toHaveLength(1)
+    expect(Object.keys(requests[0].headers ?? {}).map((name) => name.toLowerCase())).not.toContain("authorization")
+  })
+
   test("a page that is not a miniapp manifest is not_a_miniapp; a network error is download_failed", async () => {
     expect(await resolveMiniappUrl("https://x.example", serve(200, {name: "site"}))).toEqual({
       ok: false,

@@ -39,6 +39,9 @@ export function breaksMentraDomainRule(packageName: string, url: string): boolea
  * Read what a miniapp URL serves: `<url>/miniapp.json`, a copy of the manifest in its current ZIP plus
  * `bundle: {url, sha256}` naming that ZIP (relative to `<url>/` or an absolute HTTPS URL). The URL decides the
  * version, and the ZIP must have that SHA-256. The server decides access: 401 and 403 are `access_denied`.
+ *
+ * The request carries no Mentra token and answers no sign-in challenge, so a private host cannot tell who is asking:
+ * answering the challenge with the package's miniapp token is Phase 17 (miniapp distribution "Sign-in challenges").
  */
 export async function resolveMiniappUrl(url: string, fetchImpl: typeof fetch = fetch): Promise<MiniappUrlResolution> {
   let base: URL

@@ -8,6 +8,7 @@ import {
 import {
   createAssignmentReconciler,
   FETCH_TIMEOUT_MS,
+  RECONCILER_STORE_PREFIX,
   RETRY_BASE_MS,
   TRIGGER_JITTER_MS,
   type AssignmentReconciler,
@@ -625,6 +626,35 @@ describe("withdrawal", () => {
     await timers.advance(TRIGGER_JITTER_MS)
     expect(calls.slice(1)).toEqual(["unassign:com.acme.notes", "uninstall:com.acme.notes"])
     expect(contexts).toEqual(["mu_1:ws_A", "mu_1:none"])
+  })
+
+  test("a removed member's running miniapp is not stopped or revoked; it uninstalls once it stops", async () => {
+    const r = await startAndSettle()
+    running.add(notes)
+    answer = async () => unmanaged(2)
+    r.trigger("revision", 2)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls.slice(1)).toEqual(["unassign:com.acme.notes"])
+    expect(running.has(notes)).toBe(true)
+    expect(revoked.has(notes)).toBe(false)
+    stop(notes)
+    await timers.advance(0)
+    expect(calls.slice(1)).toEqual(["unassign:com.acme.notes", "uninstall:com.acme.notes"])
+    expect(revoked.has(notes)).toBe(false)
+  })
+
+  test("a removed member's idle miniapp uninstalls once and leaves nothing pending or revoked", async () => {
+    const r = await startAndSettle()
+    answer = async () => unmanaged(2)
+    r.trigger("revision", 2)
+    await timers.advance(TRIGGER_JITTER_MS)
+    stop(notes)
+    r.trigger("foreground")
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls.slice(1)).toEqual(["unassign:com.acme.notes", "uninstall:com.acme.notes"])
+    expect(revoked.size).toBe(0)
+    const persisted = [...store.values.entries()].find(([key]) => key.startsWith(RECONCILER_STORE_PREFIX))
+    expect(JSON.parse(persisted![1])).toMatchObject({pendingUninstalls: [], revoked: [], outcomes: {}})
   })
 })
 
