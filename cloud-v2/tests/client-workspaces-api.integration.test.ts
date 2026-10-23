@@ -28,6 +28,7 @@ import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import * as accountEmails from "../packages/core/src/services/account/account-email.service"
 import * as session from "../packages/core/src/services/session.service"
 import {createInvitation} from "../packages/core/src/services/workspaces/invitation.service"
+import {ensureWorkspace} from "../packages/core/src/services/workspaces/automatic-workspace.service"
 import {
   createWorkspace,
   getActiveMembership,
@@ -246,6 +247,21 @@ describe("invitations", () => {
     const body = (await res.json()) as {workspace: {workspaceId: string; name: string; role: string}}
     expect(body.workspace).toMatchObject({workspaceId: ws, name: "Acme", role: "developer"})
     expect((await getActiveMembership(ws, "mu_new"))?.role).toBe("developer")
+    expect(await (await call("/mine")).json()).toMatchObject({workspace: {workspaceId: ws}})
+  })
+
+  test("accepting yields an empty automatic workspace of the person's own and joins the invited one", async () => {
+    const ws = await workspaceWithOwner("Acme")
+    const created = await inviteTo(ws, "new@example.test", "developer")
+    await person("mu_new", "new@example.test")
+    // The phone user's own empty automatic workspace, as the portal makes when they sign in with none.
+    const automatic = (await ensureWorkspace({...owner, mentraUserId: "mu_new", email: "new@example.test"})).workspace.workspaceId
+    signedInAs("mu_new")
+
+    const res = await call(`/invitations/${created.invitationId}/accept`, {method: "POST"})
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as {workspace: {workspaceId: string}}).workspace.workspaceId).toBe(ws)
+    expect((await WorkspaceModel.findOne({workspaceId: automatic}).lean())?.status).toBe("deleted")
     expect(await (await call("/mine")).json()).toMatchObject({workspace: {workspaceId: ws}})
   })
 

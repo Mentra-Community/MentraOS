@@ -15,9 +15,11 @@
  * verified email sees no invitations. A missing or invalid token is 401, as on Fleet's phone routes, so
  * the phone refreshes its session instead of treating it as a bad request.
  *
- * A person belongs to at most one workspace. Accepting while already in one is `already_in_workspace`
- * (409): the phone says "leave first". The membership guard that makes this hold under concurrent
- * accepts lives in the workspace services; the check here is the fast, friendly refusal.
+ * A person belongs to at most one workspace. Accepting while already in one that holds anything is
+ * `already_in_workspace` (409): the phone says "leave first". An empty automatic workspace of the
+ * person's own gives way instead, so a portal user can join from the Mentra App. Both the yield and the
+ * refusal live in the workspace services (the membership guard also makes the refusal hold under
+ * concurrent accepts); this route defers to them rather than refusing early.
  *
  * Failures of an expected kind arrive as `WorkspaceError` and are rendered by the app's error handler.
  */
@@ -147,9 +149,9 @@ app.get("/invitations/mine", async c => {
 app.post("/invitations/:invitationId/accept", async c => {
   const actor = await requireActor(c)
   if (actor instanceof Response) return actor
-  if (await workspaceOf(actor.mentraUserId)) {
-    fail("already_in_workspace", "leave your current workspace before joining another")
-  }
+  // The service yields an empty automatic workspace of the person's own before joining, and refuses a
+  // workspace that holds anything with `already_in_workspace` (409) at the membership guard; a pre-check
+  // here would skip the yield and strand a portal user who has only an empty automatic workspace.
   await acceptInvitationById(actor, c.req.param("invitationId"))
   const workspace = await workspaceOf(actor.mentraUserId)
   // The membership was just written in the accepting transaction; a missing one means it was removed since.
