@@ -20,10 +20,21 @@ function githubApi(route, {method = "GET", data} = {}) {
   }
 }
 
+const ATTEMPTS = 6
+
+// Creating the tag makes GitHub decide whether the new ref creates or changes
+// workflow files. That check can time out on this repository; GitHub then
+// answers 403 as if the token lacked `workflows`, which GITHUB_TOKEN never
+// holds. It names the alternative grant in X-Accepted-GitHub-Permissions.
+export function workflowCheckDenied(error) {
+  return error.status === 403 && !error.rateLimited && /(^|[;,\s])workflows=write\b/.test(error.acceptedPermissions || "")
+}
+
 function transient(error) {
   return (
     [408, 429, 500, 502, 503, 504].includes(error.status) ||
     (error.status === 403 && (error.rateLimited || error.retryAfterMs !== undefined)) ||
+    workflowCheckDenied(error) ||
     ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EPIPE", "EAI_AGAIN", "ENETUNREACH"].includes(error.code) ||
     error.cause?.signal === "SIGTERM"
   )
@@ -52,7 +63,7 @@ export async function ensureInstallerRelease({repository, tag, sourceCommit, api
       throw error
     }
   }
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     let error
     try {
       const existing = await lookup()
@@ -83,11 +94,14 @@ export async function ensureInstallerRelease({repository, tag, sourceCommit, api
       error = caught
     }
     if (!transient(error)) throw error
-    const delay = Math.max(5000 * 2 ** (attempt - 1), error.retryAfterMs || 0)
+    const delay = Math.max(Math.min(5000 * 2 ** (attempt - 1), 60_000), error.retryAfterMs || 0)
     if (delay > 120_000) throw error
-    log(`Installer release lookup/create failed (${error.status ? `HTTP ${error.status}` : "transport error"}); reconciling the same tag after ${delay / 1000}s`)
+    const reason = workflowCheckDenied(error)
+      ? "GitHub did not complete its workflow-file check for the new tag (HTTP 403)"
+      : `Installer release lookup/create failed (${error.status ? `HTTP ${error.status}` : "transport error"})`
+    log(`${reason}; reconciling the same tag after ${delay / 1000}s`)
     await wait(delay)
-    if (attempt === 3) {
+    if (attempt === ATTEMPTS) {
       const existing = await lookup()
       if (existing) return existing
       throw error
