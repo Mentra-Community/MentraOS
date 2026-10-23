@@ -3,7 +3,7 @@
  * address opens), framed by the sidebar.
  *
  * The sections are the shared Core workspace screens (`@mentra/workspace-ui`): Members (the member list
- * with the pending invitations under it, and Invite in the header), Settings and the Audit log, and Licenses
+ * with the pending invitations under it, and Invite in the header), Settings, and Licenses
  * (pages/licenses). The sidebar offers only the sections the viewer's capabilities open, and Licenses only
  * where there is something to show: the person manages billing, or the workspace has licenses (a member sees
  * their own seats, never billing). A Private Cloud has neither. Every request is still checked by Core. A
@@ -23,12 +23,13 @@ import {
   billingStatusQuery,
   effectiveRole,
   errorMessage,
+  invitationsQuery,
   licensesQuery,
   licenseStrings,
+  membersQuery,
   ROLE_LABELS,
   Spinner,
   WorkspaceApiError,
-  WorkspaceAuditPanel,
   WorkspaceInviteDialog,
   WorkspaceMembersPanel,
   WorkspacePendingInvitationsPanel,
@@ -39,13 +40,14 @@ import {
   type MembersLicenses,
   type NavGroup,
 } from "@mentra/workspace-ui";
-import { CreditCard, ScrollText, Settings, ShieldCheck, UserPlus, Users, type LucideIcon } from "lucide-react";
+import { Boxes, CreditCard, Glasses, LayoutDashboard, Settings, ShieldCheck, UserPlus, Users, UsersRound, type LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { PortalShell, useTabWorkspace } from "@/components/portal-shell";
 import type { PortalMe } from "@/lib/api";
 import { navigate, Redirect, useSearch } from "@/lib/navigation";
 import { portalBillingApi, portalNavigateOut, portalWorkspaceApi, STORE_DELETE_NOTICE } from "@/lib/portal";
-import { keepQuery, sectionHref, type WorkspaceSection } from "@/lib/routes";
+import { fleetItemOf, fleetPath, keepQuery, sectionHref, type FleetItem, type WorkspaceSection } from "@/lib/routes";
+import { FleetScreen } from "./fleet";
 import { billingOffered, buyParam, LicensesHeaderActions, LicensesScreen } from "./licenses";
 import { NotFoundMessage } from "./not-found";
 
@@ -71,12 +73,6 @@ const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
     needs: null,
     description: name => `The name, ID and membership of ${name}.`,
   },
-  audit: {
-    label: "Audit log",
-    icon: ScrollText,
-    needs: "workspace.audit.read",
-    description: name => `Every change made in ${name}, newest first.`,
-  },
   licenses: {
     label: licenseStrings.nav.licenses,
     icon: CreditCard,
@@ -84,15 +80,36 @@ const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
     needs: null,
     description: () => undefined,
   },
+  fleet: {
+    label: "Fleet Management",
+    icon: LayoutDashboard,
+    // Offered only where Fleet is installed (see `visibleSections`); `fleet.read` also covers an Organization Admin.
+    needs: "fleet.read",
+    // The Fleet module draws each page's own header, so the portal has no title or line of its own there.
+    description: () => undefined,
+  },
 };
+
+/** The Fleet Management group's items, in sidebar order. */
+const FLEET_NAV: ReadonlyArray<{ item: FleetItem; label: string; icon: LucideIcon }> = [
+  { item: "overview", label: "Overview", icon: LayoutDashboard },
+  { item: "people", label: "People", icon: UsersRound },
+  { item: "devices", label: "Devices", icon: Glasses },
+  { item: "miniapps", label: "Miniapps", icon: Boxes },
+];
+
+/** The sidebar key of a Fleet item. */
+export function fleetNavKey(item: FleetItem): string {
+  return `fleet-${item}`;
+}
 
 /**
  * The sidebar, in groups. A group with nothing the viewer may open renders nothing, label included.
- * Fleet (devices and deployments, behind `fleet.read`) joins as its own group in a later phase.
+ * Fleet Management has its own group, behind `fleet.read` and Fleet being installed.
  */
 export const NAV_GROUPS: ReadonlyArray<{ key: string; label?: string; sections: readonly WorkspaceSection[] }> = [
-  { key: "workspace", sections: ["members", "settings", "audit", "licenses"] },
-  { key: "fleet", label: "Fleet", sections: [] },
+  { key: "workspace", sections: ["members", "settings", "licenses"] },
+  { key: "fleet", label: "Fleet Management", sections: ["fleet"] },
 ];
 
 /**
@@ -110,10 +127,11 @@ export function licensesPartShown(billing: boolean, licenses: readonly LicenseVi
  */
 export function visibleSections(
   detail: Pick<WorkspaceDetail, "capabilities"> | undefined,
-  options: { licenses?: boolean } = {},
+  options: { licenses?: boolean; fleet?: boolean } = {},
 ): WorkspaceSection[] {
   return NAV_GROUPS.flatMap(group => group.sections).filter(section => {
     if (section === "licenses") return options.licenses === true;
+    if (section === "fleet") return options.fleet === true && can(detail, "fleet.read");
     const needs = SECTIONS[section].needs;
     return needs === null || can(detail, needs);
   });
@@ -129,12 +147,20 @@ export function workspaceNav(workspaceId: string, sections: readonly WorkspaceSe
     label: group.label,
     items: group.sections
       .filter(section => sections.includes(section))
-      .map(section => ({
+      .flatMap(section =>
+        section === "fleet"
+          ? FLEET_NAV.map(entry => ({
+              key: fleetNavKey(entry.item),
+              label: entry.label,
+              icon: entry.icon,
+              href: fleetPath(workspaceId, bareWorkspaceId, entry.item),
+            }))
+          : [{
         key: section,
         label: SECTIONS[section].label,
         icon: SECTIONS[section].icon,
         href: sectionHref(section, workspaceId, bareWorkspaceId),
-      })),
+      }]),
   }));
 }
 
@@ -224,7 +250,12 @@ export function WorkspaceScreen({
   const wantsToBuy = section === "licenses" && buyParam(search) !== null;
   if (wantsToBuy !== linkedToBuy && (wantsToBuy || section !== "licenses")) setLinkedToBuy(wantsToBuy);
   const buyLinked = section === "licenses" && (linkedToBuy || wantsToBuy);
-  const sections = data ? visibleSections(data, { licenses: licensesPartShown(billing, licenses.data) || licensesFailed || buyLinked }) : [];
+  const sections = data
+    ? visibleSections(data, {
+        licenses: licensesPartShown(billing, licenses.data) || licensesFailed || buyLinked,
+        fleet: me.fleet?.installed === true,
+      })
+    : [];
   const active = section && sections.includes(section) ? section : null;
   // The address is the licenses page and the list has not answered yet: wait for it instead of leaving.
   const waitingForLicenses = data !== undefined && section === "licenses" && active === null && licenses.isPending;
@@ -251,6 +282,9 @@ export function WorkspaceScreen({
   const redirecting = data !== undefined && active === null && !waitingForLicenses;
   const shown = redirecting ? null : (active ?? section);
   const meta = shown ? SECTIONS[shown] : null;
+  // Fleet has no portal title: the design board's header on each Fleet page (People with its search, a person's name and
+  // devices, a miniapp) is the module's, and a title bar here would say the same thing twice.
+  const fleetShown = shown === "fleet";
 
   function gone() {
     tab.forget(workspaceId);
@@ -260,11 +294,10 @@ export function WorkspaceScreen({
   return (
     <PortalShell
       current={current}
-      section={active ?? undefined}
       nav={workspaceNav(workspaceId, sections, bareWorkspaceId)}
-      activeKey={active}
-      title={meta?.label ?? name}
-      description={meta?.description(name)}
+      activeKey={active === "fleet" ? fleetNavKey(fleetItemOf(search)) : active}
+      title={fleetShown ? undefined : (meta?.label ?? name)}
+      description={fleetShown ? undefined : meta?.description(name)}
       headerAction={
         active === "members" && can(data, "workspace.members.manage") ? (
           <Button onClick={() => setInviting(true)}>
@@ -294,18 +327,13 @@ export function WorkspaceScreen({
           <Spinner /> Loading licenses
         </div>
       ) : !active ? (
-        // `/`, or a section this viewer does not have: open the first one they do.
+        // `/`, or a section this viewer does not have: open the first one they do. The query and hash stay, so a
+        // deep link to a Fleet screen the viewer may not open lands somewhere real without losing the rest.
         <Redirect to={keepQuery(sectionHref(sections[0] ?? "settings", workspaceId, bareWorkspaceId), search, typeof window === "undefined" ? "" : window.location.hash)} />
       ) : active === "members" ? (
         <div className="space-y-6">
           {actsAsOrganizationAdmin(data) ? <OrganizationAdminNote /> : null}
-          <WorkspaceMembersPanel
-            api={api}
-            workspaceId={workspaceId}
-            licenses={membersLicenses}
-            locale={portalBillingApi.locale}
-          />
-          <WorkspacePendingInvitationsPanel api={api} workspaceId={workspaceId} />
+          <MembersTabs workspaceId={workspaceId} detail={data} licenses={membersLicenses} locale={portalBillingApi.locale} />
           <WorkspaceInviteDialog api={api} workspaceId={workspaceId} open={inviting} onClose={() => setInviting(false)} />
         </div>
       ) : active === "settings" ? (
@@ -322,9 +350,70 @@ export function WorkspaceScreen({
       ) : active === "licenses" ? (
         <LicensesScreen workspaceId={workspaceId} me={me} detail={data} />
       ) : (
-        <WorkspaceAuditPanel api={api} workspaceId={workspaceId} />
+        <FleetScreen workspaceId={workspaceId} />
       )}
     </PortalShell>
+  );
+}
+
+export type MembersTab = "members" | "invited";
+
+/** "Members <n>" and "Invited <n>": the people in the workspace, and the invitations sent but not accepted. */
+export function MembersTabs({
+  workspaceId,
+  detail,
+  licenses,
+  locale,
+  initialTab = "members",
+}: {
+  workspaceId: string;
+  detail: WorkspaceDetail;
+  /** The Members list's licenses source, as `WorkspaceMembersPanel` takes it. */
+  licenses?: MembersLicenses;
+  locale?: string;
+  initialTab?: MembersTab;
+}) {
+  const api = portalWorkspaceApi;
+  const [tab, setTab] = useState<MembersTab>(initialTab);
+  const mayManage = can(detail, "workspace.members.manage");
+  const members = useQuery({ ...membersQuery(api, workspaceId), enabled: can(detail, "workspace.members.read") });
+  const invited = useQuery({ ...invitationsQuery(api, workspaceId), enabled: mayManage });
+  // Only someone who manages members sees who was invited; everyone else just has the member list.
+  const tabs: Array<[MembersTab, string, number | undefined]> = [["members", "Members", members.data?.length]];
+  if (mayManage) tabs.push(["invited", "Invited", invited.data?.length]);
+  const shown = mayManage ? tab : "members";
+  return (
+    <div className="space-y-4">
+      {tabs.length > 1 ? (
+        <div role="tablist" aria-label="Members" className="bg-surface flex w-fit items-center gap-1 rounded-full border p-1">
+          {tabs.map(([key, label, count]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={shown === key}
+              onClick={() => setTab(key)}
+              className={`h-9 cursor-pointer whitespace-nowrap rounded-full px-4 text-sm font-semibold ${
+                shown === key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {label}
+              {count === undefined ? null : <span className="text-muted-foreground ml-2">{count}</span>}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {shown === "members" ? (
+        <WorkspaceMembersPanel api={api} workspaceId={workspaceId} licenses={licenses} locale={locale} />
+      ) : invited.data?.length === 0 ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          No invitations are waiting. Invite someone to add them here.
+        </p>
+      ) : (
+        // Resend and Revoke are on each row's menu.
+        <WorkspacePendingInvitationsPanel api={api} workspaceId={workspaceId} />
+      )}
+    </div>
   );
 }
 

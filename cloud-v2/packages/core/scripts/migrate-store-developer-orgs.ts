@@ -89,7 +89,11 @@
  *    role history with that role, from the Store membership's creation time, at
  *    the workspace's revision (0 for a new workspace; a run that adds members to
  *    an existing workspace bumps its revision once, as joining does). A person
- *    with several active rows keeps the highest role. An org with no owner
+ *    with several active rows keeps the highest role. A person in several orgs
+ *    keeps one membership in all: the highest role, then the earliest start, then
+ *    the smallest org id; the rest are not imported and are reported
+ *    (`otherOrgMemberships`), and a re-run ends one an earlier run imported as it
+ *    ends any membership the Store no longer grants. An org with no owner
  *    membership is given one from its `ownerUserId` (the recorded owner): a person
  *    with an active row is promoted to owner (`promotedOwners`), a person with no
  *    row at all gets a pending owner membership (`wm_owner_<orgId>`,
@@ -213,6 +217,8 @@ const MEMBERSHIP_ROLES: Record<SourceRole, WorkspaceRole> = {owner: "owner", adm
 const INVITATION_ROLES: Record<Exclude<SourceRole, "owner">, WorkspaceRole> = {admin: "admin", member: "developer"}
 /** Higher wins when one person has several active rows in an org. */
 const ROLE_RANK: Record<SourceRole, number> = {member: 0, admin: 1, owner: 2}
+/** The same order on the imported roles, for the one membership a person keeps across orgs. */
+const PLANNED_ROLE_RANK: Record<WorkspaceRole, number> = {member: 0, developer: 0, admin: 1, owner: 2}
 
 /** The parts of a credential token (`msk_<env>_<ulid>.<secret>`), as `validateCredentialToken` reads them. */
 const KEY_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/
@@ -280,6 +286,12 @@ export type MigrationReport = {
   promotedOwners: string[]
   /** People with several active rows in one org (the highest role was kept). */
   duplicateMemberships: Array<{orgId: string; userId: string}>
+  /**
+   * Memberships not imported because their person keeps a membership in another org (`keptOrgId`): one
+   * membership per person, the highest role, the earliest among equals. Keys bound to one are in
+   * `keysWithoutCreator`; an org this leaves with no owner is in `ownerlessOrgs`.
+   */
+  otherOrgMemberships: Array<{orgId: string; membershipId: string; userId: string; keptOrgId: string}>
   /**
    * Whether the target was read: always for an apply, and for a dry run given a target. The lists
    * below compare the source with the target, so they are empty when it was not.
@@ -394,6 +406,7 @@ type OrgFindings = {
   keysWithoutCreator: MigrationReport["keysWithoutCreator"]
   malformedKeys: MigrationReport["malformedKeys"]
   duplicateMemberships: MigrationReport["duplicateMemberships"]
+  otherOrgMemberships: MigrationReport["otherOrgMemberships"]
   owner: "present" | "promoted" | "synthesized" | "missing"
 }
 
@@ -458,6 +471,7 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
     synthesizedOwners: [],
     promotedOwners: [],
     duplicateMemberships: [],
+    otherOrgMemberships: [],
     targetCompared: apply || options.target !== undefined,
     skippedWorkspaces: [],
     workspaceProfiles: [],
@@ -472,9 +486,9 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
     keptLastOwners: [],
   }
 
-  const plans = [...orgs]
-    .sort((a, b) => compareStrings(a.orgId, b.orgId))
-    .map(org => planOrg(org, rows, now, log))
+  const sorted = [...orgs].sort((a, b) => compareStrings(a.orgId, b.orgId))
+  const picked = onePerPerson(sorted, rows, now)
+  const plans = sorted.map(org => planOrg(org, rows, now, log, picked))
 
   if (apply) {
     // Only now, with the whole source validated, does anything touch the target.
@@ -554,12 +568,47 @@ async function workspaceProfileIds(db: mongoose.mongo.Db, orgs: SourceOrg[], row
   return new Set(existing.filter(workspaceId => !imported.has(workspaceId)))
 }
 
+/** The membership each Store user keeps across every org: its org and Core membership id. */
+type PickedMemberships = Map<string, {orgId: string; membershipId: string}>
+
+/**
+ * One membership per person across the import: each Store user keeps the membership with the highest role,
+ * then the earliest start, then the smallest org and membership id. Planned from the source alone, so a dry
+ * run and an apply pick the same way.
+ */
+function onePerPerson(orgs: SourceOrg[], rows: SourceRows, now: Date): PickedMemberships {
+  type Candidate = {orgId: string; membership: PlannedMembership}
+  const order = (a: Candidate, b: Candidate) =>
+    PLANNED_ROLE_RANK[b.membership.role] - PLANNED_ROLE_RANK[a.membership.role] ||
+    a.membership.startedAt.getTime() - b.membership.startedAt.getTime() ||
+    compareStrings(a.orgId, b.orgId) ||
+    compareStrings(a.membership.membershipId, b.membership.membershipId)
+  const best = new Map<string, Candidate>()
+  for (const org of orgs) {
+    const orgId = requireString(org.orgId, "developer org orgId")
+    const scratch: OrgFindings = {keysWithoutCreator: [], malformedKeys: [], duplicateMemberships: [], otherOrgMemberships: [], owner: "present"}
+    for (const membership of planMemberships(org, rows.memberships.get(orgId) ?? [], now, scratch)) {
+      const candidate = {orgId, membership}
+      const current = best.get(membership.sourceUserId)
+      if (!current || order(candidate, current) < 0) best.set(membership.sourceUserId, candidate)
+    }
+  }
+  return new Map([...best].map(([userId, {orgId, membership}]) => [userId, {orgId, membershipId: membership.membershipId}]))
+}
+
 /** Everything the import needs from one org, derived from the source rows alone. */
-function planOrg(org: SourceOrg, rows: SourceRows, now: Date, log: (m: string) => void): OrgPlan {
+function planOrg(org: SourceOrg, rows: SourceRows, now: Date, log: (m: string) => void, picked: PickedMemberships): OrgPlan {
   const orgId = requireString(org.orgId, "developer org orgId")
   const createdAt = asDate(org.createdAt) ?? now
-  const findings: OrgFindings = {keysWithoutCreator: [], malformedKeys: [], duplicateMemberships: [], owner: "present"}
-  const memberships = planMemberships(org, rows.memberships.get(orgId) ?? [], now, findings)
+  const findings: OrgFindings = {keysWithoutCreator: [], malformedKeys: [], duplicateMemberships: [], otherOrgMemberships: [], owner: "present"}
+  const memberships = planMemberships(org, rows.memberships.get(orgId) ?? [], now, findings).filter(membership => {
+    const kept = picked.get(membership.sourceUserId)
+    if (!kept || kept.membershipId === membership.membershipId) return true
+    findings.otherOrgMemberships.push({orgId, membershipId: membership.membershipId, userId: membership.sourceUserId, keptOrgId: kept.orgId})
+    return false
+  })
+  // The person's membership elsewhere ranked higher: an org left with no owner is for an Organization Admin.
+  if (findings.owner !== "missing" && !memberships.some(membership => membership.role === "owner")) findings.owner = "missing"
 
   const membershipByUser = new Map(memberships.map(membership => [membership.sourceUserId, membership]))
   const invitations = planInvitations(orgId, rows.invitations.get(orgId) ?? [], membershipByUser, now, log)
@@ -1214,6 +1263,7 @@ function recordOrg(report: MigrationReport, plan: OrgPlan, result: Reconciliatio
   report.keysWithoutCreator.push(...findings.keysWithoutCreator)
   report.malformedKeys.push(...findings.malformedKeys)
   report.duplicateMemberships.push(...findings.duplicateMemberships)
+  report.otherOrgMemberships.push(...findings.otherOrgMemberships)
   if (findings.owner === "promoted") report.promotedOwners.push(orgId)
   if (findings.owner === "synthesized") report.synthesizedOwners.push(orgId)
   if (findings.owner === "missing") report.ownerlessOrgs.push(orgId)

@@ -4,14 +4,13 @@ import {TestRunsTabs} from "./pages/test-runs-tabs";
 import {TestRerunPage, readRerunId} from "./pages/test-reruns";
 import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BarChart3, BookOpen, Bug, FileText, FlaskConical, History, KeyRound, RefreshCcw, ShieldCheck, Ticket, Users, X } from "lucide-react";
+import { AlertCircle, BookOpen, Bug, FileText, FlaskConical, History, KeyRound, RefreshCcw, ShieldCheck, Ticket, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
 import { resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./lib/admin-access";
 import { api, ApiError } from "./lib/api";
-import { FleetPage, fleetHomeLocation, fleetLocation, normalizeFleetPath, readFleetPath } from "./pages/fleet";
 import { LicensesPage } from "./pages/licenses";
 import { OperatorKeysPage } from "./pages/operator-keys";
 import { WorkspacesPage } from "./pages/workspaces";
@@ -102,7 +101,6 @@ const queryClient = new QueryClient({
 
 const ADMIN_NAV: readonly NavItem[] = [
   { key: "incidents", label: "Incident system", icon: Bug },
-  { key: "fleet", label: "Fleet", icon: BarChart3 },
   { key: "test-runs", label: "Test runs", icon: FlaskConical },
   { key: "routine-catalog", label: "Routine catalog", icon: BookOpen },
   { key: "system-health", label: "System health", icon: ShieldCheck },
@@ -119,12 +117,11 @@ export function visibleNav(visible: readonly AdminPageKey[]): NavItem[] {
 
 /**
  * The page an address asks for, if any. The one place that orders the deep links, for the first load and for
- * Back and Forward alike: system health, Fleet, the test runs pages, the routine catalog, and (the first load
+ * Back and Forward alike: system health, the test runs pages, the routine catalog, and (the first load
  * only, as `reportId`) an incident report.
  */
 export function requestedPage(search: string, reportId: string | null = null): AdminPageKey | null {
   if (new URLSearchParams(search).get("systemHealth") === "1") return "system-health";
-  if (readFleetPath(search) !== null) return "fleet";
   if (
     readPrCheckId(search) || readRerunId(search) || readSuiteId(search) || readTestRunLink(search) ||
     readTestRunListScope(search) || new URLSearchParams(search).get("testRuns") === "1"
@@ -167,7 +164,6 @@ const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
 const initialHealthTab = readSystemHealthTab(window.location.search);
-const initialFleetPath = readFleetPath(window.location.search);
 
 function AdminPage() {
   const qc = useQueryClient();
@@ -179,8 +175,6 @@ function AdminPage() {
   const [rerunId, setRerunId] = useState<string | null>(initialRerunId);
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
   const [healthTab, setHealthTab] = useState(initialHealthTab);
-  // The Fleet route inside the Fleet page, from `?fleet=`.
-  const [fleetPath, setFleetPath] = useState(initialFleetPath ?? "/");
   const [laneSelection, setLaneSelection] = useState(() => readLaneSelection(window.location.search));
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
@@ -221,7 +215,6 @@ function AdminPage() {
       setLaneSelection(readLaneSelection(window.location.search));
       const requested = requestedPage(window.location.search);
       if (requested === "system-health") { setPage("system-health"); return; }
-      if (requested === "fleet") { setFleetPath(readFleetPath(window.location.search) ?? "/"); setPage("fleet"); return; }
       const prCheck = readPrCheckId(window.location.search);
       setPrCheckId(prCheck);
       const rerun = readRerunId(window.location.search);
@@ -253,15 +246,6 @@ function AdminPage() {
     window.history[replace ? "replaceState" : "pushState"](null, "", testRunLocation(window.location.href, selection));
   }
 
-  // The Fleet module asked to go to a route: the address follows, and the new route reaches the module through `fleetPath`.
-  function navigateFleet(to: string, opts?: { replace?: boolean }) {
-    const route = normalizeFleetPath(to);
-    const target = fleetLocation(window.location.href, route);
-    const current = window.location.pathname + window.location.search + window.location.hash;
-    setFleetPath(route);
-    if (target !== current) window.history[opts?.replace ? "replaceState" : "pushState"](null, "", target);
-  }
-
   function clearTestRunListScope() {
     setTestRunListScope(null);
     setInvalidTestRunListScope(false);
@@ -270,7 +254,6 @@ function AdminPage() {
 
   const pageMeta: Record<AdminPageKey, { title: string; body: string }> = {
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
-    fleet: { title: "Fleet", body: "Active people and glasses, firmware and Mentra App versions, and miniapp usage across this organization." },
     "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
     "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
     "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
@@ -308,7 +291,7 @@ function AdminPage() {
         setPage(key as AdminPageKey);
         setHealthTab("lanes");
         const location = new URL(window.location.href);
-        for (const param of ["systemHealth", "healthTab", "restoration", "hostId", "laneId", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite", "fleet"]) location.searchParams.delete(param);
+        for (const param of ["systemHealth", "healthTab", "restoration", "hostId", "laneId", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
         window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
@@ -320,8 +303,6 @@ function AdminPage() {
         if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
         setSuiteId(null);
         if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
-        setFleetPath("/");
-        if (key === "fleet") window.history.replaceState(null, "", fleetHomeLocation());
       }}
       title={pageMeta[active].title}
       description={pageMeta[active].body}
@@ -331,17 +312,7 @@ function AdminPage() {
       signingOut={signingOut}
     >
       {active === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
-      {active === "fleet" ? (
-        <FleetPage
-          me={principal}
-          path={fleetPath}
-          onNavigate={navigateFleet}
-          // Ask Core who we are again. A session that has ended answers 401 there, and a failed admin-me query is
-          // what shows the sign-in gate (which returns here afterwards, ?fleet= included).
-          onSessionExpired={() => { void qc.invalidateQueries({ queryKey: ["admin-me"] }); }}
-        />
-      ) : null}
-      {active === "workspaces" ? <WorkspacesPage /> : null}
+      {active === "workspaces" ? <WorkspacesPage fleetInstalled={principal.fleet?.installed === true} /> : null}
       {active === "licenses" ? <LicensesPage /> : null}
       {active === "operator-keys" ? <OperatorKeysPage /> : null}
       {active === "audit" ? <AuditPage /> : null}

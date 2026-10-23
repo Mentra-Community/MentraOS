@@ -63,8 +63,10 @@ export type AppShellProps = {
   title?: ReactNode;
   description?: ReactNode;
   headerAction?: ReactNode;
-  /** Account footer. */
+  /** Account footer: the signed-in address, shown when the person has no name. */
   userEmail: string;
+  /** The signed-in person's name from sign-in; the footer shows it in place of the address. */
+  userName?: string | null;
   onSignOut?: () => void;
   signingOut?: boolean;
   children: ReactNode;
@@ -91,6 +93,7 @@ export function AppShell({
   description,
   headerAction,
   userEmail,
+  userName,
   onSignOut,
   signingOut,
   children,
@@ -194,6 +197,7 @@ export function AppShell({
 
         <AccountFooter
           userEmail={userEmail}
+          userName={userName}
           items={accountItems}
           linkComponent={Link}
           onNavigate={() => setMobileSidebarOpen(false)}
@@ -262,6 +266,7 @@ function NavEntry({ item, active, Link }: { item: NavItem; active: boolean; Link
  */
 export function AccountFooter({
   userEmail,
+  userName,
   items = [],
   linkComponent: Link = PlainLink,
   onNavigate,
@@ -270,6 +275,8 @@ export function AccountFooter({
   defaultOpen = false,
 }: {
   userEmail: string;
+  /** The person's name: shown in place of the address (which stays as the tooltip). */
+  userName?: string | null;
   items?: readonly NavItem[];
   /** The host's in-app link, for `href` items. Defaults to a plain anchor. */
   linkComponent?: ShellLinkComponent;
@@ -335,9 +342,11 @@ export function AccountFooter({
         </div>
       ) : null}
       <div className="flex items-center gap-3">
-        <Avatar label={userEmail} />
+        <Avatar label={userName?.trim() || userEmail} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold">{userEmail}</div>
+          <div className="truncate text-sm font-semibold" title={userName?.trim() ? userEmail : undefined}>
+            {userName?.trim() || userEmail}
+          </div>
           <div className="text-muted-foreground truncate text-xs">Account</div>
         </div>
         <Button

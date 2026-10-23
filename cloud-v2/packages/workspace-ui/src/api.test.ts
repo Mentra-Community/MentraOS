@@ -150,6 +150,15 @@ describe("createWorkspaceApi: routes", () => {
     for (const call of rec.calls) expect(call.url).not.toContain("secret-token");
   });
 
+  test("declines an invitation by its id in the body", async () => {
+    const rec = recordingFetch(Response.json({ invitationId: "winv_1", declined: true }));
+    const api = createWorkspaceApi({ basePath: "/api/portal/workspaces", fetch: rec.fetch });
+    expect(await api.declineInvitation("winv_1")).toEqual({ invitationId: "winv_1", declined: true });
+    expect(rec.calls).toMatchObject([
+      { url: "/api/portal/workspaces/invitations/decline", method: "POST", body: { invitationId: "winv_1" } },
+    ]);
+  });
+
   test("lists the invitations addressed to the signed-in person, and accepts one by its id in the body", async () => {
     const mine = { invitationId: "winv_1", workspaceId: "ws_1", workspaceName: "Acme", email: "a@b.test", role: "member" };
     const accepted = { workspaceId: "ws_1", membershipId: "wm_2" };

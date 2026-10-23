@@ -185,7 +185,7 @@ describe("mentra login", () => {
     const result = await login({MENTRA_STORE_URL: shop.url})
     expect(result.code).toBe(0)
     expect(storedLogin().workspaceId).toBeUndefined()
-    expect(result.stdout).toContain("Multiple workspaces are available. Run `mentra workspace list`, then `mentra workspace use <id>`.")
+    expect(result.stdout).toContain("This account is in more than one workspace, which Mentra no longer allows.")
   })
 
   test("a declined sign-in fails with a clear message and stores nothing", async () => {
@@ -402,7 +402,7 @@ describe("Core mode", () => {
   test("Store commands say they need a Mentra Miniapp Store", async () => {
     const privateCloud = core()
     await login({MENTRA_CORE_URL: privateCloud.url})
-    for (const args of [["miniapps", "list"], ["workspace", "list"], ["publish"], ["tokens", "list"]]) {
+    for (const args of [["miniapps", "list"], ["workspace", "show"], ["publish"], ["tokens", "list"]]) {
       const result = await cli(args, {MENTRA_CORE_URL: privateCloud.url})
       expect(result.code).toBe(1)
       expect(result.stderr).toContain("This command needs a Mentra Miniapp Store.")
