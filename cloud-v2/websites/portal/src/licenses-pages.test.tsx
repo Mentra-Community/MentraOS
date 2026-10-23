@@ -398,6 +398,45 @@ describe("a link that asks to buy one product", () => {
   });
 });
 
+describe("coming back from the page that added a license for her (?added=)", () => {
+  const added: Scenario = {
+    ...SCENARIOS.twoActive(),
+    licenses: [{ ...CALL_LICENSE, quantity: 4, seatsUsed: 4, seats: [...CALL_LICENSE.seats!, { membershipId: "wm_dana", mentraUserId: "u_dana", assignedAt: "2026-10-21T12:00:00.000Z" }] }, FLEET_LICENSE],
+    workspaceStatus: statusOf([{ ...CALL_BILLING, quantity: 4 }, FLEET_BILLING]),
+  };
+  const banner = () => findAll('section[role="status"]')[0];
+
+  test("/licenses?added=<id> shows the assigned banner once the seat is there, and Dismiss leaves /licenses", async () => {
+    const before = window.history.length;
+    await open("/licenses?added=lic_call", added, { ready: "Mentra Call Unlimited is active, and it's assigned to you." });
+    expect(banner()!.textContent).toContain("Purchase complete");
+    expect(search()).toBe("?added=lic_call");
+    await click(buttonNamed(/^Dismiss$/)!);
+    expect(window.location.pathname).toBe("/licenses");
+    expect(search()).toBe("");
+    // The address was changed in place: Back does not return to the banner.
+    expect(window.history.length).toBe(before);
+    expect(has("is active, and it's assigned to you.")).toBe(false);
+  });
+
+  test("?workspace= and ?added= leave the address separately: dismissing keeps the workspace", async () => {
+    await open(`/licenses?workspace=${ACME}&added=lic_call`, added, { ready: "is active, and it's assigned to you." });
+    await click(buttonNamed(/^Dismiss$/)!);
+    expect(search()).not.toContain("added");
+  });
+
+  test("while the seat is on its way the page shows nothing about it", async () => {
+    await open("/licenses?added=lic_call", SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
+    expect(banner()).toBeUndefined();
+    expect(has("Purchase complete")).toBe(false);
+  });
+
+  test("no ?added= in the address, no banner", async () => {
+    await open("/licenses", added, { ready: "Mentra Call Unlimited" });
+    expect(banner()).toBeUndefined();
+  });
+});
+
 describe("coming back from checkout, to the person's own workspace", () => {
   test("/licenses?workspace=<own>&purchase=pur_1 shows the banner at /licenses?purchase=pur_1", async () => {
     await open(`/licenses?workspace=${ACME}&purchase=pur_1`, SCENARIOS.purchased(), { ready: "Your 10 Fleet licenses are ready" });

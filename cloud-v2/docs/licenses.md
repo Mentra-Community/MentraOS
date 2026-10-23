@@ -307,6 +307,17 @@ what](#who-sees-what)).
   to you." when no payment was collected), or "Your 5 Call Unlimited licenses
   are ready" and "Payment received, and one is assigned to you. Assign the rest
   to members below." for more. Otherwise the banner says what it said before.
+- **Back from the page that added a license for the person.** The hosted page of
+  row 5 above returns to `/licenses?workspace=<id>&added=<licenseId>`. The page
+  reads Core's licenses (and billing's status, for a person offered billing)
+  every 2 seconds for up to a minute, until the person's membership holds a seat
+  of that license's product, and shows nothing while it waits. Then it shows the
+  assigned banner for one unpaid license, "Purchase complete" and "<product> is
+  active, and it's assigned to you." (the add may be charged now or on the next
+  invoice, so it claims no payment), and Dismiss removes `?added=` from the
+  address in place. If the person does not hold the product by the end of the
+  minute, the banner says "Your purchase went through" and "The licenses can take
+  a few minutes to appear.", with Reload.
 - **A link that asks to buy.** A person who follows
   `/licenses?buy=<product>` (a product's key) signs in if they have to (the
   sign-in page says "Sign in to buy <product's name>.", from a public read of the
