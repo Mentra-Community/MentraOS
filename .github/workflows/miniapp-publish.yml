@@ -2,9 +2,9 @@ name: Publish first-party miniapps
 
 # Builds the first-party miniapps kept in miniapps/ on every change. Each branch
 # publishes them to its own static host, where the Mentra App updates them from
-# <host>/<packageName>/miniapp.json: dev to miniapps.dev.mentraglass.com,
-# staging to miniapps.staging.mentraglass.com, and main to
-# miniapps.mentraglass.com. A version a host already has is skipped, so
+# <host>/<packageName>/miniapp.json: staging to miniapps.staging.mentraglass.com
+# and main to miniapps.mentraglass.com. dev is a mirror of the Mentra monorepo
+# since 2026-10-23, and the monorepo publishes miniapps.dev.mentraglass.com. A version a host already has is skipped, so
 # publishing happens when a miniapp.json version is bumped.
 
 on:
@@ -20,7 +20,7 @@ on:
       - ".github/scripts/publish-miniapp-r2*"
       - ".github/workflows/miniapp-publish.yml"
   push:
-    branches: [dev, staging, main]
+    branches: [staging, main]
     paths:
       - "miniapps/captions/**"
       - "miniapps/translation/**"
