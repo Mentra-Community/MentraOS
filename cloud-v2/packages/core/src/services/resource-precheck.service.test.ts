@@ -315,3 +315,167 @@ test('historical normal return refuses a reporter changing between proof read an
   await expect(f.service.giveBack(proof, 'mini')).rejects.toThrow()
   expect(f.host.resourceReservations).toHaveLength(1); expect(f.writes).toHaveLength(1)
 })
+
+function initialBaseline(f: ReturnType<typeof fixture>) {
+  const subject = f.subject(), journal = f.host.snapshot.resourceReservations!.resourceChecks![0]!
+  subject.generation = 0; subject.status = 'unknown'; subject.idle.outcome = 'not-checked'
+  subject.idle.checkedAt = null; subject.idle.acceptedCheck = null; f.intent.resourceCheck!.subjectGeneration = 0
+  journal.intent = structuredClone(f.intent); journal.resourceCheck = structuredClone(f.intent.resourceCheck!)
+  journal.intentSha256 = requestInputDigest({...f.intent, controller: {incarnation: 'controller', generation: 1},
+    dependencies: [{resourceId: subject.subject.id, authorityHostId: 'mini', capability: 'resource-idle'}]})
+  return f
+}
+async function originalGlassesRepair() {
+  const f = initialBaseline(fixture()), lane = f.host.snapshot.lanes[0]!, phone = f.subject(), resourceId = 'glasses-exact',
+    operationId = 'glasses-check-original', at = f.host.snapshot.observedAt
+  lane.resources.push({id: resourceId, kind: 'glasses', idleContract: structuredClone(lane.resources[0]!.idleContract!)})
+  lane.glasses = [{resourceId, deviceId: '0123456789abcdef0123456789abcdef', model: 'mentra-live', capabilities: []}]
+  const glasses = structuredClone(phone); glasses.subject.id = resourceId; glasses.resource.kind = 'glasses'
+  f.host.snapshot.resourceLifecycle!.subjects.push(glasses)
+  const original = structuredClone(f.intent)
+  original.operationId = operationId; original.resources[0]!.id = resourceId; original.resourceCheck!.resourceId = resourceId
+  original.owner.id = `resource-check:${requestInputDigest({operationId, resourceId})}`
+  const digest = requestInputDigest({...original, controller: {incarnation: 'controller', generation: 1},
+    dependencies: [{resourceId, authorityHostId: 'mini', capability: 'resource-idle'}]})
+  const journal = {intentSha256: digest, operationId, resourceId, intent: structuredClone(original),
+    resourceCheck: structuredClone(original.resourceCheck!), state: 'prepared' as 'prepared' | 'began' | 'never-began', observedAt: at}
+  f.host.snapshot.resourceReservations!.resourceChecks!.push(journal)
+  const acquired = await f.service.acquire(original, 'mini')
+  expect(acquired.status).toBe('reserved'); expect(acquired.claims).toHaveLength(1)
+  f.advance(); journal.state = 'began'; journal.observedAt = f.host.snapshot.observedAt
+  // The existing failed-check repair flow retains this original claim and journals its transfer.
+  glasses.generation = 7; glasses.status = 'in-repair'; glasses.owner = {id: 'original-glasses-fixer', kind: 'fixer',
+    generation: 6, hostId: 'mini', laneId: 'android'}
+  glasses.observedAt = f.host.snapshot.observedAt; glasses.receivedAt = glasses.observedAt
+  glasses.repair.state = 'running'; glasses.repair.interruptionId = 'original-glasses-repair'; glasses.repair.executionId = glasses.owner.id; glasses.idle.outcome = 'failed'
+  glasses.idle.acceptedCheck = {operationId, subjectGeneration: 3, resultSha256: hash, acceptedAt: journal.observedAt}
+  glasses.idle.checkedAt = journal.observedAt
+  lane.state = 'in-repair'; lane.activity = {owner: {id: glasses.owner.id, kind: 'fixer'}, generation: 6}
+  const transfer = {id: 'original-glasses-repair-started', resourceId, subjectGeneration: 7, at: journal.observedAt,
+    event: 'repair-started', ownerId: glasses.owner.id, ownerGeneration: 6, hostId: 'mini', laneId: 'android'}
+  f.host.snapshot.resourceLifecycle!.history.push({id: 'original-glasses-check-failed', resourceId, subjectGeneration: 3,
+    at: journal.observedAt, event: 'check-failed'}, transfer)
+  return {...f, glasses, original, journal, transfer, claim: acquired.claims[0]!}
+}
+test('initial offline lane admits an original uncommissioned baseline without marking the phone ready', async () => {
+  const f = initialBaseline(fixture()); f.host.snapshot.lanes[0]!.state = 'offline'
+  const result = await f.service.acquire(f.intent, 'mini')
+  expect(result.status).toBe('reserved'); expect(result.claims).toHaveLength(1); expect(f.writes).toHaveLength(1)
+  expect(result.claims[0]).toMatchObject({resourceId: 'phone-exact', operationId: f.intent.operationId,
+    resourceCheck: f.intent.resourceCheck, inputSha256: f.intent.inputSha256})
+  expect(f.subject().generation).toBe(0); expect(f.subject().owner).toBeNull(); expect(f.subject().idle.acceptedCheck).toBeNull()
+  expect(resourceAvailable({...f.host, authorityReservations: f.host.resourceReservations}, 'phone-exact', start)).toBe(false)
+})
+test('disjoint original glasses-check repair admits phone baseline while preserving original repair claim and owner', async () => {
+  const f = await originalGlassesRepair(), before = structuredClone(f.glasses), claim = structuredClone(f.claim)
+  const result = await f.service.acquire(f.intent, 'mini')
+  expect(result.status).toBe('reserved'); expect(result.claims).toHaveLength(1); expect(f.writes).toHaveLength(2)
+  expect(f.host.resourceReservations).toContainEqual(claim); expect(f.host.resourceReservations).toHaveLength(2)
+  expect(f.glasses).toEqual(before); expect(f.subject().generation).toBe(0); expect(f.subject().owner).toBeNull()
+})
+test('own prepared baseline remains eligible without the projected check action', async () => {
+  const f = initialBaseline(fixture()); f.subject().supportedActions = ['mark-out-of-service']
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('reserved'); expect(f.writes).toHaveLength(1)
+})
+test('repair overlap refuses missing or changed original scope, owner, source, dependency and transfer evidence', async () => {
+  for (const mutate of [
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.resourceReservations!.resourceChecks!.splice(1)},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.journal.state = 'prepared'},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.journal.intent.inputSha256 = 'e'.repeat(64)},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.journal.intent.resourceCheck!.binding.revision = 'e'.repeat(40); f.journal.resourceCheck.binding.revision = 'e'.repeat(40)},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.resourceLifecycle!.history = []},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.transfer.ownerGeneration++},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.transfer.ownerId = 'foreign-fixer'},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.owner!.generation = null; f.glasses.supportedActions = []},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.owner!.generation = f.glasses.owner!.generation! + 1},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.current = false},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.repair.state = 'halted'},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.repair.executionId = 'foreign-fixer'},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {delete f.glasses.repair.interruptionId},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.idle.acceptedCheck!.subjectGeneration = 0},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.transfer.at = new Date(start - 1).toISOString()},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.idle.acceptedCheck!.operationId = 'foreign-check'},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.resource.dependencies = ['phone-exact']},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.lanes[0]!.resources[1]!.idleContract!.dependencies = ['phone-exact']},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.lanes[0]!.resources[1]!.capabilities = ['audio']; f.host.snapshot.lanes[0]!.resources[1]!.exclusiveDependencies = [{resourceId: 'phone-exact', authorityHostId: 'mini', capability: 'audio'}]},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.lanes[0]!.activity!.owner = {id: 'foreign-fixer', kind: 'fixer'}},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.lanes[0]!.activity!.owner = {id: 'run-original', kind: 'run', requestId: 'run-original'}},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.lanes[0]!.dispatchMode = 'paused'},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.resourceLifecycle!.subjects.splice(1); f.host.snapshot.resourceLifecycle!.history = []},
+  ]) {
+    const f = await originalGlassesRepair(); mutate(f)
+    const claims = structuredClone(f.host.resourceReservations), result = await f.service.acquire(f.intent, 'mini')
+    expect(result.status).toBe('unknown'); expect(f.writes).toHaveLength(1); expect(f.host.resourceReservations).toEqual(claims)
+    expect(f.subject().owner).toBeNull(); expect(f.subject().generation).toBe(0)
+  }
+})
+test('unscoped account and run claims cannot use a different scarce resource ID to bypass baseline lane custody', async () => {
+  for (const owner of [{id: 'account-consumer', kind: 'run' as const}, {id: 'held-authoring', kind: 'authoring' as const}]) {
+    const f = await originalGlassesRepair(), unrelated = {...structuredClone(f.claim), id: randomUUID(), resourceId: 'account-exact',
+      owner, resourceCheck: undefined, operationId: `run:${owner.id}`}
+    f.host.resourceReservations = [...hostResourceReservationsSchema.parse(f.host.resourceReservations), unrelated]
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(f.writes).toHaveLength(1)
+    expect(f.host.resourceReservations).toContainEqual(unrelated)
+  }
+})
+test('same-target authority on another lane and same-lane byte claims still fence disjoint repair baseline', async () => {
+  for (const kind of ['target', 'byte']) {
+    const f = await originalGlassesRepair(), blocker: HostResourceReservation = kind === 'target' ? {...structuredClone(f.claim),
+      id: randomUUID(), resourceId: 'phone-exact', laneId: 'other-lane', resourceCheck: undefined} :
+      {id: randomUUID(), requestId: 'other-request', fleetInputSha256: hash, hostId: 'mini', laneId: 'android',
+        poolId: 'mini-disk', minimumAvailableBytes: 1, reservedAt: f.host.snapshot.observedAt}
+    f.host.resourceReservations = [...hostResourceReservationsSchema.parse(f.host.resourceReservations), blocker]
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(f.writes).toHaveLength(1)
+    expect(f.host.resourceReservations).toContainEqual(blocker)
+  }
+})
+test('repair scope changing before original host CAS prevents phone claim without touching prior custody', async () => {
+  for (const change of ['generation', 'dependency']) {
+    const f = await originalGlassesRepair()
+    f.beforeWrite(async () => {f.advance(); if (change === 'generation') f.glasses.owner!.generation = f.glasses.owner!.generation! + 1
+      else f.glasses.resource.dependencies.push('phone-exact')})
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(f.writes).toHaveLength(1)
+    expect(f.host.resourceReservations).toEqual([f.claim]); expect(f.subject().owner).toBeNull()
+  }
+})
+
+test('offline baseline refuses paused mode and never relaxes target ownership or returning status', async () => {
+  for (const change of ['paused', 'owned', 'returning']) {
+    const f = initialBaseline(fixture()); f.host.snapshot.lanes[0]!.state = 'offline'
+    if (change === 'paused') f.host.snapshot.lanes[0]!.dispatchMode = 'paused'
+    else if (change === 'owned') f.subject().owner = {id: 'foreign-owner', kind: 'fixer', generation: 3, hostId: 'mini', laneId: 'android'}
+    else f.subject().status = 'returning'
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(f.writes).toEqual([])
+  }
+})
+test('historical original repair binding remains cleanup-only while new target baseline uses current accepted source', async () => {
+  const f = await originalGlassesRepair(), binding = {...f.host.snapshot.frameworkBinding!, revision: 'e'.repeat(40)},
+    target = f.host.snapshot.resourceReservations!.resourceChecks![0]!
+  f.host.snapshot.frameworkBinding = binding; f.intent.resourceCheck!.binding = binding
+  target.intent = structuredClone(f.intent); target.resourceCheck = structuredClone(f.intent.resourceCheck!)
+  target.intentSha256 = requestInputDigest({...f.intent, controller: {incarnation: 'controller', generation: 1},
+    dependencies: [{resourceId: 'phone-exact', authorityHostId: 'mini', capability: 'resource-idle'}]})
+  const result = await f.service.acquire(f.intent, 'mini')
+  expect(result.status).toBe('reserved'); expect(f.host.resourceReservations).toContainEqual(f.claim)
+  expect(f.claim.resourceCheck!.binding.revision).not.toBe(binding.revision); expect(f.glasses.owner!.id).toBe('original-glasses-fixer')
+})
+
+test('exact operator-check repair without a Core claim permits a disjoint phone baseline', async () => {
+  const f = await originalGlassesRepair()
+  f.host.resourceReservations = []; f.host.snapshot.resourceReservations!.resourceChecks!.splice(1)
+  const before = structuredClone(f.glasses), result = await f.service.acquire(f.intent, 'mini')
+  expect(result.status).toBe('reserved'); expect(result.claims).toHaveLength(1)
+  expect(f.glasses).toEqual(before); expect(f.host.resourceReservations).toEqual(result.claims)
+})
+test('claimless repair cannot invent a root from stale or incomplete current lifecycle lineage', async () => {
+  for (const change of ['history', 'check', 'generation', 'foreign-root', 'missing-failure']) {
+    const f = await originalGlassesRepair(); f.host.resourceReservations = []; f.host.snapshot.resourceReservations!.resourceChecks!.splice(1)
+    if (change === 'history') f.host.snapshot.resourceLifecycle!.history = []
+    if (change === 'check') f.glasses.idle.acceptedCheck = null
+    if (change === 'generation') f.glasses.idle.acceptedCheck!.subjectGeneration = f.glasses.generation
+    if (change === 'foreign-root') f.transfer.ownerId = 'foreign-fixer'
+    if (change === 'missing-failure') f.host.snapshot.resourceLifecycle!.history.splice(0, 1)
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(f.writes).toHaveLength(1)
+    expect(f.host.resourceReservations).toEqual([])
+  }
+})
