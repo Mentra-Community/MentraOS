@@ -792,6 +792,20 @@ describe("pending invitations panel", () => {
     expect(markup).not.toContain("Expires Oct");
   });
 
+  test("is the board's list: one card with no heading, a mail mark for each address, and the role as plain text", () => {
+    const markup = render("owner");
+    // The Invited tab above it names it; the card keeps an accessible name but draws no title, count or blurb.
+    expect(markup).toContain('role="region" aria-label="Pending invitations"');
+    expect(markup).not.toContain("Sent but not accepted yet");
+    expect(markup).not.toMatch(/data-slot="card-title"/);
+    // A mail mark, not initials, and no role chip (the board's role is plain grey text).
+    expect(markup.match(/lucide-mail/g)).toHaveLength(INVITATIONS.length);
+    expect(markup).not.toContain("rounded-full px-2.5 text-xs leading-none font-semibold");
+    expect(markup).toMatch(/whitespace-nowrap">Member<\/td>/);
+    // The table's top edge is the card's own border.
+    expect(markup).toMatch(/<thead class="text-muted-foreground border-b text-xs">/);
+  });
+
   test("renders nothing for a viewer who cannot manage members, or when nothing is pending", () => {
     expect(render("developer")).toBe("");
     expect(render("owner", [])).toBe("");
