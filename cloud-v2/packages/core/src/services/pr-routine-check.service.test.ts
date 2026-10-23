@@ -14,6 +14,7 @@ function fixture() {
   const stored = new Map<string, PrRoutineCheckRow>(), events = new Map<string, string>(), requests = new Map<string, any>(), results = new Map<string, any>()
   const controls = new Map<string,{deliveryId:string;digest:string;control:unknown;nextAt:Date}>(), processed = new Set<string>()
   const nativeIds = new Map<string, number>()
+  const completedSuites: string[] = []
   const checkPayloads: CheckPayload[] = [], submissions: Array<{selection: any; deadline: string}> = [], cancellations: string[] = []
   const context: PrRoutineContext = {number: 12, headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'dev', open: true,
     sameRepository: true, labels: ['routine:login'], peers: [12]}
@@ -52,12 +53,12 @@ function fixture() {
   {async getExact() {return {routineId: 'login', platform: 'android', definitionRevision: 'a'.repeat(40), definitionSha256: requestInputDigest(definition),
     routineSource: testRoutineSource(), definition} as any}}, {async inventory() {return structuredClone(builds)}},
   {async get(id) {return requests.get(id) ?? null}}, {async summary(id) {if (!results.has(id)) throw new TestRunError(404, 'missing'); return results.get(id)}},
-  {async create() {return {} as any}, async bind() {return {} as any}, async complete() {return {} as any}},
+  {async create() {return {} as any}, async bind() {return {} as any}, async complete(suiteId) {completedSuites.push(suiteId); return {} as any}},
   {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async cancelRequest() {return false}, async cancelPlan() {return false}, async detail() {return {state: 'accepted'} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
   {async get() {return null}}, () => now, {async resolve() {resolveCount++; return 'a'.repeat(40)}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
-  return {get service() {return service}, canWrite(value: boolean) {canWrite=value}, loseIntakeWake() {loseIntakeWake=true}, restart() {service = createService()}, stored, context, requests, results, submissions, cancellations, checkPayloads, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
+  return {get service() {return service}, canWrite(value: boolean) {canWrite=value}, loseIntakeWake() {loseIntakeWake=true}, restart() {service = createService()}, stored, context, requests, results, submissions, cancellations, checkPayloads, completedSuites, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
     failSubmit(value = true) {failSubmit = value}, failHistory(value = true) {failHistory = value}, failCancellation(value?: string) {failCancellation = value}, holdCancellation(value?: Promise<void>) {holdCancellation = value}, history(value: any[]) {history = value},
     gate: () => stored.get(gateId)!.payload, advance(ms = 30000) {now += ms}, get now() {return now},
     get contextCalls() {return contextCalls}, get resolves() {return resolveCount}, get deliveries() {return deliveries}, get findCalls() {return findCalls}, outage(value = true) {unavailableDelivery = value}, crashAtCreation() {crashCreation = true}, crashAtProducer() {crashProducer = true}, receipt(value: typeof producerReceipt) {producerReceipt = value}, loseDelivery() {lostDelivery = true},
@@ -576,3 +577,37 @@ test('accepted native rerun creates a current check without duplicate jobs or hi
  await expect(f.service.control({...command, deliveryId:'historical-other-event',digest:requestInputDigest('historical-other-event')})).rejects.toThrow('obsolete routine check');
  expect(f.gate().attempt.generation).toBe(2); expect(f.gate().controls).toHaveLength(1);
 })
+
+for (const conclusion of ['cancelled', 'timed_out'] as const) test(`terminal ${conclusion} preserves native return and final ACK without redundant PR metadata`, async () => {
+  const f = fixture(); await f.intake(); f.build(); await f.drain();
+  const gate = f.gate(), requestId = gate.attempt.members[0]!.requestId!, request = f.requests.get(requestId);
+  gate.attempt.conclusion = conclusion; gate.attempt.finishedAt = new Date(f.now).toISOString();
+  gate.attempt.cancellation = {kind: conclusion === 'timed_out' ? 'timeout' : 'cancel', requestedAt: gate.attempt.finishedAt};
+  gate.attempt.suiteId = 'retained-terminal-return'; gate.attempt.suiteStartedAt = gate.attempt.acceptedAt;
+  f.failCancellation(requestId); f.outage();
+  const contexts = f.contextCalls, submissions = f.submissions.length;
+  f.restart(); await f.drain(2);
+  expect(f.contextCalls).toBe(contexts); expect(f.cancellations).toContain(requestId);
+  expect(f.gate().attempt).toMatchObject({conclusion, cancellation: gate.attempt.cancellation});
+  expect(f.gate().attempt.members[0]!.settled).toBe(false);
+  expect(f.stored.get(gate.gateId)!.nextAt).toBeDefined(); expect(f.completedSuites).toHaveLength(0);
+  expect(f.gate().reporting.intended!.payload).toMatchObject({head_sha: gate.headSha, conclusion});
+  f.failCancellation(); f.outage(false);
+  request.state = 'terminal'; request.terminalStatus = 'cancelled'; request.dispatchCompletion = {disposition: 'clean'};
+  await f.drain(2);
+  expect(f.contextCalls).toBe(contexts); expect(f.submissions).toHaveLength(submissions);
+  expect(f.gate().attempt.members[0]!.settled).toBe(true);
+  expect(f.completedSuites).toContain('retained-terminal-return');
+  expect(f.checkPayloads.at(-1)!).toMatchObject({head_sha: gate.headSha, status: 'completed', conclusion});
+  expect(f.stored.get(gate.gateId)!.nextAt).toBeUndefined();
+});
+
+test('active cancellation and terminal failure still check current PR context', async () => {
+  for (const state of ['active-cancellation', 'terminal-failure'] as const) {
+    const f = fixture(); await f.intake(); f.build(); await f.drain(); const gate = f.gate();
+    if (state === 'active-cancellation') gate.attempt.cancellation = {kind: 'cancel', requestedAt: new Date(f.now).toISOString()};
+    else {gate.attempt.conclusion = 'failure'; gate.attempt.finishedAt = new Date(f.now).toISOString();}
+    const contexts = f.contextCalls; f.context.headSha = 'c'.repeat(40); await f.drain(1);
+    expect(f.contextCalls).toBeGreaterThan(contexts); expect(f.cancellations).toContain(gate.attempt.members[0]!.requestId!);
+  }
+});

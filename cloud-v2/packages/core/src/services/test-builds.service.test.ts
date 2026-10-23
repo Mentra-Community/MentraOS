@@ -510,3 +510,93 @@ test('diagnostic signed publication is explicit authoring selection and cannot b
  expect(() => selectedBuildInput(build,'android')).toThrow('explicit NIMO authoring');
  expect(selectedBuildInput(build,'android',true)).toMatchObject({diagnostic:'nimo-resource-v1'});
 });
+
+test("one nightly selection reuses authenticated run reads for both platform artifacts", async () => {
+ const f = coordinatedFixture(), scoped = f.gateway.forSelection(before);
+ const selected = await scoped.latestDev("android", before);
+ expect(selected?.availability).toBe("available");
+ expect(await scoped.resolve(selected!.source, "ios-on-mac")).toMatchObject({availability: "available", source: f.source});
+ const count = (url: string) => f.calls.filter(call => call.url === url).length;
+ expect(count(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`)).toBe(1);
+ expect(count(`${API}/actions/runs/50/artifacts?per_page=100`)).toBe(1);
+ expect(count(f.planUrl)).toBe(1);
+ expect(count(`${CDN}${f.tag}/mentra-live-ota-${f.identity}.json`)).toBe(1);
+ // Resolving the other platform still authenticates the exact selected attempt and its archive.
+ expect(count(`${API}/actions/runs/50/attempts/1`)).toBe(1);
+ expect(f.calls.filter(call => call.init?.method === "HEAD")).toHaveLength(2);
+ expect(f.calls.filter(call => call.url.startsWith(API))).toHaveLength(5);
+});
+
+test("same-run concurrent resolution shares in-flight reads without sharing current PR authority", async () => {
+ const f = coordinatedFixture(), jobsUrl = `${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`;
+ let unblock!: () => void;
+ const blocked = new Promise<void>(resolve => {unblock = resolve;});
+ let began!: () => void;
+ const started = new Promise<void>(resolve => {began = resolve;});
+ const fetch = (async (url: string, init?: RequestInit) => {
+  if (url === jobsUrl) {began(); await blocked;}
+  return f.fetch(url, init);
+ }) as typeof globalThis.fetch;
+ const scoped = new GithubTestBuildGateway({token: "test-only-token", fetch}).forSelection(before);
+ const pending = Promise.all([scoped.resolve(f.source, "android"), scoped.resolve(f.source, "ios-on-mac")]);
+ await started;
+ unblock();
+ expect((await pending).every(build => build.availability === "available")).toBe(true);
+ expect(f.calls.filter(call => call.url === jobsUrl)).toHaveLength(1);
+ expect(f.calls.filter(call => call.url === `${API}/actions/runs/50/artifacts?per_page=100`)).toHaveLength(1);
+ expect(f.calls.filter(call => call.url === f.planUrl)).toHaveLength(1);
+ expect(f.calls.filter(call => call.url === `${API}/actions/runs/50/attempts/1`)).toHaveLength(2);
+ const p = fixture(), prScope = p.gateway.forSelection(before);
+ expect(await prScope.isPrSuperseded(12, HEAD)).toBe(false);
+ p.rows.set(`${API}/pulls/12`, {...pr, head: {...pr.head, sha: BASE}});
+ expect(await prScope.isPrSuperseded(12, HEAD)).toBe(true);
+ expect(p.calls.filter(call => call.url === `${API}/pulls/12`)).toHaveLength(2);
+});
+
+test("selection reuse does not retain authority across occurrences or hide missing and changed publications", async () => {
+ const f = coordinatedFixture();
+ const originalScope = f.gateway.forSelection(before);
+ expect((await originalScope.latestDev("android", before))?.availability).toBe("available");
+ await expect(originalScope.latestDev("android", "2026-09-23T12:00:00Z")).rejects.toThrow("Selection changed its original build boundary");
+ const jobsUrl = `${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`;
+ f.rows.set(jobsUrl, new Response("rate exhausted", {status: 403}));
+ await expect(f.gateway.latestDev("android", before)).rejects.toThrow("Build metadata unavailable (HTTP 403)");
+ expect(f.calls.filter(call => call.url === jobsUrl)).toHaveLength(2);
+ for (const mutation of ["attempt", "head", "missing", "ambiguous", "archive"]) {
+  const p = coordinatedFixture(), scope = p.gateway.forSelection(before);
+  expect((await scope.latestDev("android", before))?.availability).toBe("available");
+  if (mutation === "attempt") p.rows.set(`${API}/actions/runs/50/attempts/1`, releaseRun({run_attempt: 2}));
+  if (mutation === "head") p.rows.set(`${API}/actions/runs/50/attempts/1`, releaseRun({head_sha: BASE}));
+  if (mutation === "missing") p.rows.delete(`${CDN}${p.tag}/mentraos-${p.identity}-apple-downloads.json`);
+  if (mutation === "archive") p.rows.set(`HEAD ${CDN}${p.tag}/${p.archive.name}`, new Response(null, {headers: {"Content-Length": "99"}}));
+  if (mutation === "ambiguous") {
+   const artifacts = p.rows.get(`${API}/actions/runs/50/artifacts?per_page=100`) as {artifacts: unknown[]};
+   artifacts.artifacts.push(artifacts.artifacts[1]);
+   // A new selection must re-read the mutable artifact listing and refuse its ambiguity.
+   await expect(p.gateway.latestDev("android", before)).rejects.toThrow("Finalized release result is missing or ambiguous");
+   continue;
+  }
+  if (mutation === "attempt") await expect(scope.resolve(p.source, "ios-on-mac")).rejects.toThrow("selected source and publication attempt");
+  else if (mutation === "missing") await expect(scope.resolve(p.source, "ios-on-mac")).rejects.toThrow("Build metadata unavailable (HTTP 404)");
+  else expect((await scope.resolve(p.source, "ios-on-mac")).availability).toBe("unavailable");
+ }
+});
+
+
+test("GitHub quota failures explain the proven limit and retain generic refusals otherwise", async () => {
+ for (const status of [403, 429]) {
+  const f = coordinatedFixture();
+  f.rows.set(nightlyUrl, new Response("private provider body", {status, headers: {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1792771146"}}));
+  await expect(f.gateway.latestDev("android", before)).rejects.toMatchObject({status: 503,
+   message: "Build information is unavailable because GitHub's request limit was reached. The limit resets at 2026-10-23T15:59:06.000Z."});
+ }
+ for (const headers of [{}, {"x-ratelimit-remaining": "1", "x-ratelimit-reset": "1792771146"},
+  {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "not-a-time"}, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "999999999999999999"}] as Record<string, string>[]) {
+  const f = coordinatedFixture();
+  f.rows.set(nightlyUrl, new Response("private provider body", {status: 403, headers}));
+  await expect(f.gateway.latestDev("android", before)).rejects.toMatchObject({status: 502, message: "Build metadata unavailable (HTTP 403)"});
+ }
+ const f = coordinatedFixture();
+ f.rows.set(f.planUrl, new Response("private CDN body", {status: 403, headers: {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1792771146"}}));
+ await expect(f.gateway.latestDev("android", before)).rejects.toMatchObject({status: 502, message: "Build metadata unavailable (HTTP 403)"});
+});

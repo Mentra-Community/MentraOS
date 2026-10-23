@@ -615,7 +615,9 @@ export class PrRoutineCheckService {
     try {
       let context = gate.context
       try {
-        context = await this.github.context(gate.context.number)
+        // A terminal cancellation only observes original return; it cannot admit new work.
+        if (!gate.attempt.cancellation || !['cancelled', 'timed_out'].includes(gate.attempt.conclusion ?? ''))
+          context = await this.github.context(gate.context.number)
       } catch (error) {if (!gate.attempt.cancellation) throw error}
       const contextEnded = context.headSha !== gate.headSha || !context.open
       const preserveCompleted = contextEnded && this.completedAndDelivered(gate)

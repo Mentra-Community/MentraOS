@@ -120,7 +120,8 @@ export class NightlyRoutineService {
 
   constructor(private readonly catalog: Pick<RoutineCatalogService, "list"> = new RoutineCatalogService(),
     private readonly builds: {latestDev(platform: TestBuildPlatform, before: string): Promise<TestBuild | null>;
-      resolve(source: TestBuild["source"], platform: TestBuildPlatform): Promise<TestBuild>} = new GithubTestBuildGateway(),
+      resolve(source: TestBuild["source"], platform: TestBuildPlatform): Promise<TestBuild>;
+      forSelection?(before: string): NightlyRoutineService["builds"]} = new GithubTestBuildGateway(),
     private readonly requests: Pick<TestRequestService, "get"> = new TestRequestService(),
     private readonly repository: NightlyPlanRepository = nightlyPlanRepository,
     private readonly results: Pick<FrameworkResultService, "summary"> = new FrameworkResultService(),
@@ -175,16 +176,17 @@ export class NightlyRoutineService {
     const routineRevision = catalog.length ? await this.sources.resolve(undefined, occurrence.startedAt) : undefined;
     const platforms = [...new Set(catalog.map(row => row.platform))].sort();
     const selected = new Map<TestBuildPlatform, PlatformSelection>();
+    const builds = this.builds.forSelection?.(occurrence.startedAt) ?? this.builds;
     let anchor: TestBuild | null = null;
     let anchorFailure: {error: unknown} | undefined;
-    try {if (platforms[0]) anchor = await this.builds.latestDev(platforms[0], occurrence.startedAt);}
+    try {if (platforms[0]) anchor = await builds.latestDev(platforms[0], occurrence.startedAt);}
     catch (error) {anchorFailure = {error};}
     await Promise.all(platforms.map(async platform => {
       const selection: PlatformSelection = {errors: []};
       // Resolve independently so an unavailable observation cannot discard an exact published artifact.
       const [artifact] = await Promise.allSettled([
         anchorFailure ? Promise.reject(anchorFailure.error) : !anchor ? Promise.resolve(null)
-          : platform === platforms[0] ? Promise.resolve(anchor) : this.builds.resolve(anchor.source, platform),
+          : platform === platforms[0] ? Promise.resolve(anchor) : builds.resolve(anchor.source, platform),
       ]);
       if (artifact.status === "fulfilled") {
         const build = artifact.value;
