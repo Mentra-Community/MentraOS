@@ -1,7 +1,7 @@
 ---
 status: active
 owner: nicolo
-last_verified: 2026-10-22
+last_verified: 2026-10-23
 covers:
   - cloud-v2/packages/protocol/src/fleet.ts
   - cloud-v2/packages/workspace-contract/src/**
@@ -149,6 +149,11 @@ When it disagrees with a source of truth below, the source of truth wins; then f
     miniapp-store `fleet/scripts/dev-stack.ts` (MFM with a fake registry and miniapp host) and `fleet/scripts/seed.ts`
     (`--keep-alive` keeps "connected now" past the 10 minute window). The static portal server must send a
     Content-Type, or the module script is refused and the page is blank.
+22. Phone battery: `phone.battery` in the snapshot plus the `phone_battery` capability (omitted when
+    unsupported; unknown is never 0). The collector reads `expo-battery` (`services/fleet/phoneBatterySource.ts`)
+    only at start and on checkpoint wake-ups, because Android's level listener fires only at LOW/OKAY. A snapshot
+    follows a move of 5 points or more, or a charging change. An MFM on the older vendored protocol rejects such records as
+    `schema_invalid`: re-vendor and deploy MFM before the app ships the collector.
 
 ## Open items
 
