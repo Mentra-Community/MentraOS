@@ -71,8 +71,8 @@ export function UnwornPowerOffSetting() {
             const result = await setEnabled(value)
             if (result.is_error()) throw result.error
             await BluetoothSdk.queryWearState()
-          } catch (error) {
-            setSaveError(error instanceof Error ? error.message : "Could not save or verify automatic power-off")
+          } catch {
+            setSaveError(translate("deviceSettings:autoPowerOffSaveError"))
           } finally {
             setSaving(false)
           }
@@ -80,17 +80,13 @@ export function UnwornPowerOffSetting() {
       />
       <Text text={line.worn} className="text-text text-sm" />
       <Text
-        testID={
-          !saving && !saveError && status?.enabled === false
-            ? "glasses.autoPowerOff.confirmedOff"
-            : "glasses.autoPowerOff.status"
-        }
+        testID="glasses.autoPowerOff.status"
         text={saveError ?? line.timer}
         style={{color: theme.colors.textDim}}
         className="text-sm"
       />
       <Text
-        text="The timer does not update quickly. It refreshes about every 10 seconds."
+        text={translate("deviceSettings:autoPowerOffStatusHint")}
         style={{color: theme.colors.textDim}}
         className="text-xs"
       />

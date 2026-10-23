@@ -50,14 +50,16 @@ it("does not change a user preference when the controls mount", () => {
   tree.unmount()
 })
 
-it("requires a new OFF device reply after saving OFF", async () => {
+it("does not certify a save from an uncorrelated OFF device observation", async () => {
   const tree = render(<UnwornPowerOffSetting />)
   await act(async () => {mockListener({worn: false, enabled: false, elapsedMs: 0, timeoutMs: 1200000})})
   await act(async () => {fireEvent.press(tree.getByTestId("glasses.autoPowerOff.on"))})
   expect(mockSetEnabled).toHaveBeenCalledWith(false)
   expect(tree.queryByTestId("glasses.autoPowerOff.confirmedOff")).toBeNull()
   await act(async () => {mockListener({worn: false, enabled: false, elapsedMs: 0, timeoutMs: 1200000})})
-  expect(tree.getByTestId("glasses.autoPowerOff.confirmedOff")).toBeTruthy()
+  expect(tree.queryByTestId("glasses.autoPowerOff.confirmedOff")).toBeNull()
+  expect(tree.getByTestId("glasses.autoPowerOff.status")).toBeTruthy()
+  expect(tree.getByText("deviceSettings:autoPowerOffStatusHint")).toBeTruthy()
   tree.unmount()
 })
 
@@ -67,6 +69,26 @@ it("does not certify OFF if saving the preference fails", async () => {
   await act(async () => {fireEvent.press(tree.getByTestId("glasses.autoPowerOff.on"))})
   await act(async () => {mockListener({worn: false, enabled: false, elapsedMs: 0, timeoutMs: 1200000})})
   expect(tree.queryByTestId("glasses.autoPowerOff.confirmedOff")).toBeNull()
-  expect(tree.getByText("Storage failed")).toBeTruthy()
+  expect(tree.queryByText("Storage failed")).toBeNull()
+  expect(tree.getByText("deviceSettings:autoPowerOffSaveError")).toBeTruthy()
+  tree.unmount()
+})
+
+
+it("never labels an old OFF observation confirmed while the saved app preference is ON", async () => {
+  const tree = render(<UnwornPowerOffSetting />)
+  await act(async () => {mockListener({worn: false, enabled: false})})
+  expect(tree.getByTestId("glasses.autoPowerOff.on")).toBeTruthy()
+  expect(tree.queryByTestId("glasses.autoPowerOff.confirmedOff")).toBeNull()
+  tree.unmount()
+})
+
+it("does not expose a raw native query error in the user-facing status", async () => {
+  mockQuery.mockRejectedValueOnce(new Error("private native command error"))
+  const tree = render(<UnwornPowerOffSetting />)
+  mockQuery.mockRejectedValueOnce(new Error("private native command error"))
+  await act(async () => {fireEvent.press(tree.getByTestId("glasses.autoPowerOff.on"))})
+  expect(tree.queryByText("private native command error")).toBeNull()
+  expect(tree.getByText("deviceSettings:autoPowerOffSaveError")).toBeTruthy()
   tree.unmount()
 })
