@@ -78,7 +78,7 @@ import {
   signForwardedPrincipal,
   signServiceRequest,
   type ForwardedPrincipal,
-  type ForwardedScope,
+  type UserScope,
 } from "@mentra/workspace-contract/server"
 import type {MiddlewareHandler} from "hono"
 import {bodyLimit} from "hono/body-limit"
@@ -165,7 +165,7 @@ export function limitBody(maxBytes: (c: AppContext) => number | null): Middlewar
 }
 
 /** The signed-in person as a service is told about them: who they are, what Core lets them do to the organization, and what this request covers. */
-export function forwardedUser(person: UserPrincipal, scope: ForwardedScope): ForwardedPrincipal {
+export function forwardedUser(person: UserPrincipal, scope: UserScope): ForwardedPrincipal {
   return {
     kind: "user",
     mentraUserId: person.mentraUserId,

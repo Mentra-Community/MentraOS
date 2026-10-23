@@ -11,6 +11,10 @@
  * to {@link SessionAnswer}) and `GET ui/icons/<file>`. A refusal is `{error}` with one of
  * {@link BILLING_ERROR_CODES}.
  *
+ * One route is for anyone, signed in or not: `GET /api/portal/billing/public/products/<product>`
+ * ({@link PublicProduct}), the product's name for the sign-in page. Core forwards it to billing's
+ * `GET /v1/portal/public/products/<product>` with the `public` principal, which names no person.
+ *
  * Values the portal doesn't know don't break a page. A status, an action kind and a tax value are plain
  * strings, with `KNOWN_*` lists to narrow them by; a price of a scheme the portal doesn't know carries a
  * `fallbackLabel`; an unknown field is stripped (an older Store's `ownerTypes` on an entry, or `defaultSeats` on a
@@ -267,6 +271,14 @@ export const PurchaseStatusSchema = z.object({
   licenseId: z.string().nullable(),
 })
 export type PurchaseStatus = z.infer<typeof PurchaseStatusSchema>
+
+/**
+ * `GET public/products/<product>`: what anyone may know of a product, its name, for the sign-in page ("Sign in to
+ * buy <name>."). Billing answers it for a product that is for sale, and 404 for any other; Core relays the name and
+ * nothing else, so a price, an id or an offer beside it never leaves Core.
+ */
+export const PublicProductSchema = z.object({name: z.string().min(1)})
+export type PublicProduct = z.infer<typeof PublicProductSchema>
 
 /** `GET status`: a workspace's licenses as billing reads them, with the owner's total, actions and purchase. */
 export const BillingStatusSchema = z.object({

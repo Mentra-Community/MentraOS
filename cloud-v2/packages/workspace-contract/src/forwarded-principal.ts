@@ -54,8 +54,8 @@ export interface VerifyForwardedPrincipalOptions {
  * the principal decodes to one of the {@link ForwardedPrincipal} shapes. Empty or whitespace-only
  * secrets are ignored.
  *
- * Which kinds a route accepts is the caller's decision: Fleet's `/v1/client` serves phones, and its
- * `/v1/admin` and a portal module's `/v1/portal` users.
+ * Which kinds a route accepts is the caller's decision: Fleet's `/v1/client` serves phones, its
+ * `/v1/admin` and a portal module's `/v1/portal` users, and a module's public read the `public` principal only.
  */
 export function verifyForwardedPrincipal(
   request: ForwardedRequest,
@@ -110,7 +110,9 @@ export function verifyForwardedPrincipal(
  * need not deploy in step. A missing or unknown `kind`, a missing or wrongly typed documented field,
  * a missing or unknown `scope.kind`, and a workspace scope without a `workspaceId` refuse the
  * principal. `organizationCapabilities` must be an array of strings; the entries this build does not
- * know are dropped.
+ * know are dropped. A `public` principal is its kind and the `public` scope, nothing else: any other scope refuses
+ * it, and a person's fields beside it are not read. A `user` principal with the `public` scope is refused, since
+ * a person's request is never public.
  */
 export function parseForwardedPrincipal(value: unknown): ForwardedPrincipal | null {
   if (!isRecord(value)) return null
@@ -133,17 +135,20 @@ export function parseForwardedPrincipal(value: unknown): ForwardedPrincipal | nu
       const organizationCapabilities = parseOrganizationCapabilities(own(value, "organizationCapabilities"))
       const scope = parseForwardedScope(own(value, "scope"))
       if (
+        !scope ||
+        scope.kind === "public" ||
         !isId(mentraUserId) ||
         !isNullableString(email) ||
         typeof emailVerified !== "boolean" ||
         typeof isOrganizationAdmin !== "boolean" ||
-        !organizationCapabilities ||
-        !scope
+        !organizationCapabilities
       ) {
         return null
       }
       return {kind: "user", mentraUserId, email, emailVerified, isOrganizationAdmin, organizationCapabilities, scope}
     }
+    case "public":
+      return parseForwardedScope(own(value, "scope"))?.kind === "public" ? {kind: "public", scope: {kind: "public"}} : null
     default:
       return null
   }
@@ -156,6 +161,8 @@ function parseForwardedScope(value: unknown): ForwardedScope | null {
       return {kind: "organization"}
     case "person":
       return {kind: "person"}
+    case "public":
+      return {kind: "public"}
     case "workspace": {
       const workspaceId = own(value, "workspaceId")
       return isId(workspaceId) ? {kind: "workspace", workspaceId} : null

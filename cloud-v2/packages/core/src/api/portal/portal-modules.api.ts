@@ -56,7 +56,7 @@
  * caching the module gives them.
  */
 
-import type {ForwardedScope} from "@mentra/workspace-contract/server"
+import type {UserScope} from "@mentra/workspace-contract/server"
 import {Hono} from "hono"
 import {assetResponseHeaders, methodNotAllowed, relayAsset, UI_ASSET_SEGMENT} from "../../services/forwarding/assets"
 import {forwardJson, forwardedUser, jsonAnswerHeaders, limitBody, type Upstream} from "../../services/forwarding/forward"
@@ -193,7 +193,7 @@ async function scopeOf(
   c: AppContext,
   person: UserPrincipal,
   route: Extract<Route, {kind: "workspace"}>,
-): Promise<ForwardedScope | Response> {
+): Promise<UserScope | Response> {
   const decision = await authorize(person, {workspaceId: route.workspaceId})
   return decision.allowed ? {kind: "workspace", workspaceId: route.workspaceId} : denied(c, decision)
 }
