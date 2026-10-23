@@ -402,7 +402,9 @@ export function PendingInvitationsScreen({
   if (!link && invitationsResult.data?.length === 0) return null;
   // The board draws the list as one card with no heading of its own: the Invited tab above it already says what it is.
   return (
-    <Card role="region" aria-label="Pending invitations" className="gap-0 overflow-hidden py-0">
+    // No `overflow-hidden`: a row's "…" menu opens over the card's edge, and a card with one row is shorter than the
+    // menu. The table has no fill, so nothing needs clipping to the card's rounded corners.
+    <Card role="region" aria-label="Pending invitations" className="gap-0 py-0">
       {link ? (
         <div className="px-6 pt-6">
           <InvitationLinkNotice link={link} onDismiss={() => setLink(null)} />
