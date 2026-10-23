@@ -43,15 +43,46 @@ describe("the pages", () => {
     expect("personal" in t).toBe(false);
   });
 
-  test("what the page says when the address asks to buy a product that isn't opened", () => {
+  test("the people a link's dialog names: one, two, or the first and a count", () => {
+    expect(t.names.short(["Ana Ruiz"])).toBe("Ana Ruiz");
+    expect(t.names.short(["Ana Ruiz", "Ben Cho"])).toBe("Ana Ruiz and Ben Cho");
+    expect(t.names.short(["Ana Ruiz", "Ben Cho", "Cy Dunn"])).toBe("Ana Ruiz and 2 others");
+    expect(t.names.short(["Ana Ruiz", "Ben Cho", "Cy Dunn", "Di Eng", "Ed Fox"])).toBe("Ana Ruiz and 4 others");
+  });
+
+  test("what each dialog of the ?buy= link says, word for word", () => {
     const words = t.page.buyLink;
-    expect(words.alreadyHas("Acme Field Services", "Mentra Call Unlimited")).toBe("Acme Field Services already has Mentra Call Unlimited.");
-    expect(words.notForSale).toBe("That product isn't for sale.");
-    expect(words.askAnAdmin("Acme Field Services", "Mentra Call Unlimited")).toBe(
-      "Only Admins and Owners of Acme Field Services can buy Mentra Call Unlimited. Ask one of them.",
+    const ws = "Acme Field Services";
+    const call = "Mentra Call Unlimited";
+    expect(words.held(call)).toBe("You already have Mentra Call Unlimited.");
+    expect(words.free(ws, 1, call)).toBe("Acme Field Services has 1 unassigned Mentra Call Unlimited license.");
+    expect(words.free(ws, 3, call)).toBe("Acme Field Services has 3 unassigned Mentra Call Unlimited licenses.");
+    expect(words.assignToMe).toBe("Assign it to me");
+    expect(words.assigned(call)).toBe("Mentra Call Unlimited is assigned to you.");
+    expect(words.add(ws, 3, call, t.names.short(["Ana Ruiz"]))).toBe("Acme Field Services has 3 Mentra Call Unlimited licenses, assigned to Ana Ruiz. Add one for you?");
+    expect(words.add(ws, 1, call, t.names.short(["Ana Ruiz", "Ben Cho"]))).toBe(
+      "Acme Field Services has 1 Mentra Call Unlimited license, assigned to Ana Ruiz and Ben Cho. Add one for you?",
     );
-    expect(words.askAnAdmin("Acme Field Services", words.anyProduct)).toBe("Only Admins and Owners of Acme Field Services can buy licenses. Ask one of them.");
+    expect(words.add(ws, 4, call, t.names.short(["Ana Ruiz", "Ben Cho", "Cy Dunn"]))).toBe(
+      "Acme Field Services has 4 Mentra Call Unlimited licenses, assigned to Ana Ruiz and 2 others. Add one for you?",
+    );
+    expect(words.addTerms({ price: "$29 a month", note: "before tax" })).toBe("1 more license · $29 a month · before tax");
+    expect(words.addTerms({ price: "$29 a month", note: null })).toBe("1 more license · $29 a month");
+    expect(words.addTerms({ price: "From $10 per user a month", note: "before tax" })).toBe("1 more license · From $10 per user a month · before tax");
+    expect(words.full(ws, 3, call, "Ana Ruiz and 2 others")).toEqual({
+      body: "Acme Field Services has 3 Mentra Call Unlimited licenses, assigned to Ana Ruiz and 2 others.",
+      hint: "Unassign someone on the Mentra Call Unlimited card to free a license.",
+    });
+    expect(words.alreadyHas(ws, call)).toBe("Acme Field Services already has Mentra Call Unlimited.");
+    expect(words.notForSale).toBe("That product isn't for sale.");
+    expect(words.askAnAdmin(ws, call)).toBe("Only Admins and Owners of Acme Field Services can buy Mentra Call Unlimited. Ask one of them.");
+    expect(words.askAnAdmin(ws, words.anyProduct)).toBe("Only Admins and Owners of Acme Field Services can buy licenses. Ask one of them.");
     expect(words.notHere).toBe("Licenses can't be bought here.");
+    expect(words.done).toBe("Done");
+    // The note the page used to write above the cards is gone.
+    expect(Object.keys(words).sort()).toEqual(
+      ["add", "addTerms", "alreadyHas", "anyProduct", "askAnAdmin", "assignToMe", "assigned", "done", "free", "full", "held", "notForSale", "notHere"].sort(),
+    );
   });
 });
 
@@ -437,6 +468,11 @@ describe("refusals", () => {
     );
   });
 
+  test("a request someone else has open names the product when it is known", () => {
+    expect(refusalMessage("seat_request_pending", { product: "Fleet" })).toBe("Someone else is adding a Fleet license right now. Try again in a few minutes.");
+    expect(refusalMessage("seat_request_pending")).toBe("Someone else is adding a license right now. Try again in a few minutes.");
+  });
+
   test("the refusals about a number of licenses, or about a subscription that has gone", () => {
     expect(refusalMessage("invalid_seats")).toBe("That number of licenses isn't available. Choose a different number.");
     expect(refusalMessage("unknown_action")).toBe("That isn't available for this subscription any more. Reload the page and try again.");
@@ -515,6 +551,16 @@ const FIT_LINES: unknown[][] = (["enough", "some_hold", "all_hold", "short", "fu
 const SAMPLES: Record<string, unknown[][]> = {
   "names.list": [[[]], [["A"]], [["A", "B"]], [["A", "B", "C"]], [["A", "B", "C", "D", "E"]]],
   "names.holders": [[[]], [["A"]], [["A", "B", "C", "D", "E"]]],
+  "names.short": [[["A"]], [["A", "B"]], [["A", "B", "C"]], [["A", "B", "C", "D", "E"]]],
+  "page.buyLink.held": [["Mentra Call Unlimited"]],
+  "page.buyLink.free": [["Acme Field Services", 1, "Mentra Call Unlimited"], ["Acme Field Services", 3, "Mentra Call Unlimited"]],
+  "page.buyLink.assigned": [["Mentra Call Unlimited"]],
+  "page.buyLink.add": [
+    ["Acme Field Services", 3, "Mentra Call Unlimited", "Ana Ruiz and 2 others"],
+    ["Acme Field Services", 1, "Mentra Call Unlimited", "Ana Ruiz"],
+  ],
+  "page.buyLink.addTerms": [[{ price: "$29 a month", note: "before tax" }], [{ price: "$29 a month", note: null }]],
+  "page.buyLink.full": [["Acme Field Services", 3, "Mentra Call Unlimited", "Ana Ruiz and 2 others"], ["Acme Field Services", 1, "Mentra Call Unlimited", "Ana Ruiz"]],
   "page.buyLink.alreadyHas": [["Acme Field Services", "Mentra Call Unlimited"]],
   "page.buyLink.askAnAdmin": [["Acme Field Services", "Mentra Call Unlimited"], ["Acme Field Services", "licenses"]],
   "page.adminsGiveOutSeats": [["Acme Field Services"]],

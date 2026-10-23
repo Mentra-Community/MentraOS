@@ -42,8 +42,11 @@ export interface BillingApi {
   status(scope: BillingScope, options?: { purchase?: string | null }): Promise<BillingStatus>;
   /** Starts one checkout of `product` for `seats`: the hosted page to send the browser to. */
   purchase(scope: BillingScope, request: { product: string; seats: number }): Promise<PurchaseAnswer>;
-  /** The hosted page for a billing action (`licenseId` names its license; `seats` is how many `add_seats` adds). */
-  session(scope: BillingScope, request: { action: string; licenseId?: string; seats?: number }): Promise<SessionAnswer>;
+  /**
+   * The hosted page for a billing action (`licenseId` names its license; `seats` is how many `add_seats` adds).
+   * `forMe: true` is only for `add_seats` of one license: the person adding it asks for it to be assigned to them.
+   */
+  session(scope: BillingScope, request: { action: string; licenseId?: string; seats?: number; forMe?: true }): Promise<SessionAnswer>;
 }
 
 /**
@@ -116,6 +119,7 @@ export function createBillingApi(opts: {
       const body: Record<string, unknown> = { action: request.action };
       if (request.licenseId !== undefined) body.licenseId = request.licenseId;
       if (request.seats !== undefined) body.seats = request.seats;
+      if (request.forMe === true) body.forMe = true;
       body.locale = locale;
       return parse(SessionAnswerSchema, await send("POST", `${owner(scope)}/session`, body), "session answer");
     },

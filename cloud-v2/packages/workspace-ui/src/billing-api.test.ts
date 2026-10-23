@@ -154,6 +154,18 @@ describe("createBillingApi: routes and the locale", () => {
     expect(rec.calls[1]!.body).toEqual({ action: "billing_and_invoices", locale: "en-US" });
   });
 
+  test("a session sends forMe: true only when it was asked for, and never forMe: false", async () => {
+    const rec = recordingFetch(
+      Response.json({ url: "https://billing.example.test/s/1" }),
+      Response.json({ url: "https://billing.example.test/s/2" }),
+    );
+    const billing = createBillingApi({ fetch: rec.fetch, locale: "en-US" });
+    await billing.session(WORKSPACE, { action: "add_seats", licenseId: "lic_1", seats: 1, forMe: true });
+    await billing.session(WORKSPACE, { action: "add_seats", licenseId: "lic_1", seats: 1 });
+    expect(rec.calls[0]!.body).toEqual({ action: "add_seats", licenseId: "lic_1", seats: 1, forMe: true, locale: "en-US" });
+    expect(Object.keys(rec.calls[1]!.body as object)).not.toContain("forMe");
+  });
+
   test("every request of every kind carries the locale", async () => {
     const rec = recordingFetch(
       Response.json(CATALOG),

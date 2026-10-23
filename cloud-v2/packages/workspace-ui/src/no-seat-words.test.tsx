@@ -17,9 +17,12 @@ import { join, relative } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import ts from "typescript";
 import type { ReactElement } from "react";
-import { LicensesSummary, LicensesUnavailable, PurchaseBanner, TestModeBanner } from "./components/licenses/banners";
+import { AddedBanner, LicensesSummary, LicensesUnavailable, PurchaseBanner, TestModeBanner } from "./components/licenses/banners";
+import { LinkDialog, type LinkOutcome } from "./components/licenses/buy-link";
 import { NoSeat } from "./components/licenses/page-parts";
+import { catalogEntryFor, licenseBillingFor } from "./test-billing-fixtures";
 import { cleanup, render, setupDom, teardownDom, wordsUnder } from "./test-dom";
+import { detailFor, offlineApi } from "./test-fixtures";
 
 beforeAll(setupDom);
 afterAll(teardownDom);
@@ -69,6 +72,54 @@ describe("the banners, in every state", () => {
       }
     }
     expect(drawn).toBe(32);
+  });
+
+  test("back from the hosted page that added a license, in each state it shows", async () => {
+    for (const state of [
+      { held: true, timedOut: false },
+      { held: false, timedOut: true },
+    ]) {
+      const words = await draw(<AddedBanner productName="Mentra Call Unlimited" onDismiss={noop} onReload={noop} {...state} />);
+      expect([JSON.stringify(state), words.filter((word) => SEAT.test(word))]).toEqual([JSON.stringify(state), []]);
+      expect(words.length).toBeGreaterThan(2);
+      await cleanup();
+    }
+    // While it waits it draws nothing.
+    expect(await draw(<AddedBanner productName="Mentra Call Unlimited" held={false} timedOut={false} onDismiss={noop} />)).toEqual([]);
+  });
+
+  test("every dialog the ?buy= link can open", async () => {
+    const entry = catalogEntryFor();
+    const billing = licenseBillingFor();
+    const outcomes: LinkOutcome[] = [
+      { product: entry.product, entry, kind: "held" },
+      { product: entry.product, entry, kind: "free", licenseId: "lic_call", free: 2 },
+      { product: entry.product, entry, kind: "add", licenseId: "lic_call", count: 3, people: ["Ana Ruiz", "Ben Cho", "Cy Dunn"], action: { kind: "add_seats", fallbackLabel: "Add licenses" }, billing },
+      { product: entry.product, entry, kind: "full", count: 3, people: ["Ana Ruiz"] },
+      { product: entry.product, entry, kind: "already_has" },
+      { product: entry.product, entry, kind: "ask" },
+      { product: entry.product, entry, kind: "not_here" },
+      { product: entry.product, entry, kind: "not_for_sale" },
+      { product: "mentra.nope", entry: null, kind: "ask" },
+    ];
+    for (const outcome of outcomes) {
+      if (outcome.kind === "buy") continue;
+      const { api } = offlineApi();
+      const words = await draw(
+        <LinkDialog
+          outcome={outcome}
+          workspace={detailFor("admin") as never}
+          api={api}
+          billing={{ locale: "en-US" } as never}
+          scope={{ workspaceId: "ws_acme" } as never}
+          navigateOut={{ leave: noop, openTab: () => null }}
+          onClose={noop}
+        />,
+      );
+      expect([outcome.kind, words.filter((word) => SEAT.test(word))]).toEqual([outcome.kind, []]);
+      expect(words.length).toBeGreaterThan(2);
+      await cleanup();
+    }
   });
 
   test("test mode, the total, a member with nothing, and the unavailable pages", async () => {

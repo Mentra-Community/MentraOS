@@ -102,6 +102,43 @@ export function PurchaseBanner({
   );
 }
 
+/**
+ * Back from the hosted page that added one license for the viewer (`?added=`): the purchase banner's own words for one
+ * unpaid license (the add may be charged now or on the next invoice, so it claims no payment). It shows nothing while the
+ * license is on its way (`held` and `timedOut` both false): "Purchase complete" and "<product> is active, and it's assigned
+ * to you." once the viewer holds the product, and "Your purchase went through" with "The licenses can take a few minutes
+ * to appear." and Reload once the page has waited a minute for it. The page counts the minute (`useAddedFlow`).
+ */
+export function AddedBanner({
+  productName,
+  held,
+  timedOut,
+  onDismiss,
+  onReload,
+}: {
+  /** The product, as the catalog names it. */
+  productName: string;
+  /** The viewer holds the product. */
+  held: boolean;
+  /** The page has waited a minute for it and given up reading. */
+  timedOut: boolean;
+  onDismiss(): void;
+  onReload?: () => void;
+}) {
+  if (!held && !timedOut) return null;
+  return (
+    <PurchaseBanner
+      purchase={{ status: held ? "ready" : "processing", quantity: 1, paid: false }}
+      productName={productName}
+      listed={held}
+      assigned={held}
+      timedOut={!held}
+      onDismiss={onDismiss}
+      onReload={onReload}
+    />
+  );
+}
+
 /** Hazard tape from the notice tokens: an amber and dark-amber frame no real notice uses. */
 const HAZARD_TAPE: CSSProperties = {
   backgroundImage:

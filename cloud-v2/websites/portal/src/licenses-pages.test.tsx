@@ -308,15 +308,14 @@ describe("a link that asks to buy one product", () => {
     expect(window.location.pathname + search()).toBe("/licenses");
   });
 
-  test("a Member is told who to ask, and the address keeps no ?buy=", async () => {
+  test("a Member is told who to ask, in a dialog, and the address keeps no ?buy=", async () => {
     const scenario: Scenario = { ...SCENARIOS.catalog(), role: "member", workspaceCatalog: workspaceCatalog(false) };
     await open(CALL_LINK, scenario, { ready: "Ask one of them." });
-    expect(has("Only Admins and Owners of Acme Field Services can buy Mentra Call Unlimited. Ask one of them.")).toBe(true);
-    expect(dialog()).toBeNull();
+    expect(dialog()!.textContent).toContain("Only Admins and Owners of Acme Field Services can buy Mentra Call Unlimited. Ask one of them.");
     expect(window.location.pathname + search()).toBe("/licenses");
   });
 
-  test("a Member who holds a license gets the same note on the page they already have", async () => {
+  test("a Member who holds a license is told they already have it, on the page they already have", async () => {
     const scenario: Scenario = {
       ...SCENARIOS.twoActive(),
       role: "member",
@@ -324,27 +323,29 @@ describe("a link that asks to buy one product", () => {
       licenses: [CALL_LICENSE],
       workspaceCatalog: workspaceCatalog(false),
     };
-    await open(CALL_LINK, scenario, { ready: "Ask one of them." });
-    expect(has("Only Admins and Owners of Acme Field Services can buy Mentra Call Unlimited. Ask one of them.")).toBe(true);
+    await open(CALL_LINK, scenario, { ready: "You already have Mentra Call Unlimited." });
+    expect(dialog()!.textContent).toContain("You already have Mentra Call Unlimited.");
     expect(has("Assigned to you")).toBe(true);
     expect(search()).toBe("");
   });
 
-  test("a product the workspace holds is a note, not a second purchase", async () => {
-    await open(CALL_LINK, SCENARIOS.twoActive(), { ready: "Acme Field Services already has Mentra Call Unlimited." });
-    expect(dialog()).toBeNull();
+  test("a license that is free is offered to the person who followed the link, not bought again", async () => {
+    const { core } = await open(CALL_LINK, SCENARIOS.twoActive(), { ready: "Acme Field Services has 2 unassigned Mentra Call Unlimited licenses." });
+    expect(dialog()!.textContent).toContain("Assign it to me");
     expect(search()).toBe("");
+    expect(purchases(core)).toEqual([]);
   });
 
-  test("a product that isn't for sale is a note too", async () => {
+  test("a product that isn't for sale is a dialog too", async () => {
     await open("/licenses?buy=nothing.here", SCENARIOS.catalog(), { ready: "That product isn't for sale." });
-    expect(dialog()).toBeNull();
+    expect(dialog()!.textContent).toContain("That product isn't for sale.");
     expect(search()).toBe("");
   });
 
   test("a manager whose portal is not offered billing is told licenses can't be bought here", async () => {
     const scenario: Scenario = { ...SCENARIOS.twoActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
-    await open(CALL_LINK, scenario, { modules: CATALOG_ONLY, ready: "Licenses can't be bought here." });
+    await open("/licenses?buy=example.addon", scenario, { modules: CATALOG_ONLY, ready: "Licenses can't be bought here." });
+    expect(dialog()!.textContent).toContain("Licenses can't be bought here.");
     expect(search()).toBe("");
   });
 
