@@ -271,14 +271,14 @@ function coreApp(overrides = {}) {
   }
 }
 
-function entra(t, cliArgs, {apps = [coreApp()], scopes = signInScopes, owners = [], env = {}} = {}) {
+function entra(t, cliArgs, {apps = [coreApp()], scopes = signInScopes, owners = [], env = {}, graph = {}} = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "entra-portal-"))
   t.after(() => rmSync(root, {recursive: true, force: true}))
   const callsFile = path.join(root, "calls.jsonl")
   writeFileSync(callsFile, "")
   writeFileSync(path.join(root, "az"), fakeEntra, {mode: 0o755})
   const sps = [
-    {id: "graph-sp", appId: GRAPH, oauth2PermissionScopes: scopes},
+    {id: "graph-sp", appId: GRAPH, oauth2PermissionScopes: scopes, ...graph},
     {id: "acs-sp", appId: "1fd5118e-2576-4263-8130-9503064c837a",
       oauth2PermissionScopes: [{value: "Teams.ManageCalls", id: "id-calls"}, {value: "Teams.ManageChats", id: "id-chats"}]},
     {id: "core-sp", appId: CORE},
@@ -350,6 +350,22 @@ test("missing Microsoft Graph sign-in scopes stop before any change", (t) => {
   const result = entra(t, ["--admin-portal-only", "--core-client-id", CORE], {scopes: signInScopes.filter((s) => s.value !== "email")})
   assert.notEqual(result.status, 0)
   assert.equal(result.writes.length, 0)
+})
+
+test("a Microsoft Graph service principal larger than the command-line limit still configures sign-in", (t) => {
+  // Linux rejects a single argv over 128KiB. macOS ARG_MAX here is 1MiB.
+  // The real Graph service principal exceeds both once it is passed to jq --argjson.
+  const bulky = "x".repeat(1_500_000)
+  const result = entra(
+    t,
+    ["--admin-portal-only", "--core-client-id", CORE, "--admin-portal-url", "https://core.acme.example"],
+    {apps: [coreApp({keyCredentials: [{key: bulky}]})], graph: {padding: bulky}},
+  )
+  assert.equal(result.status, 0, result.stderr)
+  const {body} = result.writes[0]
+  assert.equal("keyCredentials" in body, false)
+  assert.ok(body.web.redirectUris.includes("https://core.acme.example/interaction/callback/workforce"))
+  assert.ok(!JSON.stringify(body).includes(bulky))
 })
 
 test("the operator is made an owner of Core once", (t) => {
