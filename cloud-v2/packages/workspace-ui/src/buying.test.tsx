@@ -85,7 +85,7 @@ const payingAt = (url: string) => realBilling(() => ({ body: { url } }));
 function stubBilling(answers: { purchase?: () => Promise<{ url: string }>; session?: () => Promise<{ url: string }> } = {}) {
   const purchase = mock(async (_scope: BillingScope, _request: { product: string; seats: number }) => (answers.purchase ?? (async () => ({ url: PAY })))());
   const session = mock(
-    async (_scope: BillingScope, _request: { action: string; licenseId?: string; seats?: number }) => (answers.session ?? (async () => ({ url: PAY })))(),
+    async (_scope: BillingScope, _request: { action: string; licenseId?: string; seats?: number; forMe?: true }) => (answers.session ?? (async () => ({ url: PAY })))(),
   );
   const billing = { locale: "en-US", purchase, session } as unknown as BillingApi;
   return { billing, purchase, session };
@@ -286,9 +286,22 @@ describe("a product the owner holds", () => {
     await settle();
     expect(session).toHaveBeenCalledTimes(1);
     expect(session.mock.calls[0]).toEqual([WS, { action: "add_seats", licenseId: "lic_call_9" }]);
+    // The card's button never asks for a license for the person pressing it: that is the link's dialog alone.
+    expect("forMe" in session.mock.calls[0]![1]).toBe(false);
     expect(leave).toHaveBeenCalledWith(PAY);
     // It returns to the portal, so no other tab is opened for it.
     expect(openTab).not.toHaveBeenCalled();
+  });
+
+  test("on the wire, Add licenses sends no forMe", async () => {
+    const wire = payingAt(PAY);
+    const out = ways();
+    await mount(
+      <CatalogGrid products={WORKSPACE_CATALOG} licenses={[licenseBillingFor({ licenseId: "lic_call_9", quantity: 5 })]} scope={WS} billing={wire.billing} navigateOut={out.navigateOut} />,
+    );
+    await click(buttonNamed("Add licenses"));
+    await settle();
+    expect(wire.requests.map((request) => request.body)).toEqual([{ action: "add_seats", licenseId: "lic_call_9", locale: "en-US" }]);
   });
 
   test("only the button that was pressed waits, when several products are held", async () => {

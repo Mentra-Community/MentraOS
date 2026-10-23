@@ -335,29 +335,58 @@ what](#who-sees-what)).
   to you." when no payment was collected), or "Your 5 Call Unlimited licenses
   are ready" and "Payment received, and one is assigned to you. Assign the rest
   to members below." for more. Otherwise the banner says what it said before.
+- **Back from the page that added a license for the person.** The hosted page of
+  row 5 above returns to `/licenses?workspace=<id>&added=<licenseId>`. The page
+  reads Core's licenses (and billing's status, for a person offered billing)
+  every 2 seconds for up to a minute, until the person's membership holds a seat
+  of that license's product, and shows nothing while it waits. Then it shows the
+  assigned banner for one unpaid license, "Purchase complete" and "<product> is
+  active, and it's assigned to you." (the add may be charged now or on the next
+  invoice, so it claims no payment), and Dismiss removes `?added=` from the
+  address in place. If the person does not hold the product by the end of the
+  minute, the banner says "Your purchase went through" and "The licenses can take
+  a few minutes to appear.", with Reload.
 - **A link that asks to buy.** A person who follows
-  `/licenses?buy=<product>` (a product's key) signs in if they have to, lands
-  in their own workspace (their first visit makes one, see [the first
-  run](workspaces.md#the-workspace-portal)),
-  and the Licenses page acts once its reads are in, then removes `?buy=` from
-  the address in place, so Back does not return to the link and a reload does
-  not act again. The page opens even for a Member who holds nothing, so the
-  answer is there. What it does:
+  `/licenses?buy=<product>` (a product's key) signs in if they have to (the
+  sign-in page says "Sign in to buy <product's name>.", from a public read of the
+  product's name that needs no session, and "Sign in to buy a license." where
+  that can't be read), lands in their own workspace (their first visit makes
+  one, see [the first run](workspaces.md#the-workspace-portal)), and the
+  Licenses page acts once its reads are in. It removes `?buy=` from the address
+  in place first, so Back, from a hosted page too, does not return to the link
+  and a reload does not act again. The page opens even for a Member who holds
+  nothing, so the answer is there. The first row that matches decides; the page
+  writes no note above the cards:
 
-  | Case | The page |
-  | --- | --- |
-  | Billing is offered, and the catalog offers the product | Opens the Buy dialog on it |
-  | The workspace already holds it, or has a card for it | "<workspace> already has <product>." |
-  | The product is not in the catalog's offers | "That product isn't for sale." |
-  | The viewer is not an Admin or Owner | "Only Admins and Owners of <workspace> can buy <product>. Ask one of them." (the product's name from the catalog, else "licenses" where it can't be read) |
-  | The viewer is an Admin or Owner, but billing is not offered here | "Licenses can't be bought here." |
+  | # | Case | What happens |
+  | --- | --- | --- |
+  | 1 | The viewer holds the product (a seat of a license of it that has not ended) | A dialog: "You already have <product>." |
+  | 2 | The viewer has a membership and may assign licenses, and a license of it is free (in its term, with a license left) | The page assigns it to them, with no click and no payment, and a dialog says "You now have <product>." |
+  | 3 | The viewer is not an Admin or Owner | A dialog: "Only Admins and Owners of <workspace> can buy <product>. Ask one of them." (the product's name from the catalog, else "licenses" where it can't be read) |
+  | 4 | Billing is not offered to the viewer here | A dialog: "Licenses can't be bought here." |
+  | 5 | The workspace has a card for the product and the viewer has a membership | When one of its licenses lists `add_seats` and has no more people than licenses, the browser goes to billing's hosted page for one more license, assigned to the viewer (`add_seats` of 1, with `forMe`). Otherwise a dialog: "<workspace> has 3 <product> licenses, assigned to Ana Ruiz and 2 others." and "Unassign someone on the <product> card to free a license." |
+  | 6 | The workspace has a card and the viewer is not a member (an Organization Admin visiting) | A dialog: "<workspace> already has <product>." |
+  | 7 | Billing sells the product now | The browser goes to billing's checkout for one license, and Core assigns the buyer. Where billing's smallest purchase is more than one, the Buy dialog's licenses step opens instead. |
+  | 8 | Anything else | A dialog: "That product isn't for sale." |
 
-  A note stays until the person leaves the page. Nothing goes to checkout
-  without the person's click on Continue to payment ↗. Billing puts the buyer's
-  Core user ID on the subscription it checks out, and Core gives the buyer one of
-  the new licenses when the purchase's first write arrives, so they have it
-  whether or not they keep the tab open. An Organization Admin buying in a
-  workspace they are not a member of gets none.
+  Rows 2, 5 and 7 take no click, in this tab (the hosted page returns to the
+  portal, so no other tab is opened). The page says "Opening checkout…" in a
+  dialog while billing is asked for the page, and a refusal is a dialog with its
+  words and Done: "Someone else is adding a <product> license right now. Try
+  again in a few minutes.", "A purchase of <product> is already under way. Finish
+  it, or try again in a minute.", and the others on this page. Row 2 comes
+  before rows 3 and 4, because taking a free license needs no billing. A Member
+  or Developer sees only their own licenses, so for them row 2 never matches.
+  Every dialog is titled with the product's name ("Licenses" where the catalog
+  doesn't know it) and shows its icon. A refused assignment is a dialog with the
+  refusal ("That license was just taken. Nothing was assigned." where the license
+  filled up first). Pressing Back from the hosted page can bring the page back
+  from the browser's back/forward cache as it was, with the locked "Opening
+  checkout…" dialog; the page closes that dialog when it is shown again from the
+  cache (`pageshow` with `persisted`). Billing puts the buyer's Core user ID on the subscription it checks
+  out, and Core gives the buyer one of the new licenses when the purchase's
+  first write arrives, so they have it whether or not they keep the tab open. An
+  Organization Admin buying in a workspace they are not a member of gets none.
 - **Test mode.** Where billing sells with a test key, a banner above everything
   names the environment and the test card to pay with (with a copy button). A
   small × in its top-right corner ("Hide the test mode notice") hides it for the

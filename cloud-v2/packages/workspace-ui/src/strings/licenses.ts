@@ -74,6 +74,13 @@ function nameList(names: readonly string[]): string {
   return `${names.slice(0, 2).join(", ")} and ${names.length - 2} others`;
 }
 
+/** One name; two joined by "and"; three or more, the first and a count: "Ana Ruiz and 2 others". */
+function shortNames(names: readonly string[]): string {
+  if (names.length === 0) return "";
+  if (names.length <= 2) return and(names);
+  return `${names[0]} and ${names.length - 1} others`;
+}
+
 /** What billing's actions say. `label` returns these, so a wording changes in one place. */
 const actions = {
   addSeats: "Add licenses",
@@ -155,6 +162,8 @@ export const licenseStrings = {
   /** People, in a sentence: "Dana Reyes, Priya Natarajan and 8 others". */
   names: {
     list: nameList,
+    /** The people a link's dialog names: "Ana Ruiz", "Ana Ruiz and Ben Cho", "Ana Ruiz and 2 others". */
+    short: shortNames,
     holders: (names: readonly string[]) => (names.length === 0 ? "No one has a license yet" : nameList(names)),
   },
 
@@ -175,14 +184,33 @@ export const licenseStrings = {
     /** A manager's page for a workspace with no product, where billing offers nothing to buy. */
     noLicenses: "This workspace has no products yet.",
     loading: "Loading licenses…",
-    /** What the page says when the address asked to buy a product (`?buy=`) and the Buy dialog doesn't open. */
+    /**
+     * What a `?buy=` link answers. Where the link can get the person a license, the page does it with no click (assigns
+     * a free one, or opens billing's hosted page for one more) and a dialog says what happened; the others are a
+     * dialog that says why not. Every dialog is titled with the product's name (`page.title` where the catalog doesn't
+     * know it). `product` is the product's name; `people` is {@link licenseStrings.names.short}.
+     */
     buyLink: {
+      /** The viewer holds the product already. */
+      held: (product: string) => `You already have ${product}.`,
+      /** A free license was assigned to the viewer, with no click. */
+      youNowHave: (product: string) => `You now have ${product}.`,
+      /** The free license the link picked was taken before the assignment landed. */
+      assignTaken: "That license was just taken. Nothing was assigned.",
+      /** While billing is asked for the hosted page the link goes to. */
+      openingCheckout: "Opening checkout…",
+      /** Nothing can be added: the licenses are all assigned (or over-assigned) and billing lists no way to add one. */
+      full: (workspace: string, count: number, product: string, people: string) => ({
+        body: `${workspace} has ${count} ${product} ${count === 1 ? "license" : "licenses"}${people === "" ? "" : `, assigned to ${people}`}.`,
+        hint: `Unassign someone on the ${product} card to free a license.`,
+      }),
       alreadyHas: (workspace: string, product: string) => `${workspace} already has ${product}.`,
       notForSale: "That product isn't for sale.",
       /** `product` is the product's name, or {@link licenseStrings.page.buyLink.anyProduct} where the page doesn't know it. */
       askAnAdmin: (workspace: string, product: string) => `Only Admins and Owners of ${workspace} can buy ${product}. Ask one of them.`,
       anyProduct: "licenses",
       notHere: "Licenses can't be bought here.",
+      done: "Done",
     },
     unavailable: {
       title: "Licenses are unavailable",

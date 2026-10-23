@@ -63,6 +63,8 @@ export interface ActionRequest {
   action: BillingAction;
   licenseId?: string;
   seats?: number;
+  /** Add one license for the person pressing: sent as `forMe: true` with `add_seats` of one, and never otherwise. */
+  forMe?: true;
   /** The product, as a refusal names it, where it isn't the hook's own `product`. */
   name?: string;
 }
@@ -212,6 +214,7 @@ export function useHostedAction({
                 action: request.action.kind,
                 ...(request.licenseId !== undefined ? { licenseId: request.licenseId } : {}),
                 ...(request.seats !== undefined ? { seats: request.seats } : {}),
+                ...(request.forMe === true ? { forMe: true as const } : {}),
               }));
           if (newTab) {
             // A tab that is gone has nowhere to go: the page comes back as a link, like the tab a browser blocked.

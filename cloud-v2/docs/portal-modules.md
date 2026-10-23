@@ -126,6 +126,35 @@ unusable answers them with `503 module_unavailable`.
 On a Core whose environment is `prod`, everything is forwarded, as for staff
 elsewhere.
 
+### Public reads
+
+A module's `publicReads` in the registry are for anyone, signed in or not, on
+every Core, whatever its environment: they are marketing content. They are
+mounted ahead of the portal's sign-in gate, so Core looks up no person for them.
+Billing's one public read is a product's name, for the sign-in page ("Sign in to
+buy <name>."):
+
+| Public read | Methods | Matched |
+| --- | --- | --- |
+| `/api/portal/billing/public/products/<product>` | `GET` | One key after `public/products/`: 1 to 100 lowercase letters, digits, `.`, `_` and `-`, and not only dots |
+
+Every other method (`HEAD` included), spelling (another case, an encoding, a
+trailing slash) and extra segment is `404 module_not_installed`, with nothing read
+or forwarded, as is every public read of a module that is not installed. One whose
+settings are unusable answers it with `503 module_unavailable`.
+
+Core forwards it to `${url}/v1/portal/public/products/<product>` with the
+`public` principal, `{"kind": "public", "scope": {"kind": "public"}}`, which names
+no person: not the one who is signed in, whose cookie, token and query are not
+sent either. Core relays only the contract's `PublicProduct`, `{"name"}`, whatever
+else the module says beside it, with `cache-control: public, max-age=300`, since
+the answer is the same for everyone. A `404` from the module is `404 not_found`;
+any other answer, or a name that does not parse, is `503 module_unavailable`. Both
+carry `cache-control: no-store`.
+
+Core's forwarding has no rate limit of its own, so none applies here beyond the
+module's; the answer is cacheable by anyone for five minutes.
+
 ### Billing's routes
 
 Billing is a data module. Its routes are under
@@ -140,6 +169,7 @@ workspace's, and the contract of what they send is
 | `POST purchase` | Starts a purchase and answers the hosted payment page's address | The module decides |
 | `POST session` | Opens a hosted billing page for a license or for the workspace's billing and answers its address | The module decides |
 | `GET ui/icons/<file>` | A product's icon | Open read |
+| `GET /api/portal/billing/public/products/<product>` | A product's name, `{"name"}`, for the sign-in page | Anyone, signed in or not ([public read](#public-reads)) |
 
 Billing serves no `ui/entry.js`. It sends values and the actions it offers, and the
 workspace portal words every sentence and formats every amount, date and count
@@ -151,6 +181,7 @@ from them, and follows only the hosted-page addresses the contract accepts.
 | --- | --- | --- | --- |
 | `/api/portal/<module>/workspaces/:workspaceId/<rest>` | `${url}/v1/portal/workspaces/:workspaceId/<rest>` | `{"kind": "workspace", "workspaceId"}` | A member of that workspace, or an Organization Admin |
 | `/api/portal/<module>/ui/<rest>` | `${url}/v1/portal/ui/<rest>` | `{"kind": "person"}` | Any signed-in person the module is visible to, or anyone for an open read; `GET` and `HEAD` only |
+| `/api/portal/<module>/public/<family>/<key>` | `${url}/v1/portal/public/<family>/<key>` | `{"kind": "public"}`, with the `public` principal | Anyone, signed in or not, for a [public read](#public-reads); `GET` only, no query |
 
 The method, query string and body are forwarded. The URL may carry a path prefix;
 Core joins it to `/v1/portal/...` with or without a trailing slash. The path and
@@ -160,7 +191,7 @@ exactly `workspaces` (with a workspace after it) or `ui`, in lowercase and
 unencoded. (To a person the module is hidden from, it is the `404
 module_not_installed` of an absent module, as below.)
 
-Only people reach a module. Core answers, in this order:
+Only people reach a module, but for its public reads. Core answers, in this order:
 
 1. **Authenticate.** A signed-in person (a workspace portal session, or a Core
    access token) is required: none is `401`, and a workspace key or an operator

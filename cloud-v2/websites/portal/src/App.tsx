@@ -3,7 +3,7 @@ import { BrandPage, Button, buttonVariants, Spinner, WorkspaceApiError, workspac
 import { useEffect, useRef, useState } from "react";
 import { PortalCenteredLayout, PortalShell, TabWorkspaceProvider, useTabWorkspace } from "@/components/portal-shell";
 import { SignedOutScreen } from "./components/signed-out";
-import { fetchPortalMe, safeLocalStorage, type PortalMe } from "./lib/api";
+import { fetchPortalMe, fetchPublicProductName, safeLocalStorage, type PortalMe } from "./lib/api";
 import { DEVELOPER_CONSOLE_URL } from "./lib/config";
 import { Redirect, setQueryParam, usePathname, useSearch } from "./lib/navigation";
 import {
@@ -30,6 +30,7 @@ import { takePendingInvite } from "./lib/workspace-invite";
 import { EnterpriseScreen } from "./pages/enterprise";
 import { NotFoundMessage } from "./pages/not-found";
 import { InvitationScreen, InvitationsUnavailable, WelcomeScreen } from "./pages/welcome";
+import { buyParam } from "./pages/licenses";
 import { WorkspaceScreen } from "./pages/workspace";
 
 const queryClient = new QueryClient({
@@ -274,14 +275,51 @@ function InvitationRoute() {
   return <InvitationScreen />;
 }
 
-export function LoginGate({ invitePending = false, loginUrl = loginHref() }: { invitePending?: boolean; loginUrl?: string }) {
+/**
+ * What the sign-in gate says to someone who followed a `?buy=<product>` link: "Sign in to buy <product's name>." with the
+ * name from the public read (no sign-in needed), or "Sign in to buy a license." where it can't be read. Nothing until that
+ * read has answered, so the line is never rewritten under the person.
+ */
+function SignInToBuy({ product }: { product: string }) {
+  const [answer, setAnswer] = useState<{ product: string; name: string | null } | null>(null);
+  useEffect(() => {
+    let current = true;
+    void fetchPublicProductName(product).then(name => {
+      if (current) setAnswer({ product, name });
+    });
+    return () => {
+      current = false;
+    };
+  }, [product]);
+  const name = answer?.product === product ? answer.name : undefined;
+  return (
+    <p className="text-muted-foreground mb-7 min-h-6">
+      {name === undefined ? null : name === null ? "Sign in to buy a license." : `Sign in to buy ${name}.`}
+    </p>
+  );
+}
+
+export function LoginGate({
+  invitePending = false,
+  loginUrl = loginHref(),
+  buyProduct = typeof window === "undefined" ? null : buyParam(window.location.search),
+}: {
+  invitePending?: boolean;
+  loginUrl?: string;
+  /** The `?buy=` product the address named; the gate says what the sign-in is for. */
+  buyProduct?: string | null;
+}) {
   return (
     <BrandPage title="Sign into Mentra Portal">
-      <p className="text-muted-foreground mb-7">
-        {invitePending
-          ? "Sign in with the email address your invitation was sent to, then accept it."
-          : "Manage your workspaces, their members, roles and invitations."}
-      </p>
+      {buyProduct !== null && !invitePending ? (
+        <SignInToBuy product={buyProduct} />
+      ) : (
+        <p className="text-muted-foreground mb-7">
+          {invitePending
+            ? "Sign in with the email address your invitation was sent to, then accept it."
+            : "Manage your workspaces, their members, roles and invitations."}
+        </p>
+      )}
       <a className={buttonVariants({ size: "lg", className: "w-full" })} href={loginUrl}>
         Sign in
       </a>

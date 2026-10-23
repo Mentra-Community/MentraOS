@@ -25,6 +25,7 @@ import {
   PriceSchema,
   PurchaseAnswerSchema,
   PurchaseRequestSchema,
+  PublicProductSchema,
   PurchaseStatusSchema,
   SessionAnswerSchema,
   SessionRequestSchema,
@@ -752,6 +753,26 @@ describe("requests", () => {
       action: "cancel",
       locale: "en",
     })
+  })
+})
+
+describe("a product's public name", () => {
+  test("is a name and nothing else: a price, an id or an offer beside it is stripped", () => {
+    expect(PublicProductSchema.parse({name: "Mentra Call Unlimited"})).toEqual({name: "Mentra Call Unlimited"})
+    const parsed = PublicProductSchema.parse({
+      name: "Mentra Call Unlimited",
+      product: "mentra.call.unlimited",
+      priceId: "price_123",
+      offer: {price: {scheme: "per_seat"}},
+    })
+    expect(parsed).toEqual({name: "Mentra Call Unlimited"})
+    expect(Object.keys(parsed)).toEqual(["name"])
+  })
+
+  test("needs a non-empty string name", () => {
+    for (const value of [{}, {name: ""}, {name: null}, {name: 7}, {name: ["x"]}, null, "Mentra Call", []]) {
+      expect([value, PublicProductSchema.safeParse(value).success]).toEqual([value, false])
+    }
   })
 })
 

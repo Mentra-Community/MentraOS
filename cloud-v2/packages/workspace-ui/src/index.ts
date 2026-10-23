@@ -188,6 +188,7 @@ export {
 export { AvatarStack, PersonLabel, SeatRoster, SeatStrip, seatHolders, type AddSeatsControl, type SeatHolder } from "./components/licenses/seats";
 export { PeoplePickerDialog } from "./components/licenses/people-picker";
 export {
+  AddedBanner,
   LicensesSummary,
   LicensesUnavailable,
   PURCHASE_POLL_MS,
@@ -217,7 +218,7 @@ export { ConfirmDialog, useAsking } from "./components/confirm-dialog";
 export type { MembersLicenses } from "./components/members-panel";
 
 // The workspace's Licenses page, composed from the pieces above. It needs a `QueryClientProvider` above it, the billing
-// client, and the host's `NavigateOut`; the portal wires it to its routes, its `me`, `?purchase=` and `?buy=`. It has a
+// client, and the host's `NavigateOut`; the portal wires it to its routes, its `me`, `?purchase=`, `?buy=` and `?added=`. It has a
 // header-actions component ("Billing & invoices ↗", "Buy licenses") for the host to put in its title bar; it reads under
 // the view's keys, so nothing is requested twice.
 export {

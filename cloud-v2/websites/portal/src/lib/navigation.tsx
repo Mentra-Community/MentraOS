@@ -52,9 +52,10 @@ export function navigate(path: string, options: { replace?: boolean } = {}): voi
 
 /**
  * The query parameters pages keep in their address: the purchase a checkout returned with, the workspace an address
- * names when it is not the person's default, and the product a link asks to buy.
+ * names when it is not the person's default, the product a link asks to buy, and the license a hosted page added for
+ * the person (`added`).
  */
-export type QueryParam = "purchase" | "workspace" | "buy";
+export type QueryParam = "purchase" | "workspace" | "buy" | "added";
 
 /** Sets (or, for null, removes) one query parameter, leaving the path and the other parameters as they are. */
 export function setQueryParam(name: QueryParam, value: string | null, options: { replace?: boolean } = {}): void {

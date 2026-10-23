@@ -10,15 +10,15 @@
  */
 
 import type {Logger} from "@mentra/cloud-shared"
-import type {AuthorizeResponse} from "@mentra/workspace-contract"
-import {verifyForwardedPrincipal} from "@mentra/workspace-contract/server"
+import type {AuthorizeResponse, ForwardedPrincipal} from "@mentra/workspace-contract"
+import {FORWARDED_PRINCIPAL_HEADERS, verifyForwardedPrincipal} from "@mentra/workspace-contract/server"
 import {afterAll, afterEach, beforeEach, describe, expect, spyOn, test} from "bun:test"
 import {Hono} from "hono"
 import * as authorization from "../../services/workspaces/authorization.service"
 import type {CorePrincipal, UserPrincipal} from "../../services/signin/principal.service"
 import type {AppEnv} from "../../types/hono.types"
 import {createApp} from "../app"
-import {portalModuleApi} from "./portal-modules.api"
+import {portalModuleApi, portalModulePublicApi} from "./portal-modules.api"
 
 const SECRET = "billing-secret-for-tests"
 
@@ -165,6 +165,8 @@ root.use("*", async (c, next) => {
   if (rotated) c.header("set-cookie", rotated, {append: true})
   await next()
 })
+// As Core mounts them: the public reads ahead of the portal's person gate, the module behind it.
+root.route("/api/portal/billing/public", portalModulePublicApi("billing"))
 root.route("/api/portal/billing", portalModuleApi("billing"))
 
 type Init = Omit<RequestInit, "headers"> & {headers?: Record<string, string>}
@@ -183,6 +185,9 @@ function verified(call: Captured = calls.at(-1)!) {
     [SECRET],
   )
 }
+
+/** The principal of a public read: Core sent it, for nobody. */
+const anyone: ForwardedPrincipal = {kind: "public", scope: {kind: "public"}}
 
 /** The `error` (and `reason`) of one of Core's refusals. */
 const errorBody = (reply: Response) => reply.json() as Promise<{error?: string; reason?: string}>
@@ -1096,6 +1101,181 @@ describe("billing's open reads outside prod", () => {
   })
 })
 
+describe("a product's public name", () => {
+  const PRODUCT = "mentra.call.unlimited"
+  const NAME_PATH = `/public/products/${PRODUCT}`
+  const named = (extra: Record<string, unknown> = {}, headers: Record<string, string> = {}) => () =>
+    Response.json({name: "Mentra Call Unlimited", ...extra}, {headers})
+
+  test("anyone reads it, signed in or not, on every Core: forwarded with the public principal, and only the name comes back", async () => {
+    respond = named()
+    for (const environment of ["prod", "staging", "dev", null] as const) {
+      configure(environment)
+      for (const [who, principal] of [["nobody", null], ["member", member], ["stranger", stranger], ["admin", admin]] as const) {
+        calls = []
+        const reply = await billing(principal ? as(who, principal) : null, NAME_PATH)
+        expect([environment, who, reply.status, await reply.json()]).toEqual([environment, who, 200, {name: "Mentra Call Unlimited"}])
+        expect(reply.headers.get("cache-control")).toBe("public, max-age=300")
+        expect(reply.headers.get("content-type")).toStartWith("application/json")
+        expect(reply.headers.get("x-content-type-options")).toBe("nosniff")
+        expect(calls).toHaveLength(1)
+        expect([calls[0]!.method, calls[0]!.pathWithQuery]).toEqual(["GET", `/v1/portal/public/products/${PRODUCT}`])
+        expect(verified()).toEqual(anyone)
+      }
+    }
+  })
+
+  test("no person reaches billing: not the signed-in one, nor anything the browser sends", async () => {
+    configure("staging")
+    respond = named()
+    const reply = await billing(as("admin", admin), `${NAME_PATH}?mentraUserId=mu_admin&workspaceId=ws_1`, {
+      headers: {
+        cookie: "mentra_portal_session=abc",
+        authorization: "Bearer token",
+        "x-mentra-principal": "forged",
+        "x-mentra-principal-signature": "forged",
+        "x-forwarded-for": "203.0.113.9",
+        accept: "application/json",
+      },
+    })
+    expect(reply.status).toBe(200)
+    const call = calls.at(-1)!
+    // The query is not forwarded: the name is the same for everyone, whatever the address carries.
+    expect(call.pathWithQuery).toBe(`/v1/portal/public/products/${PRODUCT}`)
+    expect(call.headers.get("cookie")).toBeNull()
+    expect(call.headers.get("authorization")).toBeNull()
+    expect(call.headers.get("x-forwarded-for")).toBeNull()
+    expect(call.headers.get("accept")).toBe("application/json")
+    const header = call.headers.get(FORWARDED_PRINCIPAL_HEADERS.principal)!
+    expect(JSON.parse(Buffer.from(header, "base64url").toString("utf8"))).toEqual(anyone)
+    for (const [, value] of call.headers) {
+      for (const leak of ["mu_admin", "mu_admin@example.test", "forged"]) expect(value).not.toContain(leak)
+    }
+    expect(verified()).toEqual(anyone)
+  })
+
+  test("Core relays the name and nothing else, cached by anyone for five minutes", async () => {
+    configure()
+    respond = named(
+      {product: PRODUCT, priceId: "price_123", offer: {price: {scheme: "per_seat", unit: {amount: 1000, currency: "USD"}}}},
+      {"cache-control": "private, no-store", "retry-after": "30", "set-cookie": "a=b"},
+    )
+    const reply = await billing(null, NAME_PATH)
+    expect([reply.status, await reply.text()]).toEqual([200, JSON.stringify({name: "Mentra Call Unlimited"})])
+    expect(reply.headers.get("cache-control")).toBe("public, max-age=300")
+    expect(reply.headers.get("retry-after")).toBeNull()
+    expect(reply.headers.get("set-cookie")).toBeNull()
+  })
+
+  test("a product billing doesn't name is a 404, and anything else billing answers is a 503: never its body", async () => {
+    configure()
+    respond = () => Response.json({error: "not_found", detail: "secret"}, {status: 404, headers: {"cache-control": "public, max-age=86400"}})
+    const missing = await billing(null, NAME_PATH)
+    expect([missing.status, await missing.json(), missing.headers.get("cache-control")]).toEqual([404, {error: "not_found"}, "no-store"])
+
+    for (const answer of [
+      () => Response.json({error: "forbidden"}, {status: 403}),
+      () => Response.json({error: "forbidden"}, {status: 401}),
+      () => Response.json({error: "slow_down"}, {status: 429}),
+      () => Response.json({error: "invalid_request"}, {status: 400}),
+      () => new Response(null, {status: 204}),
+      () => Response.json({name: "x"}, {status: 201}),
+      () => new Response("down", {status: 500}),
+      () => new Response(null, {status: 302, headers: {location: "https://elsewhere.example"}}),
+      () => new Response("<html>", {headers: {"content-type": "text/html"}}),
+      () => new Response("not json", {headers: {"content-type": "application/json"}}),
+      () => Response.json({}),
+      () => Response.json({name: ""}),
+      () => Response.json({name: 7}),
+      () => Response.json(["Mentra Call"]),
+      () => Response.json(null),
+    ]) {
+      respond = answer
+      const reply = await billing(null, NAME_PATH)
+      const body = await reply.json()
+      expect([String(answer), reply.status, body, reply.headers.get("cache-control")]).toEqual([
+        String(answer),
+        503,
+        {error: "module_unavailable"},
+        "no-store",
+      ])
+    }
+  })
+
+  test("every other method, spelling and extra segment is a 404 with no call, its body unread", async () => {
+    configure()
+    const closed: Array<[method: string, rest: string]> = [
+      ["HEAD", NAME_PATH],
+      ["POST", NAME_PATH],
+      ["PUT", NAME_PATH],
+      ["PATCH", NAME_PATH],
+      ["DELETE", NAME_PATH],
+      ["OPTIONS", NAME_PATH],
+      ["GET", "/public"],
+      ["GET", "/public/"],
+      ["GET", "/public/products"],
+      ["GET", "/public/products/"],
+      ["GET", `/public/products/${PRODUCT}/`],
+      ["GET", `/public/products/${PRODUCT}/name`],
+      ["GET", `/public/products//${PRODUCT}`],
+      ["GET", `/public//products/${PRODUCT}`],
+      ["GET", `/public/products/Mentra.Call.Unlimited`],
+      ["GET", `/public/Products/${PRODUCT}`],
+      ["GET", `/public/product/${PRODUCT}`],
+      ["GET", `/public/catalog/${PRODUCT}`],
+      ["GET", `/public/products/%6dentra.call.unlimited`],
+      ["GET", `/public/products/mentra%2ecall`],
+      ["GET", `/public/products/a%2fb`],
+      ["GET", `/public/products/a%20b`],
+      ["GET", `/public/products/%2e%2e`],
+      ["GET", `/public/products/...`],
+      ["GET", `/public/products/a;b`],
+      ["GET", `/public/products/${"a".repeat(101)}`],
+      ["GET", `/public/%70roducts/${PRODUCT}`],
+      ["GET", `/public/ui/icons/a.png`],
+    ]
+    for (const [method, rest] of closed) {
+      for (const principal of [null, as("admin", admin)]) {
+        const big = method === "GET" || method === "HEAD" ? {} : {body: "x".repeat(2 * 1024 * 1024)}
+        const reply = await billing(principal, rest, {method, ...big})
+        expect([method, rest, principal, reply.status]).toEqual([method, rest, principal, 404])
+        if (method !== "HEAD") expect(await reply.json()).toEqual({error: "module_not_installed"})
+      }
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  test("a dot segment that reaches Core unresolved is no product either", async () => {
+    configure()
+    for (const raw of [`/public/products/..`, `/public/products/.`, `/public/products/../products/${PRODUCT}`]) {
+      const reply = await root.fetch(rawUrlRequest(`http://localhost/api/portal/billing${raw}`, {}))
+      expect([raw, reply.status]).toEqual([raw, 404])
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  test("a module that is not installed has no public names, and one whose settings are unusable is a 503", async () => {
+    const missing = await billing(null, NAME_PATH)
+    expect([missing.status, await missing.json()]).toEqual([404, {error: "module_not_installed"}])
+    configure("prod", {CLOUD_CORE_BILLING_URL: "ftp://nope"})
+    const broken = await billing(null, NAME_PATH)
+    expect([broken.status, await broken.json(), broken.headers.get("cache-control")]).toEqual([503, {error: "module_unavailable"}, "no-store"])
+    const brokenOther = await billing(null, "/public/products/A")
+    expect([brokenOther.status, await brokenOther.json()]).toEqual([404, {error: "module_not_installed"}])
+    expect(calls).toHaveLength(0)
+  })
+
+  test("is logged once, as a public request, without the product", async () => {
+    configure()
+    respond = named()
+    await billing(null, NAME_PATH)
+    const lines = logs.filter(line => line.message === "Portal module billing request forwarded")
+    expect(lines).toHaveLength(1)
+    expect(lines[0]!.fields.audience).toBe("public")
+    expect(JSON.stringify(lines[0]!.fields)).not.toContain(PRODUCT)
+  })
+})
+
 describe("mounted in Core", () => {
   test("the portal's sign-in gate is in front: a request with no session is 401 and the module is not called", async () => {
     configure()
@@ -1105,5 +1285,34 @@ describe("mounted in Core", () => {
       expect([rest, reply.status]).toEqual([rest, 401])
     }
     expect(calls).toHaveLength(0)
+  })
+
+  test("a product's public name is ahead of the gate: read with no session, and no other spelling gets through", async () => {
+    configure("staging")
+    respond = () => Response.json({name: "Mentra Call Unlimited"})
+    const app = createApp({readinessChecks: []})
+    const reply = await app.request("http://localhost/api/portal/billing/public/products/mentra.call.unlimited")
+    expect([reply.status, await reply.json()]).toEqual([200, {name: "Mentra Call Unlimited"}])
+    expect(calls).toHaveLength(1)
+    expect(verified()).toEqual(anyone)
+
+    // Every other spelling is refused: by the public route itself (404), or, for one that is not under its exact
+    // mount, by the person gate (401). Neither forwards.
+    for (const rest of [
+      "/public/products/Mentra.call.unlimited",
+      "/public/products/mentra.call.unlimited/x",
+      "/public/%70roducts/mentra.call.unlimited",
+      "/%70ublic/products/mentra.call.unlimited",
+      "/Public/products/mentra.call.unlimited",
+      "/PUBLIC/products/mentra.call.unlimited",
+      "/publicx/products/mentra.call.unlimited",
+      "/public",
+    ]) {
+      const refused = await app.request(`http://localhost/api/portal/billing${rest}`)
+      expect([rest, [401, 404].includes(refused.status)]).toEqual([rest, true])
+    }
+    const head = await app.request("http://localhost/api/portal/billing/public/products/mentra.call.unlimited", {method: "HEAD"})
+    expect(head.status).toBe(404)
+    expect(calls).toHaveLength(1)
   })
 })

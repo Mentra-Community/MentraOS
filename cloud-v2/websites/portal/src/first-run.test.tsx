@@ -514,10 +514,78 @@ describe("no workspace is made", () => {
 describe("the sign-in gate", () => {
   test("says to use the Mentra App's account, and comes back to the address", async () => {
     window.history.replaceState(null, "", BUY);
+    spyOn(globalThis, "fetch").mockImplementation((async () => Response.json({ error: "not_found" }, { status: 404 })) as unknown as typeof fetch);
     await render(<LoginGate />);
     expect(page()).toContain("Use the same account you sign in to the Mentra App with.");
     expect(page()).not.toContain("Sign in with your Mentra account.");
     const href = find<HTMLAnchorElement>("a[href^='/api/portal/auth/login']").getAttribute("href")!;
     expect(new URL(href, "https://portal.example.test").searchParams.get("return_to")).toBe(BUY);
+  });
+
+  /** The gate over a public read that answers `answer` (a name, or a Response), asked of the product's own address. */
+  async function gateAnswering(answer: Response | Error, path = BUY) {
+    window.history.replaceState(null, "", path);
+    const asked: string[] = [];
+    spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL) => {
+      asked.push(String(input));
+      if (answer instanceof Error) throw answer;
+      return answer.clone();
+    }) as unknown as typeof fetch);
+    await render(<LoginGate />);
+    await flush();
+    return asked;
+  }
+
+  test("a ?buy= link says what the sign-in is for, by the product's name from the public read, above the Mentra App line", async () => {
+    const asked = await gateAnswering(Response.json({ name: "Mentra Call Unlimited" }));
+    await until(() => page().includes("Sign in to buy Mentra Call Unlimited."), "the product's name");
+    expect(asked).toEqual(["/api/portal/billing/public/products/mentra.call.unlimited"]);
+    expect(page().indexOf("Sign in to buy Mentra Call Unlimited.")).toBeLessThan(page().indexOf("Use the same account you sign in to the Mentra App with."));
+    expect(page()).not.toContain("Manage your workspaces");
+    expect(page()).not.toContain("a license.");
+  });
+
+  test("where the name can't be read it says 'Sign in to buy a license.': an unknown product, an error, no connection", async () => {
+    for (const answer of [Response.json({ error: "not_found" }, { status: 404 }), Response.json({}, { status: 500 }), new Error("offline")]) {
+      await gateAnswering(answer);
+      await until(() => page().includes("Sign in to buy a license."), "the generic line");
+      expect(page()).toContain("Use the same account you sign in to the Mentra App with.");
+      await cleanup();
+    }
+  });
+
+  test("it says nothing of the product until the read has answered, then once", async () => {
+    window.history.replaceState(null, "", BUY);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => (release = resolve));
+    spyOn(globalThis, "fetch").mockImplementation((async () => {
+      await gate;
+      return Response.json({ name: "Mentra Call Unlimited" });
+    }) as unknown as typeof fetch);
+    await render(<LoginGate />);
+    await flush();
+    expect(page()).not.toContain("Sign in to buy");
+    release();
+    await until(() => page().includes("Sign in to buy Mentra Call Unlimited."), "the product's name");
+  });
+
+  test("without ?buy= the gate is as it was and asks nothing", async () => {
+    const asked = await gateAnswering(Response.json({ name: "x" }), "/licenses");
+    expect(asked).toEqual([]);
+    expect(page()).toContain("Manage your workspaces, their members, roles and invitations.");
+    expect(page()).not.toContain("Sign in to buy");
+  });
+
+  test("a pending invitation keeps its own line", async () => {
+    window.history.replaceState(null, "", BUY);
+    const asked: string[] = [];
+    spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL) => {
+      asked.push(String(input));
+      return Response.json({});
+    }) as unknown as typeof fetch);
+    await render(<LoginGate invitePending />);
+    await flush();
+    expect(page()).toContain("your invitation was sent to");
+    expect(asked).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { fetchPortalMe } from "./api";
+import { fetchPortalMe, fetchPublicProductName } from "./api";
 
 const BASE = {
   authenticated: true,
@@ -63,6 +63,42 @@ describe("who the portal says is signed in", () => {
     // A billingCatalog that is there but isn't true offers nothing of its own.
     for (const billingCatalog of ["yes", 1, null, "true", false]) {
       expect((await meFor({ ...BASE, modules: { billing: false, billingCatalog } })).me.modules).toEqual(none);
+    }
+  });
+});
+
+describe("the public name of a product, for a page with no session", () => {
+  const answering = (response: () => Response | Promise<Response>) => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return response();
+    }) as unknown as typeof fetch;
+    return { calls, fetchImpl };
+  };
+
+  test("reads GET /api/portal/billing/public/products/<product>, with the product's key encoded, and returns its name", async () => {
+    const { calls, fetchImpl } = answering(() => Response.json({ name: "Mentra Call Unlimited" }));
+    expect(await fetchPublicProductName("mentra.call.unlimited", fetchImpl)).toBe("Mentra Call Unlimited");
+    expect(calls.map(call => call.url)).toEqual(["/api/portal/billing/public/products/mentra.call.unlimited"]);
+    expect(calls[0]!.init?.method).toBeUndefined();
+    await fetchPublicProductName("a/b c", fetchImpl);
+    expect(calls[1]!.url).toBe("/api/portal/billing/public/products/a%2Fb%20c");
+  });
+
+  test("an unknown product, any other refusal, a body that isn't {name}, and a dropped connection are all null", async () => {
+    for (const response of [
+      () => Response.json({ error: "not_found" }, { status: 404 }),
+      () => Response.json({}, { status: 500 }),
+      () => Response.json({ name: 7 }),
+      () => Response.json({ name: "   " }),
+      () => Response.json(null),
+      () => new Response("<html>bad gateway</html>"),
+      () => {
+        throw new Error("offline");
+      },
+    ]) {
+      expect(await fetchPublicProductName("mentra.call.unlimited", answering(response).fetchImpl)).toBeNull();
     }
   });
 });

@@ -46,6 +46,22 @@
  *  - then the shared forwarding code: 413 and 400 for the body, 503 `{error: "module_unavailable"}` for a
  *    module that fails, times out, redirects or sends too much, an upstream 401 relayed as a 403.
  *
+ * Public reads. `portalModulePublicApi(name)` is mounted at `/api/portal/<name>/public` ahead of the person gate,
+ * and answers anyone, signed in or not, on every Core (billing: a product's name, for the sign-in page):
+ *
+ *   /public/products/<product>  ->  ${url}/v1/portal/public/products/<product>   GET only; principal {kind: "public"}
+ *
+ * The request must be one of the module's `publicReads` (`services/portal-modules/portal-modules.ts`), matched
+ * from its method and its path as received: `GET`, and one key of 1 to 100 lowercase letters, digits, `.`, `_`
+ * and `-`. Every other method, spelling and segment is 404 `{error: "module_not_installed"}`, as is everything
+ * when the module is not installed, with nothing read or forwarded; unusable settings are 503
+ * `{error: "module_unavailable"}`. Core forwards with the `public` principal, which names no person: whoever is
+ * signed in is not looked up, and no query, cookie or credential of theirs is sent. Core relays the module's
+ * answer only as the contract's `PublicProduct`, `{name}` and nothing else beside it, with `cache-control: public,
+ * max-age=300`, since it is the same for everyone. A 404 from the module is 404 `{error: "not_found"}`; any other
+ * answer, or a name that does not parse, is 503 `{error: "module_unavailable"}`. Both carry `cache-control:
+ * no-store`. Core has no rate limit of its own on forwarding, so none applies here beyond the module's.
+ *
  * Every JSON answer carries the labels of the shared code (`nosniff` and a sandbox policy). A forwarded JSON
  * answer is the module's answer to this person, under an address that is the same for everyone: billing's
  * catalog lists offers and prices to a billing manager and display content to anyone else. So when the module
@@ -56,13 +72,23 @@
  * caching the module gives them.
  */
 
-import type {ForwardedScope} from "@mentra/workspace-contract/server"
+import {PublicProductSchema} from "@mentra/workspace-contract/portal-billing"
+import type {ForwardedPrincipal, UserScope} from "@mentra/workspace-contract/server"
 import {Hono} from "hono"
 import {assetResponseHeaders, methodNotAllowed, relayAsset, UI_ASSET_SEGMENT} from "../../services/forwarding/assets"
-import {forwardJson, forwardedUser, jsonAnswerHeaders, limitBody, type Upstream} from "../../services/forwarding/forward"
+import {
+  forwardJson,
+  forwardedUser,
+  jsonAnswerHeaders,
+  limitBody,
+  requestLogger,
+  validRetryAfter,
+  type Upstream,
+} from "../../services/forwarding/forward"
 import {DEFAULT_FORWARDING_LIMITS, isSafeSuffix, rawPathAndQuery} from "../../services/forwarding/upstream-url"
 import {
   portalModuleAccess,
+  portalModulePublicAccess,
   type PortalModuleAccess,
   type PortalModuleName,
 } from "../../services/portal-modules/portal-modules"
@@ -147,6 +173,18 @@ function accessOf(c: AppContext, name: PortalModuleName, person: UserPrincipal, 
   return portalModuleAccess(name, person, undefined, undefined, request)
 }
 
+/** Module `name` as Core forwards to it, once it is ready. */
+function upstreamOf(name: PortalModuleName, access: Extract<PortalModuleAccess, {state: "ready"}>): Upstream {
+  return {
+    service: `portal-module-${name}`,
+    label: `Portal module ${name}`,
+    unavailableError: MODULE_UNAVAILABLE,
+    baseUrl: access.baseUrl,
+    secret: access.secret,
+    limits: DEFAULT_FORWARDING_LIMITS,
+  }
+}
+
 /** What a request to a module has settled before anything is read, signed or sent. */
 interface Admitted {
   person: UserPrincipal
@@ -175,14 +213,7 @@ function admit(c: AppContext, name: PortalModuleName): Admitted | Response {
   const access = accessOf(c, name, principal, parsed)
   if (access.state === "hidden") return c.json({error: MODULE_NOT_INSTALLED}, 404)
   if (access.state === "unavailable") return c.json({error: MODULE_UNAVAILABLE}, 503)
-  const upstream: Upstream = {
-    service: `portal-module-${name}`,
-    label: `Portal module ${name}`,
-    unavailableError: MODULE_UNAVAILABLE,
-    baseUrl: access.baseUrl,
-    secret: access.secret,
-    limits: DEFAULT_FORWARDING_LIMITS,
-  }
+  const upstream = upstreamOf(name, access)
 
   if (!parsed.route) return c.json({error: parsed.refusal}, parsed.refusal === "invalid_path" ? 400 : 404)
   return {person: principal, upstream, route: parsed.route, suffix: parsed.suffix, query: parsed.query}
@@ -193,7 +224,7 @@ async function scopeOf(
   c: AppContext,
   person: UserPrincipal,
   route: Extract<Route, {kind: "workspace"}>,
-): Promise<ForwardedScope | Response> {
+): Promise<UserScope | Response> {
   const decision = await authorize(person, {workspaceId: route.workspaceId})
   return decision.allowed ? {kind: "workspace", workspaceId: route.workspaceId} : denied(c, decision)
 }
@@ -236,5 +267,85 @@ export function portalModuleApi(name: PortalModuleName): Hono<AppEnv> {
       return keptByNoCache(await forwardJson(c, {...request, principal: () => forwardedUser(person, scope)}))
     },
   )
+  return api
+}
+
+// --- Public reads ------------------------------------------------------------
+
+/** Under the module's mount, where its public reads are. */
+const PUBLIC_SEGMENT = "public"
+
+/** The principal of every public read: Core sent it, for nobody. */
+const PUBLIC_PRINCIPAL: ForwardedPrincipal = {kind: "public", scope: {kind: "public"}}
+
+/** How long anyone may keep a public read's answer: it is the same for everyone. */
+const PUBLIC_CACHE_CONTROL = "public, max-age=300"
+
+/** How a refusal of a public read may be kept: by nobody, so a product put on sale is named at once. */
+const REFUSAL_CACHE_CONTROL = "no-store"
+
+/** Core's refusal of a public read: kept by nobody, and with a backoff only when Core passes the module's on. */
+function refusal(c: AppContext, error: string, status: 404 | 503, retryAfter: string | null = null): Response {
+  c.header("cache-control", REFUSAL_CACHE_CONTROL)
+  c.header("retry-after", retryAfter ?? undefined)
+  return c.json({error}, status)
+}
+
+/**
+ * The module's answer to a public read, as Core relays it: the name alone, or Core's refusal. `forwardJson` has
+ * set the module's `content-type`, `cache-control` and `retry-after` on the context, and each is replaced here.
+ */
+async function nameOnly(c: AppContext, upstream: Upstream, answer: Response): Promise<Response> {
+  if (answer.status === 404) return refusal(c, "not_found", 404)
+  if (answer.status === 200) {
+    let body: unknown = null
+    try {
+      body = JSON.parse(await answer.text())
+    } catch {
+      // Not JSON: refused below, as a value that is not a name.
+    }
+    const parsed = PublicProductSchema.safeParse(body)
+    if (parsed.success) {
+      c.header("cache-control", PUBLIC_CACHE_CONTROL)
+      c.header("retry-after", undefined)
+      return c.json({name: parsed.data.name}, 200)
+    }
+    requestLogger(c, upstream, c.get("reqId") ?? "").warn(
+      {audience: "public", reason: "not_a_public_product"},
+      `${upstream.label} public read answered no name`,
+    )
+    return refusal(c, MODULE_UNAVAILABLE, 503)
+  }
+  // Core's own 503 for a module that failed keeps the module's backoff; any other answer is not one Core relays.
+  return refusal(c, MODULE_UNAVAILABLE, 503, answer.status === 503 ? validRetryAfter(answer.headers.get("retry-after")) : null)
+}
+
+/**
+ * The public reads of module `name`, to be mounted at `/api/portal/<name>/public` ahead of the portal's person
+ * gate. See the file header for what it forwards: anyone may call, and no person is told to the module.
+ */
+export function portalModulePublicApi(name: PortalModuleName): Hono<AppEnv> {
+  const api = new Hono<AppEnv>()
+  api.use("*", jsonAnswerHeaders)
+  api.all("/*", async c => {
+    // The path as received, so a spelling the router decoded to this mount is not taken for a public read.
+    const prefix = `/api/portal/${name}/${PUBLIC_SEGMENT}/`
+    const {path} = rawPathAndQuery(c.req.url)
+    const rest = path.startsWith(prefix) ? path.slice(prefix.length) : null
+    const access = rest === null ? {state: "hidden" as const} : portalModulePublicAccess(name, {method: c.req.method, rest})
+    if (access.state === "hidden") return refusal(c, MODULE_NOT_INSTALLED, 404)
+    if (access.state === "unavailable") return refusal(c, MODULE_UNAVAILABLE, 503)
+    const upstream = upstreamOf(name, access)
+    // `rest` is a public read, so it holds no character that needs encoding: it is the path the module gets.
+    const answer = await forwardJson(c, {
+      upstream,
+      path: `${UPSTREAM_PREFIX}/${PUBLIC_SEGMENT}/${rest}`,
+      // The answer is the same for everyone, and so is what Core asks: no query.
+      query: "",
+      audience: "public",
+      principal: () => PUBLIC_PRINCIPAL,
+    })
+    return nameOnly(c, upstream, answer)
+  })
   return api
 }
