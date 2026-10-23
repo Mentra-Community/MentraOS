@@ -5,6 +5,7 @@ import {appendFileSync, copyFileSync, mkdirSync, readFileSync, writeFileSync} fr
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
+import {createRelease} from "./github-release-create.mjs"
 import {loadReleaseFamily, releaseRecordSha256, requirePublicHttpsUrl} from "./release-family.mjs"
 import {promotionAssetName, validatePromotionChain, validatePromotionRecord} from "./production-promotion-state.mjs"
 
@@ -283,7 +284,7 @@ function resolveContainer(repository, releaseIdentity, attempt) {
   return requirePromotionContainer(listReleases(repository), releaseIdentity, attempt)
 }
 
-function createContainer({repository, releaseIdentity, targetCommit, selectedBeta, selectionDigest}) {
+async function createContainer({repository, releaseIdentity, targetCommit, selectedBeta, selectionDigest}) {
   const releases = listReleases(repository)
   const containers = matchingPromotionContainers(releases, releaseIdentity).map(({attempt, release, ...entry}) => {
     requirePromotionContainer(releases, releaseIdentity, attempt)
@@ -304,17 +305,20 @@ function createContainer({repository, releaseIdentity, targetCommit, selectedBet
   const attempt = allocation.attempt
   const tag = promotionContainerTag(releaseIdentity, attempt)
   const name = promotionContainerName(releaseIdentity, attempt)
-  const payload = JSON.stringify({
-    tag_name: tag,
-    target_commitish: targetCommit,
-    name,
-    body: promotionContainerBody(releaseIdentity, selectedBeta, selectionDigest),
-    draft: true,
-    prerelease: false,
+  // Drafts with the same tag do not conflict on GitHub, so a retried create
+  // must find the draft an earlier attempt committed instead of adding one.
+  const release = await createRelease({
+    repository,
+    release: {
+      tag_name: tag,
+      target_commitish: targetCommit,
+      name,
+      body: promotionContainerBody(releaseIdentity, selectedBeta, selectionDigest),
+      draft: true,
+      prerelease: false,
+    },
+    validate: (created) => requirePromotionContainer([created], releaseIdentity, attempt),
   })
-  const release = JSON.parse(
-    gh(["api", "--method", "POST", `repos/${repository}/releases`, "--input", "-"], {input: payload}),
-  )
   requirePromotionContainer([...releases, release], releaseIdentity, attempt)
   return {release, attempt}
 }
@@ -362,7 +366,7 @@ function downloadLatestAttempt({repository, releaseIdentity, outputFile}) {
   return {attempt: latest.attempt, ...loaded}
 }
 
-function main() {
+async function main() {
   const command = process.argv[2]
   const args = parseArgs(process.argv.slice(3))
   if (command === "download-latest-attempt") {
@@ -421,7 +425,7 @@ function main() {
     return
   }
   if (command === "create-container") {
-    const result = createContainer({
+    const result = await createContainer({
       repository: args.repository,
       releaseIdentity: args.release,
       targetCommit: args["target-commit"],
@@ -504,4 +508,4 @@ function main() {
   throw new Error(`Unknown production promotion asset command ${JSON.stringify(command)}`)
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main()

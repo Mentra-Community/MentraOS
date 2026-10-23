@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict"
-import {execFileSync} from "node:child_process"
 import {readFileSync} from "node:fs"
 import path from "node:path"
 import {pathToFileURL} from "node:url"
 
+import {createRelease, githubApi} from "./github-release-create.mjs"
 import {finalizeReleaseManifest} from "./release-family.mjs"
 import {downloadNames} from "./coordinated-install-downloads.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
@@ -73,50 +73,53 @@ export function updateDownloadNotes(body = "", notes) {
   return body.slice(0, start) + notes + body.slice(end + END.length)
 }
 
-function githubApi(route, {method = "GET", data, allowMissing = false} = {}) {
+async function missingAsNull(request) {
   try {
-    return JSON.parse(
-      execFileSync("gh", ["api", "--method", method, route, ...(data ? ["--input", "-"] : [])], {
-        encoding: "utf8",
-        input: data ? JSON.stringify(data) : undefined,
-        stdio: ["pipe", "pipe", "pipe"],
-      }),
-    )
+    return await request()
   } catch (error) {
-    if (allowMissing && /\(HTTP 404\)/.test(String(error.stderr))) return null
+    if (error.status === 404) return null
     throw error
   }
 }
 
-export function publishCoordinatedReleasePage({plan, manifest, repository, api = githubApi}) {
+export async function publishCoordinatedReleasePage({plan, manifest, repository, api = githubApi, wait, log}) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("Invalid repository")
   const notes = releaseDownloadNotes({plan, manifest, repository})
   const tag = `mentra-v${plan.releaseIdentity}`
   const route = `repos/${repository}`
   // Finalization owns the source tag. Never create or move one while repairing notes.
-  const ref = api(`${route}/git/ref/tags/${tag}`)
+  const ref = await api(`${route}/git/ref/tags/${tag}`)
   assert.equal(ref.object.type, "commit")
   assert.equal(ref.object.sha, plan.sourceCommit, "Release tag must identify the completed source")
-  const existing = api(`${route}/releases/tags/${tag}`, {allowMissing: true})
-  if (existing) {
-    assert.equal(existing.draft, false, "Do not publish a draft through download-page repair")
-    assert.equal(existing.prerelease, true)
-    const body = updateDownloadNotes(existing.body || "", notes)
-    if (body === existing.body) return existing
-    return api(`${route}/releases/${existing.id}`, {method: "PATCH", data: {body}})
+  const validate = (release) => {
+    assert.equal(release.draft, false, "Do not publish a draft through download-page repair")
+    assert.equal(release.prerelease, true)
+    return release
   }
-  return api(`${route}/releases`, {
-    method: "POST",
-    data: {
-      tag_name: tag,
-      target_commitish: plan.sourceCommit,
-      name: `Mentra ${plan.releaseIdentity}`,
-      body: updateDownloadNotes("", notes),
-      draft: false,
-      prerelease: true,
-      make_latest: "false",
-    },
-  })
+  const existing = await missingAsNull(() => api(`${route}/releases/tags/${tag}`))
+  const release = existing
+    ? validate(existing)
+    : await createRelease({
+        repository,
+        release: {
+          tag_name: tag,
+          target_commitish: plan.sourceCommit,
+          name: `Mentra ${plan.releaseIdentity}`,
+          body: updateDownloadNotes("", notes),
+          draft: false,
+          prerelease: true,
+          make_latest: "false",
+        },
+        validate,
+        api,
+        ...(wait ? {wait} : {}),
+        ...(log ? {log} : {}),
+      })
+  // A release another publisher created between the lookup and our create
+  // still gets this run's managed notes.
+  const body = updateDownloadNotes(release.body || "", notes)
+  if (body === release.body) return release
+  return api(`${route}/releases/${release.id}`, {method: "PATCH", data: {body}})
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
@@ -125,7 +128,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     if (index < 0 || !process.argv[index + 1]) throw new Error(`Missing --${name}`)
     return process.argv[index + 1]
   }
-  const release = publishCoordinatedReleasePage({
+  const release = await publishCoordinatedReleasePage({
     plan: JSON.parse(readFileSync(option("plan"), "utf8")),
     manifest: JSON.parse(readFileSync(option("manifest"), "utf8")),
     repository: option("repository"),
