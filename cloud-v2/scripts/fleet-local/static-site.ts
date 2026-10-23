@@ -3,9 +3,9 @@
  * stack only: static files with an SPA fallback, the response headers of `dist/_headers` (the portal's Content
  * Security Policy), and `/api/*` forwarded to Core as `functions/api/[[path]].ts` does.
  *
- * It adds one local-only page, `/__dev/login`: pick a test account and get that portal's session cookie, minted by
- * the stack (`mint`). This replaces the sign-in through Core's sign-in server, which needs a sign-in site and an
- * identity provider the local stack does not run.
+ * A portal also gets one local-only page, `/__dev/login`: pick a test account and get that portal's session cookie,
+ * minted by the stack (`mint`), a shortcut past the real sign-in through Core's sign-in server. The sign-in site
+ * (`websites/account`) is served the same way, with its Pages Function's relayed paths (`forward`) going to Core.
  */
 import {existsSync, readFileSync} from "node:fs"
 import {relative, resolve} from "node:path"
@@ -21,10 +21,17 @@ export interface StaticSiteOptions {
   port: number
   distDir: string
   coreUrl: string
-  cookieName: string
-  accounts: () => DevAccount[]
-  mint: (email: string) => Promise<string | null>
+  /** The paths sent to Core; by default `/api/*`, as a portal's `functions/api/[[path]].ts` does. */
+  forward?: (pathname: string) => boolean
+  /** The `/__dev/login` shortcut; a site without it has none. */
+  devLogin?: {
+    cookieName: string
+    accounts: () => DevAccount[]
+    mint: (email: string) => Promise<string | null>
+  }
 }
+
+const isApiPath = (pathname: string) => pathname === "/api" || pathname.startsWith("/api/")
 
 /** The `/*` block of a Pages `_headers` file. */
 function readHeaders(distDir: string): Record<string, string> {
@@ -71,22 +78,22 @@ export function startStaticSite(opts: StaticSiteOptions) {
     return new Response(upstream.body, upstream)
   }
 
-  async function devLogin(url: URL): Promise<Response> {
+  async function devLogin(dev: NonNullable<StaticSiteOptions["devLogin"]>, url: URL): Promise<Response> {
     const email = url.searchParams.get("email")
     const back = url.searchParams.get("return") ?? "/"
     const safeBack = back.startsWith("/") && !back.startsWith("//") ? back : "/"
     if (email) {
-      const value = await opts.mint(email)
+      const value = await dev.mint(email)
       if (!value) return new Response(`No test account ${email}`, {status: 404})
       return new Response(null, {
         status: 302,
         headers: {
           location: safeBack,
-          "set-cookie": `${opts.cookieName}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`,
+          "set-cookie": `${dev.cookieName}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`,
         },
       })
     }
-    const rows = opts
+    const rows = dev
       .accounts()
       .map(
         (a) =>
@@ -105,16 +112,17 @@ export function startStaticSite(opts: StaticSiteOptions) {
     port: opts.port,
     async fetch(req) {
       const url = new URL(req.url)
-      if (url.pathname === "/api" || url.pathname.startsWith("/api/")) return proxy(req, url)
-      if (url.pathname === "/__dev/login") return devLogin(url)
+      if ((opts.forward ?? isApiPath)(url.pathname)) return proxy(req, url)
+      const dev = opts.devLogin
+      if (dev && url.pathname === "/__dev/login") return devLogin(dev, url)
       if (url.pathname === "/__dev/csp-report" && req.method === "POST") {
         const report = (await req.json().catch(() => null)) as {"csp-report"?: Record<string, unknown>} | null
         const r = report?.["csp-report"] ?? {}
         console.warn(`[${opts.name}] CSP violation: ${r["violated-directive"]} blocked ${r["blocked-uri"]} on ${r["document-uri"]}`)
         return new Response(null, {status: 204})
       }
-      if (url.pathname === "/__dev/logout") {
-        return new Response(null, {status: 302, headers: {location: "/__dev/login", "set-cookie": `${opts.cookieName}=; Path=/; Max-Age=0`}})
+      if (dev && url.pathname === "/__dev/logout") {
+        return new Response(null, {status: 302, headers: {location: "/__dev/login", "set-cookie": `${dev.cookieName}=; Path=/; Max-Age=0`}})
       }
       if (url.pathname !== "/") {
         let decoded: string

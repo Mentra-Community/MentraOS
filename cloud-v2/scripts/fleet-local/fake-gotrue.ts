@@ -2,8 +2,9 @@
  * A local stand-in for Supabase GoTrue, the account directory behind Core's `/api/account/*`, for the local Fleet
  * stack only (`scripts/fleet-local-stack.ts`). It holds the stack's test accounts (email, password, name) in a JSON
  * file and answers the GoTrue calls Core makes (`services/account/gotrue.client.ts`): the password grant, the admin
- * user reads and writes, sign-up (confirmed at once), resend and logout. Access tokens are HS256, signed with the
- * stack's throwaway `SUPABASE_JWT_SECRET`.
+ * user reads and writes, sign-up (confirmed at once), resend and logout. The sign-in site's supabase-js uses the
+ * same password grant from the browser (CORS open). Access tokens are HS256, signed with the stack's throwaway
+ * `SUPABASE_JWT_SECRET`.
  *
  * It never talks to a real Supabase project, and the stack binds it to 127.0.0.1.
  */
@@ -71,7 +72,14 @@ export function startFakeGotrue(opts: {
     return account
   }
   const accessToken = (a: FakeAccount) =>
-    new jose.SignJWT({email: a.email, role: "authenticated", aal: "aal1", session_id: randomUUID()})
+    new jose.SignJWT({
+      email: a.email,
+      role: "authenticated",
+      aal: "aal1",
+      // Core's sign-in hand-off needs the session's start, as Supabase states it.
+      amr: [{method: "password", timestamp: Math.floor(Date.now() / 1000)}],
+      session_id: randomUUID(),
+    })
       .setProtectedHeader({alg: "HS256", typ: "JWT"})
       .setIssuer(issuer)
       .setAudience("authenticated")

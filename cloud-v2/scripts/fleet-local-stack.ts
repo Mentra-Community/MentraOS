@@ -11,7 +11,10 @@
  *   - a stand-in account directory (`fleet-local/fake-gotrue.ts`) on :3190, so `/api/account/login` works with the
  *     stack's test accounts, from a phone too;
  *   - the workspace portal's built site on :5175 and the admin portal's on :5174, served as Cloudflare Pages serves
- *     them (their `_headers`, `/api/*` to Core), each with a local sign-in page at `/__dev/login`;
+ *     them (their `_headers`, `/api/*` to Core), each with a local sign-in shortcut at `/__dev/login`;
+ *   - the sign-in site (`websites/account`, built here against the stand-in account directory) on :5176, the origin
+ *     of Core's sign-in server (`CLOUD_CORE_OIDC_ISSUER`), relaying the provider's routes to Core as its Pages
+ *     Function does; both portals are its registered clients, so their real sign-in runs end to end;
  *   - a local control API on :3199 for the seed (`miniapp-store/fleet/scripts/seed.ts`): create test accounts, mint
  *     portal sessions, backdate a membership, expire an invitation.
  *
@@ -20,9 +23,11 @@
  * the account directory and the portals to every interface so a phone on the same network can reach Core.
  *
  * The routine and report workers `startCore` runs are not started: they deliver to Slack and are not Fleet's.
+ * Emails go out only when `RESEND_API_KEY` is set; each invitation link sent is also appended to
+ * `<state>/outbox.log`, so a walkthrough can open it without the mailbox.
  */
 import {randomBytes, generateKeyPairSync} from "node:crypto"
-import {existsSync, mkdirSync, readFileSync, writeFileSync} from "node:fs"
+import {appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync} from "node:fs"
 import {networkInterfaces} from "node:os"
 import {resolve} from "node:path"
 
@@ -36,7 +41,7 @@ const option = (name: string, fallback: string) => {
 const LAN = flag("--lan")
 const HOST = LAN ? "0.0.0.0" : "127.0.0.1"
 const STATE = resolve(option("--state", "/tmp/fleet-e2e/state"))
-const PORTS = {core: 3000, gotrue: 3190, control: 3199, portal: 5175, admin: 5174, mfm: 3004}
+const PORTS = {core: 3000, gotrue: 3190, control: 3199, portal: 5175, admin: 5174, signin: 5176, mfm: 3004}
 const MONGO_URL = process.env.FLEET_LOCAL_CORE_MONGO_URL ?? "mongodb://127.0.0.1:27017/fleet-e2e-core?replicaSet=rs0&directConnection=true"
 const MFM_MONGO_URL = process.env.FLEET_LOCAL_MFM_MONGO_URL ?? "mongodb://127.0.0.1:27017/fleet-e2e-mfm?replicaSet=rs0&directConnection=true"
 const ROOT = resolve(import.meta.dir, "..")
@@ -72,11 +77,24 @@ interface LocalSecrets {
   anonKey: string
   serviceKey: string
   refreshPepper: string
+  oidcCookieKey: string
+  workspacePortalClientSecret: string
+  adminPortalClientSecret: string
 }
+
+const random = () => randomBytes(32).toString("base64url")
 
 function loadSecrets(): LocalSecrets {
   const file = resolve(STATE, "secrets.json")
-  if (existsSync(file)) return JSON.parse(readFileSync(file, "utf8")) as LocalSecrets
+  if (existsSync(file)) {
+    const stored = JSON.parse(readFileSync(file, "utf8")) as LocalSecrets
+    // A state from before the sign-in server gains its secrets; the others are kept.
+    const added = {oidcCookieKey: random(), workspacePortalClientSecret: random(), adminPortalClientSecret: random()}
+    if (Object.keys(added).every((name) => stored[name as keyof LocalSecrets])) return stored
+    const secrets = {...added, ...stored}
+    writeFileSync(file, JSON.stringify(secrets, null, 2), {mode: 0o600})
+    return secrets
+  }
   const strip = (p: string) => p.replace(/-----(BEGIN|END) [A-Z ]+-----/g, "").replace(/\s+/g, "")
   const keys: Record<string, string> = {}
   for (const name of ["MENTRA_JWT", "MENTRA_MINIAPP_JWT", "MENTRA_ACCOUNT_JWT"]) {
@@ -84,7 +102,6 @@ function loadSecrets(): LocalSecrets {
     keys[`${name}_PRIVATE_KEY`] = strip(pair.privateKey.export({type: "pkcs8", format: "pem"}).toString())
     keys[`${name}_PUBLIC_KEY`] = strip(pair.publicKey.export({type: "spki", format: "pem"}).toString())
   }
-  const random = () => randomBytes(32).toString("base64url")
   const secrets: LocalSecrets = {
     keys,
     fleetSecret: random(),
@@ -93,6 +110,9 @@ function loadSecrets(): LocalSecrets {
     anonKey: `local-anon-${random()}`,
     serviceKey: `local-service-${random()}`,
     refreshPepper: random(),
+    oidcCookieKey: random(),
+    workspacePortalClientSecret: random(),
+    adminPortalClientSecret: random(),
   }
   writeFileSync(file, JSON.stringify(secrets, null, 2), {mode: 0o600})
   return secrets
@@ -101,6 +121,8 @@ function loadSecrets(): LocalSecrets {
 const secrets = loadSecrets()
 const PORTAL_URL = `http://localhost:${PORTS.portal}`
 const ADMIN_URL = `http://localhost:${PORTS.admin}`
+const SIGNIN_URL = `http://localhost:${PORTS.signin}`
+const GOTRUE_URL = `http://127.0.0.1:${PORTS.gotrue}`
 const ORG_ADMIN_EMAIL = "ops@mentra-fleet.test"
 
 // Everything Core reads, set here and nowhere else (an inherited value never wins).
@@ -111,11 +133,11 @@ Object.assign(process.env, {
   MONGO_URL,
   REDIS_URL: "redis://127.0.0.1:6379/9",
   REFRESH_TOKEN_PEPPER: secrets.refreshPepper,
-  SUPABASE_URL: `http://127.0.0.1:${PORTS.gotrue}`,
+  SUPABASE_URL: GOTRUE_URL,
   SUPABASE_ANON_KEY: secrets.anonKey,
   SUPABASE_SERVICE_ROLE_KEY: secrets.serviceKey,
   SUPABASE_JWT_SECRET: secrets.supabaseJwtSecret,
-  CLOUD_CORE_SUPABASE_ISSUER: `http://127.0.0.1:${PORTS.gotrue}/auth/v1`,
+  CLOUD_CORE_SUPABASE_ISSUER: `${GOTRUE_URL}/auth/v1`,
   CLOUD_CORE_ENTERPRISE_PORTAL_URL: PORTAL_URL,
   CLOUD_CORE_ADMIN_PORTAL_URL: ADMIN_URL,
   CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE: `${PORTAL_URL}/invite/{token}`,
@@ -129,6 +151,45 @@ Object.assign(process.env, {
 for (const name of Object.keys(process.env)) {
   if (/SLACK|S3_|STORAGE_|SONIOX|REPORT_AGENT|OIDC/.test(name)) delete process.env[name]
 }
+// Core's sign-in server, at the local sign-in site's origin, with both portals as its clients.
+Object.assign(process.env, {
+  CLOUD_CORE_OIDC_ISSUER: SIGNIN_URL,
+  CLOUD_CORE_OIDC_COOKIE_KEYS: secrets.oidcCookieKey,
+  CLOUD_CORE_OIDC_CLIENTS: JSON.stringify([
+    {
+      clientId: "fleet-local-portal",
+      kind: "workspace_portal",
+      secretEnv: "CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET",
+      redirectUris: [`${PORTAL_URL}/api/portal/auth/callback`],
+    },
+    {
+      clientId: "fleet-local-admin",
+      kind: "admin_portal",
+      secretEnv: "CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET",
+      redirectUris: [`${ADMIN_URL}/api/admin/auth/callback`],
+    },
+  ]),
+  CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET: secrets.workspacePortalClientSecret,
+  CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET: secrets.adminPortalClientSecret,
+})
+
+// Each invitation link Core emails is also written to the outbox; the email itself goes out unchanged.
+const OUTBOX = resolve(STATE, "outbox.log")
+const realFetch = globalThis.fetch
+globalThis.fetch = Object.assign(
+  async (input: RequestInfo | URL, init?: RequestInit) => {
+    const target = input instanceof Request ? input.url : String(input)
+    if (target.startsWith("https://api.resend.com/") && typeof init?.body === "string") {
+      try {
+        const email = JSON.parse(init.body) as {to?: string[]; subject?: string; html?: string}
+        const links = [...new Set((email.html ?? "").match(new RegExp(`${PORTAL_URL}/invite/[A-Za-z0-9_-]+`, "g")) ?? [])]
+        if (links.length) appendFileSync(OUTBOX, `${new Date().toISOString()} to=${email.to?.join(",")} ${links.join(" ")}\n`, {mode: 0o600})
+      } catch {}
+    }
+    return realFetch(input, init)
+  },
+  realFetch,
+)
 
 writeFileSync(
   resolve(STATE, "mfm.env"),
@@ -149,6 +210,7 @@ const {createApp} = await import("../packages/core/src/api/app")
 const {runStartupMigrations} = await import("../packages/core/src/migrations/startup.migrations")
 const {assertSupabaseApiKeys} = await import("../packages/core/src/services/account/gotrue.client")
 const {assertSigninConfiguration} = await import("../packages/core/src/services/signin/config")
+const {assertOidcConfiguration} = await import("../packages/core/src/services/oidc/startup")
 const {assertOrganizationConfiguration} = await import("../packages/core/src/services/workspaces/organization")
 const {registerAfterSignInHook} = await import("../packages/core/src/services/oidc/interactions")
 const {claimLegacyIdentitiesAfterSignIn} = await import("../packages/core/src/services/workspaces/membership-claim.service")
@@ -159,6 +221,7 @@ const {WorkspaceMembershipModel} = await import("../packages/core/src/models/wor
 const {WorkspaceInvitationModel} = await import("../packages/core/src/models/workspace-invitation.model")
 const {startFakeGotrue} = await import("./fleet-local/fake-gotrue")
 const {startStaticSite} = await import("./fleet-local/static-site")
+const {isRelayedPath} = await import("../websites/account/functions/_upstream")
 
 const gotrue = startFakeGotrue({
   hostname: HOST,
@@ -174,6 +237,7 @@ assertOrganizationConfiguration()
 await connectMongo(MONGO_URL)
 await runStartupMigrations()
 await assertSigninConfiguration()
+assertOidcConfiguration()
 registerAfterSignInHook(claimLegacyIdentitiesAfterSignIn)
 const app = createApp({readinessChecks: [mongoReadinessCheck]})
 Bun.serve({hostname: HOST, port: PORTS.core, idleTimeout: 60, maxRequestBodySize: 32 * 1024 * 1024, fetch: app.fetch})
@@ -225,9 +289,7 @@ const portal = startStaticSite({
   port: PORTS.portal,
   distDir: resolve(ROOT, "websites/portal/dist"),
   coreUrl: `http://127.0.0.1:${PORTS.core}`,
-  cookieName: "mentra_portal_session",
-  accounts,
-  mint: (email) => mint("portal", email),
+  devLogin: {cookieName: "mentra_portal_session", accounts, mint: (email) => mint("portal", email)},
 })
 const admin = startStaticSite({
   name: "Admin portal",
@@ -235,9 +297,24 @@ const admin = startStaticSite({
   port: PORTS.admin,
   distDir: resolve(ROOT, "websites/admin/dist"),
   coreUrl: `http://127.0.0.1:${PORTS.core}`,
-  cookieName: "mentra_admin_session",
-  accounts,
-  mint: (email) => mint("admin", email),
+  devLogin: {cookieName: "mentra_admin_session", accounts, mint: (email) => mint("admin", email)},
+})
+
+// The sign-in site's public build settings point its supabase-js at the stand-in account directory.
+const signinBuild = Bun.spawnSync(["bun", "run", "build.ts"], {
+  cwd: resolve(ROOT, "websites/account"),
+  env: {...process.env, SUPABASE_URL: GOTRUE_URL, SUPABASE_ANON_KEY: secrets.anonKey},
+  stdout: "ignore",
+  stderr: "pipe",
+})
+if (signinBuild.exitCode !== 0) refuse(`the sign-in site did not build: ${signinBuild.stderr.toString().trim()}`)
+const signin = startStaticSite({
+  name: "Sign-in site",
+  hostname: HOST,
+  port: PORTS.signin,
+  distDir: resolve(ROOT, "websites/account/dist"),
+  coreUrl: `http://127.0.0.1:${PORTS.core}`,
+  forward: isRelayedPath,
 })
 
 // The seed's control API: loopback only, whatever --lan says.
@@ -284,8 +361,10 @@ const lan = Object.values(networkInterfaces())
 console.log(`
 [fleet-local] Core half of the local Fleet stack is up (${LAN ? "all interfaces" : "127.0.0.1 only"})
   Core              http://127.0.0.1:${PORTS.core}${LAN && lan ? `  (LAN: http://${lan}:${PORTS.core})` : ""}
-  Workspace portal  ${portal.url}   (sign in: ${portal.url}/__dev/login)
-  Admin portal      ${admin.url}   (sign in: ${admin.url}/__dev/login)
+  Workspace portal  ${portal.url}   (real sign-in: ${portal.url}/api/portal/auth/login; shortcut: ${portal.url}/__dev/login)
+  Admin portal      ${admin.url}   (real sign-in: ${admin.url}/api/admin/auth/login; shortcut: ${admin.url}/__dev/login)
+  Sign-in site      ${signin.url}   (Core's sign-in server; issuer ${SIGNIN_URL})
+  Invitation links  ${OUTBOX}
   Account directory http://127.0.0.1:${PORTS.gotrue} (stand-in GoTrue)
   Control API       http://127.0.0.1:${PORTS.control} (seed only)
   MFM expected at   http://127.0.0.1:${PORTS.mfm}; its settings: ${resolve(STATE, "mfm.env")}
