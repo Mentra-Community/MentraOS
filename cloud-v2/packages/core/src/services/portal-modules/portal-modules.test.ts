@@ -5,6 +5,7 @@ import {
   portalModuleAccess,
   portalModuleAvailability,
   portalModuleConfig,
+  portalModulePublicAccess,
   portalModuleVisibleTo,
   type ConfigLog,
   type PortalModuleName,
@@ -309,6 +310,104 @@ describe("portalModuleAccess for an open read", () => {
     for (const request of [read("workspace", "status"), read("ui", "entry.js"), read("workspace", "purchase", "POST"), read("workspace", "catalog/x")]) {
       expect([request, portalModuleAccess("billing", staff, staging(), recordingLog(), request).state]).toEqual([request, "ready"])
       expect([request, portalModuleAccess("billing", everyoneElse, hosted(url), recordingLog(), request).state]).toEqual([request, "ready"])
+    }
+  })
+})
+
+describe("portalModulePublicAccess", () => {
+  const url = "https://store.example.test"
+  const get = (rest: string, method = "GET") => ({method, rest})
+
+  test("is ready for GET of one product under public/products, on every Core: no person is asked about", () => {
+    for (const environment of ["prod", "staging", "dev", "", undefined]) {
+      for (const rest of [
+        "products/mentra.call.unlimited",
+        "products/a",
+        "products/0",
+        "products/a_b-c.d",
+        "products/..a",
+        "products/a..",
+        "products/.hidden",
+        `products/${"a".repeat(100)}`,
+      ]) {
+        const access = portalModulePublicAccess("billing", get(rest), hosted(url, {CLOUD_CORE_ENVIRONMENT: environment}), recordingLog())
+        expect([environment, rest, access.state]).toEqual([environment, rest, "ready"])
+        if (access.state !== "ready") throw new Error("not ready")
+        expect(access.baseUrl.href).toBe(`${url}/`)
+        expect(access.secret).toBe(SECRET)
+      }
+    }
+  })
+
+  test("is hidden for every other request: methods, case, encodings, dots and segments", () => {
+    const closed = [
+      // Methods: GET only, in its own case.
+      get("products/mentra.call.unlimited", "HEAD"),
+      get("products/mentra.call.unlimited", "POST"),
+      get("products/mentra.call.unlimited", "PUT"),
+      get("products/mentra.call.unlimited", "PATCH"),
+      get("products/mentra.call.unlimited", "DELETE"),
+      get("products/mentra.call.unlimited", "OPTIONS"),
+      get("products/mentra.call.unlimited", "get"),
+      // The family: exactly `products`.
+      get("Products/mentra.call.unlimited"),
+      get("PRODUCTS/mentra.call.unlimited"),
+      get("product/mentra.call.unlimited"),
+      get("productsx/mentra.call.unlimited"),
+      get("%70roducts/mentra.call.unlimited"),
+      get("catalog/mentra.call.unlimited"),
+      get("icons/a.png"),
+      // No product, or more than one segment.
+      get(""),
+      get("products"),
+      get("products/"),
+      get("/products/a"),
+      get("products//a"),
+      get("products/a/"),
+      get("products/a/b"),
+      get("products/a/name"),
+      // The key: 1 to 100 of lowercase letters, digits, `.`, `_` and `-`, and not only dots.
+      get(`products/${"a".repeat(101)}`),
+      get("products/Mentra.call.unlimited"),
+      get("products/MENTRA"),
+      get("products/."),
+      get("products/.."),
+      get("products/..."),
+      get("products/%2e%2e"),
+      get("products/%2E"),
+      get("products/%61"),
+      get("products/a%2fb"),
+      get("products/a%20b"),
+      get("products/a b"),
+      get("products/a+b"),
+      get("products/a;b"),
+      get("products/a?b"),
+      get("products/a#b"),
+      get("products/a\\b"),
+      get("products/a~b"),
+      get("products/é"),
+      get("products/a\u0000"),
+      get("products/a\n"),
+    ]
+    for (const request of closed) {
+      expect([request, portalModulePublicAccess("billing", request, hosted(url), recordingLog())]).toEqual([request, {state: "hidden"}])
+    }
+  })
+
+  test("does not make an absent module present, and a broken one is unavailable for a public read only", () => {
+    expect(portalModulePublicAccess("billing", get("products/a"), env({CLOUD_CORE_ENVIRONMENT: "prod"}), recordingLog())).toEqual({state: "hidden"})
+    expect(portalModulePublicAccess("billing", get("products/a"), env({CLOUD_CORE_BILLING_SECRET: SECRET}), recordingLog())).toEqual({state: "hidden"})
+    const broken = hosted("ftp://nope", {CLOUD_CORE_ENVIRONMENT: "staging"})
+    expect(portalModulePublicAccess("billing", get("products/a"), broken, recordingLog())).toEqual({state: "unavailable"})
+    expect(portalModulePublicAccess("billing", get("products/A"), broken, recordingLog())).toEqual({state: "hidden"})
+    const noSecret = hosted(url, {CLOUD_CORE_BILLING_SECRET: ""})
+    expect(portalModulePublicAccess("billing", get("products/a"), noSecret, recordingLog())).toEqual({state: "unavailable"})
+  })
+
+  test("a public read is not an open read: it opens nothing under a workspace or ui/", () => {
+    const staging = hosted(url, {CLOUD_CORE_ENVIRONMENT: "staging"})
+    for (const request of [read("workspace", "public/products/a"), read("ui", "public/products/a"), read("workspace", "products/a")]) {
+      expect([request, portalModuleAccess("billing", everyoneElse, staging, recordingLog(), request)]).toEqual([request, {state: "hidden"}])
     }
   })
 })
