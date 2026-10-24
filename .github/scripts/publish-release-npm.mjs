@@ -82,6 +82,13 @@ function versionOfCoordinate(coordinate) {
   return coordinate.slice(coordinate.lastIndexOf("@") + 1)
 }
 
+// npm accepts --provenance only from a GitHub-hosted runner building a public
+// repository. The Mentra monorepo is private and publishes from Blacksmith, so
+// it sets NPM_PUBLISH_PROVENANCE=false; MentraOS keeps provenance.
+export function provenanceArgs(env = process.env) {
+  return env.NPM_PUBLISH_PROVENANCE === "false" ? [] : ["--provenance"]
+}
+
 // npm publish --provenance mints a Sigstore signing certificate from
 // fulcio.sigstore.dev, so a blip reaching that CA fails the publish and, with
 // it, the coordinated release: seen 2026-09-08 as
@@ -403,7 +410,9 @@ export function publishReleaseNpm({
   sdkTarball,
   npmTagOverride,
 }) {
-  requirePlanSourceCommit(rootDir, plan.sourceCommit)
+  // The Mentra monorepo releases from its own commit, the one Copybara
+  // exported as the plan's MentraOS commit: it names it in RELEASE_CHECKOUT_COMMIT.
+  requirePlanSourceCommit(rootDir, process.env.RELEASE_CHECKOUT_COMMIT || plan.sourceCommit)
   const family = loadReleaseFamily({rootDir})
   if (plan.familyBaseVersion !== family.familyBaseVersion)
     throw new Error("Release plan does not match source family base")
@@ -481,7 +490,7 @@ export function publishReleaseNpm({
     } else if (!dryRun) {
       status = publishWithRetry(coordinate, integrity, {
         publish: () =>
-          runCapturingOutput("npm", ["publish", tarball, "--tag", tag, "--access", "public", "--provenance"], {
+          runCapturingOutput("npm", ["publish", tarball, "--tag", tag, "--access", "public", ...provenanceArgs()], {
             cwd: rootDir,
           }),
         registryIntegrityOf: (spec) => parseViewValue(npmView(spec, "dist.integrity")),

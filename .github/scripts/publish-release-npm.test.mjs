@@ -16,6 +16,7 @@ import {
   npmReadbackWaitSeconds,
   npmViewPublishedTarball,
   NPM_READBACK_POLL_SECONDS,
+  provenanceArgs,
   publishWithRetry,
   releaseMetadataArgs,
   requireNpmProvenanceSource,
@@ -410,4 +411,10 @@ test("fails closed without retrying on any other npm conflict", () => {
     /conflict that is not its own staged version[\s\S]*cannot modify pre-existing version/,
   )
   assert.equal(publishes, 1)
+})
+
+test("provenance is requested unless NPM_PUBLISH_PROVENANCE is false", () => {
+  assert.deepEqual(provenanceArgs({}), ["--provenance"])
+  assert.deepEqual(provenanceArgs({NPM_PUBLISH_PROVENANCE: "true"}), ["--provenance"])
+  assert.deepEqual(provenanceArgs({NPM_PUBLISH_PROVENANCE: "false"}), [])
 })
