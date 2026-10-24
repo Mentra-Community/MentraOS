@@ -380,6 +380,7 @@
     "react-native-mmkv",
   ],
   "patchedDependencies": {
+    "react-native@0.83.6": "patches/react-native@0.83.6.patch",
     "@dr.pogodin/react-native-fs@2.38.2": "patches/@dr.pogodin%2Freact-native-fs@2.38.2.patch",
     "expo-router@55.0.16": "patches/expo-router@55.0.16.patch",
     "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",

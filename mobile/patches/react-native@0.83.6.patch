@@ -1,0 +1,9 @@
+diff --git a/sdks/hermes-engine/hermes-utils.rb b/sdks/hermes-engine/hermes-utils.rb
+--- a/sdks/hermes-engine/hermes-utils.rb
++++ b/sdks/hermes-engine/hermes-utils.rb
+@@ -36 +36 @@
+-# (either release or nightly). If not, it will fall back to building from source (the latest commit on main).
++# (either release or nightly). If not, build the matching tag shipped with React Native, never moving main.
+@@ -73 +73 @@
+-    return HermesEngineSourceType::BUILD_FROM_GITHUB_MAIN
++    return HermesEngineSourceType::BUILD_FROM_GITHUB_TAG
