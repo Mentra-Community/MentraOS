@@ -119,6 +119,24 @@ describe("maps.service directions", () => {
     expect(result.routes[0].steps?.[0].maneuver).toBe("DEPART");
   });
 
+  test("returns at most `alternatives` routes, primary first", async () => {
+    process.env.MAPBOX_ACCESS_TOKEN = "pk.test";
+    // Mapbox answers `alternatives=true` with the primary plus up to TWO
+    // alternates, so a request for 2 routes can come back with 3.
+    const [route] = mapboxDirectionsBody().routes;
+    stubFetch({
+      routes: [
+        { ...route, distance: 1000 },
+        { ...route, distance: 2000 },
+        { ...route, distance: 3000 },
+      ],
+    });
+
+    const result = await directions({ ...REQ, alternatives: 2 });
+
+    expect(result.routes.map((r) => r.totalDistanceMeters)).toEqual([1000, 2000]);
+  });
+
   test("a second identical request is served from cache (no second fetch)", async () => {
     process.env.MAPBOX_ACCESS_TOKEN = "pk.test";
     const fetchStub = stubFetch(mapboxDirectionsBody());
