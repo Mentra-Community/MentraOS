@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "contractVersion": "2026-10-24.1",
+  "contractVersion": "2026-10-24.2",
   "required": {
     "AUDIO_PROVIDER": {"kind": "enum", "values": ["soniox"], "acceptanceTest": "runtime-transcription"},
     "AUDIO_UDP_ADVERTISED_HOST": {"kind": "host", "acceptanceTest": "runtime-audio-transport"},
@@ -161,8 +161,6 @@
     "MENTRA_CLI_CLIENT_ID",
     "MENTRA_CLI_HOME",
     "MENTRA_CLI_OIDC_ISSUER",
-    "MENTRA_CLI_TOKEN",
-    "MENTRA_CLI_WORKSPACE_ID",
     "MENTRA_TOKEN",
     "ROUTINE_CASE_SOURCE_DATABASE",
     "ROUTINE_CASE_SOURCE_MONGO_URL",
@@ -245,11 +243,9 @@
     "LOG_LEVEL",
     "LOG_STDOUT_JSON",
     "MEETING_PROVIDERS",
-    "MENTRA_CONSOLE_URL",
     "MENTRA_CORE_URL",
     "MENTRA_JWKS_URLS",
     "MENTRA_MINIAPP_TOKEN_TTL_SEC",
-    "MENTRA_STORE_URL",
     "NIGHTLY_ROUTINE_LANES",
     "POD_ID",
     "PORT",
