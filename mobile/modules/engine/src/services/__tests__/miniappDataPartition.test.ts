@@ -46,21 +46,42 @@ beforeEach(() => {
   configure()
 })
 
+/** The package is assigned by `workspaceId`, and that is the account's current workspace, as the reconciler records. */
+function assignIn(workspaceId: string): void {
+  assigned.set(pkg, workspaceId)
+  partitions.setFleetWorkspace(session!, workspaceId)
+}
+
 describe("data partition of a package", () => {
   test("is the workspace's while that workspace assigned it, and personal otherwise", () => {
     const own = partitions.resolveMiniappDataPartition(pkg)
     expect(own.personalUserId).toBe("mu_1")
-    assigned.set(pkg, "ws_A")
+    assignIn("ws_A")
     const inA = partitions.resolveMiniappDataPartition(pkg)
     expect(inA.personalUserId).toBeNull()
     expect(inA.id).not.toBe(own.id)
-    assigned.set(pkg, "ws_B")
+    assignIn("ws_B")
     expect(partitions.resolveMiniappDataPartition(pkg).id).not.toBe(inA.id)
+  })
+
+  test("is never a workspace's that is no longer the account's current one, whatever the package's install recorded", () => {
+    assignIn("ws_A")
+    const inA = partitions.resolveMiniappDataPartition(pkg).id
+    // B's desired state applied, but B's install did not replace A's assignment (B's URL refused the account).
+    partitions.setFleetWorkspace(session!, "ws_B")
+    const afterB = partitions.resolveMiniappDataPartition(pkg)
+    expect(afterB.id).not.toBe(inA)
+    expect(afterB.personalUserId).toBe("mu_1")
+    // Leaving every workspace too.
+    partitions.setFleetWorkspace(session!, "ws_A")
+    expect(partitions.resolveMiniappDataPartition(pkg).id).toBe(inA)
+    partitions.setFleetWorkspace(session!, null)
+    expect(partitions.resolveMiniappDataPartition(pkg).personalUserId).toBe("mu_1")
   })
 
   test("is safe as one file name, lower-case only", () => {
     session = {coreUrl: "https://Core.Example.com:8443/base/", mentraUserId: "User/../ID"}
-    assigned.set(pkg, "WS.1")
+    assignIn("WS.1")
     const {id} = partitions.resolveMiniappDataPartition(pkg)
     expect(id).toMatch(/^[a-z0-9_~.-]+$/)
     expect(id).not.toContain("..")
@@ -68,13 +89,14 @@ describe("data partition of a package", () => {
   })
 
   test("changes only while the package is stopped", () => {
-    assigned.set(pkg, "ws_A")
+    assignIn("ws_A")
     startRunning(pkg)
     const running = partitions.resolveMiniappDataPartition(pkg).id
     // Leave A, join B while it runs: the running code keeps A's context.
-    assigned.set(pkg, "ws_B")
+    assignIn("ws_B")
     expect(partitions.resolveMiniappDataPartition(pkg).id).toBe(running)
     session = {coreUrl: CORE, mentraUserId: "mu_2"}
+    partitions.setFleetWorkspace(session, "ws_B")
     expect(partitions.resolveMiniappDataPartition(pkg).id).toBe(running)
     stopRunning(pkg)
     const after = partitions.resolveMiniappDataPartition(pkg)
@@ -83,10 +105,10 @@ describe("data partition of a package", () => {
   })
 
   test("of a hidden or background context stays pinned for that context's lifetime", () => {
-    assigned.set(pkg, "ws_A")
+    assignIn("ws_A")
     miniappContextRegistry.add(pkg)
     const live = partitions.resolveMiniappDataPartition(pkg).id
-    assigned.set(pkg, "ws_B")
+    assignIn("ws_B")
     expect(partitions.resolveMiniappDataPartition(pkg).id).toBe(live)
     miniappContextRegistry.remove(pkg)
     expect(partitions.resolveMiniappDataPartition(pkg).id).not.toBe(live)
@@ -151,6 +173,88 @@ describe("development selections", () => {
     expect(load(`${pkg}_dev_url`)).toBe("http://192.168.1.5:5173")
     stopRunning(pkg)
     expect(load(`${pkg}_dev_url`)).toBeUndefined()
+  })
+
+  test("of a stopped package switch at once while another package's live context keeps its own", () => {
+    const other = "com.acme.other"
+    partitions.setFleetWorkspace(session!, "ws_A")
+    storage.save(`${pkg}_dev_url`, "A's notes")
+    storage.save(`${other}_dev_url`, "A's other")
+    storage.save("dev_apps_index", JSON.stringify([pkg, other]))
+    partitions.setFleetWorkspace(session!, "ws_B")
+    storage.save(`${pkg}_dev_url`, "B's notes")
+    storage.save("dev_apps_index", JSON.stringify([pkg]))
+    partitions.setFleetWorkspace(session!, "ws_A")
+    expect(load(`${pkg}_dev_url`)).toBe("A's notes")
+
+    startRunning(other)
+    partitions.setFleetWorkspace(session!, "ws_B")
+    // notes is stopped: B's at once. other runs: A's, held, and not current.
+    expect(load(`${pkg}_dev_url`)).toBe("B's notes")
+    expect(load(`${other}_dev_url`)).toBe("A's other")
+    expect(JSON.parse(load("dev_apps_index") as string)).toEqual([other, pkg])
+    expect(partitions.isDevelopmentSelectionCurrent(pkg)).toBe(true)
+    expect(partitions.isDevelopmentSelectionCurrent(other)).toBe(false)
+    // Clearing notes in B leaves A's selections alone.
+    storage.remove(`${pkg}_dev_url`)
+    stopRunning(other)
+    expect(load(`${other}_dev_url`)).toBeUndefined()
+    expect(partitions.isDevelopmentSelectionCurrent(other)).toBe(true)
+    expect(JSON.parse(load("dev_apps_index") as string)).toEqual([pkg])
+
+    partitions.setFleetWorkspace(session!, "ws_A")
+    expect(load(`${pkg}_dev_url`)).toBe("A's notes")
+    expect(load(`${other}_dev_url`)).toBe("A's other")
+    expect([...JSON.parse(load("dev_apps_index") as string)].sort()).toEqual([other, pkg].sort())
+  })
+
+  test("held for a running package come back unchanged when its context returns first", () => {
+    partitions.setFleetWorkspace(session!, "ws_A")
+    storage.save(`${pkg}_dev_url`, "A's")
+    startRunning(pkg)
+    partitions.setFleetWorkspace(session!, "ws_B")
+    partitions.setFleetWorkspace(session!, "ws_A")
+    expect(partitions.isDevelopmentSelectionCurrent(pkg)).toBe(true)
+    stopRunning(pkg)
+    expect(load(`${pkg}_dev_url`)).toBe("A's")
+  })
+
+  test("of a running package's own new snapshot belong to the context it holds", () => {
+    partitions.setFleetWorkspace(session!, "ws_A")
+    storage.save(`${pkg}_dev_url`, "A's")
+    startRunning(pkg)
+    partitions.setFleetWorkspace(session!, "ws_B")
+    partitions.recordDevSnapshotOwner(pkg, "dev-200")
+    expect(partitions.isDevSnapshotVisible(pkg, "dev-200")).toBe(true)
+    stopRunning(pkg)
+    expect(partitions.isDevSnapshotVisible(pkg, "dev-200")).toBe(false)
+    partitions.setFleetWorkspace(session!, "ws_A")
+    expect(partitions.isDevSnapshotVisible(pkg, "dev-200")).toBe(true)
+  })
+
+  test("a per-package switch interrupted midway finishes on the next sync", () => {
+    const other = "com.acme.other"
+    const store = mmkvInstances.get(partitions.MINIAPP_PARTITION_STORE_ID)!
+    const from = store.getString("devsel.active")!
+    const to = partitions.partitionIdOf({coreUrl: CORE, mentraUserId: "mu_1", workspaceId: "ws_B"})
+    // other's live context holds A's selection; notes was stashed and the marker written before B's was restored.
+    store.set(`devsel:${from}`, JSON.stringify({[`${pkg}_dev_url`]: "A's"}))
+    store.set(`devsel:${to}`, JSON.stringify({[`${pkg}_dev_url`]: "B's", [`${other}_dev_url`]: "B's other"}))
+    store.set("devsel.swap", JSON.stringify({to, packages: [pkg], held: {[other]: from}}))
+    storage.save(`${pkg}_dev_url`, "half-written")
+    storage.save(`${other}_dev_url`, "A's other")
+    startRunning(other)
+    store.set(`fleetws:${to.split(".").slice(0, 2).join(".")}`, "ws_B")
+    partitions.syncDevelopmentSelections()
+    expect(load(`${pkg}_dev_url`)).toBe("B's")
+    expect(load(`${other}_dev_url`)).toBe("A's other")
+    expect(store.getString("devsel.active")).toBe(to)
+    stopRunning(other)
+    expect(load(`${other}_dev_url`)).toBe("B's other")
+    expect(JSON.parse(store.getString(`devsel:${from}`)!)).toEqual({
+      [`${pkg}_dev_url`]: "A's",
+      [`${other}_dev_url`]: "A's other",
+    })
   })
 
   test("wait for a hidden context to stop before switching", () => {

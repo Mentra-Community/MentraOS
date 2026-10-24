@@ -69,7 +69,16 @@ import {
   miniappInstallIdentityError,
   type MiniappInstallExpectations,
 } from "./miniappInstallIdentity"
-import {forgetDevSnapshotOwner, isDevSnapshotVisible, recordDevSnapshotOwner} from "./miniappDataPartition"
+import {
+  forgetDevSnapshotOwner,
+  isDevelopmentSelectionCurrent,
+  isDevSnapshotOfCurrentContext,
+  isDevSnapshotVisible,
+  recordDevSnapshotOwner,
+  restoreStashedDevelopmentSelection,
+  stashedDevelopmentSelectionOf,
+  type StashedDevelopmentSelection,
+} from "./miniappDataPartition"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {assertPublisherIdentityPolicy, assertUnsignedDevBuildAllowed} from "./publisherIdentityPolicy"
 import {selectReleaseVersionsForGarbageCollection} from "./releaseVersionGc"
@@ -310,7 +319,20 @@ interface InstallMetadataRollbackJournal {
   release: StorageSnapshot<MiniappReleaseIdentity>
   active: StorageSnapshot<string>
   devRouting?: DevRoutingSnapshot
+  /** The current context's stashed selection of the package, which a release install empties (see finalizeInstall). */
+  devStash?: StashedDevelopmentSelection
   reasons?: StorageSnapshot<StoredInstallReasons>
+}
+
+function isStashedDevelopmentSelection(value: unknown): value is StashedDevelopmentSelection {
+  const stash = value as Partial<StashedDevelopmentSelection> | null
+  return (
+    Boolean(stash) &&
+    typeof stash!.contextId === "string" &&
+    Boolean(stash!.selection) &&
+    typeof stash!.selection === "object" &&
+    !Array.isArray(stash!.selection)
+  )
 }
 
 function snapshotStorage<T>(key: string): StorageSnapshot<T> {
@@ -355,6 +377,7 @@ function readMetadataRollbackJournal(
       !isStorageSnapshot(parsed.release, "object") ||
       !isStorageSnapshot(parsed.active, "string") ||
       (parsed.reasons !== undefined && !isStorageSnapshot(parsed.reasons, "object")) ||
+      (parsed.devStash !== undefined && !isStashedDevelopmentSelection(parsed.devStash)) ||
       (parsed.devRouting !== undefined &&
         (!parsed.devRouting ||
           DEV_ROUTING_FIELDS.some((field) => !isStorageSnapshot(parsed.devRouting?.[field], "any"))))
@@ -407,6 +430,7 @@ function restoreDevRouting(packageName: string, snapshot: DevRoutingSnapshot): v
 function restoreInstallMetadata(journal: InstallMetadataRollbackJournal): void {
   if (journal.reasons) restoreInstallationMetadata(installReasonsKey(journal.packageName), journal.reasons)
   if (journal.devRouting) restoreDevRouting(journal.packageName, journal.devRouting)
+  if (journal.devStash) restoreStashedDevelopmentSelection(journal.packageName, journal.devStash)
   restoreStorage(activeVersionKey(journal.packageName), journal.active)
   restoreInstallationMetadata(releaseIdentityKey(journal.packageName, journal.version), journal.release)
   restoreInstallationMetadata(publisherIdentityKey(journal.packageName), journal.publisher)
@@ -966,9 +990,14 @@ class AppRegistry {
     )
   }
 
-  /** A live-development URL, build or snapshot would run for the package instead of its installed release. */
+  /**
+   * A live-development URL, build or snapshot would run for the package instead of its installed release. True also
+   * while a live context of the package holds an earlier account's or workspace's selection: it is not this context's
+   * to clear, and the current one's is restored when that context stops.
+   */
   public hasDevelopmentSelection(packageName: string): boolean {
     return (
+      !isDevelopmentSelectionCurrent(packageName) ||
       readDevAppRecord(packageName) !== null ||
       storage.load<string>(`${packageName}_dev_url`).is_ok() ||
       this.chooseActiveVersion(packageName).version?.startsWith("dev-") === true
@@ -976,17 +1005,21 @@ class AppRegistry {
   }
 
   /**
-   * Clear the package's live-development selection and its development builds, as a release install does, so
-   * launching runs its installed release. Serialized with installs.
+   * Clear the package's live-development selection and the development builds of the current context, as a release
+   * install does, so launching runs its installed release. Another account's or workspace's snapshots stay on disk
+   * with their selections. Resolves false, clearing nothing, while a live context of the package still holds an
+   * earlier context's selection. Serialized with installs.
    */
-  public clearDevelopmentSelection(packageName: string): Promise<void> {
+  public clearDevelopmentSelection(packageName: string): Promise<boolean> {
     return runInstallFilesystemTransaction(async () => {
+      if (!isDevelopmentSelectionCurrent(packageName)) return false
       invalidateDevSnapshotRequests(packageName)
-      this.clearDevArtifacts(packageName)
+      this.clearDevArtifacts(packageName, {currentContextOnly: true})
       const active = storage.load<string>(activeVersionKey(packageName))
       if (active.is_ok() && active.value.startsWith("dev-")) storage.remove(activeVersionKey(packageName))
       this.refreshNeeded = true
       this.notify()
+      return true
     })
   }
 
@@ -1495,6 +1528,9 @@ class AppRegistry {
           DEV_ROUTING_FIELDS.map((field) => [field, snapshotStorage(`${packageName}_dev_${field}`)]),
         ) as DevRoutingSnapshot)
       : undefined
+    // A live context may hold an earlier context's selection: the current context's then waits in the stash. The
+    // release replaces that one too, in the same transaction as the live keys.
+    const devStashBefore = releaseInstall ? stashedDevelopmentSelectionOf(packageName) : null
     const reasonsKey = installReasonsKey(packageName)
     const reasonsBefore = installReason ? snapshotInstallationMetadata<StoredInstallReasons>(reasonsKey) : undefined
     // The pending activation hides a replaced same-version release from inference: take the reasons it held.
@@ -1508,15 +1544,23 @@ class AppRegistry {
       release: releaseBefore,
       active: activeBefore,
       ...(devRoutingBefore ? {devRouting: devRoutingBefore} : {}),
+      ...(devStashBefore ? {devStash: devStashBefore} : {}),
       ...(reasonsBefore ? {reasons: reasonsBefore} : {}),
     }
     recordRecoveryState(JSON.stringify(rollbackJournal))
+
+    // Whether the live development selection this release replaces is the current context's. While a live context
+    // still holds an earlier context's, the install leaves that one alone and replaces the current context's.
+    let selectionCurrent = true
 
     const rollbackMetadata = () => {
       let firstError: unknown
       for (const restore of [
         () => {
           if (devRoutingBefore) restoreDevRouting(packageName, devRoutingBefore)
+        },
+        () => {
+          if (devStashBefore) restoreStashedDevelopmentSelection(packageName, devStashBefore)
         },
         () => restoreStorage(activeKey, activeBefore),
         () => restoreInstallationMetadata(releaseKey, releaseBefore),
@@ -1544,7 +1588,14 @@ class AppRegistry {
           // A dev probe or snapshot download started earlier must not
           // reactivate development code over this release.
           invalidateDevSnapshotRequests(packageName)
-          for (const field of DEV_ROUTING_FIELDS) restoreStorage(`${packageName}_dev_${field}`, {present: false})
+          // A held earlier context's live keys stay; the current context's selection is replaced wherever it is.
+          selectionCurrent = isDevelopmentSelectionCurrent(packageName)
+          if (selectionCurrent) {
+            for (const field of DEV_ROUTING_FIELDS) restoreStorage(`${packageName}_dev_${field}`, {present: false})
+          }
+          if (devStashBefore) {
+            restoreStashedDevelopmentSelection(packageName, {contextId: devStashBefore.contextId, selection: {}})
+          }
         }
         // Every signed install records its publisher, development snapshots
         // included: from here on only bundles signed with the same key replace
@@ -1568,13 +1619,16 @@ class AppRegistry {
           // Routing already committed with the active release. Only disposable
           // snapshot files, the dev index entry and the cached dev icon remain,
           // so an interruption here cannot select old dev code.
+          // Only the current context's development builds go; a held selection of another context keeps its own.
           try {
-            this.gcDevVersions(packageName, 0)
-            if (getDevAppIndex().includes(packageName)) {
-              storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(getDevAppIndex().filter((pkg) => pkg !== packageName)))
+            this.gcDevVersions(packageName, 0, {currentContext: true})
+            if (selectionCurrent) {
+              if (getDevAppIndex().includes(packageName)) {
+                storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(getDevAppIndex().filter((pkg) => pkg !== packageName)))
+              }
+              const devMeta = devRoutingBefore?.meta
+              if (devMeta?.present && typeof devMeta.value === "string") deleteCachedDevIcon(devMeta.value, packageName)
             }
-            const devMeta = devRoutingBefore?.meta
-            if (devMeta?.present && typeof devMeta.value === "string") deleteCachedDevIcon(devMeta.value, packageName)
           } catch (error) {
             console.warn(`APP_REGISTRY: failed to clean obsolete dev artifacts for ${packageName}`, error)
           }
@@ -1628,13 +1682,17 @@ class AppRegistry {
    * could re-surface. A release install clears the same routing inside its
    * install transaction instead (see finalizeInstall).
    */
-  private clearDevArtifacts(packageName: string): void {
+  private clearDevArtifacts(packageName: string, opts: {currentContextOnly?: boolean} = {}): void {
     if (this.retainedDevVersions.has(packageName)) throw new Error("Cannot clear a miniapp during replacement")
     try {
       const pkgDir = new Directory(Paths.document, "lmas", packageName)
       if (pkgDir.exists) {
         for (const item of pkgDir.list()) {
-          if (item instanceof Directory && item.name.startsWith("dev-")) {
+          if (
+            item instanceof Directory &&
+            item.name.startsWith("dev-") &&
+            (!opts.currentContextOnly || isDevSnapshotVisible(packageName, item.name))
+          ) {
             try {
               this.removeReleaseIdentity(packageName, item.name)
               item.delete()
@@ -1663,15 +1721,20 @@ class AppRegistry {
    * keeping the latest `keep` (by lexicographic sort, which matches
    * timestamp ordering since dev-<ms> is zero-padded).
    *
-   * Only touches `dev-*` versions; semver-installed versions are left alone.
+   * Only touches `dev-*` versions of one development context: the package's own (the one a live context of it
+   * holds, else the current one), or with `currentContext` the current one. Semver-installed versions and another
+   * account's or workspace's snapshots (kept with that context's selection) are left alone.
    */
-  public gcDevVersions(packageName: string, keep: number): void {
+  public gcDevVersions(packageName: string, keep: number, opts: {currentContext?: boolean} = {}): void {
+    const owned = opts.currentContext ? isDevSnapshotOfCurrentContext : isDevSnapshotVisible
     try {
       const pkgDir = new Directory(Paths.document, "lmas", packageName)
       if (!pkgDir.exists) return
       const dirs = pkgDir
         .list()
-        .filter((d): d is Directory => d instanceof Directory && d.name.startsWith("dev-"))
+        .filter(
+          (d): d is Directory => d instanceof Directory && d.name.startsWith("dev-") && owned(packageName, d.name),
+        )
         .sort((a, b) => (a.name < b.name ? 1 : -1))
       const protectedVersions = this.protectedDevVersions(packageName)
       for (let i = keep; i < dirs.length; i++) {

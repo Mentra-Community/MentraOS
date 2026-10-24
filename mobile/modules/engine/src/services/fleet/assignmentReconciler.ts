@@ -16,6 +16,11 @@
  *   lifted. `archived` and `not_a_miniapp` are reported and withdraw nothing.
  * - A context (Core, account, workspace) change invalidates every operation of the old context before the new one
  *   activates: nothing downloaded for the old context commits. No lock is persisted, so a kill leaves none.
+ * - The data and development context is the workspace of the last complete answer (none once the account leaves),
+ *   recorded before anything of that answer is reconciled. An assignment records which workspace installed a package
+ *   (its provenance); it grants no data once its workspace is not the current one. So when a new workspace assigns a
+ *   package the old one installed, the package never runs in the old workspace's data, even while the new one's
+ *   install fails or waits: that install's own outcome (blocked, retrying, deferred) says why.
  * - Each assignment's state change is one `assignment_outcome` (validated against the protocol schema).
  *
  * Pure: every effect goes through {@link AssignmentReconcilerDeps}. The host wiring is `assignmentReconcilerHost.ts`.
@@ -74,10 +79,17 @@ export interface ManagedMiniappPort {
   assignment(packageName: string): ManagedAssignment | null
   /** Every package holding an `assignment` reason, whichever account's. */
   assignedPackages(): string[]
-  /** A live-development build or snapshot is selected for the package, so launching would not run the release. */
+  /**
+   * A live-development build or snapshot is selected for the package, so launching would not run the release. True
+   * also while the package's selection is still an earlier context's (see `clearDevelopmentSelection`).
+   */
   hasDevelopmentSelection(packageName: string): boolean
-  /** Clear the package's live-development selection, so launching runs its installed release. */
-  clearDevelopmentSelection(packageName: string): Promise<void>
+  /**
+   * Clear the package's live-development selection in the current context, so launching runs its installed release.
+   * Resolves false, clearing nothing, while a live context of the package still holds an earlier context's selection:
+   * that one is never touched, and the package switches to the current context's once that context stops.
+   */
+  clearDevelopmentSelection(packageName: string): Promise<boolean>
   /**
    * The deployment's policy lets the phone run this release once it is installed: the release on disk when it has
    * these bytes, otherwise one installed from its URL.
@@ -433,12 +445,12 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     const current = session!
     const previousWorkspace = workspaceOf(state.snapshot)
     const workspace = workspaceOf(desired)
-    if (previousWorkspace !== workspace || state.snapshot === null) {
-      // Leaving one context: nothing of the old one may commit once the new one is active.
-      if (previousWorkspace !== workspace && state.snapshot !== null) supersede()
-      gen = generation
-      miniapps.setWorkspaceContext(current, workspace)
-    }
+    // Leaving one context: nothing of the old one may commit once the new one is active.
+    if (previousWorkspace !== workspace && state.snapshot !== null) supersede()
+    gen = generation
+    // Every complete answer names the current context, before any of its entries is reconciled: from here on, only
+    // this workspace's assignments grant data, whatever happens to its installs.
+    miniapps.setWorkspaceContext(current, workspace)
     state.appliedRevision = desired.revision
     state.snapshot = desired
     save()
@@ -630,8 +642,12 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       const sameBytes = !installed.bundleSha256 || resolution.bundleSha256 === installed.bundleSha256
       if (order === 0 && sameBytes) {
         // The cached release satisfies the assignment only once a live-development selection no longer runs instead.
+        // Only the current context's selection is cleared; one a running context still holds waits for its stop.
         if (miniapps.hasDevelopmentSelection(entry.packageName)) {
-          if (miniapps.isRunning(entry.packageName)) {
+          const cleared =
+            !miniapps.isRunning(entry.packageName) && (await miniapps.clearDevelopmentSelection(entry.packageName))
+          assertCurrent(gen)
+          if (!cleared) {
             record(entry, desired.revision, {
               state: "deferred_running",
               selectedVersion,
@@ -639,8 +655,6 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
             })
             return
           }
-          await miniapps.clearDevelopmentSelection(entry.packageName)
-          assertCurrent(gen)
         }
         const recorded = miniapps.assignment(entry.packageName)
         if (
@@ -853,8 +867,9 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       wantedRevision = revision
     }
     if (kind === "leave") {
-      // The old workspace's work stops now; the new context activates when its desired state arrives.
+      // The old workspace's work and grants stop now; the new context activates when its desired state arrives.
       supersede()
+      if (session) miniapps.setWorkspaceContext(session, null)
       again = false
       schedule(0)
       return

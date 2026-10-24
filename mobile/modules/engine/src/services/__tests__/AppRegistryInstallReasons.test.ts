@@ -42,10 +42,31 @@ mock.module("../../stores/settings", () => ({
   useSettingsStore: {getState: () => ({getSetting: () => false})},
 }))
 mock.module("expo/fetch", () => ({fetch: mock()}))
+/** Directory path to the names of its subdirectories; every other directory does not exist. */
+const fakeDirs = new Map<string, string[]>()
+const deletedDirs: string[] = []
+class FakeDirectory {
+  readonly path: string
+  readonly name: string
+  constructor(...parts: unknown[]) {
+    this.path = parts.map(String).join("/")
+    this.name = this.path.split("/").at(-1) ?? ""
+  }
+  get exists(): boolean {
+    return fakeDirs.has(this.path)
+  }
+  list(): FakeDirectory[] {
+    return (fakeDirs.get(this.path) ?? []).map((name) => new FakeDirectory(this.path, name))
+  }
+  delete(): void {
+    deletedDirs.push(this.path)
+  }
+  toString(): string {
+    return this.path
+  }
+}
 mock.module("expo-file-system", () => ({
-  Directory: class {
-    exists = false
-  },
+  Directory: FakeDirectory,
   File: class {
     exists = false
   },
@@ -55,6 +76,8 @@ mock.module("react-native-zip-archive", () => ({unzip: mock()}))
 mock.module("../../utils/storage/zip", () => ({printDirectory: mock()}))
 
 const {default: registry, hasAssignmentReason, withReleaseDigest} = await import("../AppRegistry")
+const partitions = await import("../miniappDataPartition")
+const {miniappContextRegistry} = await import("../MiniappRunningRegistry")
 const packageName = "com.acme.notes"
 const assignment: MiniappAssignment = {
   assignmentId: "asg_1",
@@ -83,6 +106,8 @@ beforeEach(() => {
   failedWrite = undefined
   devAllowed = true
   installed = []
+  fakeDirs.clear()
+  deletedDirs.length = 0
   spyOn(registry, "getInstalledVersions").mockImplementation(() => installed)
 })
 
@@ -230,6 +255,133 @@ describe("live-development selection", () => {
     expect(values.has(`${packageName}_dev_port`)).toBe(false)
     expect(values.has(`${packageName}_active_version`)).toBe(false)
     expect(registry.getActiveReleaseVersion(packageName)).toBe("1.0.0")
+  })
+})
+
+describe("live-development selection across workspaces", () => {
+  test("clears only the current workspace's snapshots, and nothing while a live context holds an earlier one", async () => {
+    const session = {coreUrl: "https://core.mentra.glass", mentraUserId: "mu_1"}
+    partitions.configureMiniappDataPartitions({getSession: () => session, assignedWorkspace: () => null})
+    try {
+      partitions.setFleetWorkspace(session, "ws_A")
+      partitions.recordDevSnapshotOwner(packageName, "dev-100")
+      values.set(`${packageName}_dev_url`, "http://192.168.1.5:5173")
+      miniappContextRegistry.add(packageName)
+      partitions.setFleetWorkspace(session, "ws_B")
+      // The live context runs A's selection: B may not clear it.
+      expect(registry.hasDevelopmentSelection(packageName)).toBe(true)
+      expect(await registry.clearDevelopmentSelection(packageName)).toBe(false)
+      expect(values.get(`${packageName}_dev_url`)).toBe("http://192.168.1.5:5173")
+
+      miniappContextRegistry.remove(packageName)
+      expect(values.has(`${packageName}_dev_url`)).toBe(false)
+      partitions.recordDevSnapshotOwner(packageName, "dev-200")
+      fakeDirs.set(`file:///test-documents/lmas/${packageName}`, ["1.0.0", "dev-100", "dev-200"])
+      expect(await registry.clearDevelopmentSelection(packageName)).toBe(true)
+      expect(deletedDirs).toEqual([`file:///test-documents/lmas/${packageName}/dev-200`])
+
+      partitions.setFleetWorkspace(session, "ws_A")
+      expect(values.get(`${packageName}_dev_url`)).toBe("http://192.168.1.5:5173")
+    } finally {
+      miniappContextRegistry.remove(packageName)
+      partitions.configureMiniappDataPartitions({getSession: () => null, assignedWorkspace: () => null})
+    }
+  })
+})
+
+describe("release install across workspaces", () => {
+  test("a new release in B removes B's development snapshots and leaves A's for A", () => {
+    const session = {coreUrl: "https://core.mentra.glass", mentraUserId: "mu_1"}
+    partitions.configureMiniappDataPartitions({getSession: () => session, assignedWorkspace: () => null})
+    try {
+      partitions.setFleetWorkspace(session, "ws_A")
+      partitions.recordDevSnapshotOwner(packageName, "dev-100")
+      values.set(`${packageName}_dev_selected_snapshot`, "dev-100")
+      partitions.setFleetWorkspace(session, "ws_B")
+      partitions.recordDevSnapshotOwner(packageName, "dev-200")
+      fakeDirs.set(`file:///test-documents/lmas/${packageName}`, ["1.0.0", "dev-100", "dev-200"])
+
+      const install = finalize("2.0.0", {source: "direct_download"}, "assignment")
+      install.apply()
+      install.afterCommit?.()
+      expect(deletedDirs).toEqual([`file:///test-documents/lmas/${packageName}/dev-200`])
+
+      partitions.setFleetWorkspace(session, "ws_A")
+      expect(values.get(`${packageName}_dev_selected_snapshot`)).toBe("dev-100")
+      expect(partitions.isDevSnapshotVisible(packageName, "dev-100")).toBe(true)
+    } finally {
+      partitions.configureMiniappDataPartitions({getSession: () => null, assignedWorkspace: () => null})
+    }
+  })
+})
+
+describe("release install while a live context holds another workspace's selection", () => {
+  const session = {coreUrl: "https://core.mentra.glass", mentraUserId: "mu_1"}
+
+  /** B selected a dev URL and dev-200; A selected its own and dev-100, and A's context is still live in B. */
+  function holdAsSelectionInB(): void {
+    partitions.configureMiniappDataPartitions({getSession: () => session, assignedWorkspace: () => null})
+    partitions.setFleetWorkspace(session, "ws_B")
+    values.set(`${packageName}_dev_url`, "B's")
+    partitions.recordDevSnapshotOwner(packageName, "dev-200")
+    partitions.setFleetWorkspace(session, "ws_A")
+    values.set(`${packageName}_dev_url`, "A's")
+    partitions.recordDevSnapshotOwner(packageName, "dev-100")
+    miniappContextRegistry.add(packageName)
+    partitions.setFleetWorkspace(session, "ws_B")
+    expect(values.get(`${packageName}_dev_url`)).toBe("A's")
+    fakeDirs.set(`file:///test-documents/lmas/${packageName}`, ["1.0.0", "dev-100", "dev-200"])
+  }
+
+  function release(): void {
+    miniappContextRegistry.remove(packageName)
+    partitions.configureMiniappDataPartitions({getSession: () => null, assignedWorkspace: () => null})
+  }
+
+  test("an install interrupted after its commit, before its cleanup, never brings B's selection back", () => {
+    try {
+      holdAsSelectionInB()
+      finalize("2.0.0", {source: "direct_download"}, "assignment").apply()
+      miniappContextRegistry.remove(packageName)
+      expect(values.has(`${packageName}_dev_url`)).toBe(false)
+    } finally {
+      release()
+    }
+  })
+
+  test("an install rolled back before its commit keeps B's selection for B", () => {
+    try {
+      holdAsSelectionInB()
+      const install = finalize("2.0.0", {source: "direct_download"}, "assignment")
+      install.apply()
+      install.rollback()
+      expect(values.get(`${packageName}_dev_url`)).toBe("A's")
+      miniappContextRegistry.remove(packageName)
+      expect(values.get(`${packageName}_dev_url`)).toBe("B's")
+    } finally {
+      release()
+    }
+  })
+
+  test("replaces B's selection and snapshots, and leaves the held selection of A alone", () => {
+    try {
+      holdAsSelectionInB()
+
+      const install = finalize("2.0.0", {source: "direct_download"}, "assignment")
+      install.apply()
+      install.afterCommit?.()
+      // The live context keeps running A's selection; only B's snapshot goes.
+      expect(values.get(`${packageName}_dev_url`)).toBe("A's")
+      expect(deletedDirs).toEqual([`file:///test-documents/lmas/${packageName}/dev-200`])
+
+      // Once it stops, B runs the release: its selection was replaced by the install. A's is kept for A.
+      miniappContextRegistry.remove(packageName)
+      expect(values.has(`${packageName}_dev_url`)).toBe(false)
+      partitions.setFleetWorkspace(session, "ws_A")
+      expect(values.get(`${packageName}_dev_url`)).toBe("A's")
+    } finally {
+      release()
+    }
   })
 })
 

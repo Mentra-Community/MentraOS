@@ -124,6 +124,8 @@ let otherReasons: Set<string>
 let assignments: Map<string, ManagedAssignment>
 let running: Set<string>
 let devSelections: Set<string>
+/** Packages whose live-development selection a live context still holds for an earlier context. */
+let heldSelections: Set<string>
 /** Packages whose release this deployment's policy would not run. */
 let disallowed: Set<string>
 let revoked: Set<string>
@@ -164,8 +166,10 @@ function start(): AssignmentReconciler {
       hasDevelopmentSelection: (pkg) => devSelections.has(pkg),
       allowsRelease: (pkg) => !disallowed.has(pkg),
       clearDevelopmentSelection: async (pkg) => {
+        if (heldSelections.has(pkg)) return false
         calls.push(`clear-dev:${pkg}`)
         devSelections.delete(pkg)
+        return true
       },
       install: async ({resolution, assignment, isCancelled, onAsking}) => {
         calls.push(`install:${resolution.packageName}@${resolution.version}`)
@@ -267,6 +271,7 @@ beforeEach(() => {
   assignments = new Map()
   running = new Set()
   devSelections = new Set()
+  heldSelections = new Set()
   disallowed = new Set()
   revoked = new Set()
   stopListeners = new Set()
@@ -565,6 +570,21 @@ describe("managed desired state", () => {
     expect(states()).toEqual(["installed"])
   })
 
+  test("a selection a live context still holds for an earlier context is never cleared; it waits like a running one", async () => {
+    installed.set(notes, {version: "1.0.0", bundleSha256: "c".repeat(64)})
+    devSelections.add(notes)
+    heldSelections.add(notes)
+    const r = await startAndSettle()
+    expect(calls).toEqual([])
+    expect(states()).toEqual(["deferred_running"])
+    heldSelections.delete(notes)
+    stop(notes)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["clear-dev:com.acme.notes", "assign:com.acme.notes"])
+    expect(states()).toEqual(["deferred_running", "installed"])
+    r.stop()
+  })
+
   test("a running live-development selection is deferred_running, then cleared when it stops", async () => {
     installed.set(notes, {version: "1.0.0", bundleSha256: "c".repeat(64)})
     devSelections.add(notes)
@@ -586,7 +606,7 @@ describe("withdrawal", () => {
     r.trigger("revision", 2)
     await timers.advance(TRIGGER_JITTER_MS)
     expect(calls.slice(1)).toEqual(["unassign:com.acme.notes", "uninstall:com.acme.notes"])
-    expect(contexts).toEqual(["mu_1:ws_A"])
+    expect(contexts).toEqual(["mu_1:ws_A", "mu_1:ws_A"])
     expect(states().at(-1)).toBe("withdrawn")
     expect(FleetAssignmentOutcomePayloadSchema.safeParse(outcomes.at(-1)).success).toBe(true)
   })
@@ -731,7 +751,32 @@ describe("context changes", () => {
     installGate = undefined
     await timers.advance(TRIGGER_JITTER_MS)
     expect(installed.has(notes)).toBe(false)
+    // Leaving ends A's grants at once; B's context is recorded with its desired state.
+    expect(contexts).toEqual(["mu_1:ws_A", "mu_1:none", "mu_1:ws_B"])
+  })
+
+  test("joining B, which assigns the same package, records B's context before B's install, and B's failure is B's", async () => {
+    await startAndSettle()
+    const urlB = "https://notes.acme.example/b"
+    served.set(urlB, {ok: false, reason: "access_denied"})
+    let contextsAtResolve = -1
+    const resolve = served.get.bind(served)
+    served.get = (url: string) => {
+      if (url === urlB) contextsAtResolve = contexts.length
+      return resolve(url)
+    }
+    answer = async () => managed(2, [{id: "asg_b", url: urlB}], B)
+    reconciler!.trigger("revision", 2)
+    await timers.advance(TRIGGER_JITTER_MS)
     expect(contexts).toEqual(["mu_1:ws_A", "mu_1:ws_B"])
+    expect(contextsAtResolve).toBe(2)
+    expect(outcomes.map((o) => `${o.assignmentId}:${o.reason ? `${o.state}:${o.reason}` : o.state}`)).toEqual([
+      "asg_notes:downloading",
+      "asg_notes:installed",
+      "asg_notes:withdrawn",
+      "asg_b:blocked:access_denied",
+    ])
+    expect(management.at(-1)).toEqual({status: "managed", workspaceId: B, workspaceName: B})
   })
 
   test("a kill mid-install leaves no lock: the next start installs", async () => {
@@ -882,10 +927,7 @@ describe("access", () => {
   test("a launch block stored by an older build is lifted, and it is not put back", async () => {
     installed.set(notes, {version: "1.0.0"})
     revoked.add(notes)
-    store.set(
-      `fleet.assignments.v1/${sessionA.coreUrl}|${sessionA.mentraUserId}`,
-      JSON.stringify({revoked: [notes]}),
-    )
+    store.set(`fleet.assignments.v1/${sessionA.coreUrl}|${sessionA.mentraUserId}`, JSON.stringify({revoked: [notes]}))
     served.set(notesUrl, {ok: false, reason: "access_denied"})
     const r = await startAndSettle()
     expect(revoked.has(notes)).toBe(false)
