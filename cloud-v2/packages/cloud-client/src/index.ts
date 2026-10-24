@@ -87,7 +87,8 @@ export type {
   SupportStateInput,
 } from "./modules/core/core";
 
-// Workspace and Fleet desired-state calls (`cloud.core.workspaces`, `cloud.core.fleet.desiredState`).
+// Workspace, Fleet desired-state and registry calls (`cloud.core.workspaces`, `cloud.core.fleet.desiredState`,
+// `cloud.core.registry`). The registry's request and answer types come from `@mentra/cloud-protocol`.
 export {CoreRequestError, CoreResponseError, SessionChangedError} from "./modules/core/core";
 export type {AccountCallOptions} from "./modules/core/core";
 export type {

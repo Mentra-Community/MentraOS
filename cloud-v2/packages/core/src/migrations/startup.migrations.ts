@@ -28,6 +28,7 @@ import { AccessCredentialModel } from "../models/access-credential.model";
 import { LicenseSeatModel } from "../models/license-seat.model";
 import { LicenseModel } from "../models/license.model";
 import { WorkspaceAssignedPackagesModel } from "../models/workspace-assigned-packages.model";
+import { MiniappRegistryArchiveRuleModel, MiniappRegistryEntryModel } from "../models/miniapp-registry.model";
 import { WorkspaceAuditCounterModel } from "../models/workspace-audit-counter.model";
 import { WorkspaceAuditEventModel } from "../models/workspace-audit-event.model";
 import { WorkspaceInvitationModel } from "../models/workspace-invitation.model";
@@ -143,6 +144,21 @@ export async function runStartupMigrations(): Promise<void> {
         }
       },
     ),
+  );
+  // The miniapp registry: one entry per URL and one archive rule per kind and value (both unique), built empty
+  // with their collections before the first registration. A refused index is logged, as above.
+  await Promise.all(
+    [MiniappRegistryEntryModel, MiniappRegistryArchiveRuleModel].map(async (model) => {
+      try {
+        await model.createCollection();
+        await model.createIndexes();
+      } catch (error) {
+        logger.error(
+          { collection: model.collection.collectionName, error: (error as Error)?.message },
+          "failed to create miniapp registry collection indexes",
+        );
+      }
+    }),
   );
   // Allowlisted admin API keys keep working as operator keys, before any
   // request is served. A key that fails is logged and retried next start.

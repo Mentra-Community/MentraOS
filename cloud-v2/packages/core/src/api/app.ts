@@ -17,6 +17,8 @@
  *                                 decline), leave
  *   /api/client/fleet/*         — a phone's Fleet reports, forwarded to the optional Fleet
  *                                 service (404 fleet_not_installed without one)
+ *   /api/client/registry/*      — the Mentra App's registry calls: register a miniapp URL at
+ *                                 install (Core verifies it), and the updater's status batch
  *   /api/client/miniapps/*      — LEGACY: the frozen preinstalled catalog that
  *                                 released Mentra App versions still install from
  *   /api/agent/reports/*        — read-only private dev-agent access
@@ -81,6 +83,7 @@ import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
 import clientWorkspaces from "./client/workspaces.api";
 import clientMiniapps from "./client/miniapps.api";
+import clientRegistry from "./client/registry.api";
 import clientBluetoothSdk from "./client/bluetooth-sdk.api";
 import { clientFleetApi } from "./fleet/fleet-forwarding";
 import accountApi from "./account/account.api";
@@ -150,6 +153,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/support-profile", clientSupportProfile);
   app.route("/api/client/workspaces", clientWorkspaces);
   app.route("/api/client/bluetooth-sdk", clientBluetoothSdk);
+  app.route("/api/client/registry", clientRegistry);
   // Fleet is optional and lives in its own service; Core authenticates the phone (its own gate) and forwards.
   app.route("/api/client/fleet", clientFleetApi);
   app.route("/api/agent/reports", reportAgent);

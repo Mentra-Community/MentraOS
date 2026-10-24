@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "contractVersion": "2026-10-23.1",
+  "contractVersion": "2026-10-24.1",
   "required": {
     "AUDIO_PROVIDER": {"kind": "enum", "values": ["soniox"], "acceptanceTest": "runtime-transcription"},
     "AUDIO_UDP_ADVERTISED_HOST": {"kind": "host", "acceptanceTest": "runtime-audio-transport"},
@@ -205,6 +205,7 @@
     "CLOUD_CORE_OIDC_ISSUER",
     "CLOUD_CORE_OIDC_PROVIDERS",
     "CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET",
+    "CLOUD_CORE_REGISTRY_STATUS_TTL_SEC",
     "CLOUD_CORE_RUNTIME_TOKEN_ISSUER",
     "CLOUD_CORE_SERVICE_SECRETS",
     "CLOUD_CORE_STORAGE_PROVIDER",

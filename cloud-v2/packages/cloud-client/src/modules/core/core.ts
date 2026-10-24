@@ -7,7 +7,8 @@
  * core never touches credentials itself.
  *
  * Today it exposes the unified report submission surface, the support
- * profile update and the Fleet report.
+ * profile update, the Fleet report, the workspace calls and the miniapp
+ * registry calls.
  *
  * Guardrail: this is device-facing only. It deliberately carries none of the
  * Dev Console / OEM Portal / store web UI surface; those are separate clients.
@@ -16,7 +17,14 @@
  * ("src/modules/core/core.ts").
  */
 import type { HttpClient } from "../../http";
-import type { FleetDesiredState, FleetReport } from "@mentra/cloud-protocol";
+import type {
+  FleetDesiredState,
+  FleetReport,
+  RegistryRegisterRequest,
+  RegistryRegisterResponse,
+  RegistryStatusRequest,
+  RegistryStatusResponse,
+} from "@mentra/cloud-protocol";
 import type {
   AcceptInvitationResult,
   DeclineInvitationResult,
@@ -26,6 +34,7 @@ import type {
 } from "./workspace-types";
 import type { AccountCallOptions, CoreTokenSource } from "./account-call";
 import { Fleet, type FleetReportOutcome } from "./fleet";
+import { Registry } from "./registry";
 import { Workspaces } from "./workspaces";
 import {
   Reports,
@@ -82,8 +91,8 @@ export type {
 export interface CoreDeps {
   http: HttpClient;
   /**
-   * Where workspace and desired-state calls get the signed-in account's Core token (`cloud.auth`). Without it those
-   * calls reject, because they must be made as one account.
+   * Where workspace, desired-state and registry calls get the signed-in account's Core token (`cloud.auth`). Without
+   * it those calls reject, because they must be made as one account.
    */
   auth?: CoreTokenSource;
 }
@@ -152,6 +161,13 @@ export class Core {
     /** `POST /api/client/workspaces/leave`, naming `opts.workspaceId` when given. */
     leave(opts?: AccountCallOptions & LeaveWorkspaceRequest): Promise<void>;
   };
+  /** The miniapp registry (`registry.ts`). Each call is made as one account. */
+  readonly registry: {
+    /** `POST /api/client/registry/register`, at each install of a miniapp URL. */
+    registerMiniappUrl(request: RegistryRegisterRequest, opts?: AccountCallOptions): Promise<RegistryRegisterResponse>;
+    /** `POST /api/client/registry/status`: one batch of installed URLs. */
+    registryStatus(request: RegistryStatusRequest, opts?: AccountCallOptions): Promise<RegistryStatusResponse>;
+  };
 
   constructor(deps: CoreDeps) {
     const { http, auth } = deps;
@@ -159,6 +175,7 @@ export class Core {
     const supportProfiles = new SupportProfiles(http);
     const fleet = new Fleet(http, auth);
     const workspaces = new Workspaces(http, auth);
+    const registry = new Registry(http, auth);
 
     this.reports = {
       submit: reports.submit.bind(reports),
@@ -182,6 +199,10 @@ export class Core {
       acceptInvitation: workspaces.acceptInvitation.bind(workspaces),
       declineInvitation: workspaces.declineInvitation.bind(workspaces),
       leave: workspaces.leave.bind(workspaces),
+    };
+    this.registry = {
+      registerMiniappUrl: registry.registerMiniappUrl.bind(registry),
+      registryStatus: registry.registryStatus.bind(registry),
     };
   }
 }

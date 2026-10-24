@@ -255,8 +255,8 @@ function isLocalIpv6(words: number[]): boolean {
   return isLoopback || isUniqueLocal || isLinkLocal
 }
 
-/** SemVer 2.0.0 (semver.org): `1.4.2`, `1.4.2-beta.1`; not `v1.4.2` or `1.4`. */
-const SEMVER =
+/** SemVer 2.0.0 (semver.org): `1.4.2`, `1.4.2-beta.1`; not `v1.4.2` or `1.4`. The `version` of a served `miniapp.json`. */
+export const MINIAPP_VERSION_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/
 
 /** What a miniapp URL serves at `<url>/miniapp.json`: the manifest inside its current ZIP, plus `bundle`. */
@@ -287,7 +287,7 @@ const NonBlankString = z.string().refine((value) => value.trim().length > 0, "mu
 export const ServedMiniappManifestSchema: z.ZodType<ServedMiniappManifest> = z
   .object({
     packageName: z.string().regex(MINIAPP_PACKAGE_NAME_PATTERN),
-    version: z.string().regex(SEMVER),
+    version: z.string().regex(MINIAPP_VERSION_PATTERN),
     name: NonBlankString,
     description: z.string().optional(),
     icon: NonBlankString.optional(),

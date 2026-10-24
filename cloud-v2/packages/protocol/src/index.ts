@@ -19,3 +19,4 @@ export * from "./maps";
 export * from "./report-automation";
 export * from "./fleet";
 export * from "./miniapp-url";
+export * from "./miniapp-registry";
