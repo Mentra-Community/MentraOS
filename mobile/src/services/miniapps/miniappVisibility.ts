@@ -4,6 +4,7 @@ import {appRegistry} from "@mentra/engine-host-internal"
 import {
   linkLingoPackageName,
   mentraCallPackageName,
+  miniappDeveloperPackageName,
   shouldHideMiniapp as shouldHideByPolicy,
 } from "@/constants/miniapps"
 import {isMiniappDevelopmentAllowed} from "@/services/deployment/miniappDevelopmentPolicy"
@@ -13,6 +14,15 @@ import type {ActiveDeployment} from "@/services/deployment/types"
 /** LinkLingo is available only while the local Super Mode setting is enabled. */
 export const isSuperModeMiniappAllowed = (packageName: string): boolean =>
   packageName !== linkLingoPackageName || engine.settings.get(SETTINGS.super_mode.key) === true
+
+/**
+ * Miniapp Developer is a launcher entry (Home and All Apps) only while its
+ * setting is on. Its tools stay reachable from Settings either way. This is a
+ * launcher gate, not the Home `hidden` flag: All Apps deliberately ignores
+ * `hidden`, so that flag alone left the shortcut in the drawer.
+ */
+export const isHiddenFromLaunchers = (packageName: string): boolean =>
+  packageName === miniappDeveloperPackageName && engine.settings.get(SETTINGS.miniapp_dev_mode.key) !== true
 
 export function isDeploymentManagedCall(deployment: ActiveDeployment = deploymentStore.getActive()): boolean {
   return (
