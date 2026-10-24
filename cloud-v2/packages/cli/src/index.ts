@@ -524,7 +524,7 @@ program
 
 program
   .command("pack")
-  .description("Pack the current miniapp into build/<packageName>-<version>.zip")
+  .description("Pack the current miniapp into build/, ready to upload to its URL")
   .option("--cwd <path>", "miniapp project directory", process.cwd())
   .option("--no-build", "skip production build before packing")
   .option("--sign", "sign with the stored publisher key (unsigned by default)")

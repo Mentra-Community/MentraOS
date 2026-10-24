@@ -31,7 +31,7 @@ mentra login               # sign in to Mentra in your browser
 mentra whoami              # who you are signed in as, and where
 mentra dev                 # local dev server; the phone runs it as the manifest package
 mentra build               # build the current miniapp
-mentra pack                # build and pack locally (use --sign to sign)
+mentra pack                # build and write build/, ready to upload (use --sign to sign)
 mentra publish --no-submit # build and upload an unsigned draft
 mentra miniapps list       # miniapps owned by your workspace
 mentra releases submit     # submit an uploaded release for review

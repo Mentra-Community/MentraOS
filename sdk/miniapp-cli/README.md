@@ -12,7 +12,7 @@ mentra-miniapp <command>
 | ------------------------------------------------- | ------------------------------------------------------------------------- |
 | [`dev`](#dev)                                     | Starts the dev server (hot reload unless `--no-hot-reload`), prints a QR to load it on a phone  |
 | [`release`](#release)                             | Builds, packs, and serves a QR to install the release on a phone over LAN |
-| [`pack`](#pack)                                   | Validates the manifest and zips `dist/` into `<pkg>-<version>.zip`        |
+| [`pack`](#pack)                                   | Writes `build/`, ready to upload to your miniapp's URL                    |
 | [`manifest`](#manifest)                           | Interactive top-level wizard for editing `miniapp.json`                   |
 | [`permission list \| add \| remove`](#permission) | Object-verb manifest edits for permissions                                |
 | [`hardware list \| add \| remove`](#hardware)     | Object-verb manifest edits for hardware requirements                      |
@@ -119,22 +119,33 @@ A release install is a fixed snapshot, like a React Native release build: each c
 
 ```bash
 mentra-miniapp pack
-mentra-miniapp pack --no-build    # zip dist/ as-is, skip the build
+mentra-miniapp pack --no-build                # zip dist/ as-is, skip the build
+mentra-miniapp pack --sign                    # sign with the package's stored publisher key
+mentra-miniapp pack --signing-key key.json    # sign with a key file (not stored)
 ```
 
-Produces a distributable ZIP. Use this when you want the artifact only — `release` calls `pack` internally.
+Writes `build/`, a folder ready to upload as is to your miniapp's URL. `release` calls `pack` internally.
 
 Steps:
 
 1. Runs `<pm> run build` with `NODE_ENV=production` (same as `release`), so the zip always contains a production bundle — never a stale dev build left behind by `dev`. Pass `--no-build` to skip this and zip whatever is already in `dist/`.
 2. Verifies `dist/` exists.
-3. Validates `miniapp.json`.
+3. Validates `miniapp.json`. It must not declare `bundle`; `pack` fills that in.
 4. Copies `miniapp.json` and `icon.png` into `dist/`.
-5. Runs the system `zip -r` command to produce `build/<packageName>-<version>.zip` and prints the absolute path.
+5. Runs the system `zip -r` command to produce `build/<packageName>-<version>.zip`, signed with `--sign` or `--signing-key`, and prints its path and SHA-256.
+6. Writes the icon and `miniapp.json` beside the ZIP.
 
-`build/` is self-ignoring — the CLI writes a `.gitignore` containing `*` into it on creation, so packed zips stay out of version control in any repo without touching the project's own `.gitignore`.
+`build/` then holds what your miniapp's URL serves:
 
-The resulting ZIP is the artifact you'd upload to the miniapp store.
+| File                            | What it is                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------- |
+| `miniapp.json`                  | Your `miniapp.json` plus `bundle: {url: "<packageName>-<version>.zip", sha256}`, naming the ZIP |
+| `<packageName>-<version>.zip`   | The bundle. ZIPs of earlier versions stay beside it.                                        |
+| the icon, such as `icon.png`    | The file `miniapp.json`'s `icon` names, taken from the ZIP. An icon URL on another host is left to that host. |
+
+Upload the folder to any static host, such as GitHub Pages, Cloudflare Pages or R2, or S3, at your miniapp's URL. For each release, bump `version`, and upload the ZIP before `miniapp.json`, so the URL never names a ZIP that isn't there yet.
+
+`build/` is self-ignoring — the CLI writes a `.gitignore` containing `*` into it on creation, so packed zips stay out of version control in any repo without touching the project's own `.gitignore`. Leave that `.gitignore` out if you deploy the folder by committing it to git.
 
 > Requires the `zip` binary on `PATH` (preinstalled on macOS and most Linux distros). On Windows, install `zip` via WSL or use a Unix-like shell.
 

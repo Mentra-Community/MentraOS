@@ -30,7 +30,7 @@ function printUsage(): void {
   console.log('  release                          Build, pack, and serve a QR to install on a phone');
   console.log('                                   Options: --no-cache  --qr-output <path>  --sign  --signing-key <path>');
   console.log(
-    '  pack                             Production-build and package miniapp (--no-build)',
+    '  pack                             Production-build and write build/, ready to upload (--no-build)',
   );
   console.log(
     '                                   Signing is opt-in and permanent per package:',

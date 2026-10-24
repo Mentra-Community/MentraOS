@@ -27,7 +27,7 @@ The CLI is **Bun-only**: it ships as TypeScript and runs under Bun. Use `bun`
 |---|---|
 | [`dev`](#dev) | Dev server with hot reload; prints a QR to load the miniapp on a phone. |
 | [`release`](#release) | Builds, packs, and serves a QR to install a release on phones over LAN. |
-| [`pack`](#pack) | Validates the manifest and zips `dist/` into `<pkg>-<version>.zip`. |
+| [`pack`](#pack) | Writes `build/`, a folder ready to upload to your miniapp's URL. |
 | [`keys`](#keys) | Creates, shows, imports and exports publisher signing keys. |
 | [`manifest`](#manifest) | Interactive wizard for editing `miniapp.json`. |
 | [`permission`](#permission-and-hardware) | Add / remove / list manifest permissions. |
@@ -94,18 +94,30 @@ mentra-miniapp pack --sign                    # sign with the package's stored p
 mentra-miniapp pack --signing-key key.json    # sign with a key file (not stored)
 ```
 
-Produces the release artifact only (`release` calls this internally). It
-builds with `NODE_ENV=production`, verifies `dist/`, validates the manifest,
-copies `miniapp.json` + `icon.png` into `dist/`, and zips to
-`build/<pkg>-<version>.zip`, replacing an older ZIP only after the new one is
-complete. It prints the bundle's SHA-256 and its publisher key, or `unsigned`. In
-a future release, this ZIP will be uploaded through the Mentra Developer Console
-for distribution in the Mentra Miniapp Store. That distribution workflow is not
-available in MentraOS 3.0.
+Writes `build/`, a folder ready to upload as is to your miniapp's URL (`release`
+calls `pack` internally). It builds with `NODE_ENV=production`, verifies `dist/`,
+validates the manifest, copies `miniapp.json` + `icon.png` into `dist/`, and zips
+to `build/<pkg>-<version>.zip`, replacing an older ZIP of the same version only
+after the new one is complete. It prints the bundle's SHA-256 and its publisher
+key, or `unsigned`.
+
+`build/` then holds what a miniapp URL serves:
+
+| File | What it is |
+|---|---|
+| `miniapp.json` | Your `miniapp.json` plus `bundle: {url: "<pkg>-<version>.zip", sha256}`, naming the ZIP and its SHA-256. |
+| `<pkg>-<version>.zip` | The bundle. ZIPs of earlier versions stay beside it. |
+| The icon, such as `icon.png` | The file `miniapp.json`'s `icon` names, taken from the ZIP. An icon URL on another host is left to that host. |
+
+Your `miniapp.json` must not declare `bundle` itself; `pack` fills it in. Upload
+the folder to any static host, such as GitHub Pages, Cloudflare Pages or R2, or
+S3. For each release, bump `version`, and upload the ZIP before `miniapp.json`, so
+your URL never names a ZIP that isn't there yet.
 
 <Note>
 `pack` requires the `zip` binary on `PATH` (preinstalled on macOS and most Linux;
-on Windows use WSL). `build/` self-ignores from git.
+on Windows use WSL). `build/` self-ignores from git with its own `.gitignore`;
+leave that file out if you deploy the folder by committing it to git.
 </Note>
 
 ### Signing
