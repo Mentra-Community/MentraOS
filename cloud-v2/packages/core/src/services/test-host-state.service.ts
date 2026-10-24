@@ -128,6 +128,7 @@ const routingHostSchema = z.object({
   incarnation: frameworkIdentitySchema.optional(),
   incarnationGeneration: z.number().int().positive().safe().optional(),
   frameworkBinding: frameworkBindingSchema.optional(),
+  resourceReservations: z.object({resourceReadiness: z.literal(true).optional()}).strict().optional(),
   resourceLifecycle: resourceLifecycleSchema.optional(),
   observedAt: z.string().datetime({offset: true}).optional(),
   laneControls: laneControlExchangeSchema.optional(),
@@ -137,7 +138,7 @@ const routingHostSchema = z.object({
 export type RoutingTestHostState = z.infer<typeof routingHostSchema> & ResourceReadinessAuthority & {receivedAt: string; authorityReservations?: HostResourceReservation[]}
 // Permission observations remain fresh; only diagnostic/history fields are excluded at the database.
 const routingStateProjection = {hostId: 1, receivedAt: 1, resourceReservations: 1, laneControls: 1, resourceLifecycleCursor: 1,
-  'snapshot.observedAt': 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+  'snapshot.resourceReservations.resourceReadiness': 1, 'snapshot.observedAt': 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
   'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle': 1, 'snapshot.resources': 1,
   'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
   'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,

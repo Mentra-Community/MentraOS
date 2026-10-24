@@ -1,7 +1,7 @@
 import {z} from 'zod'
 import {recorderHostReservationSchema, type RecorderHostReservation} from './recorder-storage.types'
 import {frameworkBindingSchema} from './framework-version.types'
-import {backendLocalPrerequisiteSchema, backendPreparingReceiptSchema, backendPrerequisiteOrigin, backendCandidatePrerequisiteSchema, backendConnectivityTargetSchema, candidatePrerequisiteSettlementSchema} from './backend-connectivity.types'
+import {backendLocalPrerequisiteSchema, backendPreparingReceiptSchema, backendPrerequisiteOrigin, backendCandidatePrerequisiteSchema, backendConnectivityTargetSchema, candidatePrerequisiteSettlementSchema, resourceReadinessMembersSchema} from './backend-connectivity.types'
 
 const identity = z.string().min(1).max(240)
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
@@ -24,30 +24,46 @@ export const resourceCheckIntentSchema = z.object({resourceId: identity, subject
 /** Existing durable operator dispatch receipt, projected only by its current controller. */
 export const localResourceDispatchSchema = z.object({requestId: identity, inputSha256: hash, definitionSha256: hash}).strict()
 export const exclusiveResourceOwnerSchema = z.object({id: identity, kind: z.enum(['run', 'authoring', 'boundary-cleanup', 'fixer'])}).strict()
-export const backendPrerequisiteIntentSchema = z.object({kind: z.literal('backend-connectivity'), jobId: identity,
+const scalarBackendPrerequisiteIntentSchema = z.object({kind: z.literal('backend-connectivity'), jobId: identity,
   targetInputSha256: hash, resourceId: identity, binding: frameworkBindingSchema,
   preparing: backendPreparingReceiptSchema.optional(), local: backendLocalPrerequisiteSchema.optional(),
   candidate: backendCandidatePrerequisiteSchema.optional(), target: backendConnectivityTargetSchema.optional()
 }).strict().refine(backendPrerequisiteOrigin, 'Prerequisite requires exactly one original intent')
   .refine(value => Boolean(value.candidate) === Boolean(value.target), 'Only candidate acquire freezes its verified APK target')
+export const graphPrerequisiteIntentSchema = z.object({kind: z.literal('resource-readiness'), jobId: identity,
+  targetInputSha256: hash, resourceId: identity, binding: frameworkBindingSchema,
+  candidate: backendCandidatePrerequisiteSchema, resources: resourceReadinessMembersSchema,
+  preparing: z.never().optional(), local: z.never().optional(), target: backendConnectivityTargetSchema.optional(),
+}).strict().refine(value => value.resources[0]!.id === value.resourceId,
+  'Readiness intent primary subject must identify its first frozen member')
+export const backendPrerequisiteIntentSchema = z.union([scalarBackendPrerequisiteIntentSchema, graphPrerequisiteIntentSchema])
 export const exclusiveResourceIntentSchema = z.object({operationId: identity, hostId: identity, laneId: identity.optional(),
   controller,
   owner: exclusiveResourceOwnerSchema, inputSha256: hash,
   localDispatch: localResourceDispatchSchema.optional(),
   prerequisite: backendPrerequisiteIntentSchema.optional(),
   resourceCheck: resourceCheckIntentSchema.optional(),
-  resources: z.array(z.object({id: identity, capabilities: z.array(identity).max(30)}).strict()).min(1).max(9),
+  resources: z.array(z.object({id: identity, capabilities: z.array(identity).max(30)}).strict()).min(1).max(30),
 }).strict().superRefine((value, context) => {
   if (!value.laneId && (!value.resourceCheck || value.prerequisite))
     context.addIssue({code: 'custom', message: 'Only a standalone resource precheck may omit a lane'})
   if (new Set(value.resources.map(resource => resource.id)).size !== value.resources.length ||
     value.resources.some(resource => new Set(resource.capabilities).size !== resource.capabilities.length))
     context.addIssue({code: 'custom', message: 'Reservation intent resources and capabilities must be unique'})
-  if (value.prerequisite && (value.owner.kind !== 'boundary-cleanup' || value.localDispatch ||
+  if (value.prerequisite?.kind !== 'resource-readiness' && value.resources.length > 9)
+    context.addIssue({code: 'custom', message: 'Ordinary intents retain their original resource bound'})
+  if (value.prerequisite?.kind === 'backend-connectivity' && (value.owner.kind !== 'boundary-cleanup' || value.localDispatch ||
     value.inputSha256 !== value.prerequisite.targetInputSha256 || value.resources.length !== 1 ||
     value.resources[0]!.id !== value.prerequisite.resourceId || value.resources[0]!.capabilities.length !== 1 ||
     value.resources[0]!.capabilities[0] !== 'backend-connectivity'))
     context.addIssue({code: 'custom', message: 'Backend prerequisite requires one phone check and its original target input'})
+  const graph = value.prerequisite?.kind === 'resource-readiness' ? value.prerequisite : undefined
+  if (graph && (value.owner.kind !== 'boundary-cleanup' || value.localDispatch || value.resourceCheck || !value.laneId ||
+    value.inputSha256 !== graph.targetInputSha256 || value.operationId !== `graph-prerequisite:${graph.targetInputSha256}` ||
+    value.controller.incarnation !== graph.candidate.controller.incarnation || value.controller.generation !== graph.candidate.controller.generation ||
+    value.resources.length !== graph.resources.length || graph.resources.some(member => member.authorityHostId !== value.hostId ||
+      !value.resources.some(resource => resource.id === member.id && resource.capabilities.length === 1 && resource.capabilities[0] === 'resource-idle'))))
+    context.addIssue({code: 'custom', message: 'Readiness intent must claim its complete original graph on one host'})
   if (value.resourceCheck && (value.owner.kind !== 'boundary-cleanup' || value.localDispatch || value.resources.length !== 1 ||
     value.resources[0]!.id !== value.resourceCheck.resourceId || value.resources[0]!.capabilities.length !== 1 ||
     value.resources[0]!.capabilities[0] !== (value.prerequisite ? 'backend-connectivity' : 'resource-idle') ||
@@ -80,7 +96,12 @@ export const exclusiveHostReservationSchema = z.object({kind: z.literal('exclusi
   resourceCheck: resourceCheckIntentSchema.optional(),
 }).strict().refine(value => (Boolean(value.laneId) || Boolean(value.resourceCheck && !value.prerequisite)) && (!value.resourceCheck || !value.origin && value.owner.kind === 'boundary-cleanup' &&
   value.resourceCheck.resourceId === value.resourceId && value.authorityHostId === value.borrowerHostId) && (!value.prerequisite || !value.origin && value.owner.kind === 'boundary-cleanup' &&
-  value.prerequisite.resourceId === value.resourceId && value.prerequisite.targetInputSha256 === value.inputSha256 &&
+  (value.prerequisite.kind === 'resource-readiness' ? !!value.resourceCheck && value.prerequisite.resources.some(member =>
+    member.id === value.resourceId && member.authorityHostId === value.authorityHostId && member.subjectGeneration === value.resourceCheck!.subjectGeneration &&
+    member.contractVersion === value.resourceCheck!.contractVersion) && sameBinding(value.prerequisite.binding, value.resourceCheck.binding) &&
+    value.resourceCheck.controller.incarnation === value.controllerIncarnation && value.resourceCheck.controller.generation === value.controllerGeneration &&
+    value.operationId === `graph-prerequisite:${value.prerequisite.targetInputSha256}` : value.prerequisite.resourceId === value.resourceId) &&
+  value.prerequisite.targetInputSha256 === value.inputSha256 &&
   value.authorityHostId === value.borrowerHostId), 'Check claim requires its original resource and host authority')
 export type ExclusiveHostReservation = z.infer<typeof exclusiveHostReservationSchema>
 export const fleetExclusiveReservationSchema = z.object({origin: z.object({kind: z.literal('fleet'), fleetInputSha256: hash}).strict(),
@@ -145,6 +166,7 @@ export const resourceReservationObservationSchema = z.object({
   // Parsed as complete qualification targets by the host/service boundary to avoid schema import cycles.
   localPrerequisites: z.array(z.unknown()).max(30).optional(),
   candidatePrerequisites: z.array(candidatePrerequisiteSettlementSchema).max(20).optional(),
+  resourceReadiness: z.literal(true).optional(),
   resourceChecks: z.array(z.object({intentSha256: hash, operationId: identity, resourceId: identity,
     intent: exclusiveResourceIntentSchema, resourceCheck: resourceCheckIntentSchema, state: z.enum(['prepared','began','never-began']),
     observedAt: z.string().datetime({offset: true}), eventId: identity.optional()}).strict()).max(100).optional(),

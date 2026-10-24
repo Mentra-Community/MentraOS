@@ -79,6 +79,128 @@ function fixture(standalone = false) {
     }}
 }
 
+function passiveScopeFixture() {
+  const f = fixture(), lane = f.host.snapshot.lanes[0]!, lifecycle = f.host.snapshot.resourceLifecycle!
+  f.subject().status = 'unknown'; f.subject().idle.outcome = 'not-checked'; f.subject().idle.checkedAt = null
+  f.subject().idle.acceptedCheck = null
+  f.subject().supportedActions = ['mark-out-of-service']
+  const add = (id: string, dependencies: string[] = [], kind: typeof lane.resources[number]['kind'] = 'glasses') => {
+    const ref = {...structuredClone(lane.resources[0]!), id, kind, idleContract: {...structuredClone(lane.resources[0]!.idleContract!), dependencies}}
+    lane.resources.push(ref)
+    if (kind === 'glasses') lane.glasses = [{resourceId: id, deviceId: '0123456789abcdef0123456789abcdef', model: 'mentra-live', capabilities: []}]
+    const subject = {...structuredClone(f.subject()), subject: {...f.subject().subject, id},
+      resource: {...structuredClone(f.subject().resource), kind}}
+    lifecycle.subjects.push(subject)
+    const intent = structuredClone(f.intent)
+    intent.operationId = `check-${id}`; intent.resources[0]!.id = id; intent.resourceCheck!.resourceId = id
+    intent.owner.id = `resource-check:${requestInputDigest({operationId: intent.operationId, resourceId: id})}`
+    const intentSha256 = requestInputDigest({...intent, controller: {incarnation: 'controller', generation: 1},
+      dependencies: [{resourceId: id, authorityHostId: 'mini', capability: 'resource-idle'}]})
+    const journal = {intentSha256, operationId: intent.operationId, resourceId: id, intent: structuredClone(intent),
+      resourceCheck: structuredClone(intent.resourceCheck!), state: 'prepared' as 'prepared' | 'began' | 'never-began', observedAt: f.host.snapshot.observedAt}
+    f.host.snapshot.resourceReservations!.resourceChecks!.push(journal)
+    return {ref, subject, intent, journal}
+  }
+  return {...f, lane, lifecycle, add}
+}
+
+test('disjoint unknown baseline probes acquire separate original claims on the same idle lane', async () => {
+  const f = passiveScopeFixture(), other = f.add('independent-glasses')
+  const first = await f.service.acquire(f.intent, 'mini')
+  expect(first.status).toBe('reserved')
+  const second = await f.service.acquire(other.intent, 'mini')
+  expect(second.status).toBe('reserved'); expect(second.claims).toHaveLength(1)
+  expect(f.host.resourceReservations).toContainEqual(first.claims[0]!); expect(f.host.resourceReservations).toHaveLength(2)
+  expect(f.subject().owner).toBeNull(); expect(other.subject.owner).toBeNull()
+  expect(resourceAvailable({...f.host, authorityReservations: f.host.resourceReservations}, other.ref.id, start)).toBe(false)
+})
+
+test('six independent probes can hold original grants together without extending the120s baseline age', async () => {
+  const f = passiveScopeFixture(), kinds = ['glasses', 'app', 'recorder', 'audio', 'fixture-data'] as const,
+    others = kinds.map((kind, i) => f.add(`independent-${i}`, [], kind))
+  for (const intent of [f.intent, ...others.map(value => value.intent)])
+    expect((await f.service.acquire(intent, 'mini')).status).toBe('reserved')
+  expect(f.host.resourceReservations).toHaveLength(6)
+  // Six serialized successful29s observations would age the first145s before
+  // the last return. Concurrent original claims avoid that forced serialization;
+  // qualification still requires actual observations and ordinary returns.
+  f.host.resourceReservations = []
+  f.advance(6 * 29_000)
+  for (const [i, subject] of f.lifecycle.subjects.entries()) {
+    subject.observedAt = f.host.snapshot.observedAt; subject.receivedAt = subject.observedAt
+    subject.status = 'idle'; subject.idle.outcome = 'passed'; subject.idle.checkedAt = new Date(start + (i + 1) * 29_000).toISOString()
+    subject.idle.acceptedCheck = {operationId: `timing-${i}`, subjectGeneration: subject.generation, resultSha256: hash, acceptedAt: subject.idle.checkedAt}
+  }
+  expect(resourceAvailable(f.host, f.subject().subject.id, start + 6 * 29_000)).toBe(false)
+  expect(resourceAvailable(f.host, others.at(-1)!.ref.id, start + 6 * 29_000)).toBe(true)
+})
+
+function beginPassiveCheck(f: ReturnType<typeof passiveScopeFixture>, intent: ExclusiveResourceIntent) {
+  const subject = f.lifecycle.subjects.find(value => value.subject.id === intent.resourceCheck!.resourceId)!,
+    journal = f.host.snapshot.resourceReservations!.resourceChecks!.find(value => value.operationId === intent.operationId)!
+  journal.state = 'began'; journal.eventId = `resource-check-began:${intent.operationId}`
+  subject.generation++; subject.status = 'checking'
+  subject.owner = {...intent.owner, generation: 3, hostId: 'mini', laneId: 'android'}
+  f.lifecycle.history.push({id: `checking:${intent.operationId}`, resourceId: subject.subject.id,
+    subjectGeneration: subject.generation, event: 'checking', at: journal.observedAt})
+}
+
+test('a current began passive reader and its original claim remain intact during a disjoint admission', async () => {
+  const f = passiveScopeFixture(), other = f.add('independent-glasses'), first = await f.service.acquire(f.intent, 'mini')
+  beginPassiveCheck(f, f.intent)
+  const original = structuredClone(f.subject())
+  expect((await f.service.acquire(other.intent, 'mini')).status).toBe('reserved')
+  expect(f.subject()).toEqual(original); expect(f.host.resourceReservations).toContainEqual(first.claims[0]!)
+})
+
+test('disjoint admission refuses unresolved original scopes, ownership, controls and stale source without removing claims', async () => {
+  for (const mutate of [
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.host.snapshot.resourceReservations!.resourceChecks!.shift()},
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.host.snapshot.resourceReservations!.resourceChecks![0]!.state = 'never-began'},
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.host.snapshot.resourceReservations!.resourceChecks![0]!.intent.inputSha256 = 'b'.repeat(64)},
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.subject().status = 'unknown'; f.subject().owner = null},
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.subject().owner!.id = 'foreign-reader'},
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.subject().generation++},
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.subject().repair.state = 'running'},
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.subject().supportedActions = []},
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.subject().resource.memberships[0]!.hostId = 'foreign'},
+    (f: ReturnType<typeof passiveScopeFixture>) => {(f.host.resourceReservations as ExclusiveHostReservation[])[0]!.controllerGeneration++},
+    (f: ReturnType<typeof passiveScopeFixture>) => {(f.host.resourceReservations as ExclusiveHostReservation[])[0]!.resourceCheck!.deadlineAt = start},
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.lane.resources[0]!.idleContract!.dependencies = ['unreported-secondary']},
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.lane.resources[0]!.idleContract!.dependencies = [f.subject().subject.id]},
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.lane.resources[1]!.idleContract!.dependencies = [f.subject().subject.id]},
+    (f: ReturnType<typeof passiveScopeFixture>) => {f.host.laneControls = [{command: {operationId: randomUUID(), hostId: 'mini',
+      operatorId: hash, expiresAt: start + 120000, subject: {resourceId: f.subject().subject.id, subjectGeneration: f.subject().generation},
+      action: 'mark-out-of-service', reason: 'Human withdrawal'}}]},
+  ]) {
+    const f = passiveScopeFixture(), other = f.add('independent-glasses')
+    await f.service.acquire(f.intent, 'mini'); beginPassiveCheck(f, f.intent); mutate(f)
+    const originalClaims = structuredClone(f.host.resourceReservations)
+    expect((await f.service.acquire(other.intent, 'mini')).status).toBe('unknown')
+    expect(f.writes).toHaveLength(1); expect(f.host.resourceReservations).toEqual(originalClaims)
+  }
+})
+
+test('recorder and fixture probes sharing a secondary app still serialize', async () => {
+  const f = passiveScopeFixture(), app = f.add('app-exact', [], 'app'),
+    recorder = f.add('recorder-exact', [app.ref.id], 'recorder'), fixture = f.add('fixture-exact', [app.ref.id], 'fixture-data')
+  const first = await f.service.acquire(recorder.intent, 'mini')
+  expect(first.status).toBe('reserved')
+  expect((await f.service.acquire(fixture.intent, 'mini')).status).toBe('unknown')
+  expect(f.host.resourceReservations).toEqual(first.claims)
+})
+
+test('post-CAS changed passive scope refuses native authority while retaining the committed original', async () => {
+  const f = passiveScopeFixture(), other = f.add('independent-glasses')
+  await f.service.acquire(f.intent, 'mini')
+  f.afterWrite(async () => {f.lane.resources[0]!.idleContract!.dependencies = [other.ref.id]})
+  expect((await f.service.acquire(other.intent, 'mini')).status).toBe('unknown')
+  expect(f.host.resourceReservations).toHaveLength(2)
+  // The lost/refused reply is reconciled through the same actual committed claim.
+  expect((await f.service.observe({intent: other.intent, controller: other.intent.controller}, 'mini')).status).toBe('reserved')
+  expect(f.host.resourceReservations).toHaveLength(2); expect(f.writes).toHaveLength(2)
+})
+
 test('queued exact manual reserve or OOS wins before generic check changes local authority', async () => {
   for(const action of ['reserve','mark-out-of-service'] as const){const f=fixture();await f.controls.submit(f.control(action),'alice')
     expect((await f.service.acquire(f.intent,'mini')).status).toBe('unknown');expect(f.writes).toEqual([]);expect(f.subject().owner).toBeNull();expect(f.subject().generation).toBe(2)}

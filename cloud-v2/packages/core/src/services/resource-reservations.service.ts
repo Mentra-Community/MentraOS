@@ -16,9 +16,10 @@ import {routineQualificationTargetSchema, type StoredRoutineJob, type OwnedRouti
 import {preparationRejectionSchema} from '../types/routine-dispatch.types'
 import {z} from 'zod'
 import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
-import {candidatePrerequisiteRequestMatches, qualifiedCandidate, candidateReturnMatches} from './backend-candidate-preparation'
+import {candidatePrerequisiteRequestMatches, qualifiedCandidate, candidateReturnMatches, qualifiedGraphCandidate,
+  graphCandidateClaimMatches, graphCandidateReturnMatches} from './backend-candidate-preparation'
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
-import {resourceAvailable, resourceLaneBlocker, requiredResourceBlocker, type ResourceReadinessBlocker} from './resource-readiness'
+import {resourceAvailable, resourceBlocker, resourceCandidateBlocker, resourceLaneBlocker, requiredResourceBlocker, type ResourceReadinessBlocker} from './resource-readiness'
 import {laneControlRecordSchema, resourceControlRecordSchema, type ResourceControlRecord} from '../types/lane-control.types'
 import {manualWithdrawalNeedsRestoration} from '../types/resource-control-authority'
 
@@ -46,8 +47,29 @@ export function routineResourceBlocker(host: ResourceReservationHost, row: Store
     laneBlocker = resourceLaneBlocker(readinessHost, laneId, {...original, hostId: host.hostId})
   if (laneBlocker) return laneBlocker
   const phone = lane.resources.find(value => value.kind === 'phone')
+  const graph = qualifiedGraphCandidate(row, host.snapshot, laneId, now, host.receivedAt)
+  const retainedPurpose = row.fleetCandidatePreparations?.at(-1)?.target.purpose
+  if (!candidateCheck && retainedPurpose?.kind === 'resource-readiness' && !graph)
+    return {code: 'resource-idle-proof-unavailable', resourceId: retainedPurpose.resourceId}
   const backendRequired = requiresBackendConnectivity(row), qualified = backendRequired && qualifiedCandidate(row, host.snapshot, laneId, now, host.receivedAt)
   if (backendRequired && !candidateCheck && !qualified) return {code: 'routine-backend-proof-unavailable', laneId}
+  if (graph?.target.purpose?.kind === 'resource-readiness') {
+    for (const required of row.fleetPreparation.requirements.resources) {
+      const resource = lane.resources.find(value => value.kind === required.kind)
+      if (!resource) return {code: 'resource-not-enrolled', laneId, resourceKind: required.kind}
+      if (['network', 'workspace'].includes(required.kind)) {
+        const blocker = resourceBlocker(readinessHost, resource.id, now, false, {...original, laneId})
+        if (blocker) return blocker
+        continue
+      }
+      if (!graph.target.purpose.resources.some(member => member.id === resource.id)) return {code: 'resource-idle-proof-unavailable', resourceId: resource.id}
+    }
+    for (const member of graph.target.purpose.resources) {
+      const blocker = resourceCandidateBlocker(readinessHost, member.id, now, {...original, laneId})
+      if (blocker) return blocker
+    }
+    return undefined
+  }
   return requiredResourceBlocker(readinessHost, lane, row.fleetPreparation.requirements.resources, now,
     (_required, resource) => resource.id === phone?.id && Boolean(candidateCheck || qualified), original)
 }
@@ -177,7 +199,7 @@ export const resourceReservationRepository: ResourceReservationRepository = {
     if (intent.prerequisite!.candidate) {
       const row = await this.request!(intent.prerequisite!.jobId), pending = row?.fleetCandidatePreparation;
       if (!candidatePrerequisiteRequestMatches(row, intent, now.getTime()) || !pending) return false;
-      if (!pending.backendTarget) {
+      if (intent.prerequisite!.target && !pending.backendTarget) {
         const saved = await TestRequestModel.collection.findOneAndUpdate({requestId: row!.requestId, state: 'awaiting-runner',
           fleetCandidatePreparation: pending, fleetBinding: {$exists: false}, fleetResourceAdmission: {$exists: false},
           fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
@@ -194,6 +216,16 @@ export const resourceReservationRepository: ResourceReservationRepository = {
     return this.replace(host, claims)
   },
   async recordCandidateReturn(requestId, pending, returned) {
+    if (pending.target.purpose?.kind === 'resource-readiness') {
+      if (!graphCandidateReturnMatches(pending, returned)) return false
+      const value = exclusiveResourceReturnSchema.parse(returned), prior = pending.resourceReturns ?? [],
+        original = prior.find(item => exclusiveResourceReturnSchema.parse(item).resourceId === value.resourceId)
+      if (original) return isDeepStrictEqual(original, value)
+      return Boolean(await TestRequestModel.collection.findOneAndUpdate({requestId, fleetCandidatePreparation: pending,
+        fleetBinding: {$exists: false}, fleetResourceAdmission: {$exists: false}},
+        {$set: {'fleetCandidatePreparation.resourceReturns': [...prior, value]}},
+        {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}))
+    }
     if (!candidateReturnMatches(pending, returned)) return false;
     if (pending.returnReceipt) return isDeepStrictEqual(pending.returnReceipt, returned);
     return Boolean(await TestRequestModel.collection.findOneAndUpdate({requestId, fleetCandidatePreparation: pending,
@@ -205,7 +237,7 @@ export const resourceReservationRepository: ResourceReservationRepository = {
       const previous = pending.noAcquisitionReceipt as {intent?: unknown; journal?: unknown}
       return isDeepStrictEqual(previous.intent, receipt.intent) && isDeepStrictEqual(previous.journal, receipt.journal)
     }
-    if (pending.claimReceipt || pending.returnReceipt || !receipt.intent.prerequisite?.candidate ||
+    if (pending.claimReceipt || pending.returnReceipt || pending.resourceClaims?.length || pending.resourceReturns?.length || !receipt.intent.prerequisite?.candidate ||
       !isDeepStrictEqual(receipt.intent.prerequisite.candidate, pending.candidate) || receipt.intent.hostId !== pending.hostId ||
       receipt.intent.laneId !== pending.laneId || receipt.intent.inputSha256 !== pending.targetInputSha256) return false
     return Boolean(await TestRequestModel.collection.findOneAndUpdate({requestId, fleetCandidatePreparation: pending,
@@ -213,6 +245,16 @@ export const resourceReservationRepository: ResourceReservationRepository = {
       {$set: {'fleetCandidatePreparation.noAcquisitionReceipt': receipt}}, {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}))
   },
   async recordCandidateClaim(requestId, pending, claim) {
+    if (pending.target.purpose?.kind === 'resource-readiness') {
+      if (!graphCandidateClaimMatches(pending, claim)) return false
+      const prior = pending.resourceClaims ?? [], original = prior.find(value =>
+        (value as ExclusiveHostReservation).resourceId === claim.resourceId)
+      if (original) return isDeepStrictEqual(original, claim)
+      return Boolean(await TestRequestModel.collection.findOneAndUpdate({requestId, fleetCandidatePreparation: pending,
+        fleetBinding: {$exists: false}, fleetResourceAdmission: {$exists: false}},
+        {$set: {'fleetCandidatePreparation.resourceClaims': [...prior, claim]}},
+        {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}))
+    }
     if (pending.claimReceipt) return isDeepStrictEqual(pending.claimReceipt, claim);
     if (!claim.prerequisite?.candidate || !isDeepStrictEqual(claim.prerequisite.candidate, pending.candidate) ||
       claim.prerequisite.targetInputSha256 !== pending.targetInputSha256 || !isDeepStrictEqual(claim.prerequisite.target, pending.backendTarget) ||
@@ -395,7 +437,14 @@ export class ResourceReservationsService {
         if (current.fleetDeadline.getTime() <= this.now() || !routineResourcesAvailable(borrower, current, laneId, this.now())) return null
         return row.fleetExclusiveReservation && !isDeepStrictEqual(row.fleetExclusiveReservation, receipt) ? null : receipt
       }
-      if(selected.some(dependency=>!dependencyAvailable(authority,dependency,this.now()))) return null;
+      if (selected.some(dependency => {
+        const graph = qualifiedGraphCandidate(current, borrower.snapshot, laneId, this.now(), borrower.receivedAt)
+        return graph?.target.purpose?.kind === 'resource-readiness' && authority.hostId === hostId &&
+          graph.target.purpose.resources.some(member => member.id === dependency.resourceId)
+          ? resourceCandidateBlocker({...authority, resourceControlRecords: authority.laneControls, authorityReservations: authority.resourceReservations},
+            dependency.resourceId, this.now(), {requestId, inputSha256: digest, laneId}) !== undefined
+          : !dependencyAvailable(authority, dependency, this.now())
+      })) return null
       if (claims.length + selected.length > 1000) return null
       const intentSha256 = requestInputDigest({...intent, controller: {incarnation: intent.controller.incarnation,
         generation: intent.controller.generation}, origin, dependencies: selected}),
@@ -456,6 +505,7 @@ export class ResourceReservationsService {
   async acquire(value: unknown, hostId: string) {
     const intent = exclusiveResourceIntentSchema.parse(value)
     if (intent.hostId !== hostId) throw new TestRunError(409, 'Resource intent differs from authenticated controller')
+    if (intent.prerequisite?.kind === 'resource-readiness') return this.acquireGraphPrerequisite(intent, hostId)
     if (intent.resourceCheck) return this.acquireResourceCheck(intent, hostId)
     if (intent.prerequisite) return this.acquireBackendPrerequisite(intent, hostId)
     const borrower = await this.host(hostId)
@@ -507,6 +557,7 @@ export class ResourceReservationsService {
       input.controller.generation < intent.controller.generation ||
       input.controller.generation === intent.controller.generation && input.controller.incarnation !== intent.controller.incarnation)
       throw new TestRunError(409, 'Original claim observation requires the current reporting controller')
+    if (intent.prerequisite?.kind === 'resource-readiness') return this.observeGraphPrerequisite(intent, borrower, input.controller)
     if (intent.resourceCheck) return this.observeResourceCheck(intent, borrower, input.controller)
     if (intent.prerequisite) {
       const intentSha256 = this.backendIntentDigest(intent), all = hostResourceReservationsSchema.parse(borrower.resourceReservations ?? []),
@@ -586,6 +637,8 @@ export class ResourceReservationsService {
   }
   async giveBack(value: unknown, hostId: string) {
     const returned = exclusiveResourceReturnSchema.parse(value), borrower = await this.host(hostId), release = returned.release
+    if (returned.originalOwner.id === `resource-graph:${returned.inputSha256}`)
+      return this.giveBackGraphPrerequisite(returned, borrower, hostId)
     if ('kind' in release && (release.kind === 'resource-check-not-started' ||
       borrower.snapshot.resourceReservations?.resourceChecks?.some(journal => journal.operationId === release.operationId &&
         journal.intentSha256 === returned.intentSha256)))
@@ -902,6 +955,227 @@ export class ResourceReservationsService {
       current.sequence === host.sequence && current.resourceReservationVersion === host.resourceReservationVersion && current.laneControlVersion === host.laneControlVersion &&
       isDeepStrictEqual(current.snapshot.resourceLifecycle, host.snapshot.resourceLifecycle) && isDeepStrictEqual(current.snapshot.resourceReservations, host.snapshot.resourceReservations)
   }
+  /** Ordinary passive checks may share a lane only when their complete current
+   * declared footprints are disjoint. A claim alone does not prove a reader scope. */
+  private disjointResourceCheckClaims(host: ResourceReservationHost, intent: ExclusiveResourceIntent, acquired?: ExclusiveHostReservation) {
+    if (intent.prerequisite || !intent.laneId) return undefined
+    const lifecycle = host.snapshot.resourceLifecycle, now = this.now(),
+      installed = [...host.snapshot.lanes.flatMap(lane => lane.resources), ...host.snapshot.resources ?? []],
+      all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []).filter(claim => !acquired || !isDeepStrictEqual(claim, acquired))
+    if (!lifecycle) return undefined
+    const scope = (root: string) => {
+      const visited = new Set<string>(), visiting = new Set<string>()
+      const visit = (id: string): boolean => {
+        if (visiting.has(id)) return false
+        if (visited.has(id)) return true
+        const refs = installed.filter(ref => ref.id === id), ref = refs[0], contract = ref?.idleContract,
+          subject = lifecycle.subjects.find(value => value.subject.id === id)
+        if (!ref || !contract || contract.qualifiedScope.kind === 'unqualified' || !subject?.current ||
+          subject.subject.authorityHostId !== host.hostId || subject.resource.kind !== ref.kind ||
+          subject.idle.contractVersion !== contract.version || !isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope) ||
+          !subject.observedAt || Date.parse(subject.observedAt) > Date.parse(host.snapshot.observedAt) ||
+          !fresh({...host, snapshot: {...host.snapshot, observedAt: subject.observedAt}}, now) ||
+          refs.some(other => other.kind !== ref.kind || !isDeepStrictEqual(other.idleContract, contract) ||
+            !isDeepStrictEqual(other.exclusiveDependencies ?? [], ref.exclusiveDependencies ?? [])) ||
+          subject.resource.memberships.some(member => member.hostId !== host.hostId || !host.snapshot.lanes.some(lane =>
+            lane.id === member.laneId && lane.resources.some(resource => resource.id === id))) ||
+          ref.exclusiveDependencies?.some(dependency => dependency.authorityHostId !== host.hostId)) return false
+        visiting.add(id)
+        if (![...contract.dependencies ?? [], ...subject.resource.dependencies,
+          ...ref.exclusiveDependencies?.map(dependency => dependency.resourceId) ?? []].every(visit)) return false
+        visiting.delete(id); visited.add(id)
+        return true
+      }
+      return visit(root) ? visited : undefined
+    }
+    const free = (ids: Set<string>, ownedRoot?: string) => [...ids].every(id => {
+      const subject = lifecycle.subjects.find(value => value.subject.id === id)!
+      // Preparing this original intentionally removes its advertised Check action.
+      // Known-custody withdrawal remains available; it cannot bless unknown effects.
+      return subject.repair.state === 'none' && subject.supportedActions.includes('mark-out-of-service') &&
+        (id === ownedRoot || subject.owner === null && ['idle', 'unknown'].includes(subject.status))
+    })
+    const target = scope(intent.resourceCheck!.resourceId)
+    if (!target || !free(target)) return undefined
+    const occupied = new Set(target), permitted = new Set<string>()
+    for (const claim of all) {
+      if (!isExclusiveHostReservation(claim)) {
+        if (claim.hostId === host.hostId && claim.laneId === intent.laneId) return undefined
+        continue
+      }
+      if (claim.borrowerHostId !== host.hostId || claim.laneId !== intent.laneId) {
+        if (occupied.has(claim.resourceId)) return undefined
+        continue
+      }
+      const check = claim.resourceCheck, subject = lifecycle.subjects.find(value => value.subject.id === claim.resourceId)
+      if (!check || claim.prerequisite || claim.origin || !subject || claim.controllerIncarnation !== host.incarnation ||
+        claim.controllerGeneration !== host.incarnationGeneration || claim.borrowerSequence > host.sequence || now >= check.deadlineAt ||
+        !isDeepStrictEqual(check.binding, host.snapshot.frameworkBinding)) return undefined
+      const journals = host.snapshot.resourceReservations?.resourceChecks?.filter(value => value.operationId === claim.operationId),
+        journal = journals?.length === 1 ? journals[0] : undefined, footprint = scope(claim.resourceId)
+      if (!journal || !this.resourceCheckClaimMatches(claim, journal.intent, this.resourceCheckIntentDigest(journal.intent)) ||
+        !isDeepStrictEqual(this.resourceCheckJournal(host, journal.intent), journal) || !footprint ||
+        [...footprint].some(id => occupied.has(id)) || Date.parse(journal.observedAt) > Date.parse(host.snapshot.observedAt)) return undefined
+      if (journal.state === 'prepared') {
+        if (subject.generation !== check.subjectGeneration || !free(footprint)) return undefined
+      } else if (journal.state === 'began') {
+        if (journal.eventId !== `resource-check-began:${claim.operationId}` || subject.status !== 'checking' ||
+          !isDeepStrictEqual(subject.owner && {id: subject.owner.id, kind: subject.owner.kind}, claim.owner) ||
+          subject.owner?.hostId !== host.hostId || subject.owner.laneId !== undefined && subject.owner.laneId !== intent.laneId ||
+          subject.generation !== check.subjectGeneration + 1 || Date.parse(journal.observedAt) < Date.parse(claim.reservedAt) ||
+          !free(footprint, claim.resourceId) || !lifecycle.history.some(event => event.resourceId === claim.resourceId &&
+            event.event === 'checking' && event.subjectGeneration === subject.generation &&
+            Date.parse(event.at) >= Date.parse(claim.reservedAt) && Date.parse(event.at) <= Date.parse(journal.observedAt))) return undefined
+      } else return undefined
+      for (const id of footprint) occupied.add(id)
+      permitted.add(claim.id)
+    }
+    // A control or another authority claim on a secondary resource still wins.
+    if (all.some(claim => isExclusiveHostReservation(claim) && !permitted.has(claim.id) && occupied.has(claim.resourceId))) return undefined
+    const controls = z.array(z.union([laneControlRecordSchema, resourceControlRecordSchema])).max(100).parse(host.laneControls ?? [])
+    if (controls.some(row => 'subject' in row.command && occupied.has(row.command.subject.resourceId) &&
+      (!row.receipt || row.receipt.result.status === 'accepted' &&
+        (row.receipt.result.reservation && ['waiting', 'granted', 'returning'].includes(row.receipt.result.reservation.state) ||
+          'check' in row.receipt.result && row.receipt.result.check?.state !== undefined && row.receipt.result.check.state !== 'settled' ||
+          manualWithdrawalNeedsRestoration(row as ResourceControlRecord,
+            lifecycle.subjects.find(subject => subject.subject.id === (row.command as ResourceControlRecord['command']).subject.resourceId), host.hostId, true, now))))) return undefined
+    return permitted.size ? permitted : undefined
+  }
+  private graphIntentDigest(intent: ExclusiveResourceIntent) {
+    if (intent.prerequisite?.kind !== 'resource-readiness') throw new TestRunError(409, 'Readiness intent has no original graph')
+    return requestInputDigest({...intent, controller: {incarnation: intent.controller.incarnation, generation: intent.controller.generation},
+      dependencies: intent.prerequisite.resources.map(member => ({resourceId: member.id,
+        authorityHostId: member.authorityHostId, capability: 'resource-idle'}))})
+  }
+  private graphSubjectsCurrent(host: ResourceReservationHost, intent: ExclusiveResourceIntent) {
+    const purpose = intent.prerequisite
+    if (purpose?.kind !== 'resource-readiness' || host.snapshot.resourceReservations?.resourceReadiness !== true ||
+      !fresh(host, this.now()) || !intent.laneId ||
+      host.incarnation !== intent.controller.incarnation || host.incarnationGeneration !== intent.controller.generation ||
+      host.sequence < intent.controller.sequence || !isDeepStrictEqual(host.snapshot.frameworkBinding, purpose.binding)) return false
+    const lane = host.snapshot.lanes.find(value => value.id === intent.laneId)
+    if (!lane || lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic' ||
+      resourceLaneBlocker({resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations}, lane.id)) return false
+    return purpose.resources.every(member => {
+      const subject = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === member.id),
+        refs = [...host.snapshot.resources ?? [], ...host.snapshot.lanes.flatMap(value => value.resources)].filter(value => value.id === member.id), ref = refs[0]
+      return member.authorityHostId === host.hostId && refs.length > 0 && refs.every(value => value.kind === ref!.kind &&
+        isDeepStrictEqual(value.idleContract, ref!.idleContract) && isDeepStrictEqual(value.exclusiveDependencies, ref!.exclusiveDependencies)) &&
+        ref?.kind === member.kind && ref.idleContract?.version === member.contractVersion && ref.idleContract.qualifiedScope.kind !== 'unqualified' &&
+        subject?.current && !!subject.resource && subject.subject.authorityHostId === host.hostId && subject.generation === member.subjectGeneration &&
+        subject.owner === null && subject.repair.state === 'none' && member.capabilities.every(value => ref.capabilities?.includes(value)) &&
+        !(ref.idleContract.dependencies ?? []).some(id => !purpose.resources.some(value => value.id === id)) &&
+        !subject.resource.dependencies.some(id => !purpose.resources.some(value => value.id === id)) &&
+        !(ref.exclusiveDependencies ?? []).some(dependency => dependency.authorityHostId !== host.hostId ||
+          !purpose.resources.some(value => value.id === dependency.resourceId)) &&
+        resourceCandidateBlocker({...host, resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations}, member.id, this.now()) === undefined
+    })
+  }
+  private async checkpointGraphClaims(intent: ExclusiveResourceIntent, claims: ExclusiveHostReservation[]) {
+    for (const claim of claims) {
+      const row = await this.rows.request?.(intent.prerequisite!.jobId), pending = row?.fleetCandidatePreparation
+      if (!row || !pending || !await this.rows.recordCandidateClaim?.(row.requestId, pending, claim)) return false
+    }
+    return true
+  }
+  private async acquireGraphPrerequisite(intent: ExclusiveResourceIntent, hostId: string) {
+    const purpose = intent.prerequisite
+    if (purpose?.kind !== 'resource-readiness') throw new TestRunError(409, 'Readiness graph is missing')
+    const intentSha256 = this.graphIntentDigest(intent), unknown = {status: 'unknown' as const, intentSha256, claims: []}
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const host = await this.host(hostId), all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []),
+        relevant = all.filter(isExclusiveHostReservation).filter(claim => purpose.resources.some(member => member.id === claim.resourceId)),
+        row = await this.rows.request?.(purpose.jobId), pending = row?.fleetCandidatePreparation
+      if (!pending || pending.target.purpose?.kind !== 'resource-readiness' || !fresh(host, this.now()) ||
+        host.incarnation !== intent.controller.incarnation || host.incarnationGeneration !== intent.controller.generation ||
+        host.sequence < intent.controller.sequence || requiresBackendConnectivity(row!) && !purpose.target) return unknown
+      // A complete committed original is custody, even after the caller's deadline
+      // or cancellation. It never starts a replacement reader.
+      if (relevant.length) return relevant.length === purpose.resources.length && relevant.every(claim =>
+        claim.intentSha256 === intentSha256 && graphCandidateClaimMatches(pending, claim)) &&
+        await this.checkpointGraphClaims(intent, relevant) ? {status: 'reserved' as const, intentSha256, claims: relevant} : unknown
+      if (!candidatePrerequisiteRequestMatches(row ?? null, intent, this.now()) || !this.graphSubjectsCurrent(host, intent)) return unknown
+      if (all.some(claim => isExclusiveHostReservation(claim)
+        ? claim.borrowerHostId === hostId && claim.laneId === intent.laneId
+        : claim.hostId === hostId && claim.laneId === intent.laneId)) return unknown
+      if (all.length + purpose.resources.length > 1000) throw new TestRunError(409, 'Resource authority is full; unresolved claims retain custody')
+      const claims: ExclusiveHostReservation[] = purpose.resources.map(member => ({kind: 'exclusive', id: randomUUID(),
+        resourceId: member.id, authorityHostId: hostId, borrowerHostId: hostId, laneId: intent.laneId, operationId: intent.operationId,
+        intentSha256, inputSha256: intent.inputSha256, owner: intent.owner, prerequisite: purpose,
+        resourceCheck: {resourceId: member.id, subjectGeneration: member.subjectGeneration, contractVersion: member.contractVersion,
+          deadlineAt: Date.parse(pending.target.deadline), binding: purpose.binding, controller: purpose.candidate.controller},
+        controllerIncarnation: intent.controller.incarnation, controllerGeneration: intent.controller.generation,
+        borrowerSequence: intent.controller.sequence, reservedAt: new Date(this.now()).toISOString()}))
+      if (!await this.rows.replaceBackend?.(host, [...all, ...claims], intent, new Date(this.now()))) continue
+      if (!await this.checkpointGraphClaims(intent, claims)) return unknown
+      const after = await this.host(hostId), committed = hostResourceReservationsSchema.parse(after.resourceReservations ?? []),
+        withoutOwn = {...after, resourceReservations: committed.filter(value => !claims.some(claim => isDeepStrictEqual(value, claim)))}
+      if (!fresh(after, this.now()) || after.incarnation !== host.incarnation || after.incarnationGeneration !== host.incarnationGeneration ||
+        !claims.every(claim => committed.some(value => isDeepStrictEqual(value, claim))) ||
+        !this.graphSubjectsCurrent(withoutOwn, intent) || !candidatePrerequisiteRequestMatches(await this.rows.request?.(purpose.jobId) ?? null, intent, this.now())) return unknown
+      return {status: 'reserved' as const, intentSha256, claims}
+    }
+    return unknown
+  }
+  private async observeGraphPrerequisite(intent: ExclusiveResourceIntent, host: ResourceReservationHost, controller: ExclusiveResourceIntent['controller']) {
+    const purpose = intent.prerequisite
+    if (purpose?.kind !== 'resource-readiness') throw new TestRunError(409, 'Readiness graph is missing')
+    const intentSha256 = this.graphIntentDigest(intent), all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []),
+      relevant = all.filter(isExclusiveHostReservation).filter(claim => purpose.resources.some(member => member.id === claim.resourceId)),
+      row = await this.rows.request?.(purpose.jobId), pending = row?.fleetCandidatePreparation,
+      unknown = {status: 'unknown' as const, intentSha256, claims: []}
+    if (!pending) return unknown
+    if (relevant.length) return relevant.length === purpose.resources.length && relevant.every(claim =>
+      claim.intentSha256 === intentSha256 && graphCandidateClaimMatches(pending, claim)) && await this.checkpointGraphClaims(intent, relevant)
+      ? {status: 'reserved' as const, intentSha256, claims: relevant} : unknown
+    if (pending.resourceClaims?.length || pending.resourceReturns?.length || controller.incarnation !== intent.controller.incarnation ||
+      controller.generation !== intent.controller.generation || controller.sequence <= intent.controller.sequence ||
+      !this.graphSubjectsCurrent(host, intent)) return unknown
+    // Fence every older claim CAS before publishing authenticated absence. The
+    // worker separately proves its original parent/children never admitted work.
+    if (!await this.rows.replace(host, all)) return unknown
+    const after = await this.host(host.hostId), version = (host.resourceReservationVersion ?? 0) + 1
+    if (after.sequence !== controller.sequence || after.resourceReservationVersion !== version ||
+      !isDeepStrictEqual(after.resourceReservations, all) || !this.graphSubjectsCurrent(after, intent)) return unknown
+    const observation = {status: 'not-acquired' as const, intentSha256, claims: [], fence: {hostId: host.hostId,
+      controller, resourceReservationVersion: version, resourceId: purpose.resourceId, subjectGeneration: purpose.resources[0]!.subjectGeneration,
+      subjects: purpose.resources.map(member => ({resourceId: member.id, subjectGeneration: member.subjectGeneration}))}}
+    if (!await this.rows.recordCandidateNoAcquisition?.(row!.requestId, pending, {intent, journal: pending.target, observation})) return unknown
+    return observation
+  }
+  private async giveBackGraphPrerequisite(returned: ExclusiveResourceReturn, host: ResourceReservationHost, hostId: string) {
+    const row = await this.rows.candidateRequest?.(hostId, returned.inputSha256), pending = row?.fleetCandidatePreparation,
+      release = returned.release, subject = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === returned.resourceId),
+      proof = (({controller: _, ...value}) => value)(returned)
+    if (!row || !pending || !graphCandidateReturnMatches(pending, returned) || !('kind' in release) || release.kind !== 'resource-check' ||
+      !fresh(host, this.now()) || host.incarnation !== returned.controller.incarnation || host.incarnationGeneration !== returned.controller.generation ||
+      host.sequence !== returned.controller.sequence || !subject?.current || subject.owner !== null ||
+      subject.subject.authorityHostId !== hostId || subject.generation !== release.subjectGeneration ||
+      subject.idle.acceptedCheck?.operationId !== release.operationId || subject.idle.acceptedCheck.subjectGeneration !== subject.generation ||
+      Date.parse(release.releasedAt) > this.now() || Date.parse(release.releasedAt) > Date.parse(host.snapshot.observedAt) ||
+      !host.snapshot.resourceReservations?.returns.some(value => isDeepStrictEqual(value, proof)) ||
+      release.eventId !== `resource-lifecycle:${requestInputDigest({id: returned.resourceId, subjectGeneration: release.subjectGeneration})}` ||
+      !host.snapshot.resourceLifecycle?.history.some(event => event.id === release.eventId && event.event === 'resource-check-released' &&
+        event.resourceId === returned.resourceId && event.checkOperationId === release.operationId && event.subjectGeneration === release.subjectGeneration &&
+        event.at === release.releasedAt && event.ownerId === returned.originalOwner.id))
+      throw new TestRunError(409, 'Readiness graph return requires its exact owned check and normal released member')
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = await this.host(hostId), all = hostResourceReservationsSchema.parse(current.resourceReservations ?? []),
+        claim = all.filter(isExclusiveHostReservation).find(value => value.resourceId === returned.resourceId)
+      if (!fresh(current, this.now()) || current.incarnation !== host.incarnation || current.incarnationGeneration !== host.incarnationGeneration ||
+        current.sequence !== host.sequence || !isDeepStrictEqual(current.snapshot.resourceLifecycle, host.snapshot.resourceLifecycle) ||
+        !isDeepStrictEqual(current.snapshot.resourceReservations, host.snapshot.resourceReservations))
+        throw new TestRunError(409, 'Readiness graph original return changed; retain the same member')
+      if (claim && (claim.id !== returned.claimId || !graphCandidateClaimMatches(pending, claim) || claim.intentSha256 !== returned.intentSha256))
+        throw new TestRunError(409, 'Readiness graph return differs from its retained original claim')
+      if (claim && !await this.rows.replace(current, all.filter(value => value !== claim))) continue
+      const actual = await this.rows.request?.(row.requestId), original = actual?.fleetCandidatePreparation
+      if (!original || !await this.rows.recordCandidateReturn?.(row.requestId, original, returned))
+        throw new TestRunError(409, 'Readiness graph original member acknowledgement is pending')
+      return {status: 'returned' as const, claimId: returned.claimId}
+    }
+    throw new TestRunError(409, 'Readiness graph authority changed; retain the same original member')
+  }
   private async acquireResourceCheck(intent: ExclusiveResourceIntent, hostId: string) {
     const intentSha256 = this.resourceCheckIntentDigest(intent), unknown = {status: 'unknown' as const, intentSha256, claims: []}
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -919,12 +1193,13 @@ export class ResourceReservationsService {
         intent.prerequisite.local ? Boolean(await this.rows.request?.(intent.prerequisite.jobId)) || !localBackendIntentMatches(host, intent, this.now()) :
           !backendPrerequisiteRequestMatches(selected ?? null, intent, this.now()))) return unknown
       const queuedDependency = !intent.prerequisite ? this.queuedDependencyClaims(host, intent) : undefined,
-        disjointRepair = !intent.prerequisite ? this.disjointResourceCheckRepairClaims(host, intent) ?? queuedDependency : undefined
+        disjointRepair = !intent.prerequisite ? this.disjointResourceCheckRepairClaims(host, intent) ?? queuedDependency : undefined,
+        disjointChecks = !intent.prerequisite ? this.disjointResourceCheckClaims(host, intent) : undefined
       const capacityBlocked = (claims: HostResourceReservation[], permitted?: Set<string>) => claims.some(claim => isExclusiveHostReservation(claim) ? Boolean(!permitted?.has(claim.id) && intent.laneId && claim.borrowerHostId === hostId && claim.laneId === intent.laneId &&
           (!intent.prerequisite || intent.prerequisite.local || !selected?.fleetExclusiveReservation?.claims.some(value => isDeepStrictEqual(value, claim)))) :
         claim.hostId === hostId && claim.laneId === intent.laneId &&
           (!intent.prerequisite || intent.prerequisite.local || !isDeepStrictEqual(claim, selected?.fleetResourceReservation)))
-      if (capacityBlocked(all, disjointRepair)) return unknown
+      if (capacityBlocked(all, disjointRepair ?? disjointChecks)) return unknown
       if (all.length >= 1000) throw new TestRunError(409, 'Resource authority is full; unresolved claims retain custody')
       const claim: ExclusiveHostReservation = {kind: 'exclusive', id: randomUUID(), resourceId: intent.resourceCheck!.resourceId,
         authorityHostId: hostId, borrowerHostId: hostId, ...(intent.laneId ? {laneId: intent.laneId} : {}), operationId: intent.operationId, intentSha256,
@@ -945,6 +1220,9 @@ export class ResourceReservationsService {
       if (queuedDependency && (!await this.resourceCheckTargetCurrent(after, intent) ||
         capacityBlocked(hostResourceReservationsSchema.parse(after.resourceReservations ?? []).filter(value => !isDeepStrictEqual(value, claim)), queuedDependency) ||
         !isDeepStrictEqual(this.queuedDependencyClaims(after, intent, claim), queuedDependency))) return unknown
+      if (disjointChecks && (!await this.resourceCheckTargetCurrent(after, intent) ||
+        capacityBlocked(hostResourceReservationsSchema.parse(after.resourceReservations ?? []).filter(value => !isDeepStrictEqual(value, claim)), disjointChecks) ||
+        !isDeepStrictEqual(this.disjointResourceCheckClaims(after, intent, claim), disjointChecks))) return unknown
       return {status: 'reserved' as const, intentSha256, claims: [claim]}
     }
     return unknown

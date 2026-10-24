@@ -1087,8 +1087,10 @@ async function precheckBackendFixture() {
   subject.owner=null;subject.status='unknown'
   f.observed.resourceLifecycle=f.row.snapshot.resourceLifecycle
   f.original.fleetDeadline=new Date(now+300000);f.original.fleetInputSha256=routineJobInputDigest(f.original);selectPreparing(f.original,f.observed)
+  const prerequisite=f.intent.prerequisite
+  if(prerequisite?.kind!=='backend-connectivity')throw new Error('Expected the original backend prerequisite fixture')
   const target=(await f.targets('mini'))[0]!, intent:ExclusiveResourceIntent={...f.intent,inputSha256:target.inputSha256,
-    prerequisite:{...f.intent.prerequisite!,targetInputSha256:target.inputSha256,binding:target.acceptedBinding!,preparing:target.preparing!},
+    prerequisite:{...prerequisite,targetInputSha256:target.inputSha256,binding:target.acceptedBinding!,preparing:target.preparing!},
     resourceCheck:{resourceId:'phone',subjectGeneration:subject.generation,contractVersion:subject.idle.contractVersion,
       deadlineAt:now+60000,binding:target.acceptedBinding!,controller:{incarnation:'controller',generation:1}}}
   const digest=requestInputDigest({...intent,controller:{incarnation:'controller',generation:1},

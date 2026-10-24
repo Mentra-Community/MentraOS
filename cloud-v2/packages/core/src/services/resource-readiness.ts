@@ -47,7 +47,7 @@ export function resourceLaneAvailable(host: ResourceReadinessAuthority, laneId: 
 
 /** Baseline admission is independent of executable app/permission qualification. */
 export function resourceBlocker(host: ResourceReadinessHost, resourceId: string, now: number, allowUnchecked = false,
-  original?: {requestId: string; inputSha256: string; laneId: string}) {
+  original?: {requestId: string; inputSha256: string; laneId: string}, requireCurrentBaselineAge = true) {
   if (hostResourceReservationsSchema.parse(host.authorityReservations ?? []).some(claim => isExclusiveHostReservation(claim) && claim.resourceId === resourceId &&
     !(original && claim.owner.kind === 'run' && claim.owner.id === original.requestId && claim.origin?.kind === 'fleet' &&
       claim.origin.fleetInputSha256 === original.inputSha256 && claim.inputSha256 === original.inputSha256 &&
@@ -65,7 +65,8 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
     .flatMap(lane => lane.resources).find(value => value.id === resourceId), contract = resource?.idleContract
   const hostBlocker = resourceHostBlocker(host, now)
   if (hostBlocker) return hostBlocker
-  if (host.snapshot.laneControls?.resourceControls !== true && !contract && !raw && !previous && !relevant.length) return undefined
+  if ((host.snapshot.laneControls?.resourceControls !== true || ['network', 'workspace'].includes(resource?.kind ?? '')) &&
+    !contract && !raw && !previous && !relevant.length) return undefined
   const received = host.receivedAt instanceof Date ? host.receivedAt.getTime() : Date.parse(host.receivedAt)
   const fresh = true
   if (relevant.some(row => manualWithdrawalNeedsRestoration(row, subject, host.hostId, fresh, now))) return {code: 'resource-restoration-required' as const, resourceId}
@@ -73,7 +74,7 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
   if (!fresh || !subject?.current || subject.subject.authorityHostId !== host.hostId || subject.owner !== null ||
     subject.repair.state !== 'none' || previous && (previous.subject.authorityHostId !== host.hostId || subject.generation < previous.generation) ||
     !Number.isFinite(observed) || observed > Date.parse(host.snapshot.observedAt ?? '') ||
-    Date.parse(host.snapshot.observedAt ?? '') > received || now - observed > 120_000) return {code: 'resource-baseline-unavailable' as const, resourceId}
+    Date.parse(host.snapshot.observedAt ?? '') > received || requireCurrentBaselineAge && now - observed > 120_000) return {code: 'resource-baseline-unavailable' as const, resourceId}
   // Host-only source preparation can tolerate an unknown app; an unassigned
   // phone check and its exact returned positive can tolerate an unknown phone.
   // Ordinary callers must supply that original candidate proof for the phone.
@@ -81,10 +82,17 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
   const checked = Date.parse(subject.idle.checkedAt ?? ''), accepted = Date.parse(subject.idle.acceptedCheck?.acceptedAt ?? '')
   if (!(!!contract && subject.status === 'idle' && subject.idle.outcome === 'passed' && subject.idle.acceptedCheck?.subjectGeneration === subject.generation &&
     subject.idle.qualifiedScope.kind !== 'unqualified' && Number.isFinite(checked) && checked <= now &&
-    now - checked <= (contract?.maximumAgeMs ?? 120_000) && Number.isFinite(accepted) && accepted >= checked && accepted <= observed &&
+    (!requireCurrentBaselineAge || now - checked <= (contract?.maximumAgeMs ?? 120_000)) && Number.isFinite(accepted) && accepted >= checked && accepted <= observed &&
     subject.idle.contractVersion === contract.version && isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope)))
     return {code: 'resource-idle-proof-unavailable' as const, resourceId}
   return undefined
+}
+
+/** Eligibility only: an expired returned baseline may receive an owned current
+ * preflight. This never supplies ordinary run readiness or changes its timestamp. */
+export function resourceCandidateBlocker(host: ResourceReadinessHost, resourceId: string, now: number,
+  original?: {requestId: string; inputSha256: string; laneId: string}) {
+  return resourceBlocker(host, resourceId, now, true, original, false)
 }
 
 export function resourceAvailable(host: ResourceReadinessHost, resourceId: string, now: number, allowUnchecked = false,

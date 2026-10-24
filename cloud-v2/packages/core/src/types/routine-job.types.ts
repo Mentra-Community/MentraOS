@@ -47,8 +47,14 @@ export const routineQualificationTargetSchema = z.object({jobId: frameworkIdenti
     acceptedAt: z.string().datetime({offset: true}), binding: frameworkBindingSchema,
     controller: z.object({incarnation: frameworkIdentitySchema, generation: z.number().int().positive().safe()}).strict()}).strict().optional(),
   target: routineJobTargetSchema.optional()}).strict().refine(value => value.selection.requestId === value.jobId &&
-    (value.purpose ? value.selection.platform === 'android' && !!value.acceptedBinding && backendPrerequisiteOrigin(value) && !!value.proposedInput && !value.accepted &&
-      value.requirements.resources.some(resource => resource.kind === 'phone' && resource.capabilities.includes('backend-connectivity'))
+    (value.purpose ? !!value.acceptedBinding && backendPrerequisiteOrigin(value) && !!value.proposedInput && !value.accepted &&
+      (value.purpose.kind === 'resource-readiness' ? !!value.candidate && !value.preparing && !value.local &&
+        value.proposedInput.platform === value.selection.platform && value.proposedInput.laneId === value.laneId &&
+        value.proposedInput.routineId === value.selection.routineId && value.proposedInput.definitionRevision === value.selection.routineRevision &&
+        value.purpose.resources.every(member => member.authorityHostId === value.hostId) &&
+        value.proposedInput.resources.filter(resource => ['phone', 'app', 'glasses', 'recorder', 'fixture-data', 'audio', 'browser'].includes(resource.kind))
+          .every(resource => value.purpose?.kind === 'resource-readiness' && value.purpose.resources.some(member => member.id === resource.id && member.kind === resource.kind)) :
+        value.selection.platform === 'android' && value.requirements.resources.some(resource => resource.kind === 'phone' && resource.capabilities.includes('backend-connectivity')))
       : value.selection.platform === 'ios-on-mac' && !value.acceptedBinding && !value.proposedInput && !value.local && !value.candidate) && value.requirements.platform === value.selection.platform &&
     (!value.target || value.target.hostId === value.hostId && (!value.target.laneId || value.target.laneId === value.laneId)) &&
     (!value.accepted || value.accepted.requestId === value.jobId && value.accepted.hostId === value.hostId) &&
@@ -74,8 +80,12 @@ export const fleetCandidatePreparationSchema = z.object({candidate: backendCandi
   provisionalReturn: z.object({recorder: recorderHostReservationSchema, admission: fleetResourceAdmissionSchema.optional(),
     exclusive: fleetExclusiveReservationSchema.optional(), releasedAt: z.string().datetime({offset: true}).optional()}).strict().optional(),
   claimReceipt: z.unknown().optional(), returnReceipt: z.unknown().optional(), settlement: candidatePrerequisiteSettlementSchema.optional(),
+  resourceClaims: z.array(z.unknown()).min(1).max(30).optional(), resourceReturns: z.array(z.unknown()).min(1).max(30).optional(),
   noAcquisitionReceipt: z.unknown().optional(),
-}).strict()
+}).strict().refine(value => value.target.purpose?.kind === 'resource-readiness'
+  ? !value.claimReceipt && !value.returnReceipt
+  : !value.resourceClaims && !value.resourceReturns && !value.settlement?.graphChecks,
+  'Graph and scalar candidate receipts cannot replace one another')
 export type FleetCandidatePreparation = z.infer<typeof fleetCandidatePreparationSchema>
 export const MAX_FLEET_CANDIDATE_PREPARATIONS = 20
 export type RoutineQualificationTarget = z.infer<typeof routineQualificationTargetSchema>;

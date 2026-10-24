@@ -70,7 +70,7 @@ test('routing reads only fresh current offers and preserves permission and physi
     const service = new TestHostStateService(), [offered] = await service.list();
     expect(offered).toEqual({...current, receivedAt: new Date(now).toISOString(), authorityReservations: retained});
     expect(selections).toEqual([{hostId: 1, receivedAt: 1, resourceReservations: 1, laneControls: 1, resourceLifecycleCursor: 1,
-      'snapshot.observedAt': 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+      'snapshot.resourceReservations.resourceReadiness': 1, 'snapshot.observedAt': 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
       'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle': 1, 'snapshot.resources': 1,
       'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
       'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
@@ -947,4 +947,26 @@ test('lifecycle comparison survives omitted envelope and omitted subject without
       expect(f.row().sequence).toBe(2)
     } finally {f.stop()}
   }
+})
+
+test('routing carries only the installed whole-resource producer flag, keeping historical observation payloads out of matching', async () => {
+  const current = {hostId: 'host', observedAt: '2026-10-24T16:00:00.000Z',
+    resourceReservations: {resourceReadiness: true}, lanes: [{id: 'android', platform: 'android',
+      dispatchMode: 'automatic', state: 'idle', resources: []}]}
+  const selections: Record<string, number>[] = []
+  const find = spyOn(TestHostStateModel, 'find').mockImplementation((() => {
+    const query = {select(value: Record<string, number>) {selections.push(value); return query},
+      limit() {return query}, read() {return query}, readConcern() {return query},
+      async lean() {return [{hostId: 'host', snapshot: structuredClone(current), receivedAt: new Date(current.observedAt)}]}}
+    return query
+  }) as never)
+  const previous = process.env.TEST_HOST_TOKENS
+  process.env.TEST_HOST_TOKENS = JSON.stringify({host: 'synthetic-host-token-'.repeat(3)})
+  try {
+    const [offered] = await new TestHostStateService().list()
+    expect(offered?.resourceReservations?.resourceReadiness).toBe(true)
+    expect(selections[0]?.['snapshot.resourceReservations.resourceReadiness']).toBe(1)
+    expect(selections[0]?.['snapshot.resourceReservations']).toBeUndefined()
+    expect(Object.keys(offered?.resourceReservations ?? {})).toEqual(['resourceReadiness'])
+  } finally {find.mockRestore(); if (previous === undefined) delete process.env.TEST_HOST_TOKENS; else process.env.TEST_HOST_TOKENS = previous}
 })

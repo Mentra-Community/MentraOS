@@ -17,7 +17,8 @@ import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.servi
 import {routineAdmissionInput} from './routine-admission.service';
 import {selectedBuildInput} from '../types/test-build.types';
 import {permissionObservationMatches, permissionContext} from '../types/resource-permissions.types';
-import {backendConnectivityObservationRefusesPreparation, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION, BACKEND_CANDIDATE_ROUTINE_API_VERSION} from '../types/backend-connectivity.types';
+import {backendConnectivityObservationRefusesPreparation, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION, BACKEND_CANDIDATE_ROUTINE_API_VERSION,
+  resourceReadinessPurposeSchema, resourceReadinessMemberSchema, type ResourceReadinessPurpose} from '../types/backend-connectivity.types';
 import {GithubRoutineSourceGateway, ROUTINE_SOURCE_DOWNLOAD_UNAVAILABLE} from './routine-source-selection.service';
 import {configuredTestingTarget, retainedTestingTarget, routineSourceRepository, testingTarget} from '../types/testing-source.types';
 import {RoutineDefinitionService} from './routine-definition.service';
@@ -27,11 +28,12 @@ import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type
 import {TestRunError} from './test-result-error';
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
 import {backendRecorderClaimMatches, requiresBackendConnectivity, requiresSerializedAndroidPreparation, resourceReservationRepository, routineResourcesAvailable, ResourceReservationsService} from './resource-reservations.service';
-import {resourceLaneBlocker, requiredResourceBlocker} from './resource-readiness';
+import {resourceLaneBlocker, resourceCandidateBlocker, requiredResourceBlocker} from './resource-readiness';
 import {routineLaneRequirementBlocker, type RoutineLaneEligibilityContext} from './routine-lane-eligibility';
 import {dependencyWaitingReason, recorderWait, RESOURCE_ADMISSION_WAIT, sharedResourceWaitingReason, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait';
-import {candidateRequestCurrent, candidateSettlement, qualifiedCandidate, candidateRenewal, candidateReturnMatches} from './backend-candidate-preparation';
+import {candidateRequestCurrent, candidateSettlement, qualifiedCandidate, qualifiedGraphCandidate, candidateRenewal, candidateReturnMatches, graphCandidateHistoricalSettlement} from './backend-candidate-preparation';
 const exclusiveResources = new ResourceReservationsService();
+const isDeepIdentity = (left: unknown, right: unknown) => requestInputDigest(left ?? null) === requestInputDigest(right ?? null);
 export type SelectedRoutineLane = {requestId: string; hostId: string; laneId: string};
 type ObservationPhase = (value: 'request' | 'delivery' | 'cancellation' | 'result' | 'projection') => void;
 
@@ -55,7 +57,7 @@ export interface RoutineJobRepository {
   releaseCandidateProvisional?(row: StoredRoutineJob, now: Date): Promise<StoredRoutineJob | null>;
   settleCandidatePreparation?(row: StoredRoutineJob, value: FleetCandidatePreparation, now: Date): Promise<StoredRoutineJob | null>;
   pending?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
-  qualificationCandidates?(hostId: string, laneId: string, limit: number, now: Date, timeoutMS: number, includeQueued: boolean, includeAccepted?: boolean, includePreparing?: boolean, platform?: 'android' | 'ios-on-mac'): AsyncIterable<StoredRoutineJob>;
+  qualificationCandidates?(hostId: string, laneId: string, limit: number, now: Date, timeoutMS: number, includeQueued: boolean, includeAccepted?: boolean, includePreparing?: boolean, platform?: 'android' | 'ios-on-mac', graphOnly?: boolean): AsyncIterable<StoredRoutineJob>;
   supersessionCandidates?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
   supersessionChecked?(jobId: string, now: Date): Promise<void>;
   dispatch?(jobId: string, previous: StoredRoutineJob['fleetDispatch'], value: NonNullable<StoredRoutineJob['fleetDispatch']>): Promise<StoredRoutineJob | null>;
@@ -498,7 +500,7 @@ export const routineJobRepository: RoutineJobRepository = {
             $or:[{'fleetDispatch.checkedAt':{$exists:false}},{'fleetDispatch.checkedAt':{$lte:new Date(now.getTime()-30_000).toISOString()}}]}]}]}]})
       .sort({createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob[];
   },
-  async *qualificationCandidates(hostId, laneId, limit, now, timeoutMS, includeQueued, includeAccepted = false, includePreparing = false, platform = 'ios-on-mac') {
+  async *qualificationCandidates(hostId, laneId, limit, now, timeoutMS, includeQueued, includeAccepted = false, includePreparing = false, platform = 'ios-on-mac', graphOnly = false) {
     const unbound = {state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}, hostReceipt: {$exists: false}};
     const queued = {state: 'queued', hostId, 'fleetBinding.hostId': hostId, 'fleetBinding.laneId': laneId,
       'input.laneId': laneId, inputSha256: {$exists: true}, hostReceipt: {$exists: false}};
@@ -511,7 +513,8 @@ export const routineJobRepository: RoutineJobRepository = {
     // queries avoid lexical state ordering or database-specific computed sort keys.
     // Older workers retain their original single-query discovery behavior.
     const prioritized = includeQueued && includePreparing;
-    const streams = platform === 'android' && includePreparing ? [{state: 'awaiting-runner', 'fleetCandidatePreparation.hostId': hostId, 'fleetCandidatePreparation.laneId': laneId}, preparing] : prioritized ? [...includeAccepted ? [accepted] : [], preparing, queued, unbound] :
+    const streams = graphOnly ? [{...unbound, 'fleetCandidatePreparation.hostId': hostId, 'fleetCandidatePreparation.laneId': laneId,
+      'fleetCandidatePreparation.target.purpose.kind': 'resource-readiness'}] : platform === 'android' && includePreparing ? [{state: 'awaiting-runner', 'fleetCandidatePreparation.hostId': hostId, 'fleetCandidatePreparation.laneId': laneId}, preparing] : prioritized ? [...includeAccepted ? [accepted] : [], preparing, queued, unbound] :
       [includeQueued ? {$or: [unbound, queued, ...includeAccepted ? [accepted] : []]} : unbound];
     const deadline = performance.now() + timeoutMS;
     let remaining = limit;
@@ -523,8 +526,8 @@ export const routineJobRepository: RoutineJobRepository = {
         hostCancellation: {$exists: false}, hostRejection: {$exists: false},
         preparationCancellation: {$exists: false}, preparationRejection: {$exists: false},
         fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}, 'fleetSelection.platform': platform,
-        fleetPreparation: {$exists: true}, 'fleetPreparation.requirements.resources': {$elemMatch: platform === 'android'
-          ? {kind: 'phone', capabilities: 'backend-connectivity'} : {permissions: {$elemMatch: {recipient: 'app'}}}},
+        fleetPreparation: {$exists: true}, ...(!graphOnly ? {'fleetPreparation.requirements.resources': {$elemMatch: platform === 'android'
+          ? {kind: 'phone', capabilities: 'backend-connectivity'} : {permissions: {$elemMatch: {recipient: 'app'}}}}} : {}),
         $and: [{$or: [{'fleetTarget.hostId': {$exists: false}}, {'fleetTarget.hostId': hostId}]},
           {$or: [{'fleetTarget.laneId': {$exists: false}}, {'fleetTarget.laneId': laneId}]},
           {$or: [{fleetResourceAdmission: {$exists: false}},
@@ -635,8 +638,10 @@ async function releaseCandidateProvisional(original: StoredRoutineJob, now: Date
       current.fleetSelectionSha256 === requestInputDigest(current.fleetSelection) && !current.fleetBinding && !current.hostId &&
       !current.dispatchIntent && !current.inputSha256 && !current.hostReceipt && !current.runId && !current.dispatchCompletion &&
       !current.fleetExclusiveExecutionBinding && Boolean(prior) && prior!.candidate.attemptId === pending.candidate.previousAttemptId &&
-      prior!.settlement?.outcome === 'qualified' && prior!.claimReceipt && prior!.returnReceipt &&
-      candidateReturnMatches(prior!, prior!.returnReceipt) && prior!.hostId === pending.hostId && prior!.laneId === pending.laneId &&
+      prior!.settlement?.outcome === 'qualified' && (prior!.target.purpose?.kind === 'resource-readiness'
+        ? pending.target.purpose?.kind === 'resource-readiness' && graphCandidateHistoricalSettlement(prior!)
+        : prior!.claimReceipt && prior!.returnReceipt && candidateReturnMatches(prior!, prior!.returnReceipt)) &&
+      prior!.hostId === pending.hostId && prior!.laneId === pending.laneId &&
       prior!.candidate.fleetInputSha256 === current.fleetInputSha256 && prior!.candidate.selectionSha256 === current.fleetSelectionSha256 &&
       requestInputDigest(current.fleetResourceReservation) === requestInputDigest(returning.recorder) &&
       requestInputDigest(current.fleetResourceAdmission ?? null) === requestInputDigest(returning.admission ?? null) &&
@@ -656,10 +661,15 @@ async function releaseCandidateProvisional(original: StoredRoutineJob, now: Date
         memberships.length > 0 && memberships.every(lane => lane.state === 'idle' && !lane.activity);
     });
     const lane = host.snapshot.lanes.find(lane => lane.id === pending.laneId), offer = lane?.resources.find(resource => resource.kind === 'recorder')?.storage,
-      phone = host.snapshot.resourceLifecycle?.subjects.find(subject => subject.subject.id === pending.target.purpose!.resourceId);
+      checkedIds = pending.target.purpose!.kind === 'resource-readiness' ? pending.target.purpose!.resources.map(member => member.id) :
+        [pending.target.purpose!.resourceId],
+      checkedReturned = checkedIds.every(id => {
+        const subject = host.snapshot.resourceLifecycle?.subjects.find(subject => subject.subject.id === id)
+        return subject?.current && subject.owner === null && subject.subject.authorityHostId === host.hostId
+      });
     return host.incarnation === pending.candidate.controller.incarnation && host.incarnationGeneration === pending.candidate.controller.generation &&
       requestInputDigest(host.snapshot.frameworkBinding) === requestInputDigest(pending.target.acceptedBinding) && lane?.state === 'idle' && !lane.activity &&
-      phone?.current && phone.owner === null && phone.subject.authorityHostId === host.hostId && offer && offer.poolId === returning.recorder.poolId &&
+      checkedReturned && offer && offer.poolId === returning.recorder.poolId &&
       Date.parse(offer.observedAt) >= Date.parse(pending.candidate.requestedAt) && Date.parse(offer.observedAt) <= now.getTime() &&
       now.getTime() - Date.parse(offer.observedAt) <= 120_000 && !offer.reservations.some(value => value.requestId === original.requestId);
   };
@@ -848,11 +858,64 @@ function selectableRoutineResources(host: RoutingTestHostState, requirements: Po
   lane: RoutingTestHostState['lanes'][number], now: number, candidateCheck: boolean,
   original?: {requestId: string; inputSha256: string}) {
   if (resourceLaneBlocker(host, lane.id, original && {...original, hostId: host.hostId})) return false
+  if (candidateCheck && host.resourceReservations?.resourceReadiness === true)
+    return routineResourceReadinessPurpose(host, lane, requirements, now, original) !== undefined
   return requiredResourceBlocker({hostId: host.hostId, receivedAt: host.receivedAt, snapshot: host,
     resourceControlRecords: host.resourceControlRecords, resourceLifecycleCursor: host.resourceLifecycleCursor,
     authorityReservations: host.authorityReservations}, lane, requirements.resources, now,
     required => candidateCheck && (required.kind === 'app' || required.kind === 'phone' && required.capabilities.includes('backend-connectivity')),
     original) === undefined
+}
+/** Resolve declared physical resources and their exact native dependency closure.
+ * Logical network capabilities remain in ordinary structural eligibility. */
+export function routineResourceReadinessPurpose(host: RoutingTestHostState, lane: RoutingTestHostState['lanes'][number],
+  requirements: PortableRequirements, now: number, original?: {requestId: string; inputSha256: string}): ResourceReadinessPurpose | undefined {
+  const all = [...host.resources ?? [], ...host.lanes.flatMap(value => value.resources)],
+    refs = new Map<string, typeof all[number]>(), selected = new Map<string, ResourceReadinessPurpose['resources'][number]>(), visiting = new Set<string>()
+  for (const ref of all) {
+    const prior = refs.get(ref.id)
+    if (prior && (prior.kind !== ref.kind || requestInputDigest(prior.idleContract ?? null) !== requestInputDigest(ref.idleContract ?? null) ||
+      requestInputDigest(prior.exclusiveDependencies ?? null) !== requestInputDigest(ref.exclusiveDependencies ?? null))) return undefined
+    refs.set(ref.id, ref)
+  }
+  const visit = (id: string, requiredCapabilities?: string[]): boolean => {
+    if (visiting.has(id)) return false
+    const ref = refs.get(id), subject = host.resourceLifecycle?.subjects.find(value => value.subject.id === id), contract = ref?.idleContract
+    if (!ref || !contract || contract.qualifiedScope.kind === 'unqualified' || !subject?.current ||
+      subject.subject.authorityHostId !== host.hostId || subject.owner !== null || subject.repair.state !== 'none' ||
+      !subject.supportedActions.includes('mark-out-of-service') || (requiredCapabilities ?? []).some(value => !ref.capabilities?.includes(value)) ||
+      resourceCandidateBlocker({hostId: host.hostId, receivedAt: host.receivedAt, snapshot: host,
+        resourceControlRecords: host.resourceControlRecords, resourceLifecycleCursor: host.resourceLifecycleCursor,
+        authorityReservations: host.authorityReservations}, id, now, original && {...original, laneId: lane.id})) return false
+    if (selected.has(id)) return true
+    visiting.add(id)
+    const dependencies = new Set([...contract.dependencies ?? [], ...subject.resource.dependencies])
+    for (const dependency of ref.exclusiveDependencies ?? []) {
+      if (dependency.authorityHostId !== host.hostId) return false
+      dependencies.add(dependency.resourceId)
+    }
+    for (const dependency of dependencies) if (dependency !== id && !visit(dependency)) return false
+    visiting.delete(id)
+    const parsed = resourceReadinessMemberSchema.safeParse({id, kind: ref.kind,
+      authorityHostId: host.hostId, subjectGeneration: subject.generation, contractVersion: contract.version,
+      capabilities: [...requiredCapabilities ?? ref.capabilities ?? []]})
+    if (!parsed.success) return false
+    selected.set(id, parsed.data)
+    return selected.size <= 30
+  }
+  for (const required of requirements.resources) {
+    const matches = lane.resources.filter(value => value.kind === required.kind)
+    if (matches.length !== 1) return undefined
+    if (['network', 'workspace'].includes(required.kind)) {
+      if (requiredResourceBlocker({hostId: host.hostId, receivedAt: host.receivedAt, snapshot: host,
+        resourceControlRecords: host.resourceControlRecords, resourceLifecycleCursor: host.resourceLifecycleCursor,
+        authorityReservations: host.authorityReservations}, lane, [required], now, () => false, original)) return undefined
+      continue
+    }
+    if (!visit(matches[0]!.id, required.capabilities)) return undefined
+  }
+  const resources = [...selected.values()]
+  return resources.length ? resourceReadinessPurposeSchema.parse({kind: 'resource-readiness', resourceId: resources[0]!.id, resources}) : undefined
 }
 export const routineJobInputDigest = (row: Pick<StoredRoutineJob, 'fleetSelection' | 'fleetPreparation' | 'fleetDeadline' | 'fleetTarget'>) =>
   requestInputDigest({selection: row.fleetSelection, prepared: row.fleetPreparation, deadline: row.fleetDeadline.toISOString(), target: row.fleetTarget ?? null});
@@ -958,6 +1021,8 @@ export class RoutineJobService {
       requestInputDigest(binding) !== requestInputDigest(owned.binding))) return [];
     const targets: RoutineQualificationTarget[] = [], queryDeadline = now + 5_000;
     for (const lane of host.lanes) {
+      const graph = await this.candidateGraphQualificationTarget(host, lane, owned, queryDeadline)
+      if (graph) {targets.push(graph); continue}
       if (lane.platform === 'android') {
         let localTarget: RoutineQualificationTarget | undefined;
         try {localTarget = await this.localBackendQualificationTarget(host, lane, owned, queryDeadline);}
@@ -1121,6 +1186,82 @@ export class RoutineJobService {
       return pending.target;
     }
     return undefined;
+  }
+  private async candidateGraphQualificationTarget(host: ReceivedTestHostState, lane: RoutingTestHostState['lanes'][number],
+    owned: OwnedRoutineQualification | undefined, queryDeadline: number) {
+    if (host.resourceReservations?.resourceReadiness !== true || lane.dispatchMode !== 'automatic' ||
+      this.now() >= queryDeadline || owned && (owned.laneId !== lane.id || owned.purpose?.kind !== 'resource-readiness')) return undefined
+    const rows = owned ? [await this.rows.get(owned.jobId)] : this.rows.qualificationCandidates?.(host.hostId, lane.id, 100,
+      new Date(this.now()), Math.max(1, queryDeadline - this.now()), false, false, false, lane.platform, true) ?? []
+    for await (const row of rows) {
+      const pending = row?.fleetCandidatePreparation, purpose = pending?.target.purpose
+      if (!row || !pending || purpose?.kind !== 'resource-readiness' || !candidateRequestCurrent(row, pending, this.now()) ||
+        pending.hostId !== host.hostId || pending.laneId !== lane.id ||
+        pending.candidate.controller.incarnation !== host.incarnation || pending.candidate.controller.generation !== host.incarnationGeneration ||
+        !isDeepIdentity(pending.target.acceptedBinding, host.frameworkBinding) || owned && pending.targetInputSha256 !== owned.inputSha256) continue
+      const actualLane = host.lanes.find(value => value.id === lane.id), ownerId = `resource-graph:${pending.targetInputSha256}`,
+        ownedLane = actualLane?.activity?.owner.id === ownerId &&
+        actualLane.activity.owner.kind === 'boundary-cleanup' && ['reserved', 'running'].includes(lane.state)
+      if (!ownedLane && (lane.state !== 'idle' || actualLane?.activity) || purpose.resources.some(member => {
+        const subject = host.resourceLifecycle?.subjects.find(value => value.subject.id === member.id)
+        return !subject?.current || subject.subject.authorityHostId !== host.hostId ||
+          (ownedLane ? subject.owner?.id !== ownerId || subject.owner.kind !== 'boundary-cleanup' ||
+            owned && subject.owner.generation !== owned.generation : subject.owner !== null || subject.generation !== member.subjectGeneration)
+      })) continue
+      const current = await this.rows.get(row.requestId), finalHost = await this.hosts.get(host.hostId)
+      if (!current || !candidateRequestCurrent(current, current.fleetCandidatePreparation, this.now()) ||
+        !isDeepIdentity(current.fleetCandidatePreparation, pending) || !finalHost || finalHost.sequence !== host.sequence ||
+        finalHost.incarnation !== host.incarnation || finalHost.incarnationGeneration !== host.incarnationGeneration || this.now() >= queryDeadline) return undefined
+      return pending.target
+    }
+    return undefined
+  }
+  private async makeGraphCandidatePreparation(row: StoredRoutineJob, host: ReceivedTestHostState, lane: RoutingTestHostState['lanes'][number]) {
+    if (!this.rows.candidatePreparation || !host.frameworkBinding || host.resourceReservations?.resourceReadiness !== true) return undefined
+    const previous = candidateRenewal(row, host.hostId, lane.id)
+    if (!previous && row.fleetCandidatePreparations?.some(value => value.hostId === host.hostId && value.laneId === lane.id) ||
+      (row.fleetResourceReservation || row.fleetResourceAdmission || row.fleetExclusiveReservation) && (!previous || !row.fleetResourceReservation) ||
+      previous && (previous.target.purpose?.kind !== 'resource-readiness' || previous.candidate.controller.incarnation !== host.incarnation ||
+        previous.candidate.controller.generation !== host.incarnationGeneration || !isDeepIdentity(previous.target.acceptedBinding, host.frameworkBinding)) ||
+      (row.fleetCandidatePreparations?.length ?? 0) >= MAX_FLEET_CANDIDATE_PREPARATIONS ||
+      host.authorityReservations?.some(claim => candidateClaimConflict(row, claim, host.hostId, lane.id))) return undefined
+    const original = {requestId: row.requestId, inputSha256: row.fleetInputSha256!},
+      purpose = routineResourceReadinessPurpose(host, lane, row.fleetPreparation!.requirements, this.now(), original)
+    if (!purpose) return undefined
+    const {recordedRoutineBuild} = await import('./routine-dispatch.service'), now = this.now(), enrollment = routineEnrollmentSchema.parse({
+      routineId: row.fleetSelection.routineId, platform: row.fleetSelection.platform, definitionRevision: row.fleetSelection.routineRevision,
+      definition: row.fleetPreparation!.definition, definitionSha256: row.fleetPreparation!.definitionSha256, routineSource: row.fleetPreparation!.routineSource})
+    let proposedInput
+    try {
+      const selectedLane = {...lane, resources: lane.resources.map(resource => resource.storage ? {...resource,
+        storage: {...resource.storage, reservations: resource.storage.reservations.filter(value =>
+          value.requestId !== row.requestId || value.inputSha256 !== row.fleetInputSha256)}} : resource)},
+        selectedHost = {...host, lanes: host.lanes.map(value => value.id === lane.id ? selectedLane : value)}
+      proposedInput = routineAdmissionInput(enrollment, recordedRoutineBuild(row.fleetSelection.build, row.fleetSelection.source, row.fleetSelection.platform),
+        {hostId: host.hostId, laneId: lane.id}, selectedHost, now, {minimumFrameworkVersion: row.fleetSelection.minimumFrameworkVersion})
+      proposedInput.build = frameworkExecutableBuild(row.fleetSelection.build, proposedInput.glassesModel)
+    } catch (error) {if (error instanceof TestRunError && error.status === 409) return undefined; throw error}
+    const candidate = {attemptId: `candidate:${row.requestId}:${(row.fleetCandidatePreparations?.length ?? 0) + 1}`,
+      requestedAt: new Date(now).toISOString(), fleetInputSha256: row.fleetInputSha256!, selectionSha256: row.fleetSelectionSha256,
+      ...(previous ? {previousAttemptId: previous.candidate.attemptId} : {}),
+      controller: {incarnation: host.incarnation, generation: host.incarnationGeneration}},
+      body = {jobId: row.requestId, hostId: host.hostId, laneId: lane.id, deadline: row.fleetDeadline.toISOString(), candidate,
+        selection: {...row.fleetSelection, routineSource: row.fleetPreparation!.routineSource}, requirements: recorderCapacityRequirements(row.fleetPreparation!),
+        definition: row.fleetPreparation!.definition, definitionSha256: row.fleetPreparation!.definitionSha256,
+        purpose, proposedInput, acceptedBinding: host.frameworkBinding, target: {hostId: host.hostId, laneId: lane.id}},
+      targetInputSha256 = requestInputDigest(body), pending = fleetCandidatePreparationSchema.parse({candidate, hostId: host.hostId, laneId: lane.id,
+        target: {...body, inputSha256: targetInputSha256}, targetInputSha256,
+        ...(previous && row.fleetResourceReservation ? {provisionalReturn: {recorder: row.fleetResourceReservation,
+          ...(row.fleetResourceAdmission ? {admission: row.fleetResourceAdmission} : {}),
+          ...(row.fleetExclusiveReservation ? {exclusive: row.fleetExclusiveReservation} : {})}} : {})})
+    const current = await this.hosts.get(host.hostId), currentLane = current?.lanes.find(value => value.id === lane.id)
+    if (!current || !currentLane || current.sequence !== host.sequence || current.incarnation !== host.incarnation ||
+      current.incarnationGeneration !== host.incarnationGeneration || currentLane.state !== 'idle' || currentLane.activity ||
+      currentLane.dispatchMode !== 'automatic' || !isDeepIdentity(current.frameworkBinding, host.frameworkBinding) ||
+      !isDeepIdentity(routineResourceReadinessPurpose(current, currentLane, row.fleetPreparation!.requirements, this.now(), original), purpose) ||
+      !current.authorityReservations || current.authorityReservations.some(claim => candidateClaimConflict(row, claim, host.hostId, lane.id)) ||
+      (await this.rows.recorderClaims?.(row.requestId) ?? []).some(claim => requestInputDigest(claim) !== requestInputDigest(row.fleetResourceReservation ?? null))) return undefined
+    return this.rows.candidatePreparation(row, pending, new Date(this.now()))
   }
   private async makeCandidatePreparation(row: StoredRoutineJob, host: ReceivedTestHostState, lane: RoutingTestHostState['lanes'][number]) {
     const previous = candidateRenewal(row, host.hostId, lane.id);
@@ -1415,7 +1556,9 @@ export class RoutineJobService {
       hosts = await this.hosts.list?.() ?? [];
     }
     if (row.fleetCandidatePreparation) return {...routineJobRouting(recorderCapacityRequirements(row.fleetPreparation!), hosts, this.now(), row.fleetTarget, row.fleetSelection.build, true, original),
-      waitingReason: 'Checking the selected phone and waiting for its complete return'};
+      waitingReason: row.fleetCandidatePreparation.target.purpose?.kind === 'resource-readiness'
+        ? 'Checking this candidate’s complete required resource graph and waiting for its original return'
+        : 'Checking the selected phone and waiting for its complete return'};
     const requirements = recorderCapacityRequirements(row.fleetPreparation!);
     // Provisional physical custody is recovered independently of network-health requirements.
     const originals = row.fleetSelection.platform === 'android' ? await this.rows.recorderClaims?.(row.requestId) ??
@@ -1452,8 +1595,11 @@ export class RoutineJobService {
     if (retained) {
       const candidateHost = row.fleetCandidateSelection && await this.hosts.get(retained.hostId), lane = candidateHost?.lanes.find(value => value.id === retained.laneId);
       if (candidateHost && lane && !qualifiedCandidate(row, candidateHost, retained.laneId, this.now(), candidateHost.receivedAt)) {
-        const pending = await this.makeCandidatePreparation(row, candidateHost, lane);
-        if (pending?.fleetCandidatePreparation) return {...routed, waitingReason: 'Returning the original unused reservation before checking this phone again'};
+        const graph = row.fleetCandidatePreparations?.at(-1)?.target.purpose?.kind === 'resource-readiness',
+          pending = graph ? await this.makeGraphCandidatePreparation(row, candidateHost, lane) : await this.makeCandidatePreparation(row, candidateHost, lane);
+        if (pending?.fleetCandidatePreparation) return {...routed, waitingReason: graph
+          ? 'Returning the original unused reservation before checking the complete required graph again'
+          : 'Returning the original unused reservation before checking this phone again'};
         return {...routed, waitingReason: RESOURCE_ADMISSION_WAIT};
       }
       const checked = await this.rows.reserveResources?.(row.requestId, row.fleetInputSha256!, retained.hostId, retained.laneId, new Date(this.now()), onWaiting);
@@ -1490,7 +1636,7 @@ export class RoutineJobService {
         lane.state !== 'idle' || lane.dispatchMode !== 'automatic') continue;
       const context = routineLaneContext(host, row.fleetSelection.build, this.now());
       if (!selectableRoutineResources(host, requirements, lane, this.now(), true, original)) continue;
-      if (!retained && !admitted && !provisional && backendPreparationRefused(requirements, lane, context)) {
+      if (!retained && !admitted && !provisional && host.resourceReservations?.resourceReadiness !== true && backendPreparationRefused(requirements, lane, context)) {
         candidateReasons.push(BACKEND_PREPARATION_WAIT); continue;
       }
       if (!compatibleStructuralRoutineLane(requirements, lane, context, this.now())) {
@@ -1500,7 +1646,13 @@ export class RoutineJobService {
             requirements.resources.find(resource => resource.kind === 'recorder')!.storage!.minimumAvailableBytes, this.now()));
         continue;
       }
-      const observedHost = requiresBackendConnectivity(row) ? await this.hosts.get(host.hostId) : undefined;
+      const observedHost = requiresBackendConnectivity(row) || host.resourceReservations?.resourceReadiness === true ? await this.hosts.get(host.hostId) : undefined;
+      if (!retained && !admitted && !provisional && host.resourceReservations?.resourceReadiness === true &&
+        (!observedHost || !qualifiedGraphCandidate(row, observedHost, lane.id, this.now(), observedHost.receivedAt))) {
+        const pending = observedHost && await this.makeGraphCandidatePreparation(row, observedHost, lane)
+        if (pending?.fleetCandidatePreparation) return {...routed, waitingReason: 'Checking the complete required resource graph before assigning this test'}
+        candidateReasons.push('Waiting for an original owned resource-graph preflight'); continue
+      }
       if (!retained && !admitted && !provisional && requiresBackendConnectivity(row) && (!observedHost || !qualifiedCandidate(row, observedHost, lane.id, this.now(), observedHost.receivedAt))) {
         const pending = observedHost && await this.makeCandidatePreparation(row, observedHost, lane);
         if (pending?.fleetCandidatePreparation) return {...routed, waitingReason: 'Checking the next available phone before assigning this test'};
