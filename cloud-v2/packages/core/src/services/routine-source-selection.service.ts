@@ -13,7 +13,48 @@ const activitySchema = z.array(z.object({id: z.number().int().positive().safe(),
   activity_type: z.enum(['push', 'pr_merge', 'merge_queue_merge', 'force_push', 'branch_creation', 'branch_deletion'])})).max(100);
 type SourceDiagnostic = {phase: 'authentication' | 'request' | 'response' | 'body' | 'integrity';
   blobSha: string; expectedBytes: number; elapsedMs: number; status?: number; receivedBytes?: number;
-  failure: 'unavailable' | 'deadline' | 'identity-mismatch'};
+  failure: 'unavailable' | 'deadline' | 'identity-mismatch'; upstream?: SourceDenial};
+type SourceDenial = {
+  kind: 'unknown' | 'primary-rate-limit' | 'secondary-rate-limit' | 'integration-access-denied' | 'bad-credentials';
+  message: string; bodyState: 'unavailable' | 'empty' | 'json' | 'invalid' | 'oversize';
+  githubRequestId?: string; retryAfter?: number | string; acceptedPermissions?: string;
+  rateLimit?: {limit?: number; remaining?: number; reset?: number; used?: number; resource?: string};
+};
+export const ROUTINE_SOURCE_DOWNLOAD_UNAVAILABLE = 'Routine files could not be downloaded.';
+const denialBodyBytes = 4096;
+const denialMessages = [
+  [/^API rate limit exceeded\b/, 'primary-rate-limit', 'GitHub reported an API rate limit.'],
+  [/^You have exceeded a secondary rate limit(?:\.|$)/, 'secondary-rate-limit', 'GitHub reported a secondary rate limit.'],
+  [/^Resource not accessible by integration\.?$/, 'integration-access-denied', 'GitHub reported that the integration cannot access this resource.'],
+  [/^Bad credentials\.?$/, 'bad-credentials', 'GitHub reported invalid credentials.'],
+] as const;
+
+/** Provider text is untrusted: retain fixed messages and strictly parsed header values only. */
+function denialHeaders(headers: Headers): SourceDenial {
+  const value: SourceDenial = {kind: 'unknown', message: 'GitHub refused the routine source download.', bodyState: 'unavailable'};
+  const number = (name: string) => {
+    const raw = headers.get(name);
+    return raw !== null && /^(0|[1-9]\d{0,15})$/.test(raw) && Number.isSafeInteger(Number(raw)) ? Number(raw) : undefined;
+  };
+  const id = headers.get('x-github-request-id');
+  if (id && id.length <= 128 && /^[\da-f]+(?::[\da-f]+)+$/i.test(id)) value.githubRequestId = id;
+  const rateLimit: NonNullable<SourceDenial['rateLimit']> = {};
+  for (const key of ['limit', 'remaining', 'reset', 'used'] as const) {
+    const parsed = number(`x-ratelimit-${key}`); if (parsed !== undefined) rateLimit[key] = parsed;
+  }
+  const resource = headers.get('x-ratelimit-resource');
+  if (resource && ['core', 'search', 'code_search', 'graphql', 'integration_manifest'].includes(resource)) rateLimit.resource = resource;
+  if (Object.keys(rateLimit).length) value.rateLimit = rateLimit;
+  const retryAfter = number('retry-after'), retryDate = headers.get('retry-after');
+  if (retryAfter !== undefined) value.retryAfter = retryAfter;
+  else if (retryDate && /^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(retryDate) && Number.isFinite(Date.parse(retryDate)))
+    value.retryAfter = new Date(retryDate).toISOString();
+  const permissions = headers.get('x-accepted-github-permissions');
+  if (permissions && permissions.length <= 128 && permissions.split(/[,;]/).every(part =>
+    /^(contents|pull_requests|actions|checks|metadata)=(read|write)$/.test(part.trim())))
+    value.acceptedPermissions = permissions.split(/[,;]/).map(part => part.trim()).join(';');
+  return value;
+}
 
 /** Resolve main once per new selection; retries use the durable selected SHA. */
 export class GithubRoutineSourceGateway {
@@ -46,6 +87,18 @@ export class GithubRoutineSourceGateway {
     const expired = new Promise<never>((_, reject) => {abort = () => reject(new Error('Source selection expired'));
       signal.addEventListener('abort', abort, {once: true});});
     try {return await Promise.race([work, expired]);} finally {signal.removeEventListener('abort', abort);}
+  }
+  private async denialBody(response: Response, metadata: SourceDenial, deadline: AbortSignal): Promise<SourceDenial> {
+    if (!response.body) return {...metadata, bodyState: 'empty'};
+    let bytes: Uint8Array;
+    try {bytes = await this.bytes(new Response(response.body), denialBodyBytes, deadline);}
+    catch (error) {return {...metadata, bodyState: error instanceof Error && error.message === 'Source response exceeds its bound' ? 'oversize' : 'unavailable'};}
+    if (!bytes.length) return {...metadata, bodyState: 'empty'};
+    try {
+      const body = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(bytes)) as {message?: unknown} | null;
+      const known = typeof body?.message === 'string' ? denialMessages.find(([pattern]) => pattern.test(body.message as string)) : undefined;
+      return {...metadata, bodyState: 'json', ...(known ? {kind: known[1], message: known[2]} : {})};
+    } catch {return {...metadata, bodyState: 'invalid'};}
   }
   private async page(path: string, maxBytes: number, deadline: AbortSignal) {
     try {
@@ -187,6 +240,7 @@ export class GithubRoutineSourceGateway {
   private async readBlob(file: {gitBlobSha1: string; size: number}) {
     let bytes: Uint8Array;
     let phase: SourceDiagnostic['phase'] = 'authentication', status: number | undefined;
+    let upstream: SourceDenial | undefined;
     const startedAt = Date.now();
     const deadline = AbortSignal.timeout(60_000);
     try {
@@ -197,12 +251,17 @@ export class GithubRoutineSourceGateway {
           Accept: 'application/vnd.github.raw+json', 'X-GitHub-Api-Version': '2022-11-28'},
       });
       phase = 'response'; status = response.status;
+      if (!response.ok) {
+        upstream = denialHeaders(response.headers);
+        upstream = await this.withinDeadline(this.denialBody(response, upstream, deadline), deadline);
+        throw new Error('Source response is unavailable');
+      }
       if (response.ok && response.body) phase = 'body';
       bytes = await this.bytes(response, file.size + 1, deadline);
     } catch {
       this.report({phase, blobSha: file.gitBlobSha1, expectedBytes: file.size, elapsedMs: Date.now() - startedAt,
-        ...(status === undefined ? {} : {status}), failure: deadline.aborted ? 'deadline' : 'unavailable'});
-      throw new TestRunError(503, 'Exact routine source bytes are unavailable; retry preparation');
+        ...(status === undefined ? {} : {status}), ...(upstream ? {upstream} : {}), failure: deadline.aborted ? 'deadline' : 'unavailable'});
+      throw new TestRunError(503, ROUTINE_SOURCE_DOWNLOAD_UNAVAILABLE);
     }
     if (bytes.byteLength !== file.size || createHash('sha1').update(`blob ${file.size}\0`).update(bytes).digest('hex') !== file.gitBlobSha1) {
       this.report({phase: 'integrity', blobSha: file.gitBlobSha1, expectedBytes: file.size, receivedBytes: bytes.byteLength,

@@ -18,7 +18,7 @@ import {routineAdmissionInput} from './routine-admission.service';
 import {selectedBuildInput} from '../types/test-build.types';
 import {permissionObservationMatches, permissionContext} from '../types/resource-permissions.types';
 import {backendConnectivityObservationRefusesPreparation, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION, BACKEND_CANDIDATE_ROUTINE_API_VERSION} from '../types/backend-connectivity.types';
-import {GithubRoutineSourceGateway} from './routine-source-selection.service';
+import {GithubRoutineSourceGateway, ROUTINE_SOURCE_DOWNLOAD_UNAVAILABLE} from './routine-source-selection.service';
 import {RoutineDefinitionService} from './routine-definition.service';
 import {hostStateSchema, TestHostStateService, type RoutingTestHostState, type ReceivedTestHostState} from './test-host-state.service';
 import {FrameworkResultService} from './framework-result.service';
@@ -1525,6 +1525,7 @@ export class RoutineJobService {
     if (row.fleetActions.some(run => BigInt(run.actionsRunId) > BigInt(input.actionsRunId))) return row;
     if (!this.rows.preparationStatus) throw new TestRunError(503, 'Preparation status storage is unavailable');
     const reason = input.code === 'not-applicable' ? `Routine ${row.fleetSelection.routineId} does not support ${row.fleetSelection.platform}.`
+      : input.phase === 'Git blobs' && input.retryable ? `${ROUTINE_SOURCE_DOWNLOAD_UNAVAILABLE} Tests did not start. Retrying the same request.`
       : input.retryable ? `Routine source preparation failed during ${input.phase}; retrying the same request.`
       : `Routine source preparation failed during ${input.phase}; source validation requires correction.`;
     return await this.rows.preparationStatus(jobId, {...input, reason, observedAt: new Date(this.now()).toISOString()}, new Date(this.now())) ?? this.job(jobId);

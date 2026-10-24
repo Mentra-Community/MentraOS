@@ -701,7 +701,7 @@ test('offline preparation reports retain exact workflow and cannot overwrite pre
   await f.service.actions(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,actionsRunId:'99'})
   const status={inputSha256:f.row!.fleetSelectionSha256,actionsRunId:'99',phase:'Git blobs',code:'source-unavailable',retryable:true}
   await f.service.preparationStatus(selection.requestId,status)
-  expect(await f.service.observation(selection.requestId)).toMatchObject({state:'awaiting-source',waitingReason:'Routine source preparation failed during Git blobs; retrying the same request.'})
+  expect(await f.service.observation(selection.requestId)).toMatchObject({state:'awaiting-source',waitingReason:'Routine files could not be downloaded. Tests did not start. Retrying the same request.'})
   await expect(f.service.preparationStatus(selection.requestId,{...status,inputSha256:'f'.repeat(64)})).rejects.toThrow('exact workflow')
   await f.service.actions(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,actionsRunId:'100'})
   await f.service.preparationStatus(selection.requestId,{...status,retryable:false,code:'source-invalid'})
