@@ -160,10 +160,19 @@ interface InstalledLma {
 
 /**
  * Where an installed release came from. `url`: installed from the miniapp's own URL (`sourceUrl`).
- * `direct_download`: a release QR. `bundled_asset`: the ZIP this build ships. `deployment_manifest`: a workspace's
- * deployment manifest. `dev_snapshot`: a development build.
+ * `direct_download`: a release Fleet installed from a resolved URL, or a release QR on an earlier Mentra App.
+ * `bundled_asset`: the ZIP this build ships.
+ * `deployment_manifest`: a workspace's deployment manifest. `dev_snapshot`: a development build. `local`: a
+ * local-network build or a release QR (`sourceUrl` is its address), always a `dev-*` development snapshot: it never
+ * updates from a URL, never gets system privileges, keeps its data apart and gets tokens marked as a local build.
  */
-export type MiniappReleaseSource = "direct_download" | "bundled_asset" | "deployment_manifest" | "dev_snapshot" | "url"
+export type MiniappReleaseSource =
+  | "direct_download"
+  | "bundled_asset"
+  | "deployment_manifest"
+  | "dev_snapshot"
+  | "local"
+  | "url"
 
 /**
  * Sources only releases that earlier Mentra Apps installed carry: read, never written. `store`: installed by a
@@ -174,7 +183,7 @@ export type RetiredMiniappReleaseSource = "preinstalled_registry" | "store" | "s
 
 export interface MiniappReleaseIdentity {
   source: MiniappReleaseSource | RetiredMiniappReleaseSource
-  /** The miniapp URL (`url` releases): the base that serves `miniapp.json`, ending in `/`. */
+  /** The miniapp URL (`url` and `local` releases): the base that serves `miniapp.json`, ending in `/`. */
   sourceUrl?: string
   /** `url` releases: the miniapp's server asked for sign-in, for `miniapp.json` or the ZIP. */
   private?: boolean
@@ -957,8 +966,10 @@ class AppRegistry {
   /** Hold the running and rollback bundles while an explicit replacement settles. */
   public retainDevVersions(packageName: string, versions: string[]): () => void {
     if (this.retainedDevVersions.has(packageName)) throw new Error("A miniapp replacement is already in progress")
-    this.retainedDevVersions.set(packageName, new Set(versions.filter(version => version.startsWith("dev-"))))
-    return () => {this.retainedDevVersions.delete(packageName)}
+    this.retainedDevVersions.set(packageName, new Set(versions.filter((version) => version.startsWith("dev-"))))
+    return () => {
+      this.retainedDevVersions.delete(packageName)
+    }
   }
 
   private protectedDevVersions(packageName: string): Set<string> {
@@ -966,7 +977,8 @@ class AppRegistry {
     const selected = this.getSelectedDevSnapshot(packageName)
     if (selected) versions.add(selected)
     const active = storage.load<string>(activeVersionKey(packageName))
-    if (active.is_ok() && active.value.startsWith("dev-") && miniappRunningRegistry.has(packageName)) versions.add(active.value)
+    if (active.is_ok() && active.value.startsWith("dev-") && miniappRunningRegistry.has(packageName))
+      versions.add(active.value)
     return versions
   }
 
@@ -1036,10 +1048,12 @@ class AppRegistry {
    * Clear the package's live-development selection and the development builds of the current context, as a release
    * install does, so launching runs its installed release. Another account's or workspace's snapshots stay on disk
    * with their selections. Resolves false, clearing nothing, while a live context of the package still holds an
-   * earlier context's selection. Serialized with installs.
+   * earlier context's selection. Serialized with installs: `assertCurrent` runs once the transaction holds the queue,
+   * before anything changes, so a caller whose session ended while it waited clears nothing.
    */
-  public clearDevelopmentSelection(packageName: string): Promise<boolean> {
+  public clearDevelopmentSelection(packageName: string, options: {assertCurrent?: () => void} = {}): Promise<boolean> {
     return runInstallFilesystemTransaction(async () => {
+      options.assertCurrent?.()
       if (!isDevelopmentSelectionCurrent(packageName)) return false
       invalidateDevSnapshotRequests(packageName)
       this.clearDevArtifacts(packageName, {currentContextOnly: true})
@@ -2539,14 +2553,23 @@ export function assertDevBuildAllowed(packageName: string): void {
  * package names coexist; rescanning the same package updates that package only.
  * The phone keeps the record, its `${packageName}_dev_*` routing keys, and the
  * dev-build marking until a release install or uninstall replaces them.
+ *
+ * A dev build follows the local-build rules whatever name it claims: it keeps
+ * its data apart from the package's, its tokens are marked as a local build's,
+ * it never gets system privileges and it never updates from a URL.
+ *
+ * `assertCurrent` runs after the icon download, immediately before the record
+ * and routing keys are written: an install whose session ended meanwhile
+ * throws there, so it never selects its server in a later session.
  */
-export async function registerDevApp(record: DevAppRecord): Promise<void> {
+export async function registerDevApp(record: DevAppRecord, options: {assertCurrent?: () => void} = {}): Promise<void> {
   migrateLegacyDevSlot()
   const packageName = record.packageName.trim()
   if (!packageName) throw new Error("Dev miniapp manifest is missing packageName")
   assertDevBuildAllowed(packageName)
 
   const iconUrl = await cacheDevAppIcon(packageName, record.iconUrl)
+  options.assertCurrent?.()
   // Relaunch paths (developer-URL screen, loadDevMiniapp) omit mdnsHost, so an
   // omitted field keeps whatever the QR scan stored instead of wiping the
   // `.local` failover host.
@@ -2597,13 +2620,6 @@ function getDevAppIndex(): string[] {
   } catch {
     return []
   }
-}
-
-/** Resolve the manifest package for a dev runtime (including the legacy slot). */
-export function getDevAppSourcePackage(packageName = DEV_APP_PACKAGE_NAME): string | null {
-  migrateLegacyDevSlot()
-  const rec = readDevAppRecord(packageName)
-  return rec?.sourcePackageName ?? rec?.packageName ?? null
 }
 
 export function getDevAppRecords(): DevAppRecord[] {

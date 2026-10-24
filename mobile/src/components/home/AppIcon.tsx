@@ -1,6 +1,6 @@
 import {Image} from "expo-image"
 import {SquircleView} from "expo-squircle-view"
-import {memo, useEffect, useState} from "react"
+import React, {memo, useEffect, useState} from "react"
 import {ActivityIndicator, StyleProp, StyleSheet, Text, TouchableOpacity, View, ViewStyle} from "react-native"
 import {withUniwind} from "uniwind"
 
@@ -15,7 +15,6 @@ import {
   useCachedRemoteImageSource,
 } from "@/hooks/useCachedRemoteImageSource"
 import type {ClientApp} from "@mentra/engine"
-import React from "react"
 
 // Helper to extract style properties for width/height override
 const extractStyleProps = (style: StyleProp<ViewStyle>): Partial<ViewStyle> => {
@@ -49,7 +48,8 @@ const AppIcon = ({app, onClick, style, disableLoader, instant, resolveCachedSour
   const [iconFailed, setIconFailed] = useState(() => isRemoteImageSourceFailed(app.logoUrl))
   const isRemoteLogo =
     typeof app.logoUrl === "string" && (app.logoUrl.startsWith("http://") || app.logoUrl.startsWith("https://"))
-  const imageUri = typeof imageSource === "object" && imageSource !== null && "uri" in imageSource ? imageSource.uri : null
+  const imageUri =
+    typeof imageSource === "object" && imageSource !== null && "uri" in imageSource ? imageSource.uri : null
   const remoteUnavailable = isRemoteLogo && !imageUri
 
   useEffect(() => {
@@ -83,7 +83,7 @@ const AppIcon = ({app, onClick, style, disableLoader, instant, resolveCachedSour
           app.updating
             ? translate("home:miniappUpdatingLabel", {app: app.name})
             : onClick
-              ? `Launch ${app.name}`
+              ? `Launch ${app.name}${app.isMiniappDev ? `, ${translate("home:developmentBuild")}` : ""}`
               : undefined
         }
         accessibilityState={{busy: Boolean(app.updating)}}

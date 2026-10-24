@@ -2,7 +2,7 @@
 
 import {describe, expect, test} from "bun:test"
 
-import {miniappOrigin, miniappOriginHost, miniappOriginUrl} from "../miniappOrigin"
+import {developmentOriginName, miniappOrigin, miniappOriginHost, miniappOriginUrl} from "../miniappOrigin"
 
 describe("miniapp origins", () => {
   test("each package gets its own origin on each platform", () => {
@@ -56,5 +56,25 @@ describe("miniapp origins", () => {
       expect(miniappOriginUrl("com.mentra.notes", path, "ios")).toBeNull()
     }
     expect(miniappOriginUrl("Bad.Name", "index.html", "ios")).toBeNull()
+  })
+})
+
+describe("a development build's origin", () => {
+  test("is its own on each platform, apart from the package's", () => {
+    const name = developmentOriginName("com.mentra.notes")
+    expect(miniappOrigin(name, "ios")).toBe("miniapp://invalid.dev.com.mentra.notes")
+    expect(miniappOrigin(name, "android")).toBe("https://invalid.dev.com.mentra.notes.miniapp.invalid")
+    for (const platform of ["ios", "android"] as const) {
+      expect(miniappOrigin(name, platform)).not.toBe(miniappOrigin("com.mentra.notes", platform))
+    }
+    expect(miniappOriginUrl(name, "ui/index.html", "ios")).toBe("miniapp://invalid.dev.com.mentra.notes/ui/index.html")
+  })
+
+  test("of one package is never another package's, nor another development build's", () => {
+    expect(developmentOriginName("com.acme.notes")).not.toBe(developmentOriginName("com.acme.other"))
+    // A development build may claim even a name under invalid.dev., whose origin is then one more level down.
+    expect(developmentOriginName(developmentOriginName("com.acme.notes"))).not.toBe(
+      developmentOriginName("com.acme.notes"),
+    )
   })
 })

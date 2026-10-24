@@ -41,13 +41,15 @@ function isApprovedSystemPackage(config: IslandConfigValues, packageName: string
  * itself, a release the engine installed for it from a Mentra host, or one the
  * retired Mentra Store installed over it. Shared by runtime privileges and
  * organization visibility. Never derived from a manifest, a signature or a dev
- * server.
+ * server, and never a local-network or development build, which may claim any
+ * name.
  */
 export function isTrustedSystemMiniappRelease(
   config: IslandConfigValues,
   packageName: string,
   identity?: {source: string; storePackageName?: string; sourceUrl?: string} | null,
 ): boolean {
+  if (identity?.source === "local" || identity?.source === "dev_snapshot") return false
   if (!isApprovedSystemPackage(config, packageName)) return false
   if (identity?.source === "bundled_asset") return true
   // Installed from a URL whose domain owns the name, which for Mentra's names is

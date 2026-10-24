@@ -44,6 +44,7 @@ const ar = {
     hint: "(: تلميح: يمكنك استخدام اي عنوان بريد الكتروني وكلمة السر المفضلة لديك",
   },
   home: {
+    developmentBuild: "إصدار تطوير",
     pairAgain: "اقتران مرة أخرى",
     hardwareIncompatible: "الأجهزة غير متوافقة",
     hardwareIncompatibleMessage: "{{app}} يتطلب أجهزة غير متوفرة في النظارات المتصلة: {{missing}}",
@@ -207,6 +208,10 @@ const ar = {
     signInFailedTitle: "فشل تسجيل الدخول",
     signInFailedDescription:
       "تعذّر على Microsoft تسجيل دخولك إلى هذه المؤسسة. حاول مرة أخرى أو تواصل مع فريق تقنية المعلومات.",
+  },
+  miniappInstall: {
+    fromLocalNetwork: "من شبكتك المحلية\n{{address}}",
+    install: "تثبيت",
   },
 } satisfies TranslationResource
 

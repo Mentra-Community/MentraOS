@@ -45,6 +45,7 @@ const ko = {
     hint: "힌트: 가장 좋아하는 암호와 아무런 아무 이메일 주소나 사용할 수 있어요 :)",
   },
   home: {
+    developmentBuild: "개발 빌드",
     pairAgain: "다시 페어링",
     hardwareIncompatible: "하드웨어 비호환",
     hardwareIncompatibleMessage: "{{app}}은(는) 연결된 안경에서 사용할 수 없는 하드웨어가 필요합니다: {{missing}}",
@@ -210,6 +211,10 @@ const ko = {
     noActiveWorkspace: "활성화된 조직이 없습니다.",
     signInFailedTitle: "로그인 실패",
     signInFailedDescription: "Microsoft에서 이 조직에 로그인할 수 없습니다. 다시 시도하거나 IT 팀에 문의하세요.",
+  },
+  miniappInstall: {
+    fromLocalNetwork: "로컬 네트워크에서\n{{address}}",
+    install: "설치",
   },
 } satisfies TranslationResource
 

@@ -564,6 +564,36 @@ describe("MentraJSRouter", () => {
     })
   })
 
+  test("records whether a context runs a local or development build before it is live, through a crash respawn", async () => {
+    const {isLocalBuildContext} = await import("../miniappBuildKind")
+    const {miniappContextRegistry} = await import("../MiniappRunningRegistry")
+    const {MentraJSCrashController} = await import("../MentraJSCrashController")
+    router.crashController = new MentraJSCrashController({now: () => 0, backoffMs: [1], maxRetries: 3})
+    router.start()
+    // What the data partition and the token see when the context becomes live.
+    const seenAtStart: boolean[] = []
+    const unsubscribe = miniappContextRegistry.subscribe(() => {
+      if (miniappContextRegistry.has("com.dev")) seenAtStart.push(isLocalBuildContext("com.dev"))
+    })
+    try {
+      await router.spawnAndRegister("com.dev", "/* dev js */", {developmentBuild: true})
+      expect(seenAtStart).toEqual([true])
+      ;(runtimeMock.runtime as unknown as {onLivenessTimeout: (packageName: string) => void}).onLivenessTimeout(
+        "com.dev",
+      )
+      await new Promise((r) => setTimeout(r, 20))
+      expect(crust.spawnCalls).toHaveLength(2)
+      expect(isLocalBuildContext("com.dev")).toBe(true)
+      // The installed release, started again, is not one.
+      await router.unregister("com.dev")
+      await router.spawnAndRegister("com.dev", "/* release js */")
+      expect(isLocalBuildContext("com.dev")).toBe(false)
+    } finally {
+      unsubscribe()
+      await router.unregister("com.dev")
+    }
+  })
+
   test("recovery reopens mounted UI once the replacement connects, not at init", async () => {
     const {MentraJSCrashController} = await import("../MentraJSCrashController")
     router.crashController = new MentraJSCrashController({backoffMs: [1], maxRetries: 3})

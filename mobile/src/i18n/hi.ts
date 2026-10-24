@@ -45,6 +45,7 @@ const hi = {
     hint: "संकेत: आप किसी भी ईमेल पते और अपने पसंदीदा पासवर्ड का उपयोग कर सकते हैं :)",
   },
   home: {
+    developmentBuild: "डेवलपमेंट बिल्ड",
     pairAgain: "फिर से पेयर करें",
     hardwareIncompatible: "हार्डवेयर असंगत",
     hardwareIncompatibleMessage:
@@ -215,6 +216,10 @@ const hi = {
     signInFailedTitle: "साइन-इन विफल",
     signInFailedDescription:
       "Microsoft आपको इस संगठन में साइन इन नहीं कर सका। फिर से कोशिश करें या अपनी IT टीम से संपर्क करें।",
+  },
+  miniappInstall: {
+    fromLocalNetwork: "आपके लोकल नेटवर्क से\n{{address}}",
+    install: "इंस्टॉल करें",
   },
 } satisfies TranslationResource
 

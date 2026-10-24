@@ -54,6 +54,7 @@ function wireDevServerRespawnBackground(router: MentraJSRouter, uiRouter: Mentra
         installedManifest: resolved.installedManifest,
         hostTrustedSystem: resolved.hostTrustedSystem,
         projectRunning,
+        developmentBuild: resolved.devBuild,
       })
       // A miniapp running as user activity starts again from the new bundle: an automatic launch to Fleet.
       if (projectRunning) {

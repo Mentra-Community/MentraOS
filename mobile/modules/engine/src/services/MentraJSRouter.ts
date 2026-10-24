@@ -42,6 +42,7 @@ import type {MentraJSCrashController} from "./MentraJSCrashController"
 import {MentraJSLogRingBuffer, MentraJSLogThrottle, redactSecrets} from "./MentraJSLogPipeline"
 import {islandNotifications} from "./NotificationsEmitter"
 import type {MentraUIRouter} from "./MentraUIRouter"
+import {recordMiniappBuild} from "./miniappBuildKind"
 import {miniappContextRegistry, miniappRunningRegistry} from "./MiniappRunningRegistry"
 
 /** The runtime's runtime instance type — the singleton exported from
@@ -111,6 +112,8 @@ interface SpawnCache {
   hostTrustedSystem: boolean
   /** Whether this context is normal user-visible activity (false for a transient action wake). */
   projectRunning: boolean
+  /** A local or development build: its data is kept apart and its tokens are marked. */
+  developmentBuild: boolean
 }
 
 export class MentraJSRouter {
@@ -229,7 +232,10 @@ export class MentraJSRouter {
     installedManifest?: InstalledMiniappManifest,
     hostTrustedSystem = false,
     projectRunning = true,
+    developmentBuild = false,
   ): void {
+    // Before the context is live: its data partition is pinned, and its tokens are marked, by the build it runs.
+    recordMiniappBuild(packageName, {localBuild: developmentBuild})
     this.runtime.registerApp(
       packageName,
       (raw: string) => {
@@ -267,6 +273,8 @@ export class MentraJSRouter {
       hostTrustedSystem?: boolean
       /** False for an invocation-scoped transient action wake. */
       projectRunning?: boolean
+      /** A local or development build (a local-network install, a development server or snapshot). */
+      developmentBuild?: boolean
     },
   ): Promise<boolean> {
     if (!this.crust.mentraJsSpawn) {
@@ -294,7 +302,8 @@ export class MentraJSRouter {
     }
     const hostTrustedSystem = options?.hostTrustedSystem ?? false
     const projectRunning = options?.projectRunning ?? true
-    this.registerApp(packageName, options?.installedManifest, hostTrustedSystem, projectRunning)
+    const developmentBuild = options?.developmentBuild ?? false
+    this.registerApp(packageName, options?.installedManifest, hostTrustedSystem, projectRunning, developmentBuild)
     // Cache spawn arguments so the crash controller can respawn the
     // same code after a backoff. permissions + manifest are cached too
     // because the native side resets setManifest on every spawn and
@@ -306,6 +315,7 @@ export class MentraJSRouter {
       installedManifest: options?.installedManifest,
       hostTrustedSystem,
       projectRunning,
+      developmentBuild,
     })
     this.crashController?.onSpawn(packageName)
 
@@ -398,7 +408,13 @@ export class MentraJSRouter {
         if (cached.permissions.length > 0) {
           await this.crust.mentraJsSetManifest(packageName, cached.permissions)
         }
-        this.registerApp(packageName, cached.installedManifest, cached.hostTrustedSystem, cached.projectRunning)
+        this.registerApp(
+          packageName,
+          cached.installedManifest,
+          cached.hostTrustedSystem,
+          cached.projectRunning,
+          cached.developmentBuild,
+        )
         controller.onSpawn(packageName)
         // Re-fire the init envelope so the respawned context's
         // `registerMiniapp` handler runs again.
@@ -555,8 +571,8 @@ export class MentraJSRouter {
         method === "warn"
           ? this.logger.warn
           : method === "error" || method === "fatal"
-          ? this.logger.error
-          : this.logger.log
+            ? this.logger.error
+            : this.logger.log
       // Emit a synthetic "[throttled N]" line in place of the next
       // would-be-allowed log to summarise drops.
       if (!decision.allowed) {

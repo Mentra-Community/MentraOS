@@ -12,6 +12,10 @@
  *   no new context of the package sees the old workspace's data, whether or not the new workspace's install worked.
  * - The partition a package's live context uses (a hidden or background one too) is pinned when the context starts
  *   and released when it stops, so its private execution context changes only while it is stopped.
+ * - A local or development build (a local-network install, a development server or a development snapshot) may
+ *   claim any package name, so its data is kept apart from every other install of that name: it uses its account's
+ *   personal partition plus `.local`, never a workspace's, and never the data from before partitions. The router
+ *   records which kind of build each context runs when it starts (`miniappBuildKind.ts`).
  * - Development selections (the `<pkg>_dev_*` keys and `dev_apps_index` in the default MMKV instance, read by many
  *   modules) follow the same rule, package by package: when the context changes, each package without a live context
  *   swaps at once (its outgoing selection is stashed with the context it belonged to, the incoming one restored), and
@@ -25,6 +29,7 @@ import {createMMKV, type MMKV} from "react-native-mmkv"
 
 import {storage} from "../utils/storage/storage"
 import {normalizeCoreUrl} from "./fleet/coreUrl"
+import {isLocalBuildContext, resetMiniappBuildsForTests} from "./miniappBuildKind"
 import {miniappContextRegistry} from "./MiniappRunningRegistry"
 
 /** The account a request speaks for, on its Core. */
@@ -36,6 +41,8 @@ export interface MiniappDataSession {
 export interface MiniappDataContext extends MiniappDataSession {
   /** The workspace whose private data this is; null for the account's personal data. */
   workspaceId: string | null
+  /** A local or development build's data, apart from the package's own. Never a workspace's. */
+  localBuild?: boolean
 }
 
 export interface MiniappDataPartition {
@@ -117,8 +124,12 @@ function sessionId(session: MiniappDataSession): string {
   return `${escapeSegment(normalizeCoreUrl(session.coreUrl))}.${escapeSegment(session.mentraUserId.trim())}`
 }
 
-/** The partition id for `context`. Pure: the same context always names the same partition. */
+/**
+ * The partition id for `context`. Pure: the same context always names the same partition. A local build's is its
+ * account's personal partition plus `.local`; no escaped segment contains a `.`, so no other context names it.
+ */
 export function partitionIdOf(context: MiniappDataContext): string {
+  if (context.localBuild) return `${sessionId(context)}.p.local`
   return `${sessionId(context)}.${context.workspaceId ? `w${escapeSegment(context.workspaceId)}` : "p"}`
 }
 
@@ -129,6 +140,10 @@ function currentSession(): MiniappDataSession | null {
 }
 
 function computeContext(packageName: string, session: MiniappDataSession): MiniappDataContext {
+  // A local build's name proves nothing, so a workspace's assignment of that name grants it nothing.
+  if (isLocalBuildContext(packageName)) {
+    return {coreUrl: session.coreUrl, mentraUserId: session.mentraUserId.trim(), workspaceId: null, localBuild: true}
+  }
   let workspaceId: string | null = null
   try {
     const assigned = hooks?.assignedWorkspace(packageName, session) ?? null
@@ -163,7 +178,11 @@ export function configureMiniappDataPartitions(next: MiniappDataPartitionHooks):
 /** The data context `packageName` reads and writes now. Throws while no account is known. */
 export function miniappDataContext(packageName: string): MiniappDataContext {
   const pinned = pins.get(packageName)
-  if (pinned && miniappContextRegistry.has(packageName)) return pinned
+  // A context that started again as another kind of build in place (a respawn) is pinned again for the new build.
+  const sameBuild = (pinned?.localBuild === true) === isLocalBuildContext(packageName)
+  if (pinned && miniappContextRegistry.has(packageName) && sameBuild) {
+    return pinned
+  }
   pins.delete(packageName)
   const session = currentSession()
   if (!session) throw new Error("Mentra user identity is unavailable")
@@ -175,7 +194,11 @@ export function miniappDataContext(packageName: string): MiniappDataContext {
 /** The partition `packageName`'s SimpleStorage and blobs use now. Throws while no account is known. */
 export function resolveMiniappDataPartition(packageName: string): MiniappDataPartition {
   const context = miniappDataContext(packageName)
-  return {id: partitionIdOf(context), personalUserId: context.workspaceId ? null : context.mentraUserId}
+  return {
+    id: partitionIdOf(context),
+    // Data from before partitions belongs to the installed package, never to a local build of its name.
+    personalUserId: context.workspaceId || context.localBuild ? null : context.mentraUserId,
+  }
 }
 
 // ---- Fleet workspace (the development context) ----------------------------------------------------------------
@@ -461,6 +484,7 @@ function isDevSnapshotOwnedBy(packageName: string, version: string, current: str
 export function resetMiniappDataPartitionsForTests(): void {
   hooks = null
   pins.clear()
+  resetMiniappBuildsForTests()
   unsubscribeContexts?.()
   unsubscribeContexts = null
   partitionStore?.clearAll()

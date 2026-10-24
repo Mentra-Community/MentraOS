@@ -72,6 +72,8 @@ interface Host {
 }
 
 let identities: Record<string, {source: string; storePackageName?: string; sourceUrl?: string} | null>
+/** Packages whose context started as a local or development build. */
+const localBuilds = new Set<string>()
 let reasons: Record<string, string[]>
 let devRecords: Array<{packageName: string}>
 let installs: Array<{url: string; options: InstallMiniappOptions}>
@@ -97,6 +99,7 @@ const HostClass = new Function(
   "isSystemMiniappPackage",
   "isHostTrustedSystemMiniapp",
   "projectSystemActions",
+  "isLocalBuildContext",
   `${compiled}; return Host`,
 )(
   SYSTEM_MINIAPP_PACKAGE_SET,
@@ -136,6 +139,7 @@ const HostClass = new Function(
   isSystemMiniappPackage,
   isHostTrustedSystemMiniapp,
   projectSystemActions,
+  (packageName: string) => localBuilds.has(packageName),
 ) as new () => Host
 
 function app(packageName: string, overrides: Partial<ClientApp> = {}): ClientApp {
@@ -189,6 +193,7 @@ beforeEach(() => {
   })
   identities = {[ai]: {source: "bundled_asset"}, [notes]: {source: "bundled_asset"}}
   reasons = {}
+  localBuilds.clear()
   devRecords = []
   installs = []
   installImplementation = async () => ({status: "installed", packageName: weather, version: "1.2.0"})
@@ -434,6 +439,19 @@ describe("what a system miniapp sees", () => {
     expect(listed).not.toHaveProperty("systemStoreOwnerPackageName")
     expect(host.buildMiniappInfo(app(weather))).toMatchObject({system: false})
     expect(host.buildMiniappInfo(app(weather))).not.toHaveProperty("storeOwnerPackageName")
+  })
+
+  test("a local or development build never gets system privileges, whatever name it claims", async () => {
+    const h = harness([app(ai), app(weather, {isMiniappDev: true})])
+    expect(h.host.isSystemPackage(ai)).toBe(true)
+    // A dev build of an ordinary package is an ordinary caller.
+    expect(h.host.isSystemPackage(weather)).toBe(false)
+    // A local build claiming a system package's name, even over its bundled release and a trusted context.
+    localBuilds.add(ai)
+    expect(h.host.isSystemPackage(ai)).toBe(false)
+    await h.host.handleMiniappsInstall(ai, {url}, "r1")
+    expect(h.results[0].error?.code).toBe(MiniappErrorCode.NOT_PERMITTED)
+    expect(installs).toEqual([])
   })
 
   test("the retired Store gets no privileges from its live context", () => {

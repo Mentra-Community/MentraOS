@@ -5,6 +5,7 @@ import {fakeCreateMMKV, mmkvInstances, resetFakeMmkv} from "../fleet/__tests__/f
 
 mock.module("react-native-mmkv", () => ({createMMKV: fakeCreateMMKV}))
 const partitions = await import("../miniappDataPartition")
+const builds = await import("../miniappBuildKind")
 const {storage} = await import("../../utils/storage/storage")
 const {miniappContextRegistry, miniappRunningRegistry} = await import("../MiniappRunningRegistry")
 
@@ -290,5 +291,64 @@ describe("development selections", () => {
     expect(partitions.isDevSnapshotVisible(pkg, "1.0.0")).toBe(true)
     partitions.setFleetWorkspace(session!, null)
     expect(partitions.isDevSnapshotVisible(pkg, "dev-100")).toBe(true)
+  })
+})
+
+describe("a local or development build's data", () => {
+  /** The router starts the package's context, recording which kind of build it runs first. */
+  function startBuild(packageName: string, localBuild: boolean): void {
+    builds.recordMiniappBuild(packageName, {localBuild})
+    startRunning(packageName)
+  }
+
+  test("is its account's personal partition plus .local, with none of the data from before partitions", () => {
+    const own = partitions.resolveMiniappDataPartition(pkg)
+    startBuild(pkg, true)
+    const local = partitions.resolveMiniappDataPartition(pkg)
+    expect(local).toEqual({id: `${own.id}.local`, personalUserId: null})
+    expect(builds.isLocalBuildContext(pkg)).toBe(true)
+  })
+
+  test("is never a workspace's, even for a package that workspace assigned", () => {
+    assignIn("ws_A")
+    const inA = partitions.resolveMiniappDataPartition(pkg).id
+    startBuild(pkg, true)
+    const local = partitions.resolveMiniappDataPartition(pkg)
+    expect(local.id).not.toBe(inA)
+    expect(local.id.endsWith(".p.local")).toBe(true)
+    expect(partitions.miniappDataContext(pkg)).toEqual({
+      coreUrl: CORE,
+      mentraUserId: "mu_1",
+      workspaceId: null,
+      localBuild: true,
+    })
+  })
+
+  test("is apart from every other install of the name, and the installed release's comes back after it", () => {
+    startBuild(pkg, false)
+    const release = partitions.resolveMiniappDataPartition(pkg).id
+    stopRunning(pkg)
+    startBuild(pkg, true)
+    const local = partitions.resolveMiniappDataPartition(pkg).id
+    expect(local).not.toBe(release)
+    stopRunning(pkg)
+    // The real one, installed again.
+    startBuild(pkg, false)
+    expect(partitions.resolveMiniappDataPartition(pkg).id).toBe(release)
+    expect(builds.isLocalBuildContext(pkg)).toBe(false)
+  })
+
+  test("follows a context that starts again as another kind of build without stopping", () => {
+    startBuild(pkg, false)
+    const release = partitions.resolveMiniappDataPartition(pkg).id
+    // A respawn re-registers the context in place.
+    builds.recordMiniappBuild(pkg, {localBuild: true})
+    expect(partitions.resolveMiniappDataPartition(pkg).id).toBe(`${release}.local`)
+  })
+
+  test("of one package leaves another package's alone", () => {
+    startBuild(pkg, true)
+    expect(builds.isLocalBuildContext("com.acme.other")).toBe(false)
+    expect(partitions.resolveMiniappDataPartition("com.acme.other").personalUserId).toBe("mu_1")
   })
 })

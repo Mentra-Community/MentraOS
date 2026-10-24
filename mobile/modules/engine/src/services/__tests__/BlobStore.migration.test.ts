@@ -119,4 +119,20 @@ describe("blobs from before partitions", () => {
     expect(get().result).toMatchObject({key: "take", bytes: 10})
     expect(fs.existsSync(path.join(targetDir(), fileName))).toBe(true)
   })
+
+  it("are never a local build's: one claiming the package finds nothing, and they stay the package's", () => {
+    const localPartition = {id: `${partition.id}.local`, personalUserId: null}
+    const claimant = new BlobStore({
+      sendResult: (_pkg, _id, success, result) => results.push({ok: success, result}),
+      getPartition: () => localPartition,
+    })
+    claimant.handleGet(pkg, {key: "take"})
+    expect(results.at(-1)).toEqual({ok: true, result: null})
+    claimant.handleList(pkg, {})
+    expect(results.at(-1)).toMatchObject({ok: true, result: {blobs: []}})
+    expect(fs.existsSync(legacyFile())).toBe(true)
+    expect(fs.existsSync(path.join(Paths.document, "mentra_blobs", localPartition.id, pkg, fileName))).toBe(false)
+    // The installed package still gets them.
+    expect(get().result).toMatchObject({key: "take", bytes: 10})
+  })
 })

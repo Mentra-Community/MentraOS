@@ -45,6 +45,7 @@ const ja = {
     hint: "ヒント: お好みのメールアドレスとパスワードを使ってください :)",
   },
   home: {
+    developmentBuild: "開発ビルド",
     pairAgain: "もう一度ペアリング",
     hardwareIncompatible: "ハードウェア非対応",
     hardwareIncompatibleMessage: "{{app}}は接続されたグラスで利用できないハードウェアが必要です: {{missing}}",
@@ -217,6 +218,10 @@ const ja = {
     signInFailedTitle: "サインインに失敗しました",
     signInFailedDescription:
       "Microsoftでこの組織にサインインできませんでした。もう一度試すか、ITチームにお問い合わせください。",
+  },
+  miniappInstall: {
+    fromLocalNetwork: "ローカルネットワークから\n{{address}}",
+    install: "インストール",
   },
 } satisfies TranslationResource
 

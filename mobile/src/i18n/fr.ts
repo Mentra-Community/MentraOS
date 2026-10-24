@@ -46,6 +46,7 @@ const fr = {
     hint: "Astuce : vous pouvez utiliser n'importe quelle adresse e-mail et votre mot de passe préféré :)",
   },
   home: {
+    developmentBuild: "Version de développement",
     pairAgain: "Appairer à nouveau",
     hardwareIncompatible: "Matériel Incompatible",
     hardwareIncompatibleMessage:
@@ -222,6 +223,10 @@ const fr = {
     signInFailedTitle: "Échec de la connexion",
     signInFailedDescription:
       "Microsoft n'a pas pu vous connecter à cette organisation. Réessayez ou contactez votre équipe informatique.",
+  },
+  miniappInstall: {
+    fromLocalNetwork: "Depuis votre réseau local\n{{address}}",
+    install: "Installer",
   },
 } satisfies TranslationResource
 

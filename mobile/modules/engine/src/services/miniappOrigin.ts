@@ -11,6 +11,11 @@
  *
  * The native side applies the same rules and serves nothing for a package
  * name that breaks them, so these return null exactly when it would.
+ *
+ * A development build's installed files (a development snapshot, or a
+ * local-network install while its server is away) load from an origin of their
+ * own, {@link developmentOriginName}, so they never share web storage with an
+ * installed release of the same name.
  */
 
 export type MiniappOriginPlatform = "ios" | "android"
@@ -19,6 +24,11 @@ export const MINIAPP_ORIGIN_SCHEME = "miniapp"
 export const MINIAPP_ORIGIN_HOST_SUFFIX = ".miniapp.invalid"
 
 const PACKAGE_NAME = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
+/**
+ * Names under `invalid.` are served from `.invalid` hosts, which have no registrable domain, so no miniapp URL can
+ * serve one and no URL install gets this origin.
+ */
+const DEVELOPMENT_ORIGIN_PREFIX = "invalid.dev."
 const MAX_HOST = 253
 const MAX_LABEL = 63
 
@@ -66,4 +76,15 @@ export function miniappOriginUrl(
     return null
   }
   return `${origin}/${segments.map(encodeURIComponent).join("/")}`
+}
+
+/**
+ * The name whose origin a development build's installed files load from: the
+ * package's own name under `invalid.dev.`, so its web storage is apart from an
+ * installed release's (`miniapp://invalid.dev.<packageName>/` on iOS,
+ * `https://invalid.dev.<host>.miniapp.invalid/` on Android). The WebView's
+ * `miniappOrigin` takes it in place of the package name.
+ */
+export function developmentOriginName(packageName: string): string {
+  return `${DEVELOPMENT_ORIGIN_PREFIX}${packageName}`
 }

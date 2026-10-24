@@ -92,6 +92,7 @@ mock.module("../../utils/storage/zip", () => ({printDirectory: mock()}))
 const {default: registry, hasAssignmentReason, withReleaseDigest} = await import("../AppRegistry")
 const partitions = await import("../miniappDataPartition")
 const {miniappContextRegistry} = await import("../MiniappRunningRegistry")
+const {runInstallFilesystemTransaction} = await import("../installOperation")
 const packageName = "com.acme.notes"
 const assignment: MiniappAssignment = {
   assignmentId: "asg_1",
@@ -270,6 +271,28 @@ describe("live-development selection", () => {
     expect(values.has(`${packageName}_dev_port`)).toBe(false)
     expect(values.has(`${packageName}_active_version`)).toBe(false)
     expect(registry.getActiveReleaseVersion(packageName)).toBe("1.0.0")
+  })
+
+  test("a clear whose session ends while it waits for the install queue clears nothing", async () => {
+    installed = ["1.0.0"]
+    values.set(`${packageName}_dev_url`, "http://192.168.1.20:3000")
+    values.set(`${packageName}_active_version`, "dev-1000")
+    // Another install holds the queue.
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const held = runInstallFilesystemTransaction(() => gate)
+    let sessionEnded = false
+    const clearing = registry.clearDevelopmentSelection(packageName, {
+      assertCurrent: () => {
+        if (sessionEnded) throw new Error("the restore's session ended")
+      },
+    })
+    sessionEnded = true
+    release()
+    await held
+    await expect(clearing).rejects.toThrow("the restore's session ended")
+    expect(values.get(`${packageName}_dev_url`)).toBe("http://192.168.1.20:3000")
+    expect(values.get(`${packageName}_active_version`)).toBe("dev-1000")
   })
 })
 

@@ -34,7 +34,10 @@ class MemoryBackend implements LocalMiniappStorageBackend {
 const CORE = "https://core.mentra.glass"
 
 function partitionOf(context: MiniappDataContext): MiniappDataPartition {
-  return {id: partitionIdOf(context), personalUserId: context.workspaceId ? null : context.mentraUserId}
+  return {
+    id: partitionIdOf(context),
+    personalUserId: context.workspaceId || context.localBuild ? null : context.mentraUserId,
+  }
 }
 
 function personal(mentraUserId: string, coreUrl = CORE) {
@@ -43,6 +46,10 @@ function personal(mentraUserId: string, coreUrl = CORE) {
 
 function workspace(workspaceId: string, mentraUserId = "mu_1", coreUrl = CORE) {
   return async () => partitionOf({coreUrl, mentraUserId, workspaceId})
+}
+
+function localBuild(mentraUserId = "mu_1", coreUrl = CORE) {
+  return async () => partitionOf({coreUrl, mentraUserId, workspaceId: null, localBuild: true})
 }
 
 describe("LocalMiniappStorage", () => {
@@ -120,6 +127,27 @@ describe("LocalMiniappStorage", () => {
     await own.set("com.acme.notes", "draft", "edited")
     backend.set("mentraos_localstorage_mu_1_com.acme.notes_draft", "stale")
     expect(await own.get("com.acme.notes", "draft")).toBe("edited")
+  })
+
+  it("keeps a local build's data apart from the installed package's, including what was left from before partitions", async () => {
+    const backend = new MemoryBackend()
+    // Data Notes wrote before partitions, not yet moved.
+    backend.set("mentraos_localstorage_mu_1_com.mentra.notes_draft", "from 3.2")
+    const claimant = new LocalMiniappStorage({backend, getPartition: localBuild()})
+    expect(await claimant.get("com.mentra.notes", "draft")).toBeNull()
+    expect(backend.has("mentraos_localstorage_mu_1_com.mentra.notes_draft")).toBe(true)
+
+    const notes = new LocalMiniappStorage({backend, getPartition: personal("mu_1")})
+    await notes.set("com.mentra.notes", "token", "real")
+    // A local build claiming Notes' name, with Notes' data on the phone (installed, or left after an uninstall).
+    expect(await claimant.get("com.mentra.notes", "token")).toBeNull()
+    expect(await claimant.getAll("com.mentra.notes")).toEqual({})
+    await claimant.set("com.mentra.notes", "token", "local")
+    await claimant.clear("com.mentra.notes")
+
+    // Nothing the local build did reached Notes' data, and the data from before partitions is Notes' own.
+    expect(await notes.get("com.mentra.notes", "token")).toBe("real")
+    expect(await notes.get("com.mentra.notes", "draft")).toBe("from 3.2")
   })
 
   it("refuses to create an anonymous namespace when identity is unavailable", async () => {

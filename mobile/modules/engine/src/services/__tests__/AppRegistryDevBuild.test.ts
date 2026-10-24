@@ -4,12 +4,16 @@ import {result as Res} from "typesafe-ts"
 
 import type {MiniappReleaseIdentity} from "../AppRegistry"
 
-// A dev build of a package is that package: the phone applies the Android
-// signer rule to it and Core mints its token like any installed miniapp's.
+// A dev build of a package claims that package's name: the phone applies the
+// Android signer rule to it, and Core mints its token marked as a local build's.
 ;(globalThis as {__DEV__?: boolean}).__DEV__ = false
 const values = new Map<string, unknown>()
 const installationValues = new Map<string, string>()
 let candidateFingerprint: string | undefined
+/** The dev icon's download, which a test may hold open. */
+let iconDownload: () => Promise<{uri: string}> = async () => {
+  throw new Error("no network in this test")
+}
 let developmentAllowed = true
 let installedAllowed = (_identity: MiniappReleaseIdentity | null) => true
 mock.module("../../utils/storage/storage", () => ({
@@ -78,6 +82,9 @@ mock.module("expo-file-system", () => ({
     }
   },
   File: class {
+    static downloadFileAsync() {
+      return iconDownload()
+    }
     uri = "file:///test-cache/bundle.zip"
     exists = false
     write() {
@@ -118,10 +125,10 @@ const {
   default: registry,
   assertDevBuildAllowed,
   getDevAppRecords,
-  getDevAppSourcePackage,
   registerDevApp,
   SignedMiniappDevBuildError,
 } = await import("../AppRegistry")
+const {isLocalBuildContext, recordMiniappBuild} = await import("../miniappBuildKind")
 
 const packageName = "com.example.devbuild"
 const devRecord = {packageName, name: "Dev Build", iconUrl: "", devUrl: "http://192.168.1.20:3000", devPort: 3001}
@@ -154,9 +161,9 @@ function tokenRequester() {
       return {token: "miniapp-token"}
     },
   }
-  const Host = new Function("cloudClientService", "getDevAppSourcePackage", `${compiled}; return Host`)(
+  const Host = new Function("cloudClientService", "isLocalBuildContext", `${compiled}; return Host`)(
     cloudClientService,
-    getDevAppSourcePackage,
+    isLocalBuildContext,
   )
   return {host: new Host() as {requestMiniappAuth(pkg: string, opts?: unknown): Promise<unknown>}, calls}
 }
@@ -164,6 +171,10 @@ function tokenRequester() {
 beforeEach(() => {
   values.clear()
   installationValues.clear()
+  recordMiniappBuild(packageName, {localBuild: false})
+  iconDownload = async () => {
+    throw new Error("no network in this test")
+  }
   candidateFingerprint = undefined
   developmentAllowed = true
   installedAllowed = () => true
@@ -176,7 +187,7 @@ describe("live dev builds follow the installed signer", () => {
     expect(values.get(`${packageName}_dev_url`)).toBe(devRecord.devUrl)
   })
 
-  test("unsigned installed X + unsigned dev X: allowed, marked as a dev build, token minted for X", async () => {
+  test("unsigned installed X + unsigned dev X: allowed, marked as a dev build, token marked as a local build's", async () => {
     install("1.0.0", {source: "direct_download"})
     expect(registry.getPublisherKeyFingerprint(packageName)).toBeNull()
 
@@ -196,14 +207,19 @@ describe("live dev builds follow the installed signer", () => {
     expect(tiles).toHaveLength(1)
     expect(tiles[0]).toMatchObject({packageName, isMiniappDev: true, devUrl: devRecord.devUrl})
 
-    // The token request names X itself and carries nothing else.
+    // The router starts X's context as a development build: its token request names X, marked as a local build.
+    recordMiniappBuild(packageName, {localBuild: true})
     const {host, calls} = tokenRequester()
     await host.requestMiniappAuth(packageName)
     await host.requestMiniappAuth(packageName, {minTtlMs: 60_000})
     expect(calls).toEqual([
-      [packageName, undefined],
-      [packageName, {minTtlMs: 60_000}],
+      [packageName, {localBuild: true}],
+      [packageName, {minTtlMs: 60_000, localBuild: true}],
     ])
+    // Its installed release, started again, asks for the package's own token.
+    recordMiniappBuild(packageName, {localBuild: false})
+    await host.requestMiniappAuth(packageName)
+    expect(calls.at(-1)).toEqual([packageName, undefined])
   })
 
   test("are refused over a signed install until it is uninstalled", async () => {
@@ -223,6 +239,37 @@ describe("live dev builds follow the installed signer", () => {
     expect(registry.getPublisherKeyFingerprint(packageName)).toBeNull()
     await registerDevApp(devRecord)
     expect(values.get(`${packageName}_dev_url`)).toBe(devRecord.devUrl)
+  })
+})
+
+describe("registering a dev build", () => {
+  test("whose session ends while its icon downloads writes no record or routing", async () => {
+    let finishDownload!: (file: {uri: string}) => void
+    iconDownload = () => new Promise((resolve) => (finishDownload = resolve))
+    let sessionEnded = false
+    const registering = registerDevApp(
+      {...devRecord, iconUrl: "http://192.168.1.20:3000/icon.png"},
+      {
+        assertCurrent: () => {
+          if (sessionEnded) throw new Error("the install's session ended")
+        },
+      },
+    )
+    await Promise.resolve()
+    sessionEnded = true
+    finishDownload({uri: "file:///test-documents/dev-miniapp-icons/icon.png"})
+    await expect(registering).rejects.toThrow("the install's session ended")
+    expect([...values.keys()].filter((key) => key.startsWith(packageName) || key === "dev_apps_index")).toEqual([])
+    expect(getDevAppRecords()).toEqual([])
+  })
+
+  test("still current after its icon downloads, writes its record and routing", async () => {
+    iconDownload = async () => ({uri: "file:///test-documents/dev-miniapp-icons/icon.png"})
+    await registerDevApp({...devRecord, iconUrl: "http://192.168.1.20:3000/icon.png"}, {assertCurrent: () => {}})
+    expect(values.get(`${packageName}_dev_url`)).toBe(devRecord.devUrl)
+    expect(getDevAppRecords().map((record) => record.iconUrl)).toEqual([
+      "file:///test-documents/dev-miniapp-icons/icon.png",
+    ])
   })
 })
 

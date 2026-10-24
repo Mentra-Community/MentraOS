@@ -76,11 +76,12 @@ jest.mock("@/services/streamPreview", () => {
   return {STREAM_PREVIEW_BIND_TIMEOUT_MS: 0, getStreamPreviewCoordinator: () => coordinator}
 })
 
-const NO_UI = {uiUri: null, uiOrigin: null, uiRootDir: null, devBuild: false}
+const NO_UI = {uiUri: null, uiOrigin: null, uiRootDir: null, uiOriginName: null, devBuild: false}
 const INSTALLED = {
   uiUri: "https://com.mentra.test.miniapp.invalid/ui/index.html",
   uiOrigin: "https://com.mentra.test.miniapp.invalid",
   uiRootDir: "file:///documents/lmas/com.mentra.test/1.0.0/",
+  uiOriginName: "com.mentra.test",
   devBuild: false,
 }
 
@@ -208,11 +209,30 @@ describe("the screen's origin", () => {
     expect(webView.props.allowingReadAccessToURL).toBeUndefined()
   })
 
+  it("serves a development snapshot under its development origin, never the package's", async () => {
+    const snapshot = {
+      uiUri: "https://invalid.dev.com.mentra.test.miniapp.invalid/ui/index.html",
+      uiOrigin: "https://invalid.dev.com.mentra.test.miniapp.invalid",
+      uiRootDir: "file:///documents/lmas/com.mentra.test/dev-1000/",
+      uiOriginName: "invalid.dev.com.mentra.test",
+      devBuild: true,
+    }
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(snapshot)
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    const webView = view.UNSAFE_getByType("WebView" as never)
+    expect(webView.props.source).toEqual({uri: snapshot.uiUri})
+    expect(webView.props.miniappOrigin).toEqual({packageName: snapshot.uiOriginName, rootDir: snapshot.uiRootDir})
+    expect(webView.props.originWhitelist).toContain(snapshot.uiOrigin)
+    expect(webView.props.originWhitelist).not.toContain(INSTALLED.uiOrigin)
+  })
+
   it("keeps a live development build on its server", async () => {
     jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue({
       uiUri: "http://192.168.1.20:8081/dist/ui/index.html",
       uiOrigin: "http://192.168.1.20:8081",
       uiRootDir: null,
+      uiOriginName: null,
       devBuild: true,
     })
     const view = render(<LocalMiniappView {...props} devUrl="http://192.168.1.20:8081" />)
@@ -265,6 +285,7 @@ describe("a first-party miniapp's web storage", () => {
     uiUri: "miniapp://com.mentra.notes/ui/index.html",
     uiOrigin: "miniapp://com.mentra.notes",
     uiRootDir: "file:///documents/lmas/com.mentra.notes/1.0.30/",
+    uiOriginName: "com.mentra.notes",
     devBuild: false,
   }
   const notesProps = {...props, packageName: "com.mentra.notes"}

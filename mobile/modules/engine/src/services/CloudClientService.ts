@@ -785,9 +785,13 @@ export const cloudClientService = {
     return getAuth()?.getUserId ? localMiniappUserIdentity.get() : null
   },
 
+  /**
+   * The package's miniapp token from Core. With `localBuild`, a token marked as a local build's, which never names a
+   * workspace and which backends accept only where they allow local builds; it is cached apart from the package's own.
+   */
   async getMiniappAuthToken(
     packageName: string,
-    opts?: {minTtlMs?: number; fresh?: boolean},
+    opts?: {minTtlMs?: number; fresh?: boolean; localBuild?: boolean},
   ): Promise<MiniappAuthToken> {
     if (!client) this.init()
     const c = client

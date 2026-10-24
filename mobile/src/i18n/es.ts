@@ -46,6 +46,7 @@ const es = {
     hint: "Consejo: puedes usar cualquier email y tu contraseña preferida :)",
   },
   home: {
+    developmentBuild: "Versión de desarrollo",
     pairAgain: "Emparejar de nuevo",
     hardwareIncompatible: "Hardware Incompatible",
     hardwareIncompatibleMessage:
@@ -221,6 +222,10 @@ const es = {
     signInFailedTitle: "Error al iniciar sesión",
     signInFailedDescription:
       "Microsoft no pudo iniciar tu sesión en esta organización. Inténtalo de nuevo o contacta con tu equipo de TI.",
+  },
+  miniappInstall: {
+    fromLocalNetwork: "Desde tu red local\n{{address}}",
+    install: "Instalar",
   },
 } satisfies TranslationResource
 

@@ -368,6 +368,16 @@ throws `InstallMiniappError`, whose `code` is one of `not_a_miniapp`,
 `domain_mismatch`, `archived`, `needs_newer_app`, `access_denied`, `age_restricted`,
 `network`, `cancelled`, `integrity` or `signature_invalid`.
 
+A URL at a local-network address (`localhost`, a private IPv4 or IPv6 address, or a
+`.local` name), such as the one `mentra dev` prints, installs as a development build,
+over HTTP or HTTPS, where the deployment allows miniapp development. Nothing registers
+it or checks its package name against a domain, so it keeps its data apart from any other
+install of that name, its miniapp tokens are marked as a local build's (a backend accepts
+them only when it allows local builds), it never gets system privileges, and it never
+updates from its URL; its development server reloads it instead. Only a person installs
+one: a `system` or `assignment` install of a local URL fails with `not_a_miniapp`. The
+preview's `local` is `true`: show "From your local network" with the address.
+
 Every install registers its URL unless `config.requireRegistry` is `false`. Off, the
 engine installs any miniapp URL without registering it; the domain rule still applies.
 A host app that turns it off answers to the app stores' rules itself.

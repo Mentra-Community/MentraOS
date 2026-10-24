@@ -21,6 +21,10 @@ mock.module("../miniappReleaseInstall", () => ({
   installMiniappRelease: async () => {},
   MiniappInstallCancelledError: CancelledError,
 }))
+mock.module("../localBuildInstall", () => ({
+  installLocalBuild: async () => {},
+  restoreInstalledRelease: async () => {},
+}))
 
 const {createMiniappInstaller, InstallMiniappError} = await import("../installMiniapp")
 const {fetchMiniappBundle, fetchMiniappJson} = await import("../miniappFetch")
@@ -31,6 +35,7 @@ type MiniappRegistrationAnswer = import("@mentra/cloud-protocol").RegistryRegist
 type MiniappRegistrationRequest = import("@mentra/cloud-protocol").RegistryRegisterRequest
 type MiniappFetchTransport = import("../miniappFetch").MiniappFetchTransport
 type MiniappRequestInit = import("../miniappFetch").MiniappRequestInit
+type LocalBuildInstall = import("../localBuildInstall").LocalBuildInstall
 
 const pkg = "com.acme.tools"
 const url = "https://tools.acme.com/app/"
@@ -62,6 +67,12 @@ let hostVersion: string
 let session: number
 let kept: string[][]
 let warnings: string[]
+let developmentSelected: boolean
+let developmentAllowed: boolean
+let localInstalls: Array<{bundleUrl: string; install: LocalBuildInstall}>
+let localInstallFailure: Error | undefined
+let restored: string[]
+let restoreFailure: Error | undefined
 
 function manifest(overrides: Record<string, unknown> = {}) {
   return {
@@ -100,14 +111,19 @@ const transport: MiniappFetchTransport = async (target, init) => {
 
 function deps(overrides: Partial<InstallMiniappDependencies> = {}): InstallMiniappDependencies {
   return {
-    fetchManifest: (target) => fetchMiniappJson(target, {packageForChallenge: true, transport}),
-    fetchBundle: (target, options) => fetchMiniappBundle(target, {...options, transport}),
+    // As the engine's own: a local-network address never has a challenge answered.
+    fetchManifest: (target, {local}) =>
+      fetchMiniappJson(target, local ? {transport} : {packageForChallenge: true, transport}),
+    fetchBundle: (target, {local, ...options}) =>
+      fetchMiniappBundle(target, {...options, ...(local ? {answerChallenge: false} : {}), transport}),
     requireRegistry: () => requireRegistry,
     register: async (request) => {
       registrations.push(request)
       return registryAnswer()
     },
     activeRelease: (packageName) => (packageName === pkg ? installed : null),
+    hasDevelopmentSelection: () => developmentSelected,
+    developmentAllowed: () => developmentAllowed,
     updateUrl: (_packageName, identity) => (identity?.source === "url" ? identity.sourceUrl : undefined),
     assertCanInstallVersion: (packageName, version) =>
       assertMiniappUpdateVersion(packageName, version, installed && packageName === pkg ? [installed.version] : []),
@@ -133,6 +149,20 @@ function deps(overrides: Partial<InstallMiniappDependencies> = {}): InstallMinia
       if (identityError) throw new Error(identityError)
       if (installFailure) throw installFailure
       installed = {version: options.expectedVersion, identity: options.releaseIdentity!}
+    },
+    installLocal: async (bundleUrl, local) => {
+      // Like the local installer: download through the caller's downloader, then bind the ZIP to the manifest.
+      const bytes = await local.downloadBundle!(bundleUrl)
+      expect(bytes.byteLength).toBeGreaterThan(0)
+      localInstalls.push({bundleUrl, install: local})
+      if (local.isCancelled?.()) throw new CancelledError()
+      if (localInstallFailure) throw localInstallFailure
+    },
+    restoreRelease: async (packageName, isCancelled) => {
+      if (isCancelled()) throw new CancelledError()
+      if (restoreFailure) throw restoreFailure
+      restored.push(packageName)
+      developmentSelected = false
     },
     keepVersions: async (_packageName, versions) => {
       kept.push(versions)
@@ -179,6 +209,12 @@ beforeEach(async () => {
   session = 1
   kept = []
   warnings = []
+  developmentSelected = false
+  developmentAllowed = true
+  localInstalls = []
+  localInstallFailure = undefined
+  restored = []
+  restoreFailure = undefined
   cloudClientService.hasCore = () => true
   cloudClientService.getMiniappAuthToken = async (packageName: string) => {
     tokens.push(packageName)
@@ -300,7 +336,6 @@ describe("what stops an install", () => {
     ["an HTTP URL", "http://tools.acme.com/app/"],
     ["a URL with a query", "https://tools.acme.com/app/?x=1"],
     ["not a URL", "tools"],
-    ["a local-network URL, until local builds install", "http://192.168.1.20:8080/"],
   ])("%s is not_a_miniapp, fetched from nowhere", async (_name, target) => {
     expect(await failure(install(target))).toBe("not_a_miniapp")
     expect(sent).toEqual([])
@@ -546,6 +581,95 @@ describe("what is already installed", () => {
     expect(result).toEqual({status: "opened", packageName: pkg, version: "2.0.0"})
     expect(installs).toEqual([])
   })
+
+  test("another install that commits a newer release first is what opens", async () => {
+    installed = {version: "1.0.0", identity: {source: "direct_download"}}
+    const result = await install(
+      url,
+      {},
+      {
+        install: async () => {
+          installed = {version: "3.0.0", identity: {source: "url", sourceUrl: url}}
+          throw new Error(`Cannot install ${pkg}: version 3.0.0 is already installed`)
+        },
+      },
+    )
+    expect(result).toEqual({status: "opened", packageName: pkg, version: "3.0.0"})
+  })
+
+  test("a newer release standing behind a development build of its name comes back, after the sheet, and opens", async () => {
+    installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
+    developmentSelected = true
+    const previews: MiniappInstallPreview[] = []
+    const result = await install(url, {
+      confirm: async (preview) => {
+        previews.push(preview)
+        return true
+      },
+    })
+    expect(result).toEqual({status: "opened", packageName: pkg, version: "2.0.0"})
+    expect(previews.map((preview) => preview.alreadyInstalled)).toEqual([true])
+    expect(restored).toEqual([pkg])
+    // Nothing downgrades.
+    expect(installs).toEqual([])
+  })
+
+  test("declining the sheet leaves the development build running", async () => {
+    installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
+    developmentSelected = true
+    expect(await failure(install(url, {confirm: async () => false}))).toBe("cancelled")
+    expect(restored).toEqual([])
+  })
+
+  test("a headless install brings the newer release back too; a Fleet assignment leaves that to the reconciler", async () => {
+    installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
+    developmentSelected = true
+    expect((await install(url, {source: "system", confirm: undefined})).status).toBe("opened")
+    expect(restored).toEqual([pkg])
+    developmentSelected = true
+    restored = []
+    const assignment = {workspaceId: "ws_1", coreUrl: "https://core.example", mentraUserId: "mu_1"} as never
+    expect((await install(url, {source: "assignment", assignment, confirm: undefined})).status).toBe("opened")
+    expect(restored).toEqual([])
+  })
+
+  test("a session that ends before the release comes back is cancelled", async () => {
+    installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
+    developmentSelected = true
+    expect(
+      await failure(
+        install(url, {
+          confirm: async () => {
+            session = 2
+            return true
+          },
+        }),
+      ),
+    ).toBe("cancelled")
+    expect(restored).toEqual([])
+  })
+
+  test("with no development build in its place, a newer release just opens", async () => {
+    installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
+    let asked = false
+    const result = await install(url, {
+      confirm: async () => {
+        asked = true
+        return true
+      },
+    })
+    expect(result.status).toBe("opened")
+    expect(asked).toBe(false)
+    expect(restored).toEqual([])
+  })
+
+  test("installed from this URL, but standing behind a development build of its name, it installs again over that build", async () => {
+    installed = {version: "1.2.0", identity: {source: "url", sourceUrl: url}}
+    developmentSelected = true
+    const result = await install()
+    expect(result).toEqual({status: "installed", packageName: pkg, version: "1.2.0"})
+    expect(installs.map((entry) => entry.identity)).toEqual([{source: "url", sourceUrl: url, bundleSha256: zipSha}])
+  })
 })
 
 describe("the registry", () => {
@@ -637,5 +761,210 @@ describe("the error", () => {
       expect((error as InstanceType<typeof InstallMiniappError>).name).toBe("InstallMiniappError")
       expect((error as InstanceType<typeof InstallMiniappError>).message).toContain("503")
     }
+  })
+})
+
+describe("a local-network address", () => {
+  const localUrl = "http://192.168.1.20:8080/"
+  const localManifestUrl = `${localUrl}miniapp.json`
+  const localZipUrl = `${localUrl}bundle.zip`
+  // Nothing proves a local build's name, so it may claim any, Notes' included.
+  const claimed = "com.mentra.notes"
+
+  function serveLocal(overrides: Record<string, unknown> = {}): void {
+    route(localManifestUrl, {
+      status: 200,
+      body: JSON.stringify(
+        manifest({packageName: claimed, name: "Notes", bundle: {url: "bundle.zip", sha256: zipSha}, ...overrides}),
+      ),
+    })
+    route(localZipUrl, {status: 200, body: zipBytes})
+  }
+
+  test("installs as a local build over HTTP: never registered, and its name checked against no domain", async () => {
+    serveLocal()
+    const previews: MiniappInstallPreview[] = []
+    const result = await install(localUrl, {
+      source: "local",
+      confirm: async (preview) => {
+        previews.push(preview)
+        return true
+      },
+    })
+    expect(result).toEqual({status: "installed", packageName: claimed, version: "1.2.0"})
+    expect(registrations).toEqual([])
+    expect(installs).toEqual([])
+    expect(previews).toEqual([
+      {
+        url: localUrl,
+        host: "192.168.1.20",
+        local: true,
+        packageName: claimed,
+        name: "Notes",
+        iconUrl: `${localUrl}icon.png`,
+        ageRating: "4+",
+        private: false,
+        alreadyInstalled: false,
+      },
+    ])
+    expect(localInstalls).toHaveLength(1)
+    const {bundleUrl, install: local} = localInstalls[0]!
+    expect(bundleUrl).toBe(localZipUrl)
+    expect(local).toMatchObject({packageName: claimed, version: "1.2.0", sourceUrl: localUrl, sha256: zipSha})
+    expect(local.server).toBeUndefined()
+    expect(sent.map((request) => request.url)).toEqual([localManifestUrl, localZipUrl])
+  })
+
+  test.each(["link", "scanner", "paste"] as const)("installs as a local build from a %s too", async (source) => {
+    serveLocal()
+    expect((await install(localUrl, {source})).status).toBe("installed")
+    expect(localInstalls).toHaveLength(1)
+  })
+
+  test("names its development server: live from its URL, reloading over its channel, by its .local name too", async () => {
+    serveLocal({
+      development: {reload: "ws://192.168.1.20:8081/__mentra_dev", mdns: "laptop.local"},
+      type: "standard",
+      permissions: [{type: "MICROPHONE", required: true}],
+      hardwareRequirements: [{type: "MICROPHONE", level: "REQUIRED"}],
+      actions: [{id: "open", description: "Open."}],
+    })
+    await install(localUrl, {source: "local"})
+    expect(localInstalls[0]!.install.server).toEqual({
+      name: "Notes",
+      iconUrl: `${localUrl}icon.png`,
+      devUrl: "http://192.168.1.20:8080",
+      devPort: 8081,
+      mdnsHost: "laptop.local",
+      type: "standard",
+      permissions: [{type: "MICROPHONE", required: true}],
+      hardwareRequirements: [{type: "MICROPHONE", level: "REQUIRED"}],
+      actions: [{id: "open", description: "Open."}],
+    })
+  })
+
+  test("a development field it can't read leaves out what it can't", async () => {
+    serveLocal({development: {reload: "http://192.168.1.20:8081/", mdns: "laptop.example.com"}})
+    await install(localUrl, {source: "local"})
+    const server = localInstalls[0]!.install.server!
+    expect(server.devPort).toBeUndefined()
+    expect(server.mdnsHost).toBe("")
+  })
+
+  test("is never installed for Fleet or by a system miniapp, and nothing is fetched", async () => {
+    serveLocal()
+    expect(await failure(install(localUrl, {source: "assignment", assignment: {} as never}))).toBe("not_a_miniapp")
+    expect(await failure(install(localUrl, {source: "system"}))).toBe("not_a_miniapp")
+    expect(sent).toEqual([])
+  })
+
+  test("is access_denied where the deployment doesn't allow development builds, before anyone is asked", async () => {
+    serveLocal()
+    developmentAllowed = false
+    let asked = false
+    const code = await failure(
+      install(localUrl, {
+        source: "local",
+        confirm: async () => {
+          asked = true
+          return true
+        },
+      }),
+    )
+    expect(code).toBe("access_denied")
+    expect(asked).toBe(false)
+    expect(localInstalls).toEqual([])
+  })
+
+  test("its server's sign-in challenge is never answered: no token goes to a local address", async () => {
+    route(localManifestUrl, {status: 401, headers: {"www-authenticate": `Bearer realm="mentra", package="${claimed}"`}})
+    expect(await failure(install(localUrl, {source: "local"}))).toBe("access_denied")
+    serveLocal()
+    route(localZipUrl, {status: 401, headers: {"www-authenticate": `Bearer realm="mentra", package="${claimed}"`}})
+    expect(await failure(install(localUrl, {source: "local"}))).toBe("access_denied")
+    expect(tokens).toEqual([])
+    for (const request of sent) expect(request.init.headers.Authorization).toBeUndefined()
+  })
+
+  test("a redirect off the local network is not_a_miniapp", async () => {
+    route(localManifestUrl, {
+      status: 200,
+      url: "https://tools.acme.com/app/miniapp.json",
+      body: JSON.stringify(manifest({packageName: claimed})),
+    })
+    expect(await failure(install(localUrl, {source: "local"}))).toBe("not_a_miniapp")
+    expect(localInstalls).toEqual([])
+  })
+
+  test("its ZIP comes over HTTP only from the local network; over HTTPS from anywhere", async () => {
+    serveLocal({bundle: {url: "http://cdn.acme.com/notes.zip", sha256: zipSha}})
+    expect(await failure(install(localUrl, {source: "local"}))).toBe("not_a_miniapp")
+    serveLocal({bundle: {url: "https://cdn.acme.com/notes.zip", sha256: zipSha}})
+    route("https://cdn.acme.com/notes.zip", {status: 200, body: zipBytes})
+    expect((await install(localUrl, {source: "local"})).status).toBe("installed")
+    expect(localInstalls[0]!.bundleUrl).toBe("https://cdn.acme.com/notes.zip")
+  })
+
+  test("a ZIP with another SHA-256 is integrity", async () => {
+    serveLocal()
+    route(localZipUrl, {status: 200, body: new TextEncoder().encode("other bytes")})
+    expect(await failure(install(localUrl, {source: "local"}))).toBe("integrity")
+  })
+
+  test("the sheet says the package is installed already when a release or a development build of it is", async () => {
+    const previews: MiniappInstallPreview[] = []
+    const confirm = async (preview: MiniappInstallPreview) => {
+      previews.push(preview)
+      return true
+    }
+    serveLocal({packageName: pkg})
+    installed = {version: "1.0.0", identity: {source: "url", sourceUrl: url}}
+    await install(localUrl, {source: "local", confirm})
+    installed = null
+    developmentSelected = true
+    serveLocal({packageName: pkg})
+    await install(localUrl, {source: "local", confirm})
+    expect(previews.map((preview) => preview.alreadyInstalled)).toEqual([true, true])
+  })
+
+  test("declining the sheet is cancelled, and nothing downloads", async () => {
+    serveLocal()
+    expect(await failure(install(localUrl, {source: "local", confirm: async () => false}))).toBe("cancelled")
+    expect(sent.map((request) => request.url)).toEqual([localManifestUrl])
+  })
+
+  test("a phone that can't run it needs a newer Mentra App", async () => {
+    serveLocal({minHostVersion: "9.0.0"})
+    expect(await failure(install(localUrl, {source: "local"}))).toBe("needs_newer_app")
+    expect(localInstalls).toEqual([])
+  })
+
+  test.each([
+    [
+      "the signing rule refuses its ZIP",
+      "Unsigned bundle cannot replace signed miniapp com.mentra.notes",
+      "signature_invalid",
+    ],
+    ["development is off", "This deployment does not allow miniapp development", "access_denied"],
+    ["its ZIP names another version", "bundle version mismatch: expected 1.2.0, got 1.3.0", "integrity"],
+  ])("the local installer's refusal when %s is %s", async (_name, message, code) => {
+    serveLocal()
+    localInstallFailure = new Error(message)
+    expect(await failure(install(localUrl, {source: "local"}))).toBe(code)
+  })
+
+  test("isCancelled stops it before its files activate", async () => {
+    serveLocal()
+    let cancel = false
+    const promise = install(localUrl, {
+      source: "local",
+      confirm: async () => {
+        cancel = true
+        return true
+      },
+      isCancelled: () => cancel,
+    })
+    expect(await failure(promise)).toBe("cancelled")
+    expect(localInstalls).toEqual([])
   })
 })

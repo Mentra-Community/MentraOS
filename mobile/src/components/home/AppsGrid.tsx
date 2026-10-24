@@ -934,11 +934,14 @@ export function AppsGrid({
                 textShadowOffset: {width: 0, height: 0},
                 textShadowRadius: 30,
               }}
-              numberOfLines={item.updating ? 1 : 2}
+              numberOfLines={item.updating || item.isMiniappDev ? 1 : 2}
               ellipsizeMode="tail"
               text={item.name}
             />
             {item.updating && <Text className="text-muted-foreground text-[10px]" tx="home:miniappUpdating" />}
+            {!item.updating && item.isMiniappDev && (
+              <Text className="text-muted-foreground text-[10px]" numberOfLines={1} tx="home:developmentBuild" />
+            )}
           </View>
         </Pressable>
       )

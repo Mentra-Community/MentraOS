@@ -93,6 +93,18 @@ describe("updates from Mentra's own host", () => {
   })
 })
 
+describe("local-network and development builds", () => {
+  test("never run with the build's privileges, whatever bundled package they claim or address they name", () => {
+    withConfig({firstPartyMiniappsUrl: "https://miniapps.mentraglass.com/"})
+    for (const source of ["local", "dev_snapshot"]) {
+      expect(
+        isHostTrustedSystemMiniapp(notes, {source, sourceUrl: "https://miniapps.mentraglass.com/com.mentra.notes/"}),
+      ).toBe(false)
+      expect(isHostTrustedSystemMiniapp(notes, {source, storePackageName: store})).toBe(false)
+    }
+  })
+})
+
 describe("releases the retired Store installed", () => {
   test("keep their trust when the Mentra Store installed them; no other Store's do", () => {
     expect(isHostTrustedSystemMiniapp(notes, {source: "system_store", storePackageName: store})).toBe(true)

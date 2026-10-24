@@ -20,7 +20,8 @@ const en = {
     autoPowerOffSubtitle:
       "Powers down about 20 minutes after you take the glasses off. Charging or a call holds the shutdown.",
     autoPowerOffSaveError: "Could not save or check this setting. Check the glasses connection and try again.",
-    autoPowerOffStatusHint: "This is the latest glasses status, not confirmation of your change. It refreshes about every 10 seconds.",
+    autoPowerOffStatusHint:
+      "This is the latest glasses status, not confirmation of your change. It refreshes about every 10 seconds.",
     brightness: "Brightness",
     display: "Display",
     disconnectGlasses: "Disconnect glasses",
@@ -624,6 +625,7 @@ const en = {
   },
   home: {
     title: "MentraOS",
+    developmentBuild: "Development build",
     miniappUpdating: "Updating…",
     miniappUpdatingLabel: "{{app}} is updating",
     miniappUpdatingTitle: "Miniapp updating",
@@ -966,6 +968,17 @@ const en = {
     miniappDevSignedInstallBody:
       "{{packageName}} is installed with a publisher signature. Uninstall it before running a development build.",
     miniappDevLoadErrorTitle: "Could not load dev miniapp",
+    miniappLocalInstallFailedTitle: "Couldn't install this miniapp",
+    miniappLocalInstallNotAMiniapp:
+      "{{address}} didn't serve a miniapp the Mentra App can install. Serve it with the latest `mentra dev`, then scan its QR code again.",
+    miniappLocalInstallNetwork:
+      "Couldn't reach {{address}}. Check that your phone is on the same network as the computer serving it.",
+    miniappLocalInstallAccessDenied:
+      "This Mentra App doesn't allow development builds, or the server refused the install.",
+    miniappLocalInstallNeedsNewerApp: "This miniapp needs a newer version of the Mentra App.",
+    miniappLocalInstallIntegrity: "The miniapp's files didn't match what its server described. Try again.",
+    miniappLocalInstallSignature:
+      "This miniapp is installed with a publisher signature. Uninstall it before installing a development build of it.",
     miniappUrlTitle: "Load Miniapp from URL",
     miniappUrlGroupTitle: "Dev Server URL",
     miniappUrlLabel: "URL",
@@ -1526,6 +1539,10 @@ const en = {
     notify: "Notifications",
     feedback: "Give Feedback",
     lmaLoader: "Miniapp Developer",
+  },
+  miniappInstall: {
+    fromLocalNetwork: "From your local network\n{{address}}",
+    install: "Install",
   },
   appInfo: {
     notInstalled: "App not installed",

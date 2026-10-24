@@ -107,6 +107,11 @@ export interface FetchMiniappBundleOptions {
   sha256: string
   /** Called when the ZIP's server asks for sign-in. */
   onChallenge?: () => void
+  /**
+   * False: a sign-in challenge comes back unanswered, as its `401`. A local-network build's server owns no domain,
+   * so it never gets a token this way.
+   */
+  answerChallenge?: boolean
   transport?: MiniappFetchTransport
 }
 
@@ -165,7 +170,7 @@ export async function fetchMiniappBundle(url: string, options: FetchMiniappBundl
   const expectedSha256 = options.sha256.toLowerCase()
   const headers = {Accept: "application/zip, application/octet-stream;q=0.9, */*;q=0.1"}
   let response = await sendBundle(transport, url, headers)
-  if (response.status === 401) {
+  if (response.status === 401 && options.answerChallenge !== false) {
     const challenge = parseMiniappChallenge(response.response.headers.get("www-authenticate"))
     if (challenge) {
       options.onChallenge?.()

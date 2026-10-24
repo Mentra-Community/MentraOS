@@ -83,7 +83,10 @@ mock.module("expo-file-system", () => ({
   },
 }))
 
-mock.module("../../stores/settings", () => ({SETTINGS: {super_mode: {key: "super_mode"}}, useSettingsStore: {getState: () => ({getSetting: () => false})}}))
+mock.module("../../stores/settings", () => ({
+  SETTINGS: {super_mode: {key: "super_mode"}},
+  useSettingsStore: {getState: () => ({getSetting: () => false})},
+}))
 
 let miniappLauncher: typeof import("../MiniappLauncher").miniappLauncher
 
@@ -111,6 +114,7 @@ function buildMockRouter() {
     permissions?: string[]
     hostTrustedSystem?: boolean
     projectRunning?: boolean
+    developmentBuild?: boolean
   }> = []
   const unregisterCalls: string[] = []
   const router = {
@@ -118,7 +122,12 @@ function buildMockRouter() {
     spawnAndRegister: async (
       packageName: string,
       src: string,
-      opts?: {permissions?: string[]; hostTrustedSystem?: boolean; projectRunning?: boolean},
+      opts?: {
+        permissions?: string[]
+        hostTrustedSystem?: boolean
+        projectRunning?: boolean
+        developmentBuild?: boolean
+      },
     ) => {
       spawnCalls.push({
         packageName,
@@ -126,6 +135,7 @@ function buildMockRouter() {
         permissions: opts?.permissions,
         hostTrustedSystem: opts?.hostTrustedSystem,
         projectRunning: opts?.projectRunning,
+        developmentBuild: opts?.developmentBuild,
       })
       registered.add(packageName)
       if (opts?.projectRunning ?? true) projected.add(packageName)
@@ -352,12 +362,15 @@ describe("MiniappLauncher", () => {
     expect(miniappLauncher.isProjectedRunning("com.x")).toBe(true)
   })
 
-  test.each(["http://reachable.local:3000", "http://unreachable.local:3000"])("explicit packed snapshot wins over scanned URL %s", async url => {
-    selectedSnapshot = "dev-1234-a"
-    storedDevUrl = url
-    await miniappLauncher.resolveBundle("com.x", {devUrl: url})
-    expect(snapshotVersions).toEqual([selectedSnapshot])
-  })
+  test.each(["http://reachable.local:3000", "http://unreachable.local:3000"])(
+    "explicit packed snapshot wins over scanned URL %s",
+    async (url) => {
+      selectedSnapshot = "dev-1234-a"
+      storedDevUrl = url
+      await miniappLauncher.resolveBundle("com.x", {devUrl: url})
+      expect(snapshotVersions).toEqual([selectedSnapshot])
+    },
+  )
 
   test("ensureRunning spawns the background context when not registered", async () => {
     const result = await miniappLauncher.ensureRunning("com.x")
@@ -371,8 +384,11 @@ describe("MiniappLauncher", () => {
       uiUri: "https://com.x.miniapp.invalid/ui/index.html",
       uiOrigin: "https://com.x.miniapp.invalid",
       uiRootDir: "file:///bundle/1.0.0/",
+      uiOriginName: "com.x",
       devBuild: false,
     })
+    // A release: its data and tokens are the package's own.
+    expect(mockRouter.spawnCalls[0].developmentBuild).toBe(false)
     expect(miniappLauncher.isRunning("com.x")).toBe(true)
   })
 
@@ -383,6 +399,7 @@ describe("MiniappLauncher", () => {
       uiUri: "miniapp://com.mentra.notes/ui/index.html",
       uiOrigin: "miniapp://com.mentra.notes",
       uiRootDir: "file:///bundle/1.0.0/",
+      uiOriginName: "com.mentra.notes",
       devBuild: false,
     })
   })
@@ -400,7 +417,7 @@ describe("MiniappLauncher", () => {
       const warn = spyOn(console, "warn").mockImplementation(() => {})
       try {
         const result = await miniappLauncher.ensureRunning(packageName)
-        expect(result).toEqual({uiUri: null, uiOrigin: null, uiRootDir: null, devBuild: false})
+        expect(result).toEqual({uiUri: null, uiOrigin: null, uiRootDir: null, uiOriginName: null, devBuild: false})
         // The background still runs; only the screen is refused.
         expect(mockRouter.spawnCalls.map((call) => call.packageName)).toEqual([packageName])
       } finally {
@@ -421,12 +438,25 @@ describe("MiniappLauncher", () => {
     }
   })
 
-  test("a development snapshot loads from the package's origin and is marked a development build", async () => {
+  test("a development snapshot loads from its development origin, never the package's, and is marked a development build", async () => {
     selectedSnapshot = "dev-1234-a"
     const resolved = await miniappLauncher.resolveBundle("com.x")
-    expect(resolved?.uiUri).toBe("https://com.x.miniapp.invalid/ui/index.html")
+    expect(resolved?.uiUri).toBe("https://invalid.dev.com.x.miniapp.invalid/ui/index.html")
+    expect(resolved?.uiOrigin).toBe("https://invalid.dev.com.x.miniapp.invalid")
+    expect(resolved?.uiOriginName).toBe("invalid.dev.com.x")
     expect(resolved?.uiRootDir).toBe("file:///bundle/dev-1234-a/")
     expect(resolved?.devBuild).toBe(true)
+  })
+
+  test("a development snapshot of a system package spawns as a development build, with no system trust", async () => {
+    ;(reactNative.Platform as {OS: string}).OS = "ios"
+    selectedSnapshot = "dev-1234-a"
+    // Even under an identity that would be trusted for a release of the name.
+    releaseSource = "bundled_asset"
+    const result = await miniappLauncher.ensureRunning("com.mentra.notes")
+    expect(result.uiUri).toBe("miniapp://invalid.dev.com.mentra.notes/ui/index.html")
+    expect(result.uiOriginName).toBe("invalid.dev.com.mentra.notes")
+    expect(mockRouter.spawnCalls[0]).toMatchObject({developmentBuild: true, hostTrustedSystem: false})
   })
 
   test("ensureRunning is idempotent — no second spawn for a live context", async () => {
@@ -537,7 +567,7 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls.length).toBe(1)
     activeVersion = ""
     const result = await miniappLauncher.ensureRunning("com.x")
-    expect(result).toEqual({uiUri: null, uiOrigin: null, uiRootDir: null, devBuild: false})
+    expect(result).toEqual({uiUri: null, uiOrigin: null, uiRootDir: null, uiOriginName: null, devBuild: false})
     expect(mockRouter.spawnCalls.length).toBe(1)
     expect(miniappLauncher.isRunning("com.x")).toBe(true)
   })

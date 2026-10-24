@@ -12,10 +12,12 @@ import {decideDevOpenRoute, engine} from "@mentra/engine"
 import {
   assertDevBuildAllowed,
   installMiniappFromJsonUrl,
+  isLocalNetworkMiniappUrl,
   normalizeManifestPermissions,
   registerDevApp,
   type DevAppRecord,
 } from "@mentra/engine-host-internal"
+import {installLocalMiniapp, localMiniappInstallErrorAlert} from "@/services/miniapps/localMiniappInstall"
 import {showDevBuildError} from "@/utils/devMiniappAlerts"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
@@ -102,6 +104,44 @@ export default function MiniappDeveloperScannerScreen() {
     }
   }
 
+  // A plain local-network miniapp URL (what `mentra dev` prints) installs through the engine as a development build,
+  // after the install sheet. `miniapp://dev?…` from older CLIs still loads its dev server below.
+  const installFromLocalNetwork = async (url: string) => {
+    let installed: Awaited<ReturnType<typeof installLocalMiniapp>>
+    // A permission sheet that was declined resets the scanner itself, once it closes.
+    let permissionsDeclined = false
+    try {
+      installed = await installLocalMiniapp(url, {
+        // A running copy restarts on the new build as it installs, so its required permissions come first, as for a
+        // release QR.
+        beforeInstall: async (preview) => {
+          const manifestRes = await fetch(new URL("miniapp.json", preview.url).href)
+          if (!manifestRes.ok) throw new Error(`Failed to fetch miniapp.json: ${manifestRes.status}`)
+          const manifest = (await manifestRes.json()) as Record<string, unknown>
+          const build = {
+            packageName: preview.packageName,
+            name: preview.name,
+            permissions: normalizeManifestPermissions(
+              manifest.permissions as Parameters<typeof normalizeManifestPermissions>[0],
+            ),
+          } as unknown as AppletInterface
+          const granted = await grantRequiredPermissions(build, () => setScanned(false))
+          permissionsDeclined = !granted
+          return granted
+        },
+      })
+    } catch (error) {
+      const {title, message} = localMiniappInstallErrorAlert(error, url)
+      showAlert(title, message, [{text: translate("common:ok"), onPress: () => setScanned(false)}])
+      return
+    }
+    if (!installed) {
+      if (!permissionsDeclined) setScanned(false)
+      return
+    }
+    await openInstalledRelease(installed)
+  }
+
   const handleBarcodeScanned = async ({data}: {data: string}) => {
     if (scanned) return
     setScanned(true)
@@ -163,6 +203,10 @@ export default function MiniappDeveloperScannerScreen() {
         devPort = url.searchParams.get("dev") || undefined
         mdnsHost = url.searchParams.get("mdns") || undefined
       } else if (data.startsWith("http://") || data.startsWith("https://")) {
+        if (isLocalNetworkMiniappUrl(data)) {
+          await installFromLocalNetwork(data)
+          return
+        }
         devUrl = data
       } else {
         showAlert(

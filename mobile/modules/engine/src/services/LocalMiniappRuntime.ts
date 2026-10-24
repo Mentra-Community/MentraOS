@@ -95,16 +95,13 @@ import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore, visibleMiniappPackage} from "../stores/apps"
-import appRegistry, {getDevAppRecords, getDevAppSourcePackage} from "./AppRegistry"
+import appRegistry, {getDevAppRecords} from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
 import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
-import {
-  configureMiniappDataPartitions,
-  miniappDataSessionOf,
-  resolveMiniappDataPartition,
-} from "./miniappDataPartition"
+import {isLocalBuildContext} from "./miniappBuildKind"
+import {configureMiniappDataPartitions, miniappDataSessionOf, resolveMiniappDataPartition} from "./miniappDataPartition"
 import {sameCoreUrl} from "./fleet/coreUrl"
 import {isHostTrustedSystemMiniapp, isSystemMiniappPackage} from "./SystemMiniappPolicy"
 import {installMiniapp, InstallMiniappError, type InstallMiniappErrorCode} from "./installMiniapp"
@@ -349,8 +346,7 @@ const localMiniappStorageBackend = {
 }
 
 configureMiniappDataPartitions({
-  getSession: () =>
-    miniappDataSessionOf(cloudClientService.getCoreSession(), cloudClientService.getDeploymentUserId()),
+  getSession: () => miniappDataSessionOf(cloudClientService.getCoreSession(), cloudClientService.getDeploymentUserId()),
   assignedWorkspace: (packageName, session) => {
     const assignment = appRegistry.getMiniappAssignment(packageName)
     return assignment &&
@@ -1744,10 +1740,13 @@ class LocalMiniappRuntime {
     // Core owns miniapp-backend token minting. A Runtime-only deployment has
     // no such capability, so fail once instead of entering the retry loop.
     if (!cloudClientService.hasCore()) return null
-    // A dev build is the package it names: Core mints its token exactly as for
-    // an installed miniapp. The phone has already applied the signer rule.
-    const authPackageName = getDevAppSourcePackage(packageName) ?? packageName
-    return cloudClientService.getMiniappAuthToken(authPackageName, opts)
+    // A local or development build may claim any package name, so its token says it is a local build: a backend
+    // accepts it only where it allows local builds, and it never names a workspace. Every other context gets its
+    // package's ordinary token.
+    return cloudClientService.getMiniappAuthToken(
+      packageName,
+      isLocalBuildContext(packageName) ? {...opts, localBuild: true} : opts,
+    )
   }
 
   private async handleAuthRefresh(
@@ -3630,7 +3629,9 @@ class LocalMiniappRuntime {
       const message = err instanceof Error ? err.message : "mic acquire error"
       console.warn(`${LOG_TAG}: mic_acquire failed for ${packageName}:`, message)
       this.sendResult(packageName, requestId, false, undefined, {
-        code: message.startsWith(MIC_SOURCE_CONFLICT) ? MiniappErrorCode.MIC_SOURCE_CONFLICT : MiniappErrorCode.INTERNAL,
+        code: message.startsWith(MIC_SOURCE_CONFLICT)
+          ? MiniappErrorCode.MIC_SOURCE_CONFLICT
+          : MiniappErrorCode.INTERNAL,
         message,
       })
     }
@@ -4032,7 +4033,9 @@ class LocalMiniappRuntime {
 
   /** True when the installed manifest of a connected miniapp declares `permission`. */
   public hasManifestPermission(packageName: string, permission: string): boolean {
-    return this.connectedApps.get(packageName)?.installedManifest?.permissions?.some((p) => p.type === permission) ?? false
+    return (
+      this.connectedApps.get(packageName)?.installedManifest?.permissions?.some((p) => p.type === permission) ?? false
+    )
   }
 
   /**
@@ -5489,7 +5492,7 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     const videoSource = payload.videoSource as {type?: string; url?: string} | undefined
-    const whepUrl = videoSource?.type === "whep" ? videoSource.url ?? "" : ""
+    const whepUrl = videoSource?.type === "whep" ? (videoSource.url ?? "") : ""
     if (!whepUrl) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INVALID_ARGUMENT,
@@ -5866,9 +5869,14 @@ class LocalMiniappRuntime {
     app.forceLocalTranscriptionStreams.clear()
     app.cloudTranscriptionStreams = new Set(streams.filter((stream) => stream.startsWith("transcription:")))
     app.transcriptionListeners ??= new TranscriptionSubscriptions()
-    app.transcriptionListeners.replace([...app.cloudTranscriptionStreams].map((stream) => ({
-      id: `legacy:${stream}`, stream, legacy: true,
-    })), cloudClientService.getAudioPosition())
+    app.transcriptionListeners.replace(
+      [...app.cloudTranscriptionStreams].map((stream) => ({
+        id: `legacy:${stream}`,
+        stream,
+        legacy: true,
+      })),
+      cloudClientService.getAudioPosition(),
+    )
     this.replaceStreamSubscribers(packageName, previousSubscriptions, app.subscriptions)
 
     this.recomputeMicRequirements()
@@ -6068,7 +6076,8 @@ class LocalMiniappRuntime {
         },
         "cloud",
         d.provider === "soniox" && (d.frameTimelineVersion === 1 || d.tokens.some((token) => token.audioPosition))
-          ? d.tokens : undefined,
+          ? d.tokens
+          : undefined,
       )
     })
 
@@ -6467,17 +6476,14 @@ class LocalMiniappRuntime {
   }
 
   private isSystemPackage(packageName: string): boolean {
+    // A local or development build never gets system privileges, whatever name it claims.
+    if (isLocalBuildContext(packageName) || !SYSTEM_MINIAPP_PACKAGE_SET.has(packageName)) return false
     const app = this.interopApps().find((candidate) => candidate.packageName === packageName)
-    if (SYSTEM_MINIAPP_PACKAGE_SET.has(packageName)) {
-      if (app?.offline) return true
-      if (app?.local && app.version) {
-        // The bundled release, or a compatible update of it from a Mentra host.
-        const identity = appRegistry.getReleaseIdentity(packageName, app.version)
-        return identity?.source === "bundled_asset" || isHostTrustedSystemMiniapp(packageName, identity)
-      }
-      return false
-    }
-    return app?.isMiniappDev === true
+    if (app?.offline) return true
+    if (!app?.local || !app.version) return false
+    // The bundled release, or a compatible update of it from a Mentra host.
+    const identity = appRegistry.getReleaseIdentity(packageName, app.version)
+    return identity?.source === "bundled_asset" || isHostTrustedSystemMiniapp(packageName, identity)
   }
 
   private async startInteropApp(packageName: string): Promise<boolean> {
@@ -6677,9 +6683,8 @@ class LocalMiniappRuntime {
 
   /**
    * Installing and uninstalling miniapps: only a miniapp on the system list, running the release the host installed
-   * for it. Both the live context's provenance and the installed release count: a development build, which may use
-   * the other system APIs, or another context that only reuses a system package's name, may not, and neither may any
-   * other miniapp.
+   * for it. Both the live context's provenance and the installed release count: a development build, or another
+   * context that only reuses a system package's name, may not, and neither may any other miniapp.
    */
   private requireSystemListCaller(
     packageName: string,

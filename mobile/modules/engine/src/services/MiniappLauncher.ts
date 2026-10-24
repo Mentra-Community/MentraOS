@@ -49,7 +49,7 @@ import devServerBridge from "./DevServerBridge"
 import {fleetEvents} from "./fleet/fleetEvents"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSRouter} from "./MentraJSRouter"
-import {miniappOrigin, miniappOriginUrl, type MiniappOriginPlatform} from "./miniappOrigin"
+import {developmentOriginName, miniappOrigin, miniappOriginUrl, type MiniappOriginPlatform} from "./miniappOrigin"
 import {isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
 
 /** The miniapp's server no longer admits this account (Fleet revocation): it cannot launch until access returns. */
@@ -96,6 +96,8 @@ export interface ResolvedBundle {
   uiOrigin: string | null
   /** The bundle root the package's origin serves. See {@link LaunchResult.uiRootDir}. */
   uiRootDir: string | null
+  /** The name the origin is for. See {@link LaunchResult.uiOriginName}. */
+  uiOriginName: string | null
   /** A development build: a live development server or a development snapshot. */
   devBuild: boolean
   declaredPermissions: string[]
@@ -110,12 +112,12 @@ export interface ResolvedBundle {
 /** What the host needs back to render the UI layer. */
 export interface LaunchResult {
   /**
-   * Where the screen loads from. An installed bundle (a release or a
-   * development snapshot) loads from its package's own origin:
-   * `miniapp://<packageName>/<ui entry>` on iOS and
+   * Where the screen loads from. An installed release loads from its
+   * package's own origin: `miniapp://<packageName>/<ui entry>` on iOS and
    * `https://<host>.miniapp.invalid/<ui entry>` on Android (see
-   * {@link miniappOriginUrl}). A live development build loads from its
-   * development server. Null when there is no screen to load.
+   * {@link miniappOriginUrl}), a development snapshot from the origin of its
+   * {@link uiOriginName}. A live development build loads from its development
+   * server. Null when there is no screen to load.
    */
   uiUri: string | null
   /** The origin `uiUri` belongs to, for the WebView's `originWhitelist`. */
@@ -126,11 +128,19 @@ export interface LaunchResult {
    * from a development server.
    */
   uiRootDir: string | null
+  /**
+   * The name the origin serves `uiRootDir` under (the WebView's
+   * `miniappOrigin.packageName`): the package name for a release, and
+   * {@link developmentOriginName} for a development snapshot, so a development
+   * build never shares web storage with a release of its name. Null with
+   * `uiRootDir`.
+   */
+  uiOriginName: string | null
   /** A development build: a live development server or a development snapshot. */
   devBuild: boolean
 }
 
-const NO_UI: LaunchResult = {uiUri: null, uiOrigin: null, uiRootDir: null, devBuild: false}
+const NO_UI: LaunchResult = {uiUri: null, uiOrigin: null, uiRootDir: null, uiOriginName: null, devBuild: false}
 
 function launchResultOf(resolved: ResolvedBundle | null | undefined): LaunchResult {
   if (!resolved) return NO_UI
@@ -138,6 +148,7 @@ function launchResultOf(resolved: ResolvedBundle | null | undefined): LaunchResu
     uiUri: resolved.uiUri,
     uiOrigin: resolved.uiOrigin,
     uiRootDir: resolved.uiRootDir,
+    uiOriginName: resolved.uiOriginName,
     devBuild: resolved.devBuild,
   }
 }
@@ -340,6 +351,7 @@ class MiniappLauncher {
       uiUri,
       uiOrigin: uiUri ? serverOrigin(uiUri) : null,
       uiRootDir: null,
+      uiOriginName: null,
       devBuild: true,
       declaredPermissions,
       installedManifest,
@@ -399,10 +411,14 @@ class MiniappLauncher {
     }
 
     // The screen loads from the package's own origin, which serves only this
-    // version's bundle and never grants file access. A package name that can't
-    // have an origin gets no screen rather than a file:// page.
+    // version's bundle and never grants file access. A development snapshot
+    // claims its name without proof, so it loads from a development origin of
+    // that name instead and never sees a release's web storage. A package name
+    // that can't have an origin gets no screen rather than a file:// page.
+    const devBuild = version.startsWith("dev-")
+    const originName = devBuild ? developmentOriginName(packageName) : packageName
     const platform = originPlatform()
-    const uiUri = entryPaths.uiPath ? miniappOriginUrl(packageName, entryPaths.uiPath, platform) : null
+    const uiUri = entryPaths.uiPath ? miniappOriginUrl(originName, entryPaths.uiPath, platform) : null
     if (entryPaths.uiPath && !uiUri) {
       console.warn(`MiniappLauncher: ${packageName} can't have an origin of its own, so its screen doesn't load`)
     }
@@ -410,12 +426,15 @@ class MiniappLauncher {
     return {
       bgSource,
       uiUri,
-      uiOrigin: uiUri ? miniappOrigin(packageName, platform) : null,
+      uiOrigin: uiUri ? miniappOrigin(originName, platform) : null,
       uiRootDir: uiUri ? entryPaths.rootDir : null,
-      devBuild: version.startsWith("dev-"),
+      uiOriginName: uiUri ? originName : null,
+      devBuild,
       declaredPermissions,
       installedManifest,
-      hostTrustedSystem: isHostTrustedSystemMiniapp(packageName, appRegistry.getReleaseIdentity(packageName, version)),
+      // A development build never runs with the build's privileges, whatever name it claims.
+      hostTrustedSystem:
+        !devBuild && isHostTrustedSystemMiniapp(packageName, appRegistry.getReleaseIdentity(packageName, version)),
       // A snapshot on disk — do not wire the sidecar; the laptop is gone.
       devUrl: null,
       devPort: null,
@@ -560,6 +579,7 @@ class MiniappLauncher {
         installedManifest: resolved.installedManifest,
         hostTrustedSystem: resolved.hostTrustedSystem,
         projectRunning,
+        developmentBuild: resolved.devBuild,
       })
       if (!ok) {
         throw new Error(`MiniappLauncher: spawn failed for ${packageName}`)

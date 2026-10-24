@@ -113,10 +113,12 @@ function LocalMiniappView({
   const nativeCanGoBack = useRef(false)
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
   // The screen's URL, the origin it belongs to, and (for an installed bundle)
-  // the bundle root that origin serves. See MiniappLauncher's LaunchResult.
+  // the bundle root that origin serves, under the name it serves it for. See
+  // MiniappLauncher's LaunchResult.
   const [uiUri, setUiUri] = useState<string | null>(null)
   const [uiOrigin, setUiOrigin] = useState<string | null>(null)
   const [uiRootDir, setUiRootDir] = useState<string | null>(null)
+  const [uiOriginName, setUiOriginName] = useState<string | null>(null)
   // Moving a first-party miniapp's web storage to its own origin.
   const {
     reader: oldWebStorageReader,
@@ -430,6 +432,7 @@ function LocalMiniappView({
       setUiUri(screenUri)
       setUiOrigin(screenUri ? result.uiOrigin : null)
       setUiRootDir(screenUri ? result.uiRootDir : null)
+      setUiOriginName(screenUri ? result.uiOriginName : null)
       // No WebView means no ready event or timeout can expose escape controls.
       if (!screenUri) fail(translate("common:miniappUiUnavailable"))
     }
@@ -770,10 +773,11 @@ function LocalMiniappView({
             key={uiRootDir ?? uiUri}
             ref={handleRef}
             source={holdSource ? undefined : {uri: uiUri}}
-            // An installed bundle loads from its package's own origin, which
-            // serves only that bundle and never has file access. A live
+            // An installed bundle loads from its own origin, which serves only
+            // that bundle and never has file access: the package's for a
+            // release, a development origin for a development snapshot. A live
             // development build loads from its server.
-            miniappOrigin={uiRootDir ? {packageName, rootDir: uiRootDir} : undefined}
+            miniappOrigin={uiRootDir ? {packageName: uiOriginName ?? packageName, rootDir: uiRootDir} : undefined}
             originWhitelist={miniappOriginWhitelist(uiOrigin)}
             onShouldStartLoadWithRequest={handleShouldStartLoad}
             javaScriptEnabled={true}
