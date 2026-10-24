@@ -771,6 +771,50 @@ describe("headless installs", () => {
     await expect(install(url, {source: "assignment", confirm: undefined})).rejects.toThrow("must name its assignment")
   })
 
+  test("a headless install tells its caller when the update prompt waits for the person", async () => {
+    let asked = 0
+    const onAsking = () => {
+      asked += 1
+    }
+    await install(url, {source: "assignment", assignment, confirm: undefined, onAsking})
+    expect(installs[0]!.options.onAsking).toBe(onAsking)
+    installs[0]!.options.onAsking!()
+    expect(asked).toBe(1)
+    // An install from the sheet stops and restarts a running copy: it never waits for the prompt.
+    installed = null
+    await install(url, {source: "link", onAsking})
+    expect(installs[1]!.options.onAsking).toBeUndefined()
+  })
+
+  test("an assignment installs only the package its reconciler resolved", async () => {
+    const result = await install(url, {source: "assignment", assignment, confirm: undefined, expectedPackageName: pkg})
+    expect(result.status).toBe("installed")
+    served = manifest({packageName: "com.acme.other"})
+    expect(
+      await failure(install(url, {source: "assignment", assignment, confirm: undefined, expectedPackageName: pkg})),
+    ).toBe("not_a_miniapp")
+    // Nothing of the other package is registered or downloaded.
+    expect(registrations).toHaveLength(1)
+    expect(installs).toHaveLength(1)
+  })
+
+  test("the deployment's policy is asked about the release as the assignment's", async () => {
+    const asked: string[] = []
+    await install(
+      url,
+      {source: "assignment", assignment, confirm: undefined},
+      {
+        allowsRelease: (_packageName, _version, _identity, source) => {
+          asked.push(source)
+          return true
+        },
+      },
+    )
+    installed = null
+    await install(url, {source: "paste"}, {allowsRelease: (_p, _v, _i, source) => (asked.push(source), true)})
+    expect(asked).toEqual(["assignment", "paste"])
+  })
+
   test("a running miniapp's headless update is deferred", async () => {
     installed = {version: "1.0.0", identity: {source: "direct_download"}}
     installFailure = new MiniappRunningError(pkg)

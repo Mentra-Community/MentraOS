@@ -39,13 +39,7 @@
 import {File} from "expo-file-system"
 import {AppState, Platform} from "react-native"
 
-import {
-  isDevMiniappAllowed,
-  isInstalledMiniappAllowed,
-  isLocalMiniappPackageAllowed,
-  isMiniappAvailable,
-  type MiniappAvailabilityMode,
-} from "../runtime/bootstrap"
+import {isDevMiniappAllowed, isMiniappAvailable, type MiniappAvailabilityMode} from "../runtime/bootstrap"
 import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
 import {storage} from "../utils/storage/storage"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
@@ -503,7 +497,7 @@ class MiniappLauncher {
     if (installation) await installation
     if (
       !isMiniappAvailable(packageName, availabilityMode(runtimeOptions)) ||
-      !isLocalMiniappPackageAllowed(packageName)
+      !appRegistry.isPackageAllowed(packageName)
     ) {
       throw new Error(`MiniappLauncher: ${packageName} is disabled by deployment policy`)
     }
@@ -603,13 +597,7 @@ class MiniappLauncher {
     if (
       // Availability may change while the bundle resolves.
       !isMiniappAvailable(packageName, availabilityMode(runtimeOptions)) ||
-      (devBuild
-        ? !isDevMiniappAllowed(packageName)
-        : !isInstalledMiniappAllowed(
-            packageName,
-            version,
-            version ? appRegistry.getReleaseIdentity(packageName, version) : null,
-          ))
+      (devBuild ? !isDevMiniappAllowed(packageName) : !appRegistry.isReleaseAllowed(packageName, version))
     ) {
       throw new Error(`MiniappLauncher: ${packageName} bundle is not authorized by deployment policy`)
     }

@@ -8,7 +8,12 @@ import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyO
 
 import "./reactNativeTestMock"
 
-import {configure, resetForTests} from "../../runtime/bootstrap"
+import {
+  configure,
+  isInstalledMiniappAllowed,
+  isLocalMiniappPackageAllowed,
+  resetForTests,
+} from "../../runtime/bootstrap"
 import type {ClientApp} from "../../types/applet"
 import {installWithRuntimeReload} from "../../utils/storeInstallRuntime"
 import {fleetEvents, type FleetLaunchEvent} from "../fleet/fleetEvents"
@@ -45,6 +50,9 @@ mock.module("../AppRegistry", () => ({
           },
     getMiniappManifest: (packageName: string) => ({packageName, ...MANIFESTS[packageName], permissions: []}),
     getReleaseIdentity: () => ({source: "bundled_asset"}),
+    isPackageAllowed: (packageName: string) => isLocalMiniappPackageAllowed(packageName),
+    isReleaseAllowed: (packageName: string, version: string | undefined) =>
+      isInstalledMiniappAllowed(packageName, version, {source: "bundled_asset"}),
     getLatestDevSnapshotVersion: () => null,
     hasDevSnapshot: () => false,
   },

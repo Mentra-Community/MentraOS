@@ -2,7 +2,7 @@
 
 import {beforeEach, describe, expect, mock, test} from "bun:test"
 
-import "./cloudClientServiceTestMock"
+import {cloudClientService} from "./cloudClientServiceTestMock"
 
 let config: {hostVersion?: string; supportedMiniappSdkRange?: string} = {}
 mock.module("../../runtime/bootstrap", () => ({getConfigValues: () => config}))
@@ -34,8 +34,20 @@ function serve(status: number, body?: unknown, finalUrl?: string, seen: string[]
   }) as unknown as typeof fetch
 }
 
+/** The packages whose miniapp token was asked for. */
+const tokens: string[] = []
+let tokenFailure: Error | undefined
+cloudClientService.hasCore = () => true
+cloudClientService.getMiniappAuthToken = async (packageName: string) => {
+  tokens.push(packageName)
+  if (tokenFailure) throw tokenFailure
+  return {token: `token-for-${packageName}`, expiresAt: Date.now() + 60_000}
+}
+
 beforeEach(() => {
   config = {}
+  tokens.length = 0
+  tokenFailure = undefined
 })
 
 describe("resolving a miniapp URL", () => {
@@ -125,7 +137,7 @@ describe("resolving a miniapp URL", () => {
     expect(await resolveMiniappUrl("https://notes.acme.com", serve(status))).toEqual({ok: false, reason})
   })
 
-  test("the request carries no token, and a sign-in challenge is not answered", async () => {
+  test("the request carries no token, and a 401 that is not Mentra's sign-in challenge is access_denied", async () => {
     const requests: RequestInit[] = []
     const challenge = (async (_url: string, init: RequestInit) => {
       requests.push(init)
@@ -148,6 +160,79 @@ describe("resolving a miniapp URL", () => {
       throw new TypeError("Network request failed")
     }) as unknown as typeof fetch
     expect(await resolveMiniappUrl("https://x.example", offline)).toEqual({ok: false, reason: "download_failed"})
+  })
+})
+
+describe("a private miniapp's sign-in challenge", () => {
+  const challenge = (packageName: string) => ({"WWW-Authenticate": `Bearer realm="mentra", package="${packageName}"`})
+
+  /** A private server: `401` with a challenge for `challengeFor`, then whatever `admit` answers for the token. */
+  function privateServer(
+    admit: (authorization: string) => {status: number; body?: unknown},
+    challengeFor = pkg,
+    seen: Array<{url: string; authorization?: string; redirect?: string}> = [],
+  ): typeof fetch {
+    return (async (url: string, init: RequestInit & {headers: Record<string, string>}) => {
+      const authorization = init.headers.Authorization
+      seen.push({url, ...(authorization ? {authorization} : {}), redirect: init.redirect})
+      const answer = authorization ? admit(authorization) : {status: 401}
+      const response = new Response(answer.body === undefined ? null : JSON.stringify(answer.body), {
+        status: answer.status,
+        headers: answer.status === 401 ? challenge(challengeFor) : {},
+      })
+      Object.defineProperty(response, "url", {value: url})
+      return response
+    }) as unknown as typeof fetch
+  }
+
+  test("is answered with that package's miniapp token, once, following no redirects", async () => {
+    tokens.length = 0
+    const seen: Array<{url: string; authorization?: string; redirect?: string}> = []
+    const server = privateServer(
+      (authorization) =>
+        authorization === `Bearer token-for-${pkg}` ? {status: 200, body: manifest()} : {status: 403},
+      pkg,
+      seen,
+    )
+    expect(await resolveMiniappUrl("https://notes.acme.com/app", server)).toMatchObject({
+      ok: true,
+      packageName: pkg,
+      version: "2.0.0",
+    })
+    expect(tokens).toEqual([pkg])
+    expect(seen).toEqual([
+      {url: "https://notes.acme.com/app/miniapp.json", redirect: "follow"},
+      {url: "https://notes.acme.com/app/miniapp.json", authorization: `Bearer token-for-${pkg}`, redirect: "error"},
+    ])
+  })
+
+  test.each([401, 403])("a token the server refuses (%d) is access_denied", async (status) => {
+    const refusing = privateServer(() => ({status}))
+    expect(await resolveMiniappUrl("https://notes.acme.com/app", refusing)).toEqual({
+      ok: false,
+      reason: "access_denied",
+    })
+  })
+
+  test("a challenge for a package its domain doesn't own is not_a_miniapp, and gets no token", async () => {
+    tokens.length = 0
+    const server = privateServer(() => ({status: 200, body: manifest()}), "com.other.notes")
+    expect(await resolveMiniappUrl("https://notes.acme.com/app", server)).toEqual({ok: false, reason: "not_a_miniapp"})
+    expect(tokens).toEqual([])
+  })
+
+  test("a challenge for another package than the one served is not_a_miniapp", async () => {
+    const server = privateServer(() => ({status: 200, body: manifest()}), "com.acme.tools")
+    expect(await resolveMiniappUrl("https://notes.acme.com/app", server)).toEqual({ok: false, reason: "not_a_miniapp"})
+  })
+
+  test("a token that can't be had is download_failed, to retry", async () => {
+    tokenFailure = new Error("Core is unreachable")
+    const server = privateServer(() => ({status: 200, body: manifest()}))
+    expect(await resolveMiniappUrl("https://notes.acme.com/app", server)).toEqual({
+      ok: false,
+      reason: "download_failed",
+    })
   })
 })
 

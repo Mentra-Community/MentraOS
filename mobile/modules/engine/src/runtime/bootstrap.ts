@@ -186,14 +186,29 @@ export function isMiniappAvailable(packageName: string, mode: MiniappAvailabilit
   return options?.config?.isMiniappAvailable?.(packageName, mode) ?? true
 }
 
-export function isLocalMiniappPackageAllowed(packageName: string): boolean {
+/** What, besides a release's provenance, decides whether a package or release may run. */
+export interface InstalledMiniappContext {
+  /**
+   * The account's current workspace assigned the package through Fleet, or the install is that assignment's. It
+   * admits the package under a workspace policy, and a release of it installed from a URL.
+   */
+  assigned?: boolean
+}
+
+/**
+ * The deployment lets this package run at all: launches check it before its release. Under a workspace policy, a
+ * package its system list or its manifest names, or one the account's current workspace assigned through Fleet that
+ * this build doesn't bundle (a bundled package follows the system list).
+ */
+export function isLocalMiniappPackageAllowed(packageName: string, context: InstalledMiniappContext = {}): boolean {
   if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
   if (policy) {
     return (
       policy.systemPackageNames === null ||
       policy.systemPackageNames.includes(packageName) ||
-      policy.managed.some((entry) => entry.packageName === packageName)
+      policy.managed.some((entry) => entry.packageName === packageName) ||
+      (context.assigned === true && !options?.config?.bundledSystemMiniappPackages?.includes(packageName))
     )
   }
   const allowlist = options?.config?.localMiniappAllowlist
@@ -236,6 +251,7 @@ export function isInstalledMiniappAllowed(
     deploymentId?: string
     deploymentOrigin?: string
   } | null,
+  context: InstalledMiniappContext = {},
 ): boolean {
   if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
@@ -251,7 +267,11 @@ export function isInstalledMiniappAllowed(
   // the system policy above whatever URL it came from: a deployment that leaves it out doesn't get it from a URL.
   if (releaseIdentity?.source === "direct_download") return isMiniappDevelopmentAllowed()
   if (releaseIdentity?.source === "url") {
-    return !options?.config?.bundledSystemMiniappPackages?.includes(packageName) && isMiniappDevelopmentAllowed()
+    if (options?.config?.bundledSystemMiniappPackages?.includes(packageName)) return false
+    // A workspace's Fleet assignment is its admins' deployment, not development: it runs where the developer tools
+    // are off. It rewrites no deployment trust, so a package the deployment's manifest pins stays the manifest's.
+    if (context.assigned && !policy.managed.some((entry) => entry.packageName === packageName)) return true
+    return isMiniappDevelopmentAllowed()
   }
   if (!version || releaseIdentity?.source !== "deployment_manifest") return false
 

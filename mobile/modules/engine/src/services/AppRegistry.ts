@@ -45,6 +45,7 @@ import {
   getConfigValues,
   isDevMiniappAllowed,
   isInstalledMiniappAllowed,
+  isLocalMiniappPackageAllowed,
   isMiniappAvailable,
   isOfflineSystemMiniappAllowed,
 } from "../runtime/bootstrap"
@@ -73,6 +74,7 @@ import {
 } from "./miniappInstallIdentity"
 import {
   forgetDevSnapshotOwner,
+  isAssignedByCurrentWorkspace,
   isDevelopmentSelectionCurrent,
   isDevSnapshotOfCurrentContext,
   isDevSnapshotVisible,
@@ -1372,6 +1374,29 @@ class AppRegistry {
   }
 
   /**
+   * The deployment lets this package run at all ({@link isLocalMiniappPackageAllowed}), a package the account's
+   * current workspace assigned included. Launches check it before the release.
+   */
+  public isPackageAllowed(packageName: string): boolean {
+    return isLocalMiniappPackageAllowed(packageName, {assigned: isAssignedByCurrentWorkspace(packageName)})
+  }
+
+  /**
+   * The deployment lets this installed release run ({@link isInstalledMiniappAllowed}): listing, launch precedence,
+   * launches and the version rule ask this. A release installed from a URL runs as a Fleet assignment while the
+   * account's current workspace assigned the package.
+   */
+  public isReleaseAllowed(
+    packageName: string,
+    version: string | undefined,
+    identity: MiniappReleaseIdentity | null = version ? this.getReleaseIdentity(packageName, version) : null,
+  ): boolean {
+    return isInstalledMiniappAllowed(packageName, version, identity, {
+      assigned: identity?.source === "url" && isAssignedByCurrentWorkspace(packageName),
+    })
+  }
+
+  /**
    * One version rule for every install source: an incoming release must be
    * greater than or equal to every installed release; an equal version is a
    * reinstall. Dev snapshot versions (`dev-*`) are sessions, not releases.
@@ -1387,7 +1412,7 @@ class AppRegistry {
       // installation, never a consumer copy of the same package.
       const identity = this.getReleaseIdentity(packageName, installedVersion)
       if (workspaceManaged && identity?.source !== "deployment_manifest") return false
-      return isInstalledMiniappAllowed(packageName, installedVersion, identity)
+      return this.isReleaseAllowed(packageName, installedVersion, identity)
     })
     assertMiniappUpdateVersion(packageName, version, installed)
   }
@@ -1998,9 +2023,7 @@ class AppRegistry {
     if (!versions.length) return {version: undefined, remember: null}
     // The newest release the deployment allows, e.g. a workspace's managed
     // release over a newer release-QR or Store install that it does not.
-    const active =
-      versions.find((v) => isInstalledMiniappAllowed(packageName, v, this.getReleaseIdentity(packageName, v))) ??
-      versions[0]
+    const active = versions.find((v) => this.isReleaseAllowed(packageName, v)) ?? versions[0]
     return {version: active, remember: res.is_ok() && res.value.startsWith("dev-") ? null : active}
   }
 
@@ -2090,11 +2113,7 @@ class AppRegistry {
       (app) =>
         (app.version?.startsWith("dev-")
           ? isDevMiniappAllowed(app.packageName)
-          : isInstalledMiniappAllowed(
-              app.packageName,
-              app.version,
-              app.version ? this.getReleaseIdentity(app.packageName, app.version) : null,
-            )) &&
+          : this.isReleaseAllowed(app.packageName, app.version)) &&
         !offlinePackages.has(app.packageName) &&
         !devPackages.has(app.packageName),
     )

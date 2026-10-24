@@ -136,6 +136,7 @@ function start(): AssignmentReconciler {
         installed.set(resolution.packageName, resolution.version)
         storage.remove(`${resolution.packageName}_dev_url`)
         assignments.set(resolution.packageName, assignment)
+        return {version: resolution.version}
       },
       classify: () => ({kind: "download_failed", retryable: true}),
       setAssignment: (pkg, assignment) => void assignments.set(pkg, assignment),

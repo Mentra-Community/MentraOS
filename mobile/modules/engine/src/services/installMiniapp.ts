@@ -75,8 +75,18 @@ export interface InstallMiniappOptions {
   confirm?: (preview: MiniappInstallPreview) => Promise<boolean>
   /** Fleet only: the assignment the install records with the release. */
   assignment?: ManagedAssignment
+  /**
+   * The package the caller resolved the URL to (Fleet's reconciler). A URL that serves another package by now is
+   * `not_a_miniapp`, before anything is registered or downloaded.
+   */
+  expectedPackageName?: string
   /** True once the install should stop. Nothing commits after that. */
   isCancelled?: () => boolean
+  /**
+   * Headless only: called when the update of a running miniapp is staged and waits for the person's answer to its
+   * update prompt. The call resolves once they answer: `installed`, or `deferred` for Not now.
+   */
+  onAsking?: () => void
 }
 
 export interface InstallMiniappResult {
@@ -147,8 +157,13 @@ export interface InstallMiniappDependencies {
   updateUrl(packageName: string, identity: MiniappReleaseIdentity | null): string | undefined
   /** Throws when a newer release of the package is installed. */
   assertCanInstallVersion(packageName: string, version: string): void
-  /** The deployment lets this release run once it is installed. */
-  allowsRelease(packageName: string, version: string, identity: MiniappReleaseIdentity): boolean
+  /** The deployment lets this release run once it is installed, for an install that came in this way. */
+  allowsRelease(
+    packageName: string,
+    version: string,
+    identity: MiniappReleaseIdentity,
+    source: InstallMiniappSource,
+  ): boolean
   /**
    * The age gate for an install with a sheet (`miniappAgeGate.ts`): the person may be asked their age, and is told why
    * when the gate stops the install.
@@ -191,6 +206,12 @@ export function createMiniappInstaller(
     assertCurrent()
     const {manifest} = served
     const packageName = manifest.packageName
+    if (options.expectedPackageName !== undefined && packageName !== options.expectedPackageName) {
+      throw new InstallMiniappError(
+        "not_a_miniapp",
+        `${target.url} serves ${packageName} now, not ${options.expectedPackageName}`,
+      )
+    }
 
     // A miniapp installed from this URL opens, unless a development build of its name runs in its place: installing
     // it again replaces that build. Fleet's reconciler decides for itself what an assignment installs.
@@ -258,7 +279,7 @@ export function createMiniappInstaller(
       bundleSha256: manifest.bundle.sha256,
       ...(served.challenge ? {private: true} : {}),
     }
-    if (!deps.allowsRelease(packageName, manifest.version, identity)) {
+    if (!deps.allowsRelease(packageName, manifest.version, identity, options.source)) {
       throw new InstallMiniappError(
         "access_denied",
         `This deployment doesn't allow installing ${packageName} from a URL`,
@@ -295,6 +316,7 @@ export function createMiniappInstaller(
         isCancelled: cancelled,
         // A headless install never closes a running miniapp: its update waits, or asks.
         ...(headless ? {onlyIfStopped: true, askIfRunning: true, firstInstall: true} : {}),
+        ...(headless && options.onAsking ? {onAsking: options.onAsking} : {}),
       })
     } catch (error) {
       if (error instanceof MiniappRunningError) {
@@ -687,7 +709,9 @@ const engineDependencies: InstallMiniappDependencies = {
       firstPartyUrl: (name) => firstPartyMiniappUrl(getConfigValues(), name),
     }),
   assertCanInstallVersion: (packageName, version) => appRegistry.assertCanInstallVersion(packageName, version),
-  allowsRelease: (packageName, version, identity) => isInstalledMiniappAllowed(packageName, version, identity),
+  // A Fleet assignment is its workspace's administration, which the deployment's policy weighs apart from development.
+  allowsRelease: (packageName, version, identity, source) =>
+    isInstalledMiniappAllowed(packageName, version, identity, {assigned: source === "assignment"}),
   checkAge: (miniapp) => checkMiniappAge(miniapp, {interactive: true}),
   compatibilityPolicy: (source) => {
     const policy = localMiniappRuntime.currentInstallCompatibilityPolicy()

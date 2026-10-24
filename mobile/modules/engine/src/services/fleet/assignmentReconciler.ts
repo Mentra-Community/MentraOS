@@ -91,17 +91,22 @@ export interface ManagedMiniappPort {
    */
   clearDevelopmentSelection(packageName: string): Promise<boolean>
   /**
-   * The deployment's policy lets the phone run this release once it is installed: the release on disk when it has
-   * these bytes, otherwise one installed from its URL.
+   * The deployment's policy lets the phone run this release, as this assignment's, once it is installed: the release
+   * on disk when it has these bytes, otherwise one installed from the assignment's URL.
    */
-  allowsRelease(packageName: string, version: string, bundleSha256: string): boolean
+  allowsRelease(packageName: string, version: string, bundleSha256: string, url: string): boolean
+  /**
+   * Install the assignment's URL headlessly. Resolves with the version installed, which is the one the URL serves when
+   * the install reads it: a URL that moved on since `resolve` installs its newer release. Rejects when nothing
+   * committed, including when the install waits for the miniapp to stop (`classify` says `running`).
+   */
   install(request: {
     resolution: Extract<ManagedResolution, {ok: true}>
     assignment: ManagedAssignment
     isCancelled: () => boolean
     /** Called when the install stops to wait for the person's answer to its update prompt. */
     onAsking?: () => void
-  }): Promise<void>
+  }): Promise<{version: string}>
   /** Map an install error to its failure. */
   classify(error: unknown): {kind: ManagedInstallFailure; retryable: boolean}
   /** Record the assignment on a package that already satisfies it. */
@@ -196,6 +201,9 @@ interface PersistedState {
 }
 
 class Superseded extends Error {}
+
+/** How an install ended: the version it committed, or why it did not. */
+type InstallResult = {failed: false; version: string} | {failed: true; error: unknown}
 
 /** An install waiting for the person's answer to its update prompt. The cycle goes on without it. */
 interface AskingInstall {
@@ -618,7 +626,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       return
     }
     // A release the phone would not run here is neither downloaded nor reported installed.
-    if (!miniapps.allowsRelease(entry.packageName, selectedVersion, resolution.bundleSha256)) {
+    if (!miniapps.allowsRelease(entry.packageName, selectedVersion, resolution.bundleSha256, entry.url)) {
       record(entry, desired.revision, {
         state: "blocked",
         reason: "incompatible_host",
@@ -701,8 +709,8 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
         onAsking: () => markAsking(),
       })
       .then(
-        () => ({error: undefined as unknown, failed: false}),
-        (error: unknown) => ({error, failed: true}),
+        ({version}): InstallResult => ({failed: false, version}),
+        (error: unknown): InstallResult => ({failed: true, error}),
       )
     const first = await Promise.race([finished, asked])
     if (first) {
@@ -742,7 +750,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     selectedVersion: string,
     installedVersion: string | undefined,
     attempts: number,
-    result: {error: unknown; failed: boolean},
+    result: InstallResult,
   ): Promise<void> {
     assertCurrent(gen)
     if (result.failed) {
@@ -765,10 +773,11 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       return
     }
     state.pendingUninstalls = state.pendingUninstalls.filter((name) => name !== entry.packageName)
+    // The URL decides the version: what installed is what it served by then.
     record(entry, desiredRevision, {
       state: "installed",
-      selectedVersion,
-      installedVersion: selectedVersion,
+      selectedVersion: result.version,
+      installedVersion: result.version,
       attempts,
       success: true,
     })

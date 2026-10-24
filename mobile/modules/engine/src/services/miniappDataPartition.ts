@@ -191,6 +191,16 @@ export function miniappDataContext(packageName: string): MiniappDataContext {
   return context
 }
 
+/**
+ * The account's current workspace assigned `packageName` through Fleet: its recorded assignment is this account's, on
+ * this Core, from the workspace now current. False while no account is known. A running context's pinned partition
+ * does not change it.
+ */
+export function isAssignedByCurrentWorkspace(packageName: string): boolean {
+  const session = currentSession()
+  return session !== null && computeContext(packageName, session).workspaceId !== null
+}
+
 /** The partition `packageName`'s SimpleStorage and blobs use now. Throws while no account is known. */
 export function resolveMiniappDataPartition(packageName: string): MiniappDataPartition {
   const context = miniappDataContext(packageName)

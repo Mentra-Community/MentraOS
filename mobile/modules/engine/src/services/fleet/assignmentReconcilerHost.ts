@@ -1,25 +1,28 @@
 /**
- * Runs the app's assignment reconciler over the engine: the release installer, the registry's installation reasons,
- * the running-miniapp registry, the Core session, the Fleet revision signal and the data partitions.
+ * Runs the app's assignment reconciler over the engine: `installMiniapp`, the registry's installation reasons, the
+ * running-miniapp registry, the Core session, the Fleet revision signal and the data partitions.
+ *
+ * Each assigned miniapp installs headlessly through `installMiniapp(url, {source: "assignment"})`, like any install
+ * from a URL: no install sheet, its URL registered, and a private server's sign-in challenge answered with the
+ * package's miniapp token, which Core makes name the assigning workspace. Reading what a URL serves answers the
+ * challenge the same way.
  *
  * The desired-state client is the caller's (`DesiredStateClient`): the engine starts this with it once the client
  * exists. Never throws.
  */
 import NetInfo from "@react-native-community/netinfo"
+import {normalizeMiniappUrl} from "@mentra/cloud-protocol/miniapp-url"
 import {AppState} from "react-native"
 
 import {isInstalledMiniappAllowed} from "../../runtime/bootstrap"
+import {MiniappRunningError} from "../../utils/storeInstallRuntime"
 import {BgTimer} from "../../utils/timers"
 import appRegistry from "../AppRegistry"
 import {cloudClientService} from "../CloudClientService"
+import {installMiniapp, InstallMiniappError} from "../installMiniapp"
 import {setFleetWorkspace} from "../miniappDataPartition"
 import {miniappLauncher} from "../MiniappLauncher"
-import {
-  classifyManagedInstallError,
-  installManagedMiniapp,
-  stopMiniappForRevocation,
-  uninstallManagedMiniapp,
-} from "../miniappReleaseInstall"
+import {classifyManagedInstallError, stopMiniappForRevocation, uninstallManagedMiniapp} from "../miniappReleaseInstall"
 import {resolveMiniappUrl} from "../miniappUrlResolution"
 import {miniappContextRegistry, miniappRunningRegistry} from "../MiniappRunningRegistry"
 import {dismissRunningUpdatePrompt, onRunningUpdatePromptDue} from "../runningUpdatePrompt"
@@ -27,6 +30,7 @@ import {
   createAssignmentReconciler,
   type AssignmentReconciler,
   type DesiredStateClient,
+  type ManagedInstallFailure,
   type ManagedMiniappPort,
   type ReconcilerSession,
 } from "./assignmentReconciler"
@@ -50,16 +54,78 @@ function installedRelease(packageName: string): {version: string; bundleSha256?:
   return sha ? {version, bundleSha256: sha} : {version}
 }
 
-function allowsRelease(packageName: string, version: string, bundleSha256: string): boolean {
+/**
+ * The deployment lets the release run as this assignment's: the release on disk when it has these bytes, otherwise
+ * one `installMiniapp` installs from the assignment's URL. The workspace that assigns it is the account's current one.
+ */
+function allowsRelease(packageName: string, version: string, bundleSha256: string, url: string): boolean {
   const onDisk = appRegistry.getInstalledVersions(packageName).includes(version)
     ? appRegistry.getReleaseIdentity(packageName, version)
     : null
   const sameBytes = onDisk && (!onDisk.bundleSha256 || onDisk.bundleSha256 === bundleSha256)
-  return isInstalledMiniappAllowed(
-    packageName,
-    version,
-    sameBytes ? onDisk : {source: "direct_download", bundleSha256},
-  )
+  const fromUrl = {source: "url", sourceUrl: normalizeMiniappUrl(url)?.url ?? url, bundleSha256}
+  return isInstalledMiniappAllowed(packageName, version, sameBytes ? onDisk : fromUrl, {assigned: true})
+}
+
+/** `installMiniapp` kept a newer release of the package, installed since the reconciler compared versions. */
+class NewerReleaseInstalled extends Error {
+  constructor(packageName: string, version: string) {
+    super(`${packageName} ${version} is installed already, newer than its assignment's release`)
+    this.name = "NewerReleaseInstalled"
+  }
+}
+
+/**
+ * Install an assignment headlessly through `installMiniapp`: no install sheet, and a running miniapp's update waits
+ * for it to stop or for the person's answer to its prompt. Rejects when nothing committed.
+ */
+export async function installAssignment({
+  resolution,
+  assignment,
+  isCancelled,
+  onAsking,
+}: Parameters<ManagedMiniappPort["install"]>[0]): Promise<{version: string}> {
+  const result = await installMiniapp(assignment.url, {
+    source: "assignment",
+    assignment,
+    expectedPackageName: resolution.packageName,
+    isCancelled,
+    ...(onAsking ? {onAsking} : {}),
+  })
+  if (result.status === "deferred") throw new MiniappRunningError(result.packageName)
+  if (result.status === "opened") throw new NewerReleaseInstalled(result.packageName, result.version)
+  return {version: result.version}
+}
+
+/** Map an assignment install's failure to its assignment reason. Never error text. */
+export function classifyAssignmentInstallError(error: unknown): {kind: ManagedInstallFailure; retryable: boolean} {
+  if (error instanceof NewerReleaseInstalled) return {kind: "newer_version_installed", retryable: false}
+  if (!(error instanceof InstallMiniappError)) return classifyManagedInstallError(error)
+  switch (error.code) {
+    case "archived":
+      return {kind: "archived", retryable: false}
+    // A package name its domain doesn't own is not a miniapp that URL may serve.
+    case "not_a_miniapp":
+    case "domain_mismatch":
+      return {kind: "not_a_miniapp", retryable: false}
+    // The server refused the account. Headless installs gate age at first open, so this is never reached for age.
+    case "access_denied":
+    case "age_restricted":
+      return {kind: "access_denied", retryable: false}
+    case "needs_newer_app":
+      return {kind: "incompatible_host", retryable: false}
+    case "signature_invalid":
+      return {kind: "signature_invalid", retryable: false}
+    case "integrity":
+      return {kind: "download_failed", retryable: true}
+    case "cancelled":
+      return {kind: "cancelled", retryable: true}
+    case "network": {
+      // A full disk shows only in the installer's message.
+      const fromInstaller = classifyManagedInstallError(error)
+      return fromInstaller.kind === "storage_full" ? fromInstaller : {kind: "download_failed", retryable: true}
+    }
+  }
 }
 
 const miniapps: ManagedMiniappPort = {
@@ -71,8 +137,8 @@ const miniapps: ManagedMiniappPort = {
   hasDevelopmentSelection: (packageName) => appRegistry.hasDevelopmentSelection(packageName),
   clearDevelopmentSelection: (packageName) => appRegistry.clearDevelopmentSelection(packageName),
   allowsRelease,
-  install: (request) => installManagedMiniapp(request),
-  classify: classifyManagedInstallError,
+  install: installAssignment,
+  classify: classifyAssignmentInstallError,
   setAssignment: (packageName, assignment) => appRegistry.setMiniappAssignment(packageName, assignment),
   clearAssignment: (packageName) => void appRegistry.clearMiniappAssignment(packageName),
   uninstall: uninstallManagedMiniapp,

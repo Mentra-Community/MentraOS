@@ -120,6 +120,49 @@ describe("deployment feature policy", () => {
     else expect(() => assertMiniappDevelopmentAllowed()).toThrow("does not allow miniapp development")
   })
 
+  test("runs a Fleet assignment's release from its URL where development is off", () => {
+    configure({
+      auth: {},
+      config: {
+        bundledSystemMiniappPackages: ["com.mentra.captions"],
+        localMiniappPolicy: {
+          systemPackageNames: ["com.mentra.settings"],
+          managed: [
+            {
+              packageName: "com.example.call",
+              version: "1.2.0",
+              sha256: "abc",
+              deploymentId: "acme",
+              deploymentOrigin: "https://acme.example",
+            },
+          ],
+        },
+      },
+    })
+    expect(isMiniappDevelopmentAllowed()).toBe(false)
+    const fromUrl = {source: "url", sourceUrl: "https://tools.example.com/app/"}
+    // The workspace's own assignment is not development.
+    expect(isInstalledMiniappAllowed("com.example.tools", "1.0.0", fromUrl, {assigned: true})).toBe(true)
+    // Without it, an install from a URL is an explicit install, which this deployment leaves out.
+    expect(isInstalledMiniappAllowed("com.example.tools", "1.0.0", fromUrl, {assigned: false})).toBe(false)
+    expect(isInstalledMiniappAllowed("com.example.tools", "1.0.0", fromUrl)).toBe(false)
+    // An assignment rewrites no deployment trust: a bundled package it left out stays out, and a package its
+    // manifest pins stays the manifest's.
+    const captionsUrl = {source: "url", sourceUrl: "https://miniapps.mentraglass.com/com.mentra.captions/"}
+    expect(isInstalledMiniappAllowed("com.mentra.captions", "1.0.0", captionsUrl, {assigned: true})).toBe(false)
+    const callUrl = {source: "url", sourceUrl: "https://call.example.com/"}
+    expect(isInstalledMiniappAllowed("com.example.call", "1.3.0", callUrl, {assigned: true})).toBe(false)
+    // The package itself may run: launches check that first.
+    expect(isLocalMiniappPackageAllowed("com.example.tools", {assigned: true})).toBe(true)
+    expect(isLocalMiniappPackageAllowed("com.example.tools", {assigned: false})).toBe(false)
+    expect(isLocalMiniappPackageAllowed("com.example.tools")).toBe(false)
+    expect(isLocalMiniappPackageAllowed("com.mentra.captions", {assigned: true})).toBe(false)
+    // Only a release installed from its URL: a scanned release QR stays a developer build.
+    expect(isInstalledMiniappAllowed("com.example.tools", "1.0.0", {source: "direct_download"}, {assigned: true})).toBe(
+      false,
+    )
+  })
+
   test("allows consumer developer builds", () => {
     configure({auth: {}})
     expect(isMiniappDevelopmentAllowed()).toBe(true)

@@ -9,7 +9,12 @@ import {afterAll, beforeAll, beforeEach, describe, expect, mock, test} from "bun
 import {result as Res} from "typesafe-ts"
 
 import "./reactNativeTestMock"
-import {configure, resetForTests} from "../../runtime/bootstrap"
+import {
+  configure,
+  isInstalledMiniappAllowed,
+  isLocalMiniappPackageAllowed,
+  resetForTests,
+} from "../../runtime/bootstrap"
 import type {ClientApp} from "../../types/applet"
 import {MiniappRunningError} from "../../utils/storeInstallRuntime"
 import {assertMiniappUpdateVersion} from "../miniappInstallIdentity"
@@ -74,6 +79,9 @@ const registry = {
   assertCanInstallVersion: (packageName: string, version: string) =>
     assertMiniappUpdateVersion(packageName, version, [active]),
   getReleaseIdentity: () => ({source: "bundled_asset"}),
+  isPackageAllowed: (packageName: string) => isLocalMiniappPackageAllowed(packageName),
+  isReleaseAllowed: (packageName: string, version: string | undefined) =>
+    isInstalledMiniappAllowed(packageName, version, {source: "bundled_asset"}),
   getPublisherKeyFingerprint: () => null,
   getSelectedDevSnapshot: () => null,
   getLatestDevSnapshotVersion: () => null,

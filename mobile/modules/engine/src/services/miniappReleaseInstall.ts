@@ -1,17 +1,14 @@
 import type {FleetAssignmentReason} from "@mentra/cloud-protocol"
-import {getConfigValues} from "../runtime/bootstrap"
 import {useAppStatusStore} from "../stores/apps"
 import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
 import {installWithRuntimeReload, MiniappRunningError} from "../utils/storeInstallRuntime"
 import appRegistry, {
   type InstallBundleOptions,
   type LocalZipInstallOptions,
-  type MiniappAssignment,
   type MiniappInstallReason,
 } from "./AppRegistry"
 import {markMiniappUpdateDeferred} from "./deferredMiniappUpdates"
 import {miniappLauncher} from "./MiniappLauncher"
-import type {MiniappUrlResolution} from "./miniappUrlResolution"
 import {
   canShowRunningUpdatePrompt,
   emitRunningUpdateFailed,
@@ -325,45 +322,6 @@ export function classifyManagedInstallError(error: unknown): {kind: ManagedInsta
   )
     return {kind: "not_a_miniapp", retryable: false}
   return {kind: "download_failed", retryable: true}
-}
-
-export interface ManagedMiniappInstall {
-  resolution: Extract<MiniappUrlResolution, {ok: true}>
-  assignment: MiniappAssignment
-  /** True once the account, Core or workspace that asked for it is no longer current. Nothing then commits. */
-  isCancelled: () => boolean
-  /** Called when the install waits for the person's answer to its update prompt. */
-  onAsking?: () => void
-}
-
-/**
- * Install or update an assigned miniapp through the one installer. A first install is silent; an update of a
- * running miniapp stages first and asks, and waits for it to stop when the prompt is not shown or is declined.
- * The `assignment` reason commits with the bundle; provenance stays `direct_download` (a URL install).
- */
-export async function installManagedMiniapp({
-  resolution,
-  assignment,
-  isCancelled,
-  onAsking,
-}: ManagedMiniappInstall): Promise<void> {
-  const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
-  await installMiniappRelease(resolution.bundleUrl, {
-    expectedPackageName: resolution.packageName,
-    expectedVersion: resolution.version,
-    expectedBundleSha256: resolution.bundleSha256,
-    releaseIdentity: {source: "direct_download", bundleSha256: resolution.bundleSha256},
-    installReason: "assignment",
-    assignment,
-    onlyIfStopped: true,
-    askIfRunning: true,
-    firstInstall: true,
-    isCancelled,
-    onAsking,
-    ...(hostVersion && supportedMiniappSdkRange
-      ? {compatibilityPolicy: {hostVersion, supportedSdkRange: supportedMiniappSdkRange}}
-      : {}),
-  })
 }
 
 /** Uninstall a withdrawn miniapp. Its data stays in its partition for a later reinstall. */

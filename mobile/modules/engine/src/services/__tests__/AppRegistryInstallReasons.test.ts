@@ -7,6 +7,8 @@ const values = new Map<string, unknown>()
 const installationValues = new Map<string, string>()
 let failedWrite: string | undefined
 let devAllowed = true
+/** What each policy check was told besides the release (`isInstalledMiniappAllowed`'s context). */
+const policyContexts: unknown[] = []
 mock.module("../../utils/storage/storage", () => ({
   storage: {
     load: (key: string) => (values.has(key) ? Res.ok(values.get(key)) : Res.error(new Error("Missing key"))),
@@ -33,7 +35,14 @@ mock.module("../../runtime/bootstrap", () => ({
   assertMiniappDevelopmentAllowed: () => {},
   getConfigValues: () => ({}),
   isDevMiniappAllowed: () => devAllowed,
-  isInstalledMiniappAllowed: () => true,
+  isInstalledMiniappAllowed: (_packageName: string, _version: unknown, _identity: unknown, context: unknown) => {
+    policyContexts.push(context)
+    return true
+  },
+  isLocalMiniappPackageAllowed: (_packageName: string, context: unknown) => {
+    policyContexts.push(context)
+    return true
+  },
   isOfflineSystemMiniappAllowed: () => true,
   isMiniappAvailable: () => true,
 }))
@@ -232,6 +241,47 @@ describe("installation reasons", () => {
     await expect(registry["installArchive"](new Uint8Array(), {installReason: "assignment"}, false)).rejects.toThrow(
       "must name its assignment",
     )
+  })
+})
+
+describe("the deployment's policy for an installed release", () => {
+  const session = {coreUrl: "https://core.mentra.glass", mentraUserId: "mu_1"}
+
+  test("hears that a package runs as an assignment only while the current workspace assigned it", () => {
+    partitions.configureMiniappDataPartitions({
+      getSession: () => session,
+      assignedWorkspace: () => registry.getMiniappAssignment(packageName)?.workspaceId ?? null,
+    })
+    try {
+      partitions.setFleetWorkspace(session, "ws_A")
+      finalize("1.0.0", {source: "url", sourceUrl: "https://notes.acme.example/miniapp/"}, "assignment").apply()
+      installed = ["1.0.0"]
+      policyContexts.length = 0
+      registry.isReleaseAllowed(packageName, "1.0.0")
+      partitions.setFleetWorkspace(session, "ws_B")
+      registry.isReleaseAllowed(packageName, "1.0.0")
+      partitions.setFleetWorkspace(session, "ws_A")
+      registry.isPackageAllowed(packageName)
+      registry.clearMiniappAssignment(packageName)
+      registry.isReleaseAllowed(packageName, "1.0.0")
+      registry.isPackageAllowed(packageName)
+      expect(policyContexts).toEqual([
+        {assigned: true},
+        {assigned: false},
+        {assigned: true},
+        {assigned: false},
+        {assigned: false},
+      ])
+
+      // Any other provenance is weighed as it always was.
+      finalize("1.1.0", {source: "bundled_asset"}, "assignment").apply()
+      policyContexts.length = 0
+      registry.isReleaseAllowed(packageName, "1.1.0")
+      expect(policyContexts).toEqual([{assigned: false}])
+    } finally {
+      partitions.setFleetWorkspace(session, null)
+      partitions.configureMiniappDataPartitions({getSession: () => null, assignedWorkspace: () => null})
+    }
   })
 })
 

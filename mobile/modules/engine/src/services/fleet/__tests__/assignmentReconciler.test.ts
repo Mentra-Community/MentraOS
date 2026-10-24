@@ -128,6 +128,10 @@ let devSelections: Set<string>
 let heldSelections: Set<string>
 /** Packages whose release this deployment's policy would not run. */
 let disallowed: Set<string>
+/** Every policy question: `<package>@<version> <url>`. */
+let policyAsked: string[]
+/** The version the URL serves by the time the install reads it, when it moved on since the reconciler resolved it. */
+let servedAtInstall: string | undefined
 let revoked: Set<string>
 let stopListeners: Set<(packageName: string) => void>
 let dueListeners: Set<(packageName: string) => void>
@@ -164,7 +168,10 @@ function start(): AssignmentReconciler {
       assignment: (pkg) => assignments.get(pkg) ?? null,
       assignedPackages: () => [...assignments.keys()],
       hasDevelopmentSelection: (pkg) => devSelections.has(pkg),
-      allowsRelease: (pkg) => !disallowed.has(pkg),
+      allowsRelease: (pkg, version, _sha, url) => {
+        policyAsked.push(`${pkg}@${version} ${url}`)
+        return !disallowed.has(pkg)
+      },
       clearDevelopmentSelection: async (pkg) => {
         if (heldSelections.has(pkg)) return false
         calls.push(`clear-dev:${pkg}`)
@@ -182,9 +189,11 @@ function start(): AssignmentReconciler {
           if (choice !== "update") throw new InstallFailure("running", true)
         }
         if (isCancelled()) throw new InstallFailure("cancelled", true)
-        installed.set(resolution.packageName, {version: resolution.version, bundleSha256: resolution.bundleSha256})
+        const version = servedAtInstall ?? resolution.version
+        installed.set(resolution.packageName, {version, bundleSha256: resolution.bundleSha256})
         devSelections.delete(resolution.packageName)
         assignments.set(resolution.packageName, assignment)
+        return {version}
       },
       classify: (error) =>
         error instanceof InstallFailure
@@ -273,6 +282,8 @@ beforeEach(() => {
   devSelections = new Set()
   heldSelections = new Set()
   disallowed = new Set()
+  policyAsked = []
+  servedAtInstall = undefined
   revoked = new Set()
   stopListeners = new Set()
   dueListeners = new Set()
@@ -377,6 +388,18 @@ describe("managed desired state", () => {
       lastSuccessAt: "2026-10-22T10:00:00.000Z",
     })
     for (const outcome of outcomes) expect(FleetAssignmentOutcomePayloadSchema.safeParse(outcome).success).toBe(true)
+  })
+
+  test("reports the version the install found at the URL, when it moved on since it was resolved", async () => {
+    servedAtInstall = "1.1.0"
+    await startAndSettle()
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0"])
+    expect(outcomes.at(-1)).toMatchObject({state: "installed", selectedVersion: "1.1.0", installedVersion: "1.1.0"})
+  })
+
+  test("asks the deployment's policy about the release the assignment's URL serves", async () => {
+    await startAndSettle()
+    expect(policyAsked).toEqual([`${notes}@1.0.0 ${notesUrl}`])
   })
 
   test("a satisfied assignment never reinstalls; a removed package reinstalls", async () => {

@@ -80,6 +80,25 @@ describe("data partition of a package", () => {
     expect(partitions.resolveMiniappDataPartition(pkg).personalUserId).toBe("mu_1")
   })
 
+  test("says whether the account's current workspace assigned the package, even while a context pins another", () => {
+    expect(partitions.isAssignedByCurrentWorkspace(pkg)).toBe(false)
+    assignIn("ws_A")
+    expect(partitions.isAssignedByCurrentWorkspace(pkg)).toBe(true)
+    // A context started in A keeps A's data until it stops; what the workspace assigned changes at once.
+    startRunning(pkg)
+    partitions.resolveMiniappDataPartition(pkg)
+    partitions.setFleetWorkspace(session!, "ws_B")
+    expect(partitions.isAssignedByCurrentWorkspace(pkg)).toBe(false)
+    stopRunning(pkg)
+    partitions.setFleetWorkspace(session!, "ws_A")
+    expect(partitions.isAssignedByCurrentWorkspace(pkg)).toBe(true)
+    partitions.setFleetWorkspace(session!, null)
+    expect(partitions.isAssignedByCurrentWorkspace(pkg)).toBe(false)
+    partitions.setFleetWorkspace(session!, "ws_A")
+    session = null
+    expect(partitions.isAssignedByCurrentWorkspace(pkg)).toBe(false)
+  })
+
   test("is safe as one file name, lower-case only", () => {
     session = {coreUrl: "https://Core.Example.com:8443/base/", mentraUserId: "User/../ID"}
     assignIn("WS.1")

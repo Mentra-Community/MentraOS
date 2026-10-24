@@ -6,7 +6,15 @@ import {reactNative, reactNativeAppState} from "./reactNativeTestMock"
 
 import type {DeclaredAge} from "@mentra/cloud-protocol/declared-age"
 
-import {configure, resetForTests, updateUiSeams, type AgeRestrictionNotice} from "../../runtime/bootstrap"
+import {
+  configure,
+  isInstalledMiniappAllowed,
+  isLocalMiniappPackageAllowed,
+  resetForTests,
+  updateUiSeams,
+  type AgeRestrictionNotice,
+  type IslandConfigValues,
+} from "../../runtime/bootstrap"
 import {installWithRuntimeReload} from "../../utils/storeInstallRuntime"
 import type {MentraJSRouter} from "../MentraJSRouter"
 
@@ -17,6 +25,8 @@ let activeVersion = "1.0.0"
 let available = true
 let backgroundAvailable = false
 let releaseSource = "bundled_asset"
+/** The account's current workspace assigned the package through Fleet. */
+let assignedHere = false
 let releaseStorePackageName: string | undefined
 let selectedSnapshot: string | null = null
 let storedDevUrl: string | null = null
@@ -50,6 +60,15 @@ mock.module("../AppRegistry", () => ({
       ...(manifestAgeRating === undefined ? {} : {ageRating: manifestAgeRating}),
     }),
     getReleaseIdentity: () => ({source: releaseSource, storePackageName: releaseStorePackageName}),
+    // AppRegistry asks the deployment's policy, knowing whether the current workspace assigned the package.
+    isPackageAllowed: (packageName: string) => isLocalMiniappPackageAllowed(packageName, {assigned: assignedHere}),
+    isReleaseAllowed: (packageName: string, version: string | undefined) =>
+      isInstalledMiniappAllowed(
+        packageName,
+        version,
+        {source: releaseSource, storePackageName: releaseStorePackageName},
+        {assigned: releaseSource === "url" && assignedHere},
+      ),
     getLatestDevSnapshotVersion: () => null,
     hasDevSnapshot: () => false,
     installFromUrl: async () => ({is_ok: () => true, is_error: () => false}),
@@ -100,14 +119,13 @@ mock.module("../../stores/settings", () => ({
 
 let miniappLauncher: typeof import("../MiniappLauncher").miniappLauncher
 
+const launcherConfig: IslandConfigValues = {
+  isMiniappAvailable: (_packageName, mode) => available || (mode === "background" && backgroundAvailable),
+  bundledSystemMiniappPackages: ["com.mentra.notes"],
+}
+
 beforeAll(async () => {
-  configure({
-    auth: {},
-    config: {
-      isMiniappAvailable: (_packageName, mode) => available || (mode === "background" && backgroundAvailable),
-      bundledSystemMiniappPackages: ["com.mentra.notes"],
-    },
-  })
+  configure({auth: {}, config: launcherConfig})
   const mod = await import("../MiniappLauncher")
   miniappLauncher = mod.miniappLauncher
 })
@@ -170,6 +188,7 @@ describe("MiniappLauncher", () => {
     available = true
     backgroundAvailable = false
     releaseSource = "bundled_asset"
+    assignedHere = false
     releaseStorePackageName = undefined
     selectedSnapshot = null
     storedDevUrl = null
@@ -333,6 +352,23 @@ describe("MiniappLauncher", () => {
       expect(resolved?.devBuild).toBe(true)
     } finally {
       globalThis.fetch = originalFetch
+    }
+  })
+
+  test("launches a workspace's Fleet assignment where the deployment's developer tools are off", async () => {
+    configure({
+      auth: {},
+      config: {...launcherConfig, localMiniappPolicy: {systemPackageNames: ["com.mentra.settings"], managed: []}},
+    })
+    try {
+      releaseSource = "url"
+      await expect(miniappLauncher.ensureRunning("com.acme.tools")).rejects.toThrow("disabled by deployment policy")
+      assignedHere = true
+      await miniappLauncher.ensureRunning("com.acme.tools")
+      expect(mockRouter.spawnCalls.map((call) => call.packageName)).toEqual(["com.acme.tools"])
+      expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(false)
+    } finally {
+      configure({auth: {}, config: launcherConfig})
     }
   })
 

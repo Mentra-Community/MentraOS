@@ -18,12 +18,13 @@ export type MiniappUrlResolution =
 /**
  * Read what a miniapp URL serves: `<url>/miniapp.json`, a copy of the manifest in its current ZIP plus
  * `bundle: {url, sha256}` naming that ZIP (relative to `<url>/` or an absolute HTTPS URL), checked with the schema
- * Core checks registrations with. The URL decides the version, and the ZIP must have that SHA-256. The server decides
- * access: 401 and 403 are `access_denied`. The package name must pass the domain rule for the URL and for where its
- * redirects ended.
+ * Core checks registrations with. The URL decides the version, and the ZIP must have that SHA-256. The package name
+ * must pass the domain rule for the URL and for where its redirects ended.
  *
- * The request carries no Mentra token and answers no sign-in challenge, so a private host cannot tell who is asking:
- * the assignment reconciler answers challenges once it installs through `installMiniapp`.
+ * The request carries no Mentra account, token or cookie. A private miniapp's server asks for sign-in with Mentra's
+ * challenge; it is answered with the miniapp token of the package it names, which the asking URL's domain must own
+ * and the URL must serve. Core names the assigning workspace in that token. The server decides access: a token it
+ * refuses (401 or 403) is `access_denied`, and so is a 401 or 403 without the challenge.
  */
 export async function resolveMiniappUrl(url: string, transport?: MiniappFetchTransport): Promise<MiniappUrlResolution> {
   // An assignment names a public HTTPS miniapp URL; a local-network build is never assigned.
@@ -32,9 +33,15 @@ export async function resolveMiniappUrl(url: string, transport?: MiniappFetchTra
   const manifestUrl = new URL("miniapp.json", normalized.url).href
   let response: MiniappJsonResult
   try {
-    response = await fetchMiniappJson(manifestUrl, transport ? {transport} : {})
+    response = await fetchMiniappJson(manifestUrl, {packageForChallenge: true, ...(transport ? {transport} : {})})
   } catch (error) {
-    if (error instanceof MiniappFetchError && error.code === "too_large") return {ok: false, reason: "not_a_miniapp"}
+    if (error instanceof MiniappFetchError) {
+      // A challenge for a package its domain doesn't own is the domain rule's refusal.
+      if (error.code === "too_large" || error.code === "challenge_domain" || error.code === "challenge_package") {
+        return {ok: false, reason: "not_a_miniapp"}
+      }
+    }
+    // Unreachable, or no token to answer with (Core unreachable): try again later.
     return {ok: false, reason: "download_failed"}
   }
   if (response.status === 401 || response.status === 403) return {ok: false, reason: "access_denied"}
@@ -56,6 +63,8 @@ export async function resolveMiniappUrl(url: string, transport?: MiniappFetchTra
   const {packageName, version} = manifest
   if (!isPackageNameAllowedForUrl(packageName, manifestUrl) || !isPackageNameAllowedForUrl(packageName, servedFrom))
     return {ok: false, reason: "not_a_miniapp"}
+  // The token answered a challenge for this package only.
+  if (response.challenge && response.challenge.packageName !== packageName) return {ok: false, reason: "not_a_miniapp"}
   let bundleUrl: string
   try {
     const resolved = new URL(manifest.bundle.url.trim(), servedFrom)
