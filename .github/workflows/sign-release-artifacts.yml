@@ -1,0 +1,111 @@
+name: Sign release artifacts
+
+# Signs the Mentra Cloud image and the Private Cloud installer of a release
+# built in the Mentra monorepo, with GitHub artifact attestations issued to
+# this public repository. GitHub only issues attestations from public
+# repositories on our plan, and customers and the release verify them with
+# `gh attestation verify --repo Mentra-Community/MentraOS`
+# (cloud-v2/deploy/private-deployment.md).
+#
+# The monorepo release triggers it once the image and installer are published
+# (repository_dispatch sign-release-artifacts, through the Mentra Copybara
+# App), with the release identity, the image digest and the installer's URL and
+# SHA-256. It attests what it is given: build provenance and the SPDX SBOM
+# for ghcr.io/mentra-community/mentra-cloud@<digest>, build provenance for the
+# installer it downloads and checks. MentraOS's own coordinated release still
+# attests its artifacts itself.
+
+on:
+  repository_dispatch:
+    types: [sign-release-artifacts]
+
+permissions:
+  attestations: write
+  contents: read
+  id-token: write
+  packages: write
+
+concurrency:
+  group: sign-release-artifacts-${{ github.event.client_payload.identity }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/mentra-community/mentra-cloud
+
+jobs:
+  sign:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - name: Check the request
+        id: request
+        env:
+          IDENTITY: ${{ github.event.client_payload.identity }}
+          DIGEST: ${{ github.event.client_payload.image_digest }}
+          INSTALLER_URL: ${{ github.event.client_payload.installer_url }}
+          INSTALLER_SHA256: ${{ github.event.client_payload.installer_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$IDENTITY" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(dev|beta)\.[0-9]+$ ]]
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$INSTALLER_URL" == "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/mentra-private-cloud-$IDENTITY/mentra-private-cloud.tar.gz" ]]
+          [[ "$INSTALLER_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          echo "### Signing \`$IDENTITY\`: $IMAGE@$DIGEST and its installer" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Attest the image's build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ github.event.client_payload.image_digest }}
+          subject-version: ${{ github.event.client_payload.identity }}
+          push-to-registry: true
+
+      - name: Generate the image's SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ env.IMAGE }}@${{ github.event.client_payload.image_digest }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ github.token }}
+          format: spdx-json
+          output-file: mentra-cloud.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest the SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ github.event.client_payload.image_digest }}
+          subject-version: ${{ github.event.client_payload.identity }}
+          sbom-path: mentra-cloud.spdx.json
+          push-to-registry: true
+
+      - name: Download and check the installer
+        env:
+          INSTALLER_URL: ${{ github.event.client_payload.installer_url }}
+          INSTALLER_SHA256: ${{ github.event.client_payload.installer_sha256 }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 -o mentra-private-cloud.tar.gz "$INSTALLER_URL"
+          echo "$INSTALLER_SHA256  mentra-private-cloud.tar.gz" | sha256sum -c -
+
+      - name: Attest the installer
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: mentra-private-cloud.tar.gz
+
+      - name: Verify what customers verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ github.event.client_payload.image_digest }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://$IMAGE@$DIGEST" --repo "$GITHUB_REPOSITORY"
+          gh attestation verify "oci://$IMAGE@$DIGEST" --repo "$GITHUB_REPOSITORY" --predicate-type https://spdx.dev/Document/v2.3
+          gh attestation verify mentra-private-cloud.tar.gz --repo "$GITHUB_REPOSITORY"
