@@ -2,10 +2,14 @@ name: Coordinated Mentra Release
 
 # Dev releases come from the Mentra monorepo since 2026-10-24 (its
 # release.yml, publishing to this repository's ledger); staging and
-# production promotion still run here.
+# production promotion still run here. The monorepo's release dispatches
+# `publish-release-npm` here for its npm family: npm trusted publishing (with
+# provenance) accepts this workflow file, from GitHub-hosted runners only.
 on:
   push:
     branches: [staging]
+  repository_dispatch:
+    types: [publish-release-npm]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -23,7 +27,9 @@ concurrency:
   # Preserve the running publication and coalesce same-branch pushes to the
   # latest pending head. Separate branch groups prevent dev and staging from
   # replacing one another's pending release.
-  group: coordinated-mentra-release-publication-${{ github.ref_name }}
+  group: >-
+    coordinated-mentra-release-publication-${{ github.event_name == 'repository_dispatch'
+    && format('npm-{0}', github.event.client_payload.request_id) || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -33,6 +39,8 @@ env:
 jobs:
   plan:
     name: Allocate immutable release identity
+    # A monorepo npm dispatch runs only monorepo-npm; every other job needs plan.
+    if: github.event_name != 'repository_dispatch'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
@@ -1080,3 +1088,124 @@ jobs:
           name: release-slack-message-${{ github.run_id }}-${{ github.run_attempt }}
           path: slack-release-message.json
           if-no-files-found: error
+
+  # The npm family of a Mentra monorepo dev release, dispatched by its
+  # release-npm.yml with the release plan already in the family container:
+  # the plan is read back and checked against the payload, the source commit
+  # must be on dev, then the same reusable job as this workflow's own releases
+  # publishes from that commit. Its npm-publications.json goes to the family
+  # container as monorepo-npm-publications-<identity>-<request id>.json (one
+  # per request, so a retry never collides), which the monorepo reads once this run (found by the intent job's name) succeeds.
+  monorepo-npm-intent:
+    name: npm for monorepo request ${{ github.event.client_payload.request_id }}
+    if: github.event_name == 'repository_dispatch'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    outputs:
+      source_commit: ${{ steps.intent.outputs.source_commit }}
+      plan_artifact: ${{ steps.intent.outputs.plan_artifact }}
+      result_artifact: ${{ steps.intent.outputs.result_artifact }}
+      ota_manifest_url: ${{ steps.intent.outputs.ota_manifest_url }}
+      ota_manifest_sha256: ${{ steps.intent.outputs.ota_manifest_sha256 }}
+      identity: ${{ steps.intent.outputs.identity }}
+      release_id: ${{ steps.intent.outputs.release_id }}
+      request_id: ${{ steps.intent.outputs.request_id }}
+    steps:
+      - name: Validate the request and read back the plan
+        id: intent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        run: |
+          set -euo pipefail
+          field() { jq -er --arg k "$1" '.[$k] | strings' <<<"$PAYLOAD"; }
+          request_id=$(field request_id)
+          identity=$(field identity)
+          source_commit=$(field source_commit)
+          plan_url=$(field plan_url)
+          plan_sha256=$(field plan_sha256)
+          ota_url=$(field ota_manifest_url)
+          ota_sha256=$(field ota_manifest_sha256)
+          release_id=$(field release_id)
+          container='^https://artifactscdn\.mentraglass\.com/Mentra-Community/MentraOS/releases/mentra-builds-v[0-9]+\.[0-9]+\.[0-9]+/[A-Za-z0-9._-]+\.json$'
+          [[ "$request_id" =~ ^[0-9]+-[0-9]+$ ]] || { echo "::error::Bad request_id"; exit 1; }
+          [[ "$identity" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$ ]] || { echo "::error::Not a dev identity: $identity"; exit 1; }
+          [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Bad source_commit"; exit 1; }
+          [[ "$release_id" =~ ^[0-9]+$ ]] || { echo "::error::Bad release_id"; exit 1; }
+          [[ "$plan_url" =~ $container && "$ota_url" =~ $container ]] || { echo "::error::Plan and OTA manifest must be in a family container"; exit 1; }
+          [[ "$plan_sha256" =~ ^[0-9a-f]{64}$ && "$ota_sha256" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::Bad sha256"; exit 1; }
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$source_commit...dev" -q .status)
+          [[ "$status" == identical || "$status" == ahead ]] || { echo "::error::$source_commit is not on dev ($status)"; exit 1; }
+          mkdir -p release-intent
+          curl -fsSL --retry 3 -o release-intent/release-plan.json "$plan_url"
+          echo "$plan_sha256  release-intent/release-plan.json" | sha256sum -c -
+          jq -e --arg identity "$identity" --arg commit "$source_commit" \
+            '.releaseIdentity == $identity and .sourceCommit == $commit' release-intent/release-plan.json >/dev/null ||
+            { echo "::error::The plan does not match the request"; exit 1; }
+          container_tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" -q .tag_name)
+          jq -e --arg tag "$container_tag" '.artifactContainerTag == $tag' release-intent/release-plan.json >/dev/null &&
+            [[ "$plan_url" == */releases/$container_tag/* ]] ||
+            { echo "::error::Release $release_id is not the plan's family container"; exit 1; }
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/ota.json" "$ota_url"
+          echo "$ota_sha256  $RUNNER_TEMP/ota.json" | sha256sum -c -
+          {
+            echo "source_commit=$source_commit"
+            echo "plan_artifact=monorepo-npm-plan-$request_id"
+            echo "result_artifact=monorepo-npm-result-$request_id"
+            echo "ota_manifest_url=$ota_url"
+            echo "ota_manifest_sha256=$ota_sha256"
+            echo "identity=$identity"
+            echo "release_id=$release_id"
+            echo "request_id=$request_id"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.intent.outputs.plan_artifact }}
+          path: release-intent/release-plan.json
+          if-no-files-found: error
+          retention-days: 7
+
+  monorepo-npm:
+    name: Publish the monorepo release's npm family
+    needs: monorepo-npm-intent
+    uses: ./.github/workflows/reusable-coordinated-npm.yml
+    with:
+      source_commit: ${{ needs.monorepo-npm-intent.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.monorepo-npm-intent.outputs.plan_artifact }}
+      members: all
+      result_artifact: ${{ needs.monorepo-npm-intent.outputs.result_artifact }}
+      ota_manifest_url: ${{ needs.monorepo-npm-intent.outputs.ota_manifest_url }}
+      ota_manifest_sha256: ${{ needs.monorepo-npm-intent.outputs.ota_manifest_sha256 }}
+      dry_run: false
+    secrets: inherit
+
+  monorepo-npm-record:
+    name: Publish the monorepo npm record
+    needs: [monorepo-npm-intent, monorepo-npm]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.monorepo-npm-intent.outputs.result_artifact }}
+          path: release-output
+      - name: Publish npm-publications.json to the family container
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          IDENTITY: ${{ needs.monorepo-npm-intent.outputs.identity }}
+          RELEASE_ID: ${{ needs.monorepo-npm-intent.outputs.release_id }}
+          REQUEST_ID: ${{ needs.monorepo-npm-intent.outputs.request_id }}
+        run: |
+          set -euo pipefail
+          name="monorepo-npm-publications-$IDENTITY-$REQUEST_ID.json"
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file release-output/npm-publications.json --name "$name" \
+            --release-id "$RELEASE_ID" --repository "$GITHUB_REPOSITORY"
