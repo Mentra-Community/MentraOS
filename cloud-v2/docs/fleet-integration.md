@@ -5,11 +5,13 @@ the Mentra App and shows an organization its devices and activity. Core stores
 none of its data. It authenticates the caller, decides who the caller is and what
 the request covers, forwards the request to Fleet with a signed statement of
 that, and relays Fleet's answer. Fleet follows Core's change feed to learn when
-Core deletes an account, and tells Core which miniapps each workspace assigns,
-so a member's miniapp tokens can name the workspace. This page is the contract
-between the two; the behavior is implemented and tested in
-`packages/core/src/api/fleet/fleet-forwarding.ts` and
-`packages/core/src/api/internal/fleet.api.ts`, with the configuration in
+Core deletes an account, tells Core which miniapps each workspace assigns, so a
+member's miniapp tokens can name the workspace, and asks Core's miniapp registry
+whether a workspace may receive a miniapp URL and what to call it. This page is
+the contract between the two; the behavior is implemented and tested in
+`packages/core/src/api/fleet/fleet-forwarding.ts`,
+`packages/core/src/api/internal/fleet.api.ts` and
+`packages/core/src/api/internal/registry.api.ts`, with the configuration in
 `packages/core/src/services/fleet/fleet-config.ts` and the signing in
 `packages/workspace-contract`.
 
@@ -641,6 +643,82 @@ PUT /api/internal/fleet/workspaces/:workspaceId/assigned-packages
   expires (an hour by default). Leaving the workspace, or a push without the
   package, takes the workspace out of the next token. A local build's token
   never names a workspace.
+
+## The miniapp registry
+
+A workspace may receive any miniapp URL that [Core's registry](registry.md)
+hasn't archived. Fleet asks the registry when an admin assigns a URL, and for
+the names its views show. It never asks the Store. Both calls are Fleet's only,
+signed as service `fleet` like the calls above: any other service is
+`403 {"error":"forbidden"}`, a missing or bad signature is
+`401 {"error":"service_unauthorized"}`, a body over 64 KiB is
+`413 {"error":"payload_too_large"}`, and a body that isn't what the call takes
+is `400 {"error":"invalid_request"}`. The types and the client methods
+(`checkRegistry`, `lookupRegistry`) are in `@mentra/workspace-contract`.
+
+### Checking URLs
+
+```http
+POST /api/internal/registry/check
+{"urls": ["https://miniapps.acme.example/com.acme.tools/"], "workspaceId": "ws_...", "mentraUserId": "mu_..."}
+
+200 {"results": [{"url": "https://miniapps.acme.example/com.acme.tools/", "status": "accepted",
+                  "packageName": "com.acme.tools", "name": "Acme Tools",
+                  "iconUrl": "https://miniapps.acme.example/com.acme.tools/icon.png",
+                  "private": true, "checkedAt": "2026-10-24T08:00:00.000Z"}]}
+```
+
+- **The body.** 1 to 50 `urls`, each normalized as `normalizeMiniappUrl`
+  does; `workspaceId`, the assigning workspace; and `mentraUserId`, the admin
+  assigning. The admin must be an active member of that active workspace, or the
+  call is `403 {"error":"not_a_member"}`. Fleet has already checked that they may
+  assign miniapps there.
+- **Registering.** Core answers a URL its registry holds from the entry, without
+  reading it. It registers a URL it doesn't know as the admin's own install
+  would, with the admin as the person registering: the same archive rules (an
+  account rule for the admin covers it), the same domain rule and the same 120
+  registrations an hour, shared with the admin's phones. No verified email is
+  needed: Fleet is acting for an admin of the workspace. A sign-in challenge gets
+  the admin's miniapp token for that package, naming `workspaceId`, because that
+  workspace is assigning it. A private entry is read again on every check, with
+  that token.
+- **Time.** Core reads at most 8 URLs at once and answers within 10 seconds. A
+  URL it hasn't finished is `unknown`; the read finishes in the background, so
+  asking again soon finds the entry.
+- **The answer.** One result per URL, in the order asked, with each URL as it
+  was sent. `checkedAt` is when Core answered for it.
+
+| `status` | Means | Fleet |
+| --- | --- | --- |
+| `accepted` | Core read a valid `miniapp.json` whose package passes the domain rule. | Assign. |
+| `accepted_unverified` | Core couldn't read the URL and holds a phone's report of it, or its server asks for sign-in and refused the admin's token. | Assign; the phone's own request decides whether it installs. |
+| `archived` | An archive rule covers it. | Refuse. |
+| `not_a_miniapp` | An invalid `miniapp.json`, a package its domain doesn't own, or not a public HTTPS URL. | Refuse. |
+| `unreachable` | Core couldn't read it, and no phone has reported it. Nothing is recorded. | Refuse; it can be assigned once a phone has installed it. |
+| `unknown` | Core didn't finish in time, or the admin has used this hour's registrations. Never a yes. | Ask again later. |
+
+`packageName` is null when Core doesn't know the package. `name` and `iconUrl`
+are null when Core doesn't know them, and for a private miniapp whose server
+refused the admin's token. `private` says the URL's server asks for sign-in.
+
+### Naming miniapps
+
+```http
+POST /api/internal/registry/lookup
+{"workspaceId": "ws_...", "packageNames": ["com.acme.tools", "com.example.gone"]}
+
+200 {"entries": {"com.acme.tools": {"name": "Acme Tools", "iconUrl": "https://...", "private": true, "archived": false},
+                 "com.example.gone": null}}
+```
+
+- 1 to 500 `packageNames`. The answer has every name asked about, null for one
+  the registry has no entry for.
+- One package can have several URLs. Core names it from its most recently
+  verified active entry, or a phone-reported one when none is verified. When
+  every entry is archived, it answers the most recent one with `archived: true`.
+- A private miniapp's `name` and `iconUrl` are null unless the workspace's
+  assigned set, as Fleet last pushed it ([Assigned miniapps](#assigned-miniapps)),
+  holds the package. Everywhere else it is a "Private miniapp".
 
 ## Not installed versus unavailable
 

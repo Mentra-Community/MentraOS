@@ -64,6 +64,7 @@ import {
   type MiniappRegistryArchiveRuleKind,
 } from "../../models/miniapp-registry.model"
 import {mintMiniappTokenFor} from "../miniapp-token.service"
+import {consumeRateLimit} from "../signin/rate-limit.service"
 import {fetchMiniappManifest, type FetchedManifest} from "./miniapp-fetcher"
 
 const logger = createLogger("core").child({service: "registry.service"})
@@ -78,6 +79,9 @@ const REVERIFY_MAX_PENDING = 1_000
 const MAX_STATUS_TTL_SECONDS = 7 * 24 * 60 * 60
 const MAX_ICON_URL_LENGTH = 2048
 const DUPLICATE_KEY = 11000
+/** Registrations one account may make in an hour: its phones' and Fleet's checks for it, together. */
+export const REGISTRATIONS_PER_HOUR = 120
+const REGISTRATION_WINDOW_SEC = 60 * 60
 
 /** The person a registration or status call is made for. */
 export interface RegistryRegistrant {
@@ -262,6 +266,19 @@ function tokensFor(registrant: RegistryRegistrant): ChallengeTokenSource {
 }
 
 // --- Registering -------------------------------------------------------------
+
+/**
+ * Counts one registration that reads a URL against the account's hourly allowance (the `auth_rate_limits` counter).
+ * Null while the account is within it; otherwise the seconds until its window ends.
+ */
+export async function consumeRegistration(mentraUserId: string, now = Date.now()): Promise<number | null> {
+  if (await consumeRateLimit(`miniapp-registry:${mentraUserId}`, REGISTRATIONS_PER_HOUR, REGISTRATION_WINDOW_SEC, now)) {
+    return null
+  }
+  const windowMs = REGISTRATION_WINDOW_SEC * 1000
+  const windowEnd = (Math.floor(now / windowMs) + 1) * windowMs
+  return Math.max(1, Math.ceil((windowEnd - now) / 1000))
+}
 
 /**
  * A registration's answer when Core can give it without reading the URL: `not_a_miniapp` for a URL that can't be one
@@ -866,7 +883,7 @@ async function archivedBy(keys: ArchiveKeys): Promise<boolean> {
 }
 
 /** The URLs of `rows` that are archived, by their own status or by a rule. */
-async function archivedUrls(rows: RegistryEntryRow[]): Promise<Set<string>> {
+export async function archivedUrls(rows: RegistryEntryRow[]): Promise<Set<string>> {
   const covered = await urlsCoveredByRules(rows)
   for (const row of rows) if (row.status === "archived") covered.add(row.url)
   return covered

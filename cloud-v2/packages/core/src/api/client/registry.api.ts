@@ -32,20 +32,17 @@ import type {z} from "zod"
 import {accountEmail} from "../../services/account/account-email.service"
 import {
   answerWithoutReading,
+  consumeRegistration,
   registerMiniappUrl,
   registryStatus,
   RegistryRequestError,
   type RegisterMiniappUrlResult,
 } from "../../services/registry/registry.service"
-import {consumeRateLimit} from "../../services/signin/rate-limit.service"
 import {isDeletedAccountId} from "../../services/user.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 import {InvalidGrant, InvalidRequest} from "../../types/oauth.types"
 import {userAuth} from "../middleware/user-auth.middleware"
 
-/** Registrations one account may make in an hour. */
-export const REGISTRATIONS_PER_HOUR = 120
-const RATE_WINDOW_SEC = 60 * 60
 /** A registration is a URL and a short report. */
 const REGISTER_BODY_LIMIT_BYTES = 16 * 1024
 /** 500 entries, each a URL of up to 2,048 characters and a version. */
@@ -88,17 +85,6 @@ async function readBody<T extends z.ZodTypeAny>(c: AppContext, schema: T): Promi
   return parsed.success ? parsed.data : null
 }
 
-/** Counts a registration; the seconds until the account's window ends when it is over the limit. */
-async function registrationRetryAfter(mentraUserId: string): Promise<number | null> {
-  const now = Date.now()
-  if (await consumeRateLimit(`miniapp-registry:${mentraUserId}`, REGISTRATIONS_PER_HOUR, RATE_WINDOW_SEC, now)) {
-    return null
-  }
-  const windowMs = RATE_WINDOW_SEC * 1000
-  const windowEnd = (Math.floor(now / windowMs) + 1) * windowMs
-  return Math.max(1, Math.ceil((windowEnd - now) / 1000))
-}
-
 /** The answer on the wire: the result without the service's own notes. */
 function toResponse(result: RegisterMiniappUrlResult): RegistryRegisterResponse {
   if (result.result === "not_a_miniapp") return {result: "not_a_miniapp", reason: result.reason}
@@ -136,7 +122,7 @@ app.post("/register", limitBody(REGISTER_BODY_LIMIT_BYTES), async (c) => {
     return c.json({error: "email_unverified", error_description: "registering a miniapp needs a verified email"}, 403)
   }
 
-  const retryAfter = await registrationRetryAfter(user.mentraUserId)
+  const retryAfter = await consumeRegistration(user.mentraUserId)
   if (retryAfter !== null) {
     c.header("retry-after", String(retryAfter))
     return c.json({error: "rate_limited", error_description: "too many miniapps registered in the last hour"}, 429)

@@ -11,7 +11,9 @@
  *    Required: a token missing paid features would lock the person out of what they bought.
  *  - `workspaceId`: the person's workspace, only when that workspace assigned the package through Fleet
  *    (`workspaces/assigned-packages.service.ts`). Required for the same reason: a company's miniapp that
- *    admits only its workspace would turn its own members away.
+ *    admits only its workspace would turn its own members away. While a workspace is assigning a package
+ *    (Fleet's registry check), the caller names that workspace itself (`assigningWorkspaceId`), and nothing
+ *    is looked up.
  *  - `localBuild: true`: the token is for a local or development build. Such a token never names a
  *    workspace, so no workspace is looked up for it.
  *
@@ -43,28 +45,34 @@ const logger = createLogger("core").child({service: "miniapp-token.service"})
 
 /**
  * Mint the miniapp token for this person and package. `localBuild` marks a token for a local or development
- * build, which never names a workspace. Throws `MiniappTokenUnavailableError` when the licensed features or
- * the assigning workspace cannot be read in time.
+ * build, which never names a workspace. `assigningWorkspaceId` is the workspace assigning the package right
+ * now, which the caller has checked the person is an active member of: the token names it in place of the
+ * one the assigned sets would. Throws `MiniappTokenUnavailableError` when the licensed features or the
+ * assigning workspace cannot be read in time.
  */
 export async function mintMiniappTokenFor(args: {
   mentraUserId: string
   tenantId: string
   packageName: string
   localBuild?: boolean
+  assigningWorkspaceId?: string
 }): Promise<{token: string; expiresAt: number}> {
   const {mentraUserId, packageName} = args
   const localBuild = args.localBuild === true
   // The email lookup never rejects, so abandoning it when a required lookup fails is safe.
   const emailLookup = miniappTokenEmail(mentraUserId)
+  const workspaceLookup = (): Promise<string | null> | string | null => {
+    if (localBuild) return null
+    if (args.assigningWorkspaceId) return args.assigningWorkspaceId
+    return required("workspace_unavailable", "assigned workspace lookup", {mentraUserId, packageName}, () =>
+      assigningWorkspace(mentraUserId, packageName),
+    )
+  }
   const [features, workspaceId] = await Promise.all([
     required("features_unavailable", "licensed features lookup", {mentraUserId, packageName}, () =>
       featuresFor({mentraUserId, packageName, now: new Date()}),
     ),
-    localBuild
-      ? null
-      : required("workspace_unavailable", "assigned workspace lookup", {mentraUserId, packageName}, () =>
-          assigningWorkspace(mentraUserId, packageName),
-        ),
+    workspaceLookup(),
   ])
   return issueMiniappToken({
     mentraUserId,

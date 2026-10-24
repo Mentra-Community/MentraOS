@@ -39,6 +39,9 @@
  *                                 (64 KiB body limit)
  *   /api/internal/fleet/*       — the signed API Fleet calls: each workspace's assigned
  *                                 miniapps (64 KiB body limit)
+ *   /api/internal/registry/*    — the miniapp registry's signed API: Fleet checks and names
+ *                                 miniapps, the directory reads and archives entries (64 KiB
+ *                                 body limit)
  *   everything else (GET)       — the admin portal's files, when
  *                                 CLOUD_CORE_ADMIN_STATIC_DIR is set (Private Cloud)
  *
@@ -92,6 +95,7 @@ import cliApi from "./cli/cli.api";
 import portalEnterprise from "./portal/enterprise.api";
 import internalFleet from "./internal/fleet.api";
 import internalLicenses from "./internal/licenses.api";
+import internalRegistry from "./internal/registry.api";
 import internalWorkspaces from "./internal/workspaces.api";
 import { createOrganizationApi } from "./organization/organization.api";
 import { createWorkspacesApi } from "./workspaces/workspaces.api";
@@ -102,7 +106,7 @@ import { createOidcApi } from "./oidc/oidc.api";
 
 const logger = createLogger("core").child({ service: "app" });
 
-/** The largest body the signed workspace, license and Fleet service APIs read. */
+/** The largest body the signed workspace, license, Fleet and registry service APIs read. */
 const INTERNAL_WORKSPACES_BODY_LIMIT_BYTES = 64 * 1024;
 
 export interface CreateAppOptions {
@@ -183,6 +187,14 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
     }),
   );
   app.route("/api/internal/fleet", internalFleet);
+  app.use(
+    "/api/internal/registry/*",
+    bodyLimit({
+      maxSize: INTERNAL_WORKSPACES_BODY_LIMIT_BYTES,
+      onError: (c) => c.json({ error: "payload_too_large" }, 413),
+    }),
+  );
+  app.route("/api/internal/registry", internalRegistry);
   app.route("/api/internal/test-requests", createRoutineJobBindingApi());
   app.route("/api/internal/test-requests", createTestRequestsApi());
   app.route("/api/internal/routine-cases", createInternalRoutineCaseApi());

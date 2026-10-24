@@ -228,6 +228,7 @@ jobs:
             tests/license-features.integration.test.ts \
             tests/miniapp-token-claims.integration.test.ts \
             tests/miniapp-registry.integration.test.ts \
+            tests/registry-service-api.integration.test.ts \
             tests/admin-licenses.integration.test.ts \
             tests/admin-registry.integration.test.ts \
             tests/migrate-store-developer-orgs.integration.test.ts \

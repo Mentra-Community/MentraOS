@@ -186,6 +186,35 @@ else await core.clearDeletionHold(workspaceId, {asOf})
   account never deletes a workspace, so a held workspace whose last owner deletes
   their account stays, with its hold, for an Organization Admin to recover.
 
+## The miniapp registry
+
+The directory reads [Core's registry](registry.md) and archives through it, at
+`/api/internal/registry/*`, signed the same way. It never reads a developer's
+URL itself. Both routes are the Store's only: Fleet is `403 forbidden`. The
+types and the client methods (`getRegistryEntry`, `archiveRegistry`) are in
+`@mentra/workspace-contract`.
+
+| Route | Answers |
+| --- | --- |
+| `GET /entries?url=` | `{entry}`: the registry's entry for a miniapp URL (in any spelling `normalizeMiniappUrl` accepts) and Core's verified `miniapp.json` as `manifest`, or `404 not_found`. |
+| `POST /archive` | `{rule, created, entriesArchived}`: archives `{rule: {kind, value}, reason, actorEmail}` for a staff member. |
+
+- **What an entry shows.** `entry` is a `RegistryEntryView` with `manifest`.
+  `status` is `archived` when an archive rule covers the entry, whatever the
+  entry's own status. A private entry, or one only a phone reported, comes with
+  its URL, package and dates only: its name, version, rating, icon and manifest
+  are null. So the directory never shows developer text Core didn't verify, or
+  the details of a miniapp whose server asks for sign-in.
+- **Archiving.** `kind` is `url`, `package`, `domain` (a registrable domain) or
+  `account` (a `mentraUserId`). Core stores the rule normalized and answers it.
+  A rule that exists already changes nothing (`created: false`). A rule that
+  can't name any entry, or an `actorEmail` that isn't an email address, is
+  `400 invalid_request`. The rule's author is `store:<actorEmail>`. Each call is
+  recorded in the admin audit log beside the admin portal's own archives, as
+  `miniapp_registry.archive` with the actor `store:<actorEmail>` and the Store
+  and staff member in its metadata. Unarchiving is for Organization Admins in
+  the admin portal.
+
 ## Signing people in to the Store
 
 The Developer Console and the `mentra` CLI sign in through the Core the Store

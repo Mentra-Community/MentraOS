@@ -7,10 +7,13 @@ not a gate: the phone checks the domain rule, the manifest and the download
 itself.
 
 The code is in `packages/core/src/services/registry/` (`registry.service.ts`,
-and the fetcher in `miniapp-fetcher.ts`), the phone's routes in
-`packages/core/src/api/client/registry.api.ts`, and the wire shapes in
-`@mentra/cloud-protocol` (`miniapp-registry.ts`). The Cloud Client calls them
-as `cloud.core.registry`.
+the fetcher in `miniapp-fetcher.ts`, and the service API's answers in
+`registry-service-api.service.ts`), the phone's routes in
+`packages/core/src/api/client/registry.api.ts`, the service API in
+`packages/core/src/api/internal/registry.api.ts`, and the wire shapes in
+`@mentra/cloud-protocol` (`miniapp-registry.ts`) and, for the service API,
+`@mentra/workspace-contract`. The Cloud Client calls the phone's routes as
+`cloud.core.registry`.
 
 ## What Core keeps
 
@@ -50,6 +53,19 @@ an hour (`429 rate_limited`, with `Retry-After`). Core answers:
 500) is the updater's batch. Core answers `active`, `archived` or `unknown` for
 each URL, in order, and `validForSeconds`. Any signed-in phone gets an answer,
 so archiving stops updates on every phone.
+
+## The service API
+
+Fleet and the directory reach the registry through Core's signed service API at
+`/api/internal/registry/*`:
+
+- **Fleet** checks the URLs an admin assigns (`POST /check`), registering the
+  ones Core doesn't know as the admin's install would, and names miniapps in a
+  workspace's views (`POST /lookup`). See
+  [Fleet integration](fleet-integration.md#the-miniapp-registry).
+- **The directory** reads an entry with Core's verified `miniapp.json`
+  (`GET /entries?url=`) and archives for its staff (`POST /archive`). See
+  [Store integration](store-integration.md#the-miniapp-registry).
 
 ## How Core verifies a URL
 
@@ -97,7 +113,8 @@ so a rule made while Core was reading the URL still refuses that install.
 Archiving refuses new installs and stops updates. Installed copies keep running.
 Removing a rule restores the entries no other rule covers. Organization Admins
 archive in the admin portal, and the directory archives through Core's signed
-service API.
+service API. Both land in the admin audit log as `miniapp_registry.archive`; a
+directory archive's actor is `store:<staff email>`.
 
 ## The admin portal
 
