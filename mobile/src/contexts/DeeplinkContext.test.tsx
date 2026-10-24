@@ -371,7 +371,7 @@ it("asks over a lifted splash before a signup link signs in to an account this p
   expect(mockReplaceAll).toHaveBeenCalledWith("/")
 })
 
-it("stays put when the person declines a signup link's account", async () => {
+it("leaves the callback splash for the current account when the person declines a signup link", async () => {
   mockCompleteSignupVerification.mockResolvedValue({is_error: () => false, value: "declined"})
   render(
     <DeeplinkProvider>
@@ -381,7 +381,7 @@ it("stays put when the person declines a signup link's account", async () => {
   await act(async () => {
     await processUrl(signupCallback)
   })
-  expect(mockReplaceAll).not.toHaveBeenCalled()
+  expect(mockReplaceAll).toHaveBeenCalledWith("/")
   expect(mockReplace).not.toHaveBeenCalled()
 })
 

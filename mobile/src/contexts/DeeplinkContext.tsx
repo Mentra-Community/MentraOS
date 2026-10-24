@@ -285,8 +285,8 @@ const deepLinkRoutes: DeepLinkRoute[] = [
           nav.replace("/auth/start?authError=invalid_grant")
           return
         }
-        // Declined: the app stays signed in as before, or signed out.
-        if (res.value === "declined") return
+        // Expo Router already opened the callback's splash. Signed in or declined, "/" routes to the account the app
+        // uses now, or to sign-in.
         nav.setAnimation("none")
         nav.replaceAll("/")
         return
