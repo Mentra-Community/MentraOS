@@ -23,7 +23,9 @@
  *
  * State observability:
  *   speaker.state              — current SpeakerState (sync getter).
- *   speaker.isPlaying          — true iff state === "playing".
+ *   speaker.isPlaying          — true iff state === "playing". An open live
+ *                                PCM stream keeps both values at "playing"
+ *                                until that stream ends or is stopped.
  *   speaker.onStateChange(h)   — fires on every state transition.
  *
  * State machine (per miniapp):
@@ -121,9 +123,14 @@ export const SPEAKER_STREAM_MAX_BUFFERED_MS = 2000
  */
 export class SpeakerStreamWriter {
   private settled = false
+  private settledNotified = false
   private writeChain: Promise<void> = Promise.resolve()
 
-  constructor(private readonly session: MiniappSession, readonly streamId: string) {}
+  constructor(
+    private readonly session: MiniappSession,
+    readonly streamId: string,
+    private readonly onSettled?: () => void,
+  ) {}
 
   /**
    * Append raw PCM bytes (16-bit LE). Auto-chunked. Resolves with the host's
@@ -166,24 +173,38 @@ export class SpeakerStreamWriter {
   async close(): Promise<{durationMs?: number}> {
     this.assertOpen()
     this.settled = true
-    await this.writeChain
-    // Draining takes as long as the buffered audio — opt out of the default
-    // request timeout like play()/speak() do.
-    const res = await this.session.sendRequest<{durationMs?: number} | null>(
-      {type: MiniappRequestType.SPEAKER_STREAM_CLOSE, streamId: this.streamId},
-      {timeoutMs: 0},
-    )
-    return res ?? {}
+    try {
+      await this.writeChain
+      // Draining takes as long as the buffered audio — opt out of the default
+      // request timeout like play()/speak() do.
+      const res = await this.session.sendRequest<{durationMs?: number} | null>(
+        {type: MiniappRequestType.SPEAKER_STREAM_CLOSE, streamId: this.streamId},
+        {timeoutMs: 0},
+      )
+      return res ?? {}
+    } finally {
+      this.notifySettled()
+    }
   }
 
   /** Stop immediately and drop any buffered audio. Idempotent. */
   async abort(): Promise<void> {
     if (this.settled) return
     this.settled = true
-    await this.session.sendRequest<void>({
-      type: MiniappRequestType.SPEAKER_STREAM_ABORT,
-      streamId: this.streamId,
-    })
+    try {
+      await this.session.sendRequest<void>({
+        type: MiniappRequestType.SPEAKER_STREAM_ABORT,
+        streamId: this.streamId,
+      })
+    } finally {
+      this.notifySettled()
+    }
+  }
+
+  private notifySettled(): void {
+    if (this.settledNotified) return
+    this.settledNotified = true
+    this.onSettled?.()
   }
 
   private assertOpen(): void {
@@ -217,22 +238,25 @@ export interface SpeakerStateEvent {
   errorMessage?: string
   /** When state === "stopped", how many ms the playback ran (best-effort). */
   durationMs?: number
+  /** Set on terminal events for a specific live PCM stream. */
+  streamId?: string
 }
 
 export class SpeakerModule {
   private _state: SpeakerState = "idle"
   private _lastEvent: SpeakerStateEvent = {state: "idle"}
+  private activeStreams = new Set<string>()
 
   constructor(private readonly session: MiniappSession) {}
 
   /** Current speaker playback state. */
   get state(): SpeakerState {
-    return this._state
+    return this.activeStreams.size > 0 ? "playing" : this._state
   }
 
   /** True iff state === "playing". */
   get isPlaying(): boolean {
-    return this._state === "playing"
+    return this.state === "playing"
   }
 
   /** Play a URL. Resolves when playback completes on the phone. */
@@ -324,11 +348,31 @@ export class SpeakerModule {
       volume: options.volume,
       stopOtherAudio: options.stopOtherAudio ?? true,
     })
-    return new SpeakerStreamWriter(this.session, res.streamId)
+    const wasPlaying = this.isPlaying
+    this.activeStreams.clear()
+    this.activeStreams.add(res.streamId)
+    this._state = "playing"
+    const stream = new SpeakerStreamWriter(this.session, res.streamId, () => {
+      this._settleStream(res.streamId)
+    })
+    if (!wasPlaying) {
+      const event: SpeakerStateEvent = {state: "playing"}
+      this._lastEvent = event
+      this.session._emitSpeakerState(event)
+    }
+    return stream
   }
 
   /** Stop any audio this miniapp is currently playing. */
   stop(): void {
+    const wasPlaying = this.isPlaying
+    this.activeStreams.clear()
+    this._state = "stopped"
+    if (wasPlaying) {
+      const event: SpeakerStateEvent = {state: "stopped"}
+      this._lastEvent = event
+      this.session._emitSpeakerState(event)
+    }
     this.session.sendOneShot({type: MiniappRequestType.STOP_AUDIO})
   }
 
@@ -342,13 +386,36 @@ export class SpeakerModule {
   }
 
   /** @internal — applied by MiniappSession on inbound SPEAKER_STATE envelope. */
-  _applyState(event: SpeakerStateEvent): void {
+  _applyState(event: SpeakerStateEvent): boolean {
+    const previousState = this.state
+
+    if (event.streamId) {
+      if (!this.activeStreams.has(event.streamId)) return false
+      if (event.state === "idle" || event.state === "stopped" || event.state === "error") {
+        this.activeStreams.delete(event.streamId)
+      }
+    } else if (this.activeStreams.size > 0) {
+      // Host state events without a stream id may belong to an unrelated or
+      // stale play()/speak() request. Keep the active PCM stream authoritative.
+      return false
+    }
+
     // Idempotent: skip if state didn't change. Error events are transient
     // and are not deduped against the prior state — they're informational
     // and the phone immediately follows up with `stopped`.
-    if (event.state === this._state && event.state !== "error") return
     this._state = event.state
     this._lastEvent = event
+    return previousState !== this.state || event.state === "error"
+  }
+
+  private _settleStream(streamId: string): void {
+    if (!this.activeStreams.delete(streamId) || this.activeStreams.size > 0) return
+    if (this._state === "playing") {
+      this._state = "stopped"
+      const event: SpeakerStateEvent = {state: "stopped", streamId}
+      this._lastEvent = event
+      this.session._emitSpeakerState(event)
+    }
   }
 
   /** @internal — for tests. */

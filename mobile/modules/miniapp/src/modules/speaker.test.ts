@@ -10,6 +10,7 @@ import {base64ToBytes} from "./base64"
 function mockSession(results: unknown[] | ((payload: Record<string, unknown>) => unknown)) {
   const requestCalls: Record<string, unknown>[] = []
   const requestOptions: unknown[] = []
+  const emittedSpeakerStates: unknown[] = []
   const resolveResult =
     typeof results === "function" ? results : () => (results.length > 1 ? results.shift() : results[0])
   const session = {
@@ -21,9 +22,10 @@ function mockSession(results: unknown[] | ((payload: Record<string, unknown>) =>
       requestOptions.push(options)
       return Promise.resolve(resolveResult(payload))
     },
+    _emitSpeakerState: (event: unknown) => emittedSpeakerStates.push(event),
   } as unknown as MiniappSession
 
-  return {session, requestCalls, requestOptions}
+  return {session, requestCalls, requestOptions, emittedSpeakerStates}
 }
 
 describe("SpeakerModule.play", () => {
@@ -116,7 +118,7 @@ describe("SpeakerModule.speak", () => {
 
 describe("SpeakerModule.createStream", () => {
   test("sends SPEAKER_STREAM_OPEN with defaulted options and returns a writer", async () => {
-    const {session, requestCalls} = mockSession([{streamId: "spk-1"}])
+    const {session, requestCalls, emittedSpeakerStates} = mockSession([{streamId: "spk-1"}])
     const speaker = new SpeakerModule(session)
 
     const writer = await speaker.createStream()
@@ -132,6 +134,7 @@ describe("SpeakerModule.createStream", () => {
         stopOtherAudio: true,
       },
     ])
+    expect(emittedSpeakerStates).toEqual([{state: "playing"}])
   })
 
   test("passes explicit options through", async () => {

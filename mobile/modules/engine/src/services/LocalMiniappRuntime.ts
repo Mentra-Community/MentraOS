@@ -677,6 +677,8 @@ class LocalMiniappRuntime {
   public onLivenessTimeout: ((packageName: string) => void) | null = null
 
   private speechRuns = new Map<string, SpeechRun>()
+  private speakerOperationCounter = 0
+  private currentSpeakerOperation: {packageName: string; operationId: number} | undefined
   private runtimeSeq = 0
   private authSessionSeq = 0
 
@@ -946,6 +948,7 @@ class LocalMiniappRuntime {
     // dangling references. The WebView will re-subscribe after its CONNECT.
     if (this.connectedApps.has(packageName)) {
       const existing = this.connectedApps.get(packageName)!
+      this.cancelPendingSpeakerOperation(packageName)
       this.cancelSpeech(packageName)
       // A crash respawn replaces the ConnectedMiniapp without going through
       // unregisterApp(). Abort the old incarnation's native PCM player before
@@ -1129,6 +1132,7 @@ class LocalMiniappRuntime {
 
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
+    this.cancelPendingSpeakerOperation(packageName)
     this.clearActionState(packageName)
     const releasedMicGateOverride = micStateCoordinator.clearMiniappGateOverrides(packageName)
     // Backstop for a miniapp that crashed or was killed mid-call: the microphone profile and the
@@ -2375,7 +2379,7 @@ class LocalMiniappRuntime {
     }
   }
 
-  private handlePlayAudio(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+  private async handlePlayAudio(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     const audioUrl = (payload.audioUrl ?? payload.url) as string | undefined
     if (!audioUrl) {
       this.sendResult(packageName, requestId, false, undefined, {
@@ -2397,7 +2401,14 @@ class LocalMiniappRuntime {
     const volume = typeof payload.volume === "number" ? payload.volume : 1.0
     const stopOtherAudio = payload.stopOtherAudio !== false
 
+    const operationId = this.beginSpeakerOperation(packageName)
     this.cancelSpeech(packageName)
+    if (stopOtherAudio) await this.stopActiveSpeakerStream(packageName)
+    if (!this.isCurrentSpeakerOperation(packageName, operationId)) {
+      this.sendResult(packageName, requestId, true, {duration: 0})
+      return
+    }
+    this.finishSpeakerOperation(packageName, operationId)
     this.setSpeakerState(packageName, "loading")
     audioPlaybackService.play(
       {
@@ -2439,10 +2450,49 @@ class LocalMiniappRuntime {
     queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
   }
 
+  private async stopActiveSpeakerStream(packageName: string): Promise<void> {
+    const streamId = this.connectedApps.get(packageName)?.activeSpeakerStreamId
+    if (!streamId) return
+    // Let the stream's tagged onEnded event settle SDK state before sending
+    // unscoped loading/playing events for its replacement playback.
+    await audioPlaybackService.abortStream(streamId)
+  }
+
+  private beginSpeakerOperation(packageName: string): number {
+    const operationId = ++this.speakerOperationCounter
+    // URL playback uses one native player across all miniapps, so the latest
+    // request owns this pending preemption globally, not just per package.
+    this.currentSpeakerOperation = {packageName, operationId}
+    return operationId
+  }
+
+  private isCurrentSpeakerOperation(packageName: string, operationId: number): boolean {
+    return (
+      this.currentSpeakerOperation?.packageName === packageName &&
+      this.currentSpeakerOperation.operationId === operationId
+    )
+  }
+
+  private finishSpeakerOperation(packageName: string, operationId: number): void {
+    if (this.isCurrentSpeakerOperation(packageName, operationId)) {
+      this.currentSpeakerOperation = undefined
+    }
+  }
+
+  private cancelPendingSpeakerOperation(packageName: string): void {
+    if (this.currentSpeakerOperation?.packageName === packageName) {
+      this.currentSpeakerOperation = undefined
+    }
+  }
+
   private handleStopAudio(packageName: string, _payload: Record<string, unknown>, requestId?: string): void {
+    this.cancelPendingSpeakerOperation(packageName)
+    const app = this.connectedApps.get(packageName)
+    const streamId = app?.activeSpeakerStreamId
+    if (app) app.activeSpeakerStreamId = undefined
     this.cancelSpeech(packageName)
     audioPlaybackService.stopForApp(packageName)
-    this.setSpeakerState(packageName, "stopped")
+    this.setSpeakerState(packageName, "stopped", streamId ? {streamId} : undefined)
     this.sendResult(packageName, requestId, true)
   }
 
@@ -2460,15 +2510,6 @@ class LocalMiniappRuntime {
   ): Promise<void> {
     const app = this.connectedApps.get(packageName)
     if (!app) return
-
-    // One stream per miniapp: opening a second closes the first.
-    const previous = app.activeSpeakerStreamId
-    if (previous) {
-      app.activeSpeakerStreamId = undefined
-      await audioPlaybackService.abortStream(previous).catch((error) => {
-        console.warn(`${LOG_TAG}: failed to abort previous speaker stream for ${packageName}`, error)
-      })
-    }
 
     const sampleRate = typeof payload.sampleRate === "number" ? payload.sampleRate : 16000
     if (!LocalMiniappRuntime.SPEAKER_STREAM_SAMPLE_RATES.has(sampleRate)) {
@@ -2495,6 +2536,19 @@ class LocalMiniappRuntime {
       return
     }
 
+    // One stream per miniapp: opening a second closes the first.
+    const previous = app.activeSpeakerStreamId
+    if (previous) {
+      app.activeSpeakerStreamId = undefined
+      await audioPlaybackService.abortStream(previous).catch((error) => {
+        console.warn(`${LOG_TAG}: failed to abort previous speaker stream for ${packageName}`, error)
+      })
+      // The aborted writer callback is intentionally ignored below because its
+      // stream is no longer current. Still notify the client that this exact
+      // stream ended before attempting to open its replacement.
+      this.setSpeakerState(packageName, "stopped", {streamId: previous})
+    }
+
     const streamId = `spkstream_${Date.now()}_${++this.speakerStreamCounter}`
     this.setSpeakerState(packageName, "loading")
     try {
@@ -2511,14 +2565,19 @@ class LocalMiniappRuntime {
           // respawn. Its abort may finish after the new app has registered and
           // must not overwrite that app's speaker state.
           if (current !== app) return
-          if (current.activeSpeakerStreamId === endedId) current.activeSpeakerStreamId = undefined
+          if (current.activeSpeakerStreamId !== endedId) {
+            // Stale completion from an aborted predecessor; do not overwrite active state
+            return
+          }
+          current.activeSpeakerStreamId = undefined
           if (success) {
-            this.setSpeakerState(packageName, "stopped", {durationMs: durationMs ?? undefined})
+            this.setSpeakerState(packageName, "stopped", {durationMs: durationMs ?? undefined, streamId: endedId})
           } else {
             this.setSpeakerState(packageName, "error", {
               errorCode: MiniappErrorCode.INTERNAL,
               errorMessage: error ?? "speaker stream failed",
               durationMs: durationMs ?? undefined,
+              streamId: endedId,
             })
           }
         },
@@ -2545,8 +2604,9 @@ class LocalMiniappRuntime {
     }
     app.activeSpeakerStreamId = streamId
     // Optimistic "playing", same as play(): the chunk player starts as soon
-    // as the first write lands. Microtask so "loading" flushes first.
-    queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+    // as the first write lands. Synchronous so SPEAKER_STATE ("playing")
+    // is queued before sendResult resolves createStream() in the miniapp.
+    this.setSpeakerState(packageName, "playing")
     this.sendResult(packageName, requestId, true, {streamId})
   }
 
@@ -2678,9 +2738,9 @@ class LocalMiniappRuntime {
     const speed = typeof voiceSettings?.speed === "number" ? voiceSettings.speed : undefined
     const run: SpeechRun = {id: audioRequestId, cancelled: false}
 
+    const operationId = this.beginSpeakerOperation(packageName)
     this.cancelSpeech(packageName)
     this.speechRuns.set(packageName, run)
-    this.setSpeakerState(packageName, "loading")
 
     let terminalSent = false
     const sendPlaybackResult = (
@@ -2727,6 +2787,15 @@ class LocalMiniappRuntime {
     run.onCancelled = () => sendPlaybackResult(true, null, null, "tts playback stopped", false)
 
     try {
+      if (stopOtherAudio) await this.stopActiveSpeakerStream(packageName)
+      if (
+        run.cancelled ||
+        this.speechRuns.get(packageName) !== run ||
+        !this.isCurrentSpeakerOperation(packageName, operationId)
+      ) return
+      this.finishSpeakerOperation(packageName, operationId)
+      this.setSpeakerState(packageName, "loading")
+
       const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
       const offlineSupportsVoice =
         !voiceExplicit || voice === "default" || ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
@@ -6381,15 +6450,16 @@ class LocalMiniappRuntime {
   private setSpeakerState(
     packageName: string,
     next: SpeakerStateValue,
-    extra?: {errorCode?: string; errorMessage?: string; durationMs?: number},
+    extra?: {errorCode?: string; errorMessage?: string; durationMs?: number; streamId?: string},
   ): void {
     const app = this.connectedApps.get(packageName)
     if (!app) return
-    if (app.speakerState === next && next !== "error") return
+    if (app.speakerState === next && next !== "error" && extra?.streamId === undefined) return
     app.speakerState = next === "error" ? "error" : next
     this.sendToMiniapp(packageName, {
       type: MiniappResponseType.SPEAKER_STATE,
       state: next,
+      ...(extra?.streamId !== undefined ? {streamId: extra.streamId} : {}),
       ...(extra?.errorCode !== undefined ? {errorCode: extra.errorCode} : {}),
       ...(extra?.errorMessage !== undefined ? {errorMessage: extra.errorMessage} : {}),
       ...(extra?.durationMs !== undefined ? {durationMs: extra.durationMs} : {}),
