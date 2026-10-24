@@ -571,6 +571,10 @@ jobs:
         if: steps.select-ipa.outputs.reused != 'true'
         run: mobile/scripts/test-hotspot-error-facts.sh
 
+      - name: Test the WebView's miniapp origins
+        if: steps.select-ipa.outputs.reused != 'true'
+        run: mobile/scripts/test-webview-miniapp-origin.sh
+
       - name: Validate CocoaPods post-install project integrity
         if: steps.select-ipa.outputs.reused != 'true'
         working-directory: ./mobile

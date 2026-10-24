@@ -1,8 +1,33 @@
+diff --git a/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java b/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java
+index 07f73fd..7349b88 100644
+--- a/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java
++++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java
+@@ -89,6 +89,13 @@ public class RNCWebChromeClient extends WebChromeClient implements LifecycleEven
+     public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+ 
+         final WebView newWebView = new WebView(view.getContext());
++        // MentraOS patch: a window a miniapp origin opens gets no file or content access either.
++        if (mWebView.getMiniappOrigin() != null) {
++            newWebView.getSettings().setAllowFileAccess(false);
++            newWebView.getSettings().setAllowContentAccess(false);
++            newWebView.getSettings().setAllowFileAccessFromFileURLs(false);
++            newWebView.getSettings().setAllowUniversalAccessFromFileURLs(false);
++        }
+ 
+         if(mHasOnOpenWindowEvent) {
+             newWebView.setWebViewClient(new WebViewClient(){
 diff --git a/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
-index 80c68034b193a47bedb56ca527352de9548e8ac6..449ce7deb5cd39012420c63ce7334152f388160f 100644
+index 80c6803..5fa57ac 100644
 --- a/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
 +++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
-@@ -18,6 +18,7 @@ import android.webkit.WebViewClient;
+@@ -12,12 +12,14 @@ import android.view.View;
+ import android.webkit.JavascriptInterface;
+ import android.webkit.ValueCallback;
+ import android.webkit.WebChromeClient;
++import android.webkit.WebSettings;
+ import android.webkit.WebView;
+ import android.webkit.WebViewClient;
+ 
  import androidx.annotation.NonNull;
  import androidx.annotation.Nullable;
  import androidx.webkit.JavaScriptReplyProxy;
@@ -10,7 +35,7 @@ index 80c68034b193a47bedb56ca527352de9548e8ac6..449ce7deb5cd39012420c63ce7334152
  import androidx.webkit.WebMessageCompat;
  import androidx.webkit.WebViewCompat;
  import androidx.webkit.WebViewFeature;
-@@ -53,6 +54,16 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+@@ -53,6 +55,16 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
      String injectedJS;
      protected @Nullable
      String injectedJSBeforeContentLoaded;
@@ -27,7 +52,65 @@ index 80c68034b193a47bedb56ca527352de9548e8ac6..449ce7deb5cd39012420c63ce7334152
      protected static final String JAVASCRIPT_INTERFACE = "ReactNativeWebView";
      protected @Nullable
      RNCWebViewBridge fallbackBridge;
-@@ -109,12 +120,43 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+@@ -79,6 +91,16 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+     protected boolean nestedScrollEnabled = false;
+     protected ProgressChangedFilter progressChangedFilter;
+ 
++    /**
++     * MentraOS patch: the miniapp origin this WebView serves, or null. Read by
++     * RNCWebViewClient.shouldInterceptRequest on WebView's IO thread.
++     */
++    protected volatile @Nullable RNCWebViewClient.MiniappOrigin mMiniappOrigin = null;
++    // The file-access props as set; a miniapp origin overrides them (see applyFileAccess).
++    protected boolean mRequestedAllowFileAccess = false;
++    protected boolean mRequestedAllowFileAccessFromFileURLs = false;
++    protected boolean mRequestedAllowUniversalAccessFromFileURLs = false;
++
+     /**
+      * WebView must be created with an context of the current activity
+      * <p>
+@@ -91,6 +113,40 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+         progressChangedFilter = new ProgressChangedFilter();
+     }
+ 
++    public @Nullable RNCWebViewClient.MiniappOrigin getMiniappOrigin() {
++        return mMiniappOrigin;
++    }
++
++    /** MentraOS patch: serve one miniapp package's files at its own origin (null to stop). */
++    public void setMiniappOrigin(@Nullable RNCWebViewClient.MiniappOrigin origin) {
++        mMiniappOrigin = origin;
++        applyFileAccess();
++    }
++
++    /**
++     * MentraOS patch: apply the file-access props, except that a miniapp origin
++     * never has file or content access.
++     */
++    public void applyFileAccess() {
++        boolean allowed = mMiniappOrigin == null;
++        WebSettings settings = getSettings();
++        settings.setAllowFileAccess(allowed && mRequestedAllowFileAccess);
++        settings.setAllowFileAccessFromFileURLs(allowed && mRequestedAllowFileAccessFromFileURLs);
++        settings.setAllowUniversalAccessFromFileURLs(allowed && mRequestedAllowUniversalAccessFromFileURLs);
++        if (!allowed) {
++            settings.setAllowContentAccess(false);
++        }
++    }
++
++    /** MentraOS patch: true for a URL a miniapp origin never loads (file and content URLs). */
++    public boolean miniappOriginRefuses(@Nullable String url) {
++        if (mMiniappOrigin == null || url == null) {
++            return false;
++        }
++        String scheme = Uri.parse(url).getScheme();
++        return scheme != null && (scheme.equalsIgnoreCase("file") || scheme.equalsIgnoreCase("content"));
++    }
++
+     public void setBasicAuthCredential(RNCBasicAuthCredential credential) {
+         mRNCWebViewClient.setBasicAuthCredential(credential);
+     }
+@@ -109,12 +165,43 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
  
      @Override
      public void onHostResume() {
@@ -73,7 +156,7 @@ index 80c68034b193a47bedb56ca527352de9548e8ac6..449ce7deb5cd39012420c63ce7334152
      }
  
      @Override
-@@ -309,6 +351,18 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+@@ -309,6 +396,18 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
      }
  
      public void callInjectedJavaScriptBeforeContentLoaded() {
@@ -92,7 +175,7 @@ index 80c68034b193a47bedb56ca527352de9548e8ac6..449ce7deb5cd39012420c63ce7334152
          if (getSettings().getJavaScriptEnabled() &&
                  injectedJSBeforeContentLoaded != null &&
                  !TextUtils.isEmpty(injectedJSBeforeContentLoaded)) {
-@@ -317,6 +371,55 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+@@ -317,6 +416,55 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
          }
      }
  
@@ -148,11 +231,555 @@ index 80c68034b193a47bedb56ca527352de9548e8ac6..449ce7deb5cd39012420c63ce7334152
      protected String injectedJavaScriptObject = null;
  
      public void setInjectedJavaScriptObject(String obj) {
+diff --git a/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
+index 0287e1c..0228683 100644
+--- a/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
++++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
+@@ -2,6 +2,7 @@ package com.reactnativecommunity.webview;
+ 
+ import android.annotation.TargetApi;
+ import android.graphics.Bitmap;
++import android.net.Uri;
+ import android.net.http.SslError;
+ import android.os.Build;
+ import android.os.SystemClock;
+@@ -35,7 +36,22 @@ import com.reactnativecommunity.webview.events.TopShouldStartLoadWithRequestEven
+ import android.webkit.CookieManager;
+ import android.webkit.CookieSyncManager;
+ 
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.FilterInputStream;
++import java.io.IOException;
++import java.io.InputStream;
++import java.net.URI;
++import java.nio.charset.StandardCharsets;
++import java.util.Collections;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.Locale;
++import java.util.Map;
+ import java.util.concurrent.atomic.AtomicReference;
++import java.util.regex.Pattern;
+ 
+ public class RNCWebViewClient extends WebViewClient {
+     private static String TAG = "RNCWebViewClient";
+@@ -90,9 +106,40 @@ public class RNCWebViewClient extends WebViewClient {
+       reactWebView.callInjectedJavaScriptBeforeContentLoaded();
+     }
+ 
++    /**
++     * MentraOS patch: a miniapp origin's files come from its bundle root, and
++     * every other *.miniapp.invalid, file or content request gets a 404. Other
++     * requests go on to the network as usual.
++     */
++    @Override
++    public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
++        MiniappOrigin origin = view instanceof RNCWebView ? ((RNCWebView) view).getMiniappOrigin() : null;
++        Uri url = request.getUrl();
++        if (origin == null || url == null || !origin.handles(url.getScheme(), url.getHost())) {
++            return super.shouldInterceptRequest(view, request);
++        }
++        String range = null;
++        Map<String, String> headers = request.getRequestHeaders();
++        if (headers != null) {
++            for (Map.Entry<String, String> header : headers.entrySet()) {
++                if ("range".equalsIgnoreCase(header.getKey())) {
++                    range = header.getValue();
++                }
++            }
++        }
++        MiniappOrigin.Response response = origin.respond(request.getMethod(), url.getScheme(), url.getHost(),
++            url.getPort(), url.getUserInfo(), url.getEncodedPath(), range);
++        return new WebResourceResponse(response.mimeType, response.encoding, response.statusCode,
++            response.reasonPhrase, response.headers, response.body);
++    }
++
+     @Override
+     public boolean shouldOverrideUrlLoading(WebView view, String url) {
+         final RNCWebView rncWebView = (RNCWebView) view;
++        // MentraOS patch: a miniapp origin never navigates to a file or content URL.
++        if (rncWebView.miniappOriginRefuses(url)) {
++            return true;
++        }
+         final boolean isJsDebugging = rncWebView.getReactApplicationContext().getJavaScriptContextHolder().get() == 0;
+ 
+         if (!isJsDebugging && rncWebView.mMessagingJSModule != null) {
+@@ -327,4 +374,403 @@ public class RNCWebViewClient extends WebViewClient {
+     public void setProgressChangedFilter(RNCWebView.ProgressChangedFilter filter) {
+         progressChangedFilter = filter;
+     }
+-}
+\ No newline at end of file
++
++    // BEGIN MiniappOrigin (MentraOS patch)
++    /**
++     * MentraOS patch: one miniapp package's origin.
++     *
++     * The WebView serves https://&lt;host&gt;.miniapp.invalid/&lt;path&gt; from the
++     * package's bundle root, where &lt;host&gt; is the package name with "_"
++     * written as "-". ".invalid" never resolves, so a request this class doesn't
++     * answer fails instead of reaching a network. Every *.miniapp.invalid request
++     * other than one of this package's files gets a 404: another package's host,
++     * "." or ".." segments, encoded separators, and any path that resolves outside
++     * the root once symlinks are followed.
++     *
++     * Plain Java with no Android types, so it is tested on the JVM
++     * (mobile/scripts/test-webview-miniapp-origin-android.sh extracts it). It is
++     * nested here because bun 1.3 cannot apply a patch that adds a file this deep
++     * in a package.
++     */
++    public static final class MiniappOrigin {
++        public static final String HOST_SUFFIX = ".miniapp.invalid";
++
++        private static final Pattern PACKAGE_NAME = Pattern.compile("^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$");
++        private static final int MAX_LABEL = 63;
++        private static final int MAX_HOST = 253;
++        private static final Map<String, String> CONTENT_TYPES = new HashMap<>();
++
++        static {
++            String[][] types = {
++                {"html", "text/html"}, {"htm", "text/html"},
++                {"js", "text/javascript"}, {"mjs", "text/javascript"}, {"cjs", "text/javascript"},
++                {"css", "text/css"}, {"json", "application/json"}, {"map", "application/json"},
++                {"webmanifest", "application/manifest+json"}, {"txt", "text/plain"}, {"xml", "application/xml"},
++                {"svg", "image/svg+xml"}, {"png", "image/png"}, {"jpg", "image/jpeg"}, {"jpeg", "image/jpeg"},
++                {"gif", "image/gif"}, {"webp", "image/webp"}, {"avif", "image/avif"}, {"ico", "image/x-icon"},
++                {"bmp", "image/bmp"}, {"wasm", "application/wasm"}, {"woff", "font/woff"}, {"woff2", "font/woff2"},
++                {"ttf", "font/ttf"}, {"otf", "font/otf"}, {"mp3", "audio/mpeg"}, {"wav", "audio/wav"},
++                {"ogg", "audio/ogg"}, {"oga", "audio/ogg"}, {"m4a", "audio/mp4"}, {"aac", "audio/aac"},
++                {"flac", "audio/flac"}, {"mp4", "video/mp4"}, {"m4v", "video/mp4"}, {"webm", "video/webm"},
++                {"mov", "video/quicktime"}, {"ogv", "video/ogg"}, {"pdf", "application/pdf"},
++                {"glb", "model/gltf-binary"}, {"gltf", "model/gltf+json"},
++            };
++            for (String[] type : types) {
++                CONTENT_TYPES.put(type[0], type[1]);
++            }
++        }
++
++        /** A response to hand to the WebView. */
++        public static final class Response {
++            public final int statusCode;
++            public final String reasonPhrase;
++            public final String mimeType;
++            /** The charset for text types, otherwise null. */
++            public final String encoding;
++            public final Map<String, String> headers;
++            public final InputStream body;
++
++            Response(int statusCode, String reasonPhrase, String mimeType, String encoding, Map<String, String> headers, InputStream body) {
++                this.statusCode = statusCode;
++                this.reasonPhrase = reasonPhrase;
++                this.mimeType = mimeType;
++                this.encoding = encoding;
++                this.headers = Collections.unmodifiableMap(headers);
++                this.body = body;
++            }
++        }
++
++        public final String packageName;
++        /** This package's host, or null when the package name can't have one (it then serves nothing). */
++        public final String host;
++        private final String rootDir;
++
++        /**
++         * @param packageName the miniapp's package name
++         * @param rootDir the active version's bundle root: an absolute path or a file:// URL
++         */
++        public MiniappOrigin(String packageName, String rootDir) {
++            this.packageName = packageName;
++            this.host = hostForPackage(packageName);
++            this.rootDir = rootDir;
++        }
++
++        /** The host for a package, or null when the name is invalid or the host would break DNS limits. */
++        public static String hostForPackage(String packageName) {
++            if (packageName == null || !PACKAGE_NAME.matcher(packageName).matches()) {
++                return null;
++            }
++            String host = packageName.replace('_', '-') + HOST_SUFFIX;
++            if (host.length() > MAX_HOST) {
++                return null;
++            }
++            for (String label : host.split("\\.")) {
++                if (label.length() > MAX_LABEL) {
++                    return null;
++                }
++            }
++            return host;
++        }
++
++        /**
++         * True when this origin answers the request itself: any *.miniapp.invalid
++         * host, and file and content URLs, which it refuses. Anything else goes on
++         * to the network as usual.
++         */
++        public boolean handles(String scheme, String requestHost) {
++            String lowerScheme = scheme == null ? "" : scheme.toLowerCase(Locale.ROOT);
++            if (lowerScheme.equals("file") || lowerScheme.equals("content")) {
++                return true;
++            }
++            if (requestHost == null) {
++                return false;
++            }
++            String lowerHost = requestHost.toLowerCase(Locale.ROOT);
++            return lowerHost.endsWith(HOST_SUFFIX) || lowerHost.equals(HOST_SUFFIX.substring(1));
++        }
++
++        /**
++         * The file a request names inside the root, with symlinks resolved, or null
++         * when this package doesn't serve it.
++         */
++        public File resolve(String scheme, String requestHost, int port, String userInfo, String encodedPath) {
++            if (host == null || scheme == null || !scheme.equalsIgnoreCase("https") || requestHost == null
++                    || !requestHost.toLowerCase(Locale.ROOT).equals(host) || port != -1 || userInfo != null) {
++                return null;
++            }
++            if (encodedPath == null || !encodedPath.startsWith("/")) {
++                return null;
++            }
++            String lowerPath = encodedPath.toLowerCase(Locale.ROOT);
++            if (lowerPath.contains("%2f") || lowerPath.contains("%5c") || lowerPath.contains("%00") || encodedPath.indexOf('\\') >= 0) {
++                return null;
++            }
++            File root = canonicalRoot();
++            if (root == null) {
++                return null;
++            }
++            File file = root;
++            for (String segment : encodedPath.split("/", -1)) {
++                if (segment.isEmpty()) {
++                    continue;
++                }
++                String decoded = percentDecode(segment);
++                if (decoded == null || decoded.isEmpty() || decoded.equals(".") || decoded.equals("..")
++                        || decoded.indexOf('/') >= 0 || decoded.indexOf('\\') >= 0 || decoded.indexOf('\0') >= 0) {
++                    return null;
++                }
++                file = new File(file, decoded);
++            }
++            if (file == root) {
++                return null;
++            }
++            try {
++                File canonical = file.getCanonicalFile();
++                String prefix = root.getPath().endsWith(File.separator) ? root.getPath() : root.getPath() + File.separator;
++                if (!canonical.getPath().startsWith(prefix) || !canonical.isFile()) {
++                    return null;
++                }
++                return canonical;
++            } catch (IOException e) {
++                return null;
++            }
++        }
++
++        /** The response to a request this origin {@link #handles}. */
++        public Response respond(String method, String scheme, String requestHost, int port, String userInfo, String encodedPath,
++                                                        String rangeHeader) {
++            String verb = method == null ? "GET" : method.toUpperCase(Locale.ROOT);
++            boolean head = verb.equals("HEAD");
++            if (!head && !verb.equals("GET")) {
++                Map<String, String> allow = new LinkedHashMap<>();
++                allow.put("Allow", "GET, HEAD");
++                return error(405, "Method Not Allowed", allow);
++            }
++            File file = resolve(scheme, requestHost, port, userInfo, encodedPath);
++            if (file == null) {
++                return error(404, "Not Found", null);
++            }
++            long length = file.length();
++            long[] range = parseRange(rangeHeader, length);
++            if (range == UNSATISFIABLE) {
++                Map<String, String> extra = new LinkedHashMap<>();
++                extra.put("Content-Range", "bytes */" + length);
++                return error(416, "Range Not Satisfiable", extra);
++            }
++            long start = range == null ? 0 : range[0];
++            long count = range == null ? length : range[1] - range[0] + 1;
++
++            InputStream body;
++            if (head) {
++                body = new ByteArrayInputStream(new byte[0]);
++            } else {
++                try {
++                    FileInputStream stream = new FileInputStream(file);
++                    long skipped = 0;
++                    while (skipped < start) {
++                        long n = stream.skip(start - skipped);
++                        if (n <= 0) {
++                            stream.close();
++                            return error(404, "Not Found", null);
++                        }
++                        skipped += n;
++                    }
++                    body = new BoundedInputStream(stream, count);
++                } catch (IOException e) {
++                    return error(404, "Not Found", null);
++                }
++            }
++
++            String type = contentType(file.getName());
++            Map<String, String> headers = baseHeaders();
++            headers.put("Content-Length", Long.toString(count));
++            headers.put("Accept-Ranges", "bytes");
++            if (range != null) {
++                headers.put("Content-Range", "bytes " + range[0] + "-" + range[1] + "/" + length);
++            }
++            return new Response(range == null ? 200 : 206, range == null ? "OK" : "Partial Content", type,
++                    isText(type) ? "utf-8" : null, headers, body);
++        }
++
++        /** The MIME type for a file name, without parameters. */
++        public static String contentType(String name) {
++            int dot = name.lastIndexOf('.');
++            String type = dot < 0 ? null : CONTENT_TYPES.get(name.substring(dot + 1).toLowerCase(Locale.ROOT));
++            return type == null ? "application/octet-stream" : type;
++        }
++
++        static boolean isText(String mimeType) {
++            return mimeType.startsWith("text/") || mimeType.equals("application/json") || mimeType.equals("application/xml")
++                    || mimeType.equals("application/manifest+json") || mimeType.equals("model/gltf+json");
++        }
++
++        static final long[] UNSATISFIABLE = new long[0];
++
++        /**
++         * One "bytes=" range as {first, last}; null for no range (or one we ignore:
++         * another unit, several ranges, a malformed header); UNSATISFIABLE for 416.
++         */
++        static long[] parseRange(String header, long length) {
++            if (header == null) {
++                return null;
++            }
++            String value = header.trim();
++            if (!value.toLowerCase(Locale.ROOT).startsWith("bytes=")) {
++                return null;
++            }
++            String spec = value.substring(6).trim();
++            if (spec.indexOf(',') >= 0) {
++                return null;
++            }
++            int dash = spec.indexOf('-');
++            if (dash < 0 || spec.indexOf('-', dash + 1) >= 0) {
++                return null;
++            }
++            String first = spec.substring(0, dash).trim();
++            String last = spec.substring(dash + 1).trim();
++            if ((first.isEmpty() && last.isEmpty()) || !digits(first) || !digits(last)) {
++                return null;
++            }
++            try {
++                if (first.isEmpty()) {
++                    long suffix = Long.parseLong(last);
++                    if (suffix == 0 || length == 0) {
++                        return UNSATISFIABLE;
++                    }
++                    return new long[] {Math.max(0, length - suffix), length - 1};
++                }
++                long start = Long.parseLong(first);
++                long end = last.isEmpty() ? length - 1 : Long.parseLong(last);
++                if (start >= length || end < start) {
++                    return UNSATISFIABLE;
++                }
++                return new long[] {start, Math.min(end, length - 1)};
++            } catch (NumberFormatException e) {
++                return null;
++            }
++        }
++
++        private static boolean digits(String text) {
++            for (int i = 0; i < text.length(); i++) {
++                if (text.charAt(i) < '0' || text.charAt(i) > '9') {
++                    return false;
++                }
++            }
++            return true;
++        }
++
++        private File canonicalRoot() {
++            if (rootDir == null || rootDir.isEmpty()) {
++                return null;
++            }
++            String path = rootDir;
++            if (rootDir.regionMatches(true, 0, "file:", 0, 5)) {
++                try {
++                    path = new URI(rootDir).getPath();
++                } catch (Exception e) {
++                    return null;
++                }
++            }
++            if (path == null || !path.startsWith("/")) {
++                return null;
++            }
++            try {
++                File root = new File(path).getCanonicalFile();
++                return root.isDirectory() ? root : null;
++            } catch (IOException e) {
++                return null;
++            }
++        }
++
++        /** Decodes %XX escapes as UTF-8 (a "+" stays a "+"); null when malformed. */
++        static String percentDecode(String segment) {
++            if (segment.indexOf('%') < 0) {
++                return segment;
++            }
++            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++            for (int i = 0; i < segment.length(); i++) {
++                char c = segment.charAt(i);
++                if (c == '%') {
++                    if (i + 2 >= segment.length()) {
++                        return null;
++                    }
++                    int high = Character.digit(segment.charAt(i + 1), 16);
++                    int low = Character.digit(segment.charAt(i + 2), 16);
++                    if (high < 0 || low < 0) {
++                        return null;
++                    }
++                    bytes.write((high << 4) | low);
++                    i += 2;
++                } else {
++                    byte[] encoded = String.valueOf(c).getBytes(StandardCharsets.UTF_8);
++                    bytes.write(encoded, 0, encoded.length);
++                }
++            }
++            return new String(bytes.toByteArray(), StandardCharsets.UTF_8);
++        }
++
++        private static Map<String, String> baseHeaders() {
++            Map<String, String> headers = new LinkedHashMap<>();
++            headers.put("Cache-Control", "no-store");
++            headers.put("X-Content-Type-Options", "nosniff");
++            return headers;
++        }
++
++        private static Response error(int statusCode, String reasonPhrase, Map<String, String> extra) {
++            byte[] text = reasonPhrase.getBytes(StandardCharsets.UTF_8);
++            Map<String, String> headers = baseHeaders();
++            headers.put("Content-Length", Integer.toString(text.length));
++            if (extra != null) {
++                headers.putAll(extra);
++            }
++            return new Response(statusCode, reasonPhrase, "text/plain", "utf-8", headers, new ByteArrayInputStream(text));
++        }
++
++        /** Reads at most `remaining` bytes of a stream. */
++        private static final class BoundedInputStream extends FilterInputStream {
++            private long remaining;
++
++            BoundedInputStream(InputStream in, long remaining) {
++                super(in);
++                this.remaining = remaining;
++            }
++
++            @Override
++            public int read() throws IOException {
++                if (remaining <= 0) {
++                    return -1;
++                }
++                int b = super.read();
++                if (b >= 0) {
++                    remaining--;
++                }
++                return b;
++            }
++
++            @Override
++            public int read(byte[] buffer, int offset, int length) throws IOException {
++                if (remaining <= 0) {
++                    return -1;
++                }
++                int n = super.read(buffer, offset, (int) Math.min(length, remaining));
++                if (n > 0) {
++                    remaining -= n;
++                }
++                return n;
++            }
++
++            @Override
++            public long skip(long n) throws IOException {
++                long skipped = super.skip(Math.min(n, remaining));
++                remaining -= skipped;
++                return skipped;
++            }
++
++            @Override
++            public int available() throws IOException {
++                return (int) Math.min(super.available(), remaining);
++            }
++        }
++    }
++    // END MiniappOrigin
++}
 diff --git a/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
-index f83033b3597a425da159555233bacce250ccfce0..56ab60c0628e103d30d127b5c91f30c14a7d97f1 100644
+index f83033b..bf89436 100644
 --- a/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
 +++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
-@@ -494,7 +494,11 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+@@ -269,6 +269,9 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+     }
+ 
+     fun onAfterUpdateTransaction(viewWrapper: RNCWebViewWrapper) {
++        // MentraOS patch: props apply in any order, so settle file access
++        // against the miniapp origin before loading the source.
++        viewWrapper.webView.applyFileAccess()
+         mPendingSource?.let { source ->
+             loadSource(viewWrapper, source)
+         }
+@@ -366,7 +369,24 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+     }
+ 
+     fun setAllowUniversalAccessFromFileURLs(viewWrapper: RNCWebViewWrapper, allow: Boolean) {
+-        viewWrapper.webView.settings.allowUniversalAccessFromFileURLs = allow
++        val view = viewWrapper.webView
++        view.mRequestedAllowUniversalAccessFromFileURLs = allow
++        view.applyFileAccess()
++    }
++
++    /**
++     * MentraOS patch: serve one miniapp package's files at
++     * https://<host>.miniapp.invalid/, with no file access. See RNCWebViewClient.MiniappOrigin.
++     */
++    fun setMiniappOrigin(viewWrapper: RNCWebViewWrapper, value: ReadableMap?) {
++        val view = viewWrapper.webView
++        val packageName = if (value != null && value.hasKey("packageName")) value.getString("packageName") else null
++        val rootDir = if (value != null && value.hasKey("rootDir")) value.getString("rootDir") else null
++        if (packageName.isNullOrEmpty()) {
++            view.setMiniappOrigin(null)
++        } else {
++            view.setMiniappOrigin(RNCWebViewClient.MiniappOrigin(packageName, rootDir))
++        }
+     }
+ 
+     private fun getDownloadingMessageOrDefault(): String? {
+@@ -387,7 +407,11 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+         if (source != null) {
+             if (source.hasKey("html")) {
+                 val html = source.getString("html")
+-                val baseUrl = if (source.hasKey("baseUrl")) source.getString("baseUrl") else ""
++                var baseUrl = if (source.hasKey("baseUrl")) source.getString("baseUrl") else ""
++                // MentraOS patch: a miniapp origin never gives a page a file base URL.
++                if (view.miniappOriginRefuses(baseUrl)) {
++                    baseUrl = ""
++                }
+                 view.loadDataWithBaseURL(
+                     baseUrl,
+                     html!!,
+@@ -403,6 +427,12 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+                 if (previousUrl != null && previousUrl == url) {
+                     return
+                 }
++                // MentraOS patch: a miniapp origin never loads a file or content URL.
++                if (view.miniappOriginRefuses(url)) {
++                    Log.w(TAG, "miniappOrigin refuses to load $url")
++                    view.loadUrl(BLANK_URL)
++                    return
++                }
+                 if (source.hasKey("method")) {
+                     val method = source.getString("method")
+                     if (method.equals(HTTP_METHOD_POST, ignoreCase = true)) {
+@@ -494,7 +524,11 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
  
      fun setInjectedJavaScriptBeforeContentLoaded(viewWrapper: RNCWebViewWrapper, value: String?) {
          val view = viewWrapper.webView
@@ -165,3 +792,822 @@ index f83033b3597a425da159555233bacce250ccfce0..56ab60c0628e103d30d127b5c91f30c1
      }
  
      fun setInjectedJavaScriptForMainFrameOnly(viewWrapper: RNCWebViewWrapper, value: Boolean) {
+@@ -549,12 +583,14 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+ 
+     fun setAllowFileAccess(viewWrapper: RNCWebViewWrapper, allowFileAccess: Boolean) {
+         val view = viewWrapper.webView
+-        view.settings.allowFileAccess = allowFileAccess;
++        view.mRequestedAllowFileAccess = allowFileAccess
++        view.applyFileAccess()
+     }
+ 
+     fun setAllowFileAccessFromFileURLs(viewWrapper: RNCWebViewWrapper, value: Boolean) {
+         val view = viewWrapper.webView
+-        view.settings.allowFileAccessFromFileURLs = value;
++        view.mRequestedAllowFileAccessFromFileURLs = value
++        view.applyFileAccess()
+     }
+ 
+     fun setAllowsFullscreenVideo(viewWrapper: RNCWebViewWrapper, value: Boolean) {
+diff --git a/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java b/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
+index 4709e28..ef73eba 100644
+--- a/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
++++ b/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
+@@ -112,6 +112,13 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
+         mRNCWebViewManagerImpl.setBasicAuthCredential(view, value);
+     }
+ 
++    @Override
++    @ReactProp(name = "miniappOrigin")
++    public void setMiniappOrigin(RNCWebViewWrapper view, @Nullable ReadableMap value) {
++        // MentraOS patch: serve one miniapp package's files at its own origin.
++        mRNCWebViewManagerImpl.setMiniappOrigin(view, value);
++    }
++
+     @Override
+     @ReactProp(name = "cacheEnabled")
+     public void setCacheEnabled(RNCWebViewWrapper view, boolean value) {
+diff --git a/android/src/oldarch/com/reactnativecommunity/webview/RNCWebViewManager.java b/android/src/oldarch/com/reactnativecommunity/webview/RNCWebViewManager.java
+index 974337f..986d674 100644
+--- a/android/src/oldarch/com/reactnativecommunity/webview/RNCWebViewManager.java
++++ b/android/src/oldarch/com/reactnativecommunity/webview/RNCWebViewManager.java
+@@ -87,6 +87,12 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper> {
+         mRNCWebViewManagerImpl.setBasicAuthCredential(view, value);
+     }
+ 
++    @ReactProp(name = "miniappOrigin")
++    public void setMiniappOrigin(RNCWebViewWrapper view, @Nullable ReadableMap value) {
++        // MentraOS patch: serve one miniapp package's files at its own origin.
++        mRNCWebViewManagerImpl.setMiniappOrigin(view, value);
++    }
++
+     @ReactProp(name = "cacheEnabled")
+     public void setCacheEnabled(RNCWebViewWrapper view, boolean value) {
+         mRNCWebViewManagerImpl.setCacheEnabled(view, value);
+diff --git a/apple/RNCMiniappSchemeHandler.h b/apple/RNCMiniappSchemeHandler.h
+new file mode 100644
+index 0000000..25bd566
+--- /dev/null
++++ b/apple/RNCMiniappSchemeHandler.h
+@@ -0,0 +1,56 @@
++/**
++ * MentraOS patch: serves one miniapp package's files to its WebView.
++ *
++ * A page at miniapp://<packageName>/<path> gets the file at <rootDir>/<path>.
++ * Every other request the handler sees is refused with a 404: another
++ * package's host, "." or ".." segments, encoded separators, and any path that
++ * resolves outside rootDir once symlinks are followed. Responses carry a
++ * content type from the file extension and Cache-Control: no-store.
++ */
++
++#import <Foundation/Foundation.h>
++#import <WebKit/WebKit.h>
++
++NS_ASSUME_NONNULL_BEGIN
++
++/** The URL scheme miniapp pages load from: miniapp://<packageName>/<path>. */
++FOUNDATION_EXPORT NSString *const RNCMiniappOriginScheme;
++
++/** A response the handler sends: a status, its headers and the body. */
++@interface RNCMiniappResponse : NSObject
++@property (nonatomic, readonly) NSInteger statusCode;
++@property (nonatomic, copy, readonly) NSDictionary<NSString *, NSString *> *headers;
++@property (nonatomic, copy, readonly) NSData *body;
++@end
++
++@interface RNCMiniappSchemeHandler : NSObject <WKURLSchemeHandler>
++
++- (instancetype)initWithPackageName:(NSString *)packageName rootDir:(nullable NSString *)rootDir NS_DESIGNATED_INITIALIZER;
++- (instancetype)init NS_UNAVAILABLE;
++
++@property (atomic, copy, readonly) NSString *packageName;
++/** The active version's bundle root: an absolute path or a file:// URL. Updated in place when the version changes. */
++@property (atomic, copy, nullable) NSString *rootDir;
++
++/** Package names follow the miniapp rule: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$ */
+++ (BOOL)isValidPackageName:(nullable NSString *)packageName;
++
++/**
++ * The regular file `url` names inside `rootDir`, with symlinks resolved, or
++ * nil when this package doesn't serve it.
++ */
+++ (nullable NSString *)resolveFileForURL:(nullable NSURL *)url
++                             packageName:(nullable NSString *)packageName
++                                 rootDir:(nullable NSString *)rootDir;
++
++/** The Content-Type for a served file, from its extension. */
+++ (NSString *)contentTypeForPath:(NSString *)path;
++
++/** The full response to `request`, read from disk. Safe to call off the main thread. */
+++ (RNCMiniappResponse *)responseForRequest:(NSURLRequest *)request
++                               packageName:(nullable NSString *)packageName
++                                   rootDir:(nullable NSString *)rootDir;
++
++@end
++
++NS_ASSUME_NONNULL_END
+diff --git a/apple/RNCMiniappSchemeHandler.m b/apple/RNCMiniappSchemeHandler.m
+new file mode 100644
+index 0000000..263bbbb
+--- /dev/null
++++ b/apple/RNCMiniappSchemeHandler.m
+@@ -0,0 +1,376 @@
++/**
++ * MentraOS patch: serves one miniapp package's files to its WebView.
++ * See RNCMiniappSchemeHandler.h.
++ */
++
++#import "RNCMiniappSchemeHandler.h"
++
++#include <errno.h>
++#include <fcntl.h>
++#include <limits.h>
++#include <stdlib.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++NSString *const RNCMiniappOriginScheme = @"miniapp";
++
++@interface RNCMiniappResponse ()
++- (instancetype)initWithStatusCode:(NSInteger)statusCode
++                           headers:(NSDictionary<NSString *, NSString *> *)headers
++                              body:(NSData *)body;
++@end
++
++@implementation RNCMiniappResponse
++- (instancetype)initWithStatusCode:(NSInteger)statusCode
++                           headers:(NSDictionary<NSString *, NSString *> *)headers
++                              body:(NSData *)body
++{
++  if ((self = [super init])) {
++    _statusCode = statusCode;
++    _headers = [headers copy];
++    _body = [body copy];
++  }
++  return self;
++}
++@end
++
++static NSString *RNCMiniappRealPath(NSString *path)
++{
++  if (path.length == 0) {
++    return nil;
++  }
++  char resolved[PATH_MAX];
++  if (realpath(path.fileSystemRepresentation, resolved) == NULL) {
++    return nil;
++  }
++  return [[NSFileManager defaultManager] stringWithFileSystemRepresentation:resolved length:strlen(resolved)];
++}
++
++/** rootDir arrives as an absolute path or a file:// URL. */
++static NSString *RNCMiniappRootPath(NSString *rootDir)
++{
++  if (rootDir.length == 0) {
++    return nil;
++  }
++  if ([rootDir.lowercaseString hasPrefix:@"file:"]) {
++    NSURL *url = [NSURL URLWithString:rootDir];
++    if (!url.isFileURL || url.path.length == 0) {
++      return nil;
++    }
++    return url.path;
++  }
++  return [rootDir hasPrefix:@"/"] ? rootDir : nil;
++}
++
++@implementation RNCMiniappSchemeHandler {
++  // Tasks WebKit hasn't stopped yet. Touched only on the main thread.
++  NSHashTable *_activeTasks;
++  dispatch_queue_t _ioQueue;
++}
++
++- (instancetype)initWithPackageName:(NSString *)packageName rootDir:(NSString *)rootDir
++{
++  if ((self = [super init])) {
++    _packageName = [packageName copy];
++    _rootDir = [rootDir copy];
++    _activeTasks = [NSHashTable hashTableWithOptions:NSPointerFunctionsStrongMemory | NSPointerFunctionsObjectPointerPersonality];
++    _ioQueue = dispatch_queue_create("com.reactnativecommunity.webview.miniapp-origin", DISPATCH_QUEUE_SERIAL);
++  }
++  return self;
++}
++
+++ (BOOL)isValidPackageName:(NSString *)packageName
++{
++  if (packageName.length == 0 || packageName.length > 253) {
++    return NO;
++  }
++  static NSRegularExpression *pattern;
++  static dispatch_once_t onceToken;
++  dispatch_once(&onceToken, ^{
++    pattern = [NSRegularExpression regularExpressionWithPattern:@"^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" options:0 error:nil];
++  });
++  return [pattern numberOfMatchesInString:packageName options:0 range:NSMakeRange(0, packageName.length)] == 1;
++}
++
+++ (NSString *)resolveFileForURL:(NSURL *)url packageName:(NSString *)packageName rootDir:(NSString *)rootDir
++{
++  if (url == nil || ![self isValidPackageName:packageName]) {
++    return nil;
++  }
++  if (![url.scheme.lowercaseString isEqualToString:RNCMiniappOriginScheme]) {
++    return nil;
++  }
++  // Only this package's own host, with no port or credentials.
++  if (![url.host isEqualToString:packageName] || url.port != nil || url.user != nil || url.password != nil) {
++    return nil;
++  }
++
++  NSURLComponents *components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
++  NSString *rawPath = components.percentEncodedPath;
++  if (rawPath.length == 0 || ![rawPath hasPrefix:@"/"]) {
++    return nil;
++  }
++  NSString *lowerPath = rawPath.lowercaseString;
++  if ([lowerPath containsString:@"%2f"] || [lowerPath containsString:@"%5c"] || [lowerPath containsString:@"%00"] ||
++      [rawPath containsString:@"\\"]) {
++    return nil;
++  }
++
++  NSString *rootPath = RNCMiniappRealPath(RNCMiniappRootPath(rootDir));
++  if (rootPath == nil) {
++    return nil;
++  }
++  NSMutableArray<NSString *> *pathParts = [NSMutableArray arrayWithObject:rootPath];
++  for (NSString *segment in [rawPath componentsSeparatedByString:@"/"]) {
++    if (segment.length == 0) {
++      continue;
++    }
++    NSString *decoded = segment.stringByRemovingPercentEncoding;
++    if (decoded.length == 0 || [decoded isEqualToString:@"."] || [decoded isEqualToString:@".."] ||
++        [decoded containsString:@"/"] || [decoded containsString:@"\\"] ||
++        [decoded rangeOfString:@"\0"].location != NSNotFound) {
++      return nil;
++    }
++    [pathParts addObject:decoded];
++  }
++  if (pathParts.count < 2) {
++    return nil;
++  }
++
++  NSString *filePath = RNCMiniappRealPath([NSString pathWithComponents:pathParts]);
++  NSString *rootPrefix = [rootPath hasSuffix:@"/"] ? rootPath : [rootPath stringByAppendingString:@"/"];
++  if (filePath == nil || ![filePath hasPrefix:rootPrefix]) {
++    return nil;
++  }
++  struct stat info;
++  if (lstat(filePath.fileSystemRepresentation, &info) != 0 || !S_ISREG(info.st_mode)) {
++    return nil;
++  }
++  return filePath;
++}
++
+++ (NSString *)contentTypeForPath:(NSString *)path
++{
++  static NSDictionary<NSString *, NSString *> *types;
++  static dispatch_once_t onceToken;
++  dispatch_once(&onceToken, ^{
++    types = @{
++      @"html" : @"text/html; charset=utf-8",
++      @"htm" : @"text/html; charset=utf-8",
++      @"js" : @"text/javascript; charset=utf-8",
++      @"mjs" : @"text/javascript; charset=utf-8",
++      @"cjs" : @"text/javascript; charset=utf-8",
++      @"css" : @"text/css; charset=utf-8",
++      @"json" : @"application/json; charset=utf-8",
++      @"map" : @"application/json; charset=utf-8",
++      @"webmanifest" : @"application/manifest+json; charset=utf-8",
++      @"txt" : @"text/plain; charset=utf-8",
++      @"xml" : @"application/xml; charset=utf-8",
++      @"svg" : @"image/svg+xml",
++      @"png" : @"image/png",
++      @"jpg" : @"image/jpeg",
++      @"jpeg" : @"image/jpeg",
++      @"gif" : @"image/gif",
++      @"webp" : @"image/webp",
++      @"avif" : @"image/avif",
++      @"ico" : @"image/x-icon",
++      @"bmp" : @"image/bmp",
++      @"wasm" : @"application/wasm",
++      @"woff" : @"font/woff",
++      @"woff2" : @"font/woff2",
++      @"ttf" : @"font/ttf",
++      @"otf" : @"font/otf",
++      @"mp3" : @"audio/mpeg",
++      @"wav" : @"audio/wav",
++      @"ogg" : @"audio/ogg",
++      @"oga" : @"audio/ogg",
++      @"m4a" : @"audio/mp4",
++      @"aac" : @"audio/aac",
++      @"flac" : @"audio/flac",
++      @"mp4" : @"video/mp4",
++      @"m4v" : @"video/mp4",
++      @"webm" : @"video/webm",
++      @"mov" : @"video/quicktime",
++      @"ogv" : @"video/ogg",
++      @"pdf" : @"application/pdf",
++      @"glb" : @"model/gltf-binary",
++      @"gltf" : @"model/gltf+json",
++    };
++  });
++  return types[path.pathExtension.lowercaseString] ?: @"application/octet-stream";
++}
++
+++ (RNCMiniappResponse *)errorResponse:(NSInteger)statusCode extraHeaders:(NSDictionary<NSString *, NSString *> *)extraHeaders
++{
++  NSString *text = statusCode == 404 ? @"Not found" : statusCode == 405 ? @"Method not allowed" : @"Range not satisfiable";
++  NSData *body = [text dataUsingEncoding:NSUTF8StringEncoding];
++  NSMutableDictionary<NSString *, NSString *> *headers = [@{
++    @"Content-Type" : @"text/plain; charset=utf-8",
++    @"Content-Length" : [NSString stringWithFormat:@"%lu", (unsigned long)body.length],
++    @"Cache-Control" : @"no-store",
++    @"X-Content-Type-Options" : @"nosniff",
++  } mutableCopy];
++  [headers addEntriesFromDictionary:extraHeaders ?: @{}];
++  return [[RNCMiniappResponse alloc] initWithStatusCode:statusCode headers:headers body:body];
++}
++
++/**
++ * One "bytes=" range. Returns NO when the header asks for none we can serve
++ * (416); a header we don't understand, or several ranges, is ignored (200).
++ */
+++ (BOOL)rangeFromHeader:(NSString *)header length:(unsigned long long)length range:(NSRange *)range present:(BOOL *)present
++{
++  *present = NO;
++  if (header.length == 0) {
++    return YES;
++  }
++  NSString *value = [header stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
++  if (![value.lowercaseString hasPrefix:@"bytes="]) {
++    return YES;
++  }
++  NSString *spec = [value substringFromIndex:6];
++  if ([spec containsString:@","]) {
++    return YES;
++  }
++  NSArray<NSString *> *parts = [spec componentsSeparatedByString:@"-"];
++  if (parts.count != 2) {
++    return YES;
++  }
++  NSCharacterSet *nonDigits = [[NSCharacterSet decimalDigitCharacterSet] invertedSet];
++  NSString *first = [parts[0] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
++  NSString *last = [parts[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
++  if ((first.length && [first rangeOfCharacterFromSet:nonDigits].location != NSNotFound) ||
++      (last.length && [last rangeOfCharacterFromSet:nonDigits].location != NSNotFound) ||
++      (first.length == 0 && last.length == 0)) {
++    return YES;
++  }
++  unsigned long long start;
++  unsigned long long end;
++  if (first.length == 0) {
++    unsigned long long suffix = strtoull(last.UTF8String, NULL, 10);
++    if (suffix == 0 || length == 0) {
++      *present = YES;
++      return NO;
++    }
++    start = suffix >= length ? 0 : length - suffix;
++    end = length - 1;
++  } else {
++    start = strtoull(first.UTF8String, NULL, 10);
++    end = last.length ? strtoull(last.UTF8String, NULL, 10) : length - 1;
++    if (start >= length || end < start) {
++      *present = YES;
++      return NO;
++    }
++    if (end >= length) {
++      end = length - 1;
++    }
++  }
++  *present = YES;
++  *range = NSMakeRange((NSUInteger)start, (NSUInteger)(end - start + 1));
++  return YES;
++}
++
+++ (RNCMiniappResponse *)responseForRequest:(NSURLRequest *)request packageName:(NSString *)packageName rootDir:(NSString *)rootDir
++{
++  NSString *method = request.HTTPMethod.uppercaseString ?: @"GET";
++  BOOL head = [method isEqualToString:@"HEAD"];
++  if (!head && ![method isEqualToString:@"GET"]) {
++    return [self errorResponse:405 extraHeaders:@{@"Allow" : @"GET, HEAD"}];
++  }
++  NSString *filePath = [self resolveFileForURL:request.URL packageName:packageName rootDir:rootDir];
++  if (filePath == nil) {
++    return [self errorResponse:404 extraHeaders:nil];
++  }
++
++  // The path has no symlinks left; refuse one swapped in since it was checked.
++  int fd = open(filePath.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
++  if (fd < 0) {
++    return [self errorResponse:404 extraHeaders:nil];
++  }
++  struct stat info;
++  if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)) {
++    close(fd);
++    return [self errorResponse:404 extraHeaders:nil];
++  }
++  unsigned long long length = (unsigned long long)info.st_size;
++
++  NSRange range = NSMakeRange(0, (NSUInteger)length);
++  BOOL partial = NO;
++  if (![self rangeFromHeader:[request valueForHTTPHeaderField:@"Range"] length:length range:&range present:&partial]) {
++    close(fd);
++    return [self errorResponse:416 extraHeaders:@{@"Content-Range" : [NSString stringWithFormat:@"bytes */%llu", length]}];
++  }
++
++  NSMutableData *body = [NSMutableData data];
++  if (!head && range.length > 0) {
++    body.length = range.length;
++    size_t done = 0;
++    while (done < range.length) {
++      ssize_t n = pread(fd, (char *)body.mutableBytes + done, range.length - done, (off_t)(range.location + done));
++      if (n < 0 && errno == EINTR) {
++        continue;
++      }
++      if (n <= 0) {
++        close(fd);
++        return [self errorResponse:404 extraHeaders:nil];
++      }
++      done += (size_t)n;
++    }
++  }
++  close(fd);
++
++  NSMutableDictionary<NSString *, NSString *> *headers = [@{
++    @"Content-Type" : [self contentTypeForPath:filePath],
++    @"Content-Length" : [NSString stringWithFormat:@"%lu", (unsigned long)range.length],
++    @"Cache-Control" : @"no-store",
++    @"X-Content-Type-Options" : @"nosniff",
++    @"Accept-Ranges" : @"bytes",
++  } mutableCopy];
++  if (partial) {
++    headers[@"Content-Range"] = [NSString stringWithFormat:@"bytes %lu-%lu/%llu", (unsigned long)range.location,
++                                                           (unsigned long)(range.location + range.length - 1), length];
++  }
++  return [[RNCMiniappResponse alloc] initWithStatusCode:partial ? 206 : 200 headers:headers body:body];
++}
++
++#pragma mark - WKURLSchemeHandler
++
++- (void)webView:(WKWebView *)webView startURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
++{
++  NSURLRequest *request = urlSchemeTask.request;
++  NSString *packageName = self.packageName;
++  NSString *rootDir = self.rootDir;
++  [_activeTasks addObject:urlSchemeTask];
++  __weak RNCMiniappSchemeHandler *weakSelf = self;
++  dispatch_async(_ioQueue, ^{
++    RNCMiniappResponse *response = [RNCMiniappSchemeHandler responseForRequest:request packageName:packageName rootDir:rootDir];
++    dispatch_async(dispatch_get_main_queue(), ^{
++      RNCMiniappSchemeHandler *strongSelf = weakSelf;
++      // WebKit throws if a stopped task is answered.
++      if (strongSelf == nil || ![strongSelf->_activeTasks containsObject:urlSchemeTask]) {
++        return;
++      }
++      [strongSelf->_activeTasks removeObject:urlSchemeTask];
++      NSHTTPURLResponse *httpResponse = [[NSHTTPURLResponse alloc] initWithURL:request.URL
++                                                                    statusCode:response.statusCode
++                                                                   HTTPVersion:@"HTTP/1.1"
++                                                                  headerFields:response.headers];
++      @try {
++        [urlSchemeTask didReceiveResponse:httpResponse];
++        if (response.body.length > 0) {
++          [urlSchemeTask didReceiveData:response.body];
++        }
++        [urlSchemeTask didFinish];
++      } @catch (NSException *exception) {
++        NSLog(@"[RNCMiniappSchemeHandler] could not answer %@: %@", request.URL, exception.reason);
++      }
++    });
++  });
++}
++
++- (void)webView:(WKWebView *)webView stopURLSchemeTask:(id<WKURLSchemeTask>)urlSchemeTask
++{
++  [_activeTasks removeObject:urlSchemeTask];
++}
++
++@end
+diff --git a/apple/RNCWebView.mm b/apple/RNCWebView.mm
+index 95c0fcc..9d985c7 100644
+--- a/apple/RNCWebView.mm
++++ b/apple/RNCWebView.mm
+@@ -359,6 +359,19 @@ - (void)updateProps:(Props::Shared const &)props oldProps:(Props::Shared const &
+         [_view setContentInset: edgesInsets];
+     }
+ 
++    // MentraOS patch: applied before the source below, so a new origin is in
++    // place before its page loads.
++    if (oldViewProps.miniappOrigin.packageName != newViewProps.miniappOrigin.packageName || oldViewProps.miniappOrigin.rootDir != newViewProps.miniappOrigin.rootDir) {
++        if (newViewProps.miniappOrigin.packageName.empty()) {
++            [_view setMiniappOrigin:nil];
++        } else {
++            [_view setMiniappOrigin:@{
++                @"packageName": RCTNSStringFromString(newViewProps.miniappOrigin.packageName),
++                @"rootDir": RCTNSStringFromString(newViewProps.miniappOrigin.rootDir)
++            }];
++        }
++    }
++
+     if (oldViewProps.basicAuthCredential.username != newViewProps.basicAuthCredential.username || oldViewProps.basicAuthCredential.password != newViewProps.basicAuthCredential.password) {
+         [_view setBasicAuthCredential: @{
+             @"username": RCTNSStringFromString(newViewProps.basicAuthCredential.username),
+diff --git a/apple/RNCWebViewImpl.h b/apple/RNCWebViewImpl.h
+index 1f6bbfd..0d73e17 100644
+--- a/apple/RNCWebViewImpl.h
++++ b/apple/RNCWebViewImpl.h
+@@ -106,6 +106,13 @@ shouldStartLoadForRequest:(NSMutableDictionary<NSString *, id> *)request
+ @property (nonatomic, assign) BOOL directionalLockEnabled;
+ @property (nonatomic, assign) BOOL ignoreSilentHardwareSwitch;
+ @property (nonatomic, copy) NSString * _Nullable allowingReadAccessToURL;
++/**
++ * MentraOS patch: {packageName, rootDir}. When set, the WebView serves
++ * miniapp://<packageName>/<path> from rootDir and never loads file URLs or
++ * grants file access. Must be set before the WKWebView exists; changing the
++ * package rebuilds it.
++ */
++@property (nonatomic, copy) NSDictionary * _Nullable miniappOrigin;
+ @property (nonatomic, copy) NSDictionary * _Nullable basicAuthCredential;
+ @property (nonatomic, assign) BOOL pullToRefreshEnabled;
+ @property (nonatomic, assign) BOOL refreshControlLightMode;
+diff --git a/apple/RNCWebViewImpl.m b/apple/RNCWebViewImpl.m
+index 7f5c24d..aba891f 100644
+--- a/apple/RNCWebViewImpl.m
++++ b/apple/RNCWebViewImpl.m
+@@ -9,6 +9,7 @@
+ #import <React/RCTConvert.h>
+ #import <React/RCTAutoInsetsProtocol.h>
+ #import "RNCWKProcessPoolManager.h"
++#import "RNCMiniappSchemeHandler.h"
+ #if !TARGET_OS_OSX
+ #import <UIKit/UIKit.h>
+ #else
+@@ -152,6 +153,10 @@ @implementation RNCWebViewImpl
+ #if defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 130000 /* __IPHONE_13_0 */
+   BOOL _savedAutomaticallyAdjustsScrollIndicatorInsets;
+ #endif
++  // MentraOS patch: the miniapp origin this WebView serves (see miniappOrigin).
++  NSString *_miniappPackageName;
++  NSString *_miniappRootDir;
++  RNCMiniappSchemeHandler *_miniappSchemeHandler;
+ }
+ 
+ - (instancetype)initWithFrame:(CGRect)frame
+@@ -437,12 +442,20 @@ - (WKWebViewConfiguration *)setUpWkWebViewConfig
+     }
+   }
+ #endif
+-  if (_allowUniversalAccessFromFileURLs) {
+-    [wkWebViewConfig setValue:@TRUE forKey:@"allowUniversalAccessFromFileURLs"];
+-  }
+-  if (_allowFileAccessFromFileURLs) {
+-    [prefs setValue:@TRUE forKey:@"allowFileAccessFromFileURLs"];
+-    _prefsUsed = YES;
++  // MentraOS patch: a miniapp origin never gets file access, whatever the
++  // file-access props say, and its files come only from its scheme handler.
++  _miniappSchemeHandler = nil;
++  if (_miniappPackageName != nil) {
++    _miniappSchemeHandler = [[RNCMiniappSchemeHandler alloc] initWithPackageName:_miniappPackageName rootDir:_miniappRootDir];
++    [wkWebViewConfig setURLSchemeHandler:_miniappSchemeHandler forURLScheme:RNCMiniappOriginScheme];
++  } else {
++    if (_allowUniversalAccessFromFileURLs) {
++      [wkWebViewConfig setValue:@TRUE forKey:@"allowUniversalAccessFromFileURLs"];
++    }
++    if (_allowFileAccessFromFileURLs) {
++      [prefs setValue:@TRUE forKey:@"allowFileAccessFromFileURLs"];
++      _prefsUsed = YES;
++    }
+   }
+   if (_javaScriptCanOpenWindowsAutomatically) {
+     [prefs setValue:@TRUE forKey:@"javaScriptCanOpenWindowsAutomatically"];
+@@ -813,6 +826,66 @@ - (void)setAllowingReadAccessToURL:(NSString *)allowingReadAccessToURL
+   }
+ }
+ 
++/**
++ * MentraOS patch: serve one miniapp package's files at its own origin.
++ *
++ * The scheme handler and the file-access settings are fixed when the
++ * WKWebView is created, so a change of package (including setting or clearing
++ * the origin) rebuilds the WKWebView. A new rootDir for the same package (an
++ * update) is applied in place.
++ */
++- (void)setMiniappOrigin:(NSDictionary *)miniappOrigin
++{
++  NSString *packageName = [RCTConvert NSString:miniappOrigin[@"packageName"]];
++  NSString *rootDir = [RCTConvert NSString:miniappOrigin[@"rootDir"]];
++  if (packageName.length == 0) {
++    packageName = nil;
++    rootDir = nil;
++  }
++  _miniappOrigin = packageName ? @{@"packageName": packageName, @"rootDir": rootDir ?: @""} : nil;
++  BOOL packageChanged = !(packageName == _miniappPackageName || [packageName isEqualToString:_miniappPackageName]);
++  _miniappPackageName = [packageName copy];
++  _miniappRootDir = [rootDir copy];
++  if (_webView == nil) {
++    return;
++  }
++  if (packageChanged) {
++    [self rebuildWebViewForMiniappOrigin];
++  } else {
++    _miniappSchemeHandler.rootDir = _miniappRootDir;
++  }
++}
++
++/** MentraOS patch: true for a load a miniapp origin refuses (any file URL). */
++- (BOOL)miniappOriginRefusesURL:(NSURL *)url
++{
++  return _miniappPackageName != nil && url != nil &&
++    (url.isFileURL || [url.scheme caseInsensitiveCompare:@"file"] == NSOrderedSame);
++}
++
++/** MentraOS patch: replace the WKWebView so it's configured for the current miniapp origin. */
++- (void)rebuildWebViewForMiniappOrigin
++{
++  if (_webView == nil) {
++    return;
++  }
++  [_webView.configuration.userContentController removeScriptMessageHandlerForName:HistoryShimName];
++  [_webView.configuration.userContentController removeScriptMessageHandlerForName:MessageHandlerName];
++  [_webView removeObserver:self forKeyPath:@"estimatedProgress"];
++  [_webView.configuration.websiteDataStore.httpCookieStore removeObserver:self];
++  [_webView stopLoading];
++  [_webView removeFromSuperview];
++#if !TARGET_OS_OSX
++  _webView.scrollView.delegate = nil;
++#endif // !TARGET_OS_OSX
++  _webView = nil;
++  _miniappSchemeHandler = nil;
++  if (self.window != nil) {
++    // Creates the WKWebView and loads the source again.
++    [self didMoveToWindow];
++  }
++}
++
+ - (void)setContentInset:(UIEdgeInsets)contentInset
+ {
+ #if !TARGET_OS_OSX
+@@ -839,7 +912,7 @@ - (void)visitSource
+   NSString *html = [RCTConvert NSString:_source[@"html"]];
+   if (html) {
+     NSURL *baseURL = [RCTConvert NSURL:_source[@"baseUrl"]];
+-    if (!baseURL) {
++    if (!baseURL || [self miniappOriginRefusesURL:baseURL]) {
+       baseURL = [NSURL URLWithString:@"about:blank"];
+     }
+     [_webView loadHTMLString:html baseURL:baseURL];
+@@ -857,6 +930,12 @@ - (void)visitSource
+   NSURLRequest *request = [self requestForSource:_source];
+   __weak WKWebView *webView = _webView;
+   NSString *allowingReadAccessToURL = _allowingReadAccessToURL;
++  // MentraOS patch: a miniapp origin never loads a file URL.
++  if ([self miniappOriginRefusesURL:request.URL]) {
++    RCTLogWarn(@"RNCWebView: miniappOrigin refuses to load %@", request.URL);
++    [webView loadHTMLString:@"" baseURL:nil];
++    return;
++  }
+ 
+   [self syncCookiesToWebView:^{
+     // Add observer to sync cookies from webview to sharedHTTPCookieStorage
+@@ -1348,6 +1427,12 @@ - (void)                  webView:(WKWebView *)webView
+     BOOL isTopFrame = [request.URL isEqual:request.mainDocumentURL];
+     BOOL hasTargetFrame = navigationAction.targetFrame != nil;
+ 
++    // MentraOS patch: no frame of a miniapp origin navigates to a file URL.
++    if ([self miniappOriginRefusesURL:request.URL]) {
++      decisionHandler(WKNavigationActionPolicyCancel);
++      return;
++    }
++
+     if (_onOpenWindow && !hasTargetFrame) {
+       // When OnOpenWindow should be called, we want to prevent the navigation
+       // If not prevented, the `decisionHandler` is called first and after that `createWebViewWithConfiguration` is called
+@@ -1615,6 +1700,9 @@ - (void)reload
+    */
+   NSURLRequest *request = [self requestForSource:self.source];
+ 
++  if ([self miniappOriginRefusesURL:request.URL]) {
++    return;
++  }
+   if (request.URL && !_webView.URL.absoluteString.length) {
+     [_webView loadRequest:request];
+   } else {
+diff --git a/apple/RNCWebViewManager.mm b/apple/RNCWebViewManager.mm
+index f8f375f..3439fad 100644
+--- a/apple/RNCWebViewManager.mm
++++ b/apple/RNCWebViewManager.mm
+@@ -78,6 +78,8 @@ - (RNCView *)view
+ RCT_EXPORT_VIEW_PROPERTY(cacheEnabled, BOOL)
+ RCT_EXPORT_VIEW_PROPERTY(allowsLinkPreview, BOOL)
+ RCT_EXPORT_VIEW_PROPERTY(allowingReadAccessToURL, NSString)
++// MentraOS patch: {packageName, rootDir}, see RNCWebViewImpl.h.
++RCT_EXPORT_VIEW_PROPERTY(miniappOrigin, NSDictionary)
+ RCT_EXPORT_VIEW_PROPERTY(basicAuthCredential, NSDictionary)
+ 
+ #if defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 110000 /* __IPHONE_11_0 */
+diff --git a/lib/WebViewTypes.d.ts b/lib/WebViewTypes.d.ts
+index 998cc88..6d1a598 100644
+--- a/lib/WebViewTypes.d.ts
++++ b/lib/WebViewTypes.d.ts
+@@ -180,6 +180,12 @@ export interface BasicAuthCredential {
+      */
+     password: string;
+ }
++export interface MiniappOrigin {
++    /** The miniapp's package name, e.g. `com.example.notes`. */
++    packageName: string;
++    /** The active version's bundle root: an absolute path or a file:// URL. */
++    rootDir: string;
++}
+ export interface CommonNativeWebViewProps extends ViewProps {
+     cacheEnabled?: boolean;
+     incognito?: boolean;
+@@ -209,6 +215,7 @@ export interface CommonNativeWebViewProps extends ViewProps {
+      */
+     applicationNameForUserAgent?: string;
+     basicAuthCredential?: BasicAuthCredential;
++    miniappOrigin?: MiniappOrigin;
+ }
+ export declare type ContentInsetAdjustmentBehavior = 'automatic' | 'scrollableAxes' | 'never' | 'always';
+ export declare type MediaCapturePermissionGrantType = 'grantIfSameHostElsePrompt' | 'grantIfSameHostElseDeny' | 'deny' | 'grant' | 'prompt';
+@@ -966,6 +973,18 @@ export interface WebViewSharedProps extends ViewProps {
+      * Loads static html or a uri (with optional headers) in the WebView.
+      */
+     source?: WebViewSource;
++    /**
++     * MentraOS patch: serve one miniapp package's files at an origin of its own,
++     * with no file access. The page loads from `miniapp://<packageName>/<path>`
++     * on iOS and `https://<host>.miniapp.invalid/<path>` on Android, where
++     * `<host>` is the package name with `_` written as `-`. Only files inside
++     * `rootDir` (an absolute path or a file:// URL to the active version's
++     * bundle root) are served; everything else, file URLs included, is refused.
++     * While it is set, `allowFileAccess`, `allowFileAccessFromFileURLs`,
++     * `allowUniversalAccessFromFileURLs` and `allowingReadAccessToURL` have no
++     * effect.
++     */
++    miniappOrigin?: MiniappOrigin;
+     /**
+      * Boolean value to enable JavaScript in the `WebView`. Used on Android only
+      * as JavaScript is enabled by default on iOS. The default value is `true`.
+diff --git a/src/RNCWebViewNativeComponent.ts b/src/RNCWebViewNativeComponent.ts
+index 7f4e6c4..d9b5702 100644
+--- a/src/RNCWebViewNativeComponent.ts
++++ b/src/RNCWebViewNativeComponent.ts
+@@ -255,6 +255,11 @@ export interface NativeProps extends ViewProps {
+     username: string;
+     password: string;
+   }>;
++  // MentraOS patch: serve one miniapp package's files at its own origin.
++  miniappOrigin?: Readonly<{
++    packageName: string;
++    rootDir: string;
++  }>;
+   cacheEnabled?: WithDefault<boolean, true>;
+   incognito?: boolean;
+   injectedJavaScript?: string;
+diff --git a/src/WebViewTypes.ts b/src/WebViewTypes.ts
+index eca8141..c0a039d 100644
+--- a/src/WebViewTypes.ts
++++ b/src/WebViewTypes.ts
+@@ -287,6 +287,13 @@ export interface BasicAuthCredential {
+   password: string;
+ }
+ 
++export interface MiniappOrigin {
++  /** The miniapp's package name, e.g. `com.example.notes`. */
++  packageName: string;
++  /** The active version's bundle root: an absolute path or a file:// URL. */
++  rootDir: string;
++}
++
+ export interface CommonNativeWebViewProps extends ViewProps {
+   cacheEnabled?: boolean;
+   incognito?: boolean;
+@@ -318,6 +325,7 @@ export interface CommonNativeWebViewProps extends ViewProps {
+    */
+   applicationNameForUserAgent?: string;
+   basicAuthCredential?: BasicAuthCredential;
++  miniappOrigin?: MiniappOrigin;
+ }
+ 
+ export declare type ContentInsetAdjustmentBehavior =
+@@ -1176,6 +1184,19 @@ export interface WebViewSharedProps extends ViewProps {
+    */
+   source?: WebViewSource;
+ 
++  /**
++   * MentraOS patch: serve one miniapp package's files at an origin of its own,
++   * with no file access. The page loads from `miniapp://<packageName>/<path>`
++   * on iOS and `https://<host>.miniapp.invalid/<path>` on Android, where
++   * `<host>` is the package name with `_` written as `-`. Only files inside
++   * `rootDir` (an absolute path or a file:// URL to the active version's
++   * bundle root) are served; everything else, file URLs included, is refused.
++   * While it is set, `allowFileAccess`, `allowFileAccessFromFileURLs`,
++   * `allowUniversalAccessFromFileURLs` and `allowingReadAccessToURL` have no
++   * effect.
++   */
++  miniappOrigin?: MiniappOrigin;
++
+   /**
+    * Boolean value to enable JavaScript in the `WebView`. Used on Android only
+    * as JavaScript is enabled by default on iOS. The default value is `true`.

@@ -494,6 +494,10 @@ jobs:
         if: steps.select-apk.outputs.reused != 'true'
         run: node --test mobile/scripts/app-config-pr-build.test.mjs
 
+      - name: Test the WebView's miniapp origins
+        if: steps.select-apk.outputs.reused != 'true'
+        run: mobile/scripts/test-webview-miniapp-origin-android.sh
+
       - name: Install Android toolchain with download retries
         if: steps.select-apk.outputs.reused != 'true'
         run: node .github/scripts/install-android-sdk.mjs --mobile mobile
