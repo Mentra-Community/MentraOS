@@ -476,6 +476,118 @@ test('settled queued fixture permits its fresh app dependency baseline without r
   expect(f.host.snapshot.resourceLifecycle!.history).toContainEqual(f.queued)
   expect(f.subject().owner).toBeNull(); expect(f.subject().generation).toBe(0)
 })
+async function queuedAppPhoneRepair() {
+  const f = await queuedFixtureRepair(), lane = f.host.snapshot.lanes[0]!, phone = f.subject(), app = f.fixtureSubject
+  lane.platform = 'android'; lane.resources[0]!.kind = 'phone'; phone.resource.kind = 'phone'
+  lane.resources[0]!.idleContract!.conditions = ['phone-identity', 'phone-same-boot', 'phone-default-network', 'phone-network-stable']
+  lane.resources[1]!.kind = 'app'; app.resource.kind = 'app'
+  lane.resources[1]!.idleContract!.conditions = ['app-phone-identity', 'app-phone-same-boot', 'app-package-absent', 'app-process-absent', 'app-data-absent']
+  // The captured parent settled after its original deadline. That proves
+  // cessation of an UNKNOWN check, never a timely result or a released claim.
+  f.advance(88971)
+  const at = f.host.snapshot.observedAt
+  app.observedAt = at; app.receivedAt = at; app.idle.checkedAt = at
+  app.idle.acceptedCheck!.acceptedAt = at; f.failure.at = at; f.queued.at = at
+  f.intent.controller.sequence = f.host.sequence; f.intent.resourceCheck!.deadlineAt = Date.parse(at) + 30000
+  const target = f.host.snapshot.resourceReservations!.resourceChecks![0]!
+  target.intent = structuredClone(f.intent); target.resourceCheck = structuredClone(f.intent.resourceCheck!)
+  target.intentSha256 = requestInputDigest({...f.intent, controller: f.intent.resourceCheck!.controller,
+    dependencies: [{resourceId: phone.subject.id, authorityHostId: 'mini', capability: 'resource-idle'}]})
+  return {...f, app, phone}
+}
+test('settled queued Android app permits only its fresh passive phone baseline while retaining the late UNKNOWN parent', async () => {
+  const f = await queuedAppPhoneRepair(), parent = structuredClone(f.app), claim = structuredClone(f.claim)
+  expect(Date.parse(parent.idle.acceptedCheck!.acceptedAt)).toBeGreaterThan(f.claim.resourceCheck!.deadlineAt)
+  const result = await f.service.acquire(f.intent, 'mini')
+  expect(result.status).toBe('reserved'); expect(result.claims).toHaveLength(1)
+  expect(f.host.resourceReservations).toContainEqual(claim); expect(f.app).toEqual(parent)
+  expect(f.phone.owner).toBeNull(); expect(f.phone.generation).toBe(0)
+  expect(result.claims[0]!.resourceCheck!.deadlineAt).toBe(f.intent.resourceCheck!.deadlineAt)
+})
+test('queued app phone dependency refuses incomplete settlement, running work, foreign scope and operator restrictions', async () => {
+  const changes: Array<(f: Awaited<ReturnType<typeof queuedAppPhoneRepair>>) => void> = [
+    f => {f.app.idle.acceptedCheck = null},
+    f => {f.app.idle.outcome = 'failed'}, // A late failure is not the producer's ceased UNKNOWN path.
+    f => {f.app.status = 'unknown'; f.app.repair.state = 'none'},
+    f => {f.app.repair.state = 'running'},
+    f => {f.app.repair.executionId = 'running-fixer'},
+    f => {f.app.repair.interruptionId = 'halted-fixer'},
+    f => {f.app.owner!.kind = 'fixer'},
+    f => {f.app.owner!.id = 'foreign-owner'},
+    f => {f.app.owner!.hostId = 'foreign-host'},
+    f => {f.app.owner!.laneId = 'other-lane'},
+    f => {f.app.current = false},
+    f => {f.app.supportedActions = []},
+    f => {f.app.generation++},
+    f => {f.failure.at = new Date(start).toISOString()},
+    f => {f.host.snapshot.resourceLifecycle!.history = []},
+    f => {f.host.snapshot.resourceLifecycle!.history.push({...f.failure, id: 'duplicate-unknown'})},
+    f => {f.journal.state = 'prepared'},
+    f => {f.journal.intent.owner.id = 'foreign-original'},
+    f => {f.host.snapshot.resourceReservations!.resourceChecks!.splice(1)},
+    f => {f.claim.controllerGeneration = 0; f.host.resourceReservations = [f.claim]},
+    f => {f.claim.controllerIncarnation = 'retired-controller'; f.host.resourceReservations = [f.claim]},
+    f => {f.host.snapshot.lanes[0]!.platform = 'ios-on-mac'},
+    f => {f.host.snapshot.lanes[0]!.dispatchMode = 'paused'},
+    f => {f.host.snapshot.lanes[0]!.activity = {generation: 1, owner: {id: 'foreign-run', kind: 'run', requestId: 'foreign-run'}}},
+    f => {f.host.snapshot.lanes[0]!.resources[1]!.idleContract!.dependencies = ['unrelated-phone']},
+    f => {f.host.snapshot.lanes[0]!.resources[1]!.idleContract!.conditions.pop()},
+    f => {f.app.resource.dependencies = ['foreign-resource']},
+    f => {f.app.resource.memberships.push({hostId: 'mini', laneId: 'other-lane'})},
+    f => {f.phone.resource.memberships.push({hostId: 'mini', laneId: 'other-lane'})},
+    f => {f.phone.resource.dependencies = [f.app.subject.id]},
+    f => {f.host.snapshot.lanes[0]!.resources[0]!.idleContract!.dependencies = [f.app.subject.id]},
+    f => {f.host.snapshot.lanes[0]!.resources[1]!.exclusiveDependencies = [{resourceId: f.phone.subject.id, capability: 'resource-idle', authorityHostId: 'mini'}]},
+    f => {f.phone.status = 'out-of-service'},
+    f => {f.app.status = 'out-of-service'},
+    f => {f.phone.owner = {id: 'foreign-native-work', kind: 'run', generation: 1, hostId: 'mini', laneId: 'android'}},
+    f => {f.host.snapshot.frameworkBinding = {...f.intent.resourceCheck!.binding, revision: 'different-source'}},
+    f => {f.host.laneControls = [{command: {...f.control('mark-out-of-service'), operatorId: hash, subject: {resourceId: f.app.subject.id, subjectGeneration: f.app.generation}}}]},
+    f => {f.host.laneControls = [{command: {...f.control('reserve'), operatorId: hash}}]},
+    f => {const command = {operationId: randomUUID(), hostId: 'mini', expiresAt: Date.parse(f.host.snapshot.observedAt) + 30000, action: 'check' as const,
+      subject: {resourceId: f.app.subject.id, subjectGeneration: f.app.generation}, operatorId: hash}
+      f.host.laneControls = [{command, receipt: {operationId: command.operationId, inputSha256: hash, hostId: 'mini', subject: command.subject,
+        completedAt: f.host.snapshot.observedAt, result: {status: 'accepted', check: {operationId: 'foreign-parent-check', resourceId: f.app.subject.id, generation: f.app.generation, state: 'active'}}}}]},
+    f => {f.advance(30001)},
+  ]
+  for (const change of changes) {
+    const f = await queuedAppPhoneRepair(); change(f)
+    const before = structuredClone(f.host.resourceReservations)
+    let status: string
+    try {status = (await f.service.acquire(f.intent, 'mini')).status} catch {status = 'invalid-report'}
+    expect(status).not.toBe('reserved'); expect(f.host.resourceReservations).toEqual(before); expect(f.writes).toHaveLength(1)
+  }
+})
+test('queued dependency revalidates parent and target after CAS while retaining a committed uncertain phone claim', async () => {
+  for (const change of [
+    (f: Awaited<ReturnType<typeof queuedAppPhoneRepair>>) => {f.app.repair.state = 'running'},
+    (f: Awaited<ReturnType<typeof queuedAppPhoneRepair>>) => {f.phone.owner = {id: 'foreign-work', kind: 'run', generation: 1, hostId: 'mini'}},
+    (f: Awaited<ReturnType<typeof queuedAppPhoneRepair>>) => {f.host.laneControls = [{command: {...f.control('mark-out-of-service'), operatorId: hash,
+      subject: {resourceId: f.app.subject.id, subjectGeneration: f.app.generation}}}]; f.host.laneControlVersion!++},
+    (f: Awaited<ReturnType<typeof queuedAppPhoneRepair>>) => {f.advance(30001)},
+  ]) {
+    const f = await queuedAppPhoneRepair(), original = structuredClone(f.claim)
+    f.afterWrite(async () => {change(f)})
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+    expect(f.host.resourceReservations).toHaveLength(2); expect(f.host.resourceReservations).toContainEqual(original)
+    expect(f.writes).toHaveLength(2)
+  }
+  const f = await queuedAppPhoneRepair()
+  f.beforeWrite(async () => {f.app.repair.state = 'running'; f.advance()})
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+  expect(f.host.resourceReservations).toHaveLength(1); expect(f.writes).toHaveLength(1)
+})
+test('recorder capacity appearing after the dependency CAS retains every claim and refuses a new phone grant', async () => {
+  const f = await queuedAppPhoneRepair(), parent = structuredClone(f.claim), recorder = {id: randomUUID(), requestId: 'concurrent-recorder',
+    fleetInputSha256: hash, hostId: 'mini', laneId: 'android', poolId: 'mini-disk', minimumAvailableBytes: 1, reservedAt: f.host.snapshot.observedAt}
+  f.afterWrite(async () => {
+    f.host.resourceReservations = [...hostResourceReservationsSchema.parse(f.host.resourceReservations), recorder]
+    f.host.resourceReservationVersion!++
+  })
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+  expect(f.host.resourceReservations).toHaveLength(3); expect(f.host.resourceReservations).toContainEqual(parent)
+  expect(f.host.resourceReservations).toContainEqual(recorder); expect(f.writes).toHaveLength(2)
+})
 test('resource-only owner keeps the original journal lane even when Core overview hides its actions', async () => {
   const f = await queuedFixtureRepair()
   delete f.fixtureSubject.owner!.laneId
