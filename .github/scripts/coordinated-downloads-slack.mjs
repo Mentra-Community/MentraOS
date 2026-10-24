@@ -92,9 +92,12 @@ export async function releaseFailureDetail(env, fetchImpl = fetch) {
     : "Not requested: the release did not publish an installable app build."
   if (env.REPOSITORY !== "Mentra-Community/MentraOS" || !/^[1-9]\d*$/.test(env.RUN_ID ?? "") ||
     !/^[1-9]\d*$/.test(env.RUN_ATTEMPT ?? "")) return fallback
-  const run = `https://github.com/${env.REPOSITORY}/actions/runs/${env.RUN_ID}`
+  // The repository whose run built the release: the Mentra monorepo releases
+  // into this repository's ledger from its own runs.
+  const runRepository = env.RUN_REPOSITORY || env.REPOSITORY
+  const run = `https://github.com/${runRepository}/actions/runs/${env.RUN_ID}`
   try {
-    const response = await fetchImpl(`https://api.github.com/repos/${env.REPOSITORY}/actions/runs/${env.RUN_ID}/attempts/${env.RUN_ATTEMPT}/jobs?per_page=100`, {
+    const response = await fetchImpl(`https://api.github.com/repos/${runRepository}/actions/runs/${env.RUN_ID}/attempts/${env.RUN_ATTEMPT}/jobs?per_page=100`, {
       headers: {Accept: "application/vnd.github+json", ...(env.GH_TOKEN ? {Authorization: `Bearer ${env.GH_TOKEN}`} : {})},
       redirect: "error", signal: AbortSignal.timeout(10_000),
     })

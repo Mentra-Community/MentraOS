@@ -29,7 +29,8 @@ if [[ -z "$webhook_url" && "$use_bot" != true ]]; then
   exit 0
 fi
 
-run_url="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
+# The Mentra monorepo releases into this repository's ledger from its own runs.
+run_url="https://github.com/${RUN_REPOSITORY:-$REPOSITORY}/actions/runs/${RUN_ID}"
 commit_url="https://github.com/${REPOSITORY}/commit/${SHA}"
 commit_short="${SHA:0:7}"
 commit_subject="${COMMIT_MESSAGE:-Commit metadata unavailable}"

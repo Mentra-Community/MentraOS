@@ -25,6 +25,14 @@ test("early preparation failure points at the preflight before any Mac build exi
   assert.match(detail, /\/job\/123/)
 })
 
+test("a release run in another repository is read and linked there", async () => {
+  const detail = await releaseFailureDetail({...env, RUN_REPOSITORY: "Mentra-Community/Mentra"}, async url => {
+    assert.equal(url, "https://api.github.com/repos/Mentra-Community/Mentra/actions/runs/100/attempts/2/jobs?per_page=100")
+    return response([ios])
+  })
+  assert.match(detail, /github\.com\/Mentra-Community\/Mentra\/actions\/runs\/100\/job\/123/)
+})
+
 test("API outages and missing jobs retain a useful release link without blocking Slack", async () => {
   for (const fetchImpl of [async () => new Response("private provider error", {status: 403}), async () => response([]),
     async () => { throw new Error("private provider error") }]) {
