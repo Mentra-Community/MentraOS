@@ -80,6 +80,10 @@ jobs:
           node --test deploy/azure/enterprise-reference/scripts/*.test.mjs
           python3 -m unittest discover -s deploy/azure/enterprise-reference/installer -p 'test_*.py'
 
+      - name: Test the Core egress policy
+        working-directory: cloud-v2
+        run: node --test deploy/kubernetes/*.test.mjs
+
       - name: Test Miniapp CLI
         working-directory: sdk
         run: bun test miniapp-cli/src

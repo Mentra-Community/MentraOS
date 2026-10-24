@@ -33,6 +33,7 @@ Operational procedures — the "how do I X" docs.
 | Doc | Task |
 | --- | --- |
 | [`deploy/udp-nlb-aws.md`](./deploy/udp-nlb-aws.md) | Provision UDP NLB for a new region (manifest, AWS LB Controller, DNS). |
+| [`core-egress-policy.md`](./core-egress-policy.md) | Apply, verify and roll back Core's egress network policy (no private or internal addresses). |
 | `deploy/new-region.md` | Bring up cloud-v2 in a new AWS region from scratch. *(TODO)* |
 | `deploy/promote-to-prod.md` | dev → staging → prod release flow. *(TODO)* |
 | `secrets/adding-a-secret.md` | Add a new secret in Doppler so it reaches the pods. *(TODO)* |
