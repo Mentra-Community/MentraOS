@@ -76,6 +76,11 @@ export interface MiniappHardwareRequirement {
 export interface InstallMiniappRequest {
   /** The miniapp's URL: the HTTPS address that serves its `miniapp.json`. */
   url: string
+  /**
+   * The package the person agreed to install. When given, a URL that serves another package installs nothing and
+   * fails with `not_a_miniapp`.
+   */
+  packageName?: string
 }
 
 export interface InstallMiniappResult {
@@ -182,7 +187,11 @@ export class MiniappsModule {
    */
   async install(request: InstallMiniappRequest): Promise<InstallMiniappResult> {
     return this.session.sendRequest<InstallMiniappResult>(
-      {type: MiniappRequestType.MINIAPPS_INSTALL, url: request.url},
+      {
+        type: MiniappRequestType.MINIAPPS_INSTALL,
+        url: request.url,
+        ...(request.packageName !== undefined ? {packageName: request.packageName} : {}),
+      },
       // Fetching, registering, downloading and installing can legitimately outlast the SDK's default request
       // timeout. The request still settles on the host response or session disconnect.
       {timeoutMs: 0},

@@ -1721,7 +1721,9 @@ class LocalMiniappRuntime {
         permissions: declaredPermissions,
         visibility: this.currentVisiblePackage() === packageName ? "foreground" : "background",
         configuration: getMiniappConfiguration(packageName),
-        hostFeatures: {captureAudio: true, initReady: true, transcriptionListeners: true},
+        // The SDK's HostFeatures. miniappInstall: system-list miniapps may call session.miniapps.install({url});
+        // the Mentra Apps before it answer NOT_PERMITTED.
+        hostFeatures: {captureAudio: true, initReady: true, transcriptionListeners: true, miniappInstall: true},
       },
       requestId,
     )
@@ -6765,8 +6767,17 @@ class LocalMiniappRuntime {
       fail(MiniappErrorCode.INVALID_ARGUMENT, "install requires the miniapp's url")
       return
     }
+    // The package the caller agreed to; the URL must serve exactly that one.
+    const expected = payload.packageName === undefined ? undefined : payload.packageName
+    if (expected !== undefined && (typeof expected !== "string" || !expected.trim())) {
+      fail(MiniappErrorCode.INVALID_ARGUMENT, "install's packageName must be a package name")
+      return
+    }
     try {
-      const {status, packageName, version} = await installMiniapp(url, {source: "system"})
+      const {status, packageName, version} = await installMiniapp(url, {
+        source: "system",
+        ...(expected !== undefined ? {expectedPackageName: expected.trim()} : {}),
+      })
       this.sendResult(callerPackageName, requestId, true, {status, packageName, version})
       this.auditInterop({caller: callerPackageName, op: "install", target: packageName, ok: true})
     } catch (error) {

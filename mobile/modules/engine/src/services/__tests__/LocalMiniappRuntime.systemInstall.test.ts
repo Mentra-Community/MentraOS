@@ -290,6 +290,23 @@ describe("installing from a system miniapp", () => {
     expect(installs).toEqual([])
   })
 
+  test("names the package the caller agreed to, for installMiniapp to hold the URL to", async () => {
+    const h = harness()
+    await h.host.handleMiniappsInstall(ai, {url, packageName: ` ${weather} `}, "r1")
+    expect(installs).toEqual([{url, options: {source: "system", expectedPackageName: weather}}])
+    expect(h.results[0].ok).toBe(true)
+  })
+
+  test.each([{packageName: ""}, {packageName: "  "}, {packageName: 42}, {packageName: null}])(
+    "refuses a URL with packageName %j without installing",
+    async (extra) => {
+      const h = harness()
+      await h.host.handleMiniappsInstall(ai, {url, ...extra}, "r1")
+      expect(h.results[0].error?.code).toBe(MiniappErrorCode.INVALID_ARGUMENT)
+      expect(installs).toEqual([])
+    },
+  )
+
   test("the old release request installs nothing: an install names a URL", async () => {
     const h = harness()
     await h.host.handleMiniappsInstall(
@@ -458,5 +475,14 @@ describe("what a system miniapp sees", () => {
     const {host} = harness([])
     host.connectedApps.set("com.mentra.store", {hostTrustedSystem: true})
     expect(host.isSystemPackage("com.mentra.store")).toBe(false)
+  })
+})
+
+describe("what every miniapp is told", () => {
+  test("each CONNECT_ACK advertises miniappInstall, so a system miniapp knows install({url}) is there", () => {
+    const declared = [...source.matchAll(/^\s*hostFeatures: (\{[^}\n]*\}),$/gm)]
+    expect(declared).toHaveLength(1)
+    const features = new Function(`return (${declared[0]![1]})`)() as Record<string, unknown>
+    expect(features).toEqual({captureAudio: true, initReady: true, transcriptionListeners: true, miniappInstall: true})
   })
 })

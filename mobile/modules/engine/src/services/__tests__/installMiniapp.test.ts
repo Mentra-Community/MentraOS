@@ -372,6 +372,17 @@ describe("what stops an install", () => {
     expect(registrations).toEqual([])
   })
 
+  test("a URL that serves another package than the caller agreed to is not_a_miniapp, before anything else", async () => {
+    expect(
+      await failure(install(url, {source: "system", confirm: undefined, expectedPackageName: "com.acme.other"})),
+    ).toBe("not_a_miniapp")
+    expect(registrations).toEqual([])
+    expect(installs).toEqual([])
+    const result = await install(url, {source: "system", confirm: undefined, expectedPackageName: pkg})
+    expect(result).toMatchObject({status: "installed", packageName: pkg})
+    expect(installs).toHaveLength(1)
+  })
+
   test("a package its domain doesn't own is domain_mismatch, and is never registered", async () => {
     served = manifest({packageName: "com.mentra.notes"})
     expect(await failure(install())).toBe("domain_mismatch")

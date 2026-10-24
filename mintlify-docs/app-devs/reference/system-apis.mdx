@@ -55,9 +55,20 @@ may install; any other caller, a development build included, gets
 `NOT_PERMITTED`.
 
 ```ts
-const {packageName} = await session.miniapps.install({url: "https://notes.example.com/"});
-await session.miniapps.open(packageName);
+if (session.hostFeatures?.miniappInstall) {
+  const {packageName} = await session.miniapps.install({
+    url: "https://notes.example.com/",
+    packageName: "com.example.notes",
+  });
+  await session.miniapps.open(packageName);
+}
 ```
+
+`packageName` is optional: the package the person agreed to. A URL that serves
+another one installs nothing and fails with `not_a_miniapp`.
+
+`session.hostFeatures.miniappInstall` says the Mentra App installs from a URL.
+Older Mentra Apps don't advertise it, and answer `install` with `NOT_PERMITTED`.
 
 The Mentra App installs it as it installs from a link: it fetches
 `miniapp.json`, checks the package name against the URL's domain, registers the

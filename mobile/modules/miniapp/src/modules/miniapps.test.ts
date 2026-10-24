@@ -38,6 +38,14 @@ describe("MiniappsModule installs", () => {
     expect(requests).toEqual([{type: MiniappRequestType.MINIAPPS_INSTALL, url: "https://weather.example.com/"}])
   })
 
+  test("sends the package the person agreed to, when the caller names it", async () => {
+    const {session, requests} = mockSession({status: "installed", packageName: "com.example.weather", version: "1.2.0"})
+    await new MiniappsModule(session).install({url: "https://weather.example.com/", packageName: "com.example.weather"})
+    expect(requests).toEqual([
+      {type: MiniappRequestType.MINIAPPS_INSTALL, url: "https://weather.example.com/", packageName: "com.example.weather"},
+    ])
+  })
+
   test("sends an uninstall request", async () => {
     const {session, requests} = mockSession()
     await new MiniappsModule(session).uninstall("com.example.weather")

@@ -130,6 +130,11 @@ export interface HostFeatures {
   captureAudio?: boolean
   /** Host keeps the UI closed until a background session that announced it sends READY. */
   initReady?: boolean
+  /**
+   * Host installs miniapps from a miniapp URL through `session.miniapps.install({url})`. Only a miniapp on the
+   * Mentra App's system list may call it; older Mentra Apps answer NOT_PERMITTED.
+   */
+  miniappInstall?: boolean
 }
 
 export interface MiniappAuthState {

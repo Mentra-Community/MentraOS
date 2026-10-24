@@ -29,6 +29,7 @@ mock.module("../../runtime/bootstrap", () => ({
   getConfigValues: () => ({}),
   isDevMiniappAllowed: () => true,
   isInstalledMiniappAllowed: () => true,
+  isLocalMiniappPackageAllowed: () => true,
   isOfflineSystemMiniappAllowed: () => true,
   isMiniappAvailable: () => true,
 }))
