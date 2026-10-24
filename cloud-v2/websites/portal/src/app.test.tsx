@@ -199,9 +199,8 @@ describe("a workspace page", () => {
     const markup = render(`/members`, TWO_WORKSPACES);
     expect(markup).toContain('aria-label="Workspace: Acme Field Team. Switch workspace"');
     expect(markup).toContain(">Owner<");
-    expect(hrefs(markup)).toEqual(
-      expect.arrayContaining([`/members`, `/settings`, `/audit`]),
-    );
+    expect(hrefs(markup)).toEqual(expect.arrayContaining([`/members`, `/settings`]));
+    expect(hrefs(markup)).not.toContain(`/audit`);
     expect(markup).toMatch(/aria-current="page"[^>]*>.*Members/);
     expect(markup).toContain(">Invite<");
     expect(markup).toContain("priya@acme.test");
@@ -209,7 +208,7 @@ describe("a workspace page", () => {
 
   test("in their own workspace a person gets bare section links, in another one the sections name it", () => {
     const own = render(`/members`, TWO_WORKSPACES);
-    expect(hrefs(own)).toEqual(expect.arrayContaining(["/members", "/settings", "/audit"]));
+    expect(hrefs(own)).toEqual(expect.arrayContaining(["/members", "/settings"]));
     expect(hrefs(own).some(href => href.includes("workspace="))).toBe(false);
     // The second workspace in the list is not what the bare address opens, so its sections name it.
     const other = render(`/settings?workspace=${NORTHWIND}`, TWO_WORKSPACES);
@@ -223,7 +222,7 @@ describe("a workspace page", () => {
     const markup = render(`/members?workspace=${customer}`, seed);
     expect(markup).toContain('aria-label="Workspace: Customer Co. Switch workspace"');
     const sections = hrefs(markup).filter(href => /^\/(members|settings|audit)/.test(href));
-    expect(sections).toEqual([`/members?workspace=${customer}`, `/settings?workspace=${customer}`, `/audit?workspace=${customer}`]);
+    expect(sections).toEqual([`/members?workspace=${customer}`, `/settings?workspace=${customer}`]);
   });
 
   test("a person with no workspace of their own gets ?workspace= on links into a customer's", () => {
@@ -232,8 +231,13 @@ describe("a workspace page", () => {
     expect(hrefs(markup).filter(href => /^\/(members|settings|audit)/.test(href))).toEqual([
       `/members?workspace=${customer}`,
       `/settings?workspace=${customer}`,
-      `/audit?workspace=${customer}`,
     ]);
+  });
+
+  test("the Audit log has no sidebar item but still opens at its address", () => {
+    const markup = render(`/audit`, TWO_WORKSPACES);
+    expect(markup).toMatch(/<h1[^>]*>Audit log<\/h1>/);
+    expect(hrefs(markup)).not.toContain(`/audit`);
   });
 
   test("the sidebar names the site as the admin portal does: Mentra Portal, on MentraOS", () => {
@@ -287,21 +291,12 @@ describe("the Developer Console link", () => {
     expect(portalLinks(null)).toEqual([]);
   });
 
-  test("opens in a new tab, marked as leaving the portal, from every sidebar whatever the viewer's role", () => {
+  test("is hidden: no sidebar shows it, even where this environment has a Developer Console", () => {
     for (const path of [`/members`, `/settings?workspace=${NORTHWIND}`, "/nowhere", "/enterprise"]) {
-      const link = anchorTo(render(path, TWO_WORKSPACES, { developerConsoleUrl: CONSOLE }), CONSOLE);
-      expect(link).toContain('target="_blank"');
-      expect(link).toContain('rel="noreferrer"');
-      expect(link).toContain(">Developer Console<");
-      expect(link).toContain("lucide-arrow-up-right");
-      expect(link).toContain("(opens in a new tab)");
+      const markup = render(path, TWO_WORKSPACES, { developerConsoleUrl: CONSOLE });
+      expect(anchorTo(markup, CONSOLE)).toBeNull();
+      expect(markup).not.toContain(">Developer Console<");
     }
-  });
-
-  test("sits under the workspace's sections, above the account", () => {
-    const markup = render(`/members`, TWO_WORKSPACES, { developerConsoleUrl: CONSOLE });
-    expect(markup.indexOf(`href="/audit"`)).toBeLessThan(markup.indexOf(`href="${CONSOLE}"`));
-    expect(markup.indexOf(`href="${CONSOLE}"`)).toBeLessThan(markup.indexOf("Open account menu"));
   });
 
   test("a Private Cloud's portal, where Core runs without a Store, has no link", () => {
@@ -776,12 +771,17 @@ const ACTIVE_LICENSES_ITEM = /aria-current="page"[^>]*>(?:(?!<\/a>).)*<\/svg>Lic
 const LICENSES_HEADING = /<h1[^>]*>Licenses<\/h1>/;
 
 describe("Licenses in the sidebar", () => {
-  test("is the last section, and is offered only where there are licenses to show", () => {
-    expect(visibleSections(caps("admin"), { licenses: true })).toEqual(["members", "settings", "audit", "licenses"]);
-    expect(visibleSections(caps("owner"), { licenses: true })).toEqual(["members", "settings", "audit", "licenses"]);
-    expect(visibleSections(caps("member"), { licenses: true })).toEqual(["settings", "licenses"]);
+  test("is the first section, and is offered only where there are licenses to show", () => {
+    expect(visibleSections(caps("admin"), { licenses: true })).toEqual(["licenses", "members", "settings", "audit"]);
+    expect(visibleSections(caps("owner"), { licenses: true })).toEqual(["licenses", "members", "settings", "audit"]);
+    expect(visibleSections(caps("member"), { licenses: true })).toEqual(["licenses", "settings"]);
     expect(visibleSections(caps("owner"), { licenses: false })).toEqual(["members", "settings", "audit"]);
     expect(visibleSections(caps("owner"))).toEqual(["members", "settings", "audit"]);
+  });
+
+  test("leads the sidebar, followed by Members and Settings, with no Audit log item", () => {
+    const items = workspaceNav(ACME, visibleSections(caps("owner"), { licenses: true }), ACME).flatMap(group => group.items);
+    expect(items.map(item => item.key)).toEqual(["licenses", "members", "settings"]);
   });
 
   test("is called Licenses and goes to the workspace's licenses address", () => {

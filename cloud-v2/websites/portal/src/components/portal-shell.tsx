@@ -98,7 +98,10 @@ export function useBareWorkspaceId(): string | null {
   return list.data ? currentWorkspace({ param: null, remembered, workspaces: list.data }) : null;
 }
 
-/** The sidebar's links out of the portal: this environment's Developer Console, where there is one. */
+/**
+ * The sidebar's links out of the portal: this environment's Developer Console, where there is one. The sidebar
+ * shows none of them: the Developer Console link is hidden.
+ */
 export function portalLinks(developerConsoleUrl: string | null): ExternalNavItem[] {
   if (!developerConsoleUrl) return [];
   return [{ key: "developer-console", label: "Developer Console", icon: CodeXml, href: developerConsoleUrl }];
@@ -107,7 +110,7 @@ export function portalLinks(developerConsoleUrl: string | null): ExternalNavItem
 /**
  * The shared `AppShell` as the portal's: named Mentra Portal, on MentraOS, with the portal's History-API
  * `Link`, the workspace switcher wired to the person's workspaces, this tab's invitation and the
- * create-workspace dialog, and the links out of the portal. A new workspace opens as soon as it exists.
+ * create-workspace dialog. A new workspace opens as soon as it exists.
  */
 export function PortalShell({
   current,
@@ -166,7 +169,6 @@ export function PortalShell({
       nav={nav}
       navLabel={navLabel}
       active={item => item.key === activeKey}
-      links={portalLinks(portal.developerConsoleUrl)}
       title={title}
       description={description}
       headerAction={headerAction}

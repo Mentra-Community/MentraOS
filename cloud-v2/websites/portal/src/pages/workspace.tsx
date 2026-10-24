@@ -2,9 +2,10 @@
  * One workspace in the workspace portal: `/<section>` (`?workspace=<workspaceId>` when it is not the one the bare
  * address opens), framed by the sidebar.
  *
- * The sections are the shared Core workspace screens (`@mentra/workspace-ui`): Members (the member list
- * with the pending invitations under it, and Invite in the header), Settings and the Audit log, and Licenses
- * (pages/licenses). The sidebar offers only the sections the viewer's capabilities open, and Licenses only
+ * The sections are the shared Core workspace screens (`@mentra/workspace-ui`): Licenses (pages/licenses),
+ * Members (the member list with the pending invitations under it, and Invite in the header), Settings, and the
+ * Audit log, which has no sidebar item and opens only at its address. The sidebar offers only the sections the
+ * viewer's capabilities open, and Licenses only
  * where there is something to show: the person manages billing, or the workspace has licenses (a member sees
  * their own seats, never billing). A Private Cloud has neither. Every request is still checked by Core. A
  * workspace that does not exist, or that the viewer may not see, is one "not found" page.
@@ -91,9 +92,12 @@ const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
  * Fleet (devices and deployments, behind `fleet.read`) joins as its own group in a later phase.
  */
 export const NAV_GROUPS: ReadonlyArray<{ key: string; label?: string; sections: readonly WorkspaceSection[] }> = [
-  { key: "workspace", sections: ["members", "settings", "audit", "licenses"] },
+  { key: "workspace", sections: ["licenses", "members", "settings"] },
   { key: "fleet", label: "Fleet", sections: [] },
 ];
+
+/** The sections that open at their address, for whoever's capabilities open them, but have no sidebar item. */
+const UNLISTED_SECTIONS: readonly WorkspaceSection[] = ["audit"];
 
 /**
  * Whether the workspace's Licenses section is offered: `billing` (the person is offered the billing module
@@ -105,14 +109,15 @@ export function licensesPartShown(billing: boolean, licenses: readonly LicenseVi
 }
 
 /**
- * The sections the viewer's capabilities in this workspace open, in sidebar order. `licenses` says whether
- * Licenses is offered (see {@link licensesPartShown}).
+ * The sections the viewer's capabilities in this workspace open: the sidebar's in its order, then the unlisted
+ * ones. The first is where the bare address lands. `licenses` says whether Licenses is offered (see
+ * {@link licensesPartShown}).
  */
 export function visibleSections(
   detail: Pick<WorkspaceDetail, "capabilities"> | undefined,
   options: { licenses?: boolean } = {},
 ): WorkspaceSection[] {
-  return NAV_GROUPS.flatMap(group => group.sections).filter(section => {
+  return [...NAV_GROUPS.flatMap(group => group.sections), ...UNLISTED_SECTIONS].filter(section => {
     if (section === "licenses") return options.licenses === true;
     const needs = SECTIONS[section].needs;
     return needs === null || can(detail, needs);

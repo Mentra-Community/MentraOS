@@ -59,10 +59,11 @@ the top of the sidebar shows it and your role (your membership's; "Member · Org
 Admin" when an Organization Admin's powers go beyond it), and lists your other workspaces,
 **Create workspace** and your pending invitations with **Accept** and **Dismiss**.
 
-**Addresses.** Your own workspace is never in the address: `/members` (members, with pending
-invitations under them), `/settings`, `/audit` and `/licenses`
-([Licenses](licenses.md#in-the-workspace-portal)) are its pages, and the sidebar offers only
-what your role opens. `/` opens the current workspace's first page. Another workspace is named
+**Addresses.** Your own workspace is never in the address: `/licenses`
+([Licenses](licenses.md#in-the-workspace-portal)), `/members` (members, with pending
+invitations under them), `/settings` and `/audit` are its pages. The sidebar lists Licenses,
+Members and Settings, in that order, and offers only what your role opens; the audit log has no
+sidebar item and opens only at `/audit`. `/` opens the current workspace's first sidebar page. Another workspace is named
 by `?workspace=<workspaceId>` on any of them, which is how an Organization Admin opens a
 customer's; the sidebar's links carry it exactly when the workspace is not the one the bare
 address opens, and a `?workspace=` that names the bare address is dropped from the address in
@@ -95,8 +96,7 @@ An invitation link lands on `/invitation`, which reads the token from the tab's 
 A link Core reports as no longer valid is shown as such once and then forgotten. Pending
 invitations are the link's and those addressed to your verified email, each shown once;
 **Dismiss** hides one in this browser only (Core does not record a refusal, and its link keeps
-working). Above your account, the sidebar links to the environment's Developer Console in a new
-tab; a Private Cloud, which has no Developer Console, shows no link. Company sign-in
+working). The sidebar has no link to the Developer Console. Company sign-in
 (enterprise orgs and trusted issuers) is not in the navigation; its pages stay reachable
 at `/enterprise` until it returns as workspace settings.
 
