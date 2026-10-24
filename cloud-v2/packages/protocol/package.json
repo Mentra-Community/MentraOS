@@ -15,6 +15,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "tldts": "7.4.19",
     "zod": "^3.24.1"
   },
   "publishConfig": {

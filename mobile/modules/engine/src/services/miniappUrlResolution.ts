@@ -3,10 +3,12 @@
  * assignment reconciler reads it to decide the version an assignment installs.
  */
 import type {FleetAssignmentReason} from "@mentra/cloud-protocol"
+import {normalizeMiniappUrl} from "@mentra/cloud-protocol/miniapp-url"
 import semver from "semver"
 
 import {getConfigValues} from "../runtime/bootstrap"
 import {checkManifestVersions} from "./manifestVersionGate"
+import {isPackageNameAllowedForUrl} from "./miniappDomainRule"
 
 /** What a miniapp URL serves now, or the assignment reason it cannot be installed. */
 export type MiniappUrlResolution =
@@ -16,42 +18,20 @@ export type MiniappUrlResolution =
 const URL_RESOLVE_TIMEOUT_MS = 20_000
 const SHA256_HEX = /^[a-f0-9]{64}$/
 
-function isMentraHost(hostname: string): boolean {
-  const host = hostname.toLowerCase()
-  return host === "mentraglass.com" || host.endsWith(".mentraglass.com")
-}
-
-/**
- * The domain rule for Mentra's names: `com.mentra.*` (and `com.mentraglass.*`) install from a URL only on a
- * mentraglass.com host. Other names need the Public Suffix List to find their registrable domain, which arrives with
- * `installMiniapp(url)`; until then they are not checked here.
- */
-export function breaksMentraDomainRule(packageName: string, url: string): boolean {
-  if (!packageName.startsWith("com.mentra.") && !packageName.startsWith("com.mentraglass.")) return false
-  try {
-    return !isMentraHost(new URL(url).hostname)
-  } catch {
-    return true
-  }
-}
-
 /**
  * Read what a miniapp URL serves: `<url>/miniapp.json`, a copy of the manifest in its current ZIP plus
  * `bundle: {url, sha256}` naming that ZIP (relative to `<url>/` or an absolute HTTPS URL). The URL decides the
- * version, and the ZIP must have that SHA-256. The server decides access: 401 and 403 are `access_denied`.
+ * version, and the ZIP must have that SHA-256. The server decides access: 401 and 403 are `access_denied`. The
+ * package name must pass the domain rule for the URL and for where its redirects ended.
  *
  * The request carries no Mentra token and answers no sign-in challenge, so a private host cannot tell who is asking:
  * answering the challenge with the package's miniapp token is Phase 17 (miniapp distribution "Sign-in challenges").
  */
 export async function resolveMiniappUrl(url: string, fetchImpl: typeof fetch = fetch): Promise<MiniappUrlResolution> {
-  let base: URL
-  try {
-    base = new URL(url.endsWith("/") ? url : `${url}/`)
-  } catch {
-    return {ok: false, reason: "not_a_miniapp"}
-  }
-  if (base.protocol !== "https:") return {ok: false, reason: "not_a_miniapp"}
-  const manifestUrl = new URL("miniapp.json", base).href
+  // An assignment names a public HTTPS miniapp URL; a local-network build is never assigned.
+  const normalized = normalizeMiniappUrl(url)
+  if (!normalized || normalized.kind !== "public") return {ok: false, reason: "not_a_miniapp"}
+  const manifestUrl = new URL("miniapp.json", normalized.url).href
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), URL_RESOLVE_TIMEOUT_MS)
   let manifest: Record<string, unknown>
@@ -81,7 +61,7 @@ export async function resolveMiniappUrl(url: string, fetchImpl: typeof fetch = f
   const packageName = typeof manifest.packageName === "string" ? manifest.packageName.trim() : ""
   const version = typeof manifest.version === "string" ? manifest.version.trim() : ""
   if (!packageName || !semver.valid(version)) return {ok: false, reason: "not_a_miniapp"}
-  if (breaksMentraDomainRule(packageName, manifestUrl) || breaksMentraDomainRule(packageName, servedFrom))
+  if (!isPackageNameAllowedForUrl(packageName, manifestUrl) || !isPackageNameAllowedForUrl(packageName, servedFrom))
     return {ok: false, reason: "not_a_miniapp"}
   const bundle = manifest.bundle as Record<string, unknown> | null | undefined
   const sha = typeof bundle?.sha256 === "string" ? bundle.sha256.trim().toLowerCase() : ""

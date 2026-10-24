@@ -1,5 +1,7 @@
 import {beforeEach, describe, expect, test} from "bun:test"
 
+import {normalizeMiniappUrl} from "@mentra/cloud-protocol/miniapp-url"
+
 import {DeviceTypes, getModelCapabilities} from "../../types"
 import type {MiniappReleaseIdentity} from "../AppRegistry"
 import type {ReleaseInstallOptions} from "../miniappReleaseInstall"
@@ -11,6 +13,7 @@ import {
   OPEN_CHECK_INTERVAL_MS,
   parseHostedManifest,
 } from "../miniappUrlUpdates"
+import {domainRuleVectors} from "./miniappUrlVectors"
 
 const pkg = "com.mentra.captions"
 const host = "https://miniapps.mentraglass.com/"
@@ -121,8 +124,31 @@ describe("the domain rule", () => {
     expect(isPackageNameAllowedForUrl("com.mentra.captions", "http://miniapps.mentraglass.com/")).toBe(false)
   })
 
-  test("other names don't update from a URL yet", () => {
-    expect(isPackageNameAllowedForUrl("com.example.notes", "https://notes.example.com/")).toBe(false)
+  test("other names come from the domain that owns them", () => {
+    expect(isPackageNameAllowedForUrl("com.example.notes", "https://notes.example.com/")).toBe(true)
+    expect(isPackageNameAllowedForUrl("io.github.alice.notes", "https://alice.github.io/notes/")).toBe(true)
+    expect(isPackageNameAllowedForUrl("com.example.notes", "https://notes.example.org/")).toBe(false)
+  })
+
+  // The vectors Core's tests read too, so both refuse the same names.
+  test.each(domainRuleVectors().map((vector) => [vector.packageName, vector.url, vector.allowed] as const))(
+    "%p from %p: %p",
+    (packageName, url, allowed) => {
+      expect(isPackageNameAllowedForUrl(packageName, url)).toBe(allowed)
+    },
+  )
+
+  test.each(
+    domainRuleVectors()
+      .filter((vector) => normalizeMiniappUrl(vector.url)?.kind === "public")
+      .map((vector) => [vector.packageName, vector.url, vector.allowed] as const),
+  )("a miniapp installed as %p from %p is checked for updates: %p", async (packageName, url, allowed) => {
+    const sourceUrl = normalizeMiniappUrl(url)!.url
+    active = {[packageName]: "1.0.0"}
+    identities = {[packageName]: {source: "url", sourceUrl}}
+    responses = [{status: 304, url: `${sourceUrl}miniapp.json`}]
+    await new MiniappUrlUpdater({...updaterDeps(), isSystemPackage: () => false}).checkAll()
+    expect(fetched.map((call) => call.url)).toEqual(allowed ? [`${sourceUrl}miniapp.json`] : [])
   })
 })
 
@@ -302,6 +328,14 @@ describe("updates from a miniapp's own URL", () => {
     devSelected.add(pkg)
     await updater().checkAll()
     expect(fetched).toEqual([])
+  })
+
+  test("follows a redirect to another host on the same domain", async () => {
+    responses = [served(manifest("1.1.0"), {url: `https://cdn.mentraglass.com/${pkg}/miniapp.json`})]
+    await updater().check(pkg)
+    expect(installs.map((install) => install.bundleUrl)).toEqual([
+      `https://cdn.mentraglass.com/${pkg}/${pkg}-1.1.0.zip`,
+    ])
   })
 
   test("refuses a miniapp.json for another package or from a host that can't serve the name", async () => {

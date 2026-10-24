@@ -41,6 +41,7 @@
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
+        "@mentra/workspace-contract": "workspace:*",
         "@types/ws": "^8.5.12",
         "ws": "^8.18.0",
       },
@@ -98,6 +99,7 @@
       "name": "@mentra/cloud-protocol",
       "version": "3.4.0",
       "dependencies": {
+        "tldts": "7.4.19",
         "zod": "^3.24.1",
       },
     },
@@ -352,7 +354,7 @@
       },
       "peerDependencies": {
         "@craftzdog/react-native-buffer": "*",
-        "@dr.pogodin/react-native-fs": "*",
+        "@dr.pogodin/react-native-fs": "2.38.2",
         "@react-native-community/netinfo": "*",
         "@types/react": "*",
         "axios": "*",
@@ -3000,6 +3002,10 @@
     "tinyglobby": ["tinyglobby@0.2.17", "", { "dependencies": { "fdir": "^6.5.0", "picomatch": "^4.0.4" } }, "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g=="],
 
     "tinyqueue": ["tinyqueue@2.0.3", "", {}, "sha512-ppJZNDuKGgxzkHihX8v9v9G5f+18gzaTfrukGrq6ueg0lmH4nqVnA2IPG0AEH3jKEk2GRJCUhDoqpoiw3PHLBA=="],
+
+    "tldts": ["tldts@7.4.19", "", { "dependencies": { "tldts-core": "^7.4.19" }, "bin": { "tldts": "bin/cli.js" } }, "sha512-48dH6aSpQnpbzDUc4vIQZ1VjB8tkK+e8c1yx05/SZK+rkssgjEOlxDd/yU8/a4vGYQ9vRgJr9dwMq9TJ0b3X2Q=="],
+
+    "tldts-core": ["tldts-core@7.4.19", "", {}, "sha512-goNXV6Ho9TIOfpJZanTd6CKG5DyYgYAL+k+22T0SLh8l6+KHIfBUPFuePuSZv05UttIaaLmI9tb7TmGIdK5AkQ=="],
 
     "tmpl": ["tmpl@1.0.5", "", {}, "sha512-3f0uOEAQwIqGuWW2MVzYg8fV/QNnc/IpuJNG837rLuczAaLVHslWHZQj4IGiEl5Hs3kkbhwL9Ab7Hrsmuj+Smw=="],
 

@@ -62,8 +62,9 @@ export function isTrustedSystemMiniappRelease(
 ): boolean {
   if (!isApprovedSystemPackage(config, packageName)) return false
   if (identity?.source === "bundled_asset") return true
-  // Installed from a Mentra host: only Mentra serves its package names, so this
-  // holds when a later deployment names another host, or none.
+  // Installed from a URL whose domain owns the name, which for Mentra's names is
+  // a mentraglass.com host: only that domain serves them, so this holds when a
+  // later deployment names another host, or none.
   if (identity?.source === "url") {
     return typeof identity.sourceUrl === "string" && isPackageNameAllowedForUrl(packageName, identity.sourceUrl)
   }
