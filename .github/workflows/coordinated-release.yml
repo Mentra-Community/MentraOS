@@ -1,8 +1,11 @@
 name: Coordinated Mentra Release
 
+# Dev releases come from the Mentra monorepo since 2026-10-24 (its
+# release.yml, publishing to this repository's ledger); staging and
+# production promotion still run here.
 on:
   push:
-    branches: [dev, staging]
+    branches: [staging]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -63,11 +66,8 @@ jobs:
           set -euo pipefail
           case "$BRANCH" in
             dev)
-              echo "cloud_environment=dev" >> "$GITHUB_OUTPUT"
-              echo "backend_environment=dev" >> "$GITHUB_OUTPUT"
-              echo "play_track=internal" >> "$GITHUB_OUTPUT"
-              echo "testflight_group=Mentra Dev" >> "$GITHUB_OUTPUT"
-              echo "testflight_audience=internal" >> "$GITHUB_OUTPUT"
+              echo "Dev releases come from the Mentra monorepo (release.yml); not releasing dev here." >&2
+              exit 1
               ;;
             staging)
               echo "cloud_environment=staging" >> "$GITHUB_OUTPUT"

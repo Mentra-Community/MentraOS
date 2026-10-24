@@ -2,7 +2,8 @@ name: Coordinated Release Family Checks
 
 on:
   pull_request:
-    branches: [dev, staging, main]
+    # dev releases come from the Mentra monorepo.
+    branches: [staging, main]
     paths:
       - ".github/release-family.json"
       - ".github/production-release/**"

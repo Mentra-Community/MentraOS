@@ -3,6 +3,7 @@ run-name: "${{ inputs.routine_pr && format('Routine PR #{0} {1} {2}{3}', inputs.
 
 on:
   pull_request:
+    branches-ignore: [dev]
     paths:
       - "mobile/**"
       - "android_core/**"
@@ -39,9 +40,10 @@ on:
       - ".github/scripts/allocate-asg-version.mjs"
       - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
   push:
+    # dev is built and released from the Mentra monorepo, where asg_client
+    # now lives (mentra_live/asg_client); MentraOS dev no longer has it.
     branches:
       - main
-      - dev
     paths:
       - "mobile/**"
       - "android_core/**"

@@ -13,10 +13,11 @@ run-name: "${{ inputs.routine_pr && format('Routine PR #{0} {1} {2}{3}', inputs.
 # asg_client untouched); otherwise the `build` job builds one and publishes it
 # next to the manifest on the pr-builds release.
 #
-# Pushes to dev/main and manual dispatches only compile-check the ASG client.
+# Pushes to main and manual dispatches only compile-check the ASG client.
 
 on:
   pull_request:
+    branches-ignore: [dev]
     paths:
       - "mobile/**"
       - "android_core/**"
@@ -53,9 +54,10 @@ on:
       - ".github/scripts/allocate-asg-version.mjs"
       - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
   push:
+    # dev is built and released from the Mentra monorepo, where asg_client
+    # now lives (mentra_live/asg_client); MentraOS dev no longer has it.
     branches:
       - main
-      - dev
     paths:
       - "mobile/**"
       - "android_core/**"

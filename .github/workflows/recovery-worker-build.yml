@@ -2,6 +2,8 @@ name: Recovery Worker Build
 
 on:
   pull_request:
+    # MentraOS dev no longer has asg_client (it is in the Mentra monorepo).
+    branches-ignore: [dev]
     paths:
       - "asg_client/recovery_worker/**"
       - ".github/workflows/recovery-worker-build.yml"
