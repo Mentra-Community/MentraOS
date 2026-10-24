@@ -223,6 +223,7 @@ jobs:
             tests/fleet-forwarding.integration.test.ts \
             tests/portal-modules.integration.test.ts \
             tests/legacy-admin-keys.integration.test.ts \
+            tests/account-auth.integration.test.ts \
             tests/account-deletion.integration.test.ts \
             tests/declared-age.integration.test.ts \
             tests/licenses.integration.test.ts \
