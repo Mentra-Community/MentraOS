@@ -10,11 +10,13 @@ const compatible = {isCompatible: true, missingRequired: [], missingOptional: []
 const installedApps = mock(async (): Promise<ClientApp[]> => [])
 const ensureRunning = mock(async () => ({}))
 const uninstall = mock(async () => Res.ok(undefined))
+const revoked = new Set<string>()
 mock.module("../../services/AppRegistry", () => ({
   default: {
     getInstalledMiniapps: installedApps,
     uninstall,
     requiresLocalSttModel: () => false,
+    isMiniappAccessRevoked: (packageName: string) => revoked.has(packageName),
     subscribe: () => () => {},
   },
 }))
@@ -82,6 +84,7 @@ beforeEach(() => {
   blocked.mockClear()
   opened.mockClear()
   ensureRunning.mockClear()
+  revoked.clear()
   uninstall.mockReset()
   uninstall.mockImplementation(async () => Res.ok(undefined))
   installedApps.mockReset()
@@ -188,6 +191,41 @@ describe("miniapp update availability", () => {
     end()
     expect(apps.getState().apps[0].updating).toBe(false)
     expect(await apps.getState().start(target)).toBe(true)
+  })
+
+  test("a miniapp whose access was revoked is refused with the host's explanation, and opens again once restored", async () => {
+    const accessRevoked = mock(() => {})
+    installHooks({onUpdateBlocked: blocked, onOpenRequested: opened, onAccessRevoked: accessRevoked})
+    revoked.add(target.packageName)
+    expect(await apps.getState().start(target)).toBe(false)
+    expect(accessRevoked).toHaveBeenCalledTimes(1)
+    expect(accessRevoked).toHaveBeenCalledWith(
+      expect.objectContaining({packageName: target.packageName, name: "Notes"}),
+    )
+    expect(opened).not.toHaveBeenCalled()
+    expect(ensureRunning).not.toHaveBeenCalled()
+    expect(apps.getState().apps[0].running).toBe(false)
+
+    revoked.delete(target.packageName)
+    expect(await apps.getState().start(target)).toBe(true)
+    expect(accessRevoked).toHaveBeenCalledTimes(1)
+    expect(ensureRunning).toHaveBeenCalledTimes(1)
+  })
+
+  test("a miniapp whose access was revoked is not brought to the foreground, even from a stale running object", async () => {
+    const accessRevoked = mock(() => {})
+    installHooks({onUpdateBlocked: blocked, onOpenRequested: opened, onAccessRevoked: accessRevoked})
+    apps.setState({apps: [{...target, running: true}]})
+    revoked.add(target.packageName)
+    await apps.getState().setForeground(target.packageName)
+    expect(apps.getState().foregroundedPackage).toBeNull()
+    expect(apps.getState().apps[0].foregrounded).toBeFalsy()
+    expect(accessRevoked).toHaveBeenCalledTimes(1)
+
+    revoked.delete(target.packageName)
+    await apps.getState().setForeground(target.packageName)
+    expect(apps.getState().foregroundedPackage).toBe(target.packageName)
+    expect(accessRevoked).toHaveBeenCalledTimes(1)
   })
 
   test("updating one miniapp does not block another", async () => {

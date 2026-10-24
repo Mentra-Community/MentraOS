@@ -69,6 +69,7 @@ import {
   miniappInstallIdentityError,
   type MiniappInstallExpectations,
 } from "./miniappInstallIdentity"
+import {forgetDevSnapshotOwner, isDevSnapshotVisible, recordDevSnapshotOwner} from "./miniappDataPartition"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {assertPublisherIdentityPolicy, assertUnsignedDevBuildAllowed} from "./publisherIdentityPolicy"
 import {selectReleaseVersionsForGarbageCollection} from "./releaseVersionGc"
@@ -182,6 +183,35 @@ export interface MiniappReleaseIdentity {
   publisherKeyFingerprint?: string
 }
 
+/**
+ * Why a package is installed (the provisioning spec's installation reasons). Kept apart from the artifact's
+ * provenance, {@link MiniappReleaseIdentity.source}: a package installs once and may hold several reasons, and the
+ * `assignment` reason never appears in `source`.
+ */
+export type MiniappInstallReason = "bundled" | "explicit" | "manifest" | "assignment"
+export const MINIAPP_INSTALL_REASONS: readonly MiniappInstallReason[] = [
+  "bundled",
+  "explicit",
+  "manifest",
+  "assignment",
+]
+
+/** The Fleet assignment behind a package's `assignment` reason. */
+export interface MiniappAssignment {
+  assignmentId: string
+  assignmentRevision: number
+  workspaceId: string
+  /** The Core and account the assignment was made to. Its data partition belongs to them. */
+  coreUrl: string
+  mentraUserId: string
+  url: string
+}
+
+interface StoredInstallReasons {
+  reasons: MiniappInstallReason[]
+  assignment?: MiniappAssignment
+}
+
 /** Options shared by every install entry point. */
 export interface InstallBundleOptions {
   /**
@@ -220,6 +250,12 @@ export interface InstallBundleOptions {
    * and leaves the previous installation untouched.
    */
   beforeActivate?: () => void
+  /**
+   * Add this installation reason in the same metadata commit as the bundle. With `assignment`, `assignment` must
+   * name it. Without either, the package's reasons are unchanged.
+   */
+  installReason?: MiniappInstallReason
+  assignment?: MiniappAssignment
 }
 
 export type InstallProgressPhase = "downloading" | "verifying" | "extracting" | "activating"
@@ -246,6 +282,14 @@ function activeVersionKey(packageName: string): string {
   return `${packageName}_active_version`
 }
 
+function installReasonsKey(packageName: string): string {
+  return `miniapp_install_reasons:${packageName}`
+}
+
+function revokedAccessKey(packageName: string): string {
+  return `miniapp_access_revoked:${packageName}`
+}
+
 interface StorageSnapshot<T> {
   present: boolean
   value?: T
@@ -266,6 +310,7 @@ interface InstallMetadataRollbackJournal {
   release: StorageSnapshot<MiniappReleaseIdentity>
   active: StorageSnapshot<string>
   devRouting?: DevRoutingSnapshot
+  reasons?: StorageSnapshot<StoredInstallReasons>
 }
 
 function snapshotStorage<T>(key: string): StorageSnapshot<T> {
@@ -309,6 +354,7 @@ function readMetadataRollbackJournal(
       !isStorageSnapshot(parsed.publisher, "string") ||
       !isStorageSnapshot(parsed.release, "object") ||
       !isStorageSnapshot(parsed.active, "string") ||
+      (parsed.reasons !== undefined && !isStorageSnapshot(parsed.reasons, "object")) ||
       (parsed.devRouting !== undefined &&
         (!parsed.devRouting ||
           DEV_ROUTING_FIELDS.some((field) => !isStorageSnapshot(parsed.devRouting?.[field], "any"))))
@@ -359,10 +405,44 @@ function restoreDevRouting(packageName: string, snapshot: DevRoutingSnapshot): v
 }
 
 function restoreInstallMetadata(journal: InstallMetadataRollbackJournal): void {
+  if (journal.reasons) restoreInstallationMetadata(installReasonsKey(journal.packageName), journal.reasons)
   if (journal.devRouting) restoreDevRouting(journal.packageName, journal.devRouting)
   restoreStorage(activeVersionKey(journal.packageName), journal.active)
   restoreInstallationMetadata(releaseIdentityKey(journal.packageName, journal.version), journal.release)
   restoreInstallationMetadata(publisherIdentityKey(journal.packageName), journal.publisher)
+}
+
+function readStoredInstallReasons(packageName: string): StoredInstallReasons | null {
+  try {
+    const stored = getInstallationMetadata().getString(installReasonsKey(packageName))
+    if (!stored) return null
+    const parsed = JSON.parse(stored) as Partial<StoredInstallReasons>
+    const reasons = Array.isArray(parsed.reasons)
+      ? MINIAPP_INSTALL_REASONS.filter((reason) => parsed.reasons!.includes(reason))
+      : []
+    const assignment = reasons.includes("assignment") && parsed.assignment ? parsed.assignment : undefined
+    return assignment ? {reasons, assignment} : {reasons: reasons.filter((reason) => reason !== "assignment")}
+  } catch {
+    return null
+  }
+}
+
+function writeStoredInstallReasons(packageName: string, value: StoredInstallReasons): void {
+  getInstallationMetadata().set(installReasonsKey(packageName), JSON.stringify(value))
+}
+
+/** A package installed before reasons were recorded holds the reason its provenance implies. */
+function inferredInstallReason(identity: MiniappReleaseIdentity | null): MiniappInstallReason {
+  switch (identity?.source) {
+    case "bundled_asset":
+    case "system_store":
+    case "preinstalled_registry":
+      return "bundled"
+    case "deployment_manifest":
+      return "manifest"
+    default:
+      return "explicit"
+  }
 }
 
 /** The installed signer decides which bundles may replace a package. */
@@ -450,6 +530,19 @@ async function downloadMiniAppZip(
   } finally {
     clearTimeout(timeout)
   }
+}
+
+/**
+ * Every release records the SHA-256 of the ZIP it installed, a bundled or release-QR install included, so Fleet can
+ * report it and an assignment can tell whether its URL serves the same bytes. Development snapshots record none.
+ */
+export async function withReleaseDigest(
+  identity: MiniappReleaseIdentity,
+  version: string,
+  bytes: Uint8Array,
+): Promise<MiniappReleaseIdentity> {
+  if (identity.bundleSha256 || version.startsWith("dev-")) return identity
+  return {...identity, bundleSha256: await sha256Hex(bytes)}
 }
 
 /**
@@ -805,6 +898,7 @@ class AppRegistry {
   /** Package names whose start() requires the on-device STT model (host-declared). */
   private sttModelRequired = new Set<string>()
   private refreshNeeded: boolean = true
+  private loaded = false
   private listeners = new Set<Listener>()
   private retainedDevVersions = new Map<string, Set<string>>()
 
@@ -828,6 +922,152 @@ class AppRegistry {
     const key = releaseIdentityKey(packageName, version)
     getInstallationMetadata().remove(key)
     storage.remove(key)
+    if (version.startsWith("dev-")) forgetDevSnapshotOwner(packageName, version)
+  }
+
+  /**
+   * Why `packageName` is installed. A package installed before reasons were recorded holds the reason its active
+   * release's provenance implies. Empty when it is not installed and holds no recorded reason.
+   */
+  public getInstallReasons(packageName: string): MiniappInstallReason[] {
+    const stored = readStoredInstallReasons(packageName)
+    if (stored) return [...stored.reasons]
+    const version = this.getActiveReleaseVersion(packageName)
+    if (version === null) return []
+    return [inferredInstallReason(this.getReleaseIdentity(packageName, version))]
+  }
+
+  /**
+   * The installed release (not a `dev-*` snapshot) that stands for the package: the stored active version when it
+   * is a release on disk, else the newest release. Null when only development builds are on disk. Reads only.
+   */
+  public getActiveReleaseVersion(packageName: string): string | null {
+    const versions = this.getInstalledVersions(packageName).filter((version) => !version.startsWith("dev-"))
+    if (versions.length === 0) return null
+    const active = storage.load<string>(activeVersionKey(packageName))
+    if (active.is_ok() && versions.includes(active.value)) return active.value
+    return versions.filter((candidate) => semver.valid(candidate)).sort(semver.rcompare)[0] ?? versions[0]
+  }
+
+  /** True once the installed miniapps have been read from disk (the first `getInstalledMiniapps`). */
+  public isLoaded(): boolean {
+    return this.loaded
+  }
+
+  /** The assignment behind the package's `assignment` reason, or null. */
+  public getMiniappAssignment(packageName: string): MiniappAssignment | null {
+    return readStoredInstallReasons(packageName)?.assignment ?? null
+  }
+
+  /** Every installed package holding an `assignment` reason, whichever account's assignment recorded it. */
+  public getAssignedPackages(): string[] {
+    return this.getPackageNames().filter((packageName) =>
+      readStoredInstallReasons(packageName)?.reasons.includes("assignment"),
+    )
+  }
+
+  /** A live-development URL, build or snapshot would run for the package instead of its installed release. */
+  public hasDevelopmentSelection(packageName: string): boolean {
+    return (
+      readDevAppRecord(packageName) !== null ||
+      storage.load<string>(`${packageName}_dev_url`).is_ok() ||
+      this.chooseActiveVersion(packageName).version?.startsWith("dev-") === true
+    )
+  }
+
+  /**
+   * Clear the package's live-development selection and its development builds, as a release install does, so
+   * launching runs its installed release. Serialized with installs.
+   */
+  public clearDevelopmentSelection(packageName: string): Promise<void> {
+    return runInstallFilesystemTransaction(async () => {
+      invalidateDevSnapshotRequests(packageName)
+      this.clearDevArtifacts(packageName)
+      const active = storage.load<string>(activeVersionKey(packageName))
+      if (active.is_ok() && active.value.startsWith("dev-")) storage.remove(activeVersionKey(packageName))
+      this.refreshNeeded = true
+      this.notify()
+    })
+  }
+
+  /** Add the `assignment` reason (or replace its assignment), keeping every other reason. */
+  public setMiniappAssignment(packageName: string, assignment: MiniappAssignment): void {
+    this.recordAssignment(packageName, assignment)
+    this.notify()
+  }
+
+  /** Remove the `assignment` reason. Returns the reasons that remain. Uninstalls nothing. */
+  public clearMiniappAssignment(packageName: string): MiniappInstallReason[] {
+    const remaining = this.getInstallReasons(packageName).filter((reason) => reason !== "assignment")
+    writeStoredInstallReasons(packageName, {reasons: remaining})
+    this.notify()
+    return remaining
+  }
+
+  /** Add a reason other than `assignment` (which needs {@link setMiniappAssignment}). */
+  public addInstallReason(packageName: string, reason: Exclude<MiniappInstallReason, "assignment">): void {
+    this.recordInstallReason(packageName, reason)
+    this.notify()
+  }
+
+  /** The reasons a package holds while `replaced`, the identity of a release being replaced in place, is hidden. */
+  private installReasonsReplacing(
+    packageName: string,
+    replaced: MiniappReleaseIdentity | null,
+  ): MiniappInstallReason[] {
+    const reasons = this.getInstallReasons(packageName)
+    if (reasons.length > 0 || readStoredInstallReasons(packageName) || !replaced) return reasons
+    return [inferredInstallReason(replaced)]
+  }
+
+  /** Writes without notifying: the install transaction notifies once its files commit. */
+  private recordAssignment(
+    packageName: string,
+    assignment: MiniappAssignment,
+    current: MiniappInstallReason[] = this.getInstallReasons(packageName),
+  ): void {
+    const reasons = new Set(current)
+    reasons.add("assignment")
+    writeStoredInstallReasons(packageName, {
+      reasons: MINIAPP_INSTALL_REASONS.filter((reason) => reasons.has(reason)),
+      assignment,
+    })
+  }
+
+  private recordInstallReason(
+    packageName: string,
+    reason: Exclude<MiniappInstallReason, "assignment">,
+    current: MiniappInstallReason[] = this.getInstallReasons(packageName),
+  ): void {
+    const stored = readStoredInstallReasons(packageName)
+    const reasons = new Set(current)
+    reasons.add(reason)
+    writeStoredInstallReasons(packageName, {
+      reasons: MINIAPP_INSTALL_REASONS.filter((candidate) => reasons.has(candidate)),
+      ...(stored?.assignment ? {assignment: stored.assignment} : {}),
+    })
+  }
+
+  /**
+   * Revocation: the miniapp's server stopped admitting this account. Its installed bundles no longer resolve, so it
+   * cannot launch, whatever its reasons (a manual install included). Nothing is uninstalled and no data changes.
+   */
+  public revokeMiniappAccess(packageName: string): void {
+    if (this.isMiniappAccessRevoked(packageName)) return
+    getInstallationMetadata().set(revokedAccessKey(packageName), JSON.stringify(true))
+    this.refreshNeeded = true
+    this.notify()
+  }
+
+  public restoreMiniappAccess(packageName: string): void {
+    if (!this.isMiniappAccessRevoked(packageName)) return
+    getInstallationMetadata().remove(revokedAccessKey(packageName))
+    this.refreshNeeded = true
+    this.notify()
+  }
+
+  public isMiniappAccessRevoked(packageName: string): boolean {
+    return getInstallationMetadata().getString(revokedAccessKey(packageName)) !== undefined
   }
 
   private static instance: AppRegistry | null = null
@@ -985,6 +1225,7 @@ class AppRegistry {
     packageName: string,
     version: string,
   ): {background: string | null; ui: string | null} | null {
+    if (this.isMiniappAccessRevoked(packageName)) return null
     const manifest = this.getMiniappManifest(packageName, version) as {
       entry?: {background?: string; ui?: string}
     } | null
@@ -1162,6 +1403,8 @@ class AppRegistry {
     adoptExisting?: AdoptExistingBundle,
   ): Promise<InstalledBundle> {
     const expected = {packageName: opts?.expectedPackageName, version: opts?.expectedVersion}
+    if (opts?.installReason === "assignment" && !opts.assignment)
+      throw new Error("An assignment install must name its assignment")
     opts?.onProgress?.("verifying")
     const manifest = await validateInstallBundleArchive(bytes, expected)
     // The artifact must be the package and version its source selected.
@@ -1175,7 +1418,7 @@ class AppRegistry {
       source: version.startsWith("dev-") ? "dev_snapshot" : localZip ? "bundled_asset" : "direct_download",
     }
     const releaseIdentity: MiniappReleaseIdentity = {
-      ...callerIdentity,
+      ...(await withReleaseDigest(callerIdentity, version, bytes)),
       ...(manifest.publisherKeyFingerprint ? {publisherKeyFingerprint: manifest.publisherKeyFingerprint} : {}),
     }
     const validateTrust = () => {
@@ -1197,8 +1440,13 @@ class AppRegistry {
           rejectExistingVersion: opts?.rejectExistingVersion,
         },
         ({packageName, version: installedVersion}, activation) =>
-          this.finalizeInstall(packageName, installedVersion, releaseIdentity, (state) =>
-            activation.recordRecoveryState(state),
+          this.finalizeInstall(
+            packageName,
+            installedVersion,
+            releaseIdentity,
+            (state) => activation.recordRecoveryState(state),
+            opts?.installReason,
+            opts?.assignment,
           ),
         () => {
           validateTrust()
@@ -1229,6 +1477,8 @@ class AppRegistry {
     version: string,
     releaseIdentity: MiniappReleaseIdentity,
     recordRecoveryState: (serializedState: string) => void,
+    installReason?: MiniappInstallReason,
+    assignment?: MiniappAssignment,
   ): InstallFinalization {
     const publisherKey = publisherIdentityKey(packageName)
     const releaseKey = releaseIdentityKey(packageName, version)
@@ -1245,6 +1495,10 @@ class AppRegistry {
           DEV_ROUTING_FIELDS.map((field) => [field, snapshotStorage(`${packageName}_dev_${field}`)]),
         ) as DevRoutingSnapshot)
       : undefined
+    const reasonsKey = installReasonsKey(packageName)
+    const reasonsBefore = installReason ? snapshotInstallationMetadata<StoredInstallReasons>(reasonsKey) : undefined
+    // The pending activation hides a replaced same-version release from inference: take the reasons it held.
+    const reasonsAtActivation = installReason ? this.installReasonsReplacing(packageName, previousRelease) : []
 
     const rollbackJournal: InstallMetadataRollbackJournal = {
       schemaVersion: 1,
@@ -1254,6 +1508,7 @@ class AppRegistry {
       release: releaseBefore,
       active: activeBefore,
       ...(devRoutingBefore ? {devRouting: devRoutingBefore} : {}),
+      ...(reasonsBefore ? {reasons: reasonsBefore} : {}),
     }
     recordRecoveryState(JSON.stringify(rollbackJournal))
 
@@ -1266,6 +1521,9 @@ class AppRegistry {
         () => restoreStorage(activeKey, activeBefore),
         () => restoreInstallationMetadata(releaseKey, releaseBefore),
         () => restoreInstallationMetadata(publisherKey, publisherBefore),
+        () => {
+          if (reasonsBefore) restoreInstallationMetadata(reasonsKey, reasonsBefore)
+        },
       ]) {
         try {
           restore()
@@ -1295,6 +1553,9 @@ class AppRegistry {
           getInstallationMetadata().set(publisherKey, JSON.stringify(releaseIdentity.publisherKeyFingerprint))
         }
         getInstallationMetadata().set(releaseKey, JSON.stringify(releaseIdentity))
+        if (installReason === "assignment") this.recordAssignment(packageName, assignment!, reasonsAtActivation)
+        else if (installReason) this.recordInstallReason(packageName, installReason, reasonsAtActivation)
+        if (!releaseInstall) recordDevSnapshotOwner(packageName, version)
         // Do not notify until the pending filesystem marker has committed.
         // A subscriber scanning here would exclude the pending version and
         // could replace this pointer with the previous installed release.
@@ -1464,8 +1725,12 @@ class AppRegistry {
   /** An explicitly selected packed snapshot takes precedence over scanned live URLs. */
   public getSelectedDevSnapshot(packageName: string): string | null {
     const selected = storage.load<string>(`${packageName}_dev_selected_snapshot`)
-    return selected.is_ok() && selected.value.startsWith("dev-") && this.getInstalledVersions(packageName).includes(selected.value)
-      ? selected.value : null
+    return selected.is_ok() &&
+      selected.value.startsWith("dev-") &&
+      this.getInstalledVersions(packageName).includes(selected.value) &&
+      isDevSnapshotVisible(packageName, selected.value)
+      ? selected.value
+      : null
   }
 
   public selectDevSnapshot(packageName: string, version: string | null): void {
@@ -1522,6 +1787,11 @@ class AppRegistry {
         // install again. Android's uninstall-then-install, for the same reason.
         if (this.getInstalledVersions(packageName).length === 0) {
           restoreInstallationMetadata(publisherIdentityKey(packageName), {present: false})
+          getInstallationMetadata().remove(installReasonsKey(packageName))
+          // Clear the revocation flag too: it blocks getMiniappEntryPaths and
+          // launch, so leaving it set would make a later QR/store/manual
+          // reinstall of the same package permanently unusable on this device.
+          getInstallationMetadata().remove(revokedAccessKey(packageName))
         }
         this.refreshNeeded = true
         this.notify()
@@ -1572,13 +1842,23 @@ class AppRegistry {
   }
 
   public async getActiveVersion(packageName: string): Promise<string | undefined> {
-    let versions = this.getInstalledVersions(packageName)
+    const {version, remember} = this.chooseActiveVersion(packageName)
+    if (remember) this.setActiveVersion(packageName, remember)
+    return version
+  }
+
+  /** The version a launch runs, by launch precedence, and the active pointer to store for it (null to leave it). */
+  private chooseActiveVersion(packageName: string): {version: string | undefined; remember: string | null} {
+    // Another account's or workspace's dev snapshot is not an installation here.
+    let versions = this.getInstalledVersions(packageName).filter((version) =>
+      isDevSnapshotVisible(packageName, version),
+    )
     // A developer build only stands in while the deployment allows development.
     // A stored dev snapshot pointer is left alone so re-allowing it brings that
     // scan back; until then a released version stays on screen.
     const devAllowed = isDevMiniappAllowed(packageName)
     const selectedSnapshot = devAllowed ? this.getSelectedDevSnapshot(packageName) : null
-    if (selectedSnapshot) return selectedSnapshot
+    if (selectedSnapshot) return {version: selectedSnapshot, remember: null}
     // Treat MMKV as a hint, not authority. A stored version may have been
     // GC'd off disk without this pointer being updated.
     const res = storage.load<string>(`${packageName}_active_version`)
@@ -1587,7 +1867,7 @@ class AppRegistry {
       versions.includes(res.value) &&
       (devAllowed || !this.isDeveloperVersion(packageName, res.value))
     ) {
-      return res.value
+      return {version: res.value, remember: null}
     }
     // Dev versions take precedence over semver-installed versions.
     if (devAllowed) {
@@ -1595,21 +1875,17 @@ class AppRegistry {
         .filter((v) => v.startsWith("dev-"))
         .sort()
         .reverse()
-      if (devVersions.length > 0) {
-        this.setActiveVersion(packageName, devVersions[0])
-        return devVersions[0]
-      }
+      if (devVersions.length > 0) return {version: devVersions[0], remember: devVersions[0]}
     }
     versions = versions.filter((v) => semver.valid(v))
     versions.sort((a, b) => semver.rcompare(a, b))
-    if (!versions.length) return undefined
+    if (!versions.length) return {version: undefined, remember: null}
     // The newest release the deployment allows, e.g. a workspace's managed
     // release over a newer release-QR or Store install that it does not.
     const active =
       versions.find((v) => isInstalledMiniappAllowed(packageName, v, this.getReleaseIdentity(packageName, v))) ??
       versions[0]
-    if (!(res.is_ok() && res.value.startsWith("dev-"))) this.setActiveVersion(packageName, active)
-    return active
+    return {version: active, remember: res.is_ok() && res.value.startsWith("dev-") ? null : active}
   }
 
   public setActiveVersion(packageName: string, version: string): Result<void, Error> {
@@ -1632,7 +1908,7 @@ class AppRegistry {
    */
   public getLatestDevSnapshotVersion(packageName: string): string | null {
     const versions = this.getInstalledVersions(packageName)
-      .filter((v) => v.startsWith("dev-"))
+      .filter((v) => v.startsWith("dev-") && isDevSnapshotVisible(packageName, v))
       .sort()
       .reverse()
     for (const version of versions) {
@@ -1795,6 +2071,10 @@ class AppRegistry {
 
       this.cachedApps = out
       this.refreshNeeded = false
+      if (!this.loaded) {
+        this.loaded = true
+        this.notify()
+      }
       return this.mergeProjectedApps(this.cachedApps, includeBackgroundOnly)
     } catch (error) {
       console.error("APP_REGISTRY: Error getting local applets", error)
@@ -2252,3 +2532,8 @@ export function getDevAppRecords(): DevAppRecord[] {
 
 const appRegistry = AppRegistry.getInstance()
 export default appRegistry
+
+/** Whether a Fleet assignment is one of the reasons `packageName` is installed. */
+export function hasAssignmentReason(packageName: string): boolean {
+  return appRegistry.getInstallReasons(packageName).includes("assignment")
+}

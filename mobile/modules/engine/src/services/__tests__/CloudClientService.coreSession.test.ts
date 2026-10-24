@@ -1,9 +1,19 @@
 /// <reference types="bun-types" />
 
 import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
-import {AuthExpiredError, AuthUnavailableError, HttpError, SessionRevocationError} from "@mentra/cloud-client"
+import {
+  AuthExpiredError,
+  AuthUnavailableError,
+  CoreRequestError,
+  CoreResponseError,
+  HttpError,
+  SessionChangedError,
+  SessionRevocationError,
+} from "@mentra/cloud-client"
 import type {FleetReport} from "@mentra/cloud-protocol"
 
+import {Fleet} from "../../../../../../cloud-v2/packages/cloud-client/src/modules/core/fleet"
+import {createHttpClient} from "../../../../../../cloud-v2/packages/cloud-client/src/http"
 import type {FleetSendOutcome} from "../CloudClientService"
 
 import {bluetoothSdk} from "./bluetoothSdkTestMock"
@@ -91,11 +101,36 @@ class FakeAuth {
 
 const ACK: FleetSendOutcome = {kind: "results", ack: {schemaVersion: 1, results: []}}
 
+/**
+ * Core's answer to `GET /api/client/fleet/desired-state`, through the real cloud-client HTTP client and `Fleet` (the
+ * production status, body and account checks): a response, a transport failure, or a request held until released.
+ */
+let desiredStateAnswer: () => Response | Promise<Response> = () => new Response(null, {status: 204})
+const desiredStateRequests: string[] = []
+const desiredStateHttp = createHttpClient({
+  baseUrl: CORE_X,
+  logger: {debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined},
+  fetch: (async (input: unknown, init?: RequestInit) => {
+    desiredStateRequests.push(String((init?.headers as Record<string, string>)?.Authorization ?? ""))
+    void input
+    return desiredStateAnswer()
+  }) as unknown as Parameters<typeof createHttpClient>[0]["fetch"],
+  timers: {
+    setTimeout(callback: () => void) {
+      queueMicrotask(callback)
+      return 0
+    },
+    clearTimeout: () => undefined,
+    setInterval: () => 0,
+    clearInterval: () => undefined,
+  },
+})
+
 class FakeCloudClient {
   static built: FakeCloudClient[] = []
   private readonly connectedHandlers: Array<() => void> = []
   readonly auth = new FakeAuth()
-  readonly core?: {fleet: {report: ReturnType<typeof mock>}}
+  readonly core?: {fleet: {report: ReturnType<typeof mock>; desiredState: Fleet["desiredState"]}}
   readonly runtime = {
     onStatusChanged: () => () => {},
     onTranscript: () => () => {},
@@ -113,7 +148,10 @@ class FakeCloudClient {
 
   constructor(readonly config: {endpoints: {core?: string; runtime: string}}) {
     FakeCloudClient.built.push(this)
-    if (config.endpoints.core) this.core = {fleet: {report: mock(async () => ACK)}}
+    if (config.endpoints.core) {
+      const fleet = new Fleet(desiredStateHttp, this.auth)
+      this.core = {fleet: {report: mock(async () => ACK), desiredState: fleet.desiredState.bind(fleet)}}
+    }
   }
 
   /** The Runtime's live session comes up. */
@@ -190,7 +228,7 @@ mock.module("../../utils/timers", () => ({
   BgTimer: {setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {}},
 }))
 
-const {cloudClientService} = await import("../CloudClientService")
+const {cloudClientService, fleetDesiredStateClient} = await import("../CloudClientService")
 type CoreSessionChange = Parameters<Parameters<typeof cloudClientService.onCoreSessionChanged>[0]>[0]
 
 const IDENTITY_KEY = "mentra.localMiniapp.userId"
@@ -444,6 +482,154 @@ describe("sending a Fleet batch as an account", () => {
       cloudClientService.core.fleet.reportAs({coreUrl: CORE_X, mentraUserId: A}, BATCH, {signal: controller.signal}),
     ).rejects.toBeDefined()
     expect(reportOf(latest())).not.toHaveBeenCalled()
+  })
+})
+
+describe("the reconciler's desired-state client", () => {
+  const T = "2026-10-21T09:30:00Z"
+  const managed = {
+    status: "managed",
+    revision: 5,
+    generatedAt: T,
+    workspace: {workspaceId: "ws_1", name: "Ridgeline"},
+    entries: [
+      {
+        assignmentId: "asg_1",
+        revision: 2,
+        url: "https://private.example.com/miniapp",
+        packageName: "com.example.private",
+        selection: "latest",
+      },
+    ],
+  }
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), {status, headers: {"Content-Type": "application/json"}})
+
+  beforeEach(() => {
+    desiredStateRequests.length = 0
+    desiredStateAnswer = () => json(200, managed)
+  })
+
+  test("resolves with a complete answer, fetched as the client's account", async () => {
+    cloudClientService.init()
+    await settle()
+    expect(await fleetDesiredStateClient.fetch()).toEqual(managed as never)
+    expect(desiredStateRequests).toEqual([`Bearer ${tokenFor(A)}`])
+    desiredStateAnswer = () => json(200, {status: "unmanaged", revision: 6, generatedAt: T})
+    expect((await fleetDesiredStateClient.fetch()).status).toBe("unmanaged")
+  })
+
+  const failures: Array<[string, () => Response | Promise<Response>, (error: unknown) => void]> = [
+    [
+      "503 fleet_unavailable",
+      () => json(503, {error: "fleet_unavailable"}),
+      (e) => expectStatus(e, 503, "fleet_unavailable"),
+    ],
+    [
+      "404 fleet_not_installed",
+      () => json(404, {error: "fleet_not_installed"}),
+      (e) => expectStatus(e, 404, "fleet_not_installed"),
+    ],
+    ["404 without Fleet's code", () => new Response("not found", {status: 404}), (e) => expectStatus(e, 404)],
+    ["403", () => json(403, {error: "forbidden"}), (e) => expectStatus(e, 403)],
+    ["429", () => json(429, {error: "rate_limited"}), (e) => expectStatus(e, 429)],
+    ["500", () => json(500, {error: "internal"}), (e) => expectStatus(e, 500)],
+    [
+      "a network failure",
+      () => {
+        throw new TypeError("Network request failed")
+      },
+      (e) => expectStatus(e, 0, "network_error"),
+    ],
+    ["an unknown status", () => json(200, {...managed, status: "paused"}), (e) => expectResponse(e, "unknown_status")],
+    ["a body that is not desired state", () => json(200, {hello: "world"}), (e) => expectResponse(e, "invalid_shape")],
+    [
+      "a partial answer",
+      () => json(200, {...managed, workspace: undefined}),
+      (e) => expectResponse(e, "invalid_shape"),
+    ],
+    [
+      "an entry without its URL",
+      () => json(200, {...managed, entries: [{...managed.entries[0], url: undefined}]}),
+      (e) => expectResponse(e, "invalid_shape"),
+    ],
+    ["an empty 200", () => new Response(null, {status: 200}), (e) => expect(e).toBeInstanceOf(CoreResponseError)],
+  ]
+
+  function expectStatus(error: unknown, status: number, code?: string): void {
+    expect(error).toBeInstanceOf(CoreRequestError)
+    expect((error as CoreRequestError).status).toBe(status)
+    if (code) expect((error as CoreRequestError).code).toBe(code)
+  }
+
+  function expectResponse(error: unknown, reason: string): void {
+    expect(error).toBeInstanceOf(CoreResponseError)
+    expect((error as CoreResponseError).reason).toBe(reason)
+  }
+
+  for (const [name, answer, check] of failures) {
+    test(`rejects for ${name}`, async () => {
+      cloudClientService.init()
+      await settle()
+      desiredStateAnswer = answer
+      const error = await fleetDesiredStateClient.fetch().then(
+        (value) => ({resolved: value}),
+        (reason: unknown) => reason,
+      )
+      check(error)
+    })
+  }
+
+  test("rejects, fetching nothing, without a client or without an account", async () => {
+    await expect(fleetDesiredStateClient.fetch()).rejects.toBeInstanceOf(SessionChangedError)
+    expect(FakeCloudClient.built).toEqual([])
+    nextTokenMode = new AuthExpiredError()
+    cloudClientService.init()
+    await settle()
+    await expect(fleetDesiredStateClient.fetch()).rejects.toBeDefined()
+    expect(desiredStateRequests).toEqual([])
+  })
+
+  test("rejects an answer that comes back after the account changed", async () => {
+    cloudClientService.init()
+    await settle()
+    let release!: () => void
+    desiredStateAnswer = () =>
+      new Promise<Response>((resolve) => {
+        release = () => resolve(json(200, managed))
+      })
+    const fetching = fleetDesiredStateClient.fetch()
+    await settle()
+    latest().auth.account = B
+    release()
+    await expect(fetching).rejects.toBeInstanceOf(SessionChangedError)
+  })
+
+  test("rejects an answer that comes back after the client was rebuilt", async () => {
+    cloudClientService.init()
+    await settle()
+    let release!: () => void
+    desiredStateAnswer = () =>
+      new Promise<Response>((resolve) => {
+        release = () => resolve(json(200, managed))
+      })
+    const fetching = fleetDesiredStateClient.fetch()
+    await settle()
+    cloudClientService.reconnect()
+    release()
+    await expect(fetching).rejects.toBeInstanceOf(SessionChangedError)
+  })
+
+  test("desiredStateAs refuses another Core or another account before sending", async () => {
+    cloudClientService.init()
+    await settle()
+    await expect(
+      cloudClientService.core.fleet.desiredStateAs({coreUrl: CORE_Y, mentraUserId: A}),
+    ).rejects.toBeInstanceOf(SessionChangedError)
+    await expect(
+      cloudClientService.core.fleet.desiredStateAs({coreUrl: CORE_X, mentraUserId: B}),
+    ).rejects.toBeInstanceOf(SessionChangedError)
+    expect(desiredStateRequests).toEqual([])
   })
 })
 

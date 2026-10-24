@@ -16,7 +16,7 @@ import {
   updateMiniappPolicy,
   updateUiSeams,
 } from "./runtime/bootstrap"
-import {cloudClientService} from "./services/CloudClientService"
+import {cloudClientService, fleetDesiredStateClient} from "./services/CloudClientService"
 import {hydrateDeviceStore, demoteOrphanedDefaultWearable} from "./services/DeviceStoreHydration"
 import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
 import {
@@ -28,6 +28,9 @@ import {startOtaService, stopOtaService} from "./services/OtaService"
 import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloudUplink"
 import {startSupportProfileSync, stopSupportProfileSync} from "./services/SupportProfileSync"
 import {startFleetReporter, stopFleetReporter} from "./services/fleet/FleetReporter"
+import {startAssignmentReconciler, stopAssignmentReconciler} from "./services/fleet/assignmentReconcilerHost"
+import {setFleetInventorySource} from "./services/fleet/fleetCollector"
+import {registryInventorySource} from "./services/fleet/registryInventorySource"
 import {startDeviceEventRouter, stopDeviceEventRouter} from "./services/DeviceEventRouter"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
 import {
@@ -124,7 +127,9 @@ export const engine = {
       // Fleet: after the token sync above, so the account is usually known and the collector starts synchronously,
       // here inside start(), before the host restores miniapps (MantleManager awaits engine.start() before
       // autostartLocalMiniapps()). When the account is not known yet, those launches wait for the collector.
+      setFleetInventorySource(registryInventorySource)
       startFleetReporter()
+      startAssignmentReconciler(fleetDesiredStateClient)
     }
     // Push device-setting changes to the glasses for ANY host, so
     // engine.glasses.settings.set() reaches the device (not just the Mentra app).
@@ -166,7 +171,9 @@ export const engine = {
     await safely("ota service", stopOtaService)
     await safely("audio cloud uplink", stopAudioCloudUplink)
     await safely("support profile sync", stopSupportProfileSync)
+    await safely("assignment reconciler", stopAssignmentReconciler)
     await safely("fleet reporter", stopFleetReporter)
+    await safely("fleet inventory source", () => setFleetInventorySource(null))
     await safely("phone notifications sync", stopPhoneNotificationsSync)
     await safely("mentrajs crashloop report service", stopMentraJSCrashloopReportService)
     await safely("bes crash report service", stopBesCrashReportService)

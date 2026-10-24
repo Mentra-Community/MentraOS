@@ -15,6 +15,11 @@ function step(label: string, result?: () => unknown) {
 let hasCore = true
 const startFleetReporter = step("fleet.start")
 const stopFleetReporter = step("fleet.stop", async () => {})
+const startAssignmentReconciler = step("reconciler.start")
+const stopAssignmentReconciler = step("reconciler.stop")
+const setFleetInventorySource = step("inventory.set")
+const fleetDesiredStateClient = {fetch: async () => ({})}
+const registryInventorySource = {list: () => null, subscribe: () => () => {}}
 
 mock.module("../runtime/bootstrap", () => ({
   configure: step("configure"),
@@ -31,8 +36,12 @@ mock.module("../services/CloudClientService", () => ({
     syncCoreTokenToBluetooth: step("cloud.syncCoreToken", async () => "token"),
     stop: step("cloud.stop"),
   },
+  fleetDesiredStateClient,
 }))
 mock.module("../services/fleet/FleetReporter", () => ({startFleetReporter, stopFleetReporter}))
+mock.module("../services/fleet/assignmentReconcilerHost", () => ({startAssignmentReconciler, stopAssignmentReconciler}))
+mock.module("../services/fleet/fleetCollector", () => ({setFleetInventorySource}))
+mock.module("../services/fleet/registryInventorySource", () => ({registryInventorySource}))
 mock.module("../services/DeviceStoreHydration", () => ({
   hydrateDeviceStore: step("hydrateDeviceStore", async () => {}),
   demoteOrphanedDefaultWearable: step("demoteOrphanedDefaultWearable", async () => {}),
@@ -115,6 +124,9 @@ beforeEach(() => {
   hasCore = true
   startFleetReporter.mockClear()
   stopFleetReporter.mockClear()
+  startAssignmentReconciler.mockClear()
+  stopAssignmentReconciler.mockClear()
+  setFleetInventorySource.mockClear()
 })
 
 describe("engine.start()", () => {
@@ -129,10 +141,23 @@ describe("engine.start()", () => {
     }
   })
 
+  test("wires the registry's inventory before the reporter, and starts the reconciler with the desired-state client after it", async () => {
+    await engine.start()
+    const at = (label: string) => calls.indexOf(label)
+    expect(setFleetInventorySource).toHaveBeenCalledWith(registryInventorySource)
+    expect(startAssignmentReconciler).toHaveBeenCalledTimes(1)
+    expect(startAssignmentReconciler).toHaveBeenCalledWith(fleetDesiredStateClient)
+    expect(at("inventory.set")).toBeLessThan(at("fleet.start"))
+    expect(at("fleet.start")).toBeLessThan(at("reconciler.start"))
+    expect(at("reconciler.start")).toBeLessThan(at("localMiniappRuntime.initialize"))
+  })
+
   test("does not start Fleet without a Core", async () => {
     hasCore = false
     await engine.start()
     expect(startFleetReporter).not.toHaveBeenCalled()
+    expect(startAssignmentReconciler).not.toHaveBeenCalled()
+    expect(setFleetInventorySource).not.toHaveBeenCalled()
   })
 })
 
@@ -152,5 +177,25 @@ describe("engine.stop()", () => {
     expect(stopFleetReporter).toHaveBeenCalledTimes(1)
     expect(calls.indexOf("fleet.stop")).toBeLessThan(calls.indexOf("cloud.stop"))
     expect(calls).toContain("bootstrap.stop")
+  })
+
+  test("stops the reconciler and unwires the inventory, both before the cloud client, even when the reconciler stop throws", async () => {
+    stopAssignmentReconciler.mockImplementationOnce(() => {
+      calls.push("reconciler.stop")
+      throw new Error("reconciler stop failed")
+    })
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      await engine.stop()
+    } finally {
+      console.warn = warn
+    }
+    const at = (label: string) => calls.indexOf(label)
+    expect(stopAssignmentReconciler).toHaveBeenCalledTimes(1)
+    expect(setFleetInventorySource).toHaveBeenCalledWith(null)
+    expect(at("reconciler.stop")).toBeLessThan(at("fleet.stop"))
+    expect(at("fleet.stop")).toBeLessThan(at("inventory.set"))
+    expect(at("inventory.set")).toBeLessThan(at("cloud.stop"))
   })
 })

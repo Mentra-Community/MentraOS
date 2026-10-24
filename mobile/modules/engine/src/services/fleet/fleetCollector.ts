@@ -26,6 +26,17 @@
  * new. A phone with no glasses connected and the Mentra App in the background so writes about 100 records a day, a
  * checkpoint every 15 minutes, whether or not miniapps execute in the background or its glasses are being retried.
  *
+ * Every snapshot carries the phone's own battery. The collector asks its source (`PhoneBatterySource`) for a new reading
+ * only at start and on each checkpoint wake-up, and a reading is worth a snapshot of its own on the same terms as the
+ * glasses' battery: once it is first known or stops being known, after a move of 5 points, or a charging change. A
+ * phone draining all day so adds about 20 snapshots, not one per reading.
+ *
+ * The installed miniapps are reported as a `miniapp_inventory` record: once when a run starts (a new run is a new
+ * account's or a new process's, which has never been told), and again, after a short settle, whenever the inventory
+ * source says it changed and what it lists is not what the last record said. Never in a snapshot. The source is
+ * injected (`InventorySource`); until the app wires one the collector sends no inventory, as it cannot tell an empty
+ * phone from an unwired one.
+ *
  * Time counts only while the collector was watching. The monotonic clock (React Native's `performance.now()`, the C++
  * steady clock) runs while the device is awake on both platforms, but not the same way through sleep, and the rules
  * below handle both:
@@ -46,10 +57,14 @@ import * as Device from "expo-device"
 import {AppState, Platform} from "react-native"
 import {
   FLEET_CAPABILITIES,
+  FLEET_INSTALL_REASONS,
   FLEET_LIMITS,
   FLEET_SCHEMA_VERSION,
+  FleetMiniappInventoryPayloadSchema,
   type FleetActivity,
   type FleetDeviceBinding,
+  type FleetInstallReason,
+  type FleetMiniappInventoryPayload,
   type FleetRecord,
 } from "@mentra/cloud-protocol"
 
@@ -60,6 +75,7 @@ import {nativeMiniappExecution} from "../NativeMiniappExecution"
 import {fleetEvents, type FleetLaunchEvent, type FleetPhotoEvent} from "./fleetEvents"
 import {newId, phoneDeviceId} from "./fleetIds"
 import type {FleetQueue} from "./fleetQueue"
+import {appPhoneBattery} from "./phoneBatterySource"
 import {
   glassesProduct,
   isSimulatedGlasses,
@@ -81,10 +97,50 @@ export interface FleetCollector {
   flushCheckpoint(): void
 }
 
+/** One installed miniapp, as the inventory source reports it. Its reasons are why it is installed, not where it came from. */
+export interface InstalledMiniapp {
+  packageName: string
+  versionName: string
+  /** The installed release's digest. */
+  digest: string
+  /** Why the phone holds it: `bundled`, `explicit`, `manifest` and `assignment`, which can hold together. At least one. */
+  reasons: readonly FleetInstallReason[]
+}
+
+/**
+ * Where the collector learns what is installed. The app's registry implements it (the wiring is the registry's side);
+ * tests fake it.
+ */
+export interface InventorySource {
+  /** The miniapps installed now, or null while that is not known yet (nothing is reported then). Must be cheap. */
+  list(): readonly InstalledMiniapp[] | null
+  /** `listener` is called, on any stack, after the installed set or any miniapp's version, digest or reasons changed. */
+  subscribe(listener: () => void): () => void
+}
+
+/** One reading of the phone's battery: `level` a whole percent from 0 to 100. */
+export interface PhoneBatteryReading {
+  level: number
+  charging: boolean
+}
+
+/**
+ * Where the collector learns the phone's battery. The app's is `appPhoneBattery` (expo-battery); tests fake it.
+ */
+export interface PhoneBatterySource {
+  /** The last reading; `unsupported` for a phone that cannot report one; null while none is known. Must be cheap. */
+  read(): PhoneBatteryReading | "unsupported" | null
+  /** Asks for a new reading, which arrives later through `subscribe`. Must be cheap. */
+  refresh(): void
+  /** `listener` is called, on any stack, after the reading changed. */
+  subscribe(listener: () => void): () => void
+}
+
 type Capability = (typeof FLEET_CAPABILITIES)[number]
 type UsageSession = Extract<FleetRecord, {kind: "usage_checkpoint"}>["payload"]["sessions"][number]
 type SnapshotPayload = Extract<FleetRecord, {kind: "snapshot"}>["payload"]
 type GlassesPayload = NonNullable<SnapshotPayload["glasses"]>
+type PhoneBatteryPayload = NonNullable<SnapshotPayload["phone"]["battery"]>
 type ConnectionState = GlassesPayload["connection"]["state"]
 type BatteryPayload = NonNullable<GlassesPayload["battery"]>
 type Firmware = NonNullable<GlassesPayload["firmware"]>
@@ -111,6 +167,8 @@ const SNAPSHOT_DEBOUNCE_MS = 2_000
  */
 const CLOCK_DRIFT_LIMIT_MS = 2 * 60_000
 const BATTERY_SNAPSHOT_STEP = 5
+/** Inventory changes this close together are one record: an install changes the set, then its reasons, then its digest. */
+const INVENTORY_DEBOUNCE_MS = 2_000
 /**
  * How long connected glasses may go without showing a serial number before they are identified without one. They send
  * it, with their Bluetooth address, within a second or two of connecting; this leaves ample room for a slow answer
@@ -148,7 +206,7 @@ const MODELS_WITHOUT_BATTERY: ReadonlySet<string> = new Set<string>()
 
 /**
  * What the phone measures without glasses. With glasses connected it measures all of them, less the battery of glasses
- * that cannot report one.
+ * that cannot report one. A phone that cannot report its own battery does not claim `phone_battery`.
  */
 const PHONE_CAPABILITIES: Capability[] = [
   "glasses_connection",
@@ -156,6 +214,7 @@ const PHONE_CAPABILITIES: Capability[] = [
   "app_foreground",
   "engine_active",
   "photo_operations",
+  "phone_battery",
 ]
 
 function warn(what: string, error: unknown): void {
@@ -170,6 +229,46 @@ function text(value: string | null | undefined): string | undefined {
 
 function iso(wall: number): string {
   return new Date(wall).toISOString()
+}
+
+/**
+ * The inventory record's payload for what the source lists, or null when there is nothing to send: the source does not
+ * know yet, or what it listed cannot make a valid record. A miniapp that cannot be described (no package, version or
+ * digest, or no known reason) is left out and counted in the warning, not allowed to sink the rest. The list is sorted
+ * by package, one entry per package, and a listing past the contract's 500 keeps the first 500, so the same phone always
+ * says the same thing.
+ */
+function inventoryPayload(listed: readonly InstalledMiniapp[] | null): FleetMiniappInventoryPayload | null {
+  if (listed === null) return null
+  const byPackage = new Map<string, FleetMiniappInventoryPayload["miniapps"][number]>()
+  let skipped = 0
+  for (const app of listed) {
+    const packageName = text(app?.packageName)
+    const versionName = text(app?.versionName)
+    const digest = text(app?.digest)
+    const reasons = FLEET_INSTALL_REASONS.filter((reason) => app?.reasons?.includes(reason))
+    if (!packageName || !versionName || !digest || reasons.length === 0) {
+      skipped += 1
+      continue
+    }
+    byPackage.set(packageName, {packageName, versionName, digest, reasons})
+  }
+  const miniapps = [...byPackage.values()]
+    .sort((a, b) => (a.packageName < b.packageName ? -1 : a.packageName > b.packageName ? 1 : 0))
+    .slice(0, FLEET_LIMITS.maxInventoryMiniapps)
+  if (skipped > 0 || byPackage.size > miniapps.length) {
+    console.warn(
+      `FleetCollector: the inventory left out ${skipped} undescribable and ${
+        byPackage.size - miniapps.length
+      } surplus miniapp(s)`,
+    )
+  }
+  const parsed = FleetMiniappInventoryPayloadSchema.safeParse({miniapps})
+  if (!parsed.success) {
+    console.warn("FleetCollector: no inventory, what the source listed is not a valid record")
+    return null
+  }
+  return parsed.data
 }
 
 function isForeground(): boolean {
@@ -354,8 +453,23 @@ interface BatteryReading {
   observedAt: number
 }
 
+type PhoneBatteryValue =
+  | {state: "measured"; level: number; charging: boolean}
+  | {state: "unsupported" | "unknown"; level?: undefined; charging?: undefined}
+/** The phone's battery as last read, and when the collector first saw it so. It is not refreshed by later snapshots. */
+type PhoneBatteryHeld = PhoneBatteryValue & {observedAt: number}
+
+/** A source's reading as a battery state: a level outside 0 to 100, or not a number, is unknown, never a number. */
+function phoneBatteryState(read: PhoneBatteryReading | "unsupported" | null): PhoneBatteryValue {
+  if (read === "unsupported") return {state: "unsupported"}
+  const level = read?.level
+  if (typeof level !== "number" || !Number.isFinite(level) || level < 0 || level > 100) return {state: "unknown"}
+  return {state: "measured", level: Math.round(level), charging: read?.charging === true}
+}
+
 /** What the last snapshot said, so a change worth a new snapshot can be told from one that is not. */
 interface SnapshotMarks {
+  phoneBattery: PhoneBatteryValue
   /** The binding of the glasses, once they are identified, as a key; "" before. */
   identity: string
   /** The glasses were connected. The states short of it (scanning, connecting, disconnected) are all "not". */
@@ -398,9 +512,53 @@ interface Env {
   now: () => number
   monotonic: () => number
   modelsWithoutBattery: ReadonlySet<string>
+  inventory: InventorySource
+  phoneBattery: PhoneBatterySource
 }
 
 const NONE: ReadonlySet<string> = new Set()
+
+/**
+ * The app's inventory source: the registry's side registers itself with `setFleetInventorySource`, and every collector
+ * the app creates reads through this. Until one is set it lists nothing known, so no inventory is sent. Setting one
+ * counts as a change.
+ */
+const inventoryListeners = new Set<() => void>()
+let appInventorySource: InventorySource | null = null
+let stopFollowingSource: (() => void) | null = null
+
+function notifyInventory(): void {
+  for (const listener of [...inventoryListeners]) {
+    try {
+      listener()
+    } catch (error) {
+      warn("inventory listener", error)
+    }
+  }
+}
+
+/** Wires (or, with null, unwires) the source of what is installed. */
+export function setFleetInventorySource(source: InventorySource | null): void {
+  stopFollowingSource?.()
+  stopFollowingSource = null
+  appInventorySource = source
+  if (source) {
+    try {
+      stopFollowingSource = source.subscribe(notifyInventory)
+    } catch (error) {
+      warn("following the inventory source", error)
+    }
+  }
+  notifyInventory()
+}
+
+const appInventory: InventorySource = {
+  list: () => appInventorySource?.list() ?? null,
+  subscribe(listener) {
+    inventoryListeners.add(listener)
+    return () => void inventoryListeners.delete(listener)
+  },
+}
 
 /** One collector run: everything a `start()` opens, and everything `stop()` closes. */
 class CollectorRun {
@@ -426,6 +584,9 @@ class CollectorRun {
   private checkpointTimer: number | null = null
   private checkpointDueMono = 0
   private snapshotDebounce: number | null = null
+  private inventoryDebounce: number | null = null
+  /** What the last inventory record of this run said, so a change that left the listing as it was writes nothing. */
+  private lastInventoryKey: string | null = null
   /** When the last snapshot was written (monotonic), and what it said, so a repeat of it can be skipped. */
   private lastSnapshotMono = 0
   private lastSnapshotKey: string | null = null
@@ -433,6 +594,7 @@ class CollectorRun {
   private known: KnownGlasses | null = null
   private heldPhotos: HeldPhoto[] = []
   private battery: BatteryReading | null = null
+  private phoneBattery: PhoneBatteryHeld | null = null
   private connection: {state: ConnectionState; observedAt: number} = {state: "disconnected", observedAt: 0}
   private marks: SnapshotMarks | null = null
 
@@ -475,8 +637,14 @@ class CollectorRun {
       }),
     )
     this.cleanups.push(() => appState.remove())
+    this.cleanups.push(this.env.phoneBattery.subscribe(() => this.guard("phone battery", () => this.onPhoneBattery())))
+    this.refreshPhoneBattery()
 
     this.takeSnapshot()
+    this.cleanups.push(
+      this.env.inventory.subscribe(() => this.guard("inventory change", () => this.scheduleInventory())),
+    )
+    this.takeInventory(true)
     // Launches the engine made before this run could listen: it restores miniapps while the account may still be
     // being resolved, and the reporter discards them when the account changes, so these are this run's account's.
     for (const {event, observedAt} of fleetEvents.takeUndeliveredLaunches()) {
@@ -508,7 +676,8 @@ class CollectorRun {
     if (this.checkpointTimer !== null) BgTimer.clearTimeout(this.checkpointTimer)
     if (this.snapshotDebounce !== null) BgTimer.clearTimeout(this.snapshotDebounce)
     if (this.foregroundTimer !== null) BgTimer.clearTimeout(this.foregroundTimer)
-    this.checkpointTimer = this.snapshotDebounce = this.foregroundTimer = null
+    if (this.inventoryDebounce !== null) BgTimer.clearTimeout(this.inventoryDebounce)
+    this.checkpointTimer = this.snapshotDebounce = this.foregroundTimer = this.inventoryDebounce = null
     for (const cleanup of this.cleanups.splice(0)) {
       try {
         cleanup()
@@ -570,6 +739,33 @@ class CollectorRun {
     ) {
       this.battery = {level: s.batteryLevel, charging: s.charging, observedAt: wall}
     }
+  }
+
+  /** Notes the phone's battery as its source holds it; a value that did not change keeps the time it was first seen. */
+  private trackPhoneBattery(wall: number): void {
+    let read: PhoneBatteryReading | "unsupported" | null = null
+    try {
+      read = this.env.phoneBattery.read()
+    } catch (error) {
+      warn("reading the phone battery", error)
+    }
+    const next = phoneBatteryState(read)
+    const held = this.phoneBattery
+    if (held && held.state === next.state && held.level === next.level && held.charging === next.charging) return
+    this.phoneBattery = {...next, observedAt: wall}
+  }
+
+  private refreshPhoneBattery(): void {
+    try {
+      this.env.phoneBattery.refresh()
+    } catch (error) {
+      warn("refreshing the phone battery", error)
+    }
+  }
+
+  private onPhoneBattery(): void {
+    this.trackPhoneBattery(this.env.now())
+    this.evaluateSnapshotTriggers()
   }
 
   /** Nothing seen of the glasses so far is about the pair that comes next: not its identity, versions or battery. */
@@ -781,6 +977,8 @@ class CollectorRun {
     if (this.stopped || this.checkpointTimer !== fired) return
     try {
       this.flush()
+      // The phone's battery is read on the wake-ups the collector already has; the reading arrives later.
+      this.refreshPhoneBattery()
       // Glasses connected long enough are identified by now, without a change in the store to say so.
       this.guard("photos", () => this.releasePhotos())
       this.guard("snapshot", () => {
@@ -1010,6 +1208,12 @@ class CollectorRun {
     }
   }
 
+  private phoneBatteryPayload(wall: number): PhoneBatteryPayload {
+    const held = this.phoneBattery ?? {state: "unknown", observedAt: wall}
+    if (held.state !== "measured") return {state: held.state, observedAt: iso(held.observedAt)}
+    return {state: "measured", observedAt: iso(held.observedAt), level: held.level, charging: held.charging}
+  }
+
   private versionKey(): string {
     const firmware = this.known?.firmware
     return firmware ? [firmware.apk, firmware.mtk, firmware.bes, firmware.os].join("|") : ""
@@ -1019,7 +1223,9 @@ class CollectorRun {
     const reading = this.battery
     const measured = !!reading && Number.isFinite(reading.level) && reading.level >= 0
     const binding = this.identified()
+    const phone = this.phoneBattery
     return {
+      phoneBattery: phone ?? {state: "unknown"},
       identity: binding ? JSON.stringify(binding) : "",
       linked: this.connection.state === "connected",
       batteryMeasured: measured,
@@ -1064,11 +1270,24 @@ class CollectorRun {
    * A disconnect is written at once, while what is known is still the pair that left: the retry that follows within
    * moments starts a new connection, which forgets them. Only a snapshot in the last two seconds holds it back to the
    * usual debounce, so a link that flaps is still one snapshot every two seconds at most.
+   *
+   * The phone's battery is worth one on the same terms, with or without glasses: once it is first known or stops being
+   * known, a move of 5 points, or a charging change.
    */
   private evaluateSnapshotTriggers(): void {
     const last = this.marks
     if (!last) return
     const now = this.currentMarks()
+    const phoneNow = now.phoneBattery
+    const phoneLast = last.phoneBattery
+    if (
+      phoneNow.state !== phoneLast.state ||
+      (phoneNow.state === "measured" &&
+        (Math.abs(phoneNow.level - (phoneLast.level ?? 0)) >= BATTERY_SNAPSHOT_STEP ||
+          phoneNow.charging !== phoneLast.charging))
+    ) {
+      this.scheduleSnapshot()
+    }
     if (now.linked !== last.linked) {
       const disconnected = !now.linked
       if (disconnected && this.env.monotonic() - this.lastSnapshotMono >= SNAPSHOT_DEBOUNCE_MS) this.takeSnapshot()
@@ -1097,6 +1316,7 @@ class CollectorRun {
     }
     const wall = this.env.now()
     this.trackGlasses(wall)
+    this.trackPhoneBattery(wall)
     const binding = this.currentBinding()
     const known = this.known
     const glasses: GlassesPayload | null =
@@ -1110,7 +1330,8 @@ class CollectorRun {
         : null
     // What the snapshot says, leaving out the time a battery with no reading is stamped with (it is now): an unknown
     // one, or one the glasses cannot report. Of glasses that are not connected only that is new: retrying them changes
-    // the state short of connected, its time, and what is known of them, with every attempt.
+    // the state short of connected, its time, and what is known of them, with every attempt. The phone's battery is
+    // left out: a move worth a snapshot schedules one, and a smaller one is not new enough to write.
     const key = JSON.stringify([
       phone,
       this.connection.state !== "connected"
@@ -1127,11 +1348,40 @@ class CollectorRun {
       ...base,
       kind: "snapshot",
       ...(glasses && binding ? {deviceBinding: binding} : {}),
-      payload: {phone, ...(glasses ? {glasses} : {})},
+      payload: {phone: {...phone, battery: this.phoneBatteryPayload(wall)}, ...(glasses ? {glasses} : {})},
     }))
     this.marks = this.currentMarks()
     this.lastSnapshotMono = this.env.monotonic()
     this.lastSnapshotKey = key
+  }
+
+  // --- inventory -----------------------------------------------------------------------------------------------
+
+  /** Asks for an inventory record once the changes around this moment have settled. */
+  private scheduleInventory(): void {
+    if (this.inventoryDebounce !== null) return
+    const timer: number = BgTimer.setTimeout(
+      () =>
+        this.guard("inventory", () => {
+          if (this.inventoryDebounce === timer) this.inventoryDebounce = null
+          this.takeInventory(false)
+        }),
+      INVENTORY_DEBOUNCE_MS,
+    )
+    this.inventoryDebounce = timer
+  }
+
+  /** Writes the inventory; unless `always`, only if it lists something the last record of this run did not. */
+  private takeInventory(always: boolean): void {
+    const wall = this.env.now()
+    const payload = inventoryPayload(this.env.inventory.list())
+    if (!payload) return
+    const key = JSON.stringify(payload)
+    if (!always && key === this.lastInventoryKey) return
+    if (this.inventoryDebounce !== null) BgTimer.clearTimeout(this.inventoryDebounce)
+    this.inventoryDebounce = null
+    this.emit(wall, (base) => ({...base, kind: "miniapp_inventory", payload}))
+    this.lastInventoryKey = key
   }
 
   // --- launches and photos -------------------------------------------------------------------------------------
@@ -1191,10 +1441,14 @@ class CollectorRun {
   // --- records -------------------------------------------------------------------------------------------------
 
   private capabilities(): Capability[] {
-    if (!realGlassesConnected()) return [...PHONE_CAPABILITIES]
-    // Glasses that cannot report a battery leave nothing to measure about it.
-    if (this.batteryUnsupported()) return FLEET_CAPABILITIES.filter((capability) => capability !== "glasses_battery")
-    return [...FLEET_CAPABILITIES]
+    const measured: readonly Capability[] = !realGlassesConnected()
+      ? PHONE_CAPABILITIES
+      : // Glasses that cannot report a battery leave nothing to measure about it.
+        this.batteryUnsupported()
+        ? FLEET_CAPABILITIES.filter((capability) => capability !== "glasses_battery")
+        : FLEET_CAPABILITIES
+    if (this.phoneBattery?.state === "unsupported") return measured.filter((capability) => capability !== "phone_battery")
+    return [...measured]
   }
 
   private base(observedAt: number): RecordBase {
@@ -1228,12 +1482,18 @@ export function createFleetCollector(deps: {
   now?: () => number
   monotonic?: () => number
   modelsWithoutBattery?: ReadonlySet<string>
+  /** What is installed. Defaults to the app's source (`setFleetInventorySource`), which reports nothing until wired. */
+  inventory?: InventorySource
+  /** The phone's battery. Defaults to the app's (`appPhoneBattery`, over expo-battery). */
+  phoneBattery?: PhoneBatterySource
 }): FleetCollector {
   const env: Env = {
     queue: deps.queue,
     now: deps.now ?? Date.now,
     monotonic: deps.monotonic ?? (() => performance.now()),
     modelsWithoutBattery: deps.modelsWithoutBattery ?? MODELS_WITHOUT_BATTERY,
+    inventory: deps.inventory ?? appInventory,
+    phoneBattery: deps.phoneBattery ?? appPhoneBattery,
   }
   let current: CollectorRun | null = null
 

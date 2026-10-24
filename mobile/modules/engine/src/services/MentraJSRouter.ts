@@ -42,7 +42,7 @@ import type {MentraJSCrashController} from "./MentraJSCrashController"
 import {MentraJSLogRingBuffer, MentraJSLogThrottle, redactSecrets} from "./MentraJSLogPipeline"
 import {islandNotifications} from "./NotificationsEmitter"
 import type {MentraUIRouter} from "./MentraUIRouter"
-import {miniappRunningRegistry} from "./MiniappRunningRegistry"
+import {miniappContextRegistry, miniappRunningRegistry} from "./MiniappRunningRegistry"
 
 /** The runtime's runtime instance type — the singleton exported from
  * LocalMiniappRuntime.ts (the file's `export default` is the instance,
@@ -240,6 +240,7 @@ export class MentraJSRouter {
       projectRunning,
     )
     this.registered.add(packageName)
+    miniappContextRegistry.add(packageName)
     this.replacementConnects.add(packageName)
     this.uiRouter?.backgroundStarting(packageName)
     this.armReadyDeadline(packageName)
@@ -454,6 +455,7 @@ export class MentraJSRouter {
     this.registered.delete(packageName)
     // JSContext torn down → miniapp is no longer "running".
     miniappRunningRegistry.remove(packageName)
+    miniappContextRegistry.remove(packageName)
     if (this.crust.mentraJsKill) {
       try {
         await this.crust.mentraJsKill(packageName)

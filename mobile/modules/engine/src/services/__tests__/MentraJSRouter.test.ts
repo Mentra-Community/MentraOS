@@ -401,6 +401,19 @@ describe("MentraJSRouter", () => {
     expect(crust.killCalls).toEqual(["com.foo"])
   })
 
+  test("every live context, a hidden one too, is in the context registry until it is torn down", async () => {
+    const {miniappContextRegistry, miniappRunningRegistry} = await import("../MiniappRunningRegistry")
+    const stopped: string[] = []
+    const unsubscribe = miniappContextRegistry.onRemoved((packageName) => stopped.push(packageName))
+    router.registerApp("com.hidden", undefined, false, false)
+    expect(miniappContextRegistry.has("com.hidden")).toBe(true)
+    expect(miniappRunningRegistry.has("com.hidden")).toBe(false)
+    await router.unregister("com.hidden")
+    unsubscribe()
+    expect(miniappContextRegistry.has("com.hidden")).toBe(false)
+    expect(stopped).toEqual(["com.hidden"])
+  })
+
   test("registeredPackages tracks registered packages", () => {
     router.registerApp("a")
     router.registerApp("b")
