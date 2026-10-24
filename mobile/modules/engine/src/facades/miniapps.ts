@@ -11,7 +11,7 @@
 import {getConfigValues} from "../runtime/bootstrap"
 import appRegistry from "../services/AppRegistry"
 import {onDeferredMiniappUpdateReady} from "../services/deferredMiniappUpdates"
-import {installMiniapp} from "../services/installMiniapp"
+import {installMiniapp, type InstallMiniappOptions, type InstallMiniappResult} from "../services/installMiniapp"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
 import {fetchMiniappJson} from "../services/miniappFetch"
 import {installMiniappRelease} from "../services/miniappReleaseInstall"
@@ -31,6 +31,10 @@ import type {ClientApp} from "../types"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
 
 type AppsState = ReturnType<typeof useAppStatusStore.getState>
+
+// A named function alias lets declaration inference choose the excluded internal
+// barrel. Keep its identity, but describe this public member with public DTOs.
+const install: (url: string, options: InstallMiniappOptions) => Promise<InstallMiniappResult> = installMiniapp
 
 const urlUpdater = new MiniappUrlUpdater({
   installedPackages: async () =>
@@ -146,7 +150,7 @@ export const miniapps = {
    * and install the ZIP. Resolves `installed`, `opened` (already installed) or `deferred`; throws
    * `InstallMiniappError` with a code.
    */
-  install: installMiniapp,
+  install,
   /** Uninstall a miniapp. */
   uninstall: (...args: Parameters<AppsState["uninstall"]>) => useAppStatusStore.getState().uninstall(...args),
   /** Persist a miniapp's captured screenshot (the switcher/card preview). */
