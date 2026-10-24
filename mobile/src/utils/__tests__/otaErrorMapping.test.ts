@@ -1,6 +1,3 @@
-import {readFileSync} from "fs"
-import {resolve} from "path"
-
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
 import {
@@ -163,67 +160,38 @@ describe("otaErrorCopyKey", () => {
   })
 })
 
-describe("glasses-side producer coverage", () => {
-  // Every code the ASG client can attach to a FAILED ota_status must have its own copy, so
-  // scan the producers rather than only the codes already in the table. Producers: literal
-  // codes passed to sendProgressToPhone(..., "FAILED", code), the downgrade watchdog codes,
-  // classifyDownloadError's return values, FirmwareDownloadException's CODE_* constants, and
-  // AsgConstants' OTA_* codes.
-  const asgJavaRoot = resolve(__dirname, "../../../../asg_client/app/src/main/java/com/mentra/asg_client")
-  const otaHelper = readFileSync(resolve(asgJavaRoot, "io/ota/helpers/OtaHelper.java"), "utf8")
-  const httpRequest = readFileSync(resolve(asgJavaRoot, "io/ota/utils/OtaHttpRequest.java"), "utf8")
-  const recoveryManager = readFileSync(resolve(asgJavaRoot, "RecoveryWorkerManager.java"), "utf8")
-  const downloadException = readFileSync(resolve(asgJavaRoot, "io/ota/utils/FirmwareDownloadException.java"), "utf8")
-  const asgConstants = readFileSync(resolve(asgJavaRoot, "AsgConstants.java"), "utf8")
+describe("glasses OTA wire error coverage", () => {
+  // Captured by the former producer scan immediately before asg_client moved out
+  // in d4c4fd7085df45cfe4d46ef17c3b38d697541cf2. Keep client coverage independent
+  // of private firmware sources. New wire codes must be added alongside their
+  // phone-side copy; this is a compatibility fixture, not a live producer scan.
+  const wireErrorCodes = [
+    "apk_restart_guard_not_persisted",
+    "apk_verify_failed",
+    "clock_skew",
+    "connect_timeout",
+    "connection_failed",
+    "dns_failed",
+    "downgrade_recovery_busy",
+    "downgrade_recovery_disabled",
+    "downgrade_recovery_incompatible",
+    "downgrade_recovery_unavailable",
+    "downgrade_status_unknown",
+    "download_failed",
+    "download_timeout",
+    "firmware_too_large",
+    "firmware_verify_failed",
+    "http_error",
+    "install_failed",
+    "insufficient_storage",
+    "ssl_error",
+  ]
 
-  function matchAll(source: string, pattern: RegExp): string[] {
-    return Array.from(source.matchAll(pattern), (match) => match[1])
-  }
-
-  const classifyDownloadErrorBody = otaHelper.slice(otaHelper.indexOf("private String classifyDownloadError("))
-  const producedCodes = new Set<string>([
-    ...matchAll(otaHelper, /"FAILED",\s*"([a-z_]+)"/g),
-    ...matchAll(otaHelper, /armHandoffWatchdog\(\s*[\w.]+,\s*"([a-z_]+)"/g),
-    ...matchAll(
-      classifyDownloadErrorBody.slice(0, classifyDownloadErrorBody.indexOf("\n    }\n")),
-      /return "([a-z_]+)";/g,
-    ),
-    ...matchAll(downloadException, /CODE_[A-Z_]+\s*=\s*"([a-z_]+)"/g),
-    ...matchAll(asgConstants, /\bOTA_INSUFFICIENT_STORAGE\s*=\s*"([a-z_]+)"/g),
-    ...matchAll(
-      httpRequest.slice(
-        httpRequest.indexOf("public static String classify("),
-        httpRequest.indexOf("public static final class RequestException"),
-      ),
-      /"([a-z_]+)"(?=;| : ")/g,
-    ),
-    ...matchAll(recoveryManager, /"(downgrade_[a-z_]+)"/g),
-  ])
-
-  it("finds the producers it scans for", () => {
-    for (const code of [
-      "download_failed",
-      "install_failed",
-      "download_timeout",
-      "apk_verify_failed",
-      "insufficient_storage",
-      "downgrade_status_unknown",
-      "downgrade_recovery_unavailable",
-      "apk_restart_guard_not_persisted",
-    ]) {
-      expect(producedCodes.has(code)).toBe(true)
-    }
-  })
-
-  it("maps every code the glasses can report", () => {
-    const unmapped = Array.from(producedCodes).filter((code) => !(code in OTA_GLASSES_ERROR_COPY_KEYS))
-    expect(unmapped).toEqual([])
-  })
-
-  it("has English copy for every mapped key", () => {
-    for (const key of Object.values(OTA_GLASSES_ERROR_COPY_KEYS)) {
-      expect(typeof OTA_ERROR_ENGLISH_COPY[key]).toBe("string")
-    }
+  it.each(wireErrorCodes)("maps the existing glasses code %s to its own English copy", (code) => {
+    const key = otaErrorCopyKey(code)
+    expect(Object.prototype.hasOwnProperty.call(OTA_GLASSES_ERROR_COPY_KEYS, code)).toBe(true)
+    expect(key).not.toBe(OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY)
+    expect(OTA_ERROR_ENGLISH_COPY[key]).toEqual(expect.any(String))
   })
 })
 
