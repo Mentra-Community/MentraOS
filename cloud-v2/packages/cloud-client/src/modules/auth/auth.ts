@@ -66,10 +66,12 @@ export interface AuthModule {
   getCoreToken(opts?: {forceRefresh?: boolean}): Promise<string>
   // a miniapp-scoped token, cached per packageName and re-minted before expiry.
   // Pass `{ fresh: true }` to skip the cache and mint now, for the moments the
-  // token's claims must be current (a miniapp opening).
+  // token's claims must be current (a miniapp opening). Pass
+  // `{ localBuild: true }` for a local or development build: Core marks its
+  // token as one, and it is cached apart from the installed miniapp's.
   getMiniappToken(
     packageName: string,
-    opts?: {minTtlMs?: number; fresh?: boolean},
+    opts?: {minTtlMs?: number; fresh?: boolean; localBuild?: boolean},
   ): Promise<{token: string; expiresAt: number}>
   // Core-owned user/oem identity, read from the Core access token.
   // Runtime-only deployments do not expose this surface.
@@ -157,6 +159,15 @@ interface RuntimeTokenResponse {
 interface RuntimeTokenEntry {
   token: string
   expiresAt: number
+}
+
+/**
+ * The cache key of a package's miniapp token: an installed miniapp's and a local
+ * build's are different tokens. The variant comes first and holds no `:`, so no
+ * package name makes one key look like another.
+ */
+function miniappTokenKey(packageName: string, localBuild: boolean): string {
+  return `${localBuild ? "local" : "installed"}:${packageName}`
 }
 
 /**
@@ -270,9 +281,9 @@ export class Auth implements AuthModule {
   private readonly httpTransport: HttpTransport
   private readonly timers: CloudClientTimers
 
-  /** Miniapp tokens cached per packageName until near expiry. */
+  /** Miniapp tokens cached per packageName and local-build flag (`miniappTokenKey`) until near expiry. */
   private readonly miniappCache = new Map<string, MiniappTokenEntry>()
-  /** The newest mint per package (and session), until it settles. See `mintMiniappToken`. */
+  /** The newest mint per package, flag and session, until it settles. See `mintMiniappToken`. */
   private readonly miniappMints = new Map<string, MiniappMint>()
   /** Core-brokered runtime token cache. */
   private runtimeToken: RuntimeTokenEntry | null = null
@@ -364,6 +375,11 @@ export class Auth implements AuthModule {
    * By default the token is cached per packageName and re-minted only when near
    * expiry, so a steady miniapp does not hit the cloud on every call.
    *
+   * `localBuild: true` asks for a local or development build's token, which Core
+   * marks as one (and never names a workspace in). It is a different token from
+   * the installed miniapp's, so the two are cached and minted apart, and a call
+   * never gets the other's.
+   *
    * `fresh: true` skips the cache and reaches Core, because what Core puts in a
    * token (the features the user holds, today) can change within its hour. It
    * can share a mint only if that mint's request has not left yet; a mint whose
@@ -379,34 +395,41 @@ export class Auth implements AuthModule {
    */
   async getMiniappToken(
     packageName: string,
-    opts?: {minTtlMs?: number; fresh?: boolean},
+    opts?: {minTtlMs?: number; fresh?: boolean; localBuild?: boolean},
   ): Promise<{token: string; expiresAt: number}> {
     this.assertSessionActive()
     const generation = this.sessionGeneration
     const fresh = opts?.fresh === true
+    const localBuild = opts?.localBuild === true
     if (!fresh) {
       const marginSeconds = this.tokenMarginSeconds(opts?.minTtlMs)
-      const cached = this.miniappCache.get(packageName)
+      const cached = this.miniappCache.get(miniappTokenKey(packageName, localBuild))
       if (cached && !this.isExpiring(cached.expiresAt, marginSeconds)) {
         return {token: cached.token, expiresAt: cached.expiresAt}
       }
     }
 
-    const entry = await this.mintMiniappToken(packageName, generation, fresh)
+    const entry = await this.mintMiniappToken(packageName, localBuild, generation, fresh)
     return {token: entry.token, expiresAt: entry.expiresAt}
   }
 
   /**
-   * The mint a caller should wait on. Mints for a package form a chain, one at a
-   * time; `miniappMints` holds the newest link.
+   * The mint a caller should wait on. Mints for a package (and local-build flag)
+   * form a chain, one at a time; `miniappMints` holds the newest link.
    *
    *  - A default caller takes the newest mint, whatever its state.
    *  - A fresh caller takes it only while its request is unsent. Otherwise it
    *    appends a mint that starts when the newest one settles, win or lose, and
    *    becomes the newest, so later fresh callers share it until it too sends.
    */
-  private mintMiniappToken(packageName: string, generation: number, fresh: boolean): Promise<MiniappTokenEntry> {
-    const key = `${MINIAPP_FLIGHT_PREFIX}${packageName}:${generation}`
+  private mintMiniappToken(
+    packageName: string,
+    localBuild: boolean,
+    generation: number,
+    fresh: boolean,
+  ): Promise<MiniappTokenEntry> {
+    const cacheKey = miniappTokenKey(packageName, localBuild)
+    const key = `${MINIAPP_FLIGHT_PREFIX}${generation}:${cacheKey}`
     const newest = this.miniappMints.get(key)
     if (newest && (!fresh || !newest.requestSent())) return newest.promise
 
@@ -416,14 +439,16 @@ export class Auth implements AuthModule {
       const accessToken = await this.getCoreToken()
       const http = this.requireCoreHttp()
       requestSent = true
-      // A dev build of a package is that package: the request names it and
-      // nothing else. The phone has already applied the installed signer rule.
-      const res = await http.post<MiniappTokenEntry>(MINIAPP_TOKEN_PATH, {packageName}, {bearer: accessToken})
+      // The request names the package, and says when it is a local build so
+      // Core marks the token. An installed miniapp's request names only the
+      // package, as it always has.
+      const body = localBuild ? {packageName, localBuild: true} : {packageName}
+      const res = await http.post<MiniappTokenEntry>(MINIAPP_TOKEN_PATH, body, {bearer: accessToken})
 
       this.assertSessionActive(generation)
       const entry: MiniappTokenEntry = {token: res.token, expiresAt: res.expiresAt}
-      this.miniappCache.set(packageName, entry)
-      this.logger.debug("minted miniapp token", {packageName})
+      this.miniappCache.set(cacheKey, entry)
+      this.logger.debug("minted miniapp token", {packageName, localBuild})
       return entry
     })()
     const mint: MiniappMint = {promise, requestSent: () => requestSent}

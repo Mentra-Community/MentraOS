@@ -5,9 +5,11 @@ the Mentra App and shows an organization its devices and activity. Core stores
 none of its data. It authenticates the caller, decides who the caller is and what
 the request covers, forwards the request to Fleet with a signed statement of
 that, and relays Fleet's answer. Fleet follows Core's change feed to learn when
-Core deletes an account. This page is the contract between the two; the
-behavior is implemented and tested in
-`packages/core/src/api/fleet/fleet-forwarding.ts`, with the configuration in
+Core deletes an account, and tells Core which miniapps each workspace assigns,
+so a member's miniapp tokens can name the workspace. This page is the contract
+between the two; the behavior is implemented and tested in
+`packages/core/src/api/fleet/fleet-forwarding.ts` and
+`packages/core/src/api/internal/fleet.api.ts`, with the configuration in
 `packages/core/src/services/fleet/fleet-config.ts` and the signing in
 `packages/workspace-contract`.
 
@@ -68,7 +70,8 @@ every Core variable.
   intervals within it that overlap the window (a role held before the
   membership's claim is never counted).
 - `CLOUD_CORE_SERVICE_SECRETS`: its `fleet` list holds the secrets Fleet signs
-  its calls to Core with (below), for example
+  its calls to Core with ([Following Core's changes](#following-cores-changes)
+  and [Assigned miniapps](#assigned-miniapps)), for example
   `{"store": ["<newest>", "<older>"], "fleet": ["<newest>", "<older>"]}`. Without
   a `fleet` list, Core refuses every call from Fleet.
 
@@ -595,6 +598,49 @@ and an Organization Admin recovers it. Invitations addressed to the person's ema
 stay valid, since they name an address and not an account. The operator keys the
 person created are revoked outside the feed, and their identity is cleared from
 the rows that stay as history.
+
+## Assigned miniapps
+
+A miniapp token names the person's workspace (its `workspaceId` claim) only for
+a miniapp that workspace assigned through Fleet. A company's miniapp can then
+admit exactly its own workspace's members, and no other miniapp learns which
+workspace anyone belongs to. Core learns each workspace's assigned miniapps
+from Fleet, and keeps the last set Fleet sent, so minting a token never waits
+on Fleet.
+
+```http
+PUT /api/internal/fleet/workspaces/:workspaceId/assigned-packages
+{"packageNames": ["com.acme.tools", "com.example.notes"], "revision": 12}
+
+200 {"workspaceId": "ws_...", "packageNames": ["com.acme.tools", "com.example.notes"], "revision": 12, "applied": true}
+```
+
+- **Who.** Fleet only, signed as service `fleet` like the calls above. Any
+  other service is `403 {"error":"forbidden"}`; a missing or bad signature is
+  `401 {"error":"service_unauthorized"}`. A body over 64 KiB is
+  `413 {"error":"payload_too_large"}`.
+- **When.** After each assign or withdraw commits, with the workspace's whole
+  active set, and again for every workspace when Fleet starts, so a push that
+  never arrived is made good. Retry a push that failed for any reason but the
+  three refusals below.
+- **The body.** `packageNames` is every package the workspace assigns now (at
+  most 500, each 1 to 128 characters with no whitespace; Core keeps them
+  unique and sorted). An empty list assigns nothing. `revision` is Fleet's
+  revision of the set, a whole number, zero or more, that grows with each
+  change. Anything else is `400 invalid_request`.
+- **Revisions.** A push replaces Core's set only when its revision is newer.
+  A repeat of Core's revision answers `200` with `applied: false` and the set
+  Core keeps. An older one is `409 {"error":"stale_revision", "revision": n}`,
+  with Core's revision: Core already has something newer, so drop the push.
+- **Workspaces.** A workspace Core never had is
+  `404 {"error":"workspace_not_found"}`, and a deleted one is
+  `410 {"error":"workspace_deleted"}`. Deleting a workspace deletes its set, and
+  a push never lands after the deletion. Drop the push in both cases.
+- **What it changes.** A member's next token for a package in the set names the
+  workspace; a token already minted keeps what it was minted with until it
+  expires (an hour by default). Leaving the workspace, or a push without the
+  package, takes the workspace out of the next token. A local build's token
+  never names a workspace.
 
 ## Not installed versus unavailable
 

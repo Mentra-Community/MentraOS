@@ -35,6 +35,8 @@
  *   /api/internal/workspaces/*  — the signed service API the Store calls (64 KiB body limit)
  *   /api/internal/licenses/*    — the signed license API the Store's billing module calls
  *                                 (64 KiB body limit)
+ *   /api/internal/fleet/*       — the signed API Fleet calls: each workspace's assigned
+ *                                 miniapps (64 KiB body limit)
  *   everything else (GET)       — the admin portal's files, when
  *                                 CLOUD_CORE_ADMIN_STATIC_DIR is set (Private Cloud)
  *
@@ -85,6 +87,7 @@ import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
 import cliApi from "./cli/cli.api";
 import portalEnterprise from "./portal/enterprise.api";
+import internalFleet from "./internal/fleet.api";
 import internalLicenses from "./internal/licenses.api";
 import internalWorkspaces from "./internal/workspaces.api";
 import { createOrganizationApi } from "./organization/organization.api";
@@ -96,7 +99,7 @@ import { createOidcApi } from "./oidc/oidc.api";
 
 const logger = createLogger("core").child({ service: "app" });
 
-/** The largest body the signed workspace and license service APIs read. */
+/** The largest body the signed workspace, license and Fleet service APIs read. */
 const INTERNAL_WORKSPACES_BODY_LIMIT_BYTES = 64 * 1024;
 
 export interface CreateAppOptions {
@@ -168,6 +171,14 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
     }),
   );
   app.route("/api/internal/licenses", internalLicenses);
+  app.use(
+    "/api/internal/fleet/*",
+    bodyLimit({
+      maxSize: INTERNAL_WORKSPACES_BODY_LIMIT_BYTES,
+      onError: (c) => c.json({ error: "payload_too_large" }, 413),
+    }),
+  );
+  app.route("/api/internal/fleet", internalFleet);
   app.route("/api/internal/test-requests", createRoutineJobBindingApi());
   app.route("/api/internal/test-requests", createTestRequestsApi());
   app.route("/api/internal/routine-cases", createInternalRoutineCaseApi());

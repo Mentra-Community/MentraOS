@@ -203,7 +203,8 @@ licenses are assigned from the Licenses page.
   change or remove them like any other member, and the keys they created
   validate.
 - Deleting a workspace ends its memberships and revokes its keys and
-  invitations at once. It is refused (`409 workspace_has_holds`) while a
+  invitations at once, and forgets the miniapps it assigned through Fleet
+  ([Fleet integration](fleet-integration.md#assigned-miniapps)). It is refused (`409 workspace_has_holds`) while a
   service holds the workspace, whoever asks, Organization Admins included: the
   Mentra Miniapp Store holds a workspace while it owns any miniapp that is not
   deleted, a draft included, and the portals say so where the delete is ("This

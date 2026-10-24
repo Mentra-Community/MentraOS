@@ -55,6 +55,7 @@ import {
 import {legacyIdentityClaims} from "../../models/legacy-browser-identity.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {endLicensesForOwner, releaseSeatsForMembership, seatReleaseReasonFor} from "../licenses/license.service"
+import {clearAssignedPackages} from "./assigned-packages.service"
 import {isDeletedAccountId} from "../user.service"
 import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
 import {deletionHoldsOf, replaceableWorkspaces} from "./workspace-holdings"
@@ -342,7 +343,8 @@ export async function renameWorkspace(
 /**
  * Delete a workspace after confirming its name. Deleting ends every membership,
  * revokes every credential and pending invitation, ends the workspace's licenses
- * and releases their seats (`endLicensesForOwner`), bumps the authorization
+ * and releases their seats (`endLicensesForOwner`), deletes the set of miniapps
+ * it assigns through Fleet (`clearAssignedPackages`), bumps the authorization
  * revision, and keeps the workspace row (`status: "deleted"`) so audit history
  * stays resolvable and its id is never reused. It records `workspace.deleted`.
  *
@@ -368,7 +370,8 @@ export async function deleteWorkspace(actor: Actor, workspaceId: string, opts: {
  * Every step of deleting `workspace` after the checks of who may and whether it should be, in the
  * caller's transaction: the workspace row becomes `deleted` (one revision bump, which serializes the
  * deletion with any other change there), its active memberships end (`workspace_deleted`) and release
- * their one-workspace guards, its keys and pending invitations are revoked, its licenses end and release their seats, and `workspace.deleted`
+ * their one-workspace guards, its keys and pending invitations are revoked, its licenses end and release their seats, its
+ * assigned miniapps' set is deleted, and `workspace.deleted`
  * is recorded for `actor`. `after` is merged into that event's `after` (`{status: "deleted", ...after}`).
  * `deleteWorkspace` calls it after `assertCanDelete`; giving way to another workspace
  * (`yieldAutomaticWorkspace`) calls it after finding the workspace holds nothing.
@@ -399,6 +402,7 @@ export async function deleteWorkspaceIn(
   await AccessCredentialModel.updateMany({workspaceId, revokedAt: null}, {$set: {revokedAt: now}}, {session})
   await WorkspaceInvitationModel.updateMany({workspaceId, status: "pending"}, {$set: {status: "revoked"}}, {session})
   await endLicensesForOwner(session, {type: "workspace", workspaceId}, "workspace_deleted", actor)
+  await clearAssignedPackages(session, workspaceId)
   await recordWorkspaceEvent(session, {
     workspaceId,
     action: "workspace.deleted",
@@ -747,19 +751,26 @@ export async function bumpRevision(
 }
 
 /**
- * Write the workspace document without changing anything it holds, so this
- * transaction usually conflicts with a concurrent mutation of the workspace
- * without invalidating anyone's `expectedRevision`. Invitations and credentials
- * use it: they do not change who holds which role. It is not a guarantee: when
- * `updatedAt` already holds the same instant the write is a no-op and conflicts
- * with nothing. Seat changes are serialized by the license's conditional
- * increment and the feed counter instead.
+ * Write the workspace document without changing anything it holds but `updatedAt`, so this transaction
+ * conflicts with any concurrent mutation of the workspace, its deletion included, without invalidating
+ * anyone's `expectedRevision`. Invitations, credentials, license writes and Fleet's assigned packages use
+ * it: they do not change who holds which role. The write always changes the document: `updatedAt` moves
+ * past the value this transaction read even when the clock still shows that instant, because a write that
+ * changes nothing is a no-op and would conflict with nothing. Seat changes are also serialized by the
+ * license's conditional increment and the feed counter.
  */
 export async function touchWorkspace(session: ClientSession, workspaceId: string): Promise<void> {
+  const current = await WorkspaceModel.findOne({workspaceId, status: "active"})
+    .select({_id: 0, updatedAt: 1})
+    .session(session)
+    .lean<{updatedAt?: Date | null}>()
+  if (!current) fail("workspace_deleted", "workspace has been deleted")
+  const read = current.updatedAt instanceof Date ? current.updatedAt.getTime() : 0
   const touched = await WorkspaceModel.updateOne(
     {workspaceId, status: "active"},
-    {$set: {updatedAt: new Date()}},
-    {session},
+    {$set: {updatedAt: new Date(Math.max(Date.now(), read + 1))}},
+    // The stamp is this write's own; the schema's timestamps would overwrite it with the clock.
+    {session, timestamps: false},
   )
   if (touched.matchedCount !== 1) fail("workspace_deleted", "workspace has been deleted")
 }

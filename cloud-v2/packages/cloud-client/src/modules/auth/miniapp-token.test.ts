@@ -27,6 +27,8 @@ const CONFIG: AuthConfig = {
 
 interface Post {
   packageName: string
+  /** The whole request body. */
+  body: Record<string, unknown>
   bearer: string | undefined
   /** Answer this request with a token (or an error). */
   respond: (result: {token: string; expiresAt: number} | Error) => void
@@ -51,6 +53,7 @@ function harness(opts: {auto?: boolean} = {}) {
       return new Promise<T>((resolve, reject) => {
         const post: Post = {
           packageName: (body as {packageName: string}).packageName,
+          body: body as Record<string, unknown>,
           bearer: reqOpts?.bearer,
           respond: (result) => {
             inFlight -= 1
@@ -176,7 +179,7 @@ describe("a fresh miniapp token request", () => {
 
     await t.auth.getMiniappToken(PACKAGE, {fresh: true})
 
-    expect(t.posts[0].packageName).toBe(PACKAGE)
+    expect(t.posts[0].body).toEqual({packageName: PACKAGE})
     expect(t.posts[0].bearer).toStartWith("e30.")
   })
 
@@ -342,5 +345,57 @@ describe("a fresh miniapp token request", () => {
     expect(t.posts).toHaveLength(1)
     expect(t.cachedPackages()).toEqual([])
     expect(t.mintsInFlight()).toBe(0)
+  })
+})
+
+describe("a local build's miniapp token", () => {
+  test("is asked for with localBuild, and an installed miniapp's with the package alone", async () => {
+    const t = harness({auto: true})
+
+    await t.auth.getMiniappToken(PACKAGE, {localBuild: true})
+    await t.auth.getMiniappToken(PACKAGE, {localBuild: false})
+    await t.auth.getMiniappToken("com.mentra.notes")
+
+    expect(t.posts.map((post) => post.body)).toEqual([
+      {packageName: PACKAGE, localBuild: true},
+      {packageName: PACKAGE},
+      {packageName: "com.mentra.notes"},
+    ])
+  })
+
+  test("is cached apart from the installed miniapp's: neither call gets the other's token", async () => {
+    const t = harness({auto: true})
+
+    const local = await t.auth.getMiniappToken(PACKAGE, {localBuild: true})
+    const installed = await t.auth.getMiniappToken(PACKAGE)
+    expect(installed.token).not.toBe(local.token)
+    expect(t.posts).toHaveLength(2)
+
+    expect((await t.auth.getMiniappToken(PACKAGE, {localBuild: true})).token).toBe(local.token)
+    expect((await t.auth.getMiniappToken(PACKAGE)).token).toBe(installed.token)
+    expect(t.posts).toHaveLength(2)
+  })
+
+  test("never joins the installed miniapp's mint in flight, nor it a local build's", async () => {
+    const t = harness()
+    const installed = t.auth.getMiniappToken(PACKAGE)
+    const local = t.auth.getMiniappToken(PACKAGE, {localBuild: true})
+    await settle()
+
+    expect(t.posts.map((post) => post.body)).toEqual([{packageName: PACKAGE}, {packageName: PACKAGE, localBuild: true}])
+    t.answer(t.posts[0], "installed")
+    t.answer(t.posts[1], "local")
+    expect((await installed).token).toBe("installed")
+    expect((await local).token).toBe("local")
+  })
+
+  test("is dropped with every other token at logout", async () => {
+    const t = harness({auto: true})
+    await t.auth.getMiniappToken(PACKAGE, {localBuild: true})
+    await t.auth.getMiniappToken(PACKAGE)
+    expect(t.cachedPackages()).toHaveLength(2)
+
+    await t.auth.clearSession().catch(() => undefined)
+    expect(t.cachedPackages()).toEqual([])
   })
 })

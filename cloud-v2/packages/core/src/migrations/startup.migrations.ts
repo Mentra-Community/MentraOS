@@ -27,6 +27,7 @@ import {ReportAssetModel, reconcileReportAssetIndexes} from '../models/report-as
 import { AccessCredentialModel } from "../models/access-credential.model";
 import { LicenseSeatModel } from "../models/license-seat.model";
 import { LicenseModel } from "../models/license.model";
+import { WorkspaceAssignedPackagesModel } from "../models/workspace-assigned-packages.model";
 import { WorkspaceAuditCounterModel } from "../models/workspace-audit-counter.model";
 import { WorkspaceAuditEventModel } from "../models/workspace-audit-event.model";
 import { WorkspaceInvitationModel } from "../models/workspace-invitation.model";
@@ -110,7 +111,8 @@ export async function runStartupMigrations(): Promise<void> {
   // identities are among them: their collection is created here while it is
   // empty, so its unique index can be built on Azure Cosmos DB too. The change
   // feed's counter collection is new and built empty the same way, as are the
-  // licenses and their seats (one seat per license and membership); the feed's
+  // licenses and their seats (one seat per license and membership), and each
+  // workspace's assigned miniapps (one set per workspace); the feed's
   // `seq` index on the already populated audit events is not unique, because
   // Cosmos DB cannot add a unique index to a populated collection. An index the
   // database refuses (some databases a Private Cloud uses support only part of
@@ -127,6 +129,7 @@ export async function runStartupMigrations(): Promise<void> {
       LegacyBrowserIdentityModel,
       LicenseModel,
       LicenseSeatModel,
+      WorkspaceAssignedPackagesModel,
     ].map(
       async (model) => {
         try {
