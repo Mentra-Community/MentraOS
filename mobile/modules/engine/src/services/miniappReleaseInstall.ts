@@ -84,7 +84,7 @@ export class MiniappInstallCancelledError extends Error {
 }
 
 /**
- * Shared release installation for QR, Store and workspace callers. The caller
+ * Shared release installation for QR, URL and workspace callers. The caller
  * authorizes the source; the archive goes through the one AppRegistry installer, which
  * binds it to the expected package and version and applies the signer and
  * version rules again inside its serialized transaction.
@@ -171,8 +171,6 @@ function assertStillInstalled(packageName: string): void {
 function explicitInstallReason(options: InstallBundleOptions): Exclude<MiniappInstallReason, "assignment"> {
   switch (options.releaseIdentity?.source) {
     case "bundled_asset":
-    case "system_store":
-    case "preinstalled_registry":
       return "bundled"
     case "deployment_manifest":
       return "manifest"

@@ -276,7 +276,7 @@ describe("the active version follows the deployment's policy", () => {
     }
     install("1.2.0", workspaceRelease)
     install("1.3.0", {source: "direct_download"})
-    install("1.4.0", {source: "store", storePackageName: "com.mentra.store"})
+    install("1.4.0", {source: "url", sourceUrl: "https://notes.example.com/"})
     // The workspace allows its managed release, and release-QR installs only while development is on.
     installedAllowed = (identity) =>
       identity?.source === "deployment_manifest" || (developmentAllowed && identity?.source === "direct_download")

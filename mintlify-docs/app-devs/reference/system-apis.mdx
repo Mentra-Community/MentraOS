@@ -44,24 +44,38 @@ await session.miniapps.stop("com.mentra.todo");
 | `stop(packageName)` | `Promise<void>` | Stop a running miniapp. |
 
 Each `MiniappInfo` also reports `system` (the Mentra App build ships this
-miniapp) and, when a bundled Store maintains the installed release,
-`storeOwnerPackageName` or `systemStoreOwnerPackageName`. Actions declared with
-`"audience": "host"` are not listed.
+miniapp). Actions declared with `"audience": "host"` are not listed.
 
 ### Installing miniapps
 
-`session.miniapps.install`, `checkInstallCompatibility`, `onInstallProgress` and
-`uninstall` are accepted only from a Store miniapp bundled with the Mentra App.
-Other callers, system miniapps included, get `NOT_PERMITTED`. The host downloads
-the release, checks its SHA-256, archive, publisher signature, version and
-compatibility, and installs it through the same installer as every other source.
+`session.miniapps.install({url})` installs the miniapp at a miniapp URL, the
+HTTPS address that serves its `miniapp.json`. The Mentra App shows no install
+sheet, so ask the person first. Only a miniapp on the Mentra App's system list
+may install; any other caller, a development build included, gets
+`NOT_PERMITTED`.
 
-An automatic update passes `onlyIfStopped: true`: it never stops a running
-miniapp by itself and answers `APP_RUNNING` instead. With `askIfRunning: true`
-as well, the Mentra App stages the release and asks the user whether to update
-now; declining, or a question the app does not show (it is in the background,
-another question is open, or it asked about this miniapp within the last day),
-still answers `APP_RUNNING`, and the update installs once the miniapp stops.
+```ts
+const {packageName} = await session.miniapps.install({url: "https://notes.example.com/"});
+await session.miniapps.open(packageName);
+```
+
+The Mentra App installs it as it installs from a link: it fetches
+`miniapp.json`, checks the package name against the URL's domain, registers the
+URL with Mentra, checks the phone can run the miniapp, and downloads, verifies
+and installs its bundle. `status` is `installed`, `opened` (it was installed from
+that URL already, or a newer release of it is) or `deferred` (the miniapp is
+running, so its update waits until it stops or the person answers the Mentra
+App's update prompt).
+
+A failed install rejects with `INSTALL_FAILED`. Its `reason` says why:
+`not_a_miniapp`, `domain_mismatch`, `archived`, `needs_newer_app`,
+`access_denied`, `age_restricted`, `network`, `cancelled`, `integrity` or
+`signature_invalid`.
+
+`checkInstallCompatibility` checks a release's `minHostVersion`, `sdkVersion`
+and `hardwareRequirements` against the phone. `uninstall(packageName)` removes
+a miniapp installed from a miniapp URL; a miniapp the Mentra App bundles, one a
+workspace manages and a development build stay, with `NOT_PERMITTED`.
 
 ## Invoke an action
 

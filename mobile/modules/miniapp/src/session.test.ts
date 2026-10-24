@@ -611,38 +611,6 @@ describe("MiniappSession visibility", () => {
   })
 })
 
-describe("MiniappSession install progress", () => {
-  test("delivers well-formed host progress pushes and drops malformed ones", async () => {
-    const transport = new FakeTransport()
-    const session = new MiniappSession({transport})
-    const connectPromise = session.connect()
-    transport.deliverFromPhone({
-      type: MiniappResponseType.CONNECT_ACK,
-      userId: "u",
-      packageName: "com.mentra.store",
-      capabilities: null,
-    })
-    await connectPromise
-
-    const received: unknown[] = []
-    session.miniapps.onInstallProgress((progress) => received.push(progress))
-    const push = (phase: unknown) =>
-      transport.deliverFromPhone({
-        type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
-        packageName: "com.example.notes",
-        version: "1.1.0",
-        phase,
-      })
-    push("downloading")
-    push("unknown-phase")
-    push("complete")
-    expect(received).toEqual([
-      {packageName: "com.example.notes", version: "1.1.0", phase: "downloading"},
-      {packageName: "com.example.notes", version: "1.1.0", phase: "complete"},
-    ])
-  })
-})
-
 describe("MiniappSession transport disconnect", () => {
   test("disconnect rejects pending requests and flips ready to false", async () => {
     const transport = new FakeTransport()

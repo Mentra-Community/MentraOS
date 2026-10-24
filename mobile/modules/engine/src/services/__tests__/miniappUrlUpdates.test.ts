@@ -333,6 +333,22 @@ describe("updates from a miniapp's own URL", () => {
     expect(fetched).toEqual([])
   })
 
+  test("a bundled miniapp the retired Store updated updates from its first-party URL, and becomes a URL install", async () => {
+    identities[pkg] = {source: "system_store", storePackageName: "com.mentra.store"}
+    responses = [served(manifest("1.1.0"))]
+    await updater().checkAll()
+    expect(fetched).toEqual([{url: `${sourceUrl}miniapp.json`, etag: undefined}])
+    expect(installs).toHaveLength(1)
+    expect(installs[0].options.releaseIdentity).toEqual({source: "url", sourceUrl, bundleSha256: sha})
+  })
+
+  test("a third-party release a Store installed has no URL to update from", async () => {
+    active = {"com.acme.weather": "1.0.0"}
+    identities = {"com.acme.weather": {source: "store", storePackageName: "com.mentra.store"}}
+    await updater().checkAll()
+    expect(fetched).toEqual([])
+  })
+
   test("follows a redirect to another host on the same domain", async () => {
     responses = [served(manifest("1.1.0"), {url: `https://cdn.mentraglass.com/${pkg}/miniapp.json`})]
     await updater().check(pkg)

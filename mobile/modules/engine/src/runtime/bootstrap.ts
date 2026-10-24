@@ -60,10 +60,6 @@ export interface IslandConfigValues {
   supportedMiniappSdkRange?: string
   /** Package identities backed by miniapp ZIPs shipped in this host build. */
   bundledSystemMiniappPackages?: readonly string[]
-  /** Store packages selected by the build; each must also be a bundled package. */
-  bundledStoreMiniappPackages?: readonly string[]
-  /** Bundled package -> the bundled Store allowed to update it automatically. */
-  bundledSystemMiniappStoreOwners?: Readonly<Record<string, string>>
   /**
    * Where Mentra hosts its own miniapps for this deployment, for example
    * `https://miniapps.mentraglass.com/`. Each bundled miniapp updates from
@@ -221,8 +217,8 @@ export function isInstalledMiniappAllowed(
   const systemApproved = policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
   if (systemApproved && releaseIdentity?.source === "bundled_asset") return true
   // A compatible update of an approved bundled package, from Mentra's own host
-  // or the Store the build assigns to it, keeps the visibility of the bundled
-  // release it replaced.
+  // (or, for an older install, the retired Mentra Store), keeps the visibility
+  // of the bundled release it replaced.
   if (isTrustedSystemMiniappRelease(options?.config ?? {}, packageName, releaseIdentity)) return true
   // An explicit install: from the scanner's release QR, or from a miniapp URL. A package this build bundles follows
   // the system policy above whatever URL it came from: a deployment that leaves it out doesn't get it from a URL.

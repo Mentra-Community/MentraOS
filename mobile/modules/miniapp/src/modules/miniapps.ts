@@ -7,10 +7,12 @@
  * layer (invoke / handle) lives on `session.actions`, not here — these are
  * operations on the app as a whole, not on a declared action.
  *
- * Installation (`install`, `checkInstallCompatibility`, `uninstall`) is
- * narrower still: the host accepts it only from a Store miniapp bundled with
- * the Mentra App build. The host downloads, verifies, and activates the
- * release through its own installer; the Store only selects the release.
+ * Installing (`install`, `checkInstallCompatibility`, `uninstall`) is
+ * narrower still: only a miniapp on the Mentra App's system list, running the
+ * release the Mentra App installed for it, may install miniapps. Development
+ * builds, which may use the calls above, may not. The host installs from a
+ * miniapp URL through the same installer as every other way in, with no install
+ * sheet: the caller asks the person first.
  */
 
 import {MiniappRequestType} from "../protocol"
@@ -55,10 +57,6 @@ export interface MiniappInfo {
   compatibility: MiniappCompatibility
   /** True when this package identity is backed by a ZIP in the Mentra App build. */
   system: boolean
-  /** Store package that owns updates of this active release, when it is Store-managed. */
-  storeOwnerPackageName?: string
-  /** Store the host build assigns to update this bundled package's active release, if any. */
-  systemStoreOwnerPackageName?: string
   /** Declared actions (empty if the miniapp declares none). */
   actions: MiniappActionInfo[]
 }
@@ -74,48 +72,48 @@ export interface MiniappHardwareRequirement {
   description?: string
 }
 
-/** Backend-neutral release request, accepted only from a bundled, host-trusted Store. */
+/** A miniapp to install. */
 export interface InstallMiniappRequest {
-  packageName: string
-  version: string
-  bundleUrl: string
-  /** SHA-256 of the release ZIP; the host refuses any other bytes. */
-  bundleSha256: string
-  /**
-   * Bearer for `bundleUrl`, when the Store's backend requires one. The host
-   * forwards it untouched and keeps no Store address of its own: entitlement is
-   * settled between this miniapp and its backend, integrity by the SHA-256 and
-   * the bundle's publisher signature.
-   */
-  bundleAuthorization?: string
-  /**
-   * Automatic update: never stop a running miniapp. A running or starting
-   * target defers the request with `APP_RUNNING`.
-   */
-  onlyIfStopped?: boolean
-  /**
-   * With `onlyIfStopped`: when the target is running, the host stages the
-   * release and asks the user whether to update now. Declining, or a prompt the
-   * host does not show (the Mentra App is in the background, another prompt is
-   * open, or this miniapp was asked within the last day), still answers
-   * `APP_RUNNING`.
-   */
-  askIfRunning?: boolean
-  /** Minimum Mentra App version declared by the release manifest. */
-  minHostVersion?: string
-  /** Mentra Miniapp SDK version declared by the release manifest. */
-  sdkVersion?: string
-  /** Glasses hardware requirements declared by the release manifest. */
-  hardwareRequirements?: MiniappHardwareRequirement[]
-  releaseId?: string
-  channel?: string
+  /** The miniapp's URL: the HTTPS address that serves its `miniapp.json`. */
+  url: string
 }
 
 export interface InstallMiniappResult {
+  /**
+   * `installed`: this release installed. `opened`: nothing installed, because the miniapp is installed from this URL
+   * already, or a newer release of it is; {@link MiniappsModule.open} it to show it. `deferred`: the miniapp is
+   * running, so its update waits until it stops, or until the person answers the Mentra App's update prompt.
+   */
+  status: "installed" | "opened" | "deferred"
   packageName: string
+  /** The installed version: the new release, or the one that stays. */
   version: string
-  installedByStore: string
 }
+
+/**
+ * Why an install failed: the `reason` of an `INSTALL_FAILED` rejection from {@link MiniappsModule.install}.
+ * - `not_a_miniapp`: the URL serves no valid `miniapp.json` or bundle.
+ * - `domain_mismatch`: the package name doesn't belong to the URL's domain.
+ * - `archived`: Mentra archived this URL; it doesn't install.
+ * - `needs_newer_app`: the miniapp needs a newer Mentra App, or hardware the glasses lack.
+ * - `access_denied`: its server refused this account, or this deployment doesn't allow installing from a URL.
+ * - `age_restricted`: the person's declared age is below the miniapp's age rating.
+ * - `network`: the URL couldn't be reached.
+ * - `cancelled`: the Mentra App signed out or switched deployments meanwhile.
+ * - `integrity`: the bundle doesn't match what `miniapp.json` names.
+ * - `signature_invalid`: the bundle's signature doesn't match the installed miniapp's publisher.
+ */
+export type InstallMiniappFailureReason =
+  | "not_a_miniapp"
+  | "domain_mismatch"
+  | "archived"
+  | "needs_newer_app"
+  | "access_denied"
+  | "age_restricted"
+  | "network"
+  | "cancelled"
+  | "integrity"
+  | "signature_invalid"
 
 export interface InstallMiniappCompatibilityRequest {
   minHostVersion?: string | null
@@ -127,17 +125,7 @@ export type InstallMiniappCompatibility =
   | {compatible: true}
   | {compatible: false; blocker: "host" | "sdk" | "hardware"; reason: string}
 
-export type InstallMiniappPhase = "downloading" | "verifying" | "extracting" | "activating" | "complete"
-
-export interface InstallMiniappProgress {
-  packageName: string
-  version: string
-  phase: InstallMiniappPhase
-}
-
 export class MiniappsModule {
-  private readonly progressHandlers = new Set<(progress: InstallMiniappProgress) => void>()
-
   constructor(private readonly session: MiniappSession) {}
 
   /**
@@ -185,24 +173,23 @@ export class MiniappsModule {
   }
 
   /**
-   * Download, verify, and install a release through the phone host. Accepted
-   * only from a Store bundled with the Mentra App build; other callers receive
-   * NOT_PERMITTED.
+   * Install the miniapp at a miniapp URL, with no install sheet: ask the person first. The host fetches its
+   * `miniapp.json`, checks the package name against the URL's domain, registers the URL with Mentra, checks the
+   * phone can run it, and downloads, verifies and installs its bundle.
+   *
+   * Only a miniapp on the Mentra App's system list may install; any other caller gets NOT_PERMITTED. A failed
+   * install rejects with INSTALL_FAILED, whose `reason` is an {@link InstallMiniappFailureReason}.
    */
   async install(request: InstallMiniappRequest): Promise<InstallMiniappResult> {
     return this.session.sendRequest<InstallMiniappResult>(
-      {
-        ...request,
-        type: MiniappRequestType.MINIAPPS_INSTALL,
-      },
-      // Downloading, validating, extracting, asking the user and relaunching
-      // can legitimately outlast the SDK's default request timeout. The request
-      // still settles on the host response or session disconnect.
+      {type: MiniappRequestType.MINIAPPS_INSTALL, url: request.url},
+      // Fetching, registering, downloading and installing can legitimately outlast the SDK's default request
+      // timeout. The request still settles on the host response or session disconnect.
       {timeoutMs: 0},
     )
   }
 
-  /** Check host, Mentra Miniapp SDK, and glasses compatibility before offering or applying an update. */
+  /** Check a release's Mentra App, SDK and glasses requirements against this phone. System-list miniapps only. */
   async checkInstallCompatibility(request: InstallMiniappCompatibilityRequest): Promise<InstallMiniappCompatibility> {
     return this.session.sendRequest<InstallMiniappCompatibility>({
       type: MiniappRequestType.MINIAPPS_INSTALL_CHECK,
@@ -212,18 +199,10 @@ export class MiniappsModule {
     })
   }
 
-  /** Subscribe to host-owned install progress. Returns an unsubscribe function. */
-  onInstallProgress(handler: (progress: InstallMiniappProgress) => void): () => void {
-    this.progressHandlers.add(handler)
-    return () => this.progressHandlers.delete(handler)
-  }
-
-  /** @internal */
-  _deliverInstallProgress(progress: InstallMiniappProgress): void {
-    for (const handler of this.progressHandlers) handler(progress)
-  }
-
-  /** Uninstall a package this Store installed. Bundled Stores only. */
+  /**
+   * Uninstall a miniapp installed from a miniapp URL. A miniapp the Mentra App bundles, one a workspace manages and a
+   * development build stay, with NOT_PERMITTED. System-list miniapps only.
+   */
   async uninstall(packageName: string): Promise<void> {
     await this.session.sendRequest<void>({
       type: MiniappRequestType.MINIAPPS_UNINSTALL,

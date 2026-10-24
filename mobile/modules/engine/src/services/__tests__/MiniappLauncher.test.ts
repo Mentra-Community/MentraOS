@@ -92,9 +92,7 @@ beforeAll(async () => {
     auth: {},
     config: {
       isMiniappAvailable: (_packageName, mode) => available || (mode === "background" && backgroundAvailable),
-      bundledSystemMiniappPackages: ["com.mentra.store", "com.mentra.notes"],
-      bundledStoreMiniappPackages: ["com.mentra.store"],
-      bundledSystemMiniappStoreOwners: {"com.mentra.notes": "com.mentra.store"},
+      bundledSystemMiniappPackages: ["com.mentra.notes"],
     },
   })
   const mod = await import("../MiniappLauncher")
@@ -288,10 +286,10 @@ describe("MiniappLauncher", () => {
   })
 
   test("marks only a host-provenance bundled package as SYSTEM-trusted", async () => {
-    await miniappLauncher.ensureRunning("com.mentra.store")
+    await miniappLauncher.ensureRunning("com.mentra.notes")
     expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(true)
 
-    await miniappLauncher.ensureRunning("com.example.store")
+    await miniappLauncher.ensureRunning("com.example.notes")
     expect(mockRouter.spawnCalls[1].hostTrustedSystem).toBe(false)
   })
 
@@ -322,13 +320,14 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(false)
   })
 
-  test("does not trust an ordinary Store release of a bundled Store package", async () => {
+  test("does not trust a Store's release of a bundled package", async () => {
     releaseSource = "store"
-    await miniappLauncher.ensureRunning("com.mentra.store")
+    releaseStorePackageName = "com.mentra.store"
+    await miniappLauncher.ensureRunning("com.mentra.notes")
     expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(false)
   })
 
-  test("trusts a bundled package updated by the Store its build assigns", async () => {
+  test("trusts a bundled package the retired Mentra Store updated, and no other Store's", async () => {
     releaseSource = "system_store"
     releaseStorePackageName = "com.mentra.store"
     await miniappLauncher.ensureRunning("com.mentra.notes")

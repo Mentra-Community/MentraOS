@@ -130,15 +130,6 @@ describe("a caller's bundle downloader", () => {
     expect(validated).toEqual([])
   })
 
-  test("takes no caller's bearer as well", async () => {
-    const result = await registry.installFromUrl(zipUrl, {
-      bundleAuthorization: "store-token",
-      downloadBundle: async () => bytes,
-    })
-    expect(result.is_error() && result.error.message).toContain("either a downloader or an authorization")
-    expect(validated).toEqual([])
-  })
-
   test("its failure is the install's", async () => {
     const failure = new Error("the server refused the token")
     const result = await registry.installFromUrl(zipUrl, {

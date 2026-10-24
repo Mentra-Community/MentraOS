@@ -20,7 +20,7 @@ import {
 
 import {getConfigValues, isInstalledMiniappAllowed} from "../runtime/bootstrap"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
-import appRegistry, {type MiniappReleaseIdentity} from "./AppRegistry"
+import appRegistry, {type InstallableReleaseIdentity, type MiniappReleaseIdentity} from "./AppRegistry"
 import {cloudClientService} from "./CloudClientService"
 import type {ManagedAssignment} from "./fleet/assignmentReconciler"
 import localMiniappRuntime from "./LocalMiniappRuntime"
@@ -186,7 +186,7 @@ export function createMiniappInstaller(
       return {status: "opened", packageName, version: active?.version ?? manifest.version}
     }
 
-    const identity: MiniappReleaseIdentity = {
+    const identity: InstallableReleaseIdentity = {
       source: "url",
       sourceUrl: target.url,
       bundleSha256: manifest.bundle.sha256,

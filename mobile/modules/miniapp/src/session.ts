@@ -185,6 +185,8 @@ export class ConnectAckTimeoutError extends Error {
 export interface MiniappRequestError {
   code: string
   message: string
+  /** A finer cause, where a request documents one (`INSTALL_FAILED` from `session.miniapps.install`). */
+  reason?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -995,22 +997,6 @@ export class MiniappSession<TChannels extends object = any> {
         if (next === "light" || next === "dark") {
           this.colorScheme = next
           this.emitter.emit("colorScheme", next)
-        }
-        return
-      }
-
-      case MiniappResponseType.MINIAPPS_INSTALL_PROGRESS: {
-        const {packageName, version, phase} = payload as Record<string, unknown>
-        if (
-          typeof packageName === "string" &&
-          typeof version === "string" &&
-          (phase === "downloading" ||
-            phase === "verifying" ||
-            phase === "extracting" ||
-            phase === "activating" ||
-            phase === "complete")
-        ) {
-          this.miniapps._deliverInstallProgress({packageName, version, phase})
         }
         return
       }

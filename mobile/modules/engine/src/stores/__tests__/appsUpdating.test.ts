@@ -27,7 +27,6 @@ mock.module("../../services/MiniappRunningRegistry", () => ({
 mock.module("../../services/LocalDisplayManager", () => ({default: {onCoreAppChange: () => {}}}))
 mock.module("../../services/NotificationsEmitter", () => ({islandNotifications: {emit: () => {}}}))
 mock.module("../../services/STTModelManager", () => ({default: {isModelAvailable: async () => true}}))
-mock.module("../../services/SystemMiniappPolicy", () => ({isStoreMiniappPackage: () => false}))
 mock.module("../../utils/hardware/hardware", () => ({HardwareCompatibility: {checkCompatibility: () => compatible}}))
 mock.module("../../types/hardware", () => ({getModelCapabilities: () => ({})}))
 mock.module("../../utils/storage/storage", () => ({

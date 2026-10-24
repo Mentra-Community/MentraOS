@@ -1085,7 +1085,7 @@ class MantleManager {
         )
       }),
     })
-    // Keep checking the workspace's manifest while the app runs, like Store updates.
+    // Keep checking the workspace's manifest while the app runs, as miniapp updates do.
     const deployment = deploymentStore.getActive()
     if (deployment.kind === "workspace") {
       void workspaceManifestScheduler.start(deployment.workspaceOrigin, {

@@ -4,7 +4,7 @@ import {describe, expect, test} from "bun:test"
 
 import {MiniappRequestType} from "../protocol"
 import type {MiniappSession} from "../session"
-import {MiniappsModule} from "./miniapps"
+import {type InstallMiniappResult, MiniappsModule} from "./miniapps"
 
 function mockSession(result?: unknown) {
   const requests: Array<Record<string, unknown>> = []
@@ -19,46 +19,23 @@ function mockSession(result?: unknown) {
   return {session, requests, requestOptions}
 }
 
-describe("MiniappsModule Store operations", () => {
-  test("sends a backend-neutral install request without a request timeout", async () => {
-    const result = {packageName: "com.example.weather", version: "1.2.0", installedByStore: "com.mentra.store"}
+describe("MiniappsModule installs", () => {
+  test("installs a miniapp URL, with no request timeout", async () => {
+    const result = {status: "installed", packageName: "com.example.weather", version: "1.2.0"}
     const {session, requests, requestOptions} = mockSession(result)
-    const miniapps = new MiniappsModule(session)
-
-    await expect(
-      miniapps.install({
-        packageName: "com.example.weather",
-        version: "1.2.0",
-        bundleUrl: "https://store.example/bundle.zip",
-        bundleSha256: "a".repeat(64),
-        bundleAuthorization: "store-token",
-        onlyIfStopped: true,
-        askIfRunning: true,
-        minHostVersion: "2.13.0",
-        sdkVersion: "0.3.0",
-        hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
-        releaseId: "rel_123",
-        channel: "stable",
-      }),
-    ).resolves.toEqual(result)
-    expect(requests).toEqual([
-      {
-        type: MiniappRequestType.MINIAPPS_INSTALL,
-        packageName: "com.example.weather",
-        version: "1.2.0",
-        bundleUrl: "https://store.example/bundle.zip",
-        bundleSha256: "a".repeat(64),
-        bundleAuthorization: "store-token",
-        onlyIfStopped: true,
-        askIfRunning: true,
-        minHostVersion: "2.13.0",
-        sdkVersion: "0.3.0",
-        hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
-        releaseId: "rel_123",
-        channel: "stable",
-      },
-    ])
+    const installed: InstallMiniappResult = await new MiniappsModule(session).install({
+      url: "https://weather.example.com/",
+    })
+    expect(installed).toEqual(result)
+    expect(requests).toEqual([{type: MiniappRequestType.MINIAPPS_INSTALL, url: "https://weather.example.com/"}])
     expect(requestOptions).toEqual([{timeoutMs: 0}])
+  })
+
+  test("sends only the URL, whatever else the caller passes", async () => {
+    const {session, requests} = mockSession({status: "opened", packageName: "com.example.weather", version: "1.2.0"})
+    const request = {url: "https://weather.example.com/", bundleUrl: "https://store.example/bundle.zip"}
+    await new MiniappsModule(session).install(request)
+    expect(requests).toEqual([{type: MiniappRequestType.MINIAPPS_INSTALL, url: "https://weather.example.com/"}])
   })
 
   test("sends an uninstall request", async () => {
@@ -85,16 +62,5 @@ describe("MiniappsModule Store operations", () => {
         hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
       },
     ])
-  })
-
-  test("fans host install progress out to subscribers", () => {
-    const {session} = mockSession()
-    const miniapps = new MiniappsModule(session)
-    const received: unknown[] = []
-    const unsubscribe = miniapps.onInstallProgress((progress) => received.push(progress))
-    miniapps._deliverInstallProgress({packageName: "com.example.weather", version: "1.2.0", phase: "verifying"})
-    unsubscribe()
-    miniapps._deliverInstallProgress({packageName: "com.example.weather", version: "1.2.0", phase: "complete"})
-    expect(received).toEqual([{packageName: "com.example.weather", version: "1.2.0", phase: "verifying"}])
   })
 })

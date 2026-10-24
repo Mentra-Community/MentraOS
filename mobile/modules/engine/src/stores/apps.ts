@@ -20,7 +20,7 @@ import {DeviceTypes} from "../types/enums"
 import {getModelCapabilities} from "../types/hardware"
 import {HardwareCompatibility, type CompatibilityResult} from "../utils/hardware/hardware"
 import {storage} from "../utils/storage/storage"
-import appRegistry from "../services/AppRegistry"
+import appRegistry, {type UninstallOptions} from "../services/AppRegistry"
 import localDisplayManager from "../services/LocalDisplayManager"
 import {fleetEvents} from "../services/fleet/fleetEvents"
 import {islandNotifications} from "../services/NotificationsEmitter"
@@ -30,7 +30,6 @@ import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
 import {nativeMiniappExecution} from "../services/NativeMiniappExecution"
 import {noteMiniappOpened} from "../services/runningUpdatePrompt"
 import {isMiniappAvailable} from "../runtime/bootstrap"
-import {isStoreMiniappPackage} from "../services/SystemMiniappPolicy"
 import {resolveHiddenStatus} from "./appVisibility"
 import {SETTINGS, useSettingsStore} from "./settings"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
@@ -115,7 +114,7 @@ interface AppStatusState {
   clearForeground: () => void
   stopAll: () => AsyncResult<void, Error>
   install: (url: string, opts?: {versionOverride?: string}) => AsyncResult<void, Error>
-  uninstall: (packageName: string, version?: string) => AsyncResult<void, Error>
+  uninstall: (packageName: string, version?: string, options?: UninstallOptions) => AsyncResult<void, Error>
   saveScreenshot: (packageName: string, screenshot: string) => Promise<void>
   setHiddenStatus: (packageName: string, status: boolean) => void
   getHiddenStatus: (packageName: string) => boolean
@@ -500,8 +499,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // Foreground-only-one rule: stop other running standard apps.
     if (app.type === "standard") {
       const runningForeground = state.apps.filter(
-        (a) =>
-          a.running && a.type === "standard" && a.packageName !== packageName && !isStoreMiniappPackage(a.packageName),
+        (a) => a.running && a.type === "standard" && a.packageName !== packageName,
       )
       for (const r of runningForeground) {
         await get().stop(r.packageName)
@@ -634,13 +632,13 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
   install: (url, opts) => appRegistry.installFromUrl(url, opts),
 
-  uninstall: (packageName, version) => {
+  uninstall: (packageName, version, options) => {
     return Res.try_async(async () => {
       if (get().updatingPackages.has(packageName)) throw new Error(`${packageName} is updating; try again shortly`)
       if (uninstallingPackages.has(packageName)) throw new Error(`${packageName} is already being uninstalled`)
       uninstallingPackages.add(packageName)
       try {
-        const res = await appRegistry.uninstall(packageName, version)
+        const res = await appRegistry.uninstall(packageName, version, options)
         if (res.is_error()) throw res.error
         set((s) => ({apps: s.apps.filter((a) => a.packageName !== packageName)}))
       } finally {

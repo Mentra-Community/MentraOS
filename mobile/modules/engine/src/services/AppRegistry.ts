@@ -85,7 +85,6 @@ import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {assertPublisherIdentityPolicy, assertUnsignedDevBuildAllowed} from "./publisherIdentityPolicy"
 import {selectReleaseVersionsForGarbageCollection} from "./releaseVersionGc"
 import {sameMiniappBundle} from "./sameMiniappBundle"
-import {requiresConnectedGlasses} from "./SystemMiniappPolicy"
 import {validateInstallBundleArchive} from "./validateInstallBundle"
 
 export {normalizeManifestActions} from "./manifestActions"
@@ -144,11 +143,8 @@ export function buildHardwareRequirements(
     }
   }
 
-  // Most miniapps require connected glasses. A Store manages apps from the
-  // phone and runs its background updates while the glasses are away.
-  if (requiresConnectedGlasses(packageName)) {
-    out.push({type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED})
-  }
+  // Every miniapp requires connected glasses.
+  out.push({type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED})
   return out
 }
 
@@ -162,31 +158,31 @@ interface InstalledLma {
   versions: Record<string, InstalledInfo>
 }
 
+/**
+ * Where an installed release came from. `url`: installed from the miniapp's own URL (`sourceUrl`).
+ * `direct_download`: a release QR. `bundled_asset`: the ZIP this build ships. `deployment_manifest`: a workspace's
+ * deployment manifest. `dev_snapshot`: a development build.
+ */
+export type MiniappReleaseSource = "direct_download" | "bundled_asset" | "deployment_manifest" | "dev_snapshot" | "url"
+
+/**
+ * Sources only releases that earlier Mentra Apps installed carry: read, never written. `store`: installed by a
+ * bundled Store. `system_store`: a bundled package a Store updated. `preinstalled_registry`: installed by Core's
+ * retired preinstall registry.
+ */
+export type RetiredMiniappReleaseSource = "preinstalled_registry" | "store" | "system_store"
+
 export interface MiniappReleaseIdentity {
-  /**
-   * `url`: installed from the miniapp's own URL (`sourceUrl`). `store`:
-   * installed by a bundled Store. `system_store`: a bundled package updated by
-   * the Store the build assigns to it. `preinstalled_registry`: installed by
-   * Core's retired preinstall registry (read for existing installs).
-   */
-  source:
-    | "direct_download"
-    | "bundled_asset"
-    | "preinstalled_registry"
-    | "deployment_manifest"
-    | "dev_snapshot"
-    | "url"
-    | "store"
-    | "system_store"
+  source: MiniappReleaseSource | RetiredMiniappReleaseSource
   /** The miniapp URL (`url` releases): the base that serves `miniapp.json`, ending in `/`. */
   sourceUrl?: string
   /** `url` releases: the miniapp's server asked for sign-in, for `miniapp.json` or the ZIP. */
   private?: boolean
-  releaseId?: string
   bundleSha256?: string
-  channel?: string
-  /** The Store that installed this release (`store` / `system_store`). */
+  /** The Store that installed this release, and its release id and channel (`store` / `system_store`, read only). */
   storePackageName?: string
+  releaseId?: string
+  channel?: string
   deploymentId?: string
   deploymentOrigin?: string
   /**
@@ -195,6 +191,12 @@ export interface MiniappReleaseIdentity {
    */
   publisherKeyFingerprint?: string
 }
+
+/** The identity an install records: a current source, and none of the retired Store's fields. */
+export type InstallableReleaseIdentity = Omit<
+  MiniappReleaseIdentity,
+  "source" | "storePackageName" | "releaseId" | "channel"
+> & {source: MiniappReleaseSource}
 
 /**
  * Why a package is installed (the provisioning spec's installation reasons). Kept apart from the artifact's
@@ -232,21 +234,16 @@ export interface InstallBundleOptions {
    * path uses `dev-<ms>` so snapshots coexist with semver-installed versions.
    */
   versionOverride?: string
-  releaseIdentity?: MiniappReleaseIdentity
+  /** Recorded with the release. Installs write only current sources. */
+  releaseIdentity?: InstallableReleaseIdentity
   /** The archive's manifest must name this package. */
   expectedPackageName?: string
   /** The archive's manifest must declare this version. */
   expectedVersion?: string
   /** Refuse to overwrite a version that is already installed. */
   rejectExistingVersion?: boolean
-  /** The downloaded ZIP must have this SHA-256 (a Store's selected release). */
+  /** The downloaded ZIP must have this SHA-256 (the one its `miniapp.json` or manifest names). */
   expectedBundleSha256?: string
-  /**
-   * Bearer the calling Store already holds for its own backend. Attached
-   * verbatim to the download only; never followed across a redirect, never
-   * minted, inspected or reused by the host.
-   */
-  bundleAuthorization?: string
   /**
    * Remote installs: fetch the ZIP's bytes this way instead of with an anonymous request, for a miniapp URL whose
    * server may ask for sign-in. It runs before the release identity is read, so it may complete that identity. The
@@ -278,6 +275,14 @@ export interface InstallBundleOptions {
 }
 
 export type InstallProgressPhase = "downloading" | "verifying" | "extracting" | "activating"
+
+export interface UninstallOptions {
+  /**
+   * Runs inside the serialized uninstall, before anything is removed. Throwing keeps the package as it is: a caller
+   * that checked what it may remove checks again here, where no install can change it.
+   */
+  beforeRemove?: () => void
+}
 
 /** Local ZIP installs may additionally adopt an identical, already installed bundle. */
 export interface LocalZipInstallOptions extends InstallBundleOptions {
@@ -510,7 +515,7 @@ function assertInstallCompatibility(
  */
 async function downloadMiniAppZip(
   url: string,
-  options: Pick<InstallBundleOptions, "expectedBundleSha256" | "bundleAuthorization" | "onProgress"> = {},
+  options: Pick<InstallBundleOptions, "expectedBundleSha256" | "onProgress"> = {},
 ): Promise<Uint8Array> {
   const abortController = new AbortController()
   const timeout = setTimeout(() => abortController.abort(), REMOTE_BUNDLE_TIMEOUT_MS)
@@ -520,24 +525,10 @@ async function downloadMiniAppZip(
     // Expo fetch provides the native ReadableStream required for bounded
     // downloads without buffering an attacker-controlled response first.
     const requestUrl = new URL(url)
-    const authorization = options.bundleAuthorization?.trim()
-    const response = await expoFetch(
-      url,
-      authorization
-        ? {
-            signal: abortController.signal,
-            headers: {Authorization: `Bearer ${authorization}`},
-            // Never forward the caller's bearer credential through a redirect.
-            redirect: "error",
-          }
-        : {signal: abortController.signal},
-    )
+    const response = await expoFetch(url, {signal: abortController.signal})
     if (!response.ok) throw new Error(`bundle download failed with HTTP ${response.status}`)
     if (requestUrl.protocol === "https:" && response.url && new URL(response.url).protocol !== "https:") {
       throw new Error("bundle download redirected away from HTTPS")
-    }
-    if (authorization && response.url && new URL(response.url).origin !== requestUrl.origin) {
-      throw new Error("authorized bundle download changed origin")
     }
     const declaredSize = Number(response.headers.get("content-length"))
     if (Number.isFinite(declaredSize) && declaredSize > MAX_REMOTE_BUNDLE_BYTES) {
@@ -573,9 +564,8 @@ async function downloadMiniAppZip(
 async function downloadWith(
   download: NonNullable<InstallBundleOptions["downloadBundle"]>,
   url: string,
-  options: Pick<InstallBundleOptions, "expectedBundleSha256" | "bundleAuthorization" | "onProgress">,
+  options: Pick<InstallBundleOptions, "expectedBundleSha256" | "onProgress">,
 ): Promise<Uint8Array> {
-  if (options.bundleAuthorization) throw new Error("A bundle download takes either a downloader or an authorization")
   options.onProgress?.("downloading")
   const bytes = await download(url)
   if (bytes.byteLength === 0 || bytes.byteLength > MAX_REMOTE_BUNDLE_BYTES) {
@@ -1401,7 +1391,6 @@ class AppRegistry {
         ? await downloadWith(opts.downloadBundle, url, opts)
         : await downloadMiniAppZip(url, {
             expectedBundleSha256: opts?.expectedBundleSha256,
-            bundleAuthorization: opts?.bundleAuthorization,
             onProgress: opts?.onProgress,
           })
       console.log("ZIP: done downloading, starting unzip")
@@ -1858,11 +1847,12 @@ class AppRegistry {
     this.notify()
   }
 
-  public uninstall(packageName: string, version?: string): AsyncResult<void, Error> {
+  public uninstall(packageName: string, version?: string, options: UninstallOptions = {}): AsyncResult<void, Error> {
     // Serialize with installs: an uninstall must not delete a package tree
     // while another operation is staging or activating inside it.
     return Res.try_async(() =>
       runInstallFilesystemTransaction(async () => {
+        options.beforeRemove?.()
         if (this.retainedDevVersions.has(packageName)) throw new Error("Cannot uninstall a miniapp during replacement")
         if (version) {
           const lmaDir = new Directory(Paths.document, "lmas", packageName, version)

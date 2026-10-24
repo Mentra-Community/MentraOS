@@ -2,7 +2,7 @@
  * Automatic updates that waited for a running miniapp.
  *
  * An update deferred because its miniapp was running resumes when that
- * miniapp stops: the host subscribes and runs Store maintenance again, which
+ * miniapp stops: the host subscribes and checks for updates again, which
  * then finds the miniapp idle and installs the release.
  */
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"

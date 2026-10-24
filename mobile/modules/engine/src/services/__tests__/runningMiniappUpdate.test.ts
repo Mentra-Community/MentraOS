@@ -562,10 +562,10 @@ describe("a managed first install", () => {
 
 describe("installation reasons", () => {
   test("an explicit install records the user's reason; an automatic update records none", async () => {
-    await installMiniappRelease("https://store.example/notes-1.1.0.zip", {
+    await installMiniappRelease("https://notes.example.com/notes-1.1.0.zip", {
       expectedPackageName: pkg,
       expectedVersion: "1.1.0",
-      releaseIdentity: {source: "store"},
+      releaseIdentity: {source: "url", sourceUrl: "https://notes.example.com/"},
     })
     active = "1.1.0"
     await release({expectedVersion: "1.2.0"})

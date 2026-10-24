@@ -665,8 +665,6 @@ describe("MantleManager", () => {
   })
 
   it("configures the build's bundled miniapps and its miniapp SDK range", () => {
-    expect(miniappConfig.bundledStoreMiniappPackages).toBeUndefined()
-    expect(miniappConfig.bundledSystemMiniappStoreOwners).toBeUndefined()
     expect(miniappConfig.isMiniappAvailable).toBeUndefined()
     expect(miniappConfig.supportedMiniappSdkRange).toBe(">=0.3.0 <4.0.0")
   })

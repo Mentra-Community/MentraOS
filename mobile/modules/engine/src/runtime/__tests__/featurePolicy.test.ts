@@ -184,16 +184,14 @@ describe("deployment feature policy", () => {
   })
 })
 
-describe("Store-updated bundled releases", () => {
+describe("bundled releases the retired Store updated", () => {
   afterEach(resetForTests)
   const identity = {source: "system_store", storePackageName: "com.mentra.store"}
   function configureOrganization(approved: string[] | null, managed = false) {
     configure({
       auth: {},
       config: {
-        bundledSystemMiniappPackages: ["com.mentra.notes", "com.mentra.store"],
-        bundledStoreMiniappPackages: ["com.mentra.store"],
-        bundledSystemMiniappStoreOwners: {"com.mentra.notes": "com.mentra.store"},
+        bundledSystemMiniappPackages: ["com.mentra.notes"],
         localMiniappPolicy: {
           systemPackageNames: approved,
           managed: managed

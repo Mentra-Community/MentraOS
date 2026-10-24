@@ -355,7 +355,7 @@ const offPrompt = engine.miniapps.onUpdatePrompt((prompt) => {
   prompt.answer(userChoseUpdate ? "update" : "not_now")
 })
 const offFailure = engine.miniapps.onUpdateFailed(({displayName, installedVersion}) => { … })
-const offDeferred = engine.miniapps.onDeferredUpdateReady((packageName) => { … }) // run Store maintenance again
+const offDeferred = engine.miniapps.onDeferredUpdateReady((packageName) => { … }) // check for updates again
 ```
 
 `install` takes a miniapp URL (the HTTPS base that serves `miniapp.json`). It fetches
@@ -372,8 +372,8 @@ Every install registers its URL unless `config.requireRegistry` is `false`. Off,
 engine installs any miniapp URL without registering it; the domain rule still applies.
 A host app that turns it off answers to the app stores' rules itself.
 
-`onUpdatePrompt` is how the host renders the question before a bundled Store's
-update closes a running miniapp. The engine decides when a prompt may appear:
+`onUpdatePrompt` is how the host renders the question before an update closes a
+running miniapp. The engine decides when a prompt may appear:
 only while the app is in the foreground, one at a time, and at most once a day
 per miniapp. If the update fails after the user accepts, the engine starts the
 installed version again and calls `onUpdateFailed`.

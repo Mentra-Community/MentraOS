@@ -106,15 +106,8 @@ import {
   resolveMiniappDataPartition,
 } from "./miniappDataPartition"
 import {sameCoreUrl} from "./fleet/coreUrl"
-import {
-  automaticUpdateOwner,
-  canStoreUpdateSystemMiniapp,
-  isHostTrustedSystemMiniapp,
-  isStoreMiniappPackage,
-  isSystemMiniappPackage,
-} from "./SystemMiniappPolicy"
-import {MiniappRunningError} from "../utils/storeInstallRuntime"
-import {installMiniappRelease} from "./miniappReleaseInstall"
+import {isHostTrustedSystemMiniapp, isSystemMiniappPackage} from "./SystemMiniappPolicy"
+import {installMiniapp, InstallMiniappError, type InstallMiniappErrorCode} from "./installMiniapp"
 import {dismissRunningUpdatePrompts} from "./runningUpdatePrompt"
 import {
   checkMiniappInstallCompatibility,
@@ -196,7 +189,7 @@ interface ConnectedMiniapp {
   lastPongAt: number
   unansweredPingRounds: number
   installedManifest?: InstalledMiniappManifest
-  /** Host-derived provenance (a bundled or Store-assigned release); never from miniapp.json. */
+  /** Host-derived provenance (a bundled release, or one from a Mentra host); never from miniapp.json. */
   hostTrustedSystem: boolean
   authRefreshTimerId: number | null
   /**
@@ -285,10 +278,6 @@ const SYSTEM_MINIAPP_PACKAGE_SET = new Set([
 
 /** The trusted host's identity as an action caller; never a miniapp package. */
 const HOST_ACTION_CALLER = "__mentra_host__"
-/** Package names a Store may name: dot-separated, path-safe segments (the installer's own rule). */
-const STORE_TARGET_PACKAGE_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*(\.[a-zA-Z][a-zA-Z0-9_-]*)+$/
-const STORE_RELEASE_VERSION_PATTERN =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 
 function diagnosticStringList(values: Iterable<string>): string[] {
   return [...values]
@@ -6465,9 +6454,7 @@ class LocalMiniappRuntime {
     }
   >()
   private actionCallSeq = 0
-  /** Packages a Store request is installing or uninstalling: one operation per package. */
-  private storeMutationsInFlight = new Set<string>()
-  /** Bumped by cleanup(): a Store install requested before sign-out or a deployment switch never activates. */
+  /** Bumped by cleanup(): an install requested before sign-out or a deployment switch never activates. */
   private installSessionEpoch = 0
 
   /** Changes at cleanup: an install started earlier belongs to the ended session. */
@@ -6484,15 +6471,12 @@ class LocalMiniappRuntime {
     if (SYSTEM_MINIAPP_PACKAGE_SET.has(packageName)) {
       if (app?.offline) return true
       if (app?.local && app.version) {
-        // The bundled release, or a compatible update its assigned Store installed.
+        // The bundled release, or a compatible update of it from a Mentra host.
         const identity = appRegistry.getReleaseIdentity(packageName, app.version)
         return identity?.source === "bundled_asset" || isHostTrustedSystemMiniapp(packageName, identity)
       }
       return false
     }
-    // A Store runs background-only, outside the apps list. Its privileges come
-    // from the provenance of its live context, never from its package name.
-    if (isStoreMiniappPackage(packageName)) return this.connectedApps.get(packageName)?.hostTrustedSystem === true
     return app?.isMiniappDev === true
   }
 
@@ -6552,22 +6536,13 @@ class LocalMiniappRuntime {
       missingOptional: [],
       warnings: [],
     }
-    const system = isSystemMiniappPackage(app.packageName)
-    const identity =
-      app.local && app.version && !app.isMiniappDev
-        ? appRegistry.getReleaseIdentity(app.packageName, app.version)
-        : null
-    // The Store allowed to update this active release automatically; absent for
-    // manual, development and organization-managed releases.
-    const owner = automaticUpdateOwner(app.packageName, identity)
     return {
       packageName: app.packageName,
       name: app.name,
       version: app.version ?? "",
       running: app.running,
       compatibility,
-      system,
-      ...(owner ? (system ? {systemStoreOwnerPackageName: owner} : {storeOwnerPackageName: owner}) : {}),
+      system: isSystemMiniappPackage(app.packageName),
       actions: projectSystemActions(app.actions ?? []),
     }
   }
@@ -6697,24 +6672,33 @@ class LocalMiniappRuntime {
   }
 
   // ---------------------------------------------------------------------------
-  // Store installation (bundled, host-trusted Stores only)
+  // Installing miniapps (system-list miniapps only)
   // ---------------------------------------------------------------------------
 
-  /** Only a Store bundled with this build, running its host-installed release, may install. */
-  private requireHostTrustedStore(
-    storePackageName: string,
+  /**
+   * Installing and uninstalling miniapps: only a miniapp on the system list, running the release the host installed
+   * for it. Both the live context's provenance and the installed release count: a development build, which may use
+   * the other system APIs, or another context that only reuses a system package's name, may not, and neither may any
+   * other miniapp.
+   */
+  private requireSystemListCaller(
+    packageName: string,
     requestId: string | undefined,
     op: InteropAuditEvent["op"],
     target?: string,
   ): boolean {
-    if (isStoreMiniappPackage(storePackageName) && this.connectedApps.get(storePackageName)?.hostTrustedSystem) {
+    if (
+      SYSTEM_MINIAPP_PACKAGE_SET.has(packageName) &&
+      this.connectedApps.get(packageName)?.hostTrustedSystem === true &&
+      this.isSystemPackage(packageName)
+    ) {
       return true
     }
-    this.sendResult(storePackageName, requestId, false, undefined, {
+    this.sendResult(packageName, requestId, false, undefined, {
       code: MiniappErrorCode.NOT_PERMITTED,
-      message: "Installing miniapps is restricted to the Mentra App's bundled Store",
+      message: "Installing miniapps is restricted to the Mentra App's system miniapps",
     })
-    this.auditInterop({caller: storePackageName, op, target, ok: false, errorCode: MiniappErrorCode.NOT_PERMITTED})
+    this.auditInterop({caller: packageName, op, target, ok: false, errorCode: MiniappErrorCode.NOT_PERMITTED})
     return false
   }
 
@@ -6756,199 +6740,106 @@ class LocalMiniappRuntime {
     )
   }
 
+  /**
+   * Install the miniapp at a miniapp URL through `installMiniapp`, headlessly: the system miniapp asks the person
+   * first, in its own conversation. It registers the URL like every install.
+   */
   private async handleMiniappsInstall(
-    storePackageName: string,
+    callerPackageName: string,
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
-    const target = typeof payload.packageName === "string" ? payload.packageName.trim() : undefined
-    if (!this.requireHostTrustedStore(storePackageName, requestId, "install", target)) return
-    const sessionEpoch = this.installSessionEpoch
-    const fail = (code: MiniappErrorCode, message: string) => {
-      this.sendResult(storePackageName, requestId, false, undefined, {code, message})
-      this.auditInterop({caller: storePackageName, op: "install", target, ok: false, errorCode: code})
+    if (!this.requireSystemListCaller(callerPackageName, requestId, "install")) return
+    const fail = (code: MiniappErrorCode, message: string, reason?: InstallMiniappErrorCode) => {
+      this.sendResult(callerPackageName, requestId, false, undefined, {code, message, ...(reason ? {reason} : {})})
+      this.auditInterop({caller: callerPackageName, op: "install", ok: false, errorCode: code})
     }
-
-    const version = typeof payload.version === "string" ? payload.version.trim() : ""
-    const bundleUrl = typeof payload.bundleUrl === "string" ? payload.bundleUrl.trim() : ""
-    const bundleSha256 = typeof payload.bundleSha256 === "string" ? payload.bundleSha256.trim().toLowerCase() : ""
-    // The Store's own backend credential. The host forwards it untouched: it
-    // does not mint it, read it, or keep a Store address to check it against —
-    // entitlement belongs to the Store, integrity to the host.
-    const bundleAuthorization =
-      typeof payload.bundleAuthorization === "string" ? payload.bundleAuthorization.trim() : ""
-    const onlyIfStopped = payload.onlyIfStopped === true
-    const askIfRunning = onlyIfStopped && payload.askIfRunning === true
-    if (
-      !target ||
-      !STORE_TARGET_PACKAGE_PATTERN.test(target) ||
-      !STORE_RELEASE_VERSION_PATTERN.test(version) ||
-      !bundleUrl ||
-      !/^[a-f0-9]{64}$/.test(bundleSha256)
-    ) {
-      fail(MiniappErrorCode.INVALID_ARGUMENT, "install requires packageName, version, bundleUrl, and a SHA-256 hash")
+    const url = typeof payload.url === "string" ? payload.url.trim() : ""
+    if (!url) {
+      fail(MiniappErrorCode.INVALID_ARGUMENT, "install requires the miniapp's url")
       return
     }
-    if (isStoreMiniappPackage(target)) {
-      fail(MiniappErrorCode.NOT_PERMITTED, "A Store cannot replace a bundled Store")
-      return
-    }
-    if (isSystemMiniappPackage(target) && !canStoreUpdateSystemMiniapp(storePackageName, target)) {
-      fail(MiniappErrorCode.STORE_OWNERSHIP_CONFLICT, `${target} is assigned to another Store by this Mentra App build`)
-      return
-    }
-    if (this.storeMutationsInFlight.has(target)) {
-      fail(MiniappErrorCode.INSTALL_IN_PROGRESS, `Another Store operation is already in progress for ${target}`)
-      return
-    }
-    this.storeMutationsInFlight.add(target)
     try {
-      let parsedUrl: URL
-      try {
-        parsedUrl = new URL(bundleUrl)
-      } catch {
-        fail(MiniappErrorCode.INVALID_ARGUMENT, "bundleUrl is not a valid URL")
-        return
-      }
-      const developmentHttp = (globalThis as {__DEV__?: boolean}).__DEV__ === true && parsedUrl.protocol === "http:"
-      if (parsedUrl.protocol !== "https:" && !developmentHttp) {
-        fail(MiniappErrorCode.INVALID_ARGUMENT, "bundleUrl must use HTTPS")
-        return
-      }
-      const compatibilityPolicy = this.currentInstallCompatibilityPolicy()
-      const compatibility = this.evaluateInstallCompatibility(payload)
-      if (!compatibilityPolicy || !compatibility.compatible) {
-        fail(
-          MiniappErrorCode.APP_NOT_COMPATIBLE,
-          compatibility.compatible ? "Host miniapp compatibility policy is not configured" : compatibility.reason,
-        )
-        return
-      }
-
-      const activeVersion = await appRegistry.getActiveVersion(target)
-      const identity = activeVersion ? appRegistry.getReleaseIdentity(target, activeVersion) : null
-      if (
-        (identity?.source === "store" || identity?.source === "system_store") &&
-        identity.storePackageName !== storePackageName
-      ) {
-        fail(MiniappErrorCode.STORE_OWNERSHIP_CONFLICT, `${target} is managed by ${identity.storePackageName}`)
-        return
-      }
-      if (onlyIfStopped) {
-        // An automatic update replaces only a release this Store maintains:
-        // never a development selection, a manual install or an organization pin.
-        if (this.hasDevelopmentSelection(target)) {
-          fail(MiniappErrorCode.INSTALL_FAILED, `${target} uses a manually selected build`)
-          return
-        }
-        if (automaticUpdateOwner(target, identity) !== storePackageName) {
-          fail(MiniappErrorCode.STORE_OWNERSHIP_CONFLICT, `${target} is not managed by ${storePackageName}`)
-          return
-        }
-      }
-
-      await installMiniappRelease(bundleUrl, {
-        expectedPackageName: target,
-        expectedVersion: version,
-        expectedBundleSha256: bundleSha256,
-        ...(bundleAuthorization ? {bundleAuthorization} : {}),
-        compatibilityPolicy,
-        onlyIfStopped,
-        askIfRunning,
-        isCancelled: () => sessionEpoch !== this.installSessionEpoch,
-        beforeActivate: () => {
-          if (onlyIfStopped && this.hasDevelopmentSelection(target)) {
-            throw new Error(`${target} uses a manually selected build`)
-          }
-        },
-        onProgress: (phase) =>
-          this.sendToMiniapp(storePackageName, {
-            type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
-            packageName: target,
-            version,
-            phase,
-          }),
-        releaseIdentity: {
-          source: isSystemMiniappPackage(target) ? "system_store" : "store",
-          storePackageName,
-          bundleSha256,
-          ...(typeof payload.releaseId === "string" ? {releaseId: payload.releaseId} : {}),
-          ...(typeof payload.channel === "string" ? {channel: payload.channel} : {}),
-        },
-      })
-      // Keep the new release and the one it replaced, for recovery.
-      void appRegistry.gcReleaseVersions(target, [version, ...(activeVersion ? [activeVersion] : [])])
-      this.sendToMiniapp(storePackageName, {
-        type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
-        packageName: target,
-        version,
-        phase: "complete",
-      })
-      this.sendResult(storePackageName, requestId, true, {
-        packageName: target,
-        version,
-        installedByStore: storePackageName,
-      })
-      this.auditInterop({caller: storePackageName, op: "install", target, ok: true})
+      const {status, packageName, version} = await installMiniapp(url, {source: "system"})
+      this.sendResult(callerPackageName, requestId, true, {status, packageName, version})
+      this.auditInterop({caller: callerPackageName, op: "install", target: packageName, ok: true})
     } catch (error) {
-      fail(
-        error instanceof MiniappRunningError ? MiniappErrorCode.APP_RUNNING : MiniappErrorCode.INSTALL_FAILED,
-        (error as Error)?.message ?? "miniapp installation failed",
-      )
-    } finally {
-      this.storeMutationsInFlight.delete(target)
+      if (error instanceof InstallMiniappError) fail(MiniappErrorCode.INSTALL_FAILED, error.message, error.code)
+      else fail(MiniappErrorCode.INSTALL_FAILED, (error as Error)?.message ?? "miniapp installation failed")
     }
   }
 
   private handleMiniappsInstallCheck(
-    storePackageName: string,
+    callerPackageName: string,
     payload: Record<string, unknown>,
     requestId?: string,
   ): void {
-    if (!this.requireHostTrustedStore(storePackageName, requestId, "install")) return
-    this.sendResult(storePackageName, requestId, true, this.evaluateInstallCompatibility(payload))
+    if (!this.requireSystemListCaller(callerPackageName, requestId, "install")) return
+    this.sendResult(callerPackageName, requestId, true, this.evaluateInstallCompatibility(payload))
+  }
+
+  /**
+   * Why a system miniapp may not uninstall `target`, or null. It may uninstall a miniapp installed from a miniapp URL,
+   * by the person or a system miniapp. A miniapp this build bundles, one a workspace manages (its deployment manifest
+   * or a Fleet assignment), a release QR's and a development build stay: they belong to the build, the workspace or
+   * the person.
+   */
+  private uninstallRefusal(target: string): {code: MiniappErrorCode; message: string} | null {
+    if (isSystemMiniappPackage(target)) {
+      return {code: MiniappErrorCode.NOT_PERMITTED, message: `${target} is bundled with the Mentra App`}
+    }
+    const version = appRegistry.getActiveReleaseVersion(target)
+    if (!version) return {code: MiniappErrorCode.APP_NOT_FOUND, message: `${target} is not installed`}
+    const identity = appRegistry.getReleaseIdentity(target, version)
+    const fromUrlOnly = appRegistry.getInstallReasons(target).every((reason) => reason === "explicit")
+    if (identity?.source !== "url" || !fromUrlOnly || this.hasDevelopmentSelection(target)) {
+      return {code: MiniappErrorCode.NOT_PERMITTED, message: `${target} wasn't installed from a miniapp URL`}
+    }
+    return null
   }
 
   private async handleMiniappsUninstall(
-    storePackageName: string,
+    callerPackageName: string,
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
     const target = typeof payload.packageName === "string" ? payload.packageName : undefined
-    if (!this.requireHostTrustedStore(storePackageName, requestId, "uninstall", target)) return
+    if (!this.requireSystemListCaller(callerPackageName, requestId, "uninstall", target)) return
     const fail = (code: MiniappErrorCode, message: string) => {
-      this.sendResult(storePackageName, requestId, false, undefined, {code, message})
-      this.auditInterop({caller: storePackageName, op: "uninstall", target, ok: false, errorCode: code})
+      this.sendResult(callerPackageName, requestId, false, undefined, {code, message})
+      this.auditInterop({caller: callerPackageName, op: "uninstall", target, ok: false, errorCode: code})
     }
-    if (!target || isSystemMiniappPackage(target)) {
-      fail(MiniappErrorCode.NOT_PERMITTED, "A Store cannot uninstall a miniapp bundled with the Mentra App")
+    if (!target) {
+      fail(MiniappErrorCode.INVALID_ARGUMENT, "uninstall requires a packageName")
       return
     }
-    if (this.storeMutationsInFlight.has(target)) {
-      fail(MiniappErrorCode.INSTALL_IN_PROGRESS, `Another Store operation is already in progress for ${target}`)
+    const refused = this.uninstallRefusal(target)
+    if (refused) {
+      fail(refused.code, refused.message)
       return
     }
-    this.storeMutationsInFlight.add(target)
+    const session = this.installSessionEpoch
+    const late: {refusal?: {code: MiniappErrorCode; message: string}} = {}
     try {
-      const activeVersion = await appRegistry.getActiveVersion(target)
-      const identity = activeVersion ? appRegistry.getReleaseIdentity(target, activeVersion) : null
-      if (identity?.source !== "store" || identity.storePackageName !== storePackageName) {
-        fail(
-          MiniappErrorCode.STORE_OWNERSHIP_CONFLICT,
-          `${target} is managed by ${identity?.storePackageName ?? "another installer"}`,
-        )
-        return
-      }
       const app = this.interopApps().find((candidate) => candidate.packageName === target)
       if (app?.running) await this.stopInteropApp(target)
-      const result = await useAppStatusStore.getState().uninstall(target)
+      // Checked again inside the serialized uninstall: a Fleet assignment, a workspace release or a development build
+      // may have arrived while the miniapp stopped, and nothing is removed once the engine session has ended.
+      const result = await useAppStatusStore.getState().uninstall(target, undefined, {
+        beforeRemove: () => {
+          late.refusal =
+            session === this.installSessionEpoch
+              ? (this.uninstallRefusal(target) ?? undefined)
+              : {code: MiniappErrorCode.INTERNAL, message: `The uninstall of ${target} was cancelled`}
+          if (late.refusal) throw new Error(late.refusal.message)
+        },
+      })
       if (result.is_error()) throw result.error
-      this.sendResult(storePackageName, requestId, true)
-      this.auditInterop({caller: storePackageName, op: "uninstall", target, ok: true})
+      this.sendResult(callerPackageName, requestId, true)
+      this.auditInterop({caller: callerPackageName, op: "uninstall", target, ok: true})
     } catch (error) {
-      fail(MiniappErrorCode.INTERNAL, (error as Error)?.message ?? "miniapp uninstall failed")
-    } finally {
-      this.storeMutationsInFlight.delete(target)
+      if (late.refusal) fail(late.refusal.code, late.refusal.message)
+      else fail(MiniappErrorCode.INTERNAL, (error as Error)?.message ?? "miniapp uninstall failed")
     }
   }
 
@@ -7076,7 +6967,7 @@ class LocalMiniappRuntime {
     })
   }
 
-  /** Host-owned scheduler entry (Store maintenance). The host is not represented as a miniapp. */
+  /** The host invokes a miniapp's action, host-only actions included. The host is not represented as a miniapp. */
   public invokeActionFromHost(
     targetPackageName: string,
     actionId: string,

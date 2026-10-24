@@ -156,8 +156,7 @@ export type {
   InstallMiniappCompatibilityRequest,
   InstallMiniappRequest,
   InstallMiniappResult,
-  InstallMiniappPhase,
-  InstallMiniappProgress,
+  InstallMiniappFailureReason,
   MiniappHardwareRequirement,
 } from "./modules/miniapps"
 export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/actions"

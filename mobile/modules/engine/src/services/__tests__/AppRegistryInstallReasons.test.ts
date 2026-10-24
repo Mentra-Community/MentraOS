@@ -138,7 +138,7 @@ describe("installation reasons", () => {
   })
 
   test("adding and removing the assignment reason never changes source", () => {
-    finalize("1.0.0", {source: "store", storePackageName: "com.mentra.store"}).apply()
+    finalize("1.0.0", {source: "url", sourceUrl: "https://notes.example.com/"}).apply()
     installed = ["1.0.0"]
     const before = registry.getReleaseIdentity(packageName, "1.0.0")
 
@@ -467,5 +467,28 @@ describe("access revocation", () => {
     installed = []
     expect((await registry.uninstall(packageName)).is_ok()).toBe(true)
     expect(registry.isMiniappAccessRevoked(packageName)).toBe(false)
+  })
+})
+
+describe("uninstalling", () => {
+  test("beforeRemove runs inside the uninstall, and refusing keeps the package, its release and its reasons", async () => {
+    finalize("1.0.0", {source: "url", sourceUrl: "https://notes.acme.example/"}, "assignment").apply()
+    installed = ["1.0.0"]
+    fakeDirs.set(`file:///test-documents/lmas/${packageName}`, ["1.0.0"])
+    const checked: string[] = []
+    const result = await registry.uninstall(packageName, undefined, {
+      beforeRemove: () => {
+        checked.push(...registry.getInstallReasons(packageName))
+        throw new Error("now assigned")
+      },
+    })
+    expect(result.is_error() && result.error.message).toBe("now assigned")
+    expect(checked).toEqual(["assignment"])
+    expect(deletedDirs).toEqual([])
+    expect(registry.getReleaseIdentity(packageName, "1.0.0")).toMatchObject({source: "url"})
+    expect(registry.getInstallReasons(packageName)).toEqual(["assignment"])
+
+    expect((await registry.uninstall(packageName, undefined, {beforeRemove: () => {}})).is_ok()).toBe(true)
+    expect(deletedDirs).toEqual([`file:///test-documents/lmas/${packageName}`])
   })
 })
