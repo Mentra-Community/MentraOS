@@ -209,6 +209,17 @@ const ar = {
     signInFailedDescription:
       "تعذّر على Microsoft تسجيل دخولك إلى هذه المؤسسة. حاول مرة أخرى أو تواصل مع فريق تقنية المعلومات.",
   },
+  miniappAge: {
+    askTitle: "كم عمرك؟",
+    askMessage: "بعض miniapps مصنّفة لأعمار أكبر. نحتفظ بإجابتك مع حساب Mentra الخاص بك ولا نشاركها أبدًا مع miniapps.",
+    agePlaceholder: "عمرك",
+    invalidAge: "أدخل عمرك بالأرقام.",
+    continue: "متابعة",
+    restrictedTitle: "تصنيف {{name}} هو {{rating}}.",
+    restrictedMessage: "إنه غير متاح لعمرك.",
+    unavailableTitle: "تعذّر التحقق من عمرك",
+    unavailableMessage: "اتصل بالإنترنت وحاول مرة أخرى.",
+  },
   miniappInstall: {
     fromLocalNetwork: "من شبكتك المحلية\n{{address}}",
     install: "تثبيت",

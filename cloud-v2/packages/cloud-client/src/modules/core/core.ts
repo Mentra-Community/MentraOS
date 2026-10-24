@@ -7,8 +7,8 @@
  * core never touches credentials itself.
  *
  * Today it exposes the unified report submission surface, the support
- * profile update, the Fleet report, the workspace calls and the miniapp
- * registry calls.
+ * profile update, the Fleet report, the workspace calls, the miniapp
+ * registry calls and the person's declared age.
  *
  * Guardrail: this is device-facing only. It deliberately carries none of the
  * Dev Console / OEM Portal / store web UI surface; those are separate clients.
@@ -18,6 +18,7 @@
  */
 import type { HttpClient } from "../../http";
 import type {
+  DeclaredAge,
   FleetDesiredState,
   FleetReport,
   RegistryRegisterRequest,
@@ -33,6 +34,7 @@ import type {
   PendingInvitationsResponse,
 } from "./workspace-types";
 import type { AccountCallOptions, CoreTokenSource } from "./account-call";
+import { Account } from "./account";
 import { Fleet, type FleetReportOutcome } from "./fleet";
 import { Registry } from "./registry";
 import { Workspaces } from "./workspaces";
@@ -91,8 +93,8 @@ export type {
 export interface CoreDeps {
   http: HttpClient;
   /**
-   * Where workspace, desired-state and registry calls get the signed-in account's Core token (`cloud.auth`). Without
-   * it those calls reject, because they must be made as one account.
+   * Where workspace, desired-state, registry and account calls get the signed-in account's Core token (`cloud.auth`).
+   * Without it those calls reject, because they must be made as one account.
    */
   auth?: CoreTokenSource;
 }
@@ -168,6 +170,13 @@ export class Core {
     /** `POST /api/client/registry/status`: one batch of installed URLs. */
     registryStatus(request: RegistryStatusRequest, opts?: AccountCallOptions): Promise<RegistryStatusResponse>;
   };
+  /** What the phone keeps on the signed-in person's account (`account.ts`). Each call is made as one account. */
+  readonly account: {
+    /** `GET /api/account/declared-age`: the age the person declared and when, both null until they answer. */
+    declaredAge(opts?: AccountCallOptions): Promise<DeclaredAge>;
+    /** `PUT /api/account/declared-age`: keep `age` as the person's declared age, dated now. */
+    setDeclaredAge(age: number, opts?: AccountCallOptions): Promise<DeclaredAge>;
+  };
 
   constructor(deps: CoreDeps) {
     const { http, auth } = deps;
@@ -176,6 +185,7 @@ export class Core {
     const fleet = new Fleet(http, auth);
     const workspaces = new Workspaces(http, auth);
     const registry = new Registry(http, auth);
+    const account = new Account(http, auth);
 
     this.reports = {
       submit: reports.submit.bind(reports),
@@ -203,6 +213,10 @@ export class Core {
     this.registry = {
       registerMiniappUrl: registry.registerMiniappUrl.bind(registry),
       registryStatus: registry.registryStatus.bind(registry),
+    };
+    this.account = {
+      declaredAge: account.declaredAge.bind(account),
+      setDeclaredAge: account.setDeclaredAge.bind(account),
     };
   }
 }

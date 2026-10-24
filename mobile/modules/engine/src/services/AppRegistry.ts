@@ -1958,6 +1958,11 @@ class AppRegistry {
     return version
   }
 
+  /** The version a launch would run now (as `getActiveVersion` chooses it), read without storing anything. */
+  public peekActiveVersion(packageName: string): string | undefined {
+    return this.chooseActiveVersion(packageName).version
+  }
+
   /** The version a launch runs, by launch precedence, and the active pointer to store for it (null to leave it). */
   private chooseActiveVersion(packageName: string): {version: string | undefined; remember: string | null} {
     // Another account's or workspace's dev snapshot is not an installation here.

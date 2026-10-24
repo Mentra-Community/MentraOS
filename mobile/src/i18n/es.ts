@@ -223,6 +223,18 @@ const es = {
     signInFailedDescription:
       "Microsoft no pudo iniciar tu sesión en esta organización. Inténtalo de nuevo o contacta con tu equipo de TI.",
   },
+  miniappAge: {
+    askTitle: "¿Cuántos años tienes?",
+    askMessage:
+      "Algunas miniapps están clasificadas para mayores. Guardamos tu respuesta en tu cuenta de Mentra y nunca la compartimos con las miniapps.",
+    agePlaceholder: "Tu edad",
+    invalidAge: "Escribe tu edad con un número.",
+    continue: "Continuar",
+    restrictedTitle: "{{name}} está clasificada para {{rating}}.",
+    restrictedMessage: "No está disponible para tu edad.",
+    unavailableTitle: "No pudimos comprobar tu edad",
+    unavailableMessage: "Conéctate a internet y vuelve a intentarlo.",
+  },
   miniappInstall: {
     fromLocalNetwork: "Desde tu red local\n{{address}}",
     install: "Instalar",

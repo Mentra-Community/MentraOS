@@ -26,6 +26,7 @@ import {fleetEvents} from "../services/fleet/fleetEvents"
 import {islandNotifications} from "../services/NotificationsEmitter"
 import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
+import {checkMiniappAge, isMiniappAgeGateOn, miniappRequiredAge} from "../services/miniappAgeGate"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
 import {nativeMiniappExecution} from "../services/NativeMiniappExecution"
 import {noteMiniappOpened} from "../services/runningUpdatePrompt"
@@ -77,6 +78,17 @@ export interface AppStoreHooks {
 }
 
 let hostHooks: AppStoreHooks = {}
+
+/** The running-state change at the end of each start, one at a time (see `start`). */
+let startTransitions: Promise<unknown> = Promise.resolve()
+/** How many times each package has been stopped, so a start can tell whether a later start stopped it. */
+const stopCounts = new Map<string, number>()
+
+function oneStartAtATime<T>(transition: () => Promise<T>): Promise<T> {
+  const run = startTransitions.then(transition)
+  startTransitions = run.catch(() => {})
+  return run
+}
 const uninstallingPackages = new Set<string>()
 
 export function installAppStoreHooks(hooks: AppStoreHooks): void {
@@ -466,7 +478,18 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return false
     }
 
-    // A model check above may have yielded while an update started.
+    // The age gate, before the screen opens or another miniapp stops, so a refusal changes nothing: the person was
+    // asked their age, or told why. Only a gated miniapp waits here. The launch is checked again as its context
+    // spawns, for every other way in.
+    if (app.local && !app.running && isMiniappAgeGateOn()) {
+      const rated = miniappLauncher.installedAgeRating(packageName)
+      if (miniappRequiredAge(rated.ageRating) !== null) {
+        const verdict = await checkMiniappAge(rated, {interactive: AppState.currentState === "active"})
+        if (verdict !== "allowed") return false
+      }
+    }
+
+    // A model check or the age gate above may have yielded while an update started.
     if (get().updatingPackages.has(packageName)) {
       hostHooks.onUpdateBlocked?.(app)
       return false
@@ -486,8 +509,9 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
     // If the tapped app is already running, this is a re-open: the nav/foreground
     // above already drove the animation, and there's nothing to spawn. Short-
-    // circuit before the spawn pipeline.
-    if (app.running) {
+    // circuit before the spawn pipeline. Another start of it may have finished
+    // while this one waited above.
+    if (app.running || get().apps.find((a) => a.packageName === packageName)?.running) {
       saveLastOpenTime(packageName)
       return true
     }
@@ -496,22 +520,29 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // declares no execution is the Mentra App's own interface (Settings, Feedback), not a miniapp, and is not reported.
     if (app.local || app.nativeExecution) attempt.begin()
 
-    // Foreground-only-one rule: stop other running standard apps.
-    if (app.type === "standard") {
-      const runningForeground = state.apps.filter(
-        (a) => a.running && a.type === "standard" && a.packageName !== packageName,
-      )
-      for (const r of runningForeground) {
-        await get().stop(r.packageName)
+    // Foreground-only-one rule: stop other running standard apps, then mark this one running. Starts that waited
+    // above (the age question, a presentation) can get here together, so each does this one at a time, on the
+    // state as it is then: the last one in stops the others.
+    let stopsWhenMarked = 0
+    await oneStartAtATime(async () => {
+      if (app.type === "standard") {
+        const runningForeground = get().apps.filter(
+          (a) => a.running && a.type === "standard" && a.packageName !== packageName,
+        )
+        for (const r of runningForeground) {
+          await get().stop(r.packageName)
+        }
       }
-    }
 
-    set((s) => ({
-      apps: s.apps.map((a) => (a.packageName === packageName ? {...a, running: true, loading: false} : a)),
-    }))
-
-    saveLastOpenTime(packageName)
-    await startStopApp(app, true)
+      set((s) => ({
+        apps: s.apps.map((a) => (a.packageName === packageName ? {...a, running: true, loading: false} : a)),
+      }))
+      saveLastOpenTime(packageName)
+      await startStopApp(app, true)
+      stopsWhenMarked = stopCounts.get(packageName) ?? 0
+    })
+    // A start that came in after this one may have stopped it already: it doesn't come back.
+    if ((stopCounts.get(packageName) ?? 0) !== stopsWhenMarked) return false
 
     // Spawn the background JS context for local miniapps. This used to be a
     // side effect of LocalMiniappView mounting on foreground; pulling it here
@@ -542,6 +573,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   }),
 
   stop: async (packageName: string) => {
+    stopCounts.set(packageName, (stopCounts.get(packageName) ?? 0) + 1)
     const state = get()
     const app = state.apps.find((a) => a.packageName === packageName)
     if (!app) {

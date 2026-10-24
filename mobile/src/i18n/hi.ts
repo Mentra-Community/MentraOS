@@ -217,6 +217,18 @@ const hi = {
     signInFailedDescription:
       "Microsoft आपको इस संगठन में साइन इन नहीं कर सका। फिर से कोशिश करें या अपनी IT टीम से संपर्क करें।",
   },
+  miniappAge: {
+    askTitle: "आपकी उम्र क्या है?",
+    askMessage:
+      "कुछ miniapps बड़ी उम्र के लोगों के लिए रेट किए गए हैं। हम आपका जवाब आपके Mentra खाते में रखते हैं और इसे कभी miniapps के साथ साझा नहीं करते।",
+    agePlaceholder: "आपकी उम्र",
+    invalidAge: "अपनी उम्र अंकों में लिखें।",
+    continue: "जारी रखें",
+    restrictedTitle: "{{name}} की रेटिंग {{rating}} है।",
+    restrictedMessage: "यह आपकी उम्र के लिए उपलब्ध नहीं है।",
+    unavailableTitle: "हम आपकी उम्र की जाँच नहीं कर सके",
+    unavailableMessage: "इंटरनेट से कनेक्ट करें और फिर से कोशिश करें।",
+  },
   miniappInstall: {
     fromLocalNetwork: "आपके लोकल नेटवर्क से\n{{address}}",
     install: "इंस्टॉल करें",

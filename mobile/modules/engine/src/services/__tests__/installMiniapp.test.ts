@@ -34,6 +34,8 @@ type MiniappInstallPreview = import("../installMiniapp").MiniappInstallPreview
 type MiniappRegistrationAnswer = import("@mentra/cloud-protocol").RegistryRegisterResponse
 type MiniappRegistrationRequest = import("@mentra/cloud-protocol").RegistryRegisterRequest
 type MiniappFetchTransport = import("../miniappFetch").MiniappFetchTransport
+type AgeGateVerdict = import("../miniappAgeGate").AgeGateVerdict
+type AgeRatedMiniapp = import("../miniappAgeGate").AgeRatedMiniapp
 type MiniappRequestInit = import("../miniappFetch").MiniappRequestInit
 type LocalBuildInstall = import("../localBuildInstall").LocalBuildInstall
 
@@ -67,6 +69,11 @@ let hostVersion: string
 let session: number
 let kept: string[][]
 let warnings: string[]
+/** What the age gate answers, and every miniapp it was asked about. */
+let ageVerdict: () => Promise<AgeGateVerdict>
+let ageChecks: AgeRatedMiniapp[]
+/** Every step, in order, for the tests that check where the age gate comes. */
+let steps: string[]
 let developmentSelected: boolean
 let developmentAllowed: boolean
 let localInstalls: Array<{bundleUrl: string; install: LocalBuildInstall}>
@@ -128,6 +135,11 @@ function deps(overrides: Partial<InstallMiniappDependencies> = {}): InstallMinia
     assertCanInstallVersion: (packageName, version) =>
       assertMiniappUpdateVersion(packageName, version, installed && packageName === pkg ? [installed.version] : []),
     allowsRelease: () => allowed,
+    checkAge: async (miniapp) => {
+      ageChecks.push(miniapp)
+      steps.push("age gate")
+      return ageVerdict()
+    },
     compatibilityPolicy: (source) =>
       source === "assignment"
         ? {hostVersion, supportedSdkRange: ">=3.0.0 <4.0.0"}
@@ -209,6 +221,9 @@ beforeEach(async () => {
   session = 1
   kept = []
   warnings = []
+  ageVerdict = async () => "allowed"
+  ageChecks = []
+  steps = []
   developmentSelected = false
   developmentAllowed = true
   localInstalls = []
@@ -614,6 +629,23 @@ describe("what is already installed", () => {
     expect(installs).toEqual([])
   })
 
+  test("bringing a release back from behind a development build meets the age gate before its sheet", async () => {
+    installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
+    developmentSelected = true
+    served = manifest({ageRating: "18+"})
+    ageVerdict = async () => "too_young"
+    let sheets = 0
+    const pending = install(url, {
+      confirm: async () => {
+        sheets += 1
+        return true
+      },
+    })
+    expect(await failure(pending)).toBe("age_restricted")
+    expect(sheets).toBe(0)
+    expect(restored).toEqual([])
+  })
+
   test("declining the sheet leaves the development build running", async () => {
     installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
     developmentSelected = true
@@ -749,6 +781,113 @@ describe("headless installs", () => {
   })
 })
 
+describe("the age gate", () => {
+  /** An install with the sheet, recording when the sheet opens. */
+  function installWithSheet(options: Partial<InstallMiniappOptions> = {}) {
+    return install(url, {
+      confirm: async () => {
+        steps.push("sheet")
+        return true
+      },
+      ...options,
+    })
+  }
+
+  test("comes after registration and before the sheet, with the served name and rating", async () => {
+    served = manifest({ageRating: "18+"})
+    const register = deps().register
+    await install(
+      url,
+      {
+        confirm: async () => {
+          steps.push("sheet")
+          return true
+        },
+      },
+      {
+        register: async (request) => {
+          steps.push("register")
+          return register(request)
+        },
+      },
+    )
+    expect(ageChecks).toEqual([{packageName: pkg, name: "Acme Tools", ageRating: "18+"}])
+    expect(steps).toEqual(["register", "age gate", "sheet"])
+    expect(installs).toHaveLength(1)
+  })
+
+  test("a miniapp without a rating goes to the gate too, which lets it through", async () => {
+    served = manifest({ageRating: undefined})
+    await installWithSheet()
+    expect(ageChecks).toEqual([{packageName: pkg, name: "Acme Tools", ageRating: null}])
+    expect(installs).toHaveLength(1)
+  })
+
+  test.each(["too_young", "unknown", "unavailable"] as const)(
+    "%s stops it as age_restricted, before the sheet and before anything downloads",
+    async (verdict) => {
+      served = manifest({ageRating: "18+"})
+      ageVerdict = async () => verdict
+      expect(await failure(installWithSheet())).toBe("age_restricted")
+      expect(steps).toEqual(["age gate"])
+      expect(sent.map((request) => request.url)).toEqual([manifestUrl])
+      expect(installs).toEqual([])
+    },
+  )
+
+  test("closing the age question is cancelled, and no sheet opens", async () => {
+    ageVerdict = async () => "cancelled"
+    expect(await failure(installWithSheet())).toBe("cancelled")
+    expect(steps).toEqual(["age gate"])
+    expect(installs).toEqual([])
+  })
+
+  test("an install cancelled while the person answers never opens the sheet", async () => {
+    let cancelled = false
+    ageVerdict = async () => {
+      cancelled = true
+      return "allowed"
+    }
+    expect(await failure(installWithSheet({isCancelled: () => cancelled}))).toBe("cancelled")
+    expect(steps).toEqual(["age gate"])
+    expect(installs).toEqual([])
+  })
+
+  test.each(["system", "assignment"] as const)(
+    "a headless %s install doesn't meet it until the miniapp opens",
+    async (source) => {
+      served = manifest({ageRating: "18+"})
+      ageVerdict = async () => "too_young"
+      const result = await install(url, {
+        source,
+        confirm: undefined,
+        ...(source === "assignment"
+          ? {
+              assignment: {
+                assignmentId: "a1",
+                assignmentRevision: 3,
+                workspaceId: "w1",
+                coreUrl: "https://core.example.com",
+                mentraUserId: "u1",
+                url,
+              },
+            }
+          : {}),
+      })
+      expect(result.status).toBe("installed")
+      expect(ageChecks).toEqual([])
+    },
+  )
+
+  test("a miniapp installed from this URL opens without it: opening meets the gate", async () => {
+    served = manifest({ageRating: "18+"})
+    installed = {version: "1.2.0", identity: {source: "url", sourceUrl: url}}
+    ageVerdict = async () => "too_young"
+    expect((await installWithSheet()).status).toBe("opened")
+    expect(ageChecks).toEqual([])
+  })
+})
+
 describe("the error", () => {
   test("carries its code, a message and the cause", async () => {
     route(manifestUrl, {status: 503})
@@ -813,6 +952,14 @@ describe("a local-network address", () => {
     expect(local).toMatchObject({packageName: claimed, version: "1.2.0", sourceUrl: localUrl, sha256: zipSha})
     expect(local.server).toBeUndefined()
     expect(sent.map((request) => request.url)).toEqual([localManifestUrl, localZipUrl])
+  })
+
+  test("meets the age gate before its sheet, as any install with a sheet does", async () => {
+    serveLocal({ageRating: "18+"})
+    ageVerdict = async () => "too_young"
+    expect(await failure(install(localUrl, {source: "local"}))).toBe("age_restricted")
+    expect(ageChecks).toEqual([{packageName: claimed, name: "Notes", ageRating: "18+"}])
+    expect(localInstalls).toEqual([])
   })
 
   test.each(["link", "scanner", "paste"] as const)("installs as a local build from a %s too", async (source) => {

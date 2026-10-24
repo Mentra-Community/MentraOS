@@ -45,6 +45,7 @@ export {
 } from "./services/installMiniapp"
 export type {DisplayMirrorEvent} from "./facades/displayMirror"
 export type {
+  AgeRestrictionNotice,
   IslandConfigureOptions,
   IslandAuth,
   IslandConfigValues,

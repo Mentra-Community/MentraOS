@@ -29,10 +29,15 @@
  * A launch the apps store's `start` makes is reported by `start` itself
  * (`fleetEvents.claimLaunch`); a context already executing, or one a hidden
  * action wake keeps out of the running tray, is no launch.
+ *
+ * Age ratings: every launch path comes through here, so this is where a miniapp rated above the host app's own
+ * rating meets the age gate as it opens, whether it was installed with the sheet or headlessly (a Fleet assignment,
+ * a system miniapp). A launch the person makes in front of the app may ask their age once; any other launch needs it
+ * declared already.
  */
 
 import {File} from "expo-file-system"
-import {Platform} from "react-native"
+import {AppState, Platform} from "react-native"
 
 import {
   isDevMiniappAllowed,
@@ -49,6 +54,7 @@ import devServerBridge from "./DevServerBridge"
 import {fleetEvents} from "./fleet/fleetEvents"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSRouter} from "./MentraJSRouter"
+import {checkMiniappAge, type AgeGateVerdict, type AgeRatedMiniapp} from "./miniappAgeGate"
 import {developmentOriginName, miniappOrigin, miniappOriginUrl, type MiniappOriginPlatform} from "./miniappOrigin"
 import {isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
 
@@ -57,6 +63,20 @@ export class MiniappAccessRevokedError extends Error {
   constructor(readonly packageName: string) {
     super(`MiniappLauncher: access to ${packageName} was revoked`)
     this.name = "MiniappAccessRevokedError"
+  }
+}
+
+/**
+ * The miniapp is rated above the host app's own rating and the person's declared age doesn't let it open (see
+ * {@link AgeGateVerdict}). A person opening it in front of the app was asked their age, or told why.
+ */
+export class MiniappAgeRestrictedError extends Error {
+  constructor(
+    readonly packageName: string,
+    readonly verdict: Exclude<AgeGateVerdict, "allowed">,
+  ) {
+    super(`MiniappLauncher: ${packageName} is age-rated and did not open (${verdict})`)
+    this.name = "MiniappAgeRestrictedError"
   }
 }
 
@@ -102,6 +122,8 @@ export interface ResolvedBundle {
   devBuild: boolean
   declaredPermissions: string[]
   installedManifest?: InstalledMiniappManifest
+  /** What the bundle's `miniapp.json` declares as `ageRating`; null when it declares none. */
+  ageRating: unknown
   /** Build-owned SYSTEM trust derived from install provenance, never the manifest. */
   hostTrustedSystem: boolean
   /** Set for dev miniapps (HTTP off the dev server); null for released. */
@@ -231,6 +253,21 @@ class MiniappLauncher {
     }
   }
 
+  /**
+   * The name and age rating of the installed bundle a launch of `packageName` runs (the version `getActiveVersion`
+   * chooses, a development snapshot included), read without waiting. The apps store checks it before it opens the
+   * screen or stops other miniapps, so a refusal changes nothing. A live development server's rating is read when
+   * its context spawns, where every launch is checked again.
+   */
+  installedAgeRating(packageName: string): AgeRatedMiniapp {
+    const version = appRegistry.peekActiveVersion(packageName)
+    const manifest = version
+      ? (appRegistry.getMiniappManifest(packageName, version) as {name?: unknown; ageRating?: unknown} | null)
+      : null
+    const name = typeof manifest?.name === "string" && manifest.name ? manifest.name : packageName
+    return {packageName, name, ageRating: manifest?.ageRating ?? null}
+  }
+
   /** Wire the router in. Called once from MiniappEngine construction. */
   configure(deps: LauncherDeps): void {
     this.deps = deps
@@ -355,6 +392,7 @@ class MiniappLauncher {
       devBuild: true,
       declaredPermissions,
       installedManifest,
+      ageRating: manifest.ageRating ?? null,
       // A dev server is never host-trusted, whatever package name it claims.
       hostTrustedSystem: false,
       devUrl: resolvedUrl,
@@ -373,6 +411,7 @@ class MiniappLauncher {
       sdkVersion?: string
       minHostVersion?: string
       type?: string
+      ageRating?: unknown
       entry?: {background?: string; ui?: string}
       permissions?: Array<{type: string; required?: boolean; description?: string}>
       hardwareRequirements?: Array<{type: string; level: string; description?: string}>
@@ -432,6 +471,7 @@ class MiniappLauncher {
       devBuild,
       declaredPermissions,
       installedManifest,
+      ageRating: manifest?.ageRating ?? null,
       // A development build never runs with the build's privileges, whatever name it claims.
       hostTrustedSystem:
         !devBuild && isHostTrustedSystemMiniapp(packageName, appRegistry.getReleaseIdentity(packageName, version)),
@@ -548,6 +588,14 @@ class MiniappLauncher {
       throw new Error(`MiniappLauncher: cannot resolve bundle for ${packageName}`)
     }
     const version = resolved.installedManifest?.version
+    const projectRunning = runtimeOptions?.projectRunning ?? true
+    // The age gate, before the deployment checks below, which then see the state after any question the person
+    // answered. Only a launch the person makes in front of the app may ask.
+    const verdict = await checkMiniappAge(
+      {packageName, name: resolved.installedManifest?.name || packageName, ageRating: resolved.ageRating},
+      {interactive: projectRunning && AppState.currentState === "active"},
+    )
+    if (verdict !== "allowed") throw new MiniappAgeRestrictedError(packageName, verdict)
     // A live dev server sets devUrl. A snapshot keeps the directory name `dev-*`
     // as the active version. Either one is the scanned build; a release fallback is neither.
     const activeVersion = await appRegistry.getActiveVersion(packageName)
@@ -568,7 +616,6 @@ class MiniappLauncher {
 
     // Re-check after the async resolve: a different path may have spawned it
     // while we were fetching/reading the bundle.
-    const projectRunning = runtimeOptions?.projectRunning ?? true
     if (router.registeredPackages().includes(packageName)) {
       if (projectRunning && this.promote(packageName)) {
         this.reportLaunch(packageName, "started", runtimeOptions, resolved.installedManifest)

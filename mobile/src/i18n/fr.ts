@@ -224,6 +224,18 @@ const fr = {
     signInFailedDescription:
       "Microsoft n'a pas pu vous connecter à cette organisation. Réessayez ou contactez votre équipe informatique.",
   },
+  miniappAge: {
+    askTitle: "Quel âge avez-vous ?",
+    askMessage:
+      "Certaines miniapps sont destinées à un public plus âgé. Nous gardons votre réponse avec votre compte Mentra et ne la partageons jamais avec les miniapps.",
+    agePlaceholder: "Votre âge",
+    invalidAge: "Indiquez votre âge en chiffres.",
+    continue: "Continuer",
+    restrictedTitle: "{{name}} est classée {{rating}}.",
+    restrictedMessage: "Elle n'est pas disponible pour votre âge.",
+    unavailableTitle: "Impossible de vérifier votre âge",
+    unavailableMessage: "Connectez-vous à Internet et réessayez.",
+  },
   miniappInstall: {
     fromLocalNetwork: "Depuis votre réseau local\n{{address}}",
     install: "Installer",

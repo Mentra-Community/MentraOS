@@ -1,10 +1,12 @@
 /// <reference types="bun-types" />
 
-import {afterAll, beforeAll, beforeEach, describe, expect, test, mock, spyOn} from "bun:test"
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, mock, spyOn} from "bun:test"
 
-import {reactNative} from "./reactNativeTestMock"
+import {reactNative, reactNativeAppState} from "./reactNativeTestMock"
 
-import {configure, resetForTests} from "../../runtime/bootstrap"
+import type {DeclaredAge} from "@mentra/cloud-protocol/declared-age"
+
+import {configure, resetForTests, updateUiSeams, type AgeRestrictionNotice} from "../../runtime/bootstrap"
 import {installWithRuntimeReload} from "../../utils/storeInstallRuntime"
 import type {MentraJSRouter} from "../MentraJSRouter"
 
@@ -21,12 +23,15 @@ let storedDevUrl: string | null = null
 let publisherFingerprint: string | null = null
 let snapshotVersions: string[] = []
 let uiPath = "ui/index.html"
+/** The installed bundle's own `ageRating`; undefined declares none. */
+let manifestAgeRating: string | undefined
 const revoked = new Set<string>()
 
 mock.module("../AppRegistry", () => ({
   default: {
     isMiniappAccessRevoked: (packageName: string) => revoked.has(packageName),
     getActiveVersion: async () => activeVersion,
+    peekActiveVersion: () => activeVersion || undefined,
     getPublisherKeyFingerprint: () => publisherFingerprint,
     getSelectedDevSnapshot: () => selectedSnapshot,
     getMiniappEntryPaths: (_package: string, version: string) => {
@@ -38,7 +43,12 @@ mock.module("../AppRegistry", () => ({
         uiPath,
       }
     },
-    getMiniappManifest: () => ({permissions: [{type: "MICROPHONE"}], hardwareRequirements: []}),
+    getMiniappManifest: () => ({
+      name: "Night Club",
+      permissions: [{type: "MICROPHONE"}],
+      hardwareRequirements: [],
+      ...(manifestAgeRating === undefined ? {} : {ageRating: manifestAgeRating}),
+    }),
     getReleaseIdentity: () => ({source: releaseSource, storePackageName: releaseStorePackageName}),
     getLatestDevSnapshotVersion: () => null,
     hasDevSnapshot: () => false,
@@ -166,6 +176,8 @@ describe("MiniappLauncher", () => {
     publisherFingerprint = null
     snapshotVersions = []
     uiPath = "ui/index.html"
+    manifestAgeRating = undefined
+    reactNativeAppState.currentState = "active"
     ;(reactNative.Platform as {OS: string}).OS = "android"
     waitForConnectCalls = []
     revoked.clear()
@@ -582,5 +594,150 @@ describe("MiniappLauncher", () => {
 
   test("isRunning is false for an unconfigured / unknown package", () => {
     expect(miniappLauncher.isRunning("com.unknown")).toBe(false)
+  })
+
+  describe("the age gate", () => {
+    /** What the person's account holds; null until they answer. */
+    let declared: DeclaredAge
+    let answers: Array<number | null>
+    let gateCalls: string[]
+    let notices: AgeRestrictionNotice[]
+
+    beforeEach(async () => {
+      const {setMiniappAgeGateDependenciesForTests} = await import("../miniappAgeGate")
+      declared = {declaredAge: null, declaredAgeAt: null}
+      answers = []
+      gateCalls = []
+      notices = []
+      updateUiSeams({showAgeRestricted: (notice) => notices.push(notice)})
+      setMiniappAgeGateDependenciesForTests({
+        hostAgeRating: () => "12+",
+        account: async () => {
+          gateCalls.push("account")
+          return "mu_alice"
+        },
+        cached: () => null,
+        cache: () => {},
+        fetch: async () => declared,
+        store: async (_account, age) => {
+          gateCalls.push(`store ${age}`)
+          declared = {declaredAge: age, declaredAgeAt: new Date().toISOString()}
+          return declared
+        },
+        asker: () => async () => {
+          gateCalls.push("ask")
+          return answers.shift() ?? null
+        },
+        now: () => new Date(),
+        warn: () => {},
+      })
+    })
+
+    afterEach(async () => {
+      const {setMiniappAgeGateDependenciesForTests} = await import("../miniappAgeGate")
+      setMiniappAgeGateDependenciesForTests(null)
+      updateUiSeams({showAgeRestricted: undefined})
+    })
+
+    test("a miniapp without a rating never meets it", async () => {
+      await miniappLauncher.ensureRunning("com.club")
+      expect(mockRouter.spawnCalls).toHaveLength(1)
+      expect(gateCalls).toEqual([])
+    })
+
+    test("a miniapp rated above the host's rating opens for a person old enough", async () => {
+      manifestAgeRating = "18+"
+      declared = {declaredAge: 21, declaredAgeAt: new Date().toISOString()}
+      await miniappLauncher.ensureRunning("com.club")
+      expect(mockRouter.spawnCalls.map((call) => call.packageName)).toEqual(["com.club"])
+    })
+
+    test("a person too young is told why, and nothing spawns", async () => {
+      const {MiniappAgeRestrictedError} = await import("../MiniappLauncher")
+      manifestAgeRating = "18+"
+      declared = {declaredAge: 15, declaredAgeAt: new Date().toISOString()}
+      const refusal = await miniappLauncher.ensureRunning("com.club").catch((error: unknown) => error)
+      expect(refusal).toBeInstanceOf(MiniappAgeRestrictedError)
+      expect(refusal).toMatchObject({packageName: "com.club", verdict: "too_young"})
+      expect(mockRouter.spawnCalls).toHaveLength(0)
+      expect(notices).toEqual([{packageName: "com.club", name: "Night Club", ageRating: "18+", reason: "too_young"}])
+    })
+
+    test("the first open in front of the person asks once, keeps the answer, and opens", async () => {
+      manifestAgeRating = "16+"
+      answers = [16]
+      await miniappLauncher.ensureRunning("com.club", undefined, {trigger: "user"})
+      expect(gateCalls).toEqual(["account", "ask", "store 16"])
+      expect(mockRouter.spawnCalls).toHaveLength(1)
+    })
+
+    test("a headless install's first open without the person (a hidden wake) asks nobody and doesn't run", async () => {
+      const {MiniappAgeRestrictedError} = await import("../MiniappLauncher")
+      manifestAgeRating = "16+"
+      answers = [30]
+      await expect(
+        miniappLauncher.ensureConnected("com.club", 5000, undefined, {projectRunning: false}),
+      ).rejects.toBeInstanceOf(MiniappAgeRestrictedError)
+      expect(gateCalls).not.toContain("ask")
+      expect(mockRouter.spawnCalls).toHaveLength(0)
+      expect(notices).toEqual([])
+    })
+
+    test("a launch while the Mentra App is in the background asks nobody", async () => {
+      manifestAgeRating = "16+"
+      answers = [30]
+      reactNativeAppState.currentState = "background"
+      await expect(miniappLauncher.ensureRunning("com.club")).rejects.toMatchObject({verdict: "unknown"})
+      expect(gateCalls).not.toContain("ask")
+    })
+
+    test("closing the question opens nothing", async () => {
+      manifestAgeRating = "18+"
+      answers = [null]
+      await expect(miniappLauncher.ensureRunning("com.club")).rejects.toMatchObject({verdict: "cancelled"})
+      expect(mockRouter.spawnCalls).toHaveLength(0)
+      expect(notices).toEqual([])
+    })
+
+    test("a Home tap and the screen's own launch share one question", async () => {
+      manifestAgeRating = "16+"
+      answers = [16]
+      await Promise.all([
+        miniappLauncher.ensureRunning("com.club"),
+        miniappLauncher.ensureRunning("com.club", undefined, {trigger: "user"}),
+      ])
+      expect(gateCalls.filter((call) => call === "ask")).toHaveLength(1)
+      expect(mockRouter.spawnCalls).toHaveLength(1)
+    })
+
+    test("the apps store reads the installed bundle's name and rating ahead of a launch, without waiting", () => {
+      manifestAgeRating = "18+"
+      expect(miniappLauncher.installedAgeRating("com.club")).toEqual({
+        packageName: "com.club",
+        name: "Night Club",
+        ageRating: "18+",
+      })
+      // The version a launch runs, a development snapshot nobody selected included.
+      activeVersion = "dev-5"
+      expect(miniappLauncher.installedAgeRating("com.club").ageRating).toBe("18+")
+      manifestAgeRating = undefined
+      expect(miniappLauncher.installedAgeRating("com.club").ageRating).toBeNull()
+      activeVersion = ""
+      expect(miniappLauncher.installedAgeRating("com.club")).toEqual({
+        packageName: "com.club",
+        name: "com.club",
+        ageRating: null,
+      })
+      expect(mockRouter.spawnCalls).toHaveLength(0)
+      expect(gateCalls).toEqual([])
+    })
+
+    test("a development snapshot that declares a rating meets it too", async () => {
+      manifestAgeRating = "18+"
+      declared = {declaredAge: 15, declaredAgeAt: new Date().toISOString()}
+      selectedSnapshot = "dev-1"
+      await expect(miniappLauncher.ensureRunning("com.club")).rejects.toMatchObject({verdict: "too_young"})
+      expect(mockRouter.spawnCalls).toHaveLength(0)
+    })
   })
 })

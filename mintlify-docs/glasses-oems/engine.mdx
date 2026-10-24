@@ -382,6 +382,16 @@ Every install registers its URL unless `config.requireRegistry` is `false`. Off,
 engine installs any miniapp URL without registering it; the domain rule still applies.
 A host app that turns it off answers to the app stores' rules itself.
 
+Set `config.hostAgeRating` to your app's own App Store age rating, for example `"12+"`.
+A miniapp whose `ageRating` is above it installs or opens only for a person whose
+declared age is old enough. The first time that comes up, the engine calls
+`ui.askDeclaredAge()` (resolve the whole number of years the person gives, or `null`
+when they cancel) and keeps the answer, with the date, on their Core account. It never
+sends it to a miniapp. When the gate stops a miniapp the person is installing or
+opening, the engine calls `ui.showAgeRestricted(notice)` so you can say why. An install
+with a sheet is checked before `confirm`; a headless install is checked when the
+miniapp first opens. Without `hostAgeRating`, nothing is gated.
+
 `onUpdatePrompt` is how the host renders the question before an update closes a
 running miniapp. The engine decides when a prompt may appear:
 only while the app is in the foreground, one at a time, and at most once a day

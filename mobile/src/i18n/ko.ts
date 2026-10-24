@@ -212,6 +212,17 @@ const ko = {
     signInFailedTitle: "로그인 실패",
     signInFailedDescription: "Microsoft에서 이 조직에 로그인할 수 없습니다. 다시 시도하거나 IT 팀에 문의하세요.",
   },
+  miniappAge: {
+    askTitle: "나이가 어떻게 되세요?",
+    askMessage: "일부 miniapp에는 연령 등급이 있습니다. 답변은 Mentra 계정에 저장되며 miniapp과 공유되지 않습니다.",
+    agePlaceholder: "나이",
+    invalidAge: "나이를 숫자로 입력해 주세요.",
+    continue: "계속",
+    restrictedTitle: "{{name}}은(는) {{rating}} 등급입니다.",
+    restrictedMessage: "현재 나이로는 이용할 수 없습니다.",
+    unavailableTitle: "나이를 확인할 수 없습니다",
+    unavailableMessage: "인터넷에 연결한 후 다시 시도해 주세요.",
+  },
   miniappInstall: {
     fromLocalNetwork: "로컬 네트워크에서\n{{address}}",
     install: "설치",

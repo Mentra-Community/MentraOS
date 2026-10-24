@@ -16,6 +16,7 @@ import {
   buildMiniappGlobalsScript,
   localMiniappRuntime,
   miniappLauncher,
+  useAppStatusStore,
 } from "@mentra/engine-host-internal"
 import {devServerBridge} from "@mentra/engine-host-internal/devtools"
 import {useNavigationStore, type NavInterceptor} from "@/stores/navigation"
@@ -439,6 +440,16 @@ function LocalMiniappView({
 
     launch().catch((e: Error) => {
       if (e.name === "AbortError") return // stale run — ignore entirely
+      // The age gate kept it from opening (MiniappAgeRestrictedError): the person answered the age question, or was
+      // told why on the alert sheet. Close the screen instead of showing an error on it, but only for this view's
+      // current launch, while this miniapp is still the one in front: a refusal that arrives after the person moved
+      // on leaves the screen they're on alone.
+      if (e.name === "MiniappAgeRestrictedError") {
+        if (!signal.aborted && useAppStatusStore.getState().foregroundedPackage === packageName) {
+          engine.miniapps.clearForeground()
+        }
+        return
+      }
       if (devUrl) {
         // Dev bundle couldn't be resolved (dev server unreachable, or the
         // manifest/background bundle fetch failed) — route to the dedicated

@@ -39,6 +39,18 @@ test("ordinary and PR Expo generation retain the exact build backend baseline", 
   }
 })
 
+test("ordinary and PR builds package the Mentra App's own App Store age rating", () => {
+  for (const pr of [false, true]) {
+    const output = execFileSync(process.execPath, ["--require", "tsx/cjs", "--eval",
+      'const configure = require("./app.config.ts"); console.log(JSON.stringify(configure({config: {}}).extra))',
+    ], {cwd: mobile, encoding: "utf8", env: {...process.env,
+      EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN: "ci-dummy-not-a-real-token", MENTRAOS_PINNED_BUILD_NUMBER: "303000123",
+      MENTRA_PR_MOBILE_FINGERPRINT: pr ? fingerprint : "", MENTRA_PR_BUILD_SHA: "b".repeat(40),
+    }})
+    assert.equal(JSON.parse(output).MENTRA_APP_AGE_RATING, "12+")
+  }
+})
+
 test("all baseline contexts preserve the existing service URL without consulting Expo runtime extra", () => {
   for (const value of ["https://core.dev.us-west-2.mentraglass.com", "https://core.staging.us-west-2.mentraglass.com",
     "https://core.mentraglass.com", "http://localhost:3000/workspace", "  https://custom.example:8443/core  "])

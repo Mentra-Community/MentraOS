@@ -251,9 +251,10 @@ export async function finishAccountDeletion(mentraUserId: string): Promise<"comp
   // Core's copy of the account's email: cleared, and fenced against a lookup still in flight.
   await forgetAccountEmail(mentraUserId)
   if (user.tenantId === MENTRA_TENANT_ID) await gotrue.deleteUser(user.tenantUserId)
+  // The age the person declared goes with the rest of their account.
   await UserModel.updateOne(
     {mentraUserId, accountDeletionCompletedAt: null},
-    {$set: {accountDeletionCompletedAt: new Date()}},
+    {$set: {accountDeletionCompletedAt: new Date(), declaredAge: null, declaredAgeAt: null}},
   )
   return "completed"
 }

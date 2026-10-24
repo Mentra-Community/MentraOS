@@ -12,6 +12,7 @@
  *   when the alert has one and allows dismissal. Otherwise the sheet waits for a button.
  * - Buttons follow iOS alerts: two buttons sit side by side with the main action on the right, unless a
  *   label wouldn't fit on one line. Then, and with three or more buttons, they stack, main action on top.
+ * - A sheet whose content has a text field rides above the keyboard while it's open.
  */
 import {StatusBar} from "expo-status-bar"
 import {type ReactNode, useCallback, useEffect, useReducer, useRef, useState} from "react"
@@ -26,6 +27,7 @@ import {
   View,
 } from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
+import {useReanimatedKeyboardAnimation} from "react-native-keyboard-controller"
 import Animated, {Easing, useAnimatedStyle, useSharedValue, withSpring, withTiming} from "react-native-reanimated"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 import {scheduleOnRN} from "react-native-worklets"
@@ -242,6 +244,8 @@ export function ModalProvider({children}: {children: ReactNode}) {
 
   const offset = useSharedValue(windowHeight)
   const backdrop = useSharedValue(0)
+  // The keyboard's height, negative while it's open: a text field in the content stays above it.
+  const keyboard = useReanimatedKeyboardAnimation()
 
   const current = queue.current[0]
   const cancelIndex = current ? current.buttons.findIndex((button) => button.style === "cancel") : -1
@@ -263,6 +267,8 @@ export function ModalProvider({children}: {children: ReactNode}) {
       if (!alert || closing.current) return
       closing.current = {id: alert.id, index}
       rerender()
+      // A field in the sheet goes with it: the keyboard closes as the sheet slides away.
+      Keyboard.dismiss()
       backdrop.value = withTiming(0, HIDE)
       // Finish however the slide ends: nothing else animates the sheet while it closes.
       offset.value = withTiming(windowHeight, HIDE, () => scheduleOnRN(finish))
@@ -359,7 +365,12 @@ export function ModalProvider({children}: {children: ReactNode}) {
     })
 
   const backdropStyle = useAnimatedStyle(() => ({opacity: backdrop.value}))
-  const sheetStyle = useAnimatedStyle(() => ({transform: [{translateY: offset.value}]}))
+  // The keyboard lifts the sheet only as far as the sheet is on screen, so a sheet sliding away or in is never held
+  // up by a keyboard that is still closing.
+  const sheetStyle = useAnimatedStyle(() => {
+    const shown = windowHeight > 0 ? Math.max(0, 1 - offset.value / windowHeight) : 1
+    return {transform: [{translateY: offset.value + keyboard.height.value * shown}]}
+  })
 
   return (
     <>

@@ -1540,6 +1540,18 @@ const en = {
     feedback: "Give Feedback",
     lmaLoader: "Miniapp Developer",
   },
+  miniappAge: {
+    askTitle: "How old are you?",
+    askMessage:
+      "Some miniapps are rated for older ages. We keep your answer with your Mentra account and never share it with miniapps.",
+    agePlaceholder: "Your age",
+    invalidAge: "Enter your age as a number.",
+    continue: "Continue",
+    restrictedTitle: "{{name}} is rated {{rating}}.",
+    restrictedMessage: "It isn't available for your age.",
+    unavailableTitle: "We couldn't check your age",
+    unavailableMessage: "Connect to the internet and try again.",
+  },
   miniappInstall: {
     fromLocalNetwork: "From your local network\n{{address}}",
     install: "Install",

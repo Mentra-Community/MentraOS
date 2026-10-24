@@ -93,6 +93,9 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   const packagedExtra = {
     ...originalExtra,
     mentraBackendTarget: {schemaVersion: 1, coreUrl},
+    // The Mentra App's own age rating, as App Store Connect shows it. A miniapp rated above it installs or opens
+    // only for a person whose declared age is old enough. Change it with the App Store rating.
+    MENTRA_APP_AGE_RATING: "12+",
   }
 
   return {

@@ -6,7 +6,8 @@
  * 2. The domain rule: the URL's domain, and the domain it was served from, must own the package name.
  * 3. Register the URL in Core's registry. `archived` and `not_a_miniapp` stop the install; when the registry can't
  *    be reached, or Core refuses the call, the install goes on, as for an entry only the phone can reach.
- * 4. Ask the person, unless the install is headless.
+ * 4. Ask the person, unless the install is headless. First the age gate: a miniapp rated above the host app's own
+ *    rating needs the person's declared age to be old enough. A headless install meets the gate when it first opens.
  * 5. Check the phone can run it: `minHostVersion`, `sdkVersion` and `hardwareRequirements`.
  * 6. Download the ZIP (answering its server's challenge), check its SHA-256, and install it through the shared
  *    installer, which checks the ZIP's own package name and version and applies the signing and version rules.
@@ -30,6 +31,7 @@ import {cloudClientService} from "./CloudClientService"
 import type {ManagedAssignment} from "./fleet/assignmentReconciler"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 import {checkManifestVersions} from "./manifestVersionGate"
+import {checkMiniappAge, type AgeGateVerdict, type AgeRatedMiniapp} from "./miniappAgeGate"
 import {isPackageNameAllowedForUrl} from "./miniappDomainRule"
 import {fetchMiniappBundle, fetchMiniappJson, MiniappFetchError, type MiniappJsonResult} from "./miniappFetch"
 import {checkMiniappInstallCompatibility, type MiniappCompatibilityPolicy} from "./miniappInstallCompatibility"
@@ -89,6 +91,12 @@ export interface InstallMiniappResult {
   version: string
 }
 
+/**
+ * Why an install stopped. `age_restricted`: the age gate stopped it, because the person's declared age is below the
+ * miniapp's rating, or couldn't be read, kept or asked for. In the first two cases the engine has already told them
+ * why, through the host's `showAgeRestricted` seam. `cancelled`: the install was cancelled, or the person declined
+ * the sheet or closed the age question.
+ */
 export type InstallMiniappErrorCode =
   | "not_a_miniapp"
   | "domain_mismatch"
@@ -141,6 +149,11 @@ export interface InstallMiniappDependencies {
   assertCanInstallVersion(packageName: string, version: string): void
   /** The deployment lets this release run once it is installed. */
   allowsRelease(packageName: string, version: string, identity: MiniappReleaseIdentity): boolean
+  /**
+   * The age gate for an install with a sheet (`miniappAgeGate.ts`): the person may be asked their age, and is told why
+   * when the gate stops the install.
+   */
+  checkAge(miniapp: AgeRatedMiniapp): Promise<AgeGateVerdict>
   /** The phone's compatibility policy, or null when the host configured none. Fleet's leaves out hardware. */
   compatibilityPolicy(
     source: InstallMiniappSource,
@@ -222,7 +235,7 @@ export function createMiniappInstaller(
       if (!isNewerInstalled(error)) throw installError(error, packageName)
       if (options.source !== "assignment" && deps.hasDevelopmentSelection(packageName)) {
         if (options.confirm) {
-          await confirmInstall(options.confirm, preview)
+          await askToInstall(deps, options.confirm, preview, assertCurrent)
           assertCurrent()
         }
         try {
@@ -253,7 +266,7 @@ export function createMiniappInstaller(
     }
 
     if (options.confirm) {
-      await confirmInstall(options.confirm, preview)
+      await askToInstall(deps, options.confirm, preview, assertCurrent)
       assertCurrent()
     }
 
@@ -335,17 +348,22 @@ async function installFromLocalNetwork(
   }
 
   if (options.confirm) {
-    await confirmInstall(options.confirm, {
-      url: target.url,
-      host: target.host,
-      local: true,
-      packageName,
-      name: manifest.name,
-      iconUrl: served.iconUrl,
-      ageRating: manifest.ageRating ?? null,
-      private: false,
-      alreadyInstalled: deps.activeRelease(packageName) !== null || deps.hasDevelopmentSelection(packageName),
-    })
+    await askToInstall(
+      deps,
+      options.confirm,
+      {
+        url: target.url,
+        host: target.host,
+        local: true,
+        packageName,
+        name: manifest.name,
+        iconUrl: served.iconUrl,
+        ageRating: manifest.ageRating ?? null,
+        private: false,
+        alreadyInstalled: deps.activeRelease(packageName) !== null || deps.hasDevelopmentSelection(packageName),
+      },
+      assertCurrent,
+    )
     assertCurrent()
   }
 
@@ -370,6 +388,28 @@ async function installFromLocalNetwork(
     throw installError(error, packageName)
   }
   return {status: "installed", packageName, version: manifest.version}
+}
+
+/**
+ * Ask the person to install: first the age gate, so nobody is offered a miniapp they're too young for, then the install
+ * sheet. A headless install meets the age gate when the miniapp first opens (`MiniappLauncher`).
+ */
+async function askToInstall(
+  deps: InstallMiniappDependencies,
+  confirm: (preview: MiniappInstallPreview) => Promise<boolean>,
+  preview: MiniappInstallPreview,
+  assertCurrent: () => void,
+): Promise<void> {
+  const {packageName, name, ageRating} = preview
+  const verdict = await deps.checkAge({packageName, name, ageRating})
+  assertCurrent()
+  if (verdict === "cancelled") {
+    throw new InstallMiniappError("cancelled", `The age question for ${packageName} was closed`)
+  }
+  if (verdict !== "allowed") {
+    throw new InstallMiniappError("age_restricted", `${packageName} is rated ${String(ageRating)} (${verdict})`)
+  }
+  await confirmInstall(confirm, preview)
 }
 
 /** Show the install sheet. A sheet that fails, or that the person declines, cancels the install. */
@@ -648,6 +688,7 @@ const engineDependencies: InstallMiniappDependencies = {
     }),
   assertCanInstallVersion: (packageName, version) => appRegistry.assertCanInstallVersion(packageName, version),
   allowsRelease: (packageName, version, identity) => isInstalledMiniappAllowed(packageName, version, identity),
+  checkAge: (miniapp) => checkMiniappAge(miniapp, {interactive: true}),
   compatibilityPolicy: (source) => {
     const policy = localMiniappRuntime.currentInstallCompatibilityPolicy()
     if (!policy) return null

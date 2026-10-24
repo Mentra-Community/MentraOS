@@ -73,6 +73,13 @@ export interface IslandConfigValues {
    * it; the domain rule still applies. A host app that turns it off answers to the app stores' rules itself.
    */
   requireRegistry?: boolean
+  /**
+   * The host app's own App Store age rating, for example `"12+"`. A miniapp whose `ageRating` is above it installs or
+   * opens only for a person whose declared age is old enough: the engine asks once through the `askDeclaredAge` seam
+   * and keeps the answer on the person's Core account. A miniapp without a rating is never gated. Omitted, nothing is
+   * gated; a host app that leaves it out answers to the app stores' rules itself.
+   */
+  hostAgeRating?: string | null
   /** Optional per-package configuration supplied by the host deployment. */
   miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
   /** Deployment-scoped key for the persisted Core refresh token. */
@@ -137,6 +144,26 @@ export interface IslandUiSeams {
    * miniapps get NOT_IMPLEMENTED.
    */
   scanQr?: (options?: ScanQrOptions) => Promise<ScanQrResult>
+  /**
+   * Ask the person how old they are, once: a miniapp rated above `hostAgeRating` is installing or opening and their
+   * Core account has no declared age yet. Resolve the whole number of years they give, or null when they cancel. The
+   * engine keeps the answer, with the date, on their account and never sends it to a miniapp. Absent ⇒ such
+   * miniapps don't install or open until the account has a declared age.
+   */
+  askDeclaredAge?: () => Promise<number | null>
+  /** A miniapp the person was installing or opening was stopped by its age rating. The host says why. */
+  showAgeRestricted?: (notice: AgeRestrictionNotice) => void
+}
+
+/** Why the age gate stopped a miniapp the person was installing or opening. */
+export interface AgeRestrictionNotice {
+  packageName: string
+  /** The miniapp's name. */
+  name: string
+  /** The rating it declares, for example `"18+"`. */
+  ageRating: string
+  /** `too_young`: their declared age is below its rating. `unavailable`: their age could not be checked (offline). */
+  reason: "too_young" | "unavailable"
 }
 
 export interface ScanQrOptions {

@@ -219,6 +219,18 @@ const ja = {
     signInFailedDescription:
       "Microsoftでこの組織にサインインできませんでした。もう一度試すか、ITチームにお問い合わせください。",
   },
+  miniappAge: {
+    askTitle: "年齢を教えてください",
+    askMessage:
+      "一部のminiappには年齢制限があります。回答はMentraアカウントに保存され、miniappと共有されることはありません。",
+    agePlaceholder: "年齢",
+    invalidAge: "年齢を数字で入力してください。",
+    continue: "続ける",
+    restrictedTitle: "{{name}}は{{rating}}向けです。",
+    restrictedMessage: "お客様の年齢ではご利用いただけません。",
+    unavailableTitle: "年齢を確認できませんでした",
+    unavailableMessage: "インターネットに接続して、もう一度お試しください。",
+  },
   miniappInstall: {
     fromLocalNetwork: "ローカルネットワークから\n{{address}}",
     install: "インストール",

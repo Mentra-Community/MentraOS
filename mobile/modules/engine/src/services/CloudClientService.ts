@@ -1098,6 +1098,18 @@ export const cloudClientService = {
         return getCoreClient().registry.registerMiniappUrl(...args)
       },
     },
+    /**
+     * What the phone keeps on the signed-in person's Core account (`/api/account`): the age they declared, for the
+     * miniapp age gate. Each call is made as one account (`SessionChangedError` after a switch).
+     */
+    account: {
+      declaredAge(...args: Parameters<CloudCore["account"]["declaredAge"]>) {
+        return getCoreClient().account.declaredAge(...args)
+      },
+      setDeclaredAge(...args: Parameters<CloudCore["account"]["setDeclaredAge"]>) {
+        return getCoreClient().account.setDeclaredAge(...args)
+      },
+    },
     /** The signed-in person's workspace calls. Each is made as one account (`SessionChangedError` after a switch). */
     workspaces: {
       mine(...args: Parameters<CloudCore["workspaces"]["mine"]>) {

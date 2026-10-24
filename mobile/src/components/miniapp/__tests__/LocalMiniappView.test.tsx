@@ -37,8 +37,11 @@ jest.mock("../MiniappSplash", () => (props: {error?: string}) => {
   const {Text} = require("react-native")
   return <Text testID="splash-error">{props.error}</Text>
 })
+/** The miniapp in front, as the engine's apps store holds it. */
+let mockForegroundedPackage: string | null = null
 jest.mock("@mentra/engine-host-internal", () => ({
   miniappLauncher: {ensureRunning: jest.fn()},
+  useAppStatusStore: {getState: () => ({foregroundedPackage: mockForegroundedPackage})},
   buildMiniappGlobalsScript: () => "",
   buildMentraUiShim: () => "",
   localMiniappRuntime: {hasManifestPermission: () => false},
@@ -457,5 +460,52 @@ describe("a first-party miniapp's web storage", () => {
     await finishLaunch()
     expect(reader(dev)).toBeUndefined()
     expect(injected(dev)).not.toContain("mentra_web_storage")
+  })
+})
+
+describe("a launch the age gate refuses", () => {
+  const ageRestricted = () => Object.assign(new Error("age-rated"), {name: "MiniappAgeRestrictedError"})
+
+  afterEach(() => {
+    mockForegroundedPackage = null
+  })
+
+  it("closes the screen instead of showing an error", async () => {
+    const {engine} = jest.requireMock("@mentra/engine") as {engine: {miniapps: {clearForeground: jest.Mock}}}
+    mockForegroundedPackage = "com.mentra.test"
+    jest.mocked(miniappLauncher.ensureRunning).mockRejectedValue(ageRestricted())
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    expect(engine.miniapps.clearForeground).toHaveBeenCalledTimes(1)
+    expect(view.getByTestId("splash-error").props.children).toBeUndefined()
+  })
+
+  it("leaves another miniapp in front alone", async () => {
+    const {engine} = jest.requireMock("@mentra/engine") as {engine: {miniapps: {clearForeground: jest.Mock}}}
+    mockForegroundedPackage = "com.mentra.notes"
+    jest.mocked(miniappLauncher.ensureRunning).mockRejectedValue(ageRestricted())
+    render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+  })
+
+  it("arriving after the view moved on to another miniapp, closes nothing", async () => {
+    const {engine} = jest.requireMock("@mentra/engine") as {engine: {miniapps: {clearForeground: jest.Mock}}}
+    let refuse!: (error: Error) => void
+    jest
+      .mocked(miniappLauncher.ensureRunning)
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => (refuse = reject)))
+      .mockResolvedValue(NO_UI)
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    mockForegroundedPackage = "com.mentra.notes"
+    view.rerender(<LocalMiniappView {...props} packageName="com.mentra.notes" />)
+    // Even if the refused miniapp is in front again by the time the answer lands, the old launch closes nothing.
+    mockForegroundedPackage = "com.mentra.test"
+    await act(async () => {
+      refuse(ageRestricted())
+      await Promise.resolve()
+    })
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
   })
 })
