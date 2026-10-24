@@ -58,6 +58,7 @@ import {
   type ServedMiniappManifest,
 } from "@mentra/cloud-protocol"
 import {
+  MINIAPP_REGISTRY_ARCHIVE_RULE_KINDS,
   MiniappRegistryArchiveRuleModel,
   MiniappRegistryEntryModel,
   type MiniappRegistryArchiveRuleKind,
@@ -875,7 +876,17 @@ async function archivedUrls(rows: RegistryEntryRow[]): Promise<Set<string>> {
 async function urlsCoveredByRules(
   rows: Array<Pick<RegistryEntryRow, "url" | "packageName" | "registrableDomain" | "firstRegisteredBy">>,
 ): Promise<Set<string>> {
-  if (rows.length === 0) return new Set()
+  return new Set((await ruleKindsCovering(rows)).keys())
+}
+
+/**
+ * The kinds of the rules that cover each of `rows`, by URL, with one query: a URL no rule covers is absent. Kinds are
+ * in `MINIAPP_REGISTRY_ARCHIVE_RULE_KINDS` order.
+ */
+export async function ruleKindsCovering(
+  rows: Array<Pick<RegistryEntryRow, "url" | "packageName" | "registrableDomain" | "firstRegisteredBy">>,
+): Promise<Map<string, MiniappRegistryArchiveRuleKind[]>> {
+  if (rows.length === 0) return new Map()
   const values = (pick: (row: (typeof rows)[number]) => string) => [...new Set(rows.map(pick))]
   const rules = await MiniappRegistryArchiveRuleModel.find({
     $or: [
@@ -888,16 +899,16 @@ async function urlsCoveredByRules(
     .select({kind: 1, value: 1})
     .lean<Array<{kind: MiniappRegistryArchiveRuleKind; value: string}>>()
   const ruled = new Set(rules.map((rule) => `${rule.kind}\u0000${rule.value}`))
-  const has = (kind: MiniappRegistryArchiveRuleKind, value: string) => ruled.has(`${kind}\u0000${value}`)
-  return new Set(
-    rows
-      .filter(
-        (row) =>
-          has("url", row.url) ||
-          has("package", row.packageName) ||
-          has("domain", row.registrableDomain) ||
-          has("account", row.firstRegisteredBy),
-      )
-      .map((row) => row.url),
-  )
+  const covering = new Map<string, MiniappRegistryArchiveRuleKind[]>()
+  for (const row of rows) {
+    const keys: Record<MiniappRegistryArchiveRuleKind, string> = {
+      url: row.url,
+      package: row.packageName,
+      domain: row.registrableDomain,
+      account: row.firstRegisteredBy,
+    }
+    const kinds = MINIAPP_REGISTRY_ARCHIVE_RULE_KINDS.filter((kind) => ruled.has(`${kind}\u0000${keys[kind]}`))
+    if (kinds.length > 0) covering.set(row.url, kinds)
+  }
+  return covering
 }

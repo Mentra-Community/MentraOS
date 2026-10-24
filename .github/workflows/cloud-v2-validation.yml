@@ -119,7 +119,9 @@ jobs:
             websites/admin/src/pages/workspaces.test.tsx \
             websites/admin/src/pages/operator-keys.test.tsx \
             websites/admin/src/pages/fleet.test.tsx \
-            websites/admin/src/pages/licenses.test.tsx
+            websites/admin/src/pages/licenses.test.tsx \
+            websites/admin/src/pages/registry.test.tsx \
+            websites/admin/src/pages/registry-dialogs.test.tsx
 
       - name: Typecheck backend packages
         working-directory: cloud-v2
@@ -227,6 +229,7 @@ jobs:
             tests/miniapp-token-claims.integration.test.ts \
             tests/miniapp-registry.integration.test.ts \
             tests/admin-licenses.integration.test.ts \
+            tests/admin-registry.integration.test.ts \
             tests/migrate-store-developer-orgs.integration.test.ts \
             tests/legacy-identity-claim.integration.test.ts \
             tests/legacy-miniapp-registry.integration.test.ts

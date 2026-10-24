@@ -4,7 +4,7 @@ import {TestRunsTabs} from "./pages/test-runs-tabs";
 import {TestRerunPage, readRerunId} from "./pages/test-reruns";
 import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BookOpen, Bug, FileText, FlaskConical, History, KeyRound, RefreshCcw, ShieldCheck, Ticket, Users, X } from "lucide-react";
+import { AlertCircle, BookOpen, Boxes, Bug, FileText, FlaskConical, History, KeyRound, RefreshCcw, ShieldCheck, Ticket, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./li
 import { api, ApiError } from "./lib/api";
 import { LicensesPage } from "./pages/licenses";
 import { OperatorKeysPage } from "./pages/operator-keys";
+import { RegistryPage } from "./pages/registry";
 import { WorkspacesPage } from "./pages/workspaces";
 import { loginHref, signOutOfAdminPortal } from "./lib/session";
 import { SignedOutScreen } from "./components/signed-out";
@@ -106,6 +107,7 @@ const ADMIN_NAV: readonly NavItem[] = [
   { key: "system-health", label: "System health", icon: ShieldCheck },
   { key: "workspaces", label: "Workspaces", icon: Users },
   { key: "licenses", label: "Licenses", icon: Ticket },
+  { key: "registry", label: "Miniapp registry", icon: Boxes },
   { key: "operator-keys", label: "Operator keys", icon: KeyRound },
   { key: "audit", label: "Audit log", icon: History },
 ];
@@ -259,6 +261,7 @@ function AdminPage() {
     "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
     workspaces: { title: "Workspaces", body: "Every workspace in this organization: members, invitations, keys, settings, audit, and ownership recovery." },
     licenses: { title: "Licenses", body: "Every product bought in this organization's workspaces: which workspace holds it, how many licenses are assigned and what it is paid through." },
+    registry: { title: "Miniapp registry", body: "Every miniapp URL installed in the Mentra App. Archive a URL, a package, a domain or everything one account registered, and register URLs yourself." },
     "operator-keys": { title: "Operator keys", body: "Organization keys for incident, support-profile and test-run tooling." },
     audit: { title: "Audit log", body: "Admin actions recorded by Core, such as support-profile lookups." },
   };
@@ -314,6 +317,7 @@ function AdminPage() {
       {active === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
       {active === "workspaces" ? <WorkspacesPage fleetInstalled={principal.fleet?.installed === true} /> : null}
       {active === "licenses" ? <LicensesPage /> : null}
+      {active === "registry" ? <RegistryPage /> : null}
       {active === "operator-keys" ? <OperatorKeysPage /> : null}
       {active === "audit" ? <AuditPage /> : null}
       <div className={["test-runs", "routine-catalog", "system-health"].includes(active) ? "testing-workspace" : undefined}>

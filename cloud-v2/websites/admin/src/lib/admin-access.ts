@@ -8,6 +8,7 @@ export type AdminPageKey =
   | "system-health"
   | "workspaces"
   | "licenses"
+  | "registry"
   | "operator-keys"
   | "audit";
 
@@ -39,6 +40,7 @@ export const PAGE_ORDER: readonly AdminPageKey[] = [
   "system-health",
   "workspaces",
   "licenses",
+  "registry",
   "operator-keys",
   "audit",
 ];
@@ -51,6 +53,7 @@ const PAGE_CAPABILITY: Partial<Record<AdminPageKey, OrganizationCapability>> = {
   "system-health": "organization.testing.read",
   workspaces: "organization.workspaces.administer",
   licenses: "organization.licenses.read",
+  registry: "organization.registry.administer",
   "operator-keys": "organization.credentials.manage",
 };
 

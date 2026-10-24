@@ -99,6 +99,27 @@ Removing a rule restores the entries no other rule covers. Organization Admins
 archive in the admin portal, and the directory archives through Core's signed
 service API.
 
+## The admin portal
+
+The admin portal's **Miniapp registry** page is the full registry, for
+Organization Admins only: it needs `organization.registry.administer`, which
+no operator key can carry. Its routes are under `/api/admin/registry`
+(`packages/core/src/api/admin/registry.api.ts`), with the types in
+`@mentra/workspace-contract` (`registry-admin.ts`):
+
+| Route | What it does |
+| --- | --- |
+| `GET /entries?q=&status=&verification=&cursor=` | Every entry, most recently registered first, 50 to a page, with nothing redacted. `q` matches the URL, package name, name or domain as plain text, or the account that registered it by its Mentra user ID. |
+| `GET /export` | Every entry as CSV, for App Review: URL, package, name, version, age rating, verification, private, status and dates. It names no account. |
+| `POST /register` with `{urls}` | Registers 1 to 50 URLs as the Organization Admin, exactly as a phone's registration: Core reads each one, and a sign-in challenge gets the admin's own miniapp token. A URL Core can't read records nothing. Seeds Mentra's own listings. |
+| `GET /coverage?kind=&value=` | How many entries a rule covers, and whether it exists. The page asks before it archives. |
+| `POST /archive` with `{rule: {kind, value}, reason?}` | Archives by `url`, `package`, `domain` (a registrable domain) or `account` (a Mentra user ID). |
+| `POST /unarchive` with `{rule}` | Removes the rule. |
+| `GET /rules?cursor=` | The archive rules, newest first. |
+
+Archiving, unarchiving, each registered URL and each export are recorded in the
+admin audit log with the Organization Admin's email.
+
 ## Configuration
 
 - `CLOUD_CORE_REGISTRY_STATUS_TTL_SEC`: the status answer's `validForSeconds`,
