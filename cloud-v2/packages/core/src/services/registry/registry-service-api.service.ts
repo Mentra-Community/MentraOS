@@ -5,9 +5,13 @@
  *
  * **Check (Fleet).** An admin assigning miniapp URLs to a workspace. A URL the registry holds is answered from its
  * entry. Core registers a URL it doesn't know as the admin's own install would, with the admin as the person
- * registering: the same archive rules, the same hourly allowance, the same read and domain rule. A sign-in challenge
- * gets a token that names the assigning workspace, because that workspace is assigning the package. A private entry
- * is read again each time, with that token, so its name goes only to a workspace its server admits. A URL Core can't
+ * registering: the same archive rules, the same hourly allowance, the same read and domain rule. Fleet decides who may
+ * assign (`miniapps.assign`, which an Organization Admin holds in any workspace); Core decides what the token claims. A
+ * sign-in challenge from an active member of the workspace gets a token that names the assigning workspace, because
+ * that workspace is assigning the package. Anyone else, such as an Organization Admin who isn't a member, gets their
+ * own token under the ordinary rules, which never claims a workspace they aren't in: a server that admits only the
+ * workspace's members refuses it, and the URL is assignable with its package only. A private entry is read again each
+ * time, with that check's token, so its name goes only to a workspace its server admits. A URL Core can't
  * read and no phone has reported is `unreachable`: no entry is made, and it can be assigned once a phone has
  * installed it. Core reads at most 8 URLs at once and answers within 10 seconds; a URL it hasn't finished is
  * `unknown`, and its read finishes in the background.
@@ -71,11 +75,14 @@ type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
 const sameEntryView: Same<RegistryEntryView, PhoneRegistryEntryView> = true
 void sameEntryView
 
-/** The person a check names isn't an active member of the workspace it names. Answered `403 not_a_member`. */
+/**
+ * The workspace a check names isn't an active one, or the person isn't a live account: no one there to check for.
+ * Answered `403 not_a_member`.
+ */
 export class RegistryCheckRefused extends Error {
   readonly code = "not_a_member"
   constructor() {
-    super("the person is not an active member of the workspace")
+    super("the workspace is not active, or the person is not a live account")
     this.name = "RegistryCheckRefused"
   }
 }
@@ -94,22 +101,23 @@ type CheckAnswer = Omit<RegistryCheckResult, "url">
 
 /**
  * What the registry says of each URL an admin of `workspaceId` is assigning, in order, with each URL as sent (see
- * the file comment). Throws `RegistryCheckRefused` when `mentraUserId` isn't an active member of an active
- * `workspaceId`.
+ * the file comment). Throws `RegistryCheckRefused` when `workspaceId` isn't active or `mentraUserId` isn't a live
+ * account.
  */
 export async function checkRegistryUrls(
   input: {urls: string[]; workspaceId: string; mentraUserId: string},
   options: {concurrency?: number; deadlineMs?: number} = {},
 ): Promise<RegistryCheckResult[]> {
   const startedAt = Date.now()
-  const registrant = await assigningAdmin(input.workspaceId, input.mentraUserId)
+  const {registrant, member} = await assigningAdmin(input.workspaceId, input.mentraUserId)
   const tokenFor: ChallengeTokenSource = async (packageName) =>
     (
       await mintMiniappTokenFor({
         mentraUserId: registrant.mentraUserId,
         tenantId: registrant.tenantId,
         packageName,
-        assigningWorkspaceId: input.workspaceId,
+        // Only a member's token names the workspace: a claim is never false.
+        ...(member ? {assigningWorkspaceId: input.workspaceId} : {}),
       })
     ).token
 
@@ -148,16 +156,19 @@ export async function checkRegistryUrls(
   })
 }
 
-/** The admin as the person registering: an active member of the active workspace, with their tenant. */
-async function assigningAdmin(workspaceId: string, mentraUserId: string): Promise<RegistryRegistrant> {
+/** The admin as the person registering, with their tenant, in an active workspace; and whether they are its member. */
+async function assigningAdmin(
+  workspaceId: string,
+  mentraUserId: string,
+): Promise<{registrant: RegistryRegistrant; member: boolean}> {
   const [workspace, membership, deleted, user] = await Promise.all([
     getWorkspace(workspaceId),
     getActiveMembership(workspaceId, mentraUserId),
     isDeletedAccountId(mentraUserId),
     getUser(mentraUserId),
   ])
-  if (workspace?.status !== "active" || !membership || deleted || !user) throw new RegistryCheckRefused()
-  return {mentraUserId, tenantId: user.tenantId}
+  if (workspace?.status !== "active" || deleted || !user) throw new RegistryCheckRefused()
+  return {registrant: {mentraUserId, tenantId: user.tenantId}, member: membership !== null}
 }
 
 /**

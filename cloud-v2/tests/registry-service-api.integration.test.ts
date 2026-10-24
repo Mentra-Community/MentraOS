@@ -494,7 +494,37 @@ describe("check", () => {
     expect(fetches).toHaveLength(1)
   })
 
-  test("the person must be an active member of the active workspace", async () => {
+  test("someone who isn't a member, such as an Organization Admin, is checked with their own token, never the workspace's", async () => {
+    // Fleet let them assign; Core still never claims a workspace they aren't in. Acme's server admits only Acme.
+    servePrivate(ACME_URL, ACME_TOOLS, acmeManifest(), (claims) => claims.workspaceId === "ws_acme")
+    serve(NOTES_URL, manifest())
+    await WorkspaceMembershipModel.updateOne({workspaceId: "ws_globex"}, {$set: {status: "ended", endedAt: new Date()}})
+
+    for (const [workspaceId, mentraUserId] of [
+      ["ws_acme", OTHER_ADMIN], // a member of another workspace
+      ["ws_acme", "mu_staff"], // a member of none
+      ["ws_globex", OTHER_ADMIN], // left this one
+    ] as const) {
+      if (mentraUserId === "mu_staff" && !(await UserModel.exists({mentraUserId}))) {
+        await UserModel.create({mentraUserId, tenantId: "mentra", tenantUserId: "gotrue-mu_staff"})
+      }
+      fetches = []
+      const results = await check([ACME_URL, NOTES_URL], {workspaceId, mentraUserId})
+      expect(results.map((result) => [result.status, result.name])).toEqual([
+        ["accepted_unverified", null],
+        ["accepted", "Notes"],
+      ])
+      expect(fetches.filter((fetch) => fetch.claims).map((fetch) => [fetch.claims!.sub, fetch.claims!.workspaceId ?? null])).toEqual([
+        [mentraUserId, null],
+      ])
+    }
+    // A member of the workspace still gets its claim, and the name.
+    fetches = []
+    expect((await check([ACME_URL]))[0]).toMatchObject({status: "accepted", name: "Acme Tools"})
+    expect(fetches.find((fetch) => fetch.claims)?.claims?.workspaceId).toBe("ws_acme")
+  })
+
+  test("the workspace must be active and the person a live account", async () => {
     serve(NOTES_URL, manifest())
     await WorkspaceModel.create({workspaceId: "ws_gone", name: "Gone", status: "deleted"})
     await WorkspaceMembershipModel.create(
@@ -507,11 +537,8 @@ describe("check", () => {
         startedAt: new Date(),
       }),
     )
-    await WorkspaceMembershipModel.updateOne({workspaceId: "ws_globex"}, {$set: {status: "ended", endedAt: new Date()}})
 
     for (const [workspaceId, mentraUserId] of [
-      ["ws_globex", ADMIN], // not a member
-      ["ws_globex", OTHER_ADMIN], // left
       ["ws_gone", ADMIN], // deleted workspace
       ["ws_nowhere", ADMIN], // no such workspace
       ["ws_acme", "mu_stranger"], // no such person
@@ -957,7 +984,7 @@ describe("the workspace contract's client", () => {
     expect((await store.getRegistryEntry(NOTES_URL))?.status).toBe("archived")
 
     await expect(
-      fleet.checkRegistry({urls: [NOTES_URL], workspaceId: "ws_globex", mentraUserId: ADMIN}),
+      fleet.checkRegistry({urls: [NOTES_URL], workspaceId: "ws_nowhere", mentraUserId: ADMIN}),
     ).rejects.toMatchObject({
       code: "forbidden",
       status: 403,

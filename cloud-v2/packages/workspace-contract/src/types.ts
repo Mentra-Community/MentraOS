@@ -557,7 +557,7 @@ export interface OrganizationView {
 export const REGISTRY_CHECK_MAX_URLS = 50
 /** The most package names one `lookup` may name. */
 export const REGISTRY_LOOKUP_MAX_PACKAGES = 500
-/** `403`: the person `check` names isn't an active member of the workspace it names. */
+/** `403`: the workspace `check` names isn't active, or the person it names isn't a live account. */
 export const NOT_A_MEMBER_ERROR = "not_a_member"
 /** `404` from `entries`: the registry has no entry for the URL. */
 export const REGISTRY_ENTRY_NOT_FOUND_ERROR = "not_found"

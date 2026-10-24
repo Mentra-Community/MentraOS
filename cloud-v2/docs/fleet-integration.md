@@ -670,18 +670,22 @@ POST /api/internal/registry/check
 
 - **The body.** 1 to 50 `urls`, each normalized as `normalizeMiniappUrl`
   does; `workspaceId`, the assigning workspace; and `mentraUserId`, the admin
-  assigning. The admin must be an active member of that active workspace, or the
+  assigning. The workspace must be active and the admin a live account, or the
   call is `403 {"error":"not_a_member"}`. Fleet has already checked that they may
-  assign miniapps there.
+  assign miniapps there, an Organization Admin included.
 - **Registering.** Core answers a URL its registry holds from the entry, without
   reading it. It registers a URL it doesn't know as the admin's own install
   would, with the admin as the person registering: the same archive rules (an
   account rule for the admin covers it), the same domain rule and the same 120
   registrations an hour, shared with the admin's phones. No verified email is
   needed: Fleet is acting for an admin of the workspace. A sign-in challenge gets
-  the admin's miniapp token for that package, naming `workspaceId`, because that
-  workspace is assigning it. A private entry is read again on every check, with
-  that token.
+  the admin's miniapp token for that package. When the admin is an active member
+  of the workspace, it names `workspaceId`, because that workspace is assigning
+  it. Anyone else, such as an Organization Admin who isn't a member, gets their
+  ordinary token, which never names a workspace they aren't in: a server that
+  admits only the workspace's members refuses it, and the URL is
+  `accepted_unverified` with its package only. A private entry is read again on
+  every check, with that check's token.
 - **Time.** Core reads at most 8 URLs at once and answers within 10 seconds. A
   URL it hasn't finished is `unknown`; the read finishes in the background, so
   asking again soon finds the entry.

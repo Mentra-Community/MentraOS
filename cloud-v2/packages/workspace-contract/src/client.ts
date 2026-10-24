@@ -153,9 +153,10 @@ export interface CoreWorkspaceClient {
   /**
    * What the miniapp registry says of each URL an admin is assigning (Fleet only): one result per URL, in order.
    * Core registers a URL it doesn't know as the admin's own install would, answering a sign-in challenge with a
-   * token that names `workspaceId`, and gives up on a URL it hasn't finished within 10 seconds (`unknown`), so this
-   * call waits at least `REGISTRY_CHECK_TIMEOUT_MS` whatever the client's `timeoutMs`. A person
-   * who isn't an active member of the workspace is `forbidden` (`403 not_a_member`).
+   * token that names `workspaceId` when the admin is an active member of it (anyone else, such as an Organization
+   * Admin who isn't one, gets their own ordinary token), and gives up on a URL it hasn't finished within 10 seconds
+   * (`unknown`), so this call waits at least `REGISTRY_CHECK_TIMEOUT_MS` whatever the client's `timeoutMs`. A
+   * workspace that isn't active, or a person who isn't a live account, is `forbidden` (`403 not_a_member`).
    */
   checkRegistry(input: RegistryCheckRequest): Promise<RegistryCheckResult[]>
   /**

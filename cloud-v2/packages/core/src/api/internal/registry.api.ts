@@ -95,7 +95,7 @@ app.post("/check", requireService("fleet"), async (c) => {
   } catch (error) {
     if (error instanceof RegistryCheckRefused) {
       return c.json(
-        {error: NOT_A_MEMBER_ERROR, error_description: "mentraUserId is not an active member of workspaceId"},
+        {error: NOT_A_MEMBER_ERROR, error_description: "workspaceId is not an active workspace, or mentraUserId is not a live account"},
         403,
       )
     }
