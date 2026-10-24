@@ -12,7 +12,7 @@ import {resourceLifecycleSubjectSchema} from '../types/resource-lifecycle.types'
 
 const start = Date.parse('2026-10-18T23:00:00Z'), hash = 'a'.repeat(64)
 function fixture(standalone = false) {
-  let now = start, lost = false, beforeWrite: (() => Promise<void>) | undefined
+  let now = start, lost = false, beforeWrite: (() => Promise<void>) | undefined, afterWrite: (() => Promise<void>) | undefined
   const at = () => new Date(now).toISOString(), binding = {...testFrameworkBinding(), routineApiVersion: 70}
   const resourceId = standalone ? 'google-account-exact' : 'phone-exact', laneId = standalone ? undefined : 'android'
   const contract = {version: 'baseline-v1', maximumAgeMs: 120000, qualifiedScope: {kind: 'same-controller' as const, controllerId: 'mini'},
@@ -45,6 +45,7 @@ function fixture(standalone = false) {
     if (previous.sequence !== host.sequence || previous.incarnation !== host.incarnation || previous.incarnationGeneration !== host.incarnationGeneration ||
       previous.resourceReservationVersion !== host.resourceReservationVersion || previous.laneControlVersion !== host.laneControlVersion) return false
     host.resourceReservations=structuredClone(claims); host.resourceReservationVersion!++; writes.push(structuredClone(claims))
+    if (afterWrite) {const action=afterWrite; afterWrite=undefined; await action()}
     if (lost) {lost=false; throw Error('Original CAS response lost')}
     return true
   }}
@@ -60,6 +61,7 @@ function fixture(standalone = false) {
   const service=new ResourceReservationsService(repository, () => now)
   return {host, intent, digest, service, controls, writes, subject:()=>host.snapshot.resourceLifecycle!.subjects[0]!,
     beforeWrite(action:()=>Promise<void>) {beforeWrite=action}, loseReply() {lost=true},
+    afterWrite(action:()=>Promise<void>) {afterWrite=action},
     advance(ms=1) {now+=ms; host.sequence++;host.snapshot.sequence=host.sequence;host.snapshot.observedAt=at();host.receivedAt=new Date(now)
       host.snapshot.resourceLifecycle!.subjects[0]!.observedAt=at();host.snapshot.resourceLifecycle!.subjects[0]!.receivedAt=at()},
     control(action:'reserve'|'mark-out-of-service') {return {operationId:randomUUID(),hostId:'mini',subject:{resourceId,subjectGeneration:2},expiresAt:now+120000,
@@ -122,6 +124,104 @@ test('began check raw return stays exact and recoverable after its original Core
   const f=fixture(),result=await f.service.acquire(f.intent,'mini'),proof=f.return(result.claims[0]!,false)
   expect(await f.service.giveBack(proof,'mini')).toMatchObject({status:'returned'});expect(await f.service.giveBack(proof,'mini')).toMatchObject({status:'returned'})
   expect(f.writes).toHaveLength(2)
+})
+
+async function completedHistoricalCheck() {
+  const f=fixture(), first=await f.service.acquire(f.intent,'mini'), claim=first.claims[0]!, proof=f.return(claim,false)
+  await f.service.giveBack(proof,'mini')
+  f.advance();f.subject().generation+=2
+  proof.controller.sequence=f.host.sequence
+  return {f,claim,proof}
+}
+test('completed historical check ACK fences absence without renewing the newer unowned resource',async()=>{
+  for(const status of ['unknown','out-of-service'] as const){
+    const {f,claim,proof}=await completedHistoricalCheck()
+    f.subject().status=status
+    const {resourceCheck:_,...other}=claim, unrelated=['browser','glasses'].map(kind=>({...other,id:randomUUID(),resourceId:`${kind}-exact`,
+      operationId:`other-${kind}`,intentSha256:'b'.repeat(64),inputSha256:'c'.repeat(64),owner:{kind:'run' as const,id:`other-${kind}`}}))
+    expect(hostResourceReservationsSchema.parse(unrelated)).toEqual(unrelated)
+    f.host.resourceReservations=structuredClone(unrelated)
+    const lifecycle=structuredClone(f.host.snapshot.resourceLifecycle), writes=f.writes.length, version=f.host.resourceReservationVersion!
+    expect(await f.service.giveBack(proof,'mini')).toEqual({status:'returned',claimId:claim.id})
+    expect(f.writes).toHaveLength(writes+1);expect(f.host.resourceReservationVersion).toBe(version+1)
+    expect(f.host.resourceReservations).toEqual(unrelated);expect(f.host.snapshot.resourceLifecycle).toEqual(lifecycle)
+    expect(f.subject().idle.acceptedCheck).toBeNull();expect(f.subject().idle.outcome).toBe('not-checked')
+    expect((await f.service.acquire(f.intent,'mini')).status).toBe('unknown')
+  }
+})
+test('historical check ACK refuses altered original proof, current owner, stale reporter and generation rollback',async()=>{
+  for(const mutate of [
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.subject().generation=2},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.subject().current=false},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.subject().owner={id:'replacement',kind:'run',generation:9,hostId:'mini',laneId:'android'}},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.advance(120001);p.controller.sequence=f.host.sequence;f.host.receivedAt=new Date(start)},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{p.controller.sequence--},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{p.controller.incarnation='foreign'},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceReservations!.returns=[]},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceReservations!.resourceChecks=[]},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceReservations!.resourceChecks![0]!.state='prepared'},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceReservations!.resourceChecks![0]!.intent.inputSha256='b'.repeat(64)},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceReservations!.resourceChecks![0]!.intent.owner.id='foreign'},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceReservations!.resourceChecks![0]!.resourceCheck.subjectGeneration++},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceReservations!.resourceChecks![0]!.observedAt=f.host.snapshot.observedAt},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceLifecycle!.history=[]},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceLifecycle!.history[0]!.checkOperationId='foreign'},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{const event=f.host.snapshot.resourceLifecycle!.history[0]!;event.subjectGeneration=(event.subjectGeneration??0)+1},
+    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceLifecycle!.history[0]!.at=new Date(start).toISOString()},
+  ]){const {f,proof}=await completedHistoricalCheck(),writes=f.writes.length;mutate(f,proof)
+    await expect(f.service.giveBack(proof,'mini')).rejects.toThrow();expect(f.writes).toHaveLength(writes)}
+})
+test('historical check never relaxes a present original or foreign claim, or a never-began return',async()=>{
+  for(const foreign of [false,true]){const {f,claim,proof}=await completedHistoricalCheck()
+    f.host.resourceReservations=[{...claim,...(foreign?{id:randomUUID(),owner:{kind:'boundary-cleanup' as const,id:'foreign'}}:{})}]
+    expect(f.host.resourceReservations).toEqual(hostResourceReservationsSchema.parse(f.host.resourceReservations))
+    const retained=structuredClone(f.host.resourceReservations),writes=f.writes.length
+    await expect(f.service.giveBack(proof,'mini')).rejects.toThrow();expect(f.host.resourceReservations).toEqual(retained);expect(f.writes).toHaveLength(writes)}
+  const f=fixture(),first=await f.service.acquire(f.intent,'mini'),proof=f.return(first.claims[0]!,true)
+  await f.service.giveBack(proof,'mini');f.advance();f.subject().generation++;proof.controller.sequence=f.host.sequence
+  const writes=f.writes.length
+  await expect(f.service.giveBack(proof,'mini')).rejects.toThrow();expect(f.writes).toHaveLength(writes)
+})
+test('same-generation check return still requires the exact present claim UUID',async()=>{
+  const f=fixture(),first=await f.service.acquire(f.intent,'mini'),claim=first.claims[0]!,proof=f.return(claim,false)
+  f.host.resourceReservations=[{...claim,id:randomUUID()}]
+  const retained=hostResourceReservationsSchema.parse(f.host.resourceReservations),writes=f.writes.length
+  await expect(f.service.giveBack(proof,'mini')).rejects.toThrow();expect(f.host.resourceReservations).toEqual(retained);expect(f.writes).toHaveLength(writes)
+})
+test('historical check completion must follow its matching frozen beginning generation',async()=>{
+  for(const generation of [3,4]){const {f,proof}=await completedHistoricalCheck(),j=f.host.snapshot.resourceReservations!.resourceChecks![0]!
+    j.resourceCheck.subjectGeneration=generation;j.intent.resourceCheck=structuredClone(j.resourceCheck)
+    j.intentSha256=requestInputDigest({...j.intent,controller:{incarnation:j.intent.controller.incarnation,generation:j.intent.controller.generation},
+      dependencies:[{resourceId:j.resourceId,authorityHostId:'mini',capability:'resource-idle'}]})
+    proof.intentSha256=j.intentSha256;const {controller:_,...published}=proof;f.host.snapshot.resourceReservations!.returns=[published]
+    expect(hostStateSchema.parse(f.host.snapshot)).toEqual(f.host.snapshot)
+    const writes=f.writes.length;await expect(f.service.giveBack(proof,'mini')).rejects.toThrow();expect(f.writes).toHaveLength(writes)}
+})
+test('historical absence fence refuses a concurrent claim or changed report before commit',async()=>{
+  for(const mutate of [
+    (f:ReturnType<typeof fixture>,claim:ExclusiveHostReservation)=>{f.host.resourceReservationVersion!++},
+    (f:ReturnType<typeof fixture>,claim:ExclusiveHostReservation)=>{f.host.resourceReservations=[claim];f.host.resourceReservationVersion!++},
+    (f:ReturnType<typeof fixture>,claim:ExclusiveHostReservation)=>{f.advance()},
+    (f:ReturnType<typeof fixture>,claim:ExclusiveHostReservation)=>{f.host.laneControlVersion!++;f.subject().owner={id:'replacement',kind:'run',generation:9,hostId:'mini'}},
+  ]){const {f,claim,proof}=await completedHistoricalCheck(),writes=f.writes.length;f.beforeWrite(async()=>{mutate(f,claim)})
+    await expect(f.service.giveBack(proof,'mini')).rejects.toThrow();expect(f.writes).toHaveLength(writes)}
+})
+test('historical absence ACK re-reads the committed fence and refuses post-commit races',async()=>{
+  for(const mutate of [
+    (f:ReturnType<typeof fixture>,claim:ExclusiveHostReservation)=>{f.host.resourceReservationVersion!++},
+    (f:ReturnType<typeof fixture>,claim:ExclusiveHostReservation)=>{f.host.resourceReservations=[claim];f.host.resourceReservationVersion!++},
+    (f:ReturnType<typeof fixture>,claim:ExclusiveHostReservation)=>{f.advance()},
+    (f:ReturnType<typeof fixture>,claim:ExclusiveHostReservation)=>{f.host.laneControlVersion!++},
+    (f:ReturnType<typeof fixture>,claim:ExclusiveHostReservation)=>{f.subject().owner={id:'replacement',kind:'run',generation:9,hostId:'mini',laneId:'android'}},
+    (f:ReturnType<typeof fixture>,claim:ExclusiveHostReservation)=>{f.host.snapshot.resourceReservations!.returns=[]},
+  ]){const {f,claim,proof}=await completedHistoricalCheck(),writes=f.writes.length;f.afterWrite(async()=>{mutate(f,claim)})
+    await expect(f.service.giveBack(proof,'mini')).rejects.toThrow();expect(f.writes).toHaveLength(writes+1)}
+})
+test('lost historical absence fence response remains recoverable through the SAME return',async()=>{
+  const {f,claim,proof}=await completedHistoricalCheck(),writes=f.writes.length;f.loseReply()
+  await expect(f.service.giveBack(proof,'mini')).rejects.toThrow('response lost')
+  expect(await f.service.giveBack(proof,'mini')).toEqual({status:'returned',claimId:claim.id})
+  expect(f.writes).toHaveLength(writes+2);expect(f.host.resourceReservations).toEqual([]);expect(f.subject().idle.acceptedCheck).toBeNull()
 })
 test('missing no-start evidence, begun journal, foreign sidecar, owner or changed return report retain the original claim',async()=>{
   for(const mutate of [

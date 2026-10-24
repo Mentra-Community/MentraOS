@@ -961,16 +961,18 @@ export class ResourceReservationsService {
     const release = returned.release
     if (!('kind' in release)) throw new TestRunError(409, 'Resource precheck needs its original check return')
     const at = Date.parse(release.releasedAt), subject = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === returned.resourceId),
-      proof = (({controller: _, ...value}) => value)(returned)
+      proof = (({controller: _, ...value}) => value)(returned),
+      historical = release.kind === 'resource-check' && !!subject && subject.generation > release.subjectGeneration
     if (!fresh(host, this.now()) || host.incarnation !== returned.controller.incarnation || host.incarnationGeneration !== returned.controller.generation ||
       host.sequence !== returned.controller.sequence || returned.authorityHostId !== hostId || !subject?.current || subject.owner !== null ||
-      subject.subject.authorityHostId !== hostId || subject.generation !== release.subjectGeneration || !Number.isFinite(at) || at > this.now() ||
+      subject.subject.authorityHostId !== hostId || !historical && subject.generation !== release.subjectGeneration || !Number.isFinite(at) || at > this.now() ||
       at > Date.parse(host.snapshot.observedAt) || !host.snapshot.resourceReservations?.returns.some(value => isDeepStrictEqual(value, proof)))
       throw new TestRunError(409, 'Resource precheck return requires its exact original journal and current unowned subject')
     const journal = host.snapshot.resourceReservations?.resourceChecks?.find(value => value.operationId === release.operationId)
     if (!journal || journal.resourceId !== returned.resourceId || journal.intentSha256 !== returned.intentSha256 ||
       journal.intent.inputSha256 !== returned.inputSha256 || journal.intent.hostId !== hostId || journal.intent.laneId !== returned.laneId ||
       !isDeepStrictEqual(journal.intent.owner, returned.originalOwner) || this.resourceCheckIntentDigest(journal.intent) !== returned.intentSha256 ||
+      historical && (release.subjectGeneration <= journal.resourceCheck.subjectGeneration || Date.parse(journal.observedAt) > at) ||
       (release.kind === 'resource-check-not-started' ? journal.state !== 'never-began' || journal.eventId !== release.eventId ||
         journal.observedAt !== release.releasedAt || !isDeepStrictEqual(journal.resourceCheck, release.resourceCheck) : journal.state !== 'began' ||
         !host.snapshot.resourceLifecycle?.history.some(event => event.id === release.eventId && event.event === 'resource-check-released' &&
@@ -984,12 +986,27 @@ export class ResourceReservationsService {
         !isDeepStrictEqual(authority.snapshot.resourceReservations, host.snapshot.resourceReservations))
         throw new TestRunError(409, 'Original resource return observation changed; retain the same return')
       if (!claim) {
+        if (historical) {
+          // Fence every older preclaim CAS before acknowledging retained completion.
+          // This retires only protocol work; it cannot renew the current baseline.
+          if (authority.resourceReservationVersion !== host.resourceReservationVersion || authority.laneControlVersion !== host.laneControlVersion ||
+            all.some(value => value.id === returned.claimId))
+            throw new TestRunError(409, 'Historical resource return authority changed; retain the same return')
+          if (!await this.rows.replace(authority, all)) continue
+          const after = await this.host(hostId)
+          if (!fresh(after, this.now()) || after.incarnation !== authority.incarnation || after.incarnationGeneration !== authority.incarnationGeneration ||
+            after.sequence !== authority.sequence || after.laneControlVersion !== authority.laneControlVersion ||
+            after.resourceReservationVersion !== (authority.resourceReservationVersion ?? 0) + 1 || !isDeepStrictEqual(after.resourceReservations, all) ||
+            !isDeepStrictEqual(after.snapshot.resourceLifecycle, authority.snapshot.resourceLifecycle) ||
+            !isDeepStrictEqual(after.snapshot.resourceReservations, authority.snapshot.resourceReservations))
+            throw new TestRunError(409, 'Historical resource return fence changed; retain the same return')
+        }
         const row = await this.rows.candidateRequest?.(hostId, returned.inputSha256)
         if (row?.fleetCandidatePreparation && !await this.rows.recordCandidateReturn?.(row.requestId, row.fleetCandidatePreparation, returned))
           throw new TestRunError(409, 'Original candidate return acknowledgement is pending')
         return {status: 'returned' as const, claimId: returned.claimId}
       }
-      if (!claim.resourceCheck || claim.id !== returned.claimId || claim.operationId !== release.operationId || claim.intentSha256 !== returned.intentSha256 ||
+      if (historical || !claim.resourceCheck || claim.id !== returned.claimId || claim.operationId !== release.operationId || claim.intentSha256 !== returned.intentSha256 ||
         claim.inputSha256 !== returned.inputSha256 || claim.borrowerHostId !== hostId || claim.laneId !== returned.laneId ||
         !isDeepStrictEqual(claim.owner, returned.originalOwner) || !isDeepStrictEqual(claim.resourceCheck, journal.resourceCheck) ||
         at < Date.parse(claim.reservedAt) || returned.controller.generation < claim.controllerGeneration ||
