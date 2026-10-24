@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
+import {appRepositorySchema, type AppRepository} from '../types/testing-source.types';
 import type {TestBuildPlatform, TestBuild, TestBuildQuery, TestBuildSource} from "../types/test-build.types";
 import { TestRunGithubApp } from "./test-run-github-app";
 
@@ -86,14 +87,18 @@ export interface TestBuildGateway {
   inventory(query: TestBuildQuery): Promise<TestBuild[]>;
   resolve(source: TestBuildSource, platform: TestBuildPlatform): Promise<TestBuild>;
   resolveNimoDiagnostic?(source: TestBuildSource): Promise<TestBuild>;
-  isPrSuperseded?(prNumber: number, headSha: string): Promise<boolean>;
+  isPrSuperseded?(prNumber: number, headSha: string, repository?: AppRepository): Promise<boolean>;
 }
 
 export class GithubTestBuildGateway implements TestBuildGateway {
   constructor(private readonly options: {
-    token?: string; privateReadToken?: string; appAuth?: TestRunGithubApp; fetch?: typeof fetch; channels?: string[]; routines?: string[];
+    repository?: AppRepository; token?: string; privateReadToken?: string; appAuth?: TestRunGithubApp; fetch?: typeof fetch; channels?: string[]; routines?: string[];
   } = {}, private readonly selectionBoundary?: string) { this.appAuth = options.appAuth ?? new TestRunGithubApp({ fetch: options.fetch }); }
   private readonly appAuth: TestRunGithubApp;
+  private get repository(): AppRepository {return appRepositorySchema.parse(this.options.repository ?? REPOSITORY);}
+  private forRepository(repository: AppRepository) {
+    return new GithubTestBuildGateway({...this.options, appAuth: this.appAuth, repository: appRepositorySchema.parse(repository)}, this.selectionBoundary);
+  }
   private releaseReads?: {runId: number; reads: Map<string, Promise<unknown>>};
   /** One selection only; never reuse mutable provider observations across occurrences. */
   forSelection(before: string): GithubTestBuildGateway {
@@ -112,7 +117,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   private async token(scope: "source" | "private" = "source") {
     const injected = scope === "source" ? this.options.token : this.options.privateReadToken;
     if (injected) return injected;
-    try { return await this.appAuth.token(scope); }
+    try { return await this.appAuth.token(scope, scope === "source" ? this.repository : undefined); }
     catch { throw new TestDispatchError(503, "Routine GitHub App authentication is unavailable; check the Core GitHub App configuration"); }
   }
   private async api(path: string, init: RequestInit = {}, token?: string) {
@@ -145,39 +150,42 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const jobs: Job[] = [];
     for (let page = 1; page <= 10; page++) {
       const data = z.object({ total_count: z.number().int().nonnegative(), jobs: z.array(jobSchema) }).parse(
-        await this.api(`${REPOSITORY}/actions/runs/${runId}/jobs?filter=all&per_page=100&page=${page}`));
+        await this.api(`${this.repository}/actions/runs/${runId}/jobs?filter=all&per_page=100&page=${page}`));
       jobs.push(...data.jobs);
       if (jobs.length === data.total_count) return jobs;
       requireThat(jobs.length < data.total_count && data.jobs.length === 100, "Incomplete build job history");
     }
     throw new TestDispatchError(502, "Build job history exceeds its limit");
   }
-  async isPrSuperseded(number: number, headSha: string): Promise<boolean> {
-    const pr = prSchema.parse(await this.api(`${REPOSITORY}/pulls/${number}`));
-    requireThat(pr.number === number && pr.head.repo.full_name === REPOSITORY, "PR identity differs from the admitted build");
+  async isPrSuperseded(number: number, headSha: string, repository: AppRepository = REPOSITORY): Promise<boolean> {
+    if (appRepositorySchema.parse(repository) !== this.repository) return this.forRepository(repository).isPrSuperseded(number, headSha, repository);
+    const pr = prSchema.parse(await this.api(`${this.repository}/pulls/${number}`));
+    requireThat(pr.number === number && pr.head.repo.full_name === this.repository, "PR identity differs from the admitted build");
     return pr.head.sha !== headSha;
   }
   private async pr(number: number) {
-    const pr = prSchema.parse(await this.api(`${REPOSITORY}/pulls/${number}`));
+    const pr = prSchema.parse(await this.api(`${this.repository}/pulls/${number}`));
     requireThat(pr.number === number && pr.state === "open" && (PR_BASES as readonly string[]).includes(pr.base.ref)
-      && pr.head.repo.full_name === REPOSITORY, "Choose an open same-repository PR targeting dev or staging");
+      && pr.head.repo.full_name === this.repository, "Choose an open same-repository PR targeting dev or staging");
     return pr;
   }
   /** The actual tip of the PR's admitted base; the PR API's base SHA can lag it. */
   private async baseSha(pr: PullRequest) {
     const base = pr.base.ref as PrBase;
     const ref = z.object({ ref: z.literal(`refs/heads/${base}`), object: z.object({ type: z.literal("commit"), sha }) })
-      .parse(await this.api(`${REPOSITORY}/git/ref/heads/${base}`));
+      .parse(await this.api(`${this.repository}/git/ref/heads/${base}`));
     return ref.object.sha;
   }
   async inventory(query: TestBuildQuery, allowOriginalBase = false, producerRunId?: number): Promise<TestBuild[]> {
+    const repository = appRepositorySchema.parse(query.repository ?? REPOSITORY);
+    if (repository !== this.repository) return this.forRepository(repository).inventory(query, allowOriginalBase, producerRunId);
     const pr = query.channel === "pr" ? await this.pr(query.pr!) : undefined;
     const platform = query.platform;
     const workflow = pr ? prWorkflow(platform) : RELEASE_WORKFLOW;
     const runs: GithubRun[] = [];
     if (pr) {
       if (producerRunId) {
-        const retained = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${positive.parse(producerRunId)}`));
+        const retained = runSchema.parse(await this.api(`${this.repository}/actions/runs/${positive.parse(producerRunId)}`));
         if (this.matches(retained, query.channel, platform, pr)) runs.push(retained);
       }
       // Discovery is a bounded recent inventory, not proof that no publication exists.
@@ -185,14 +193,14 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       for (const filter of [`event=pull_request&head_sha=${pr.head.sha}`, 'event=workflow_dispatch&branch=dev']) {
         for (let page = 1; page <= 5; page++) {
           const data = z.object({workflow_runs: z.array(runSchema).max(100)}).parse(
-            await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?${filter}&per_page=100&page=${page}`));
+            await this.api(`${this.repository}/actions/workflows/${workflow}/runs?${filter}&per_page=100&page=${page}`));
           runs.push(...data.workflow_runs.filter(run => this.matches(run, query.channel, platform, pr) && !runs.some(value => value.id === run.id)));
           if (data.workflow_runs.length < 100) break;
         }
       }
     } else {
       const data = z.object({workflow_runs: z.array(runSchema)}).parse(
-        await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?branch=${query.channel}&per_page=10`));
+        await this.api(`${this.repository}/actions/workflows/${workflow}/runs?branch=${query.channel}&per_page=10`));
       runs.push(...data.workflow_runs.filter(run => this.matches(run, query.channel, platform)));
     }
     const base = pr && !allowOriginalBase ? await this.baseSha(pr) : undefined;
@@ -207,7 +215,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const seen = new Set<number>();
     for (let page = 1; page <= 10; page++) {
       const data = z.object({total_count: z.number().int().nonnegative(), workflow_runs: z.array(runSchema)}).parse(
-        await this.api(`${REPOSITORY}/actions/workflows/${RELEASE_WORKFLOW}/runs?branch=dev&created=<=${encodeURIComponent(before)}&per_page=100&page=${page}`));
+        await this.api(`${this.repository}/actions/workflows/${RELEASE_WORKFLOW}/runs?branch=dev&created=<=${encodeURIComponent(before)}&per_page=100&page=${page}`));
       for (const run of data.workflow_runs) {
         if (seen.has(run.id)) throw new TestDispatchError(502, "Nightly build history changed while reading");
         seen.add(run.id);
@@ -239,7 +247,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     throw new TestDispatchError(502, "Nightly build history exceeds its limit");
   }
   private matches(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PullRequest) {
-    return run.repository.full_name === REPOSITORY && run.head_repository.full_name === REPOSITORY
+    return run.repository.full_name === this.repository && run.head_repository.full_name === this.repository
       && run.path === `.github/workflows/${pr ? prWorkflow(platform) : RELEASE_WORKFLOW}`
       && (pr ? (run.event === "pull_request" && run.head_sha === pr.head.sha && run.head_branch === pr.head.ref ||
         run.event === 'workflow_dispatch' && run.head_branch === 'dev' &&
@@ -255,8 +263,10 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     return this.resolveSelected(source, platform, false);
   }
   private async resolveSelected(source: TestBuildSource, platform: TestBuildPlatform, diagnostic: boolean): Promise<TestBuild> {
+    const repository = appRepositorySchema.parse(source.repository ?? REPOSITORY);
+    if (repository !== this.repository) return this.forRepository(repository).resolveSelected(source, platform, diagnostic);
     const pr = source.channel === "pr" ? await this.pr(source.prNumber) : undefined;
-    const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
+    const run = runSchema.parse(await this.api(`${this.repository}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
     requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && this.matches(run, source.channel, platform, pr),
       "Build does not match the selected source and publication attempt");
     // Explicit sources identify an immutable publication. Its producing merge may
@@ -264,13 +274,14 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     requireThat(!diagnostic || run.event === 'workflow_dispatch', 'Diagnostics require an explicit pinned PR dispatch');
     const result = await this.describe(run, source.channel, platform, pr, undefined, true, diagnostic);
     requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
+    if (source.repository !== undefined) result.source = {...result.source, repository: source.repository};
     return result;
   }
   private async describe(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PrIdentity, baseSha?: string, exact = false, diagnostic = false): Promise<TestBuild> {
-    const source: TestBuildSource = pr ? { channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: run.run_attempt }
-      : { channel: channel as "dev" | "staging", buildRunId: run.id, publicationAttempt: run.run_attempt };
+    const source: TestBuildSource = pr ? { channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: run.run_attempt, ...(this.repository === REPOSITORY ? {} : {repository: this.repository}) }
+      : { channel: channel as "dev" | "staging", buildRunId: run.id, publicationAttempt: run.run_attempt, ...(this.repository === REPOSITORY ? {} : {repository: this.repository}) };
     const build: TestBuild = { source, platform, title: pr ? `PR #${pr.number} — ${pr.title}` : run.display_title,
-      headSha: pr?.head.sha ?? run.head_sha, buildUrl: runUrl(REPOSITORY, run.id), createdAt: run.created_at,
+      headSha: pr?.head.sha ?? run.head_sha, buildUrl: runUrl(this.repository, run.id), createdAt: run.created_at,
       availability: "unavailable",
       ...(run.status !== 'completed' ? {producerStatus: 'pending' as const} :
         run.conclusion && run.conclusion !== 'success' ? {producerStatus: 'failed' as const} : {}) };
@@ -309,7 +320,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       && data.app.backend === pr.base.ref && data.app.otaManifestUrl === `${CDN}pr-builds/${otaName}`
       && data.artifacts.mac.name === `mentra-ios-mac-pr-${pr.number}-${pr.head.sha}-${run.id}-${attempts.build}.zip`,
       "Mac receipt belongs to a different PR build");
-    const commit = z.object({ sha, parents: z.array(z.object({ sha })) }).parse(await this.api(`${REPOSITORY}/commits/${data.buildSha}`));
+    const commit = z.object({ sha, parents: z.array(z.object({ sha })) }).parse(await this.api(`${this.repository}/commits/${data.buildSha}`));
     // The immutable iOS receipt records the synthetic merge SHA. Its first parent
     // is the original base; only a new inventory selection compares it to today's tip.
     requireThat(commit.sha === data.buildSha && commit.parents.length === 2 && (!baseSha || commit.parents[0]!.sha === baseSha)
@@ -353,7 +364,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       && data.runId === run.id && data.runAttempt === attempt && data.app.headSha === data.headSha
       && data.app.buildSha === data.buildSha && data.app.backend === pr.base.ref && data.app.otaManifestUrl === `${CDN}pr-builds/${otaName}`
       && data.artifacts.android.name === `${name}.apk`, "Android receipt belongs to a different PR build");
-    const commit = z.object({ sha, parents: z.array(z.object({ sha })) }).parse(await this.api(`${REPOSITORY}/commits/${data.buildSha}`));
+    const commit = z.object({ sha, parents: z.array(z.object({ sha })) }).parse(await this.api(`${this.repository}/commits/${data.buildSha}`));
     requireThat(commit.sha === data.buildSha && commit.parents.length === 2 && commit.parents[0]!.sha === data.baseSha
       && commit.parents[1]!.sha === pr.head.sha, "Android build does not contain the recorded base and selected PR head");
     const ota = await this.metadata("pr-builds", otaName);
@@ -367,7 +378,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   }
   private async readReleaseIdentity(run: GithubRun): Promise<string | null> {
     const listed = z.object({ artifacts: z.array(z.object({ name: z.string(), expired: z.boolean(),
-      workflow_run: z.object({ id: positive, head_sha: sha }) })) }).parse(await this.api(`${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`));
+      workflow_run: z.object({ id: positive, head_sha: sha }) })) }).parse(await this.api(`${this.repository}/actions/runs/${run.id}/artifacts?per_page=100`));
     const plans = listed.artifacts.filter(item => item.name.startsWith("coordinated-release-plan-mentra-"));
     requireThat(plans.length === 1 && !plans[0]!.expired && plans[0]!.workflow_run.id === run.id
       && plans[0]!.workflow_run.head_sha === run.head_sha, "Release plan is missing or ambiguous");

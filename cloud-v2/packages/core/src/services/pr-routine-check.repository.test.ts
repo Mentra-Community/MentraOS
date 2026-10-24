@@ -29,3 +29,15 @@ test('event wake uses the same nextAt field and cannot postpone already due work
  expect((update.mock.calls as unknown[][])[0]![0]).toEqual({gateId:'gate'});expect((update.mock.calls as unknown[][])[0]![1]).toEqual({$min:{nextAt:at}})
  expect(((update.mock.calls as unknown[][])[0]![2] as any).timeoutMS).toBe(2000)
 })
+
+
+test('predecessor lookup includes missing historical repo only for MentraOS and never crosses a PR number into Mentra', async () => {
+ const chain = {select: (_value: unknown) => chain, limit: (_value: unknown) => chain, read: (_value: unknown) => chain,
+  readConcern: (_value: unknown) => chain, setOptions: (_value: unknown) => chain, lean: async () => [{gateId: 'previous'}]};
+ const find = spyOn(PrRoutineCheckModel, 'find').mockReturnValue(chain as never); spies.push(find);
+ expect(await prRoutineCheckRepository.predecessors(12, 'current', 'Mentra-Community/Mentra')).toEqual(['previous']);
+ expect((find.mock.calls as unknown[][])[0]![0]).toEqual({'payload.context.number': 12, 'payload.context.repository': 'Mentra-Community/Mentra', gateId: {$ne: 'current'}});
+ await prRoutineCheckRepository.predecessors(12, 'current');
+ expect((find.mock.calls as unknown[][])[1]![0]).toEqual({'payload.context.number': 12, gateId: {$ne: 'current'},
+  $or: [{'payload.context.repository': 'Mentra-Community/MentraOS'}, {'payload.context.repository': {$exists: false}}]});
+});

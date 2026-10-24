@@ -1,15 +1,16 @@
+import {appRepositorySchema} from './testing-source.types';
 import {z} from "zod";
 import {routinePlatformSchema} from "./routine-definition.types";
 import {firmwareManifestSchema} from "./glasses-software.types";
 export {firmwareManifestSchema, glassesSoftwareRefSchema, type GlassesSoftwareRef} from "./glasses-software.types";
 const positive = z.number().int().positive().safe();
 export const testBuildSourceSchema = z.discriminatedUnion("channel", [
-  z.object({channel: z.literal("pr"), prNumber: positive, buildRunId: positive, publicationAttempt: positive}).strict(),
-  z.object({channel: z.literal("dev"), buildRunId: positive, publicationAttempt: positive}).strict(),
-  z.object({channel: z.literal("staging"), buildRunId: positive, publicationAttempt: positive}).strict(),
+  z.object({channel: z.literal("pr"), prNumber: positive, buildRunId: positive, publicationAttempt: positive, repository: appRepositorySchema.optional()}).strict(),
+  z.object({channel: z.literal("dev"), buildRunId: positive, publicationAttempt: positive, repository: appRepositorySchema.optional()}).strict(),
+  z.object({channel: z.literal("staging"), buildRunId: positive, publicationAttempt: positive, repository: appRepositorySchema.optional()}).strict(),
 ]);
 export const testBuildQuerySchema = z.object({channel: z.enum(["pr", "dev", "staging"]),
-  pr: z.coerce.number().int().positive().safe().optional(), platform: routinePlatformSchema}).strict()
+  repository: appRepositorySchema.optional(), pr: z.coerce.number().int().positive().safe().optional(), platform: routinePlatformSchema}).strict()
   .refine(value => (value.channel === "pr") === (value.pr !== undefined), "Only PR inventory requires a PR number");
 export type TestBuildSource = z.infer<typeof testBuildSourceSchema>;
 export type TestBuildQuery = z.infer<typeof testBuildQuerySchema>;
@@ -32,7 +33,7 @@ export function selectedBuildInput(build: TestBuild, platform: TestBuildPlatform
   return {
     kind: platform === "ios-on-mac" ? "mac-ci-package" : "android-apk",
     ...(build.diagnostic ? {diagnostic: build.diagnostic} : {}),
-    repository: "Mentra-Community/MentraOS", headSha: build.headSha, channel: build.source.channel,
+    repository: appRepositorySchema.parse(build.source.repository ?? "Mentra-Community/MentraOS"), headSha: build.headSha, channel: build.source.channel,
     ...(build.source.channel === "pr" ? {prNumber: build.source.prNumber} : {}),
     ...(build.release ? {releaseIdentity: build.release} : {}),
     source: build.source, archive: build.archive, receipt: build.receipt,

@@ -28,6 +28,7 @@ import {TestRunError} from './test-result-error'
 import {permissionContext} from '../types/resource-permissions.types'
 import {RoutineWorkNotification} from './routine-work-notification'
 import {GithubRoutineJobActions, type RoutineJobActions, routineActionsRetry, type RoutineActionsDispatch, cancelRoutineActions, type RoutineActionsCancellation} from './routine-job-actions.service'
+import {configuredTestingTarget, retainedTestingTarget} from '../types/testing-source.types'
 
 interface RoutineWorkVerificationRecord {
   identity: RoutineWorkVerification['identity']
@@ -250,20 +251,21 @@ export class RoutineWorkService {
       await this.notify(row)
       return this.deliver(row)
     }
-    if (input.buildSource.channel !== 'pr' || input.buildSource.prNumber !== input.origin.prNumber)
+    if (input.buildSource.channel !== 'pr' || input.buildSource.prNumber !== input.origin.prNumber ||
+      (input.buildSource.repository ?? 'Mentra-Community/MentraOS') !== input.origin.repository)
       throw new TestRunError(409, 'Authoring request build differs from its originating PR')
     try {
       const platform = input.requirements.platform === 'mac' ? 'ios-on-mac' : 'android'
       const [build, revision] = await Promise.all([
         input.diagnostic ? (this.builds.resolveNimoDiagnostic ? this.builds.resolveNimoDiagnostic(input.buildSource) : Promise.reject(new TestRunError(409, 'NIMO diagnostic build admission is unavailable'))) : this.builds.resolve(input.buildSource, platform),
-        this.sources.resolve(input.source.revision),
+        this.sources.resolve(input.source.revision, undefined, input.source.repository),
       ])
       if (
         !build ||
         build.availability !== 'available' ||
         !build.archive ||
         !build.receipt ||
-        build.headSha !== input.origin.headSha || build.diagnostic !== input.diagnostic
+        build.headSha !== input.origin.headSha || (build.source.repository ?? 'Mentra-Community/MentraOS') !== input.origin.repository || build.diagnostic !== input.diagnostic
       )
         throw new TestRunError(409, 'The exact originating PR build is not published')
       const {buildSource: _, deadline: _deadline, diagnostic: _diagnostic, ...fields} = input
@@ -311,7 +313,7 @@ export class RoutineWorkService {
   }
   private async discover(row: RoutineWorkDelivery) {
     if (!this.actionsTransport?.runs || !row.fleetDispatch) return []
-    const runs = await this.actionsTransport.runs(row.workId, row.fleetDispatch.firstAttemptAt ?? row.createdAt?.toISOString() ?? row.fleetDispatch.lastAttemptAt)
+    const runs = await this.actionsTransport.runs(row.workId, row.fleetDispatch.firstAttemptAt ?? row.createdAt?.toISOString() ?? row.fleetDispatch.lastAttemptAt, retainedTestingTarget(row.fleetDispatch.target))
     for (const run of runs) if (!row.fleetActions?.some(value => value.actionsRunId === run.actionsRunId)) {
       row = await this.rows.actions?.(row.workId, row.fleetInputSha256!, {actionsRunId: run.actionsRunId, recordedAt: new Date(this.now()).toISOString()}) ?? await this.inspect(row.workId)
       if (!row.fleetActions?.some(value => value.actionsRunId === run.actionsRunId)) throw new TestRunError(503, 'Authoring Actions delivery history exceeds its bound')
@@ -332,10 +334,11 @@ export class RoutineWorkService {
       return this.inspect(row.workId)
     }
     if (!this.rows.dispatch) throw new TestRunError(503, 'Authoring Actions dispatch storage is unavailable')
-    const receipt = {attempts: (previous?.attempts ?? 0) + 1, firstAttemptAt: previous?.firstAttemptAt ?? new Date(this.now()).toISOString(), lastAttemptAt: new Date(this.now()).toISOString(), checkedAt: new Date(this.now()).toISOString()}
+    const receipt = {attempts: (previous?.attempts ?? 0) + 1, firstAttemptAt: previous?.firstAttemptAt ?? new Date(this.now()).toISOString(), lastAttemptAt: new Date(this.now()).toISOString(), checkedAt: new Date(this.now()).toISOString(),
+      target: previous ? retainedTestingTarget(previous.target) : configuredTestingTarget()}
     if (!await this.rows.dispatch(row.workId, previous, receipt)) return this.inspect(row.workId)
     try {
-      await this.actionsTransport.dispatch(row.workId)
+      await this.actionsTransport.dispatch(row.workId, receipt.target)
       return await this.rows.dispatch(row.workId, receipt, {...receipt, acknowledgedAt: new Date(this.now()).toISOString()}) ?? await this.inspect(row.workId)
     } catch {
       await this.rows.dispatch(row.workId, receipt, {...receipt, error: 'GitHub authoring delivery is unavailable; retry the retained job'})
@@ -354,7 +357,7 @@ export class RoutineWorkService {
     if (!saved.fleetActions?.some(run => run.actionsRunId === input.actionsRunId)) throw new TestRequestConflict('Authoring Actions delivery receipt limit reached')
     if (saved.fleetCancellation) {
       await this.rows.cancellationProgress?.(jobId, input.inputSha256, {checkedAt: new Date(0).toISOString(), settled: false})
-      await Promise.allSettled([this.actionsTransport?.cancel(input.actionsRunId)])
+      await Promise.allSettled([this.actionsTransport?.cancel(input.actionsRunId, retainedTestingTarget(saved.fleetDispatch?.target))])
     }
     return this.observation(jobId)
   }

@@ -19,6 +19,7 @@ import {selectedBuildInput} from '../types/test-build.types';
 import {permissionObservationMatches, permissionContext} from '../types/resource-permissions.types';
 import {backendConnectivityObservationRefusesPreparation, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION, BACKEND_CANDIDATE_ROUTINE_API_VERSION} from '../types/backend-connectivity.types';
 import {GithubRoutineSourceGateway, ROUTINE_SOURCE_DOWNLOAD_UNAVAILABLE} from './routine-source-selection.service';
+import {configuredTestingTarget, retainedTestingTarget, routineSourceRepository, testingTarget} from '../types/testing-source.types';
 import {RoutineDefinitionService} from './routine-definition.service';
 import {hostStateSchema, TestHostStateService, type RoutingTestHostState, type ReceivedTestHostState} from './test-host-state.service';
 import {FrameworkResultService} from './framework-result.service';
@@ -1258,6 +1259,7 @@ export class RoutineJobService {
     if (selected.routineId !== original.routineId || selected.platform !== original.platform ||
       selected.minimumFrameworkVersion !== original.minimumFrameworkVersion || requestInputDigest(selected.source) !== requestInputDigest(original.source) ||
       selected.routineRevision && selected.routineRevision !== original.routineRevision ||
+      selected.routineRepository && selected.routineRepository !== routineSourceRepository(original) ||
       selected.routineSource && requestInputDigest(selected.routineSource) !== requestInputDigest(original.routineSource ?? row.fleetPreparation?.routineSource ?? null) ||
       requestInputDigest(selected.target ?? null) !== requestInputDigest(row.fleetTarget ?? null) ||
       selected.deadline && Date.parse(selected.deadline) !== row.fleetDeadline.getTime())
@@ -1287,12 +1289,14 @@ export class RoutineJobService {
   }
   async freezeSelection(value: unknown, inheritedBuild?: PortableRoutineSelection['build']): Promise<PortableRoutineSelection> {
     const selected = routineJobSubmissionSchema.parse(value);
-    const routineRevision = selected.routineRevision ?? selected.routineSource?.commit ?? await this.sources.resolve();
+    const routineRepository = selected.routineRepository ?? selected.routineSource?.repository ?? configuredTestingTarget().repository;
+    const routineRevision = selected.routineRevision ?? selected.routineSource?.commit ?? await this.sources.resolve(undefined, undefined, routineRepository);
     const build = inheritedBuild ? null : await this.builds.resolve(selected.source, selected.platform);
     if (build && (build.availability !== 'available' || !build.archive || !build.receipt))
       throw new TestRunError(409, build.reason ?? 'Exact app publication is unavailable');
-    const {target: _, deadline: __, ...selection} = selected;
+    const {target: _, deadline: __, routineRepository: _repository, ...selection} = selected;
     return portableRoutineSelectionSchema.parse(JSON.parse(JSON.stringify({...selection, routineRevision,
+      ...(routineRepository === testingTarget().repository ? {} : {routineRepository}),
       build: inheritedBuild ?? {...selectedBuildInput(build!, selected.platform),
         ...(build!.manifest ? {manifest: build!.manifest, manifestSha256: build!.manifestSha256} : {})}})));
   }
@@ -1333,7 +1337,7 @@ export class RoutineJobService {
   }
   private async discover(row: StoredRoutineJob) {
     if (!this.actionsTransport?.runs || !row.fleetDispatch) return [];
-    const runs = await this.actionsTransport.runs(row.requestId, row.fleetDispatch.firstAttemptAt ?? row.createdAt?.toISOString() ?? row.fleetDispatch.lastAttemptAt);
+    const runs = await this.actionsTransport.runs(row.requestId, row.fleetDispatch.firstAttemptAt ?? row.createdAt?.toISOString() ?? row.fleetDispatch.lastAttemptAt, retainedTestingTarget(row.fleetDispatch.target));
     for (const run of runs) if (!row.fleetActions?.some(value => value.actionsRunId === run.actionsRunId)) {
       const saved = await this.rows.actions?.(row.requestId, row.fleetInputSha256 ?? row.fleetSelectionSha256,
         {actionsRunId:run.actionsRunId,recordedAt:new Date(this.now()).toISOString()});
@@ -1345,7 +1349,7 @@ export class RoutineJobService {
   private async supersession(row: StoredRoutineJob): Promise<StoredRoutineJob> {
     if (row.state === 'terminal' || row.fleetCancellation || this.now() >= row.fleetDeadline.getTime() || !isAutomaticPrRoutineJob(row) || !this.builds.isPrSuperseded) return row;
     const source = row.fleetSelection.source;
-    if (source.channel === 'pr' && await this.builds.isPrSuperseded(source.prNumber, row.fleetSelection.build.headSha)) {
+    if (source.channel === 'pr' && await this.builds.isPrSuperseded(source.prNumber, row.fleetSelection.build.headSha, row.fleetSelection.build.repository)) {
       await this.cancel(row.requestId, {reason: `Superseded by a newer commit on PR #${source.prNumber}`});
       return this.job(row.requestId);
     }
@@ -1371,11 +1375,12 @@ export class RoutineJobService {
       return this.job(row.requestId);
     }
     if (!this.rows.dispatch) throw new TestRunError(503, 'Actions dispatch receipt storage is unavailable');
-    const value = {attempts:(previous?.attempts??0)+1,firstAttemptAt:previous?.firstAttemptAt??new Date(this.now()).toISOString(),lastAttemptAt:new Date(this.now()).toISOString(),checkedAt:new Date(this.now()).toISOString()};
+    const value = {attempts:(previous?.attempts??0)+1,firstAttemptAt:previous?.firstAttemptAt??new Date(this.now()).toISOString(),lastAttemptAt:new Date(this.now()).toISOString(),checkedAt:new Date(this.now()).toISOString(),
+      target: previous ? retainedTestingTarget(previous.target) : configuredTestingTarget()};
     const retained=await this.rows.dispatch(row.requestId,previous,value);
     if(!retained)return this.job(row.requestId);
     try {
-      await this.actionsTransport.dispatch(row.requestId);
+      await this.actionsTransport.dispatch(row.requestId, value.target);
       return await this.rows.dispatch(row.requestId,value,{...value,acknowledgedAt:new Date(this.now()).toISOString()})??await this.job(row.requestId);
     } catch(error) {
       await this.rows.dispatch(row.requestId,value,{...value,error:error instanceof TestRunError?error.message:'GitHub routine delivery is unavailable; retry the retained job'});
@@ -1537,11 +1542,12 @@ export class RoutineJobService {
     if (known && !known.definition.platforms.includes(selection.platform))
       throw new TestRunError(422, `Routine ${selection.routineId} does not support ${selection.platform} at the selected source revision.`);
   }
-  async inventory(jobId: string) {const row = await this.job(jobId); return this.sources.inventory(row.fleetSelection.routineRevision);}
+  async inventory(jobId: string) {const row = await this.job(jobId); return this.sources.inventory(row.fleetSelection.routineRevision, routineSourceRepository(row.fleetSelection));}
   async blob(jobId: string, sha: string) {
     const file = (await this.inventory(jobId)).files.find(file => file.gitBlobSha1 === sha);
     if (!file) throw new TestRequestConflict('Requested blob is not part of the exact job source');
-    return this.sources.blob(file);
+    const row = await this.job(jobId);
+    return this.sources.blob(file, routineSourceRepository(row.fleetSelection));
   }
   async prepared(jobId: string, value: unknown) {
     const input = completeRoutineJobPreparationSchema.parse(value), row = await this.job(jobId), selected = row.fleetSelection;
@@ -1551,7 +1557,7 @@ export class RoutineJobService {
       throw new TestRunError(422, 'Candidate-only source requires its accepted authoring job and review authorization');
     const definition = routineEnrollmentSchema.parse({routineId: selected.routineId, platform: selected.platform, definitionRevision: selected.routineRevision,
       routineSource: input.routineSource, definitionSha256: input.definitionSha256, definition: input.definition});
-    if (requestInputDigest(input.definition) !== input.definitionSha256 || selected.routineSource &&
+    if (input.routineSource.repository !== routineSourceRepository(selected) || requestInputDigest(input.definition) !== input.definitionSha256 || selected.routineSource &&
       requestInputDigest(selected.routineSource) !== requestInputDigest(input.routineSource))
       throw new TestRequestConflict('Offline preparation differs from the selected exact source');
     const {inputSha256: _, ...preparedInput} = input;
@@ -1644,9 +1650,10 @@ export class RoutineJobService {
       if (!saved.fleetActions?.some(value => value.actionsRunId === input.actionsRunId))
         throw new TestRequestConflict('Actions delivery history exceeds its retry bound');
     }
-    if (row.fleetCancellation || (await this.job(jobId)).fleetCancellation) {
+    const current = await this.job(jobId);
+    if (row.fleetCancellation || current.fleetCancellation) {
       await this.rows.cancellationProgress?.(jobId,{checkedAt:new Date(this.now()-30_001).toISOString(),settled:false});
-      await Promise.allSettled([this.actionsTransport?.cancel(input.actionsRunId)]);
+      await Promise.allSettled([this.actionsTransport?.cancel(input.actionsRunId, retainedTestingTarget(current.fleetDispatch?.target))]);
     }
     return this.observation(jobId);
   }

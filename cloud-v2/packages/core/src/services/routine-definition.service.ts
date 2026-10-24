@@ -3,6 +3,7 @@ import {createLogger} from '@mentra/cloud-shared/logger';
 import {testWriteConcern} from "../models/test-write-concern";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import {RoutineCollectionModel} from '../models/routine-collection.model';
+import {testingRepositorySchema, testingTarget} from '../types/testing-source.types';
 import {RoutineWorkModel} from '../models/routine-work.model';
 import {authoringJobViewSchema} from '../types/routine-work.types';
 import {routineEnrollmentSchema, routineCardDefinitionSchema, type RoutineEnrollment, type RecordedRoutineEnrollment, type RoutineCardDefinition} from "../types/routine-definition.types";
@@ -141,13 +142,14 @@ export class RoutineDefinitionService {
   }
   /** Complete CI collection becomes visible atomically; first-parent version prevents late ancestor regression. */
   async publishCollection(input: unknown) {
-    const parsed = z.object({commit: z.string().regex(/^[a-f0-9]{40}$/), version: z.number().int().positive().safe(),
+    const parsed = z.object({commit: z.string().regex(/^[a-f0-9]{40}$/), repository: testingRepositorySchema.optional(), version: z.number().int().positive().safe(),
       definitions: z.array(routineEnrollmentSchema).min(1).max(1000)}).strict().safeParse(input);
     if (!parsed.success) throw new RoutineDefinitionConflict('Invalid published collection');
     const collection = parsed.data;
     const identities = collection.definitions.map(row => `${row.routineId}:${row.platform}`);
     if (new Set(identities).size !== identities.length || collection.definitions.some(row => row.verification ||
-      row.definitionRevision !== collection.commit || requestInputDigest(row.definition) !== row.definitionSha256))
+      row.definitionRevision !== collection.commit || row.routineSource.repository !== (collection.repository ?? testingTarget().repository) ||
+      requestInputDigest(row.definition) !== row.definitionSha256))
       throw new RoutineDefinitionConflict('Published collection identity or exact definition differs');
     collection.definitions.sort((left, right) =>
       `${left.routineId}:${left.platform}`.localeCompare(`${right.routineId}:${right.platform}`));

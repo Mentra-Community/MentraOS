@@ -1,3 +1,4 @@
+import {routineCheckRepository} from '../types/pr-routine-check.types'
 import {createHmac} from 'node:crypto'
 import {expect, test} from 'bun:test'
 import {PrRoutineCheckService, prRoutineGateId, routineCheckPayload, routineCheckPublicName} from './pr-routine-check.service'
@@ -14,6 +15,9 @@ function fixture() {
   const stored = new Map<string, PrRoutineCheckRow>(), events = new Map<string, string>(), requests = new Map<string, any>(), results = new Map<string, any>()
   const controls = new Map<string,{deliveryId:string;digest:string;control:unknown;nextAt:Date}>(), processed = new Set<string>()
   const nativeIds = new Map<string, number>()
+  let routineRepository = 'Mentra-Community/Mentra-Automated-Testing'
+  const routineSourceCalls: Array<{operation: string; repository: string | undefined}> = []
+  const repositoryCalls: Array<{operation: string; repository: string | undefined}> = [], inventoryQueries: unknown[] = []
   const checkPayloads: CheckPayload[] = [], submissions: Array<{selection: any; deadline: string}> = [], cancellations: string[] = []
   const context: PrRoutineContext = {number: 12, headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'dev', open: true,
     sameRepository: true, labels: ['routine:login'], peers: [12]}
@@ -28,7 +32,7 @@ function fixture() {
       return true},
     async wake(id, date) {const row=stored.get(id); if(loseIntakeWake) {loseIntakeWake=false; return}; if(row && (!row.nextAt || row.nextAt>date)) row.nextAt=date},
     async due(date) {return [...stored.values()].filter(row => row.nextAt && row.nextAt <= date).sort((a,b)=>a.nextAt!.getTime()-b.nextAt!.getTime()).slice(0,20).map(row => row.gateId)},
-    async predecessors(number, except) {return [...stored.values()].filter(row => row.payload.context.number === number && row.gateId !== except).map(row => row.gateId)},
+    async predecessors(number, except, repository = 'Mentra-Community/MentraOS') {return [...stored.values()].filter(row => row.payload.context.number === number && routineCheckRepository(row.payload.context) === repository && row.gateId !== except).map(row => row.gateId)},
     async eventsDue(date) {return [...controls.values()].filter(row=>!processed.has(row.deliveryId)&&row.nextAt<=date)}, async eventSettled(id,nextAt) {if(nextAt) controls.get(id)!.nextAt=nextAt;else processed.add(id)}, async event(id, hash, _gateId, control) {if (events.has(id) && events.get(id) !== hash) throw Error('conflict'); events.set(id, hash); if(control && !controls.has(id)) controls.set(id,{deliveryId:id,digest:hash,control:structuredClone(control),nextAt:new Date(now)})},
   }
   let builds: any[] = [], history: any[] = [], failSubmit = false, failHistory = false, failCancellation: string | undefined, holdCancellation: Promise<void> | undefined, dispatchFailure: boolean | undefined
@@ -37,10 +41,10 @@ function fixture() {
   const previews: any[] = [], rerunSubmits: any[] = []
   const definition = {id: 'login', title: 'Account login', steps: [{id: 'open', instruction: 'Open account'}, {id: 'check', instruction: 'Verify login'}], platforms: ['android']}
   const createService = () => new PrRoutineCheckService(rows, {
-    async context() {contextCalls++; return structuredClone(context)}, async permission() {return canWrite}, async ownedCheck() {return true},
-    async findCheck(payload) {findCalls++; return !lostDelivery ? nativeIds.get(payload.external_id) : undefined}, async producer(_platform, _context, _operationId, retainedRunId) {retainedProducerIds.push(retainedRunId); return producerReceipt}, async deliver(_id, payload) {if (unavailableDelivery) throw Error('outage'); deliveries++; checkPayloads.push(structuredClone(payload)); if (!nativeIds.has(payload.external_id)) nativeIds.set(payload.external_id, 99 + nativeIds.size); if (lostDelivery) {lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false; throw Error('lost')} return nativeIds.get(payload.external_id)!}, async requestBuild(platform) {buildCalls.push(platform); if (dispatchFailure !== undefined) throw new PrBuildDispatchFailure(dispatchFailure)},
+    async context(_number, repository = 'Mentra-Community/MentraOS') {contextCalls++; repositoryCalls.push({operation: 'context', repository}); const {repository: _, ...legacy} = context; return {...structuredClone(legacy), ...(repository === 'Mentra-Community/MentraOS' ? {} : {repository})}}, async permission(_actor, repository) {repositoryCalls.push({operation: 'permission', repository}); return canWrite}, async ownedCheck(_id, _head, _external, repository) {repositoryCalls.push({operation: 'ownedCheck', repository}); return true},
+    async findCheck(payload, repository) {repositoryCalls.push({operation: 'findCheck', repository}); findCalls++; return !lostDelivery ? nativeIds.get(payload.external_id) : undefined}, async producer(_platform, _context, _operationId, retainedRunId) {retainedProducerIds.push(retainedRunId); return producerReceipt}, async deliver(_id, payload, _allowCreate, repository) {repositoryCalls.push({operation: 'deliver', repository}); if (unavailableDelivery) throw Error('outage'); deliveries++; checkPayloads.push(structuredClone(payload)); if (!nativeIds.has(payload.external_id)) nativeIds.set(payload.external_id, 99 + nativeIds.size); if (lostDelivery) {lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false; throw Error('lost')} return nativeIds.get(payload.external_id)!}, async requestBuild(platform) {buildCalls.push(platform); if (dispatchFailure !== undefined) throw new PrBuildDispatchFailure(dispatchFailure)},
   }, {
-    async freezeSelection(value: any) {return {...value, build: {repository: 'Mentra-Community/MentraOS', kind: 'android-apk', channel: 'pr', headSha: context.headSha, source: value.source,
+    async freezeSelection(value: any) {routineSourceCalls.push({operation: 'freeze', repository: value.routineRepository}); const selection = {...value}; if (selection.routineRepository === 'Mentra-Community/Mentra-Automated-Testing') delete selection.routineRepository; return {...selection, build: {repository: value.source.repository ?? 'Mentra-Community/MentraOS', kind: 'android-apk', channel: 'pr', headSha: context.headSha, source: value.source,
       archive: {name: 'app.apk', url: 'https://artifactscdn.mentraglass.com/app.apk', size: 10, sha256: 'd'.repeat(64)}, receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 1, sha256: 'e'.repeat(64)}}} as any},
     async submitFrozen(selection, deadline) {submissions.push({selection: structuredClone(selection), deadline}); if (failSubmit) throw Error('unavailable before admission');
       if (!requests.has(selection.requestId)) requests.set(selection.requestId, {requestId: selection.requestId, fleetSelection: selection,
@@ -48,13 +52,13 @@ function fixture() {
       return requests.get(selection.requestId)},
     async cancel(id) {cancellations.push(id); if (holdCancellation) await holdCancellation; if (id === failCancellation) throw Error('provider-sensitive-cancel-error'); return {} as any},
     async cancelFrozen(selection, _deadline, value) {await this.cancel(selection.requestId, value); return {} as any},
-  }, {async catalog(revision) {return {routineRevision: revision!, routines: [{routineId: 'login', platforms: ['android']}]}}},
+  }, {async catalog(revision, _ids, repository) {routineSourceCalls.push({operation: 'catalog', repository}); return {routineRevision: revision!, routines: [{routineId: 'login', platforms: ['android']}]}}},
   {async getExact() {return {routineId: 'login', platform: 'android', definitionRevision: 'a'.repeat(40), definitionSha256: requestInputDigest(definition),
-    routineSource: testRoutineSource(), definition} as any}}, {async inventory() {return structuredClone(builds)}},
+    routineSource: {...testRoutineSource(), repository: routineRepository}, definition} as any}}, {async inventory(query) {inventoryQueries.push(query); return structuredClone(builds)}},
   {async get(id) {return requests.get(id) ?? null}}, {async summary(id) {if (!results.has(id)) throw new TestRunError(404, 'missing'); return results.get(id)}},
   {async create() {return {} as any}, async bind() {return {} as any}, async complete() {return {} as any}},
   {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async cancelRequest() {return false}, async cancelPlan() {return false}, async detail() {return {state: 'accepted'} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
-  {async get() {return null}}, () => now, {async resolve() {resolveCount++; return 'a'.repeat(40)}})
+  {async get() {return null}}, () => now, {async resolve(_revision, _before, repository) {resolveCount++; routineRepository = repository ?? 'Mentra-Community/Mentra-Automated-Testing'; routineSourceCalls.push({operation: 'resolve', repository}); return 'a'.repeat(40)}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
   return {get service() {return service}, canWrite(value: boolean) {canWrite=value}, loseIntakeWake() {loseIntakeWake=true}, restart() {service = createService()}, stored, context, requests, results, submissions, cancellations, checkPayloads, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
@@ -62,8 +66,8 @@ function fixture() {
     gate: () => stored.get(gateId)!.payload, advance(ms = 30000) {now += ms}, get now() {return now},
     get contextCalls() {return contextCalls}, get resolves() {return resolveCount}, get deliveries() {return deliveries}, get findCalls() {return findCalls}, outage(value = true) {unavailableDelivery = value}, crashAtCreation() {crashCreation = true}, crashAtProducer() {crashProducer = true}, receipt(value: typeof producerReceipt) {producerReceipt = value}, loseDelivery() {lostDelivery = true},
     inventory(value: any[]) {builds = value},
-    retainedProducerIds,
-    build() {builds = [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}]},
+    retainedProducerIds, repositoryCalls, inventoryQueries, routineSourceCalls,
+    build() {builds = [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1, ...(context.repository ? {repository: context.repository} : {})}}]},
     async intake(event = 'event-one') {await service.intake(12, event, requestInputDigest(event)); await service.tick()},
     async drain(count = 6) {for (let i = 0; i < count; i++) {now += 30000; await service.tick()}}
   }
@@ -576,3 +580,48 @@ test('accepted native rerun creates a current check without duplicate jobs or hi
  await expect(f.service.control({...command, deliveryId:'historical-other-event',digest:requestInputDigest('historical-other-event')})).rejects.toThrow('obsolete routine check');
  expect(f.gate().attempt.generation).toBe(2); expect(f.gate().controls).toHaveLength(1);
 })
+
+
+test('same-head and same-number app PRs keep repository-specific gates, predecessors and reporting after restart', async () => {
+  const f = fixture(); f.context.labels = [];
+  const legacyId = prRoutineGateId(f.context.headSha), currentId = prRoutineGateId(f.context.headSha, 'Mentra-Community/Mentra');
+  expect(currentId).not.toBe(legacyId);
+  await f.service.intake(12, 'legacy-pr', requestInputDigest('legacy-pr'), f.context);
+  await f.service.intake(12, 'current-pr', requestInputDigest('current-pr'), {...f.context, repository: 'Mentra-Community/Mentra'});
+  expect(f.stored.size).toBe(2);
+  expect(f.stored.get(legacyId)!.payload.context).not.toHaveProperty('repository');
+  expect(f.stored.get(currentId)!.payload.context.repository).toBe('Mentra-Community/Mentra');
+  expect(f.stored.get(currentId)!.payload.predecessors).toEqual([]);
+  f.restart(); await f.service.tick();
+  expect(f.repositoryCalls.filter(row => row.operation === 'deliver').map(row => row.repository).sort()).toEqual(['Mentra-Community/Mentra', 'Mentra-Community/MentraOS']);
+  expect(f.stored.get(legacyId)!.payload.context).not.toHaveProperty('repository');
+  expect(f.stored.get(currentId)!.payload.context.repository).toBe('Mentra-Community/Mentra');
+  const current = f.stored.get(currentId)!.payload;
+  const calls = f.repositoryCalls.length;
+  await expect(f.service.control({deliveryId: 'wrong-repo', digest: 'c'.repeat(64), gateId: currentId, checkId: current.checkId!,
+    externalId: current.checkExternalId, headSha: current.headSha, actor: 'writer', kind: 'rerun', repository: 'Mentra-Community/MentraOS'})).rejects.toThrow('different routine check repository');
+  expect(f.repositoryCalls).toHaveLength(calls);
+});
+
+
+test('new canonical routine source stays pinned while legacy revisions remain legacy after a config switch', async () => {
+ const previous = process.env.TESTING_REPOSITORY;
+ try {
+  process.env.TESTING_REPOSITORY = 'Mentra-Community/Mentra';
+  const f = fixture(); f.context.repository = 'Mentra-Community/Mentra'; f.build();
+  const gateId = prRoutineGateId(f.context.headSha, 'Mentra-Community/Mentra');
+  await f.service.intake(12, 'canonical-source', requestInputDigest('canonical-source'), f.context); await f.service.tick();
+  expect(f.stored.get(gateId)!.payload.routineRepository).toBe('Mentra-Community/Mentra');
+  process.env.TESTING_REPOSITORY = 'Mentra-Community/Mentra-Automated-Testing';
+  f.restart(); await f.drain();
+  expect(f.stored.get(gateId)!.payload.attempt.routineRepository).toBe('Mentra-Community/Mentra');
+  expect(f.routineSourceCalls.every(call => call.repository === 'Mentra-Community/Mentra')).toBe(true);
+  expect(f.submissions[0]!.selection.routineRepository).toBe('Mentra-Community/Mentra');
+  expect(f.submissions[0]!.selection.source.repository).toBe('Mentra-Community/Mentra');
+  const legacy = fixture(); legacy.build(); await legacy.intake('legacy-source');
+  expect(legacy.gate().routineRevision).toBe('a'.repeat(40)); expect(legacy.gate()).not.toHaveProperty('routineRepository');
+  process.env.TESTING_REPOSITORY = 'Mentra-Community/Mentra'; legacy.restart(); await legacy.drain();
+  expect(legacy.routineSourceCalls.every(call => call.repository === 'Mentra-Community/Mentra-Automated-Testing')).toBe(true);
+  expect(legacy.submissions[0]!.selection).not.toHaveProperty('routineRepository');
+ } finally {if (previous === undefined) delete process.env.TESTING_REPOSITORY; else process.env.TESTING_REPOSITORY = previous;}
+});

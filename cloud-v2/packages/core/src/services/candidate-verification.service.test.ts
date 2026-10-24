@@ -65,6 +65,24 @@ test('candidate permits bind accepted host, current attempt, exact reviewed sour
     .rejects.toThrow('accepted current host')
 })
 
+test('canonical testing candidate follows its accepted work source and review rather than the app repository', async () => {
+  const row = structuredClone(accepted()), repository = 'Mentra-Community/Mentra' as const;
+  row.work.source.repository = repository;
+  row.inputSha256 = requestInputDigest(row.work); row.acceptance!.inputSha256 = row.inputSha256;
+  const details = row.status!.details as any;
+  details.work = row.work; details.inputSha256 = row.inputSha256;
+  details.details.prUrl = `https://github.com/${repository}/pull/500`;
+  details.details.review.prUrl = details.details.prUrl;
+  details.details.review.reviewUrl = `${details.details.prUrl}#pullrequestreview-44`;
+  const service = new CandidateVerificationService(async () => row), canonical = {...selected, routineSource: {...selected.routineSource, repository}};
+  await service.authorize(verification, 'mini', canonical);
+  await expect(service.authorize(verification, 'mini', selected)).rejects.toThrow('accepted current host');
+  details.details.prUrl = 'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/500';
+  details.details.review.prUrl = details.details.prUrl;
+  details.details.review.reviewUrl = `${details.details.prUrl}#pullrequestreview-44`;
+  await expect(service.authorize(verification, 'mini', canonical)).rejects.toThrow('exact-source independent review');
+});
+
 test('only authenticated candidate intake is admitted; retained local receipt reconciles after restoration', async () => {
   const rows = new Map<string, StoredTestRequest>()
   const repository = {async insert(row: StoredTestRequest) {

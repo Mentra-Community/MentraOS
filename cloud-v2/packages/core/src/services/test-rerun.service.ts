@@ -11,6 +11,7 @@ import {individualRerunSchema, rerunPlanSchema, recordedRerunPlanSchema, rerunPr
 import {TestSuiteService} from "./test-suite.service";
 import {RoutineJobService} from "./routine-job.service";
 import {portableRoutineSelectionSchema, type StoredRoutineJob} from "../types/routine-job.types";
+import {routineSourceRepository, type TestingRepository} from '../types/testing-source.types';
 import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest} from "./test-request.service";
 import {readAcceptedRoutineRequest} from './routine-request-input';
 import {FrameworkResultService, frameworkResultSummaryFields, readFrameworkResultSummary, nativeRunFilter} from "./framework-result.service";
@@ -62,6 +63,7 @@ export const testRerunRepository: RerunRepository = {
     .read("primary").readConcern("majority").lean() as RerunRecord | null;},
 };
 export type ParentMember = {memberId: string; requestId?: string; routineId: string; platform: string; status: string;
+  routineRepository?: TestingRepository;
   routineSource?: z.infer<typeof frameworkRequestInputSchema>['routineSource'];
   routineRevision?: string; evidenceStatus?: 'complete'|'failed';
   build?: z.infer<typeof frameworkRequestInputSchema>['build']; publicationComplete?: boolean; runId?: string; startedAt?: string; finishedAt?: string};
@@ -183,7 +185,7 @@ export class TestRerunService {
     if (!frameworkIdentitySchema.safeParse("suiteId" in parent ? parent.suiteId : parent.requestId).success)
       throw new TestRunError(400, "Invalid original identity");
     if ("suiteId" in parent) return (await this.suites.detail(parent.suiteId)).members.map(member => ({...member,
-      routineRevision: member.definitionRevision}));
+      routineRevision: member.routineRevision ?? member.definitionRevision}));
     if (await this.suites.originalMember?.(parent.requestId)) throw new TestRunError(409, "Use the original suite member to preserve its history");
     if (await this.store.byRequest(parent.requestId)) throw new TestRunError(409, "Use the rerun's original parent to preserve its history");
     const request = await this.requests.get(parent.requestId);
@@ -193,6 +195,7 @@ export class TestRerunService {
     const input = isExecutableRequest(request) ? recordedFrameworkRequestInputSchema.parse(request.input) : undefined;
     const attempt = await this.requestAttempt(parent.requestId, {parent, memberId: parent.requestId, attemptNumber: 0, attemptId: parent.requestId});
     return [{...attempt, memberId: parent.requestId, routineId: input?.routineId ?? intent!.routineId, platform: input?.platform ?? intent!.platform,
+      ...(intent?.routineRepository ? {routineRepository: intent.routineRepository} : {}),
       routineSource: input?.routineSource ?? intent?.routineSource, routineRevision: input?.definitionRevision ?? intent!.routineRevision}];
   }
   /** Exact original identities/source for supported linked adapters; never today's catalog. */
@@ -249,6 +252,7 @@ export class TestRerunService {
       let source = selected.source;
       let originalBuild = member.build;
       let routineSource = member.routineSource;
+      let routineRepository = routineSourceRepository(member);
       let routineRevision = member.routineRevision ?? routineSource?.commit;
       let minimumFrameworkVersion: number | undefined;
       if (member.requestId) {
@@ -260,6 +264,7 @@ export class TestRerunService {
             throw new TestRunError(503, 'Original fleet selection provenance is unavailable');
           routineRevision = frozen.data.routineRevision;
           routineSource = frozen.data.routineSource ?? originalJob.fleetPreparation?.routineSource;
+          routineRepository = routineSourceRepository({routineRepository: frozen.data.routineRepository, routineSource});
           originalBuild = frozen.data.build;
           minimumFrameworkVersion = frozen.data.minimumFrameworkVersion;
         } else if (original && !isExecutableRequest(original)) {
@@ -267,6 +272,7 @@ export class TestRerunService {
           if (!intent.success || requestInputDigest(intent.data) !== original.dispatchIntentSha256)
             throw new TestRunError(503, 'Original preparation provenance is unavailable');
           routineRevision = original.dispatchIntent.routineRevision; routineSource = original.dispatchIntent.routineSource;
+          routineRepository = routineSourceRepository(intent.data);
           originalBuild = original.dispatchIntent.build;
           minimumFrameworkVersion = intent.data.minimumFrameworkVersion;
         } else if (original) {
@@ -274,6 +280,7 @@ export class TestRerunService {
           if (!parsedInput.success || requestInputDigest(parsedInput.data) !== original.inputSha256)
             throw new TestRunError(503, 'Original routine provenance is unavailable');
           routineSource = parsedInput.data.routineSource;
+          routineRepository = routineSourceRepository(parsedInput.data);
           routineRevision = parsedInput.data.definitionRevision;
           minimumFrameworkVersion = parsedInput.data.minimumFrameworkVersion;
         }
@@ -295,7 +302,7 @@ export class TestRerunService {
       if (!routineRevision) throw new TestRunError(409, 'Original exact routine source is unavailable');
       if (selected.routineRevision) {routineRevision = selected.routineRevision; routineSource = undefined;}
       if (selected.minimumFrameworkVersion !== undefined) minimumFrameworkVersion = Math.max(minimumFrameworkVersion ?? 0, selected.minimumFrameworkVersion);
-      const frozen = await this.jobs.freezeSelection({requestId, routineId: member.routineId, platform: member.platform, source, routineRevision,
+      const frozen = await this.jobs.freezeSelection({requestId, routineId: member.routineId, platform: member.platform, source, routineRevision, routineRepository,
         ...(routineSource ? {routineSource} : {}), ...(minimumFrameworkVersion === undefined ? {} : {minimumFrameworkVersion})},
       !selected.source && originalBuild ? routinePreparedBuildSchema.parse(originalBuild) : undefined);
       members.push({memberId: member.memberId, rootKey, ...(member.requestId ? {originalRequestId: member.requestId} : {}), predecessorAttemptId,

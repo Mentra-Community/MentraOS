@@ -3,7 +3,7 @@ import {frameworkIdentitySchema, frameworkRequestInputSchema} from './framework-
 import {frameworkBindingSchema, routineSourceRefSchema} from './framework-version.types';
 import {publishedRoutineDefinitionSchema, routineResourceRequirementSchema, routinePlatformSchema,
   glassesModelSchema, routineIdentitySchema} from './routine-definition.types';
-import {routineDispatchSelectionSchema, routinePreparedBuildSchema, routineRevisionSchema} from './routine-dispatch.types';
+import {consistentRoutineSource, routineDispatchSelectionSchema, routinePreparedBuildSchema, routineRevisionSchema} from './routine-dispatch.types';
 import {backendQualificationPurposeSchema, backendLocalPrerequisiteSchema, backendPreparingReceiptSchema, backendCandidatePrerequisiteSchema, backendConnectivityTargetSchema, candidatePrerequisiteSettlementSchema, backendPrerequisiteOrigin} from './backend-connectivity.types';
 import {recorderHostReservationSchema} from './recorder-storage.types';
 import {fleetResourceAdmissionSchema, fleetExclusiveReservationSchema} from './resource-reservations.types';
@@ -17,11 +17,10 @@ export const jobHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 export const routineJobTargetSchema = z.object({hostId: frameworkIdentitySchema.optional(), laneId: frameworkIdentitySchema.optional()}).strict()
   .refine(value => !!value.hostId, 'A lane target requires its host identity');
 export const routineJobSubmissionSchema = routineDispatchSelectionSchema.extend({target: routineJobTargetSchema.optional(),
-  deadline: z.string().datetime({offset: true}).optional()}).refine(value => !value.routineRevision || !value.routineSource ||
-    value.routineRevision === value.routineSource.commit, 'Routine revision and source must identify the same commit');
+  deadline: z.string().datetime({offset: true}).optional()}).refine(consistentRoutineSource, 'Routine repository, revision and source must identify the same commit');
 export const portableRoutineSelectionSchema = routineDispatchSelectionSchema.extend({routineRevision: routineRevisionSchema,
-  build: routinePreparedBuildSchema}).refine(value => !value.routineSource || value.routineRevision === value.routineSource.commit,
-    'Routine revision and source must identify the same commit').refine(value =>
+  build: routinePreparedBuildSchema}).refine(consistentRoutineSource,
+    'Routine repository, revision and source must identify the same commit').refine(value =>
     value.build.kind === (value.platform === 'android' ? 'android-apk' : 'mac-ci-package') &&
     JSON.stringify(value.build.source) === JSON.stringify(value.source), 'Frozen app source differs from selection');
 export const portableRequirementsSchema = z.object({platform: routinePlatformSchema,

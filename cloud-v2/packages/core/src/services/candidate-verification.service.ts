@@ -4,6 +4,7 @@ import {authoringJobViewSchema, routineWorkVerificationIdentitySchema, type Auth
 import {requestInputDigest} from './test-request.service'
 import {TestRunError} from './test-result-error'
 import {frameworkExecutableBuild, type FrameworkRequestDisplay} from '../types/framework-request.types'
+import {testingTarget, type TestingRepository} from '../types/testing-source.types'
 
 export interface CandidateWorkRecord {
   hostId: string
@@ -16,7 +17,7 @@ export interface CandidateWorkRecord {
 }
 export interface CandidateAuthorization {
   authorize(binding: CandidateVerification, hostId: string, selected: {
-    routineId: string; platform: string; definitionRevision: string; laneId?: string; build?: unknown; requestId?:string; admissionExpiresAt?:number; glassesModel?: 'nimo'
+    routineId: string; platform: string; definitionRevision: string; routineSource?: {repository: TestingRepository}; laneId?: string; build?: unknown; requestId?:string; admissionExpiresAt?:number; glassesModel?: 'nimo'
   }): Promise<void>
 }
 
@@ -27,7 +28,7 @@ export class CandidateVerificationService implements CandidateAuthorization {
     private readonly now:()=>number=Date.now) {}
 
   async authorize(binding: CandidateVerification, hostId: string, selected: {
-    routineId: string; platform: string; definitionRevision: string; laneId?: string; build?: unknown; requestId?:string; admissionExpiresAt?:number; glassesModel?: 'nimo'
+    routineId: string; platform: string; definitionRevision: string; routineSource?: {repository: TestingRepository}; laneId?: string; build?: unknown; requestId?:string; admissionExpiresAt?:number; glassesModel?: 'nimo'
   }) {
     const parsed = candidateVerificationSchema.safeParse(binding)
     const row = parsed.success ? await this.get(parsed.data.workId) : null
@@ -62,6 +63,7 @@ export class CandidateVerificationService implements CandidateAuthorization {
         requestInputDigest(view.data.work) !== row.inputSha256 || view.data.hostId !== hostId ||
         view.data.attemptId !== binding.attemptId || !['awaiting-installation', 'verifying'].includes(view.data.state) ||
         view.data.details.sourceRevision !== binding.sourceRevision || selected.definitionRevision !== binding.sourceRevision ||
+        row.work.source.repository !== (selected.routineSource?.repository ?? testingTarget().repository) ||
         row.work.routineId !== selected.routineId || row.work.target.hostId !== hostId ||
         (row.work.requirements.platform === 'mac' ? 'ios-on-mac' : 'android') !== selected.platform ||
         selected.laneId !== undefined && row.work.target.laneId !== selected.laneId ||
@@ -69,7 +71,7 @@ export class CandidateVerificationService implements CandidateAuthorization {
       throw new TestRunError(409, 'Candidate verification requires its accepted current host, attempt, source and build')
     const review = view.data.details.review
     if (!review || review.verdict !== 'APPROVED' || review.sourceRevision !== binding.sourceRevision ||
-        review.prUrl !== view.data.details.prUrl)
+        review.prUrl !== view.data.details.prUrl || !review.prUrl.startsWith(`https://github.com/${row.work.source.repository}/pull/`))
       throw new TestRunError(409, 'Candidate verification requires its current exact-source independent review')
   }
 }

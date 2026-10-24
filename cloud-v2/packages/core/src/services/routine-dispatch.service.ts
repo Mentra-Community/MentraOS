@@ -13,6 +13,7 @@ import {configuredRoutineLanes, routineAdmissionInput, type RoutineLaneBindings}
 import {GithubRoutineSourceGateway} from './routine-source-selection.service';
 import {TestRunError} from './test-result-error';
 import {RoutineJobService} from './routine-job.service';
+import {configuredTestingTarget, routineSourceRepository, testingTarget, type TestingRepository} from '../types/testing-source.types';
 
 export {routineDispatchSchema} from '../types/routine-dispatch.types';
 export const preparedRoutineRequestSchema = z.object({dispatchIntentSha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -28,14 +29,15 @@ export class RoutineDispatchService {
     private readonly bindings: () => RoutineLaneBindings = configuredRoutineLanes,
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve' | 'inventory'> = new GithubRoutineSourceGateway(),
     private readonly fleet: Pick<RoutineJobService, 'submit'> | null = new RoutineJobService()) {}
-  async catalog(revision?: string, selectedIds?: string[]): Promise<{routineRevision: string; routines: Array<{
+  async catalog(revision?: string, selectedIds?: string[], repository: TestingRepository = configuredTestingTarget().repository): Promise<{routineRevision: string; routineRepository?: TestingRepository; routines: Array<{
     routineId: string; platforms?: z.infer<typeof routineEnrollmentSchema>['definition']['platforms']}>}> {
-    const routineRevision = await this.sources.resolve(revision), inventory = await this.sources.inventory(routineRevision);
+    const routineRevision = await this.sources.resolve(revision, undefined, repository), inventory = await this.sources.inventory(routineRevision, repository);
+    const identity = {routineRevision, ...(repository === testingTarget().repository ? {} : {routineRepository: repository})};
     const routines = inventory.files.flatMap(file => {
       const match = /^routines\/([A-Za-z0-9][A-Za-z0-9_.-]{0,119})\/routine\.ts$/.exec(file.path);
       return match && match[1] !== 'shared' ? [{routineId: match[1]}] : [];
     });
-    if (!selectedIds) return {routineRevision, routines};
+    if (!selectedIds) return {...identity, routines};
     const ids = z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/)).min(1).max(30).parse(selectedIds);
     if (new Set(ids).size !== ids.length || ids.some(id => !routines.some(row => row.routineId === id)))
       throw new TestRunError(422, 'Selected routine is absent from the exact source inventory');
@@ -45,11 +47,11 @@ export class RoutineDispatchService {
         this.definitions.getExact(routineId, platform, routineRevision, true)))).filter(row => row !== null);
       if (!definitions.length) {selected.push({routineId}); continue;}
       for (const row of definitions) if (!routineEnrollmentSchema.safeParse(row).success || row.routineId !== routineId ||
-        row.definitionRevision !== routineRevision || requestInputDigest(row.definition) !== row.definitionSha256)
+        row.definitionRevision !== routineRevision || row.routineSource.repository !== repository || requestInputDigest(row.definition) !== row.definitionSha256)
         throw new TestRunError(503, 'Selected routine exact platform description is unavailable');
       selected.push({routineId, platforms: [...new Set(definitions.flatMap(row => row.definition.platforms))].sort()});
     }
-    return {routineRevision, routines: selected};
+    return {...identity, routines: selected};
   }
   private originalRequest(selected: z.infer<typeof routineDispatchSchema>, request: StoredRequest) {
     const intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
@@ -58,25 +60,29 @@ export class RoutineDispatchService {
     if (intent.data.requestId !== selected.requestId || intent.data.routineId !== selected.routineId || intent.data.platform !== selected.platform ||
       intent.data.minimumFrameworkVersion !== selected.minimumFrameworkVersion ||
       selected.routineRevision && selected.routineRevision !== intent.data.routineRevision ||
+      selected.routineRepository && selected.routineRepository !== routineSourceRepository(intent.data) ||
       selected.routineSource && requestInputDigest(selected.routineSource) !== requestInputDigest(intent.data.routineSource ?? null) ||
       requestInputDigest(selected.source) !== requestInputDigest(intent.data.source))
       throw new TestRunError(409, 'Request retry changed its original routine/platform or exact source');
     return request;
   }
-  async validatePreparationSource(intent: {routineId: string; platform: string; routineRevision: string}) {
+  async validatePreparationSource(intent: {routineId: string; platform: string; routineRevision: string; routineRepository?: TestingRepository; routineSource?: {repository: TestingRepository}}) {
     const ordinary = await this.definitions.getExact(intent.routineId, intent.platform, intent.routineRevision, true);
     if (!ordinary && await this.definitions.getExact(intent.routineId, intent.platform, intent.routineRevision, false))
       throw new TestRunError(422, 'Candidate-only routine source requires its accepted authoring job and review authorization');
+    if (ordinary && ordinary.routineSource.repository !== routineSourceRepository(intent))
+      throw new TestRunError(409, 'Routine source repository differs from its immutable enrollment');
   }
   /** Rerun previews inherit explicit old routine source and immutable app references. */
   async prepareIntent(input: unknown, original?: {hostId: string; laneId: string; build: z.infer<typeof frameworkRequestInputSchema>['build']}) {
     const selected = routineDispatchSchema.parse(input), binding = original ?? this.bindings()[selected.platform];
+    const routineRepository = selected.routineRepository ?? selected.routineSource?.repository ?? (original ? testingTarget().repository : configuredTestingTarget().repository);
     if (!binding) throw new TestRunError(409, `No configured host/lane binding for ${selected.platform}.`);
     const registered = selected.routineSource ? await this.definitions.getExact(selected.routineId, selected.platform, selected.routineSource.commit, true) : null;
     if (registered && requestInputDigest(registered.routineSource) !== requestInputDigest(selected.routineSource))
       throw new TestRunError(409, 'Explicit routine source differs from immutable enrollment');
     const routineRevision = registered || original && selected.routineSource ? selected.routineSource!.commit :
-      await this.sources.resolve(selected.routineRevision ?? selected.routineSource?.commit);
+      await this.sources.resolve(selected.routineRevision ?? selected.routineSource?.commit, undefined, routineRepository);
     if (!original) {
       const host = await this.hosts.get(binding.hostId);
       if (!host || host.hostId !== binding.hostId || !Number.isFinite(Date.parse(host.receivedAt)) || Date.now() - Date.parse(host.receivedAt) > 120_000 ||
@@ -86,7 +92,8 @@ export class RoutineDispatchService {
     const build = original ? recordedRoutineBuild(original.build, selected.source, selected.platform) : await this.builds.resolve(selected.source, selected.platform);
     if (build.availability !== 'available' || !build.archive || !build.receipt) throw new TestRunError(409, build.reason ?? 'Exact app publication is unavailable');
     const frozen = original?.build ?? JSON.parse(JSON.stringify({...selectedBuildInput(build, selected.platform), ...(build.manifest ? {manifest: build.manifest, manifestSha256: build.manifestSha256} : {})}));
-    const dispatchIntent = routineDispatchIntentSchema.parse({...selected, routineRevision, laneId: binding.laneId, build: frozen});
+    const dispatchIntent = routineDispatchIntentSchema.parse({...selected, routineRevision,
+      ...(routineRepository === testingTarget().repository ? {} : {routineRepository}), laneId: binding.laneId, build: frozen});
     await this.validatePreparationSource(dispatchIntent);
     return {hostId: binding.hostId, dispatchIntent};
   }
@@ -119,7 +126,7 @@ export class RoutineDispatchService {
     await this.validatePreparationSource(intent);
     const enrollment = routineEnrollmentSchema.parse({routineId: intent.routineId, platform: intent.platform, definitionRevision: intent.routineRevision,
       routineSource: value.routineSource, definitionSha256: value.definitionSha256, definition: value.definition});
-    if (requestInputDigest(value.definition) !== value.definitionSha256 || intent.routineSource && requestInputDigest(intent.routineSource) !== requestInputDigest(value.routineSource))
+    if (value.routineSource.repository !== routineSourceRepository(intent) || requestInputDigest(value.definition) !== value.definitionSha256 || intent.routineSource && requestInputDigest(intent.routineSource) !== requestInputDigest(value.routineSource))
       throw new TestRunError(409, 'Prepared routine source contradicts the selected intent');
     const exact = await this.definitions.getExact(intent.routineId, intent.platform, intent.routineRevision, true);
     if (exact && (exact.definitionSha256 !== enrollment.definitionSha256 || requestInputDigest(exact.routineSource) !== requestInputDigest(enrollment.routineSource)))

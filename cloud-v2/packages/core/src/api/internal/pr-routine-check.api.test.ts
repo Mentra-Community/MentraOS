@@ -44,3 +44,25 @@ test('signed PR intake acknowledges after durable persistence without waiting fo
   expect((await app.request('/webhook', {method: 'POST', body, headers: {'x-github-event': 'pull_request', 'x-github-delivery': 'event-pr', 'x-hub-signature-256': sign(body)}})).status).toBe(200)
   expect(received[3]).toMatchObject({headSha: 'a'.repeat(40), labels: ['rerun:login:r:original', 'routine:login'], peers: []})
 })
+
+
+test('signed Mentra events preserve repository identity and reject same-name repositories outside the allowlist', async () => {
+  const intakes: any[][] = [], controls: any[] = [];
+  const app = createPrRoutineCheckApi({async intake(...value: any[]) {intakes.push(value); return {accepted: true}},
+    async receiveControl(value: any) {controls.push(value); return {accepted: true}}} as any,
+    {applicationId: 17, installationId: 19} as any, () => secret);
+  const repository = 'Mentra-Community/Mentra';
+  const pr = {number: 12, state: 'open', head: {sha: 'a'.repeat(40), ref: 'feature', repo: {full_name: repository}}, base: {ref: 'dev'}, labels: []};
+  const payload = {repository: {full_name: repository}, installation: {id: 19}, sender: {login: 'writer'}, action: 'opened', pull_request: pr};
+  const send = (value: any, event = 'pull_request') => {const body = JSON.stringify(value); return app.request('/webhook', {method: 'POST', body,
+    headers: {'x-github-event': event, 'x-github-delivery': 'mentra-pr', 'x-hub-signature-256': sign(body)}})};
+  expect((await send(payload)).status).toBe(200);
+  expect(intakes[0]![3]).toMatchObject({repository, sameRepository: true});
+  expect((await send({...payload, pull_request: {...pr, head: {...pr.head, repo: {full_name: 'Mentra-Community/MentraOS'}}}})).status).toBe(200);
+  expect(intakes[1]![3]).toMatchObject({repository, sameRepository: false});
+  expect((await send({...payload, repository: {full_name: 'other/Mentra'}})).status).toBe(400);
+  expect(intakes).toHaveLength(2);
+  const control = {...payload, action: 'rerequested', check_run: {id: 23, external_id: 'pr-check-current:1:1', head_sha: pr.head.sha, app: {id: 17}}};
+  expect((await send(control, 'check_run')).status).toBe(200);
+  expect(controls[0]).toMatchObject({repository, headSha: pr.head.sha});
+});

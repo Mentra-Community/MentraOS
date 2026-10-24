@@ -1,4 +1,5 @@
 import {expect, test} from "bun:test";
+import {selectedBuildInput, testBuildQuerySchema, testBuildSourceSchema} from '../types/test-build.types';
 import {GithubTestBuildGateway} from "./test-builds.service";
 import {createHash} from "node:crypto";
 const REPO = "Mentra-Community/MentraOS";
@@ -599,4 +600,54 @@ test("GitHub quota failures explain the proven limit and retain generic refusals
  const f = coordinatedFixture();
  f.rows.set(f.planUrl, new Response("private CDN body", {status: 403, headers: {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1792771146"}}));
  await expect(f.gateway.latestDev("android", before)).rejects.toMatchObject({status: 502, message: "Build metadata unavailable (HTTP 403)"});
+});
+
+
+test("Mentra app artifacts resolve from the pinned repository while retained MentraOS selections stay unchanged", async () => {
+ const f = fixture(), repository = "Mentra-Community/Mentra", currentApi = `https://api.github.com/repos/${repository}`;
+ for (const [key, value] of [...f.rows]) if (key.startsWith(API)) {
+  let row = value;
+  if (key.endsWith("/pulls/12")) row = {...pr, head: {...pr.head, repo: {full_name: repository}}};
+  if (key.includes("/actions/runs/50/attempts/1")) row = run({repository: {full_name: repository}, head_repository: {full_name: repository}});
+  f.rows.set(key.replace(API, currentApi), row);
+ }
+ const currentRun = run({repository: {full_name: repository}, head_repository: {full_name: repository}});
+ f.rows.set(`${currentApi}/actions/workflows/mentra-app-ios-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=100&page=1`, {workflow_runs: [currentRun]});
+ const legacy = {channel: "pr" as const, prNumber: 12, buildRunId: 50, publicationAttempt: 1};
+ const original = await f.gateway.resolve(legacy, "ios-on-mac");
+ const selected = await f.gateway.resolve({...legacy, repository}, "ios-on-mac");
+ expect(selected.availability).toBe("available"); expect(selected.source.repository).toBe(repository);
+ expect(selected.buildUrl).toBe(`https://github.com/${repository}/actions/runs/50`);
+ expect(selectedBuildInput(selected, "ios-on-mac").repository).toBe(repository);
+ expect(selected.archive).toEqual(original.archive);
+ expect((await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac", repository}))[0]!.source.repository).toBe(repository);
+ const canonicalReads = f.calls.filter(call => call.url.startsWith(currentApi));
+ expect(canonicalReads.some(call => call.url.endsWith(`/commits/${MERGE}`))).toBe(true);
+ expect(canonicalReads.some(call => call.url.endsWith("/jobs?filter=all&per_page=100&page=1"))).toBe(true);
+ expect(await f.gateway.resolve(legacy, "ios-on-mac")).toEqual(original);
+ expect((await f.gateway.resolve({...legacy, repository: REPO}, "ios-on-mac")).source.repository).toBe(REPO);
+ f.rows.set(`${currentApi}/actions/runs/50/attempts/1`, run());
+ await expect(f.gateway.resolve({...legacy, repository}, "ios-on-mac")).rejects.toThrow("selected source and publication attempt");
+ for (const wrong of ["other/Mentra", "Mentra-Community/Mentra-Automated-Testing"]) {
+  const source = {...legacy, repository: wrong};
+  expect(testBuildSourceSchema.safeParse(source).success).toBe(false);
+  expect(testBuildQuerySchema.safeParse({channel: "pr", pr: 12, platform: "ios-on-mac", repository: wrong}).success).toBe(false);
+  const count = f.calls.length;
+  await expect(f.gateway.resolve(source as any, "ios-on-mac")).rejects.toThrow();
+  expect(f.calls).toHaveLength(count);
+ }
+});
+
+test("app build GitHub grants follow the selected repository and cannot relabel legacy supersession", async () => {
+ const targets: Array<{scope: string; repository: string | undefined}> = [], urls: string[] = [];
+ const repository = "Mentra-Community/Mentra";
+ const appAuth = {async token(scope: string, target?: string) {targets.push({scope, repository: target}); return "scoped"}} as any;
+ const gateway = new GithubTestBuildGateway({appAuth, fetch: (async (url: any) => {
+  urls.push(String(url)); const target = String(url).includes(`/repos/${repository}/`) ? repository : REPO;
+  return Response.json({...pr, head: {...pr.head, repo: {full_name: target}}});
+ }) as typeof fetch});
+ expect(await gateway.isPrSuperseded(12, HEAD, repository)).toBe(false);
+ expect(await gateway.isPrSuperseded(12, HEAD)).toBe(false);
+ expect(targets).toEqual([{scope: "source", repository}, {scope: "source", repository: REPO}]);
+ expect(urls).toEqual([`https://api.github.com/repos/${repository}/pulls/12`, `${API}/pulls/12`]);
 });

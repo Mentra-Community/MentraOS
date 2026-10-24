@@ -1,5 +1,6 @@
-export interface RoutineFixInput {requestId:string;observed:boolean;app:{repository:string;headSha:string;artifactSha256?:string;producer?:{buildRunId:number;publicationAttempt:number;prNumber?:number}};routine:{revision:string;bundleSha256?:string};
-  framework:{revision:string;version:number;runtimeSha256:string;apiVersion:number}|null;glasses:{manifestSha256:string}|null;
+import {testingRepositorySchema, testingTarget, type TestingRepository} from './testing-source.types'
+export interface RoutineFixInput {requestId:string;observed:boolean;app:{repository:string;headSha:string;artifactSha256?:string;producer?:{buildRunId:number;publicationAttempt:number;prNumber?:number}};routine:{repository?:TestingRepository;revision:string;bundleSha256?:string};
+  framework:{repository?:TestingRepository;revision:string;version:number;runtimeSha256:string;apiVersion:number}|null;glasses:{manifestSha256:string}|null;
   execution:{hostId:string;laneId:string}|null;backend:null}
 export interface RoutineFixDelta {requestId:string;changes:Array<{component:'app'|'routine'|'framework'|'glasses software'|'machine/lane';original:string;attempt:string}>;
   unknowns:string[];noInputChanges:boolean}
@@ -9,6 +10,7 @@ export function routineFixDelta(original:RoutineFixInput,attempt:RoutineFixInput
   if(a===undefined||b===undefined){unknowns.push(`${component} unavailable`);return}if(a!==b)changes.push({component,original:a,attempt:b})}
  compare('app',`${original.app.repository}@${original.app.headSha}`,`${attempt.app.repository}@${attempt.app.headSha}`)
  compare('app',original.app.artifactSha256,attempt.app.artifactSha256)
+ compare('routine',original.routine.repository ?? testingTarget().repository,attempt.routine.repository ?? testingTarget().repository)
  compare('routine',original.routine.revision,attempt.routine.revision)
  compare('routine',original.routine.bundleSha256,attempt.routine.bundleSha256)
  compare('framework',original.framework?JSON.stringify(original.framework):undefined,attempt.framework?JSON.stringify(attempt.framework):undefined)
@@ -26,10 +28,10 @@ export interface RoutineFixInclusion {repository:import('./routine-case.types').
 /** Components are admitted only from the exact published artifact, bundle or installed runtime. */
 export function routineFixComponents(input:RoutineFixInput,repository:string):Array<{component:RoutineFixComponent;revision:string}> {
  if(!input.observed)return[]
- if(repository===input.app.repository)return input.app.artifactSha256?[{component:'app artifact',revision:input.app.headSha}]:[]
- if(repository!=='Mentra-Community/Mentra-Automated-Testing')return[]
- return[...(input.routine.bundleSha256?[{component:'routine bundle' as const,revision:input.routine.revision}]:[]),
-  ...(input.framework?.runtimeSha256?[{component:'framework' as const,revision:input.framework.revision}]:[])]
+ const app=repository===input.app.repository&&input.app.artifactSha256?[{component:'app artifact' as const,revision:input.app.headSha}]:[]
+ if(!testingRepositorySchema.safeParse(repository).success)return app
+ return[...app,...(input.routine.bundleSha256&&repository===(input.routine.repository??testingTarget().repository)?[{component:'routine bundle' as const,revision:input.routine.revision}]:[]),
+  ...(input.framework?.runtimeSha256&&repository===(input.framework.repository??testingTarget().repository)?[{component:'framework' as const,revision:input.framework.revision}]:[])]
 }
 /** A merge badge alone is not inclusion. Stored comparisons must match this immutable tested revision and PR source. */
 export function routineFixInclusions(input:RoutineFixInput,fixes:CaseFollowUpSummary['intendedFixes']):RoutineFixInclusion[] {

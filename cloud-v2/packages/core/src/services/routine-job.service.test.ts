@@ -15,13 +15,15 @@ import type {StoredRoutineJob} from '../types/routine-job.types';
 import type {ReceivedTestHostState, RoutingTestHostState} from './test-host-state.service';
 import type {ExclusiveHostReservation} from '../types/resource-reservations.types';
 import {RESOURCE_ADMISSION_WAIT, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT, sharedResourceWait} from './routine-resource-wait';
+import {testingTarget, type TestingTarget} from '../types/testing-source.types';
+import type {RoutineJobActions} from './routine-job-actions.service';
 const source = {channel:'pr' as const,prNumber:12,buildRunId:55,publicationAttempt:2};
 const selection = {requestId:'job-one',routineId:'new-routine',platform:'android' as const,source,routineRevision:'a'.repeat(40)};
 const definition = {id:'new-routine',minimumRoutineApiVersion:1,title:'A check',purpose:'Verify independently',platforms:['android'],entry:'home',account:'lane',
   requirements:[],fixtures:[],steps:[{id:'check',instruction:'Check',expected:'Checked'}],
   execution:{resourceKinds:['phone','app','recorder','network'],policy:{estimatedOutputBytes:1024 ** 3}},resourceRequirements:[{kind:'phone',capabilities:[]},{kind:'app',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'network',capabilities:['independent-uplink']}],
   source:{repository:'Mentra-Community/Mentra-Automated-Testing',revision:selection.routineRevision,path:'routines/new-routine/routine.ts'}};
-function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequirements' | 'fixtures'> & {resourceRequirements: {kind: string; capabilities: string[]}[]; fixtures: {provider: string; description: string}[]; glasses?: {models: string[]}} = definition) {
+function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequirements' | 'fixtures'> & {resourceRequirements: {kind: string; capabilities: string[]}[]; fixtures: {provider: string; description: string}[]; glasses?: {models: string[]}} = definition, actions: RoutineJobActions | null = null) {
   let time = Date.parse('2026-10-08T00:00:00Z'), row:StoredRoutineJob|null=null, resolves=0, sources=0;
   let offeredHosts: (ReceivedTestHostState & Pick<RoutingTestHostState, 'authorityReservations'>)[] | undefined, resultFound = false;
   const copy = <T>(value:T):T => structuredClone(value);
@@ -53,12 +55,55 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
     archive:{name:'app.apk',size:100,sha256:'d'.repeat(64),url:'https://artifactscdn.mentraglass.com/app.apk'},receipt:{size:10,sha256:'e'.repeat(64),url:'https://artifactscdn.mentraglass.com/receipt.json'}}}},
     {async resolve(revision){sources++;return revision??selection.routineRevision},async inventory(commit){return {commit,files:[]}},async blob(){return new Uint8Array()}},
     {async getExact(){return null}}, {async get(hostId){return offeredHosts?.find(host => host.hostId === hostId) ?? host(hostId)}, async list(){return offeredHosts ?? [host('mini')]}}, {async cancel(){if(row && row.state!=='terminal')row={...row,state:'terminal',terminalStatus:'cancelled'};return null}},
-    {async detail(){throw new TestRunError(404,'missing')}},()=>time);
+    {async detail(){throw new TestRunError(404,'missing')}},()=>time,actions);
   // Result lookup intentionally uses the same 404 class as existing Core result APIs.
   const prepare=async()=>{const first=await service.submit(selection);await service.prepared(selection.requestId,{inputSha256:first.fleetSelectionSha256,
     routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});return service.preparation(selection.requestId)};
   return {service,rows,lane,prepare,offer(hosts: (ReceivedTestHostState & Pick<RoutingTestHostState, 'authorityReservations'>)[]){offeredHosts=copy(hosts)}, restore(value:StoredRoutineJob){row=copy(value)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},queued(inputSha256:string){if(row)row={...row,state:'queued',inputSha256,hostReceipt:undefined} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256,hostReceipt:{requestId:row.requestId,hostId:row.hostId!,inputSha256,acceptedAt:new Date(time).toISOString()}} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:selection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
 }
+test('dispatch persists its original target before I/O and legacy receipts remain on main after the selector changes', async () => {
+  const previousSetting = process.env.TESTING_REPOSITORY;
+  try {
+    delete process.env.TESTING_REPOSITORY;
+    const delivered: TestingTarget[] = [], observed: TestingTarget[] = [];
+    const f = fixture(definition, {async dispatch(_id, target) {
+      expect(f.row?.fleetDispatch?.target).toEqual(target);
+      delivered.push(target!);
+    }, async runs(_id, _since, target) {observed.push(target!); return [];}, async cancel() {}});
+    const first = await f.service.submit(selection), frozenDigest = first.fleetSelectionSha256;
+    // A pre-bridge receipt has no target. It retains the old identity even after a restart/switch.
+    const {target: _target, ...legacyReceipt} = first.fleetDispatch!;
+    f.restore({...first, fleetDispatch: legacyReceipt});
+    process.env.TESTING_REPOSITORY = 'Mentra-Community/Mentra';
+    expect(await f.service.freezeSelection({...selection, routineRepository: testingTarget().repository})).not.toHaveProperty('routineRepository');
+    f.advance(130_000);
+    const retried = await f.service.submit(selection);
+    expect(retried.fleetSelectionSha256).toBe(frozenDigest);
+    expect(retried.fleetSelection).not.toHaveProperty('routineRepository');
+    expect(delivered).toEqual([testingTarget(), testingTarget()]);
+    expect(observed).toEqual([testingTarget()]);
+  } finally {if (previousSetting === undefined) delete process.env.TESTING_REPOSITORY; else process.env.TESTING_REPOSITORY = previousSetting;}
+});
+
+test('canonical source and workflow remain pinned when new work is retried after a switch back', async () => {
+  const previousSetting = process.env.TESTING_REPOSITORY;
+  try {
+    process.env.TESTING_REPOSITORY = 'Mentra-Community/Mentra';
+    const delivered: TestingTarget[] = [], f = fixture(definition, {async dispatch(_id, target) {
+      expect(f.row?.fleetDispatch?.target).toEqual(target); delivered.push(target!);
+    }, async runs(_id, _since, target) {expect(target).toEqual(testingTarget('Mentra-Community/Mentra')); return [];}, async cancel() {}});
+    const first = await f.service.submit(selection), frozenDigest = first.fleetSelectionSha256;
+    expect(first.fleetSelection.routineRepository).toBe('Mentra-Community/Mentra');
+    delete process.env.TESTING_REPOSITORY;
+    f.advance(130_000);
+    const retried = await f.service.submit(selection);
+    expect(retried.fleetSelectionSha256).toBe(frozenDigest);
+    expect(retried.fleetSelection.routineRepository).toBe('Mentra-Community/Mentra');
+    expect(delivered).toEqual([testingTarget('Mentra-Community/Mentra'), testingTarget('Mentra-Community/Mentra')]);
+    await expect(f.service.submit({...selection, routineRepository: 'Mentra-Community/Mentra-Automated-Testing'})).rejects.toThrow('changed');
+  } finally {if (previousSetting === undefined) delete process.env.TESTING_REPOSITORY; else process.env.TESTING_REPOSITORY = previousSetting;}
+});
+
 test('bound observation never substitutes prepared input before executable preparation', async () => {
   const f = fixture(), prepared = await f.prepare();
   expect(await f.service.observation(selection.requestId)).not.toHaveProperty('boundInputSha256');

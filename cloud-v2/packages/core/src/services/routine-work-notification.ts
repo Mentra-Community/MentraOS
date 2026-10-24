@@ -1,3 +1,4 @@
+import {appRepositorySchema, type AppRepository} from '../types/testing-source.types'
 import {TestRunGithubApp} from './test-run-github-app'
 import {requestInputDigest} from './test-request.service'
 import {readTestMetadata} from './test-builds.service'
@@ -28,15 +29,15 @@ export class RoutineWorkNotification {
     private readonly rows: RoutineWorkReportRepository = routineWorkReportRepository,
     private readonly now: () => number = Date.now,
   ) {}
-  private async api(path: string, method = 'GET', body?: unknown, deadline = this.now() + 90_000): Promise<unknown> {
+  private async api(path: string, method = 'GET', body?: unknown, deadline = this.now() + 90_000, repository: AppRepository = 'Mentra-Community/MentraOS'): Promise<unknown> {
     try {
       if (this.now() >= deadline) throw new Error('unavailable')
-      const response = await this.transport(`https://api.github.com/repos/Mentra-Community/MentraOS/${path}`, {
+      const response = await this.transport(`https://api.github.com/repos/${appRepositorySchema.parse(repository)}/${path}`, {
         method,
         redirect: 'error',
         signal: AbortSignal.timeout(Math.max(1, Math.min(20_000, deadline - this.now()))),
         headers: {
-          'Authorization': `Bearer ${await this.app.token('reporter')}`,
+          'Authorization': `Bearer ${await this.app.token('reporter', repository)}`,
           'Accept': 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
           'Content-Type': 'application/json',
@@ -48,14 +49,14 @@ export class RoutineWorkNotification {
     } catch (error) {
       if (error instanceof Error && error.message === 'permission')
         throw new ReportingFailure(
-          'GitHub App lacks source-PR comment permission; grant pull_requests:write for MentraOS and retry this retained report.',
+          `GitHub App lacks source-PR comment permission; grant pull_requests:write for ${repository} and retry this retained report.`,
         )
       throw new ReportingFailure(
         'GitHub App source-PR reporting is unavailable; verify its installation and pull_requests:write permission. The original job is retained.',
       )
     }
   }
-  private async comments(pr: number, deadline: number): Promise<Comment[]> {
+  private async comments(pr: number, deadline: number, repository: AppRepository): Promise<Comment[]> {
     const comments: Comment[] = []
     for (let page = 1; page <= 10; page++) {
       if (this.now() >= deadline)
@@ -65,6 +66,7 @@ export class RoutineWorkNotification {
         'GET',
         undefined,
         deadline,
+        repository,
       )) as Comment[]
       if (!Array.isArray(values)) throw new ReportingFailure('Source-PR comment history is unavailable')
       comments.push(...values)
@@ -88,7 +90,7 @@ export class RoutineWorkNotification {
   }
   private async send(row: RoutineWorkDelivery, intent: RoutineWorkReportIntent): Promise<number | null> {
     const deadline = Math.min(this.now() + 90_000, row.reporting!.lease!.expiresAt.getTime() - 10_000)
-    const comments = await this.comments(row.work.origin!.prNumber, deadline)
+    const comments = await this.comments(row.work.origin!.prNumber, deadline, appRepositorySchema.parse(row.work.origin!.repository))
     const final = this.owned(comments, routineWorkFinalMarker(row.workId))
     const latest = await this.rows.get(row.workId)
     if (
@@ -108,6 +110,7 @@ export class RoutineWorkNotification {
       existing ? 'PATCH' : 'POST',
       {body: intent.body},
       deadline,
+      appRepositorySchema.parse(row.work.origin!.repository),
     )) as Comment
     if (!Number.isSafeInteger(result?.id) || result.id <= 0)
       throw new ReportingFailure('Source-PR report acknowledgement is unavailable')
@@ -128,6 +131,9 @@ export class RoutineWorkNotification {
       // Re-read after claiming: a terminal receipt supersedes a pending progress report, including after restart.
       const current = await this.rows.get(workId)
       if (!current) throw new ReportingFailure('Retained authoring work is unavailable')
+      if (current.work.origin && (appRepositorySchema.parse(current.work.build.repository) !== current.work.origin.repository ||
+          (current.work.build.source.repository ?? 'Mentra-Community/MentraOS') !== current.work.origin.repository))
+        throw new ReportingFailure('Authoring report repository differs from its frozen originating PR/build')
       current.reporting = reporting
       const kind = terminalWorkState(current.status?.state) ? 'final' : 'progress'
       let intent = reporting.pending

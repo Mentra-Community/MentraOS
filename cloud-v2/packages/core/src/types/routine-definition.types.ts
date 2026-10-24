@@ -1,6 +1,7 @@
 import {recorderStorageRequirementSchema} from './recorder-storage.types';
 import {routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
+import {testingRepositorySchema, testingTarget} from './testing-source.types';
 import {permissionRequirementsSchema} from "./resource-permissions.types";
 import {glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
@@ -47,8 +48,10 @@ export const publishedRoutineDefinitionSchema = z.object({
   privateEvidenceIntervals: z.array(z.object({startStepId: id, endStepId: id, reason: text}).strict()).max(30).optional(),
   execution: z.object({resourceKinds: z.array(z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"])).min(1),
     policy: z.record(z.unknown()).optional()}).strict().optional(),
-  source: z.object({repository: z.string().regex(/^[\w-]+\/[\w.-]+$/),
-    revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string().regex(/^routines\/[\w.-]+\/routine\.ts$/)}).strict(),
+  source: z.object({repository: testingRepositorySchema,
+    revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string().regex(/^(?:testing\/)?routines\/[\w.-]+\/routine\.ts$/)
+      .refine(path => path.split('/').every(part => part !== '.' && part !== '..'))}).strict()
+    .refine(value => value.path.startsWith(`${testingTarget(value.repository).sourceRoot}routines/`), 'Routine path differs from its repository root'),
 }).strict().superRefine((definition, ctx) => {
   const resourceKinds = definition.resourceRequirements.map(value => value.kind);
   const executionKinds = definition.execution?.resourceKinds ?? [];
@@ -87,7 +90,7 @@ export const routineEnrollmentSchema = z.object({
   if (row.routineId !== row.definition.id || row.definitionRevision !== row.definition.source.revision
     || !row.definition.platforms.includes(row.platform))
     ctx.addIssue({code: "custom", message: "Enrollment identity contradicts its definition"});
-  if (row.routineSource.commit !== row.definitionRevision || row.routineSource.minimumRoutineApiVersion !== row.definition.minimumRoutineApiVersion)
+  if (row.routineSource.repository !== row.definition.source.repository || row.routineSource.commit !== row.definitionRevision || row.routineSource.minimumRoutineApiVersion !== row.definition.minimumRoutineApiVersion)
     ctx.addIssue({code: 'custom', message: 'Routine bundle contradicts its definition/API requirement'});
   if (row.verification && row.verification.sourceRevision !== row.definitionRevision)
     ctx.addIssue({code: 'custom', message: 'Candidate verification source differs from its definition'});

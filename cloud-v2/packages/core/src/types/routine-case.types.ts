@@ -5,7 +5,7 @@ const sha = z.string().regex(/^[a-f0-9]{40}$/)
 export const caseIdSchema = z.string().regex(/^mfc_[a-f0-9]{64}$/)
 export const caseClassificationSchema = z.enum(['app', 'framework', 'routine', 'undetermined'])
 export const caseStageSchema = z.enum(['investigating', 'fixing', 'in-review', 'waiting-deployment', 'verifying', 'verified', 'needs-input'])
-export const casePrSchema = z.object({repository: z.enum(['Mentra-Community/MentraOS', 'Mentra-Community/Mentra-Automated-Testing']),
+export const casePrSchema = z.object({repository: z.enum(['Mentra-Community/MentraOS', 'Mentra-Community/Mentra-Automated-Testing', 'Mentra-Community/Mentra']),
   number: z.number().int().positive().safe()}).strict()
 export const caseEvidenceSchema = z.discriminatedUnion('kind', [
   z.object({kind: z.literal('run'), id: frameworkIdentitySchema}).strict(),

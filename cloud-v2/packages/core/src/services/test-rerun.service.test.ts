@@ -5,6 +5,8 @@ import {TestRunError} from './test-result-error';
 import {testRoutineSource} from '../testing/framework-fixtures';
 import {nightlySuiteProjection} from './test-suite.service';
 import {individualRerunSchema, rerunPreviewSchema} from '../types/test-rerun.types';
+import {RoutineJobService} from './routine-job.service';
+import {routineSourceRepository, testingTarget, type TestingRepository} from '../types/testing-source.types';
 const source={channel:'dev' as const,buildRunId:123,publicationAttempt:1};
 const nativeInput={routineId:'captions',routineSource:testRoutineSource(),platform:'android' as const,definitionRevision:'a'.repeat(40),laneId:'android',resources:[{id:'app',kind:'app' as const}],build:{repository:'Mentra-Community/MentraOS' as const,headSha:'b'.repeat(40),channel:'dev' as const,kind:'android-apk' as const,source,archive:{name:'app.apk',url:'https://artifactscdn.mentraglass.com/app.apk',size:100,sha256:'c'.repeat(64)},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',size:10,sha256:'d'.repeat(64)}}};
 
@@ -113,6 +115,83 @@ test('unbound original fleet selections retain their worker floor without recons
  const preview=await f.service.preview({rerunId:'unbound-minimum',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},reason:'Same frozen worker floor'},'admin');
  expect(preview.plan.members[0]!.selection.minimumFrameworkVersion).toBe(716);
  expect(preview.plan.members[0]!.selection.build).toEqual(nativeInput.build);
+});
+
+for(const path of ['fleet','intent','input','suite-request','suite-unsubmitted'] as const) {
+ for(const repository of [testingTarget().repository,'Mentra-Community/Mentra'] as TestingRepository[]) {
+  for(const override of [false,true]) test(`rerun retains ${repository} through ${path}${override?' with an exact revision override':''}`,async()=>{
+   const previous=process.env.TESTING_REPOSITORY, f=fixture(),originalId='original-20';
+   const selection={requestId:originalId,routineId:'captions',platform:'android' as const,routineRevision:nativeInput.definitionRevision,
+    ...(repository===testingTarget().repository?{}:{routineRepository:repository}),source,build:structuredClone(nativeInput.build),
+    ...(path==='suite-unsubmitted'?{}:{minimumFrameworkVersion:716})};
+   let original:any;
+   if(path==='input') {
+    const input={...structuredClone(nativeInput),minimumFrameworkVersion:716,routineSource:{...testRoutineSource(),repository}};
+    original={requestId:originalId,hostId:'mini',state:'terminal',terminalStatus:'not-run',input,inputSha256:requestInputDigest(input)};
+   } else if(path==='intent') {
+    const intent={...selection,laneId:'android'};
+    original={requestId:originalId,hostId:'mini',state:'terminal',terminalStatus:'not-run',dispatchIntent:intent,dispatchIntentSha256:requestInputDigest(intent)};
+   } else original={requestId:originalId,state:'terminal',terminalStatus:'not-run',fleetSelection:selection,fleetSelectionSha256:requestInputDigest(selection)};
+   f.requests.set(originalId,original);
+   let projectedOriginal:any;
+   if(path==='suite-unsubmitted') {
+    const suite={suiteId:'nightly',channel:'dev' as const,trigger:'nightly' as const,startedAt:'2026-10-06T11:00:00Z',build:{headSha:nativeInput.build.headSha},
+     members:[20,21].map(i=>({memberId:`member-${i}`,requestId:`original-${i}`,routineId:'captions',platform:'android' as const}))};
+    const members=suite.members.map(member=>({...member,requestId:member.requestId!,routineRevision:selection.routineRevision,
+     definitionRevision:selection.routineRevision,build:selection.build,selection:{...selection,requestId:member.requestId!}}));
+    const plan={occurrenceId:'unsubmitted-occurrence',suiteId:suite.suiteId,startedAt:suite.startedAt,trigger:suite.trigger,suite,members};
+    const result={...plan,members:members.map(member=>({...member,status:'not-run' as const,publicationComplete:false})),expectedCount:2,passed:0,status:'failed' as const,finishedAt:'2026-10-06T11:30:00Z'};
+    projectedOriginal={suite,plan,result};
+    const projected=nightlySuiteProjection(suite,plan,result);
+    expect(projected.members[0]).not.toHaveProperty('routineSource');
+    if(repository===testingTarget().repository)expect(projected.members[0]).not.toHaveProperty('routineRepository');
+    else expect(projected.members[0]!.routineRepository).toBe(repository);
+    (f.service as any).suites={async detail(){return nightlySuiteProjection(suite,plan,result)},async summary(){return nightlySuiteProjection(suite,plan,result)}};
+    f.requests.delete(originalId);
+   }
+   const before=JSON.stringify({original,projectedOriginal}),revision=override?'f'.repeat(40):selection.routineRevision;
+   let freezes=0;
+   (f.service as any).jobs.freezeSelection=async(value:unknown,inherited:any)=>{
+    freezes++;
+    return RoutineJobService.prototype.freezeSelection.call({sources:{async resolve(){throw Error('Original exact revision must not be resolved again')}},
+     builds:{async resolve(){throw Error('Original exact app must not be resolved again')}}} as any,value,inherited);
+   };
+   try {
+    process.env.TESTING_REPOSITORY=repository===testingTarget().repository?'Mentra-Community/Mentra':testingTarget().repository;
+    const parent=path.startsWith('suite-')?{suiteId:'nightly'}:{requestId:originalId};
+    const input={rerunId:'repository-rerun',parent,selection:{memberIds:[path.startsWith('suite-')?'member-20':originalId]},
+     ...(override?{routineRevision:revision}:{}),reason:'Retain original repository'};
+    const preview=path==='suite-unsubmitted'?await f.service.individual({requestId:input.rerunId,parent:{suiteId:'nightly',memberId:'member-20'},
+     predecessorAttemptId:originalId,...(override?{routineRevision:revision}:{}),reason:input.reason},'admin'):await f.service.preview(input,'admin');
+    const frozen=preview.plan.members[0]!.selection;
+    expect(routineSourceRepository(frozen)).toBe(repository);
+    expect(frozen).toMatchObject({routineRevision:revision,build:nativeInput.build,source,...(path==='suite-unsubmitted'?{}:{minimumFrameworkVersion:716})});
+    if(path!=='input'||override)expect(frozen.routineSource).toBeUndefined();
+    expect(JSON.stringify({original,projectedOriginal})).toBe(before);
+    expect(f.executions).toBe(0);
+    if(path!=='suite-unsubmitted') {
+     process.env.TESTING_REPOSITORY=repository;
+     expect(await f.service.preview(input,'admin')).toEqual(preview);expect(freezes).toBe(1);
+    }
+   } finally {if(previous===undefined)delete process.env.TESTING_REPOSITORY;else process.env.TESTING_REPOSITORY=previous;}
+  });
+ }
+}
+
+for(const override of [false,true]) test(`recorded input without routine identity remains legacy despite a canonical app build${override?' and routine override':''}`,async()=>{
+ const f=fixture(),previous=process.env.TESTING_REPOSITORY,{routineSource:_,...recorded}=structuredClone(nativeInput);
+ const appSource={...source,repository:'Mentra-Community/Mentra' as const},build={...recorded.build,repository:'Mentra-Community/Mentra' as const,source:appSource};
+ const input={...recorded,build},original={requestId:'original-20',hostId:'mini',state:'terminal',terminalStatus:'not-run',input,inputSha256:requestInputDigest(input)};
+ f.requests.set(original.requestId,original);const before=JSON.stringify(original);
+ (f.service as any).jobs.freezeSelection=(value:unknown,inherited:any)=>RoutineJobService.prototype.freezeSelection.call({} as any,value,inherited);
+ try {
+  process.env.TESTING_REPOSITORY='Mentra-Community/Mentra';
+  const preview=await f.service.individual({requestId:'recorded-repository',parent:{requestId:original.requestId},predecessorAttemptId:original.requestId,
+   ...(override?{routineRevision:'f'.repeat(40)}:{}),reason:'Retain historical routine source'},'admin');
+  const frozen=preview.plan.members[0]!.selection;
+  expect(routineSourceRepository(frozen)).toBe(testingTarget().repository);
+  expect(frozen.build).toEqual(build);expect(frozen.routineSource).toBeUndefined();expect(JSON.stringify(original)).toBe(before);
+ } finally {if(previous===undefined)delete process.env.TESTING_REPOSITORY;else process.env.TESTING_REPOSITORY=previous;}
 });
 
 test('rerun minimum versions use the existing worker-version validation on both admission paths',()=>{

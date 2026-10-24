@@ -2,6 +2,7 @@ import {frameworkBindingSchema, routineSourceRefSchema} from './framework-versio
 import {z} from "zod";
 import {frameworkBuildSchema, frameworkIdentitySchema} from "./framework-request.types";
 import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
+import {testingRepositorySchema, testingTarget} from './testing-source.types';
 
 export const frameworkRunIdSchema = frameworkIdentitySchema;
 /** Bounded manifest cardinality; the publication route separately retains its 1 MiB JSON body limit. */
@@ -11,10 +12,12 @@ export const frameworkAssetIdSchema = z.string().min(1).max(500)
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/);
 const id = frameworkRunIdSchema;
 const ms = z.number().finite().nonnegative();
-export const stepSourceSchema = z.object({id, repository: z.literal("Mentra-Community/Mentra-Automated-Testing"),
-  revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string().max(500).regex(/^(?:routines|framework|tools)\/[\w./-]+\.ts$/)
+export const stepSourceSchema = z.object({id, repository: testingRepositorySchema,
+  revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string().max(500).regex(/^(?:testing\/)?(?:routines|framework|tools)\/[\w./-]+\.ts$/)
     .refine(path => path.split("/").every(part => part !== "." && part !== ".." && part !== "")),
-  line: z.number().int().positive().safe()}).strict();
+  line: z.number().int().positive().safe()}).strict()
+  .refine(value => value.repository === 'Mentra-Community/Mentra' ? value.path.startsWith(testingTarget(value.repository).sourceRoot) : !value.path.startsWith('testing/'),
+    'Step source path differs from its repository root');
 const stepSourcesSchema = z.object({setup: z.array(stepSourceSchema).max(500), test: z.array(stepSourceSchema).max(500),
   teardown: z.array(stepSourceSchema).max(500)}).strict();
 const lifecycleAction = z.object({id, instruction: z.string().min(1).max(2000), expected: z.string().min(1).max(2000),

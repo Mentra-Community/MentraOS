@@ -7,6 +7,7 @@ import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInput
 import {routineResourceKindSchema, type RoutineEnrollment} from "../types/routine-definition.types";
 import {routineDispatchIntentSchema, type RoutineDispatchIntent} from "../types/routine-dispatch.types";
 import {GithubRoutineSourceGateway} from "./routine-source-selection.service";
+import {configuredTestingTarget, testingTarget, type TestingRepository} from '../types/testing-source.types';
 import {selectedBuildInput, type TestBuild, type TestBuildPlatform} from "../types/test-build.types";
 import {testSuiteSchema, type TestSuite} from "../types/test-suite.types";
 import {RoutineCatalogService} from "./routine-catalog.service";
@@ -173,7 +174,8 @@ export class NightlyRoutineService {
     const catalog = (await this.catalog.list()).filter(row => row.nightlyEnabled !== false)
       .map(row => ({routineId: row.routineId, platform: row.platform}));
     if (catalog.length > 100) throw new TestRunError(503, "Nightly catalog exceeds the occurrence bound; no members were selected");
-    const routineRevision = catalog.length ? await this.sources.resolve(undefined, occurrence.startedAt) : undefined;
+    const routineRepository = configuredTestingTarget().repository;
+    const routineRevision = catalog.length ? await this.sources.resolve(undefined, occurrence.startedAt, routineRepository) : undefined;
     const platforms = [...new Set(catalog.map(row => row.platform))].sort();
     const selected = new Map<TestBuildPlatform, PlatformSelection>();
     const builds = this.builds.forSelection?.(occurrence.startedAt) ?? this.builds;
@@ -198,7 +200,7 @@ export class NightlyRoutineService {
       } else selection.errors.push(this.selectionError(artifact.reason, "build", occurrence.occurrenceId, platform));
       selected.set(platform, selection);
     }));
-    const members = catalog.map(row => this.member(row, routineRevision!, suiteId, selected.get(row.platform)!));
+    const members = catalog.map(row => this.member(row, routineRevision!, suiteId, selected.get(row.platform)!, routineRepository));
     const firstBuild = members.find(member => member.build)?.build;
     const suiteHeadSha = anchor?.headSha ?? firstBuild?.headSha;
     const suiteRelease = anchor?.release ?? firstBuild?.releaseIdentity;
@@ -212,7 +214,7 @@ export class NightlyRoutineService {
       ...(anchor ? {publication: {source: anchor.source, headSha: anchor.headSha, ...(anchor.release ? {release: anchor.release} : {})}} : {})});
   }
 
-  private member(row: Pick<RoutineEnrollment, "routineId" | "platform">, routineRevision: string, suiteId: string, selected: PlatformSelection): NightlyMember {
+  private member(row: Pick<RoutineEnrollment, "routineId" | "platform">, routineRevision: string, suiteId: string, selected: PlatformSelection, routineRepository: TestingRepository): NightlyMember {
     const memberId = `member-${digestId([row.routineId, row.platform])}`, requestId = `${suiteId}-${memberId}`;
     const buildInput = selected.build?.availability === "available" && selected.build.archive && selected.build.receipt ? {...selectedBuildInput(selected.build, row.platform), ...(selected.build.manifest ? {manifest:selected.build.manifest,manifestSha256:selected.build.manifestSha256} : {})} : undefined;
     const base = {memberId, requestId, routineId: row.routineId, platform: row.platform, routineRevision, definitionRevision: routineRevision, ...(buildInput ? {build: buildInput} : {})};
@@ -221,7 +223,7 @@ export class NightlyRoutineService {
     try {
       if (!buildInput) throw new TestRunError(409, selected.build?.reason ?? "No immutable artifact is available for this platform.");
       const selection = portableRoutineSelectionSchema.parse({requestId, routineId: row.routineId, platform: row.platform,
-        routineRevision, source: selected.build!.source, build: buildInput});
+        routineRevision, ...(routineRepository === testingTarget().repository ? {} : {routineRepository}), source: selected.build!.source, build: buildInput});
       return {...base, selection};
     }
     catch (error) {if (error instanceof TestRunError) return {...base, unavailableReason: error.message,

@@ -19,6 +19,7 @@ import {frameworkResultSummaryFields, readFrameworkResultSummary} from "./framew
 import {nativeRunFilter} from "./framework-run-summary.service";
 import {LaneRestorationService} from "./lane-restoration.service";
 import {restorationHostIsFresh, type LaneOverviewList} from "../types/lane-restoration.types";
+import type {TestingRepository} from '../types/testing-source.types';
 
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
 const logger = createLogger("core").child({component: "test-suite"});
@@ -32,7 +33,7 @@ type RecordedNightlyResult = Omit<NightlyResult, "members"> & {members: (Nightly
   (InputNightlyMember & Omit<NightlyResult["members"][number], "routineRevision" | "dispatchIntent" | "input" | "inputSha256">))[]};
 
 /** Project the occurrence's one terminal authority; never take another evidence snapshot. */
-export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPlan, result: RecordedNightlyResult): ReturnType<typeof summarizeSuite> {
+export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPlan, result: RecordedNightlyResult): SuiteSummary {
   if (requestInputDigest(suite) !== requestInputDigest(plan.suite) || result.suiteId !== suite.suiteId
     || result.occurrenceId !== plan.occurrenceId || result.startedAt !== plan.startedAt || result.trigger !== plan.trigger
     || result.expectedCount !== suite.members.length || result.members.length !== suite.members.length)
@@ -81,10 +82,12 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
       }
     }
     const build = input?.build ?? expected.build;
+    const routineRepository = "routineRevision" in expected ? (expected.selection ?? expected.dispatchIntent)?.routineRepository : undefined;
     const unavailableReason = nightlyUnassignedReason({reason: receipt.unavailableReason, startedAt: result.startedAt,
       observedAt: result.finishedAt, unassigned: "selection" in expected && !!expected.selection
         && !receipt.binding && !receipt.hostId && !receipt.runId && ["incomplete", "not-run"].includes(receipt.status)});
     return {...member, requestId: expected.requestId, routineRevision: "routineRevision" in expected ? expected.routineRevision : expected.definitionRevision,
+      ...(routineRepository ? {routineRepository} : {}),
       hostId: receipt.hostId ?? expected.hostId,
       ...(input?.laneId ? {laneId: input.laneId} : "dispatchIntent" in receipt && receipt.dispatchIntent ? {laneId: receipt.dispatchIntent.laneId}
         : "dispatchIntent" in expected && expected.dispatchIntent ? {laneId: expected.dispatchIntent.laneId} : {}),
@@ -165,7 +168,8 @@ function suiteRejections(requests: BoundRequest[]): SuiteRejection[] {
   });
 }
 
-type SuiteSummary = Omit<ReturnType<typeof summarizeSuite>, "build"> & {build?: TestSuite["build"]};
+type SuiteSummary = Omit<ReturnType<typeof summarizeSuite>, "build" | "members"> & {build?: TestSuite["build"];
+  members: (ReturnType<typeof summarizeSuite>["members"][number] & {routineRevision?: string; routineRepository?: TestingRepository})[]};
 export type SuiteSummaryRead = SuiteSummary | Error;
 
 /** Active execution comes from fresh controller custody, never from admission alone. */

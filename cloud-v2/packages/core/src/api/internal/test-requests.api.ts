@@ -9,6 +9,7 @@ import {RoutineDispatchService} from '../../services/routine-dispatch.service';
 import {GithubRoutineSourceGateway} from '../../services/routine-source-selection.service';
 import {RoutineJobService} from '../../services/routine-job.service';
 import {ownedRoutineQualificationSchema} from '../../types/routine-job.types';
+import {routineSourceRepository} from '../../types/testing-source.types';
 
 const acceptanceSchema = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
   inputSha256: z.string().regex(/^[a-f0-9]{64}$/), acceptedAt: z.string().datetime({offset: true})}).strict();
@@ -56,13 +57,14 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
   app.get('/:requestId/preparation', async c => c.json({request: await service.preparationView(c.req.param('requestId'), c.var.testHostId)}));
   app.get('/:requestId/routine-source/inventory', async c => {
     const intent = await active(c.req.param('requestId'), c.var.testHostId);
-    return c.json(await sources.inventory(intent.routineRevision));
+    return c.json(await sources.inventory(intent.routineRevision, routineSourceRepository(intent)));
   });
   app.get('/:requestId/routine-source/blobs/:sha', async c => {
     const intent = await active(c.req.param('requestId'), c.var.testHostId);
-    const inventory = await sources.inventory(intent.routineRevision), file = inventory.files.find(value => value.gitBlobSha1 === c.req.param('sha'));
+    const repository = routineSourceRepository(intent);
+    const inventory = await sources.inventory(intent.routineRevision, repository), file = inventory.files.find(value => value.gitBlobSha1 === c.req.param('sha'));
     if (!file) throw new TestRequestConflict('Requested GitHub blob is not part of this exact routine inventory');
-    const bytes = await sources.blob(file);
+    const bytes = await sources.blob(file, repository);
     await active(c.req.param('requestId'), c.var.testHostId);
     return new Response(bytes, {headers: {'Content-Type': 'application/octet-stream', 'Content-Length': String(bytes.byteLength),
       'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'}});

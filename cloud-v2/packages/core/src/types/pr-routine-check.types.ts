@@ -1,3 +1,4 @@
+import {appRepositorySchema, type AppRepository, type TestingRepository} from './testing-source.types'
 import type {PortableRoutineSelection} from './routine-job.types'
 import type {RoutineProgress} from './routine-progress.types'
 import type {PrLinkedTarget} from './pr-rerun-label.types'
@@ -5,10 +6,12 @@ import type {TestBuildSource} from './test-build.types'
 
 export const ROUTINE_CHECK_NAME = 'Routine tests'
 export const ROUTINE_CHECK_REPOSITORY = 'Mentra-Community/MentraOS'
+export const routineCheckRepository = (context: Pick<PrRoutineContext, 'repository'>): AppRepository =>
+  appRepositorySchema.parse(context.repository ?? ROUTINE_CHECK_REPOSITORY)
 export const ROUTINE_RERUN_ACTION = {label: 'Re-run routines', description: 'Run routine tests again', identifier: 'rerun-routines'} as const
 export type CheckConclusion = 'success' | 'failure' | 'cancelled' | 'timed_out'
 export type PrRoutineContext = {
-  number: number; headSha: string; baseRef: string; headRef: string; sameRepository: boolean;
+  repository?: AppRepository; number: number; headSha: string; baseRef: string; headRef: string; sameRepository: boolean;
   open: boolean; labels: string[]; peers: number[]; labelActors?: Record<string, string>; labelEvents?: Record<string, number>
 }
 export type PrRoutineMember = {
@@ -22,7 +25,7 @@ export type PrRoutineMember = {
   linkedPreview?: {id: string; digest?: string; renewals?: number};
 }
 export type PrRoutineAttempt = {
-  generation: number; acceptedAt: string; deadline: string; routineRevision?: string; members: PrRoutineMember[];
+  generation: number; acceptedAt: string; deadline: string; routineRevision?: string; routineRepository?: TestingRepository; members: PrRoutineMember[];
   suiteId?: string; suiteStartedAt?: string; rerun?: {id: string; memberIds: string[]; linkedMemberIds?: string[];
     groups?: Array<{id: string; parent: {suiteId: string} | {requestId: string}; memberIds: string[]; previewDigest?: string; previewAttempt?: number}>};
   conclusion?: CheckConclusion; finishedAt?: string;
@@ -30,7 +33,7 @@ export type PrRoutineAttempt = {
 }
 export type PrRoutineCheck = {
   gateId: string; headSha: string; context: PrRoutineContext; selectionKey: string;
-  coverageGeneration: number; routineRevision?: string; attempt: PrRoutineAttempt;
+  coverageGeneration: number; routineRevision?: string; routineRepository?: TestingRepository; attempt: PrRoutineAttempt;
   selectionComplete?: boolean;
   retired: PrRoutineAttempt[]; controls: Array<{id: string; kind: 'rerun' | 'cancel'; generation: number; actor: string}>;
   checkId?: number; checkExternalId: string; creation?: {attemptedAt: string; absenceObservedAt?: string; attempts: number};

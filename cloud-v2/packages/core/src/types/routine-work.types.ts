@@ -1,3 +1,4 @@
+import {appRepositorySchema} from './testing-source.types'
 import {z} from 'zod'
 import {nimoCommissioningPlanSchema} from './nimo-commissioning.types'
 import {frameworkIdentitySchema} from './framework-request.types'
@@ -5,6 +6,7 @@ import {routineIdentitySchema, routineResourceRequirementSchema} from './routine
 import {routineJobTargetSchema, portableRequirementsSchema} from './routine-job.types'
 import {testBuildSourceSchema} from './test-build.types'
 import {firmwareManifestSchema} from './glasses-software.types'
+import {testingRepositorySchema} from './testing-source.types'
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/)
 export const workHashSchema = z.string().regex(/^[a-f0-9]{64}$/)
@@ -52,12 +54,12 @@ const fields = {
       expected: z.array(description).min(1).max(100),
     })
     .strict(),
-  source: z.object({repository: z.literal('Mentra-Community/Mentra-Automated-Testing'), revision: sha}).strict(),
+  source: z.object({repository: testingRepositorySchema, revision: sha}).strict(),
   target: z.object({hostId: frameworkIdentitySchema, laneId: frameworkIdentitySchema}).strict(),
   requirements: routineWorkRequirementsSchema,
   origin: z
     .object({
-      repository: z.literal('Mentra-Community/MentraOS'),
+      repository: appRepositorySchema,
       prNumber: z.number().int().positive().safe(),
       headSha: sha,
     })
@@ -69,7 +71,7 @@ export const routineWorkBuildSchema = z
   .object({
     kind: z.enum(['mac-ci-package', 'android-apk']),
     diagnostic: z.literal('nimo-resource-v1').optional(),
-    repository: z.literal('Mentra-Community/MentraOS'),
+    repository: appRepositorySchema,
     headSha: sha,
     channel: z.enum(['dev', 'staging', 'pr']),
     prNumber: z.number().int().positive().safe().optional(),
@@ -86,6 +88,7 @@ export const routineWorkBuildSchema = z
   .strict()
   .superRefine((value, ctx) => {
     if (
+      (value.source.repository ?? 'Mentra-Community/MentraOS') !== value.repository ||
       value.source.channel !== value.channel ||
       (value.channel === 'pr'
         ? value.source.channel !== 'pr' ||
@@ -165,7 +168,7 @@ export const routineWorkLocalRegistrationSchema = z.object({
     ctx.addIssue({code: 'custom', message: 'Local registration requires its originless accepted host and work'})
 })
 const publicText = z.string().min(1).max(4000)
-const githubPr = z.string().regex(/^https:\/\/github\.com\/Mentra-Community\/Mentra-Automated-Testing\/pull\/[1-9]\d*$/)
+const githubPr = z.string().regex(/^https:\/\/github\.com\/Mentra-Community\/(?:Mentra-Automated-Testing|Mentra)\/pull\/[1-9]\d*$/)
 export const routineWorkProgressSchema = z
   .object({
     observedAt: z.string().datetime({offset: true}),
@@ -179,7 +182,7 @@ export const routineWorkProgressSchema = z
 const reviewUrl = z
   .string()
   .regex(
-    /^https:\/\/github\.com\/Mentra-Community\/Mentra-Automated-Testing\/pull\/[1-9]\d*#pullrequestreview-[1-9]\d*$/,
+    /^https:\/\/github\.com\/Mentra-Community\/(?:Mentra-Automated-Testing|Mentra)\/pull\/[1-9]\d*#pullrequestreview-[1-9]\d*$/,
   )
 const sameReviewPr = (value: {prUrl: string; reviewUrl: string}) => value.reviewUrl.split('#')[0] === value.prUrl
 export const routineWorkReviewSchema = z

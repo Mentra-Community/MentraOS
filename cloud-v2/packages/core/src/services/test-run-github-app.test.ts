@@ -102,3 +102,48 @@ test("runner refresh failure exposes neither the key nor provider credential and
   expect(await app.runnerCredential()).toEqual({credential: "recovered-runner", expiresAt: new Date(start + 3600_000).toISOString()});
   expect(calls).toBe(2);
 });
+
+
+test("repository target grants and concurrent caches stay isolated across the migration", async () => {
+  const issued: Array<{repositories: string[]; permissions: unknown}> = [];
+  const app = new TestRunGithubApp({credentials, now: () => start, fetch: async (_url, init) => {
+    issued.push(JSON.parse(String(init.body)));
+    await Promise.resolve();
+    return Response.json({token: `isolated-${issued.length}`, expires_at: new Date(start + 3600_000).toISOString()}, {status: 201});
+  }});
+  const old = await app.token("source");
+  const current = await Promise.all(Array.from({length: 10}, () => app.token("source", "Mentra-Community/Mentra")));
+  expect(new Set(current).size).toBe(1);
+  expect(current[0]).not.toBe(old);
+  expect(await app.token("source", "Mentra-Community/MentraOS")).toBe(old);
+  for (const scope of ["reporter", "checks", "harness", "private", "dispatch", "runner"] as const)
+    await app.token(scope, "Mentra-Community/Mentra");
+  expect(issued.map(row => row.repositories)).toEqual([["MentraOS"], ...Array(7).fill(["Mentra"])]);
+  expect(issued[2]!.permissions).toEqual({pull_requests: "write"});
+  expect(issued[3]!.permissions).toEqual({checks: "write", pull_requests: "read", contents: "read"});
+  expect(issued[4]!.permissions).toEqual({contents: "read", pull_requests: "read"});
+  expect(issued[5]!.permissions).toEqual({actions: "read"});
+  expect(issued[6]!.permissions).toEqual({actions: "write"});
+  expect(issued[7]!.permissions).toEqual({organization_self_hosted_runners: "write"});
+  await app.runnerCredential("Mentra-Community/Mentra");
+  expect(issued).toHaveLength(8);
+  for (const [scope, repository] of [["source", "Mentra-Community/Mentra-Automated-Testing"], ["reporter", "other/Mentra"],
+    ["private", "Mentra-Community/MentraOS"], ["checks", "Mentra-Community/Mentra/other"]] as const)
+    await expect(app.token(scope, repository as any)).rejects.toThrow();
+  expect(issued).toHaveLength(8);
+});
+
+test("testing credential aliases precede old configuration without changing legacy scope defaults", () => {
+  const names = ["TESTING_TEST_RUN_GITHUB_APP_ID", "TESTING_TEST_RUN_GITHUB_APP_PRIVATE_KEY", "TESTING_TEST_RUN_GITHUB_APP_INSTALLATION_ID",
+    "TEST_RUN_GITHUB_APP_ID", "TEST_RUN_GITHUB_APP_PRIVATE_KEY", "TEST_RUN_GITHUB_INSTALLATION_ID"];
+  const previous = names.map(name => process.env[name]);
+  try {
+    Object.assign(process.env, {TESTING_TEST_RUN_GITHUB_APP_ID: "12345", TESTING_TEST_RUN_GITHUB_APP_PRIVATE_KEY: credentials.privateKey,
+      TESTING_TEST_RUN_GITHUB_APP_INSTALLATION_ID: "67890", TEST_RUN_GITHUB_APP_ID: "7", TEST_RUN_GITHUB_APP_PRIVATE_KEY: "old", TEST_RUN_GITHUB_INSTALLATION_ID: "8"});
+    const app = new TestRunGithubApp();
+    expect(app.configured).toBe(true); expect(app.applicationId).toBe(12345); expect(app.installationId).toBe(67890);
+    for (const name of names.slice(0, 3)) delete process.env[name];
+    const fallback = new TestRunGithubApp();
+    expect(fallback.applicationId).toBe(7); expect(fallback.installationId).toBe(8);
+  } finally {names.forEach((name, index) => {if (previous[index] === undefined) delete process.env[name]; else process.env[name] = previous[index]});}
+});
