@@ -44,7 +44,8 @@
  *    double encoding: 400 `{error: "invalid_path"}` (`isSafeSuffix`); not one of the two families: 404;
  *  - a workspace path for a person with no standing there: 403 or 404, as above;
  *  - then the shared forwarding code: 413 and 400 for the body, 503 `{error: "module_unavailable"}` for a
- *    module that fails, times out, redirects or sends too much, an upstream 401 relayed as a 403.
+ *    module that fails, times out, redirects or sends too much, an upstream 401 relayed as a 403, and a 503
+ *    naming one of the module's own codes (billing's `billing_unavailable`) relayed with that code alone.
  *
  * Public reads. `portalModulePublicApi(name)` is mounted at `/api/portal/<name>/public` ahead of the person gate,
  * and answers anyone, signed in or not, on every Core (billing: a product's name, for the sign-in page):

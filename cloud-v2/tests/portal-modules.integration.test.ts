@@ -603,6 +603,22 @@ describe("what comes back", () => {
     expect([reply.status, reply.json]).toEqual([503, {error: "module_unavailable"}])
   })
 
+  test("a 503 naming the module's own code reaches the browser with that code and its Retry-After, and nothing else", async () => {
+    useBilling("prod")
+    const someone = await person("someone")
+    const workspaceId = await workspaceOf(someone, "Mine")
+    answer = () =>
+      Response.json(
+        {error: "core_unavailable", error_description: "the workspace service is unavailable; try again"},
+        {status: 503, headers: {"retry-after": "10", "x-internal": "1"}},
+      )
+
+    const reply = await billing(someone, "GET", `/workspaces/${workspaceId}/licenses`)
+
+    expect([reply.status, reply.json, reply.headers.get("retry-after")]).toEqual([503, {error: "core_unavailable"}, "10"])
+    expect([reply.headers.get("cache-control"), reply.headers.get("x-internal")]).toEqual(["private, no-store", null])
+  })
+
   test("a session due for rotation keeps its new cookie on the forwarded answer", async () => {
     useBilling("prod")
     const someone = await person("someone")

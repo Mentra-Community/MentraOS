@@ -937,6 +937,25 @@ describe("limits and failures", () => {
     }
   })
 
+  test("a 503 naming Fleet's own code reaches the phone and the admin with that code and nothing else of its body", async () => {
+    configure()
+    const organizationAdmin = as("organization-admin", person(true))
+    respond = () =>
+      Response.json(
+        {error: "directory_unavailable", error_description: "The miniapp directory cannot be read right now.", secret: "internal details"},
+        {status: 503, headers: {"retry-after": "30", "x-internal": "1"}},
+      )
+
+    for (const response of [await phone("/devices"), await admin(organizationAdmin, "/devices")]) {
+      expect([response.status, await response.json(), response.headers.get("retry-after")]).toEqual([
+        503,
+        {error: "directory_unavailable"},
+        "30",
+      ])
+      expect(response.headers.get("x-internal")).toBeNull()
+    }
+  })
+
   test("a valid Retry-After on an upstream 5xx reaches the caller on Core's own 503, and an invalid one does not", async () => {
     configure()
     const organizationAdmin = as("organization-admin", person(true))

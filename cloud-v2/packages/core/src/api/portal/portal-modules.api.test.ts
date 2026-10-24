@@ -558,6 +558,29 @@ describe("what the person receives", () => {
     }
   })
 
+  test("a 503 naming the module's own code reaches the person with that code, its Retry-After and no cache", async () => {
+    configure()
+    for (const code of ["billing_unavailable", "core_unavailable"]) {
+      respond = () =>
+        Response.json(
+          {error: code, error_description: "billing is unavailable; try again", detail: "at upstream.ts:12"},
+          {status: 503, headers: {"retry-after": "15", "cache-control": "public, max-age=600", "x-secret": "1"}},
+        )
+      const reply = await billing(as("member", member), "/workspaces/ws_1/status")
+      expect([code, reply.status, await reply.json()]).toEqual([code, 503, {error: code}])
+      expect([code, reply.headers.get("retry-after"), reply.headers.get("cache-control"), reply.headers.get("x-secret")]).toEqual([
+        code,
+        "15",
+        "private, no-store",
+        null,
+      ])
+    }
+    // One that is not a code is Core's own.
+    respond = () => Response.json({error: "Billing is down!"}, {status: 503})
+    const masked = await billing(as("member", member), "/workspaces/ws_1/status")
+    expect([masked.status, await masked.json()]).toEqual([503, {error: "module_unavailable"}])
+  })
+
   test("a module that is down is a 503 module_unavailable", async () => {
     configure("prod", {CLOUD_CORE_BILLING_URL: "http://127.0.0.1:9"})
     const reply = await billing(as("member", member), "/workspaces/ws_1/x")
@@ -1243,6 +1266,18 @@ describe("a product's public name", () => {
       }
     }
     expect(calls).toHaveLength(0)
+  })
+
+  test("a public read relays no code of the module's: its 503 is Core's own, with the module's backoff", async () => {
+    configure()
+    respond = () => Response.json({error: "billing_unavailable"}, {status: 503, headers: {"retry-after": "20"}})
+    const reply = await billing(null, NAME_PATH)
+    expect([reply.status, await reply.json(), reply.headers.get("retry-after"), reply.headers.get("cache-control")]).toEqual([
+      503,
+      {error: "module_unavailable"},
+      "20",
+      "no-store",
+    ])
   })
 
   test("a dot segment that reaches Core unresolved is no product either", async () => {

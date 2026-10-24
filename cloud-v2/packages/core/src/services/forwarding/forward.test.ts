@@ -2,7 +2,8 @@
  * @fileoverview The shared forwarding code against a stub upstream: what a second user of it (a portal
  * module) can rely on. Fleet's routes run the same code, and `api/fleet/fleet-forwarding.test.ts` holds the
  * full matrix of its behavior; this file pins the parts that are parameters of the upstream, namely its
- * `unavailableError`, its log label and its limits, plus the pieces that have no Fleet route of their own.
+ * `unavailableError`, its log label and its limits, plus the pieces that have no Fleet route of their own, and the
+ * full matrix of a 503 that names its own code (relayed) against everything that is not one (Core's own 503).
  */
 
 import type {Logger} from "@mentra/cloud-shared"
@@ -213,12 +214,224 @@ describe("forwardJson", () => {
     expect(logs.at(-1)).toMatchObject({level: "warn", message: "Test module request forwarded"})
   })
 
+  test("a HEAD answered 503 is Core's own 503: there is no body to name a code", async () => {
+    respond = () => Response.json({error: "directory_unavailable"}, {status: 503, headers: {"retry-after": "4"}})
+    const reply = await appFor().request("http://core.test/x", {method: "HEAD"})
+    expect([reply.status, reply.headers.get("retry-after")]).toEqual([503, "4"])
+  })
+
   test("refuses a body over the limit before forwarding it, and a body that is not UTF-8", async () => {
     const big = await appFor().request("http://core.test/x", {method: "POST", body: "x".repeat(65)})
     expect([big.status, await big.json()]).toEqual([413, {error: "payload_too_large"}])
     const bad = await appFor().request("http://core.test/x", {method: "POST", body: new Uint8Array([0xff, 0xfe])})
     expect([bad.status, await bad.json()]).toEqual([400, {error: "invalid_body"}])
     expect(calls).toHaveLength(0)
+  })
+})
+
+describe("a 503 that names its own code", () => {
+  /** A 503 as a service answers one: a code, a sentence for its own logs, a backoff and headers of its own. */
+  const named = (body: unknown, headers: Record<string, string> = {}) => () =>
+    Response.json(body, {status: 503, headers: {"retry-after": "30", ...headers}})
+
+  test("is relayed as a 503 with that code and its Retry-After, and nothing else of the body or the headers", async () => {
+    respond = named(
+      {error: "directory_unavailable", error_description: "the directory at http://10.0.0.7 is down", stack: "Error: at x"},
+      {
+        "cache-control": "public, max-age=600",
+        "set-cookie": "a=1",
+        "x-internal": "secret",
+        "content-security-policy": "default-src *",
+        "x-request-id": "up_1",
+      },
+    )
+    const reply = await appFor().request("http://core.test/x")
+
+    expect([reply.status, await reply.json(), reply.headers.get("retry-after")]).toEqual([503, {error: "directory_unavailable"}, "30"])
+    expect(reply.headers.get("content-type")).toBe("application/json")
+    for (const name of ["cache-control", "set-cookie", "x-internal"]) expect([name, reply.headers.get(name)]).toEqual([name, null])
+    // Core's labels, not the service's.
+    expect(reply.headers.get("content-security-policy")).toBe("default-src 'none'; frame-ancestors 'none'; sandbox")
+    expect(reply.headers.get("x-content-type-options")).toBe("nosniff")
+    // Logged once, as an answer the service gave (info), with its request id and never its body.
+    expect(logs.at(-1)).toMatchObject({
+      level: "info",
+      message: "Test module request forwarded",
+      fields: {status: 503, upstreamStatus: 503, upstreamRequestId: "up_1"},
+    })
+    expect(logs.at(-1)!.fields.reason).toBeUndefined()
+    expect(JSON.stringify(logs)).not.toContain("10.0.0.7")
+  })
+
+  test("is relayed whatever the method, and without a Retry-After when the service gave no usable one", async () => {
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
+      respond = named({error: "registry_unavailable"}, {"retry-after": "soon"})
+      const reply = await appFor().request("http://core.test/x", {method, ...(method === "GET" ? {} : {body: "{}"})})
+      expect([method, reply.status, await reply.json(), reply.headers.get("retry-after")]).toEqual([
+        method,
+        503,
+        {error: "registry_unavailable"},
+        null,
+      ])
+    }
+  })
+
+  test("accepts a code of 1 to 64 lowercase letters, digits and underscores that starts with a letter", async () => {
+    for (const code of ["x", "billing_unavailable", "core_unavailable", "a1_b2", "a".repeat(64), "z_"]) {
+      respond = named({error: code})
+      const reply = await appFor().request("http://core.test/x")
+      expect([code, reply.status, await reply.json()]).toEqual([code, 503, {error: code}])
+    }
+  })
+
+  test("a code that is not one, or a body that is not an object naming one, is Core's own 503", async () => {
+    const bodies: unknown[] = [
+      {},
+      {message: "directory_unavailable"},
+      {error: ""},
+      {error: "Directory_Unavailable"},
+      {error: "DIRECTORY_UNAVAILABLE"},
+      {error: "directory-unavailable"},
+      {error: "directory.unavailable"},
+      {error: "directory unavailable"},
+      {error: "1directory"},
+      {error: "_directory"},
+      {error: "a".repeat(65)},
+      {error: "directory_unavailable\n"},
+      {error: "directory_unavailable\r\nset-cookie: a=1"},
+      {error: "<script>alert(1)</script>"},
+      {error: "../../etc/passwd"},
+      {error: "unavailable\u0000"},
+      {error: "dirеctory_unavailable"},
+      {error: "ünavailable"},
+      {error: 503},
+      {error: true},
+      {error: null},
+      {error: ["directory_unavailable"]},
+      {error: {code: "directory_unavailable"}},
+      ["directory_unavailable"],
+      [{error: "directory_unavailable"}],
+      "directory_unavailable",
+      503,
+      null,
+    ]
+    for (const body of bodies) {
+      respond = named(body)
+      const reply = await appFor().request("http://core.test/x")
+      const label = JSON.stringify(body)
+      expect([label, reply.status, await reply.json(), reply.headers.get("retry-after")]).toEqual([
+        label,
+        503,
+        {error: "test_unavailable"},
+        "30",
+      ])
+      expect([label, logs.at(-1)]).toMatchObject([
+        label,
+        {level: "warn", fields: {status: 503, upstreamStatus: 503, reason: "error_code_not_relayed"}},
+      ])
+    }
+  })
+
+  test("a code inherited rather than the body's own is not one", async () => {
+    respond = () =>
+      new Response('{"__proto__": {"error": "directory_unavailable"}}', {status: 503, headers: {"content-type": "application/json"}})
+    const reply = await appFor().request("http://core.test/x")
+    expect(await reply.json()).toEqual({error: "test_unavailable"})
+  })
+
+  test("a body that is not JSON, or not under a JSON content-type, is Core's own 503", async () => {
+    const answers: Array<[string, () => Response]> = [
+      ["text", () => new Response('{"error":"directory_unavailable"}', {status: 503, headers: {"content-type": "text/plain"}})],
+      ["html", () => new Response('<html>{"error":"directory_unavailable"}</html>', {status: 503, headers: {"content-type": "text/html"}})],
+      ["no content-type", () => new Response(new TextEncoder().encode('{"error":"directory_unavailable"}'), {status: 503})],
+      ["a list of types", () => new Response('{"error":"directory_unavailable"}', {status: 503, headers: {"content-type": "application/json, text/html"}})],
+      ["not JSON", () => new Response("directory_unavailable", {status: 503, headers: {"content-type": "application/json"}})],
+      ["truncated JSON", () => new Response('{"error":"directory_unavailable"', {status: 503, headers: {"content-type": "application/json"}})],
+      ["empty", () => new Response("", {status: 503, headers: {"content-type": "application/json"}})],
+      ["not UTF-8", () => new Response(new Uint8Array([0x7b, 0x22, 0xff, 0x22, 0x7d]), {status: 503, headers: {"content-type": "application/json"}})],
+    ]
+    for (const [name, answer] of answers) {
+      respond = answer
+      const reply = await appFor().request("http://core.test/x")
+      expect([name, reply.status, await reply.json()]).toEqual([name, 503, {error: "test_unavailable"}])
+    }
+  })
+
+  test("a JSON content-type with parameters, or in another case, still names a code", async () => {
+    for (const contentType of ["application/json; charset=utf-8", "Application/JSON"]) {
+      respond = () => new Response('{"error":"directory_unavailable"}', {status: 503, headers: {"content-type": contentType}})
+      const reply = await appFor().request("http://core.test/x")
+      expect([contentType, await reply.json()]).toEqual([contentType, {error: "directory_unavailable"}])
+    }
+  })
+
+  test("a body over 4 KiB is Core's own 503, whether its length is declared or it just keeps streaming, and the request is ended", async () => {
+    const roomy = {limits: {...LIMITS, maxResponseBytes: 1024 * 1024}}
+    const atCap = JSON.stringify({error: "directory_unavailable", pad: ""})
+    respond = named({error: "directory_unavailable", pad: "x".repeat(4096 - atCap.length)})
+    expect(await (await appFor(roomy).request("http://core.test/x")).json()).toEqual({error: "directory_unavailable"})
+
+    respond = named({error: "directory_unavailable", pad: "x".repeat(4097 - atCap.length)})
+    expect(await (await appFor(roomy).request("http://core.test/x")).json()).toEqual({error: "test_unavailable"})
+
+    let cancelled = false
+    let sent = 0
+    respond = () =>
+      new Response(
+        new ReadableStream({
+          async pull(controller) {
+            controller.enqueue(new TextEncoder().encode(sent++ === 0 ? '{"error":"directory_unavailable","pad":"' : "x".repeat(512)))
+            await Bun.sleep(1)
+          },
+          cancel() {
+            cancelled = true
+          },
+        }),
+        {status: 503, headers: {"content-type": "application/json", "retry-after": "8"}},
+      )
+    const streamed = await appFor(roomy).request("http://core.test/x")
+    expect([streamed.status, await streamed.json(), streamed.headers.get("retry-after")]).toEqual([503, {error: "test_unavailable"}, "8"])
+    for (let i = 0; i < 100 && !cancelled; i++) await Bun.sleep(10)
+    expect(cancelled).toBe(true)
+    expect(sent).toBeLessThan(100)
+  })
+
+  test("and so is one over the upstream's own response limit, when that is lower", async () => {
+    // LIMITS.maxResponseBytes is 256.
+    respond = named({error: "directory_unavailable", pad: "x".repeat(300)})
+    expect(await (await appFor().request("http://core.test/x")).json()).toEqual({error: "test_unavailable"})
+  })
+
+  test("a body that stalls past the timeout is Core's own 503, with the service's Retry-After", async () => {
+    respond = () => {
+      let pulls = 0
+      return new Response(
+        new ReadableStream({
+          async pull(controller) {
+            if (pulls++ === 0) return controller.enqueue(new TextEncoder().encode('{"error":'))
+            await Bun.sleep(LIMITS.timeoutMs + 500)
+            controller.enqueue(new TextEncoder().encode('"directory_unavailable"}'))
+            controller.close()
+          },
+        }),
+        {status: 503, headers: {"content-type": "application/json", "retry-after": "12"}},
+      )
+    }
+    const reply = await appFor().request("http://core.test/x")
+    expect([reply.status, await reply.json(), reply.headers.get("retry-after")]).toEqual([503, {error: "test_unavailable"}, "12"])
+  })
+
+  test("only a 503 names a code: any other 5xx with a well-formed one is Core's own 503", async () => {
+    for (const status of [500, 501, 502, 504, 507, 599]) {
+      respond = () => Response.json({error: "directory_unavailable"}, {status, headers: {"retry-after": "3"}})
+      const reply = await appFor().request("http://core.test/x")
+      expect([status, reply.status, await reply.json(), reply.headers.get("retry-after")]).toEqual([
+        status,
+        503,
+        {error: "test_unavailable"},
+        "3",
+      ])
+    }
   })
 })
 

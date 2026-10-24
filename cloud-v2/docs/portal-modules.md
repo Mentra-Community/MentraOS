@@ -264,6 +264,14 @@ or a success that is not JSON is `503 {"error":"module_unavailable"}`; an
 upstream `401` reaches the browser as a `403` (a `401` from Core means "sign in
 again"); every JSON answer carries `x-content-type-options: nosniff` and a
 sandbox `content-security-policy`; and the module's `x-request-id` is returned.
+A module's `503` may name what is down, by the rules of
+[Fleet's](fleet-integration.md#paths-and-bodies): a `503` whose JSON body's
+`error` is a code (`^[a-z][a-z0-9_]{0,63}$`, in a body of at most 4 KiB) reaches
+the browser as `503 {"error":"<code>"}` with the module's `Retry-After` and
+nothing else of its body or headers, so billing's `billing_unavailable` and
+`core_unavailable` reach the portal, which words them. Any other `5xx`, and a
+`503` without such a code, is `module_unavailable`. A public read relays no
+code: its `503` is always `module_unavailable`.
 A JSON answer is the module's answer to one person at an address that is the
 same for everyone (billing's catalog lists offers to a billing manager and
 display content to anyone else), so one the module sets no `cache-control` on

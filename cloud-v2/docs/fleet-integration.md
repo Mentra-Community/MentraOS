@@ -191,6 +191,26 @@ signs.
   `503 fleet_unavailable` and its body is dropped. Fleet's `Retry-After` on that
   `5xx`, when it is a whole number of seconds, is repeated on Core's `503`, so
   send one when Fleet is down or shutting down.
+- **A `503` may name what is down.** When Fleet answers `503` with a JSON body
+  whose `error` is one of its own codes, Core relays the `503` with that code:
+  `{"error":"directory_unavailable"}` reaches the caller, not
+  `fleet_unavailable`, so a page can say what still works (the listed miniapps
+  are down, but a pasted URL can still be added). The rules:
+  - the status is exactly `503`; every other `5xx` is `fleet_unavailable`;
+  - the `content-type` is `application/json` (as above, a single value, with or
+    without parameters) and the body, at most 4 KiB, is a JSON object;
+  - its `error` is 1 to 64 lowercase letters, digits and `_`, starting with a
+    letter (`^[a-z][a-z0-9_]{0,63}$`).
+
+  Core answers `{"error":"<code>"}`, its own body, with the labels every JSON
+  answer carries and the `Retry-After` rule above. The rest of Fleet's body (an
+  `error_description`, a stack) and every other header of the answer are
+  dropped, Fleet's `x-request-id` among them: the caller gets Core's, which
+  Core's log line ties to Fleet's. Anything less (no code, a code that does not match, a body that is
+  not JSON, too large or late, a timeout or no connection) is
+  `503 fleet_unavailable`. This holds on every JSON route (phones, the admin
+  portal and the workspace portal); the [UI asset route](#fleet-ui-assets)
+  relays no code. A phone reads every `503` as "try later", whatever its code.
 
 ### Correlation
 
@@ -202,9 +222,10 @@ returns one, and its own otherwise.
 Core logs every request that reaches Fleet once, with its request id, Fleet's
 request id, the status Core answered, Fleet's status and the time taken. A
 success is logged at debug, an answer Fleet gives that is not a success (a `403`,
-a `429`, a `404`) at info, and what Core could not relay as Fleet said it (a
-network error, a timeout, a `5xx`, a redirect, an oversized body, a `401`, a
-success that is not JSON) at warn. So a secret that does not match Fleet's, which Fleet refuses with `403`,
+a `429`, a `404`, a `503` whose code Core relays) at info, and what Core could
+not relay as Fleet said it (a network error, a timeout, a `5xx`, a redirect, an
+oversized body, a `401`, a success that is not JSON, a `503` whose code it did
+not relay, with the reason `error_code_not_relayed`) at warn. So a secret that does not match Fleet's, which Fleet refuses with `403`,
 shows in the log at the production level. Core never logs a body, a header, a
 query, an email or a secret.
 
@@ -738,6 +759,10 @@ sending", the other "try again".
   than `304`, a response body over the limit, or a `2xx` that is not JSON (on the
   JSON routes), or an asset that fails the checks of the
   [UI asset route](#fleet-ui-assets). Never an empty success. Retry later.
+- `503` with another code, such as `directory_unavailable` or
+  `registry_unavailable`: Fleet answered, and named the part of it that is down
+  ([A `503` may name what is down](#paths-and-bodies)). Retry later; a page may
+  say what still works.
 - `401 {"error":"unauthorized"}`: the caller is not signed in. A phone treats it
   as an expired session and refreshes.
 - `403 {"error":"forbidden"}`: the admin caller is a key, or lacks

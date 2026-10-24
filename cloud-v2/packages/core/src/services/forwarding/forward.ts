@@ -36,8 +36,17 @@
  * sends, taken from the same URL object.
  *
  * What the caller gets. Outcomes, with `<unavailable>` the upstream's `unavailableError`:
- *  - a network error, a timeout, an upstream 5xx, an upstream 3xx other than 304 (redirects are never
- *    followed) or a body over `limits.maxResponseBytes`: 503 `{error: <unavailable>}`. Never an empty success;
+ *  - an upstream 503 that names its own error code is relayed as a 503 with that code and nothing else:
+ *    `{error: <code>}`, Core's own body. The answer must have a JSON `content-type`, a body of at most
+ *    `MAX_RELAYED_ERROR_BODY_BYTES` (and the response limit) that is a JSON object, and an `error` that
+ *    `RELAYED_ERROR_CODE` matches (`directory_unavailable`, `billing_unavailable`). The rest of the body (a
+ *    message, a stack) and every header but `Retry-After` are dropped. This is how a service tells the caller
+ *    which of its parts is down, and so what still works. The asset routes (`assets.ts`) relay no code: an
+ *    asset that cannot be served is always Core's own 503;
+ *  - a network error, a timeout, any other upstream 5xx (a 503 included: one with no code, a code that does not
+ *    match, a body that is not JSON, too large or does not arrive in time), an upstream 3xx other than 304
+ *    (redirects are never followed) or a body over `limits.maxResponseBytes`: 503 `{error: <unavailable>}`.
+ *    Never an empty success;
  *  - an upstream 401 reaches the caller as a 403 with the service's body: phones and the portals read a 401 as
  *    "your session ended, sign in again", and a service's answer never means that. A service should answer
  *    403 for "not allowed" itself;
@@ -47,7 +56,8 @@
  *  - any other upstream status and body pass through, with `content-type`, `cache-control` and `retry-after`
  *    only. A 204, 205 or 304, and any answer to a `HEAD`, has no body: Core does not read one and adds no
  *    `content-type` of its own.
- * A 503 Core gives for an upstream 5xx repeats the service's `Retry-After` when it is a whole number of seconds.
+ * A 503 Core gives for an upstream 5xx, relayed code or not, repeats the service's `Retry-After` when it is a
+ * whole number of seconds.
  *
  * What the browser is told. A portal session cookie is `SameSite=Lax`, so a top-level `GET` to a forwarded
  * route carries it and what comes back is read as a document of the portal's origin. Every answer of a JSON
@@ -61,8 +71,9 @@
  * request) and answers with the service's `x-request-id` when it returns one, Core's otherwise. Each request
  * that reaches the service is logged once, as `<label> request forwarded`, with `{audience, reqId,
  * upstreamRequestId, status, ms}`: at debug for a success, at info for an answer the service gave that is not
- * one (a 403, a 429, a 404...), and at warn for what Core could not relay as the service said it (a failure,
- * a timeout, an upstream 401, a success that is not JSON). Never a body, a header, a query or a secret.
+ * one (a 403, a 429, a 404, a 503 whose code is relayed...), and at warn for what Core could not relay as the
+ * service said it (a failure, a timeout, an upstream 401, a success that is not JSON, a 503 whose code is not
+ * relayed, with the `reason` `error_code_not_relayed`). Never a body, a header, a query or a secret.
  *
  * The answer is built through the context, never returned as a raw `Response`: Hono replaces the context's
  * headers with a raw Response's, and the context holds the caller's rotated portal-session cookie
@@ -97,7 +108,10 @@ export interface Upstream {
   service: string
   /** Names the service in its log lines: `Fleet` gives `Fleet request forwarded`. */
   label: string
-  /** The `error` of the 503 Core answers when the service cannot, such as `fleet_unavailable`. */
+  /**
+   * The `error` of the 503 Core answers when the service cannot, such as `fleet_unavailable`: unless the service
+   * answered a 503 naming its own code, which Core relays in its place (`relayedErrorCode`).
+   */
   unavailableError: string
   baseUrl: URL
   /** The shared secret that signs what Core sends. */
@@ -179,11 +193,57 @@ export function forwardedUser(person: UserPrincipal, scope: UserScope): Forwarde
 
 /**
  * Core's own 503. `retryAfter` is the service's `Retry-After` when it answered with a failure and sent a
- * valid one, so a phone backs off for as long as the service asked rather than for its own guess.
+ * valid one, so a phone backs off for as long as the service asked rather than for its own guess. `error` is
+ * the upstream's `unavailableError`, or the code of a 503 Core relays (`relayedErrorCode`).
  */
-export function unavailable(c: AppContext, upstream: Upstream, retryAfter: string | null = null) {
+export function unavailable(
+  c: AppContext,
+  upstream: Upstream,
+  retryAfter: string | null = null,
+  error: string = upstream.unavailableError,
+) {
   if (retryAfter) c.header("retry-after", retryAfter)
-  return c.json({error: upstream.unavailableError}, 503)
+  return c.json({error}, 503)
+}
+
+/**
+ * An error code Core relays from a service's 503: lowercase letters, digits and `_`, starting with a letter, at
+ * most 64 characters. Nothing a browser could read as markup, a path, a sentence or a second header.
+ */
+export const RELAYED_ERROR_CODE = /^[a-z][a-z0-9_]{0,63}$/
+
+/** The most of a 503's body Core reads for its code. A code and a sentence about it fit many times over. */
+export const MAX_RELAYED_ERROR_BODY_BYTES = 4096
+
+/**
+ * The code of a service's 503 that Core relays, by the rules in the file header, or null when Core answers its
+ * own 503 instead: no JSON `content-type`, a body over `limit` or `MAX_RELAYED_ERROR_BODY_BYTES`, one that is not
+ * UTF-8 JSON or not an object, an `error` that is missing or does not match `RELAYED_ERROR_CODE`, or a body that
+ * fails to arrive (a timeout, a reset). Only the code is kept. The call is ended in every case.
+ */
+export async function relayedErrorCode(call: UpstreamCall, limit: number): Promise<string | null> {
+  if (!isJsonContentType(call.response.headers.get("content-type"))) {
+    await discard(call)
+    return null
+  }
+  let bytes: Uint8Array<ArrayBuffer> | null
+  try {
+    bytes = await readCapped(call, Math.min(limit, MAX_RELAYED_ERROR_BODY_BYTES))
+  } catch {
+    // The body did not arrive whole: the timeout, or the service dropped the connection.
+    call.abort()
+    return null
+  }
+  if (!bytes) return null
+  let body: unknown
+  try {
+    body = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(bytes))
+  } catch {
+    return null
+  }
+  if (body === null || typeof body !== "object" || Array.isArray(body) || !Object.hasOwn(body, "error")) return null
+  const code = (body as {error: unknown}).error
+  return typeof code === "string" && RELAYED_ERROR_CODE.test(code) ? code : null
 }
 
 /** A `Retry-After` Core will repeat to a phone: a whole number of seconds, which is all phones read. */
@@ -328,8 +388,8 @@ export function outcomeLogger(log: Logger, upstream: Upstream, audience: string)
     // A success is routine (debug). An answer the service gave that is not one (a 403 for a signature it
     // refused, a 429, a 404) is relayed as it is and logged at info, so it shows at the production log
     // level. What Core could not relay as the service said it (a failure, a redirect, an oversized body, a
-    // 401 turned into a 403, no answer at all) is a warning.
-    const relayedAsIs = outcome.status === outcome.upstreamStatus
+    // 401 turned into a 403, a 503 whose code it did not relay, no answer at all) is a warning.
+    const relayedAsIs = outcome.status === outcome.upstreamStatus && outcome.reason === undefined
     const success = outcome.status >= 200 && outcome.status < 300
     const level = !relayedAsIs ? "warn" : success || outcome.status === 304 ? "debug" : "info"
     log[level](fields, `${upstream.label} request forwarded`)
@@ -395,11 +455,16 @@ export async function forwardJson(c: AppContext, request: ForwardRequest): Promi
     upstreamHeaders = answer.headers
     const upstreamRequestId = upstreamHeaders.get(REQUEST_ID_HEADER)
     if (isNotRelayed(status)) {
-      // Not an answer Core relays: a failure, or a redirect it never follows.
-      await discard(call)
-      logged({status: 503, upstreamStatus: status, upstreamRequestId})
+      // Not an answer Core relays as it is: a failure, or a redirect it never follows. Of a 503, Core relays
+      // the code that names what is down, when the service gave one.
       // The service's own backoff (it sends one on an outage and while it shuts down) belongs to a failure, not to a redirect.
-      return unavailable(c, upstream, status >= 500 ? validRetryAfter(upstreamHeaders.get("retry-after")) : null)
+      const retryAfter = status >= 500 ? validRetryAfter(upstreamHeaders.get("retry-after")) : null
+      let code: string | null = null
+      if (status === 503 && method !== "HEAD") code = await relayedErrorCode(call, limits.maxResponseBytes)
+      else await discard(call)
+      const notRelayed = status === 503 && code === null ? {reason: "error_code_not_relayed"} : {}
+      logged({status: 503, upstreamStatus: status, upstreamRequestId, ...notRelayed})
+      return unavailable(c, upstream, retryAfter, code ?? upstream.unavailableError)
     }
     if (method === "HEAD" || NULL_BODY_STATUSES.has(status)) {
       // No body to relay. A HEAD answer's `content-length` describes the body a GET would get, so it

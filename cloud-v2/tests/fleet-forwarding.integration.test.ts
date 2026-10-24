@@ -1292,6 +1292,37 @@ describe("the workspace portal", () => {
     expect((await fromPortal(owner, "GET", `/workspaces/${ws}/people`)).status).toBe(200)
   })
 
+  test("a 503 naming what in Fleet is down reaches the browser with that code, so the page can say what still works", async () => {
+    const owner = await portalPerson("p-owner")
+    const ws = await workspaceWith(owner)
+    // MFM's answers while the directory, and then the registry, cannot be read.
+    answer = () =>
+      Response.json(
+        {error: "directory_unavailable", error_description: "The miniapp directory cannot be read right now. Paste the miniapp's URL instead."},
+        {status: 503, headers: {"retry-after": "30", "cache-control": "public, max-age=600"}},
+      )
+    const list = await fromPortal(owner, "GET", `/workspaces/${ws}/eligible-packages`)
+    expect([list.status, list.json, list.headers.get("retry-after")]).toEqual([503, {error: "directory_unavailable"}, "30"])
+    expect(list.headers.get("cache-control")).toBeNull()
+    expect(list.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(received.at(-1)!.pathWithQuery).toBe(`/v1/portal/workspaces/${ws}/eligible-packages`)
+
+    answer = () => Response.json({error: "registry_unavailable", error_description: "Nothing was assigned; try again."}, {status: 503})
+    const assign = await fromPortal(owner, "POST", `/workspaces/${ws}/assignments`, {
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({url: "https://notes.example.test/"}),
+    })
+    expect([assign.status, assign.json]).toEqual([503, {error: "registry_unavailable"}])
+
+    // Anything less than a code of Fleet's own is still Core's fleet_unavailable.
+    answer = () => new Response("<html>upstream connect error</html>", {status: 503, headers: {"content-type": "text/html"}})
+    const proxied = await fromPortal(owner, "GET", `/workspaces/${ws}/eligible-packages`)
+    expect([proxied.status, proxied.json]).toEqual([503, {error: "fleet_unavailable"}])
+    answer = () => Response.json({error: "directory_unavailable"}, {status: 502})
+    const gateway = await fromPortal(owner, "GET", `/workspaces/${ws}/eligible-packages`)
+    expect([gateway.status, gateway.json]).toEqual([503, {error: "fleet_unavailable"}])
+  })
+
   test("a deployment without Fleet answers 404 fleet_not_installed to a signed-in person, and 503 when it is misconfigured", async () => {
     const owner = await portalPerson("p-owner")
     const ws = await workspaceWith(owner)

@@ -16,7 +16,7 @@
  * What is Fleet's here is who may call, what the request covers and how Fleet is configured. How a request
  * is signed and sent, what Fleet receives, how its answer is mapped and how its UI assets are relayed are
  * the shared forwarding code (`services/forwarding/forward.ts` and `assets.ts`), which Core's portal modules
- * use as well; read its headers for those rules. Fleet's own error codes are `fleet_unavailable` and
+ * use as well; read its headers for those rules. Core's own error codes for Fleet are `fleet_unavailable` and
  * `fleet_not_installed`.
  *
  * Who may call. Only people reach Fleet.
@@ -55,8 +55,9 @@
  *    double-encoded `%252e`) is refused too, so a Fleet that decodes a second time cannot be handed
  *    a dot segment or a separator (`isSafeSuffix`);
  *  - everything Fleet then does or fails to do is mapped as the shared forwarding code says, with 503
- *    `{error: "fleet_unavailable"}` for a failure, a timeout, a redirect or an oversized body, and an upstream
- *    401 relayed as a 403.
+ *    `{error: "fleet_unavailable"}` for a failure, a timeout, a redirect or an oversized body, an upstream
+ *    401 relayed as a 403, and a 503 naming one of Fleet's own codes (`directory_unavailable`) relayed with that
+ *    code alone.
  *
  * Fleet UI assets. `GET` and `HEAD` `/api/admin/fleet/ui/<rest>` -> `${CLOUD_CORE_FLEET_URL}/v1/admin/ui/<rest>`
  * have a route of their own, ahead of the forwarder and behind the same admin gates. Only that route may
