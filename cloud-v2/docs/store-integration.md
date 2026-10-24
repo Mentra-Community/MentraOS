@@ -90,6 +90,11 @@ clears the hold. Every miniapp counts, a draft and one never released as much as
 published or suspended one, so a workspace is held from the moment its first
 miniapp is created until its last one is deleted.
 
+The Mentra Miniapp Store hosts no miniapps, so it holds no workspace: at startup
+and every hour it clears every hold it set, and it never sets one. The pattern
+below is for any service that keeps something a workspace must not lose, with a
+count of owned miniapps as the example.
+
 ```ts
 // Under the workspace's lock: an asOf later than the last one sent for this workspace, taken just
 // before counting, so the count reflects every change made before it.
