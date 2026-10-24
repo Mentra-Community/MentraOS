@@ -341,15 +341,16 @@ const deepLinkRoutes: DeepLinkRoute[] = [
       }
     },
   },
-  {
-    // Password reset is the code "Forgot password" emails (account spec). A reset link carries no session: any tokens
-    // in it are ignored, so a link can never sign the phone in or replace the account signed in now.
-    pattern: "/auth/reset-password",
+  // Password reset is the code "Forgot password" emails (account spec). A reset link carries no session: any tokens in
+  // it are ignored, so a link can never sign the phone in or replace the account signed in now. A signed-in person
+  // stays where they are; a signed-out one sees sign-in with the invalid-link message, next to Forgot password.
+  ...["/auth/reset-password", "/auth/reset-password/"].map((pattern) => ({
+    pattern,
     handler: (_url: string, params: Record<string, string>) => {
       if (params.authed === "true") return
-      useNavigationStore.getState().replace("/auth/forgot-password")
+      useNavigationStore.getState().replace("/auth/start?authError=invalid_reset_link")
     },
-  },
+  })),
 
   // Mirror/Gallery routes
   {

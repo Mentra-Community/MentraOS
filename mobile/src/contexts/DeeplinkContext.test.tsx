@@ -410,18 +410,22 @@ describe("password reset links", () => {
     expect(mockReplaceAll).not.toHaveBeenCalled()
   })
 
-  it.each(links)("sends a signed-out person to the emailed-code reset: %s", async (link) => {
-    render(
-      <DeeplinkProvider>
-        <Probe />
-      </DeeplinkProvider>,
-    )
-    await act(async () => {
-      await processUrl(link)
-    })
-    expect(mockUpdateSessionWithTokens).not.toHaveBeenCalled()
-    expect(mockReplace).toHaveBeenCalledWith("/auth/forgot-password")
-  })
+  it.each([...links, "com.mentra://auth/reset-password/#access_token=attacker-access"])(
+    "shows a signed-out person sign-in with the invalid-link message: %s",
+    async (link) => {
+      render(
+        <DeeplinkProvider>
+          <Probe />
+        </DeeplinkProvider>,
+      )
+      await act(async () => {
+        await processUrl(link)
+      })
+      expect(mockUpdateSessionWithTokens).not.toHaveBeenCalled()
+      expect(mockReplace).toHaveBeenCalledWith("/auth/start?authError=invalid_reset_link")
+      expect(mockReplaceAll).not.toHaveBeenCalled()
+    },
+  )
 
   it("keeps the link's tokens out of the logs", async () => {
     const log = jest.spyOn(console, "log").mockImplementation(() => {})
