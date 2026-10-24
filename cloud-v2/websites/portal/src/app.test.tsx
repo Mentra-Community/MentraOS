@@ -716,10 +716,10 @@ test("the login gate names the site", () => {
   expect(renderToStaticMarkup(<LoginGate loginUrl="/api/portal/auth/login" />)).toContain("Sign into Mentra Portal");
 });
 
-test("the login gate says to use the account the Mentra App signs in with", () => {
+test("the login gate's button says to sign into the Mentra account, with nothing under it", () => {
   const markup = renderToStaticMarkup(<LoginGate loginUrl="/api/portal/auth/login" />);
-  expect(markup).toContain("Use the same account you sign in to the Mentra App with.");
-  expect(markup).not.toContain("Sign in with your Mentra account.");
+  expect(markup).toContain(">Sign into Mentra account</a></div></main>");
+  expect(markup).not.toContain("Use the same account");
 });
 
 test("the login gate says to sign in with the invited address when an invitation is pending", () => {

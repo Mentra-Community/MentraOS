@@ -100,7 +100,7 @@ tab; a Private Cloud, which has no Developer Console, shows no link. Company sig
 (enterprise orgs and trusted issuers) is not in the navigation; its pages stay reachable
 at `/enterprise` until it returns as workspace settings.
 
-The sign-in page says "Use the same account you sign in to the Mentra App with."
+The sign-in page's button reads "Sign into Mentra account", with nothing under it.
 
 **Members** lists each member by name over email (the email alone where Core has no
 name), with a "You" mark on your own row, "Pending first sign-in" on an imported
