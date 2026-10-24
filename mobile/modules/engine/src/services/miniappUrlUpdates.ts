@@ -8,6 +8,7 @@
  * hash, and applies the signer and version rules. Mentra's own bundled
  * miniapps update from `<firstPartyMiniappsUrl><packageName>/`.
  */
+import {ServedMiniappManifestSchema} from "@mentra/cloud-protocol/miniapp-url"
 import semver from "semver"
 
 import {isPackageNameAllowedForUrl} from "./miniappDomainRule"
@@ -20,9 +21,6 @@ export const OPEN_CHECK_INTERVAL_MS = 60_000
 /** Failed checks back off from this delay, doubling up to {@link MAX_BACKOFF_MS}. */
 export const BASE_BACKOFF_MS = 5 * 60_000
 export const MAX_BACKOFF_MS = 6 * 60 * 60_000
-const FETCH_TIMEOUT_MS = 15_000
-const MAX_MANIFEST_BYTES = 64 * 1024
-
 export interface HostedMiniappManifest {
   packageName: string
   version: string
@@ -32,6 +30,7 @@ export interface HostedMiniappManifest {
   bundle: {url: string; sha256: string}
 }
 
+/** What a `miniapp.json` request answered (`fetchMiniappJson` in `miniappFetch.ts`). */
 export interface ManifestFetchResult {
   status: number
   /** The URL the response came from, after redirects. */
@@ -65,9 +64,7 @@ export interface MiniappUrlUpdaterDependencies {
 
 export {isPackageNameAllowedForUrl}
 
-const SHA256 = /^[a-f0-9]{64}$/
-
-/** Validate a served `miniapp.json` for `packageName`. */
+/** Validate a served `miniapp.json` for `packageName`, with the schema Core checks registrations with. */
 export function parseHostedManifest(body: string, packageName: string): HostedMiniappManifest {
   let raw: unknown
   try {
@@ -75,29 +72,44 @@ export function parseHostedManifest(body: string, packageName: string): HostedMi
   } catch {
     throw new Error("miniapp.json is not valid JSON")
   }
-  if (!raw || typeof raw !== "object") throw new Error("miniapp.json is not an object")
-  const manifest = raw as Record<string, unknown>
+  const parsed = ServedMiniappManifestSchema.safeParse(raw)
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]
+    throw new Error(`miniapp.json is not valid${issue ? `: ${issue.path.join(".") || "root"} ${issue.message}` : ""}`)
+  }
+  const manifest = parsed.data
   if (manifest.packageName !== packageName) {
-    throw new Error(`miniapp.json names ${String(manifest.packageName)}, not ${packageName}`)
-  }
-  if (typeof manifest.version !== "string" || !semver.valid(manifest.version)) {
-    throw new Error("miniapp.json has no valid version")
-  }
-  const bundle = manifest.bundle as Record<string, unknown> | undefined
-  if (!bundle || typeof bundle.url !== "string" || bundle.url.trim() === "") {
-    throw new Error("miniapp.json has no bundle URL")
-  }
-  if (typeof bundle.sha256 !== "string" || !SHA256.test(bundle.sha256.toLowerCase())) {
-    throw new Error("miniapp.json has no valid bundle SHA-256")
+    throw new Error(`miniapp.json names ${manifest.packageName}, not ${packageName}`)
   }
   return {
     packageName,
     version: manifest.version,
-    minHostVersion: typeof manifest.minHostVersion === "string" ? manifest.minHostVersion : undefined,
-    sdkVersion: typeof manifest.sdkVersion === "string" ? manifest.sdkVersion : undefined,
+    minHostVersion: manifest.minHostVersion,
+    sdkVersion: manifest.sdkVersion,
     hardwareRequirements: manifest.hardwareRequirements,
-    bundle: {url: bundle.url.trim(), sha256: bundle.sha256.toLowerCase()},
+    bundle: {url: manifest.bundle.url.trim(), sha256: manifest.bundle.sha256},
   }
+}
+
+/**
+ * The URL an installed release updates from, or undefined when nothing updates it automatically. A bundled package,
+ * or one an updater replaced, updates from the host this build or workspace names, so it follows the deployment;
+ * none, no updates.
+ */
+export function miniappUpdateUrl(
+  packageName: string,
+  identity: MiniappReleaseIdentity | null,
+  deps: Pick<MiniappUrlUpdaterDependencies, "isSystemPackage" | "firstPartyUrl">,
+): string | undefined {
+  if (!identity) return undefined
+  const firstParty =
+    identity.source === "url" ||
+    identity.source === "bundled_asset" ||
+    identity.source === "preinstalled_registry" ||
+    identity.source === "system_store"
+  if (firstParty && deps.isSystemPackage(packageName)) return deps.firstPartyUrl(packageName)
+  if (identity.source === "url") return identity.sourceUrl
+  return undefined
 }
 
 interface Backoff {
@@ -122,17 +134,7 @@ export class MiniappUrlUpdater {
 
   /** The URL an installed release updates from, or undefined when nothing updates it automatically. */
   updateUrlFor(packageName: string, identity: MiniappReleaseIdentity | null): string | undefined {
-    if (!identity) return undefined
-    // A bundled package, or one an updater replaced, updates from the host this
-    // build or workspace names, so it follows the deployment; none, no updates.
-    const firstParty =
-      identity.source === "url" ||
-      identity.source === "bundled_asset" ||
-      identity.source === "preinstalled_registry" ||
-      identity.source === "system_store"
-    if (firstParty && this.deps.isSystemPackage(packageName)) return this.deps.firstPartyUrl(packageName)
-    if (identity.source === "url") return identity.sourceUrl
-    return undefined
+    return miniappUpdateUrl(packageName, identity, this.deps)
   }
 
   /** Check every installed miniapp, one at a time. A pass ends with its engine session. */
@@ -276,34 +278,5 @@ export class MiniappUrlUpdater {
       nextAttemptAt: this.deps.now() + Math.max(delay, retryAfterMs ?? 0),
     })
     this.deps.warn(`Miniapp update check for ${packageName}: ${message}`, error)
-  }
-}
-
-/** `fetch` for `miniapp.json`: conditional, time-limited, and size-bounded. */
-export async function fetchHostedManifest(url: string, etag: string | undefined): Promise<ManifestFetchResult> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "Accept": "application/json",
-        "Cache-Control": "no-cache",
-        ...(etag ? {"If-None-Match": etag} : {}),
-      },
-    })
-    const retryAfter = Number(response.headers.get("retry-after"))
-    const base: ManifestFetchResult = {
-      status: response.status,
-      url: response.url || url,
-      etag: response.headers.get("etag") ?? undefined,
-      ...(Number.isFinite(retryAfter) && retryAfter > 0 ? {retryAfterMs: retryAfter * 1000} : {}),
-    }
-    if (response.status < 200 || response.status >= 300) return base
-    const body = await response.text()
-    if (body.length > MAX_MANIFEST_BYTES) throw new Error(`miniapp.json exceeds ${MAX_MANIFEST_BYTES} bytes`)
-    return {...base, body}
-  } finally {
-    clearTimeout(timeout)
   }
 }

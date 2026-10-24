@@ -347,7 +347,7 @@ await engine.miniapps.stop(packageName)
 await engine.miniapps.setForeground(packageName)
 engine.miniapps.clearForeground()
 await engine.miniapps.stopAll()
-await engine.miniapps.install(url, opts?)
+const {status} = await engine.miniapps.install(miniappUrl, {source: "link", confirm}) // "installed" | "opened" | "deferred"
 await engine.miniapps.uninstall(packageName, version?)
 await engine.miniapps.invokeAction(packageName, actionId, params?, timeoutMs?) // host-only actions included
 const offPrompt = engine.miniapps.onUpdatePrompt((prompt) => {
@@ -357,6 +357,20 @@ const offPrompt = engine.miniapps.onUpdatePrompt((prompt) => {
 const offFailure = engine.miniapps.onUpdateFailed(({displayName, installedVersion}) => { … })
 const offDeferred = engine.miniapps.onDeferredUpdateReady((packageName) => { … }) // run Store maintenance again
 ```
+
+`install` takes a miniapp URL (the HTTPS base that serves `miniapp.json`). It fetches
+`miniapp.json`, answering the miniapp server's sign-in challenge with that package's
+token, checks that the URL's domain owns the package name, registers the URL in Core's
+registry, then calls your `confirm(preview)` to show an install sheet (omit it for a
+headless install), checks the phone can run the miniapp, and downloads, verifies and
+installs its ZIP. `opened` means it was already installed from that URL. A failure
+throws `InstallMiniappError`, whose `code` is one of `not_a_miniapp`,
+`domain_mismatch`, `archived`, `needs_newer_app`, `access_denied`, `age_restricted`,
+`network`, `cancelled`, `integrity` or `signature_invalid`.
+
+Every install registers its URL unless `config.requireRegistry` is `false`. Off, the
+engine installs any miniapp URL without registering it; the domain rule still applies.
+A host app that turns it off answers to the app stores' rules itself.
 
 `onUpdatePrompt` is how the host renders the question before a bundled Store's
 update closes a running miniapp. The engine decides when a prompt may appear:

@@ -11,10 +11,12 @@
 import {getConfigValues} from "../runtime/bootstrap"
 import appRegistry from "../services/AppRegistry"
 import {onDeferredMiniappUpdateReady} from "../services/deferredMiniappUpdates"
+import {installMiniapp} from "../services/installMiniapp"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
+import {fetchMiniappJson} from "../services/miniappFetch"
 import {installMiniappRelease} from "../services/miniappReleaseInstall"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
-import {fetchHostedManifest, MiniappUrlUpdater} from "../services/miniappUrlUpdates"
+import {MiniappUrlUpdater} from "../services/miniappUrlUpdates"
 import {
   onRunningUpdateFailed,
   onRunningUpdatePrompt,
@@ -39,7 +41,7 @@ const urlUpdater = new MiniappUrlUpdater({
   firstPartyUrl: (packageName) => firstPartyMiniappUrl(getConfigValues(), packageName),
   hasDevelopmentSelection: (packageName) => localMiniappRuntime.hasDevelopmentSelection(packageName),
   compatibilityPolicy: () => localMiniappRuntime.currentInstallCompatibilityPolicy(),
-  fetchManifest: fetchHostedManifest,
+  fetchManifest: (url, etag) => fetchMiniappJson(url, {etag}),
   install: installMiniappRelease,
   keepVersions: (packageName, versions) => appRegistry.gcReleaseVersions(packageName, versions),
   isRunningError: (error) => error instanceof MiniappRunningError,
@@ -138,8 +140,13 @@ export const miniapps = {
   },
   /** Stop all running miniapps. */
   stopAll: () => useAppStatusStore.getState().stopAll(),
-  /** Install a miniapp from a bundle URL. */
-  install: (...args: Parameters<AppsState["install"]>) => useAppStatusStore.getState().install(...args),
+  /**
+   * Install the miniapp at a miniapp URL: fetch its `miniapp.json` (answering a sign-in challenge), check the domain
+   * rule, register the URL, ask through `confirm` unless headless, check the phone can run it, then download, verify
+   * and install the ZIP. Resolves `installed`, `opened` (already installed) or `deferred`; throws
+   * `InstallMiniappError` with a code.
+   */
+  install: installMiniapp,
   /** Uninstall a miniapp. */
   uninstall: (...args: Parameters<AppsState["uninstall"]>) => useAppStatusStore.getState().uninstall(...args),
   /** Persist a miniapp's captured screenshot (the switcher/card preview). */

@@ -584,6 +584,7 @@ describe("classifying a managed install failure", () => {
     ["bundle package mismatch: expected a, got b", "not_a_miniapp", false],
     ["bundle version mismatch: expected 1.0.0, got 1.0.1", "download_failed", true],
     ["bundle download timed out after 45000ms", "download_failed", true],
+    ["bundle contains a symbolic link: ui/data.json", "not_a_miniapp", false],
   ] as const)("%s", (message, kind, retryable) => {
     expect(classifyManagedInstallError(new Error(message))).toEqual({kind, retryable})
   })

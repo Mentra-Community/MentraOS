@@ -1082,6 +1082,18 @@ export const cloudClientService = {
         return state
       },
     },
+    /** Core's miniapp registry, as the signed-in person's phone calls it (`/api/client/registry/*`). */
+    registry: {
+      /**
+       * Register a miniapp URL as it installs: Core verifies it and answers `accepted`, `accepted_unverified`,
+       * `not_a_miniapp` or `archived`. Rejects when Core can't be reached or refuses the call.
+       */
+      async register(
+        ...args: Parameters<CloudCore["registry"]["registerMiniappUrl"]>
+      ): ReturnType<CloudCore["registry"]["registerMiniappUrl"]> {
+        return getCoreClient().registry.registerMiniappUrl(...args)
+      },
+    },
     /** The signed-in person's workspace calls. Each is made as one account (`SessionChangedError` after a switch). */
     workspaces: {
       mine(...args: Parameters<CloudCore["workspaces"]["mine"]>) {

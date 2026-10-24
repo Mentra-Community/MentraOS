@@ -34,6 +34,15 @@ export type {IslandNotification, IslandNotificationKind} from "./facades/notific
 export type {WifiSearchResult} from "./facades/glassesWifi"
 export type {IdentitySnapshot} from "./services/PairingIdentity"
 export type {PendingRunningUpdatePrompt, RunningUpdateFailure} from "./services/runningUpdatePrompt"
+// engine.miniapps.install: its options, its result and its error codes.
+export {
+  InstallMiniappError,
+  type InstallMiniappErrorCode,
+  type InstallMiniappOptions,
+  type InstallMiniappResult,
+  type InstallMiniappSource,
+  type MiniappInstallPreview,
+} from "./services/installMiniapp"
 export type {DisplayMirrorEvent} from "./facades/displayMirror"
 export type {
   IslandConfigureOptions,

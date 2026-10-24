@@ -178,6 +178,19 @@ jest.mock("react-native-zip-archive", () => ({
   },
 }))
 jest.mock("../../../modules/engine/src/utils/storage/zip", () => ({printDirectory: jest.fn()}))
+// Extraction checks each unpacked file's real path (no links) through Crust, as the native module answers.
+jest.mock("@mentra/crust", () => ({
+  __esModule: true,
+  default: {
+    canonicalFilePath: (path: string) => {
+      try {
+        return require("node:fs").realpathSync(path)
+      } catch {
+        return null
+      }
+    },
+  },
+}))
 // The release installer's own suite covers its prompt and deferral. Here it
 // installs like the real one, after asking when the miniapp is open.
 const mockRunning = new Set<string>()

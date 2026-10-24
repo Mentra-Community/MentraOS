@@ -95,6 +95,8 @@ mock.module("expo-file-system", () => ({
 // Extraction is where an accepted bundle goes next. Reaching it proves the
 // publisher gate let the candidate through.
 let extractions = 0
+// Extraction checks each unpacked file's real path through Crust.
+mock.module("@mentra/crust", () => ({default: {canonicalFilePath: (path: string) => path}}))
 mock.module("react-native-zip-archive", () => ({
   unzip: async () => {
     extractions += 1

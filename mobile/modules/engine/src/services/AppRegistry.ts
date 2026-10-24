@@ -61,6 +61,7 @@ import {
   runInstallFilesystemTransaction,
 } from "./installOperation"
 import {checkManifestVersions} from "./manifestVersionGate"
+import {linkedEntry} from "./miniappFiles"
 import {checkMiniappInstallCompatibility, type MiniappCompatibilityPolicy} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
 import {normalizeManifestPermissions} from "./manifestPermissions"
@@ -179,6 +180,8 @@ export interface MiniappReleaseIdentity {
     | "system_store"
   /** The miniapp URL (`url` releases): the base that serves `miniapp.json`, ending in `/`. */
   sourceUrl?: string
+  /** `url` releases: the miniapp's server asked for sign-in, for `miniapp.json` or the ZIP. */
+  private?: boolean
   releaseId?: string
   bundleSha256?: string
   channel?: string
@@ -244,6 +247,12 @@ export interface InstallBundleOptions {
    * minted, inspected or reused by the host.
    */
   bundleAuthorization?: string
+  /**
+   * Remote installs: fetch the ZIP's bytes this way instead of with an anonymous request, for a miniapp URL whose
+   * server may ask for sign-in. It runs before the release identity is read, so it may complete that identity. The
+   * installer still checks the size and `expectedBundleSha256` of what it returns.
+   */
+  downloadBundle?: (url: string) => Promise<Uint8Array>
   /** Refuse a bundle this host or the user's glasses cannot run. */
   compatibilityPolicy?: MiniappCompatibilityPolicy | Omit<MiniappCompatibilityPolicy, "hardwareCapabilities">
   onProgress?: (phase: InstallProgressPhase) => void
@@ -558,6 +567,29 @@ async function downloadMiniAppZip(
 }
 
 /**
+ * Download a ZIP with the caller's `downloadBundle`, then hold its bytes to the same limits and expected SHA-256 as
+ * the installer's own download.
+ */
+async function downloadWith(
+  download: NonNullable<InstallBundleOptions["downloadBundle"]>,
+  url: string,
+  options: Pick<InstallBundleOptions, "expectedBundleSha256" | "bundleAuthorization" | "onProgress">,
+): Promise<Uint8Array> {
+  if (options.bundleAuthorization) throw new Error("A bundle download takes either a downloader or an authorization")
+  options.onProgress?.("downloading")
+  const bytes = await download(url)
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_REMOTE_BUNDLE_BYTES) {
+    throw new Error(`bundle must be between 1 and ${MAX_REMOTE_BUNDLE_BYTES} bytes`)
+  }
+  if (options.expectedBundleSha256 !== undefined) {
+    const expected = options.expectedBundleSha256.toLowerCase()
+    const actual = await sha256Hex(bytes)
+    if (actual !== expected) throw new Error(`bundle SHA-256 mismatch: expected ${expected}, got ${actual}`)
+  }
+  return bytes
+}
+
+/**
  * Every release records the SHA-256 of the ZIP it installed, a bundled or release-QR install included, so Fleet can
  * report it and an assignment can tell whether its URL serves the same bytes. Development snapshots record none.
  */
@@ -728,6 +760,11 @@ async function extractMiniApp(
     console.error("Error unzipping zip file", error)
     throw new Error("UNZIP_FAILED")
   }
+  // The validator refuses ZIP entries marked as links, but the native unzipper decides what it writes. Before
+  // anything reads the files, every one must be a plain file or directory where it was written: a link could make
+  // the miniapp's files point at the Mentra App's own.
+  const linked = linkedEntry(unzipDir)
+  if (linked !== null) throw new Error(`bundle contains a symbolic link: ${linked}`)
 
   // Strict zip shape: miniapp.json at unzip root. No tolerance for an
   // enclosing folder or app.json fallback — we own the dev-server emit
@@ -1360,11 +1397,13 @@ class AppRegistry {
   public installFromUrl(url: string, opts?: InstallBundleOptions): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       if (opts?.expectedPackageName) this.assertNoReplacementInProgress(opts.expectedPackageName, opts.versionOverride)
-      const bytes = await downloadMiniAppZip(url, {
-        expectedBundleSha256: opts?.expectedBundleSha256,
-        bundleAuthorization: opts?.bundleAuthorization,
-        onProgress: opts?.onProgress,
-      })
+      const bytes = opts?.downloadBundle
+        ? await downloadWith(opts.downloadBundle, url, opts)
+        : await downloadMiniAppZip(url, {
+            expectedBundleSha256: opts?.expectedBundleSha256,
+            bundleAuthorization: opts?.bundleAuthorization,
+            onProgress: opts?.onProgress,
+          })
       console.log("ZIP: done downloading, starting unzip")
       await this.installArchive(bytes, opts, false)
       console.log("APP_REGISTRY: Downloaded and installed mini app")

@@ -39,12 +39,18 @@ export class FakeDirectory {
     fs.mkdirSync(this.path, {recursive: options.intermediates ?? false})
   }
   list() {
+    // As expo lists them: a link to a directory is a directory; a link to nothing is a file.
+    const isDirectory = (path: string) => {
+      try {
+        return fs.statSync(path).isDirectory()
+      } catch {
+        return false
+      }
+    }
     return fs
       .readdirSync(this.path)
       .map((name) =>
-        fs.statSync(nodePath.join(this.path, name)).isDirectory()
-          ? new FakeDirectory(this.path, name)
-          : new FakeFile(this.path, name),
+        isDirectory(nodePath.join(this.path, name)) ? new FakeDirectory(this.path, name) : new FakeFile(this.path, name),
       )
   }
   delete() {

@@ -44,6 +44,7 @@ export {default as localMiniappRuntime, type InstalledMiniappManifest} from "./s
 export {miniappLauncher, type LaunchHints, type LaunchResult, type ResolvedBundle} from "./services/MiniappLauncher"
 export {miniappOrigin, miniappOriginHost, miniappOriginUrl, type MiniappOriginPlatform} from "./services/miniappOrigin"
 export {installMiniappFromJsonUrl} from "./services/manualMiniappInstall"
+export {installMiniapp, InstallMiniappError} from "./services/installMiniapp"
 export {
   installMiniappRelease,
   MiniappInstallCancelledError,

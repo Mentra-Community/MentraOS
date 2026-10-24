@@ -33,6 +33,40 @@ export function canonicalPath(path: string): string | null {
   }
 }
 
+/**
+ * The first entry under `dir`, as a path relative to it, whose real path is not its own: a symbolic link, or a link
+ * on the way to it. `"."` when `dir` itself can't be resolved, which includes a host that cannot resolve paths, so
+ * nothing passes unchecked. Null when every entry is a plain file or directory. A linked directory is never entered.
+ */
+export function linkedEntry(dir: Directory): string | null {
+  // The host's own directory and its listing: a `file:` URI, or an absolute path.
+  const hostPath = (uri: string) =>
+    filePathOfUri(uri.startsWith("/") ? `file://${uri.split("/").map(encodeURIComponent).join("/")}` : uri)
+  const dirPath = hostPath(dir.uri)
+  const realDir = dirPath ? canonicalPath(dirPath) : null
+  if (!realDir) return "."
+  const walk = (current: Directory, relative: string[]): string | null => {
+    let items: ReturnType<Directory["list"]>
+    try {
+      items = current.list()
+    } catch {
+      return relative.join("/") || "."
+    }
+    for (const item of items) {
+      const parts = [...relative, item.name]
+      const itemPath = hostPath(item.uri)
+      const real = itemPath ? canonicalPath(itemPath) : null
+      if (real !== `${realDir.replace(/\/$/, "")}/${parts.join("/")}`) return parts.join("/")
+      if (item instanceof Directory) {
+        const found = walk(item, parts)
+        if (found !== null) return found
+      }
+    }
+    return null
+  }
+  return walk(dir, [])
+}
+
 /** True when `path` is strictly inside `dir`, both as written and once symlinks are resolved. */
 function isInside(dir: string, path: string): boolean {
   if (path === dir || !isPathWithin(dir, path)) return false

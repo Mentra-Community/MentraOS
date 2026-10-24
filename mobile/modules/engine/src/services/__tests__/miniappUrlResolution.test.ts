@@ -2,8 +2,16 @@
 
 import {beforeEach, describe, expect, mock, test} from "bun:test"
 
+import "./cloudClientServiceTestMock"
+
 let config: {hostVersion?: string; supportedMiniappSdkRange?: string} = {}
 mock.module("../../runtime/bootstrap", () => ({getConfigValues: () => config}))
+// Each test passes its own transport.
+mock.module("expo/fetch", () => ({
+  fetch: async () => {
+    throw new Error("no transport")
+  },
+}))
 
 const {resolveMiniappUrl} = await import("../miniappUrlResolution")
 const {normalizeMiniappUrl} = await import("@mentra/cloud-protocol/miniapp-url")
@@ -13,7 +21,7 @@ const pkg = "com.acme.notes"
 const SHA = "a".repeat(64)
 
 function manifest(extra: Record<string, unknown> = {}) {
-  return {packageName: pkg, version: "2.0.0", bundle: {url: "notes-2.0.0.zip", sha256: SHA}, ...extra}
+  return {packageName: pkg, version: "2.0.0", name: "Notes", bundle: {url: "notes-2.0.0.zip", sha256: SHA}, ...extra}
 }
 
 /** Serves `body` with `status`; `finalUrl` is where redirects ended. */

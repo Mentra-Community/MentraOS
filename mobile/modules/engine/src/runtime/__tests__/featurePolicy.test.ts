@@ -90,6 +90,7 @@ describe("deployment feature policy", () => {
     configure({
       auth: {},
       config: {
+        bundledSystemMiniappPackages: ["com.mentra.captions"],
         localMiniappPolicy: {
           systemPackageNames: approved,
           managed: [
@@ -109,6 +110,12 @@ describe("deployment feature policy", () => {
     expect(isDevMiniappAllowed("com.example.call")).toBe(allowed)
     expect(isDevMiniappAllowed("com.example.other")).toBe(allowed)
     expect(isInstalledMiniappAllowed("com.example.other", "1.0.0", {source: "direct_download"})).toBe(allowed)
+    // An install from a miniapp URL is an explicit install too.
+    const fromUrl = {source: "url", sourceUrl: "https://tools.example.com/app/"}
+    expect(isInstalledMiniappAllowed("com.example.tools", "1.0.0", fromUrl)).toBe(allowed)
+    // A package the build bundles keeps the system policy, whatever URL it came from.
+    const captionsUrl = {source: "url", sourceUrl: "https://miniapps.mentraglass.com/com.mentra.captions/"}
+    expect(isInstalledMiniappAllowed("com.mentra.captions", "1.0.0", captionsUrl)).toBe(approved === null)
     if (allowed) expect(() => assertMiniappDevelopmentAllowed()).not.toThrow()
     else expect(() => assertMiniappDevelopmentAllowed()).toThrow("does not allow miniapp development")
   })
@@ -117,6 +124,9 @@ describe("deployment feature policy", () => {
     configure({auth: {}})
     expect(isMiniappDevelopmentAllowed()).toBe(true)
     expect(isDevMiniappAllowed("com.example.call")).toBe(true)
+    expect(
+      isInstalledMiniappAllowed("com.example.tools", "1.0.0", {source: "url", sourceUrl: "https://tools.example.com/"}),
+    ).toBe(true)
   })
 
   test("applies a live Super Mode gate to listing, cached releases and direct/dev launches", () => {

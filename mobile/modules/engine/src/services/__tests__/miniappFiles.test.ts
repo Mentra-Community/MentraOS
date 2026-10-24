@@ -8,7 +8,7 @@ import {FakeDirectory, FakePaths, crustRealpath, fakeExpoFileSystem, uriOf, useF
 const crust: {canonicalFilePath?: (path: string) => string | null} = {canonicalFilePath: crustRealpath}
 mock.module("expo-file-system", () => fakeExpoFileSystem)
 mock.module("@mentra/crust", () => ({default: crust}))
-const {canonicalPath, fileInside, writeHandoffFile} = await import("../miniappFiles")
+const {canonicalPath, fileInside, linkedEntry, writeHandoffFile} = await import("../miniappFiles")
 
 const DAY = 24 * 60 * 60 * 1000
 let root: string
@@ -120,5 +120,69 @@ describe("writeHandoffFile", () => {
     expect(fs.existsSync(decodeURIComponent(held.file.uri.replace("file://", "")))).toBe(true)
     held.release()
     fresh.release()
+  })
+})
+
+describe("linkedEntry", () => {
+  let bundle: InstanceType<typeof FakeDirectory>
+  beforeEach(() => {
+    bundle = new FakeDirectory(FakePaths.cache, "lma_unzip-1")
+    fs.mkdirSync(path.join(bundle.path, "ui", "assets"), {recursive: true})
+    fs.writeFileSync(path.join(bundle.path, "miniapp.json"), "{}")
+    fs.writeFileSync(path.join(bundle.path, "ui", "index.html"), "<html>")
+    fs.writeFileSync(path.join(bundle.path, "ui", "assets", "app.js"), "1")
+  })
+
+  it("is null when every entry is a plain file or directory", () => {
+    expect(linkedEntry(bundle)).toBeNull()
+  })
+
+  it("names a link to a file outside the bundle", () => {
+    fs.writeFileSync(path.join(root, "secret"), "refresh-token")
+    fs.symlinkSync(path.join(root, "secret"), path.join(bundle.path, "ui", "assets", "data.json"))
+    expect(linkedEntry(bundle)).toBe("ui/assets/data.json")
+  })
+
+  it("names a link even when it points inside the bundle", () => {
+    fs.symlinkSync(path.join(bundle.path, "miniapp.json"), path.join(bundle.path, "ui", "copy.json"))
+    expect(linkedEntry(bundle)).toBe("ui/copy.json")
+  })
+
+  it("names a linked directory without entering it", () => {
+    fs.mkdirSync(path.join(root, "outside"))
+    fs.symlinkSync(path.join(root, "outside"), path.join(bundle.path, "ui", "docs"))
+    const listed: string[] = []
+    const list = FakeDirectory.prototype.list
+    const spy = spyOn(FakeDirectory.prototype, "list").mockImplementation(function (
+      this: InstanceType<typeof FakeDirectory>,
+    ) {
+      listed.push(this.path)
+      return list.call(this)
+    })
+    try {
+      expect(linkedEntry(bundle)).toBe("ui/docs")
+      expect(listed).not.toContain(path.join(bundle.path, "ui", "docs"))
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it("names a link to nothing", () => {
+    fs.symlinkSync(path.join(root, "missing"), path.join(bundle.path, "miniapp.png"))
+    expect(linkedEntry(bundle)).toBe("miniapp.png")
+  })
+
+  it("passes nothing when the host can't resolve paths, or the bundle's own directory", () => {
+    crust.canonicalFilePath = undefined
+    expect(linkedEntry(bundle)).toBe(".")
+    crust.canonicalFilePath = crustRealpath
+    expect(linkedEntry(new FakeDirectory(FakePaths.cache, "missing"))).toBe(".")
+  })
+
+  it("follows the real path of the directory the bundle is in", () => {
+    // An iOS container is reached through /var, a link to /private/var.
+    const linkedCache = path.join(root, "linked-cache")
+    fs.symlinkSync(FakePaths.cache.path, linkedCache)
+    expect(linkedEntry(new FakeDirectory(linkedCache, "lma_unzip-1"))).toBeNull()
   })
 })

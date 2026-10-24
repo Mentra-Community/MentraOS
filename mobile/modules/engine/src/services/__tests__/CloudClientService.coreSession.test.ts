@@ -13,6 +13,7 @@ import {
 import type {FleetReport} from "@mentra/cloud-protocol"
 
 import {Fleet} from "../../../../../../cloud-v2/packages/cloud-client/src/modules/core/fleet"
+import {Registry} from "../../../../../../cloud-v2/packages/cloud-client/src/modules/core/registry"
 import {createHttpClient} from "../../../../../../cloud-v2/packages/cloud-client/src/http"
 import type {FleetSendOutcome} from "../CloudClientService"
 
@@ -126,11 +127,40 @@ const desiredStateHttp = createHttpClient({
   },
 })
 
+/** Core's answer to `POST /api/client/registry/register`, through the real cloud-client HTTP client and `Registry`. */
+let registryAnswer: () => Response | Promise<Response> = () => Response.json({result: "archived"})
+const registryRequests: Array<{url: string; method: string; authorization: string; body: unknown}> = []
+const registryHttp = createHttpClient({
+  baseUrl: CORE_X,
+  logger: {debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined},
+  fetch: (async (input: unknown, init?: RequestInit) => {
+    registryRequests.push({
+      url: String(input),
+      method: String(init?.method),
+      authorization: String((init?.headers as Record<string, string>)?.Authorization ?? ""),
+      body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body,
+    })
+    return registryAnswer()
+  }) as unknown as Parameters<typeof createHttpClient>[0]["fetch"],
+  timers: {
+    setTimeout(callback: () => void) {
+      queueMicrotask(callback)
+      return 0
+    },
+    clearTimeout: () => undefined,
+    setInterval: () => 0,
+    clearInterval: () => undefined,
+  },
+})
+
 class FakeCloudClient {
   static built: FakeCloudClient[] = []
   private readonly connectedHandlers: Array<() => void> = []
   readonly auth = new FakeAuth()
-  readonly core?: {fleet: {report: ReturnType<typeof mock>; desiredState: Fleet["desiredState"]}}
+  readonly core?: {
+    fleet: {report: ReturnType<typeof mock>; desiredState: Fleet["desiredState"]}
+    registry: {registerMiniappUrl: Registry["registerMiniappUrl"]}
+  }
   readonly runtime = {
     onStatusChanged: () => () => {},
     onTranscript: () => () => {},
@@ -150,7 +180,11 @@ class FakeCloudClient {
     FakeCloudClient.built.push(this)
     if (config.endpoints.core) {
       const fleet = new Fleet(desiredStateHttp, this.auth)
-      this.core = {fleet: {report: mock(async () => ACK), desiredState: fleet.desiredState.bind(fleet)}}
+      const registry = new Registry(registryHttp, this.auth)
+      this.core = {
+        fleet: {report: mock(async () => ACK), desiredState: fleet.desiredState.bind(fleet)},
+        registry: {registerMiniappUrl: registry.registerMiniappUrl.bind(registry)},
+      }
     }
   }
 
@@ -630,6 +664,55 @@ describe("the reconciler's desired-state client", () => {
       cloudClientService.core.fleet.desiredStateAs({coreUrl: CORE_X, mentraUserId: B}),
     ).rejects.toBeInstanceOf(SessionChangedError)
     expect(desiredStateRequests).toEqual([])
+  })
+})
+
+describe("registering a miniapp URL", () => {
+  const request = {
+    url: "https://tools.acme.com/app/",
+    reported: {packageName: "com.acme.tools", name: "Acme Tools", version: "1.2.0", ageRating: "4+" as const},
+  }
+
+  beforeEach(() => {
+    registryRequests.length = 0
+    registryAnswer = () => Response.json({result: "archived"})
+  })
+
+  test("posts the URL and the phone's report to Core as the signed-in account, and answers Core's verdict", async () => {
+    cloudClientService.init()
+    await settle()
+    await expect(cloudClientService.core.registry.register(request)).resolves.toEqual({result: "archived"})
+    expect(registryRequests).toEqual([
+      {
+        url: `${CORE_X}/api/client/registry/register`,
+        method: "POST",
+        authorization: `Bearer ${tokenFor(A)}`,
+        body: request,
+      },
+    ])
+  })
+
+  test("a refusal rejects with Core's status and code, for the installer to carry on without it", async () => {
+    cloudClientService.init()
+    await settle()
+    registryAnswer = () =>
+      Response.json({error: "email_unverified", error_description: "registering a miniapp needs a verified email"}, {
+        status: 403,
+      })
+    await expect(cloudClientService.core.registry.register(request)).rejects.toMatchObject({
+      status: 403,
+      code: "email_unverified",
+    })
+    registryAnswer = () => Response.json({result: "maybe"})
+    await expect(cloudClientService.core.registry.register(request)).rejects.toBeInstanceOf(CoreResponseError)
+  })
+
+  test("without a Core it rejects and sends nothing", async () => {
+    endpoints.current = {runtime: RUNTIME}
+    cloudClientService.reconnect({runtime: RUNTIME})
+    await settle()
+    await expect(cloudClientService.core.registry.register(request)).rejects.toThrow()
+    expect(registryRequests).toEqual([])
   })
 })
 

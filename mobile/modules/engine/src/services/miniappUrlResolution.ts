@@ -3,73 +3,62 @@
  * assignment reconciler reads it to decide the version an assignment installs.
  */
 import type {FleetAssignmentReason} from "@mentra/cloud-protocol"
-import {normalizeMiniappUrl} from "@mentra/cloud-protocol/miniapp-url"
-import semver from "semver"
+import {normalizeMiniappUrl, ServedMiniappManifestSchema} from "@mentra/cloud-protocol/miniapp-url"
 
 import {getConfigValues} from "../runtime/bootstrap"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {isPackageNameAllowedForUrl} from "./miniappDomainRule"
+import {fetchMiniappJson, MiniappFetchError, type MiniappFetchTransport, type MiniappJsonResult} from "./miniappFetch"
 
 /** What a miniapp URL serves now, or the assignment reason it cannot be installed. */
 export type MiniappUrlResolution =
   | {ok: true; packageName: string; version: string; bundleUrl: string; bundleSha256: string}
   | {ok: false; reason: FleetAssignmentReason}
 
-const URL_RESOLVE_TIMEOUT_MS = 20_000
-const SHA256_HEX = /^[a-f0-9]{64}$/
-
 /**
  * Read what a miniapp URL serves: `<url>/miniapp.json`, a copy of the manifest in its current ZIP plus
- * `bundle: {url, sha256}` naming that ZIP (relative to `<url>/` or an absolute HTTPS URL). The URL decides the
- * version, and the ZIP must have that SHA-256. The server decides access: 401 and 403 are `access_denied`. The
- * package name must pass the domain rule for the URL and for where its redirects ended.
+ * `bundle: {url, sha256}` naming that ZIP (relative to `<url>/` or an absolute HTTPS URL), checked with the schema
+ * Core checks registrations with. The URL decides the version, and the ZIP must have that SHA-256. The server decides
+ * access: 401 and 403 are `access_denied`. The package name must pass the domain rule for the URL and for where its
+ * redirects ended.
  *
  * The request carries no Mentra token and answers no sign-in challenge, so a private host cannot tell who is asking:
- * answering the challenge with the package's miniapp token is Phase 17 (miniapp distribution "Sign-in challenges").
+ * the assignment reconciler answers challenges once it installs through `installMiniapp`.
  */
-export async function resolveMiniappUrl(url: string, fetchImpl: typeof fetch = fetch): Promise<MiniappUrlResolution> {
+export async function resolveMiniappUrl(url: string, transport?: MiniappFetchTransport): Promise<MiniappUrlResolution> {
   // An assignment names a public HTTPS miniapp URL; a local-network build is never assigned.
   const normalized = normalizeMiniappUrl(url)
   if (!normalized || normalized.kind !== "public") return {ok: false, reason: "not_a_miniapp"}
   const manifestUrl = new URL("miniapp.json", normalized.url).href
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), URL_RESOLVE_TIMEOUT_MS)
-  let manifest: Record<string, unknown>
-  let servedFrom: string
+  let response: MiniappJsonResult
   try {
-    const response = await fetchImpl(manifestUrl, {
-      signal: controller.signal,
-      headers: {"Accept": "application/json", "Cache-Control": "no-cache"},
-    })
-    if (response.status === 401 || response.status === 403) return {ok: false, reason: "access_denied"}
-    if (response.status === 410) return {ok: false, reason: "archived"}
-    if (response.status === 404) return {ok: false, reason: "not_a_miniapp"}
-    if (!response.ok) return {ok: false, reason: "download_failed"}
-    servedFrom = response.url || manifestUrl
-    try {
-      const parsed = (await response.json()) as unknown
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {ok: false, reason: "not_a_miniapp"}
-      manifest = parsed as Record<string, unknown>
-    } catch {
-      return {ok: false, reason: "not_a_miniapp"}
-    }
-  } catch {
+    response = await fetchMiniappJson(manifestUrl, transport ? {transport} : {})
+  } catch (error) {
+    if (error instanceof MiniappFetchError && error.code === "too_large") return {ok: false, reason: "not_a_miniapp"}
     return {ok: false, reason: "download_failed"}
-  } finally {
-    clearTimeout(timeout)
   }
-  const packageName = typeof manifest.packageName === "string" ? manifest.packageName.trim() : ""
-  const version = typeof manifest.version === "string" ? manifest.version.trim() : ""
-  if (!packageName || !semver.valid(version)) return {ok: false, reason: "not_a_miniapp"}
+  if (response.status === 401 || response.status === 403) return {ok: false, reason: "access_denied"}
+  if (response.status === 410) return {ok: false, reason: "archived"}
+  if (response.status === 404) return {ok: false, reason: "not_a_miniapp"}
+  if (response.status < 200 || response.status >= 300 || response.body === undefined) {
+    return {ok: false, reason: "download_failed"}
+  }
+  const servedFrom = response.url
+  let raw: unknown
+  try {
+    raw = JSON.parse(response.body)
+  } catch {
+    return {ok: false, reason: "not_a_miniapp"}
+  }
+  const parsed = ServedMiniappManifestSchema.safeParse(raw)
+  if (!parsed.success) return {ok: false, reason: "not_a_miniapp"}
+  const manifest = parsed.data
+  const {packageName, version} = manifest
   if (!isPackageNameAllowedForUrl(packageName, manifestUrl) || !isPackageNameAllowedForUrl(packageName, servedFrom))
     return {ok: false, reason: "not_a_miniapp"}
-  const bundle = manifest.bundle as Record<string, unknown> | null | undefined
-  const sha = typeof bundle?.sha256 === "string" ? bundle.sha256.trim().toLowerCase() : ""
-  const bundlePath = typeof bundle?.url === "string" ? bundle.url.trim() : ""
-  if (!SHA256_HEX.test(sha) || !bundlePath) return {ok: false, reason: "not_a_miniapp"}
   let bundleUrl: string
   try {
-    const resolved = new URL(bundlePath, servedFrom)
+    const resolved = new URL(manifest.bundle.url.trim(), servedFrom)
     if (resolved.protocol !== "https:") return {ok: false, reason: "not_a_miniapp"}
     bundleUrl = resolved.href
   } catch {
@@ -77,14 +66,8 @@ export async function resolveMiniappUrl(url: string, fetchImpl: typeof fetch = f
   }
   const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
   if (hostVersion && supportedMiniappSdkRange) {
-    const versions = checkManifestVersions(
-      {
-        sdkVersion: typeof manifest.sdkVersion === "string" ? manifest.sdkVersion : undefined,
-        minHostVersion: typeof manifest.minHostVersion === "string" ? manifest.minHostVersion : undefined,
-      },
-      {hostVersion, supportedSdkRange: supportedMiniappSdkRange},
-    )
+    const versions = checkManifestVersions(manifest, {hostVersion, supportedSdkRange: supportedMiniappSdkRange})
     if (!versions.ok) return {ok: false, reason: "incompatible_host"}
   }
-  return {ok: true, packageName, version, bundleUrl, bundleSha256: sha}
+  return {ok: true, packageName, version, bundleUrl, bundleSha256: manifest.bundle.sha256}
 }

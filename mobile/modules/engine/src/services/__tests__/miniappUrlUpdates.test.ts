@@ -49,6 +49,7 @@ function manifest(version: string, overrides: Record<string, unknown> = {}) {
   return {
     packageName: pkg,
     version,
+    name: "Captions",
     sdkVersion: "0.3.0",
     minHostVersion: "3.0.0",
     hardwareRequirements: [],
@@ -163,6 +164,8 @@ describe("the served miniapp.json", () => {
     ["an invalid version", {version: "one"}],
     ["no bundle", {bundle: undefined}],
     ["a bad hash", {bundle: {url: "x.zip", sha256: "abc"}}],
+    ["no name", {name: undefined}],
+    ["an unknown age rating", {ageRating: "21+"}],
   ])("is refused for %s", (_name, overrides) => {
     expect(() => parseHostedManifest(JSON.stringify(manifest("1.2.0", overrides)), pkg)).toThrow()
   })

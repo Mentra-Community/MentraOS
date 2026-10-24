@@ -71,6 +71,12 @@ export interface IslandConfigValues {
    * miniapps on the versions the build or deployment ships.
    */
   firstPartyMiniappsUrl?: string | null
+  /**
+   * Register every miniapp URL the engine installs in Core's registry, and stop an install the registry has
+   * archived. On by default, as on iOS and Android. Off, the engine installs any miniapp URL without registering
+   * it; the domain rule still applies. A host app that turns it off answers to the app stores' rules itself.
+   */
+  requireRegistry?: boolean
   /** Optional per-package configuration supplied by the host deployment. */
   miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
   /** Deployment-scoped key for the persisted Core refresh token. */
@@ -218,8 +224,12 @@ export function isInstalledMiniappAllowed(
   // or the Store the build assigns to it, keeps the visibility of the bundled
   // release it replaced.
   if (isTrustedSystemMiniappRelease(options?.config ?? {}, packageName, releaseIdentity)) return true
-  // A release a developer installed from the scanner's release QR.
+  // An explicit install: from the scanner's release QR, or from a miniapp URL. A package this build bundles follows
+  // the system policy above whatever URL it came from: a deployment that leaves it out doesn't get it from a URL.
   if (releaseIdentity?.source === "direct_download") return isMiniappDevelopmentAllowed()
+  if (releaseIdentity?.source === "url") {
+    return !options?.config?.bundledSystemMiniappPackages?.includes(packageName) && isMiniappDevelopmentAllowed()
+  }
   if (!version || releaseIdentity?.source !== "deployment_manifest") return false
 
   return policy.managed.some(

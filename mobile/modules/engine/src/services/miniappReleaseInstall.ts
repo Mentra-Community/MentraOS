@@ -321,7 +321,7 @@ export function classifyManagedInstallError(error: unknown): {kind: ManagedInsta
     return {kind: "incompatible_host", retryable: false}
   if (/bundle version mismatch|SHA-256 mismatch/i.test(message)) return {kind: "download_failed", retryable: true}
   if (
-    /package mismatch|miniapp\.json|UNZIP_FAILED|READ_MANIFEST_FAILED|invalid miniapp version|bundle (exceeds|must be)/i.test(
+    /package mismatch|miniapp\.json|UNZIP_FAILED|READ_MANIFEST_FAILED|invalid miniapp version|bundle (exceeds|must be|contains)/i.test(
       message,
     )
   )
