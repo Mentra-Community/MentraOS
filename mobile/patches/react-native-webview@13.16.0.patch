@@ -232,7 +232,7 @@ index 80c6803..5fa57ac 100644
  
      public void setInjectedJavaScriptObject(String obj) {
 diff --git a/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
-index 0287e1c..0228683 100644
+index 0287e1c..5c78d82 100644
 --- a/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
 +++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
 @@ -2,6 +2,7 @@ package com.reactnativecommunity.webview;
@@ -266,7 +266,7 @@ index 0287e1c..0228683 100644
  
  public class RNCWebViewClient extends WebViewClient {
      private static String TAG = "RNCWebViewClient";
-@@ -90,9 +106,40 @@ public class RNCWebViewClient extends WebViewClient {
+@@ -90,9 +106,47 @@ public class RNCWebViewClient extends WebViewClient {
        reactWebView.callInjectedJavaScriptBeforeContentLoaded();
      }
  
@@ -297,6 +297,13 @@ index 0287e1c..0228683 100644
 +            response.reasonPhrase, response.headers, response.body);
 +    }
 +
++    /**
++     * MentraOS patch: whether the navigation being decided is the main frame's,
++     * while the request overload knows it; reported to JS as `isTopFrame`, as
++     * iOS reports it.
++     */
++    protected @Nullable Boolean mNavigationIsForMainFrame = null;
++
      @Override
      public boolean shouldOverrideUrlLoading(WebView view, String url) {
          final RNCWebView rncWebView = (RNCWebView) view;
@@ -307,7 +314,46 @@ index 0287e1c..0228683 100644
          final boolean isJsDebugging = rncWebView.getReactApplicationContext().getJavaScriptContextHolder().get() == 0;
  
          if (!isJsDebugging && rncWebView.mMessagingJSModule != null) {
-@@ -327,4 +374,403 @@ public class RNCWebViewClient extends WebViewClient {
+@@ -102,6 +156,9 @@ public class RNCWebViewClient extends WebViewClient {
+ 
+             final WritableMap event = createWebViewEvent(view, url);
+             event.putDouble("lockIdentifier", lockIdentifier);
++            if (mNavigationIsForMainFrame != null) {
++                event.putBoolean("isTopFrame", mNavigationIsForMainFrame);
++            }
+             rncWebView.dispatchDirectShouldStartLoadWithRequest(event);
+ 
+             try {
+@@ -132,9 +189,13 @@ public class RNCWebViewClient extends WebViewClient {
+             progressChangedFilter.setWaitingForCommandLoadUrl(true);
+ 
+             int reactTag = RNCWebViewWrapper.getReactTagFromWebView(view);
++            final WritableMap event = createWebViewEvent(view, url);
++            if (mNavigationIsForMainFrame != null) {
++                event.putBoolean("isTopFrame", mNavigationIsForMainFrame);
++            }
+             UIManagerHelper.getEventDispatcherForReactTag((ReactContext) view.getContext(), reactTag).dispatchEvent(new TopShouldStartLoadWithRequestEvent(
+                     reactTag,
+-                    createWebViewEvent(view, url)));
++                    event));
+             return true;
+         }
+     }
+@@ -143,7 +204,12 @@ public class RNCWebViewClient extends WebViewClient {
+     @Override
+     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+         final String url = request.getUrl().toString();
+-        return this.shouldOverrideUrlLoading(view, url);
++        mNavigationIsForMainFrame = request.isForMainFrame();
++        try {
++            return this.shouldOverrideUrlLoading(view, url);
++        } finally {
++            mNavigationIsForMainFrame = null;
++        }
+     }
+ 
+     @Override
+@@ -327,4 +393,403 @@ public class RNCWebViewClient extends WebViewClient {
      public void setProgressChangedFilter(RNCWebView.ProgressChangedFilter filter) {
          progressChangedFilter = filter;
      }

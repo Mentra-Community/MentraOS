@@ -6,6 +6,8 @@
  */
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 
+import "./reactNativeTestMock"
+
 import {configure, resetForTests} from "../../runtime/bootstrap"
 import type {ClientApp} from "../../types/applet"
 import {installWithRuntimeReload} from "../../utils/storeInstallRuntime"
@@ -33,7 +35,14 @@ mock.module("../AppRegistry", () => ({
     getPublisherKeyFingerprint: () => null,
     getSelectedDevSnapshot: () => null,
     getMiniappEntryPaths: (packageName: string, version: string) =>
-      missingBundles.has(packageName) ? null : {background: `file:///bundle/${packageName}/${version}/bg.js`, ui: null},
+      missingBundles.has(packageName)
+        ? null
+        : {
+            background: `file:///bundle/${packageName}/${version}/bg.js`,
+            ui: null,
+            rootDir: `file:///bundle/${packageName}/${version}/`,
+            uiPath: null,
+          },
     getMiniappManifest: (packageName: string) => ({packageName, ...MANIFESTS[packageName], permissions: []}),
     getReleaseIdentity: () => ({source: "bundled_asset"}),
     getLatestDevSnapshotVersion: () => null,

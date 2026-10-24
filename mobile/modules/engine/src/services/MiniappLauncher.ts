@@ -32,6 +32,7 @@
  */
 
 import {File} from "expo-file-system"
+import {Platform} from "react-native"
 
 import {
   isDevMiniappAllowed,
@@ -48,6 +49,7 @@ import devServerBridge from "./DevServerBridge"
 import {fleetEvents} from "./fleet/fleetEvents"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSRouter} from "./MentraJSRouter"
+import {miniappOrigin, miniappOriginUrl, type MiniappOriginPlatform} from "./miniappOrigin"
 import {isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
 
 /** The miniapp's server no longer admits this account (Fleet revocation): it cannot launch until access returns. */
@@ -88,8 +90,14 @@ function availabilityMode(options?: RuntimeLaunchOptions): MiniappAvailabilityMo
 /** Everything the launcher resolved for a package — bg source + UI entry. */
 export interface ResolvedBundle {
   bgSource: string
+  /** Where the screen loads from. See {@link LaunchResult.uiUri}. */
   uiUri: string | null
-  uiBaseDir: string | null
+  /** The origin `uiUri` belongs to. See {@link LaunchResult.uiOrigin}. */
+  uiOrigin: string | null
+  /** The bundle root the package's origin serves. See {@link LaunchResult.uiRootDir}. */
+  uiRootDir: string | null
+  /** A development build: a live development server or a development snapshot. */
+  devBuild: boolean
   declaredPermissions: string[]
   installedManifest?: InstalledMiniappManifest
   /** Build-owned SYSTEM trust derived from install provenance, never the manifest. */
@@ -101,8 +109,48 @@ export interface ResolvedBundle {
 
 /** What the host needs back to render the UI layer. */
 export interface LaunchResult {
+  /**
+   * Where the screen loads from. An installed bundle (a release or a
+   * development snapshot) loads from its package's own origin:
+   * `miniapp://<packageName>/<ui entry>` on iOS and
+   * `https://<host>.miniapp.invalid/<ui entry>` on Android (see
+   * {@link miniappOriginUrl}). A live development build loads from its
+   * development server. Null when there is no screen to load.
+   */
   uiUri: string | null
-  uiBaseDir: string | null
+  /** The origin `uiUri` belongs to, for the WebView's `originWhitelist`. */
+  uiOrigin: string | null
+  /**
+   * The root of the active version's bundle, which the package's origin
+   * serves (the WebView's `miniappOrigin.rootDir`). Null when the screen loads
+   * from a development server.
+   */
+  uiRootDir: string | null
+  /** A development build: a live development server or a development snapshot. */
+  devBuild: boolean
+}
+
+const NO_UI: LaunchResult = {uiUri: null, uiOrigin: null, uiRootDir: null, devBuild: false}
+
+function launchResultOf(resolved: ResolvedBundle | null | undefined): LaunchResult {
+  if (!resolved) return NO_UI
+  return {
+    uiUri: resolved.uiUri,
+    uiOrigin: resolved.uiOrigin,
+    uiRootDir: resolved.uiRootDir,
+    devBuild: resolved.devBuild,
+  }
+}
+
+/** The platform whose origin shape the Mentra App's WebView serves. */
+function originPlatform(): MiniappOriginPlatform {
+  return Platform.OS === "android" ? "android" : "ios"
+}
+
+/** `scheme://host[:port]` of an http(s) URL, lowercased as a page's `location.origin` reads it. */
+function serverOrigin(url: string): string | null {
+  const match = /^(https?:\/\/[^/?#]+)/i.exec(url)
+  return match ? match[1].toLowerCase() : null
 }
 
 class MiniappLauncher {
@@ -197,7 +245,8 @@ class MiniappLauncher {
   /**
    * Resolve the background JS source + UI entry + declared permissions for a
    * package. Handles both dev (HTTP off the running dev server) and released
-   * (file:// from the installed snapshot). Reads disk/network/storage; does
+   * (the installed snapshot on disk, whose screen loads from the package's own
+   * origin). Reads disk/network/storage; does
    * NOT spawn. Returns null when the bundle can't be resolved (dev server
    * unreachable with no on-disk snapshot, missing entry, no installed version).
    */
@@ -235,7 +284,7 @@ class MiniappLauncher {
       return null
     }
 
-    // --- Released: resolve from the installed file:// snapshot. ---
+    // --- Released: resolve from the installed snapshot on disk. ---
     // A view can retain its old version prop across an install or rollback.
     // Resolve the committed pointer here, including after an installation wait.
     const version = await appRegistry.getActiveVersion(packageName)
@@ -289,7 +338,9 @@ class MiniappLauncher {
     return {
       bgSource,
       uiUri,
-      uiBaseDir: uiUri ? uiUri.replace(/\/[^/]+$/, "/") : null,
+      uiOrigin: uiUri ? serverOrigin(uiUri) : null,
+      uiRootDir: null,
+      devBuild: true,
       declaredPermissions,
       installedManifest,
       // A dev server is never host-trusted, whatever package name it claims.
@@ -347,14 +398,25 @@ class MiniappLauncher {
       return null
     }
 
+    // The screen loads from the package's own origin, which serves only this
+    // version's bundle and never grants file access. A package name that can't
+    // have an origin gets no screen rather than a file:// page.
+    const platform = originPlatform()
+    const uiUri = entryPaths.uiPath ? miniappOriginUrl(packageName, entryPaths.uiPath, platform) : null
+    if (entryPaths.uiPath && !uiUri) {
+      console.warn(`MiniappLauncher: ${packageName} can't have an origin of its own, so its screen doesn't load`)
+    }
+
     return {
       bgSource,
-      uiUri: entryPaths.ui ?? null,
-      uiBaseDir: entryPaths.ui ? entryPaths.ui.replace(/\/[^/]+$/, "/") : null,
+      uiUri,
+      uiOrigin: uiUri ? miniappOrigin(packageName, platform) : null,
+      uiRootDir: uiUri ? entryPaths.rootDir : null,
+      devBuild: version.startsWith("dev-"),
       declaredPermissions,
       installedManifest,
       hostTrustedSystem: isHostTrustedSystemMiniapp(packageName, appRegistry.getReleaseIdentity(packageName, version)),
-      // Snapshot fallback is file:// — do not wire the sidecar; the laptop is gone.
+      // A snapshot on disk — do not wire the sidecar; the laptop is gone.
       devUrl: null,
       devPort: null,
     }
@@ -398,7 +460,7 @@ class MiniappLauncher {
       const promoted = projectRunning && this.promote(packageName)
       const existing = await this.resolveBundle(packageName, hints, runtimeOptions).catch(() => null)
       if (promoted) this.reportLaunch(packageName, "started", runtimeOptions, existing?.installedManifest)
-      return {uiUri: existing?.uiUri ?? null, uiBaseDir: existing?.uiBaseDir ?? null}
+      return launchResultOf(existing)
     }
 
     // Coalesce concurrent launches of the same package onto one promise.
@@ -516,7 +578,7 @@ class MiniappLauncher {
       if (projectRunning) this.reportLaunch(packageName, "started", runtimeOptions, resolved.installedManifest)
     }
 
-    return {uiUri: resolved.uiUri, uiBaseDir: resolved.uiBaseDir}
+    return launchResultOf(resolved)
   }
 
   /**

@@ -1246,7 +1246,11 @@ class AppRegistry {
 
   /**
    * Resolve the two-layer entry paths for an installed miniapp version.
-   * Returns absolute file:// URIs for `background` and (when present) `ui`.
+   * Returns absolute file:// URIs for `background` and (when present) `ui`,
+   * the bundle's root directory, and the UI entry's path relative to that
+   * root. The screen loads from the package's own origin, which serves the
+   * root (`miniappOriginUrl(packageName, uiPath, platform)`), so hosts use
+   * `rootDir` and `uiPath` rather than the `ui` file.
    *
    * Legacy single-layer bundles (no `entry` object in manifest) fall back
    * to `index.html` discovery so the WebView host keeps working unchanged.
@@ -1258,26 +1262,23 @@ class AppRegistry {
   public getMiniappEntryPaths(
     packageName: string,
     version: string,
-  ): {background: string | null; ui: string | null} | null {
+  ): {background: string | null; ui: string | null; rootDir: string; uiPath: string | null} | null {
     if (this.isMiniappAccessRevoked(packageName)) return null
     const manifest = this.getMiniappManifest(packageName, version) as {
       entry?: {background?: string; ui?: string}
     } | null
     const bundleDir = this.getBundleDir(packageName, version)
-    const resolve = (rel: string): string | null => {
+    const resolve = (rel: string): {uri: string; path: string} | null => {
       const trimmed = rel.replace(/^\.?\/+/, "")
       const file = new File(bundleDir, trimmed)
       // The manifest is the miniapp's: an entry outside its own bundle (`../`) is not one.
-      return isFileUriInside(bundleDir, file.uri) && file.exists ? file.uri : null
+      return isFileUriInside(bundleDir, file.uri) && file.exists ? {uri: file.uri, path: trimmed} : null
     }
     if (manifest?.entry) {
-      console.log("manifest.entry", manifest.entry)
       const bg = manifest.entry.background ? resolve(manifest.entry.background) : null
-      console.log("bg", bg)
       const ui = manifest.entry.ui ? resolve(manifest.entry.ui) : null
-      console.log("ui", ui)
       if (bg || ui) {
-        return {background: bg, ui: ui}
+        return {background: bg?.uri ?? null, ui: ui?.uri ?? null, rootDir: bundleDir, uiPath: ui?.path ?? null}
       }
     }
     // Legacy single-bundle fallback — `index.html` at the bundle root.
@@ -1285,6 +1286,8 @@ class AppRegistry {
     return {
       background: null,
       ui: legacy.exists ? legacy.uri : null,
+      rootDir: bundleDir,
+      uiPath: legacy.exists ? "index.html" : null,
     }
   }
 

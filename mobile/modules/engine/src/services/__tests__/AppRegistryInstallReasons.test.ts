@@ -65,11 +65,23 @@ class FakeDirectory {
     return this.path
   }
 }
+/** File URIs that exist; every other file does not. */
+const existingFiles = new Set<string>()
+class FakeFile {
+  readonly uri: string
+  constructor(...parts: unknown[]) {
+    this.uri = parts
+      .map(String)
+      .join("/")
+      .replace(/([^:/])\/{2,}/g, "$1/")
+  }
+  get exists(): boolean {
+    return existingFiles.has(this.uri)
+  }
+}
 mock.module("expo-file-system", () => ({
   Directory: FakeDirectory,
-  File: class {
-    exists = false
-  },
+  File: FakeFile,
   Paths: {cache: {list: () => []}, document: "file:///test-documents"},
 }))
 mock.module("react-native-zip-archive", () => ({unzip: mock()}))
@@ -103,6 +115,7 @@ function finalize(version: string, identity: MiniappReleaseIdentity, reason?: "a
 beforeEach(() => {
   values.clear()
   installationValues.clear()
+  existingFiles.clear()
   failedWrite = undefined
   devAllowed = true
   installed = []
@@ -399,6 +412,39 @@ describe("development snapshot selection", () => {
     expect(registry.hasDevelopmentSelection(packageName)).toBe(true)
     expect(values.has(`${packageName}_active_version`)).toBe(false)
     expect(await registry.getActiveVersion(packageName)).toBe("dev-1000")
+  })
+})
+
+describe("entry paths", () => {
+  const bundleDir = "file:///test-documents/lmas/com.acme.notes/1.0.0/"
+
+  test("hand back the bundle root and the UI entry's path within it, for the package's origin", () => {
+    spyOn(registry, "getMiniappManifest").mockImplementation(() => ({
+      entry: {background: "background/index.js", ui: "./ui/index.html"},
+    }))
+    spyOn(registry, "getBundleDir").mockImplementation(() => bundleDir)
+    existingFiles.add(`${bundleDir}background/index.js`)
+    existingFiles.add(`${bundleDir}ui/index.html`)
+    expect(registry.getMiniappEntryPaths(packageName, "1.0.0")).toEqual({
+      background: `${bundleDir}background/index.js`,
+      ui: `${bundleDir}ui/index.html`,
+      rootDir: bundleDir,
+      uiPath: "ui/index.html",
+    })
+  })
+
+  test("a missing UI entry has no path", () => {
+    spyOn(registry, "getMiniappManifest").mockImplementation(() => ({
+      entry: {background: "background/index.js", ui: "ui/index.html"},
+    }))
+    spyOn(registry, "getBundleDir").mockImplementation(() => bundleDir)
+    existingFiles.add(`${bundleDir}background/index.js`)
+    expect(registry.getMiniappEntryPaths(packageName, "1.0.0")).toEqual({
+      background: `${bundleDir}background/index.js`,
+      ui: null,
+      rootDir: bundleDir,
+      uiPath: null,
+    })
   })
 })
 

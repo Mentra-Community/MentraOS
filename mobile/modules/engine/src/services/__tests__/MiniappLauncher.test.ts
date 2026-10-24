@@ -1,6 +1,8 @@
 /// <reference types="bun-types" />
 
-import {afterAll, beforeAll, beforeEach, describe, expect, test, mock} from "bun:test"
+import {afterAll, beforeAll, beforeEach, describe, expect, test, mock, spyOn} from "bun:test"
+
+import {reactNative} from "./reactNativeTestMock"
 
 import {configure, resetForTests} from "../../runtime/bootstrap"
 import {installWithRuntimeReload} from "../../utils/storeInstallRuntime"
@@ -18,6 +20,7 @@ let selectedSnapshot: string | null = null
 let storedDevUrl: string | null = null
 let publisherFingerprint: string | null = null
 let snapshotVersions: string[] = []
+let uiPath = "ui/index.html"
 const revoked = new Set<string>()
 
 mock.module("../AppRegistry", () => ({
@@ -28,7 +31,12 @@ mock.module("../AppRegistry", () => ({
     getSelectedDevSnapshot: () => selectedSnapshot,
     getMiniappEntryPaths: (_package: string, version: string) => {
       snapshotVersions.push(version)
-      return {background: `file:///bundle/${version}/bg.js`, ui: `file:///bundle/${version}/ui.html`}
+      return {
+        background: `file:///bundle/${version}/bg.js`,
+        ui: `file:///bundle/${version}/${uiPath}`,
+        rootDir: `file:///bundle/${version}/`,
+        uiPath,
+      }
     },
     getMiniappManifest: () => ({permissions: [{type: "MICROPHONE"}], hardwareRequirements: []}),
     getReleaseIdentity: () => ({source: releaseSource, storePackageName: releaseStorePackageName}),
@@ -149,6 +157,8 @@ describe("MiniappLauncher", () => {
     storedDevUrl = null
     publisherFingerprint = null
     snapshotVersions = []
+    uiPath = "ui/index.html"
+    ;(reactNative.Platform as {OS: string}).OS = "android"
     waitForConnectCalls = []
     revoked.clear()
     mockRouter = buildMockRouter()
@@ -261,7 +271,7 @@ describe("MiniappLauncher", () => {
     expect(launched).toBe(true)
     expect(mockRouter.spawnCalls).toHaveLength(1)
     expect(mockRouter.spawnCalls[0].src).toBe(fail ? "BG SOURCE" : "UPDATED SOURCE")
-    expect(result.uiUri).toBe(`file:///bundle/${fail ? "1.0.0" : "2.0.0"}/ui.html`)
+    expect(result.uiRootDir).toBe(`file:///bundle/${fail ? "1.0.0" : "2.0.0"}/`)
     expect(mockRouter.unregisterCalls).toEqual([])
   })
 
@@ -296,6 +306,11 @@ describe("MiniappLauncher", () => {
       expect(resolved?.devUrl).toBe("http://localhost:8081")
       expect(resolved?.bgSource).toBe("DEV SOURCE")
       expect(resolved?.hostTrustedSystem).toBe(false)
+      // A live development build keeps loading its screen from its server.
+      expect(resolved?.uiUri).toBe("http://localhost:8081/dist/ui.html")
+      expect(resolved?.uiOrigin).toBe("http://localhost:8081")
+      expect(resolved?.uiRootDir).toBeNull()
+      expect(resolved?.devBuild).toBe(true)
     } finally {
       globalThis.fetch = originalFetch
     }
@@ -351,10 +366,68 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls[0].packageName).toBe("com.x")
     expect(mockRouter.spawnCalls[0].src).toBe("BG SOURCE")
     expect(mockRouter.spawnCalls[0].permissions).toEqual(["MICROPHONE"])
-    // Hands the resolved UI entry back to the host (for the WebView mount).
-    expect(result.uiUri).toBe("file:///bundle/1.0.0/ui.html")
-    expect(result.uiBaseDir).toBe("file:///bundle/1.0.0/")
+    // Hands the resolved UI entry back to the host (for the WebView mount): the
+    // package's own origin, serving the active version's bundle root.
+    expect(result).toEqual({
+      uiUri: "https://com.x.miniapp.invalid/ui/index.html",
+      uiOrigin: "https://com.x.miniapp.invalid",
+      uiRootDir: "file:///bundle/1.0.0/",
+      devBuild: false,
+    })
     expect(miniappLauncher.isRunning("com.x")).toBe(true)
+  })
+
+  test("loads an installed screen from the package's own origin on iOS", async () => {
+    ;(reactNative.Platform as {OS: string}).OS = "ios"
+    const result = await miniappLauncher.ensureRunning("com.mentra.notes")
+    expect(result).toEqual({
+      uiUri: "miniapp://com.mentra.notes/ui/index.html",
+      uiOrigin: "miniapp://com.mentra.notes",
+      uiRootDir: "file:///bundle/1.0.0/",
+      devBuild: false,
+    })
+  })
+
+  test("writes an underscore as a hyphen in the Android host and encodes the entry path", async () => {
+    uiPath = "ui/main page.html"
+    const resolved = await miniappLauncher.resolveBundle("com.example_corp.my_app")
+    expect(resolved?.uiUri).toBe("https://com.example-corp.my-app.miniapp.invalid/ui/main%20page.html")
+    expect(resolved?.uiOrigin).toBe("https://com.example-corp.my-app.miniapp.invalid")
+  })
+
+  test.each(["com.Example.notes", "com.example.my-app"])(
+    "gives %s no screen, never a file URL, when its name can't have an origin",
+    async (packageName) => {
+      const warn = spyOn(console, "warn").mockImplementation(() => {})
+      try {
+        const result = await miniappLauncher.ensureRunning(packageName)
+        expect(result).toEqual({uiUri: null, uiOrigin: null, uiRootDir: null, devBuild: false})
+        // The background still runs; only the screen is refused.
+        expect(mockRouter.spawnCalls.map((call) => call.packageName)).toEqual([packageName])
+      } finally {
+        warn.mockRestore()
+      }
+    },
+  )
+
+  test("gives no screen for a UI entry that leaves the bundle", async () => {
+    uiPath = "../other/index.html"
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const resolved = await miniappLauncher.resolveBundle("com.x")
+      expect(resolved?.uiUri).toBeNull()
+      expect(resolved?.uiRootDir).toBeNull()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("a development snapshot loads from the package's origin and is marked a development build", async () => {
+    selectedSnapshot = "dev-1234-a"
+    const resolved = await miniappLauncher.resolveBundle("com.x")
+    expect(resolved?.uiUri).toBe("https://com.x.miniapp.invalid/ui/index.html")
+    expect(resolved?.uiRootDir).toBe("file:///bundle/dev-1234-a/")
+    expect(resolved?.devBuild).toBe(true)
   })
 
   test("ensureRunning is idempotent — no second spawn for a live context", async () => {
@@ -368,8 +441,8 @@ describe("MiniappLauncher", () => {
     // spawn resolves — they must share one spawn, not race into a double-spawn.
     const [a, b] = await Promise.all([miniappLauncher.ensureRunning("com.x"), miniappLauncher.ensureRunning("com.x")])
     expect(mockRouter.spawnCalls.length).toBe(1)
-    expect(a.uiUri).toBe("file:///bundle/1.0.0/ui.html")
-    expect(b.uiUri).toBe("file:///bundle/1.0.0/ui.html")
+    expect(a.uiUri).toBe("https://com.x.miniapp.invalid/ui/index.html")
+    expect(b.uiUri).toBe("https://com.x.miniapp.invalid/ui/index.html")
   })
 
   test("runs the installed bundle instead of live dev code for a package with a publisher signature", async () => {
@@ -416,7 +489,7 @@ describe("MiniappLauncher", () => {
     if (fail) expect(result.message).toBe("install failed")
     const launched = await launch
     expect(mockRouter.spawnCalls.map((call) => call.src)).toEqual([fail ? "BG SOURCE" : "UPDATED SOURCE"])
-    expect(launched.uiUri).toBe(`file:///bundle/${fail ? "1.0.0" : "2.0.0"}/ui.html`)
+    expect(launched.uiRootDir).toBe(`file:///bundle/${fail ? "1.0.0" : "2.0.0"}/`)
   })
 
   test("explicit installs wait for an already-starting context and restart the new bundle", async () => {
@@ -441,7 +514,7 @@ describe("MiniappLauncher", () => {
     activeVersion = "2.0.0"
     const result = await miniappLauncher.ensureRunning("com.x", {version: "1.0.0"})
     expect(mockRouter.spawnCalls[0].src).toBe("UPDATED SOURCE")
-    expect(result.uiUri).toBe("file:///bundle/2.0.0/ui.html")
+    expect(result.uiRootDir).toBe("file:///bundle/2.0.0/")
   })
 
   test("ensureConnected spawns then waits for the CONNECT handshake", async () => {
@@ -465,7 +538,7 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls.length).toBe(1)
     activeVersion = ""
     const result = await miniappLauncher.ensureRunning("com.x")
-    expect(result).toEqual({uiUri: null, uiBaseDir: null})
+    expect(result).toEqual({uiUri: null, uiOrigin: null, uiRootDir: null, devBuild: false})
     expect(mockRouter.spawnCalls.length).toBe(1)
     expect(miniappLauncher.isRunning("com.x")).toBe(true)
   })

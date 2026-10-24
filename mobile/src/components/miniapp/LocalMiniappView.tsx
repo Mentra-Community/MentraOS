@@ -1,6 +1,6 @@
 import {miniappHistoryBridge} from "./historyBridge"
 import {useCallback, useEffect, useRef, useState} from "react"
-import {AppState, findNodeHandle, Platform, View, type AppStateStatus} from "react-native"
+import {AppState, findNodeHandle, Linking, Platform, View, type AppStateStatus} from "react-native"
 import {WebView, type WebViewMessageEvent, type WebViewProps} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
@@ -23,6 +23,20 @@ import CapsuleMenu from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {getStreamPreviewCoordinator, STREAM_PREVIEW_BIND_TIMEOUT_MS} from "@/services/streamPreview"
+import {
+  applyWebStorageChange,
+  beginWebStorageMove,
+  completeWebStorageMove,
+  failWebStorageMove,
+  keepsWebStorage,
+  keptWebStorage,
+  newWebStorageNonce,
+  parseWebStorageChange,
+  webStorageKeeperScript,
+  type WebStorageKeeper,
+} from "@/services/miniapps/webStorageMigration"
+import {decideMiniappNavigation, miniappOriginWhitelist} from "./miniappNavigation"
+import {useOldWebStorageReader} from "./OldWebStorageReader"
 import {getWebViewLoadErrorDiagnostics} from "./webViewLoadErrorDiagnostics"
 
 /**
@@ -98,8 +112,24 @@ function LocalMiniappView({
   const spaDepth = useRef(0)
   const nativeCanGoBack = useRef(false)
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
+  // The screen's URL, the origin it belongs to, and (for an installed bundle)
+  // the bundle root that origin serves. See MiniappLauncher's LaunchResult.
   const [uiUri, setUiUri] = useState<string | null>(null)
-  const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
+  const [uiOrigin, setUiOrigin] = useState<string | null>(null)
+  const [uiRootDir, setUiRootDir] = useState<string | null>(null)
+  // Moving a first-party miniapp's web storage to its own origin.
+  const {
+    reader: oldWebStorageReader,
+    read: readOldWebStorage,
+    cancel: cancelOldWebStorageRead,
+  } = useOldWebStorageReader()
+  // The host's copy of a first-party miniapp's web storage, for this screen.
+  const [storageKeeper, setStorageKeeperState] = useState<WebStorageKeeper | null>(null)
+  const storageKeeperRef = useRef<WebStorageKeeper | null>(null)
+  const setStorageKeeper = useCallback((next: WebStorageKeeper | null) => {
+    storageKeeperRef.current = next
+    setStorageKeeperState(next)
+  }, [])
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
   // Stream preview. For a CAMERA miniapp on Android the WebView is first rendered without its real
   // source: the preview's WebMessageListener only appears in documents that start loading after
@@ -320,6 +350,8 @@ function LocalMiniappView({
     resetLoadState()
     setUiReleased(false)
     previewBoundInstanceRef.current = null
+    // The keeper stays with the WebView that is still showing until this launch
+    // replaces it, so that page's reports aren't dropped meanwhile.
 
     const ac = new AbortController()
     const {signal} = ac
@@ -365,17 +397,41 @@ function LocalMiniappView({
         })
         return
       }
-      const previewEligible = !!result.uiUri && localMiniappRuntime.hasManifestPermission(packageName, "CAMERA")
+      const screenUri = result.uiUri && result.uiOrigin ? result.uiUri : null
+
+      // A first-party miniapp's web storage: the first open on its own origin
+      // moves its keys from the old shared file:// store (the hidden reader
+      // runs before the miniapp's page loads), and every load restores what the
+      // host keeps and reports the page's changes to it.
+      let keeper: WebStorageKeeper | null = null
+      if (screenUri && result.uiOrigin && result.uiRootDir && !result.devBuild && keepsWebStorage(packageName)) {
+        const move = beginWebStorageMove(packageName, {devBuild: result.devBuild})
+        if (move) {
+          const read = await readOldWebStorage(move)
+          checkpoint()
+          if ("error" in read) failWebStorageMove(move, read.error)
+          else completeWebStorageMove(move, read.entries)
+        }
+        const current = storageKeeperRef.current
+        keeper =
+          current && current.packageName === packageName && current.origin === result.uiOrigin
+            ? current
+            : {packageName, origin: result.uiOrigin, nonce: newWebStorageNonce()}
+      }
+      setStorageKeeper(keeper)
+
+      const previewEligible = !!screenUri && localMiniappRuntime.hasManifestPermission(packageName, "CAMERA")
       previewEligibleRef.current = previewEligible
       // Batched with setUiUri so the WebView's first render already has no source.
       setHoldSource(previewEligible && Platform.OS === "android")
       // Set unconditionally: when the launcher resolves no UI entry (e.g. a
       // re-foreground couldn't re-resolve a non-dev package), clearing prevents
       // the WebView from continuing to show a stale / previous URL.
-      setUiUri(result.uiUri)
-      setUiBaseDir(result.uiBaseDir)
+      setUiUri(screenUri)
+      setUiOrigin(screenUri ? result.uiOrigin : null)
+      setUiRootDir(screenUri ? result.uiRootDir : null)
       // No WebView means no ready event or timeout can expose escape controls.
-      if (!result.uiUri) fail(translate("common:miniappUiUnavailable"))
+      if (!screenUri) fail(translate("common:miniappUiUnavailable"))
     }
 
     launch().catch((e: Error) => {
@@ -399,11 +455,23 @@ function LocalMiniappView({
 
     return () => {
       ac.abort()
+      cancelOldWebStorageRead()
       clearReadyTimer()
       getMentraJS()?.uiRouter.unbindWebView(packageName)
       getStreamPreviewCoordinator().viewDestroyed(packageName, "miniapp-unmounted")
     }
-  }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer, fail])
+  }, [
+    packageName,
+    version,
+    devUrl,
+    devPort,
+    resetLoadState,
+    clearReadyTimer,
+    fail,
+    readOldWebStorage,
+    cancelOldWebStorageRead,
+    setStorageKeeper,
+  ])
 
   useEffect(() => {
     if (!packageName) return
@@ -504,6 +572,13 @@ function LocalMiniappView({
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
       if (!packageName) return
+      // The page changing a first-party miniapp's kept web storage.
+      const keeper = storageKeeperRef.current
+      const change = keeper ? parseWebStorageChange(event.nativeEvent.data, keeper) : null
+      if (keeper && change) {
+        applyWebStorageChange(keeper.packageName, change)
+        return
+      }
       try {
         const message = JSON.parse(event.nativeEvent.data)
         if (message.type === "mentra_history" && Number.isInteger(message.depth) && message.depth >= 0) {
@@ -536,6 +611,26 @@ function LocalMiniappView({
       mj?.uiRouter.routeFromWebView(packageName, event.nativeEvent.data)
     },
     [packageName, markConnected],
+  )
+
+  // The miniapp's own document stays on its origin; frames may show web content;
+  // a top-level link elsewhere opens in the system browser.
+  const handleShouldStartLoad = useCallback<NonNullable<WebViewProps["onShouldStartLoadWithRequest"]>>(
+    (request) => {
+      if (!uiOrigin) return false
+      const decision = decideMiniappNavigation(request, uiOrigin)
+      if (decision === "open_externally") {
+        Linking.openURL(request.url).catch((e) =>
+          console.warn(`LocalMiniappView: couldn't open a link from ${packageName}`, e),
+        )
+      } else if (decision === "refuse") {
+        console.warn(
+          `LocalMiniappView: ${packageName} navigation refused (${request.isTopFrame === false ? "frame" : "top"})`,
+        )
+      }
+      return decision === "load"
+    },
+    [packageName, uiOrigin],
   )
 
   const handleNavStateChange = useCallback(({canGoBack}: {canGoBack: boolean}) => {
@@ -647,7 +742,13 @@ function LocalMiniappView({
     colorScheme,
   })
   const uiShim = buildMentraUiShim({packageName})
-  const injectedJS = `${globalsScript}\n${uiShim}\n${Platform.OS === "android" ? miniappHistoryBridge : ""}`
+  const injectedJS = [
+    // First, so the kept values are in place before anything else runs.
+    storageKeeper ? webStorageKeeperScript(storageKeeper, keptWebStorage(storageKeeper.packageName)) : "",
+    globalsScript,
+    uiShim,
+    Platform.OS === "android" ? miniappHistoryBridge : "",
+  ].join("\n")
 
   // While the WebView is mounted but the miniapp hasn't sent `ready` yet,
   // show retry progress on the splash. Once connected, the splash hides;
@@ -662,14 +763,19 @@ function LocalMiniappView({
     <View ref={viewShotRef} collapsable={false} className="flex-1" style={{backgroundColor: theme.colors.background}}>
       {/* The splash uncovers the page and capsule together in the same fade. */}
       <View className="flex-1" style={{zIndex: 0}} pointerEvents={contentRevealed ? "auto" : "none"}>
-        {uiUri ? (
+        {oldWebStorageReader}
+        {uiUri && uiOrigin ? (
           <WebView
+            // A new bundle root (an update) is a new document on the same URL.
+            key={uiRootDir ?? uiUri}
             ref={handleRef}
             source={holdSource ? undefined : {uri: uiUri}}
-            originWhitelist={["*"]}
-            allowFileAccess={true}
-            allowFileAccessFromFileURLs={true}
-            allowingReadAccessToURL={uiBaseDir ?? undefined}
+            // An installed bundle loads from its package's own origin, which
+            // serves only that bundle and never has file access. A live
+            // development build loads from its server.
+            miniappOrigin={uiRootDir ? {packageName, rootDir: uiRootDir} : undefined}
+            originWhitelist={miniappOriginWhitelist(uiOrigin)}
+            onShouldStartLoadWithRequest={handleShouldStartLoad}
             javaScriptEnabled={true}
             domStorageEnabled={true}
             // Miniapps such as Livestreamer render muted autoplay previews using
