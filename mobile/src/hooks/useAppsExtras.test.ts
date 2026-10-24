@@ -3,7 +3,7 @@ import {act, renderHook} from "@testing-library/react-native"
 import {Platform} from "react-native"
 
 import {useAvailableApps} from "./useAppsExtras"
-import {linkLingoPackageName} from "@/constants/miniapps"
+import {linkLingoPackageName, miniappDeveloperPackageName} from "@/constants/miniapps"
 
 describe("available miniapps for home and All Apps", () => {
   const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
@@ -77,6 +77,27 @@ describe("available miniapps for home and All Apps", () => {
       await Engine.engine.settings.set("show_mentra_call_ios", false)
     })
     expect(packages()).toEqual(["com.mentra.call", "com.mentra.notes"])
+  })
+
+  it("keeps Miniapp Developer out of Home and All Apps while its setting is off", async () => {
+    jest.spyOn(Engine, "useApps").mockReturnValue([
+      {packageName: miniappDeveloperPackageName, hidden: true},
+      {packageName: "com.mentra.notes", hidden: false},
+    ] as Engine.ClientApp[])
+    await Engine.engine.settings.set(Engine.SETTINGS.miniapp_dev_mode.key, false)
+    const {result} = renderHook(useAvailableApps)
+    const packages = () => result.current.map((app) => app.packageName)
+    try {
+      expect(packages()).toEqual(["com.mentra.notes"])
+      await act(async () => {
+        await Engine.engine.settings.set(Engine.SETTINGS.miniapp_dev_mode.key, true)
+      })
+      expect(packages()).toEqual([miniappDeveloperPackageName, "com.mentra.notes"])
+    } finally {
+      await act(async () => {
+        await Engine.engine.settings.set(Engine.SETTINGS.miniapp_dev_mode.key, false)
+      })
+    }
   })
 
   it("keeps Android unchanged", () => {
