@@ -48,6 +48,19 @@ export {
   type ResolvedBundle,
 } from "./services/MiniappLauncher"
 export {miniappOrigin, miniappOriginHost, miniappOriginUrl, type MiniappOriginPlatform} from "./services/miniappOrigin"
+export {resolveMiniappDataPartition} from "./services/miniappDataPartition"
+export {
+  applyMiniappWebStorageOps,
+  fillMiniappWebStorage,
+  markMiniappWebStorageLoaded,
+  markMiniappWebStorageOriginUnknown,
+  MINIAPP_WEB_STORAGE_CAP_BYTES,
+  miniappWebStorageEntries,
+  openMiniappWebStorage,
+  removedMiniappWebStorageKeys,
+  type MiniappWebStorageOp,
+  type MiniappWebStorageSession,
+} from "./services/miniappWebStorage"
 export {installMiniappFromJsonUrl} from "./services/manualMiniappInstall"
 export {installMiniapp, InstallMiniappError, isLocalNetworkMiniappUrl} from "./services/installMiniapp"
 export {

@@ -859,6 +859,9 @@ const mockIslandEntries = () => {
     ...jest.requireActual("./modules/engine/src/services/fleet/fleetManagementState"),
     // Credential vaults (real), over the in-memory expo-secure-store and MMKV mocks above.
     ...jest.requireActual("./modules/engine/src/utils/credentials/platform"),
+    // The host's copy of miniapp screens' localStorage (real, over the MMKV mock); one data partition.
+    ...jest.requireActual("./modules/engine/src/services/miniappWebStorage"),
+    resolveMiniappDataPartition: jest.fn(() => ({id: "test-partition", personalUserId: "test-user"})),
     __esModule: true,
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
     // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates)
@@ -945,6 +948,7 @@ const mockIslandEntries = () => {
       stopManagedStream: jest.fn(() => Promise.resolve()),
       isConnected: jest.fn(() => false),
       onConnectionChange: jest.fn(() => () => {}),
+      resolveMentraUserId: jest.fn(() => Promise.resolve("test-user")),
     },
     // Bluetooth SDK passthrough — the same mock singleton @mentra/bluetooth-sdk
     // is mocked with, so emitBluetoothSdkEvent/resetBluetoothSdkMock still drive

@@ -1,5 +1,5 @@
 import {miniappHistoryBridge} from "./historyBridge"
-import {useCallback, useEffect, useRef, useState} from "react"
+import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {AppState, findNodeHandle, Linking, Platform, View, type AppStateStatus} from "react-native"
 import {WebView, type WebViewMessageEvent, type WebViewProps} from "react-native-webview"
 
@@ -25,15 +25,10 @@ import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {getStreamPreviewCoordinator, STREAM_PREVIEW_BIND_TIMEOUT_MS} from "@/services/streamPreview"
 import {
-  applyWebStorageChange,
-  beginWebStorageMove,
-  completeWebStorageMove,
-  failWebStorageMove,
-  keepsWebStorage,
-  keptWebStorage,
-  newWebStorageNonce,
-  parseWebStorageChange,
-  webStorageKeeperScript,
+  applyWebStorageReport,
+  openWebStorageKeeper,
+  parseWebStorageReport,
+  webStorageKeeperAfterLoad,
   type WebStorageKeeper,
 } from "@/services/miniapps/webStorageMigration"
 import {decideMiniappNavigation, miniappOriginWhitelist} from "./miniappNavigation"
@@ -126,12 +121,12 @@ function LocalMiniappView({
     read: readOldWebStorage,
     cancel: cancelOldWebStorageRead,
   } = useOldWebStorageReader()
-  // The host's copy of a first-party miniapp's web storage, for this screen.
-  const [storageKeeper, setStorageKeeperState] = useState<WebStorageKeeper | null>(null)
+  // The host's copy of the screen's localStorage, and the keeper script this launch's WebView gets.
+  const [storageKeeperScript, setStorageKeeperScript] = useState("")
   const storageKeeperRef = useRef<WebStorageKeeper | null>(null)
-  const setStorageKeeper = useCallback((next: WebStorageKeeper | null) => {
-    storageKeeperRef.current = next
-    setStorageKeeperState(next)
+  const setStorageKeeper = useCallback((next: {keeper: WebStorageKeeper | null; script: string} | null) => {
+    storageKeeperRef.current = next?.keeper ?? null
+    setStorageKeeperScript(next?.script ?? "")
   }, [])
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
   // Stream preview. For a CAMERA miniapp on Android the WebView is first rendered without its real
@@ -402,25 +397,23 @@ function LocalMiniappView({
       }
       const screenUri = result.uiUri && result.uiOrigin ? result.uiUri : null
 
-      // A first-party miniapp's web storage: the first open on its own origin
-      // moves its keys from the old shared file:// store (the hidden reader
-      // runs before the miniapp's page loads), and every load restores what the
-      // host keeps and reports the page's changes to it.
-      let keeper: WebStorageKeeper | null = null
-      if (screenUri && result.uiOrigin && result.uiRootDir && !result.devBuild && keepsWebStorage(packageName)) {
-        const move = beginWebStorageMove(packageName, {devBuild: result.devBuild})
-        if (move) {
-          const read = await readOldWebStorage(move)
-          checkpoint()
-          if ("error" in read) failWebStorageMove(move, read.error)
-          else completeWebStorageMove(move, read.entries)
-        }
-        const current = storageKeeperRef.current
-        keeper =
-          current && current.packageName === packageName && current.origin === result.uiOrigin
-            ? current
-            : {packageName, origin: result.uiOrigin, nonce: newWebStorageNonce()}
-      }
+      // Every screen's localStorage: the host keeps a copy in the miniapp's data
+      // partition, restores it before the page's own scripts and takes the
+      // page's changes. A first-party miniapp's first open on its own origin
+      // also moves its keys from the old shared file:// store (the hidden
+      // reader runs before the miniapp's page loads).
+      const keeper =
+        screenUri && result.uiOrigin
+          ? await openWebStorageKeeper({
+              packageName,
+              origin: result.uiOrigin,
+              devBuild: result.devBuild,
+              previous: storageKeeperRef.current,
+              readOldStore: readOldWebStorage,
+              checkpoint,
+            })
+          : null
+      checkpoint()
       setStorageKeeper(keeper)
 
       const previewEligible = !!screenUri && localMiniappRuntime.hasManifestPermission(packageName, "CAMERA")
@@ -586,11 +579,12 @@ function LocalMiniappView({
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
       if (!packageName) return
-      // The page changing a first-party miniapp's kept web storage.
+      // The page changing its localStorage, which the host keeps a copy of.
       const keeper = storageKeeperRef.current
-      const change = keeper ? parseWebStorageChange(event.nativeEvent.data, keeper) : null
-      if (keeper && change) {
-        applyWebStorageChange(keeper.packageName, change)
+      const report = keeper ? parseWebStorageReport(event.nativeEvent.data, keeper) : null
+      if (keeper && report) {
+        applyWebStorageReport(keeper, report)
+        if (report.loaded && keeper.session.mode === "replace") setStorageKeeper(webStorageKeeperAfterLoad(keeper))
         return
       }
       try {
@@ -624,7 +618,7 @@ function LocalMiniappView({
       const mj = getMentraJS()
       mj?.uiRouter.routeFromWebView(packageName, event.nativeEvent.data)
     },
-    [packageName, markConnected],
+    [packageName, markConnected, setStorageKeeper],
   )
 
   // The miniapp's own document stays on its origin; frames may show web content;
@@ -736,33 +730,32 @@ function LocalMiniappView({
     })
   }, [packageName, devUrl, resetLoadState])
 
+  // Built once per change: the keeper script carries the miniapp's whole kept localStorage (up to 5 MB).
+  const insetBottom = Platform.OS === "android" ? insets.bottom : 0
+  const injectedJS = useMemo(
+    () =>
+      [
+        // First, so the kept values are in place before anything else runs.
+        storageKeeperScript,
+        buildMiniappGlobalsScript({
+          packageName,
+          miniappLocal: true,
+          miniappDeveloperMode: !!devUrl,
+          safeAreaInsets: {top: insets.top, bottom: insetBottom, left: insets.left, right: insets.right},
+          webviewFillsStatusBar: true,
+          colorScheme,
+        }),
+        buildMentraUiShim({packageName}),
+        Platform.OS === "android" ? miniappHistoryBridge : "",
+      ].join("\n"),
+    [storageKeeperScript, packageName, devUrl, insets.top, insetBottom, insets.left, insets.right, colorScheme],
+  )
+
   if (!packageName) {
     return <Text text="Missing required parameters" />
   }
 
   const isDevApp = !!devUrl
-
-  const globalsScript = buildMiniappGlobalsScript({
-    packageName,
-    miniappLocal: true,
-    miniappDeveloperMode: !!devUrl,
-    safeAreaInsets: {
-      top: insets.top,
-      bottom: Platform.OS === "android" ? insets.bottom : 0,
-      left: insets.left,
-      right: insets.right,
-    },
-    webviewFillsStatusBar: true,
-    colorScheme,
-  })
-  const uiShim = buildMentraUiShim({packageName})
-  const injectedJS = [
-    // First, so the kept values are in place before anything else runs.
-    storageKeeper ? webStorageKeeperScript(storageKeeper, keptWebStorage(storageKeeper.packageName)) : "",
-    globalsScript,
-    uiShim,
-    Platform.OS === "android" ? miniappHistoryBridge : "",
-  ].join("\n")
 
   // While the WebView is mounted but the miniapp hasn't sent `ready` yet,
   // show retry progress on the splash. Once connected, the splash hides;

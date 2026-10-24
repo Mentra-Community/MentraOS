@@ -7,8 +7,6 @@ import {useRegisterCapsule} from "@/stores/capsule"
 import {miniappLauncher} from "@mentra/engine-host-internal"
 import {useStressTestStore} from "@/stores/stressTest"
 import {
-  keptWebStorage,
-  keptWebStorageKey,
   resetWebStorageMoveStateForTests,
   writeWebStorageReader,
   webStorageMoveAttemptsKey,
@@ -46,6 +44,9 @@ jest.mock("@mentra/engine-host-internal", () => ({
   buildMentraUiShim: () => "",
   localMiniappRuntime: {hasManifestPermission: () => false},
   redactSecrets: jest.requireActual("../../../../modules/engine/src/services/MentraJSLogPipeline").redactSecrets,
+  ...jest.requireActual("../../../../modules/engine/src/services/miniappWebStorage"),
+  resolveMiniappDataPartition: () => ({id: "test-partition", personalUserId: "test-user"}),
+  cloudClientService: {resolveMentraUserId: () => Promise.resolve("test-user")},
 }))
 
 jest.mock("@/services/miniapps/webStorageMigration", () => ({
@@ -100,7 +101,7 @@ const props = {
 async function finishLaunch() {
   await act(async () => {
     jest.advanceTimersByTime(40)
-    await Promise.resolve()
+    for (let i = 0; i < 10; i++) await Promise.resolve()
   })
 }
 
@@ -111,11 +112,7 @@ beforeEach(() => {
   useNavigationStore.setState({interceptor: null})
   jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(NO_UI)
   resetWebStorageMoveStateForTests()
-  for (const packageName of ["com.mentra.notes", "com.mentra.test"]) {
-    storage.remove(webStorageMovedKey(packageName))
-    storage.remove(webStorageMoveAttemptsKey(packageName))
-    storage.remove(keptWebStorageKey(packageName))
-  }
+  jest.requireActual("../../../../modules/engine/src/services/miniappWebStorage").resetMiniappWebStorageForTests()
 })
 afterEach(() => {
   jest.restoreAllMocks()
@@ -283,7 +280,7 @@ describe("the screen's origin", () => {
   })
 })
 
-describe("a first-party miniapp's web storage", () => {
+describe("the screen's localStorage", () => {
   const NOTES = {
     uiUri: "miniapp://com.mentra.notes/ui/index.html",
     uiOrigin: "miniapp://com.mentra.notes",
@@ -307,13 +304,19 @@ describe("a first-party miniapp's web storage", () => {
     return miniappWebView(view)!.props.injectedJavaScriptBeforeContentLoaded
   }
 
+  /** The kept values the keeper script on the miniapp's page restores. */
+  function keptIn(view: ReturnType<typeof render>): Record<string, string> {
+    const literal = /var KEPT = JSON\.parse\(("(?:[^"\\]|\\.)*")\);/.exec(injected(view))![1]
+    return JSON.parse(JSON.parse(literal))
+  }
+
   async function answerRead(view: ReturnType<typeof render>, entries: Record<string, string>) {
     const move = jest.mocked(writeWebStorageReader).mock.calls.at(-1)![0]
     await act(async () => {
       reader(view)!.props.onMessage({
         nativeEvent: {data: JSON.stringify({type: "mentra_web_storage_read", nonce: move.nonce, entries, error: null})},
       })
-      await Promise.resolve()
+      for (let i = 0; i < 10; i++) await Promise.resolve()
     })
     return move
   }
@@ -321,6 +324,14 @@ describe("a first-party miniapp's web storage", () => {
   /** The nonce the keeper script on the miniapp's page reports with. */
   function keeperNonce(view: ReturnType<typeof render>): string {
     return /var NONCE = "([0-9a-f]+)";/.exec(injected(view))![1]
+  }
+
+  function report(view: ReturnType<typeof render>, nonce: string, ops: unknown[], loaded = false) {
+    miniappWebView(view)!.props.onMessage({
+      nativeEvent: {
+        data: JSON.stringify({type: "mentra_web_storage_changed", nonce, ops, ...(loaded ? {loaded} : {})}),
+      },
+    })
   }
 
   it("moves the old store with the hidden page, then the page gets the kept keys before its own scripts", async () => {
@@ -333,20 +344,17 @@ describe("a first-party miniapp's web storage", () => {
     expect(hidden.props.allowingReadAccessToURL).toBe("file:///cache/miniapp-web-storage-move/com.mentra.notes")
     expect(hidden.props.injectedJavaScriptBeforeContentLoaded).toBeUndefined()
     expect(miniappWebView(view)).toBeUndefined()
-    expect(attempts("com.mentra.notes")).toBe(1)
 
     const move = await answerRead(view, {"onboarding-progress": '{"step":2}', "MENTRA_MOCK": "1"})
     expect(move).toMatchObject({packageName: "com.mentra.notes", attempt: 1})
     expect(reader(view)).toBeUndefined()
     expect(storage.load(webStorageMovedKey("com.mentra.notes")).is_ok()).toBe(true)
-    expect(keptWebStorage("com.mentra.notes")).toEqual({"onboarding-progress": '{"step":2}'})
 
     // The miniapp's page gets the kept keys ahead of its own scripts, on its own origin only.
     const script = injected(view)
-    expect(script.indexOf('"onboarding-progress"')).toBeGreaterThan(-1)
+    expect(keptIn(view)).toEqual({"onboarding-progress": '{"step":2}'})
     // First of the injected scripts (the globals and shim are stubbed to "" here).
     expect(script.startsWith("(function () {")).toBe(true)
-    expect(script).toContain("var KEPT")
     expect(script).toContain('window.location.origin !== "miniapp://com.mentra.notes"')
     expect(script).not.toContain("MENTRA_MOCK")
 
@@ -355,43 +363,55 @@ describe("a first-party miniapp's web storage", () => {
     const again = render(<LocalMiniappView {...notesProps} />)
     await finishLaunch()
     expect(reader(again)).toBeUndefined()
-    expect(injected(again)).toContain('"{\\"step\\":2}"')
+    expect(keptIn(again)).toEqual({"onboarding-progress": '{"step":2}'})
   })
 
-  it("keeps the page's changes, so the next load brings them back", async () => {
-    const view = render(<LocalMiniappView {...notesProps} />)
+  it("keeps a third-party miniapp's localStorage too: the page's changes come back at the next load", async () => {
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(INSTALLED)
+    const view = render(<LocalMiniappView {...props} />)
     await finishLaunch()
-    await answerRead(view, {"onboarding-progress": "x", "mentra-email-drawer-to": "ada@example.com"})
+    expect(reader(view)).toBeUndefined()
     const nonce = keeperNonce(view)
     act(() => {
-      miniappWebView(view)!.props.onMessage({
-        nativeEvent: {
-          data: JSON.stringify({type: "mentra_web_storage_changed", nonce, set: {mentra_recent_searches: '["q"]'}}),
-        },
-      })
-      miniappWebView(view)!.props.onMessage({
-        nativeEvent: {
-          data: JSON.stringify({type: "mentra_web_storage_changed", nonce, remove: ["mentra-email-drawer-to"]}),
-        },
-      })
+      report(view, nonce, [], true)
+      report(view, nonce, [
+        ["set", "draft", "Dear diary"],
+        ["set", "gone", "x"],
+      ])
+      report(view, nonce, [["remove", "gone"]])
       // Another screen's nonce changes nothing.
-      miniappWebView(view)!.props.onMessage({
-        nativeEvent: {
-          data: JSON.stringify({
-            type: "mentra_web_storage_changed",
-            nonce: "f".repeat(32),
-            set: {"onboarding-progress": "z"},
-          }),
-        },
-      })
+      report(view, "f".repeat(32), [["set", "draft", "forged"]])
     })
-    expect(keptWebStorage("com.mentra.notes")).toEqual({"onboarding-progress": "x", "mentra_recent_searches": '["q"]'})
     view.unmount()
 
-    const again = render(<LocalMiniappView {...notesProps} />)
+    const again = render(<LocalMiniappView {...props} />)
     await finishLaunch()
-    expect(injected(again)).toContain('"mentra_recent_searches":"[\\"q\\"]"')
-    expect(injected(again)).not.toContain("ada@example.com")
+    expect(keptIn(again)).toEqual({draft: "Dear diary"})
+    expect(injected(again)).toContain("var REPLACE = false")
+  })
+
+  it("after a replace, later documents in the same WebView merge instead of replacing again", async () => {
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(INSTALLED)
+    // A first screen that never confirmed its load leaves the origin's contents unknown.
+    const first = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    first.unmount()
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    expect(injected(view)).toContain("var REPLACE = true")
+    const nonce = keeperNonce(view)
+    act(() => report(view, nonce, [["set", "draft", "after replace"]], true))
+    expect(injected(view)).toContain("var REPLACE = false")
+    expect(keeperNonce(view)).toBe(nonce)
+    expect(keptIn(view)).toEqual({draft: "after replace"})
+  })
+
+  it("keeps a development build's localStorage, and moves nothing for it", async () => {
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue({...NOTES, devBuild: true})
+    const dev = render(<LocalMiniappView {...notesProps} />)
+    await finishLaunch()
+    expect(reader(dev)).toBeUndefined()
+    expect(injected(dev)).toContain("mentra_web_storage_changed")
   })
 
   it("keeps taking the page's reports while a relaunch of the same miniapp resolves", async () => {
@@ -409,19 +429,13 @@ describe("a first-party miniapp's web storage", () => {
     await finishLaunch()
     // The 1.0.30 page is still showing and still reported.
     expect(injected(view)).toContain(nonce)
-    act(() => {
-      miniappWebView(view)!.props.onMessage({
-        nativeEvent: {
-          data: JSON.stringify({type: "mentra_web_storage_changed", nonce, set: {mentra_recent_searches: "[1]"}}),
-        },
-      })
-    })
-    expect(keptWebStorage("com.mentra.notes")).toEqual({mentra_recent_searches: "[1]"})
+    act(() => report(view, nonce, [["set", "mentra_recent_searches", "[1]"]]))
     await act(async () => {
       finishRelaunch({...NOTES, uiRootDir: "file:///documents/lmas/com.mentra.notes/1.0.31/"})
-      await Promise.resolve()
+      for (let i = 0; i < 10; i++) await Promise.resolve()
     })
     expect(keeperNonce(view)).toBe(nonce)
+    expect(keptIn(view)).toEqual({mentra_recent_searches: "[1]"})
   })
 
   it("opens without the move when the hidden page doesn't answer, and retries at the next open", async () => {
@@ -431,7 +445,7 @@ describe("a first-party miniapp's web storage", () => {
     expect(reader(view)).toBeDefined()
     await act(async () => {
       jest.advanceTimersByTime(OLD_WEB_STORAGE_READ_TIMEOUT_MS)
-      await Promise.resolve()
+      for (let i = 0; i < 10; i++) await Promise.resolve()
     })
     expect(reader(view)).toBeUndefined()
     const screen = miniappWebView(view)!
@@ -445,21 +459,6 @@ describe("a first-party miniapp's web storage", () => {
     await finishLaunch()
     expect(reader(again)).toBeDefined()
     expect(attempts("com.mentra.notes")).toBe(2)
-  })
-
-  it("keeps nothing for a miniapp without listed keys or a development build", async () => {
-    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(INSTALLED)
-    const third = render(<LocalMiniappView {...props} />)
-    await finishLaunch()
-    expect(reader(third)).toBeUndefined()
-    expect(injected(third)).not.toContain("mentra_web_storage")
-    third.unmount()
-
-    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue({...NOTES, devBuild: true})
-    const dev = render(<LocalMiniappView {...notesProps} />)
-    await finishLaunch()
-    expect(reader(dev)).toBeUndefined()
-    expect(injected(dev)).not.toContain("mentra_web_storage")
   })
 })
 
