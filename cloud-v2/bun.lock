@@ -14,7 +14,7 @@
     },
     "packages/auth": {
       "name": "@mentra/auth",
-      "version": "0.1.0-dev.0",
+      "version": "0.1.0-dev.1",
       "dependencies": {
         "jose": "^5.9.6",
       },

@@ -22,6 +22,10 @@ const DEFAULT_ALGORITHMS = ["EdDSA"] as const;
  */
 const DEFAULT_KEY_IDS = ["mentra-miniapp-1"] as const;
 const DEFAULT_CONTEXT_KEY = "mentraAuth";
+/** The realm of the sign-in challenge, {@link mentraSignInChallenge}. */
+const SIGN_IN_REALM = "mentra";
+/** Package names the challenge can carry as a quoted string without escaping. */
+const CHALLENGE_PACKAGE_NAME = /^[A-Za-z0-9._-]+$/;
 
 export interface VerifiedMentraAuth {
   mentraUserId: string;
@@ -54,6 +58,22 @@ export interface VerifiedMentraAuth {
    * is later done to the `features` array.
    */
   hasFeature(feature: string): boolean;
+  /**
+   * The person's workspace, from the token's `workspaceId` claim. Core names it
+   * only in a token for a miniapp that the person's current workspace assigned
+   * through Fleet, so a company's miniapp can admit exactly its own workspace's
+   * members. `null` for every other miniapp, and always `null` for a local
+   * build.
+   */
+  workspaceId: string | null;
+  /**
+   * True when Core minted the token for a local-network build of this miniapp
+   * (the `localBuild` claim). A local build can claim any package name, so its
+   * tokens are refused unless the backend allows local builds
+   * ({@link MentraAuthOptions.allowLocalBuilds}); a verified result is a local
+   * build only on a backend that allows them.
+   */
+  localBuild: boolean;
   claims: jose.JWTPayload;
 }
 
@@ -103,6 +123,14 @@ export interface MentraAuthOptions {
    * Remote JWKS cooldown duration in milliseconds.
    */
   cooldownMs?: number;
+  /**
+   * Accept tokens Core minted for local-network builds of this miniapp. A
+   * local build has no domain to vouch for its package name, so it could
+   * claim this miniapp's; turn this on only for a development backend. Off by
+   * default: such a token is refused with the code `local_build_not_allowed`.
+   * Defaults to `MENTRA_AUTH_ALLOW_LOCAL_BUILDS=true`.
+   */
+  allowLocalBuilds?: boolean;
 }
 
 export interface MentraAuthVariables {
@@ -120,21 +148,61 @@ export interface MentraHonoOptions {
   onUnauthorized?: (error: MentraAuthError, c: HonoLikeContext) => Response | Promise<Response>;
 }
 
+export interface MentraMiniappFilesOptions {
+  /**
+   * Decide whether this verified person may have the miniapp's files. Only
+   * `true` admits the request; anything else answers `403`. An error thrown
+   * here propagates, and the files are not served.
+   */
+  authorize: (auth: VerifiedMentraAuth, c: HonoLikeContext) => boolean | Promise<boolean>;
+  /**
+   * Hono context variable key for an admitted request's verified auth.
+   * Defaults to "mentraAuth".
+   */
+  contextKey?: string;
+}
+
 export interface HonoLikeContext {
   req: {
     header(name: string): string | undefined;
   };
   set(key: string, value: unknown): void;
   json(body: unknown, status?: number): Response;
+  /**
+   * The response once `next()` has run, as Hono's `c.res`. Optional: with
+   * {@link header}, it lets `miniappFiles` keep admitted files out of shared
+   * caches.
+   */
+  res?: Response;
+  /** Set a response header, as Hono's `c.header`. Optional; see {@link res}. */
+  header?(name: string, value: string): void;
 }
 
 export type HonoLikeNext = () => Promise<void>;
 export type HonoLikeMiddleware = (c: HonoLikeContext, next: HonoLikeNext) => Promise<Response | void>;
 
+/**
+ * Why a token or request was refused:
+ * - `missing_token`: no `Authorization: Bearer` header.
+ * - `invalid_token`: not a miniapp token this backend accepts (signature, key,
+ *   type, issuer, audience, expiry or subject).
+ * - `local_build_not_allowed`: a genuine token for a local-network build, on a
+ *   backend that doesn't allow local builds.
+ * - `invalid_configuration`: the verifier itself is misconfigured.
+ */
+export type MentraAuthErrorCode =
+  | "missing_token"
+  | "invalid_token"
+  | "local_build_not_allowed"
+  | "invalid_configuration";
+
 export class MentraAuthError extends Error {
-  constructor(message: string) {
+  readonly code: MentraAuthErrorCode;
+
+  constructor(message: string, code: MentraAuthErrorCode = "invalid_token") {
     super(message);
     this.name = "MentraAuthError";
+    this.code = code;
   }
 }
 
@@ -146,9 +214,12 @@ export class MentraAuth {
   private readonly clockTolerance: string | number;
   private readonly jwksUrls: string[];
   private readonly jwksSets: ReturnType<typeof jose.createRemoteJWKSet>[];
+  private readonly allowLocalBuilds: boolean;
 
   constructor(options: MentraAuthOptions = {}) {
     this.packageName = resolvePackageName(options.packageName);
+    this.allowLocalBuilds =
+      options.allowLocalBuilds ?? env("MENTRA_AUTH_ALLOW_LOCAL_BUILDS")?.toLowerCase() === "true";
     this.issuer = resolveIssuer(options.issuer);
     this.algorithms = options.algorithms ?? [...DEFAULT_ALGORITHMS];
     this.keyIds = new Set(options.keyIds ?? DEFAULT_KEY_IDS);
@@ -172,6 +243,14 @@ export class MentraAuth {
       throw new MentraAuthError("miniapp token missing subject");
     }
 
+    const localBuild = localBuildClaim(payload.localBuild);
+    if (localBuild && !this.allowLocalBuilds) {
+      throw new MentraAuthError(
+        "miniapp token rejected: this backend does not allow local builds",
+        "local_build_not_allowed",
+      );
+    }
+
     const features = featuresClaim(payload.features);
     const granted = new Set(features);
 
@@ -185,6 +264,10 @@ export class MentraAuth {
       issuedAt: typeof payload.iat === "number" ? payload.iat : undefined,
       features,
       hasFeature: (feature) => granted.has(feature),
+      // Core never names a workspace in a local build's token; should one
+      // arrive anyway, a local build still gets none.
+      workspaceId: localBuild ? null : stringClaim(payload.workspaceId) ?? null,
+      localBuild,
       claims: payload,
     };
   }
@@ -209,6 +292,43 @@ export class MentraAuth {
         }
         throw error;
       }
+    };
+  }
+
+  /**
+   * Gate a miniapp's files (its `miniapp.json` and ZIPs) behind a Mentra
+   * sign-in. A request without a bearer token, or with one that doesn't verify
+   * (expired included), gets `401` with the sign-in challenge for this
+   * backend's package ({@link mentraSignInChallenge}); the Mentra App answers
+   * it with that package's miniapp token and retries. A token `authorize`
+   * refuses gets `403`, as does a local build's token on a backend that doesn't
+   * allow local builds: a new token wouldn't change either answer. An admitted
+   * request has its verified auth set on the context and goes on to `next()`,
+   * and its response is marked `Cache-Control: private` when the context can
+   * set headers, so a shared cache never hands a gated file to someone else.
+   */
+  miniappFiles(options: MentraMiniappFilesOptions): HonoLikeMiddleware {
+    if (typeof options?.authorize !== "function") {
+      throw new MentraAuthError("miniappFiles needs an authorize function", "invalid_configuration");
+    }
+    const contextKey = options.contextKey ?? DEFAULT_CONTEXT_KEY;
+    const challenge = mentraSignInChallenge(this.packageName);
+    return async (c, next) => {
+      let auth: VerifiedMentraAuth;
+      try {
+        auth = await this.verifyAuthHeader(c.req.header("Authorization"));
+      } catch (error) {
+        if (!(error instanceof MentraAuthError)) throw error;
+        if (error.code === "local_build_not_allowed") return refusal(c, 403, error.code);
+        return refusal(c, 401, "sign_in_required", challenge);
+      }
+      if ((await options.authorize(auth, c)) !== true) {
+        return refusal(c, 403, "access_denied");
+      }
+      c.set(contextKey, auth);
+      await next();
+      keepOutOfSharedCaches(c);
+      return undefined;
     };
   }
 
@@ -287,9 +407,25 @@ export async function verifyMentraAuthHeader(
 export function extractBearerToken(header: string | undefined | null): string {
   const match = /^Bearer\s+(.+)$/i.exec(header ?? "");
   if (!match?.[1]) {
-    throw new MentraAuthError("missing bearer token");
+    throw new MentraAuthError("missing bearer token", "missing_token");
   }
   return match[1];
+}
+
+/**
+ * The sign-in challenge a miniapp server sends, on a `401`, for a file that
+ * needs a Mentra sign-in: `Bearer realm="mentra", package="<packageName>"`.
+ * It's the `WWW-Authenticate` value `miniappFiles` answers with; a server or
+ * worker that verifies requests itself (`verifyRequest`) sends the same.
+ */
+export function mentraSignInChallenge(packageName: string): string {
+  if (!CHALLENGE_PACKAGE_NAME.test(packageName)) {
+    throw new MentraAuthError(
+      "packageName cannot be named in a sign-in challenge: use letters, digits, dots, hyphens and underscores",
+      "invalid_configuration",
+    );
+  }
+  return `Bearer realm="${SIGN_IN_REALM}", package="${packageName}"`;
 }
 
 type JwksUrlOptions = Pick<MentraAuthOptions, "jwksUrl" | "jwksUrls">;
@@ -318,7 +454,7 @@ function resolvePackageName(packageName?: string): string {
     env("MINIAPP_PACKAGE_NAME") ??
     env("PACKAGE_NAME");
   if (!value) {
-    throw new MentraAuthError("packageName is required");
+    throw new MentraAuthError("packageName is required", "invalid_configuration");
   }
   return value;
 }
@@ -397,6 +533,43 @@ function featuresClaim(value: unknown): string[] {
     return [];
   }
   return [...value];
+}
+
+/**
+ * The `localBuild` claim. Core sets it to `true` on a local build's token and
+ * leaves it out otherwise; any value but absent or `false` is read as a local
+ * build, so a malformed claim never passes as an ordinary token.
+ */
+function localBuildClaim(value: unknown): boolean {
+  return value !== undefined && value !== false;
+}
+
+/**
+ * A refusal from `miniappFiles`: never cached, and carrying the challenge when
+ * one is due. It starts from `c.json`, so headers earlier middleware set (CORS,
+ * for one) are kept, and is copied so its headers can be set.
+ */
+function refusal(c: HonoLikeContext, status: 401 | 403, error: string, challenge?: string): Response {
+  const base = c.json({ error }, status);
+  const response = new Response(base.body, base);
+  response.headers.set("Cache-Control", "no-store");
+  if (challenge) response.headers.set("WWW-Authenticate", challenge);
+  return response;
+}
+
+/**
+ * Mark an admitted file's response `private`, keeping the files handler's
+ * other directives but dropping those that let a shared cache store it
+ * (`public`, `s-maxage`). A context that can't read or set headers is left
+ * as it is.
+ */
+function keepOutOfSharedCaches(c: HonoLikeContext): void {
+  if (!c.header || !c.res) return;
+  const directives = (c.res.headers.get("Cache-Control") ?? "")
+    .split(",")
+    .map((directive) => directive.trim())
+    .filter((directive) => directive && !/^(?:public|private|s-maxage)\b/i.test(directive));
+  c.header("Cache-Control", ["private", ...directives].join(", "));
 }
 
 function stringClaim(value: unknown): string | undefined {

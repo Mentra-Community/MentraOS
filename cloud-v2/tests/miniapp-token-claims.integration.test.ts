@@ -30,6 +30,7 @@ import {
 } from "bun:test"
 import * as jose from "jose"
 
+import {createMentraAuth, MentraAuthError, type HonoLikeContext} from "../packages/auth/src/index"
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
@@ -169,11 +170,16 @@ async function postMiniappToken(body: Record<string, unknown>): Promise<Response
   })
 }
 
-/** The verified claims of `signedIn`'s token for `packageName`. */
-async function mint(packageName: string, extra: Record<string, unknown> = {}): Promise<jose.JWTPayload> {
+/** `signedIn`'s token for `packageName`, as Core issues it. */
+async function mintToken(packageName: string, extra: Record<string, unknown> = {}): Promise<string> {
   const response = await postMiniappToken({packageName, ...extra})
   expect(response.status).toBe(200)
-  const {token} = (await response.json()) as {token: string}
+  return ((await response.json()) as {token: string}).token
+}
+
+/** The verified claims of `signedIn`'s token for `packageName`. */
+async function mint(packageName: string, extra: Record<string, unknown> = {}): Promise<jose.JWTPayload> {
+  const token = await mintToken(packageName, extra)
   const pem = `-----BEGIN PUBLIC KEY-----\n${process.env.MENTRA_MINIAPP_JWT_PUBLIC_KEY}\n-----END PUBLIC KEY-----`
   const key = await jose.importSPKI(pem, "EdDSA")
   return (await jose.jwtVerify(token, key, {issuer: "cloud-core", audience: packageName})).payload
@@ -363,6 +369,90 @@ describe("a token for an unassigned, installed miniapp", () => {
     await workspace("ws_acme", ["mu_owner", "mu_alice"])
 
     expect(Object.keys(await mint(NOTES)).sort()).toEqual(["aud", "exp", "iat", "iss", "jti", "sub", "tenantId"])
+  })
+})
+
+// --- A miniapp backend reading the claims ----------------------------------
+
+describe("a miniapp backend verifying with @mentra/auth", () => {
+  // Core's own key set, served from the app, as a backend fetches it.
+  let jwks: ReturnType<typeof Bun.serve>
+  beforeAll(() => {
+    jwks = Bun.serve({port: 0, hostname: "127.0.0.1", fetch: () => app.request(`${BASE}/.well-known/jwks.json`)})
+  })
+  afterAll(() => {
+    jwks.stop(true)
+  })
+  // The key set also publishes Core's access keys, which the rest of this file never needs.
+  let restoreAccessKeys: () => void = () => {}
+  beforeEach(() => {
+    const {privateKey, publicKey} = crypto.generateKeyPairSync("ed25519")
+    restoreAccessKeys = applyEnv({
+      MENTRA_JWT_PRIVATE_KEY: strip(privateKey.export({type: "pkcs8", format: "pem"}).toString()),
+      MENTRA_JWT_PUBLIC_KEY: strip(publicKey.export({type: "spki", format: "pem"}).toString()),
+    })
+    session.resetSigningKeyCache()
+  })
+  afterEach(() => {
+    restoreAccessKeys()
+  })
+  // A new verifier per test: each test signs with a new key, and a verifier caches the key set it read.
+  const backend = (options: {allowLocalBuilds?: boolean} = {}) =>
+    createMentraAuth({packageName: ACME_TOOLS, jwksUrl: `${jwks.url.origin}/.well-known/jwks.json`, ...options})
+
+  test("sees the workspace only for a package the workspace assigned", async () => {
+    await workspace("ws_acme", ["mu_owner", "mu_alice"])
+    await assign("ws_acme", [ACME_TOOLS], 1)
+
+    const assigned = await backend().verifyToken(await mintToken(ACME_TOOLS))
+    expect(assigned).toMatchObject({mentraUserId: "mu_alice", workspaceId: "ws_acme", localBuild: false})
+
+    await assign("ws_acme", [], 2)
+    expect((await backend().verifyToken(await mintToken(ACME_TOOLS))).workspaceId).toBeNull()
+  })
+
+  test("refuses a local build's token unless the backend allows local builds", async () => {
+    await workspace("ws_acme", ["mu_owner", "mu_alice"])
+    await assign("ws_acme", [ACME_TOOLS], 1)
+    const token = await mintToken(ACME_TOOLS, {localBuild: true})
+
+    const refused = await backend({allowLocalBuilds: false}).verifyToken(token).catch((error: unknown) => error)
+    expect(refused).toBeInstanceOf(MentraAuthError)
+    expect((refused as MentraAuthError).code).toBe("local_build_not_allowed")
+
+    const allowed = await backend({allowLocalBuilds: true}).verifyToken(token)
+    expect(allowed).toMatchObject({mentraUserId: "mu_alice", localBuild: true, workspaceId: null})
+  })
+
+  test("miniappFiles challenges without a token and admits only the assigning workspace's members", async () => {
+    await workspace("ws_acme", ["mu_owner", "mu_alice"])
+    await workspace("ws_globex", ["mu_globex_owner", "mu_bob"])
+    await assign("ws_acme", [ACME_TOOLS], 1)
+    const files = backend().miniappFiles({authorize: (auth) => auth.workspaceId === "ws_acme"})
+    const request = async (authorization?: string) => {
+      let served = false
+      const context: HonoLikeContext = {
+        req: {header: (name) => (name.toLowerCase() === "authorization" ? authorization : undefined)},
+        set: () => {},
+        json: (body, status = 200) => Response.json(body, {status}),
+      }
+      const response = await files(context, async () => {
+        served = true
+      })
+      return {status: response instanceof Response ? response.status : 200, served, response}
+    }
+
+    const anonymous = await request()
+    expect(anonymous.status).toBe(401)
+    expect((anonymous.response as Response).headers.get("WWW-Authenticate")).toBe(
+      `Bearer realm="mentra", package="${ACME_TOOLS}"`,
+    )
+    expect(anonymous.served).toBe(false)
+
+    expect(await request(`Bearer ${await mintToken(ACME_TOOLS)}`)).toMatchObject({status: 200, served: true})
+
+    signedIn = "mu_bob"
+    expect(await request(`Bearer ${await mintToken(ACME_TOOLS)}`)).toMatchObject({status: 403, served: false})
   })
 })
 

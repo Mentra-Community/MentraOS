@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "contractVersion": "2026-10-20.1",
+  "contractVersion": "2026-10-23.1",
   "required": {
     "AUDIO_PROVIDER": {"kind": "enum", "values": ["soniox"], "acceptanceTest": "runtime-transcription"},
     "AUDIO_UDP_ADVERTISED_HOST": {"kind": "host", "acceptanceTest": "runtime-audio-transport"},
@@ -157,6 +157,7 @@
     "CLOUD_CORE_LOCAL_STORAGE_DIR",
     "CLOUD_CORE_WEB_CLIENT_IDS",
     "CLOUD_STORAGE_LOCAL_DIR",
+    "MENTRA_AUTH_ALLOW_LOCAL_BUILDS",
     "MENTRA_CLI_CLIENT_ID",
     "MENTRA_CLI_HOME",
     "MENTRA_CLI_OIDC_ISSUER",
