@@ -198,6 +198,16 @@ const hi = {
     signInFailedDescription:
       "Microsoft आपको इस संगठन में साइन इन नहीं कर सका। फिर से कोशिश करें या अपनी IT टीम से संपर्क करें।",
   },
+  login: {
+    ...en.login,
+    linkSignInTitle: "इस लिंक से साइन इन करें?",
+    linkSignInMessage: "यह लिंक आपको {{email}} के रूप में साइन इन करता है। केवल तभी जारी रखें जब यह आपका खाता हो।",
+    linkSignInSwitchMessage:
+      "आप {{current}} के रूप में साइन इन हैं। यह लिंक आपको इसके बजाय {{email}} के रूप में साइन इन करता है। केवल तभी जारी रखें जब यह आपका खाता हो।",
+    linkSignInSwitchUnknownMessage:
+      "आप किसी दूसरे खाते में साइन इन हैं। यह लिंक आपको इसके बजाय {{email}} के रूप में साइन इन करता है। केवल तभी जारी रखें जब यह आपका खाता हो।",
+    linkSignInContinue: "साइन इन करें",
+  },
 } satisfies TranslationResource
 
 export default hi

@@ -2,7 +2,13 @@ import {AppState} from "react-native"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 
 import {SETTINGS, engine} from "@mentra/engine"
-import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
+import {
+  ConfirmLinkSignIn,
+  LinkSignInResult,
+  MentraAuthSession,
+  MentraAuthUser,
+  MentraSigninResponse,
+} from "@/utils/auth/authProvider.types"
 import {AuthingWrapperClient} from "@/utils/auth/provider/authingClient"
 import {AccountAuthProvider} from "@/utils/auth/provider/accountClient"
 
@@ -23,8 +29,14 @@ export abstract class AuthClient {
     return Res.error_async(new Error("Method not implemented"))
   }
 
-  /** Exchange an email confirmation's provider token for a Mentra session. */
-  public completeSignupVerification(_accessToken: string): AsyncResult<void, Error> {
+  /**
+   * Exchange an email confirmation's provider token for a Mentra session. The link signs in without asking only when
+   * it confirms the sign-up started on this phone, or the account already signed in; otherwise `confirm` decides.
+   */
+  public completeSignupVerification(
+    _accessToken: string,
+    _confirm: ConfirmLinkSignIn,
+  ): AsyncResult<LinkSignInResult, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }
 
@@ -64,10 +76,6 @@ export abstract class AuthClient {
   }
 
   public getSession(): AsyncResult<MentraAuthSession, Error> {
-    return Res.error_async(new Error("Method not implemented"))
-  }
-
-  public updateSessionWithTokens(_tokens: {access_token: string; refresh_token: string}): AsyncResult<void, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }
 

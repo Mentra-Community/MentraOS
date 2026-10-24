@@ -31,6 +31,11 @@ jest.mock("@/components/diagnostics/IncidentReportRequest", () => ({
   },
 }))
 const mockCompleteSignupVerification = jest.fn()
+const mockUpdateSessionWithTokens = jest.fn()
+const mockConfirmLinkSignIn = jest.fn()
+jest.mock("@/utils/auth/confirmLinkSignIn", () => ({
+  confirmLinkSignIn: (...args: unknown[]) => mockConfirmLinkSignIn(...args),
+}))
 let mockPendingRoute: string | null = null
 
 jest.mock("expo-linking", () => ({
@@ -72,6 +77,8 @@ jest.mock("@/utils/auth/authClient", () => ({
     getSession: (...args: unknown[]) => mockGetSession(...args),
     completeOAuthHandoff: (...args: unknown[]) => mockCompleteOAuthHandoff(...args),
     completeSignupVerification: (...args: unknown[]) => mockCompleteSignupVerification(...args),
+    // Retired: a link must never hand the app a session. Kept on the mock only to prove nothing calls it.
+    updateSessionWithTokens: (...args: unknown[]) => mockUpdateSessionWithTokens(...args),
   },
 }))
 
@@ -88,7 +95,7 @@ beforeEach(() => {
   jest.clearAllMocks()
   mockCompleteOAuthHandoff.mockResolvedValue({is_error: () => false})
   mockGetSession.mockResolvedValue({is_error: () => false, value: {token: undefined}})
-  mockCompleteSignupVerification.mockResolvedValue({is_error: () => false})
+  mockCompleteSignupVerification.mockResolvedValue({is_error: () => false, value: "signed_in"})
   mockRequestAttendedPermissions.mockResolvedValue({requestId: "batch-1"})
   mockPendingRoute = null
   mockSetPendingRoute.mockImplementation((url: string) => {
@@ -296,10 +303,10 @@ it("waits for signup sign-in before navigating and ignores duplicate callbacks",
   await act(async () => {
     processing = processUrl(signupCallback)
   })
-  expect(mockCompleteSignupVerification).toHaveBeenCalledWith("signup-token")
+  expect(mockCompleteSignupVerification).toHaveBeenCalledWith("signup-token", expect.any(Function))
   expect(mockReplaceAll).not.toHaveBeenCalled()
   await act(async () => {
-    finish({is_error: () => false})
+    finish({is_error: () => false, value: "signed_in"} as never)
     await processing
     await processUrl(signupCallback)
   })
@@ -321,7 +328,7 @@ it("completes a signup link that launches the app", async () => {
   await act(async () => {
     await jest.runAllTimersAsync()
   })
-  expect(mockCompleteSignupVerification).toHaveBeenCalledWith("signup-token")
+  expect(mockCompleteSignupVerification).toHaveBeenCalledWith("signup-token", expect.any(Function))
   expect(mockReplaceAll).toHaveBeenCalledWith("/")
 })
 
@@ -338,6 +345,106 @@ it("shows a login error when signup exchange fails", async () => {
   expect(mockReplace).toHaveBeenCalledWith("/auth/start?authError=invalid_grant")
   expect(mockReplaceAll).not.toHaveBeenCalled()
   expect(mockSetSplashEnabled).toHaveBeenLastCalledWith(false)
+})
+
+it("asks over a lifted splash before a signup link signs in to an account this phone didn't start", async () => {
+  mockConfirmLinkSignIn.mockResolvedValue(true)
+  mockCompleteSignupVerification.mockImplementation(
+    async (_token: string, confirm: (a: unknown) => Promise<boolean>) => {
+      const accepted = await confirm({email: "other@example.test", current: {email: "me@example.test"}})
+      return {is_error: () => false, value: accepted ? "signed_in" : "declined"}
+    },
+  )
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl(signupCallback)
+  })
+  expect(mockConfirmLinkSignIn).toHaveBeenCalledWith({email: "other@example.test", current: {email: "me@example.test"}})
+  const splashOff = mockSetSplashEnabled.mock.invocationCallOrder.filter(
+    (_order, index) => mockSetSplashEnabled.mock.calls[index][0] === false,
+  )
+  expect(splashOff[0]).toBeLessThan(mockConfirmLinkSignIn.mock.invocationCallOrder[0])
+  expect(mockReplaceAll).toHaveBeenCalledWith("/")
+})
+
+it("stays put when the person declines a signup link's account", async () => {
+  mockCompleteSignupVerification.mockResolvedValue({is_error: () => false, value: "declined"})
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl(signupCallback)
+  })
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+  expect(mockReplace).not.toHaveBeenCalled()
+})
+
+describe("password reset links", () => {
+  const attackerFragment = "#access_token=attacker-access&refresh_token=attacker-refresh&type=recovery"
+  const links = [
+    `com.mentra://auth/reset-password${attackerFragment}`,
+    `https://apps.mentraglass.com/auth/reset-password${attackerFragment}`,
+    `https://apps.mentra.glass/auth/reset-password${attackerFragment}`,
+  ]
+
+  it.each(links)("never adopts tokens or leaves the signed-in account: %s", async (link) => {
+    mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "victim-session"}})
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(link)
+    })
+    expect(mockUpdateSessionWithTokens).not.toHaveBeenCalled()
+    expect(mockCompleteSignupVerification).not.toHaveBeenCalled()
+    expect(mockCompleteOAuthHandoff).not.toHaveBeenCalled()
+    expect(mockReplace).not.toHaveBeenCalled()
+    expect(mockReplaceAll).not.toHaveBeenCalled()
+  })
+
+  it.each(links)("sends a signed-out person to the emailed-code reset: %s", async (link) => {
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(link)
+    })
+    expect(mockUpdateSessionWithTokens).not.toHaveBeenCalled()
+    expect(mockReplace).toHaveBeenCalledWith("/auth/forgot-password")
+  })
+
+  it("keeps the link's tokens out of the logs", async () => {
+    const log = jest.spyOn(console, "log").mockImplementation(() => {})
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      render(
+        <DeeplinkProvider>
+          <Probe />
+        </DeeplinkProvider>,
+      )
+      await act(async () => {
+        await processUrl(links[0])
+        await processUrl("com.mentra://auth/callback?code=secret-handoff&state=secret-state")
+      })
+      const logged = JSON.stringify([...log.mock.calls, ...warn.mock.calls])
+      expect(logged).not.toContain("attacker-access")
+      expect(logged).not.toContain("attacker-refresh")
+      expect(logged).not.toContain("secret-handoff")
+    } finally {
+      log.mockRestore()
+      warn.mockRestore()
+    }
+  })
 })
 
 it("does not exchange an expired confirmation link", async () => {

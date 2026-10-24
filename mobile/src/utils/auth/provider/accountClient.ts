@@ -12,7 +12,13 @@ import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {BgTimer} from "@mentra/engine"
 
 import {AuthClient} from "@/utils/auth/authClient"
-import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
+import {
+  ConfirmLinkSignIn,
+  LinkSignInResult,
+  MentraAuthSession,
+  MentraAuthUser,
+  MentraSigninResponse,
+} from "@/utils/auth/authProvider.types"
 import {AuthStateListener, createAuthStateFanout} from "@/utils/auth/provider/authStateFanout"
 import {
   type AccountLoginPhase,
@@ -27,6 +33,8 @@ import {storage} from "@/utils/storage"
 const ACCESS_KEY = "mentra.account.accessToken"
 const REFRESH_KEY = "mentra.account.refreshToken"
 const PROFILE_KEY = "mentra.account.userProfile"
+/** The email this phone last signed up (or resent verification) with. Not a credential. */
+const PENDING_SIGNUP_KEY = "mentra.account.pendingSignupEmail"
 const OAUTH_STATE_KEY = "mentra.account.oauth.state"
 const OAUTH_VERIFIER_KEY = "mentra.account.oauth.verifier"
 const LOGOUT_TIMEOUT_MS = 10_000
@@ -66,6 +74,17 @@ function loadCachedProfile(): MentraAuthUser | undefined {
 
 function saveCachedProfile(user: MentraAuthUser): void {
   storage.save(PROFILE_KEY, JSON.stringify(user))
+}
+
+const normalizeEmail = (email: string | undefined) => (email ?? "").trim().toLowerCase()
+
+function rememberPendingSignup(email: string): void {
+  if (normalizeEmail(email)) storage.save(PENDING_SIGNUP_KEY, normalizeEmail(email))
+}
+
+function pendingSignupEmail(): string {
+  const raw = storage.load<string>(PENDING_SIGNUP_KEY)
+  return raw.is_error() ? "" : normalizeEmail(raw.value)
 }
 
 function core(path: string): string {
@@ -343,12 +362,14 @@ export class AccountAuthProvider extends AuthClient {
         body: JSON.stringify(credentials),
       })
       if (!res.ok && res.status !== 202) await throwApiError(res)
+      rememberPendingSignup(credentials.email)
       return {session: null, user: null}
     })
   }
 
   public resendSignupEmail(email: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
+      rememberPendingSignup(email)
       await fetch(core("/api/account/verify/resend"), {
         method: "POST",
         headers: {"content-type": "application/json"},
@@ -357,7 +378,10 @@ export class AccountAuthProvider extends AuthClient {
     })
   }
 
-  public completeSignupVerification(accessToken: string): AsyncResult<void, Error> {
+  public completeSignupVerification(
+    accessToken: string,
+    confirm: ConfirmLinkSignIn,
+  ): AsyncResult<LinkSignInResult, Error> {
     return Res.try_async(async () => {
       const generation = this.sessionGeneration
       // Email confirmation links carry GoTrue tokens. Use the existing public
@@ -385,6 +409,27 @@ export class AccountAuthProvider extends AuthClient {
       const me = (await meRes.json()) as {mentraUserId?: string; email?: string; name?: string; avatarUrl?: string}
       this.assertSessionCurrent(generation)
       if (!me.mentraUserId) throw new Error("verification returned no account")
+
+      // Anyone can send a confirmation link, for any account. It signs in without asking only when it confirms the
+      // sign-up started on this phone (and nobody is signed in), or the account already signed in. Otherwise the
+      // person sees the account and decides, so a link can't quietly put them in someone else's account.
+      const signedIn = loadTokens()
+      const current = signedIn ? (loadCachedProfile() ?? null) : null
+      const sameAccount = current?.id === me.mentraUserId
+      const startedHere = !signedIn && !!normalizeEmail(me.email) && normalizeEmail(me.email) === pendingSignupEmail()
+      if (!sameAccount && !startedHere) {
+        const exchanged = {access: body.access_token, refresh: body.refresh_token}
+        if (!me.email) {
+          this.revokeQuietly(exchanged)
+          throw new Error("verification returned no account email")
+        }
+        const accepted = await confirm({email: me.email, current: signedIn ? {email: current?.email} : null})
+        if (!accepted) {
+          this.revokeQuietly(exchanged)
+          return "declined"
+        }
+        this.assertSessionCurrent(generation)
+      }
       const user: MentraAuthUser = {
         id: me.mentraUserId,
         email: me.email,
@@ -393,8 +438,10 @@ export class AccountAuthProvider extends AuthClient {
       }
       saveTokens({access: body.access_token, refresh: body.refresh_token})
       saveCachedProfile(user)
+      storage.remove(PENDING_SIGNUP_KEY)
       // AuthContext and the engine must receive the account before navigation.
       authState.emit("SIGNED_IN", {token: body.access_token, user})
+      return "signed_in"
     })
   }
 
@@ -421,13 +468,6 @@ export class AccountAuthProvider extends AuthClient {
       this.assertSessionCurrent(generation)
       saveTokens({access: body.access_token, refresh: body.refresh_token})
       this.notify("SIGNED_IN")
-    })
-  }
-
-  public updateSessionWithTokens(tokens: {access_token: string; refresh_token: string}): AsyncResult<void, Error> {
-    return Res.try_async(async () => {
-      saveTokens({access: tokens.access_token, refresh: tokens.refresh_token})
-      this.notify("TOKEN_REFRESHED")
     })
   }
 
@@ -597,6 +637,15 @@ export class AccountAuthProvider extends AuthClient {
   }
 
   /** Remote revocation uses the private snapshot and never writes rotated tokens. */
+  /** Ends a session the person declined, in the background. It was never saved, so a failure leaves nothing behind. */
+  private revokeQuietly(tokens: Tokens): void {
+    const controller = new AbortController()
+    const timeout = BgTimer.setTimeout(() => controller.abort(), LOGOUT_TIMEOUT_MS)
+    this.revokeSession(tokens, controller.signal)
+      .catch(() => console.warn("MENTRA AUTH: could not end a declined link session"))
+      .finally(() => BgTimer.clearTimeout(timeout))
+  }
+
   private async revokeSession(tokens: Tokens, signal: AbortSignal): Promise<void> {
     const probe = await fetch(core("/api/account/me"), {headers: {authorization: `Bearer ${tokens.access}`}, signal})
     if (signal.aborted) throw new Error("Account session revocation timed out")

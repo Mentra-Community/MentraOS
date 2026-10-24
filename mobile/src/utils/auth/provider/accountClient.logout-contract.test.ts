@@ -228,7 +228,7 @@ describe("AccountAuthProvider logout completion", () => {
         flow === "password"
           ? provider.signInWithPassword({email: user.email, password: "test"})
           : flow === "verification"
-            ? provider.completeSignupVerification("provider-token")
+            ? provider.completeSignupVerification("provider-token", async () => true)
             : flow === "reset"
               ? provider.resetPasswordByCode(user.email, "test-code", "new-password")
               : provider.completeOAuthHandoff({code: "handoff", state: "oauth-state"})

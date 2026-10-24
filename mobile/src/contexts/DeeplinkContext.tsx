@@ -6,6 +6,7 @@ import {AppState, Platform} from "react-native"
 import {cameraPackageName} from "@/constants/miniapps"
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import mentraAuth from "@/utils/auth/authClient"
+import {confirmLinkSignIn} from "@/utils/auth/confirmLinkSignIn"
 import {BgTimer, engine, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 import IncidentReportRequest from "@/components/diagnostics/IncidentReportRequest"
@@ -22,6 +23,14 @@ function sanitizeDeeplinkUrl(url: string): string {
   return url.replace(/\\&/g, "&").replace(/\\(?=$|[?#])/g, "")
 }
 
+/**
+ * A link for logs: its path only. Auth links carry one-time codes and provider tokens in the query or fragment, and
+ * phone logs leave the device in bug reports.
+ */
+function loggableUrl(url: string): string {
+  return url.split(/[?#]/)[0]
+}
+
 /** Returns immediately if the app is already active, otherwise waits for it. */
 const waitForActive = (): Promise<void> => {
   if (AppState.currentState === "active") return Promise.resolve()
@@ -35,9 +44,14 @@ const waitForActive = (): Promise<void> => {
   })
 }
 
+export interface DeepLinkRouteUi {
+  /** Lifts the splash, so a sheet the handler presents is visible. */
+  hideSplash: () => void
+}
+
 export interface DeepLinkRoute {
   pattern: string
-  handler: (url: string, params: Record<string, string>) => void | Promise<void>
+  handler: (url: string, params: Record<string, string>, ui: DeepLinkRouteUi) => void | Promise<void>
   requiresAuth?: boolean
   /** Diagnostic observations must not cover the currently selected app screen. */
   presentation?: "passive"
@@ -197,7 +211,7 @@ const deepLinkRoutes: DeepLinkRoute[] = [
   },
   {
     pattern: "/auth/callback",
-    handler: async (url: string, params: Record<string, string>) => {
+    handler: async (url: string, params: Record<string, string>, ui: DeepLinkRouteUi) => {
       const nav = useNavigationStore.getState()
       // console.log("[LOGIN DEBUG] params:", params)
       // console.log("[LOGIN DEBUG] url:", url)
@@ -256,7 +270,11 @@ const deepLinkRoutes: DeepLinkRoute[] = [
       }
 
       if (authParams?.type === "signup" && authParams.access_token) {
-        const res = await mentraAuth.completeSignupVerification(authParams.access_token)
+        // A link that would sign in to an account this phone didn't sign up for, or switch accounts, asks first.
+        const res = await mentraAuth.completeSignupVerification(authParams.access_token, (account) => {
+          ui.hideSplash()
+          return confirmLinkSignIn(account)
+        })
         try {
           WebBrowser.dismissBrowser()
         } catch {
@@ -267,6 +285,8 @@ const deepLinkRoutes: DeepLinkRoute[] = [
           nav.replace("/auth/start?authError=invalid_grant")
           return
         }
+        // Declined: the app stays signed in as before, or signed out.
+        if (res.value === "declined") return
         nav.setAnimation("none")
         nav.replaceAll("/")
         return
@@ -322,59 +342,12 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     },
   },
   {
+    // Password reset is the code "Forgot password" emails (account spec). A reset link carries no session: any tokens
+    // in it are ignored, so a link can never sign the phone in or replace the account signed in now.
     pattern: "/auth/reset-password",
-    handler: async (url: string, params: Record<string, string>) => {
-      const nav = useNavigationStore.getState()
-      console.log("[RESET PASSWORD DEBUG] Handling reset password deep link")
-      console.log("[RESET PASSWORD DEBUG] URL:", url)
-      console.log("[RESET PASSWORD DEBUG] Params:", params)
-
-      // Parse the auth parameters from the URL fragment
-      const parseAuthParams = (url: string) => {
-        const parts = url.split("#")
-        if (parts.length < 2) return null
-        const paramsString = parts[1]
-        const urlParams = new URLSearchParams(paramsString)
-        return {
-          access_token: urlParams.get("access_token"),
-          refresh_token: urlParams.get("refresh_token"),
-          type: urlParams.get("type"),
-          // Error params (when link is expired/invalid)
-          error: urlParams.get("error"),
-          error_code: urlParams.get("error_code"),
-          error_description: urlParams.get("error_description"),
-        }
-      }
-
-      const authParams = parseAuthParams(url)
-
-      // Check if there's an error in the URL (e.g., expired link)
-      if (authParams?.error || authParams?.error_code) {
-        console.log("[RESET PASSWORD DEBUG] Error in reset link:", authParams.error_code, authParams.error_description)
-        // Navigate to login with the error code so login screen can show the message
-        nav.replace(`/auth/start?authError=${authParams.error_code || authParams.error}`)
-        return
-      }
-
-      if (authParams && authParams.access_token && authParams.refresh_token && authParams.type === "recovery") {
-        // Set the recovery session
-        const res = await mentraAuth.updateSessionWithTokens({
-          access_token: authParams.access_token,
-          refresh_token: authParams.refresh_token,
-        })
-        if (res.is_error()) {
-          console.error("[RESET PASSWORD DEBUG] Error setting recovery session:", res.error)
-          nav.replace("/auth/start?authError=invalid_reset_link")
-          return
-        }
-
-        console.log("[RESET PASSWORD DEBUG] Recovery session set successfully")
-        // Navigate to the reset password screen
-        nav.replace("/auth/reset-password")
-      } else {
-        console.log("[RESET PASSWORD DEBUG] Missing required auth parameters for password reset")
-        nav.replace("/auth/start?authError=invalid_reset_link")
-      }
+    handler: (_url: string, params: Record<string, string>) => {
+      if (params.authed === "true") return
+      useNavigationStore.getState().replace("/auth/forgot-password")
     },
   },
 
@@ -554,7 +527,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       return true
     },
     fallbackHandler: (url: string) => {
-      console.warn("Fallback handler called for URL:", url)
+      console.warn("Fallback handler called for URL:", loggableUrl(url))
       setTimeout(() => {
         nav.replaceAll("/auth/start")
       }, 100)
@@ -568,7 +541,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
   useEffect(() => {
     const subscription = Linking.addEventListener("url", handleUrlRaw)
     Linking.getInitialURL().then((url) => {
-      console.log("@@@@@@@@@@@@@ INITIAL URL @@@@@@@@@@@@@@@", url)
+      console.log("@@@@@@@@@@@@@ INITIAL URL @@@@@@@@@@@@@@@", url && loggableUrl(url))
       if (url) {
         processUrl(url, true)
       }
@@ -693,7 +666,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       const matchedRoute = findMatchingRoute(parsedUrl)
 
       if (!matchedRoute) {
-        console.warn("No matching route found for URL:", url)
+        console.warn("No matching route found for URL:", loggableUrl(url))
         config.fallbackHandler?.(url)
         return
       }
@@ -726,13 +699,13 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       }
 
       try {
-        console.log("@@@@@@@@@@@@@ MATCHED ROUTE @@@@@@@@@@@@@@@", matchedRoute)
-        console.log("@@@@@@@@@@@@@ PARAMS @@@@@@@@@@@@@@@", params)
-        console.log("@@@@@@@@@@@@@ URL @@@@@@@@@@@@@@@", url)
+        console.log("@@@@@@@@@@@@@ MATCHED ROUTE @@@@@@@@@@@@@@@", matchedRoute.pattern)
+        console.log("@@@@@@@@@@@@@ PARAMS @@@@@@@@@@@@@@@", Object.keys(params))
+        console.log("@@@@@@@@@@@@@ URL @@@@@@@@@@@@@@@", loggableUrl(url))
         if (matchedRoute.presentation !== "passive") setSplashEnabled(true)
         // OAuth must start its one-time exchange while the browser is still
         // presented. A JS timer can be suspended during that transition.
-        await matchedRoute.handler(url, params)
+        await matchedRoute.handler(url, params, {hideSplash: () => setSplashEnabled(false)})
       } catch (error) {
         console.warn("Route handler failed, router may not be ready:", error)
       } finally {
