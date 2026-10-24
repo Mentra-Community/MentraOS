@@ -4,7 +4,7 @@ import { join, resolve } from 'path';
 import { printQR, writeQRPng } from './qr.js';
 import { warnIfPlaceholderIcon } from './icon.js';
 import { validateManifest } from './manifest.js';
-import { buildProjectZip, startDevSidecar } from './dev-server.js';
+import { buildProjectSnapshot, startDevSidecar } from './dev-server.js';
 import { getLanIp, getMdnsHostname } from './lan.js';
 import { adbReverse, closeUsbTunnel, missingReversePorts, openUsbTunnel } from './adb.js';
 
@@ -38,6 +38,152 @@ export interface DevOptions {
    * this to false; the sidecar still forwards console logs.
    */
   hotReload?: boolean;
+}
+
+/** Where the dev server serves the project's ZIP, relative to the miniapp URL. */
+export const DEV_BUNDLE_PATH = 'bundle.zip';
+
+/**
+ * The miniapp URL the QR encodes and `dev` prints: the dev server's root,
+ * which serves miniapp.json like any miniapp URL. A LAN address, or loopback
+ * over USB, so the Mentra App installs it as a local-network miniapp.
+ */
+export function buildDevUrl(host: string, port: number): string {
+  const urlHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+  return `http://${urlHost}:${port}/`;
+}
+
+/** What the served miniapp.json's `development` field tells the phone about the dev server. */
+export interface DevelopmentInfo {
+  /** The sidecar's live-reload socket. Absent while the sidecar isn't running. */
+  reload?: string;
+  /** This computer's mDNS name, to reach it by when its LAN address changes. */
+  mdns?: string;
+}
+
+/**
+ * The miniapp.json the dev server serves: the ZIP's own, plus `bundle` naming
+ * the ZIP and its SHA-256, as any miniapp URL serves, and `development`, which
+ * the Mentra App reads only from a local-network URL.
+ */
+export function servedDevManifest(
+  manifest: Record<string, unknown>,
+  sha256: string,
+  development: DevelopmentInfo,
+): Record<string, unknown> {
+  return { ...manifest, bundle: { url: DEV_BUNDLE_PATH, sha256 }, development };
+}
+
+export interface DevRequestHandlerOptions {
+  /** The project root the server serves. */
+  cwd: string;
+  /** The sidecar's port, read on each request: null while it isn't running. */
+  sidecarPort: () => number | null;
+  /** This computer's mDNS name, if it has one. */
+  mdnsHost: string | null;
+  /**
+   * Settles once no build is writing dist/, so a request never reads half a
+   * build, and miniapp.json and the ZIP it names come from the same one.
+   */
+  idle?: () => Promise<void>;
+}
+
+const NO_STORE = 'no-store';
+
+/**
+ * Runs builds one at a time, in the order they were asked for, so two
+ * triggers (a save and a LAN address change) never write dist/ at once.
+ * `idle` settles once every build asked for so far has finished, failed ones
+ * included.
+ */
+export function createBuildQueue(run: () => Promise<void>): { build: () => Promise<void>; idle: () => Promise<void> } {
+  let tail: Promise<void> = Promise.resolve();
+  return {
+    build() {
+      const next = tail.then(run);
+      tail = next.catch(() => {});
+      return next;
+    },
+    async idle() {
+      let current: Promise<void>;
+      do {
+        current = tail;
+        await current;
+      } while (current !== tail);
+    },
+  };
+}
+
+/**
+ * The static server's requests. `/miniapp.json` (and `/`) is the served
+ * manifest, `/bundle.zip` the ZIP it names; any other path is a project file,
+ * which live launches load `dist/` from.
+ */
+export function createDevRequestHandler(options: DevRequestHandlerOptions): (req: Request) => Promise<Response> {
+  return async (req) => {
+    await options.idle?.();
+    const url = new URL(req.url);
+    if (url.pathname === '/' || url.pathname === '/miniapp.json') {
+      const snapshot = await buildProjectSnapshot(options.cwd);
+      if (snapshot.manifest === null) return new Response('not found', { status: 404 });
+      let manifest: unknown;
+      try {
+        manifest = JSON.parse(snapshot.manifest);
+      } catch {
+        manifest = null;
+      }
+      if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) {
+        return new Response('miniapp.json is not a JSON object', { status: 500 });
+      }
+      const development: DevelopmentInfo = {};
+      const sidecarPort = options.sidecarPort();
+      // The host the phone reached this server by: the LAN address, loopback
+      // over USB, or the mDNS name. The sidecar is on the same machine.
+      if (sidecarPort) development.reload = `ws://${url.hostname}:${sidecarPort}/__mentra_dev`;
+      // Lets the phone retry via ComputerName.local when the raw IP goes stale
+      // after a Wi-Fi/DHCP change.
+      if (options.mdnsHost) development.mdns = options.mdnsHost;
+      const served = servedDevManifest(manifest as Record<string, unknown>, snapshot.sha256, development);
+      return new Response(`${JSON.stringify(served, null, 2)}\n`, {
+        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': NO_STORE },
+      });
+    }
+    if (url.pathname === `/${DEV_BUNDLE_PATH}` || url.pathname === '/__mentra_dev/bundle.zip') {
+      const { zip } = await buildProjectSnapshot(options.cwd);
+      const body = zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength) as ArrayBuffer;
+      return new Response(body, {
+        headers: {
+          'content-type': 'application/zip',
+          'content-length': String(zip.byteLength),
+          'cache-control': NO_STORE,
+        },
+      });
+    }
+    // Strip leading slash and prevent ../ traversal. Path joining
+    // against cwd already canonicalises, but we double-check by
+    // refusing absolute paths and any segment starting with `..`.
+    const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+    if (rel.split('/').some((seg) => seg === '..')) {
+      return new Response('forbidden', { status: 403 });
+    }
+    const abs = join(options.cwd, rel);
+    try {
+      const stat = statSync(abs);
+      if (stat.isDirectory()) {
+        // Index of a directory isn't useful for the phone — refuse.
+        return new Response('not found', { status: 404 });
+      }
+      const buf = readFileSync(abs);
+      return new Response(buf, {
+        headers: {
+          'content-type': contentTypeFor(abs),
+          'cache-control': NO_STORE,
+        },
+      });
+    } catch {
+      return new Response('not found', { status: 404 });
+    }
+  };
 }
 
 function contentTypeFor(path: string): string {
@@ -159,61 +305,30 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     console.log(`Port ${requestedPort} was unavailable; using ${port} instead.`);
   }
 
+  // Every build goes through one queue, so the server can hold requests until
+  // no build is writing dist/.
+  const { build, idle } = createBuildQueue(() => runBuild(cwd));
+
   // Initial build before serving — a fresh `bun run dev` should always
   // start from a clean, current `dist/`.
   try {
-    await runBuild(cwd);
+    await build();
   } catch (err) {
     console.error('Initial build failed:', (err as Error).message);
     process.exit(1);
   }
 
-  // Static HTTP server on `port` serving the project root. The phone hits
-  // `${devUrl}/miniapp.json` (reachability + manifest), `${devUrl}/icon.png`
-  // (icon preview), and `${devUrl}/bundle.zip` (local snapshot install).
-  // Range requests aren't supported — files are small and short-lived.
+  const mdnsHost = getMdnsHostname();
+  let sidecarPort: number | null = null;
+
+  // Static HTTP server on `port` serving the project root: the miniapp URL.
+  // The phone fetches `miniapp.json`, then the `bundle.zip` it names, and
+  // live launches load `dist/` files from here. Range requests aren't
+  // supported — files are small and short-lived.
   const userServer = Bun.serve({
     hostname: '0.0.0.0',
     port,
-    fetch(req) {
-      const url = new URL(req.url);
-      if (url.pathname === '/bundle.zip' || url.pathname === '/__mentra_dev/bundle.zip') {
-        return buildProjectZip(cwd).then((buf) => {
-          const body = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
-          return new Response(body, {
-            headers: {
-              'content-type': 'application/zip',
-              'content-length': String(buf.byteLength),
-              'cache-control': 'no-store',
-            },
-          });
-        });
-      }
-      // Strip leading slash and prevent ../ traversal. Path joining
-      // against cwd already canonicalises, but we double-check by
-      // refusing absolute paths and any segment starting with `..`.
-      const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '');
-      if (rel.split('/').some((seg) => seg === '..')) {
-        return new Response('forbidden', { status: 403 });
-      }
-      const abs = rel === '' ? join(cwd, 'miniapp.json') : join(cwd, rel);
-      try {
-        const stat = statSync(abs);
-        if (stat.isDirectory()) {
-          // Index of a directory isn't useful for the phone — refuse.
-          return new Response('not found', { status: 404 });
-        }
-        const buf = readFileSync(abs);
-        return new Response(buf, {
-          headers: {
-            'content-type': contentTypeFor(abs),
-            'cache-control': 'no-store',
-          },
-        });
-      } catch {
-        return new Response('not found', { status: 404 });
-      }
-    },
+    fetch: createDevRequestHandler({ cwd, sidecarPort: () => sidecarPort, mdnsHost, idle }),
   });
 
   // In USB mode the QR advertises loopback, so a missing LAN IP is the expected
@@ -231,7 +346,6 @@ export async function dev(options: DevOptions = {}): Promise<void> {
   // `onBeforeBroadcast` hook rebuilds `dist/` before the phone is
   // notified, so the next `bundle.zip` fetch ships current code.
   // Failure here is non-fatal; the miniapp still runs without live reload.
-  let sidecarPort: number | null = null;
   let sidecar: ReturnType<typeof startDevSidecar> | null = null;
   try {
     sidecar = startDevSidecar({
@@ -240,7 +354,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
       hotReload: options.hotReload !== false,
       onBeforeBroadcast: async () => {
         try {
-          await runBuild(cwd);
+          await build();
         } catch (err) {
           console.error('Rebuild failed:', (err as Error).message);
         }
@@ -287,19 +401,6 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     }
   }
 
-  const mdnsHost = getMdnsHostname();
-
-  // The phone runs the dev build under `package` (the manifest package name)
-  // and applies its installed-signer rule to it; the QR carries no credential.
-  const buildDevUrl = (ip: string): string => {
-    const devServerUrl = `http://${ip}:${port}`;
-    const base = `miniapp://dev?url=${encodeURIComponent(devServerUrl)}&name=${encodeURIComponent(name)}&package=${encodeURIComponent(packageName)}`;
-    const withDevPort = sidecarPort ? `${base}&dev=${sidecarPort}` : base;
-    // mDNS hint lets the phone retry via ComputerName.local when the raw IP
-    // goes stale after a Wi-Fi/DHCP change — same QR, new address under the hood.
-    return mdnsHost ? `${withDevPort}&mdns=${encodeURIComponent(mdnsHost)}` : withDevPort;
-  };
-
   const printBanner = (): void => {
     console.log('\n╔══════════════════════════════════════════════════════════════╗');
     console.log('║  To test your miniapp on glasses:                            ║');
@@ -331,11 +432,10 @@ export async function dev(options: DevOptions = {}): Promise<void> {
   const qrOutputPath = resolve(options.qrOutput ?? defaultQrPath);
   const cleanupQrOnExit = !options.qrOutput;
 
-  const emitQR = async (url: string, host: string): Promise<void> => {
+  const emitQR = async (url: string): Promise<void> => {
     await printQR(url);
     const wrote = await writeQRPng(url, qrOutputPath);
-    console.log(`\nDev server URL: http://${host}:${port}`);
-    console.log(`${url}`);
+    console.log(`\nMiniapp URL: ${url}`);
     if (wrote) {
       console.log(`PNG QR: ${qrOutputPath}\n`);
     } else {
@@ -349,10 +449,9 @@ export async function dev(options: DevOptions = {}): Promise<void> {
   }
   // Loopback when the USB tunnel is up, otherwise the LAN IP. `lanIp` is
   // non-null here: the only path that leaves it null exits above unless the
-  // tunnel came up.
+  // tunnel came up. The QR is the plain miniapp URL and carries no credential.
   const devHost = usbActive ? USB_LOOPBACK_HOST : lanIp!;
-  const devUrl = buildDevUrl(devHost);
-  await emitQR(devUrl, devHost);
+  await emitQR(buildDevUrl(devHost, port));
 
   // Confirm the reverse mappings survive. They are dropped on unplug, on
   // `adb kill-server`, and on device reboot, and nothing notifies us — the
@@ -392,7 +491,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
         console.log(`\n📶 LAN IP changed: ${lanIp} → ${newIp}`);
         console.log('Rebuilding so baked-in LAN URLs (e.g. signing endpoints) stay current…');
         try {
-          await runBuild(cwd);
+          await build();
         } catch (err) {
           // Leave lanIp on the previous value so the next poll retries this IP.
           // Committing early would leave dist/ stale while skipping further rebuilds.
@@ -407,8 +506,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
         if (mdnsHost) {
           console.log(`mDNS: ${mdnsHost}\n`);
         }
-        const newDevUrl = buildDevUrl(newIp);
-        await emitQR(newDevUrl, newIp);
+        await emitQR(buildDevUrl(newIp, port));
       } finally {
         ipCheckInFlight = false;
       }

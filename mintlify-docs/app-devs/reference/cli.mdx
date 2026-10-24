@@ -41,9 +41,11 @@ mentra-miniapp dev
 ```
 
 Validates `miniapp.json`, builds both layers, serves them over your LAN, and
-prints a QR (and a `miniapp://dev?...` URL). It also runs a **dev sidecar**
-WebSocket on the next port up for live reload and console-log forwarding back to
-your terminal (non-fatal if it can't start). It watches for Wi-Fi/LAN-IP changes
+prints a QR of its local-network miniapp URL, `http://<lan-ip>:<port>/`. That
+URL serves `miniapp.json` like any miniapp URL, naming `bundle.zip` and its
+SHA-256. It also runs a **dev sidecar** WebSocket on the next port up for live
+reload and console-log forwarding back to your terminal (non-fatal if it can't
+start). It watches for Wi-Fi/LAN-IP changes
 every 10 seconds and reprints the QR.
 
 The starting port comes from `"port"` in `miniapp.json` (default `3000`); if it or

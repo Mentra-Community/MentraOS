@@ -1,12 +1,13 @@
 /// <reference types="bun-types" />
 
-import {afterEach, beforeEach, describe, expect, test} from "bun:test"
+import {afterEach, beforeEach, describe, expect, setSystemTime, test} from "bun:test"
+import {createHash} from "node:crypto"
 import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from "fs"
 import {tmpdir} from "os"
 import {join} from "path"
 import JSZip from "jszip"
 
-import {buildProjectZip, classifyWatchEvent, listProjectFiles} from "./dev-server"
+import {buildProjectSnapshot, buildProjectZip, classifyWatchEvent, listProjectFiles} from "./dev-server"
 
 describe("listProjectFiles — dist/ inclusion", () => {
   let root: string
@@ -134,6 +135,63 @@ describe("buildProjectZip — two-output bundle contract", () => {
     const bg = await zip.files["background/index.js"]!.async("string")
     expect(manifest).toBe('{"a":1}')
     expect(bg).toBe("/* bg-stub */")
+  })
+})
+
+describe("buildProjectSnapshot: the ZIP the served miniapp.json names", () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "mentra-snapshot-test-"))
+  })
+
+  afterEach(() => {
+    setSystemTime()
+    rmSync(root, {recursive: true, force: true})
+  })
+
+  function touch(rel: string, contents = "// stub") {
+    const abs = join(root, rel)
+    mkdirSync(join(abs, ".."), {recursive: true})
+    writeFileSync(abs, contents)
+  }
+
+  const manifest = '{"packageName":"com.test","version":"1.0.0","name":"Test","hardwareRequirements":[]}'
+
+  test("names the ZIP's SHA-256 and the miniapp.json inside it", async () => {
+    touch("miniapp.json", manifest)
+    touch("dist/background/index.js", "console.log('bg')")
+    const snapshot = await buildProjectSnapshot(root)
+    expect(snapshot.sha256).toBe(createHash("sha256").update(snapshot.zip).digest("hex"))
+    expect(snapshot.manifest).toBe(manifest)
+    const zip = await JSZip.loadAsync(snapshot.zip)
+    expect(await zip.files["miniapp.json"]!.async("string")).toBe(manifest)
+  })
+
+  test("the same files make the same ZIP, whenever it is built", async () => {
+    touch("miniapp.json", manifest)
+    touch("dist/background/index.js", "console.log('bg')")
+    touch("dist/ui/assets/main.js", "console.log('ui')")
+    setSystemTime(new Date("2026-01-01T10:00:00Z"))
+    const first = await buildProjectSnapshot(root)
+    setSystemTime(new Date("2026-06-01T18:30:07Z"))
+    const second = await buildProjectSnapshot(root)
+    expect(second.sha256).toBe(first.sha256)
+    expect(Buffer.from(second.zip).equals(Buffer.from(first.zip))).toBe(true)
+    expect(await buildProjectZip(root)).toEqual(second.zip)
+  })
+
+  test("changed files make a different ZIP", async () => {
+    touch("miniapp.json", manifest)
+    touch("dist/background/index.js", "console.log('bg')")
+    const before = await buildProjectSnapshot(root)
+    touch("dist/background/index.js", "console.log('bg 2')")
+    expect((await buildProjectSnapshot(root)).sha256).not.toBe(before.sha256)
+  })
+
+  test("a project without miniapp.json has no manifest", async () => {
+    touch("dist/background/index.js")
+    expect((await buildProjectSnapshot(root)).manifest).toBeNull()
   })
 })
 

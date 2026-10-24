@@ -36,9 +36,9 @@ What it does:
 1. Reads + validates `miniapp.json` (hard-fails on bad permissions / hardware types so you don't have to debug it on the phone).
 2. Runs the project's `build.ts` so `dist/background/index.js` and `dist/ui/*` are current.
 3. Picks the first free adjacent port pair starting at `port`: one for static files and the next for the dev sidecar.
-4. Starts a static server that serves `miniapp.json`, `icon.png`, and project files.
+4. Starts a static server at the miniapp URL. It serves `miniapp.json` the way any miniapp URL does, as the project's `miniapp.json` plus `bundle: {url: "bundle.zip", sha256}`, and adds a `development` field, `{reload: "ws://<host>:<port + 1>/__mentra_dev", mdns: "<name>.local"}`, which the Mentra App reads only from a local-network URL. It also serves `bundle.zip`, built from the current `dist/`, plus `icon.png` and the project files. The same files always make the same ZIP, so the hash holds until a rebuild changes them.
 5. Starts a **dev sidecar** on `port + 1` — a WebSocket the phone connects to for live reload + console-log forwarding back to your terminal. Failure here is non-fatal; the miniapp still runs without live reload. `--no-hot-reload` keeps the log bridge and `bundle.zip` endpoint but skips the filesystem watcher, so saves no longer remount the WebView or respawn the background JSContext.
-6. Detects the LAN IP (or sets up USB tunnels with `--usb`), builds a `miniapp://dev?url=…&name=…&package=…&dev=<sidecarPort>` URL, and prints a terminal QR + the raw URL.
+6. Detects the LAN IP (or sets up USB tunnels with `--usb`) and prints the miniapp URL, `http://<lan-ip>:<port>/`, and its terminal QR. The Mentra App installs it like any other miniapp URL, as a local-network miniapp: it isn't registered, keeps its own data, and its tokens say it is a local build.
 7. Watches for LAN-IP changes (Wi-Fi switch) every 2s and reprints the QR. Skipped under `--usb`, where the QR host is a fixed loopback address.
 
 Default `port` is `3000`; override the starting point with a `"port": <n>` field in `miniapp.json`. If that port or its sidecar neighbor is busy, `dev` scans upward until it finds a free adjacent pair.
@@ -58,12 +58,12 @@ that works without the computer.
 
 `--usb` runs `adb reverse` for the static port and the sidecar port, which
 publishes them on the phone's own loopback address over the USB cable. The QR
-then advertises `http://127.0.0.1:<port>` instead of a LAN IP, so the phone and
+then advertises `http://127.0.0.1:<port>/` instead of a LAN IP, so the phone and
 the laptop no longer need to share a network. This is the fix when you're on
 guest Wi-Fi, on a network with AP client isolation, or on no Wi-Fi at all.
 
 Everything else behaves the same: live reload and console forwarding ride the
-same tunnel, and the QR still carries the mDNS hint as a fallback.
+same tunnel, and the served `miniapp.json` still names the mDNS name as a fallback.
 
 Notes:
 
