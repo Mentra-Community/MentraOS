@@ -173,6 +173,16 @@ public class BaseHardwareManager implements IHardwareManager {
     }
 
     @Override
+    public void playAudioAssetAndAwait(String assetName, long timeoutMs) {
+        Log.d(TAG, "playAudioAssetAndAwait(" + assetName + ") called - no-op on base hardware");
+    }
+
+    @Override
+    public void playAudioAssetClaimingBridge(String assetName) {
+        Log.d(TAG, "playAudioAssetClaimingBridge(" + assetName + ") called - no-op on base hardware");
+    }
+
+    @Override
     public void stopAudioPlayback() {
         Log.d(TAG, "stopAudioPlayback() called - no-op on base hardware");
     }

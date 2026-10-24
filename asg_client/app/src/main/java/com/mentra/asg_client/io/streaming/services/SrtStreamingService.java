@@ -39,6 +39,7 @@ import com.mentra.asg_client.io.streaming.events.StreamingCommand;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
 import com.mentra.asg_client.io.streaming.StreamCallbackScope;
+import com.mentra.asg_client.io.streaming.StreamStartCue;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.audio.AudioAssets;
@@ -384,9 +385,7 @@ public class SrtStreamingService extends Service {
             if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
               mHardwareManager.acquireRecordingLed(mPrivacyLightOwner);
             }
-            if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
-              mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_START);
-            }
+            // The start cue already finished before capture opened.
 
             startBatteryMonitoring();
             startMetricsReporting();
@@ -679,15 +678,26 @@ public class SrtStreamingService extends Service {
         }
       };
 
-      mSrtStreamer.startStream(mSrtUrl, streamContinuation);
+      StreamStartCue.handoff(
+          mLifecycleHandler,
+          mHardwareManager,
+          mSoundEnabled,
+          () -> {
+            synchronized (mStateLock) {
+              return mStreamState == StreamState.STARTING
+                  && mPublisherCallbacks.isCurrent(startGeneration);
+            }
+          },
+          () -> {
+            try {
+              mSrtStreamer.startStream(mSrtUrl, streamContinuation);
+            } catch (Exception e) {
+              reportStartFailure(e);
+            }
+          });
 
     } catch (Exception e) {
-      String errorMsg = "Failed to start SRT streaming: " + e.getMessage();
-      Log.e(TAG, errorMsg, e);
-      synchronized (mStateLock) { mStreamState = StreamState.IDLE; mIsStreaming = false; }
-      if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
-      StreamingReporting.reportStreamStartFailure(SrtStreamingService.this, mSrtUrl, e.getMessage(), e);
-      scheduleReconnect("start_exception");
+      reportStartFailure(e);
     }
   }
 
@@ -721,7 +731,19 @@ public class SrtStreamingService extends Service {
     forceStopStreamingInternal(false);
   }
 
+  private void reportStartFailure(Exception e) {
+    String errorMsg = "Failed to start SRT streaming: " + e.getMessage();
+    Log.e(TAG, errorMsg, e);
+    synchronized (mStateLock) { mStreamState = StreamState.IDLE; mIsStreaming = false; }
+    if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
+    StreamingReporting.reportStreamStartFailure(SrtStreamingService.this, mSrtUrl, e.getMessage(), e);
+    scheduleReconnect("start_exception");
+  }
+
   private void forceStopStreamingInternal(boolean preserveSession) {
+    if (mHardwareManager != null) {
+      mHardwareManager.stopAudioPlayback();
+    }
     final long stopGeneration = mPublisherCallbacks.advance();
     mAwaitingPublisherRecovery = false;
     Log.d(TAG, "Force stopping SRT stream (preserveSession=" + preserveSession + ")");

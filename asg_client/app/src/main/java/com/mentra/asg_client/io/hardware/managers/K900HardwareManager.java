@@ -210,6 +210,24 @@ public class K900HardwareManager extends BaseHardwareManager {
     }
 
     @Override
+    public void playAudioAssetAndAwait(String assetName, long timeoutMs) {
+        if (audioController != null) {
+            audioController.playAssetAndAwait(assetName, timeoutMs);
+        } else {
+            Log.w(TAG, "Audio controller not available");
+        }
+    }
+
+    @Override
+    public void playAudioAssetClaimingBridge(String assetName) {
+        if (audioController != null) {
+            audioController.playAssetClaimingBridge(assetName);
+        } else {
+            Log.w(TAG, "Audio controller not available");
+        }
+    }
+
+    @Override
     public long playAudioAssetTracked(String assetName) {
         if (audioController != null) {
             return audioController.playAssetTracked(
