@@ -259,6 +259,61 @@ describe("fetching miniapp.json", () => {
   })
 })
 
+describe("redirects answered, not followed", () => {
+  test.each([301, 302, 303, 307, 308])("a %d comes back with its target, unread", async (status) => {
+    const result = await fetchMiniappJson(manifestUrl, {
+      redirect: "manual",
+      packageForChallenge: pkg,
+      transport: serve({status, body: "moved", headers: {location: "https://apps.acme.com/tools/miniapp.json"}}),
+    })
+    expect(result).toEqual({status, url: manifestUrl, location: "https://apps.acme.com/tools/miniapp.json"})
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.init.redirect).toBe("manual")
+    expect(tokens).toEqual([])
+  })
+
+  test("a relative Location resolves against the URL that answered", async () => {
+    const result = await fetchMiniappJson(manifestUrl, {
+      redirect: "manual",
+      transport: serve({status: 301, headers: {location: "../v2/miniapp.json"}}),
+    })
+    expect(result.location).toBe("https://tools.acme.com/v2/miniapp.json")
+  })
+
+  test("a redirect with no usable Location, or another status, names no target", async () => {
+    const missing = await fetchMiniappJson(manifestUrl, {redirect: "manual", transport: serve({status: 301})})
+    expect(missing).toEqual({status: 301, url: manifestUrl})
+    const unparsable = await fetchMiniappJson(manifestUrl, {
+      redirect: "manual",
+      transport: serve({status: 308, headers: {location: "https://"}}),
+    })
+    expect(unparsable.location).toBeUndefined()
+    const notModified = await fetchMiniappJson(manifestUrl, {
+      redirect: "manual",
+      transport: serve({status: 304, headers: {location: "https://apps.acme.com/miniapp.json"}}),
+    })
+    expect(notModified.location).toBeUndefined()
+  })
+
+  test("following is the default, and a Location there is not reported", async () => {
+    const result = await fetchMiniappJson(manifestUrl, {
+      transport: serve({status: 302, headers: {location: "https://apps.acme.com/miniapp.json"}}),
+    })
+    expect(sent[0]!.init.redirect).toBe("follow")
+    expect(result.location).toBeUndefined()
+  })
+
+  test("the request that answers a challenge still follows no redirects", async () => {
+    const result = await fetchMiniappJson(manifestUrl, {
+      redirect: "manual",
+      packageForChallenge: pkg,
+      transport: serve({status: 401, headers: {"www-authenticate": challenge}}, {status: 200, body: "{}"}),
+    })
+    expect(result).toMatchObject({status: 200, challenge: {packageName: pkg}})
+    expect(sent.map((request) => request.init.redirect)).toEqual(["manual", "error"])
+  })
+})
+
 describe("downloading the ZIP", () => {
   const zipUrl = `${base}${pkg}-1.0.0.zip`
   const bytes = new TextEncoder().encode("zip bytes")

@@ -1721,6 +1721,18 @@ class AppRegistry {
     }
   }
 
+  /**
+   * A miniapp installed from its URL moved (a permanent redirect within its domain): record the URL this release
+   * updates from now. Only `sourceUrl` changes. Answers false, and changes nothing, unless the release is a `url`
+   * release that still records `fromUrl`, so a move can't overwrite a release an install just replaced.
+   */
+  public setReleaseSourceUrl(packageName: string, version: string, fromUrl: string, sourceUrl: string): boolean {
+    const identity = this.getReleaseIdentity(packageName, version)
+    if (identity?.source !== "url" || identity.sourceUrl !== fromUrl) return false
+    getInstallationMetadata().set(releaseIdentityKey(packageName, version), JSON.stringify({...identity, sourceUrl}))
+    return true
+  }
+
   /** The publisher key a package is pinned to, or null when it is unsigned or not installed. */
   public getPublisherKeyFingerprint(packageName: string): string | null {
     try {

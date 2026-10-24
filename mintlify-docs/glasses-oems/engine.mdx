@@ -378,9 +378,11 @@ updates from its URL; its development server reloads it instead. Only a person i
 one: a `system` or `assignment` install of a local URL fails with `not_a_miniapp`. The
 preview's `local` is `true`: show "From your local network" with the address.
 
-Every install registers its URL unless `config.requireRegistry` is `false`. Off, the
-engine installs any miniapp URL without registering it; the domain rule still applies.
-A host app that turns it off answers to the app stores' rules itself.
+Every install registers its URL unless `config.requireRegistry` is `false`. The engine's
+update checks also ask Core which installed URLs are archived, and never update those;
+installed copies keep running. Off, the engine installs any miniapp URL without
+registering it and asks Core nothing; the domain rule still applies. A host app that
+turns it off answers to the app stores' rules itself.
 
 Set `config.hostAgeRating` to your app's own App Store age rating, for example `"12+"`.
 A miniapp whose `ageRating` is above it installs or opens only for a person whose

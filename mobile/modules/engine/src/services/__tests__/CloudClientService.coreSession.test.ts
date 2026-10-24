@@ -159,7 +159,7 @@ class FakeCloudClient {
   readonly auth = new FakeAuth()
   readonly core?: {
     fleet: {report: ReturnType<typeof mock>; desiredState: Fleet["desiredState"]}
-    registry: {registerMiniappUrl: Registry["registerMiniappUrl"]}
+    registry: {registerMiniappUrl: Registry["registerMiniappUrl"]; registryStatus: Registry["registryStatus"]}
   }
   readonly runtime = {
     onStatusChanged: () => () => {},
@@ -183,7 +183,10 @@ class FakeCloudClient {
       const registry = new Registry(registryHttp, this.auth)
       this.core = {
         fleet: {report: mock(async () => ACK), desiredState: fleet.desiredState.bind(fleet)},
-        registry: {registerMiniappUrl: registry.registerMiniappUrl.bind(registry)},
+        registry: {
+          registerMiniappUrl: registry.registerMiniappUrl.bind(registry),
+          registryStatus: registry.registryStatus.bind(registry),
+        },
       }
     }
   }
@@ -696,9 +699,12 @@ describe("registering a miniapp URL", () => {
     cloudClientService.init()
     await settle()
     registryAnswer = () =>
-      Response.json({error: "email_unverified", error_description: "registering a miniapp needs a verified email"}, {
-        status: 403,
-      })
+      Response.json(
+        {error: "email_unverified", error_description: "registering a miniapp needs a verified email"},
+        {
+          status: 403,
+        },
+      )
     await expect(cloudClientService.core.registry.register(request)).rejects.toMatchObject({
       status: 403,
       code: "email_unverified",
@@ -713,6 +719,63 @@ describe("registering a miniapp URL", () => {
     await settle()
     await expect(cloudClientService.core.registry.register(request)).rejects.toThrow()
     expect(registryRequests).toEqual([])
+  })
+})
+
+describe("asking a Core's registry for status", () => {
+  const request = {entries: [{url: "https://tools.acme.com/app/", version: "1.2.0"}]}
+  const statuses = {statuses: [{url: "https://tools.acme.com/app/", status: "archived" as const}], validForSeconds: 3600}
+
+  beforeEach(() => {
+    registryRequests.length = 0
+    registryAnswer = () => Response.json(statuses)
+  })
+
+  test("asks that Core as the signed-in account, and answers Core's statuses", async () => {
+    cloudClientService.init()
+    await settle()
+    await expect(cloudClientService.core.registry.statusAs(`${CORE_X}/`, request)).resolves.toEqual(statuses)
+    expect(registryRequests).toEqual([
+      {
+        url: `${CORE_X}/api/client/registry/status`,
+        method: "POST",
+        authorization: `Bearer ${tokenFor(A)}`,
+        body: request,
+      },
+    ])
+  })
+
+  test("answers null, sending nothing, for another Core or without a Core", async () => {
+    cloudClientService.init()
+    await settle()
+    await expect(cloudClientService.core.registry.statusAs(CORE_Y, request)).resolves.toBeNull()
+    endpoints.current = {runtime: RUNTIME}
+    cloudClientService.reconnect({runtime: RUNTIME})
+    await settle()
+    await expect(cloudClientService.core.registry.statusAs(CORE_X, request)).resolves.toBeNull()
+    expect(registryRequests).toEqual([])
+  })
+
+  test("drops an answer that comes back after the client was rebuilt", async () => {
+    cloudClientService.init()
+    await settle()
+    let release!: () => void
+    registryAnswer = () =>
+      new Promise<Response>((resolve) => {
+        release = () => resolve(Response.json(statuses))
+      })
+    const asking = cloudClientService.core.registry.statusAs(CORE_X, request)
+    await settle()
+    cloudClientService.reconnect()
+    release()
+    await expect(asking).resolves.toBeNull()
+  })
+
+  test("a refusal rejects with Core's status", async () => {
+    cloudClientService.init()
+    await settle()
+    registryAnswer = () => Response.json({error: "unavailable"}, {status: 503})
+    await expect(cloudClientService.core.registry.statusAs(CORE_X, request)).rejects.toMatchObject({status: 503})
   })
 })
 

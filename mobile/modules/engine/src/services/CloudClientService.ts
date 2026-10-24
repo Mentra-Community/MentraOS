@@ -1097,6 +1097,28 @@ export const cloudClientService = {
       ): ReturnType<CloudCore["registry"]["registerMiniappUrl"]> {
         return getCoreClient().registry.registerMiniappUrl(...args)
       },
+      /**
+       * The registry status of installed miniapp URLs, in one batch, from `coreUrl`'s registry and only from it:
+       * `active`, `archived` or `unknown` for each, and how long the answer stays valid. Resolves null, sending nothing,
+       * unless the current client was built for that Core (compared like `desiredStateAs`), and null for an answer that
+       * comes back after the client was rebuilt or the account changed. Never builds a client. Rejects when Core can't
+       * be reached or refuses the call.
+       */
+      async statusAs(
+        coreUrl: string,
+        ...args: Parameters<CloudCore["registry"]["registryStatus"]>
+      ): Promise<Awaited<ReturnType<CloudCore["registry"]["registryStatus"]>> | null> {
+        const c = client
+        if (!c?.core || !clientCoreUrl || !sameCoreUrl(clientCoreUrl, coreUrl)) return null
+        let answer: Awaited<ReturnType<CloudCore["registry"]["registryStatus"]>>
+        try {
+          answer = await c.core.registry.registryStatus(...args)
+        } catch (err) {
+          if (err instanceof SessionChangedError) return null
+          throw err
+        }
+        return c === client ? answer : null
+      },
     },
     /**
      * What the phone keeps on the signed-in person's Core account (`/api/account`): the age they declared, for the

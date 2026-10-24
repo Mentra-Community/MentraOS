@@ -5,6 +5,9 @@
  * `401` with `WWW-Authenticate: Bearer realm="mentra", package="<packageName>"`. To answer, the engine checks that the
  * domain of the URL that asked owns the package, gets that package's miniapp token, and sends the same request once
  * more with it, following no redirects. A token is only ever sent that way, and only for the package that was named.
+ *
+ * The updater asks for redirects back instead of followed (`redirect: "manual"`), so it can tell a miniapp that moved
+ * (`301`, `308`) from one that is only elsewhere for now.
  */
 import {fetch as expoFetch} from "expo/fetch"
 import {MINIAPP_PACKAGE_NAME_PATTERN} from "@mentra/cloud-protocol/miniapp-url"
@@ -32,8 +35,8 @@ export interface MiniappResponse {
 export interface MiniappRequestInit {
   headers: Record<string, string>
   signal: AbortSignal
-  /** `error` for a request that carries a token: it must not reach another URL. */
-  redirect: "follow" | "error"
+  /** `error` for a request that carries a token: it must not reach another URL. `manual`: answer the redirect itself. */
+  redirect: "follow" | "error" | "manual"
   /** Never the phone's cookies. */
   credentials: "omit"
 }
@@ -85,6 +88,11 @@ export interface MiniappJsonResult {
   retryAfterMs?: number
   /** The sign-in challenge the server answered with, answered or not. */
   challenge?: MiniappChallenge
+  /**
+   * With `redirect: "manual"`: the redirect's target, as an absolute URL resolved against `url`, for a `301`, `302`,
+   * `303`, `307` or `308` that names one. The redirect isn't followed; `status` is its status.
+   */
+  location?: string
 }
 
 export interface FetchMiniappJsonOptions {
@@ -96,6 +104,11 @@ export interface FetchMiniappJsonOptions {
    * of the URL that asked must own the package. Omitted, a challenge comes back unanswered, as its `401`.
    */
   packageForChallenge?: string | true
+  /**
+   * `follow` (the default) follows redirects. `manual` answers a redirect with its `location` instead. A request that
+   * carries a token follows none either way.
+   */
+  redirect?: "follow" | "manual"
   /** Tests replace the network. */
   transport?: MiniappFetchTransport
 }
@@ -152,12 +165,12 @@ export async function fetchMiniappJson(url: string, options: FetchMiniappJsonOpt
     ...(options.etag ? {"If-None-Match": options.etag} : {}),
   }
   const transport = options.transport ?? defaultTransport
-  const first = await sendJson(transport, url, headers)
+  const first = await sendJson(transport, url, headers, false, options.redirect ?? "follow")
   const challenge = first.status === 401 ? first.challenge : undefined
   if (!challenge || options.packageForChallenge === undefined) return first
   const expected = options.packageForChallenge === true ? undefined : options.packageForChallenge
   const authorization = await answerChallenge(challenge, first.url, expected)
-  const second = await sendJson(transport, first.url, {...headers, Authorization: authorization}, true)
+  const second = await sendJson(transport, first.url, {...headers, Authorization: authorization}, true, "follow")
   return {...second, challenge}
 }
 
@@ -237,6 +250,7 @@ async function send<T>(
   withToken: boolean,
   timeoutMs: number,
   read: (sent: SentResponse) => Promise<T>,
+  redirect: "follow" | "manual" = "follow",
 ): Promise<T> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
@@ -246,7 +260,7 @@ async function send<T>(
       response = await transport(url, {
         headers,
         signal: controller.signal,
-        redirect: withToken ? "error" : "follow",
+        redirect: withToken ? "error" : redirect,
         credentials: "omit",
       })
     } catch (error) {
@@ -270,22 +284,28 @@ async function send<T>(
   }
 }
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+
 function sendJson(
   transport: MiniappFetchTransport,
   url: string,
   headers: Record<string, string>,
-  withToken = false,
+  withToken: boolean,
+  redirect: "follow" | "manual",
 ): Promise<MiniappJsonResult> {
-  return send(transport, url, headers, withToken, JSON_TIMEOUT_MS, async ({response, status, url: servedFrom}) => {
+  const read = async ({response, status, url: servedFrom}: SentResponse): Promise<MiniappJsonResult> => {
     const retryAfter = Number(response.headers.get("retry-after"))
     const challenge = status === 401 ? parseMiniappChallenge(response.headers.get("www-authenticate")) : null
     const etag = response.headers.get("etag")
+    const location =
+      redirect === "manual" && REDIRECT_STATUSES.has(status) ? redirectTarget(response, servedFrom) : null
     const result: MiniappJsonResult = {
       status,
       url: servedFrom,
       ...(etag ? {etag} : {}),
       ...(Number.isFinite(retryAfter) && retryAfter > 0 ? {retryAfterMs: retryAfter * 1000} : {}),
       ...(challenge ? {challenge} : {}),
+      ...(location ? {location} : {}),
     }
     if (status < 200 || status >= 300) return result
     const bytes = await readBody(response, MAX_MINIAPP_JSON_BYTES, servedFrom)
@@ -296,7 +316,19 @@ function sendJson(
       throw new MiniappFetchError("network", `${servedFrom} is not UTF-8 text`, {cause: error})
     }
     return {...result, body}
-  })
+  }
+  return send(transport, url, headers, withToken, JSON_TIMEOUT_MS, read, redirect)
+}
+
+/** A redirect's `Location`, resolved against the URL that answered, or null when it names no usable URL. */
+function redirectTarget(response: MiniappResponse, answeredFrom: string): string | null {
+  const location = response.headers.get("location")?.trim()
+  if (!location) return null
+  try {
+    return new URL(location, answeredFrom).href
+  } catch {
+    return null
+  }
 }
 
 function sendBundle(

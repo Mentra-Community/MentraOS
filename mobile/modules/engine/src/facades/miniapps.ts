@@ -10,10 +10,13 @@
  */
 import {getConfigValues} from "../runtime/bootstrap"
 import appRegistry from "../services/AppRegistry"
+import {cloudClientService} from "../services/CloudClientService"
 import {onDeferredMiniappUpdateReady} from "../services/deferredMiniappUpdates"
+import {normalizeCoreUrl} from "../services/fleet/coreUrl"
 import {installMiniapp, type InstallMiniappOptions, type InstallMiniappResult} from "../services/installMiniapp"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
-import {fetchMiniappJson} from "../services/miniappFetch"
+import {fetchMiniappBundle, fetchMiniappJson} from "../services/miniappFetch"
+import {registryStatusStore} from "../services/miniappRegistryStatusStore"
 import {installMiniappRelease} from "../services/miniappReleaseInstall"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
 import {MiniappUrlUpdater} from "../services/miniappUrlUpdates"
@@ -45,11 +48,29 @@ const urlUpdater = new MiniappUrlUpdater({
   firstPartyUrl: (packageName) => firstPartyMiniappUrl(getConfigValues(), packageName),
   hasDevelopmentSelection: (packageName) => localMiniappRuntime.hasDevelopmentSelection(packageName),
   compatibilityPolicy: () => localMiniappRuntime.currentInstallCompatibilityPolicy(),
-  fetchManifest: (url, etag) => fetchMiniappJson(url, {etag}),
+  // Redirects come back to the updater, which follows moves itself.
+  fetchManifest: (url, {etag, packageName}) =>
+    fetchMiniappJson(url, {...(etag ? {etag} : {}), packageForChallenge: packageName, redirect: "manual"}),
+  fetchBundle: (url, options) => fetchMiniappBundle(url, options),
   install: installMiniappRelease,
   keepVersions: (packageName, versions) => appRegistry.gcReleaseVersions(packageName, versions),
   isRunningError: (error) => error instanceof MiniappRunningError,
   installSession: () => localMiniappRuntime.installSession(),
+  requireRegistry: () => getConfigValues().requireRegistry !== false,
+  // The Core this build is configured for, which the kept answer belongs to whether or not its client exists yet.
+  registryCore: () => {
+    try {
+      return normalizeCoreUrl(cloudClientService.getCoreUrl())
+    } catch {
+      return null
+    }
+  },
+  // Only that Core's client answers; before it exists, or while it speaks for another Core, nothing is asked.
+  registryStatus: (core, request) => cloudClientService.core.registry.statusAs(core, request),
+  register: (request) => cloudClientService.core.registry.register(request),
+  statusStore: registryStatusStore,
+  setReleaseSourceUrl: (packageName, version, fromUrl, sourceUrl) =>
+    appRegistry.setReleaseSourceUrl(packageName, version, fromUrl, sourceUrl),
   now: () => Date.now(),
   log: (message) => console.log(`MiniappUpdates: ${message}`),
   warn: (message, error) => console.warn(`MiniappUpdates: ${message}`, error ?? ""),
