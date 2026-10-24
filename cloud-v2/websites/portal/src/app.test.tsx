@@ -71,14 +71,11 @@ const ME: PortalMe = {
   workspaceCreation: { allowed: true, reason: null },
   onboardingRequired: true,
   org: null,
-  modules: { billing: false, billingCatalog: false },
+  modules: { billing: false },
 };
 
-/**
- * `/api/portal/me` for a person who is (or is not) offered billing. Where billing is offered its catalog is too
- * (`catalog` says otherwise: a non-staff Admin on staging sees licenses, not billing).
- */
-const meWith = (billing: boolean, catalog = billing): PortalMe => ({ ...ME, modules: { billing, billingCatalog: catalog } });
+/** `/api/portal/me` on a Core that does (or does not) offer billing. */
+const meWith = (billing: boolean): PortalMe => ({ ...ME, modules: { billing } });
 
 function session(overrides: Partial<PortalSession> = {}): PortalSession {
   return {
@@ -91,7 +88,7 @@ function session(overrides: Partial<PortalSession> = {}): PortalSession {
     signOut() {},
     signingOut: false,
     developerConsoleUrl: null,
-    modules: { billing: false, billingCatalog: false },
+    modules: { billing: false },
     sessionExpired() {},
     ...overrides,
   };
@@ -810,8 +807,8 @@ describe("the Licenses page", () => {
     expect(manager).not.toContain("pays for");
     // The title stands alone: nothing is drawn under it.
     expect(manager).not.toMatch(/Licenses<\/h1><p/);
-    // A non-staff Admin on staging sees the same page (licenses, no billing).
-    const admin = render(`/licenses`, adminOfAcme([LICENSE]), { modules: meWith(false, true).modules }, undefined, meWith(false, true));
+    // An Admin sees the same page.
+    const admin = renderAs(true, `/licenses`, adminOfAcme([LICENSE]));
     expect(admin).toMatch(LICENSES_HEADING);
     expect(admin).not.toContain("pays for");
     expect(admin).not.toMatch(/Licenses<\/h1><p/);
@@ -850,10 +847,8 @@ describe("the Licenses page", () => {
     const admin = detail(ACME, "Acme Field Team", "admin");
     expect(billingOffered(meWith(true), admin)).toBe(true);
     expect(billingOffered(meWith(true), detail(ACME, "Acme Field Team", "owner"))).toBe(true);
-    // Billing off (including a non-staff Admin on staging, who sees licenses but not billing), a role below Admin,
-    // or a workspace not yet loaded: no.
+    // Billing off, a role below Admin, or a workspace not yet loaded: no.
     expect(billingOffered(meWith(false), admin)).toBe(false);
-    expect(billingOffered(meWith(false, true), admin)).toBe(false);
     for (const role of ["member", "developer"] as const) {
       expect(billingOffered(meWith(true), detail(ACME, "Acme Field Team", role))).toBe(false);
     }
@@ -935,7 +930,6 @@ describe("the personal Billing page is gone", () => {
       renderAs(false, "/account/billing", { list: [] }),
       renderAs(true, "/account/billing", { list: [] }),
       renderAs(true, "/account/billing", TWO_WORKSPACES),
-      render("/account/billing", { list: [] }, { modules: meWith(false, true).modules }, undefined, meWith(false, true)),
     ]) {
       expect(markup).toContain("Page not found");
       expect(markup).not.toContain("Loading billing");

@@ -1,4 +1,3 @@
-import {BILLING_ICON_PATH_PREFIX, billingIconPath} from "@mentra/workspace-contract/portal-billing"
 import {describe, expect, test} from "bun:test"
 import {
   installedPortalModules,
@@ -6,15 +5,13 @@ import {
   portalModuleAvailability,
   portalModuleConfig,
   portalModulePublicAccess,
-  portalModuleVisibleTo,
   type ConfigLog,
   type PortalModuleName,
-  type PortalModuleRequest,
 } from "./portal-modules"
 
 const SECRET = "billing-shared-secret-value"
-const staff = {isOrganizationAdmin: true}
-const everyoneElse = {isOrganizationAdmin: false}
+/** Every value `CLOUD_CORE_ENVIRONMENT` takes, unset included: none of them changes who reaches a module. */
+const ENVIRONMENTS = ["prod", "staging", "dev", "production", "local", "", undefined]
 
 /** A logger that records what it is given, so a misconfiguration is asserted rather than printed. */
 function recordingLog(): ConfigLog & {lines: Array<{variable: unknown; message: string}>} {
@@ -122,194 +119,34 @@ describe("portalModuleConfig", () => {
   })
 })
 
-describe("portalModuleVisibleTo", () => {
-  test("billing is visible to everyone only on a Core whose environment is exactly prod", () => {
-    expect(portalModuleVisibleTo("billing", everyoneElse, env({CLOUD_CORE_ENVIRONMENT: "prod"}))).toBe(true)
-    expect(portalModuleVisibleTo("billing", staff, env({CLOUD_CORE_ENVIRONMENT: "prod"}))).toBe(true)
-  })
-
-  test("elsewhere billing is staff-only: dev and staging, and any other or unset environment fail closed", () => {
-    for (const environment of ["dev", "staging", "production", "Prod", "prod ", "local", "", undefined]) {
-      const values = env({CLOUD_CORE_ENVIRONMENT: environment})
-      expect([environment, portalModuleVisibleTo("billing", everyoneElse, values)]).toEqual([environment, false])
-      expect([environment, portalModuleVisibleTo("billing", staff, values)]).toEqual([environment, true])
-    }
-  })
-})
-
 describe("portalModuleAccess", () => {
   const url = "https://store.example.test"
 
-  test("is hidden when the module is not installed, or is not visible to the person, broken or not", () => {
-    expect(portalModuleAccess("billing", staff, env({CLOUD_CORE_ENVIRONMENT: "prod"}))).toEqual({state: "hidden"})
-    expect(portalModuleAccess("billing", everyoneElse, hosted(url, {CLOUD_CORE_ENVIRONMENT: "staging"}))).toEqual({state: "hidden"})
-    // A broken install is as hidden as an absent one from a person who may not see it.
-    const broken = hosted("ftp://nope", {CLOUD_CORE_ENVIRONMENT: "staging"})
-    expect(portalModuleAccess("billing", everyoneElse, broken, recordingLog())).toEqual({state: "hidden"})
+  test("is hidden when the module is not installed, on every Core", () => {
+    for (const environment of ENVIRONMENTS) {
+      expect([environment, portalModuleAccess("billing", env({CLOUD_CORE_ENVIRONMENT: environment}))]).toEqual([environment, {state: "hidden"}])
+      // A secret alone is inert.
+      const secretOnly = env({CLOUD_CORE_ENVIRONMENT: environment, CLOUD_CORE_BILLING_SECRET: SECRET})
+      expect([environment, portalModuleAccess("billing", secretOnly)]).toEqual([environment, {state: "hidden"}])
+    }
   })
 
-  test("is unavailable when the person may see a module whose settings are unusable", () => {
-    const broken = hosted("ftp://nope", {CLOUD_CORE_ENVIRONMENT: "staging"})
-    expect(portalModuleAccess("billing", staff, broken, recordingLog())).toEqual({state: "unavailable"})
-    expect(portalModuleAccess("billing", everyoneElse, hosted("ftp://nope"), recordingLog())).toEqual({state: "unavailable"})
+  test("is unavailable when the module is installed with settings Core cannot use", () => {
+    for (const environment of ENVIRONMENTS) {
+      const broken = hosted("ftp://nope", {CLOUD_CORE_ENVIRONMENT: environment})
+      expect([environment, portalModuleAccess("billing", broken, recordingLog())]).toEqual([environment, {state: "unavailable"}])
+      const noSecret = hosted(url, {CLOUD_CORE_ENVIRONMENT: environment, CLOUD_CORE_BILLING_SECRET: ""})
+      expect([environment, portalModuleAccess("billing", noSecret, recordingLog())]).toEqual([environment, {state: "unavailable"}])
+    }
   })
 
-  test("is ready, with where to forward and how to sign, when it is installed, usable and visible", () => {
-    const access = portalModuleAccess("billing", everyoneElse, hosted(url))
-    expect(access.state).toBe("ready")
-    if (access.state !== "ready") throw new Error("not ready")
-    expect(access.baseUrl.href).toBe(`${url}/`)
-    expect(access.secret).toBe(SECRET)
-    expect(portalModuleAccess("billing", staff, hosted(url, {CLOUD_CORE_ENVIRONMENT: "dev"})).state).toBe("ready")
-  })
-})
-
-/** A request as `portal-modules.api.ts` describes one to the access rules: its method, its family and what follows the scope. */
-const read = (
-  kind: PortalModuleRequest["route"]["kind"],
-  rest: string,
-  method = "GET",
-): PortalModuleRequest => ({method, route: {kind}, rest})
-
-describe("portalModuleAccess for an open read", () => {
-  const url = "https://store.example.test"
-  const staging = (extra: Record<string, string | undefined> = {}) => hosted(url, {CLOUD_CORE_ENVIRONMENT: "staging", ...extra})
-
-  test("is ready for someone the module is hidden from, for GET of a catalog and GET or HEAD of an icon", () => {
-    for (const request of [
-      read("workspace", "catalog"),
-      read("ui", "icons/mentra.call.unlimited.png"),
-      read("ui", "icons/x.svg"),
-      read("ui", "icons/x.png", "HEAD"),
-    ]) {
-      const access = portalModuleAccess("billing", everyoneElse, staging(), recordingLog(), request)
-      expect([request, access.state]).toEqual([request, "ready"])
+  test("is ready, with where to forward and how to sign, wherever it is installed and usable: staging and dev as on prod", () => {
+    for (const environment of ENVIRONMENTS) {
+      const access = portalModuleAccess("billing", hosted(url, {CLOUD_CORE_ENVIRONMENT: environment}))
+      expect([environment, access.state]).toEqual([environment, "ready"])
       if (access.state !== "ready") throw new Error("not ready")
       expect(access.baseUrl.href).toBe(`${url}/`)
       expect(access.secret).toBe(SECRET)
-    }
-  })
-
-  test("is still hidden for every other request, exact paths only", () => {
-    const closed: PortalModuleRequest[] = [
-      // Other paths and methods under a scope.
-      read("workspace", "status"),
-      read("workspace", "summary"),
-      read("workspace", "purchase", "POST"),
-      read("workspace", "session", "POST"),
-      read("workspace", "", "GET"),
-      read("workspace", "catalog", "POST"),
-      read("workspace", "catalog", "HEAD"),
-      read("workspace", "catalog", "PUT"),
-      read("workspace", "catalog", "DELETE"),
-      read("workspace", "catalog", "PATCH"),
-      read("workspace", "catalog", "OPTIONS"),
-      read("workspace", "catalog", "get"),
-      // The path is matched as received: no trailing slash, case, encoding or deeper path.
-      read("workspace", "catalog/"),
-      read("workspace", "/catalog"),
-      read("workspace", "Catalog"),
-      read("workspace", "CATALOG"),
-      read("workspace", "catalog/x"),
-      read("workspace", "x/catalog"),
-      read("workspace", "%63atalog"),
-      read("workspace", "catalog%2f"),
-      read("workspace", "catalog "),
-      read("workspace", "catalog;x"),
-      read("workspace", "catalog?x"),
-      // Assets: icons only, GET and HEAD only, one file.
-      read("ui", "entry.js"),
-      read("ui", "entry.js", "HEAD"),
-      read("ui", "icons"),
-      read("ui", "icons/"),
-      read("ui", "iconsx/a.png"),
-      read("ui", "Icons/a.png"),
-      read("ui", "ICONS/a.png"),
-      read("ui", "icons/a/b.png"),
-      read("ui", "icons//a.png"),
-      read("ui", "icons/a.png/"),
-      read("ui", "icons/.."),
-      read("ui", "icons/."),
-      read("ui", "icons/%78.png"),
-      read("ui", "icons/a b.png"),
-      read("ui", "icons/a.png", "POST"),
-      read("ui", "icons/a.png", "PUT"),
-      read("ui", "icons/a.png", "DELETE"),
-      read("ui", "icons/a.png", "PATCH"),
-      read("ui", "icons/a.png", "OPTIONS"),
-      read("ui", "icons/a.png", "head"),
-      // The open paths belong to their own family only.
-      read("ui", "catalog"),
-      read("workspace", "icons/a.png"),
-      read("workspace", "ui/icons/a.png"),
-    ]
-    for (const request of closed) {
-      expect([request, portalModuleAccess("billing", everyoneElse, staging(), recordingLog(), request)]).toEqual([
-        request,
-        {state: "hidden"},
-      ])
-    }
-  })
-
-  test("an icon is open exactly when the contract accepts its path: one rule for both", () => {
-    for (const file of [
-      "mentra.call.unlimited.png",
-      "x.svg",
-      "a_b-c.PNG",
-      "..a",
-      "a..",
-      ".hidden",
-      "1",
-      "a".repeat(255),
-      "a".repeat(256),
-      ".",
-      "..",
-      "...",
-      "",
-      "a b.png",
-      "a%20b.png",
-      "a/b.png",
-      "a\\b.png",
-      "a?b.png",
-      "a#b.png",
-      'a".png',
-      "a(1).png",
-      "é.png",
-    ]) {
-      const access = portalModuleAccess("billing", everyoneElse, staging(), recordingLog(), read("ui", `icons/${file}`))
-      expect([file, access.state === "ready"]).toEqual([file, billingIconPath(`${BILLING_ICON_PATH_PREFIX}${file}`) !== null])
-    }
-  })
-
-  test("is hidden without a request, as before", () => {
-    expect(portalModuleAccess("billing", everyoneElse, staging(), recordingLog())).toEqual({state: "hidden"})
-    expect(portalModuleAccess("billing", everyoneElse, staging(), recordingLog(), undefined)).toEqual({state: "hidden"})
-  })
-
-  test("does not make an absent module present: not installed stays hidden", () => {
-    expect(portalModuleAccess("billing", everyoneElse, env({CLOUD_CORE_ENVIRONMENT: "staging"}), recordingLog(), read("workspace", "catalog"))).toEqual({
-      state: "hidden",
-    })
-    const secretOnly = env({CLOUD_CORE_ENVIRONMENT: "staging", CLOUD_CORE_BILLING_SECRET: SECRET})
-    expect(portalModuleAccess("billing", everyoneElse, secretOnly, recordingLog(), read("ui", "icons/a.png"))).toEqual({
-      state: "hidden",
-    })
-  })
-
-  test("a module whose settings are unusable is unavailable for an open read and hidden for anything else", () => {
-    const broken = staging({CLOUD_CORE_BILLING_URL: "ftp://nope"})
-    expect(portalModuleAccess("billing", everyoneElse, broken, recordingLog(), read("workspace", "catalog"))).toEqual({state: "unavailable"})
-    expect(portalModuleAccess("billing", everyoneElse, broken, recordingLog(), read("ui", "icons/a.png"))).toEqual({state: "unavailable"})
-    expect(portalModuleAccess("billing", everyoneElse, broken, recordingLog(), read("workspace", "status"))).toEqual({state: "hidden"})
-    const noSecret = staging({CLOUD_CORE_BILLING_SECRET: ""})
-    expect(portalModuleAccess("billing", everyoneElse, noSecret, recordingLog(), read("workspace", "catalog"))).toEqual({state: "unavailable"})
-    expect(portalModuleAccess("billing", everyoneElse, noSecret, recordingLog(), read("ui", "entry.js"))).toEqual({state: "hidden"})
-  })
-
-  test("a request changes nothing for staff or on prod: every request is ready", () => {
-    for (const request of [read("workspace", "status"), read("ui", "entry.js"), read("workspace", "purchase", "POST"), read("workspace", "catalog/x")]) {
-      expect([request, portalModuleAccess("billing", staff, staging(), recordingLog(), request).state]).toEqual([request, "ready"])
-      expect([request, portalModuleAccess("billing", everyoneElse, hosted(url), recordingLog(), request).state]).toEqual([request, "ready"])
     }
   })
 })
@@ -403,13 +240,6 @@ describe("portalModulePublicAccess", () => {
     const noSecret = hosted(url, {CLOUD_CORE_BILLING_SECRET: ""})
     expect(portalModulePublicAccess("billing", get("products/a"), noSecret, recordingLog())).toEqual({state: "unavailable"})
   })
-
-  test("a public read is not an open read: it opens nothing under a workspace or ui/", () => {
-    const staging = hosted(url, {CLOUD_CORE_ENVIRONMENT: "staging"})
-    for (const request of [read("workspace", "public/products/a"), read("ui", "public/products/a"), read("workspace", "products/a")]) {
-      expect([request, portalModuleAccess("billing", everyoneElse, staging, recordingLog(), request)]).toEqual([request, {state: "hidden"}])
-    }
-  })
 })
 
 describe("installedPortalModules and portalModuleAvailability", () => {
@@ -419,23 +249,14 @@ describe("installedPortalModules and portalModuleAvailability", () => {
     expect(installedPortalModules(hosted("https://store.example.test"))).toEqual(["billing"] satisfies PortalModuleName[])
   })
 
-  test("availability is installed and visible to this person, and says separately whether the catalog can be read", () => {
-    const ready = (environment: string) => hosted("https://store.example.test", {CLOUD_CORE_ENVIRONMENT: environment})
-    expect(portalModuleAvailability(everyoneElse, ready("prod"))).toEqual({billing: true, billingCatalog: true})
-    // Outside prod the module is for staff, but its catalog is for everyone.
-    expect(portalModuleAvailability(everyoneElse, ready("staging"))).toEqual({billing: false, billingCatalog: true})
-    expect(portalModuleAvailability(everyoneElse, ready("dev"))).toEqual({billing: false, billingCatalog: true})
-    expect(portalModuleAvailability(everyoneElse, ready(""))).toEqual({billing: false, billingCatalog: true})
-    expect(portalModuleAvailability(staff, ready("staging"))).toEqual({billing: true, billingCatalog: true})
-    // Not installed: neither.
-    expect(portalModuleAvailability(staff, env({CLOUD_CORE_ENVIRONMENT: "prod"}))).toEqual({billing: false, billingCatalog: false})
-    expect(portalModuleAvailability(everyoneElse, env({CLOUD_CORE_ENVIRONMENT: "staging"}))).toEqual({billing: false, billingCatalog: false})
-    // Misconfigured: neither, whoever asks.
-    expect(portalModuleAvailability(staff, hosted("ftp://nope"), recordingLog())).toEqual({billing: false, billingCatalog: false})
-    expect(portalModuleAvailability(everyoneElse, hosted("ftp://nope"), recordingLog())).toEqual({billing: false, billingCatalog: false})
-    expect(portalModuleAvailability(everyoneElse, hosted("ftp://nope", {CLOUD_CORE_ENVIRONMENT: "staging"}), recordingLog())).toEqual({
-      billing: false,
-      billingCatalog: false,
-    })
+  test("availability is billing installed and usable, the same on every Core", () => {
+    for (const environment of ENVIRONMENTS) {
+      const ready = hosted("https://store.example.test", {CLOUD_CORE_ENVIRONMENT: environment})
+      expect([environment, portalModuleAvailability(ready)]).toEqual([environment, {billing: true}])
+      // Not installed, or installed with settings Core cannot use: not offered.
+      expect([environment, portalModuleAvailability(env({CLOUD_CORE_ENVIRONMENT: environment}))]).toEqual([environment, {billing: false}])
+      const broken = hosted("ftp://nope", {CLOUD_CORE_ENVIRONMENT: environment})
+      expect([environment, portalModuleAvailability(broken, recordingLog())]).toEqual([environment, {billing: false}])
+    }
   })
 })

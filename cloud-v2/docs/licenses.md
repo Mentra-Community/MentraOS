@@ -202,11 +202,9 @@ routes above), billing's catalog (what each product is) and billing's status
 (what each costs and what can be done about it).
 
 Whether the portal offers billing follows `GET /api/portal/me`. `modules.billing`
-says the [billing module](portal-modules.md#is-the-module-installed-and-is-it-for-me)
-is ready on this Core and visible to the person. `modules.billingCatalog` says
-its catalog can be read, which holds wherever billing is ready, whoever asks. The
-page asks only for what its viewer's view needs ([Who sees
-what](#who-sees-what)).
+says the [billing module](portal-modules.md#is-the-module-installed) is ready on
+this Core, and with it its catalog, for everyone who signs in. The page asks only
+for what its viewer's view needs ([Who sees what](#who-sees-what)).
 
 - **The page.** A workspace has a Licenses item, last in its sidebar, when the
   person is offered billing or the workspace has products to show them (an Admin's
@@ -493,22 +491,16 @@ the page does.
 | Viewer | The page shows | The page reads |
 | --- | --- | --- |
 | **A plain member** (Member or Developer) | Only the products they hold a license for, each as "Assigned to you" with "Your license" since when, "Given by" the workspace, and the miniapps it works in. No totals, no money, no one else's licenses, no controls. The Licenses item is in their sidebar while they hold a license. | Their licenses from Core, and the catalog for names and icons. Not billing's status, not the members. |
-| **A license manager without billing** (an Admin or Owner who is not offered billing) | Every product with its licenses and who holds each. They assign and unassign, from a card (Unassign asks in a dialog) or the people picker. No money, no dates, no total, no billing actions, no buying, no Add licenses. | Core's licenses and the members, and the catalog for names and icons. Not billing's status. |
-| **A billing manager** (an Admin or Owner offered billing) | All of that, plus each license's cost and dates, the total, billing's actions and the failed-payment notices, buying, the header actions, and the banner after checkout. | Billing's status as well. |
-| **Staff, where billing uses a test key** | Where `CLOUD_CORE_ENVIRONMENT` is not `prod`, billing is offered to Organization Admins only. They act as Owner everywhere, so they are billing managers of every workspace, under a test-mode banner. | As for a billing manager. |
+| **A billing manager** (an Admin or Owner offered billing) | Every product with its licenses and who holds each. They assign and unassign, from a card (Unassign asks in a dialog) or the people picker. Each license's cost and dates, the total, billing's actions and the failed-payment notices, buying, the header actions, and the banner after checkout. Where billing uses a test key, a test-mode banner above it all. | Core's licenses and the members, billing's catalog and billing's status. |
 
-- **Who is a license manager without billing.** The roles hold the three
-  capabilities together, so the difference is whether billing is offered. It is
-  offered when `modules.billing` is true and the person holds
-  `workspace.billing.manage`. On a Core with a test key, an Admin or Owner who is
-  not an Organization Admin is a license manager without billing: the catalog is an
-  open read, so their products are still named and drawn with their icons
-  ([Open reads](portal-modules.md#open-reads)), but they see no money and cannot
-  buy.
-- **The catalog is open, the rest is not.** Billing answers the catalog for every
-  member of the workspace, with display content only; it adds each product's
-  price and how many licenses may be bought only for someone who manages the owner's
-  billing. A plain member's page needs it for names and icons, so it asks for it
+- **Who is a billing manager.** Billing is offered when `modules.billing` is true
+  and the person holds `workspace.billing.manage`. The roles hold the three
+  capabilities together, so wherever billing is installed every Admin and Owner
+  is a billing manager, on every Core.
+- **The catalog is for every member, the rest is not.** Billing answers the
+  catalog for every member of the workspace, with display content only; it adds
+  each product's price and how many licenses may be bought only for someone who
+  manages the owner's billing. A plain member's page needs it for names and icons, so it asks for it
   once Core has listed a product for them to name.
 - **The Members page.** Its Licenses column is for a viewer with
   `workspace.licenses.read` where the catalog can be read. It only shows: a chip per

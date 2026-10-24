@@ -330,7 +330,7 @@ export type SessionAnswer = z.infer<typeof SessionAnswerSchema>
 
 /**
  * The `error` of a refusal from billing (`{error}`): 400 `invalid_request`, `not_for_sale`, `invalid_seats` or
- * `unknown_action`; 403 `forbidden` or `billing_staff_only`; 404 `license_not_found` or `no_billing_account`;
+ * `unknown_action`; 403 `forbidden`; 404 `license_not_found` or `no_billing_account`;
  * 409 `already_licensed`, `checkout_in_progress`, `seat_request_pending` or `owner_ended`; 503
  * `billing_unavailable` or `core_unavailable`. Core words the ones it knows, and any other gets its generic "try again".
  */
@@ -340,7 +340,6 @@ export const BILLING_ERROR_CODES = [
   "invalid_seats",
   "unknown_action",
   "forbidden",
-  "billing_staff_only",
   "license_not_found",
   "no_billing_account",
   "already_licensed",

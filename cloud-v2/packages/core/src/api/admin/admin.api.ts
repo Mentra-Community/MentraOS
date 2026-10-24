@@ -32,7 +32,7 @@ import {Hono, type MiddlewareHandler} from "hono"
 import {createMiddleware} from "hono/factory"
 import {fleetInstalled} from "../../services/fleet/fleet-config"
 import {anyLicenseExists} from "../../services/licenses/license-list.service"
-import {portalModuleAccess, type ConfigLog} from "../../services/portal-modules/portal-modules"
+import {portalModuleConfig, type ConfigLog} from "../../services/portal-modules/portal-modules"
 import type {CorePrincipal} from "../../services/signin/principal.service"
 import {organizationCapabilities, organizationView} from "../../services/workspaces/authorization.service"
 import {listWorkspacesForUser} from "../../services/workspaces/workspace.service"
@@ -99,7 +99,7 @@ const QUIET: ConfigLog = {error: () => {}}
 async function licensesAvailable(principal: CorePrincipal): Promise<boolean> {
   // Only a person (an Organization Admin) holds it: it is not an operator key scope.
   if (principal.kind !== "user" || !organizationCapabilities(principal).has("organization.licenses.read")) return false
-  if (portalModuleAccess("billing", principal, undefined, QUIET).state !== "hidden") return true
+  if (portalModuleConfig("billing", undefined, QUIET).state !== "not_installed") return true
   return anyLicenseExists()
 }
 

@@ -180,13 +180,13 @@ export function useMembersLicenses({
   enabled: boolean;
 }): MembersLicenses | undefined {
   const scope = useMemo(() => workspaceScope(workspaceId), [workspaceId]);
-  const wanted = enabled && me.modules.billingCatalog && can(detail, "workspace.licenses.read") && (licenses ?? []).some(license => !license.endedAt);
+  const wanted = enabled && me.modules.billing && can(detail, "workspace.licenses.read") && (licenses ?? []).some(license => !license.endedAt);
   const catalog = useQuery({ ...billingCatalogQuery(portalBillingApi, scope), enabled: wanted });
 
   return useMemo(
     // The one place the source is built.
-    () => (me.modules.billingCatalog ? { catalog: catalog.data?.products } : undefined),
-    [me.modules.billingCatalog, catalog.data],
+    () => (me.modules.billing ? { catalog: catalog.data?.products } : undefined),
+    [me.modules.billing, catalog.data],
   );
 }
 

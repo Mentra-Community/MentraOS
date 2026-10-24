@@ -821,7 +821,6 @@ describe("billing's error codes", () => {
       "invalid_seats",
       "unknown_action",
       "forbidden",
-      "billing_staff_only",
       "license_not_found",
       "no_billing_account",
       "already_licensed",

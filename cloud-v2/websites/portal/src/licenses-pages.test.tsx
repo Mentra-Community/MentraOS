@@ -9,7 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } f
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { PortalRoutes } from "./App";
-import { fetchPortalMe, type PortalMe, type PortalModules } from "./lib/api";
+import type { PortalMe, PortalModules } from "./lib/api";
 import { usePathname } from "./lib/navigation";
 import { PORTAL_ME_KEY, PortalProvider, type PortalSession } from "./lib/portal";
 import { parseRoute } from "./lib/routes";
@@ -43,9 +43,9 @@ afterEach(async () => {
 
 // ---- the rig ------------------------------------------------------------------------------------------------------
 
-const BILLING_ON: PortalModules = { billing: true, billingCatalog: true };
-/** A non-staff Admin on staging: licenses are theirs to see, billing is staff's. */
-const CATALOG_ONLY: PortalModules = { billing: false, billingCatalog: true };
+const BILLING_ON: PortalModules = { billing: true };
+/** A Core without billing, such as a Private Cloud. */
+const BILLING_OFF: PortalModules = { billing: false };
 
 const meWith = (modules: PortalModules): PortalMe => ({
   authenticated: true,
@@ -182,27 +182,7 @@ describe("the Licenses page", () => {
     expect(has("Assigned to")).toBe(true);
   });
 
-  test("a non-staff Admin on staging (licenses, no billing) gets the Licenses item and cards without money", async () => {
-    const scenario: Scenario = { ...SCENARIOS.twoActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
-    const { core } = await open(`/licenses`, scenario, { modules: CATALOG_ONLY, ready: "Mentra Call Unlimited" });
-    expect(hrefs()).toContain(`/licenses`);
-    expect(find("h1").textContent).toBe("Licenses");
-    // Names and licenses, and none of billing's: no money, no dates, no actions, no buying.
-    expect(has("Fleet")).toBe(true);
-    expect(text()).not.toMatch(/\$\d/);
-    expect(buttonNamed(/Billing & invoices/)).toBeUndefined();
-    expect(buttonNamed(/Buy licenses/)).toBeUndefined();
-    expect(buttonNamed(/Add licenses/)).toBeUndefined();
-    // Only the catalog, which anyone may read, was asked of billing: never its status.
-    expect(billingRequests(core).map(request => request.path)).toEqual([`/api/portal/billing/workspaces/${ACME}/catalog`]);
-    // And the account menu, once opened, has no Billing page for them (it is offered by `billing`, not by the catalog).
-    await click(find("button[aria-label='Open account menu']"));
-    expect(has("Sign out")).toBe(true);
-    expect(hrefs()).not.toContain("/account/billing");
-    expect(buttonNamed(/^Billing$/)).toBeUndefined();
-  });
-
-  test("and the account menu has no Billing, even for someone offered billing", async () => {
+  test("the account menu has no Billing, even for someone offered billing", async () => {
     await open(`/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(hrefs()).not.toContain("/account/billing");
     await click(find("button[aria-label='Open account menu']"));
@@ -211,12 +191,9 @@ describe("the Licenses page", () => {
   });
 
   test("Retry on the Licenses page also reads who the person is again, so a page opened before billing was ready can recover", async () => {
-    // Billing wasn't ready when `me` was read (`billingCatalog: false`), and the workspace already holds licenses.
-    const { client } = await open(`/licenses`, SCENARIOS.twoActive(), {
-      modules: { billing: false, billingCatalog: false },
-      ready: "Licenses are unavailable",
-    });
-    client.setQueryData(PORTAL_ME_KEY, meWith({ billing: false, billingCatalog: false }));
+    // Billing wasn't ready when `me` was read (`billing: false`), and the workspace already holds licenses.
+    const { client } = await open(`/licenses`, SCENARIOS.twoActive(), { modules: BILLING_OFF, ready: "Licenses are unavailable" });
+    client.setQueryData(PORTAL_ME_KEY, meWith(BILLING_OFF));
     expect(client.getQueryState(PORTAL_ME_KEY)?.isInvalidated).toBe(false);
     await click(buttonNamed(/^Retry$/)!);
     expect(client.getQueryState(PORTAL_ME_KEY)?.isInvalidated).toBe(true);
@@ -384,9 +361,10 @@ describe("a link that asks to buy one product", () => {
     expect(search()).toBe("");
   });
 
-  test("a manager whose portal is not offered billing is told licenses can't be bought here", async () => {
-    const scenario: Scenario = { ...SCENARIOS.twoActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
-    await open("/licenses?buy=example.addon", scenario, { modules: CATALOG_ONLY, ready: "Licenses can't be bought here." });
+  test("a manager on a Core without billing is told licenses can't be bought here", async () => {
+    const scenario: Scenario = { ...SCENARIOS.catalog(), role: "admin" };
+    const { core } = await open("/licenses?buy=example.addon", scenario, { modules: BILLING_OFF, ready: "Licenses can't be bought here." });
+    expect(billingRequests(core)).toEqual([]);
     expect(dialog()!.textContent).toContain("Licenses can't be bought here.");
     expect(search()).toBe("");
   });
@@ -524,36 +502,18 @@ describe("Members", () => {
     expect(findAll("button[aria-label^='More for ']").length).toBeGreaterThan(5);
   });
 
-  test("without billing (a non-staff Admin) the list still has its chips, and asks billing for no status", async () => {
+  test("an Admin's list has its chips, and asks billing for the catalog only, never its status", async () => {
     const scenario: Scenario = { ...SCENARIOS.threeActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
-    const { core } = await open(`/members`, scenario, { modules: CATALOG_ONLY, ready: "Hannah Kim" });
+    const { core } = await open(`/members`, scenario, { modules: BILLING_ON, ready: "Hannah Kim" });
     await until(() => findAll("ul[aria-label='Licenses']").length > 0, "the Licenses column");
     expect(rowOf("Hannah Kim").textContent).toContain("Call Unlimited");
     expect(billingRequests(core).some(request => request.path.endsWith("/status"))).toBe(false);
   });
 
   test("without a catalog the list works without any of it (billing off: no Licenses column)", async () => {
-    const { core } = await open(`/members`, SCENARIOS.threeActive(), {
-      modules: { billing: false, billingCatalog: false },
-      ready: "Hannah Kim",
-    });
+    const { core } = await open(`/members`, SCENARIOS.threeActive(), { modules: BILLING_OFF, ready: "Hannah Kim" });
     expect(findAll("ul[aria-label='Licenses']")).toHaveLength(0);
     expect(billingRequests(core)).toEqual([]);
-  });
-});
-
-// ---- older Cores --------------------------------------------------------------------------------------------------
-
-describe("an older Core", () => {
-  test("whose /me has no billingCatalog is read as billing: the Licenses page is drawn with money", async () => {
-    const older = { ...meWith(BILLING_ON), modules: { billing: true } };
-    spyOn(globalThis, "fetch").mockImplementation((async () => Response.json(older)) as unknown as typeof fetch);
-    const me = await fetchPortalMe();
-    mock.restore();
-    expect(me.modules).toEqual(BILLING_ON);
-    const { core } = await open(`/licenses`, SCENARIOS.twoActive(), { me, modules: me.modules, ready: "Mentra Call Unlimited" });
-    expect(has("$145")).toBe(true);
-    expect(billingRequests(core).some(request => request.path.endsWith("/catalog"))).toBe(true);
   });
 });
 

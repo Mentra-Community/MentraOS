@@ -145,7 +145,7 @@ const HAZARD_TAPE: CSSProperties = {
     "repeating-linear-gradient(-45deg, var(--mentra-error) 0 10px, color-mix(in srgb, var(--mentra-error) 18%, var(--mentra-error-bg)) 10px 20px)",
 };
 
-/** The session's storage key for a test-mode notice that staff hid: one key, so it holds on every page of the session. */
+/** The session's storage key for a test-mode notice the viewer hid: one key, so it holds on every page of the session. */
 export const TEST_MODE_NOTICE_HIDDEN_KEY = "mentra.testModeNotice.hidden";
 
 /** Whether the notice was hidden earlier in this browser session. Storage that throws (a private mode) reads as not hidden. */

@@ -18,18 +18,14 @@ export type PortalUser = {
 };
 
 /**
- * What this person is offered of billing. They are separate because they are not the same people: on a Core that
- * is not prod billing is staff-only, but its catalog (the products' names and icons, which name the licenses a
- * workspace holds) is readable by every Admin.
+ * Which portal modules this Core offers. The same for everyone who signs in to it.
  *
- * - `billing`: billing is ready and visible to them. They see money, buy, and manage: the Billing page, the
- *   Licenses page's totals and actions. A Private Cloud with no billing says false.
- * - `billingCatalog`: billing is ready, whoever asks. Licenses can be named, so the Licenses page and the
- *   Members list can draw them. True wherever `billing` is.
+ * - `billing`: billing is installed and ready. Its catalog can be read, so the Licenses page and the Members list
+ *   can name licenses, and whoever manages a workspace's billing (`workspace.billing.manage`) sees money, buys and
+ *   manages there. A Private Cloud with no billing says false.
  */
 export type PortalModules = {
   billing: boolean;
-  billingCatalog: boolean;
 };
 
 /** `GET /api/portal/me`. */
@@ -44,15 +40,11 @@ export type PortalMe = {
 
 /**
  * The modules as `/api/portal/me` sent them, read strictly: only an explicit `true` offers one, and a Core that
- * sends no `modules` (the portal and Core deploy separately) offers none, rather than failing the page. Billing
- * implies its catalog (decision 4: the catalog is readable wherever billing is ready, whoever asks), so
- * `billingCatalog` is true where `billing` is, whatever it says itself. That also reads a Core from before
- * `billingCatalog` existed, which sent only `billing`. A `billingCatalog` that is there but isn't true offers nothing of its own.
+ * sends no `modules` (the portal and Core deploy separately) offers none, rather than failing the page.
  */
 export function readPortalModules(raw: unknown): PortalModules {
-  const modules = typeof raw === "object" && raw !== null ? (raw as { billing?: unknown; billingCatalog?: unknown }) : {};
-  const billing = modules.billing === true;
-  return { billing, billingCatalog: billing || modules.billingCatalog === true };
+  const modules = typeof raw === "object" && raw !== null ? (raw as { billing?: unknown }) : {};
+  return { billing: modules.billing === true };
 }
 
 /** `GET /api/portal/me`, with the modules read by {@link readPortalModules}. */
