@@ -11,47 +11,20 @@ import {
   publisherKeyFingerprint,
 } from "@mentra/miniapp-cli";
 import { Command, Option } from "commander";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
-import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
-  createApp,
-  createRelease,
   createWorkspace,
-  deleteApp,
   ensureOidcClient,
-  getAdminMe,
-  getConsoleSession,
-  getCoreAdminMe,
-  listApps,
-  listReleases,
-  publishRelease,
-  readPublishingProfile,
-  resolveWorkspaceId,
+  listWorkspaces,
   SessionExpiredError,
-  setPackagePrefix,
-  submitRelease,
-  type CliWorkspace,
-  type ConsoleSessionResponse,
-  type StoreCredentials,
+  type CoreCredentials,
 } from "./api";
-import { getConfig, targetLabel, type CliConfig, type CliTarget } from "./config";
-import {
-  cliHome,
-  isStoredLogin,
-  targetFields,
-  targetOf,
-  type CliCredentials,
-  type CommandCredentials,
-} from "./credentials";
+import { getConfig, type CliConfig } from "./config";
+import { cliHome, type CliCredentials } from "./credentials";
 import { loopbackLogin } from "./loopback-login";
 import { openBrowser } from "./open-browser";
-import { loadFreshCredentials, renewRefusedLogin, selectWorkspace, signOut, storeLogin } from "./session";
-import { verifyPackedBundle } from "./validate-bundle";
-import { registerStoreCommands } from "./store-commands";
-
-/** Credentials for a Store command: a stored login or `MENTRA_CLI_TOKEN`, with the Store they go to. */
-type StoreSession = CommandCredentials & StoreCredentials;
+import { loadFreshCredentials, renewRefusedLogin, signOut, storeLogin } from "./session";
 
 const program = new Command();
 const CLI_VERSION = (
@@ -62,23 +35,11 @@ program
   .name("mentra")
   .description("Mentra developer CLI")
   .version(CLI_VERSION)
-  .option("--store-url <url>", "use this Mentra Miniapp Store (MENTRA_STORE_URL)")
-  .option("--core-url <url>", "use a Core without a Store, such as a Mentra Private Cloud (MENTRA_CORE_URL)")
+  .option("--core-url <url>", "use this Core, such as a Mentra Private Cloud's (MENTRA_CORE_URL)")
   .hook("preAction", (command) => {
-    const { storeUrl, coreUrl } = command.opts<{ storeUrl?: string; coreUrl?: string }>();
-    if (storeUrl && coreUrl) {
-      console.error("Use either --store-url or --core-url, not both.");
-      process.exit(1);
-    }
+    const { coreUrl } = command.opts<{ coreUrl?: string }>();
     // A flag replaces the environment's choice for this run.
-    if (storeUrl) {
-      process.env.MENTRA_STORE_URL = storeUrl;
-      delete process.env.MENTRA_CORE_URL;
-    }
-    if (coreUrl) {
-      process.env.MENTRA_CORE_URL = coreUrl;
-      delete process.env.MENTRA_STORE_URL;
-    }
+    if (coreUrl) process.env.MENTRA_CORE_URL = coreUrl;
   });
 
 program
@@ -102,50 +63,17 @@ program
         email: result.email,
         issuer: oidc.serverMetadata().issuer,
         clientId: oidc.clientMetadata().client_id,
-        ...targetFields(config.target),
+        coreUrl: config.coreUrl,
         storedAt: new Date().toISOString(),
       };
-      let storage = await storeLogin(credentials);
-      if (config.target.kind === "core") {
-        console.log(`Signed in as ${result.email ?? result.subject}`);
-        console.log(`Core: ${config.target.url}`);
-      } else {
-        storage = (await announceStoreLogin(credentials, config.target.url)) ?? storage;
-      }
+      const storage = await storeLogin(credentials);
+      console.log(`Signed in as ${result.email ?? result.subject}`);
+      console.log(`Core: ${config.coreUrl}`);
       console.log(`Credentials stored in ${storage === "keychain" ? "the OS keychain" : cliHome()}`);
     } catch (error) {
       fail(error);
     }
   });
-
-/**
- * After a Store login: say who the Store sees, and select the workspace when
- * the Store reports one active or the person has only one. Returns where the
- * login was stored again, when it was.
- */
-async function announceStoreLogin(
-  credentials: CliCredentials,
-  storeUrl: string,
-): Promise<"keychain" | "file" | null> {
-  let session: ConsoleSessionResponse;
-  try {
-    session = await getConsoleSession({ ...credentials, storeUrl });
-  } catch (error) {
-    // Signed in all the same; the first Store command reports the problem again.
-    console.log(`Signed in as ${credentials.email ?? credentials.mentraUserId}`);
-    console.error(`Could not reach the Mentra Miniapp Store at ${storeUrl}: ${message(error)}`);
-    return null;
-  }
-  const workspaceId =
-    session.activeWorkspaceId ?? (session.workspaces.length === 1 ? session.workspaces[0]!.workspaceId : null);
-  const storage = workspaceId ? await selectWorkspace(targetOf(credentials), workspaceId, credentials) : null;
-  console.log(`Signed in as ${session.user.email}`);
-  if (workspaceId) console.log(`Workspace: ${workspaceId}`);
-  if (session.workspaces.length > 1 && !workspaceId) {
-    console.log("This account is in more than one workspace, which Mentra no longer allows. Contact Mentra support to bring it down to one.");
-  }
-  return storage;
-}
 
 program
   .command("whoami")
@@ -153,79 +81,42 @@ program
   .action(async () => {
     try {
       const config = getConfig();
-      const creds = await loadSession(config.target);
+      const creds = await loadSession(config.coreUrl);
       if (!creds) return;
-      if (isStoredLogin(creds)) {
-        console.log(`Email: ${creds.email ?? "unknown"}`);
-        console.log(`Core user: ${creds.mentraUserId}`);
-        console.log(`Issuer: ${creds.issuer}`);
-      } else {
-        console.log("Signed in with MENTRA_CLI_TOKEN");
-      }
-      console.log(`${targetLabel(config.target)}: ${config.target.url}`);
-      if (creds.workspaceId) console.log(`Workspace: ${creds.workspaceId}`);
-      if (isStoredLogin(creds)) console.log(`Expires: ${new Date(creds.expiresAt).toLocaleString()}`);
+      console.log(`Email: ${creds.email ?? "unknown"}`);
+      console.log(`Core user: ${creds.mentraUserId}`);
+      console.log(`Issuer: ${creds.issuer}`);
+      console.log(`Core: ${config.coreUrl}`);
+      console.log(`Expires: ${new Date(creds.expiresAt).toLocaleString()}`);
     } catch (error) {
       fail(error);
     }
   });
 
-const workspace = program.command("workspace").description("Show or set up your workspace (an account belongs to one)");
+const workspace = program.command("workspace").description("Show or create your workspace (an account belongs to one)");
 
 workspace
   .command("show")
-  .description("Show the active workspace and its publishing profile")
+  .description("Show your workspace and your role in it")
   .action(async () => {
-    const creds = await requireStoreCredentials();
+    const creds = await requireCoreCredentials();
     if (!creds) return;
 
     try {
-      const session = await getConsoleSession(creds);
-      const active = activeWorkspace(creds, session);
-      if (!active) {
-        if (creds.workspaceId) {
-          throw new Error(`Workspace ${creds.workspaceId} is not available to this account. Sign in again with \`mentra login\`.`);
-        }
-        if (session.workspaces.length > 1) {
-          // Nothing to pick among: a person belongs to one workspace, so this is for Mentra support to fix.
-          console.log("This account is in more than one workspace, which Mentra no longer allows. Contact Mentra support to bring it down to one.");
-          return;
-        }
+      const workspaces = await listWorkspaces(creds);
+      if (workspaces.length === 0) {
         console.log("This account has no workspace. Create one with `mentra workspace create <name>`.");
         return;
       }
-
-      console.log(`Workspace: ${active.name} (${active.workspaceId})`);
-      console.log(`Role: ${active.membership.role}`);
-      const profile = await readPublishingProfile({...creds, workspaceId: active.workspaceId});
-      if (profile.state === "hidden") {
-        console.log("Package prefix: not visible to your role");
-      } else if (profile.state === "not_set" || !profile.profile.packagePrefix) {
-        console.log("Package prefix: not set");
-        console.log(
-          `Set one with \`mentra workspace set-prefix <prefix>\` (for example com.example) or in the Developer Console at ${getConfig().consoleUrl}.`,
-        );
-      } else {
-        console.log(`Package prefix: ${profile.profile.packagePrefix}`);
-        console.log(`Prefix status: ${profile.profile.packagePrefixStatus}`);
+      if (workspaces.length > 1) {
+        // Nothing to pick among: a person belongs to one workspace, so this is for Mentra support to fix.
+        console.log("This account is in more than one workspace, which Mentra no longer allows. Contact Mentra support to bring it down to one.");
+        for (const each of workspaces) console.log(`  ${each.workspaceId}\t${each.name}`);
+        return;
       }
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-workspace
-  .command("set-prefix")
-  .argument("<prefix>", "package prefix for the workspace's miniapps, e.g. com.example")
-  .description("Set the package prefix of the active workspace")
-  .action(async (prefix: string) => {
-    const creds = await requireStoreCredentials();
-    if (!creds) return;
-
-    try {
-      const workspaceId = await resolveWorkspaceId(creds);
-      const profile = await setPackagePrefix({...creds, workspaceId}, prefix);
-      console.log(`Package prefix: ${profile.packagePrefix} (${profile.packagePrefixStatus})`);
+      const [only] = workspaces;
+      console.log(`Workspace: ${only!.name} (${only!.workspaceId})`);
+      console.log(`Role: ${only!.membership.role}`);
     } catch (error) {
       fail(error);
     }
@@ -234,41 +125,22 @@ workspace
 workspace
   .command("create")
   .argument("<name>", "workspace name")
-  .option("--package-prefix <prefix>", "package prefix for the workspace's miniapps, e.g. com.example")
   .description("Create your workspace (Core refuses a second one)")
-  .action(async (name: string, options: { packagePrefix?: string }) => {
-    const creds = await requireStoreCredentials();
+  .action(async (name: string) => {
+    const creds = await requireCoreCredentials();
     if (!creds) return;
 
     try {
       const created = await createWorkspace(creds, name);
-      // Selected before the prefix is set, so a refused prefix still leaves the new workspace active.
-      const next = {...creds, workspaceId: created.workspaceId};
       console.log(`Workspace created: ${created.name} (${created.workspaceId})`);
-      if (isStoredLogin(next) && !(await selectWorkspace(targetOf(next), created.workspaceId, next))) {
-        // Another account signed in on this computer meanwhile: nothing more is done for this one.
-        throw new Error(
-          `The sign-in changed while the workspace was being created, so it was not selected${options.packagePrefix ? " and its package prefix was not set" : ""}. Run \`mentra login\` again as its owner to select it.`,
-        );
-      }
-      if (!isStoredLogin(next)) console.log(`Set MENTRA_CLI_WORKSPACE_ID=${created.workspaceId} to use it with MENTRA_CLI_TOKEN.`);
-      if (options.packagePrefix) {
-        try {
-          const profile = await setPackagePrefix(next, options.packagePrefix);
-          console.log(`Package prefix: ${profile.packagePrefix} (${profile.packagePrefixStatus})`);
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : String(error);
-          throw new Error(`The workspace was created and selected, but its package prefix was not set: ${reason}`);
-        }
-      }
     } catch (error) {
       fail(error);
     }
   });
 
-const miniapps = program.command("miniapps").description("Manage miniapp package records");
+const miniapps = program.command("miniapps").description("Miniapp tools");
 
-const miniappKeys = miniapps.command("keys").description("Manage durable publisher signing keys");
+const miniappKeys = miniapps.command("keys").description("Manage durable publisher signing keys (for `mentra pack --sign`)");
 
 miniappKeys
   .command("create")
@@ -328,172 +200,6 @@ miniappKeys
     }
   });
 
-miniapps
-  .command("list")
-  .description("List miniapps owned by the active workspace")
-  .action(async () => {
-    const creds = await requireStoreCredentials();
-    if (!creds) return;
-
-    try {
-      const { apps: appList } = await listApps(creds);
-      if (appList.length === 0) {
-        console.log("No miniapps yet.");
-        return;
-      }
-
-      for (const app of appList) {
-        const release = app.activeRelease ?? app.latestRelease;
-        const releaseLabel = release ? `${release.version} (${release.status})` : "no releases";
-        console.log(`${app.packageName}\t${app.name}\t${app.status}\t${releaseLabel}`);
-      }
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-miniapps
-  .command("create")
-  .argument("<packageName>", "stable package name, e.g. com.mentra.myminiapp")
-  .requiredOption("--name <name>", "display name")
-  .option("--description <description>", "short miniapp description")
-  .description("Reserve a miniapp package name")
-  .action(async (packageName: string, options: { name: string; description?: string }) => {
-    const creds = await requireStoreCredentials();
-    if (!creds) return;
-
-    try {
-      const { app } = await createApp(creds, {
-        packageName,
-        displayName: options.name,
-        description: options.description ?? null,
-      });
-      console.log(`Miniapp ready: ${app.packageName} (${app.name})`);
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-miniapps
-  .command("delete")
-  .argument("<packageName>", "package name to archive")
-  .description("Archive a miniapp package record")
-  .action(async (packageName: string) => {
-    const creds = await requireStoreCredentials();
-    if (!creds) return;
-
-    try {
-      await deleteApp(creds, packageName);
-      console.log(`Archived ${packageName}`);
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-const releases = program.command("releases").description("Inspect miniapp releases");
-
-releases
-  .command("list")
-  .argument("<packageName>", "package name")
-  .description("List releases for a miniapp")
-  .option("--json", "print machine-readable JSON")
-  .action(async (packageName: string, options: { json?: boolean }) => {
-    const creds = await requireStoreCredentials();
-    if (!creds) return;
-
-    try {
-      const { releases: releaseList } = await listReleases(creds, packageName);
-      if (options.json) {
-        console.log(JSON.stringify({ releases: releaseList }, null, 2));
-        return;
-      }
-      if (releaseList.length === 0) {
-        console.log("No releases yet.");
-        return;
-      }
-
-      for (const release of releaseList) {
-        const size = release.bundleSizeBytes ? `${Math.round(release.bundleSizeBytes / 1024)} KB` : "no bundle";
-        console.log(`${release.version}\t${release.releaseTrack}\t${release.status}\t${size}\t${release.bundleSha256 ?? "no hash"}`);
-        if (release.reviewNotes) console.log(`  Review: ${release.reviewNotes}`);
-      }
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-releases
-  .command("status")
-  .argument("<packageName>", "package name")
-  .argument("[releaseId]", "release id; defaults to the latest release")
-  .option("--json", "print machine-readable JSON")
-  .description("Show release state and review feedback")
-  .action(async (packageName: string, releaseId: string | undefined, options: { json?: boolean }) => {
-    const creds = await requireStoreCredentials();
-    if (!creds) return;
-    try {
-      const { releases: releaseList } = await listReleases(creds, packageName);
-      const release = releaseId ? releaseList.find(item => item.id === releaseId) : releaseList[0];
-      if (!release) throw new Error(releaseId ? `Release not found: ${releaseId}` : `No releases for ${packageName}`);
-      if (options.json) console.log(JSON.stringify({ release }, null, 2));
-      else {
-        console.log(`${packageName}@${release.version}`);
-        console.log(`Status: ${release.status}`);
-        console.log(`Track: ${release.releaseTrack}`);
-        console.log(`Release: ${release.id}`);
-        if (release.reviewNotes) console.log(`Review: ${release.reviewNotes}`);
-        if (release.bundleSha256) console.log(`Bundle SHA-256: ${release.bundleSha256}`);
-        if (release.manifestSha256) console.log(`Manifest SHA-256: ${release.manifestSha256}`);
-      }
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-releases
-  .command("submit")
-  .argument("<packageName>", "package name")
-  .argument("<releaseId>", "release id")
-  .description("Submit an uploaded release for admin review")
-  .action(async (packageName: string, releaseId: string) => {
-    const creds = await requireStoreCredentials();
-    if (!creds) return;
-
-    try {
-      const { release } = await submitRelease(creds, { packageName, releaseId });
-      console.log(`Submitted ${packageName}@${release.version} (${release.releaseTrack}) for review`);
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-const admin = program.command("admin").description("Internal Mentra admin operations");
-
-admin
-  .command("me")
-  .description("Show who you are signed in as and what you may administer")
-  .action(async () => {
-    try {
-      const config = getConfig();
-      if (config.target.kind === "core") {
-        const creds = await loadSession(config.target);
-        if (!creds) return;
-        const me = await getCoreAdminMe({token: creds.token, coreUrl: config.target.url});
-        console.log(`Signed in as: ${me.user?.email ?? me.credential?.label ?? "unknown"}`);
-        console.log(`Organization capabilities: ${me.organization.capabilities.join(", ") || "none"}`);
-        console.log(`Core: ${config.target.url}`);
-        return;
-      }
-      const creds = await requireStoreCredentials();
-      if (!creds) return;
-      const me = await getAdminMe(creds);
-      console.log(`Admin: ${me.user?.email ?? "unknown"}`);
-      console.log(`Store: ${creds.storeUrl}`);
-    } catch (error) {
-      fail(error);
-    }
-  });
-
 program
   .command("dev")
   .description("Start the local miniapp dev server; the phone runs it under the manifest package name")
@@ -543,124 +249,12 @@ program
   });
 
 program
-  .command("publish")
-  .description("Build and upload the current miniapp release bundle to the Store without signing")
-  .option("--cwd <path>", "miniapp project directory", process.cwd())
-  .option("--no-build", "skip running bun run build before packing")
-  .option("--no-pack", "skip running bun run pack and upload the existing build zip")
-  .option("--no-submit", "upload as draft without submitting for review")
-  .option("--publish", "also publish; requires an approved release or an app publishing token")
-  .option("--skip-existing", "skip published versions and safely resume matching unfinished uploads")
-  .option("--track <track>", "release track: stable or beta", "stable")
-  .option("--json", "print machine-readable JSON")
-  .action(async (options: {
-    cwd: string;
-    build: boolean;
-    pack: boolean;
-    submit: boolean;
-    publish?: boolean;
-    skipExisting?: boolean;
-    track: string;
-    json?: boolean;
-  }) => {
-    const creds = await requireStoreCredentials();
-    if (!creds) return;
-
-    const cwd = resolve(options.cwd);
-    try {
-      if (options.track !== "stable" && options.track !== "beta") {
-        throw new Error("--track must be either stable or beta");
-      }
-      if (options.publish && !options.submit) throw new Error("--publish cannot be combined with --no-submit");
-      const manifest = readManifest(cwd);
-      const packageName = stringField(manifest, "packageName");
-      const version = stringField(manifest, "version");
-      const name = stringField(manifest, "name") || packageName;
-      const description = typeof manifest.description === "string" ? manifest.description : null;
-
-      await ensureMiniappRecord(creds, { packageName, displayName: name, description });
-
-      const existing = options.skipExisting
-        ? (await listReleases(creds, packageName)).releases.find(release => release.version === version && release.releaseTrack === options.track)
-        : undefined;
-      if (existing?.status === "published") {
-        if (options.json) console.log(JSON.stringify({release: existing, skipped: true}, null, 2));
-        else console.log(`Skipped ${packageName}@${version}: already published`);
-        return;
-      }
-      if (existing && !["draft", "submitted", "in_review", "accepted"].includes(existing.status)) {
-        throw new Error(`Existing release is ${existing.status}; resolve it before retrying or bump the version`);
-      }
-
-      // An unfinished immutable release must resume from its original ZIP.
-      // Repacking first can destroy the only local copy of those exact bytes.
-      if (!existing && options.pack) {
-        await packMiniapp({
-          cwd,
-          build: options.build,
-          silent: options.json,
-          sign: false,
-        });
-      } else if (!existing && options.build) {
-        await buildMiniappProduction(cwd, { silent: options.json });
-      }
-
-      const zipPath = join(cwd, "build", `${packageName}-${version}.zip`);
-      if (!existsSync(zipPath)) {
-        throw new Error(`Release bundle not found: ${zipPath}`);
-      }
-      const bundle = readFileSync(zipPath);
-      const verifiedBundle = await verifyPackedBundle(bundle, manifest);
-      if (existing && existing.bundleSha256 !== createHash("sha256").update(bundle).digest("hex")) {
-        throw new Error("This version already has different bundle bytes. Retry with the original ZIP or bump miniapp.json version.");
-      }
-      const { release } = existing ? {release: existing} : await createRelease(creds, {
-        packageName,
-        version,
-        releaseTrack: options.track,
-        manifest,
-        bundle,
-        fileName: basename(zipPath),
-      });
-      let submitted = options.submit && release.status === "draft"
-        ? await submitRelease(creds, { packageName, releaseId: release.id })
-        : { release };
-      if (options.publish && submitted.release.status !== "published") {
-        submitted = await publishRelease(creds, packageName, release.id);
-      }
-      const sizeKb = Math.round(statSync(zipPath).size / 1024);
-      if (options.json) {
-        console.log(
-          JSON.stringify(
-            {
-              release: submitted.release,
-              bundle: basename(zipPath),
-              publisherKeyFingerprint: verifiedBundle.publisherKeyFingerprint ?? null,
-            },
-            null,
-            2,
-          ),
-        );
-        return;
-      }
-      console.log(`Uploaded ${packageName}@${release.version}`);
-      console.log(`Status: ${submitted.release.status}`);
-      console.log(`Track: ${submitted.release.releaseTrack}`);
-      console.log(`Bundle: ${basename(zipPath)} (${sizeKb} KB)`);
-      console.log(`Publisher key: ${verifiedBundle.publisherKeyFingerprint ?? "unsigned"}`);
-      if (release.bundleSha256) console.log(`SHA-256: ${release.bundleSha256}`);
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-program
   .command("logout")
   .description("Sign out: revoke this login at the sign-in server and delete it from this computer")
   .action(async () => {
     try {
       // After any refresh another command is running; deleted even when the sign-in server cannot be reached.
-      const {signedIn, confirmed} = await signOut(getConfig().target);
+      const { signedIn, confirmed } = await signOut(getConfig().coreUrl);
       if (!signedIn) console.log("Not signed in");
       else console.log(confirmed ? "Signed out" : "Signed out locally; server sign-out not confirmed");
     } catch (error) {
@@ -668,16 +262,15 @@ program
     }
   });
 
-registerStoreCommands(program, requireStoreCredentials);
 await program.parseAsync();
 
 /**
- * What a command acts with against `target`, refreshed when needed. Prints
- * why and sets a failing exit code when there is nothing to act with.
+ * The login for the Core at `coreUrl`, refreshed when needed. Prints why and
+ * sets a failing exit code when there is none.
  */
-async function loadSession(target: CliTarget): Promise<CommandCredentials | null> {
+async function loadSession(coreUrl: string): Promise<CliCredentials | null> {
   try {
-    const creds = await loadFreshCredentials(target);
+    const creds = await loadFreshCredentials(coreUrl);
     if (creds) return creds;
     console.error("Not signed in. Run `mentra login`.");
   } catch (error) {
@@ -687,8 +280,8 @@ async function loadSession(target: CliTarget): Promise<CommandCredentials | null
   return null;
 }
 
-/** Credentials for a command that needs a Mentra Miniapp Store. */
-async function requireStoreCredentials(): Promise<StoreSession | null> {
+/** Credentials for a command that asks Core, renewed once when Core refuses the access token. */
+async function requireCoreCredentials(): Promise<CoreCredentials | null> {
   let config: CliConfig;
   try {
     config = getConfig();
@@ -696,71 +289,13 @@ async function requireStoreCredentials(): Promise<StoreSession | null> {
     fail(error);
     return null;
   }
-  if (config.target.kind !== "store") {
-    fail(
-      new Error(
-        "This command needs a Mentra Miniapp Store. MENTRA_CORE_URL (or --core-url) selects a Core without a Store, where only login, logout, whoami and admin me work.",
-      ),
-    );
-    return null;
-  }
-  const target = config.target;
-  const creds = await loadSession(target);
+  const creds = await loadSession(config.coreUrl);
   if (!creds) return null;
-  const session: StoreSession = { ...creds, storeUrl: target.url };
-  if (isStoredLogin(creds)) {
-    session.renewToken = async refused =>
-      (await renewRefusedLogin(target, creds.mentraUserId, refused))?.token ?? null;
-  }
-  return session;
-}
-
-function readManifest(cwd: string): Record<string, unknown> {
-  const path = join(cwd, "miniapp.json");
-  if (!existsSync(path)) throw new Error(`miniapp.json not found in ${cwd}`);
-  const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("miniapp.json must be a JSON object");
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function stringField(manifest: Record<string, unknown>, field: string): string {
-  const value = manifest[field];
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`miniapp.json is missing string field "${field}"`);
-  }
-  return value.trim();
-}
-
-async function ensureMiniappRecord(
-  creds: StoreCredentials,
-  input: { packageName: string; displayName: string; description?: string | null },
-): Promise<void> {
-  try {
-    await createApp(creds, input);
-    return;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.toLowerCase().includes("package name is already claimed")) {
-      throw error;
-    }
-  }
-
-  const { apps } = await listApps(creds);
-  const existing = apps.find(app => app.packageName === input.packageName && app.status !== "archived");
-  if (!existing) {
-    throw new Error(`Package ${input.packageName} is already claimed by another workspace.`);
-  }
-}
-
-/** The workspace commands act in: the saved selection, else the Store's active one, else the account's only one. */
-function activeWorkspace(creds: StoreCredentials, session: ConsoleSessionResponse): CliWorkspace | null {
-  const id =
-    creds.workspaceId ??
-    session.activeWorkspaceId ??
-    (session.workspaces.length === 1 ? session.workspaces[0]!.workspaceId : null);
-  return session.workspaces.find(candidate => candidate.workspaceId === id) ?? null;
+  return {
+    token: creds.token,
+    coreUrl: config.coreUrl,
+    renewToken: async (refused) => (await renewRefusedLogin(config.coreUrl, creds.mentraUserId, refused))?.token ?? null,
+  };
 }
 
 function message(error: unknown): string {

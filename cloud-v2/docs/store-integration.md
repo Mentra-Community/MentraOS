@@ -217,8 +217,8 @@ types and the client methods (`getRegistryEntry`, `archiveRegistry`) are in
 
 ## Signing people in to the Store
 
-The Developer Console and the `mentra` CLI sign in through the Core the Store
-belongs to ([`signin.md`](signin.md)):
+The Developer Console signs in through the Core the Store belongs to
+([`signin.md`](signin.md)):
 
 - **The Console** is that Core's `console` client. The Store's
   `MENTRA_STORE_OIDC_ISSUER` is the Core's `CLOUD_CORE_OIDC_ISSUER`;
@@ -228,13 +228,10 @@ belongs to ([`signin.md`](signin.md)):
   keeps the person's tokens on its side, passes the access token to
   `POST /principal` on every request, and ends the Console session when Core
   answers `401 invalid_token`.
-- **The CLI** is the Core's `cli` client. The Store answers
-  `GET /api/console/auth/cli-config` with `{issuer, clientId}` from
-  `MENTRA_STORE_OIDC_ISSUER` and `MENTRA_STORE_CLI_CLIENT_ID`; the CLI then signs
-  in on a loopback port and sends its Core access token to the Store as a bearer.
-  CI sends a workspace key (`msk_`) instead.
+- **The `mentra` CLI** signs in at Core itself (`GET /api/cli/config`) and
+  never calls the Store.
 
-Either way the Store passes what it was given to `/authorize` and `/principal`;
+The Store passes what it was given to `/authorize` and `/principal`;
 it never validates a person's token itself.
 
 ### Private miniapps

@@ -29,9 +29,10 @@ coding agent needs to build a miniapp that fits the Mentra App: safe areas and
 the capsule menu, light and dark colors, back navigation, the icon, and when to
 use `dev` vs. `release`.
 
-To publish a finished miniapp to the Mentra Miniapp Store, see
-[`@mentra/cli`](https://www.npmjs.com/package/@mentra/cli) (`mentra login` /
-`mentra publish`).
+To publish a finished miniapp, pack it (`mentra pack`, from
+[`@mentra/cli`](https://www.npmjs.com/package/@mentra/cli)) and upload `build/`
+to the miniapp's URL; to list it in the Mentra Miniapp Store's directory, submit
+that URL there.
 
 ## Part of MentraOS
 

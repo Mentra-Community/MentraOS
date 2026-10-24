@@ -171,11 +171,9 @@ accepted.
 
 The CLI takes its issuer and client ID from `MENTRA_CLI_OIDC_ISSUER` and
 `MENTRA_CLI_CLIENT_ID` on the developer's machine when both are set. Otherwise
-it asks the service it targets:
-
-- a Mentra Miniapp Store answers `GET /api/console/auth/cli-config` with its
-  Core's issuer and CLI client;
-- a Core without a Store (a Private Cloud) answers `GET /api/cli/config`.
+it asks the Core it signs in to (production Core, or `MENTRA_CORE_URL`), at
+`GET /api/cli/config`. It talks to that Core only, never to a Mentra Miniapp
+Store.
 
 `GET /api/cli/config` is unauthenticated and answers `{issuer, clientId}`: the
 issuer, and the `cli` client's ID. It answers 404

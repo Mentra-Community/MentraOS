@@ -6,16 +6,14 @@ import {join} from "node:path"
 import {refreshTokenGrant} from "openid-client"
 
 import {ensureOidcClient, revokeLogin, SessionExpiredError} from "./api"
-import type {CliTarget} from "./config"
 import {clearCredentials, loadStoredLogin, refreshLockPath, saveCredentials, type CliCredentials} from "./credentials"
 import {loopbackLogin} from "./loopback-login"
-import {loadFreshCredentials, renewRefusedLogin, selectWorkspace, signOut, storeLogin} from "./session"
+import {loadFreshCredentials, renewRefusedLogin, signOut, storeLogin} from "./session"
 import {startFakeOidcIssuer, type FakeOidcIssuer} from "./testing/fake-oidc-issuer"
 import {expectLoopbackPortsFree, freeLoopbackPorts} from "./testing/loopback"
 
-const target: CliTarget = {kind: "store", url: "https://store.example.test"}
+const target = "https://core.example.test"
 const savedHome = process.env.MENTRA_CLI_HOME
-const savedToken = process.env.MENTRA_CLI_TOKEN
 const secrets = new Map<string, string>()
 let spies: Array<{mockRestore(): void}> = []
 let home = ""
@@ -26,7 +24,6 @@ beforeEach(async () => {
   freePorts = await freeLoopbackPorts()
   home = mkdtempSync(join(tmpdir(), "mentra-cli-session-"))
   process.env.MENTRA_CLI_HOME = home
-  delete process.env.MENTRA_CLI_TOKEN
   secrets.clear()
   spies = [
     spyOn(Bun.secrets, "get").mockImplementation(async ({service, name}) => secrets.get(`${service}:${name}`) ?? null),
@@ -44,8 +41,6 @@ afterEach(async () => {
   rmSync(home, {recursive: true, force: true})
   if (savedHome === undefined) delete process.env.MENTRA_CLI_HOME
   else process.env.MENTRA_CLI_HOME = savedHome
-  if (savedToken === undefined) delete process.env.MENTRA_CLI_TOKEN
-  else process.env.MENTRA_CLI_TOKEN = savedToken
   await expectLoopbackPortsFree(freePorts)
 })
 
@@ -69,8 +64,7 @@ async function storedLogin(expiresInMs: number): Promise<CliCredentials> {
     email: result.email,
     issuer: idp.issuer,
     clientId: "mentra-cli",
-    storeUrl: target.url,
-    workspaceId: "ws_1",
+    coreUrl: target,
     storedAt: new Date().toISOString(),
   }
   await saveCredentials(login)
@@ -90,8 +84,8 @@ test("refresh rotates the stored refresh token", async () => {
   expect(fresh.token).not.toBe(login.token)
   expect(fresh.refreshToken).not.toBe(login.refreshToken)
   expect(Date.parse(fresh.expiresAt)).toBeGreaterThan(Date.now() + 3_000_000)
-  // The rotated refresh token is what is stored, with the workspace kept.
-  expect(await loadStoredLogin(target)).toMatchObject({refreshToken: fresh.refreshToken, token: fresh.token, workspaceId: "ws_1"})
+  // The rotated refresh token is what is stored, for the same Core.
+  expect(await loadStoredLogin(target)).toMatchObject({refreshToken: fresh.refreshToken, token: fresh.token, coreUrl: target})
   expect(idp.refreshTokenActive(login.refreshToken)).toBe(false)
   expect(idp.refreshTokenActive(fresh.refreshToken)).toBe(true)
   expect(readdirSync(home).filter(name => name.endsWith(".lock"))).toEqual([])
@@ -111,7 +105,7 @@ test("a refused access token is refreshed at once, although it has not expired",
   const renewed = (await renewRefusedLogin(target, login.mentraUserId, login.token))!
   expect(idp.refreshes).toBe(1)
   expect(renewed.token).not.toBe(login.token)
-  expect(await loadStoredLogin(target)).toMatchObject({token: renewed.token, refreshToken: renewed.refreshToken, workspaceId: "ws_1"})
+  expect(await loadStoredLogin(target)).toMatchObject({token: renewed.token, refreshToken: renewed.refreshToken})
 })
 
 test("a refused access token another request already replaced is not refreshed again", async () => {
@@ -153,28 +147,6 @@ test("signing out waits for a running refresh, revokes the refresh token it prod
   expect(await loadStoredLogin(target)).toBeNull()
   expect(idp.refreshTokenActive(refreshed.refreshToken)).toBe(false)
   expect(await signOut(target)).toEqual({signedIn: false, confirmed: false})
-})
-
-test("selecting a workspace keeps the tokens a concurrent refresh rotated", async () => {
-  const login = await storedLogin(30_000)
-  idp.refreshDelayMs = 300
-  const refreshing = loadFreshCredentials(target)
-  await Bun.sleep(80)
-  expect(await selectWorkspace(target, "ws_2", {mentraUserId: login.mentraUserId})).not.toBeNull()
-  const refreshed = (await refreshing) as CliCredentials
-  const stored = (await loadStoredLogin(target))!
-  expect(stored.workspaceId).toBe("ws_2")
-  expect(stored.refreshToken).toBe(refreshed.refreshToken)
-  expect(stored.refreshToken).not.toBe(login.refreshToken)
-  expect(idp.refreshTokenActive(stored.refreshToken)).toBe(true)
-})
-
-test("a workspace chosen for one person is never applied to another person's login stored meanwhile", async () => {
-  const login = await storedLogin(3_600_000)
-  expect(await selectWorkspace(target, "ws_2", {mentraUserId: "mu_someone_else"})).toBeNull()
-  expect((await loadStoredLogin(target))!.workspaceId).toBe(login.workspaceId)
-  expect(await selectWorkspace(target, "ws_2", {mentraUserId: login.mentraUserId})).not.toBeNull()
-  expect((await loadStoredLogin(target))!.workspaceId).toBe("ws_2")
 })
 
 test("a new sign-in stored during a refresh of the previous one is not overwritten by it", async () => {
@@ -252,12 +224,5 @@ test("a refused refresh token says Session expired and clears the login", async 
   expect(error).toBeInstanceOf(SessionExpiredError)
   expect((error as Error).message).toBe("Session expired. Run `mentra login`.")
   expect(await loadStoredLogin(target)).toBeNull()
-  expect(existsSync(join(home, "store-refresh-" + Buffer.from(target.url).toString("base64url") + ".lock"))).toBe(false)
-})
-
-test("MENTRA_CLI_TOKEN is used without any refresh", async () => {
-  await storedLogin(30_000)
-  process.env.MENTRA_CLI_TOKEN = "msk_ci_key"
-  expect(await loadFreshCredentials(target)).toMatchObject({fromEnvironment: true, token: "msk_ci_key"})
-  expect(idp.refreshes).toBe(0)
+  expect(existsSync(join(home, "core-refresh-" + Buffer.from(target).toString("base64url") + ".lock"))).toBe(false)
 })

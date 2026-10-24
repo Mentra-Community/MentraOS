@@ -1,7 +1,8 @@
 /**
  * @fileoverview The `mentra` CLI's sign-in against Core's real sign-in server
  * (L09): the CLI's own `loopbackLogin`, `refreshLoginToken` and `revokeLogin`,
- * with the provider's registered `mentra-cli` client.
+ * with the provider's registered `mentra-cli` client, and its workspace
+ * requests (`listWorkspaces`, `createWorkspace`) with the token it gets.
  *
  * Core's app runs in-process; the test's `fetch` sends the issuer's origin and
  * the Core's origin to it, as the sign-in site's relay and the network would.
@@ -20,8 +21,9 @@ import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefault
 import type * as client from "openid-client"
 
 import {
+  createWorkspace,
   ensureOidcClient,
-  getCoreAdminMe,
+  listWorkspaces,
   refreshLoginToken,
   revokeLogin,
   SessionExpiredError,
@@ -43,7 +45,7 @@ import {applyEnv} from "./support/signin-harness"
 
 setDefaultTimeout(30_000)
 
-/** The Core the CLI targets in Core mode; its sign-in server is `OIDC_ISSUER`. */
+/** The Core the CLI signs in to; its sign-in server is `OIDC_ISSUER`. */
 const CORE_ORIGIN = "https://core.test"
 const SIGNED_IN = "Signed in to Mentra. You can close this tab."
 
@@ -137,9 +139,9 @@ async function approveInBrowser(authorizationUrl: string, mentraUserId: string, 
   return {status: response.status, text: await response.text(), askedToSignIn}
 }
 
-/** `mentra login` against Core (Core mode), approved in `browser` as `mentraUserId`. */
+/** `mentra login` against Core, approved in `browser` as `mentraUserId`. */
 async function cliLogin(mentraUserId: string, browser = new Browser(app)) {
-  const config = await ensureOidcClient({target: {kind: "core", url: CORE_ORIGIN}})
+  const config = await ensureOidcClient({coreUrl: CORE_ORIGIN})
   let authorizationUrl = ""
   let visit: Promise<BrowserVisit> | undefined
   const result = await loopbackLogin(config, {
@@ -178,7 +180,7 @@ describe("GET /api/cli/config", () => {
 })
 
 describe("the CLI against Core's sign-in server (L09)", () => {
-  test("loopback login: Core accepts the access token as the person, and admin me answers for them", async () => {
+  test("loopback login: Core accepts the access token as the person, for their workspace", async () => {
     const {mentraUserId} = await person()
     const {config, result, authorizationUrl, page} = await cliLogin(mentraUserId)
     expect(config.serverMetadata().issuer).toBe(OIDC_ISSUER)
@@ -193,9 +195,14 @@ describe("the CLI against Core's sign-in server (L09)", () => {
     expect(result.refreshToken).toBeTruthy()
     expect(await verifyCoreAccessToken(result.accessToken)).toMatchObject({mentraUserId, clientId: "mentra-cli"})
 
-    const me = await getCoreAdminMe({token: result.accessToken, coreUrl: CORE_ORIGIN})
-    expect(me.user).toMatchObject({mentraUserId, email: result.email})
-    expect(me.organization.capabilities).toEqual([])
+    // `mentra workspace show` and `mentra workspace create`, as this person.
+    const credentials = {token: result.accessToken, coreUrl: CORE_ORIGIN}
+    expect(await listWorkspaces(credentials)).toEqual([])
+    const created = await createWorkspace(credentials, "CLI Team")
+    expect(created).toMatchObject({name: "CLI Team", membership: {role: "owner"}})
+    expect((await listWorkspaces(credentials)).map(workspace => [workspace.workspaceId, workspace.name])).toEqual([
+      [created.workspaceId, "CLI Team"],
+    ])
   })
 
   test("refresh rotates; reusing the spent refresh token fails and ends the grant", async () => {
