@@ -10,7 +10,12 @@ Every active deployment has a schema-v1 `DeploymentManifest`:
   this build lane (`https://miniapps.mentraglass.com/` and its staging and dev
   hosts). Each bundled miniapp updates from `<that URL><packageName>/`; without
   it, the dev host. A workspace manifest that sets no host keeps its bundled
-  miniapps on the versions it pins. The selection is persisted, but the
+  miniapps on the versions it pins. `EXPO_PUBLIC_DIRECTORY_URL` becomes
+  `artifacts.directoryUrl`: the directory's API (the Mentra Miniapp Store
+  backend, `https://api.apps.mentraglass.com/` and its staging and dev hosts),
+  where package links look up their miniapp; without it, the dev directory. A
+  workspace manifest that names no directory opens package links in the
+  browser. The selection is persisted, but the
   official manifest is reconstructed from the installed build, never restored
   from an old build's cached values.
 - **Workspace:** the resolver downloads and validates the customer's manifest.

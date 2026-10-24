@@ -35,3 +35,13 @@ test("attended permission command stays with the handler instead of navigating",
   expect(redirectSystemPath({path: "com.mentra://test/request-permissions?request_id=batch-1", initial: false})).toBeNull()
   expect(redirectSystemPath({path: "com.mentra://test/request-permissions?request_id=batch-1", initial: true})).toBe("/")
 })
+
+it.each([
+  "https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F",
+  "https://apps.mentra.glass/package/com.example.notes",
+  "com.mentra://open?url=https%3A%2F%2Fnotes.example.com%2F",
+  "/package/com.example.notes",
+])("leaves miniapp install link %s to the install sheet", (link) => {
+  expect(redirectSystemPath({path: link, initial: false})).toBeNull()
+  expect(redirectSystemPath({path: link, initial: true})).toBe("/")
+})

@@ -11,7 +11,8 @@ import {
   localMiniappInstallErrorAlert,
 } from "./localMiniappInstall"
 
-jest.mock("@/contexts/ModalContext", () => ({NO_ANSWER: -1, showAlert: jest.fn()}))
+jest.mock("@/contexts/ModalContext", () => ({NO_ANSWER: -1, showAlert: jest.fn(), waitForAlertHost: async () => {}}))
+jest.mock("expo-image", () => ({Image: () => null}))
 
 const url = "http://192.168.1.20:8080/"
 const preview: MiniappInstallPreview = {
@@ -44,6 +45,8 @@ describe("the install sheet for a local-network build", () => {
       title: "Notes",
       message: translate("miniappInstall:fromLocalNetwork", {address: "192.168.1.20:8080"}),
       buttons: [{text: translate("common:cancel"), style: "cancel"}, {text: translate("miniappInstall:install")}],
+      // The one install sheet: the miniapp's icon, and a swipe means Cancel.
+      options: expect.objectContaining({allowDismiss: true, icon: expect.anything()}),
     })
     expect(en.miniappInstall.fromLocalNetwork).toBe("From your local network\n{{address}}")
   })
@@ -59,7 +62,10 @@ describe("the install sheet for a local-network build", () => {
   it("shows the age rating beside the name", async () => {
     jest.mocked(showAlert).mockResolvedValueOnce(1)
     await confirmLocalMiniappInstall({...preview, ageRating: "13+"})
-    expect(jest.mocked(showAlert).mock.calls[0]![0].title).toBe("Notes · 13+")
+    expect(jest.mocked(showAlert).mock.calls[0]![0].title).toBe(
+      translate("miniappInstall:nameWithRating", {name: "Notes", rating: "13+"}),
+    )
+    expect(en.miniappInstall.nameWithRating).toBe("{{name}} · {{rating}}")
   })
 
   it("names the address by host and port", () => {

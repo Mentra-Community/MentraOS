@@ -50,6 +50,7 @@ export const deploymentManifestSchema = z
         sttModelBaseUrl: nullableUrl,
         ttsModelBaseUrl: nullableUrl,
         firstPartyMiniappsUrl: nullableUrl.optional(),
+        directoryUrl: nullableUrl.optional(),
       })
       .strict(),
     appUpdates: z

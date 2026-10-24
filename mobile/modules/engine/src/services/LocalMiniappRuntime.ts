@@ -3066,6 +3066,7 @@ class LocalMiniappRuntime {
     sendResult: (packageName, requestId, ok, result, error) =>
       this.sendResult(packageName, requestId, ok, result, error),
     ownFilesDirectory: (packageName) => this.blobStore.ownFilesDirectory(packageName),
+    isHostLink: (url) => getConfigValues().isHostLink?.(url) === true,
   })
 
   private readonly simpleStorage = new LocalMiniappStorage({

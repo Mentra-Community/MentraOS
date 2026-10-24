@@ -14,6 +14,15 @@ const DOPPLER_KEYS = [
   "EXPO_PUBLIC_MINIAPPS_URL",
 ]
 
+// The directory's API (the Mentra Miniapp Store backend) for each backend lane. A
+// fixed public endpoint per lane, like the backend itself, so it is set here
+// rather than read from Doppler.
+const DIRECTORY_URLS = {
+  dev: "https://api.apps.dev.mentraglass.com/",
+  staging: "https://api.apps.staging.mentraglass.com/",
+  prod: "https://api.apps.mentraglass.com/",
+}
+
 function requireHttps(value, label) {
   const url = new URL(value)
   if (url.protocol !== "https:" || url.username || url.password || url.hash) {
@@ -44,6 +53,7 @@ export function prepareMobileReleaseEnvironment({plan, doppler, backendEnvironme
     ...Object.fromEntries(DOPPLER_KEYS.map((key) => [key, doppler[key]])),
     EXPO_PUBLIC_ASG_OTA_VERSION_URL: requireHttps(otaManifestUrl, "OTA manifest URL"),
     EXPO_PUBLIC_BUILD_ENV: backendEnvironment,
+    EXPO_PUBLIC_DIRECTORY_URL: DIRECTORY_URLS[backendEnvironment],
     EXPO_PUBLIC_MENTRAOS_VERSION: plan.releaseIdentity,
     MENTRAOS_NATIVE_MARKETING_VERSION: plan.native.marketingVersion,
     MENTRAOS_PINNED_BUILD_NUMBER: String(plan.native.buildNumber),

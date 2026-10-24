@@ -34,6 +34,7 @@ test("writes Doppler values and the release identity, and nothing else", () => {
   assert.match(env, /^EXPO_PUBLIC_ASG_OTA_VERSION_URL=https:\/\/example\.com\/ota\.json$/m)
   assert.match(env, /^EXPO_PUBLIC_CLOUD_CORE_URL=https:\/\/core\.staging\.us-west-2\.mentraglass\.com$/m)
   assert.match(env, /^EXPO_PUBLIC_MINIAPPS_URL=https:\/\/miniapps\.staging\.mentraglass\.com\/$/m)
+  assert.match(env, /^EXPO_PUBLIC_DIRECTORY_URL=https:\/\/api\.apps\.staging\.mentraglass\.com\/$/m)
   assert.match(env, /^EXPO_PUBLIC_SENTRY_DSN=https:\/\/public@example\.ingest\.sentry\.io\/1$/m)
   assert.doesNotMatch(env, /DOPPLER_CONFIG|MAPBOX_DOWNLOADS_TOKEN|sk\.secret/)
   assert.deepEqual(masked, ["pk.example", "https://public@example.ingest.sentry.io/1"])
@@ -79,6 +80,7 @@ test("renders production candidates from production plans", () => {
     backendEnvironment: "prod",
   })
   assert.match(env, /^EXPO_PUBLIC_BUILD_ENV=prod$/m)
+  assert.match(env, /^EXPO_PUBLIC_DIRECTORY_URL=https:\/\/api\.apps\.mentraglass\.com\/$/m)
   assert.match(env, /^MENTRAOS_PINNED_BUILD_NUMBER=310000099$/m)
 })
 

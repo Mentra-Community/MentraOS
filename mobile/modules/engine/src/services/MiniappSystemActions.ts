@@ -12,7 +12,8 @@
  *   - a file the host writes for either gets a safe name in a new directory of
  *     its own in the cache (miniappFiles.ts), so a name like `../x` cannot
  *     overwrite the Mentra App's files;
- *   - openUrl never opens a local file, content URI or script.
+ *   - openUrl never opens a local file, content URI or script, or a link to the
+ *     host app itself (its install links, sign-in callbacks and test commands).
  */
 
 import {Linking} from "react-native"
@@ -44,10 +45,21 @@ export interface MiniappSystemActionsHooks {
    * the data partition it uses now. Throws while no account is known.
    */
   ownFilesDirectory: (packageName: string) => Directory
+  /** Whether a URL opens the host app itself (the host's `isHostLink`). */
+  isHostLink?: (url: string) => boolean
 }
 
 export class MiniappSystemActions {
   constructor(private readonly hooks: MiniappSystemActionsHooks) {}
+
+  /** A host check that throws refuses the link: it can't be shown to be safe. */
+  private isHostLink(url: string): boolean {
+    try {
+      return this.hooks.isHostLink?.(url) === true
+    } catch {
+      return true
+    }
+  }
 
   /**
    * The file `url` names when it is one of this miniapp's own files (inside its
@@ -131,6 +143,10 @@ export class MiniappSystemActions {
     const scheme = urlScheme(url)
     if (!scheme || UNOPENABLE_SCHEMES.has(scheme)) {
       console.warn(`${LOG_TAG}: open_url blocked ${scheme ? `${scheme}:` : "relative"} URL`)
+      return
+    }
+    if (this.isHostLink(url)) {
+      console.warn(`${LOG_TAG}: open_url blocked a link to the host app`)
       return
     }
     try {

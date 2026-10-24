@@ -384,6 +384,11 @@ installed copies keep running. Off, the engine installs any miniapp URL without
 registering it and asks Core nothing; the domain rule still applies. A host app that
 turns it off answers to the app stores' rules itself.
 
+Pass `config.isHostLink(url)` to name your own app's links: its URL schemes and the
+addresses it claims as app links. A miniapp's `session.system.openUrl` never opens
+them, so no miniapp can open your install sheet, your sign-in callbacks or anything
+else your link handling does. Refuse the same links in the miniapp WebView you host.
+
 Set `config.hostAgeRating` to your app's own App Store age rating, for example `"12+"`.
 A miniapp whose `ageRating` is above it installs or opens only for a person whose
 declared age is old enough. The first time that comes up, the engine calls

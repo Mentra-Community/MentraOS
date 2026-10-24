@@ -42,6 +42,11 @@ export interface DeploymentManifest {
     ttsModelBaseUrl: string | null
     /** Where Mentra hosts its own miniapps; bundled miniapps update from it. Absent or null pins them. */
     firstPartyMiniappsUrl?: string | null
+    /**
+     * The directory's API base (the Mentra Miniapp Store backend, which serves `/api/directory/…`). Package links look
+     * their miniapp up there; absent or null, they open the directory website in the browser.
+     */
+    directoryUrl?: string | null
   }
   appUpdates: {
     mode: "store" | "managed"

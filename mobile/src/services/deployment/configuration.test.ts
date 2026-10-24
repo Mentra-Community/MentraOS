@@ -82,6 +82,35 @@ it("uses shared dev defaults for missing or blank environment values", () => {
   })
 })
 
+describe("the build's directory", () => {
+  const original = process.env.EXPO_PUBLIC_DIRECTORY_URL
+  afterEach(() => {
+    if (original === undefined) delete process.env.EXPO_PUBLIC_DIRECTORY_URL
+    else process.env.EXPO_PUBLIC_DIRECTORY_URL = original
+  })
+
+  it("takes the build lane's directory", () => {
+    process.env.EXPO_PUBLIC_DIRECTORY_URL = " https://api.apps.staging.mentraglass.com/ "
+    const manifest = createOfficialManifest()
+    expect(deploymentManifestSchema.parse(manifest)).toEqual(manifest)
+    expect(manifest.artifacts.directoryUrl).toBe("https://api.apps.staging.mentraglass.com/")
+  })
+
+  it.each([undefined, "", "   "])("uses the dev directory when the build sets none (%p)", (value) => {
+    if (value === undefined) delete process.env.EXPO_PUBLIC_DIRECTORY_URL
+    else process.env.EXPO_PUBLIC_DIRECTORY_URL = value
+    expect(createOfficialManifest().artifacts.directoryUrl).toBe("https://api.apps.dev.mentraglass.com/")
+  })
+
+  it("lets a workspace manifest name no directory", () => {
+    const manifest = createOfficialManifest()
+    const {directoryUrl: _omitted, ...artifacts} = manifest.artifacts
+    expect(deploymentManifestSchema.parse({...manifest, artifacts}).artifacts.directoryUrl).toBeUndefined()
+    const unset = deploymentManifestSchema.parse({...manifest, artifacts: {...artifacts, directoryUrl: null}})
+    expect(unset.artifacts.directoryUrl).toBeNull()
+  })
+})
+
 describe("the build's first-party miniapps host", () => {
   const original = process.env.EXPO_PUBLIC_MINIAPPS_URL
   afterEach(() => {

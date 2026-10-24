@@ -13,18 +13,31 @@
  * {@link decideMiniappNavigation} (the WebView's `onShouldStartLoadWithRequest`)
  * makes the per-frame decision. File URLs are refused natively before either
  * runs.
+ *
+ * A miniapp never opens the Mentra App's own links (`isMentraAppLink`): they
+ * reach the app's link handling, which installs miniapps, signs in and runs
+ * test commands. The app's own schemes are in the whitelist only so they reach
+ * {@link decideMiniappNavigation}, which refuses them; outside it, the library
+ * would hand them to the system, which opens the Mentra App.
  */
+
+import {isMentraAppLink, MENTRA_APP_SCHEME_PATTERNS} from "@/services/miniapps/miniappInstallLinks"
 
 export type MiniappNavigationDecision = "load" | "open_externally" | "refuse"
 
 /** Schemes a frame inside the miniapp's page may load. */
 const FRAME_SCHEMES = ["https://*", "http://*", "about:*", "blob:*", "data:*"]
+/**
+ * Android intent URIs, which can name any app's activity, the Mentra App's included. Listed only so they reach
+ * {@link decideMiniappNavigation}, which refuses them, rather than the library's hand-off to the system.
+ */
+const INTENT_SCHEMES = ["intent:*"]
 /** Schemes a top-level link may hand to the system. */
 const EXTERNAL_SCHEMES = ["mailto:*", "tel:*"]
 
 /** The WebView's `originWhitelist` for a page at `pageOrigin`. */
 export function miniappOriginWhitelist(pageOrigin: string): string[] {
-  return [pageOrigin, ...FRAME_SCHEMES, ...EXTERNAL_SCHEMES]
+  return [pageOrigin, ...FRAME_SCHEMES, ...EXTERNAL_SCHEMES, ...MENTRA_APP_SCHEME_PATTERNS, ...INTENT_SCHEMES]
 }
 
 /** A URL on another package's Android origin; it is never a website. */
@@ -74,6 +87,8 @@ export function decideMiniappNavigation(
   }
 
   if (url === "about:blank") return "load"
+  // The Mentra App's install links, sign-in callbacks and test commands are never a miniapp's to open.
+  if (isMentraAppLink(url)) return "refuse"
   // Blob URLs name their creator's origin: the top frame may show the page's own.
   if (scheme === "blob" && isOnOrigin(url.slice("blob:".length), origin)) return "load"
   if (scheme === "https" || scheme === "http" || scheme === "mailto" || scheme === "tel") return "open_externally"

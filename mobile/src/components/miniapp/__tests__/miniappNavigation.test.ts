@@ -83,3 +83,63 @@ describe("decideMiniappNavigation", () => {
     expect(decideMiniappNavigation({url: "http://192.168.1.20:8082/", isTopFrame: true}, dev)).toBe("open_externally")
   })
 })
+
+describe("the Mentra App's own links", () => {
+  const ownLinks = [
+    "com.mentra://open?url=https%3A%2F%2Fnotes.example.com%2F",
+    "com.mentra://test/load-miniapp?package=com.mentra.notes&version=1.0.0&url=https%3A%2F%2Fx%2Fb.zip",
+    "com.mentra://auth/callback?code=x&state=y",
+    "com.mentra.mentra://home",
+    "msauth://com.mentra.mentra/hash?code=x",
+    "https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F",
+    "https://apps.mentraglass.com/package/com.example.notes",
+    "https://apps.mentra.glass/auth/reset-password#access_token=x&refresh_token=y&type=recovery",
+    "intent://open?url=https%3A%2F%2Fnotes.example.com%2F#Intent;scheme=com.mentra;package=com.mentra.mentra;end",
+  ]
+
+  it.each(ownLinks)("a miniapp's screen never opens %s, in any frame", (url) => {
+    for (const isTopFrame of [true, false, undefined]) {
+      const decision = decideMiniappNavigation({url, isTopFrame}, IOS)
+      // An app-link host may show as a web page inside a frame; it is never handed to the system.
+      expect(decision).not.toBe("open_externally")
+      if (!url.startsWith("https://") || isTopFrame !== false) expect(decision).toBe("refuse")
+    }
+  })
+
+  it.each(ownLinks)("the WebView asks the host about %s rather than handing it to the system", (url) => {
+    // react-native-webview hands a URL outside `originWhitelist` straight to Linking, never asking the host.
+    jest.isolateModules(() => {
+      const Linking = {canOpenURL: jest.fn(async () => true), openURL: jest.fn(async () => true)}
+      jest.doMock("react-native", () => ({
+        Linking,
+        Platform: {OS: "android"},
+        StyleSheet: {create: (s: unknown) => s},
+        View: "View",
+        Text: "Text",
+        ActivityIndicator: "ActivityIndicator",
+      }))
+      const {createOnShouldStartLoadWithRequest} = require("react-native-webview/lib/WebViewShared")
+      const loadRequest = jest.fn()
+      const decide = jest.fn(
+        (request: {url: string; isTopFrame?: boolean}) => decideMiniappNavigation(request, ANDROID) === "load",
+      )
+      createOnShouldStartLoadWithRequest(
+        loadRequest,
+        miniappOriginWhitelist(ANDROID),
+        decide,
+      )({
+        nativeEvent: {url, isTopFrame: true, lockIdentifier: 1},
+      })
+      expect(decide).toHaveBeenCalled()
+      expect(Linking.canOpenURL).not.toHaveBeenCalled()
+      expect(Linking.openURL).not.toHaveBeenCalled()
+      expect(loadRequest).toHaveBeenCalledWith(false, url, 1)
+    })
+  })
+
+  it("still opens other web links in the system browser", () => {
+    expect(decideMiniappNavigation({url: "https://docs.mentraglass.com/", isTopFrame: true}, IOS)).toBe(
+      "open_externally",
+    )
+  })
+})

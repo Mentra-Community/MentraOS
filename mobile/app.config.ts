@@ -164,21 +164,17 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // while-in-use permission only. Blocking it avoids the Play Store
       // background-location declaration/video review.
       blockedPermissions: ["android.permission.ACCESS_BACKGROUND_LOCATION"],
+      // App Links for the miniapp install links (the open link and the package link): Android verifies them
+      // against the directory website's assetlinks.json. The rest of the website stays in the browser.
       intentFilters: [
         {
           action: "VIEW",
           autoVerify: true,
           data: [
-            {
-              scheme: "https",
-              host: "apps.mentra.glass",
-              pathPrefix: "/package/",
-            },
-            {
-              scheme: "https",
-              host: "apps.mentraglass.com",
-              pathPrefix: "/package/",
-            },
+            {scheme: "https", host: "apps.mentra.glass", path: "/open"},
+            {scheme: "https", host: "apps.mentra.glass", pathPrefix: "/package/"},
+            {scheme: "https", host: "apps.mentraglass.com", path: "/open"},
+            {scheme: "https", host: "apps.mentraglass.com", pathPrefix: "/package/"},
           ],
           category: ["DEFAULT", "BROWSABLE"],
         },

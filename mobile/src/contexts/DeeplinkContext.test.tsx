@@ -21,6 +21,16 @@ jest.mock("@/services/permissionStatusRequest", () => ({
 jest.mock("@/services/miniapps/loadAuthoringMiniapp", () => ({
   loadAuthoringMiniapp: (...args: unknown[]) => mockLoadAuthoringMiniapp(...args),
 }))
+const mockStartMiniappInstallFromLink = jest.fn()
+const mockToastShow = jest.fn()
+const mockToastHide = jest.fn()
+jest.mock("react-native-toast-message", () => ({
+  __esModule: true,
+  default: {show: (...args: unknown[]) => mockToastShow(...args), hide: () => mockToastHide()},
+}))
+jest.mock("@/services/miniapps/miniappInstallFlow", () => ({
+  startMiniappInstallFromLink: (...args: unknown[]) => mockStartMiniappInstallFromLink(...args),
+}))
 
 jest.mock("@/components/diagnostics/IncidentReportRequest", () => ({
   __esModule: true,
@@ -525,5 +535,110 @@ describe("the Gallery link", () => {
     })
     expect(mockMiniappsStart).not.toHaveBeenCalled()
     expect(mockPush).toHaveBeenCalledWith("/asg/gallery")
+  })
+})
+
+describe("miniapp install links", () => {
+  const signedIn = () => mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+
+  it.each([
+    "https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F",
+    "https://apps.mentra.glass/open/?url=https%3A%2F%2Fnotes.example.com%2F",
+    "com.mentra://open?url=https%3A%2F%2Fnotes.example.com%2F",
+    "https://apps.mentraglass.com/package/com.example.notes",
+    "https://apps.mentraglass.com/package/com.example.notes/",
+    "https://apps.mentraglass.com/app/com.example.notes",
+    "com.mentra://package/com.example.notes",
+  ])("hands %s to the install flow, with no splash over its sheet", async (url) => {
+    signedIn()
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(url)
+    })
+    expect(mockStartMiniappInstallFromLink).toHaveBeenCalledWith(url, "link", {onPresent: expect.any(Function)})
+    expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(mockReplaceAll).not.toHaveBeenCalled()
+  })
+
+  it("reads an open link whose host a source stripped", async () => {
+    signedIn()
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl("/open?url=https%3A%2F%2Fnotes.example.com%2F")
+    })
+    expect(mockStartMiniappInstallFromLink).toHaveBeenCalledWith(
+      "https://apps.mentra.glass/open?url=https%3A%2F%2Fnotes.example.com%2F",
+      "link",
+      expect.anything(),
+    )
+  })
+
+  it("says the link is opening until its sheet shows", async () => {
+    signedIn()
+    mockStartMiniappInstallFromLink.mockImplementationOnce(
+      async (_url: string, _source: string, options: {onPresent: () => void}) => {
+        expect(mockToastShow).toHaveBeenCalledTimes(1)
+        expect(mockToastHide).not.toHaveBeenCalled()
+        options.onPresent()
+      },
+    )
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl("https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F")
+    })
+    expect(mockToastShow).toHaveBeenCalledWith({type: "info", text1: expect.any(String)})
+    expect(mockToastHide).toHaveBeenCalledTimes(1)
+  })
+
+  it("waits for sign-in before installing", async () => {
+    const url = "https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F"
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(url)
+    })
+    expect(mockStartMiniappInstallFromLink).not.toHaveBeenCalled()
+    expect(mockSetPendingRoute).toHaveBeenCalledWith(url)
+  })
+
+  it("ignores the same link again while its sheet is open", async () => {
+    signedIn()
+    let finish!: () => void
+    mockStartMiniappInstallFromLink.mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)))
+    const url = "https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F"
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    let first!: Promise<void>
+    await act(async () => {
+      first = processUrl(url)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await processUrl(url, true)
+    })
+    expect(mockStartMiniappInstallFromLink).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      finish()
+      await first
+    })
   })
 })

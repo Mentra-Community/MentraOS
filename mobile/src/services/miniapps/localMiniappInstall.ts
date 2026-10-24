@@ -1,7 +1,9 @@
 import {engine, type InstallMiniappErrorCode, type MiniappInstallPreview} from "@mentra/engine"
 
-import {showAlert} from "@/contexts/ModalContext"
+import {confirmMiniappInstall, localMiniappAddress} from "@/components/miniapps/MiniappInstallSheet"
 import {translate} from "@/i18n"
+
+export {localMiniappAddress}
 
 /**
  * Installing a miniapp from a local-network address, such as the URL `mentra dev` prints: the install sheet says
@@ -9,23 +11,12 @@ import {translate} from "@/i18n"
  * (`installMiniapp`, spec "Local-network miniapps").
  */
 
-/** The address the sheet names: the URL's host and port. */
-export function localMiniappAddress(url: string): string {
-  try {
-    return new URL(url).host
-  } catch {
-    return url
-  }
-}
-
-/** The install sheet for a local-network build. Resolves true when the person taps Install. */
-export async function confirmLocalMiniappInstall(preview: MiniappInstallPreview): Promise<boolean> {
-  const answer = await showAlert({
-    title: preview.ageRating ? `${preview.name} · ${preview.ageRating}` : preview.name,
-    message: translate("miniappInstall:fromLocalNetwork", {address: localMiniappAddress(preview.url)}),
-    buttons: [{text: translate("common:cancel"), style: "cancel"}, {text: translate("miniappInstall:install")}],
-  })
-  return answer === 1
+/**
+ * The install sheet for a local-network build: the Mentra App's one install sheet, which says "From your local
+ * network" with the address. Resolves true when the person taps Install.
+ */
+export function confirmLocalMiniappInstall(preview: MiniappInstallPreview): Promise<boolean> {
+  return confirmMiniappInstall(preview)
 }
 
 export interface InstalledLocalMiniapp {

@@ -18,6 +18,8 @@ import {
   type DevAppRecord,
 } from "@mentra/engine-host-internal"
 import {installLocalMiniapp, localMiniappInstallErrorAlert} from "@/services/miniapps/localMiniappInstall"
+import {startMiniappInstallFromLink} from "@/services/miniapps/miniappInstallFlow"
+import {parseMiniappInstallLink} from "@/services/miniapps/miniappInstallLinks"
 import {showDevBuildError} from "@/utils/devMiniappAlerts"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
@@ -185,6 +187,16 @@ export default function MiniappDeveloperScannerScreen() {
       } catch (err) {
         showAlert("Install failed", String(err), [{text: "OK", onPress: () => setScanned(false)}])
       }
+      return
+    }
+
+    // A miniapp's own URL, an open link or a package link installs through the install sheet, as from Add a miniapp.
+    // A local-network URL installs below, as a development build with its required permissions first.
+    const link = parseMiniappInstallLink(data)
+    if (link && (link.kind === "package" || !link.local)) {
+      const outcome = await startMiniappInstallFromLink(data, "scanner")
+      // Installed or opened, the flow has gone Home; otherwise the scanner resumes.
+      if (outcome === "cancelled" || outcome === "failed") setScanned(false)
       return
     }
 

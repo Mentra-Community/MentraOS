@@ -197,6 +197,34 @@ describe("open URL", () => {
     }
     expect(openURL).not.toHaveBeenCalled()
   })
+
+  it("never opens a link to the host app, which would reach its install sheet or sign-in", async () => {
+    const isHostLink = mock((url: string) => url.startsWith("com.mentra:") || url.startsWith("https://apps.example/"))
+    const hosted = new MiniappSystemActions({
+      sendResult: results,
+      ownFilesDirectory: (packageName) =>
+        new FakeDirectory(FakePaths.document, "mentra_blobs", "partition", packageName),
+      isHostLink,
+    })
+    await hosted.handleOpenUrl(pkg, {url: "com.mentra://open?url=https%3A%2F%2Fnotes.example.com%2F"})
+    await hosted.handleOpenUrl(pkg, {url: "https://apps.example/package/com.example.notes"})
+    await hosted.handleOpenUrl(pkg, {url: "https://example.com"})
+    expect(isHostLink).toHaveBeenCalledTimes(3)
+    expect(openURL.mock.calls.map((c) => c[0])).toEqual(["https://example.com"])
+  })
+
+  it("refuses a link when the host can't say whether it is its own", async () => {
+    const hosted = new MiniappSystemActions({
+      sendResult: results,
+      ownFilesDirectory: (packageName) =>
+        new FakeDirectory(FakePaths.document, "mentra_blobs", "partition", packageName),
+      isHostLink: () => {
+        throw new Error("not ready")
+      },
+    })
+    await hosted.handleOpenUrl(pkg, {url: "https://example.com"})
+    expect(openURL).not.toHaveBeenCalled()
+  })
 })
 
 describe("media URLs", () => {

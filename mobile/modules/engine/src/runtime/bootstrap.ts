@@ -74,6 +74,12 @@ export interface IslandConfigValues {
    */
   requireRegistry?: boolean
   /**
+   * Whether a URL opens this host app itself: its own URL schemes, and the addresses it claims as app links. A
+   * miniapp never opens one through `session.system.openUrl`: it would reach the host's own link handling, such as
+   * its install sheet or its sign-in callbacks, which no miniapp may drive. Omitted, nothing more is refused.
+   */
+  isHostLink?: (url: string) => boolean
+  /**
    * The host app's own App Store age rating, for example `"12+"`. A miniapp whose `ageRating` is above it installs or
    * opens only for a person whose declared age is old enough: the engine asks once through the `askDeclaredAge` seam
    * and keeps the answer on the person's Core account. A miniapp without a rating is never gated. Omitted, nothing is

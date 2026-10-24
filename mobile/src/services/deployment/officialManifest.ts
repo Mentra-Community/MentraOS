@@ -25,6 +25,7 @@ export function createOfficialManifest(): DeploymentManifest {
       sttModelBaseUrl: null,
       ttsModelBaseUrl: null,
       firstPartyMiniappsUrl: process.env.EXPO_PUBLIC_MINIAPPS_URL?.trim() || "https://miniapps.dev.mentraglass.com/",
+      directoryUrl: process.env.EXPO_PUBLIC_DIRECTORY_URL?.trim() || "https://api.apps.dev.mentraglass.com/",
     },
     appUpdates: {
       mode: "store",

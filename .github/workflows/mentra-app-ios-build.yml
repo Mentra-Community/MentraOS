@@ -349,21 +349,25 @@ jobs:
               CLOUD_CORE="https://core.dev.us-west-2.mentraglass.com"
               CLOUD_RT="https://runtime.dev.us-west-2.mentraglass.com"
               CLOUD_MINIAPPS="https://miniapps.dev.mentraglass.com/"
+              CLOUD_DIRECTORY="https://api.apps.dev.mentraglass.com/"
               ;;
             staging)
               CLOUD_CORE="https://core.staging.us-west-2.mentraglass.com"
               CLOUD_RT="https://runtime.staging.us-west-2.mentraglass.com"
               CLOUD_MINIAPPS="https://miniapps.staging.mentraglass.com/"
+              CLOUD_DIRECTORY="https://api.apps.staging.mentraglass.com/"
               ;;
             prod)
               CLOUD_CORE="https://core.us-west-2.mentraglass.com"
               CLOUD_RT="https://runtime.us-west-2.mentraglass.com"
               CLOUD_MINIAPPS="https://miniapps.mentraglass.com/"
+              CLOUD_DIRECTORY="https://api.apps.mentraglass.com/"
               ;;
             *)
               CLOUD_CORE=""
               CLOUD_RT=""
               CLOUD_MINIAPPS=""
+              CLOUD_DIRECTORY=""
               ;;
           esac
           if [ -n "$CLOUD_CORE" ]; then
@@ -371,6 +375,7 @@ jobs:
                 -e "s|^EXPO_PUBLIC_CLOUD_CORE_URL=.*|EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE|" \
                 -e "s|^EXPO_PUBLIC_CLOUD_RUNTIME_URL=.*|EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT|" \
                 -e "s|^EXPO_PUBLIC_MINIAPPS_URL=.*|EXPO_PUBLIC_MINIAPPS_URL=$CLOUD_MINIAPPS|" \
+                -e "s|^EXPO_PUBLIC_DIRECTORY_URL=.*|EXPO_PUBLIC_DIRECTORY_URL=$CLOUD_DIRECTORY|" \
                 .env > .env.tmp && mv .env.tmp .env
             # Make the pin authoritative for every later step. release:android /
             # release:ios call setBuildEnv(), which keeps any value already
@@ -382,12 +387,13 @@ jobs:
             # inherited endpoint, and validateReleaseArchive() would compare the
             # bundle against that same inherited process env and pass. GITHUB_ENV
             # takes precedence over the runner's inherited environment, so the
-            # four keys agree from here on.
+            # pinned keys agree from here on.
             {
               echo "EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV"
               echo "EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE"
               echo "EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT"
               echo "EXPO_PUBLIC_MINIAPPS_URL=$CLOUD_MINIAPPS"
+              echo "EXPO_PUBLIC_DIRECTORY_URL=$CLOUD_DIRECTORY"
             } >> "$GITHUB_ENV"
             echo "Cloud backend pinned to $CLOUD_ENV ($CLOUD_CORE)"
           elif [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.routine_pr }}" != "" ]; then
