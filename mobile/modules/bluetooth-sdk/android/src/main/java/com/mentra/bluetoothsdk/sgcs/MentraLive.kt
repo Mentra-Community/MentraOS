@@ -482,9 +482,9 @@ class MentraLive : SGCManager() {
         private const val PREFS_NAME = "MentraLivePrefs"
         private const val PREF_DEVICE_NAME = "LastConnectedDeviceName"
 
-        // Auth settings
-        private const val AUTH_PREFS_NAME = "augmentos_auth_prefs"
-        private const val KEY_CORE_TOKEN = "core_token"
+        // A Core token older builds kept in plain SharedPreferences. Deleted, never read.
+        private const val LEGACY_AUTH_PREFS_NAME = "augmentos_auth_prefs"
+        private const val LEGACY_KEY_CORE_TOKEN = "core_token"
 
         private const val MAX_BONDING_RETRIES = 3
         private const val BONDING_RETRY_DELAY_MS =
@@ -1089,6 +1089,7 @@ class MentraLive : SGCManager() {
         this.type = DeviceTypes.LIVE
         this.hasMic = true
         this.context = Bridge.getContext()
+        forgetLegacyCoreToken()
 
         // Initialize bluetooth adapter
         val bluetoothManager =
@@ -11684,20 +11685,19 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Get the core authentication token. Reads from DeviceStore first (synced from JS via
-     * BluetoothSdkModule.update), then falls back to SharedPreferences for backward compatibility.
+     * Get the current Core access token, synced from JS into the in-memory DeviceStore
+     * (BluetoothSdkModule.update). Empty when there is none: credentials are never read from
+     * plain storage.
      */
     private fun getCoreToken(): String {
         val fromStore = DeviceStore.get("bluetooth", "core_token")
-        if (fromStore is String) {
-            val token = fromStore
-            if (token != null && !token.isEmpty()) {
-                return token
-            }
-        }
-        val prefs = context!!.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
-        val fromPrefs = prefs.getString(KEY_CORE_TOKEN, "")
-        return if (fromPrefs != null) fromPrefs else ""
+        return if (fromStore is String) fromStore else ""
+    }
+
+    /** Delete the Core token older builds left in plain SharedPreferences. */
+    private fun forgetLegacyCoreToken() {
+        val prefs = context?.getSharedPreferences(LEGACY_AUTH_PREFS_NAME, Context.MODE_PRIVATE) ?: return
+        if (prefs.contains(LEGACY_KEY_CORE_TOKEN)) prefs.edit().remove(LEGACY_KEY_CORE_TOKEN).apply()
     }
 
     /** Send BLE transfer completion notification */

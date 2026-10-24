@@ -9,7 +9,9 @@ jest.mock("@/utils/auth/authClient", () => ({AuthClient: class {}}))
 
 import {AccountAuthProvider} from "./accountClient"
 import {storage} from "@/utils/storage"
+import {accountCredentials} from "@/utils/auth/accountCredentials"
 import {isDuplicateSignupError, mapAuthError} from "@/utils/auth/authErrors"
+import {resetAccountCredentials, storedCredential} from "@/test-utils/accountCredentials"
 
 type TestableProvider = {
   performRefresh(refresh: string): Promise<{access: string; refresh: string} | null>
@@ -59,8 +61,9 @@ describe("AccountAuthProvider refresh requests", () => {
   const fetchMock = jest.fn()
   let provider: TestableProvider
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage.clearAll()
+    await resetAccountCredentials()
     fetchMock.mockReset()
     global.fetch = fetchMock as unknown as typeof fetch
     provider = new AccountAuthProvider() as unknown as TestableProvider
@@ -121,18 +124,18 @@ describe("AccountAuthProvider signup verification", () => {
   let listener: jest.Mock
   let unsubscribe: () => void
 
-  const stored = (key: string) => {
-    const result = storage.load(key)
+  const storedProfile = () => {
+    const result = storage.load("mentra.account.userProfile")
     if (result.is_error()) throw result.error
     return result.value
   }
 
   const response = (status: number, body: unknown) => ({ok: status < 400, status, json: async () => body})
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage.clearAll()
-    storage.save("mentra.account.accessToken", "previous-access")
-    storage.save("mentra.account.refreshToken", "previous-refresh")
+    await accountCredentials.set("mentra.account.accessToken", "previous-access")
+    await accountCredentials.set("mentra.account.refreshToken", "previous-refresh")
     storage.save("mentra.account.userProfile", JSON.stringify({id: "previous-user"}))
     fetchMock.mockReset()
     global.fetch = fetchMock as unknown as typeof fetch
@@ -167,8 +170,8 @@ describe("AccountAuthProvider signup verification", () => {
       "https://core.example.test/api/account/me",
       {headers: {authorization: "Bearer mentra-access"}},
     ])
-    expect(stored("mentra.account.accessToken")).toBe("mentra-access")
-    expect(stored("mentra.account.refreshToken")).toBe("mentra-refresh")
+    expect(await storedCredential("mentra.account.accessToken")).toBe("mentra-access")
+    expect(await storedCredential("mentra.account.refreshToken")).toBe("mentra-refresh")
     expect(listener).toHaveBeenCalledWith("SIGNED_IN", {
       token: "mentra-access",
       user: {id: "new-user", email: verifiedUser.email, name: verifiedUser.name},
@@ -188,9 +191,9 @@ describe("AccountAuthProvider signup verification", () => {
       }
       const result = await provider.completeSignupVerification("provider-token")
       expect(result.is_error()).toBe(true)
-      expect(stored("mentra.account.accessToken")).toBe("previous-access")
-      expect(stored("mentra.account.refreshToken")).toBe("previous-refresh")
-      expect(stored("mentra.account.userProfile")).toBe(JSON.stringify({id: "previous-user"}))
+      expect(await storedCredential("mentra.account.accessToken")).toBe("previous-access")
+      expect(await storedCredential("mentra.account.refreshToken")).toBe("previous-refresh")
+      expect(storedProfile()).toBe(JSON.stringify({id: "previous-user"}))
       expect(listener).not.toHaveBeenCalled()
     },
   )

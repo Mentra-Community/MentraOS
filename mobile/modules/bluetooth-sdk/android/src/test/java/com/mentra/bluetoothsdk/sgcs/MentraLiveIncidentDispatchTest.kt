@@ -52,6 +52,14 @@ class MentraLiveIncidentDispatchTest {
         prefs.edit().remove("core_token").commit()
     }
 
+    @Test fun `deletes the Core token older builds left in plain storage`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val prefs = context.getSharedPreferences("augmentos_auth_prefs", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putString("core_token", "stale-synthetic-token").commit()
+        withLive { }
+        assertFalse(prefs.contains("core_token"))
+    }
+
     @Test fun `current token is queued before upload and never logged`() = withLive { live ->
         ready(live)
         val token = "synthetic-${UUID.randomUUID()}"

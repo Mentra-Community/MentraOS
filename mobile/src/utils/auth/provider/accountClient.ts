@@ -11,6 +11,7 @@
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {BgTimer} from "@mentra/engine"
 
+import {ACCOUNT_CREDENTIAL_KEYS, accountCredentials} from "@/utils/auth/accountCredentials"
 import {AuthClient} from "@/utils/auth/authClient"
 import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
 import {AuthStateListener, createAuthStateFanout} from "@/utils/auth/provider/authStateFanout"
@@ -24,31 +25,33 @@ import {resolvedEndpoints} from "@/services/cloudClient"
 import {deploymentStore} from "@/services/deployment"
 import {storage} from "@/utils/storage"
 
-const ACCESS_KEY = "mentra.account.accessToken"
-const REFRESH_KEY = "mentra.account.refreshToken"
+const {accessToken: ACCESS_KEY, refreshToken: REFRESH_KEY} = ACCOUNT_CREDENTIAL_KEYS
+const {oauthState: OAUTH_STATE_KEY, oauthVerifier: OAUTH_VERIFIER_KEY} = ACCOUNT_CREDENTIAL_KEYS
 const PROFILE_KEY = "mentra.account.userProfile"
-const OAUTH_STATE_KEY = "mentra.account.oauth.state"
-const OAUTH_VERIFIER_KEY = "mentra.account.oauth.verifier"
 const LOGOUT_TIMEOUT_MS = 10_000
 
 type Tokens = {access: string; refresh: string}
 
-function loadTokens(): Tokens | null {
-  const a = storage.load<string>(ACCESS_KEY)
-  const r = storage.load<string>(REFRESH_KEY)
-  if (a.is_error() || r.is_error() || !a.value || !r.value) return null
-  return {access: a.value, refresh: r.value}
+// The token pair lives in the platform secure store (accountCredentials), never in MMKV.
+async function loadTokens(): Promise<Tokens | null> {
+  const [access, refresh] = await Promise.all([accountCredentials.get(ACCESS_KEY), accountCredentials.get(REFRESH_KEY)])
+  if (!access || !refresh) return null
+  return {access, refresh}
 }
 
-function saveTokens(t: Tokens): void {
-  storage.save(ACCESS_KEY, t.access)
-  storage.save(REFRESH_KEY, t.refresh)
+async function saveTokens(t: Tokens): Promise<void> {
+  await Promise.all([accountCredentials.set(ACCESS_KEY, t.access), accountCredentials.set(REFRESH_KEY, t.refresh)])
 }
 
-function clearTokens(): void {
-  storage.remove(ACCESS_KEY)
-  storage.remove(REFRESH_KEY)
+async function clearTokens(): Promise<void> {
   storage.remove(PROFILE_KEY)
+  await Promise.all([accountCredentials.delete(ACCESS_KEY), accountCredentials.delete(REFRESH_KEY)])
+}
+
+/** Sign-out and account deletion: every account credential goes, including an OAuth sign-in still in progress. */
+async function clearAccountSession(): Promise<void> {
+  storage.remove(PROFILE_KEY)
+  await accountCredentials.clear()
 }
 
 /** Last successful /me result, cached so an OFFLINE cold start can restore the
@@ -173,7 +176,8 @@ export class AccountAuthProvider extends AuthClient {
       // presented, someone else already won the rotation and saved a live
       // session, so hand that back instead of reporting a hard failure that
       // would make the caller clearTokens() out from under it.
-      const current = loadTokens()
+      const current = await loadTokens()
+      this.assertSessionCurrent(generation)
       if (current && current.refresh !== refresh) return current
       console.log(`MENTRA AUTH: refresh grant rejected (${errorCode}, HTTP ${res.status}), session is dead`)
       return null
@@ -181,7 +185,7 @@ export class AccountAuthProvider extends AuthClient {
     const body = (await res.json()) as {access_token: string; refresh_token: string}
     this.assertSessionCurrent(generation)
     const t = {access: body.access_token, refresh: body.refresh_token}
-    saveTokens(t)
+    await saveTokens(t)
     return t
   }
 
@@ -196,7 +200,8 @@ export class AccountAuthProvider extends AuthClient {
    * the stored one is rejected. Throws if there is no usable session. */
   private async ensureFreshAccess(): Promise<string> {
     const generation = this.sessionGeneration
-    const tokens = loadTokens()
+    const tokens = await loadTokens()
+    this.assertSessionCurrent(generation)
     if (!tokens) throw new Error("not signed in")
     const probe = await fetch(core("/api/account/me"), {
       headers: {authorization: `Bearer ${tokens.access}`},
@@ -207,7 +212,7 @@ export class AccountAuthProvider extends AuthClient {
     this.assertSessionCurrent(generation)
     if (!refreshed) {
       console.log(`MENTRA AUTH: clearing tokens, refresh rejected after /me probe (HTTP ${probe.status})`)
-      clearTokens()
+      await clearTokens()
       throw new Error("session expired")
     }
     return refreshed.access
@@ -216,7 +221,8 @@ export class AccountAuthProvider extends AuthClient {
   public getSession(): AsyncResult<MentraAuthSession, Error> {
     return Res.try_async(async () => {
       const generation = this.sessionGeneration
-      const tokens = loadTokens()
+      const tokens = await loadTokens()
+      this.assertSessionCurrent(generation)
       if (!tokens) return {token: undefined}
       let access = tokens.access
       let meRes = await fetch(core("/api/account/me"), {
@@ -247,7 +253,7 @@ export class AccountAuthProvider extends AuthClient {
           console.log(
             `MENTRA AUTH: getSession clearing tokens, /me rejected (HTTP ${meRes?.status}) and refresh grant rejected`,
           )
-          clearTokens()
+          await clearTokens()
           return {token: undefined}
         }
       }
@@ -318,7 +324,8 @@ export class AccountAuthProvider extends AuthClient {
         const body = (await res.json()) as {access_token: string; refresh_token: string}
         phase = "session"
         this.assertSessionCurrent(generation)
-        saveTokens({access: body.access_token, refresh: body.refresh_token})
+        await saveTokens({access: body.access_token, refresh: body.refresh_token})
+        this.assertSessionCurrent(generation)
         const session = await this.getSession()
         this.assertSessionCurrent(generation)
         const value = session.is_ok() ? session.value : {token: body.access_token}
@@ -391,7 +398,8 @@ export class AccountAuthProvider extends AuthClient {
         name: me.name ?? me.email ?? "",
         avatarUrl: me.avatarUrl,
       }
-      saveTokens({access: body.access_token, refresh: body.refresh_token})
+      await saveTokens({access: body.access_token, refresh: body.refresh_token})
+      this.assertSessionCurrent(generation)
       saveCachedProfile(user)
       // AuthContext and the engine must receive the account before navigation.
       authState.emit("SIGNED_IN", {token: body.access_token, user})
@@ -419,14 +427,15 @@ export class AccountAuthProvider extends AuthClient {
       if (!res.ok) await throwApiError(res)
       const body = (await res.json()) as {access_token: string; refresh_token: string}
       this.assertSessionCurrent(generation)
-      saveTokens({access: body.access_token, refresh: body.refresh_token})
+      await saveTokens({access: body.access_token, refresh: body.refresh_token})
+      this.assertSessionCurrent(generation)
       this.notify("SIGNED_IN")
     })
   }
 
   public updateSessionWithTokens(tokens: {access_token: string; refresh_token: string}): AsyncResult<void, Error> {
     return Res.try_async(async () => {
-      saveTokens({access: tokens.access_token, refresh: tokens.refresh_token})
+      await saveTokens({access: tokens.access_token, refresh: tokens.refresh_token})
       this.notify("TOKEN_REFRESHED")
     })
   }
@@ -496,29 +505,30 @@ export class AccountAuthProvider extends AuthClient {
       // The account is gone; the server revoked every session already.
       this.sessionGeneration += 1
       this.refreshInFlight = null
-      clearTokens()
+      await clearAccountSession()
       authState.emit("SIGNED_OUT", {token: undefined})
     })
   }
 
   /** Build the OAuth start URL for the system browser. The PKCE verifier and
-   * state stay in MMKV; only the S256 challenge leaves the device, so an
-   * intercepted deep link cannot be completed without the verifier. */
-  private oauthStartUrl(provider: "google" | "apple"): string {
+   * state stay in the secure store; only the S256 challenge leaves the device,
+   * so an intercepted deep link cannot be completed without the verifier. */
+  private async oauthStartUrl(provider: "google" | "apple"): Promise<string> {
+    const url = core(`/api/account/oauth/${provider}/start`)
     const state = randomUrlSafe(16)
     const verifier = randomUrlSafe(32)
-    storage.save(OAUTH_STATE_KEY, state)
-    storage.save(OAUTH_VERIFIER_KEY, verifier)
+    await accountCredentials.set(OAUTH_STATE_KEY, state)
+    await accountCredentials.set(OAUTH_VERIFIER_KEY, verifier)
     const q = new URLSearchParams({state, code_challenge: s256Challenge(verifier)})
-    return core(`/api/account/oauth/${provider}/start?${q}`)
+    return `${url}?${q}`
   }
 
   public googleSignIn(): AsyncResult<string, Error> {
-    return Res.try_async(async () => this.oauthStartUrl("google"))
+    return Res.try_async(() => this.oauthStartUrl("google"))
   }
 
   public appleSignIn(): AsyncResult<string, Error> {
-    return Res.try_async(async () => this.oauthStartUrl("apple"))
+    return Res.try_async(() => this.oauthStartUrl("apple"))
   }
 
   /** Deep link landed with ?code&state: verify state, swap the handoff code +
@@ -526,12 +536,12 @@ export class AccountAuthProvider extends AuthClient {
   public completeOAuthHandoff(params: {code: string; state: string}): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       const generation = this.sessionGeneration
-      const expectedState = storage.load<string>(OAUTH_STATE_KEY)
-      const verifier = storage.load<string>(OAUTH_VERIFIER_KEY)
-      if (expectedState.is_error() || verifier.is_error() || !expectedState.value || !verifier.value) {
+      const expectedState = await accountCredentials.get(OAUTH_STATE_KEY)
+      const verifier = await accountCredentials.get(OAUTH_VERIFIER_KEY)
+      if (!expectedState || !verifier) {
         throw new Error("no oauth flow in progress")
       }
-      if (params.state !== expectedState.value) throw new Error("oauth state mismatch")
+      if (params.state !== expectedState) throw new Error("oauth state mismatch")
       // Keep state+verifier until the server definitively answers: a transient
       // network failure here must leave the deep link retryable (the handoff
       // code is unconsumed server-side). Clear on success or on a definitive
@@ -541,19 +551,19 @@ export class AccountAuthProvider extends AuthClient {
         res = await fetch(core("/api/account/oauth/complete"), {
           method: "POST",
           headers: {"content-type": "application/json"},
-          body: JSON.stringify({code: params.code, code_verifier: verifier.value}),
+          body: JSON.stringify({code: params.code, code_verifier: verifier}),
         })
       } catch (err) {
         throw err instanceof Error ? err : new Error(String(err))
       }
       this.assertSessionCurrent(generation)
-      storage.remove(OAUTH_STATE_KEY)
-      storage.remove(OAUTH_VERIFIER_KEY)
+      await Promise.all([accountCredentials.delete(OAUTH_STATE_KEY), accountCredentials.delete(OAUTH_VERIFIER_KEY)])
       if (!res.ok) await throwApiError(res)
       const body = (await res.json()) as {access_token: string; refresh_token: string}
       this.assertSessionCurrent(generation)
       if (!body?.access_token || !body?.refresh_token) throw new Error("oauth completion returned no session")
-      saveTokens({access: body.access_token, refresh: body.refresh_token})
+      await saveTokens({access: body.access_token, refresh: body.refresh_token})
+      this.assertSessionCurrent(generation)
       const session = await this.getSession()
       this.assertSessionCurrent(generation)
       authState.emit("SIGNED_IN", session.is_ok() ? session.value : {token: body.access_token})
@@ -569,12 +579,23 @@ export class AccountAuthProvider extends AuthClient {
 
   public signOut(): AsyncResult<void, Error> {
     return Res.try_async(async () => {
-      const tokens = loadTokens()
+      // Invalidate older requests first, so none saves a rotated session while the snapshot is read.
       this.sessionGeneration += 1
       this.refreshInFlight = null
-      clearTokens()
+      // The snapshot only serves remote revocation; the local sign-out never depends on reading it.
+      const tokens = await loadTokens().catch(() => null)
+      let localFailure: unknown = null
+      try {
+        await clearAccountSession()
+      } catch (error) {
+        localFailure = error
+        console.error("MENTRA AUTH: could not delete the stored account session", error)
+      }
       authState.emit("SIGNED_OUT", {token: undefined})
-      if (!tokens) return
+      if (!tokens) {
+        if (localFailure) throw localFailure
+        return
+      }
       const controller = new AbortController()
       let timeout: number | undefined
       try {
@@ -593,6 +614,7 @@ export class AccountAuthProvider extends AuthClient {
       } finally {
         if (timeout !== undefined) BgTimer.clearTimeout(timeout)
       }
+      if (localFailure) throw localFailure
     })
   }
 

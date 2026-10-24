@@ -189,6 +189,8 @@ jest.mock("@mentra/engine-host-internal", () => {
   const appRegistry = jest.requireActual("../../../modules/engine/src/services/AppRegistry").default
   const {MiniappRunningError} = jest.requireActual("../../../modules/engine/src/utils/storeInstallRuntime")
   return {
+    // LogoutUtils reaches the account credential vault.
+    ...jest.requireActual("../../../modules/engine/src/utils/credentials/platform"),
     appRegistry,
     sha256Hex: async () => mockDigest,
     MiniappRunningError,

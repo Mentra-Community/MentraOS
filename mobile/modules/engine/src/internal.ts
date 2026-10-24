@@ -180,6 +180,9 @@ export {useAppStatusStore, installAppStoreHooks, type AppStoreHooks} from "./sto
 
 // Cloud client + credentials + v1 comms.
 export {cloudSecureStore} from "./utils/cloudClient/cloudSecureStore"
+// Core credentials in the platform secure store, moved out of MMKV once.
+export {createPlatformCredentialVault, mmkvLegacyCredentials} from "./utils/credentials/platform"
+export type {CredentialLocation, CredentialVault} from "./utils/credentials/credentialVault"
 export {cloudClientService} from "./services/CloudClientService"
 export {createCloudUdpSocket} from "./utils/cloudClient/RnUdpAdapter"
 // Fleet: the workspace screens ask the assignment reconciler to read desired state now.

@@ -10,7 +10,7 @@ import {
 } from "@/services/deployment"
 import {clearDeploymentDebugOverrides} from "@/services/deployment/debugOverrides"
 import {LogoutUtils} from "@/utils/LogoutUtils"
-import {storage} from "@/utils/storage"
+import {hasStoredAccountSession} from "@/utils/auth/accountCredentials"
 import mentraAuth from "@/utils/auth/authClient"
 import {MentraAuthSession, MentraAuthUser} from "@/utils/auth/authProvider.types"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
@@ -97,15 +97,19 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       // A fresh install must not contact Mentra account services until the user
       // chooses the consumer path. Preserve seamless upgrades for already
       // signed-in consumers by recognizing their existing local token pair.
-      const access = storage.load<string>("mentra.account.accessToken")
-      const refresh = storage.load<string>("mentra.account.refreshToken")
-      const hasExistingConsumerSession =
-        (access.is_ok() && Boolean(access.value)) || (refresh.is_ok() && Boolean(refresh.value))
-      if (hasExistingConsumerSession && !store.isSelectingWorkspace()) {
-        store.restoreConsumerSessionSelection()
-      } else {
-        applySession(null, false)
-      }
+      void hasStoredAccountSession()
+        .catch((error) => {
+          console.warn("AuthContext: could not read the stored account session", error)
+          return false
+        })
+        .then((hasExistingConsumerSession) => {
+          if (cancelled) return
+          if (hasExistingConsumerSession && !store.isSelectingWorkspace()) {
+            store.restoreConsumerSessionSelection()
+          } else {
+            applySession(null, false)
+          }
+        })
     } else if (workspaceAuth && activeDeployment.kind === "workspace") {
       const allowTelemetry = activeDeployment.manifest.telemetry
       unsubscribe = workspaceAuth.onStateChange((next) => applySession(toMentraSession(next), allowTelemetry))

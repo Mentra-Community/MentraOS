@@ -4,6 +4,7 @@ import {engine} from "@mentra/engine"
 import mantle from "@/services/MantleManager"
 import {settleFrame} from "@/utils/settleFrame"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
+import {accountCredentials, hasStoredAccountSession} from "@/utils/auth/accountCredentials"
 import mentraAuth from "@/utils/auth/authClient"
 import {storage} from "@/utils/storage"
 import {cloudClient} from "@/services/cloudClient"
@@ -181,6 +182,12 @@ export class LogoutUtils {
     } catch (error) {
       console.error(`${this.TAG}: Error clearing app settings:`, error)
     }
+    // The account credentials live in the secure store, which storage.clearAll() does not reach.
+    try {
+      await accountCredentials.clear()
+    } catch (error) {
+      console.error(`${this.TAG}: Error clearing the stored account credentials:`, error)
+    }
   }
 
   /**
@@ -231,10 +238,8 @@ export class LogoutUtils {
    */
   public static async verifyLogoutSuccess(): Promise<boolean> {
     // The device only holds V2 account tokens now (issue 019); logged out
-    // means the MMKV token pair is gone.
-    const access = storage.load<string>("mentra.account.accessToken")
-    const refresh = storage.load<string>("mentra.account.refreshToken")
-    const isLoggedOut = (access.is_error() || !access.value) && (refresh.is_error() || !refresh.value)
+    // means the stored token pair is gone.
+    const isLoggedOut = !(await hasStoredAccountSession().catch(() => true))
 
     console.log(`${this.TAG}: Logout verification - Success: ${isLoggedOut}`)
     return isLoggedOut

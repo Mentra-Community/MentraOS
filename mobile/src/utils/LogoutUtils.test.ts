@@ -22,6 +22,7 @@ jest.mock("@/utils/GlobalEventEmitter", () => ({__esModule: true, default: {emit
 
 import {LogoutUtils} from "./LogoutUtils"
 import {result as Res} from "typesafe-ts"
+import {ACCOUNT_CREDENTIAL_KEYS, accountCredentials} from "@/utils/auth/accountCredentials"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -69,6 +70,16 @@ describe("LogoutUtils credential-owner ordering", () => {
       expect(mockReset).toHaveBeenCalledTimes(1)
     },
   )
+
+  it("deletes every account credential from the secure store, which clearing MMKV does not reach", async () => {
+    mockCoreSignOut.mockResolvedValue(undefined)
+    await accountCredentials.set(ACCOUNT_CREDENTIAL_KEYS.refreshToken, "refresh-1")
+    await accountCredentials.set(ACCOUNT_CREDENTIAL_KEYS.oauthVerifier, "verifier-1")
+    // Joining a workspace tears down without a provider sign-out, as before.
+    await LogoutUtils.performCompleteLogout({skipAuthSignOut: true})
+    for (const key of Object.values(ACCOUNT_CREDENTIAL_KEYS)) expect(await accountCredentials.get(key)).toBeNull()
+    expect(await LogoutUtils.verifyLogoutSuccess()).toBe(true)
+  })
 
   it("account deletion skips provider signout and still waits for its Core logout", async () => {
     mockCoreSignOut.mockResolvedValue(undefined)

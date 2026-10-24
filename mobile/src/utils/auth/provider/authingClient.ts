@@ -4,9 +4,9 @@ import {AuthenticationClient, EmailScene} from "authing-js-sdk"
 import type {AuthenticationClientOptions, User} from "authing-js-sdk"
 import {Result, result as Res, AsyncResult} from "typesafe-ts"
 
+import {ACCOUNT_CREDENTIAL_KEYS, accountCredentials} from "@/utils/auth/accountCredentials"
 import {AuthClient} from "@/utils/auth/authClient"
 import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
-import {storage} from "@/utils/storage/storage"
 
 interface Session {
   access_token?: string
@@ -15,7 +15,8 @@ interface Session {
   user?: User
 }
 
-const SESSION_KEY = "authing_session"
+// The session (with its tokens) lives in the platform secure store, as JSON.
+const SESSION_KEY = ACCOUNT_CREDENTIAL_KEYS.authingSession
 
 /**
  * The authing-js-sdk's GraphQLClient rejects with a plain `{code, message, data}`
@@ -213,25 +214,30 @@ export class AuthingWrapperClient extends AuthClient {
 
   public getSession(): AsyncResult<MentraAuthSession, Error> {
     console.log("AuthingWrapperClient: getSession()")
-    const res = this.readSessionFromStorage()
-    if (res.is_error()) {
-      console.error("Error loading session:", res.error)
-      return Res.error_async(res.error)
-    }
-    const session = res.value
-    return Res.ok_async({
-      token: session.access_token,
-      user: {
-        id: session.user!.id,
-        email: session.user!.email!,
-        name: session.user!.name || "",
-      },
+    return Res.try_async(async () => {
+      const res = await this.readSessionFromStorage()
+      if (res.is_error()) {
+        console.error("Error loading session:", res.error)
+        throw res.error
+      }
+      const session = res.value
+      return {
+        token: session.access_token,
+        user: {
+          id: session.user!.id,
+          email: session.user!.email!,
+          name: session.user!.name || "",
+        },
+      }
     })
   }
 
-  private readSessionFromStorage(): Result<Session, Error> {
-    const res = storage.load<Session>(SESSION_KEY)
-    return res
+  private async readSessionFromStorage(): Promise<Result<Session, Error>> {
+    return Res.try_async(async () => {
+      const text = await accountCredentials.get(SESSION_KEY)
+      if (!text) throw new Error(`No value found for ${SESSION_KEY}`)
+      return JSON.parse(text) as Session
+    })
   }
 
   private async setupTokenRefresh() {
@@ -316,9 +322,10 @@ export class AuthingWrapperClient extends AuthClient {
   }
 
   private async saveSession(session: Session): Promise<void> {
-    const res = await storage.save(SESSION_KEY, session)
-    if (res.is_error()) {
-      console.error("Failed to save session", res.error)
+    try {
+      await accountCredentials.set(SESSION_KEY, JSON.stringify(session))
+    } catch (error) {
+      console.error("Failed to save session", error)
     }
   }
 
@@ -327,9 +334,10 @@ export class AuthingWrapperClient extends AuthClient {
       clearTimeout(this.refreshTimeout)
       this.refreshTimeout = null
     }
-    const res = await storage.remove(SESSION_KEY)
-    if (res.is_error()) {
-      console.error("Failed to clear session", res.error)
+    try {
+      await accountCredentials.delete(SESSION_KEY)
+    } catch (error) {
+      console.error("Failed to clear session", error)
     }
     // clears the session and user
     this.authing.logout()

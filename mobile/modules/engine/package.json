@@ -147,6 +147,7 @@
     "expo-location": "~55.1.10",
     "expo-task-manager": "~55.0.16",
     "expo-notifications": "~55.0.23",
+    "expo-secure-store": "~55.0.14",
     "react-native-share": "*",
     "react-native-localize": "*",
     "react-native-ble-manager": "*",

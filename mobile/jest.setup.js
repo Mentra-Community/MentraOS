@@ -107,7 +107,24 @@ jest.mock("react-native-mmkv", () => {
       }),
       clearAll: jest.fn(() => mockStorage.clear()),
       getAllKeys: jest.fn(() => Array.from(mockStorage.keys())),
+      trim: jest.fn(),
     })),
+  }
+})
+
+// Mock expo-secure-store (the Keychain / Keystore-backed store of Core
+// credentials) with an in-memory store. Plain functions, so mock resets keep it.
+jest.mock("expo-secure-store", () => {
+  const mockItems = new Map()
+  return {
+    AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: 1,
+    getItemAsync: async (key) => mockItems.get(key) ?? null,
+    setItemAsync: async (key, value) => {
+      mockItems.set(key, value)
+    },
+    deleteItemAsync: async (key) => {
+      mockItems.delete(key)
+    },
   }
 })
 
@@ -838,6 +855,8 @@ const mockIslandEntries = () => {
     installMiniappFromJsonUrl: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
     // Fleet's managed/unmanaged answer: a pure module, so tests drive the real one (`setFleetManagementState`).
     ...jest.requireActual("./modules/engine/src/services/fleet/fleetManagementState"),
+    // Credential vaults (real), over the in-memory expo-secure-store and MMKV mocks above.
+    ...jest.requireActual("./modules/engine/src/utils/credentials/platform"),
     __esModule: true,
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
     // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates)
