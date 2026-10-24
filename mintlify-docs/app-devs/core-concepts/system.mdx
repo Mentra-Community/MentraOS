@@ -44,11 +44,11 @@ await session.system.share({
 | `ShareOptions` field | Type | Notes |
 |---|---|---|
 | `text` | `string` | Body text for the share. |
-| `url` | `string` | A URL to share. |
+| `url` | `string` | An `http:` or `https:` link, or the `uri` of one of your [blobs](/app-devs/core-concepts/blob). Any other URL is refused. |
 | `title` | `string` | Title shown by the share sheet. |
 | `base64` | `string` | Base64-encoded file data for file sharing. |
 | `mimeType` | `string` | MIME type when sharing `base64` data. |
-| `filename` | `string` | Filename when sharing `base64` data. |
+| `filename` | `string` | File name when sharing `base64` data. One name: `/` and `\` become `_`. |
 
 | `ShareResult` field | Type | Notes |
 |---|---|---|
@@ -77,9 +77,9 @@ const b = await session.system.download({
 
 | `DownloadOptions` field | Type | Notes |
 |---|---|---|
-| `url` | `string` | URL to download from, or use `base64`. |
+| `url` | `string` | An `http:` or `https:` URL to download from, or use `base64`. |
 | `base64` | `string` | Base64 file data, as an alternative to `url`. |
-| `filename` | `string` | Suggested filename. |
+| `filename` | `string` | Suggested file name. One name: `/` and `\` become `_`. |
 | `mimeType` | `string` | MIME type of the data. |
 
 | `DownloadResult` field | Type | Notes |
@@ -106,7 +106,8 @@ await session.system.copyToClipboard("https://maps.app/abc");
 
 `openUrl(url)` opens a URL in the phone's browser. It's fire-and-forget: it
 returns `void` immediately and doesn't report whether the browser opened.
-Dangerous schemes (`javascript:`, `file:`) are blocked.
+It never opens local files, content URIs or scripts (`file:`, `content:`,
+`javascript:`, `data:`).
 
 ```typescript
 session.system.openUrl("https://docs.mentra.glass");
@@ -117,4 +118,4 @@ session.system.openUrl("https://docs.mentra.glass");
 | `share(options)` | `Promise<ShareResult>` | Opens the native share sheet. |
 | `download(options)` | `Promise<DownloadResult>` | Saves a file via the system downloader. |
 | `copyToClipboard(text)` | `Promise<void>` | Copies text to the clipboard. |
-| `openUrl(url)` | `void` | Opens a URL in the phone browser. Blocks `javascript:`/`file:`. |
+| `openUrl(url)` | `void` | Opens a URL in the phone browser. Never opens `file:`, `content:`, `javascript:` or `data:` URLs. |

@@ -64,6 +64,7 @@ import {checkManifestVersions} from "./manifestVersionGate"
 import {checkMiniappInstallCompatibility, type MiniappCompatibilityPolicy} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
 import {normalizeManifestPermissions} from "./manifestPermissions"
+import {isFileUriInside} from "./miniappPaths"
 import {
   assertMiniappUpdateVersion,
   miniappInstallIdentityError,
@@ -1266,7 +1267,8 @@ class AppRegistry {
     const resolve = (rel: string): string | null => {
       const trimmed = rel.replace(/^\.?\/+/, "")
       const file = new File(bundleDir, trimmed)
-      return file.exists ? file.uri : null
+      // The manifest is the miniapp's: an entry outside its own bundle (`../`) is not one.
+      return isFileUriInside(bundleDir, file.uri) && file.exists ? file.uri : null
     }
     if (manifest?.entry) {
       console.log("manifest.entry", manifest.entry)

@@ -114,8 +114,8 @@ currently provides these browser-like globals:
 |---|---|
 | `console` | `log`, `info`, `warn`, `error`, `debug`, and `trace` |
 | Timers | `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, and `queueMicrotask` |
-| `fetch` | String, `ArrayBuffer`, and typed-array request bodies; `text()`, `json()`, and byte-exact `arrayBuffer()` responses over the native HTTP bridge |
-| `WebSocket` | Native WebSocket bridge |
+| `fetch` | `http:` and `https:` URLs only. String, `ArrayBuffer`, and typed-array request bodies; `text()`, `json()`, and byte-exact `arrayBuffer()` responses over the native HTTP bridge |
+| `WebSocket` | Native WebSocket bridge, for `ws:` and `wss:` URLs |
 | `localStorage` | Per-miniapp string key/value storage |
 | `crypto` | `getRandomValues` and `randomUUID`; `crypto.subtle` is not implemented |
 | Encoding | `TextEncoder`, `TextDecoder`, `atob`, and `btoa` |

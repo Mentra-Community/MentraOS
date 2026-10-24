@@ -777,6 +777,67 @@ describe("startup bundle — fetch", () => {
     expect(requests[1]!.body ?? null).toBeNull()
     expect(requests[1]!.bodyBase64).toBeUndefined()
   })
+
+  // Miniapp code is untrusted: a file: URL would read the Mentra App's own files.
+  test("refuses every URL that is not http: or https: without asking native", async () => {
+    const {fetch, requests} = nativeFetch(utf8("secret"))
+    for (const url of [
+      "file:///var/mobile/Containers/Data/Application/X/Documents/mmkv/mmkv.default",
+      "FILE:///etc/hosts",
+      " file:///etc/hosts",
+      "\tfile:///etc/hosts",
+      "data:text/plain,hello",
+      "blob:abc",
+      "content://com.mentra.mentra.fileprovider/cache/x",
+      "ftp://example.com/x",
+      "/etc/hosts",
+      "relative/path",
+    ]) {
+      const error = await fetch(url).then(
+        () => null,
+        (e: unknown) => e,
+      )
+      // The sandbox's TypeError is another realm's, so compare by name.
+      expect((error as Error | null)?.name).toBe("TypeError")
+      expect((error as Error).message).toContain("http")
+    }
+    expect(requests).toEqual([])
+  })
+
+  test("still fetches http: and https: URLs in any letter case", async () => {
+    const {fetch, requests} = nativeFetch(utf8("ok"))
+    await fetch("HTTPS://example.com/a")
+    await fetch("http://192.168.1.20:8080/b")
+    expect(requests.map((r) => r.url)).toEqual(["HTTPS://example.com/a", "http://192.168.1.20:8080/b"])
+  })
+})
+
+describe("startup bundle — WebSocket schemes", () => {
+  test("throws a SyntaxError for a non-network URL without asking native", () => {
+    const stubs = freshStubs()
+    const sandbox = evalBundle(stubs)
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (url: string) => unknown
+    for (const url of ["file:///etc/hosts", "data:text/plain,x", "ftp://example.com", "/socket"]) {
+      let error: unknown = null
+      try {
+        new WS(url)
+      } catch (e) {
+        error = e
+      }
+      expect((error as Error | null)?.name).toBe("SyntaxError")
+    }
+    expect(stubs.dispatchCalls.filter((c) => c.iface === "ws")).toEqual([])
+  })
+
+  test("opens ws:, wss:, http: and https: URLs", () => {
+    const stubs = freshStubs()
+    const sandbox = evalBundle(stubs)
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (url: string) => unknown
+    for (const url of ["ws://10.0.0.2:9000/s", "WSS://example.com/s", "https://example.com/s", "http://example.com/s"]) {
+      new WS(url)
+    }
+    expect(stubs.dispatchCalls.filter((c) => c.iface === "ws" && c.method === "open")).toHaveLength(4)
+  })
 })
 
 describe("startup bundle — TextDecoder", () => {

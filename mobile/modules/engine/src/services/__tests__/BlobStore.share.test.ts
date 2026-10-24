@@ -3,74 +3,85 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 
+import {crustRealpath} from "./fakeExpoFileSystem"
+
 let root: string
 let now: number
 let copies: number
 let failCopy: boolean
 const Paths = {cache: "", document: ""}
 const shareOpen = mock(async (_options: {url: string}) => {})
-const pathname = (parts: Array<string | {uri: string}>) =>
-  path.join(...parts.map((p) => (typeof p === "string" ? p : p.uri)))
+// Like expo-file-system: parts joined with a normalizing join, `file://` URIs.
+const pathname = (parts: Array<string | {path: string}>) =>
+  path.join(...parts.map((p) => (typeof p === "string" ? p : p.path)))
 const touch = (name: string) => fs.utimesSync(name, now / 1000, now / 1000)
 class Directory {
-  uri: string
-  constructor(...parts: Array<string | {uri: string}>) {
-    this.uri = pathname(parts)
+  path: string
+  constructor(...parts: Array<string | {path: string}>) {
+    this.path = pathname(parts)
+  }
+  get uri() {
+    return `file://${this.path}/`
   }
   get name() {
-    return path.basename(this.uri)
+    return path.basename(this.path)
   }
   get exists() {
-    return fs.existsSync(this.uri)
+    return fs.existsSync(this.path)
   }
   create() {
-    fs.mkdirSync(this.uri, {recursive: true})
-    touch(this.uri)
+    fs.mkdirSync(this.path, {recursive: true})
+    touch(this.path)
   }
   list() {
     return fs
-      .readdirSync(this.uri)
+      .readdirSync(this.path)
       .map((name) =>
-        fs.statSync(path.join(this.uri, name)).isDirectory() ? new Directory(this, name) : new File(this, name),
+        fs.statSync(path.join(this.path, name)).isDirectory() ? new Directory(this, name) : new File(this, name),
       )
   }
   info() {
-    return {modificationTime: fs.statSync(this.uri).mtimeMs}
+    return {modificationTime: fs.statSync(this.path).mtimeMs}
   }
   delete() {
-    fs.rmSync(this.uri, {recursive: true})
+    fs.rmSync(this.path, {recursive: true})
   }
 }
 class File {
-  uri: string
-  constructor(...parts: Array<string | {uri: string}>) {
-    this.uri = pathname(parts)
+  path: string
+  constructor(...parts: Array<string | {path: string}>) {
+    this.path = pathname(parts)
+  }
+  get uri() {
+    return `file://${this.path}`
   }
   get exists() {
-    return fs.existsSync(this.uri)
+    return fs.existsSync(this.path)
   }
   get size() {
-    return fs.statSync(this.uri).size
+    return fs.statSync(this.path).size
   }
   copy(target: File) {
     if (failCopy) throw new Error("copy failed")
     copies++
-    fs.copyFileSync(this.uri, target.uri)
-    touch(path.dirname(target.uri))
+    fs.copyFileSync(this.path, target.path)
+    touch(path.dirname(target.path))
   }
   write(value: string) {
-    fs.writeFileSync(this.uri, value)
+    fs.writeFileSync(this.path, value)
   }
   textSync() {
-    return fs.readFileSync(this.uri, "utf8")
+    return fs.readFileSync(this.path, "utf8")
   }
   delete() {
-    fs.unlinkSync(this.uri)
+    fs.unlinkSync(this.path)
   }
+  static downloadFileAsync = mock(async (_url: string, target: File) => target)
 }
 mock.module("expo-file-system", () => ({Directory, File, Paths}))
 mock.module("react-native-share", () => ({default: {open: shareOpen}}))
 mock.module("@mentra/miniapp", () => ({MiniappErrorCode: {BLOB_NOT_FOUND: "BLOB_NOT_FOUND"}}))
+mock.module("@mentra/crust", () => ({default: {canonicalFilePath: crustRealpath}}))
 mock.module("../../utils/storage/storage", () => ({storage: {}}))
 const {BlobStore} = await import("../BlobStore")
 
@@ -80,7 +91,7 @@ let clock: ReturnType<typeof spyOn>
 let store: InstanceType<typeof BlobStore>
 let results: ReturnType<typeof mock>
 const share = (key = "a") => store.handleShare("recorder", {key})
-const lastUrl = () => shareOpen.mock.calls.at(-1)![0].url
+const lastUrl = () => shareOpen.mock.calls.at(-1)![0].url.replace(/^file:\/\//, "")
 const readable = (url: string) => fs.existsSync(url) && fs.readFileSync(url).equals(bytes)
 
 beforeEach(() => {
@@ -97,7 +108,7 @@ beforeEach(() => {
   results = mock(() => {})
   store = new BlobStore({sendResult: results, getPartition: () => ({id: "user", personalUserId: null})})
   const source = new File(Paths.document, "recording.wav")
-  fs.writeFileSync(source.uri, bytes)
+  fs.writeFileSync(source.path, bytes)
   Object.assign(store, {
     readMeta: (_pkg: string, key: string) => ({
       key,
@@ -174,5 +185,23 @@ describe("blob share lifetime", () => {
     now += 1000
     await share("c")
     expect(readable(url)).toBe(true)
+  })
+})
+
+describe("blob setFromUrl", () => {
+  it("downloads only http and https URLs, whatever their letter case", async () => {
+    for (const url of [
+      "FILE:///var/mobile/Containers/Data/Application/X/Documents/mmkv/mmkv.default",
+      " file:///etc/hosts",
+      "content://com.mentra.mentra.fileprovider/root/x",
+      "data:text/plain,x",
+      "/etc/hosts",
+    ]) {
+      results.mockClear()
+      await store.handleSetFromUrl("recorder", {key: "k", url}, "r")
+      expect(results.mock.calls.at(-1)?.[2]).toBe(false)
+      expect(results.mock.calls.at(-1)?.[4]?.message).toContain("Unsupported URL scheme")
+    }
+    expect(File.downloadFileAsync).not.toHaveBeenCalled()
   })
 })

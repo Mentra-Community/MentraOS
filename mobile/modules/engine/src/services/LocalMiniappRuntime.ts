@@ -11,11 +11,9 @@
 
 import {parsePhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 import {acquireGlassesHotspot} from "./GlassesHotspotLease"
-import {AppState, Linking} from "react-native"
-import Share from "react-native-share"
+import {AppState} from "react-native"
 import * as Battery from "expo-battery"
 import * as Clipboard from "expo-clipboard"
-import {File, Paths} from "expo-file-system"
 import * as Location from "expo-location"
 import BluetoothSdk, {type RgbLedAction, type RgbLedColor} from "@mentra/bluetooth-sdk"
 
@@ -49,6 +47,7 @@ import micStateCoordinator from "./MicStateCoordinator"
 import micSessionManager, {MIC_SOURCE_CONFLICT, type MicSession} from "./MicSessionManager"
 import {ENGINE_ONLY_USE_CASES, MIC_USE_CASES, VOICE_CALL_PACKAGES, type MicUseCase} from "./micPolicy"
 import {BlobStore} from "./BlobStore"
+import {MiniappSystemActions} from "./MiniappSystemActions"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 import {fleetEvents} from "./fleet/fleetEvents"
@@ -1439,16 +1438,16 @@ class LocalMiniappRuntime {
       }
 
       case MiniappRequestType.SHARE:
-        this.handleShare(packageName, payload, requestId)
+        void this.systemActions.handleShare(packageName, payload, requestId)
         break
       case MiniappRequestType.OPEN_URL:
-        this.handleOpenUrl(packageName, payload)
+        void this.systemActions.handleOpenUrl(packageName, payload)
         break
       case MiniappRequestType.COPY_CLIPBOARD:
         this.handleCopyClipboard(packageName, payload, requestId)
         break
       case MiniappRequestType.DOWNLOAD:
-        this.handleDownload(packageName, payload, requestId)
+        void this.systemActions.handleDownload(packageName, payload, requestId)
         break
       case MiniappRequestType.SCAN_QR:
         void this.handleScanQr(packageName, payload, requestId)
@@ -2396,6 +2395,14 @@ class LocalMiniappRuntime {
       })
       return
     }
+    // The player opens local files too: a file URL must be one of this miniapp's own blobs.
+    if (!this.systemActions.allowsMediaUrl(packageName, audioUrl)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "play_audio: audioUrl must be an http(s) or data: URL, or a file from this miniapp's blob storage",
+      })
+      return
+    }
 
     const audioRequestId = requestId || `local_${Date.now()}`
     const volume = typeof payload.volume === "number" ? payload.volume : 1.0
@@ -3066,6 +3073,13 @@ class LocalMiniappRuntime {
   })
   private readonly blobRequestQueues = new Map<string, Promise<void>>()
 
+  /** session.system share, download and openUrl; a file URL must name one of the miniapp's own blobs. */
+  private readonly systemActions = new MiniappSystemActions({
+    sendResult: (packageName, requestId, ok, result, error) =>
+      this.sendResult(packageName, requestId, ok, result, error),
+    ownFilesDirectory: (packageName) => this.blobStore.ownFilesDirectory(packageName),
+  })
+
   private readonly simpleStorage = new LocalMiniappStorage({
     backend: localMiniappStorageBackend,
     getPartition: async (packageName) => {
@@ -3676,63 +3690,8 @@ class LocalMiniappRuntime {
   }
 
   // ---------------------------------------------------------------------------
-  // System utilities (share, open URL, clipboard, download)
+  // System utilities (share, open URL and download are in MiniappSystemActions)
   // ---------------------------------------------------------------------------
-
-  private async handleShare(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
-    const {text, title, base64, mimeType, filename, url} = payload as {
-      text?: string
-      title?: string
-      base64?: string
-      mimeType?: string
-      filename?: string
-      url?: string
-    }
-    try {
-      if (base64) {
-        // File share via base64 — write to temp file then share
-        const tempFile = new File(Paths.cache, filename || "shared_file")
-        tempFile.write(base64, {encoding: "base64"})
-        await Share.open({
-          url: tempFile.uri,
-          type: mimeType || "application/octet-stream",
-          filename: filename,
-          title: title,
-        })
-      } else if (url) {
-        await Share.open({url, title, message: text})
-      } else {
-        await Share.open({message: text || "", title})
-      }
-      this.sendResult(packageName, requestId, true, {success: true})
-    } catch (error: any) {
-      // react-native-share throws when user dismisses the share sheet
-      if (error?.message?.includes("User did not share")) {
-        this.sendResult(packageName, requestId, true, {success: false, cancelled: true})
-      } else {
-        console.error(`${LOG_TAG}: share error:`, error)
-        this.sendResult(packageName, requestId, true, {success: false})
-      }
-    }
-  }
-
-  private async handleOpenUrl(packageName: string, payload: Record<string, unknown>): Promise<void> {
-    const url = payload.url as string | undefined
-    if (!url || typeof url !== "string") {
-      console.warn(`${LOG_TAG}: open_url missing url`)
-      return
-    }
-    // Block dangerous schemes
-    if (url.startsWith("javascript:") || url.startsWith("file:")) {
-      console.warn(`${LOG_TAG}: open_url blocked dangerous scheme: ${url}`)
-      return
-    }
-    try {
-      await Linking.openURL(url)
-    } catch (error) {
-      console.error(`${LOG_TAG}: open_url error:`, error)
-    }
-  }
 
   private async handleCopyClipboard(
     packageName: string,
@@ -3753,46 +3712,6 @@ class LocalMiniappRuntime {
         code: MiniappErrorCode.INTERNAL,
         message: error?.message || "Clipboard error",
       })
-    }
-  }
-
-  private async handleDownload(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
-    const {base64, url, mimeType, filename} = payload as {
-      base64?: string
-      url?: string
-      mimeType?: string
-      filename?: string
-    }
-    const name = filename || "download"
-    try {
-      let file: File
-      if (base64) {
-        file = new File(Paths.cache, name)
-        file.write(base64, {encoding: "base64"})
-      } else if (url) {
-        file = await File.downloadFileAsync(url, new File(Paths.cache, name), {idempotent: true})
-      } else {
-        console.warn(`${LOG_TAG}: download missing base64 or url`)
-        return
-      }
-      // Open share sheet so user can choose where to save
-      await Share.open({
-        url: file.uri,
-        type: mimeType || "application/octet-stream",
-        filename: name,
-      })
-      this.sendResult(packageName, requestId, true, {success: true})
-    } catch (error: any) {
-      if (error?.message?.includes("User did not share")) {
-        this.sendResult(packageName, requestId, true, {success: true, cancelled: true})
-      } else {
-        console.error(`${LOG_TAG}: download error:`, error)
-        this.sendResult(packageName, requestId, true, {success: false})
-      }
     }
   }
 

@@ -63,6 +63,8 @@
     "!ios/build/**",
     "!ios/Pods",
     "!ios/Pods/**",
+    "!ios/MiniappPolicyKit/.build",
+    "!ios/MiniappPolicyKit/.build/**",
     "app.plugin.js",
     "build",
     "plugin/build",

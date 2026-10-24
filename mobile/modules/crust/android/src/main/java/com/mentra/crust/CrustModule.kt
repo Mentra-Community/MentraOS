@@ -24,6 +24,7 @@ import com.mentra.crust.jsc.InstalledMiniappManifest
 import com.mentra.crust.jsc.JSCPolyfillBridge
 import com.mentra.crust.http.NativeHttpRequests
 import com.mentra.crust.http.nativeHttpFailureCode
+import com.mentra.crust.utils.CanonicalFilePath
 
 class CrustModule : Module() {
   companion object {
@@ -183,6 +184,11 @@ class CrustModule : Module() {
 
     AsyncFunction("setValueAsync") { value: String ->
       sendEvent("onChange", mapOf("value" to value))
+    }
+
+    // Where a path really is, symlinks resolved; the engine checks miniapp-named paths with it.
+    Function("canonicalFilePath") { path: String ->
+      CanonicalFilePath.of(path)
     }
 
     AsyncFunction("captureMiniappPreview") Coroutine { viewTag: Int ->

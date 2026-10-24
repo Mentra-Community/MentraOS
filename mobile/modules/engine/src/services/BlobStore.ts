@@ -14,6 +14,11 @@
  *     entirely host-side;
  *   - `share` hands a stored file to the OS share sheet.
  *
+ * Miniapp code is untrusted: `setFromUrl` downloads only http: and https: URLs,
+ * and a shared copy's name is one safe file name (blobPaths.shareFileName).
+ * This directory is the miniapp's own files (`ownFilesDirectory`), the only
+ * ones `session.system.share` and `session.speaker.play` accept by file URL.
+ *
  * Layout (mirrors SimpleStorage's scoping; see miniappDataPartition.ts):
  *   bytes:    Paths.document/mentra_blobs/{partitionId}/{packageName}/{fileName}
  *   metadata: MMKV key  mentraos_blobmeta/{partitionId}/{packageName}/{key}  → StoredBlobMeta JSON
@@ -35,6 +40,8 @@ import {Directory, File, Paths, type FileHandle} from "expo-file-system"
 import {MiniappErrorCode} from "@mentra/miniapp"
 import {storage as mmkvStorage} from "../utils/storage/storage"
 import {sanitizeSegment, shareFileName, withDiskExt} from "./blobPaths"
+import {canonicalPath} from "./miniappFiles"
+import {filePathOfUri, isNetworkUrl} from "./miniappPaths"
 import type {MiniappDataPartition} from "./miniappDataPartition"
 
 const LOG_TAG = "LocalMiniappRuntime"
@@ -168,6 +175,14 @@ export class BlobStore {
       console.warn(`${LOG_TAG}: blob migration for ${packageName} failed; retried on next use`, err)
       throw err
     }
+  }
+
+  /**
+   * The directory holding this miniapp's blobs in the data partition it uses now:
+   * the only files its file URLs may name. Throws while no account is known.
+   */
+  ownFilesDirectory(packageName: string): Directory {
+    return this.dirFor(packageName)
   }
 
   private dirFor(packageName: string): Directory {
@@ -440,10 +455,12 @@ export class BlobStore {
       this.fail(packageName, requestId, MiniappErrorCode.INTERNAL, new Error("setFromUrl requires key + url"))
       return
     }
-    if (url.startsWith("file:") || url.startsWith("javascript:")) {
+    // Only the network: a file: URL (in any case), content: URI or other local
+    // scheme would copy one of the phone's files into the miniapp's storage.
+    if (!isNetworkUrl(url)) {
       this.hooks.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.BLOB_DOWNLOAD_FAILED,
-        message: "Unsupported URL scheme",
+        message: "Unsupported URL scheme: setFromUrl downloads only http: and https: URLs",
       })
       return
     }
@@ -722,6 +739,13 @@ export class BlobStore {
       if (!temp.exists || temp.size !== meta.bytes) {
         if (temp.exists) temp.delete()
         file.copy(temp)
+      }
+      // Resolve, then verify: the copy is directly in its share directory.
+      const tempPath = filePathOfUri(temp.uri)
+      const real = tempPath ? canonicalPath(tempPath) : null
+      const realDir = canonicalPath(filePathOfUri(tempDir.uri) ?? "")
+      if (!real || !realDir || real.slice(0, real.lastIndexOf("/")) !== realDir) {
+        throw new Error("blob share copy is outside its directory")
       }
       cacheReady = true
       // Persist each handoff's age, even when reusing old bytes. Directory

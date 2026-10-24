@@ -50,6 +50,9 @@ Pod::Spec.new do |s|
   }
 
   s.source_files = "**/*.{h,m,mm,swift,hpp,cpp}"
+  # MiniappPolicyKit's sources compile into this pod; its manifest, tests and
+  # local `swift test` output are only for testing them on a Mac.
+  s.exclude_files = "MiniappPolicyKit/Package.swift", "MiniappPolicyKit/Tests/**/*", "MiniappPolicyKit/.build/**/*"
 
   # Ship the MentraJS polyfill bundle inside the pod's resource bundle so
   # JSCRuntime can read it at runtime via Bundle.main. The source of

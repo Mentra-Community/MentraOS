@@ -39,6 +39,7 @@ class FetchBridgeTest {
     private val results = LinkedBlockingQueue<Map<*, *>>()
     private lateinit var server: MockWebServer
     private lateinit var runtime: JSCRuntime
+    @Volatile private var redirectTarget = "file:///etc/hosts"
 
     /** A 24 kHz 16-bit sine followed by every byte value: mostly not valid UTF-8. */
     private val pcm = ByteArray(4800 * 2 + 256).also { out ->
@@ -70,6 +71,7 @@ class FetchBridgeTest {
                     "/large.txt" -> response("text/plain").setBody(Buffer().write(largeUtf8Text))
                     "/data.json" -> response("application/json").setBody("{\"message\":\"héllo 😀 中文\"}")
                     "/upload" -> response("text/plain").setBody("ok")
+                    "/to-file" -> MockResponse().setResponseCode(302).setHeader("Location", redirectTarget)
                     else -> MockResponse().setResponseCode(404)
                 }
             }
@@ -187,6 +189,62 @@ class FetchBridgeTest {
         val upload = server.takeRequest()
         assertEquals("{\"t\":\"é😀\"}", upload.body.readUtf8())
         assertEquals("application/json; charset=utf-8", upload.getHeader("Content-Type"))
+    }
+
+    /**
+     * Miniapp code is untrusted and can call the bridge without the polyfill's own check, so
+     * native must refuse a local URL itself. A file: URL would read the Mentra App's files.
+     */
+    @Test fun `native fetch and WebSocket refuse local URLs even when the polyfill is skipped`() {
+        val secret = File.createTempFile("mentra-credentials", ".txt").apply {
+            writeText("refresh-token-that-must-not-leak")
+            deleteOnExit()
+        }
+        val urls = listOf(secret.toURI().toString(), "FILE://${secret.absolutePath}", "content://com.mentra.mentra.fileprovider/x", "data:text/plain,hi")
+        val result = runMiniapp(
+            """
+            const outcomes = []
+            for (const url of ${org.json.JSONArray(urls)}) {
+              outcomes.push(await __mentraSendRequest("fetch", "request", [{url, method: "GET", headers: {}}]).then(
+                (r) => ({read: String(r && (r.body || r.bodyBase64))}),
+                (e) => ({error: String(e && (e.message || e.code))}),
+              ))
+              let opened = false
+              try {
+                __dispatch("ws", "open", JSON.stringify([{sid: "s-" + outcomes.length, url, protocols: []}]))
+                opened = true
+              } catch (e) {
+                outcomes.push({error: String(e && e.message)})
+              }
+              if (opened) outcomes.push({read: "ws opened"})
+            }
+            return {outcomes}
+            """,
+        )
+        val outcomes = result["outcomes"] as List<*>
+        assertEquals(urls.size * 2, outcomes.size)
+        for (outcome in outcomes) {
+            val map = outcome as Map<*, *>
+            assertNull("a local URL was read: $map", map["read"])
+            assertTrue("unexpected refusal: $map", (map["error"] as String).contains("URLs are allowed"))
+        }
+    }
+
+    /** OkHttp follows a redirect only to another http(s) URL, so a 302 to a file: URL reads nothing. */
+    @Test fun `a redirect to a file URL is not followed`() {
+        val secret = File.createTempFile("mentra-credentials", ".txt").apply {
+            writeText("refresh-token-that-must-not-leak")
+            deleteOnExit()
+        }
+        redirectTarget = secret.toURI().toString()
+        val result = runMiniapp(
+            """
+            const response = await fetch(BASE + "/to-file")
+            return {status: response.status, text: await response.text()}
+            """,
+        )
+        assertEquals(302, result["status"])
+        assertFalse((result["text"] as String).contains("refresh-token"))
     }
 
     private fun runMiniapp(body: String): Map<*, *> {

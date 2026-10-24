@@ -5,7 +5,8 @@
  * audio chunks, VAD) lives on session.mic — the split is by I/O direction.
  *
  * Imperative surface:
- *   speaker.play({audioUrl})   — play an arbitrary URL via the phone's
+ *   speaker.play({audioUrl})   — play an http(s) or data: URL, or one of this
+ *                                miniapp's blobs, via the phone's
  *                                AudioPlaybackService.
  *   speaker.speak(text)        — send a SPEAK request. Phone streams cloud
  *                                TTS when connected and falls back to local
@@ -40,6 +41,10 @@ import {bytesToBase64, toUint8Array} from "./base64"
 import type {UnsubscribeFn} from "./events"
 
 export interface PlayAudioOptions {
+  /**
+   * An http(s) or `data:` URL, or the `file://` uri of one of this miniapp's
+   * blobs (`session.blob`). The host refuses any other file or scheme.
+   */
   audioUrl: string
   /** Start playback at this offset in milliseconds. Defaults to zero. */
   startPositionMs?: number

@@ -11,6 +11,12 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   getPermissionStatus(requestId: string): Promise<AppPermissionReceipt>
   PI: number
   hello(): string
+  /**
+   * The canonical path of an existing file or directory: absolute, with `.`,
+   * `..` and every symlink resolved. Null when nothing is there. The engine
+   * checks that a path a miniapp names stays inside the directory it may use.
+   */
+  canonicalFilePath(path: string): string | null
   setValueAsync(value: string): Promise<void>
   /** Android: copy the displayed view's window pixels to a temporary JPEG URI. */
   captureMiniappPreview(viewTag: number): Promise<string>

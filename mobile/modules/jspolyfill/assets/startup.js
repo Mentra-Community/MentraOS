@@ -668,10 +668,20 @@
         return out;
       };
     }
+    const urlScheme = (url) => {
+      const match = /^[\u0000- ]*([A-Za-z][A-Za-z0-9+.-]*):/.exec(url);
+      return match ? match[1].toLowerCase() : null;
+    };
     if (typeof g.fetch !== "function") {
       ;
       g.fetch = async (input, init) => {
         const url = typeof input === "string" ? input : input.toString();
+        const scheme = urlScheme(url);
+        if (scheme !== "http" && scheme !== "https") {
+          throw new TypeError(
+            `fetch: only http: and https: URLs can be fetched, not ${scheme ? `${scheme}:` : "a relative URL"}`
+          );
+        }
         const method = (init?.method ?? "GET").toUpperCase();
         let bodyString = null;
         let bodyBase64;
@@ -782,6 +792,12 @@
             close: /* @__PURE__ */ new Set()
           };
           this.url = String(url);
+          const scheme = urlScheme(this.url);
+          if (scheme !== "ws" && scheme !== "wss" && scheme !== "http" && scheme !== "https") {
+            throw new SyntaxError(
+              `WebSocket: the URL's scheme must be ws:, wss:, http: or https:, not ${scheme ? `${scheme}:` : "none"}`
+            );
+          }
           const protoList = Array.isArray(protocols) ? protocols : protocols ? [protocols] : [];
           this.sid = `ws-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
           sockets.set(this.sid, this);
