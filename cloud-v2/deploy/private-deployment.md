@@ -97,6 +97,12 @@ Core issues an opaque Mentra user id. It retains provider metadata only for host
 integrations such as proving an ACS token belongs to the same Entra employee.
 Miniapp tokens never contain the federated identity.
 
+A person signed in through a configured provider is a verified account for the
+miniapp registry: installing a miniapp URL from their phone registers it in
+this Core's registry, with the same limit of 120 registrations an hour per
+person. No Mentra account or email is involved. See
+[The miniapp registry](../docs/registry.md#verified-accounts).
+
 ### Admin portal sign-in
 
 Core serves the admin portal and its own sign-in server at its origin. The

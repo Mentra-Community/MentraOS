@@ -38,9 +38,10 @@ Both need the phone's Core access token. A missing, invalid or deleted one is
 `POST /api/client/registry/register` with `{url, reported?}` is sent at each
 install. `reported` is what the phone read: `{packageName, name, version,
 ageRating?}`. An archived URL, or one that can't be a miniapp, is answered for
-any signed-in phone without reading it. Reading the URL needs an account with a
-verified email (`403 email_unverified`), and each account may register 120 URLs
-an hour (`429 rate_limited`, with `Retry-After`). Core answers:
+any signed-in phone without reading it. Reading the URL needs a verified account
+(`403 email_unverified` otherwise; see [Verified accounts](#verified-accounts)),
+and each account may register 120 URLs an hour (`429 rate_limited`, with
+`Retry-After`). Core answers:
 
 | Result | When |
 | --- | --- |
@@ -53,6 +54,23 @@ an hour (`429 rate_limited`, with `Retry-After`). Core answers:
 500) is the updater's batch. Core answers `active`, `archived` or `unknown` for
 each URL, in order, and `validForSeconds`. Any signed-in phone gets an answer,
 so archiving stops updates on every phone.
+
+## Verified accounts
+
+Core reads URLs only for a verified account (`accountIsVerified`, in
+`packages/core/src/services/account/verified-account.service.ts`). Which
+accounts are verified depends on where they sign in:
+
+- **A Mentra account:** its email is verified, in Core's copy of the account
+  directory's answer. When the directory can't say and Core has no copy, a
+  registration is `503 unavailable`.
+- **A person signed in through one of this Core's own identity providers**
+  (`CLOUD_CORE_OIDC_PROVIDERS`, such as a Private Cloud's Entra): always. The
+  deployment's operator trusts that provider to sign in its people. Removing
+  the provider from the configuration ends it.
+- **Anyone else** (an OEM's people, or an enterprise trusted issuer's): never.
+
+The 120-an-hour limit applies to every account alike.
 
 ## The service API
 
@@ -98,7 +116,7 @@ read, a phone's report or a refused token doesn't replace it.
 There is no crawler. A status call re-verifies a URL off the request path when
 the phone reports a version newer than the one Core recorded, or when Core
 hasn't verified the entry yet. This happens at most once an hour per URL across
-every Core instance, and only for phones whose account has a verified email.
+every Core instance, and only for phones whose account is verified.
 Core reads a private URL with the token of the person whose phone asked.
 
 ## Archiving
@@ -142,11 +160,3 @@ admin audit log with the Organization Admin's email.
 - `CLOUD_CORE_REGISTRY_STATUS_TTL_SEC`: the status answer's `validForSeconds`,
   from 1 to 604800 (a week). Default `21600` (6 hours). Any other value logs a
   warning and uses the default.
-
-## Known limits
-
-- Reading a URL for a registration needs a verified email in Core's copy of
-  the account directory's answer. A Core without an account directory
-  (`SUPABASE_URL` unset) has none, so its phones get `403 email_unverified`
-  for any URL that isn't archived. Archived answers and status calls still
-  work there.

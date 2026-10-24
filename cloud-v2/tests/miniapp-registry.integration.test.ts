@@ -56,7 +56,7 @@ import {
 import * as session from "../packages/core/src/services/session.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {membershipRow} from "./support/membership-row"
-import {applyEnv} from "./support/signin-harness"
+import {applyEnv, PRIVATE_CLOUD_ENV} from "./support/signin-harness"
 
 // Index builds and per-test cleanup on a shared, busy local replica set can take longer than the 5 s default.
 setDefaultTimeout(30_000)
@@ -94,8 +94,9 @@ let databaseUrl: string
 let verified = false
 let app: ReturnType<typeof createApp>
 let restoreEnv: () => void = () => {}
-/** Who the phone's access token names. */
+/** Who the phone's access token names, and the tenant they signed in through. */
 let signedIn = "mu_alice"
+let signedInTenant = "mentra"
 const mocks: Array<{mockRestore(): void}> = []
 
 /** What each URL serves to Core's fetcher, by request: the bearer is the challenge retry's token. */
@@ -137,6 +138,7 @@ beforeEach(async () => {
   })
   session.resetSigningKeyCache()
   signedIn = "mu_alice"
+  signedInTenant = "mentra"
   served = new Map()
   fetches = []
   mocks.push(
@@ -145,7 +147,7 @@ beforeEach(async () => {
       async () =>
         ({
           mentraUserId: signedIn,
-          tenantId: "mentra",
+          tenantId: signedInTenant,
           sessionId: "sess",
           jti: "jti",
           exp: Math.floor(Date.now() / 1000) + 300,
@@ -263,6 +265,12 @@ async function workspaceAssigning(workspaceId: string, mentraUserId: string, pac
   await WorkspaceAssignedPackagesModel.create({workspaceId, packageNames, revision: 1})
 }
 
+/** Restores `second`'s changes, then `first`'s. */
+const chain = (first: () => void, second: () => void) => () => {
+  second()
+  first()
+}
+
 const rule = (kind: RegistryArchiveRule["kind"], value: string) => ({kind, value})
 const by = {reason: "test", createdBy: "admin@example.com"}
 
@@ -342,6 +350,60 @@ describe("who may register", () => {
     // Past the limit, an archived URL is still answered.
     await archive(rule("url", NOTES_URL), by)
     expect(await register({url: NOTES_URL}, "mu_alice")).toEqual({result: "archived"})
+  })
+
+  test("on a Private Cloud, a person signed in through its identity provider registers without a Mentra email", async () => {
+    // A Private Cloud: no account directory, and the customer's provider in CLOUD_CORE_OIDC_PROVIDERS.
+    restoreEnv = chain(
+      restoreEnv,
+      applyEnv({SUPABASE_URL: undefined, CLOUD_CORE_OIDC_PROVIDERS: PRIVATE_CLOUD_ENV.CLOUD_CORE_OIDC_PROVIDERS}),
+    )
+    // The provider's tenant in PRIVATE_CLOUD_ENV; the account directory knows no email for this person.
+    signedInTenant = "contoso"
+    serve(NOTES_URL, manifest())
+
+    const answer = await register({url: NOTES_URL}, "mu_contoso_dana")
+    expect(answer.result).toBe("accepted")
+    expect((await entryRow(NOTES_URL))?.firstRegisteredBy).toBe("mu_contoso_dana")
+    expect(fetches).toHaveLength(1)
+  })
+
+  test("a person from a tenant that isn't one of this Core's own identity providers still needs a verified email", async () => {
+    restoreEnv = chain(
+      restoreEnv,
+      applyEnv({SUPABASE_URL: undefined, CLOUD_CORE_OIDC_PROVIDERS: PRIVATE_CLOUD_ENV.CLOUD_CORE_OIDC_PROVIDERS}),
+    )
+    serve(NOTES_URL, manifest())
+    // An OEM's or an enterprise trusted issuer's people.
+    signedInTenant = "some-oem"
+    const answer = await call("register", {url: NOTES_URL}, {as: "mu_oem_erin"})
+    expect({status: answer.status, error: answer.json?.error}).toEqual({status: 403, error: "email_unverified"})
+    // A provider removed from the configuration no longer vouches for its people.
+    restoreEnv = chain(restoreEnv, applyEnv({CLOUD_CORE_OIDC_PROVIDERS: undefined}))
+    signedInTenant = "contoso"
+    const removed = await call("register", {url: NOTES_URL}, {as: "mu_contoso_dana"})
+    expect({status: removed.status, error: removed.json?.error}).toEqual({status: 403, error: "email_unverified"})
+    expect(fetches).toEqual([])
+  })
+
+  test("a Private Cloud person registers at most 120 URLs an hour too", async () => {
+    restoreEnv = chain(
+      restoreEnv,
+      applyEnv({SUPABASE_URL: undefined, CLOUD_CORE_OIDC_PROVIDERS: PRIVATE_CLOUD_ENV.CLOUD_CORE_OIDC_PROVIDERS}),
+    )
+    signedInTenant = "contoso"
+    setSystemTime(new Date("2026-10-24T12:30:00.000Z"))
+    const windowStart = Date.parse("2026-10-24T12:00:00.000Z")
+    await AuthRateLimitModel.create({
+      _id: `miniapp-registry:mu_contoso_dana:${windowStart}`,
+      count: 120,
+      windowEndsAt: new Date(windowStart + 3_600_000),
+    })
+    serve(NOTES_URL, manifest())
+    const limited = await call("register", {url: NOTES_URL}, {as: "mu_contoso_dana"})
+    expect({status: limited.status, error: limited.json?.error}).toEqual({status: 429, error: "rate_limited"})
+    expect(limited.headers.get("retry-after")).toBe("1800")
+    expect(fetches).toEqual([])
   })
 
   test("a malformed body is 400 invalid_request", async () => {
@@ -787,6 +849,24 @@ describe("the status batch", () => {
 })
 
 describe("re-verification", () => {
+  test("a Private Cloud person's status call re-reads a URL, as a verified Mentra account's does", async () => {
+    restoreEnv = chain(
+      restoreEnv,
+      applyEnv({SUPABASE_URL: undefined, CLOUD_CORE_OIDC_PROVIDERS: PRIVATE_CLOUD_ENV.CLOUD_CORE_OIDC_PROVIDERS}),
+    )
+    signedInTenant = "contoso"
+    serve(NOTES_URL, manifest())
+    await register({url: NOTES_URL}, "mu_contoso_dana")
+    setSystemTime(new Date(Date.now() + 2 * 3_600_000))
+    serve(NOTES_URL, manifest({version: "2.0.0"}))
+    const before = fetches.length
+
+    expect((await status([{url: NOTES_URL, version: "2.0.0"}], "mu_contoso_dana")).statuses[0].status).toBe("active")
+    await reverificationsIdle()
+    expect(fetches).toHaveLength(before + 1)
+    expect((await entryRow(NOTES_URL))?.version).toBe("2.0.0")
+  })
+
   test("a version Core hasn't seen re-reads the URL off the request path, at most once an hour", async () => {
     const start = new Date("2026-10-24T08:00:00.000Z")
     setSystemTime(start)

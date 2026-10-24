@@ -11,12 +11,12 @@
  * The gate is the phone's Core access token (`userAuth`); missing, invalid or deleted is 401, as on the phone's
  * workspace routes, so the phone refreshes its session. An answer Core can give without reading the URL (an archived
  * URL, or one that can't be a miniapp) goes to any signed-in phone, so archiving holds everywhere. Reading the URL
- * needs a verified email (Core's copy of the account directory's answer, `accountEmail`): otherwise
- * `403 email_unverified`, or `503 unavailable` when the directory can't say. Each account registers at most 120 URLs
- * an hour (`429 rate_limited` with `Retry-After`).
+ * needs a verified account (`accountIsVerified`: a Mentra account with a verified email, or a person signed in through
+ * this Core's own identity provider): otherwise `403 email_unverified`, or `503 unavailable` when the account
+ * directory can't say. Each account registers at most 120 URLs an hour (`429 rate_limited` with `Retry-After`).
  *
- * The status call answers any signed-in phone, so archiving stops updates for everyone; only an account with a
- * verified email makes Core read URLs again from it. A malformed body is `400 invalid_request`.
+ * The status call answers any signed-in phone, so archiving stops updates for everyone; only a verified account makes
+ * Core read URLs again from it. A malformed body is `400 invalid_request`.
  */
 
 import {
@@ -29,7 +29,7 @@ import {Hono} from "hono"
 import type {MiddlewareHandler} from "hono"
 import {bodyLimit} from "hono/body-limit"
 import type {z} from "zod"
-import {accountEmail} from "../../services/account/account-email.service"
+import {accountIsVerified} from "../../services/account/verified-account.service"
 import {
   answerWithoutReading,
   consumeRegistration,
@@ -112,13 +112,13 @@ app.post("/register", limitBody(REGISTER_BODY_LIMIT_BYTES), async (c) => {
     return c.json(toResponse(early))
   }
 
-  let email: string | null
+  let verified: boolean
   try {
-    email = await accountEmail(user.mentraUserId)
+    verified = await accountIsVerified(registrant)
   } catch {
     return c.json({error: "unavailable", error_description: "could not confirm your email; try again"}, 503)
   }
-  if (!email) {
+  if (!verified) {
     return c.json({error: "email_unverified", error_description: "registering a miniapp needs a verified email"}, 403)
   }
 
@@ -145,12 +145,12 @@ app.post("/status", limitBody(STATUS_BODY_LIMIT_BYTES), async (c) => {
   if (!body) {
     return invalidRequest(c, `body must be {entries: [{url, version}]} with at most ${MINIAPP_REGISTRY_STATUS_MAX_ENTRIES} entries`)
   }
-  // Only an account with a verified email makes Core read URLs; the answer itself is everyone's.
-  const verifiedEmail = await accountEmail(user.mentraUserId).catch(() => null)
+  // Only a verified account makes Core read URLs; the answer itself is everyone's.
+  const caller = {mentraUserId: user.mentraUserId, tenantId: user.tenantId}
   const answer = await registryStatus({
     entries: body.entries,
-    caller: {mentraUserId: user.mentraUserId, tenantId: user.tenantId},
-    reverify: verifiedEmail !== null,
+    caller,
+    reverify: await accountIsVerified(caller).catch(() => false),
   })
   c.header("cache-control", "no-store")
   return c.json(answer)
