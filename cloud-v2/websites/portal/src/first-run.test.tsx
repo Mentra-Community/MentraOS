@@ -512,12 +512,12 @@ describe("no workspace is made", () => {
 });
 
 describe("the sign-in gate", () => {
-  test("says to use the Mentra App's account, and comes back to the address", async () => {
+  test("says to sign into the Mentra account, and comes back to the address", async () => {
     window.history.replaceState(null, "", BUY);
     spyOn(globalThis, "fetch").mockImplementation((async () => Response.json({ error: "not_found" }, { status: 404 })) as unknown as typeof fetch);
     await render(<LoginGate />);
-    expect(page()).toContain("Use the same account you sign in to the Mentra App with.");
-    expect(page()).not.toContain("Sign in with your Mentra account.");
+    expect(page()).toContain("Sign into Mentra account");
+    expect(page()).not.toContain("Use the same account");
     const href = find<HTMLAnchorElement>("a[href^='/api/portal/auth/login']").getAttribute("href")!;
     expect(new URL(href, "https://portal.example.test").searchParams.get("return_to")).toBe(BUY);
   });
@@ -536,11 +536,11 @@ describe("the sign-in gate", () => {
     return asked;
   }
 
-  test("a ?buy= link says what the sign-in is for, by the product's name from the public read, above the Mentra App line", async () => {
+  test("a ?buy= link says what the sign-in is for, by the product's name from the public read, above the button", async () => {
     const asked = await gateAnswering(Response.json({ name: "Mentra Call Unlimited" }));
     await until(() => page().includes("Sign in to buy Mentra Call Unlimited."), "the product's name");
     expect(asked).toEqual(["/api/portal/billing/public/products/mentra.call.unlimited"]);
-    expect(page().indexOf("Sign in to buy Mentra Call Unlimited.")).toBeLessThan(page().indexOf("Use the same account you sign in to the Mentra App with."));
+    expect(page().indexOf("Sign in to buy Mentra Call Unlimited.")).toBeLessThan(page().indexOf("Sign into Mentra account"));
     expect(page()).not.toContain("Manage your workspaces");
     expect(page()).not.toContain("a license.");
   });
@@ -549,7 +549,7 @@ describe("the sign-in gate", () => {
     for (const answer of [Response.json({ error: "not_found" }, { status: 404 }), Response.json({}, { status: 500 }), new Error("offline")]) {
       await gateAnswering(answer);
       await until(() => page().includes("Sign in to buy a license."), "the generic line");
-      expect(page()).toContain("Use the same account you sign in to the Mentra App with.");
+      expect(page()).toContain("Sign into Mentra account");
       await cleanup();
     }
   });

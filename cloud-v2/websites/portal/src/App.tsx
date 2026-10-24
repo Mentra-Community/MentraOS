@@ -321,9 +321,8 @@ export function LoginGate({
         </p>
       )}
       <a className={buttonVariants({ size: "lg", className: "w-full" })} href={loginUrl}>
-        Sign in
+        Sign into Mentra account
       </a>
-      <p className="text-muted-foreground mt-6 text-sm">Use the same account you sign in to the Mentra App with.</p>
     </BrandPage>
   );
 }
