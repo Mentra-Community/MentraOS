@@ -15,6 +15,12 @@
  * pod-pool fairness.
  *
  * Default N=30 (15 per pod, 2 workers per pod). Tune via `AUDIO_SOAK_N`.
+ *
+ * Safety: Mongo comes from `localTestMongoUrl` (loopback only, random database
+ * name, ignores `MONGO_URL`), checked before any destructive call and dropped
+ * afterwards. Redis comes from `localTestRedisUrl` (loopback only; refuses to
+ * run when `REDIS_URL` is set), so the keys this suite deletes are on a local
+ * server even under `doppler run`. Override with `CLOUD_V2_TEST_MONGO_URL` / `CLOUD_V2_TEST_REDIS_URL`.
  */
 
 import crypto from "node:crypto";
@@ -58,10 +64,8 @@ const N_CLIENTS = Number.parseInt(process.env.AUDIO_SOAK_N ?? "30", 10);
       oemIdClaim: "oem_id",
     },
   ]);
-  process.env.MONGO_URL ??=
-    "mongodb://127.0.0.1:27017/mentra-cloud-v2-soak-test";
   // Distinct Redis DB so this test doesn't share keys with other suites.
-  process.env.REDIS_URL ??= "redis://127.0.0.1:6379/3";
+  process.env.REDIS_URL = localTestRedisUrl(3);
   // Deterministic offline transcript source: this suite tests scaling/routing,
   // not transcription. The product transcription path is covered by the real
   // Soniox e2e tests.
@@ -70,6 +74,8 @@ const N_CLIENTS = Number.parseInt(process.env.AUDIO_SOAK_N ?? "30", 10);
 }
 
 import { startCore, type CoreHandle } from "../packages/core/src/index";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+import { localTestRedisUrl } from "./support/local-redis";
 import {
   startTestOem,
   type TestOemHandle,
@@ -92,6 +98,11 @@ let testOemHandle: TestOemHandle;
 let podA: PodHandle;
 let podB: PodHandle;
 
+const databaseUrl = localTestMongoUrl("audio-soak");
+// Set only once the live connection is confirmed to be our random database;
+// every destructive call is gated on it.
+let verified = false;
+
 beforeAll(async () => {
   const { resetMentraKeyCache } = await import("../packages/shared/src/auth");
   const { resetSigningKeyCache } = await import(
@@ -104,7 +115,9 @@ beforeAll(async () => {
     port: TEST_OEM_PORT,
     tenantId: TEST_OEM_ID,
   });
-  coreHandle = await startCore({ port: CORE_PORT });
+  coreHandle = await startCore({ port: CORE_PORT, mongoUrl: databaseUrl });
+  assertConnectedTo(databaseUrl, UserModel.db.name);
+  verified = true;
   await connectRedis(process.env.REDIS_URL!);
 
   await Promise.all([
@@ -132,6 +145,10 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  if (verified && UserModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, UserModel.db.name);
+    await UserModel.db.dropDatabase();
+  }
   await Promise.all([podA?.kill(), podB?.kill()]);
   await disconnectRedis();
   await coreHandle?.stop();
@@ -139,6 +156,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  assertConnectedTo(databaseUrl, UserModel.db.name);
   await Promise.all([
     OemModel.deleteMany({}),
     UserModel.deleteMany({}),

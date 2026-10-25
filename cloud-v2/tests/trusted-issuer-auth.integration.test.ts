@@ -10,10 +10,14 @@
  *
  * A local HTTP server serves the issuer's JWKS so Core's remote-JWKS fetcher has
  * a real endpoint. Signing uses node:crypto Ed25519 directly (the root tests dir
- * can't resolve jose). Prereq: a running Mongo (override via MONGO_URL). The test
- * wipes its own collections — do NOT point it at a real database.
+ * can't resolve jose).
  *
- * Run: `bun test tests/trusted-issuer-auth.integration.test.ts`
+ * Safety: the test connects through `localTestMongoUrl` (loopback only, random
+ * database name, ignores `MONGO_URL`) and asserts the live connection is on
+ * that database before any destructive call. It clears its collections before
+ * each case and drops the database in `afterAll`, only if the check passed.
+ *
+ * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/trusted-issuer-auth.integration.test.ts`
  */
 
 import crypto from "node:crypto";
@@ -41,7 +45,6 @@ import {
     nodePub.export({ type: "spki", format: "pem" }).toString(),
   );
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
-  process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/mentra-cloud-v2-test";
 }
 
 // eslint-disable-next-line import/first
@@ -57,12 +60,18 @@ import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
+import { resetCoreKeyCaches } from "./support/key-caches";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
 
 const TENANT_ID = "acme";
 const ENV = "sandbox";
 const ISSUER = "https://auth.acme.example/sandbox";
 const KID = "acme-key-1";
 
+const databaseUrl = localTestMongoUrl("trusted-issuer-auth");
+// Set only once the live connection is confirmed to be our random database;
+// every destructive call is gated on it.
+let verified = false;
 let coreApp: ReturnType<typeof createApp>;
 let issuerPrivateKey: crypto.KeyObject;
 let issuerPublicJwk: Record<string, unknown>;
@@ -72,7 +81,11 @@ let jwksUrl: string;
 const b64url = (input: Buffer | string) => Buffer.from(input).toString("base64url");
 
 beforeAll(async () => {
-  await connectMongo(process.env.MONGO_URL!);
+  // This suite's keys were set when the file loaded; a suite before it may have cached its own.
+  resetCoreKeyCaches();
+  await connectMongo(databaseUrl);
+  assertConnectedTo(databaseUrl, UserModel.db.name);
+  verified = true;
   await Promise.all([
     EnterpriseOrgModel.syncIndexes(),
     TrustedIssuerModel.syncIndexes(),
@@ -106,10 +119,16 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise<void>(resolve => jwksServer.close(() => resolve()));
+  if (verified && UserModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, UserModel.db.name);
+    await UserModel.db.dropDatabase();
+  }
   await disconnectMongo();
+  resetCoreKeyCaches();
 });
 
 beforeEach(async () => {
+  assertConnectedTo(databaseUrl, UserModel.db.name);
   await Promise.all([
     EnterpriseOrgModel.deleteMany({ tenantId: /^acme/ }),
     TrustedIssuerModel.deleteMany({ issuer: /^https:\/\/auth\.acme\.example/ }),

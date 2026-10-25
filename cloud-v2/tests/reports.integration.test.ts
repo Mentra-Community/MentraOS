@@ -9,11 +9,13 @@
  * Wires the core in-process via app.fetch and authenticates through the real
  * Supabase-subject token exchange, mirroring auth.mentra-user-exchange tests.
  *
- * Prereq: a running Mongo. Defaults to
- * `mongodb://127.0.0.1:27017/mentra-cloud-v2-test`; override via `MONGO_URL`.
- * The test wipes its own collections between cases — do NOT point at a real DB.
+ * Safety: the test connects through `localTestMongoUrl` (loopback only, random
+ * database name, ignores `MONGO_URL`) and asserts the live connection is on
+ * that database before any destructive call. It clears the report collections
+ * before each case and drops the database in `afterAll`, only if the check
+ * passed.
  *
- * Run: `bun test tests/reports.integration.test.ts`
+ * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/reports.integration.test.ts`
  */
 
 import crypto from "node:crypto";
@@ -36,7 +38,6 @@ const STORAGE_DIR = join(tmpdir(), `mentra-reports-test-${process.pid}`);
     nodePub.export({ type: "spki", format: "pem" }).toString(),
   );
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
-  process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/mentra-cloud-v2-test";
   process.env.SUPABASE_JWT_SECRET = "test-supabase-secret-not-for-production";
   process.env.SUPABASE_URL = "https://testproj.supabase.co";
   process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = STORAGE_DIR;
@@ -64,12 +65,14 @@ import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
-import { committedReadWait, getReport, incidentReportId, listReports } from "../packages/core/src/services/report.service";
+import { committedReadWait, getReport, incidentReportId, listReports, resetReportStorage } from "../packages/core/src/services/report.service";
 import {
   createStorageService,
   sha256Hex,
   StorageService,
 } from "../packages/core/src/services/storage/storage.service";
+import { resetCoreKeyCaches } from "./support/key-caches";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
 
 // Mirrors the limits in api/client/reports.api.ts.
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -84,12 +87,22 @@ const MAX_REQUEST_BODY_BYTES =
 
 const REPORTS_PATH = "http://localhost/api/client/reports";
 
+const databaseUrl = localTestMongoUrl("reports");
+// Set only once the live connection is confirmed to be our random database;
+// every destructive call is gated on it.
+let verified = false;
 let coreApp: ReturnType<typeof createApp>;
 let accessToken: string;
 let mentraUserId: string;
 
 beforeAll(async () => {
-  await connectMongo(process.env.MONGO_URL!);
+  // This suite's keys and storage directory were set when the file loaded; a suite before it may have
+  // cached its own.
+  resetCoreKeyCaches();
+  resetReportStorage();
+  await connectMongo(databaseUrl);
+  assertConnectedTo(databaseUrl, ReportModel.db.name);
+  verified = true;
   await Promise.all([
     ReportModel.syncIndexes(),
     ReportAssetModel.syncIndexes(),
@@ -108,11 +121,18 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (verified && ReportModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, ReportModel.db.name);
+    await ReportModel.db.dropDatabase();
+  }
   await disconnectMongo();
   await rm(STORAGE_DIR, { recursive: true, force: true });
+  resetCoreKeyCaches();
+  resetReportStorage();
 });
 
 beforeEach(async () => {
+  assertConnectedTo(databaseUrl, ReportModel.db.name);
   await Promise.all([
     ReportModel.deleteMany({}),
     ReportAssetModel.deleteMany({}),
@@ -1081,6 +1101,9 @@ describe("report Slack notifications", () => {
     );
     expect(res.status).toBe(200);
     expect(((await res.json()) as { status: string }).status).toBe("ready");
+    // The notifier reads the token only after its account lookup. Let it run while the token is still
+    // unset: otherwise it reads the next test's token and posts into that test's mocked bot.
+    await new Promise(resolve => setTimeout(resolve, 200));
     expect(slackCalls).toHaveLength(0);
   });
 });

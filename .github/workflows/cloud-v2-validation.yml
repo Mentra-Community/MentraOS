@@ -235,7 +235,17 @@ jobs:
             tests/admin-registry.integration.test.ts \
             tests/migrate-store-developer-orgs.integration.test.ts \
             tests/legacy-identity-claim.integration.test.ts \
-            tests/legacy-miniapp-registry.integration.test.ts
+            tests/legacy-miniapp-registry.integration.test.ts \
+            tests/account-email.integration.test.ts \
+            tests/client-workspaces-api.integration.test.ts \
+            tests/membership-history.integration.test.ts \
+            tests/one-workspace-cleanup.integration.test.ts \
+            tests/one-workspace-guard.integration.test.ts \
+            tests/oem-auth.integration.test.ts \
+            tests/refresh-rotation.integration.test.ts \
+            tests/reports.integration.test.ts \
+            tests/trusted-issuer-auth.integration.test.ts \
+            tests/startup-migrations.integration.test.ts
 
       - name: Verify nightly selection-result projection
         working-directory: cloud-v2

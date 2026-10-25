@@ -9,7 +9,13 @@
  * a second call returns the same token until it nears expiry.
  *
  * Run with: bun test tests/cloud-client.miniapp-token.integration.test.ts
- * (needs Mongo at 127.0.0.1:27017 and Redis at 127.0.0.1:6379).
+ * (needs a local Mongo and Redis, by default 127.0.0.1:27017 and 127.0.0.1:6379).
+ *
+ * Safety: Mongo comes from `localTestMongoUrl` (loopback only, random database
+ * name, ignores `MONGO_URL`), checked before any destructive call and dropped
+ * afterwards. Redis comes from `localTestRedisUrl` (loopback only; refuses to
+ * run when `REDIS_URL` is set), so the keys this suite deletes are on a local
+ * server even under `doppler run`. Override with `CLOUD_V2_TEST_MONGO_URL` / `CLOUD_V2_TEST_REDIS_URL`.
  */
 import crypto from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -38,13 +44,13 @@ const TEST_PACKAGE = "com.test.app";
     miniapp.publicKey.export({ type: "spki", format: "pem" }).toString(),
   );
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
-  process.env.MONGO_URL ??=
-    "mongodb://127.0.0.1:27017/mentra-cloud-v2-cloudclient-miniapp-test";
-  process.env.REDIS_URL ??= "redis://127.0.0.1:6379/5";
+  process.env.REDIS_URL = localTestRedisUrl(5);
   process.env.LOG_LEVEL ??= "warn";
 }
 
 import { startCore, type CoreHandle } from "../packages/core/src/index";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+import { localTestRedisUrl } from "./support/local-redis";
 import { startTestOem, type TestOemHandle } from "../test/test-oem/src/index";
 import { OemModel } from "../packages/core/src/models/oem.model";
 import { UserModel } from "../packages/core/src/models/user.model";
@@ -56,6 +62,11 @@ import { CloudClient } from "../packages/cloud-client/node";
 let coreHandle: CoreHandle;
 let testOemHandle: TestOemHandle;
 
+const databaseUrl = localTestMongoUrl("cloud-client-miniapp-token");
+// Set only once the live connection is confirmed to be our random database;
+// every destructive call is gated on it.
+let verified = false;
+
 beforeAll(async () => {
   const { resetMentraKeyCache } = await import("../packages/shared/src/auth");
   const { resetSigningKeyCache } = await import(
@@ -65,7 +76,9 @@ beforeAll(async () => {
   resetSigningKeyCache();
 
   testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
-  coreHandle = await startCore({ port: CORE_PORT });
+  coreHandle = await startCore({ port: CORE_PORT, mongoUrl: databaseUrl });
+  assertConnectedTo(databaseUrl, UserModel.db.name);
+  verified = true;
   await Promise.all([
     OemModel.syncIndexes(),
     UserModel.syncIndexes(),
@@ -76,11 +89,16 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  if (verified && UserModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, UserModel.db.name);
+    await UserModel.db.dropDatabase();
+  }
   await coreHandle?.stop();
   await testOemHandle?.stop();
 });
 
 beforeEach(async () => {
+  assertConnectedTo(databaseUrl, UserModel.db.name);
   await Promise.all([
     OemModel.deleteMany({}),
     UserModel.deleteMany({}),

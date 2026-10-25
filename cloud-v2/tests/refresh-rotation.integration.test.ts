@@ -10,9 +10,12 @@
  * successor so duplicate responses cannot race the client into a logout;
  * anything older than the immediate predecessor still fails.
  *
- * Prereq: a running Mongo (override via MONGO_URL). Wipes its own collection.
+ * Safety: the test connects through `localTestMongoUrl` (loopback only, random
+ * database name, ignores `MONGO_URL`) and asserts the live connection is on
+ * that database before any destructive call. The database is dropped in
+ * `afterAll`, only if the check passed.
  *
- * Run: bun test tests/refresh-rotation.integration.test.ts
+ * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/refresh-rotation.integration.test.ts`
  */
 import crypto from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -30,7 +33,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
     publicKey.export({ type: "spki", format: "pem" }).toString(),
   );
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
-  process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/mentra-cloud-v2-test";
 }
 
 // eslint-disable-next-line import/first
@@ -44,6 +46,15 @@ import { refreshSession } from "../packages/core/src/services/session.service";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 // eslint-disable-next-line import/first
 import { OauthError } from "../packages/core/src/types/oauth.types";
+// eslint-disable-next-line import/first
+import { resetCoreKeyCaches } from "./support/key-caches";
+// eslint-disable-next-line import/first
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+
+const databaseUrl = localTestMongoUrl("refresh-rotation");
+// Set only once the live connection is confirmed to be our random database;
+// every destructive call is gated on it.
+let verified = false;
 
 /** Mirror of session.service's private hashRefreshToken. */
 function hash(plaintext: string): string {
@@ -76,14 +87,24 @@ async function expectInvalidGrant(refreshToken: string): Promise<void> {
 }
 
 beforeAll(async () => {
-  await connectMongo(process.env.MONGO_URL!);
+  // This suite's keys were set when the file loaded; a suite before it may have cached its own.
+  resetCoreKeyCaches();
+  await connectMongo(databaseUrl);
+  assertConnectedTo(databaseUrl, RefreshTokenModel.db.name);
+  verified = true;
 });
 
 afterAll(async () => {
+  if (verified && RefreshTokenModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, RefreshTokenModel.db.name);
+    await RefreshTokenModel.db.dropDatabase();
+  }
   await disconnectMongo();
+  resetCoreKeyCaches();
 });
 
 beforeEach(async () => {
+  assertConnectedTo(databaseUrl, RefreshTokenModel.db.name);
   await RefreshTokenModel.deleteMany({ mentraUserId: "mu_test_os1703" });
 });
 
