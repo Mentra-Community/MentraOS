@@ -147,10 +147,17 @@ if [[ "${UPLOAD_GOOGLE_PLAY:-true}" == "false" ]]; then
   play_detail="dev uploads paused; APK/AAB downloads remain available"
 fi
 android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Android: $(icon "$android_result") $(label "$android_result") · Google Play: ${play_detail}"
+# The build numbers Google Play Console and App Store Connect show for this build.
+if [[ -n "${ANDROID_VERSION_CODE:-}" ]]; then
+  android_line+=" · versionCode ${ANDROID_VERSION_CODE}"
+fi
 if [[ -n "${PLAY_INSTALL_URL:-}" ]]; then
   android_line+=" - <${PLAY_INSTALL_URL}|Install from Google Play>"
 fi
 ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}iOS: $(icon "$ios_result") $(label "$ios_result") · TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
+if [[ -n "${IOS_BUILD_NUMBER:-}" ]]; then
+  ios_line+=" · build ${IOS_BUILD_NUMBER}"
+fi
 if [[ -n "${TESTFLIGHT_DISTRIBUTION_STATUS:-}" ]]; then
   ios_line+=" - ${TESTFLIGHT_DISTRIBUTION_STATUS}"
 fi

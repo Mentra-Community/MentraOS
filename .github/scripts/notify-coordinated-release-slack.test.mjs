@@ -108,3 +108,18 @@ test("store phase failures remain visible even when downloadable artifacts are r
   assert.match(text, /iOS: :x: failed · TestFlight:/)
   assert.match(text, /Android: :x: failed · Google Play:/)
 })
+
+test("app lines show the build numbers Google Play Console and App Store Connect show", () => {
+  const text = JSON.stringify(
+    notification("core", {
+      BRANCH: "staging",
+      STAGING_SLACK_WEBHOOK_URL: "https://example.invalid",
+      ANDROID_RESULT: "success",
+      IOS_RESULT: "success",
+      ANDROID_VERSION_CODE: "304000123",
+      IOS_BUILD_NUMBER: "304000120",
+    }),
+  )
+  assert.match(text, /Google Play: [^\\]*· versionCode 304000123/)
+  assert.match(text, /TestFlight: [^\\]*· build 304000120/)
+})
