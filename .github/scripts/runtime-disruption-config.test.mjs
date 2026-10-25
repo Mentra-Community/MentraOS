@@ -32,7 +32,7 @@ function fixture(t) {
   return directory
 }
 
-test('all promoted environments render identical behavior and scoped Runtime protection', t => {
+test('all promoted environments render identical behavior and scoped Core and Runtime protection', t => {
   const directory = fixture(t)
   const configurations = []
   for (const [environment, target] of Object.entries(CLOUD_V2_TARGETS)) {
@@ -56,11 +56,17 @@ test('all promoted environments render identical behavior and scoped Runtime pro
     delete config.envGroups
     configurations.push(config)
     const overrides = parse(path.join(directory, target.porterConfig.replace(/\.yaml$/, '.overrides.yaml')))
-    assert.deepEqual(Object.keys(overrides), [`${target.porterApp}-runtime`])
-    assert.deepEqual(overrides[`${target.porterApp}-runtime`], {
-      podDisruptionBudget: {enabled: true, minAvailablePercentage: 100},
-      deploymentStrategy: {kind: 'rolling', rolling: {maxUnavailable: 0, maxSurge: 1}},
-    })
+    assert.deepEqual(Object.keys(overrides), [`${target.porterApp}-core`, `${target.porterApp}-runtime`])
+    for (const service of ['core', 'runtime']) {
+      assert.deepEqual(overrides[`${target.porterApp}-${service}`], {
+        podDisruptionBudget: {enabled: true, minAvailablePercentage: 100},
+        deploymentStrategy: {kind: 'rolling', rolling: {maxUnavailable: 0, maxSurge: 1}},
+      })
+    }
+    const core = config.services.find(service => service.name === 'core')
+    assert.equal(core.instances, 1)
+    assert.equal(core.cpuCores, 0.25)
+    assert.equal(core.ramMegabytes, 1024)
     const runtime = config.services.find(service => service.name === 'runtime')
     assert.equal(runtime.instances, 1)
     assert.equal(runtime.cpuCores, 0.5)
@@ -94,6 +100,10 @@ for (const [name, filename, transform, error] of [
   ['missing web type', 'porter.shared.yaml', text => text.replace('    type: web\n', ''), /requires a web entrypoint/],
   ['disabled readiness', 'porter.shared.yaml', text => text.replace('readinessCheck:\n      enabled: true', 'readinessCheck:\n      enabled: false'), /requires an enabled readinessCheck/],
   ['unprotected runtime', 'runtime-policy.yaml', text => text.replace('minAvailablePercentage: 100', 'minAvailablePercentage: 0'), /requires PDB100/],
+  ['unprotected Core eviction', 'runtime-policy.yaml', text => text.replace(/(core:[\s\S]*minAvailablePercentage:) 100/, '$1 0'), /Core requires PDB100/],
+  ['Core rollout dropping the singleton', 'runtime-policy.yaml', text => text.replace(/(core:[\s\S]*maxUnavailable:) 0/, '$1 1'), /Core requires PDB100/],
+  ['Core rollout without replacement capacity', 'runtime-policy.yaml', text => text.replace(/(core:[\s\S]*maxSurge:) 1/, '$1 0'), /Core requires PDB100/],
+  ['missing Core policy', 'runtime-policy.yaml', text => text.slice(0, text.indexOf('core:')), /Core policy must be an object/],
   ['placement expansion', 'runtime-policy.yaml', text => text + '  affinity: {}\n', /unsupported field affinity/],
 ]) {
   test(`rejects ${name} before producing deployable inputs`, t => {

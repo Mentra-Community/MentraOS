@@ -91,19 +91,22 @@ export function renderCloudV2Config(sourceRoot, environment) {
     }),
   }
   const policy = read('runtime-policy.yaml')
-  keys(policy, ['runtime'], 'Shared service policy')
-  keys(policy.runtime, ['podDisruptionBudget', 'deploymentStrategy'], 'Runtime policy')
-  keys(policy.runtime.podDisruptionBudget, ['enabled', 'minAvailablePercentage'], 'Runtime disruption budget')
-  keys(policy.runtime.deploymentStrategy, ['kind', 'rolling'], 'Runtime deployment strategy')
-  keys(policy.runtime.deploymentStrategy.rolling, ['maxUnavailable', 'maxSurge'], 'Runtime rolling strategy')
-  const {podDisruptionBudget: budget, deploymentStrategy: strategy} = policy.runtime
-  if (budget.enabled !== true || budget.minAvailablePercentage !== 100 || strategy.kind !== 'rolling' ||
-      strategy.rolling.maxUnavailable !== 0 || strategy.rolling.maxSurge !== 1) {
-    throw new Error('Runtime requires PDB100 and rolling maxUnavailable0/maxSurge1 in every environment')
+  keys(policy, ['core', 'runtime'], 'Shared service policy')
+  for (const service of ['core', 'runtime']) {
+    const label = service === 'core' ? 'Core' : 'Runtime'
+    keys(policy[service], ['podDisruptionBudget', 'deploymentStrategy'], `${label} policy`)
+    keys(policy[service].podDisruptionBudget, ['enabled', 'minAvailablePercentage'], `${label} disruption budget`)
+    keys(policy[service].deploymentStrategy, ['kind', 'rolling'], `${label} deployment strategy`)
+    keys(policy[service].deploymentStrategy.rolling, ['maxUnavailable', 'maxSurge'], `${label} rolling strategy`)
+    const {podDisruptionBudget: budget, deploymentStrategy: strategy} = policy[service]
+    if (budget.enabled !== true || budget.minAvailablePercentage !== 100 || strategy.kind !== 'rolling' ||
+        strategy.rolling.maxUnavailable !== 0 || strategy.rolling.maxSurge !== 1) {
+      throw new Error(`${label} requires PDB100 and rolling maxUnavailable0/maxSurge1 in every environment`)
+    }
   }
   return {
     config,
-    overrides: {[`${target.porterApp}-runtime`]: policy.runtime},
+    overrides: {[`${target.porterApp}-core`]: policy.core, [`${target.porterApp}-runtime`]: policy.runtime},
     configPath: target.porterConfig,
     overridesPath: target.porterConfig.replace(/\.yaml$/, '.overrides.yaml'),
   }

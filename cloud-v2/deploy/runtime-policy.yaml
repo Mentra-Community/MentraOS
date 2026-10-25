@@ -1,5 +1,15 @@
-# Protect the sole serving Runtime from voluntary node eviction.
+# Protect the sole serving Core and Runtime from voluntary node eviction.
 runtime:
+  podDisruptionBudget:
+    enabled: true
+    minAvailablePercentage: 100
+  deploymentStrategy:
+    kind: rolling
+    rolling:
+      maxUnavailable: 0
+      maxSurge: 1
+
+core:
   podDisruptionBudget:
     enabled: true
     minAvailablePercentage: 100
