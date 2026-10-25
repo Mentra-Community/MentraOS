@@ -102,7 +102,8 @@ function invitationTo(workspaceName: string, fields: Partial<InvitationPreview> 
     email: "sam@acme.test",
     role: "member",
     invitedByEmail: "olivia@acme.test",
-    expiresAt: "2026-10-26T01:25:48.000Z",
+    // A week from now, so the card always reads "Expires in 7 days" whenever the test runs.
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     ...fields,
   };
 }
