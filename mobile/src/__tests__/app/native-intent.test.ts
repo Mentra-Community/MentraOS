@@ -45,3 +45,18 @@ it.each([
   expect(redirectSystemPath({path: link, initial: false})).toBeNull()
   expect(redirectSystemPath({path: link, initial: true})).toBe("/")
 })
+
+it.each([
+  "com.mentra://auth/reset-password#access_token=x&refresh_token=y&type=recovery",
+  "https://apps.mentraglass.com/auth/reset-password#access_token=x",
+  "https://apps.mentra.glass/auth/reset-password/",
+  "/auth/reset-password",
+])("keeps a reset link with its handler, never opening the reset screen: %s", (link) => {
+  expect(redirectSystemPath({path: link, initial: false})).toBeNull()
+  expect(redirectSystemPath({path: link, initial: true})).toBe("/")
+})
+
+it("still opens the reset screen from an unrelated host's path untouched", () => {
+  const other = "https://example.com/auth/reset-password"
+  expect(redirectSystemPath({path: other, initial: false})).toBe(other)
+})

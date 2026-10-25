@@ -1137,16 +1137,20 @@ const en = {
     rememberPassword: "Remember your password?",
     backToLogin: "Back to Log In",
     resetPasswordTitle: "Reset Password",
-    resetPasswordSubtitle: "Enter your new password below",
     resetPasswordCodeSubtitle: "Enter the verification code sent to your email and choose a new password.",
+    linkSignInTitle: "Sign in with this link?",
+    linkSignInMessage: "This link signs you in as {{email}}. Continue only if this is your account.",
+    linkSignInSwitchMessage:
+      "You're signed in as {{current}}. This link signs you in as {{email}} instead. Continue only if this is your account.",
+    linkSignInSwitchUnknownMessage:
+      "You're signed in to another account. This link signs you in as {{email}} instead. Continue only if this is your account.",
+    linkSignInContinue: "Sign in",
     verificationCode: "Verification Code",
     verificationCodePlaceholder: "Enter 6-digit code",
     resetPassword: "Reset Password",
     passwordResetSuccess: "Password Reset Successful",
     redirectingToLogin: "Redirecting to login…",
     loggingYouIn: "Logging you in…",
-    invalidResetLink: "Invalid or expired reset link",
-    verifyingResetLink: "Verifying reset link…",
     // Error messages - user-friendly versions of API errors
     errors: {
       // Credentials errors

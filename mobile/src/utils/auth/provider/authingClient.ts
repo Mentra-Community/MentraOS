@@ -359,10 +359,6 @@ export class AuthingWrapperClient extends AuthClient {
     return Res.error_async(new Error("Method not implemented"))
   }
 
-  public updateSessionWithTokens(_tokens: {access_token: string; refresh_token: string}): AsyncResult<void, Error> {
-    return Res.error_async(new Error("Method not implemented"))
-  }
-
   public appleSignIn(): AsyncResult<string, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }

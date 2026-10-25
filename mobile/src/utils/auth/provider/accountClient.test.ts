@@ -155,8 +155,11 @@ describe("AccountAuthProvider signup verification", () => {
     fetchMock
       .mockResolvedValueOnce(response(200, {access_token: "mentra-access", refresh_token: "mentra-refresh"}))
       .mockResolvedValueOnce(response(200, verifiedUser))
-    const result = await provider.completeSignupVerification("provider-token")
-    expect(result.is_ok()).toBe(true)
+    const confirm = jest.fn(async () => true)
+    const result = await provider.completeSignupVerification("provider-token", confirm)
+    expect(result.is_ok() && result.value).toBe("signed_in")
+    // Another account is signed in, so the person was asked first.
+    expect(confirm).toHaveBeenCalledWith({email: verifiedUser.email, current: {email: undefined}})
     const [url, request] = fetchMock.mock.calls[0]
     expect(url).toBe("https://core.example.test/api/client/auth/exchange")
     expect(request.headers).toEqual({"content-type": "application/x-www-form-urlencoded"})
@@ -189,12 +192,129 @@ describe("AccountAuthProvider signup verification", () => {
         if (failure === "profile unavailable") fetchMock.mockRejectedValueOnce(new Error("offline"))
         else fetchMock.mockResolvedValueOnce(response(failure === "profile rejected" ? 403 : 200, {}))
       }
-      const result = await provider.completeSignupVerification("provider-token")
+      const confirm = jest.fn(async () => true)
+      const result = await provider.completeSignupVerification("provider-token", confirm)
       expect(result.is_error()).toBe(true)
+      expect(confirm).not.toHaveBeenCalled()
       expect(await storedCredential("mentra.account.accessToken")).toBe("previous-access")
       expect(await storedCredential("mentra.account.refreshToken")).toBe("previous-refresh")
       expect(storedProfile()).toBe(JSON.stringify({id: "previous-user"}))
       expect(listener).not.toHaveBeenCalled()
     },
   )
+})
+
+describe("AccountAuthProvider signup links never switch accounts silently", () => {
+  const originalFetch = global.fetch
+  const fetchMock = jest.fn()
+  const linkAccount = {mentraUserId: "link-user", email: "Link@Example.test", name: "Link account"}
+  const response = (status: number, body: unknown) => ({ok: status < 400, status, json: async () => body})
+  let provider: AccountAuthProvider
+  let listener: jest.Mock
+  let unsubscribe: () => void
+
+  const exchangeFor = (me: unknown) => {
+    fetchMock
+      .mockResolvedValueOnce(response(200, {access_token: "link-access", refresh_token: "link-refresh"}))
+      .mockResolvedValueOnce(response(200, me))
+  }
+  const signInAs = async (profile: {id: string; email?: string}) => {
+    await accountCredentials.set("mentra.account.accessToken", "current-access")
+    await accountCredentials.set("mentra.account.refreshToken", "current-refresh")
+    storage.save("mentra.account.userProfile", JSON.stringify(profile))
+  }
+
+  beforeEach(async () => {
+    storage.clearAll()
+    await resetAccountCredentials()
+    fetchMock.mockReset()
+    // Revoking a declined session: /me, then /logout.
+    fetchMock.mockResolvedValue(response(200, {}))
+    global.fetch = fetchMock as unknown as typeof fetch
+    provider = new AccountAuthProvider()
+    listener = jest.fn()
+    const sub = provider.onAuthStateChange(listener)
+    if (sub.is_error()) throw sub.error
+    unsubscribe = sub.value.unsubscribe
+  })
+
+  afterEach(() => {
+    unsubscribe()
+    global.fetch = originalFetch
+  })
+
+  it("keeps the signed-in account when the person declines another account's link", async () => {
+    await signInAs({id: "victim", email: "victim@example.test"})
+    exchangeFor(linkAccount)
+    const confirm = jest.fn(async () => false)
+    const result = await provider.completeSignupVerification("attacker-provider-token", confirm)
+    expect(result.is_ok() && result.value).toBe("declined")
+    expect(confirm).toHaveBeenCalledWith({email: linkAccount.email, current: {email: "victim@example.test"}})
+    expect(await storedCredential("mentra.account.accessToken")).toBe("current-access")
+    expect(await storedCredential("mentra.account.refreshToken")).toBe("current-refresh")
+    expect(listener).not.toHaveBeenCalled()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const urls = fetchMock.mock.calls.map(([url]) => url)
+    expect(urls).toContain("https://core.example.test/api/account/logout")
+  })
+
+  it("asks a signed-out person whose phone didn't start this sign-up", async () => {
+    exchangeFor(linkAccount)
+    const confirm = jest.fn(async () => false)
+    const result = await provider.completeSignupVerification("attacker-provider-token", confirm)
+    expect(result.is_ok() && result.value).toBe("declined")
+    expect(confirm).toHaveBeenCalledWith({email: linkAccount.email, current: null})
+    expect(await storedCredential("mentra.account.accessToken")).toBeNull()
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it("asks when this phone signed up with a different email", async () => {
+    fetchMock.mockResolvedValueOnce(response(202, {status: "verification_sent"}))
+    expect((await provider.signUp({email: "mine@example.test", password: "pw-123456"})).is_ok()).toBe(true)
+    exchangeFor(linkAccount)
+    const confirm = jest.fn(async () => false)
+    await provider.completeSignupVerification("attacker-provider-token", confirm)
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(await storedCredential("mentra.account.accessToken")).toBeNull()
+  })
+
+  it.each(["signUp", "resendSignupEmail"] as const)(
+    "signs in without asking when it confirms the sign-up this phone started (%s)",
+    async (start) => {
+      fetchMock.mockResolvedValueOnce(response(202, {status: "verification_sent"}))
+      if (start === "signUp") await provider.signUp({email: " link@example.TEST ", password: "pw-123456"})
+      else await provider.resendSignupEmail("link@example.test")
+      exchangeFor(linkAccount)
+      const confirm = jest.fn(async () => false)
+      const result = await provider.completeSignupVerification("provider-token", confirm)
+      expect(result.is_ok() && result.value).toBe("signed_in")
+      expect(confirm).not.toHaveBeenCalled()
+      expect(await storedCredential("mentra.account.accessToken")).toBe("link-access")
+      // The marker is spent: a second link for the same account asks.
+      const marker = storage.load<string>("mentra.account.pendingSignupEmail")
+      expect(marker.is_ok() ? marker.value : undefined).toBeFalsy()
+    },
+  )
+
+  it("signs in without asking when the link is for the account already signed in", async () => {
+    await signInAs({id: "link-user", email: "link@example.test"})
+    exchangeFor(linkAccount)
+    const confirm = jest.fn(async () => false)
+    const result = await provider.completeSignupVerification("provider-token", confirm)
+    expect(result.is_ok() && result.value).toBe("signed_in")
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  it("refuses a link whose account has no email to show", async () => {
+    exchangeFor({mentraUserId: "link-user"})
+    const confirm = jest.fn(async () => true)
+    const result = await provider.completeSignupVerification("provider-token", confirm)
+    expect(result.is_error()).toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(await storedCredential("mentra.account.accessToken")).toBeNull()
+  })
+
+  it("has no way to adopt a session handed over in a link", () => {
+    expect("updateSessionWithTokens" in provider).toBe(false)
+  })
 })

@@ -266,6 +266,16 @@ const ja = {
     continue: "続ける",
     homeLink: "miniappを追加",
   },
+  login: {
+    ...en.login,
+    linkSignInTitle: "このリンクでサインインしますか？",
+    linkSignInMessage: "このリンクで {{email}} としてサインインします。ご自身のアカウントの場合のみ続行してください。",
+    linkSignInSwitchMessage:
+      "現在 {{current}} でサインインしています。このリンクでは代わりに {{email}} としてサインインします。ご自身のアカウントの場合のみ続行してください。",
+    linkSignInSwitchUnknownMessage:
+      "現在別のアカウントでサインインしています。このリンクでは代わりに {{email}} としてサインインします。ご自身のアカウントの場合のみ続行してください。",
+    linkSignInContinue: "サインイン",
+  },
 } satisfies TranslationResource
 
 export default ja

@@ -257,6 +257,16 @@ const ko = {
     continue: "계속",
     homeLink: "miniapp 추가",
   },
+  login: {
+    ...en.login,
+    linkSignInTitle: "이 링크로 로그인할까요?",
+    linkSignInMessage: "이 링크는 {{email}}(으)로 로그인합니다. 본인 계정인 경우에만 계속하세요.",
+    linkSignInSwitchMessage:
+      "현재 {{current}}(으)로 로그인되어 있습니다. 이 링크는 대신 {{email}}(으)로 로그인합니다. 본인 계정인 경우에만 계속하세요.",
+    linkSignInSwitchUnknownMessage:
+      "현재 다른 계정으로 로그인되어 있습니다. 이 링크는 대신 {{email}}(으)로 로그인합니다. 본인 계정인 경우에만 계속하세요.",
+    linkSignInContinue: "로그인",
+  },
 } satisfies TranslationResource
 
 export default ko
