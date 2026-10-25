@@ -19,9 +19,15 @@ import {copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, 
 import {createServer} from "node:net"
 import {basename, join} from "node:path"
 import {pathToFileURL} from "node:url"
-import {parse} from "dotenv"
 
 const FIRST_PORT = 3100
+
+// dotenv, loaded by the functions that read .env files: the mobile preinstall
+// (copyPublicMiniapps) runs before it is installed.
+let parse
+const loadDotenv = async () => {
+  parse ??= (await import("dotenv")).parse
+}
 
 const git = spawnSync("git", ["rev-parse", "--show-toplevel"], {encoding: "utf8"})
 const top = git.status === 0 ? git.stdout.trim() : ""
@@ -69,7 +75,17 @@ function run(command, args, cwd, env = process.env) {
 /** Make a public miniapp's copy equal to the original, deletions included. */
 function copy(app) {
   if (app.dir === app.source) return
+  // GNU rsync creates only the last component of the destination.
+  mkdirSync(app.dir, {recursive: true})
   run("rsync", ["-a", "--delete", "--exclude", "node_modules", "--exclude", "dist", `${app.source}/`, app.dir], top)
+}
+
+/**
+ * In the monorepo, put each public miniapp's copy in MentraOS's root workspace (public/mentraos/miniapps/<name>), so
+ * that workspace's install matches its lockfile, which lists them. Nothing to do in MentraOS, where they live there.
+ */
+export function copyPublicMiniapps() {
+  for (const app of bundledMiniapps()) if (app.workspace) copy(app)
 }
 
 /** Keep copying it on every change. */
@@ -140,6 +156,7 @@ function newZips(dir, since) {
 /** Pack every bundled miniapp from the working tree into assets/miniapps/, or throw naming those that failed. */
 export async function packMiniapps() {
   if (process.env.CI || !top) return
+  await loadDotenv()
   const apps = bundledMiniapps()
   const dest = join(mobile, "assets/miniapps")
   mkdirSync(dest, {recursive: true})
@@ -232,6 +249,7 @@ function prefixed(name, stream, out) {
  */
 export async function startDevMiniapps() {
   if (process.env.CI || process.env.MENTRA_DEV_MINIAPPS === "0" || !top) return
+  await loadDotenv()
   const apps = bundledMiniapps().filter((app) => app.dev)
   if (apps.length === 0) return
   prepare(apps)
