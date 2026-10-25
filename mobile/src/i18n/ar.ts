@@ -190,6 +190,16 @@ const ar = {
     signInFailedDescription:
       "تعذّر على Microsoft تسجيل دخولك إلى هذه المؤسسة. حاول مرة أخرى أو تواصل مع فريق تقنية المعلومات.",
   },
+  login: {
+    ...en.login,
+    linkSignInTitle: "هل تريد تسجيل الدخول باستخدام هذا الرابط؟",
+    linkSignInMessage: "يسجّل هذا الرابط دخولك باسم {{email}}. تابع فقط إذا كان هذا حسابك.",
+    linkSignInSwitchMessage:
+      "أنت مسجّل الدخول باسم {{current}}. يسجّل هذا الرابط دخولك باسم {{email}} بدلًا من ذلك. تابع فقط إذا كان هذا حسابك.",
+    linkSignInSwitchUnknownMessage:
+      "أنت مسجّل الدخول إلى حساب آخر. يسجّل هذا الرابط دخولك باسم {{email}} بدلًا من ذلك. تابع فقط إذا كان هذا حسابك.",
+    linkSignInContinue: "تسجيل الدخول",
+  },
 } satisfies TranslationResource
 
 export default ar

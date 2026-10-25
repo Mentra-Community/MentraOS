@@ -204,6 +204,16 @@ const fr = {
     signInFailedDescription:
       "Microsoft n'a pas pu vous connecter à cette organisation. Réessayez ou contactez votre équipe informatique.",
   },
+  login: {
+    ...en.login,
+    linkSignInTitle: "Se connecter avec ce lien ?",
+    linkSignInMessage: "Ce lien vous connecte en tant que {{email}}. Continuez uniquement s'il s'agit de votre compte.",
+    linkSignInSwitchMessage:
+      "Vous êtes connecté en tant que {{current}}. Ce lien vous connecte plutôt en tant que {{email}}. Continuez uniquement s'il s'agit de votre compte.",
+    linkSignInSwitchUnknownMessage:
+      "Vous êtes connecté à un autre compte. Ce lien vous connecte plutôt en tant que {{email}}. Continuez uniquement s'il s'agit de votre compte.",
+    linkSignInContinue: "Se connecter",
+  },
 } satisfies TranslationResource
 
 export default fr

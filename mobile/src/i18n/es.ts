@@ -204,6 +204,16 @@ const es = {
     signInFailedDescription:
       "Microsoft no pudo iniciar tu sesión en esta organización. Inténtalo de nuevo o contacta con tu equipo de TI.",
   },
+  login: {
+    ...en.login,
+    linkSignInTitle: "¿Iniciar sesión con este enlace?",
+    linkSignInMessage: "Este enlace inicia sesión como {{email}}. Continúa solo si es tu cuenta.",
+    linkSignInSwitchMessage:
+      "Has iniciado sesión como {{current}}. Este enlace inicia sesión como {{email}} en su lugar. Continúa solo si es tu cuenta.",
+    linkSignInSwitchUnknownMessage:
+      "Has iniciado sesión en otra cuenta. Este enlace inicia sesión como {{email}} en su lugar. Continúa solo si es tu cuenta.",
+    linkSignInContinue: "Iniciar sesión",
+  },
 } satisfies TranslationResource
 
 export default es
