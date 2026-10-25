@@ -1,16 +1,18 @@
 import {submitRoutineRequest, routineLabelIds, routineId, ensure, positive, automaticRoutineRequest} from "./routine-api.mjs"
-import {authenticatedPr, publicationForPlatform, platformProducer} from "./request-e2e-routine.mjs"
+import {appRepository, authenticatedPr, publicationForPlatform, platformProducer} from "./request-e2e-routine.mjs"
 import {COORDINATED_WORKFLOW} from "./coordinated-routine-request.mjs"
 import {selectedRoutinePlatforms, reportUnsupportedRoutinePlatforms, retainedAutomaticPlan} from './routine-platforms.mjs'
 
 /** Reauthenticate the completed public producer; application archives are resolved by Core. */
 export async function planDeviceDispatches({github, context, token, fetchImpl = fetch, checksOnly = false}) {
   const candidate = context.payload.workflow_run
-  ensure(context.eventName === "workflow_run" && positive(candidate?.id) && positive(candidate.run_attempt) &&
-    `${context.repo.owner}/${context.repo.repo}` === "Mentra-Community/MentraOS", "Invalid public producer callback")
+  ensure(context.eventName === "workflow_run" && positive(candidate?.id) && positive(candidate.run_attempt),
+    "Invalid public producer callback")
+  // MentraOS, or the Mentra monorepo, which publishes its own PR builds.
+  const repository = appRepository(context)
   const {data: run} = await github.rest.actions.getWorkflowRunAttempt({...context.repo, run_id: candidate.id, attempt_number: candidate.run_attempt})
   ensure(run.id === candidate.id && run.run_attempt === candidate.run_attempt && run.status === "completed" &&
-    run.repository?.full_name === "Mentra-Community/MentraOS" && run.head_repository?.full_name === "Mentra-Community/MentraOS",
+    run.repository?.full_name === repository && run.head_repository?.full_name === repository,
     "Completed producer differs from its callback")
   // Coordinated publication itself requests no coverage. Explicit exact-source requests and enabled nightlies use Core.
   if (run.path === COORDINATED_WORKFLOW) return []
@@ -29,7 +31,9 @@ export async function planDeviceDispatches({github, context, token, fetchImpl = 
     const response = await fetchImpl('https://core.dev.us-west-2.mentraglass.com/api/internal/pr-routine-checks/intake', {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20000),
       headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
-      body: JSON.stringify({prNumber: pr.number, deliveryId: `producer-${run.id}-${run.run_attempt}`}),
+      // Core's intake defaults to MentraOS; another repository is named.
+      body: JSON.stringify({prNumber: pr.number, deliveryId: `producer-${run.id}-${run.run_attempt}`,
+        ...(repository === "Mentra-Community/MentraOS" ? {} : {repository})}),
     })
     ensure(response.ok, 'PR routine check reconciliation is unavailable')
     return []

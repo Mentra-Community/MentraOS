@@ -509,6 +509,21 @@ test("iOS path applicability matches its filtered workflow", () => {
     assert.equal(iosBuildRequired([{filename}]), true)
 })
 
+test("the monorepo maps its layout to MentraOS's paths, and every bundled miniapp requires iOS", () => {
+  const monorepo = "Mentra-Community/Mentra"
+  for (const filename of ["public/mentraos/mobile/src/app.tsx", "mentra_live/asg_client/app/build.gradle",
+    "miniapps/public/captions/src/index.ts", ".github/workflows/mentra-app-ios-build.yml",
+    "public/mentraos/.github/scripts/pr-ios-artifacts.mjs", "mentra_live/bes/src/main.c", ".github/workflows/bes.yml",
+    ".github/ci/pack-miniapps.sh", ".github/ci/asg-build-identity.mjs"])
+    assert.equal(iosBuildRequired([{filename}], monorepo), true, filename)
+  for (const filename of ["public/mentraos/README.md", "internal_tools/app.ts",
+    "public/mentraos/cloud-v2/packages/core/src/service.ts"])
+    assert.equal(iosBuildRequired([{filename}], monorepo), false, filename)
+  // MentraOS keeps its own layout.
+  assert.equal(iosBuildRequired([{filename: "miniapps/public/captions/src/index.ts"}], "Mentra-Community/MentraOS"), false)
+  assert.equal(iosBuildRequired([{filename: "public/mentraos/mobile/src/app.tsx"}], "Mentra-Community/MentraOS"), false)
+})
+
 test("an Android artifact-helper-only PR reports its triggered iOS build, including a failure", async () => {
   const files = [{filename: ".github/scripts/pr-android-artifacts.mjs"}]
   const ready = harness({files})

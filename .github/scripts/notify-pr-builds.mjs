@@ -7,12 +7,47 @@ import {artifactUrl} from "./release-artifact-storage.mjs"
 import {routineLabelIds} from "./routine-api.mjs"
 import {slackRoutineSection, slackRoutineText} from "./slack-routine-section.mjs"
 
-export function iosBuildRequired(files) {
-  return files.some(({filename}) =>
-    MOBILE_PR_PATHS.some((pattern) =>
-      pattern.endsWith("*") ? filename.startsWith(pattern.replace(/\*+$/, "")) : filename === pattern,
-    ),
-  )
+// The Mentra monorepo holds this tree at public/mentraos, the ASG client at
+// mentra_live/asg_client and the miniapps the app bundles at miniapps/; its
+// producer workflows sit at the root's .github/workflows/.
+export const MONOREPO = "Mentra-Community/Mentra"
+const MONOREPO_ROOT = "public/mentraos/"
+
+/** A changed file's path in MentraOS's layout; null when it has none (a bundled miniapp). */
+export function mentraOsPath(filename, repository) {
+  if (repository !== MONOREPO) return filename
+  if (filename.startsWith(MONOREPO_ROOT)) return filename.slice(MONOREPO_ROOT.length)
+  if (filename.startsWith("mentra_live/asg_client/")) return filename.slice("mentra_live/".length)
+  if (filename.startsWith("miniapps/")) return null
+  return filename
+}
+
+/**
+ * Monorepo paths outside MentraOS that start the PR app builds (the paths of its root mentra-app-*-build.yml and
+ * mentra-asg-client-build.yml workflows).
+ */
+export const MONOREPO_PR_BUILD_PATHS = [
+  "mentra_live/bes/*",
+  ".github/workflows/bes.yml",
+  ".github/workflows/mentra-app-android-build.yml",
+  ".github/workflows/mentra-app-ios-build.yml",
+  ".github/workflows/mentra-asg-client-build.yml",
+  ".github/workflows/reusable-pr-build-notification.yml",
+  ".github/ci/pack-miniapps.sh",
+  ".github/ci/asg-build-identity.mjs",
+]
+
+const matches = (path, pattern) =>
+  pattern.endsWith("*") ? path.startsWith(pattern.replace(/\*+$/, "")) : path === pattern
+
+export function iosBuildRequired(files, repository) {
+  return files.some(({filename}) => {
+    if (repository === MONOREPO && MONOREPO_PR_BUILD_PATHS.some((pattern) => matches(filename, pattern))) return true
+    const path = mentraOsPath(filename, repository)
+    // The monorepo packs every miniapp into the app it builds.
+    if (path === null) return true
+    return MOBILE_PR_PATHS.some((pattern) => matches(path, pattern))
+  })
 }
 
 const link = (url, label) => `<${url}|${slackRoutineText(label, 200).replaceAll("|", " ")}>`
@@ -297,7 +332,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const mismatch = (platform, actual) =>
     `${platform} was built for ${["dev", "staging"].includes(actual) ? `the ${backendName(actual)}` : "an unrecorded"} backend, but this PR now targets ${destination}; rebuild it for this destination.`
   const files = await github.paginate(github.rest.pulls.listFiles, {...repo, pull_number: pr.number, per_page: 100})
-  const ios = {required: iosBuildRequired(files)}
+  const ios = {required: iosBuildRequired(files, `${repo.owner}/${repo.repo}`)}
   const [androidBuild, asgBuild, iosBuild] = await Promise.all([
     readBuild(github, context, pr, sha, "android"),
     readBuild(github, context, pr, sha, "asg"),
@@ -371,7 +406,8 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       ios.backend = backend
       ios.archiveSha256 = assets.mac.sha256
       if (macHandoff) ios.macInstallUrl = macInstallPageUrl(urls.install, receipt.runAttempt)
-      ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/mobile/ci/pr-ios/README.md`
+      const tree = `${repo.owner}/${repo.repo}` === MONOREPO ? MONOREPO_ROOT : ""
+      ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/${tree}mobile/ci/pr-ios/README.md`
     } catch (failure) {
       ios.error = failure.message
     }
@@ -384,7 +420,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       const coordinates = {pr: pr.number, sha, runId: androidBuild.run.id, attempt: androidBuild.attempt}
       receipt = await (await request(artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds",
         androidReceiptName(pr.number, sha, coordinates.runId, coordinates.attempt)))).json()
-      asset = validateAndroidReceipt(receipt, coordinates).android
+      // The monorepo's APKs pin its own OTA manifests; MentraOS's pin MentraOS's.
+      const repository = `${repo.owner}/${repo.repo}` === MONOREPO ? MONOREPO : undefined
+      asset = validateAndroidReceipt(receipt, {...coordinates, repository}).android
     } catch (failure) {
       receipt = undefined
       core.warning(`Android receipt unavailable: ${failure.message}; publish available downloads and keep receipt verification retryable.`)

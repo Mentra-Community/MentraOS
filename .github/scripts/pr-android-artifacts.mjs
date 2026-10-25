@@ -9,6 +9,11 @@ import {artifactUrl} from "./release-artifact-storage.mjs"
 
 export const ANDROID_WORKFLOW = "mentra-app-android-build.yml"
 export const ANDROID_PUBLICATION_STEP = "Upload APK to the public artifact CDN"
+// The repositories whose PRs publish signed app builds under their own
+// <repository>/releases/pr-builds/ prefix: MentraOS, and the Mentra monorepo
+// that builds MentraOS from public/mentraos.
+export const PR_BUILD_REPOSITORIES = Object.freeze(["Mentra-Community/MentraOS", "Mentra-Community/Mentra"])
+const DEFAULT_REPOSITORY = PR_BUILD_REPOSITORIES[0]
 const SHA = /^[a-f0-9]{40}$/
 const HASH = /^[a-f0-9]{64}$/
 const positive = value => Number.isSafeInteger(value) && value > 0
@@ -20,14 +25,15 @@ export function androidReceiptName(pr, sha, runId, attempt, diagnostic = false) 
   return `mentra-android-${diagnostic ? "nimo-diagnostic-" : ""}pr-${pr}-${sha}-${runId}-${attempt}.json`
 }
 
-export function validateAndroidReceipt(receipt, {pr, sha, runId, attempt, diagnostic = false}) {
+export function validateAndroidReceipt(receipt, {pr, sha, runId, attempt, diagnostic = false, repository = DEFAULT_REPOSITORY}) {
   const name = androidReceiptName(pr, sha, runId, attempt, diagnostic)
   requireThat(diagnostic ? receipt?.diagnostic === "nimo-resource-v1" && receipt?.app?.diagnostic === "nimo-resource-v1" : receipt?.diagnostic === undefined && receipt?.app?.diagnostic === undefined, "Android diagnostic classification differs")
   requireThat(receipt?.schemaVersion === 1 && receipt.pr === pr && receipt.headSha === sha &&
     receipt.runId === runId && receipt.runAttempt === attempt && SHA.test(receipt.baseSha ?? "") &&
     SHA.test(receipt.buildSha ?? ""), "Android receipt belongs to a different revision or workflow attempt")
   const app = receipt.app
-  const ota = artifactUrl("Mentra-Community/MentraOS", "pr-builds", `ota-pr-${pr}-${sha}.json`)
+  requireThat(PR_BUILD_REPOSITORIES.includes(repository), "Unsupported Android publication repository")
+  const ota = artifactUrl(repository, "pr-builds", `ota-pr-${pr}-${sha}.json`)
   requireThat(app?.packageId === "com.mentra.mentra" && app.headSha === sha && app.buildSha === receipt.buildSha &&
     ["dev", "staging"].includes(app.backend) && app.otaManifestUrl === ota && typeof app.version === "string" && !!app.version &&
     typeof app.build === "string" && /^[1-9]\d*$/.test(app.build) && Number(app.build) <= 2100000000 &&
@@ -42,14 +48,15 @@ export function validateAndroidReceipt(receipt, {pr, sha, runId, attempt, diagno
 }
 
 /** Read the packaged configuration and the binary manifest, not source defaults. */
-export function androidAppIdentity({config, badging, pr, headSha, buildSha, backend, baseRef}) {
+export function androidAppIdentity({config, badging, pr, headSha, buildSha, backend, baseRef, repository = DEFAULT_REPOSITORY}) {
   const native = /^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'/m.exec(badging)
   const build = config?.extra?.mentraPrBuild
   requireThat(native?.[1] === "com.mentra.mentra" && config.android?.package === native[1] &&
     config.version === native[3] && String(config.android?.versionCode) === native[2] &&
     build?.schemaVersion === 1 && build.prHeadSha === headSha && String(build.buildNumber) === native[2] &&
     HASH.test(build.mobileFingerprint ?? "") && SHA.test(build.mobileSourceCommit ?? "") &&
-    build.otaManifestUrl === artifactUrl("Mentra-Community/MentraOS", "pr-builds", `ota-pr-${pr}-${headSha}.json`) &&
+    PR_BUILD_REPOSITORIES.includes(repository) &&
+    build.otaManifestUrl === artifactUrl(repository, "pr-builds", `ota-pr-${pr}-${headSha}.json`) &&
     backend === prBackend(baseRef), "Packaged Android identity differs from its native manifest or PR inputs")
   return {packageId: native[1], version: native[3], build: native[2], headSha, buildSha, backend,
     otaManifestUrl: build.otaManifestUrl, mobileFingerprint: build.mobileFingerprint,
@@ -64,7 +71,8 @@ export async function publishAndroidArtifacts(apk, env = process.env, {exec = ex
   requireThat(!diagnostic || env.GITHUB_EVENT_NAME === 'workflow_dispatch' && env.MENTRA_PR_BUILD_SHA && env.PR_NUMBER,
     'Diagnostics require a pinned PR dispatch')
   const name = androidReceiptName(pr, headSha, runId, runAttempt, diagnostic)
-  requireThat(env.GITHUB_REPOSITORY === "Mentra-Community/MentraOS" && SHA.test(buildSha ?? ""),
+  const repository = env.GITHUB_REPOSITORY
+  requireThat(PR_BUILD_REPOSITORIES.includes(repository) && SHA.test(buildSha ?? ""),
     "Invalid Android publication source")
   const commit = exec("git", ["cat-file", "-p", buildSha], {encoding: "utf8"})
   const parents = [...commit.split("\n\n", 1)[0].matchAll(/^parent ([a-f0-9]{40})$/gm)].map(match => match[1])
@@ -76,7 +84,7 @@ export async function publishAndroidArtifacts(apk, env = process.env, {exec = ex
   requireThat(versions.length > 0, "Android build tools are unavailable")
   const badging = exec(path.join(env.ANDROID_HOME, "build-tools", versions[0], "aapt"), ["dump", "badging", apk], {encoding: "utf8"})
   const app = androidAppIdentity({config, badging, pr, headSha, buildSha, backend: env.EXPO_PUBLIC_BUILD_ENV,
-    baseRef: env.MENTRA_PR_BASE_REF || env.GITHUB_BASE_REF})
+    baseRef: env.MENTRA_PR_BASE_REF || env.GITHUB_BASE_REF, repository})
   requireThat(app.mobileFingerprint === env.MENTRA_PR_MOBILE_FINGERPRINT, "APK compilation fingerprint differs from the selected build")
   // The receiver is registered at runtime; its fixed action must be in compiled DEX,
   // not merely claimed by an asset or AndroidManifest entry.
@@ -97,13 +105,13 @@ export async function publishAndroidArtifacts(apk, env = process.env, {exec = ex
   const bytes = await readFile(apk)
   const receipt = {schemaVersion: 1, ...(diagnostic ? {diagnostic: "nimo-resource-v1", diagnosticVerification: {...diagnosticProof, kind:"compiled-capture-wiring-v3", apkSha256:createHash("sha256").update(bytes).digest("hex")}} : {}), pr, headSha, baseSha, buildSha, runId, runAttempt, app,
     artifacts: {android: {name: name.replace(/\.json$/, ".apk"), sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length}}}
-  validateAndroidReceipt(receipt, {pr, sha: headSha, runId, attempt: runAttempt, diagnostic})
+  validateAndroidReceipt(receipt, {pr, sha: headSha, runId, attempt: runAttempt, diagnostic, repository})
   const file = path.join(path.dirname(apk), name)
   await writeFile(file, JSON.stringify(receipt, null, 2) + "\n")
-  const releaseId = exec("gh", ["api", `repos/${env.GITHUB_REPOSITORY}/releases/tags/pr-builds`, "--jq", ".id"], {encoding: "utf8"}).trim()
+  const releaseId = exec("gh", ["api", `repos/${repository}/releases/tags/pr-builds`, "--jq", ".id"], {encoding: "utf8"}).trim()
   for (const [source, target] of [[apk, receipt.artifacts.android.name], [file, name]])
     exec(process.execPath, [fileURLToPath(new URL("./publish-immutable-release-asset.mjs", import.meta.url)),
-      "--file", source, "--name", target, "--release-id", releaseId, "--repository", env.GITHUB_REPOSITORY], {stdio: "inherit", env})
+      "--file", source, "--name", target, "--release-id", releaseId, "--repository", repository], {stdio: "inherit", env})
   return receipt
 }
 

@@ -1,5 +1,5 @@
 import {submitRoutineRequest, routineLabelIds, routineId, routineRevision, platforms, exactSource, stableRequestId, automaticRoutineRequest, ensure, positive} from "./routine-api.mjs"
-import {ANDROID_PUBLICATION_STEP} from "./pr-android-artifacts.mjs"
+import {ANDROID_PUBLICATION_STEP, PR_BUILD_REPOSITORIES} from "./pr-android-artifacts.mjs"
 import {selectedRoutinePlatforms, reportUnsupportedRoutinePlatforms, retainedAutomaticPlan} from './routine-platforms.mjs'
 
 export const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
@@ -56,19 +56,28 @@ export function successfulAndroidPublication(run, all) {
 }
 
 
+/** The app repository a workflow runs in: MentraOS or the Mentra monorepo. */
+export function appRepository(context) {
+  const repository = `${context.repo.owner}/${context.repo.repo}`
+  ensure(PR_BUILD_REPOSITORIES.includes(repository), "Unsupported app repository")
+  return repository
+}
+
 export async function authenticatedPr(github, context, number) {
   ensure(positive(number), "A PR number is required")
+  const repository = appRepository(context)
   const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: number})
   ensure(pr.number === number && pr.state === "open" && admittedPrBase(pr.base?.ref) &&
-    pr.head?.repo?.full_name === "Mentra-Community/MentraOS" && /^[a-f0-9]{40}$/.test(pr.head.sha ?? ""),
+    pr.head?.repo?.full_name === repository && /^[a-f0-9]{40}$/.test(pr.head.sha ?? ""),
     "PR routine requests require an open same-repository PR targeting dev or staging")
   return pr
 }
 
 export async function publicationForPlatform(github, context, run, platform) {
+  const repository = appRepository(context)
   ensure(run?.path === platformProducer(platform) && positive(run.id) && positive(run.run_attempt) &&
-    run.event === "pull_request" && run.repository?.full_name === "Mentra-Community/MentraOS" &&
-    run.head_repository?.full_name === "Mentra-Community/MentraOS", "Invalid app publication source")
+    run.event === "pull_request" && run.repository?.full_name === repository &&
+    run.head_repository?.full_name === repository, "Invalid app publication source")
   const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {...context.repo, run_id: run.id, filter: "all", per_page: 100})
   ensure(jobs.length < 1000 && new Set(jobs.map(job => job.id)).size === jobs.length, "App publication job history is incomplete")
   return platform === "android" ? successfulAndroidPublication(run, jobs) : successfulMacPublication(run, jobs)

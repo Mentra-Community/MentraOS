@@ -190,3 +190,26 @@ test('checks-only callback reconciles Core gate and never enrolls or admits a pa
   assert.equal(calls[0].url, 'https://core.dev.us-west-2.mentraglass.com/api/internal/pr-routine-checks/intake')
   assert.equal(JSON.parse(calls[0].init.body).prNumber, f.pr.number)
 })
+
+test('the Mentra monorepo reconciles its own PR publications and names itself to Core', async () => {
+  const f = fixture(), monorepo = 'Mentra-Community/Mentra'
+  f.run.repository.full_name = monorepo; f.run.head_repository.full_name = monorepo; f.pr.head.repo.full_name = monorepo
+  f.context.repo.repo = 'Mentra'
+  const calls = []
+  const plans = await planDeviceDispatches({...f, token: 'fixture', checksOnly: true, fetchImpl: async (url, init) => {
+    calls.push({url, init}); return new Response('{}', {status: 200})
+  }})
+  assert.deepEqual(plans, [])
+  assert.deepEqual(JSON.parse(calls[0].init.body), {prNumber: f.pr.number, deliveryId: `producer-${f.run.id}-${f.run.run_attempt}`, repository: monorepo})
+  // MentraOS keeps its original intake body.
+  const legacy = fixture(), legacyCalls = []
+  await planDeviceDispatches({...legacy, token: 'fixture', checksOnly: true, fetchImpl: async (url, init) => {
+    legacyCalls.push(init); return new Response('{}', {status: 200})
+  }})
+  assert.equal('repository' in JSON.parse(legacyCalls[0].body), false)
+  // A publication from another repository than the one running is refused.
+  const mixed = fixture(); mixed.context.repo.repo = 'Mentra'
+  await assert.rejects(planDeviceDispatches({...mixed, token: 'fixture', checksOnly: true, fetchImpl: async () => assert.fail('must not contact Core')}))
+  const other = fixture(); other.context.repo = {owner: 'someone', repo: 'else'}
+  await assert.rejects(planDeviceDispatches({...other, token: 'fixture', checksOnly: true, fetchImpl: async () => assert.fail('must not contact Core')}))
+})

@@ -230,6 +230,29 @@ test("immutable signed APK publication precedes the per-attempt receipt, with no
   })
 })
 
+test("the Mentra monorepo publishes under its own prefix and pins its own OTA manifest", async () => {
+  await publishing(async ({apk, env, exec, calls}) => {
+    const repository = "Mentra-Community/Mentra"
+    const monorepoOta = artifactUrl(repository, "pr-builds", `ota-pr-42-${head}.json`)
+    const packaged = config(); packaged.extra.mentraPrBuild.otaManifestUrl = monorepoOta
+    const monorepoExec = (command, args, options) => {
+      if (command === "unzip" && args.at(-1) === "assets/app.config") return JSON.stringify(packaged)
+      if (command === process.execPath) assert.equal(args[args.indexOf("--repository") + 1], repository)
+      return exec(command, args, options)
+    }
+    const receipt = await publishAndroidArtifacts(apk, {...env, GITHUB_REPOSITORY: repository}, {exec: monorepoExec})
+    assert.equal(receipt.app.otaManifestUrl, monorepoOta)
+    assert.equal(calls.length, 2)
+    const coordinates = {pr: 42, sha: head, runId: 100, attempt: 2}
+    assert.equal(validateAndroidReceipt(receipt, {...coordinates, repository}), receipt.artifacts)
+    assert.throws(() => validateAndroidReceipt(receipt, coordinates), /OTA pin/)
+    assert.throws(() => validateAndroidReceipt(receipt, {...coordinates, repository: "someone/else"}), /repository/)
+    // An APK packaged with MentraOS's manifest URL is not the monorepo's.
+    await assert.rejects(publishAndroidArtifacts(apk, {...env, GITHUB_REPOSITORY: repository}, {exec}), /PR inputs/)
+    await assert.rejects(publishAndroidArtifacts(apk, {...env, GITHUB_REPOSITORY: "someone/else"}, {exec}), /publication source/)
+  })
+})
+
 test("a staging receipt records its staging backend, and a mismatched build publishes nothing", async () => {
   await publishing(async ({apk, env, exec, calls}) => {
     const staging = {...env, GITHUB_BASE_REF: "staging", EXPO_PUBLIC_BUILD_ENV: "staging"}
