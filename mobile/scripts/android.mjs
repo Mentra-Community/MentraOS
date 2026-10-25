@@ -1,10 +1,14 @@
 #!/usr/bin/env zx
 import {setBuildEnv} from "./set-build-env.mjs"
+import {startDevMiniapps} from "./local-miniapps.mjs"
 import {syncAutolinkingCache} from "./clear-autolinking-cache.mjs"
 import {pinLocalBuildNumber} from "./local-build-number.mjs"
 // The autolinking guard runs once, after prebuild (below), where it is
 // authoritative; skipping the pre-prebuild pass saves ~1.3s.
-await setBuildEnv({syncAutolinking: false})
+// A debug build gets the miniapps live instead of packed.
+await setBuildEnv({syncAutolinking: false, packMiniapps: false})
+// Serve every miniapp of this checkout to the debug build, live.
+await startDevMiniapps()
 
 // Pin the build number for this local build so prebuild and Gradle stop
 // baking a fresh per-second versionCode into the project on every run

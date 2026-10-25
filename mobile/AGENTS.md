@@ -14,6 +14,7 @@ The Mentra App is a React Native app built with Expo and expo-router for file-ba
 - Start dev server: `bun start` (expo start --dev-client)
 - Run on Android: `bun android` (expo run:android)
 - Run on iOS: `bun ios` (expo run:ios)
+- Miniapps (`scripts/local-miniapps.mjs`): `bun start`, `bun android` and `bun ios` serve every miniapp of the checkout from its dev server (frontend only, against its `.env.example` dev backend), and the debug build installs them all as local builds that reload on every save, with no QR code (`MENTRA_DEV_MINIAPPS=0` serves none). Every other local build packs them from the working tree into `assets/miniapps/` (the navigation miniapp needs `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN` in `.env`). The private Mentra monorepo has more miniapps than MentraOS; the flow is the same.
 - Run the iOS app directly on an Apple Silicon Mac: `bun ios:mac` (local Release build with bundled JavaScript, background launch). Use `--build-only` to compile without replacing the running app, or `--debug` with a separate Metro server. Requires Xcode development signing; does not upload to TestFlight.
 - Setup ADB port forwarding: `bun adb`
 
@@ -220,13 +221,11 @@ push("/settings/profile")
   GitHub Actions secret; coordinated releases take it from the Doppler config
   of their backend (`mentra-mobile-client` dev/stg/prd). A local `.env` edit
   updates neither.
-- Mentra Maps also embeds a public token in its committed ZIP under
-  `assets/miniapps/`. CI includes that ZIP without rebuilding it. When rotating
-  the Maps token, set `PUBLIC_MAPBOX_TOKEN` for the navigation miniapp build
-  (it falls back to `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN`), bump `miniapp.json`,
-  rebuild and pack the ZIP, replace the bundled ZIP, and regenerate
-  `src/generated/bundledMiniapps.ts`. Updating the CI secret alone does not
-  replace the token inside an existing ZIP.
+- Mentra Maps also embeds a public token in its bundle. App builds pack every
+  bundled miniapp from source with the build's `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN`
+  (`PUBLIC_MAPBOX_TOKEN` overrides it for the navigation miniapp). A miniapp
+  whose sources did not change reuses its packed bundle, so after rotating the
+  token, bump the navigation miniapp's `miniapp.json` version.
 - **Downloads token (`sk.…`, secret scope `Downloads:Read`)** — build time only,
   authenticates downloading Mapbox's binary SDKs. Never shipped. It must live in:
   - `~/.netrc` for iOS (SPM reads it): `machine api.mapbox.com login mapbox password sk.…`

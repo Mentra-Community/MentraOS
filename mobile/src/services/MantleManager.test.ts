@@ -43,6 +43,19 @@ import {
   resetBluetoothSdkMock,
 } from "@/test-utils/mockBluetoothSdk"
 
+// The bundled ZIPs are packed by CI, not committed: the tests use stand-ins.
+jest.mock("@/generated/bundledMiniapps", () => ({
+  BUNDLED_MINIAPPS: [1, 2],
+  BUNDLED_SYSTEM_MINIAPP_PACKAGES: [
+    "com.mentra.ai",
+    "com.mentra.call",
+    "com.mentra.captions",
+    "com.mentra.link",
+    "com.mentra.livestreamer",
+    "com.mentra.notes",
+  ],
+}))
+
 jest.mock("@mentra/bluetooth-sdk-internal", () => {
   const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
   return {

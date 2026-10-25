@@ -1,7 +1,11 @@
 #!/usr/bin/env zx
 import {runPodInstallIfNeeded} from "./cocoapods-install.mjs"
 import {setBuildEnv} from "./set-build-env.mjs"
-await setBuildEnv()
+import {startDevMiniapps} from "./local-miniapps.mjs"
+// A debug build gets the miniapps live instead of packed.
+await setBuildEnv({packMiniapps: false})
+// Serve every miniapp of this checkout to the debug build, live.
+await startDevMiniapps()
 
 // prebuild ios:
 await $({stdio: "inherit"})`bun expo prebuild --platform ios`

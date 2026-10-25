@@ -1,8 +1,12 @@
 #!/usr/bin/env zx
 
 import './configure-zx-shell.mjs'
+import {generateBundledMiniapps} from './generate-bundled-miniapps.mjs'
 
 console.log('Running postinstall...');
+
+// The type check imports src/generated/bundledMiniapps.ts, which is not committed.
+await generateBundledMiniapps();
 
 // Workspace setup hoists deps to root node_modules. Per-module `bun install`
 // is no longer needed and re-introduced duplicate react/react-native copies.

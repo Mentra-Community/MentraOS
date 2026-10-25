@@ -10,6 +10,7 @@ import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {miniappUpdateScheduler} from "@/services/miniapps/miniappUpdateScheduler"
+import {installDevMiniapp, installDevMiniapps} from "@/services/miniapps/devMiniapps"
 import {workspaceManifestScheduler} from "@/services/deployment/workspaceManifestScheduler"
 import {installCloudWorkspaceApi} from "@/services/fleet/cloudWorkspaceApi"
 import {BUNDLED_MINIAPPS, BUNDLED_SYSTEM_MINIAPP_PACKAGES} from "@/generated/bundledMiniapps"
@@ -792,6 +793,9 @@ class MantleManager {
     // already-installed check below sees the real on-disk state.
     await this.installBundledMiniapps()
     if (!isCurrent()) return
+    // A debug build runs the miniapps served from this checkout instead, live.
+    await installDevMiniapps(isCurrent)
+    if (!isCurrent()) return
 
     // Publish iOS enablement only after managed installation has finished.
     // Every startup/retry follows this order, including recovery from a failed
@@ -862,11 +866,17 @@ class MantleManager {
       }
       return
     }
+    await this.installBundledOrDevMiniapp(mentraCallPackageName)
+  }
+
+  /** Install the package's bundled ZIP, or, in a debug build that has none, its live build from this checkout. */
+  private async installBundledOrDevMiniapp(packageName: string): Promise<void> {
     const asset = BUNDLED_MINIAPPS.map((module) => Asset.fromModule(module)).find(
-      (asset) => parseBundledMiniappName(asset.name)?.packageName === mentraCallPackageName,
+      (candidate) => parseBundledMiniappName(candidate.name)?.packageName === packageName,
     )
-    if (!asset) throw new Error(`Missing bundled miniapp: ${mentraCallPackageName}`)
-    await this.installBundledMiniapp(asset)
+    if (asset) return this.installBundledMiniapp(asset)
+    if (await installDevMiniapp(packageName)) return
+    throw new Error(`Missing bundled miniapp: ${packageName}`)
   }
 
   /** Install one bundle, or skip it when current policy/version makes it unnecessary. */
@@ -981,13 +991,7 @@ class MantleManager {
       },
       setHidden: (hidden) => engine.miniapps.setHiddenStatus(packageName, hidden),
       clearRunningState: () => saveLocalAppRunningState(packageName, false),
-      install: async () => {
-        const asset = BUNDLED_MINIAPPS.map((module) => Asset.fromModule(module)).find(
-          (candidate) => parseBundledMiniappName(candidate.name)?.packageName === packageName,
-        )
-        if (!asset) throw new Error(`Missing bundled miniapp: ${packageName}`)
-        await this.installBundledMiniapp(asset)
-      },
+      install: () => this.installBundledOrDevMiniapp(packageName),
       stop: async () => {
         if (useAppStatusStore.getState().foregroundedPackage === packageName) engine.miniapps.clearForeground()
         await miniappLauncher.stop(packageName)

@@ -297,7 +297,10 @@ export async function dev(options: DevOptions = {}): Promise<void> {
 
   const name: string = (manifest.name as string) ?? 'unnamed';
   const packageName: string = (manifest.packageName as string) ?? 'unknown';
-  const requestedPort: number = (manifest.port as number) ?? DEFAULT_DEV_PORT;
+  // MENTRA_MINIAPP_DEV_PORT: the port a runner serving several miniapps assigned
+  // (the Mentra App's scripts/dev-miniapps.mjs).
+  const requestedPort: number =
+    Number(process.env.MENTRA_MINIAPP_DEV_PORT) || ((manifest.port as number) ?? DEFAULT_DEV_PORT);
   const port = pickDevPort(requestedPort);
 
   console.log(`Starting dev server for ${name} (${packageName}) on port ${port}...`);
