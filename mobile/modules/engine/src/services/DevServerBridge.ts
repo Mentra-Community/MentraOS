@@ -4,6 +4,7 @@
  *
  * Multiplexed over a single WebSocket per dev miniapp:
  *   laptop → phone : {type: "reload"}                 → trigger WebView.reload()
+ *   laptop → phone : {type: "respawn-bg"}             → restart the background JSContext
  *   phone  → laptop: {type: "log", level, args, ...}  → forwarded console calls
  *
  * Lifecycle: `connect(packageName, devUrl, devPort)` is called from
@@ -23,6 +24,8 @@ const BACKOFF_MIN_MS = 1_000
 const BACKOFF_MAX_MS = 30_000
 const RING_BUFFER_MAX_ENTRIES = 100
 const RING_BUFFER_MAX_BYTES = 32 * 1024
+/** A handler for a dev server signal. A promise holds the package's later signals until it settles. */
+export type DevSignalHandler = (packageName: string) => void | Promise<void>
 
 type State = "idle" | "connecting" | "connected" | "disconnected" | "closed"
 
@@ -49,15 +52,17 @@ interface BridgeEntry {
 
 class DevServerBridge {
   private entries = new Map<string, BridgeEntry>()
-  private globalReloadHandler: ((packageName: string) => void) | null = null
-  private globalRespawnBackgroundHandler: ((packageName: string) => void) | null = null
+  private globalReloadHandler: DevSignalHandler | null = null
+  private globalRespawnBackgroundHandler: DevSignalHandler | null = null
+  /** Each package's signals run in the order the dev server sent them, one at a time. */
+  private signalQueues = new Map<string, Promise<void>>()
 
   /**
    * Register a global reload handler. MiniappHost calls this once at boot. The
    * bridge invokes the handler with the offending packageName whenever a
    * reload signal is received.
    */
-  public onReload(handler: (packageName: string) => void): void {
+  public onReload(handler: DevSignalHandler): void {
     this.globalReloadHandler = handler
   }
 
@@ -68,7 +73,7 @@ class DevServerBridge {
    * bootstrap) should kill + respawn the JSContext to pick up the
    * change. WebView reload is separate (see `onReload`).
    */
-  public onRespawnBackground(handler: ((packageName: string) => void) | null): void {
+  public onRespawnBackground(handler: DevSignalHandler | null): void {
     this.globalRespawnBackgroundHandler = handler
   }
 
@@ -142,6 +147,26 @@ class DevServerBridge {
   }
 
   // -----------------------------------------------------------------------
+
+  /**
+   * Run a signal after the package's earlier ones have settled. A `reload` that follows a `respawn-bg` (one save that
+   * touched both layers) waits for the new background, so the reloaded screen doesn't start against the old one or one
+   * being torn down, and two respawns never overlap. A handler's failure is logged and doesn't hold the queue.
+   */
+  private enqueueSignal(packageName: string, signal: string, run: () => void | Promise<void>): void {
+    const previous = this.signalQueues.get(packageName) ?? Promise.resolve()
+    const next = previous.then(async () => {
+      try {
+        await run()
+      } catch (error) {
+        console.warn(`${LOG_TAG}: ${packageName} ${signal} failed`, error)
+      }
+    })
+    this.signalQueues.set(packageName, next)
+    void next.then(() => {
+      if (this.signalQueues.get(packageName) === next) this.signalQueues.delete(packageName)
+    })
+  }
 
   private buildWsUrl(devHostUrl: string, devPort: number): string {
     let host: string
@@ -227,7 +252,7 @@ class DevServerBridge {
 
       if (parsed.type === "reload") {
         console.log(`${LOG_TAG}: ${packageName} received reload signal`)
-        this.globalReloadHandler?.(packageName)
+        this.enqueueSignal(packageName, "reload", () => this.globalReloadHandler?.(packageName))
         return
       }
 
@@ -236,7 +261,7 @@ class DevServerBridge {
       // reload). The host's MentraJSRouter listens here.
       if (parsed.type === "respawn-bg") {
         console.log(`${LOG_TAG}: ${packageName} received respawn-bg signal`)
-        this.globalRespawnBackgroundHandler?.(packageName)
+        this.enqueueSignal(packageName, "respawn-bg", () => this.globalRespawnBackgroundHandler?.(packageName))
         return
       }
     }

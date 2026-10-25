@@ -124,12 +124,19 @@ function fmtTime(ts: number): string {
 const isUnder = (filename: string, name: string): boolean =>
   filename === name || filename.startsWith(`${name}/`) || filename.includes(`/${name}/`)
 
+/** What the dev server tells the phone after a save. */
+export type DevReloadSignal = "reload" | "respawn-bg"
+
 /**
  * Decide what a filesystem watcher event should trigger: `respawn-bg` for a
- * change under `src/background/`, `reload` for any other project file, or
- * `ignore` for build output and dependency churn.
+ * change under `src/background/`, `both` for `src/shared/` (both layers import
+ * it), `reload` for any other project file, or `ignore` for build output and
+ * dependency churn.
  */
-export function classifyWatchEvent(filename: string, separator: string = sep): "ignore" | "reload" | "respawn-bg" {
+export function classifyWatchEvent(
+  filename: string,
+  separator: string = sep,
+): "ignore" | "reload" | "respawn-bg" | "both" {
   // fs.watch reports paths with the platform separator (`src\background\index.ts`
   // on Windows), while every check below matches on `/`.
   const path = separator === "/" ? filename : filename.split(separator).join("/")
@@ -147,7 +154,29 @@ export function classifyWatchEvent(filename: string, separator: string = sep): "
   if (isUnder(path, ".next")) return "ignore"
 
   const touchedBackground = path.startsWith("src/background/") || path.includes("/src/background/")
-  return touchedBackground ? "respawn-bg" : "reload"
+  if (touchedBackground) return "respawn-bg"
+  const touchedShared = path.startsWith("src/shared/") || path.includes("/src/shared/")
+  return touchedShared ? "both" : "reload"
+}
+
+/**
+ * The signals one debounced batch of watcher events sends, in order. The phone
+ * handles them separately: `respawn-bg` restarts the background JSContext and
+ * keeps the mounted WebView, and `reload` reloads only the WebView. So a batch
+ * that touched both layers (a save-all, a branch switch, a shared file) sends
+ * both, the background first, so the reloaded screen binds to the new one.
+ */
+export function reloadSignalsForBatch(events: Iterable<"reload" | "respawn-bg" | "both">): DevReloadSignal[] {
+  let respawn = false
+  let reload = false
+  for (const event of events) {
+    if (event === "respawn-bg" || event === "both") respawn = true
+    if (event === "reload" || event === "both") reload = true
+  }
+  const signals: DevReloadSignal[] = []
+  if (respawn) signals.push("respawn-bg")
+  if (reload) signals.push("reload")
+  return signals
 }
 
 /**
@@ -250,31 +279,29 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
   // layer changed. Background code lives under `src/background/` and UI
   // code under `src/ui/`; a touch under `src/background/` requires killing
   // + re-spawning the JSContext, while a touch under `src/ui/` only needs
-  // a WebView reload. Touches anywhere else default to reload.
+  // a WebView reload. `src/shared/` (imported by both) needs both, and so
+  // does a batch that touched both layers. Touches anywhere else reload.
   let reloadTimer: ReturnType<typeof setTimeout> | null = null
-  let pendingType: "reload" | "respawn-bg" | null = null
+  const pendingEvents = new Set<"reload" | "respawn-bg" | "both">()
   let suppressEventsUntil = 0
   const hotReload = options.hotReload !== false
 
   const onWatch = (_event: string, filename: string | null): void => {
     if (!filename) return
     if (Date.now() < suppressEventsUntil) return
-    // Decide which layer the change touched. Order matters: a single batch
-    // may hit both layers; if so, respawn-bg wins (it implies a full reload
-    // anyway on the WebView side because background drives the UI state).
+    // Decide which layer the change touched. A batch may touch both; then
+    // the phone gets both signals (reloadSignalsForBatch).
     const nextType = classifyWatchEvent(filename)
     if (nextType === "ignore") return
-    if (pendingType === "respawn-bg") {
-      // already locked in to the heavier signal — leave it
-    } else {
-      pendingType = nextType
-    }
+    pendingEvents.add(nextType)
 
     if (reloadTimer) clearTimeout(reloadTimer)
     reloadTimer = setTimeout(async () => {
       reloadTimer = null
-      const type = pendingType ?? "reload"
-      pendingType = null
+      const signals = reloadSignalsForBatch(pendingEvents)
+      pendingEvents.clear()
+      if (signals.length === 0) return
+      const type: DevReloadSignal = signals[0]!
       // Two-layer projects rebuild `dist/` here so the next bundle.zip
       // fetch ships current code. A build failure surfaces in the
       // terminal but does not block the broadcast — phones will install
@@ -289,11 +316,10 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
           log(`${COLOR.red}[__mentra_dev] onBeforeBroadcast failed:${COLOR.reset} ${(err as Error).message}`)
         }
       }
-      const msg = JSON.stringify({type})
       let count = 0
       for (const s of sockets) {
         try {
-          s.send(msg)
+          for (const signal of signals) s.send(JSON.stringify({type: signal}))
           count++
         } catch {
           /* ignore */
@@ -305,7 +331,7 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
         // we tag it explicitly so the dev knows the JSContext is
         // restarting (which clears in-memory state in the
         // controller).
-        const verb = type === "respawn-bg" ? "respawn-bg" : "reload"
+        const verb = signals.join(" + ")
         log(`${COLOR.cyan}${verb}${COLOR.reset} ${COLOR.dim}${filename}${COLOR.reset}`)
       }
     }, RELOAD_DEBOUNCE_MS)
