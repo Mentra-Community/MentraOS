@@ -32,6 +32,7 @@ import {resourceLaneBlocker, resourceCandidateBlocker, requiredResourceBlocker} 
 import {routineLaneRequirementBlocker, type RoutineLaneEligibilityContext} from './routine-lane-eligibility';
 import {dependencyWaitingReason, recorderWait, RESOURCE_ADMISSION_WAIT, sharedResourceWaitingReason, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait';
 import {candidateRequestCurrent, candidateSettlement, qualifiedCandidate, qualifiedGraphCandidate, candidateRenewal, candidateReturnMatches, graphCandidateHistoricalSettlement} from './backend-candidate-preparation';
+import {currentGraphReturnContinuation} from './graph-return-continuation';
 const exclusiveResources = new ResourceReservationsService();
 const isDeepIdentity = (left: unknown, right: unknown) => requestInputDigest(left ?? null) === requestInputDigest(right ?? null);
 export type SelectedRoutineLane = {requestId: string; hostId: string; laneId: string};
@@ -227,15 +228,29 @@ export const routineJobRepository: RoutineJobRepository = {
     return releaseCandidateProvisional(row, now);
   },
   async settleCandidatePreparation(row, value, now) {
-    if (!row.fleetCandidatePreparation || !value.settlement ||
-      requestInputDigest((({settlement: _, ...v}) => v)(value)) !== requestInputDigest(row.fleetCandidatePreparation)) return null;
+    const original = row.fleetCandidatePreparation;
+    if (!original || !value.settlement) return null;
+    if (original.resourceReturnContinuation) {
+      const identity = ({settlement: _, resourceReturnContinuation: __, ...rest}: FleetCandidatePreparation) => rest;
+      if (requestInputDigest(identity(value)) !== requestInputDigest(identity(original)) || value.settlement.outcome !== 'unknown') return null;
+      // Only the continuation may advance. Re-read Core's accepted history here,
+      // then store that verified extension under the unchanged original-row CAS.
+      const host = await new TestHostStateService().get(original.hostId), continuation = host && currentGraphReturnContinuation(original, {
+        hostId: host.hostId, incarnation: host.incarnation!, incarnationGeneration: host.incarnationGeneration!, snapshot: host,
+        frameworkHistory: host.frameworkHistory, frameworkStopReceipts: [original.resourceReturnContinuation.stopped],
+      });
+      if (!host || !continuation || !host.authorityReservations ||
+        [host.receivedAt, host.observedAt].some(at => !Number.isFinite(Date.parse(at)) || Date.parse(at) > now.getTime() || now.getTime() - Date.parse(at) > 120_000)) return null;
+      value = {...value, resourceReturnContinuation: continuation};
+      if (requestInputDigest(candidateSettlement(value, host, host.authorityReservations, now.getTime()) ?? null) !== requestInputDigest(value.settlement)) return null;
+    } else if (requestInputDigest((({settlement: _, ...v}) => v)(value)) !== requestInputDigest(original)) return null;
     // Settlement can finish after cancellation/deadline; it releases only this pending probe, never starts another one.
     const filter = {requestId: row.requestId, fleetInputSha256: row.fleetInputSha256,
       fleetCandidatePreparation: row.fleetCandidatePreparation, fleetCandidatePreparations: row.fleetCandidatePreparations ?? {$exists: false},
       fleetBinding: {$exists: false}, fleetResourceAdmission: {$exists: false}, hostId: {$exists: false}},
       update = {$unset: {fleetCandidatePreparation: ''}, $set: {fleetCandidatePreparations: [...row.fleetCandidatePreparations ?? [], value], updatedAt: now}},
       options = {returnDocument: 'after' as const, writeConcern: testWriteConcern, timeoutMS: 5000};
-    if (value.settlement.outcome !== 'qualified') return await TestRequestModel.collection.findOneAndUpdate(filter, update, options) as unknown as StoredRoutineJob | null;
+    if (value.settlement!.outcome !== 'qualified') return await TestRequestModel.collection.findOneAndUpdate(filter, update, options) as unknown as StoredRoutineJob | null;
     // Current request state, not a prior read, decides whether this positive may select a phone.
     const selected = await TestRequestModel.collection.findOneAndUpdate({...filter, state: 'awaiting-runner',
       fleetCancellation: {$exists: false}, hostCancellation: {$exists: false}, preparationCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
@@ -1317,9 +1332,17 @@ export class RoutineJobService {
     const pending = row.fleetCandidatePreparation;
     if (!pending || !host || Date.parse(host.receivedAt) > this.now() || this.now() - Date.parse(host.receivedAt) > 120_000 ||
       Date.parse(host.observedAt) > this.now() || this.now() - Date.parse(host.observedAt) > 120_000 || !host.authorityReservations) return row;
-    const settlement = candidateSettlement(pending, host, host.authorityReservations, this.now());
+    // get() supplied Core's retained accepted history. After a lost final ACK,
+    // extend only the already authenticated return lineage across same-source
+    // restarts; no new acquisition or target is created.
+    const continuation = pending.resourceReturnContinuation && currentGraphReturnContinuation(pending, {
+      hostId: host.hostId, incarnation: host.incarnation!, incarnationGeneration: host.incarnationGeneration!, snapshot: host,
+      frameworkHistory: host.frameworkHistory, frameworkStopReceipts: [pending.resourceReturnContinuation.stopped],
+    }), checked = continuation ? {...pending, resourceReturnContinuation: continuation} : pending;
+    if (pending.resourceReturnContinuation && !continuation) return row;
+    const settlement = candidateSettlement(checked, host, host.authorityReservations, this.now());
     if (!settlement || !this.rows.settleCandidatePreparation) return row;
-    return await this.rows.settleCandidatePreparation(row, {...pending, settlement}, new Date(this.now())) ?? row;
+    return await this.rows.settleCandidatePreparation(row, {...checked, settlement}, new Date(this.now())) ?? row;
   }
   /** A selected preparing receipt authorizes host-only preparation; only the owned check can observe the phone. */
   private async backendQualificationTarget(host: ReceivedTestHostState,

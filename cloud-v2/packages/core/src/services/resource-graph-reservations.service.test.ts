@@ -1,14 +1,18 @@
 import {expect, test, spyOn} from 'bun:test'
 import {isDeepStrictEqual} from 'node:util'
 import {backendCandidateFixture} from './backend-candidate-preparation.test-support'
-import {candidatePrerequisiteRequestMatches, candidateSettlement, graphCandidateClaimMatches, graphCandidateReturnMatches, graphCheckOperationId} from './backend-candidate-preparation'
-import {ResourceReservationsService, type ResourceReservationHost, type ResourceReservationRepository} from './resource-reservations.service'
+import {candidatePrerequisiteRequestMatches, candidateSettlement, graphCandidateClaimMatches, graphCandidateReturnMatches, graphCandidateHistoricalSettlement, graphCheckOperationId} from './backend-candidate-preparation'
+import {ResourceReservationsService, resourceReservationRepository, type ResourceReservationHost, type ResourceReservationRepository} from './resource-reservations.service'
+import {TestRequestModel} from '../models/test-request.model'
+import {TestHostStateService} from './test-host-state.service'
+import {routineJobRepository} from './routine-job.service'
 import {requestInputDigest} from './test-request.service'
 import {exclusiveResourceIntentSchema, exclusiveResourceReturnSchema, type ExclusiveHostReservation, type ExclusiveResourceReturn} from '../types/resource-reservations.types'
 
 /** Real service and existing host-row CAS; provider observations are inert fixtures. */
 async function graphAuthorityFixture() {
-  const f = backendCandidateFixture(), versions = new Map<string, number>(), writes: string[][] = []
+  const f = backendCandidateFixture(), versions = new Map<string, number>(), writes: string[][] = [],
+    framework: {history?: unknown[]; stops?: unknown[]} = {}
   for (const host of f.hosts) {
     host.resourceReservations!.resourceReadiness = true
     host.frameworkAcceptedAt = host.observedAt
@@ -41,7 +45,8 @@ async function graphAuthorityFixture() {
       const snapshot = value && (({receivedAt: _, authorityReservations: __, ...snapshot}) => snapshot)(value)
       return value ? {hostId: id, incarnation: value.incarnation, incarnationGeneration: value.incarnationGeneration, sequence: value.sequence,
         receivedAt: new Date(value.receivedAt), snapshot: structuredClone(snapshot), resourceReservationVersion: versions.get(id)!,
-        resourceReservations: structuredClone(value.authorityReservations), laneControlVersion: 0, laneControls: []} as ResourceReservationHost : null
+        resourceReservations: structuredClone(value.authorityReservations), laneControlVersion: 0, laneControls: [],
+        frameworkHistory: structuredClone(framework.history), frameworkStopReceipts: structuredClone(framework.stops)} as ResourceReservationHost : null
     },
     async request(id) {return id === f.row.requestId ? structuredClone(f.row) : null},
     async candidateRequest(id, digest) {return id === pending.hostId && digest === pending.targetInputSha256 ? structuredClone(f.row) : null},
@@ -98,8 +103,174 @@ async function graphAuthorityFixture() {
     host.resourceReservations!.returns = returned.map(({controller: _, ...proof}) => proof)
     return returned
   }
-  return {f, host, pending, purpose, intent, rows, service, writes, closedReturns}
+  return {f, host, pending, purpose, intent, rows, service, writes, closedReturns, framework}
 }
+
+async function successorReturns() {
+  const g = await graphAuthorityFixture(), acquired = await g.service.acquire(g.intent, g.host.hostId)
+  if (acquired.status !== 'reserved') throw Error('Original graph was not acquired')
+  const original = {binding: structuredClone(g.host.frameworkBinding!), incarnation: g.host.incarnation!,
+    incarnationGeneration: g.host.incarnationGeneration!, process: structuredClone(g.host.frameworkProcess!),
+    effectiveAt: g.host.frameworkAcceptedAt!, observedAt: g.host.observedAt}
+  g.f.advance(1)
+  const stopped = {installationId: original.binding.installationId, process: original.process, observedAt: new Date(g.f.now).toISOString()}
+  g.framework.stops = [stopped]
+  g.f.advance(1)
+  g.host.incarnation = 'accepted-successor'; g.host.incarnationGeneration!++; g.host.sequence = 1
+  g.host.frameworkBinding = {...original.binding, version: original.binding.version + 1, revision: 'b'.repeat(40), installationId: 'accepted-successor-installation'}
+  g.host.frameworkProcess = {pid: 200, startedAt: 'accepted-successor-process'}; g.host.frameworkAcceptedAt = g.host.observedAt
+  g.framework.history = [{...original, endedAt: stopped.observedAt, endReason: 'observed-stop'},
+    {binding: g.host.frameworkBinding, incarnation: g.host.incarnation, incarnationGeneration: g.host.incarnationGeneration,
+      process: g.host.frameworkProcess, effectiveAt: g.host.frameworkAcceptedAt, observedAt: g.host.observedAt}]
+  const returns = g.closedReturns(acquired.claims as ExclusiveHostReservation[]).map(value => ({...value,
+    controller: {incarnation: g.host.incarnation!, generation: g.host.incarnationGeneration!, sequence: g.host.sequence}}))
+  for (const subject of g.host.resourceLifecycle!.subjects) {subject.idle.outcome = 'unknown'; subject.status = 'unknown'}
+  // Run the production journal writer; only its database CAS is an in-memory seam.
+  g.rows.recordCandidateReturn = function (...args) {return resourceReservationRepository.recordCandidateReturn!.apply(this, args)}
+  g.f.rows.settleCandidatePreparation = routineJobRepository.settleCandidatePreparation! as any
+  const clock = spyOn(Date, 'now').mockImplementation(() => g.f.now),
+    hostRead = spyOn(TestHostStateService.prototype, 'get').mockImplementation(async id => id === g.host.hostId ? structuredClone(g.host) : null),
+    write = spyOn(TestRequestModel.collection, 'findOneAndUpdate').mockImplementation(async (filter: any, update: any) => {
+      if (filter.requestId !== g.f.row.requestId || !isDeepStrictEqual(filter.fleetCandidatePreparation, g.f.row.fleetCandidatePreparation)) return null as any
+      if (update.$unset?.fleetCandidatePreparation === '') {
+        expect(filter.fleetBinding).toEqual({$exists: false}); expect(filter.hostId).toEqual({$exists: false})
+        expect(filter.fleetResourceAdmission).toEqual({$exists: false}); expect(filter.fleetDeadline).toBeUndefined()
+        expect(update.$set.fleetCandidateSelection).toBeUndefined()
+        g.f.row = {...g.f.row, ...structuredClone(update.$set), fleetCandidatePreparation: undefined}
+        return structuredClone(g.f.row) as any
+      }
+      for (const [key, value] of Object.entries(update.$set)) {
+        if (!key.startsWith('fleetCandidatePreparation.')) throw Error('Unexpected write')
+        ;(g.f.row.fleetCandidatePreparation as any)[key.slice('fleetCandidatePreparation.'.length)] = structuredClone(value)
+      }
+      return {requestId: g.f.row.requestId} as any
+    })
+  return {...g, returns, acquired, close() {write.mockRestore(); hostRead.mockRestore(); clock.mockRestore()}}
+}
+
+test('verified stopped source and accepted successor return the same original claims as UNKNOWN through the real journal writer', async () => {
+  const g = await successorReturns()
+  try {
+    const original = structuredClone(g.pending)
+    for (const returned of g.returns) expect(await g.service.giveBack(returned, g.host.hostId)).toEqual({status: 'returned', claimId: returned.claimId})
+    const saved = g.f.row.fleetCandidatePreparation!
+    expect(saved.target).toEqual(original.target); expect(saved.resourceClaims).toEqual(original.resourceClaims)
+    expect(g.framework.stops![0]).toEqual(saved.resourceReturnContinuation?.stopped)
+    expect(saved.resourceReturns?.every(value => graphCandidateReturnMatches(saved, value))).toBe(true)
+    expect(g.host.authorityReservations).toEqual([])
+    g.f.advance(1); g.host.sequence++
+    expect(await g.service.giveBack({...g.returns[0]!, controller: {...g.returns[0]!.controller, sequence: g.host.sequence}}, g.host.hostId))
+      .toEqual({status: 'returned', claimId: g.returns[0]!.claimId})
+    expect(g.f.row.fleetCandidatePreparation!.resourceReturns).toHaveLength(g.returns.length)
+  } finally {g.close()}
+})
+
+function reportSuccessorSettlement(g: Awaited<ReturnType<typeof successorReturns>>) {
+  const checks = g.purpose.resources.map(member => {
+    const subject = g.host.resourceLifecycle!.subjects.find(value => value.subject.id === member.id)!
+    return {resourceId: member.id, checkOperationId: subject.idle.acceptedCheck!.operationId, outcome: 'unknown' as const,
+      subjectGeneration: subject.generation, contractVersion: member.contractVersion,
+      resultSha256: subject.idle.acceptedCheck!.resultSha256, checkedAt: subject.idle.checkedAt!}
+  })
+  const receipt = {candidate: g.pending.candidate, targetInputSha256: g.pending.targetInputSha256,
+    outcome: 'unknown' as const, hostWorkSettled: true as const, checkOperationId: g.intent.operationId, graphChecks: checks}
+  g.host.resourceReservations!.candidatePrerequisites = [receipt]
+  g.host.frameworkHistory = structuredClone(g.framework.history) as any
+  return receipt
+}
+
+test.each(['heartbeat', 'restart-no-retry', 'restart-retry'] as const)('production UNKNOWN settlement completes after all ACKs and %s', async scenario => {
+  const g = await successorReturns()
+  try {
+    for (const returned of g.returns) await g.service.giveBack(returned, g.host.hostId)
+    const restart = scenario !== 'heartbeat'
+    if (restart) {
+      g.f.advance(1)
+      const prior = g.framework.history!.at(-1) as any
+      prior.endedAt = g.host.observedAt; prior.endReason = 'accepted-replacement'
+      g.host.incarnation = 'same-source-restart'; g.host.incarnationGeneration!++; g.host.sequence = 1
+      g.host.frameworkProcess = {pid: 201, startedAt: 'same-source-restart-process'}; g.host.frameworkAcceptedAt = g.host.observedAt
+      g.framework.history!.push({binding: g.host.frameworkBinding, incarnation: g.host.incarnation,
+        incarnationGeneration: g.host.incarnationGeneration, process: g.host.frameworkProcess,
+        effectiveAt: g.host.frameworkAcceptedAt, observedAt: g.host.observedAt})
+      // Lost acknowledgement: the new reporter retries the unchanged old release.
+      if (scenario === 'restart-retry') expect(await g.service.giveBack({...g.returns[0]!, controller: {incarnation: g.host.incarnation,
+        generation: g.host.incarnationGeneration!, sequence: g.host.sequence}}, g.host.hostId))
+        .toEqual({status: 'returned', claimId: g.returns[0]!.claimId})
+    }
+    const receipt = reportSuccessorSettlement(g), original = structuredClone(g.pending.target)
+    g.f.advance(400_000)
+    g.host.frameworkHistory!.at(-1)!.observedAt = g.host.observedAt
+    await g.f.service.preparation('job-one')
+    expect(g.f.row.fleetCandidatePreparation).toBeUndefined()
+    const saved = g.f.row.fleetCandidatePreparations!.at(-1)!
+    expect(saved.target).toEqual(original); expect(saved.settlement).toEqual(receipt)
+    expect(saved.resourceReturnContinuation!.history).toHaveLength(restart ? 3 : 2)
+    expect(graphCandidateHistoricalSettlement(saved)).toBe(true)
+    expect(g.f.row.fleetCandidateSelection).toBeUndefined(); expect(g.f.row.fleetBinding).toBeUndefined()
+    expect(g.f.row.fleetDeadline.toISOString()).toBe(original.deadline)
+  } finally {g.close()}
+})
+
+test.each(['positive-check', 'missing-return', 'live-claim', 'foreign-process', 'changed-source'] as const)(
+  'successor settlement retains the original when %s', async changed => {
+    const g = await successorReturns()
+    try {
+      for (const returned of g.returns) await g.service.giveBack(returned, g.host.hostId)
+      const receipt = reportSuccessorSettlement(g)
+      if (changed === 'positive-check') (receipt.graphChecks[0] as any).outcome = 'passed'
+      if (changed === 'missing-return') g.f.row.fleetCandidatePreparation!.resourceReturns!.pop()
+      if (changed === 'live-claim') g.host.authorityReservations = [g.acquired.claims[0]!]
+      if (changed === 'foreign-process') g.host.frameworkProcess = {pid: 999, startedAt: 'foreign'}
+      if (changed === 'changed-source') g.host.frameworkBinding = {...g.host.frameworkBinding!, revision: 'c'.repeat(40)}
+      g.f.advance(400_000)
+      await g.f.service.preparation('job-one')
+      expect(g.f.row.fleetCandidatePreparation).toBeDefined()
+      expect(g.f.row.fleetCandidatePreparations?.length ?? 0).toBe(0)
+    } finally {g.close()}
+  })
+
+test.each(['changed-claim', 'changed-target', 'foreign-history', 'missing-stop', 'stale-host', 'lost-cas', 'positive'] as const)(
+  'production settlement writer rejects %s without archiving the original', async changed => {
+    const g = await successorReturns()
+    try {
+      for (const returned of g.returns) await g.service.giveBack(returned, g.host.hostId)
+      const settlement = reportSuccessorSettlement(g), original = structuredClone(g.f.row),
+        value = {...structuredClone(original.fleetCandidatePreparation!), settlement: structuredClone(settlement)}
+      if (changed === 'changed-claim') (value.resourceClaims![0] as any).id = '99999999-9999-4999-8999-999999999999'
+      if (changed === 'changed-target') value.target.deadline = new Date(g.f.now + 600_000).toISOString()
+      if (changed === 'foreign-history') g.host.frameworkHistory![1]!.process = {pid: 999, startedAt: 'foreign'}
+      if (changed === 'missing-stop') g.host.frameworkHistory![0]!.endReason = 'accepted-replacement'
+      if (changed === 'stale-host') g.host.receivedAt = new Date(g.f.now - 120_001).toISOString()
+      if (changed === 'lost-cas') g.f.row.fleetCandidatePreparation!.resourceReturns!.pop()
+      if (changed === 'positive') (value.settlement as any).outcome = 'qualified'
+      expect(await routineJobRepository.settleCandidatePreparation!(original, value, new Date(g.f.now))).toBeNull()
+      expect(g.f.row.fleetCandidatePreparation).toBeDefined(); expect(g.f.row.fleetCandidatePreparations?.length ?? 0).toBe(0)
+    } finally {g.close()}
+  })
+
+test.each(['live-old', 'missing-cessation', 'wrong-stopped-process', 'unaccepted-successor', 'foreign-successor', 'stale-binding',
+  'stale-claim', 'stale-grant', 'different-host', 'positive-result', 'client-only-history'] as const)(
+  'successor return rejects %s before changing original claim custody', async changed => {
+    const g = await successorReturns()
+    try {
+      const returned = structuredClone(g.returns[0]!)
+      if (changed === 'live-old') {delete (g.framework.history![0] as any).endedAt; delete (g.framework.history![0] as any).endReason}
+      if (changed === 'missing-cessation') g.framework.stops = []
+      if (changed === 'wrong-stopped-process') (g.framework.stops![0] as any).process = {pid: 999, startedAt: 'foreign'}
+      if (changed === 'unaccepted-successor') delete g.host.frameworkAcceptedAt
+      if (changed === 'foreign-successor') (g.framework.history![1] as any).process = {pid: 999, startedAt: 'foreign'}
+      if (changed === 'stale-binding') g.host.frameworkBinding = {...g.host.frameworkBinding!, configurationSha256: 'c'.repeat(64)}
+      if (changed === 'stale-claim') returned.claimId = '99999999-9999-4999-8999-999999999999'
+      if (changed === 'stale-grant') returned.originalOwner = {...returned.originalOwner, id: 'another-owner'}
+      if (changed === 'different-host') g.host.hostId = 'foreign-host'
+      if (changed === 'positive-result') g.host.resourceLifecycle!.subjects.find(value => value.subject.id === returned.resourceId)!.idle.outcome = 'passed'
+      if (changed === 'client-only-history') {g.host.frameworkHistory = g.framework.history as any; g.framework.history = undefined}
+      const claims = structuredClone(g.host.authorityReservations), original = structuredClone(g.f.row.fleetCandidatePreparation)
+      await expect(g.service.giveBack(returned, g.pending.hostId)).rejects.toThrow()
+      expect(g.host.authorityReservations).toEqual(claims); expect(g.f.row.fleetCandidatePreparation).toEqual(original)
+    } finally {g.close()}
+  })
 
 function reportJoinedUnused(f: Awaited<ReturnType<typeof graphAuthorityFixture>>) {
   f.host.resourceReservations!.candidatePrerequisites = [{candidate: f.pending.candidate, targetInputSha256: f.pending.targetInputSha256,

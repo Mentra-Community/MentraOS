@@ -7,6 +7,7 @@ import {consistentRoutineSource, routineDispatchSelectionSchema, routinePrepared
 import {backendQualificationPurposeSchema, backendLocalPrerequisiteSchema, backendPreparingReceiptSchema, backendCandidatePrerequisiteSchema, backendConnectivityTargetSchema, candidatePrerequisiteSettlementSchema, backendPrerequisiteOrigin} from './backend-connectivity.types';
 import {recorderHostReservationSchema} from './recorder-storage.types';
 import {fleetResourceAdmissionSchema, fleetExclusiveReservationSchema} from './resource-reservations.types';
+import {resourceReturnContinuationSchema} from './resource-return-continuation.types';
 
 const canonicalTarget = (value: unknown): unknown => Array.isArray(value) ? value.map(canonicalTarget) :
   value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
@@ -81,10 +82,11 @@ export const fleetCandidatePreparationSchema = z.object({candidate: backendCandi
     exclusive: fleetExclusiveReservationSchema.optional(), releasedAt: z.string().datetime({offset: true}).optional()}).strict().optional(),
   claimReceipt: z.unknown().optional(), returnReceipt: z.unknown().optional(), settlement: candidatePrerequisiteSettlementSchema.optional(),
   resourceClaims: z.array(z.unknown()).min(1).max(30).optional(), resourceReturns: z.array(z.unknown()).min(1).max(30).optional(),
+  resourceReturnContinuation: resourceReturnContinuationSchema.optional(),
   noAcquisitionReceipt: z.unknown().optional(),
 }).strict().refine(value => value.target.purpose?.kind === 'resource-readiness'
   ? !value.claimReceipt && !value.returnReceipt
-  : !value.resourceClaims && !value.resourceReturns && !value.settlement?.graphChecks,
+  : !value.resourceClaims && !value.resourceReturns && !value.resourceReturnContinuation && !value.settlement?.graphChecks,
   'Graph and scalar candidate receipts cannot replace one another')
 export type FleetCandidatePreparation = z.infer<typeof fleetCandidatePreparationSchema>
 export const MAX_FLEET_CANDIDATE_PREPARATIONS = 20

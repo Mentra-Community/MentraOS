@@ -12,10 +12,11 @@ import {TestRunError} from './test-result-error'
 import {TestRequestModel} from '../models/test-request.model'
 import {assertFleetResourceAdmission, fleetResourceExecutionBinding} from './fleet-resource-binding'
 import {frameworkRequestInputSchema} from '../types/framework-request.types'
-import {routineQualificationTargetSchema, MAX_FLEET_CANDIDATE_PREPARATIONS, type StoredRoutineJob, type OwnedRoutineQualification, type RoutineQualificationTarget} from '../types/routine-job.types'
+import {routineQualificationTargetSchema, MAX_FLEET_CANDIDATE_PREPARATIONS, type StoredRoutineJob, type OwnedRoutineQualification, type RoutineQualificationTarget, type FleetCandidatePreparation} from '../types/routine-job.types'
 import {preparationRejectionSchema} from '../types/routine-dispatch.types'
 import {z} from 'zod'
 import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
+import {currentGraphReturnContinuation} from './graph-return-continuation'
 import {candidatePrerequisiteRequestMatches, qualifiedCandidate, candidateReturnMatches, qualifiedGraphCandidate,
   graphCandidateClaimMatches, graphCandidateReturnMatches, graphCandidateHasOriginalCustody, graphCandidateNoAcquisitionMatches,
   candidatePrerequisiteIdentityMatches, reportedGraphCandidateSettlement, completedCandidatePreparationForHost} from './backend-candidate-preparation'
@@ -31,7 +32,19 @@ export function requiresSerializedAndroidPreparation(lane: TestHostState['lanes'
 }
 export type ResourceReservationHost = {hostId: string; incarnation: string; incarnationGeneration: number; sequence: number;
   receivedAt: Date; snapshot: TestHostState; resourceReservationVersion?: number; resourceReservations?: unknown;
-  laneControlVersion?: number; laneControls?: unknown; resourceLifecycleCursor?: unknown}
+  laneControlVersion?: number; laneControls?: unknown; resourceLifecycleCursor?: unknown;
+  frameworkHistory?: unknown; frameworkStopReceipts?: unknown}
+
+function graphReturnCandidate(pending: FleetCandidatePreparation, returned: ExclusiveResourceReturn,
+  host: ResourceReservationHost | null, now: number) {
+  if (returned.controller.incarnation === pending.candidate.controller.incarnation &&
+    returned.controller.generation === pending.candidate.controller.generation) return pending
+  if (!host || !fresh(host, now) || host.incarnation !== returned.controller.incarnation ||
+    host.incarnationGeneration !== returned.controller.generation || host.sequence !== returned.controller.sequence ||
+    host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === returned.resourceId)?.idle.outcome !== 'unknown') return
+  const continuation = currentGraphReturnContinuation(pending, host)
+  return continuation ? {...pending, resourceReturnContinuation: continuation} : undefined
+}
 /** Installed resource controls and new fleet claims contend on the same authority row. */
 function dependencyAvailable(host: ResourceReservationHost, dependency: ExclusiveResourceDependency, now: number) {
   return resourceAvailable({...host, resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations}, dependency.resourceId, now)
@@ -149,6 +162,7 @@ export const resourceReservationRepository: ResourceReservationRepository = {
       'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.activity': 1,
       'snapshot.lanes.resources': 1, 'snapshot.lanes.glasses': 1, 'snapshot.resources': 1, 'snapshot.resourceReservations': 1,
       'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1,
+      frameworkHistory: 1, frameworkStopReceipts: 1,
       'snapshot.resourceLifecycle': 1, resourceLifecycleCursor: 1, resourceReservationVersion: 1, resourceReservations: 1})
       .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() as ResourceReservationHost | null
   },
@@ -220,13 +234,18 @@ export const resourceReservationRepository: ResourceReservationRepository = {
   },
   async recordCandidateReturn(requestId, pending, returned) {
     if (pending.target.purpose?.kind === 'resource-readiness') {
-      if (!graphCandidateReturnMatches(pending, returned)) return false
-      const value = exclusiveResourceReturnSchema.parse(returned), prior = pending.resourceReturns ?? [],
+      const value = exclusiveResourceReturnSchema.parse(returned),
+        checked = graphReturnCandidate(pending, value, await this.get(pending.hostId), Date.now()), prior = pending.resourceReturns ?? [],
         original = prior.find(item => exclusiveResourceReturnSchema.parse(item).resourceId === value.resourceId)
-      if (original) return isDeepStrictEqual(original, value)
+      if (!checked || !graphCandidateReturnMatches(checked, value)) return false
+      // A fresh authenticated report may retry a committed original return after
+      // losing the ACK. Its reporting sequence is not another resource release.
+      if (original) return isDeepStrictEqual((({controller: _, ...proof}) => proof)(exclusiveResourceReturnSchema.parse(original)),
+        (({controller: _, ...proof}) => proof)(value))
       return Boolean(await TestRequestModel.collection.findOneAndUpdate({requestId, fleetCandidatePreparation: pending,
         fleetBinding: {$exists: false}, fleetResourceAdmission: {$exists: false}},
-        {$set: {'fleetCandidatePreparation.resourceReturns': [...prior, value]}},
+        {$set: {'fleetCandidatePreparation.resourceReturns': [...prior, value],
+          ...(checked.resourceReturnContinuation ? {'fleetCandidatePreparation.resourceReturnContinuation': checked.resourceReturnContinuation} : {})}},
         {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}))
     }
     if (!candidateReturnMatches(pending, returned)) return false;
@@ -1160,9 +1179,10 @@ export class ResourceReservationsService {
   }
   private async giveBackGraphPrerequisite(returned: ExclusiveResourceReturn, host: ResourceReservationHost, hostId: string) {
     const row = await this.rows.candidateRequest?.(hostId, returned.inputSha256), pending = row?.fleetCandidatePreparation,
+      checked = pending && graphReturnCandidate(pending, returned, host, this.now()),
       release = returned.release, subject = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === returned.resourceId),
       proof = (({controller: _, ...value}) => value)(returned)
-    if (!row || !pending || !graphCandidateReturnMatches(pending, returned) || !('kind' in release) || release.kind !== 'resource-check' ||
+    if (!row || !pending || !checked || !graphCandidateReturnMatches(checked, returned) || !('kind' in release) || release.kind !== 'resource-check' ||
       !fresh(host, this.now()) || host.incarnation !== returned.controller.incarnation || host.incarnationGeneration !== returned.controller.generation ||
       host.sequence !== returned.controller.sequence || !subject?.current || subject.owner !== null ||
       subject.subject.authorityHostId !== hostId || subject.generation !== release.subjectGeneration ||
@@ -1178,7 +1198,8 @@ export class ResourceReservationsService {
       const current = await this.host(hostId), all = hostResourceReservationsSchema.parse(current.resourceReservations ?? []),
         claim = all.filter(isExclusiveHostReservation).find(value => value.resourceId === returned.resourceId)
       if (!fresh(current, this.now()) || current.incarnation !== host.incarnation || current.incarnationGeneration !== host.incarnationGeneration ||
-        current.sequence !== host.sequence || !isDeepStrictEqual(current.snapshot.resourceLifecycle, host.snapshot.resourceLifecycle) ||
+        current.sequence !== host.sequence || !isDeepStrictEqual(current.frameworkHistory, host.frameworkHistory) ||
+        !isDeepStrictEqual(current.frameworkStopReceipts, host.frameworkStopReceipts) || !isDeepStrictEqual(current.snapshot.resourceLifecycle, host.snapshot.resourceLifecycle) ||
         !isDeepStrictEqual(current.snapshot.resourceReservations, host.snapshot.resourceReservations))
         throw new TestRunError(409, 'Readiness graph original return changed; retain the same member')
       if (claim && (claim.id !== returned.claimId || !graphCandidateClaimMatches(pending, claim) || claim.intentSha256 !== returned.intentSha256))

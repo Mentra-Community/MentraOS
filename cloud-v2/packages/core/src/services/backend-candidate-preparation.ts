@@ -6,6 +6,7 @@ import {z} from 'zod'
 import type {TestHostState} from './test-host-state.service'
 import {permissionContext} from '../types/resource-permissions.types'
 import {requestInputDigest} from './test-request.service'
+import {graphReturnReporterMatches, graphReturnSuccessorMatches} from './graph-return-continuation'
 
 export const graphCheckOperationId = (targetInputSha256: string, resourceId: string) =>
   `graph-check:${targetInputSha256}:${requestInputDigest(resourceId).slice(0, 24)}`
@@ -46,8 +47,9 @@ export function graphCandidateReturnMatches(pending: FleetCandidatePreparation, 
     returned.authorityHostId === original.authorityHostId && returned.resourceId === original.resourceId &&
     returned.intentSha256 === original.intentSha256 && returned.inputSha256 === original.inputSha256 &&
     returned.laneId === original.laneId && isDeepStrictEqual(returned.originalOwner, original.owner) &&
-    returned.controller.incarnation === original.controllerIncarnation && returned.controller.generation === original.controllerGeneration &&
-    returned.controller.sequence > original.borrowerSequence && release.subjectGeneration > original.resourceCheck!.subjectGeneration &&
+    (returned.controller.incarnation === original.controllerIncarnation && returned.controller.generation === original.controllerGeneration &&
+      returned.controller.sequence > original.borrowerSequence || graphReturnSuccessorMatches(pending, returned)) &&
+    release.subjectGeneration > original.resourceCheck!.subjectGeneration &&
     Date.parse(release.releasedAt) >= Date.parse(original.reservedAt)
 }
 export function graphCandidateNoAcquisitionMatches(pending: FleetCandidatePreparation, host?: TestHostState) {
@@ -105,6 +107,8 @@ function graphCandidateNeverRequestedMatches(pending: FleetCandidatePreparation,
 export function graphCandidateHistoricalSettlement(pending: FleetCandidatePreparation) {
   const purpose = pending.target.purpose, settlement = pending.settlement
   if (purpose?.kind !== 'resource-readiness' || !settlement || settlement.checkOperationId !== `graph-prerequisite:${pending.targetInputSha256}`) return false
+  if (pending.resourceReturnContinuation && (settlement.outcome !== 'unknown' || !settlement.graphChecks?.length ||
+    !settlement.graphChecks.every(check => check.outcome === 'unknown' && !check.backendConnectivity))) return false
   if (settlement.outcome === 'unknown' && !settlement.graphChecks?.length) return settlement.neverRequested
     ? graphCandidateNeverRequestedMatches(pending, settlement) : graphCandidateNoAcquisitionMatches(pending)
   return settlement.graphChecks?.length === purpose.resources.length && pending.resourceClaims?.length === purpose.resources.length &&
@@ -122,7 +126,7 @@ export function qualifiedGraphCandidate(row: StoredRoutineJob, host: TestHostSta
   requireDynamicFreshness = true) {
   const pending = row.fleetCandidatePreparations?.at(-1), purpose = pending?.target.purpose,
     received = receivedAt instanceof Date ? receivedAt.getTime() : Date.parse(receivedAt), observed = Date.parse(host.observedAt)
-  if (!pending || purpose?.kind !== 'resource-readiness' || !fleetCandidatePreparationSchema.safeParse(pending).success ||
+  if (!pending || pending.resourceReturnContinuation || purpose?.kind !== 'resource-readiness' || !fleetCandidatePreparationSchema.safeParse(pending).success ||
     pending.target.inputSha256 !== pending.targetInputSha256 ||
     requestInputDigest((({inputSha256: _, ...target}) => target)(pending.target)) !== pending.targetInputSha256 ||
     !isDeepStrictEqual(pending.candidate, pending.target.candidate) || row.fleetCandidatePreparation || requireDynamicFreshness && row.fleetCancellation ||
@@ -338,8 +342,11 @@ export function reportedGraphCandidateSettlement(pending: FleetCandidatePreparat
     !isDeepStrictEqual(receipt.candidate, pending.candidate) || receipt.targetInputSha256 !== pending.targetInputSha256 ||
     receipt.checkOperationId !== `graph-prerequisite:${pending.targetInputSha256}` ||
     requestInputDigest((({inputSha256: _, ...target}) => target)(pending.target)) !== pending.targetInputSha256 ||
-    host.hostId !== pending.hostId || host.incarnation !== pending.candidate.controller.incarnation ||
-    host.incarnationGeneration !== pending.candidate.controller.generation || !isDeepStrictEqual(host.frameworkBinding, pending.target.acceptedBinding)) return undefined
+    host.hostId !== pending.hostId) return undefined
+  const original = host.incarnation === pending.candidate.controller.incarnation &&
+    host.incarnationGeneration === pending.candidate.controller.generation && isDeepStrictEqual(host.frameworkBinding, pending.target.acceptedBinding)
+  if (!original && !(receipt.outcome === 'unknown' && receipt.graphChecks?.length &&
+    receipt.graphChecks.every(check => check.outcome === 'unknown' && !check.backendConnectivity) && graphReturnReporterMatches(pending, host))) return undefined
   return receipt
 }
 export function graphCandidateHasOriginalCustody(pending: FleetCandidatePreparation, host: TestHostState, claims: unknown[]) {
