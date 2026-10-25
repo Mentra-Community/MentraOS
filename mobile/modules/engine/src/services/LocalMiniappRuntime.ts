@@ -2372,7 +2372,11 @@ class LocalMiniappRuntime {
     }
   }
 
-  private async handlePlayAudio(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+  private async handlePlayAudio(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
     const audioUrl = (payload.audioUrl ?? payload.url) as string | undefined
     if (!audioUrl) {
       this.sendResult(packageName, requestId, false, undefined, {
@@ -2521,17 +2525,33 @@ class LocalMiniappRuntime {
       return
     }
 
+    const operationId = this.beginSpeakerOperation(packageName)
+    this.cancelSpeech(packageName)
+    const isCurrent = () =>
+      this.connectedApps.get(packageName) === app && this.isCurrentSpeakerOperation(packageName, operationId)
+    const rejectSuperseded = () => {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "speaker stream open was superseded",
+      })
+    }
+
     // One stream per miniapp: opening a second closes the first.
     const previous = app.activeSpeakerStreamId
     if (previous) {
-      app.activeSpeakerStreamId = undefined
       await audioPlaybackService.abortStream(previous).catch((error) => {
         console.warn(`${LOG_TAG}: failed to abort previous speaker stream for ${packageName}`, error)
       })
-      // The aborted writer callback is intentionally ignored below because its
-      // stream is no longer current. Still notify the client that this exact
-      // stream ended before attempting to open its replacement.
-      this.setSpeakerState(packageName, "stopped", {streamId: previous})
+      // The normal onEnded callback clears the stream and reports its end.
+      // Settle it here too if the native service no longer tracked that ID.
+      if (this.connectedApps.get(packageName) === app && app.activeSpeakerStreamId === previous) {
+        app.activeSpeakerStreamId = undefined
+        this.setSpeakerState(packageName, "stopped", {streamId: previous})
+      }
+    }
+    if (!isCurrent()) {
+      rejectSuperseded()
+      return
     }
 
     const streamId = `spkstream_${Date.now()}_${++this.speakerStreamCounter}`
@@ -2569,10 +2589,13 @@ class LocalMiniappRuntime {
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      this.setSpeakerState(packageName, "error", {
-        errorCode: MiniappErrorCode.INTERNAL,
-        errorMessage: message,
-      })
+      if (isCurrent()) {
+        this.finishSpeakerOperation(packageName, operationId)
+        this.setSpeakerState(packageName, "error", {
+          errorCode: MiniappErrorCode.INTERNAL,
+          errorMessage: message,
+        })
+      }
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message,
@@ -2583,10 +2606,12 @@ class LocalMiniappRuntime {
     // The native open can outlive a miniapp disconnect. Its ordinary teardown
     // ran while no StreamState existed yet, so close this late result here
     // instead of leaving an orphan AudioTrack/AVAudioEngine session.
-    if (this.connectedApps.get(packageName) !== app) {
+    if (!isCurrent()) {
       await audioPlaybackService.abortStream(streamId)
+      rejectSuperseded()
       return
     }
+    this.finishSpeakerOperation(packageName, operationId)
     app.activeSpeakerStreamId = streamId
     // Optimistic "playing", same as play(): the chunk player starts as soon
     // as the first write lands. Synchronous so SPEAKER_STATE ("playing")
@@ -2777,7 +2802,11 @@ class LocalMiniappRuntime {
         run.cancelled ||
         this.speechRuns.get(packageName) !== run ||
         !this.isCurrentSpeakerOperation(packageName, operationId)
-      ) return
+      ) {
+        run.cancelled = true
+        sendPlaybackResult(true, null, null, "tts playback stopped", false)
+        return
+      }
       this.finishSpeakerOperation(packageName, operationId)
       this.setSpeakerState(packageName, "loading")
 
