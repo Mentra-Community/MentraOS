@@ -2,20 +2,17 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SignedOutScreen } from "./signed-out";
 
-test("the signed-out screen offers the Mentra sign-out", () => {
-  const html = renderToStaticMarkup(<SignedOutScreen signOutUrl="https://account.test/signout" />);
+test("the signed-out screen says one thing and offers only Sign in again", () => {
+  const html = renderToStaticMarkup(<SignedOutScreen />);
   expect(html).toContain("Signed out of Mentra Portal");
-  expect(html).toContain('href="https://account.test/signout"');
-  expect(html).toContain("Sign out of your Mentra account");
-});
-
-test("a null signOutUrl shows no Mentra sign-out link", () => {
-  const html = renderToStaticMarkup(<SignedOutScreen signOutUrl={null} />);
-  expect(html).toContain("Signed out of Mentra Portal");
+  expect(html).toContain("You can close this tab.");
+  expect(html).toContain(">Sign in again<");
+  expect(html.match(/<a /g)).toHaveLength(1);
   expect(html).not.toContain("Sign out of your Mentra account");
+  expect(html).not.toContain("still signed in");
 });
 
-test("signing in again returns to a waiting invitation, so switching accounts lands back on it", () => {
-  expect(renderToStaticMarkup(<SignedOutScreen signOutUrl={null} />)).toContain('href="/"');
-  expect(renderToStaticMarkup(<SignedOutScreen signOutUrl={null} signInHref="/invitation" />)).toContain('href="/invitation"');
+test("signing in again returns to a waiting invitation", () => {
+  expect(renderToStaticMarkup(<SignedOutScreen />)).toContain('href="/"');
+  expect(renderToStaticMarkup(<SignedOutScreen signInHref="/invitation" />)).toContain('href="/invitation"');
 });

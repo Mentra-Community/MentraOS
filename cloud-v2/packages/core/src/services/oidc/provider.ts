@@ -21,6 +21,11 @@
  * - Revocation and RP-initiated logout (end-session) are on. Userinfo is
  *   served by Core itself (`api/oidc/oidc.api.ts`), because the library's
  *   userinfo refuses JWT access tokens.
+ * - End-session from a registered client that names a registered
+ *   `post_logout_redirect_uri` (the portals' sign-out) signs the person out
+ *   of the sign-in server at once and returns them there; the page only
+ *   submits itself. A request that names no client or no return address (a
+ *   bare link, the sign-in site's `/signout`) asks the person to confirm.
  * - The provider's own cookies are signed with `CLOUD_CORE_OIDC_COOKIE_KEYS`,
  *   `__Host-`/`__Secure-` prefixed on HTTPS, and authenticate nothing outside
  *   the provider.
@@ -35,7 +40,7 @@ import {findClient} from "./clients"
 import {CORE_API_RESOURCE, OIDC_ROUTES, OIDC_SCOPES} from "./config"
 import {OIDC_TOKEN_ALG, oidcSigningJwk} from "./keys"
 import {MongoAdapter} from "./mongo-adapter"
-import {renderPage} from "./pages"
+import {cspOrigin, renderPage} from "./pages"
 
 const logger = createLogger("core").child({service: "oidc-provider"})
 
@@ -64,6 +69,35 @@ const ERROR_TEXT: Record<string, string> = {
   invalid_redirect_uri: "This site is not registered to sign in with Mentra.",
   invalid_request: "The sign-in request was not valid. Start again from the site you were using.",
   session_not_found: "This sign-in has expired. Start again from the site you were using.",
+}
+
+/**
+ * The end-session page for a signed-in person. `form` is the provider's
+ * `op.logoutForm` (its XSRF token); its button signs the person out of the
+ * whole sign-in server session (`logout=yes`).
+ *
+ * The provider has already checked that a named client is registered and
+ * that its `post_logout_redirect_uri` is one the client registered. When the
+ * request names both, a registered site is signing the person out and asks to
+ * have them back: the page submits itself, and the button is only the
+ * fallback when script does not run. Otherwise (a bare link, which anyone can
+ * send) it asks the person to confirm.
+ */
+export function logoutPage(ctx: KoaContextWithOIDC, form: string) {
+  const returnTo = typeof ctx.oidc.params?.post_logout_redirect_uri === "string" ? ctx.oidc.params.post_logout_redirect_uri : undefined
+  const returnOrigin = ctx.oidc.client && returnTo ? cspOrigin(returnTo) : null
+  if (returnOrigin) {
+    return renderPage({
+      title: "Signing you out…",
+      bodyHtml: `${form}<div class="stack"><button class="button button-primary" id="auto-submit" type="submit" form="op.logoutForm" name="logout" value="yes">Sign out</button></div>`,
+      autoSubmit: {redirectsTo: returnOrigin},
+    })
+  }
+  return renderPage({
+    title: "Sign out of Mentra?",
+    paragraphs: ["You will need to sign in again the next time a Mentra site asks. Sites where you are signed in stay signed in until you sign out of them."],
+    bodyHtml: `${form}<div class="stack"><button class="button button-primary" type="submit" form="op.logoutForm" name="logout" value="yes" autofocus>Sign out</button><a class="button button-secondary" href="/">Stay signed in</a></div>`,
+  })
 }
 
 /** The scopes Core grants a first-party client: what it asked for, among the scopes Core knows. */
@@ -155,11 +189,7 @@ export async function providerConfiguration(settings: ProviderSettings) {
       rpInitiatedLogout: {
         enabled: true,
         logoutSource: async (ctx: KoaContextWithOIDC, form: string) => {
-          const page = renderPage({
-            title: "Sign out of Mentra?",
-            paragraphs: ["You will need to sign in again the next time a Mentra site asks. Sites where you are signed in stay signed in until you sign out of them."],
-            bodyHtml: `${form}<div class="stack"><button class="button button-primary" type="submit" form="op.logoutForm" name="logout" value="yes" autofocus>Sign out</button><a class="button button-secondary" href="/">Stay signed in</a></div>`,
-          })
+          const page = logoutPage(ctx, form)
           ctx.set(page.headers)
           ctx.body = page.html
         },

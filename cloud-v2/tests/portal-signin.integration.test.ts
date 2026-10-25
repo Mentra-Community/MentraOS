@@ -14,6 +14,8 @@
  * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/portal-signin.integration.test.ts`
  */
 
+import {createHash} from "node:crypto"
+
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test} from "bun:test"
 import * as jose from "jose"
 
@@ -42,7 +44,7 @@ import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {resetCoreKeyCaches} from "./support/key-caches"
 import {legacyAdminKey, legacyKeys} from "./support/legacy-admin-key"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
-import {routeOriginsToApp} from "./support/oidc-harness"
+import {Browser, CLIENTS, routeOriginsToApp} from "./support/oidc-harness"
 import {
   ADMIN_COOKIE,
   ADMIN_EMAIL,
@@ -396,15 +398,134 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
     }
   })
 
-  test("logout is same-origin only, ends the portal session, and offers the sign-in site's sign-out", async () => {
+  test("logout is same-origin only, ends the portal session, and answers the Mentra account sign-out that returns to the portal", async () => {
     const {sessionCookie} = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
     const cookie = `${ADMIN_COOKIE}=${sessionCookie}`
     expect((await app.request(`${ADMIN_ORIGIN}/api/admin/auth/logout`, {method: "POST", headers: {cookie, origin: "https://evil.test"}})).status).toBe(403)
     const out = await app.request(`${ADMIN_ORIGIN}/api/admin/auth/logout`, {method: "POST", headers: {cookie, origin: ADMIN_ORIGIN}})
     expect(out.status).toBe(200)
     expect(out.headers.get("cache-control")).toBe("no-store")
-    expect(await out.json()).toEqual({signOutUrl: `${OIDC_ISSUER}/oidc/session/end`})
+    expect(await out.json()).toEqual({
+      signOutUrl: `${OIDC_ISSUER}/oidc/session/end?client_id=admin-portal&post_logout_redirect_uri=${encodeURIComponent(`${ADMIN_ORIGIN}/`)}`,
+    })
     expect((await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie}})).status).toBe(401)
+    // The workspace portal's names its own client and origin, from configuration, never from request headers.
+    const portal = await app.request(`${PORTAL_ORIGIN}/api/portal/auth/logout`, {
+      method: "POST",
+      headers: {origin: PORTAL_ORIGIN, "x-forwarded-host": "evil.test", "x-mentra-public-origin": "https://evil.test"},
+    })
+    const portalUrl = new URL(((await portal.json()) as {signOutUrl: string}).signOutUrl)
+    expect([...portalUrl.searchParams]).toEqual([
+      ["client_id", "workspace-portal"],
+      ["post_logout_redirect_uri", `${PORTAL_ORIGIN}/`],
+    ])
+  })
+
+  /** Sign out of the workspace portal and follow its sign-out URL as the browser does, up to the sign-in server's page. */
+  async function signOutOfPortal(sessionCookie: string | null, browser: Browser) {
+    const out = await app.request(`${PORTAL_ORIGIN}/api/portal/auth/logout`, {
+      method: "POST",
+      headers: {cookie: `${PORTAL_COOKIE}=${sessionCookie}`, origin: PORTAL_ORIGIN},
+    })
+    const {signOutUrl} = (await out.json()) as {signOutUrl: string}
+    const endSession = await browser.request(signOutUrl)
+    return {signOutUrl, endSession, html: await endSession.text()}
+  }
+
+  /** What the page's form submits (`op.logoutForm` with the pressed button's `logout=yes`), posted as the browser does. */
+  async function submitLogoutForm(browser: Browser, html: string) {
+    const form = /<form id="op\.logoutForm" method="post" action="([^"]+)"><input type="hidden" name="xsrf" value="([^"]+)"\/><\/form>/.exec(html)
+    if (!form) throw new Error("no logout form")
+    return browser.request(form[1]!, {
+      method: "POST",
+      headers: {"content-type": "application/x-www-form-urlencoded", origin: OIDC_ISSUER},
+      body: new URLSearchParams({xsrf: form[2]!, logout: "yes"}).toString(),
+    })
+  }
+
+  test("Sign out is one step: the Mentra account is signed out without a prompt and the browser lands on the portal's sign-in page", async () => {
+    const first = await portalSignIn(app, idp, {portal: "portal", person: ADMIN_PERSON})
+    expect(first.browser.cookies(OIDC_ISSUER).has("__Host-mentra_oidc_session")).toBe(true)
+    const {endSession, html} = await signOutOfPortal(first.sessionCookie, first.browser)
+
+    // A page that only submits itself: no confirmation, a fallback button, one script allowed by its hash.
+    expect(endSession.status).toBe(200)
+    expect(endSession.headers.get("cache-control")).toBe("no-store")
+    expect(html).toContain("Signing you out…")
+    expect(html).not.toContain("Sign out of Mentra?")
+    expect(html).not.toContain("Stay signed in")
+    expect(html).toMatch(/<button[^>]*id="auto-submit"[^>]*form="op\.logoutForm"[^>]*name="logout"[^>]*value="yes"[^>]*>Sign out<\/button>/)
+    const scripts = [...html.matchAll(/<script>([^<]*)<\/script>/g)].map(match => match[1]!)
+    expect(scripts).toEqual(['document.getElementById("auto-submit").click()'])
+    const csp = endSession.headers.get("content-security-policy")!
+    expect(csp).toContain(`script-src 'sha256-${createHash("sha256").update(scripts[0]!).digest("base64")}';`)
+    // The form posts to the sign-in server, whose answer goes on to the portal: both are allowed form targets.
+    expect(csp).toContain(`form-action 'self' ${PORTAL_ORIGIN};`)
+    expect(csp).toContain("frame-ancestors 'none'")
+
+    const done = await submitLogoutForm(first.browser, html)
+    expect(done.status).toBe(303)
+    expect(done.headers.get("location")).toBe(`${PORTAL_ORIGIN}/`)
+    expect(first.browser.cookies(OIDC_ISSUER).has("__Host-mentra_oidc_session")).toBe(false)
+
+    // Both sessions are over: the portal's, and the Mentra account's, so the next sign-in asks for credentials
+    // (a new hand-off), and can be another account.
+    expect((await app.request(`${PORTAL_ORIGIN}/api/portal/me`, {headers: {cookie: `${PORTAL_COOKIE}=${first.sessionCookie}`}})).status).toBe(401)
+    const handoffs = idp.logoutCalls.length
+    const other = await portalSignIn(app, idp, {portal: "portal", person: {sub: "supa-other", email: "other@example.com", emailConfirmed: true}, browser: first.browser})
+    expect(idp.logoutCalls.length).toBe(handoffs + 1)
+    const me = await app.request(`${PORTAL_ORIGIN}/api/portal/me`, {headers: {cookie: `${PORTAL_COOKIE}=${other.sessionCookie}`}})
+    expect(((await me.json()) as {user: {email: string}}).user.email).toBe("other@example.com")
+  })
+
+  test("a person no longer signed in at the sign-in server is returned to the portal too", async () => {
+    const first = await portalSignIn(app, idp, {portal: "portal", person: ADMIN_PERSON})
+    // A browser with no sign-in server session (it ended, or the person signed out on the sign-in site): the
+    // provider's own self-submitting form, with nothing to confirm.
+    const browser = new Browser(app)
+    const {endSession, html} = await signOutOfPortal(first.sessionCookie, browser)
+    expect(endSession.status).toBe(200)
+    expect(html).not.toContain("Sign out of Mentra?")
+    expect(html).toContain('name="logout" value="yes"')
+    const xsrf = /name="xsrf" value="([^"]+)"/.exec(html)![1]!
+    const done = await browser.request(`${OIDC_ISSUER}/oidc/session/end/confirm`, {
+      method: "POST",
+      headers: {"content-type": "application/x-www-form-urlencoded", origin: OIDC_ISSUER},
+      body: new URLSearchParams({xsrf, logout: "yes"}).toString(),
+    })
+    expect(done.status).toBe(303)
+    expect(done.headers.get("location")).toBe(`${PORTAL_ORIGIN}/`)
+  })
+
+  test("a return address the client did not register is refused, and signs nobody out", async () => {
+    const first = await portalSignIn(app, idp, {portal: "portal", person: ADMIN_PERSON})
+    for (const returnTo of ["https://evil.test/", `${ADMIN_ORIGIN}/`, `${PORTAL_ORIGIN}/elsewhere`]) {
+      const refused = await first.browser.request(
+        `${OIDC_ISSUER}/oidc/session/end?client_id=workspace-portal&post_logout_redirect_uri=${encodeURIComponent(returnTo)}`,
+        {headers: {accept: "text/html"}},
+      )
+      expect(refused.status).toBe(400)
+      const page = await refused.text()
+      expect(page).toContain("Sign-in did not complete")
+      expect(page).not.toContain("op.logoutForm")
+      expect(page).not.toContain(returnTo)
+    }
+    expect(first.browser.cookies(OIDC_ISSUER).has("__Host-mentra_oidc_session")).toBe(true)
+  })
+
+  test("a portal whose client registers other post-logout URIs names its client alone, and the sign-in server asks to confirm", async () => {
+    restoreEnv()
+    restoreEnv = applyEnv({
+      ...HOSTED_ENV,
+      CLOUD_CORE_OIDC_CLIENTS: JSON.stringify(
+        CLIENTS.map(client => (client.kind === "workspace_portal" ? {...client, postLogoutRedirectUris: [`${PORTAL_ORIGIN}/goodbye`]} : client)),
+      ),
+    })
+    const first = await portalSignIn(app, idp, {portal: "portal", person: ADMIN_PERSON})
+    const {signOutUrl, html} = await signOutOfPortal(first.sessionCookie, first.browser)
+    expect(signOutUrl).toBe(`${OIDC_ISSUER}/oidc/session/end?client_id=workspace-portal`)
+    expect(html).toContain("Sign out of Mentra?")
+    expect(html).not.toContain("<script")
   })
 
   test("the workspace portal signs in with its own client and cookie", async () => {
@@ -446,6 +567,12 @@ describe("portal sign-in not configured", () => {
   test("the admin API still answers 401 without a principal", async () => {
     expect((await app.request(`${ADMIN_ORIGIN}/api/admin/me`)).status).toBe(401)
   })
+
+  test("logout ends the portal session and answers no Mentra account sign-out", async () => {
+    const out = await app.request(`${ADMIN_ORIGIN}/api/admin/auth/logout`, {method: "POST", headers: {origin: ADMIN_ORIGIN}})
+    expect(out.status).toBe(200)
+    expect(await out.json()).toEqual({signOutUrl: null})
+  })
 })
 
 describe("a Private Cloud: Entra behind Core's sign-in server, on Core's one host", () => {
@@ -485,6 +612,25 @@ describe("a Private Cloud: Entra behind Core's sign-in server, on Core's one hos
     const body = (await me.json()) as {user: {mentraUserId: string; isOrganizationAdmin: boolean}; organization: {capabilities: string[]}}
     expect(body.user).toMatchObject({mentraUserId: phoneUser.mentraUserId, isOrganizationAdmin: true})
     expect(body.organization.capabilities).toContain("organization.workspaces.administer")
+  })
+
+  test("Sign out returns to the admin portal on Core's host, signed out of the sign-in server without a prompt", async () => {
+    const {sessionCookie, browser} = await portalSignIn(app, entra, {portal: "admin", person: entraPerson("oid-admin")})
+    const out = await app.request(`${ADMIN_ORIGIN}/api/admin/auth/logout`, {method: "POST", headers: {cookie: `${ADMIN_COOKIE}=${sessionCookie}`, origin: ADMIN_ORIGIN}})
+    const {signOutUrl} = (await out.json()) as {signOutUrl: string}
+    expect(signOutUrl).toBe(`${ADMIN_ORIGIN}/oidc/session/end?client_id=admin-portal&post_logout_redirect_uri=${encodeURIComponent(`${ADMIN_ORIGIN}/`)}`)
+    const endSession = await browser.request(signOutUrl)
+    const html = await endSession.text()
+    expect(html).toContain("Signing you out…")
+    const form = /<form id="op\.logoutForm" method="post" action="([^"]+)"><input type="hidden" name="xsrf" value="([^"]+)"\/><\/form>/.exec(html)!
+    const done = await browser.request(form[1]!, {
+      method: "POST",
+      headers: {"content-type": "application/x-www-form-urlencoded", origin: ADMIN_ORIGIN},
+      body: new URLSearchParams({xsrf: form[2]!, logout: "yes"}).toString(),
+    })
+    expect(done.status).toBe(303)
+    expect(done.headers.get("location")).toBe(`${ADMIN_ORIGIN}/`)
+    expect(browser.cookies(ADMIN_ORIGIN).has("__Host-mentra_oidc_session")).toBe(false)
   })
 
   test("a deleted account cannot sign in with its provider", async () => {
