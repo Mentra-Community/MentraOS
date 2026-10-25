@@ -71,14 +71,11 @@ const ME: PortalMe = {
   workspaceCreation: { allowed: true, reason: null },
   onboardingRequired: true,
   org: null,
-  modules: { billing: false, billingCatalog: false },
+  modules: { billing: false },
 };
 
-/**
- * `/api/portal/me` for a person who is (or is not) offered billing. Where billing is offered its catalog is too
- * (`catalog` says otherwise: a non-staff Admin on staging sees licenses, not billing).
- */
-const meWith = (billing: boolean, catalog = billing): PortalMe => ({ ...ME, modules: { billing, billingCatalog: catalog } });
+/** `/api/portal/me` on a Core that does (or does not) offer billing. */
+const meWith = (billing: boolean): PortalMe => ({ ...ME, modules: { billing } });
 
 function session(overrides: Partial<PortalSession> = {}): PortalSession {
   return {
@@ -91,7 +88,7 @@ function session(overrides: Partial<PortalSession> = {}): PortalSession {
     signOut() {},
     signingOut: false,
     developerConsoleUrl: null,
-    modules: { billing: false, billingCatalog: false },
+    modules: { billing: false },
     sessionExpired() {},
     ...overrides,
   };
@@ -105,7 +102,8 @@ function invitationTo(workspaceName: string, fields: Partial<InvitationPreview> 
     email: "sam@acme.test",
     role: "member",
     invitedByEmail: "olivia@acme.test",
-    expiresAt: "2026-10-26T01:25:48.000Z",
+    // A week from now, so the card always reads "Expires in 7 days" whenever the test runs.
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     ...fields,
   };
 }
@@ -345,21 +343,12 @@ describe("the Developer Console link", () => {
     expect(portalLinks(null)).toEqual([]);
   });
 
-  test("opens in a new tab, marked as leaving the portal, from every sidebar whatever the viewer's role", () => {
+  test("is hidden: no sidebar shows it, even where this environment has a Developer Console", () => {
     for (const path of [`/members`, `/settings?workspace=${NORTHWIND}`, "/nowhere", "/enterprise"]) {
-      const link = anchorTo(render(path, TWO_WORKSPACES, { developerConsoleUrl: CONSOLE }), CONSOLE);
-      expect(link).toContain('target="_blank"');
-      expect(link).toContain('rel="noreferrer"');
-      expect(link).toContain(">Developer Console<");
-      expect(link).toContain("lucide-arrow-up-right");
-      expect(link).toContain("(opens in a new tab)");
+      const markup = render(path, TWO_WORKSPACES, { developerConsoleUrl: CONSOLE });
+      expect(anchorTo(markup, CONSOLE)).toBeNull();
+      expect(markup).not.toContain(">Developer Console<");
     }
-  });
-
-  test("sits under the workspace's sections, above the account", () => {
-    const markup = render(`/members`, TWO_WORKSPACES, { developerConsoleUrl: CONSOLE });
-    expect(markup.indexOf(`href="/settings"`)).toBeLessThan(markup.indexOf(`href="${CONSOLE}"`));
-    expect(markup.indexOf(`href="${CONSOLE}"`)).toBeLessThan(markup.indexOf("Open account menu"));
   });
 
   test("a Private Cloud's portal, where Core runs without a Store, has no link", () => {
@@ -894,12 +883,19 @@ const ACTIVE_LICENSES_ITEM = /aria-current="page"[^>]*>(?:(?!<\/a>).)*<\/svg>Lic
 const LICENSES_HEADING = /<h1[^>]*>Licenses<\/h1>/;
 
 describe("Licenses in the sidebar", () => {
-  test("is the last section, and is offered only where there are licenses to show", () => {
-    expect(visibleSections(caps("admin"), { licenses: true })).toEqual(["members", "settings", "licenses"]);
-    expect(visibleSections(caps("owner"), { licenses: true })).toEqual(["members", "settings", "licenses"]);
-    expect(visibleSections(caps("member"), { licenses: true })).toEqual(["settings", "licenses"]);
+  test("is the first section, and is offered only where there are licenses to show", () => {
+    expect(visibleSections(caps("admin"), { licenses: true })).toEqual(["licenses", "members", "settings"]);
+    expect(visibleSections(caps("owner"), { licenses: true })).toEqual(["licenses", "members", "settings"]);
+    expect(visibleSections(caps("member"), { licenses: true })).toEqual(["licenses", "settings"]);
     expect(visibleSections(caps("owner"), { licenses: false })).toEqual(["members", "settings"]);
     expect(visibleSections(caps("owner"))).toEqual(["members", "settings"]);
+    // Fleet Management keeps its own group, after the workspace's.
+    expect(visibleSections(caps("owner"), { licenses: true, fleet: true })).toEqual(["licenses", "members", "settings", "fleet"]);
+  });
+
+  test("leads the sidebar, followed by Members and Settings, with no Audit log item", () => {
+    const items = workspaceNav(ACME, visibleSections(caps("owner"), { licenses: true }), ACME).flatMap(group => group.items);
+    expect(items.map(item => item.key)).toEqual(["licenses", "members", "settings"]);
   });
 
   test("is called Licenses and goes to the workspace's licenses address", () => {
@@ -925,8 +921,8 @@ describe("the Licenses page", () => {
     expect(manager).not.toContain("pays for");
     // The title stands alone: nothing is drawn under it.
     expect(manager).not.toMatch(/Licenses<\/h1><p/);
-    // A non-staff Admin on staging sees the same page (licenses, no billing).
-    const admin = render(`/licenses`, adminOfAcme([LICENSE]), { modules: meWith(false, true).modules }, undefined, meWith(false, true));
+    // An Admin sees the same page.
+    const admin = renderAs(true, `/licenses`, adminOfAcme([LICENSE]));
     expect(admin).toMatch(LICENSES_HEADING);
     expect(admin).not.toContain("pays for");
     expect(admin).not.toMatch(/Licenses<\/h1><p/);
@@ -965,10 +961,8 @@ describe("the Licenses page", () => {
     const admin = detail(ACME, "Acme Field Team", "admin");
     expect(billingOffered(meWith(true), admin)).toBe(true);
     expect(billingOffered(meWith(true), detail(ACME, "Acme Field Team", "owner"))).toBe(true);
-    // Billing off (including a non-staff Admin on staging, who sees licenses but not billing), a role below Admin,
-    // or a workspace not yet loaded: no.
+    // Billing off, a role below Admin, or a workspace not yet loaded: no.
     expect(billingOffered(meWith(false), admin)).toBe(false);
-    expect(billingOffered(meWith(false, true), admin)).toBe(false);
     for (const role of ["member", "developer"] as const) {
       expect(billingOffered(meWith(true), detail(ACME, "Acme Field Team", role))).toBe(false);
     }
@@ -1050,7 +1044,6 @@ describe("the personal Billing page is gone", () => {
       renderAs(false, "/account/billing", { list: [] }),
       renderAs(true, "/account/billing", { list: [] }),
       renderAs(true, "/account/billing", TWO_WORKSPACES),
-      render("/account/billing", { list: [] }, { modules: meWith(false, true).modules }, undefined, meWith(false, true)),
     ]) {
       expect(markup).toContain("Page not found");
       expect(markup).not.toContain("Loading billing");

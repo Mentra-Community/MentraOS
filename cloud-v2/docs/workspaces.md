@@ -60,10 +60,12 @@ the top of the sidebar shows it and your role (your membership's; "Member · Org
 Admin" when an Organization Admin's powers go beyond it), and lists your other workspaces,
 **Create workspace** and your pending invitations with **Accept** and **Dismiss**.
 
-**Addresses.** Your own workspace is never in the address: `/members` (members, with pending
-invitations under them), `/settings`, `/audit` and `/licenses`
-([Licenses](licenses.md#in-the-workspace-portal)) are its pages, and the sidebar offers only
-what your role opens. `/` opens the current workspace's first page. Another workspace is named
+**Addresses.** Your own workspace is never in the address: `/licenses`
+([Licenses](licenses.md#in-the-workspace-portal)), `/members` (members, with pending
+invitations under them) and `/settings` are its pages. The sidebar lists Licenses, Members and
+Settings, in that order, and offers only what your role opens; Fleet Management (`/fleet`), where
+Fleet is installed, is its own group under them. `/` opens the current workspace's first sidebar
+page. Another workspace is named
 by `?workspace=<workspaceId>` on any of them, which is how an Organization Admin opens a
 customer's; the sidebar's links carry it exactly when the workspace is not the one the bare
 address opens, and a `?workspace=` that names the bare address is dropped from the address in
@@ -96,8 +98,7 @@ An invitation link lands on `/invitation`, which reads the token from the tab's 
 A link Core reports as no longer valid is shown as such once and then forgotten. Pending
 invitations are the link's and those addressed to your verified email, each shown once;
 **Dismiss** hides one in this browser only (Core does not record a refusal, and its link keeps
-working). Above your account, the sidebar links to the environment's Developer Console in a new
-tab; a Private Cloud, which has no Developer Console, shows no link. Company sign-in
+working). The sidebar has no link to the Developer Console. Company sign-in
 (enterprise orgs and trusted issuers) is not in the navigation; its pages stay reachable
 at `/enterprise` until it returns as workspace settings.
 
@@ -295,9 +296,8 @@ and its billing module writes licenses through it ([Licenses](licenses.md)).
 `/api/portal/billing/*` forwards the workspace portal's billing requests
 to that module for a signed-in person, with the workspace or the person's own
 account as the scope Core decides ([Portal modules](portal-modules.md)).
-`/api/portal/me` says whether to offer it (`modules.billing`) and whether its catalog
-can be read (`modules.billingCatalog`), which names the licenses on the Members list for
-everyone who may see them.
+`/api/portal/me` says whether to offer it (`modules.billing`), the same for everyone
+who signs in.
 
 ## Configuration
 
@@ -309,7 +309,7 @@ everyone who may see them.
 | `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` | Optional. Comma-separated environment labels keys may carry; the first is the one new keys get. Default: this Core's own label (`CLOUD_CORE_ENVIRONMENT`, else derived from `CONSOLE2_URL`, else `local`), which is the label existing keys carry. |
 | `CLOUD_CORE_SERVICE_SECRETS` | Optional. The signed service API's secrets by service (`store`, `fleet`), `{"store": ["<newest>", "<older>"], "fleet": ["<newest>"]}`. Unset: every service call is refused. |
 | `CLOUD_CORE_FLEET_URL`, `CLOUD_CORE_FLEET_SECRET`, `CLOUD_CORE_ENABLED_FEATURES` | Optional. The Fleet service Core forwards to, its shared secret, and (on a Private Cloud) the features the deployment has bought, which must list `fleet.managed` (case-sensitive). Unset: Fleet is not installed. See [Fleet integration](fleet-integration.md). |
-| `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | Optional, hosted Core only. The billing module Core forwards to, and its shared secret. Unset: billing is not installed. Outside `CLOUD_CORE_ENVIRONMENT=prod` its pages are visible to Organization Admins only, and its catalog stays readable by members. See [Portal modules](portal-modules.md). |
+| `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | Optional, hosted Core only. The billing module Core forwards to, and its shared secret. Unset: billing is not installed. Set: billing is offered to every signed-in person, on every Core. See [Portal modules](portal-modules.md). |
 | `RESEND_API_KEY`, `EMAIL_SENDER` | Invitation emails. Without them, inviting still works and returns the link to copy. |
 
 Workspace writes use multi-document transactions across collections, so they

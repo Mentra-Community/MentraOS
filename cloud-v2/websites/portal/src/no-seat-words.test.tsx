@@ -87,8 +87,8 @@ describe("the guard sees what it should", () => {
 
 // ---- the rig ------------------------------------------------------------------------------------------------------
 
-const BILLING_ON: PortalModules = { billing: true, billingCatalog: true };
-const CATALOG_ONLY: PortalModules = { billing: false, billingCatalog: true };
+const BILLING_ON: PortalModules = { billing: true };
+const BILLING_OFF: PortalModules = { billing: false };
 
 const meWith = (modules: PortalModules): PortalMe => ({
   authenticated: true,
@@ -309,12 +309,6 @@ describe("a license's card, in each state", () => {
     await exploreCards("an unknown status");
   });
 
-  test("a manager not offered billing sees the licenses without money", async () => {
-    const scenario: Scenario = { ...SCENARIOS.twoActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
-    await open(`/licenses`, scenario, "Mentra Call Unlimited", CATALOG_ONLY);
-    await exploreCards("without billing");
-  });
-
   test("the total counts products", async () => {
     await open(`/licenses`, SCENARIOS.threeActive(), "Mentra Call Unlimited");
     expect(has("3 products")).toBe(true);
@@ -438,8 +432,8 @@ describe("a link to buy one product", () => {
     expectNoSeat("a member");
     await cleanup();
     mock.restore();
-    const admin: Scenario = { ...SCENARIOS.twoActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
-    await open("/licenses?buy=example.addon", admin, t.page.buyLink.notHere, CATALOG_ONLY);
+    const admin: Scenario = { ...SCENARIOS.catalog(), role: "admin" };
+    await open("/licenses?buy=example.addon", admin, t.page.buyLink.notHere, BILLING_OFF);
     expectNoSeat("not offered");
   });
 });

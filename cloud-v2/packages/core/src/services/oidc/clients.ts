@@ -15,7 +15,14 @@
  * - `secretEnv`: the variable holding a confidential client's secret, named
  *   `CLOUD_CORE_OIDC_<CLIENT>_CLIENT_SECRET` (at least 32 characters).
  *   Secrets never sit in the JSON itself.
- * - `redirectUris`: matched exactly. `postLogoutRedirectUris` is optional.
+ * - `redirectUris`: matched exactly.
+ * - `postLogoutRedirectUris`: where a client may ask the sign-in server to send
+ *   the browser after signing the person out (end-session's
+ *   `post_logout_redirect_uri`), matched exactly. Optional: a confidential
+ *   client without it registers the root (`<origin>/`) of each of its
+ *   redirect URIs' origins, which is where the portals return after sign-out.
+ *   A configured list, empty included, is used as it is. The CLI registers
+ *   none unless configured.
  * - The Developer Console and the CLI get refresh tokens; the portals do not.
  *
  * `findClient` is the one lookup the provider and Core's token checks use. A
@@ -87,6 +94,11 @@ function checkUri(uri: string, label: string, loopbackOnly: boolean): void {
   fail(`${label} "${uri}" must be an HTTPS URL`)
 }
 
+/** The root (`<origin>/`) of each URI's origin, once each, in order. */
+function originRoots(uris: string[]): string[] {
+  return [...new Set(uris.map(uri => `${new URL(uri).origin}/`))]
+}
+
 function parseClient(value: unknown, index: number): OidcClient {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail(`entry ${index} must be an object`)
   const entry = value as Record<string, unknown>
@@ -111,7 +123,10 @@ function parseClient(value: unknown, index: number): OidcClient {
 
   const redirectUris = stringArray(entry.redirectUris, `${label} redirectUris`, true)
   for (const uri of redirectUris) checkUri(uri, `${label} redirect URI`, clientKind === "cli")
-  const postLogoutRedirectUris = stringArray(entry.postLogoutRedirectUris, `${label} postLogoutRedirectUris`, false)
+  const postLogoutRedirectUris =
+    entry.postLogoutRedirectUris === undefined && confidential
+      ? originRoots(redirectUris)
+      : stringArray(entry.postLogoutRedirectUris, `${label} postLogoutRedirectUris`, false)
   for (const uri of postLogoutRedirectUris) checkUri(uri, `${label} post-logout redirect URI`, false)
 
   return {

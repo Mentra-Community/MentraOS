@@ -36,7 +36,7 @@ const ME: PortalMe = {
   onboardingRequired: false,
   org: null,
   // Billing is offered, so Licenses is a page this person's own workspace has.
-  modules: { billing: true, billingCatalog: true },
+  modules: { billing: true },
 };
 
 function detail(workspaceId: string, member = true): WorkspaceDetail {

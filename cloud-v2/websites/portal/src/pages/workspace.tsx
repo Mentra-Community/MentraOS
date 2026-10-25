@@ -2,9 +2,9 @@
  * One workspace in the workspace portal: `/<section>` (`?workspace=<workspaceId>` when it is not the one the bare
  * address opens), framed by the sidebar.
  *
- * The sections are the shared Core workspace screens (`@mentra/workspace-ui`): Members (the member list
- * with the pending invitations under it, and Invite in the header), Settings, and Licenses
- * (pages/licenses). The sidebar offers only the sections the viewer's capabilities open, and Licenses only
+ * The sections are the shared Core workspace screens (`@mentra/workspace-ui`): Licenses (pages/licenses),
+ * Members (the member list with the pending invitations under it, and Invite in the header) and Settings. The
+ * sidebar offers only the sections the viewer's capabilities open, and Licenses only
  * where there is something to show: the person manages billing, or the workspace has licenses (a member sees
  * their own seats, never billing). A Private Cloud has neither. Every request is still checked by Core. A
  * workspace that does not exist, or that the viewer may not see, is one "not found" page.
@@ -108,7 +108,7 @@ export function fleetNavKey(item: FleetItem): string {
  * Fleet Management has its own group, behind `fleet.read` and Fleet being installed.
  */
 export const NAV_GROUPS: ReadonlyArray<{ key: string; label?: string; sections: readonly WorkspaceSection[] }> = [
-  { key: "workspace", sections: ["members", "settings", "licenses"] },
+  { key: "workspace", sections: ["licenses", "members", "settings"] },
   { key: "fleet", label: "Fleet Management", sections: ["fleet"] },
 ];
 
@@ -122,8 +122,8 @@ export function licensesPartShown(billing: boolean, licenses: readonly LicenseVi
 }
 
 /**
- * The sections the viewer's capabilities in this workspace open, in sidebar order. `licenses` says whether
- * Licenses is offered (see {@link licensesPartShown}).
+ * The sections the viewer's capabilities in this workspace open, in sidebar order. The first is where the bare
+ * address lands. `licenses` says whether Licenses is offered (see {@link licensesPartShown}).
  */
 export function visibleSections(
   detail: Pick<WorkspaceDetail, "capabilities"> | undefined,
@@ -206,13 +206,13 @@ export function useMembersLicenses({
   enabled: boolean;
 }): MembersLicenses | undefined {
   const scope = useMemo(() => workspaceScope(workspaceId), [workspaceId]);
-  const wanted = enabled && me.modules.billingCatalog && can(detail, "workspace.licenses.read") && (licenses ?? []).some(license => !license.endedAt);
+  const wanted = enabled && me.modules.billing && can(detail, "workspace.licenses.read") && (licenses ?? []).some(license => !license.endedAt);
   const catalog = useQuery({ ...billingCatalogQuery(portalBillingApi, scope), enabled: wanted });
 
   return useMemo(
     // The one place the source is built.
-    () => (me.modules.billingCatalog ? { catalog: catalog.data?.products } : undefined),
-    [me.modules.billingCatalog, catalog.data],
+    () => (me.modules.billing ? { catalog: catalog.data?.products } : undefined),
+    [me.modules.billing, catalog.data],
   );
 }
 
@@ -257,8 +257,10 @@ export function WorkspaceScreen({
       })
     : [];
   const active = section && sections.includes(section) ? section : null;
-  // The address is the licenses page and the list has not answered yet: wait for it instead of leaving.
-  const waitingForLicenses = data !== undefined && section === "licenses" && active === null && licenses.isPending;
+  // The address is not a section this viewer is offered yet (`/`, or Licenses itself), and whether Licenses is offered
+  // waits on the licenses list: wait for it instead of leaving, because Licenses is the first section and so decides
+  // where `/` lands. Where billing is offered, Licenses already is.
+  const waitingForLicenses = data !== undefined && active === null && !billing && licenses.isPending;
   // The Members list shows each member's licenses.
   const membersLicenses = useMembersLicenses({ me, workspaceId, detail: data, licenses: licenses.data, enabled: active === "members" });
 
@@ -324,7 +326,7 @@ export function WorkspaceScreen({
         )
       ) : waitingForLicenses ? (
         <div role="status" className="text-muted-foreground flex items-center gap-2.5 text-sm">
-          <Spinner /> Loading licenses
+          <Spinner /> {section === "licenses" ? "Loading licenses" : "Loading workspace"}
         </div>
       ) : !active ? (
         // `/`, or a section this viewer does not have: open the first one they do. The query and hash stay, so a

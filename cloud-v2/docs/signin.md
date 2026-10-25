@@ -86,6 +86,15 @@ identity provider.
   and the `__Secure-` interaction cookies) are signed with
   `CLOUD_CORE_OIDC_COOKIE_KEYS` and authenticate nothing outside the sign-in
   server.
+- **Sign-out.** End-session that names a registered client (`client_id`) and
+  one of that client's post-logout redirect URIs (`post_logout_redirect_uri`)
+  signs the person out of the sign-in server without asking: its page submits
+  itself (one script, allowed by its hash; a **Sign out** button stays as the
+  fallback) and the browser lands on that URI. This is how the portals sign out
+  (below). A request that names no client or no return address, such as a bare
+  link to `/oidc/session/end` or the sign-in site's `/signout`, asks the person
+  to confirm and ends on a signed-out page. A return address the client did not
+  register is refused. The sign-in server's pages are light only.
 - **Storage.** Mongo collections `oidc_session`, `oidc_interaction`,
   `oidc_grant`, `oidc_authorization_code`, `oidc_refresh_token`,
   `oidc_access_token` and `oidc_replay_detection`, with TTL indexes; codes and
@@ -153,6 +162,12 @@ consent screen.
   characters. A client whose secret is unset is unknown.
 - Redirect URIs match exactly and are HTTPS, except the CLI's loopback URIs (and
   loopback HTTP on an undeployed Core).
+- `postLogoutRedirectUris` lists where the client may send people back after
+  signing them out, matched exactly. It is optional: a confidential client
+  without it registers the root of each of its redirect URIs' origins
+  (`https://portal.mentraglass.com/` for the callback above), which is where a
+  portal returns after sign-out, so no environment needs to set it. A
+  configured list, empty included, is used as it is. The CLI registers none.
 
 ### The CLI
 
@@ -212,11 +227,25 @@ Core's sign-in server; Core runs their server side.
 | --- | --- |
 | `GET /api/admin/auth/login?return_to=…`, `GET /api/portal/auth/login?return_to=…` | Starts the code flow: scope `openid email profile`, S256 PKCE, `state` and `nonce`. `return_to` must be a relative path; anything else becomes `/`. 20 per minute per IP. |
 | `GET /api/admin/auth/callback`, `GET /api/portal/auth/callback` | Redeems the code with `client_secret_post` and verifies the ID token with Core's own key: `kid`, `iss`, `aud` (and `azp`), `nonce`, expiry. Starts a portal session for `sub` and redirects to `return_to`. Any failure shows a fixed page with **Try again** and sets no session cookie. 30 per minute per IP. |
-| `POST /api/admin/auth/logout`, `POST /api/portal/auth/logout` | Same-origin only. Ends the portal session and answers `{signOutUrl}`, the sign-in server's end-session endpoint. |
+| `POST /api/admin/auth/logout`, `POST /api/portal/auth/logout` | Same-origin only. Ends the portal session and answers `{signOutUrl}`: the sign-in server's end-session endpoint with the portal's `client_id` and `post_logout_redirect_uri` `<portal origin>/`, from configuration. Null when the portal's sign-in is not configured. |
 
 All three answer `Cache-Control: no-store`. The portal's callback,
 `<portal origin>/api/<admin|portal>/auth/callback`, must be registered for its
 client; with the sign-in server on, Core refuses to start otherwise.
+
+**Sign out** in a portal is one step. The portal calls its logout route and
+sends the tab to `signOutUrl` (replacing the page, so Back does not return to
+a signed-in page). The sign-in server signs the person out of their Mentra
+account without asking and returns them to `<portal origin>/`, the portal's
+sign-in page. The next sign-in goes through the sign-in step again, so this is
+also how a person switches accounts (on a Private Cloud, the customer's identity
+provider keeps its own session); in the workspace portal, an invitation waiting
+in the tab is where signing in again returns. Without a `signOutUrl` (or when the call
+fails) the portal shows its own signed-out page with **Sign in again**. When the
+client registers other post-logout URIs but not `<portal origin>/`, the URL
+names the client alone and the sign-in server asks to confirm. Other sites the
+person is signed in to (the other portal, the Developer Console) stay signed in
+until they sign out there.
 
 ### Sessions and cookies
 

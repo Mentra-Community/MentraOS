@@ -30,7 +30,7 @@ const ME: PortalMe = {
   workspaceCreation: { allowed: true, reason: null },
   onboardingRequired: false,
   org: null,
-  modules: { billing: true, billingCatalog: true },
+  modules: { billing: true },
 };
 
 const WORKSPACE: PortalModuleScope = { kind: "workspace", workspaceId: "ws_acme" };
@@ -380,7 +380,7 @@ describe("the page around the module", () => {
     signOut() {},
     signingOut: false,
     developerConsoleUrl: null,
-    modules: { billing: true, billingCatalog: true },
+    modules: { billing: true },
     sessionExpired() {},
   };
 

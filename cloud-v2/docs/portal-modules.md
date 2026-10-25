@@ -47,7 +47,6 @@ Set on Core. Values are read on every request, so a change takes effect at once.
   `127.0.0.1`. No credentials, query or fragment.
 - `CLOUD_CORE_BILLING_SECRET`: the shared secret that signs everything Core
   sends. Required when the URL is set. A secret without a URL does nothing.
-- `CLOUD_CORE_ENVIRONMENT`: decides who may see billing (below).
 
 A module has three states, never conflated:
 
@@ -61,70 +60,19 @@ The limits are Fleet's defaults and are not settings: a request body up to 1 MiB
 a JSON answer up to 10 MiB, an asset up to 25 MiB, and 10 seconds for the module
 to answer, body included.
 
-## Is the module installed, and is it for me?
+## Is the module installed?
 
-`GET /api/portal/me` answers `modules: {"billing": true | false,
-"billingCatalog": true | false}`:
+`GET /api/portal/me` answers `modules: {"billing": true | false}`. `billing` is
+true when billing is ready on this Core, so the portal offers billing's pages
+only where they work. A module whose settings are unusable is false, not true:
+the portal could not load its page. So is one that is not installed.
 
-- `billing` is true when billing is ready on this Core and visible to the person
-  who asked (below), so the portal offers billing's pages only where they work.
-- `billingCatalog` is true when billing is ready, whoever asks, because the
-  catalog is an open read (below). It tells the portal that licenses can be named
-  for everyone who may see them, on the Licenses page and on the Members list.
-
-A module whose settings are unusable is false in both, not true: the portal could
-not load its page. So is one that is not installed.
-
-### Who sees billing
-
-On a Core whose `CLOUD_CORE_ENVIRONMENT` is exactly `prod`, billing is visible to
-everyone. On every other Core (`dev`, `staging`, a misspelling, nothing at all)
-it is visible to staff only, because billing sells with a test key there. Staff
-are Organization Admins, as `CLOUD_CORE_ADMIN_EMAILS` and
-`CLOUD_CORE_ADMIN_EMAIL_DOMAINS` decide from a verified email; the forwarded
-principal carries the answer as `isOrganizationAdmin`. For anyone else on such a
-Core, `modules.billing` is `false` and every `/api/portal/billing/*` request but
-an open read (below) answers `404 module_not_installed`, with the module never
-called, exactly as if it were not installed.
-
-The module repeats the rule on its side: on a test key it answers `403
-billing_staff_only` to a principal without `isOrganizationAdmin`, before it does
-anything, except for the same open reads, so Core and the module reach one
-answer.
-
-### Open reads
-
-Staff-only is for what a person can do with billing, not for what it sells. A
-member of a workspace who is not staff still reads the catalog, so the Members
-list can name the licenses people hold, and the pages can show a product's icon.
-A module's `openReads` in the registry (`services/portal-modules/portal-modules.ts`)
-name the few requests that stay open to every signed-in person, however staff-only
-the module is. Billing's are:
-
-| Open read | Methods | Matched |
-| --- | --- | --- |
-| `/api/portal/billing/workspaces/:workspaceId/catalog` | `GET` | The path after the workspace is exactly `catalog` |
-| `/api/portal/billing/ui/icons/<file>` | `GET`, `HEAD` | One file name after `ui/icons/`: 1 to 255 letters, digits, `.`, `_` and `-`, and not only dots. It is the contract's rule for an icon path (`BILLING_ICON_FILE`), so every icon path the portal accepts is open |
-
-Everything else is not open, in any spelling or method: `HEAD`, `POST` and the
-rest of the methods on a catalog; a trailing slash (`catalog/`), another case
-(`Catalog`), an encoded letter (`%63atalog`), a deeper path (`catalog/x`) or a
-doubled slash; `ui/icons` or `ui/icons/` with no file, a file under a deeper path
-or an encoded one, `ui/Icons/...` and `ui/iconsx/...`; and every other `ui/` path.
-Each is the `404 module_not_installed` of an absent module, as is a path Core
-refuses for its form (`invalid_path` goes only to people the module is visible to),
-so a person cannot probe around an open read. The request body of one that is not
-forwarded is not read, so a large one cannot tell them the module is there.
-
-An open read changes only whether a person may see the module. The scope rules
-are the same: a workspace's catalog needs a member of that workspace or an
-Organization Admin (`403 not_a_member`, or `404 workspace_not_found`, with the
-module not called), and the module is called with the scope Core decides. A module
-that is not installed has no open reads (`404`), and one whose settings are
-unusable answers them with `503 module_unavailable`.
-
-On a Core whose environment is `prod`, everything is forwarded, as for staff
-elsewhere.
+An installed module is for every signed-in person, on every Core, alike:
+`CLOUD_CORE_ENVIRONMENT` and whether the person is an Organization Admin change
+nothing about whether Core forwards. What a person may do inside the module is
+the module's own decision ([Forwarding paths](#forwarding-paths)). Billing sells
+with a test key on every Core but the production one, and the Licenses page then
+shows a test-mode banner ([Licenses](licenses.md)).
 
 ### Public reads
 
@@ -164,11 +112,11 @@ workspace's, and the contract of what they send is
 
 | Route | What it answers | Who |
 | --- | --- | --- |
-| `GET catalog` | What billing sells to workspaces, and what this one holds. Display content for everyone; a viewer who manages billing also gets each product's price and how many licenses may be bought | Open read |
+| `GET catalog` | What billing sells to workspaces, and what this one holds. Display content for everyone; a viewer who manages billing also gets each product's price and how many licenses may be bought | Any member of the workspace |
 | `GET status` | The workspace's licenses as billing holds them, their dates and actions, the total, and the state of a purchase (`?purchase=`) | The module decides |
 | `POST purchase` | Starts a purchase and answers the hosted payment page's address | The module decides |
 | `POST session` | Opens a hosted billing page for a license or for the workspace's billing and answers its address | The module decides |
-| `GET ui/icons/<file>` | A product's icon | Open read |
+| `GET ui/icons/<file>` | A product's icon | Any signed-in person |
 | `GET /api/portal/billing/public/products/<product>` | A product's name, `{"name"}`, for the sign-in page | Anyone, signed in or not ([public read](#public-reads)) |
 
 Billing serves no `ui/entry.js`. It sends values and the actions it offers, and the
@@ -180,7 +128,7 @@ from them, and follows only the hosted-page addresses the contract accepts.
 | Core path | Forwarded to | Scope | Caller |
 | --- | --- | --- | --- |
 | `/api/portal/<module>/workspaces/:workspaceId/<rest>` | `${url}/v1/portal/workspaces/:workspaceId/<rest>` | `{"kind": "workspace", "workspaceId"}` | A member of that workspace, or an Organization Admin |
-| `/api/portal/<module>/ui/<rest>` | `${url}/v1/portal/ui/<rest>` | `{"kind": "person"}` | Any signed-in person the module is visible to, or anyone for an open read; `GET` and `HEAD` only |
+| `/api/portal/<module>/ui/<rest>` | `${url}/v1/portal/ui/<rest>` | `{"kind": "person"}` | Any signed-in person; `GET` and `HEAD` only |
 | `/api/portal/<module>/public/<family>/<key>` | `${url}/v1/portal/public/<family>/<key>` | `{"kind": "public"}`, with the `public` principal | Anyone, signed in or not, for a [public read](#public-reads); `GET` only, no query |
 
 The method, query string and body are forwarded. The URL may carry a path prefix;
@@ -188,8 +136,7 @@ Core joins it to `/v1/portal/...` with or without a trailing slash. The path and
 query Core signs are exactly the ones it sends. Anything else under the mount is
 `404 {"error":"not_found"}`, `/account/<rest>` included: the first segment must be
 exactly `workspaces` (with a workspace after it) or `ui`, in lowercase and
-unencoded. (To a person the module is hidden from, it is the `404
-module_not_installed` of an absent module, as below.)
+unencoded.
 
 Only people reach a module, but for its public reads. Core answers, in this order:
 
@@ -198,21 +145,18 @@ Only people reach a module, but for its public reads. Core answers, in this orde
    key is `403 {"error":"forbidden"}`. The admin portal's session cookie
    authenticates nothing here. A cookie-authenticated write must come from the
    workspace portal's origin.
-2. **Installed and visible?** `404 module_not_installed` if the module is not
-   installed or is hidden from this person, unless the request is one of its
-   [open reads](#open-reads); `503 module_unavailable` if it is misconfigured.
-   Neither learns anything about workspaces: this comes before the scope check.
-   Whether a request is an open read is settled from its method and its path as
-   received, before the path is refused for its form, so a refusal of the path
-   never tells a person the module is there.
+2. **Installed?** `404 module_not_installed` if the module is not installed;
+   `503 module_unavailable` if it is misconfigured. Neither learns anything about
+   workspaces: this comes before the scope check. A request body is not read
+   for either.
 3. **Path.** A path with an encoded separator (`%2f`, `%5c`), a control
    character, a bad escape or a double encoding (`%252e`) is `400
    {"error":"invalid_path"}`, as for Fleet. The server in front of Core resolves a
    literal or encoded dot segment (`..`, `%2e%2e`) and turns a backslash into a
    separator before Core sees the request, as a URL parser does, so Core judges
-   the path it resolves to: `status/../catalog` arrives as `catalog` and is the
-   open read, and `catalog/../status` arrives as `status`. Core's own refusal of a
-   dot segment is a second line, for a server that does not resolve them.
+   the path it resolves to: `status/../catalog` arrives as `catalog`. Core's own
+   refusal of a dot segment is a second line, for a server that does not resolve
+   them.
 4. **Scope.** A workspace path needs standing in that workspace: a member of any
    role, or an Organization Admin, who acts as an Owner in every workspace. A
    non-member is `403 {"error":"forbidden","reason":"not_a_member"}`, and an

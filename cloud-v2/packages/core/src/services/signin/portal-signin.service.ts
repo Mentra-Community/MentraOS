@@ -21,8 +21,15 @@
  * Redirect and callback URLs come only from configuration, never from `Host`
  * or forwarding headers. The browser holds only the portal's own session
  * cookie (`__Host-` prefixed, HttpOnly, Secure, SameSite=Lax, Path=/, no
- * Domain). Sign-out ends that session and offers the provider's end-session
- * endpoint, the sign-in site's sign-out.
+ * Domain).
+ *
+ * Sign-out is one step for the person. Core ends the portal session and
+ * answers the provider's end-session URL for this portal: its `client_id` and
+ * `post_logout_redirect_uri` `<portal origin>/`, which every web client
+ * registers by default (`oidc/clients.ts`). The portal sends the browser
+ * there; the sign-in server ends the person's Mentra account session without
+ * asking (a registered client is asking) and returns them to the portal's own
+ * sign-in page.
  */
 
 import {createLogger} from "@mentra/cloud-shared"
@@ -77,6 +84,8 @@ export interface PortalClient extends PortalSite {
   clientId: string
   clientSecret: string
   redirectUri: string
+  /** `<portal origin>/`, the portal's sign-in page, when its client registers it as a post-logout redirect URI (the default); else null. */
+  postLogoutRedirectUri: string | null
 }
 
 function clean(value: string | undefined): string {
@@ -111,7 +120,9 @@ export function portalClient(portal: PortalKind): PortalClient {
   if (!client.redirectUris.includes(redirectUri)) {
     throw new ConfigurationError(`${portal} portal sign-in: client "${client.clientId}" does not register ${redirectUri}`)
   }
-  return {...site, issuer, clientId: client.clientId, clientSecret: secret, redirectUri}
+  const root = `${site.origin}/`
+  const postLogoutRedirectUri = client.postLogoutRedirectUris.includes(root) ? root : null
+  return {...site, issuer, clientId: client.clientId, clientSecret: secret, redirectUri, postLogoutRedirectUri}
 }
 
 /** The portal's client, or null when its sign-in is not configured. */
@@ -364,7 +375,31 @@ export async function verifyPortalIdToken(pc: PortalClient, idToken: string | un
   }
 }
 
-/** `POST /api/{admin,portal}/auth/logout`: end the portal session; offer the identity provider's sign-out. */
+/**
+ * The URL that signs the person out of their Mentra account at Core's sign-in
+ * server and brings them back to the portal's root, its sign-in page: the
+ * end-session endpoint with the portal's `client_id` and
+ * `post_logout_redirect_uri` `<portal origin>/`, both from configuration.
+ * Without a registered `<portal origin>/` (a client configured with other
+ * post-logout URIs) the URL names the client alone, and the sign-in server
+ * asks the person to confirm. Null when the portal's sign-in is not
+ * configured: there is no Mentra account session of this portal's to end.
+ */
+export function portalSignOutUrl(portal: PortalKind): string | null {
+  const pc = portalClientIfConfigured(portal)
+  const endpoint = pc ? endSessionUrl(pc.issuer) : null
+  if (!pc || !endpoint) return null
+  const url = new URL(endpoint)
+  url.searchParams.set("client_id", pc.clientId)
+  if (pc.postLogoutRedirectUri) url.searchParams.set("post_logout_redirect_uri", pc.postLogoutRedirectUri)
+  return url.href
+}
+
+/**
+ * `POST /api/{admin,portal}/auth/logout`: end the portal session and answer
+ * `{signOutUrl}`, where the portal sends the browser next to sign out of the
+ * Mentra account too (`portalSignOutUrl`), or null.
+ */
 export async function signOutPortal(c: C, portal: PortalKind): Promise<Response> {
   c.header("cache-control", "no-store")
   const pc = portalSite(portal)
@@ -373,7 +408,7 @@ export async function signOutPortal(c: C, portal: PortalKind): Promise<Response>
   const value = getCookie(c, pc.cookieName)
   if (value) await revokePortalSession(value, "sign_out")
   deleteCookie(c, pc.cookieName, {path: "/", secure: pc.secureCookies})
-  return c.json({signOutUrl: endSessionUrl()})
+  return c.json({signOutUrl: portalSignOutUrl(portal)})
 }
 
 /**

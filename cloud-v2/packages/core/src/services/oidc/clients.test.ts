@@ -12,6 +12,7 @@ import {
 const NAMES = [
   "CLOUD_CORE_OIDC_CLIENTS",
   "CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET",
+  "CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET",
   "CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET",
   "CLOUD_CORE_ENVIRONMENT",
   "NODE_ENV",
@@ -76,6 +77,43 @@ describe("first-party client registry", () => {
     expect(providerClientMetadata(consoleClient!).grant_types).toEqual(["authorization_code", "refresh_token"])
   })
 
+  test("a web client without postLogoutRedirectUris registers the root of each of its redirect URIs' origins", () => {
+    const portal = {
+      clientId: "mentra-portal-dev",
+      kind: "workspace_portal",
+      secretEnv: "CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET",
+      redirectUris: ["https://portal.dev.mentraglass.com/api/portal/auth/callback"],
+    }
+    const console = {
+      clientId: "mentra-console-dev",
+      kind: "console",
+      secretEnv: "CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET",
+      redirectUris: ["https://console.dev.mentraglass.com/api/console/auth/callback", "https://console.dev.mentraglass.com/other/callback", "https://console-preview.dev.mentraglass.com:8443/cb"],
+    }
+    configure([admin, portal, console, cli], {CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET: SECRET, CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET: SECRET})
+    const byKind = Object.fromEntries(configuredClients().map(client => [client.kind, client.postLogoutRedirectUris]))
+    expect(byKind).toEqual({
+      admin_portal: ["https://admin.dev.mentraglass.com/"],
+      workspace_portal: ["https://portal.dev.mentraglass.com/"],
+      console: ["https://console.dev.mentraglass.com/", "https://console-preview.dev.mentraglass.com:8443/"],
+      // The CLI's loopback client registers none unless configured.
+      cli: [],
+    })
+    expect(providerClientMetadata(configuredClients()[0]!).post_logout_redirect_uris).toEqual(["https://admin.dev.mentraglass.com/"])
+  })
+
+  test("configured postLogoutRedirectUris are used as they are, an empty list included", () => {
+    configure([{...admin, postLogoutRedirectUris: ["https://admin.dev.mentraglass.com/signed-out"]}])
+    expect(configuredClients()[0]!.postLogoutRedirectUris).toEqual(["https://admin.dev.mentraglass.com/signed-out"])
+    configure([{...admin, postLogoutRedirectUris: []}])
+    expect(configuredClients()[0]!.postLogoutRedirectUris).toEqual([])
+  })
+
+  test("a loopback web client's default post-logout URI is its loopback root, on an undeployed Core", () => {
+    configure([{...admin, redirectUris: ["http://localhost:4001/api/admin/auth/callback"]}], {CLOUD_CORE_ENVIRONMENT: undefined})
+    expect(configuredClients()[0]!.postLogoutRedirectUris).toEqual(["http://localhost:4001/"])
+  })
+
   test("a confidential client whose secret is unset is unknown, and refused at startup", async () => {
     configure([admin], {CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET: undefined})
     expect(await findClient("mentra-admin-dev")).toBeNull()
@@ -101,6 +139,8 @@ describe("first-party client registry", () => {
     ["an HTTP redirect URI", [{...admin, redirectUris: ["http://admin.example.com/cb"]}], "must be an HTTPS URL"],
     ["a redirect URI with a fragment", [{...admin, redirectUris: ["https://admin.example.com/cb#x"]}], "no fragment"],
     ["a CLI redirect off the loopback", [{...cli, redirectUris: ["https://cli.example.com/callback"]}], "loopback"],
+    ["an HTTP post-logout redirect URI", [{...admin, postLogoutRedirectUris: ["http://admin.example.com/"]}], "post-logout redirect URI"],
+    ["post-logout redirect URIs that are not a list", [{...admin, postLogoutRedirectUris: "https://admin.example.com/"}], "postLogoutRedirectUris"],
   ] as const)("refuses %s", (_label, clients, message) => {
     configure(clients)
     expect(() => configuredClients()).toThrow(ConfigurationError)

@@ -1,5 +1,5 @@
 /**
- * @fileoverview Which portal modules are installed on this Core, how to reach them, and who may see them.
+ * @fileoverview Which portal modules are installed on this Core and how to reach them.
  *
  * A portal module is a separately deployed service that brings its own API and its own UI to the workspace
  * portal: Core authenticates the person, decides what the request covers, signs a statement of that and
@@ -21,39 +21,20 @@
  * Everything is read from the environment on each call, so a changed setting takes effect on the next request
  * and tests can pass their own. A problem is logged once per process, naming the variable and never its value.
  *
- * Staff-only (billing). Billing sells with a test key on every Core but the production one, so there it is
- * visible only to staff: an Organization Admin, as `isOrganizationAdminEmail` decides from
- * `CLOUD_CORE_ADMIN_EMAILS` and `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` and the forwarded principal carries as
- * `isOrganizationAdmin`. Billing is visible to everyone only when `CLOUD_CORE_ENVIRONMENT` is exactly `prod`,
- * the value the production release contract requires. Anything else (`dev`, `staging`, `production`, a
- * misspelling, nothing at all) is staff-only: a Core that is not known to be production never shows a test-mode
- * checkout to the public.
+ * An installed module is for every signed-in person, on every Core, alike. What a person may do inside it is the
+ * module's own decision, through Core's `/authorize`; a workspace path needs a member of that workspace or an
+ * Organization Admin, which the API checks.
  *
- * Open reads. Staff-only is for what a person can do with billing, not for what it sells: a member of a
- * workspace who is not staff still sees what a license is, so the Members list can name the licenses people
- * hold. A module's `openReads` name the few requests that stay open to everyone who may reach the module's
- * scope, however staff-only it is, and `portalModuleAccess` answers `ready` for exactly those and nothing else:
- *  - `scopePaths`: `GET` of `/workspaces/<id>/<path>`, the path matched exactly as received (billing:
- *    `catalog`). `HEAD` and every other method, a trailing slash, another case, an encoded
- *    letter or a deeper path are not it;
- *  - `assetPrefixes`: `GET` and `HEAD` of `/ui/<prefix><file>`, with one file name after the prefix (billing:
- *    `icons/`). The rest of `ui/`, a module's `entry.js` above all, is not open.
- * The scope is untouched: a workspace path still needs a member or an Organization Admin, which the API checks
- * after this, and a person who may not see the module at all gets what an absent one gives for anything else.
- * An open read of a module that is not installed is as hidden as any other, and one of a module whose settings
- * are unusable is `unavailable`.
- *
- * Public reads. A module's `publicReads` are for anyone, signed in or not, on every Core, staff-only or not:
- * what it says there is marketing content (billing: a product's name, for the sign-in page). Each names a family
- * of `GET public/<family>/<key>`, with exactly one key after it of 1 to 100 lowercase letters, digits, `.`, `_`
- * and `-`, not only dots, matched as received (billing: `products`). `HEAD` and every other method, another case,
- * an encoding, a dot segment, a trailing slash or a deeper path are not one, and `portalModulePublicAccess`
- * answers `hidden` for them. Core forwards a public read with the `public` principal, which names no person, so
- * it is not an open read either: it opens nothing under a workspace or `ui/`.
+ * Public reads. A module's `publicReads` are for anyone, signed in or not, on every Core: what it says there is
+ * marketing content (billing: a product's name, for the sign-in page). Each names a family of
+ * `GET public/<family>/<key>`, with exactly one key after it of 1 to 100 lowercase letters, digits, `.`, `_` and
+ * `-`, not only dots, matched as received (billing: `products`). `HEAD` and every other method, another case, an
+ * encoding, a dot segment, a trailing slash or a deeper path are not one, and `portalModulePublicAccess` answers
+ * `hidden` for them. Core forwards a public read with the `public` principal, which names no person, so it opens
+ * nothing under a workspace or `ui/`.
  */
 
 import {createLogger, type Logger} from "@mentra/cloud-shared"
-import {BILLING_ICON_FILE} from "@mentra/workspace-contract/portal-billing"
 import {isDeployedEnvironment} from "../signin/config"
 import {parseUpstreamUrl} from "../forwarding/upstream-url"
 
@@ -66,24 +47,9 @@ const logger: ConfigLog = createLogger("core").child({service: "portal-modules"}
 export const PORTAL_MODULE_NAMES = ["billing"] as const
 export type PortalModuleName = (typeof PORTAL_MODULE_NAMES)[number]
 
-/** The requests a staff-only module still answers to everyone who reaches it (see the file header). */
-interface OpenReads {
-  /** Paths under a workspace (`/workspaces/<id>/<path>`) whose `GET` is open, matched exactly as received. */
-  scopePaths: readonly string[]
-  /**
-   * Prefixes under `ui/` whose `GET` and `HEAD` are open, for one file name after the prefix. Each ends with "/":
-   * the type refuses one that does not, because `icons` would open `ui/iconsa.png` as well.
-   */
-  assetPrefixes: ReadonlyArray<`${string}/`>
-}
-
 interface PortalModuleSettings {
   urlVariable: string
   secretVariable: string
-  /** Visible to Organization Admins only, unless `CLOUD_CORE_ENVIRONMENT` is `prod`. */
-  staffOnlyUnlessProd: boolean
-  /** What a person the module is hidden from may still read. */
-  openReads: OpenReads
   /** The families under `public/` whose `GET public/<family>/<key>` anyone may make, signed in or not. */
   publicReads: readonly string[]
 }
@@ -92,8 +58,6 @@ const REGISTRY: Record<PortalModuleName, PortalModuleSettings> = {
   billing: {
     urlVariable: "CLOUD_CORE_BILLING_URL",
     secretVariable: "CLOUD_CORE_BILLING_SECRET",
-    staffOnlyUnlessProd: true,
-    openReads: {scopePaths: ["catalog"], assetPrefixes: ["icons/"]},
     publicReads: ["products"],
   },
 }
@@ -121,35 +85,6 @@ function isPublicRead(name: PortalModuleName, request: PortalModulePublicRequest
   const [family, key] = segments as [string, string]
   return REGISTRY[name].publicReads.includes(family) && PUBLIC_READ_KEY.test(key) && !ONLY_DOTS.test(key)
 }
-
-/**
- * A request to a module, as far as who may make it is concerned: its method, the family of path it is for and
- * the rest of the path after that family's scope, exactly as received (not decoded, no leading "/", no query):
- * `catalog` for `/workspaces/ws_1/catalog`, `icons/a.png` for `/ui/icons/a.png`.
- */
-export interface PortalModuleRequest {
-  method: string
-  route: {kind: "workspace" | "ui"}
-  rest: string
-}
-
-/**
- * Whether `request` is one of the reads `name` leaves open to everyone (see the file header). Exact, so anything
- * unlisted is not. The one file name after an asset prefix is the contract's rule for a billing icon, the same
- * one that decides which `icon` paths the portal shows, so a contract-valid icon is always an open one.
- */
-function isOpenRead(name: PortalModuleName, request: PortalModuleRequest): boolean {
-  const {scopePaths, assetPrefixes} = REGISTRY[name].openReads
-  const {method, route, rest} = request
-  if (route.kind === "ui") {
-    if (method !== "GET" && method !== "HEAD") return false
-    return assetPrefixes.some(prefix => rest.startsWith(prefix) && BILLING_ICON_FILE.test(rest.slice(prefix.length)))
-  }
-  return method === "GET" && scopePaths.includes(rest)
-}
-
-/** The value of `CLOUD_CORE_ENVIRONMENT` that makes a Core the production one. */
-const PRODUCTION_ENVIRONMENT = "prod"
 
 export type PortalModuleConfig =
   | {state: "not_installed"}
@@ -222,28 +157,11 @@ export function installedPortalModules(
 }
 
 /**
- * Whether `name` may be shown to this person. False only when the module is staff-only on this Core (see the
- * file header) and the person is no Organization Admin. It says nothing of whether the module is installed.
- */
-export function portalModuleVisibleTo(
-  name: PortalModuleName,
-  principal: {isOrganizationAdmin: boolean},
-  env: NodeJS.ProcessEnv = processEnvironment(),
-): boolean {
-  if (!REGISTRY[name].staffOnlyUnlessProd) return true
-  return env.CLOUD_CORE_ENVIRONMENT === PRODUCTION_ENVIRONMENT || principal.isOrganizationAdmin
-}
-
-/**
- * What a person can reach of module `name` on this Core, decided once for everything that asks (the routes, the
- * request-body limit before them, and `/me`), so they cannot drift:
- *  - `hidden`: the module is not installed, or is not visible to this person (see the file header) and the
- *    request is not an open read. It is indistinguishable from an absent one, a broken install included;
- *  - `unavailable`: it is visible to them, or the request is an open read, but its settings are unusable;
+ * What a signed-in person can reach of module `name` on this Core, decided once for everything that asks (the
+ * routes, the request-body limit before them, and `/me`), so they cannot drift. It is the same for every person:
+ *  - `hidden`: the module is not installed. Core answers as if it did not exist;
+ *  - `unavailable`: it is installed, but its settings are unusable;
  *  - `ready`: Core may forward, to `baseUrl`, signing with `secret`.
- *
- * `request` is what is being asked. Without one, only what the person may see of the module as a whole counts,
- * so an open read is `hidden` from someone it is hidden from, unless the request says it is one.
  */
 export type PortalModuleAccess =
   | {state: "hidden"}
@@ -252,21 +170,18 @@ export type PortalModuleAccess =
 
 export function portalModuleAccess(
   name: PortalModuleName,
-  principal: {isOrganizationAdmin: boolean},
   env: NodeJS.ProcessEnv = processEnvironment(),
   log: ConfigLog = logger,
-  request?: PortalModuleRequest,
 ): PortalModuleAccess {
   const config = portalModuleConfig(name, env, log)
   if (config.state === "not_installed") return {state: "hidden"}
-  if (!portalModuleVisibleTo(name, principal, env) && !(request && isOpenRead(name, request))) return {state: "hidden"}
   if (config.state === "misconfigured") return {state: "unavailable"}
   return {state: "ready", baseUrl: config.baseUrl, secret: config.secret}
 }
 
 /**
- * What anyone, signed in or not, can reach of module `name` with `request`, a request under its `public/`. There
- * is no person to ask about, so the module's visibility does not count, on any Core:
+ * What anyone, signed in or not, can reach of module `name` with `request`, a request under its `public/`, on
+ * every Core:
  *  - `hidden`: the module is not installed, or the request is not one of its public reads (see the file header);
  *  - `unavailable`: it is a public read, but the module's settings are unusable;
  *  - `ready`: Core may forward, to `baseUrl`, signing with `secret`.
@@ -283,33 +198,16 @@ export function portalModulePublicAccess(
   return {state: "ready", baseUrl: config.baseUrl, secret: config.secret}
 }
 
-/** What `/me` says the portal can offer this person. */
+/** What `/me` says the portal can offer. */
 export interface PortalModuleAvailability {
-  /** Billing is installed and usable, and visible to this person: its pages, and everything it does, are theirs. */
+  /** Billing is installed and usable: its pages, its catalog and everything it does are offered. */
   billing: boolean
-  /** Billing's catalog can be read: installed and usable, whoever asks, because the catalog is an open read. */
-  billingCatalog: boolean
 }
 
-/** The request `billingCatalog` stands for: a workspace's catalog, read the same way under every workspace. */
-const CATALOG_READ: PortalModuleRequest = {
-  method: "GET",
-  route: {kind: "workspace"},
-  rest: REGISTRY.billing.openReads.scopePaths[0],
-}
-
-/**
- * For each question the portal asks, whether it should offer it to this person: the module is installed and
- * usable, and visible to them (`billing`), or at least its catalog, an open read, can be reached
- * (`billingCatalog`).
- */
+/** For each module, whether the portal should offer it: the module is installed and usable on this Core. */
 export function portalModuleAvailability(
-  principal: {isOrganizationAdmin: boolean},
   env: NodeJS.ProcessEnv = processEnvironment(),
   log: ConfigLog = logger,
 ): PortalModuleAvailability {
-  return {
-    billing: portalModuleAccess("billing", principal, env, log).state === "ready",
-    billingCatalog: portalModuleAccess("billing", principal, env, log, CATALOG_READ).state === "ready",
-  }
+  return {billing: portalModuleAccess("billing", env, log).state === "ready"}
 }

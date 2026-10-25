@@ -48,6 +48,7 @@ import {
   Browser,
   CLIENT_SECRETS,
   CONSOLE_CALLBACK,
+  CONSOLE_ORIGIN,
   coreKeyEnv,
   finishInteraction,
   OIDC_ISSUER,
@@ -374,6 +375,34 @@ describe("end-session and the provider's cookies", () => {
     })
     const step = await flow.browser.follow(again.href, location => location.pathname.startsWith("/interaction/") || location.href.startsWith(ADMIN_CALLBACK))
     expect("stoppedAt" in step && step.stoppedAt.pathname.startsWith("/interaction/")).toBe(true)
+  })
+
+  test("end-session from a registered client, back to its origin's root (registered by default), signs out without asking", async () => {
+    const {mentraUserId} = await person()
+    const flow = await authorize({mentraUserId, clientId: "console", secretEnv: "CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET", redirectUri: CONSOLE_CALLBACK})
+    const endSession = await flow.browser.request(
+      `${OIDC_ISSUER}/oidc/session/end?client_id=console&post_logout_redirect_uri=${encodeURIComponent(`${CONSOLE_ORIGIN}/`)}`,
+    )
+    expect(endSession.status).toBe(200)
+    const page = await endSession.text()
+    expect(page).toContain("Signing you out…")
+    expect(page).not.toContain("Sign out of Mentra?")
+    expect(endSession.headers.get("content-security-policy")).toContain(`form-action 'self' ${CONSOLE_ORIGIN};`)
+    const xsrf = /name="xsrf" value="([^"]+)"/.exec(page)![1]!
+    const done = await flow.browser.request(`${OIDC_ISSUER}/oidc/session/end/confirm`, {
+      method: "POST",
+      headers: {"content-type": "application/x-www-form-urlencoded", origin: OIDC_ISSUER},
+      body: new URLSearchParams({xsrf, logout: "yes"}).toString(),
+    })
+    expect(done.status).toBe(303)
+    expect(done.headers.get("location")).toBe(`${CONSOLE_ORIGIN}/`)
+    expect(flow.browser.cookies(OIDC_ISSUER).has("__Host-mentra_oidc_session")).toBe(false)
+    // The CLI's loopback client registers no post-logout redirect: it cannot send anyone anywhere.
+    const cli = await flow.browser.request(
+      `${OIDC_ISSUER}/oidc/session/end?client_id=mentra-cli&post_logout_redirect_uri=${encodeURIComponent("http://127.0.0.1:53682/")}`,
+      {headers: {accept: "text/html"}},
+    )
+    expect(cli.status).toBe(400)
   })
 
   test("a provider session whose person was revoked asks for a new sign-in", async () => {

@@ -48,7 +48,7 @@ export function addedParam(search: string): string | null {
 }
 
 /**
- * What the view and its header actions are given. The catalog is readable wherever billing is ready (`me.modules.billingCatalog`),
+ * What the view and its header actions are given. The catalog is readable wherever billing is ready (`me.modules.billing`),
  * which names the licenses for anyone who may see them; money, dates, actions and buying are for whoever is offered billing.
  */
 export function licensesPageProps(
@@ -61,7 +61,7 @@ export function licensesPageProps(
     api: portalWorkspaceApi,
     billing: portalBillingApi,
     workspaceId,
-    offer: { catalog: me.modules.billingCatalog, manage: billingOffered(me, detail) },
+    offer: { catalog: me.modules.billing, manage: billingOffered(me, detail) },
     purchaseId,
     navigateOut: portalNavigateOut,
   };
@@ -92,7 +92,7 @@ export function LicensesScreen({ workspaceId, me, detail }: LicensesProps) {
       onAddedDone={() => setQueryParam("added", null, { replace: true })}
       // The banner was dismissed: the address loses `?purchase=` in place, so Back does not return to the banner.
       onPurchaseDone={() => setQueryParam("purchase", null, { replace: true })}
-      // Retry also asks who the person is again: a page opened before billing was ready (`billingCatalog` false, with
+      // Retry also asks who the person is again: a page opened before billing was ready (`billing` false, with
       // licenses to name) can only recover when `me` says it is.
       onRetry={() => void client.invalidateQueries({ queryKey: PORTAL_ME_KEY })}
     />

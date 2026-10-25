@@ -24,7 +24,7 @@ import {
   type PortalRoute,
   type WorkspaceSection,
 } from "./lib/routes";
-import { loginHref, signOutOfEnterprisePortal } from "./lib/session";
+import { loginHref, signOut as signOutEverywhere } from "./lib/session";
 import { usePortalInvitations } from "./lib/use-portal-invitations";
 import { takePendingInvite } from "./lib/workspace-invite";
 import { EnterpriseScreen } from "./pages/enterprise";
@@ -69,8 +69,8 @@ function safeSessionStorage(): Storage | null {
 function PortalPage() {
   const qc = useQueryClient();
   const pathname = usePathname();
-  const [signingOut, setSigningOut] = useState(false);
-  const [signedOut, setSignedOut] = useState<{ signOutUrl: string | null } | null>(null);
+  // Signing out, then on the way to Core's sign-out ("leaving"), or signed out here without one ("signed-out").
+  const [signOutState, setSignOutState] = useState<"signing-out" | "leaving" | "signed-out" | null>(null);
   const me = useQuery({
     queryKey: PORTAL_ME_KEY,
     queryFn: () => fetchPortalMe(),
@@ -89,17 +89,17 @@ function PortalPage() {
     },
   });
 
-  if (signedOut) {
-    return <SignedOutScreen signOutUrl={signedOut.signOutUrl} signInHref={invites.inviteToken ? INVITATION_PATH : "/"} />;
-  }
+  // On the way to Core's sign-out, which signs the person out of their Mentra account and brings them back to `/`.
+  if (signOutState === "leaving") return <Splash label="Signing out" />;
+  if (signOutState === "signed-out") return <SignedOutScreen signInHref={invites.inviteToken ? INVITATION_PATH : "/"} />;
   if (me.isLoading) return <Splash label="Checking your session" />;
   if (me.isError || !me.data) return <LoginGate invitePending={invites.inviteToken !== null} />;
 
   async function signOut() {
-    setSigningOut(true);
-    const result = await signOutOfEnterprisePortal();
-    qc.clear();
-    setSignedOut(result);
+    setSignOutState("signing-out");
+    const outcome = await signOutEverywhere();
+    if (outcome === "signed-out") qc.clear();
+    setSignOutState(outcome);
   }
 
   const session: PortalSession = {
@@ -112,7 +112,7 @@ function PortalPage() {
     invitationsUnavailable: invites.unavailable,
     forgetInvitation: invites.forgetInvitation,
     signOut: () => void signOut(),
-    signingOut,
+    signingOut: signOutState !== null,
     developerConsoleUrl: DEVELOPER_CONSOLE_URL,
     modules: me.data.modules,
     sessionExpired: () => expireSession(qc),
@@ -306,7 +306,7 @@ function SignInToBuy({ product }: { product: string }) {
 
 export function LoginGate({
   invitePending = false,
-  loginUrl = loginHref(),
+  loginUrl = loginHref(window.location, invitePending),
   buyProduct = typeof window === "undefined" ? null : buyParam(window.location.search),
 }: {
   invitePending?: boolean;

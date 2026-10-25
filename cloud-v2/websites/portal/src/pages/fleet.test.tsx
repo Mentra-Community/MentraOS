@@ -25,7 +25,7 @@ const ME: PortalMe = {
   workspaceCreation: { allowed: false, reason: null },
   onboardingRequired: false,
   org: null,
-  modules: { billing: false, billingCatalog: false },
+  modules: { billing: false },
   organization: { capabilities: ["organization.fleet.administer"] },
   workspaces: [{ workspaceId: "ws_acme", name: "Acme", capabilities: ["fleet.read", "miniapps.assign"] }],
   fleet: { installed: true },

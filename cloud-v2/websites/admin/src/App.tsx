@@ -15,7 +15,7 @@ import { LicensesPage } from "./pages/licenses";
 import { OperatorKeysPage } from "./pages/operator-keys";
 import { RegistryPage } from "./pages/registry";
 import { WorkspacesPage } from "./pages/workspaces";
-import { loginHref, signOutOfAdminPortal } from "./lib/session";
+import { loginHref, signOut as signOutEverywhere } from "./lib/session";
 import { SignedOutScreen } from "./components/signed-out";
 import {
   hasInvalidTestRunListScope, readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
@@ -182,14 +182,15 @@ function AdminPage() {
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
   const [invalidTestRunListScope, setInvalidTestRunListScope] = useState(() => hasInvalidTestRunListScope(window.location.search));
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
-  const [signingOut, setSigningOut] = useState(false);
-  const [signedOut, setSignedOut] = useState<{ signOutUrl: string | null } | null>(null);
+  // Signing out, then on the way to Core's sign-out ("leaving"), or signed out here without one ("signed-out").
+  const [signOutState, setSignOutState] = useState<"signing-out" | "leaving" | "signed-out" | null>(null);
+  const signingOut = signOutState !== null;
 
   async function signOut() {
-    setSigningOut(true);
-    const result = await signOutOfAdminPortal();
-    qc.clear();
-    setSignedOut(result);
+    setSignOutState("signing-out");
+    const outcome = await signOutEverywhere();
+    if (outcome === "signed-out") qc.clear();
+    setSignOutState(outcome);
   }
 
   const me = useQuery({
@@ -266,7 +267,9 @@ function AdminPage() {
     audit: { title: "Audit log", body: "Admin actions recorded by Core, such as support-profile lookups." },
   };
 
-  if (signedOut) return <SignedOutScreen signOutUrl={signedOut.signOutUrl} />;
+  // On the way to Core's sign-out, which signs the person out of their Mentra account and brings them back to `/`.
+  if (signOutState === "leaving") return <Splash label="Signing out" />;
+  if (signOutState === "signed-out") return <SignedOutScreen />;
   if (me.isLoading) return <Splash label="Checking admin session" />;
   if (me.isError) {
     // A 403 means the sign-in itself worked but this caller may not use the admin portal; offering the

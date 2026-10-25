@@ -30,7 +30,7 @@ const ME: PortalMe = {
   workspaceCreation: { allowed: true, reason: null },
   onboardingRequired: false,
   org: null,
-  modules: { billing: false, billingCatalog: false },
+  modules: { billing: false },
 };
 
 const LAST_WORKSPACE_KEY = "mentra.portal.lastWorkspace";
