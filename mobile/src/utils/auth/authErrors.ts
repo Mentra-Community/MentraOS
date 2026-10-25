@@ -171,9 +171,10 @@ export const mapAuthError = (error: Error | string): string => {
   }
 
   // First try to get the error code (preferred method per Supabase docs)
-  const errorCode = typeof error === "object" && "code" in error ? (error as any).code : null
+  // A string is an error code when it names one, as the `authError` that links pass to sign-in does.
+  const errorCode = typeof error === "object" && "code" in error ? (error as any).code : error
 
-  if (errorCode && ERROR_CODE_MAP[errorCode]) {
+  if (typeof errorCode === "string" && Object.prototype.hasOwnProperty.call(ERROR_CODE_MAP, errorCode)) {
     return translate(ERROR_CODE_MAP[errorCode])
   }
 
