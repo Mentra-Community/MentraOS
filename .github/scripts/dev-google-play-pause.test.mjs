@@ -158,9 +158,13 @@ test("the plan CLI pauses Google Play for dev and keeps it for staging", (t) => 
   t.after(() => rmSync(root, {recursive: true, force: true}))
   const repositoryRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..")
   const otaInputs = path.join(root, "ota-inputs.json")
+  // The firmware pin (asg_client/ota_manifests/firmware_live.json) is gone:
+  // releases build their OTA set from source. The plan only carries it.
+  const firmwareManifest = path.join(root, "firmware.json")
+  writeFileSync(firmwareManifest, JSON.stringify({mtk_patches: [], bes_firmware: {version: "0.0.0"}}))
   const collected = spawnSync(
     process.execPath,
-    [".github/scripts/collect-ota-release-inputs.mjs", "asg_client/ota_manifests/firmware_live.json", otaInputs],
+    [".github/scripts/collect-ota-release-inputs.mjs", firmwareManifest, otaInputs],
     {cwd: repositoryRoot, encoding: "utf8"},
   )
   assert.equal(collected.status, 0, collected.stderr)

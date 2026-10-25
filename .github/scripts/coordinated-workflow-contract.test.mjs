@@ -339,9 +339,10 @@ test("Cloud V2 readiness gates mobile compilation and publication", () => {
   const finalize = jobBlock(coordinator, "finalize")
   const notify = jobBlock(coordinator, "notify-slack")
 
-  assert.match(coordinator, /cloud_environment=dev/)
+  // Dev releases come from the Mentra monorepo; this coordinator serves staging.
+  assert.doesNotMatch(coordinator, /cloud_environment=dev/)
   assert.match(coordinator, /cloud_environment=staging/)
-  assert.match(coordinator, /backend_environment=dev/)
+  assert.doesNotMatch(coordinator, /backend_environment=dev/)
   assert.match(coordinator, /backend_environment=staging/)
   assert.match(cloudJob, /^    needs: plan$/m)
   assert.match(cloudJob, /reusable-coordinated-cloud-v2\.yml/)
@@ -714,7 +715,8 @@ test("mobile destinations use real TestFlight groups without changing the releas
   const exampleIos = jobBlock(example, "ios")
   const exampleStore = jobBlock(example, "testflight")
 
-  assert.match(coordinator, /testflight_group=Mentra Dev/)
+  // Dev releases (TestFlight group Mentra Dev) come from the Mentra monorepo.
+  assert.doesNotMatch(coordinator, /testflight_group=Mentra Dev/)
   assert.match(coordinator, /testflight_group=Mentra Staging/)
   assert.match(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\(jq -er \.channel release-intent\/release-plan\.json\)/)
   assert.match(mobile, /MENTRA_TESTFLIGHT_INTERNAL_ONLY: \$\{\{ inputs\.compatibility_lab \}\}/)
@@ -1366,10 +1368,11 @@ test("cache scope receives the generated public runtime environment, including i
   assert.doesNotMatch(result.stdout, /PRIVATE_TOKEN/)
 })
 
-test("app cache inputs do not gate coordinated dev and staging cloud deployments", () => {
+// Dev releases come from the Mentra monorepo: this coordinator runs on staging.
+test("app cache inputs do not gate coordinated staging cloud deployments", () => {
   const coordinator = workflow("coordinated-release.yml")
   const push = coordinator.split("  push:\n")[1].split("  workflow_dispatch:\n")[0]
-  assert.match(push, /branches: \[dev, staging\]/)
+  assert.match(push, /branches: \[staging\]/)
   assert.doesNotMatch(push, /paths(?:-ignore)?:/)
   const cloud = jobBlock(coordinator, "cloud-v2")
   assert.match(cloud, /uses: \.\/\.github\/workflows\/reusable-coordinated-cloud-v2.yml/)

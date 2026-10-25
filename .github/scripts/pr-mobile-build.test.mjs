@@ -211,7 +211,7 @@ test("every producer trigger path is a shared mobile PR path, and every shared p
     assert.ok(MOBILE_PR_PATHS.includes(path))
 })
 
-test("standalone push compile checks use the app input boundary while coordinated releases still deploy every dev/staging push", () => {
+test("standalone push compile checks use the app input boundary while coordinated releases still deploy every staging push", () => {
   for (const name of ["mentra-app-android-build.yml", "mentra-app-ios-build.yml", "mentra-asg-client-build.yml"]) {
     const workflow = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
     const push = workflow.split("\n  push:\n")[1].split("\n  workflow_dispatch:")[0]
@@ -220,7 +220,8 @@ test("standalone push compile checks use the app input boundary while coordinate
   }
   const release = readFileSync(new URL("../workflows/coordinated-release.yml", import.meta.url), "utf8")
   const push = release.split("\n  push:\n")[1].split("\n  workflow_dispatch:")[0]
-  assert.match(push, /branches: \[dev, staging\]/)
+  // Dev releases come from the Mentra monorepo.
+  assert.match(push, /branches: \[staging\]/)
   assert.doesNotMatch(push, /paths:/)
   assert.match(release, /uses: \.\/\.github\/workflows\/reusable-coordinated-cloud-v2\.yml/)
 })
