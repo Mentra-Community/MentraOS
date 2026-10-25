@@ -3,7 +3,7 @@ import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInput
 import {frameworkBindingSchema, routineSourceRefSchema, type FrameworkBinding} from '../types/framework-version.types';
 import {publishedRoutineDefinitionSchema, routineEnrollmentSchema} from '../types/routine-definition.types';
 import {routineDispatchSchema, routineDispatchIntentSchema} from '../types/routine-dispatch.types';
-import {testBuildSourceSchema, selectedBuildInput, type TestBuild} from '../types/test-build.types';
+import {testBuildArtifactSourceSchema, testBuildSourceSchema, selectedBuildInput, type TestBuild} from '../types/test-build.types';
 import {RoutineDefinitionService} from './routine-definition.service';
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service';
 import {TestHostStateService} from './test-host-state.service';
@@ -13,7 +13,7 @@ import {configuredRoutineLanes, routineAdmissionInput, type RoutineLaneBindings}
 import {GithubRoutineSourceGateway} from './routine-source-selection.service';
 import {TestRunError} from './test-result-error';
 import {RoutineJobService} from './routine-job.service';
-import {configuredTestingTarget, routineSourceRepository, testingTarget, type TestingRepository} from '../types/testing-source.types';
+import {appRepositorySchema, configuredTestingTarget, routineSourceRepository, testingTarget, type TestingRepository} from '../types/testing-source.types';
 
 export {routineDispatchSchema} from '../types/routine-dispatch.types';
 export const preparedRoutineRequestSchema = z.object({dispatchIntentSha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -173,10 +173,13 @@ export class RoutineDispatchService {
 /** Original admissions already verified publication. Reuse their immutable references after a PR closes or moves. */
 export function recordedRoutineBuild(input: z.infer<typeof frameworkRequestInputSchema>['build'], source: z.infer<typeof testBuildSourceSchema>, platform: TestBuild['platform']): TestBuild {
   const asset = z.object({url:z.string().url().refine(value=>value.startsWith('https://artifactscdn.mentraglass.com/')),size:z.number().int().positive().safe(),sha256:z.string().regex(/^[a-f0-9]{64}$/)}).passthrough();
-  const parsed = z.object({repository:z.literal('Mentra-Community/MentraOS'),headSha:z.string().regex(/^[a-f0-9]{40}$/),channel:z.enum(['pr','dev','staging']),source:testBuildSourceSchema,archive:asset.extend({name:z.string().min(1)}),receipt:asset,manifest:asset.optional(),manifestSha256:z.string().optional(),releaseIdentity:z.string().optional()}).passthrough().safeParse(input);
-  if (!parsed.success || requestInputDigest(parsed.data.source)!==requestInputDigest(source) || parsed.data.channel!==source.channel)
+  const parsed = z.object({repository:appRepositorySchema,headSha:z.string().regex(/^[a-f0-9]{40}$/),artifactSource:testBuildArtifactSourceSchema.optional(),channel:z.enum(['pr','dev','staging']),source:testBuildSourceSchema,archive:asset.extend({name:z.string().min(1)}),receipt:asset,manifest:asset.optional(),manifestSha256:z.string().optional(),releaseIdentity:z.string().optional()}).passthrough().safeParse(input);
+  if (!parsed.success || requestInputDigest(parsed.data.source)!==requestInputDigest(source) || parsed.data.channel!==source.channel ||
+    parsed.data.repository !== (source.repository ?? 'Mentra-Community/MentraOS') ||
+    parsed.data.artifactSource && (parsed.data.repository !== 'Mentra-Community/Mentra' || source.channel === 'pr') ||
+    parsed.data.repository === 'Mentra-Community/Mentra' && source.channel !== 'pr' && !parsed.data.artifactSource)
     throw new TestRunError(409,'Original exact app references are incomplete; choose an explicit replacement artifact');
   const build=parsed.data;
-  return {source,platform,headSha:build.headSha,title:'Original recorded artifact',createdAt:'1970-01-01T00:00:00Z',buildUrl:`https://github.com/Mentra-Community/MentraOS/actions/runs/${source.buildRunId}`,availability:'available',archive:build.archive,receipt:build.receipt,
+  return {source,platform,headSha:build.headSha,...(build.artifactSource?{artifactSource:build.artifactSource}:{}),title:'Original recorded artifact',createdAt:'1970-01-01T00:00:00Z',buildUrl:`https://github.com/${build.repository}/actions/runs/${source.buildRunId}`,availability:'available',archive:build.archive,receipt:build.receipt,
     ...(build.manifest?{manifest:build.manifest,manifestSha256:build.manifestSha256}:{}),...(build.releaseIdentity?{release:build.releaseIdentity}:{})};
 }

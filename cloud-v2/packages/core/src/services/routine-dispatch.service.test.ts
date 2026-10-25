@@ -7,6 +7,7 @@ import {TestRequestService, TestRequestConflict, requestInputDigest, isExecutabl
 import {TestRunError} from './test-result-error';
 import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {frameworkRequestInputSchema} from '../types/framework-request.types';
+import {selectedBuildInput} from '../types/test-build.types';
 import {readAcceptedRoutineRequest} from './routine-request-input';
 import {nightlyPreparedInput} from './nightly-routine.service';
 const source = {channel: 'pr' as const, prNumber: 12, buildRunId: 55, publicationAttempt: 2};
@@ -160,6 +161,51 @@ test('host exact source completion enrolls then commits executable input once an
   expect(await f.service.prepared(selected.requestId,'mini',body)).toEqual(queued);expect(f.resolves).toBe(1);
   await expect(f.service.prepared(selected.requestId,'other',body)).rejects.toMatchObject({status:404});
   await expect(f.service.prepared(selected.requestId,'mini',{...body,routineSource:testRoutineSource('b'.repeat(40))})).rejects.toThrow();
+});
+for (const completion of ['producer', 'cached'] as const) test(`canonical recorded dev preparation completes through ${completion} source with its original export`, async () => {
+  const f = fixture(), original = (f.service as any).builds;
+  const canonicalSource = {channel: 'dev' as const, repository: 'Mentra-Community/Mentra' as const, buildRunId: 55, publicationAttempt: 2};
+  const artifactSource = {repository: 'Mentra-Community/MentraOS' as const, headSha: 'b'.repeat(40)};
+  (f.service as any).builds = {async resolve(...args: unknown[]) {return {...await original.resolve(...args), artifactSource};}};
+  const waiting = await f.service.submit({...selected, source: canonicalSource}), definition = f.definition();
+  const frozen = routineDispatchIntentSchema.parse(waiting.dispatchIntent).build;
+  expect(frozen).toMatchObject({repository: canonicalSource.repository, headSha: 'c'.repeat(40), artifactSource});
+  (f.service as any).builds = {async resolve() {throw Error('Completion must reuse the admitted publication');}};
+  let queued: StoredRequest;
+  if (completion === 'producer') queued = await f.service.prepared(selected.requestId, 'mini', {
+    dispatchIntentSha256: waiting.dispatchIntentSha256, routineSource: definition.routineSource,
+    definitionSha256: definition.definitionSha256, definition: definition.definition});
+  else {f.definitions.set(definition.definitionRevision, definition); queued = (await f.service.detail(selected.requestId)).request;}
+  expect(queued.state).toBe('queued');
+  expect(queued.input).toMatchObject({build: frozen});
+  expect(queued.dispatchIntent).toEqual(routineDispatchIntentSchema.parse(waiting.dispatchIntent));
+  expect(queued.dispatchIntentSha256).toBe(waiting.dispatchIntentSha256);
+  expect(queued.inputSha256).toBe(requestInputDigest(queued.input));
+  const recorded = recordedRoutineBuild(frozen, canonicalSource, 'android');
+  expect(recorded).toMatchObject({source: canonicalSource, headSha: 'c'.repeat(40), artifactSource,
+    buildUrl: 'https://github.com/Mentra-Community/Mentra/actions/runs/55'});
+  expect(requestInputDigest(frozen)).toBe(requestInputDigest(selectedBuildInput(recorded, 'android')));
+  await expect(f.service.prepareIntent({...selected, source: canonicalSource, routineSource: definition.routineSource},
+    {hostId: 'mini', laneId: 'android-lane', build: frozen})).resolves.toMatchObject({dispatchIntent: {build: frozen}});
+  await expect(f.requests.completePreparation(selected.requestId, 'mini', waiting.dispatchIntentSha256!,
+    {...queued.input as any, build: {...frozen, artifactSource: {...artifactSource, headSha: 'a'.repeat(40)}}})).rejects.toThrow('original dispatch intent');
+  expect(f.resolves).toBe(1);
+});
+test('recorded app references reject foreign or missing canonical export projections without changing public originals', () => {
+  const canonicalSource = {channel: 'dev' as const, repository: 'Mentra-Community/Mentra' as const, buildRunId: 55, publicationAttempt: 2};
+  const artifactSource = {repository: 'Mentra-Community/MentraOS' as const, headSha: 'b'.repeat(40)};
+  const build = {repository: canonicalSource.repository, headSha: 'c'.repeat(40), channel: 'dev' as const,
+    source: canonicalSource, artifactSource, archive: {name: 'app.apk', size: 100, sha256: 'd'.repeat(64), url: 'https://artifactscdn.mentraglass.com/app.apk'},
+    receipt: {size: 10, sha256: 'e'.repeat(64), url: 'https://artifactscdn.mentraglass.com/receipt.json'}};
+  for (const changed of [{artifactSource: undefined}, {artifactSource: {...artifactSource, repository: 'foreign/repo'}},
+    {artifactSource: {...artifactSource, headSha: 'not-a-commit'}}, {repository: 'Mentra-Community/MentraOS'},
+    {source: {...canonicalSource, repository: 'Mentra-Community/MentraOS'}},
+    {channel: 'pr', source: {...source, repository: 'Mentra-Community/Mentra'}}])
+    expect(() => recordedRoutineBuild({...build, ...changed} as any, (changed.source ?? canonicalSource) as any, 'android')).toThrow('incomplete');
+  const {repository: _repository, ...publicSource} = canonicalSource;
+  const publicBuild = {...build, repository: 'Mentra-Community/MentraOS', source: publicSource, artifactSource: undefined};
+  expect(recordedRoutineBuild(publicBuild, publicSource, 'android')).toMatchObject({headSha: build.headSha,
+    buildUrl: 'https://github.com/Mentra-Community/MentraOS/actions/runs/55'});
 });
 test('cancellation before preparation survives restart and cannot become executable',async()=>{
   const f=fixture(),waiting=await f.service.submit(selected),row=f.definition();

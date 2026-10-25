@@ -1,7 +1,7 @@
 import {expect, test} from 'bun:test';
 import {createHash} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
-import {configuredTestingTarget, retainedTestingTarget, testingTarget, testingTargetSchema} from '../types/testing-source.types';
+import {configuredAppRepository, configuredTestingTarget, retainedTestingTarget, testingTarget, testingTargetSchema} from '../types/testing-source.types';
 import {frameworkBindingSchema} from '../types/framework-version.types';
 import {stepSourceSchema} from '../types/framework-run.types';
 import {routineEnrollmentSchema} from '../types/routine-definition.types';
@@ -41,9 +41,13 @@ function enrolled(repository: string = canonical.repository, path = 'testing/rou
 test('one selector derives only allowlisted tuples and absent originals ignore the current setting', () => {
   expect(configuredTestingTarget({})).toEqual(legacy);
   expect(configuredTestingTarget({TESTING_REPOSITORY: canonical.repository})).toEqual(canonical);
+  expect(configuredAppRepository({})).toBe('Mentra-Community/MentraOS');
+  expect(configuredAppRepository({TESTING_REPOSITORY: canonical.repository})).toBe('Mentra-Community/Mentra');
   expect(retainedTestingTarget()).toEqual(legacy);
-  for (const repository of ['foreign/repository', 'Mentra-Community/MentraOS', 'Mentra-Community/Mentra/'])
+  for (const repository of ['foreign/repository', 'Mentra-Community/MentraOS', 'Mentra-Community/Mentra/']) {
     expect(() => configuredTestingTarget({TESTING_REPOSITORY: repository})).toThrow();
+    expect(() => configuredAppRepository({TESTING_REPOSITORY: repository})).toThrow();
+  }
   for (const changed of [{ref: 'refs/heads/main'}, {sourceRoot: '../testing/'}, {workflow: `${canonical.repository}/testing/.github/workflows/routine-device.yml@refs/heads/dev`}])
     expect(testingTargetSchema.safeParse({...canonical, ...changed}).success).toBe(false);
 });

@@ -6,9 +6,12 @@ import type {TestBuildPlatform, TestBuild, TestBuildQuery, TestBuildSource} from
 import { TestRunGithubApp } from "./test-run-github-app";
 
 const REPOSITORY = "Mentra-Community/MentraOS";
+const CANONICAL_REPOSITORY = "Mentra-Community/Mentra";
 const prWorkflow = (platform: TestBuildPlatform) => platform === "android" ? "mentra-app-android-build.yml" : "mentra-app-ios-build.yml";
 const RELEASE_WORKFLOW = "coordinated-release.yml";
 const RELEASE_FINALIZE_JOB = "Finalize immutable release bill of materials";
+const EXPORTED_PATHS = ["public/mentraos", "miniapps/public/captions", "miniapps/public/navigation",
+  "miniapps/public/recorder", "miniapps/public/teleprompter", "miniapps/public/translation"];
 const CDN = `https://artifactscdn.mentraglass.com/${REPOSITORY}/releases/`;
 // Google Play's largest accepted version code.
 const ANDROID_MAX_VERSION_CODE = 2_100_000_000;
@@ -96,6 +99,8 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   } = {}, private readonly selectionBoundary?: string) { this.appAuth = options.appAuth ?? new TestRunGithubApp({ fetch: options.fetch }); }
   private readonly appAuth: TestRunGithubApp;
   private get repository(): AppRepository {return appRepositorySchema.parse(this.options.repository ?? REPOSITORY);}
+  private get releaseWorkflow() {return this.repository === CANONICAL_REPOSITORY ? "release.yml" : RELEASE_WORKFLOW;}
+  private get releaseFinalizer() {return this.repository === CANONICAL_REPOSITORY ? "finalize / Finalize the release manifest and tag" : RELEASE_FINALIZE_JOB;}
   private forRepository(repository: AppRepository) {
     return new GithubTestBuildGateway({...this.options, appAuth: this.appAuth, repository: appRepositorySchema.parse(repository)}, this.selectionBoundary);
   }
@@ -177,11 +182,12 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     return ref.object.sha;
   }
   async inventory(query: TestBuildQuery, allowOriginalBase = false, producerRunId?: number): Promise<TestBuild[]> {
-    const repository = appRepositorySchema.parse(query.repository ?? REPOSITORY);
+    // Only dev moved to the canonical producer; PR and staging builds remain public.
+    const repository = appRepositorySchema.parse(query.repository ?? (query.channel === 'dev' ? this.repository : REPOSITORY));
     if (repository !== this.repository) return this.forRepository(repository).inventory(query, allowOriginalBase, producerRunId);
     const pr = query.channel === "pr" ? await this.pr(query.pr!) : undefined;
     const platform = query.platform;
-    const workflow = pr ? prWorkflow(platform) : RELEASE_WORKFLOW;
+    const workflow = pr ? prWorkflow(platform) : this.releaseWorkflow;
     const runs: GithubRun[] = [];
     if (pr) {
       if (producerRunId) {
@@ -215,7 +221,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const seen = new Set<number>();
     for (let page = 1; page <= 10; page++) {
       const data = z.object({total_count: z.number().int().nonnegative(), workflow_runs: z.array(runSchema)}).parse(
-        await this.api(`${this.repository}/actions/workflows/${RELEASE_WORKFLOW}/runs?branch=dev&created=<=${encodeURIComponent(before)}&per_page=100&page=${page}`));
+        await this.api(`${this.repository}/actions/workflows/${this.releaseWorkflow}/runs?branch=dev&created=<=${encodeURIComponent(before)}&per_page=100&page=${page}`));
       for (const run of data.workflow_runs) {
         if (seen.has(run.id)) throw new TestDispatchError(502, "Nightly build history changed while reading");
         seen.add(run.id);
@@ -224,7 +230,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
         && Date.parse(run.created_at) <= boundary).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
       for (const run of candidates) {
         // Later reruns cannot supersede the publication that existed when this occurrence began.
-        const finalizers = (await this.jobs(run.id)).filter(job => job.name === RELEASE_FINALIZE_JOB && job.run_attempt <= run.run_attempt
+        const finalizers = (await this.jobs(run.id)).filter(job => job.name === this.releaseFinalizer && job.run_attempt <= run.run_attempt
           && job.started_at && Number.isFinite(Date.parse(job.started_at)) && Date.parse(job.started_at) <= boundary);
         const latest = Math.max(0, ...finalizers.map(job => job.run_attempt));
         const current = finalizers.filter(job => job.run_attempt === latest);
@@ -248,7 +254,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   }
   private matches(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PullRequest) {
     return run.repository.full_name === this.repository && run.head_repository.full_name === this.repository
-      && run.path === `.github/workflows/${pr ? prWorkflow(platform) : RELEASE_WORKFLOW}`
+      && run.path === `.github/workflows/${pr ? prWorkflow(platform) : this.releaseWorkflow}`
       && (pr ? (run.event === "pull_request" && run.head_sha === pr.head.sha && run.head_branch === pr.head.ref ||
         run.event === 'workflow_dispatch' && run.head_branch === 'dev' &&
           (run.display_title === `Routine PR #${pr.number} ${pr.head.sha} ${pr.base.ref}` ||
@@ -374,7 +380,69 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       result: { ...(diagnostic ? {diagnostic: "nimo-resource-v1" as const} : {}), receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
   }
   private releaseIdentity(run: GithubRun): Promise<string | null> {
+    if (this.repository === CANONICAL_REPOSITORY) return this.canonicalRelease(run).then(value => value.identity);
     return this.releaseRead(run.id, `identity:${run.head_sha}`, () => this.readReleaseIdentity(run));
+  }
+  private canonicalRelease(run: GithubRun): Promise<{identity: string; sourceCommit: string}> {
+    return this.releaseRead(run.id, "canonical:" + run.head_sha, async () => {
+      try {return await this.readCanonicalRelease(run);}
+      catch (error) {
+        if (error instanceof TestDispatchError && error.status === 404)
+          throw new TestDispatchError(502, "Original canonical release ledger metadata is not available");
+        throw error;
+      }
+    });
+  }
+  private async readCanonicalRelease(run: GithubRun): Promise<{identity: string; sourceCommit: string}> {
+    // The canonical producer uses an annotated public sequence tag, without Actions plan artifacts.
+    // Its public ledger requires its own repository-scoped App credential.
+    const ledger = this.forRepository(REPOSITORY);
+    const refSchema = z.object({ref: z.string(), object: z.object({type: z.string(), sha})});
+    const refs = z.array(refSchema).parse(await ledger.api(REPOSITORY + "/git/matching-refs/tags/mentra-sequence-"));
+    if (refs.length >= 2000) throw new TestDispatchError(502, "Release sequence history exceeds its complete-read limit");
+    requireThat(new Set(refs.map(ref => ref.ref)).size === refs.length && refs.every(ref =>
+      /^refs\/tags\/mentra-sequence-[1-9]\d*$/.test(ref.ref) && ref.object.type === "tag"), "Release sequence ledger is malformed");
+    const owned: {sequence: string; sourceCommit: string}[] = [];
+    // Read the complete bounded list to prove one owner, including older original runs.
+    for (let offset = 0; offset < refs.length; offset += 8) {
+      const batch = await Promise.all(refs.slice(offset, offset + 8).map(async ref => {
+        const tag = z.object({sha, tag: z.string(), message: z.string(), object: z.object({type: z.string(), sha})})
+          .parse(await ledger.api(REPOSITORY + "/git/tags/" + ref.object.sha));
+        requireThat(tag.sha === ref.object.sha && "refs/tags/" + tag.tag === ref.ref && tag.object.type === "commit",
+          "Release sequence annotation differs from its reference");
+        if (tag.message.replace(/\n$/, "") !== "monorepo-run:" + run.id) return null;
+        return {sequence: ref.ref.slice("refs/tags/mentra-sequence-".length), sourceCommit: tag.object.sha};
+      }));
+      owned.push(...batch.filter((value): value is NonNullable<typeof value> => value !== null));
+    }
+    if (owned.length === 0) throw new TestDispatchError(502, "Original canonical release sequence is not available");
+    requireThat(owned.length === 1, "Canonical release sequence is ambiguous");
+    const original = owned[0]!;
+    const releases = z.array(refSchema).parse(await ledger.api(REPOSITORY + "/git/matching-refs/tags/mentra-v"));
+    if (releases.length >= 2000) throw new TestDispatchError(502, "Release tag history exceeds its complete-read limit");
+    const channel = run.head_branch === "dev" ? "dev" : "beta";
+    const candidates = releases.filter(ref => new RegExp("^refs/tags/mentra-v\\d+\\.\\d+\\.\\d+-" + channel + "\\." + original.sequence + "$").test(ref.ref));
+    if (candidates.length === 0) throw new TestDispatchError(502, "Original completed release tag is not available");
+    requireThat(candidates.length === 1 && candidates[0]!.object.type === "commit" && candidates[0]!.object.sha === original.sourceCommit,
+      "Completed release tag differs from its original sequence");
+    const commit = z.object({sha, message: z.string()}).parse(await ledger.api(REPOSITORY + "/git/commits/" + original.sourceCommit));
+    const origins = [...commit.message.matchAll(/^GitOrigin-RevId: ([a-f0-9]{40})$/gm)];
+    requireThat(commit.sha === original.sourceCommit && origins.length === 1, "Exported release has no unique canonical source");
+    const origin = origins[0]![1]!;
+    const comparison = z.object({status: z.string(), base_commit: z.object({sha}), merge_base_commit: z.object({sha}),
+      total_commits: z.number().int().nonnegative(), commits: z.array(z.object({sha})),
+      files: z.array(z.object({filename: z.string(), previous_filename: z.string().optional()}))})
+      .parse(await this.api(CANONICAL_REPOSITORY + "/compare/" + origin + "..." + run.head_sha));
+    if (comparison.total_commits > 250 || comparison.commits.length !== comparison.total_commits || comparison.files.length >= 300)
+      throw new TestDispatchError(502, "Canonical export comparison is incomplete or exceeds its limit");
+    const exported = (path: string) => EXPORTED_PATHS.some(root => path === root || path.startsWith(root + "/"));
+    requireThat(comparison.base_commit.sha === origin && comparison.merge_base_commit.sha === origin
+      && ["ahead", "identical"].includes(comparison.status)
+      && new Set(comparison.commits.map(value => value.sha)).size === comparison.total_commits
+      && (origin === run.head_sha ? comparison.total_commits === 0 : comparison.commits.at(-1)?.sha === run.head_sha)
+      && comparison.files.every(file => !exported(file.filename) && (!file.previous_filename || !exported(file.previous_filename))),
+      "Canonical producer changed the selected public export");
+    return {identity: candidates[0]!.ref.slice("refs/tags/mentra-v".length), sourceCommit: original.sourceCommit};
   }
   private async readReleaseIdentity(run: GithubRun): Promise<string | null> {
     const listed = z.object({ artifacts: z.array(z.object({ name: z.string(), expired: z.boolean(),
@@ -394,7 +462,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   private async releaseArtifacts(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform) {
     // Downstream failures and notification-only retries do not erase a publication.
     // A newer finalizer execution must qualify itself; never fall back past it.
-    const finalizers = (await this.jobs(run.id)).filter(job => job.name === RELEASE_FINALIZE_JOB && job.run_attempt <= run.run_attempt);
+    const finalizers = (await this.jobs(run.id)).filter(job => job.name === this.releaseFinalizer && job.run_attempt <= run.run_attempt);
     const latestAttempt = Math.max(0, ...finalizers.map(job => job.run_attempt));
     const published = finalizers.filter(job => job.run_attempt === latestAttempt);
     // Successful finalization plus the immutable receipts below prove publication; GitHub can omit job steps.
@@ -405,7 +473,10 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const attempt = Math.min(job.run_attempt, ...finalizers.filter(item => job.started_at && job.completed_at
       && item.started_at === job.started_at && item.completed_at === job.completed_at && item.conclusion === job.conclusion)
       .map(item => item.run_attempt));
-    const identity = await this.releaseIdentity(run);
+    const canonical = this.repository === CANONICAL_REPOSITORY ? await this.canonicalRelease(run) : undefined;
+    const identity = canonical?.identity ?? await this.releaseIdentity(run);
+    const sourceCommit = canonical?.sourceCommit ?? run.head_sha;
+    const artifactSource = canonical ? {artifactSource: {repository: REPOSITORY as typeof REPOSITORY, headSha: sourceCommit}} : {};
     requireThat(identity, "Selected coordinated attempt did not publish immutable assets");
     const match = /^(\d+\.\d+\.\d+)-(dev|beta)\.[1-9]\d*$/.exec(identity);
     requireThat(match && match[2] === (channel === "dev" ? "dev" : "beta"), "Release identity does not match the selected channel");
@@ -414,7 +485,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const plan = z.object({ releaseIdentity: z.string(), sourceCommit: sha, channel: z.string(), artifactContainerTag: z.string(),
       native: z.object({ buildNumber: positive, marketingVersion: z.string() }), artifactNames: z.object({ otaManifest: z.string(), androidApp: z.string().optional(), releaseManifest: z.string().optional() }) })
       .parse(planMetadata.value);
-    requireThat(plan.releaseIdentity === identity && plan.sourceCommit === run.head_sha && plan.channel === match[2]
+    requireThat(plan.releaseIdentity === identity && plan.sourceCommit === sourceCommit && plan.channel === match[2]
       && plan.artifactContainerTag === tag && plan.artifactNames.otaManifest === `mentra-live-ota-${identity}.json`,
       "Published plan does not match the producing run");
     if (platform === "android") {
@@ -429,30 +500,31 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       // The manifest copies the plan's native identity and may add only the Android version code it built.
       const { androidBuildNumber: versionCode = plan.native.buildNumber, ...planNative } = data.native;
       requireThat(data.releaseIdentity === identity && data.releaseSetId === `mentra-${identity}`
-        && data.sourceCommit === run.head_sha && data.channel === match[2] && data.releasePlanSha256 === planMetadata.sha256
+        && data.sourceCommit === sourceCommit && data.channel === match[2] && data.releasePlanSha256 === planMetadata.sha256
         && isDeepStrictEqual(planNative, (planMetadata.value as { native?: unknown }).native)
         && typeof versionCode === "number" && Number.isSafeInteger(versionCode)
         && versionCode >= plan.native.buildNumber && versionCode <= ANDROID_MAX_VERSION_CODE
         && assets.length === 1 && assets[0]!.url === `${CDN}${tag}/${plan.artifactNames.androidApp}`
-        && ["built", "published", "reused"].includes(String(assets[0]!.status)), "Android receipt does not match the selected coordinated release");
+        && ["built", "published", "reused"].includes(String(assets[0]!.status))
+        && (!canonical || assets[0]!.provenanceUrl === runUrl(this.repository, run.id)), "Android receipt does not match the selected coordinated release");
       const archive = assetSchema.parse({ name: assets[0]!.coordinate, sha256: assets[0]!.sha256, size: assets[0]!.size });
       const ota = await this.metadata(tag, plan.artifactNames.otaManifest);
       requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === identity, "OTA manifest release differs");
-      return { attempt, tag, archive, result: { release: identity, receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
+      return { attempt, tag, archive, result: { ...artifactSource, release: identity, receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
     }
     const receipt = await this.metadata(tag, `mentraos-${identity}-apple-downloads.json`);
     const data = z.object({ schemaVersion: z.literal(1), releaseIdentity: z.string(), sourceCommit: sha,
       app: z.object({ bundleId: z.literal("com.mentra.mentra"), headSha: sha, backend: z.string(), build: z.string(),
         version: z.string(), otaManifestUrl: z.string(), executableSha256: digest, javascriptSha256: digest }),
       artifacts: z.object({ mac: assetSchema }) }).parse(receipt.value);
-    requireThat(data.releaseIdentity === identity && data.sourceCommit === run.head_sha && data.app.headSha === run.head_sha
+    requireThat(data.releaseIdentity === identity && data.sourceCommit === sourceCommit && data.app.headSha === sourceCommit
       && data.app.backend === channel && data.app.build === String(plan.native.buildNumber) && data.app.version === plan.native.marketingVersion
       && data.app.otaManifestUrl === `${CDN}${tag}/${plan.artifactNames.otaManifest}` && data.artifacts.mac.name === `mentraos-${identity}-mac.zip`,
       "Mac receipt does not match the selected coordinated release");
     const ota = await this.metadata(tag, plan.artifactNames.otaManifest);
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === identity, "OTA manifest release differs");
     return { attempt, tag, archive: data.artifacts.mac,
-      result: { release: identity, receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size},
+      result: { ...artifactSource, release: identity, receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size},
         app: { executableSha256: data.app.executableSha256, javascriptSha256: data.app.javascriptSha256 } } };
   }
 }

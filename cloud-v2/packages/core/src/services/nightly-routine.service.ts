@@ -7,7 +7,7 @@ import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInput
 import {routineResourceKindSchema, type RoutineEnrollment} from "../types/routine-definition.types";
 import {routineDispatchIntentSchema, type RoutineDispatchIntent} from "../types/routine-dispatch.types";
 import {GithubRoutineSourceGateway} from "./routine-source-selection.service";
-import {configuredTestingTarget, testingTarget, type TestingRepository} from '../types/testing-source.types';
+import {configuredAppRepository, configuredTestingTarget, testingTarget, type TestingRepository} from '../types/testing-source.types';
 import {selectedBuildInput, type TestBuild, type TestBuildPlatform} from "../types/test-build.types";
 import {testSuiteSchema, type TestSuite} from "../types/test-suite.types";
 import {RoutineCatalogService} from "./routine-catalog.service";
@@ -122,7 +122,7 @@ export class NightlyRoutineService {
   constructor(private readonly catalog: Pick<RoutineCatalogService, "list"> = new RoutineCatalogService(),
     private readonly builds: {latestDev(platform: TestBuildPlatform, before: string): Promise<TestBuild | null>;
       resolve(source: TestBuild["source"], platform: TestBuildPlatform): Promise<TestBuild>;
-      forSelection?(before: string): NightlyRoutineService["builds"]} = new GithubTestBuildGateway(),
+      forSelection?(before: string): NightlyRoutineService["builds"]} = new GithubTestBuildGateway({repository: configuredAppRepository()}),
     private readonly requests: Pick<TestRequestService, "get"> = new TestRequestService(),
     private readonly repository: NightlyPlanRepository = nightlyPlanRepository,
     private readonly results: Pick<FrameworkResultService, "summary"> = new FrameworkResultService(),

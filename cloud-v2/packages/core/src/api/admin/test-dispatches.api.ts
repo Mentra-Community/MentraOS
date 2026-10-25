@@ -17,11 +17,12 @@ import {frameworkVersionSchema} from "../../types/framework-version.types";
 import {RoutineJobService} from '../../services/routine-job.service';
 import {portableRoutineSelectionSchema} from '../../types/routine-job.types';
 import {routineAdmissionInput} from "../../services/routine-admission.service";
+import {configuredAppRepository} from "../../types/testing-source.types";
 const pickerSubmission = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema.optional(), laneId: frameworkIdentitySchema.optional(), routineId: routineIdentitySchema, routineRevision: routineRevisionSchema.optional(), minimumFrameworkVersion: frameworkVersionSchema.optional(), platform: z.enum(["ios-on-mac", "android"]), source: testBuildSourceSchema, archiveSha256: z.string().regex(/^[a-f0-9]{64}$/)}).strict().refine(value => !value.laneId || !!value.hostId, 'A targeted lane requires its host');
 const submission = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema, input: frameworkRequestInputSchema}).strict();
 export const HOST_STATE_FRESHNESS_MS = 120_000;
 /** Admin retains exact selections before the trusted fleet workflow assigns a host. */
-export function createTestDispatchAdminApi(service = new TestRequestService(), definitions = new RoutineDefinitionService(), builds: TestBuildGateway = new GithubTestBuildGateway(), hosts = new TestHostStateService(),
+export function createTestDispatchAdminApi(service = new TestRequestService(), definitions = new RoutineDefinitionService(), builds: TestBuildGateway = new GithubTestBuildGateway({repository: configuredAppRepository()}), hosts = new TestHostStateService(),
   dispatch = new RoutineDispatchService(definitions, builds, hosts, service), jobs = new RoutineJobService()) {
   const app = new Hono<AppEnv>();
   app.onError((error, c) => {

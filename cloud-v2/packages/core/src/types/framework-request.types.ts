@@ -6,17 +6,21 @@ import {firmwareManifestSchema, glassesSoftwareRefSchema} from "./glasses-softwa
 import {candidateVerificationSchema} from './candidate-verification.types';
 import type {RoutineLiveProgress} from './routine-progress.types';
 import {exclusiveResourceDependenciesSchema} from './resource-reservations.types';
+import {testBuildArtifactSourceSchema} from './test-build.types';
 
 export const frameworkIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/);
 export const frameworkBuildSchema = z.object({
   repository: z.string().regex(/^[\w-]+\/[\w.-]+$/),
   headSha: z.string().regex(/^[a-f0-9]{40}$/),
+  artifactSource: testBuildArtifactSourceSchema.optional(),
   channel: z.enum(["dev", "staging", "pr", "local"]),
   prNumber: z.number().int().positive().optional(),
   manifest: firmwareManifestSchema.optional(),
   manifestSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).passthrough().superRefine((build, ctx) => {
   if (build.channel === "pr" && !build.prNumber) ctx.addIssue({code: "custom", message: "PR build requires its PR number"});
+  if (build.artifactSource && (build.repository !== 'Mentra-Community/Mentra' || !['dev', 'staging'].includes(build.channel)))
+    ctx.addIssue({code: 'custom', message: 'Exported artifact source requires a canonical coordinated release'});
 });
 const frozenFrameworkRequestInputSchema = z.object({
   routineId: routineIdentitySchema,

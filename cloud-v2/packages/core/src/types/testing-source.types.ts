@@ -25,6 +25,10 @@ export function testingTarget(repository: TestingRepository = legacy.repository)
 export function configuredTestingTarget(env: {TESTING_REPOSITORY?: string} = {TESTING_REPOSITORY: process.env.TESTING_REPOSITORY}): TestingTarget {
   return testingTarget(testingRepositorySchema.parse(env.TESTING_REPOSITORY ?? legacy.repository));
 }
+/** New build inventories follow the active producer; retained source omissions remain legacy. */
+export function configuredAppRepository(env: {TESTING_REPOSITORY?: string} = {TESTING_REPOSITORY: process.env.TESTING_REPOSITORY}): AppRepository {
+  return configuredTestingTarget(env).repository === monorepo.repository ? monorepo.repository : 'Mentra-Community/MentraOS';
+}
 export function retainedTestingTarget(target?: TestingTarget): TestingTarget {
   return target === undefined ? testingTarget() : testingTargetSchema.parse(target);
 }
