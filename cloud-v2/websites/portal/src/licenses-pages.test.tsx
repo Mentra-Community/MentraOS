@@ -88,10 +88,21 @@ const billingRequests = (core: ReturnType<typeof fakeCore>) => core.requests.fil
  * Opens `path` as a person with `modules`, over a fake Core answering `scenario`. Resolves once `ready` holds on the
  * page (a request answered, a render it asked for).
  */
-async function open(path: string, scenario: Scenario, options: { modules?: PortalModules; me?: PortalMe; ready?: string } = {}) {
+async function open(
+  path: string,
+  scenario: Scenario,
+  options: { modules?: PortalModules; me?: PortalMe; ready?: string; slowLicensesMs?: number } = {},
+) {
   window.history.replaceState(null, "", path);
   const core = fakeCore(scenario);
-  spyOn(globalThis, "fetch").mockImplementation(core.fetch);
+  const licensesPath = `/api/portal/workspaces/${ACME}/licenses`;
+  spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
+    // `slowLicensesMs`: Core's licenses list answers that much later than the rest.
+    if (options.slowLicensesMs && new URL(String(input), "https://portal.example.test").pathname === licensesPath) {
+      await new Promise(resolve => setTimeout(resolve, options.slowLicensesMs));
+    }
+    return core.fetch(input, init);
+  }) as typeof fetch);
   const modules = options.modules ?? BILLING_ON;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
   await render(
@@ -197,6 +208,17 @@ describe("the Licenses page", () => {
     expect(client.getQueryState(PORTAL_ME_KEY)?.isInvalidated).toBe(false);
     await click(buttonNamed(/^Retry$/)!);
     expect(client.getQueryState(PORTAL_ME_KEY)?.isInvalidated).toBe(true);
+  });
+
+  test("the bare address opens Licenses for a Member who holds one, even when the list answers late", async () => {
+    const scenario: Scenario = {
+      ...SCENARIOS.twoActive(),
+      role: "member",
+      licenses: [CALL_LICENSE].map(license => ({ ...license, seats: license.seats!.slice(0, 1), seatsUsed: 3 })),
+      workspaceCatalog: workspaceCatalog(false),
+    };
+    await open(`/`, scenario, { modules: BILLING_ON, slowLicensesMs: 150, ready: "Assigned to you" });
+    expect(window.location.pathname).toBe("/licenses");
   });
 
   test("a Member sees the products they hold a license for, and nothing of billing's", async () => {

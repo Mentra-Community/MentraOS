@@ -231,8 +231,10 @@ export function WorkspaceScreen({
   const buyLinked = section === "licenses" && (linkedToBuy || wantsToBuy);
   const sections = data ? visibleSections(data, { licenses: licensesPartShown(billing, licenses.data) || licensesFailed || buyLinked }) : [];
   const active = section && sections.includes(section) ? section : null;
-  // The address is the licenses page and the list has not answered yet: wait for it instead of leaving.
-  const waitingForLicenses = data !== undefined && section === "licenses" && active === null && licenses.isPending;
+  // The address is not a section this viewer is offered yet (`/`, or Licenses itself), and whether Licenses is offered
+  // waits on the licenses list: wait for it instead of leaving, because Licenses is the first section and so decides
+  // where `/` lands. Where billing is offered, Licenses already is.
+  const waitingForLicenses = data !== undefined && active === null && !billing && licenses.isPending;
   // The Members list shows each member's licenses.
   const membersLicenses = useMembersLicenses({ me, workspaceId, detail: data, licenses: licenses.data, enabled: active === "members" });
 
@@ -296,7 +298,7 @@ export function WorkspaceScreen({
         )
       ) : waitingForLicenses ? (
         <div role="status" className="text-muted-foreground flex items-center gap-2.5 text-sm">
-          <Spinner /> Loading licenses
+          <Spinner /> {section === "licenses" ? "Loading licenses" : "Loading workspace"}
         </div>
       ) : !active ? (
         // `/`, or a section this viewer does not have: open the first one they do.
