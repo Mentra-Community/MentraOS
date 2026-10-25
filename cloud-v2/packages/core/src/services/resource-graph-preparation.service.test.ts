@@ -1,7 +1,7 @@
 import {expect, test} from 'bun:test'
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures'
 import {candidatePrerequisiteSettlementSchema, type ResourceReadinessCheck} from '../types/backend-connectivity.types'
-import {exclusiveResourceIntentSchema, resourceReservationObservationSchema} from '../types/resource-reservations.types'
+import {exclusiveHostReservationSchema, exclusiveResourceIntentSchema, resourceReservationObservationSchema} from '../types/resource-reservations.types'
 import {fleetCandidatePreparationSchema, routineQualificationTargetSchema} from '../types/routine-job.types'
 import {requestInputDigest} from './test-request.service'
 import {candidateSettlement, graphCheckOperationId, graphFinalCheckOperationId, graphCandidateClaimMatches, graphCandidateReturnMatches, qualifiedGraphCandidate} from './backend-candidate-preparation'
@@ -226,17 +226,67 @@ test('a source-only preparation that never requested resources closes UNKNOWN an
   expect({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline, input: f.row.fleetInputSha256}).toEqual(original)
 })
 
-test.each(['backend-target', 'claim', 'return', 'absence-receipt', 'owner', 'generation', 'contract', 'parent', 'candidate', 'not-never-requested'] as const)(
+function unrelatedGraphClaim(pending: FleetCandidatePreparation) {
+  if (pending.target.purpose?.kind !== 'resource-readiness') throw Error('Expected original graph')
+  const claim = structuredClone(closedGraphFixture().pending.resourceClaims![0]) as any,
+    digest = 'c'.repeat(64), member = pending.target.purpose.resources[0]!
+  Object.assign(claim, {authorityHostId: pending.hostId, borrowerHostId: pending.hostId, laneId: pending.laneId,
+    resourceId: member.id, operationId: `graph-prerequisite:${digest}`, inputSha256: digest,
+    owner: {kind: 'boundary-cleanup', id: `resource-graph:${digest}`}})
+  Object.assign(claim.prerequisite, {jobId: 'different-original', targetInputSha256: digest})
+  claim.prerequisite.resourceId = member.id
+  Object.assign(claim.prerequisite.resources[0], {id: member.id, authorityHostId: pending.hostId})
+  claim.prerequisite.candidate.attemptId = 'candidate:different-original:1'
+  claim.resourceCheck.resourceId = member.id
+  expect(exclusiveHostReservationSchema.safeParse(claim).success).toBe(true)
+  return claim
+}
+
+test('a never-requested original tries an alternate while a different graph retains its lane and overlapping claims', async () => {
+  const f = routingGraphFixture(), original = structuredClone({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline,
+    input: f.row.fleetInputSha256})
+  await f.service.preparation('job-one')
+  const {pending, host} = f.settleNeverRequested(), claim = unrelatedGraphClaim(pending)
+  host.authorityReservations = [claim]
+  host.lanes[0]!.activity = {generation: 4, owner: claim.owner}
+  for (const subject of host.resourceLifecycle!.subjects) {
+    subject.owner = {...claim.owner, hostId: host.hostId, generation: 4}; subject.generation++
+  }
+  const retained = structuredClone({claims: host.authorityReservations, lifecycle: host.resourceLifecycle, activity: host.lanes[0]!.activity})
+  await f.service.preparation('job-one')
+  expect(f.row.fleetCandidatePreparations?.[0]?.settlement?.neverRequested).toBe(true)
+  expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2'); expect(f.bindWrites).toBe(0)
+  expect({claims: host.authorityReservations, lifecycle: host.resourceLifecycle, activity: host.lanes[0]!.activity}).toEqual(retained)
+  expect({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline, input: f.row.fleetInputSha256}).toEqual(original)
+})
+
+test.each(['owner', 'operation', 'input', 'job', 'target', 'attempt', 'subject-owner', 'lane-owner'] as const)(
+  'never-requested closure retains a partially identified original %s even when other claim fields disagree', async changed => {
+    const f = routingGraphFixture(); await f.service.preparation('job-one')
+    const {pending, host} = f.settleNeverRequested(), claim = unrelatedGraphClaim(pending), owner = `resource-graph:${pending.targetInputSha256}`
+    if (changed === 'owner') claim.owner.id = owner
+    if (changed === 'operation') claim.operationId = `graph-prerequisite:${pending.targetInputSha256}`
+    if (changed === 'input') claim.inputSha256 = pending.targetInputSha256
+    if (changed === 'job') claim.prerequisite.jobId = pending.target.jobId
+    if (changed === 'target') claim.prerequisite.targetInputSha256 = pending.targetInputSha256
+    if (changed === 'attempt') claim.prerequisite.candidate.attemptId = pending.candidate.attemptId
+    if (changed === 'subject-owner') host.resourceLifecycle!.subjects[0]!.owner = {id: owner, kind: 'boundary-cleanup', hostId: host.hostId, generation: 4}
+    if (changed === 'lane-owner') host.lanes[0]!.activity = {generation: 4, owner: {id: owner, kind: 'boundary-cleanup'}}
+    host.authorityReservations = [claim]
+    const before = structuredClone(f.row.fleetCandidatePreparation)
+    expect(candidateSettlement(pending, host, [claim], f.now)).toBeUndefined()
+    expect(f.row.fleetCandidatePreparation).toEqual(before); expect(f.bindWrites).toBe(0)
+    expect(f.row.fleetCandidatePreparations).toBeUndefined()
+  })
+
+test.each(['backend-target', 'claim', 'return', 'absence-receipt', 'parent', 'candidate', 'not-never-requested'] as const)(
   'never-requested cannot hide %s or invent an alternate dispatch', async changed => {
     const f = routingGraphFixture(); await f.service.preparation('job-one')
-    const {pending, host, receipt} = f.settleNeverRequested(), subject = host.resourceLifecycle!.subjects[0]!
+    const {pending, receipt} = f.settleNeverRequested()
     if (changed === 'backend-target') pending.backendTarget = {schemaVersion: 1, coreUrl: 'https://core.example/'}
     if (changed === 'claim') pending.resourceClaims = [{id: 'unknown-original-claim'}]
     if (changed === 'return') pending.resourceReturns = [{claimId: 'unknown-original-claim'}]
     if (changed === 'absence-receipt') pending.noAcquisitionReceipt = {status: 'unknown'}
-    if (changed === 'owner') subject.owner = {kind: 'fixer', id: 'other-owner', generation: 2, hostId: host.hostId}
-    if (changed === 'generation') subject.generation++
-    if (changed === 'contract') host.lanes[0]!.resources[0]!.idleContract!.version = 'changed-contract'
     if (changed === 'parent') receipt.checkOperationId += '-different'
     if (changed === 'candidate') receipt.candidate = {...receipt.candidate, attemptId: 'foreign-candidate'}
     if (changed === 'not-never-requested') delete receipt.neverRequested

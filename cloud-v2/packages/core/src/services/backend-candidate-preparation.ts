@@ -56,7 +56,8 @@ export function graphCandidateNoAcquisitionMatches(pending: FleetCandidatePrepar
       fence?: {hostId?: string; controller?: {incarnation?: string; generation?: number; sequence?: number};
         resourceReservationVersion?: number; subjects?: {resourceId: string; subjectGeneration: number}[]}}} | undefined
   if (purpose?.kind !== 'resource-readiness' || pending.resourceClaims?.length || pending.resourceReturns?.length || !saved?.intent ||
-    !exclusiveResourceIntentSchema.safeParse(saved.intent).success || saved.intent.prerequisite?.kind !== 'resource-readiness' ||
+    !exclusiveResourceIntentSchema.safeParse(saved.intent).success || !candidatePrerequisiteIdentityMatches(pending, saved.intent) ||
+    saved.intent.prerequisite?.kind !== 'resource-readiness' ||
     saved.intent.prerequisite.jobId !== pending.target.jobId || saved.intent.prerequisite.targetInputSha256 !== pending.targetInputSha256 ||
     !isDeepStrictEqual(saved.intent.prerequisite.candidate, pending.candidate) || !isDeepStrictEqual(saved.journal, pending.target) ||
     saved.observation?.status !== 'not-acquired' || saved.observation.claims?.length !== 0 ||
@@ -314,32 +315,58 @@ export function candidateRequestCurrent(row: StoredRoutineJob | null, pending: F
   return true
 }
 export function candidatePrerequisiteRequestMatches(row: StoredRoutineJob | null, intent: ExclusiveResourceIntent, now: number) {
-  const pending = row?.fleetCandidatePreparation, purpose = intent.prerequisite
-  return Boolean(purpose?.candidate && (purpose.kind === 'resource-readiness' || purpose.target) && candidateRequestCurrent(row, pending, now) && pending &&
+  return candidateRequestCurrent(row, row?.fleetCandidatePreparation, now) && candidatePrerequisiteIdentityMatches(row!.fleetCandidatePreparation, intent)
+}
+/** Retained identity also fences a negative observation after its execution deadline. */
+export function candidatePrerequisiteIdentityMatches(pending: FleetCandidatePreparation | undefined, intent: ExclusiveResourceIntent) {
+  const purpose = intent.prerequisite
+  return Boolean(purpose?.candidate && (purpose.kind === 'resource-readiness' || purpose.target) && pending &&
     isDeepStrictEqual(pending.candidate, purpose.candidate) && pending.hostId === intent.hostId && pending.laneId === intent.laneId &&
     pending.targetInputSha256 === purpose.targetInputSha256 && pending.target.purpose?.resourceId === purpose.resourceId &&
     isDeepStrictEqual(pending.target.acceptedBinding, purpose.binding) &&
     pending.candidate.controller.incarnation === intent.controller.incarnation && pending.candidate.controller.generation === intent.controller.generation &&
     (purpose.kind === 'resource-readiness' ? pending.target.purpose?.kind === 'resource-readiness' &&
+      intent.operationId === `graph-prerequisite:${pending.targetInputSha256}` && intent.owner.id === `resource-graph:${pending.targetInputSha256}` &&
       isDeepStrictEqual(pending.target.purpose.resources, purpose.resources) &&
       (!pending.backendTarget || isDeepStrictEqual(pending.backendTarget, purpose.target)) :
       (!pending.backendTarget || isDeepStrictEqual(pending.backendTarget, purpose.target))))
 }
+export function reportedGraphCandidateSettlement(pending: FleetCandidatePreparation, host: TestHostState) {
+  if (pending.target.purpose?.kind !== 'resource-readiness') return undefined
+  const found = (host.resourceReservations?.candidatePrerequisites ?? []).filter(value => value.candidate.attemptId === pending.candidate.attemptId), receipt = found[0]
+  if (found.length !== 1 || !receipt || !candidatePrerequisiteSettlementSchema.safeParse(receipt).success ||
+    !isDeepStrictEqual(receipt.candidate, pending.candidate) || receipt.targetInputSha256 !== pending.targetInputSha256 ||
+    receipt.checkOperationId !== `graph-prerequisite:${pending.targetInputSha256}` ||
+    requestInputDigest((({inputSha256: _, ...target}) => target)(pending.target)) !== pending.targetInputSha256 ||
+    host.hostId !== pending.hostId || host.incarnation !== pending.candidate.controller.incarnation ||
+    host.incarnationGeneration !== pending.candidate.controller.generation || !isDeepStrictEqual(host.frameworkBinding, pending.target.acceptedBinding)) return undefined
+  return receipt
+}
+export function graphCandidateHasOriginalCustody(pending: FleetCandidatePreparation, host: TestHostState, claims: unknown[]) {
+  const ownerId = `resource-graph:${pending.targetInputSha256}`, originalOwner = (id?: string) => id === ownerId || id === pending.target.jobId
+  return claims.some(value => {const claim = value as {owner?: {id?: string}; requestId?: string; operationId?: string; inputSha256?: string;
+    prerequisite?: {jobId?: string; targetInputSha256?: string; candidate?: {attemptId?: string}}}
+    return !claim || originalOwner(claim.owner?.id) || claim.requestId === pending.target.jobId ||
+      claim.operationId === `graph-prerequisite:${pending.targetInputSha256}` || claim.inputSha256 === pending.targetInputSha256 ||
+      claim.prerequisite?.jobId === pending.target.jobId || claim.prerequisite?.targetInputSha256 === pending.targetInputSha256 ||
+      claim.prerequisite?.candidate?.attemptId === pending.candidate.attemptId}) ||
+    !!host.resourceLifecycle?.subjects.some(subject => originalOwner(subject.owner?.id)) ||
+    host.lanes.some(lane => originalOwner(lane.activity?.owner.id) || lane.activity?.owner.requestId === pending.target.jobId)
+}
 /** Raw-work closure is a current authenticated producer account, separate from phone return proof. */
 export function candidateSettlement(pending: FleetCandidatePreparation, host: TestHostState, claims: unknown[], now: number) {
   if (pending.target.purpose?.kind === 'resource-readiness') {
-    const purpose = pending.target.purpose, found = (host.resourceReservations?.candidatePrerequisites ?? [])
-      .filter(value => value.candidate.attemptId === pending.candidate.attemptId), receipt = found[0]
-    if (found.length !== 1 || !receipt || !candidatePrerequisiteSettlementSchema.safeParse(receipt).success ||
-      !isDeepStrictEqual(receipt.candidate, pending.candidate) || receipt.targetInputSha256 !== pending.targetInputSha256 ||
-      host.hostId !== pending.hostId || host.incarnation !== pending.candidate.controller.incarnation ||
-      host.incarnationGeneration !== pending.candidate.controller.generation || !isDeepStrictEqual(host.frameworkBinding, pending.target.acceptedBinding) ||
-      claims.some(value => {const claim = value as {kind?: string; borrowerHostId?: string; laneId?: string; resourceId?: string}
-        return claim.kind === 'exclusive' && (purpose.resources.some(member => member.id === claim.resourceId) ||
-          claim.borrowerHostId === pending.hostId && claim.laneId === pending.laneId)})) return undefined
-    if (receipt.checkOperationId !== `graph-prerequisite:${pending.targetInputSha256}`) return undefined
-    if (receipt.neverRequested) return graphCandidateNeverRequestedMatches(pending, receipt, host) ? receipt : undefined
-    if (receipt.outcome === 'unknown' && !receipt.graphChecks?.length && graphCandidateNoAcquisitionMatches(pending, host)) return receipt
+    const purpose = pending.target.purpose, receipt = reportedGraphCandidateSettlement(pending, host)
+    if (!receipt) return undefined
+    if (receipt.outcome === 'unknown' && !receipt.graphChecks?.length) {
+      // A contradictory partial original claim still represents custody. A
+      // different graph's occupancy cannot invalidate authenticated no-work history.
+      if (graphCandidateHasOriginalCustody(pending, host, claims)) return undefined
+      return (receipt.neverRequested ? graphCandidateNeverRequestedMatches(pending, receipt) : graphCandidateNoAcquisitionMatches(pending)) ? receipt : undefined
+    }
+    if (claims.some(value => {const claim = value as {kind?: string; borrowerHostId?: string; laneId?: string; resourceId?: string}
+      return claim.kind === 'exclusive' && (purpose.resources.some(member => member.id === claim.resourceId) ||
+        claim.borrowerHostId === pending.hostId && claim.laneId === pending.laneId)})) return undefined
     if (!receipt.graphChecks || receipt.graphChecks.length !== purpose.resources.length ||
       pending.resourceClaims?.length !== purpose.resources.length || pending.resourceReturns?.length !== purpose.resources.length ||
       !pending.resourceClaims.every(claim => graphCandidateClaimMatches(pending, claim)) ||

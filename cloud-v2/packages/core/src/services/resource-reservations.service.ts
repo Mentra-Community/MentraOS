@@ -12,12 +12,13 @@ import {TestRunError} from './test-result-error'
 import {TestRequestModel} from '../models/test-request.model'
 import {assertFleetResourceAdmission, fleetResourceExecutionBinding} from './fleet-resource-binding'
 import {frameworkRequestInputSchema} from '../types/framework-request.types'
-import {routineQualificationTargetSchema, type StoredRoutineJob, type OwnedRoutineQualification, type RoutineQualificationTarget} from '../types/routine-job.types'
+import {routineQualificationTargetSchema, MAX_FLEET_CANDIDATE_PREPARATIONS, type StoredRoutineJob, type OwnedRoutineQualification, type RoutineQualificationTarget} from '../types/routine-job.types'
 import {preparationRejectionSchema} from '../types/routine-dispatch.types'
 import {z} from 'zod'
 import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
 import {candidatePrerequisiteRequestMatches, qualifiedCandidate, candidateReturnMatches, qualifiedGraphCandidate,
-  graphCandidateClaimMatches, graphCandidateReturnMatches} from './backend-candidate-preparation'
+  graphCandidateClaimMatches, graphCandidateReturnMatches, graphCandidateHasOriginalCustody, graphCandidateNoAcquisitionMatches,
+  candidatePrerequisiteIdentityMatches, reportedGraphCandidateSettlement, completedCandidatePreparationForHost} from './backend-candidate-preparation'
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
 import {resourceAvailable, resourceBlocker, resourceCandidateBlocker, resourceLaneBlocker, requiredResourceBlocker, type ResourceReadinessBlocker} from './resource-readiness'
 import {laneControlRecordSchema, resourceControlRecordSchema, type ResourceControlRecord} from '../types/lane-control.types'
@@ -199,6 +200,8 @@ export const resourceReservationRepository: ResourceReservationRepository = {
     if (intent.prerequisite!.candidate) {
       const row = await this.request!(intent.prerequisite!.jobId), pending = row?.fleetCandidatePreparation;
       if (!candidatePrerequisiteRequestMatches(row, intent, now.getTime()) || !pending) return false;
+      if (intent.prerequisite!.kind === 'resource-readiness' &&
+        (pending.noAcquisitionReceipt || reportedGraphCandidateSettlement(pending, host.snapshot))) return false
       if (intent.prerequisite!.target && !pending.backendTarget) {
         const saved = await TestRequestModel.collection.findOneAndUpdate({requestId: row!.requestId, state: 'awaiting-runner',
           fleetCandidatePreparation: pending, fleetBinding: {$exists: false}, fleetResourceAdmission: {$exists: false},
@@ -1094,7 +1097,8 @@ export class ResourceReservationsService {
       if (relevant.length) return relevant.length === purpose.resources.length && relevant.every(claim =>
         claim.intentSha256 === intentSha256 && graphCandidateClaimMatches(pending, claim)) &&
         await this.checkpointGraphClaims(intent, relevant) ? {status: 'reserved' as const, intentSha256, claims: relevant} : unknown
-      if (!candidatePrerequisiteRequestMatches(row ?? null, intent, this.now()) || !this.graphSubjectsCurrent(host, intent)) return unknown
+      if (pending.noAcquisitionReceipt || reportedGraphCandidateSettlement(pending, host.snapshot) ||
+        !candidatePrerequisiteRequestMatches(row ?? null, intent, this.now()) || !this.graphSubjectsCurrent(host, intent)) return unknown
       if (all.some(claim => isExclusiveHostReservation(claim)
         ? claim.borrowerHostId === hostId && claim.laneId === intent.laneId
         : claim.hostId === hostId && claim.laneId === intent.laneId)) return unknown
@@ -1122,24 +1126,35 @@ export class ResourceReservationsService {
     if (purpose?.kind !== 'resource-readiness') throw new TestRunError(409, 'Readiness graph is missing')
     const intentSha256 = this.graphIntentDigest(intent), all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []),
       relevant = all.filter(isExclusiveHostReservation).filter(claim => purpose.resources.some(member => member.id === claim.resourceId)),
-      row = await this.rows.request?.(purpose.jobId), pending = row?.fleetCandidatePreparation,
+      row = await this.rows.request?.(purpose.jobId), candidates = [row?.fleetCandidatePreparation, ...row?.fleetCandidatePreparations ?? []]
+        .filter(value => value && candidatePrerequisiteIdentityMatches(value, intent)),
+      pending = candidates.length === 1 ? candidates[0] : undefined,
       unknown = {status: 'unknown' as const, intentSha256, claims: []}
-    if (!pending) return unknown
-    if (relevant.length) return relevant.length === purpose.resources.length && relevant.every(claim =>
-      claim.intentSha256 === intentSha256 && graphCandidateClaimMatches(pending, claim)) && await this.checkpointGraphClaims(intent, relevant)
-      ? {status: 'reserved' as const, intentSha256, claims: relevant} : unknown
-    if (pending.resourceClaims?.length || pending.resourceReturns?.length || controller.incarnation !== intent.controller.incarnation ||
+    if (!row || !pending || (row.fleetCandidatePreparations?.length ?? 0) > MAX_FLEET_CANDIDATE_PREPARATIONS) return unknown
+    const historical = pending !== row.fleetCandidatePreparation, saved = pending.noAcquisitionReceipt as {intent?: unknown} | undefined
+    if ((historical || saved) && (!graphCandidateNoAcquisitionMatches(pending) || !isDeepStrictEqual(saved?.intent, intent)) ||
+      historical && !completedCandidatePreparationForHost({...row, fleetCandidatePreparations: [pending]}, host.hostId)) return unknown
+    if (relevant.length === purpose.resources.length && relevant.every(claim =>
+      claim.intentSha256 === intentSha256 && graphCandidateClaimMatches(pending, claim)) && await this.checkpointGraphClaims(intent, relevant))
+      return {status: 'reserved' as const, intentSha256, claims: relevant}
+    const closed = reportedGraphCandidateSettlement(pending, host.snapshot), closedUnused =
+      closed?.outcome === 'unknown' && closed.graphChecks?.length === 0
+    if (pending.resourceClaims?.length || pending.resourceReturns?.length || !isDeepStrictEqual(host.snapshot.frameworkBinding, pending.target.acceptedBinding) ||
+      controller.incarnation !== intent.controller.incarnation ||
       controller.generation !== intent.controller.generation || controller.sequence <= intent.controller.sequence ||
-      !this.graphSubjectsCurrent(host, intent)) return unknown
-    // Fence every older claim CAS before publishing authenticated absence. The
-    // worker separately proves its original parent/children never admitted work.
+      graphCandidateHasOriginalCustody(pending, host.snapshot, all) ||
+      !closedUnused) return unknown
+    // Accepted original closure blocks acquisition on this same host snapshot.
+    // This CAS fences older open-report reads before saving durable absence.
     if (!await this.rows.replace(host, all)) return unknown
     const after = await this.host(host.hostId), version = (host.resourceReservationVersion ?? 0) + 1
-    if (after.sequence !== controller.sequence || after.resourceReservationVersion !== version ||
-      !isDeepStrictEqual(after.resourceReservations, all) || !this.graphSubjectsCurrent(after, intent)) return unknown
+    if (!fresh(after, this.now()) || after.incarnation !== host.incarnation || after.incarnationGeneration !== host.incarnationGeneration ||
+      after.sequence !== controller.sequence || after.resourceReservationVersion !== version || after.laneControlVersion !== host.laneControlVersion ||
+      !isDeepStrictEqual(after.resourceReservations, all) || !isDeepStrictEqual(after.snapshot, host.snapshot)) return unknown
     const observation = {status: 'not-acquired' as const, intentSha256, claims: [], fence: {hostId: host.hostId,
       controller, resourceReservationVersion: version, resourceId: purpose.resourceId, subjectGeneration: purpose.resources[0]!.subjectGeneration,
       subjects: purpose.resources.map(member => ({resourceId: member.id, subjectGeneration: member.subjectGeneration}))}}
+    if (!graphCandidateNoAcquisitionMatches({...pending, noAcquisitionReceipt: {intent, journal: pending.target, observation}})) return unknown
     if (!await this.rows.recordCandidateNoAcquisition?.(row!.requestId, pending, {intent, journal: pending.target, observation})) return unknown
     return observation
   }
