@@ -31,9 +31,9 @@ jest.mock("@mentra/engine", () => ({
   },
 }))
 
-const mockConfirm = jest.fn(async (_preview: unknown) => true)
+const mockConfirm = jest.fn(async (_preview: unknown, _installedName?: string | null) => true)
 jest.mock("@/components/miniapps/MiniappInstallSheet", () => ({
-  confirmMiniappInstall: (preview: unknown) => mockConfirm(preview),
+  confirmMiniappInstall: (preview: unknown, installedName?: string | null) => mockConfirm(preview, installedName),
 }))
 const mockShowAlert = jest.fn(async (_alert: {title: string; message?: string}) => 0)
 jest.mock("@/contexts/ModalContext", () => ({
@@ -112,7 +112,7 @@ describe("startMiniappInstall", () => {
     await expect(startMiniappInstall("https://Notes.Example.com", "paste", {onPresent})).resolves.toBe("installed")
 
     expect(mockInstall).toHaveBeenCalledWith("https://notes.example.com/", expect.objectContaining({source: "paste"}))
-    expect(mockConfirm).toHaveBeenCalledWith(preview)
+    expect(mockConfirm).toHaveBeenCalledWith(preview, null)
     expect(onPresent).toHaveBeenCalledTimes(1)
     expect(mockGoHome).toHaveBeenCalled()
     expect(mockToast.mock.calls).toEqual([
@@ -120,6 +120,13 @@ describe("startMiniappInstall", () => {
       [{type: "success", text1: "Notes is on your Home screen"}],
     ])
     expect(mockShowAlert).not.toHaveBeenCalled()
+  })
+
+  it("names the installed copy on the sheet, which can be a development build under another name", async () => {
+    installs("installed", {...preview, alreadyInstalled: true})
+    mockList.mockReturnValue([{packageName: "com.example.notes", name: "Notes Dev"}])
+    await startMiniappInstall("https://notes.example.com/", "paste")
+    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({alreadyInstalled: true}), "Notes Dev")
   })
 
   it("closes the app's own screen in front of Home, such as Settings with the developer scanner", async () => {

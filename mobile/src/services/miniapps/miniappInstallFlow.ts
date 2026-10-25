@@ -144,7 +144,7 @@ export async function startMiniappInstall(
           return false
         }
         present()
-        const accepted = await confirmMiniappInstall(preview)
+        const accepted = await confirmMiniappInstall(preview, installedMiniappName(preview.packageName))
         // The download can take a moment: say it's under way.
         if (accepted) Toast.show({type: "info", text1: translate("miniappInstall:installing", {name: preview.name})})
         return accepted
@@ -297,4 +297,9 @@ function hostOf(url: string): string {
   } catch {
     return url
   }
+}
+
+/** The name of the installed copy of a package, as its Home tile shows it; null when none is installed. */
+function installedMiniappName(packageName: string): string | null {
+  return engine.miniapps.list().find((app) => app.packageName === packageName)?.name ?? null
 }

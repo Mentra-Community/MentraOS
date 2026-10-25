@@ -16,7 +16,9 @@ export {localMiniappAddress}
  * network" with the address. Resolves true when the person taps Install.
  */
 export function confirmLocalMiniappInstall(preview: MiniappInstallPreview): Promise<boolean> {
-  return confirmMiniappInstall(preview)
+  // The replace line names the copy installed now, which can be a development build under another name.
+  const installed = engine.miniapps.list().find((app) => app.packageName === preview.packageName)
+  return confirmMiniappInstall(preview, installed?.name)
 }
 
 export interface InstalledLocalMiniapp {

@@ -55,8 +55,14 @@ export function localMiniappAddress(url: string): string {
   }
 }
 
-/** The sheet's title and message for a miniapp. */
-export function miniappInstallSheetCopy(preview: MiniappInstallPreview): {title: string; message: string} {
+/**
+ * The sheet's title and message for a miniapp. `installedName`: the name of the copy installed now, which the replace
+ * line names (a development build of the package can carry another name); the miniapp's own name when unknown.
+ */
+export function miniappInstallSheetCopy(
+  preview: MiniappInstallPreview,
+  installedName?: string | null,
+): {title: string; message: string} {
   const title = preview.ageRating
     ? translate("miniappInstall:nameWithRating", {name: preview.name, rating: preview.ageRating})
     : preview.name
@@ -64,7 +70,7 @@ export function miniappInstallSheetCopy(preview: MiniappInstallPreview): {title:
     ? translate("miniappInstall:fromLocalNetwork", {address: localMiniappAddress(preview.url)})
     : translate("miniappInstall:from", {host: preview.host})
   const message = preview.alreadyInstalled
-    ? `${from}\n\n${translate("miniappInstall:replaces", {name: preview.name})}`
+    ? `${from}\n\n${translate("miniappInstall:replaces", {name: installedName?.trim() || preview.name})}`
     : from
   return {title, message}
 }
@@ -72,17 +78,21 @@ export function miniappInstallSheetCopy(preview: MiniappInstallPreview): {title:
 type SheetChoice = "cancel" | "install"
 
 /**
- * Ask the person whether to install the miniapp. Resolves true only when they press Install. The sheet answers with
- * the pressed button's index, and lays buttons out by their style, so each button carries its role.
+ * Ask the person whether to install the miniapp. Resolves true only when they press Install. `installedName` names
+ * the copy it replaces, when one is installed. The sheet answers with the pressed button's index, and lays buttons
+ * out by their style, so each button carries its role.
  */
-export async function confirmMiniappInstall(preview: MiniappInstallPreview): Promise<boolean> {
+export async function confirmMiniappInstall(
+  preview: MiniappInstallPreview,
+  installedName?: string | null,
+): Promise<boolean> {
   const choices: Array<{role: SheetChoice; button: AlertButton}> = [
     {role: "cancel", button: {text: translate("common:cancel"), style: "cancel"}},
     {role: "install", button: {text: translate("miniappInstall:install")}},
   ]
   // A link that cold-starts the app arrives before the sheet is mounted; with no sheet, the answer would be no.
   await waitForAlertHost()
-  const {title, message} = miniappInstallSheetCopy(preview)
+  const {title, message} = miniappInstallSheetCopy(preview, installedName)
   const index = await showAlert({
     title,
     message,

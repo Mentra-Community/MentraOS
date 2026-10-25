@@ -90,6 +90,15 @@ describe("the install sheet's copy", () => {
       "From notes.example.com\n\nIt replaces the Notes you have now.",
     )
   })
+
+  it("names the copy it replaces, which can carry another name", () => {
+    expect(miniappInstallSheetCopy(preview({alreadyInstalled: true}), "Notes Dev").message).toBe(
+      "From notes.example.com\n\nIt replaces the Notes Dev you have now.",
+    )
+    expect(miniappInstallSheetCopy(preview({alreadyInstalled: true}), "  ").message).toBe(
+      "From notes.example.com\n\nIt replaces the Notes you have now.",
+    )
+  })
 })
 
 describe("the install sheet on the real alert sheet", () => {
@@ -124,6 +133,14 @@ describe("the install sheet on the real alert sheet", () => {
     )
     expect(buttons(screen!)).toEqual(["Install", "Cancel"])
     expect(systemAlert).not.toHaveBeenCalled()
+  })
+
+  it("names the installed copy it replaces", async () => {
+    screen = render(<ModalProvider>{null}</ModalProvider>)
+    act(() => {
+      void confirmMiniappInstall(preview({alreadyInstalled: true}), "Notes Dev")
+    })
+    expect(await screen.findByText("From notes.example.com\n\nIt replaces the Notes Dev you have now.")).toBeTruthy()
   })
 
   it("shows the initial when the miniapp names no icon", async () => {
