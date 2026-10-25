@@ -1,0 +1,207 @@
+---
+title: "Publish your miniapp"
+description: "Host your miniapp at an HTTPS URL, share it, and get it listed in the Mentra Miniapp Store."
+icon: "rocket"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+A published miniapp is a folder of files on a website you control. There is no
+upload step and no account to create: the Mentra App installs a miniapp from its
+URL, and keeps it up to date from the same URL.
+
+## 1. Pack it
+
+From your project, run:
+
+```bash
+mentra-miniapp pack
+```
+
+(In a scaffolded project, `bun run pack` does the same. The `mentra` CLI's
+`mentra pack` is the same command.) It builds your miniapp and writes `build/`:
+
+| File | What it is |
+|---|---|
+| `<packageName>-<version>.zip` | The bundle. ZIPs of earlier versions stay beside it. |
+| `miniapp.json` | Your `miniapp.json` plus `bundle: {url, sha256}`, naming the ZIP and its SHA-256. |
+| The icon, such as `icon.png` | The file your `miniapp.json` `icon` names. |
+
+Your own `miniapp.json` must not declare `bundle`; `pack` adds it to the copy it
+writes. See the [CLI reference](/app-devs/reference/cli#pack) for signing.
+
+## 2. Host it
+
+Upload the contents of `build/` to any static host that serves HTTPS: GitHub
+Pages, Cloudflare Pages or R2, S3, or a plain web server. The folder's URL is
+your **miniapp URL**, for example `https://notes.example.com/`.
+
+For each release:
+
+1. Bump `version` in `miniapp.json` (semantic version, such as `1.4.2`).
+2. Run `mentra-miniapp pack`.
+3. Upload the new ZIP first, and `miniapp.json` last, so your URL never names a
+   ZIP that isn't there yet. A ZIP never changes once published; each version
+   is a new file.
+
+Have your host send an `ETag` or `Last-Modified` header. The Mentra App asks
+for `miniapp.json` conditionally, so an unchanged miniapp costs one small `304`
+response.
+
+## 3. Match the package name to your domain
+
+A package name is your miniapp's identity, so it can only be served from a
+domain that owns it. The name must start with the reversed registrable domain of
+the URL, plus at least one more part:
+
+| Served from | May use |
+|---|---|
+| `notes.example.com` | `com.example.*` |
+| `alice.github.io` | `io.github.alice.*` |
+| `tools.acme.co.uk` | `uk.co.acme.*` |
+
+- A hyphen in a domain label is an underscore in the package name:
+  `my-site.com` may use `com.my_site.*`.
+- A domain whose labels can't become package-name parts, such as a label that
+  starts with a digit, can't serve a miniapp.
+- Internationalized domains are written in their `xn--` form.
+- `com.mentra.*` is reserved for Mentra's own domain, `mentraglass.com`.
+
+The Mentra App checks this on every install and update. A miniapp that breaks it
+doesn't install: "This miniapp's name doesn't match its website."
+
+**Moving.** A permanent redirect (`301` or `308`) from your miniapp URL to
+another HTTPS URL on the same registrable domain moves the miniapp, and
+installed copies update from the new URL. Moving to another domain means a new
+package name.
+
+## 4. Share it
+
+Anyone with the URL can install it. They can paste the URL into **Add a
+miniapp** in the Mentra App, scan a QR code of it, or open
+`https://apps.mentraglass.com/open?url=<your miniapp URL>`. The install sheet
+shows where the miniapp comes from before it installs.
+
+Installed miniapps check for new releases when the Mentra App starts, when it
+comes to the foreground, when a miniapp opens, and every 15 minutes while it
+runs.
+
+## Age rating and listing
+
+Two optional fields in `miniapp.json` describe your miniapp to people.
+
+```json miniapp.json
+{
+  "ageRating": "13+",
+  "listing": { "category": "productivity" }
+}
+```
+
+- **`ageRating`** is one of `4+`, `9+`, `13+`, `16+` or `18+`. A miniapp rated
+  above the Mentra App's own App Store rating installs or opens only for a
+  person who has told the Mentra App they are old enough. Without `ageRating`
+  a miniapp is never gated. A value that isn't one of the five counts as
+  `18+`.
+- **`listing`** holds the category for the Mentra Miniapp Store. The rest of a
+  listing comes from fields you already have: `name`, `description` and `icon`.
+  A listing has no screenshots.
+
+## Get listed in the Mentra Miniapp Store
+
+Every miniapp is **unlisted** by default: installable by anyone with its URL, and
+out of browse and search. To be **listed**:
+
+1. Install your miniapp once in the Mentra App from its URL. That registers the
+   URL with Mentra.
+2. Submit the URL at [apps.mentraglass.com/submit](https://apps.mentraglass.com/submit).
+3. Mentra staff review the submission and approve or reject it.
+
+The listing shows your `name`, `description`, `icon`, `ageRating` and
+`listing.category`, exactly as your `miniapp.json` has them. Private miniapps
+and miniapps Mentra hasn't verified can't be listed.
+
+Staff review a listing again when its text or icon changes, never for a code
+update. Until they approve the change, the Store keeps showing the version they
+approved. The Store sees an icon change when the icon's URL changes, so give a
+new image a new file name. Changing your listing means changing your
+`miniapp.json`.
+
+## Private miniapps
+
+A miniapp's server can decide who gets its files, the way a website decides who
+gets its pages. Use `@mentra/auth` on the server that hosts them, with a worker
+in front of the static files if your host is only static:
+
+```ts
+import { createMentraAuth } from "@mentra/auth";
+import { serveStatic } from "hono/bun";
+
+const mentraAuth = createMentraAuth({ packageName: "com.example.tools" });
+
+app.use(
+  "/tools/*",
+  mentraAuth.miniappFiles({
+    authorize: (session) => session.workspaceId === "ws_your_workspace",
+  }),
+);
+app.use("/tools/*", serveStatic({ root: "./public" }));
+```
+
+- A request without a valid Mentra token gets `401` with
+  `WWW-Authenticate: Bearer realm="mentra", package="<packageName>"`. The
+  Mentra App answers with a token for that package only, and retries. A server
+  that never asks is public, and the Mentra App sends it no account, token or
+  cookie.
+- A token your `authorize` function refuses gets `403`. Only `true` admits a
+  request.
+- `session.workspaceId` names the person's workspace only when that workspace
+  assigned your miniapp through Fleet; otherwise it is `null`.
+- Admitted responses are marked `Cache-Control: private`, so shared caches never
+  serve a gated file to someone else.
+- A private miniapp can't be listed in the Mentra Miniapp Store.
+
+Often the ZIP doesn't need hiding. A miniapp that keeps its secrets in its
+backend can be an ordinary unlisted miniapp whose backend checks `workspaceId`.
+
+## Build against your own machine
+
+`mentra-miniapp dev` serves your project from your computer and prints a QR of
+its local-network URL, `http://<your-lan-ip>:<port>/`. The Mentra App installs
+it like any miniapp URL, shows it as "From your local network", and reloads it
+when you save. See the [CLI reference](/app-devs/reference/cli#dev).
+
+A local-network URL has no domain to vouch for its package name, so a local build
+could claim any name. Two rules make that useless:
+
+- A local build keeps its data apart from any other install of the same package
+  name.
+- The miniapp tokens it gets are marked as a local build's, and `@mentra/auth`
+  refuses them unless your backend allows local builds. Turn that on for your
+  development backend only:
+
+```bash
+MENTRA_AUTH_ALLOW_LOCAL_BUILDS=true
+```
+
+or `createMentraAuth({ packageName, allowLocalBuilds: true })`. On a backend that
+allows them, `session.localBuild` is `true` for a local build, and its
+`workspaceId` is always `null`. A local build never gets system privileges.
+
+## What persists on the phone
+
+A miniapp's `session.storage`, `session.blob` and its screen's `localStorage`
+(up to 5 MB) survive restarts. See [Storage](/app-devs/core-concepts/storage#what-the-phone-keeps)
+for what the phone keeps and what it doesn't.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Distribution" icon="upload" href="/app-devs/getting-started/distribution">
+    Versioning, signing and installing test builds on your own phones.
+  </Card>
+  <Card title="The manifest" icon="file-code" href="/app-devs/core-concepts/miniapp-manifest">
+    `ageRating`, `listing` and every other `miniapp.json` field.
+  </Card>
+</CardGroup>

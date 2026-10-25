@@ -4,8 +4,8 @@
   <p>
     <a href="https://mentra.glass">Website</a> •
     <a href="https://docs.mentra.glass">Documentation</a> •
-    <a href="https://console.mentra.glass">Developer Console</a> •
-    <a href="https://apps.mentra.glass">Mentra MiniApp Store</a>
+    <a href="https://apps.mentraglass.com/submit">Submit a miniapp</a> •
+    <a href="https://apps.mentraglass.com">Mentra Miniapp Store</a>
   </p>
 
   <!--

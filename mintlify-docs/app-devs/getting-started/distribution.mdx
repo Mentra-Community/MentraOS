@@ -9,10 +9,9 @@ import BetaNote from '/snippets/beta-note.mdx'
 
 <BetaNote />
 
-A miniapp is a **bundle that runs on the user's phone**: there's no server to
-host, no domain, no uptime to manage. MentraOS 3.0 supports local development
-and testing, but it does not provide a supported way to distribute a miniapp to
-users.
+A miniapp is a **bundle that runs on the user's phone**. This page covers
+putting builds on your own phones while you work. To share a miniapp with other
+people, see [Publish your miniapp](/app-devs/getting-started/publish).
 
 <LegacyCloudNote />
 
@@ -50,8 +49,8 @@ mentra-miniapp release
 This builds, packs, and serves the bundle behind a `miniapp://release` QR. Anyone
 on the same network can scan it to install. The miniapp installs on the device,
 **runs offline, and persists across restarts**: no laptop required once it's
-installed. This is intended for local testing, demos, and dogfooding; it is not
-a supported distribution channel.
+installed. This is intended for local testing, demos, and dogfooding. To reach other
+people, [publish your miniapp](/app-devs/getting-started/publish).
 
 Each install is logged in your terminal, and the server stays up so multiple
 devices can install from the same QR. The miniapp opens on the phone as soon as
@@ -62,21 +61,20 @@ each change, run `mentra-miniapp release` again and rescan. While you develop,
 use `mentra-miniapp dev` instead: scan once, and every saved change reloads on
 the phone.
 
-## Future distribution
+## Publishing
 
-In a future release, developers will upload miniapps through the
-[Mentra Developer Console](https://console.mentraglass.com), and users will
-download them from the
-[Mentra Miniapp Store](https://apps.mentraglass.com). The Developer Console and
-Mentra Miniapp Store do not support Miniapp SDK distribution in MentraOS 3.0.
+To share a miniapp, host it at an HTTPS URL and let people install it from there;
+they can also find it in the [Mentra Miniapp Store](https://apps.mentraglass.com)
+once Mentra staff list it. See [Publish your miniapp](/app-devs/getting-started/publish).
 
-The CLI can already produce the ZIP artifact intended for that future workflow:
+The CLI writes the folder to upload:
 
 ```bash
 mentra-miniapp pack
 ```
 
-The artifact is written to `build/<packageName>-<version>.zip`. Make sure your
+The folder is written to `build/`, with the ZIP named
+`<packageName>-<version>.zip`. Make sure your
 [`miniapp.json`](/app-devs/core-concepts/miniapp-manifest) is accurate before you
 pack: its `hardwareRequirements` will decide which glasses can see your miniapp,
 and its `permissions` will drive the OS prompts users see.

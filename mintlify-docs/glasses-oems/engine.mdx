@@ -425,6 +425,12 @@ optional **config** — engine owns the entire runtime. The only required seam i
 storage, the cloud client, glasses/BLE, settings, speech, display, and the miniapp
 runtime from there.
 
+**Native peer packages.** The engine declares its native dependencies as peer
+dependencies, so your app installs them (see `peerDependencies` in
+`@mentra/engine`'s `package.json`). `expo-secure-store` (`~55.0.14`) is required:
+the engine keeps Mentra Core sign-in credentials in the iOS Keychain and the
+Android Keystore through it.
+
 <Note>
 You may see internal `configureRuntime(...)` wiring in the first-party Mentra App —
 that's **transitional** scaffolding for migrating Mentra's own screens, not part of

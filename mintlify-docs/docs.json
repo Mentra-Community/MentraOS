@@ -41,6 +41,7 @@
               "app-devs/getting-started/quickstart",
               "app-devs/getting-started/example-apps",
               "app-devs/getting-started/distribution",
+              "app-devs/getting-started/publish",
               "app-devs/getting-started/ai-ide-integration"
             ]
           },
@@ -211,8 +212,8 @@
     ],
     "primary": {
       "type": "button",
-      "label": "Developer Portal",
-      "href": "https://console.mentra.glass"
+      "label": "Submit a miniapp",
+      "href": "https://apps.mentraglass.com/submit"
     }
   },
   "contextual": {

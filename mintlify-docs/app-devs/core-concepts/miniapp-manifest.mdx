@@ -45,9 +45,9 @@ else is optional.
 
 | Field | Type | Notes |
 |---|---|---|
-| `packageName` | string | Reverse-DNS, e.g. `com.example.notes`. Must match `^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$`. Your miniapp's unique identity. |
+| `packageName` | string | Reverse-DNS, e.g. `com.example.notes`. Your miniapp's unique identity. To install from a URL it must be lowercase parts of letters, digits and underscores (`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`) and start with the reversed domain the URL is served from. See [Publish your miniapp](/app-devs/getting-started/publish#3-match-the-package-name-to-your-domain). |
 | `version` | string | Semver, e.g. `1.0.0`. |
-| `name` | string | Display name in the launcher and store. |
+| `name` | string | Display name in the launcher and the Mentra Miniapp Store. |
 | `hardwareRequirements` | array | What the glasses must (or may) have. See below. **Required.** |
 | `description` | string | Short summary. |
 | `icon` | string | Path to the icon, relative to the project root (e.g. `icon.png`). Packed into the bundle. |
@@ -55,9 +55,15 @@ else is optional.
 | `sdkVersion` | string | The `@mentra/miniapp` version you built against. |
 | `minHostVersion` | string | Minimum Mentra App version required to run this miniapp. |
 | `entry` | object | `{ "background": "background/index.js", "ui": "ui/index.html" }`: built output paths for the two layers. Declaring `entry.background` is what makes a miniapp two-layer (and gives you `session.ui`). |
+| `ageRating` | string | `4+`, `9+`, `13+`, `16+` or `18+`. A rating above the Mentra App's own App Store rating gates install and open on the person's declared age. Without it a miniapp is never gated; an unrecognized value counts as `18+`. |
+| `listing` | object | For the Mentra Miniapp Store: `{ "category": "productivity" }`. The phone ignores it. There are no screenshots. |
 | `port` | number | Dev-server starting port (default `3000`). Used only by `dev`; `release` picks its own port. |
 | `permissions` | array | Runtime permissions you request. See below. |
 | `actions` | array | Capabilities other miniapps / Mentra AI can invoke. See [Interop & Actions](/app-devs/core-concepts/miniapp-interop). |
+
+Don't write `bundle` yourself: `mentra-miniapp pack` adds `bundle: {url, sha256}`
+to the `miniapp.json` it serves, naming the ZIP and its SHA-256. See
+[Publish your miniapp](/app-devs/getting-started/publish).
 
 The `$schema` line points editors at the JSON Schema shipped with the CLI, so you
 get autocomplete and validation as you type. `create-mentra-miniapp` adds it for
@@ -93,9 +99,7 @@ Each entry is `{ "type": "...", "level": "...", "description"?: "..." }`.
 |---|---|
 | `CAMERA`, `DISPLAY`, `MICROPHONE`, `SPEAKER`, `IMU`, `BUTTON`, `LIGHT`, `WIFI` | `REQUIRED` or `OPTIONAL` |
 
-- **`REQUIRED`**: glasses without this hardware can't install the miniapp (when
-  Store distribution becomes available, it will be hidden in the Mentra Miniapp
-  Store and launcher on incompatible devices).
+- **`REQUIRED`**: glasses without this hardware can't install the miniapp.
 - **`OPTIONAL`**: incompatible glasses still run the miniapp, in a degraded state.
 
 <Note>

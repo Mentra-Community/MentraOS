@@ -13,6 +13,11 @@ npm install @mentra/engine
 > package manager. Until every peer is published to npm, consume the engine
 > from this monorepo's workspace (as the example OEM app does).
 
+> **Secure storage:** `expo-secure-store` (`~55.0.14`) is a required peer
+> dependency. The engine keeps Core sign-in credentials in it (iOS Keychain,
+> Android Keystore) instead of in MMKV, and moves existing ones on first
+> launch. Install it in your app like the other Expo peers.
+
 > **Module format:** the published entry points target **React Native /
 > Metro** consumers (the `react-native` exports condition). Loading
 > `@mentra/engine` from plain Node (`require`/ESM) is not supported at 0.1.x —
