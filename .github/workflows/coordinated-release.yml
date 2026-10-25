@@ -821,6 +821,8 @@ jobs:
           PLAY_TRACK: ${{ needs.plan.outputs.play_track }}
           UPLOAD_GOOGLE_PLAY: ${{ needs.plan.outputs.upload_google_play }}
           PLAY_INSTALL_URL: ${{ needs.mobile.outputs.play_install_url }}
+          ANDROID_VERSION_CODE: ${{ needs.mobile.outputs.android_version_code }}
+          IOS_BUILD_NUMBER: ${{ needs.mobile.outputs.ios_build_number }}
           TESTFLIGHT_GROUP: ${{ needs.plan.outputs.testflight_group }}
           TESTFLIGHT_DISTRIBUTION_STATUS: ${{ needs.mobile.outputs.testflight_distribution_status }}
           TESTFLIGHT_INSTALL_URL: ${{ needs.mobile.outputs.testflight_install_url }}
