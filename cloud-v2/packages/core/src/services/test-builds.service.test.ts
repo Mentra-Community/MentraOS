@@ -325,6 +325,69 @@ test("canonical inventory and original-boundary discovery use the real normal wo
  expect(ledgerReads).toHaveLength(2); // Inventory and one occurrence each obtain their own immutable-source evidence.
 });
 
+test("canonical forks share immutable tag reads while references and publication checks remain fresh", async () => {
+ const f = canonicalFixture(), tagUrl = API + "/git/tags/" + SEQUENCE_TAG;
+ const first = await Promise.all([f.gateway.resolve(f.source, "android"), f.gateway.resolve(f.source, "android")]);
+ expect(first.every(build => build.availability === "available")).toBe(true);
+ expect(await f.gateway.forSelection("2026-10-25T11:00:00Z").resolve(f.source, "android")).toMatchObject({availability: "available"});
+ const count = (url: string) => f.calls.filter(call => call.url === url).length;
+ expect(count(tagUrl)).toBe(1);
+ expect(count(API + "/git/matching-refs/tags/mentra-sequence-")).toBe(3);
+ expect(count(API + "/git/matching-refs/tags/mentra-v")).toBe(3);
+ expect(count(CANONICAL_API + "/actions/runs/" + f.id + "/jobs?filter=all&per_page=100&page=1")).toBe(3);
+ f.rows.set(CANONICAL_API + "/actions/runs/" + f.id + "/jobs?filter=all&per_page=100&page=1",
+  new Response("temporarily unavailable", {status: 503}));
+ await expect(f.gateway.forSelection("2026-10-25T12:00:00Z").resolve(f.source, "android"))
+  .rejects.toThrow("Build metadata unavailable (HTTP 503)");
+});
+
+test("cached canonical tags cannot hide changed references, duplicate owners or mismatched reference names", async () => {
+ for (const mutation of ["changed-owner", "duplicate-owner", "reference-name"]) {
+  const f = canonicalFixture();
+  expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available"});
+  const otherSha = "f".repeat(40);
+  if (mutation === "changed-owner") {
+   f.rows.set(API + "/git/matching-refs/tags/mentra-sequence-", [{...f.sequenceRef, object: {type: "tag", sha: otherSha}}]);
+   f.rows.set(API + "/git/tags/" + otherSha, {...f.sequence, sha: otherSha, message: "monorepo-run:" + (f.id + 1)});
+   await expect(f.gateway.forSelection("2026-10-25T12:00:00Z").resolve(f.source, "android"))
+    .rejects.toThrow("Original canonical release sequence is not available");
+  } else {
+   const ref = {...f.sequenceRef, ref: "refs/tags/mentra-sequence-1098"};
+   if (mutation === "duplicate-owner") {
+    ref.object = {type: "tag", sha: otherSha};
+    f.rows.set(API + "/git/tags/" + otherSha, {...f.sequence, sha: otherSha, tag: "mentra-sequence-1098"});
+    f.rows.set(API + "/git/matching-refs/tags/mentra-sequence-", [f.sequenceRef, ref]);
+   } else f.rows.set(API + "/git/matching-refs/tags/mentra-sequence-", [ref]);
+   expect(await f.gateway.forSelection("2026-10-25T12:00:00Z").resolve(f.source, "android"))
+    .toMatchObject({availability: "unavailable", reason: mutation === "duplicate-owner"
+     ? "Canonical release sequence is ambiguous" : "Release sequence annotation differs from its reference"});
+  }
+ }
+});
+
+test("failed canonical tag reads are evicted, including mismatched object SHAs", async () => {
+ for (const mutation of ["provider", "object-sha"]) {
+  const f = canonicalFixture(), tagUrl = API + "/git/tags/" + SEQUENCE_TAG;
+  f.rows.set(tagUrl, mutation === "provider" ? new Response("private failure", {status: 503}) : {...f.sequence, sha: HEAD});
+  if (mutation === "provider") await expect(f.gateway.resolve(f.source, "android")).rejects.toThrow("Build metadata unavailable (HTTP 503)");
+  else expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "unavailable", reason: "Release sequence object differs from its requested SHA"});
+  f.rows.set(tagUrl, f.sequence);
+  expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available"});
+  expect(f.calls.filter(call => call.url === tagUrl)).toHaveLength(2);
+ }
+});
+
+test("oversized unrelated annotations remain readable without accumulating in the tag cache", async () => {
+ const f = canonicalFixture(), otherSha = "f".repeat(40), otherUrl = API + "/git/tags/" + otherSha;
+ f.rows.set(API + "/git/matching-refs/tags/mentra-sequence-", [f.sequenceRef,
+  {ref: "refs/tags/mentra-sequence-1098", object: {type: "tag", sha: otherSha}}]);
+ f.rows.set(otherUrl, {...f.sequence, sha: otherSha, tag: "mentra-sequence-1098", message: "x".repeat(5000)});
+ expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available"});
+ expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available"});
+ expect(f.calls.filter(call => call.url === otherUrl)).toHaveLength(2);
+ expect(f.calls.filter(call => call.url === API + "/git/tags/" + SEQUENCE_TAG)).toHaveLength(1);
+});
+
 test("configured canonical discovery changes new selection only, leaving absent original provenance legacy", async () => {
  const f = canonicalFixture();
  const gateway = new GithubTestBuildGateway({repository: CANONICAL_REPO, token: "test-only-token", fetch: f.fetch});

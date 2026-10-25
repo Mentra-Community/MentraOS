@@ -20,6 +20,8 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const positive = z.number().int().positive().safe();
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const repositorySchema = z.object({ full_name: z.string() });
+const sequenceTagSchema = z.object({sha, tag: z.string(), message: z.string(), object: z.object({type: z.string(), sha})});
+type SequenceTag = z.infer<typeof sequenceTagSchema>;
 const runSchema = z.object({
   id: positive, run_attempt: positive, head_sha: sha, head_branch: z.string(), path: z.string(),
   event: z.string(), status: z.string(), conclusion: z.string().nullable(), created_at: z.string(),
@@ -96,18 +98,19 @@ export interface TestBuildGateway {
 export class GithubTestBuildGateway implements TestBuildGateway {
   constructor(private readonly options: {
     repository?: AppRepository; token?: string; privateReadToken?: string; appAuth?: TestRunGithubApp; fetch?: typeof fetch; channels?: string[]; routines?: string[];
-  } = {}, private readonly selectionBoundary?: string) { this.appAuth = options.appAuth ?? new TestRunGithubApp({ fetch: options.fetch }); }
+  } = {}, private readonly selectionBoundary?: string,
+    private readonly tagObjects = new Map<string, Promise<SequenceTag>>()) { this.appAuth = options.appAuth ?? new TestRunGithubApp({ fetch: options.fetch }); }
   private readonly appAuth: TestRunGithubApp;
   private get repository(): AppRepository {return appRepositorySchema.parse(this.options.repository ?? REPOSITORY);}
   private get releaseWorkflow() {return this.repository === CANONICAL_REPOSITORY ? "release.yml" : RELEASE_WORKFLOW;}
   private get releaseFinalizer() {return this.repository === CANONICAL_REPOSITORY ? "finalize / Finalize the release manifest and tag" : RELEASE_FINALIZE_JOB;}
   private forRepository(repository: AppRepository) {
-    return new GithubTestBuildGateway({...this.options, appAuth: this.appAuth, repository: appRepositorySchema.parse(repository)}, this.selectionBoundary);
+    return new GithubTestBuildGateway({...this.options, appAuth: this.appAuth, repository: appRepositorySchema.parse(repository)}, this.selectionBoundary, this.tagObjects);
   }
   private releaseReads?: {runId: number; reads: Map<string, Promise<unknown>>};
   /** One selection only; never reuse mutable provider observations across occurrences. */
   forSelection(before: string): GithubTestBuildGateway {
-    return new GithubTestBuildGateway({...this.options, appAuth: this.appAuth}, before);
+    return new GithubTestBuildGateway({...this.options, appAuth: this.appAuth}, before, this.tagObjects);
   }
   private releaseRead<T>(runId: number, key: string, read: () => Promise<T>): Promise<T> {
     if (this.selectionBoundary === undefined) return read();
@@ -393,6 +396,25 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       }
     });
   }
+  private sequenceTag(objectSha: string): Promise<SequenceTag> {
+    const key = this.repository + ":" + objectSha;
+    const retained = this.tagObjects.get(key);
+    if (retained) return retained;
+    // Only content-addressed objects survive an occurrence. References and publication
+    // observations remain fresh. Cap both the entry count and retained object size.
+    if (this.tagObjects.size >= 2000) this.tagObjects.delete(this.tagObjects.keys().next().value!);
+    const pending: Promise<SequenceTag> = this.api(this.repository + "/git/tags/" + objectSha).then(value => {
+      const tag = sequenceTagSchema.parse(value);
+      requireThat(tag.sha === objectSha, "Release sequence object differs from its requested SHA");
+      if (JSON.stringify(tag).length > 4096 && this.tagObjects.get(key) === pending) this.tagObjects.delete(key);
+      return tag;
+    }).catch(error => {
+      if (this.tagObjects.get(key) === pending) this.tagObjects.delete(key);
+      throw error;
+    });
+    this.tagObjects.set(key, pending);
+    return pending;
+  }
   private async readCanonicalRelease(run: GithubRun): Promise<{identity: string; sourceCommit: string}> {
     // The canonical producer uses an annotated public sequence tag, without Actions plan artifacts.
     // Its public ledger requires its own repository-scoped App credential.
@@ -403,12 +425,11 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     requireThat(new Set(refs.map(ref => ref.ref)).size === refs.length && refs.every(ref =>
       /^refs\/tags\/mentra-sequence-[1-9]\d*$/.test(ref.ref) && ref.object.type === "tag"), "Release sequence ledger is malformed");
     const owned: {sequence: string; sourceCommit: string}[] = [];
-    // Read the complete bounded list to prove one owner, including older original runs.
+    // Refresh the complete references even when immutable tag objects are cached.
     for (let offset = 0; offset < refs.length; offset += 8) {
       const batch = await Promise.all(refs.slice(offset, offset + 8).map(async ref => {
-        const tag = z.object({sha, tag: z.string(), message: z.string(), object: z.object({type: z.string(), sha})})
-          .parse(await ledger.api(REPOSITORY + "/git/tags/" + ref.object.sha));
-        requireThat(tag.sha === ref.object.sha && "refs/tags/" + tag.tag === ref.ref && tag.object.type === "commit",
+        const tag = await ledger.sequenceTag(ref.object.sha);
+        requireThat("refs/tags/" + tag.tag === ref.ref && tag.object.type === "commit",
           "Release sequence annotation differs from its reference");
         if (tag.message.replace(/\n$/, "") !== "monorepo-run:" + run.id) return null;
         return {sequence: ref.ref.slice("refs/tags/mentra-sequence-".length), sourceCommit: tag.object.sha};
