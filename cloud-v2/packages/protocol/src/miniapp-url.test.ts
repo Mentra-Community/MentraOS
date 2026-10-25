@@ -119,7 +119,7 @@ function specManifest(overrides: Record<string, unknown> = {}): Record<string, u
     entry: {background: "background/index.js", ui: "ui/index.html"},
     permissions: [{type: "MICROPHONE", required: true}],
     hardwareRequirements: [{type: "MICROPHONE", level: "REQUIRED"}],
-    listing: {category: "productivity", screenshots: ["screen-1.png"]},
+    listing: {category: "productivity"},
     bundle: {url: "com.example.notes-1.4.2.zip", sha256: SHA},
     ...overrides,
   }
@@ -155,7 +155,7 @@ describe("the served miniapp.json", () => {
   })
 
   test("leaves the directory's listing to the directory", () => {
-    const listing = {category: 7, screenshots: "screen-1.png", future: {field: true}}
+    const listing = {category: 7, future: {field: true}}
     expect(ServedMiniappManifestSchema.parse(specManifest({listing})).listing).toEqual(listing)
   })
 
