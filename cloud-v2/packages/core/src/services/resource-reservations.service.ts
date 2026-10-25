@@ -981,7 +981,12 @@ export class ResourceReservationsService {
    * declared footprints are disjoint. A claim alone does not prove a reader scope. */
   private disjointResourceCheckClaims(host: ResourceReservationHost, intent: ExclusiveResourceIntent, acquired?: ExclusiveHostReservation) {
     if (intent.prerequisite || !intent.laneId) return undefined
-    const lifecycle = host.snapshot.resourceLifecycle, now = this.now(),
+    return this.disjointPassiveCheckClaims(host, intent.laneId, [intent.resourceCheck!.resourceId], this.now(), acquired)
+  }
+  /** Membership alone is not reader scope. Protect every declared graph member
+   * while retaining the same original passive-check identity and custody proof. */
+  disjointPassiveCheckClaims(host: ResourceReservationHost, laneId: string, resourceIds: string[], now = this.now(), acquired?: ExclusiveHostReservation) {
+    const lifecycle = host.snapshot.resourceLifecycle,
       installed = [...host.snapshot.lanes.flatMap(lane => lane.resources), ...host.snapshot.resources ?? []],
       all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []).filter(claim => !acquired || !isDeepStrictEqual(claim, acquired))
     if (!lifecycle) return undefined
@@ -1017,15 +1022,20 @@ export class ResourceReservationsService {
       return subject.repair.state === 'none' && subject.supportedActions.includes('mark-out-of-service') &&
         (id === ownedRoot || subject.owner === null && ['idle', 'unknown'].includes(subject.status))
     })
-    const target = scope(intent.resourceCheck!.resourceId)
-    if (!target || !free(target)) return undefined
+    const target = new Set<string>()
+    if (!resourceIds.length || !resourceIds.every(id => {
+      const footprint = scope(id)
+      if (!footprint || !free(footprint)) return false
+      for (const member of footprint) target.add(member)
+      return true
+    })) return undefined
     const occupied = new Set(target), permitted = new Set<string>()
     for (const claim of all) {
       if (!isExclusiveHostReservation(claim)) {
-        if (claim.hostId === host.hostId && claim.laneId === intent.laneId) return undefined
+        if (claim.hostId === host.hostId && claim.laneId === laneId) return undefined
         continue
       }
-      if (claim.borrowerHostId !== host.hostId || claim.laneId !== intent.laneId) {
+      if (claim.borrowerHostId !== host.hostId || claim.laneId !== laneId) {
         if (occupied.has(claim.resourceId)) return undefined
         continue
       }
@@ -1043,7 +1053,7 @@ export class ResourceReservationsService {
       } else if (journal.state === 'began') {
         if (journal.eventId !== `resource-check-began:${claim.operationId}` || subject.status !== 'checking' ||
           !isDeepStrictEqual(subject.owner && {id: subject.owner.id, kind: subject.owner.kind}, claim.owner) ||
-          subject.owner?.hostId !== host.hostId || subject.owner.laneId !== undefined && subject.owner.laneId !== intent.laneId ||
+          subject.owner?.hostId !== host.hostId || subject.owner.laneId !== undefined && subject.owner.laneId !== laneId ||
           subject.generation !== check.subjectGeneration + 1 || Date.parse(journal.observedAt) < Date.parse(claim.reservedAt) ||
           !free(footprint, claim.resourceId) || !lifecycle.history.some(event => event.resourceId === claim.resourceId &&
             event.event === 'checking' && event.subjectGeneration === subject.generation &&
@@ -1118,8 +1128,9 @@ export class ResourceReservationsService {
         await this.checkpointGraphClaims(intent, relevant) ? {status: 'reserved' as const, intentSha256, claims: relevant} : unknown
       if (pending.noAcquisitionReceipt || reportedGraphCandidateSettlement(pending, host.snapshot) ||
         !candidatePrerequisiteRequestMatches(row ?? null, intent, this.now()) || !this.graphSubjectsCurrent(host, intent)) return unknown
+      const disjointChecks = this.disjointPassiveCheckClaims(host, intent.laneId!, purpose.resources.map(member => member.id))
       if (all.some(claim => isExclusiveHostReservation(claim)
-        ? claim.borrowerHostId === hostId && claim.laneId === intent.laneId
+        ? !disjointChecks?.has(claim.id) && claim.borrowerHostId === hostId && claim.laneId === intent.laneId
         : claim.hostId === hostId && claim.laneId === intent.laneId)) return unknown
       if (all.length + purpose.resources.length > 1000) throw new TestRunError(409, 'Resource authority is full; unresolved claims retain custody')
       const claims: ExclusiveHostReservation[] = purpose.resources.map(member => ({kind: 'exclusive', id: randomUUID(),
@@ -1135,7 +1146,9 @@ export class ResourceReservationsService {
         withoutOwn = {...after, resourceReservations: committed.filter(value => !claims.some(claim => isDeepStrictEqual(value, claim)))}
       if (!fresh(after, this.now()) || after.incarnation !== host.incarnation || after.incarnationGeneration !== host.incarnationGeneration ||
         !claims.every(claim => committed.some(value => isDeepStrictEqual(value, claim))) ||
-        !this.graphSubjectsCurrent(withoutOwn, intent) || !candidatePrerequisiteRequestMatches(await this.rows.request?.(purpose.jobId) ?? null, intent, this.now())) return unknown
+        !this.graphSubjectsCurrent(withoutOwn, intent) ||
+        !isDeepStrictEqual(this.disjointPassiveCheckClaims(withoutOwn, intent.laneId!, purpose.resources.map(member => member.id)), disjointChecks) ||
+        !candidatePrerequisiteRequestMatches(await this.rows.request?.(purpose.jobId) ?? null, intent, this.now())) return unknown
       return {status: 'reserved' as const, intentSha256, claims}
     }
     return unknown

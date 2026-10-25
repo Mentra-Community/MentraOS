@@ -621,6 +621,15 @@ function candidateClaimConflict(row: StoredRoutineJob, claim: import('../types/r
     !row.fleetExclusiveReservation?.claims.some(original => requestInputDigest(original) === requestInputDigest(claim));
   return claim.hostId === hostId && claim.laneId === laneId && requestInputDigest(claim) !== requestInputDigest(row.fleetResourceReservation ?? null);
 }
+function graphCandidateClaimConflict(row: StoredRoutineJob, host: ReceivedTestHostState, laneId: string,
+  purpose: NonNullable<ReturnType<typeof routineResourceReadinessPurpose>>, now: number) {
+  const permitted = exclusiveResources.disjointPassiveCheckClaims({hostId: host.hostId, incarnation: host.incarnation!,
+    incarnationGeneration: host.incarnationGeneration!, sequence: host.sequence!, receivedAt: new Date(host.receivedAt),
+    snapshot: host, laneControls: host.resourceControlRecords, resourceReservations: host.authorityReservations,
+    resourceLifecycleCursor: host.resourceLifecycleCursor}, laneId, purpose.resources.map(member => member.id), now)
+  return host.authorityReservations?.some(claim => candidateClaimConflict(row, claim, host.hostId, laneId) &&
+    (!isExclusiveHostReservation(claim) || !permitted?.has(claim.id)))
+}
 /** The request fence remains until every exact never-executed provisional claim has returned on its original authority. */
 async function releaseCandidateProvisional(original: StoredRoutineJob, now: Date): Promise<StoredRoutineJob | null> {
   const pending = original.fleetCandidatePreparation, returning = pending?.provisionalReturn;
@@ -695,9 +704,11 @@ async function releaseCandidateProvisional(original: StoredRoutineJob, now: Date
       if (!current || !witness(host) || !host) return null;
       const all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []), actual = all.filter(claim => isExclusiveHostReservation(claim)
         ? claim.owner.kind === 'run' && claim.owner.id === original.requestId : claim.requestId === original.requestId);
-      if (actual.some(claim => !expected.some(value => requestInputDigest(value) === requestInputDigest(claim))) ||
-        host.hostId === pending.hostId && all.some(claim => candidateClaimConflict(original, claim, pending.hostId, pending.laneId))) return null;
+      if (actual.some(claim => !expected.some(value => requestInputDigest(value) === requestInputDigest(claim)))) return null;
+      // A later Check cannot block acknowledgment of an already returned original.
+      // Live original claims still require the ordinary lane conflict guard.
       if (!actual.length) {absent = true; break;}
+      if (host.hostId === pending.hostId && all.some(claim => candidateClaimConflict(original, claim, pending.hostId, pending.laneId))) return null;
       if (!await currentRequest()) return null;
       // A lost reply never clears the pending receipt; the next pass reads these same original claim identities.
       if (await resourceReservationRepository.replace(host, all.filter(claim => !actual.includes(claim)))) {
@@ -1238,11 +1249,10 @@ export class RoutineJobService {
       (row.fleetResourceReservation || row.fleetResourceAdmission || row.fleetExclusiveReservation) && (!previous || !row.fleetResourceReservation) ||
       previous && (previous.target.purpose?.kind !== 'resource-readiness' || previous.candidate.controller.incarnation !== host.incarnation ||
         previous.candidate.controller.generation !== host.incarnationGeneration || !isDeepIdentity(previous.target.acceptedBinding, host.frameworkBinding)) ||
-      (row.fleetCandidatePreparations?.length ?? 0) >= MAX_FLEET_CANDIDATE_PREPARATIONS ||
-      host.authorityReservations?.some(claim => candidateClaimConflict(row, claim, host.hostId, lane.id))) return undefined
+      (row.fleetCandidatePreparations?.length ?? 0) >= MAX_FLEET_CANDIDATE_PREPARATIONS) return undefined
     const original = {requestId: row.requestId, inputSha256: row.fleetInputSha256!},
       purpose = routineResourceReadinessPurpose(host, lane, row.fleetPreparation!.requirements, this.now(), original)
-    if (!purpose) return undefined
+    if (!purpose || graphCandidateClaimConflict(row, host, lane.id, purpose, this.now())) return undefined
     const {recordedRoutineBuild} = await import('./routine-dispatch.service'), now = this.now(), enrollment = routineEnrollmentSchema.parse({
       routineId: row.fleetSelection.routineId, platform: row.fleetSelection.platform, definitionRevision: row.fleetSelection.routineRevision,
       definition: row.fleetPreparation!.definition, definitionSha256: row.fleetPreparation!.definitionSha256, routineSource: row.fleetPreparation!.routineSource})
@@ -1274,7 +1284,7 @@ export class RoutineJobService {
       current.incarnationGeneration !== host.incarnationGeneration || currentLane.state !== 'idle' || currentLane.activity ||
       currentLane.dispatchMode !== 'automatic' || !isDeepIdentity(current.frameworkBinding, host.frameworkBinding) ||
       !isDeepIdentity(routineResourceReadinessPurpose(current, currentLane, row.fleetPreparation!.requirements, this.now(), original), purpose) ||
-      !current.authorityReservations || current.authorityReservations.some(claim => candidateClaimConflict(row, claim, host.hostId, lane.id)) ||
+      !current.authorityReservations || graphCandidateClaimConflict(row, current, lane.id, purpose, this.now()) ||
       (await this.rows.recorderClaims?.(row.requestId) ?? []).some(claim => requestInputDigest(claim) !== requestInputDigest(row.fleetResourceReservation ?? null))) return undefined
     return this.rows.candidatePreparation(row, pending, new Date(this.now()))
   }

@@ -896,3 +896,34 @@ test(`historical ${outcome} repository ${boundary} preserves exact original sett
   expect(f.row).toEqual(original);
  }finally{TestRequestModel.collection.findOneAndUpdate=find;}
 })
+
+for(const gap of ['none','reappeared-original-claim','changed-input','local-consumer','changed-controller'] as const)test(`interrupted original byte return retries metadata beside a later Check with ${gap}`,async()=>{
+ const f=await returnedGraphFixture('android'),original=structuredClone(f.row),claim=structuredClone(f.row.fleetResourceReservation!);
+ f.advance(120001);await f.service.preparation('job-one');const pending=structuredClone(f.row.fleetCandidatePreparation!);
+ let host=graphRepositoryEnvelope(f),hostWrites=0,ackWrites=0,lost=true;
+ const template=host.snapshot.resourceLifecycle!.subjects[0]!,lane=host.snapshot.lanes[0]!;
+ lane.resources.push({id:'air1:glasses',kind:'glasses',capabilities:[],idleContract:{version:'glasses-baseline',maximumAgeMs:120000,conditions:['physical-baseline'],repairConfigured:true,dependencies:[],qualifiedScope:{kind:'same-controller',controllerId:'air1'}}});
+ host.snapshot.resourceLifecycle!.subjects.push({...structuredClone(template),subject:{kind:'resource',id:'air1:glasses',authorityHostId:'air1'},generation:1,status:'idle',owner:null,idle:{...structuredClone(template.idle),contractVersion:'glasses-baseline'},resource:{kind:'glasses',capabilities:[],memberships:[{hostId:'air1',laneId:'android'}],dependencies:[],placement:'installed'}});
+ lane.glasses=[{resourceId:'air1:glasses',deviceId:'cpu-only-glasses',model:'mentra-live',capabilities:[]}];const glass=host.snapshot.resourceLifecycle!.subjects.at(-1)!;glass.idle.acceptedCheck={operationId:'cpu-return:glasses',subjectGeneration:1,resultSha256:'c'.repeat(64),acceptedAt:host.snapshot.observedAt};
+ const saved={get:routineJobRepository.get,read:resourceReservationRepository.get,replace:resourceReservationRepository.replace,write:TestRequestModel.collection.findOneAndUpdate};
+ routineJobRepository.get=async()=>structuredClone(f.row);resourceReservationRepository.get=async()=>structuredClone(host);
+ resourceReservationRepository.replace=async(_host,next)=>{hostWrites++;host.resourceReservations=structuredClone(next);return true};
+ TestRequestModel.collection.findOneAndUpdate=mock(async(_filter:any,update:any)=>{ackWrites++;if(lost){lost=false;return null}for(const key of Object.keys(update.$unset??{}))delete (f.row as any)[key];f.row={...f.row,...structuredClone(update.$set)};return structuredClone(f.row)}) as never;
+ try{
+  const intent={operationId:'resource-check:11111111-1111-4111-8111-111111111111',hostId:'air1',laneId:'android',controller:{incarnation:host.incarnation,generation:host.incarnationGeneration,sequence:host.sequence},owner:{id:'resource-check:independent-glasses',kind:'boundary-cleanup' as const},inputSha256:'d'.repeat(64),resources:[{id:'air1:glasses',capabilities:['resource-idle']}],resourceCheck:{resourceId:'air1:glasses',subjectGeneration:1,contractVersion:'glasses-baseline',deadlineAt:f.now+120000,binding:host.snapshot.frameworkBinding!,controller:{incarnation:host.incarnation,generation:host.incarnationGeneration}}};
+  const check=new ResourceReservationsService({async get(){return structuredClone(host)},async replace(_host,next){hostWrites++;host.resourceReservations=structuredClone(next);return true}},()=>f.now);
+  intent.owner.id=`resource-check:${requestInputDigest({operationId:intent.operationId,resourceId:intent.resourceCheck.resourceId})}`;const digest=requestInputDigest({...intent,controller:{incarnation:intent.controller.incarnation,generation:intent.controller.generation},dependencies:[{resourceId:'air1:glasses',authorityHostId:'air1',capability:'resource-idle'}]});host.snapshot.resourceReservations!.resourceChecks=[{intentSha256:digest,operationId:intent.operationId,resourceId:'air1:glasses',intent,resourceCheck:intent.resourceCheck,state:'prepared',observedAt:host.snapshot.observedAt}];
+  expect(await check.acquire(intent,'air1')).toMatchObject({status:'unknown',claims:[]});expect(hostWrites).toBe(0);
+  expect(await routineJobRepository.releaseCandidateProvisional!(f.row,new Date(f.now))).toBeNull();expect(hostWrites).toBe(1);expect(host.resourceReservations).toEqual([]);expect(ackWrites).toBe(1);
+  expect(f.row.fleetCandidatePreparation!.provisionalReturn!.releasedAt).toBeUndefined();expect(f.row.fleetResourceReservation).toEqual(claim);
+  const answer=await check.acquire(intent,'air1');expect(answer.status).toBe('reserved');expect(answer.claims).toHaveLength(1);const checkClaims=structuredClone(host.resourceReservations);
+  if(gap==='reappeared-original-claim')host.resourceReservations=[...hostResourceReservationsSchema.parse(host.resourceReservations),claim];
+  if(gap==='changed-input')f.row.fleetInputSha256='e'.repeat(64);
+  if(gap==='local-consumer')lane.resources.find(ref=>ref.kind==='recorder')!.storage!.reservations=[{requestId:f.row.requestId,inputSha256:f.row.fleetInputSha256!,remainingOutputBytes:1}];
+  if(gap==='changed-controller')host.incarnation='replacement-controller';
+  const retained=structuredClone(host.resourceReservations),result=await routineJobRepository.releaseCandidateProvisional!(f.row,new Date(f.now));
+  if(gap==='none'){expect(result).not.toBeNull();expect(ackWrites).toBe(2);expect(f.row.fleetCandidatePreparation!.provisionalReturn!.releasedAt).toBe(new Date(f.now).toISOString());expect(f.row.fleetResourceReservation).toBeUndefined()}
+  else{expect(result).toBeNull();expect(ackWrites).toBe(1);expect(f.row.fleetCandidatePreparation!.provisionalReturn!.releasedAt).toBeUndefined();expect(f.row.fleetResourceReservation).toEqual(claim)}
+  expect(hostWrites).toBe(2);expect(host.resourceReservations).toEqual(retained);expect(checkClaims).toHaveLength(1);expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations);expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);expect(f.row.fleetBinding).toBeUndefined();
+ }finally{routineJobRepository.get=saved.get;resourceReservationRepository.get=saved.read;resourceReservationRepository.replace=saved.replace;TestRequestModel.collection.findOneAndUpdate=saved.write}
+})
