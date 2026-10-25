@@ -55,10 +55,29 @@ test('the later manual receipt can follow baseline acceptance by31ms without bec
   expect(resourceCandidateBlocker(f.host, id, now)).toBeUndefined()
 })
 
-test('an aged returned baseline may become a candidate but cannot authorize ordinary execution', () => {
+test.each(['phone', 'glasses'] as const)('an aged %s baseline requires current job preflight before ordinary execution', kind => {
   const f = fixture(), later = now + 120_001
+  f.host.snapshot.lanes[0]!.resources[0]!.kind = kind; f.subject.resource!.kind = kind
   f.host.receivedAt = at(later); f.host.snapshot.observedAt = at(later); f.subject.observedAt = at(later)
   expect(resourceCandidateBlocker(f.host, id, later)).toBeUndefined()
+  expect(resourceBlocker(f.host, id, later)?.code).toBe('resource-idle-proof-unavailable')
+})
+test.each(['app', 'recorder', 'fixture-data', 'audio', 'browser'] as const)('an unchanged returned %s baseline remains available after its check ages', kind => {
+  const f = fixture(), later = now + 24 * 60 * 60 * 1000
+  f.host.snapshot.lanes[0]!.resources[0]!.kind = kind; f.subject.resource!.kind = kind
+  f.host.receivedAt = at(later); f.host.snapshot.observedAt = at(later); f.subject.observedAt = at(later)
+  const before = structuredClone(f.host)
+  expect(resourceCandidateBlocker(f.host, id, later)).toBeUndefined()
+  expect(resourceBlocker(f.host, id, later)).toBeUndefined()
+  expect(f.host).toEqual(before)
+})
+test.each(['app', 'phone', 'glasses'] as const)('an aged %s baseline cannot override withdrawn lifecycle support', kind => {
+  const f = fixture(), later = now + 24 * 60 * 60 * 1000
+  f.host.snapshot.lanes[0]!.resources[0]!.kind = kind; f.subject.resource!.kind = kind
+  f.host.receivedAt = at(later); f.host.snapshot.observedAt = at(later); f.subject.observedAt = at(later)
+  f.subject.status = 'out-of-service'; f.subject.repair.configured = false; f.subject.supportedActions = []
+  f.subject.reason = {code: 'repair-runtime-missing', message: 'Original provider runtime was withdrawn'}
+  expect(resourceCandidateBlocker(f.host, id, later)?.code).toBe('resource-idle-proof-unavailable')
   expect(resourceBlocker(f.host, id, later)?.code).toBe('resource-idle-proof-unavailable')
 })
 

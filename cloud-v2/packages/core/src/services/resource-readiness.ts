@@ -82,9 +82,11 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
   if (allowUnchecked && subject.status === 'unknown' && ['unknown', 'not-checked'].includes(subject.idle.outcome))
     return unknownChecks.length ? {code: 'resource-operator-restriction' as const, resourceId} : undefined
   const checked = Date.parse(subject.idle.checkedAt ?? ''), accepted = Date.parse(subject.idle.acceptedCheck?.acceptedAt ?? '')
+  // Only volatile device observations expire. Static return facts stay tied to
+  // their accepted generation, contract and current unowned custody.
   if (!(!!contract && subject.status === 'idle' && subject.idle.outcome === 'passed' && subject.idle.acceptedCheck?.subjectGeneration === subject.generation &&
     subject.idle.qualifiedScope.kind !== 'unqualified' && Number.isFinite(checked) && checked <= now &&
-    (!requireCurrentBaselineAge || now - checked <= (contract?.maximumAgeMs ?? 120_000)) && Number.isFinite(accepted) && accepted >= checked && accepted <= observed &&
+    (!requireCurrentBaselineAge || !['phone', 'glasses'].includes(resource?.kind ?? '') || now - checked <= (contract?.maximumAgeMs ?? 120_000)) && Number.isFinite(accepted) && accepted >= checked && accepted <= observed &&
     subject.idle.contractVersion === contract.version && isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope)))
     return {code: 'resource-idle-proof-unavailable' as const, resourceId}
   // UNKNOWN is the original Check outcome, not permanent custody after a later
