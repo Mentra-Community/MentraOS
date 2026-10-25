@@ -34,7 +34,7 @@
  * licenses until the viewer holds the product and then says so (`AddedBanner`).
  *
  * Which of these a viewer is, comes from Core's own answer for the workspace (their capabilities), and from the host's
- * `offer`: `catalog` is whether billing's catalog can be read (`me.modules.billingCatalog`) and `manage` whether this
+ * `offer`: `catalog` is whether billing's catalog can be read (in the portal, `me.modules.billing`) and `manage` whether this
  * viewer is offered billing for the workspace (billing ready and `workspace.billing.manage`). Where the catalog or
  * the status can't be read, or an answer doesn't match the contract, the page says "Licenses are unavailable" with
  * Retry rather than cards without names.
@@ -74,7 +74,7 @@ export interface WorkspaceLicensesViewProps {
   billing: BillingApi;
   workspaceId: string;
   offer: {
-    /** Billing's catalog can be read (`me.modules.billingCatalog`): licenses can be named. */
+    /** Billing's catalog can be read (in the portal, `me.modules.billing`): licenses can be named. */
     catalog: boolean;
     /** The viewer is offered billing for this workspace: billing is ready and they hold `workspace.billing.manage`. */
     manage: boolean;

@@ -5,13 +5,12 @@
  * module. Import it from `@mentra/workspace-contract/portal-billing-icons`.
  */
 
-/** Where billing serves product icons: the one path of its `ui/` that every viewer may read (Core's open reads). */
+/** Where billing serves product icons, under its `ui/`. */
 export const BILLING_ICON_PATH_PREFIX = "/api/portal/billing/ui/icons/"
 
 /**
  * A product icon's file: letters, digits, `.`, `_` and `-`, 1 to 255 of them, and not only dots (`.` and `..`
- * are directories). Nothing else can lead out of the icons directory or into a style or a script. Core's open
- * reads use this same rule for the one file name they leave open under `ui/icons/`.
+ * are directories). Nothing else can lead out of the icons directory or into a style or a script.
  */
 export const BILLING_ICON_FILE = /^(?!\.+$)[A-Za-z0-9._-]{1,255}$/
 

@@ -28,41 +28,16 @@ describe("who the portal says is signed in", () => {
   }
 
   test("reads /api/portal/me, and offers a module only when Core says true", async () => {
-    const { me, requests } = await meFor({ ...BASE, modules: { billing: true, billingCatalog: true } });
+    const { me, requests } = await meFor({ ...BASE, modules: { billing: true } });
     expect(requests).toEqual(["/api/portal/me"]);
-    expect(me.modules).toEqual({ billing: true, billingCatalog: true });
+    expect(me.modules).toEqual({ billing: true });
     expect(me.user).toEqual(BASE.user);
-    expect((await meFor({ ...BASE, modules: { billing: false, billingCatalog: false } })).me.modules).toEqual({
-      billing: false,
-      billingCatalog: false,
-    });
-  });
-
-  test("the catalog is offered on its own: a non-staff Admin on staging sees licenses without billing", async () => {
-    const { me } = await meFor({ ...BASE, modules: { billing: false, billingCatalog: true } });
-    expect(me.modules).toEqual({ billing: false, billingCatalog: true });
-  });
-
-  test("an older Core that sends no billingCatalog is read as billing: what it offered then is what it offers now", async () => {
-    expect((await meFor({ ...BASE, modules: { billing: true } })).me.modules).toEqual({ billing: true, billingCatalog: true });
-    expect((await meFor({ ...BASE, modules: { billing: false } })).me.modules).toEqual({ billing: false, billingCatalog: false });
-  });
-
-  test("billing implies the catalog: a contradictory /me is read the way decision 4 has it", async () => {
-    // Billing ready and visible to them means the catalog is ready, whatever billingCatalog says.
-    for (const billingCatalog of [false, "yes", 1, null, "true"]) {
-      expect((await meFor({ ...BASE, modules: { billing: true, billingCatalog } })).me.modules).toEqual({ billing: true, billingCatalog: true });
-    }
+    expect((await meFor({ ...BASE, modules: { billing: false } })).me.modules).toEqual({ billing: false });
   });
 
   test("a Core that sends no modules, or something other than true, offers none", async () => {
-    const none = { billing: false, billingCatalog: false };
-    for (const modules of [undefined, null, {}, { billing: "yes" }, { billing: 1 }, { billing: null }]) {
-      expect((await meFor({ ...BASE, modules })).me.modules).toEqual(none);
-    }
-    // A billingCatalog that is there but isn't true offers nothing of its own.
-    for (const billingCatalog of ["yes", 1, null, "true", false]) {
-      expect((await meFor({ ...BASE, modules: { billing: false, billingCatalog } })).me.modules).toEqual(none);
+    for (const modules of [undefined, null, {}, { billing: "yes" }, { billing: 1 }, { billing: null }, { billing: "true" }]) {
+      expect((await meFor({ ...BASE, modules })).me.modules).toEqual({ billing: false });
     }
   });
 });

@@ -30,7 +30,7 @@ const ME: PortalMe = {
   workspaceCreation: { allowed: true, reason: null },
   onboardingRequired: false,
   org: null,
-  modules: { billing: false, billingCatalog: false },
+  modules: { billing: false },
 };
 
 const LAST_WORKSPACE_KEY = "mentra.portal.lastWorkspace";
@@ -180,13 +180,13 @@ describe("the current workspace", () => {
   test("a person's own workspace gets bare links, and a redundant ?workspace= is dropped in place", async () => {
     await open("/settings?workspace=ws_own&purchase=pur_1", { listed: ["ws_own"] }, "Name of ws_own");
     await until(() => address() === "/settings?purchase=pur_1", "the redundant parameter to go");
-    expect(sidebarHrefs()).toEqual(["/members", "/settings", "/audit"]);
+    expect(sidebarHrefs()).toEqual(["/members", "/settings"]);
   });
 
   test("an Organization Admin at a customer's workspace gets ?workspace= on every sidebar link, and it is not remembered", async () => {
     await open("/members?workspace=ws_x", { listed: ["ws_own"], adminOf: ["ws_x"] }, "Name of ws_x");
     expect(address()).toBe("/members?workspace=ws_x");
-    expect(sidebarHrefs()).toEqual(["/members?workspace=ws_x", "/settings?workspace=ws_x", "/audit?workspace=ws_x"]);
+    expect(sidebarHrefs()).toEqual(["/members?workspace=ws_x", "/settings?workspace=ws_x"]);
     expect(window.localStorage.getItem(LAST_WORKSPACE_KEY)).toBeNull();
   });
 

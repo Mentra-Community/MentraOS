@@ -184,9 +184,10 @@ else on it:
   [operations](./operations.md#customer-configuration-checklist).
 
 The admin portal signs in through Core's sign-in server on Core's own host,
-which signs people in with Entra as the Core API app. The portal's signed-out
-screen links to the sign-in server's sign-out, `https://<core host>/oidc/session/end`;
-Entra keeps its own session.
+which signs people in with Entra as the Core API app. **Sign out** in the admin
+portal also signs the person out of Core's sign-in server and returns them to
+the admin portal's sign-in page. Entra keeps its own session, so the next sign-in
+may not ask for a password.
 
 When the operator cannot change the Core app, setup stops before deploying and
 prints an `az ad app owner add` command for an Application Administrator or

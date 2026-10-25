@@ -8,8 +8,7 @@
  * here.
  *
  *  - `/me`: who is signed in, their enterprise org, whether they may create a workspace, and which
- *    portal modules to offer them (`modules: {billing, billingCatalog}`): `billing` where billing is ready and
- *    visible to them, `billingCatalog` where it is ready at all, because its catalog is an open read;
+ *    portal modules to offer them (`modules: {billing}`): `billing` wherever billing is installed and usable;
  *  - `/workspaces/*`: the workspace API (`workspaces.api.ts`), the same handlers
  *    `/api/workspaces` and `/api/admin/workspaces` serve;
  *  - `/billing/*`: the billing portal module, forwarded to the Mentra Miniapp Store (`portal-modules.api.ts`).
@@ -83,9 +82,8 @@ async function getMe(c: AppContext) {
     workspaceCreation: organizationView(userPrincipal(c)).workspaceCreation,
     onboardingRequired: org === null,
     org,
-    // What this person is offered of the portal modules: billing where it is installed, usable and visible to
-    // them (`billing`), and its catalog wherever it is installed and usable, staff or not (`billingCatalog`).
-    modules: portalModuleAvailability(userPrincipal(c)),
+    // Which portal modules to offer: billing wherever it is installed and usable, to everyone alike.
+    modules: portalModuleAvailability(),
   });
 }
 

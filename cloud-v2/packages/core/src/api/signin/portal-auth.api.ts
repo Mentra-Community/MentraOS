@@ -5,7 +5,8 @@
  *  - `GET  /api/{admin,portal}/auth/callback`: finish it (30 per minute per IP);
  *    any failure renders a fixed-text page with "Try again" and sets no session cookie;
  *  - `POST /api/{admin,portal}/auth/logout`: same-origin only; ends the portal
- *    session and answers `{signOutUrl}` (the identity provider's sign-out, or null).
+ *    session and answers `{signOutUrl}`, the sign-in server's sign-out that
+ *    returns to the portal (`portalSignOutUrl`), or null.
  * All three answer `Cache-Control: no-store`. Mounted ahead of each group's
  * principal gate.
  */

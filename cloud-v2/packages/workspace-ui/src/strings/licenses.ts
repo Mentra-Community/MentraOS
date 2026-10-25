@@ -46,8 +46,6 @@ export function refusalMessage(code: string, context: RefusalContext = {}): stri
       return "That isn't available for this subscription any more. Reload the page and try again.";
     case "forbidden":
       return "You don't have permission to manage billing here.";
-    case "billing_staff_only":
-      return "Only Organization Admins can use billing on this environment.";
     case "license_not_found":
       return "That subscription no longer exists. Reload the page.";
     case "no_billing_account":

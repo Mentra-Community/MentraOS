@@ -98,8 +98,10 @@ while Core's account-wide sign-out depends on it: that call
 - An admin portal sign-in from a fresh browser asks for credentials on the
   environment's sign-in site, then lands back on the admin portal; the workspace
   portal then signs in without asking.
-- Signing out on the sign-in site (`/signout`) leaves the portals signed in;
-  logging out everywhere in the Mentra App signs them out.
+- **Sign out** in a portal lands back on that portal's sign-in page without a
+  confirmation, and the next sign-in asks for credentials on the sign-in site.
+- Signing out on the sign-in site (`/signout`) asks to confirm and leaves the
+  portals signed in; logging out everywhere in the Mentra App signs them out.
 - The Mentra App signs in on each platform.
 - A Mentra App sign-up's confirmation link shows that the email is verified, on
   the `CLOUD_CORE_ACCOUNT_EMAIL_REDIRECT_URL` page or on the sign-in site's root.
