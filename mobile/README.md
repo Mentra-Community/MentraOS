@@ -102,6 +102,16 @@ bun run start
 for pure JS changes once you have a build installed all you need to run is
 `bun run start`
 
+## Miniapps in local builds
+
+Miniapp ZIPs are not committed: `assets/miniapps/*.zip` and `src/generated/bundledMiniapps.ts` are built from source and git-ignored ([`scripts/local-miniapps.mjs`](scripts/local-miniapps.mjs)).
+
+- **Debug builds get every miniapp live.** `bun start`, `bun android` and `bun ios` start the dev server of each miniapp in the checkout's `miniapps/` folder (`mentra-miniapp dev`, frontend only). The debug app installs all of them on launch as local builds, with no QR code, and reloads one whenever you save a change to it. The frontends call the dev backend their `.env.example` names, or the one your miniapp's `.env` names. `MENTRA_DEV_MINIAPPS=0` serves none. To run the iOS app on your Mac, start `bun start`, then `bun ios:mac --debug` in a second terminal.
+- **Other local builds bundle them.** Release builds (`bun ios:mac` without `--debug`, `bun ios:release`, `bun android:release` and the like) pack each miniapp from your working tree into `assets/miniapps/`, and stop if one fails. The navigation miniapp needs `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN` in `.env`.
+- **CI** packs them at the build commit itself.
+
+If Xcode hangs resolving the Mapbox packages, the Mapbox download token in `~/.netrc` has expired: run the build once under `doppler run` (which refreshes it) or update it by hand.
+
 ## IF YOU HAVE ISSUES BUILDING DUE TO UI REFRESH, SEE HERE:
 
 Due to the UI refresh there will be some weird cache issues. Do this to fix them...
