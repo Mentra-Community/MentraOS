@@ -266,7 +266,10 @@ function reconcileFrameworkStops(history: FrameworkHistoryEntry[], stops: Framew
     if (!interval) continue
     if (Date.parse(stop.observedAt) < Date.parse(interval.effectiveAt))
       throw new TestRunError(409, "Observed framework stop precedes its accepted startup")
-    if (!interval.endedAt || (interval.endReason === 'accepted-replacement' && Date.parse(stop.observedAt) <= Date.parse(interval.endedAt))) {
+    // A controller may report its later recovery inspection before the updater
+    // delivers the original supervisor observation. The independently retained
+    // stop can shorten that interval, but never extend it or change its identity.
+    if (!interval.endedAt || Date.parse(stop.observedAt) <= Date.parse(interval.endedAt)) {
       interval.endedAt = stop.observedAt
       interval.endReason = 'observed-stop'
     }

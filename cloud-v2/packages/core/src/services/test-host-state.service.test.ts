@@ -825,6 +825,25 @@ test('unmatched stop receipt reconciles delayed offline history without closing 
     expect(f.row().frameworkHistory.at(-1).endedAt).toBeUndefined()
   } finally {f.stop()}
 })
+test('late independent supervisor stop supersedes a later controller inspection and survives subsequent history reports', async () => {
+  const f = fixture()
+  try {
+    await f.service.report(accepted(3, 1), 'mini')
+    const interval = {binding: binding(1), incarnation: 'boot-1', incarnationGeneration: 1,
+      process: accepted(1, 1).frameworkProcess, effectiveAt: accepted(1, 1).frameworkAcceptedAt,
+      observedAt: accepted(1, 1).frameworkAcceptedAt, endedAt: '2026-10-03T01:00:02.500Z', endReason: 'observed-stop'}
+    await f.service.report({...accepted(3, 2), frameworkHistory: [interval]}, 'mini')
+    const stopped = {installationId: 'release-1', process: interval.process, observedAt: '2026-10-03T01:00:01.500Z'}
+    await f.service.reportDeployment(observation(1, {stopped}), 'mini')
+    await f.service.report({...accepted(3, 3), frameworkHistory: [interval]}, 'mini')
+    expect(f.row().frameworkHistory[0].endedAt).toBe(stopped.observedAt)
+    expect(f.row().frameworkHistory.at(-1).endedAt).toBeUndefined()
+    // Repeated or conflicting packets cannot change the first independently retained observation.
+    await f.service.reportDeployment(observation(2, {stopped: {...stopped, observedAt: '2026-10-03T01:00:02Z'}}), 'mini')
+    expect(f.row().frameworkStopReceipts).toEqual([stopped])
+    expect(f.row().frameworkHistory[0].endedAt).toBe(stopped.observedAt)
+  } finally {f.stop()}
+})
 test('unmatched observed stop receipts retain a bounded recent history', async () => {
   const f = fixture()
   try {
