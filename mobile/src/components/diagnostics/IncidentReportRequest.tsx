@@ -1,13 +1,14 @@
 import {useEffect, useState} from "react"
 import {Modal, ScrollView, View} from "react-native"
-import type {IncidentReportResult} from "@mentra/engine"
+import {engine, SETTINGS, type IncidentReportResult} from "@mentra/engine"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {useAuth} from "@/contexts/AuthContext"
 import {useDeployment} from "@/services/deployment"
 import {parseIncidentReportRequest, submitIncidentReportOnce} from "@/services/bugReport/incidentReportAutomation"
 
-/** Available in every build through com.mentra://test/submit-incident-report.
+/** Opened by com.mentra://test/submit-incident-report in every build, but it only files a report while Super Mode
+ * is on; otherwise it returns a failed receipt without uploading.
  * The uploader uses the current authenticated engine; this screen never resets it.
  */
 export default function IncidentReportRequest({
@@ -37,6 +38,16 @@ export default function IncidentReportRequest({
     setResult(null)
     // Re-check when authentication changes while this modal is open.
     const request: Record<string, unknown> = JSON.parse(input)
+    if (engine.settings.get(SETTINGS.super_mode.key) !== true) {
+      setResult({
+        alert_id: typeof request.alert_id === "string" ? request.alert_id : undefined,
+        test_run_id: typeof request.test_run_id === "string" ? request.test_run_id : undefined,
+        failure_code: typeof request.failure_code === "string" ? request.failure_code : "unknown",
+        status: "failed",
+        error: "Enable Super Mode to request an incident report from a script",
+      })
+      return
+    }
     const parsed = parseIncidentReportRequest(request)
     if (!parsed.ok) {
       setResult({
