@@ -479,6 +479,21 @@ test("does not post when the group already contains the build", async () => {
   assert.equal(api.calls.length, 2)
 })
 
+test("does not post to a group that receives every build automatically", async () => {
+  const api = client([
+    {data: [{id: "group-1", attributes: {name: "Mentra Dev", isInternalGroup: true, hasAccessToAllBuilds: true}}]},
+    {data: []},
+  ])
+  const result = await assignBuildToGroup(api, {
+    appId: "app-1",
+    buildId: "build-1",
+    groupName: "Mentra Dev",
+    expectedInternal: true,
+  })
+  assert.equal(result.reused, true)
+  assert.equal(api.calls.length, 2)
+})
+
 test("creates an external TestFlight group with a public invitation link", async () => {
   const api = client([
     {data: []},

@@ -515,6 +515,10 @@ export async function assignBuildToGroup(client, {appId, buildId, groupName, exp
   const relationship = `/v1/betaGroups/${group.id}/relationships/builds`
   const existing = await collectPaginatedData(client, query(relationship, {limit: "200"}))
   if (existing.some((build) => build.id === buildId)) return {group, reused: true}
+  // A group with access to all builds (automatic distribution) receives every
+  // build itself, and App Store Connect refuses adding one to it (422): right
+  // after processing, the build may not be listed there yet.
+  if (group.attributes?.hasAccessToAllBuilds === true) return {group, reused: true}
   await client.request(relationship, {
     method: "POST",
     body: JSON.stringify({data: [{type: "builds", id: buildId}]}),
