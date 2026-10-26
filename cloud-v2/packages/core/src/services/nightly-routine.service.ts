@@ -119,7 +119,7 @@ export function nightlyRequiredResourceKinds(member: NightlyMember, job: StoredR
 export class NightlyRoutineService {
   private completionCursor?: {startedAt: Date; suiteId: string};
 
-  constructor(private readonly catalog: Pick<RoutineCatalogService, "list"> = new RoutineCatalogService(),
+  constructor(private readonly catalog: Pick<RoutineCatalogService, "selection"> = new RoutineCatalogService(),
     private readonly builds: {latestDev(platform: TestBuildPlatform, before: string): Promise<TestBuild | null>;
       resolve(source: TestBuild["source"], platform: TestBuildPlatform): Promise<TestBuild>;
       forSelection?(before: string): NightlyRoutineService["builds"]} = new GithubTestBuildGateway({repository: configuredAppRepository()}),
@@ -171,7 +171,7 @@ export class NightlyRoutineService {
   }
 
   private async select(occurrence: Occurrence, suiteId: string): Promise<NightlyPlan> {
-    const catalog = (await this.catalog.list()).filter(row => row.nightlyEnabled !== false)
+    const catalog = (await this.catalog.selection()).filter(row => row.nightlyEnabled !== false)
       .map(row => ({routineId: row.routineId, platform: row.platform}));
     if (catalog.length > 100) throw new TestRunError(503, "Nightly catalog exceeds the occurrence bound; no members were selected");
     const routineRepository = configuredTestingTarget().repository;

@@ -11,6 +11,7 @@ import {
   FrameworkRunsPage,
   RoutineCatalogCard,
   RoutineCatalogList,
+  hasCatalogPassingRun,
   frameworkRunHref,
   frameworkRunRefetchInterval,
   routineHref,
@@ -246,12 +247,12 @@ test("catalog filter controls derive options from the whole catalog and retain c
   const client = new QueryClient()
   client.setQueryData(["routine-catalog"], {
     routines: [
-      {...routine, example: null},
+      {...routine, example: {runId: "recorded", definitionRevision: routine.definitionRevision, recordingAssetId: "video", startedAt: "2026-10-01T00:00:00Z", finishedAt: "2026-10-01T00:01:00Z", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}}},
       {
         ...routine,
         platform: "android",
         definition: {...routine.definition, glasses: {models: ["mentra-live", "even-g1"]}},
-        example: null,
+        example: {runId: "recorded", definitionRevision: routine.definitionRevision, recordingAssetId: "video", startedAt: "2026-10-01T00:00:00Z", finishedAt: "2026-10-01T00:01:00Z", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}},
       },
     ],
   })
@@ -275,14 +276,14 @@ test("catalog filter controls derive options from the whole catalog and retain c
     expect(html).toContain(`>${label}</option>`)
   expect(html).toContain("Showing 2 of 2 routines")
   expect(html.match(/<article /g)).toHaveLength(2)
-  expect(html.match(/role="switch"/g)).toHaveLength(2)
+  expect(html.match(/role="switch"/g)).toHaveLength(3)
   client.setQueryData(["routine-catalog"], {routines: []})
   const empty = renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <RoutineCatalogList />
     </QueryClientProvider>,
   )
-  expect(empty).toContain("No routine has a published passing example")
+  expect(empty).toContain("No routine catalog has been processed yet.")
   expect(empty).not.toContain("No routines match your filters")
 })
 test("catalog labels a historical example without claiming the current definition passed", () => {
@@ -1334,4 +1335,21 @@ test('failed run links to its reported incident without changing failure selecti
   expect(render(null)).not.toContain('>Incident report</a>');
   expect(render()).not.toContain('>Incident report</a>');
   expect(render('rep_EXACT', 'pass')).not.toContain('>Incident report</a>');
+});
+
+ test('unrecorded routine visibility is a local UI filter, hidden by default', () => {
+  expect(hasCatalogPassingRun({example: null})).toBe(false)
+  expect(hasCatalogPassingRun({example: null}, true)).toBe(true)
+  expect(hasCatalogPassingRun({example: {} as any})).toBe(true)
+})
+
+
+test('catalog hides unrecorded definitions by default and exposes the display toggle', () => {
+  const client = new QueryClient();
+  client.setQueryData(['routine-catalog'], {routines: [{...routine, example: null}]});
+  const markup = renderToStaticMarkup(<QueryClientProvider client={client}><RoutineCatalogList /></QueryClientProvider>);
+  expect(markup).toContain('Show routines without a passing run');
+  expect(markup).toContain('Showing 0 of 1 routines');
+  expect(markup).not.toContain('<article ');
+  expect(markup).not.toContain('checked=""');
 });

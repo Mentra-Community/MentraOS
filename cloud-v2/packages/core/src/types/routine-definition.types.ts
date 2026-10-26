@@ -97,6 +97,22 @@ export const routineEnrollmentSchema = z.object({
 });
 export type RoutineEnrollment = z.infer<typeof routineEnrollmentSchema>;
 
+/** Catalog metadata describes source; it supplies no executable bundle or candidate authority. */
+const catalogDefinition = publishedRoutineDefinitionSchema.innerType().extend({
+  // Source metadata can describe a future capability before a worker implements it.
+  // Implementation/capability and execution-policy checks remain run admission.
+  resourceRequirements: z.array(routineResourceRequirementSchema.innerType().innerType()
+    .extend({kind: routineIdentitySchema})).max(9),
+  execution: z.object({resourceKinds: z.array(routineIdentitySchema).min(1), policy: z.record(z.unknown()).optional()}).strict().optional(),
+});
+export const routineCatalogDefinitionSchema = routineEnrollmentSchema.innerType()
+  .omit({routineSource: true, verification: true}).extend({definition: catalogDefinition}).strict().superRefine((row, ctx) => {
+    if (row.routineId !== row.definition.id || row.definitionRevision !== row.definition.source.revision ||
+      !row.definition.platforms.includes(row.platform))
+      ctx.addIssue({code: 'custom', message: 'Catalog definition identity differs'});
+  });
+export type RoutineCatalogDefinition = z.infer<typeof routineCatalogDefinitionSchema>;
+
 /** Exact recorded source for history; executable admission separately requires routineEnrollmentSchema. */
 export const recordedRoutineDefinitionSchema = z.object({
   id, title: text, purpose: text, platforms: z.array(routinePlatformSchema).min(1).max(2),

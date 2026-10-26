@@ -1,26 +1,37 @@
 import {z} from 'zod';
-import {createLogger} from '@mentra/cloud-shared/logger';
 import {testWriteConcern} from "../models/test-write-concern";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import {RoutineCollectionModel} from '../models/routine-collection.model';
-import {testingRepositorySchema, testingTarget} from '../types/testing-source.types';
+import {testingTarget} from '../types/testing-source.types';
 import {RoutineWorkModel} from '../models/routine-work.model';
 import {authoringJobViewSchema} from '../types/routine-work.types';
-import {routineEnrollmentSchema, routineCardDefinitionSchema, type RoutineEnrollment, type RecordedRoutineEnrollment, type RoutineCardDefinition} from "../types/routine-definition.types";
+import {routineEnrollmentSchema, routineCardDefinitionSchema, routineCatalogDefinitionSchema, type RoutineCatalogDefinition, type RoutineEnrollment, type RecordedRoutineEnrollment, type RoutineCardDefinition} from "../types/routine-definition.types";
 import {requestInputDigest} from "./test-request.service";
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
 import {GithubRoutineMergeGateway, RoutineMergeEligibilityService} from './routine-merge-eligibility.service';
 
-import {readRoutineDefinition, writeRoutineDefinition, routineCollectionDetailSchema, readRoutineCollection, writeRoutineCollection, ROUTINE_COLLECTION_BATCH_SIZE} from './routine-definition-detail.service';
-
-const logger = createLogger('core').child({service: 'routine-definition.service'});
+import {readRoutineDefinition, writeRoutineDefinition, routineCollectionDetailSchema, readRoutineCollection} from './routine-definition-detail.service';
 
 export class RoutineDefinitionConflict extends Error {}
+const catalogCollectionSchema = routineCollectionDetailSchema.extend({version: z.number().int().positive().safe(),
+  definitions: z.array(routineCatalogDefinitionSchema).min(1).max(1000)});
+function catalogProjection(row: {commit: string; version: number; manifestSha256: string; catalog?: unknown}) {
+  const collection = catalogCollectionSchema.parse(row.catalog);
+  if (collection.commit !== row.commit || collection.version !== row.version || requestInputDigest(collection) !== row.manifestSha256)
+    throw new RoutineDefinitionConflict('Published catalog projection differs');
+  return collection;
+}
+function cardDefinition(row: RoutineCatalogDefinition): RoutineCardDefinition {
+  return routineCardDefinitionSchema.parse({routineId: row.routineId, platform: row.platform,
+    definitionRevision: row.definitionRevision, definitionSha256: row.definitionSha256,
+    definition: {title: row.definition.title, purpose: row.definition.purpose,
+      ...(row.definition.glasses ? {glasses: {models: row.definition.glasses.models}} : {})}});
+}
 export interface RoutineDefinitionRepository {
   enroll(row: RoutineEnrollment): Promise<void>;
-  current(): Promise<RoutineEnrollment[]>;
+  current(): Promise<RoutineCatalogDefinition[]>;
   overview(): Promise<RoutineCardDefinition[]>;
-  getCurrent(routineId: string, platform: string): Promise<RoutineEnrollment | null>;
+  getCurrent(routineId: string, platform: string): Promise<RoutineCatalogDefinition | null>;
   getExact(routineId: string, platform: string, revision: string, ordinaryOnly?: boolean): Promise<RoutineEnrollment | null>;
 }
 const mongoRepository: RoutineDefinitionRepository = {
@@ -82,22 +93,23 @@ const mongoRepository: RoutineDefinitionRepository = {
     const latest = await RoutineCollectionModel.findOne().sort({version: -1})
       .read('primary').readConcern('majority').lean();
     if (!latest) return [];
-    const collection = await readRoutineCollection(latest.detail);
+    const collection = latest.catalog ? catalogProjection(latest) : await readRoutineCollection(latest.detail);
     if (collection.commit !== latest.commit || collection.version !== latest.version || requestInputDigest(collection) !== latest.manifestSha256)
       throw new RoutineDefinitionConflict('Published collection manifest differs');
     const rows = collection.definitions;
     if (rows.length !== latest.members.length || rows.some((row, index) => row.routineId !== latest.members[index]?.routineId ||
       row.platform !== latest.members[index]?.platform || row.definitionSha256 !== latest.members[index]?.definitionSha256))
       throw new RoutineDefinitionConflict('Published collection members differ');
-    return rows.map(row => routineEnrollmentSchema.parse(row));
+    return rows.map(row => latest.catalog ? routineCatalogDefinitionSchema.parse(row) : routineEnrollmentSchema.parse(row));
   },
   async getCurrent(routineId, platform) {
     return (await this.current()).find(row => row.routineId === routineId && row.platform === platform) ?? null;
   },
   async overview() {
     const latest = await RoutineCollectionModel.findOne().sort({version: -1})
-      .select({commit: 1, members: 1}).read('primary').readConcern('majority').lean();
+      .select({commit: 1, version: 1, manifestSha256: 1, catalog: 1, members: 1}).read('primary').readConcern('majority').lean();
     if (!latest) return [];
+    if (latest.catalog) return catalogProjection(latest).definitions.map(cardDefinition);
     const stored = await RoutineDefinitionModel.find({definitionRevision: latest.commit,
       $or: latest.members.map(member => ({routineId: member.routineId, platform: member.platform}))})
       .select({routineId: 1, platform: 1, definitionRevision: 1, definitionSha256: 1,
@@ -140,62 +152,34 @@ export class RoutineDefinitionService {
     if (!row.verification) await this.promotion?.enroll(row);
     return row;
   }
-  /** Complete CI collection becomes visible atomically; first-parent version prevents late ancestor regression. */
+  /** One source-only catalog update; it never enrolls executable source or promotes requests. */
   async publishCollection(input: unknown) {
-    const parsed = z.object({commit: z.string().regex(/^[a-f0-9]{40}$/), repository: testingRepositorySchema.optional(), version: z.number().int().positive().safe(),
-      definitions: z.array(routineEnrollmentSchema).min(1).max(1000)}).strict().safeParse(input);
-    if (!parsed.success) throw new RoutineDefinitionConflict('Invalid published collection');
+    const parsed = catalogCollectionSchema.safeParse(input);
+    if (!parsed.success) throw new RoutineDefinitionConflict('Invalid published catalog');
     const collection = parsed.data;
     const identities = collection.definitions.map(row => `${row.routineId}:${row.platform}`);
-    if (new Set(identities).size !== identities.length || collection.definitions.some(row => row.verification ||
-      row.definitionRevision !== collection.commit || row.routineSource.repository !== (collection.repository ?? testingTarget().repository) ||
+    if (new Set(identities).size !== identities.length || collection.definitions.some(row =>
+      row.definitionRevision !== collection.commit || row.definition.source.repository !== (collection.repository ?? testingTarget().repository) ||
       requestInputDigest(row.definition) !== row.definitionSha256))
-      throw new RoutineDefinitionConflict('Published collection identity or exact definition differs');
-    collection.definitions.sort((left, right) =>
-      `${left.routineId}:${left.platform}`.localeCompare(`${right.routineId}:${right.platform}`));
+      throw new RoutineDefinitionConflict('Published catalog identity or exact definition differs');
+    collection.definitions.sort((left, right) => `${left.routineId}:${left.platform}`.localeCompare(`${right.routineId}:${right.platform}`));
     const manifestSha256 = requestInputDigest(collection);
-    let stageStartedAt = performance.now();
-    const stageComplete = (stage: 'r2' | 'mongodb' | 'promotion') => {
-      logger.info({commit: collection.commit, version: collection.version, definitions: collection.definitions.length,
-        stage, durationMs: Math.round(performance.now() - stageStartedAt)}, 'Routine collection publication stage completed');
-      stageStartedAt = performance.now();
-    };
-    const {detail, definitions: snapshots} = await writeRoutineCollection(collection);
-    stageComplete('r2');
-    const byIdentity = new Map(snapshots.map(row => [`${row.routineId}:${row.platform}`, row]));
-    try {await RoutineDefinitionModel.db.transaction(async session => {
-      const publication = await RoutineCollectionModel.findOne({$or: [{commit: collection.commit}, {version: collection.version}]}).session(session).lean();
-      if (publication) {
-        if (publication.commit !== collection.commit || publication.version !== collection.version || publication.manifestSha256 !== manifestSha256)
-          throw new RoutineDefinitionConflict('Published immutable collection manifest conflicts');
-        return;
+    const committed = () => RoutineCollectionModel.findOne({$or: [{commit: collection.commit}, {version: collection.version}]})
+      .read('primary').readConcern('majority').lean();
+    const matches = (row: Awaited<ReturnType<typeof committed>>) => row && row.commit === collection.commit &&
+      row.version === collection.version && row.manifestSha256 === manifestSha256;
+    const existing = await committed();
+    if (existing && !matches(existing)) throw new RoutineDefinitionConflict('Published immutable catalog conflicts');
+    if (!existing) {
+      try {
+        await RoutineCollectionModel.create([{commit: collection.commit, version: collection.version, manifestSha256,
+          catalog: collection, members: collection.definitions.map(row => ({routineId: row.routineId, platform: row.platform,
+            definitionSha256: row.definitionSha256}))}], {writeConcern: testWriteConcern});
+      } catch (error) {
+        if ((error as {code?: number}).code !== 11000) throw error;
+        if (!matches(await committed())) throw new RoutineDefinitionConflict('Concurrent immutable catalog conflicts');
       }
-      for (const row of collection.definitions) {
-        const identity = {routineId: row.routineId, platform: row.platform, definitionRevision: row.definitionRevision};
-        const existing = await RoutineDefinitionModel.findOne(identity).session(session).lean();
-        if (existing && (!existing.routineSource || existing.definitionSha256 !== row.definitionSha256 || (await readRoutineDefinition(existing)).definitionSha256 !== row.definitionSha256 ||
-          requestInputDigest(existing.routineSource) !== requestInputDigest(row.routineSource)))
-          throw new RoutineDefinitionConflict('Published immutable collection bytes conflict');
-        if (existing && !existing.ordinaryEnrolledAt) await RoutineDefinitionModel.updateOne(identity,
-          {$set: {ordinaryEnrolledAt: new Date()}}, {session});
-        else if (!existing) await RoutineDefinitionModel.create([{...byIdentity.get(`${row.routineId}:${row.platform}`), card: {title: row.definition.title, purpose: row.definition.purpose,
-          ...(row.definition.glasses ? {glasses: {models: row.definition.glasses.models}} : {})}, ordinaryEnrolledAt: new Date()}], {session});
-      }
-      await RoutineCollectionModel.create([{commit: collection.commit, version: collection.version, manifestSha256, detail,
-        members: collection.definitions.map(row => ({routineId: row.routineId, platform: row.platform, definitionSha256: row.definitionSha256}))}], {session});
-    }, {writeConcern: testWriteConcern});} catch (error) {
-      if ((error as {code?: number}).code !== 11000) throw error;
-      const published = await RoutineCollectionModel.findOne({commit: collection.commit}).read('primary').readConcern('majority').lean();
-      if (!published || published.version !== collection.version || published.manifestSha256 !== manifestSha256)
-        throw new RoutineDefinitionConflict('Published immutable collection manifest conflicts');
     }
-    stageComplete('mongodb');
-    for (let offset = 0; offset < collection.definitions.length; offset += ROUTINE_COLLECTION_BATCH_SIZE) {
-      const batch = await Promise.allSettled(collection.definitions.slice(offset, offset + ROUTINE_COLLECTION_BATCH_SIZE)
-        .map(row => this.promotion?.enroll(row)));
-      for (const result of batch) if (result.status === 'rejected') throw result.reason;
-    }
-    stageComplete('promotion');
     return {commit: collection.commit, version: collection.version, definitions: collection.definitions.length};
   }
   current() {return this.repository.current();}

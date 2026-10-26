@@ -3,7 +3,7 @@ import {expect, spyOn, test} from "bun:test";
 import {NightlyRoutineService as ActualNightlyRoutineService, nightlyPlanRepository, nightlyRequiredResourceKinds, type NightlyPlan, type NightlyResult, type NightlyPlanRepository, type NightlyCancellation} from "./nightly-routine.service";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRequestModel} from "../models/test-request.model";
-import type {RoutineCatalogService} from "./routine-catalog.service";
+import {RoutineCatalogService} from "./routine-catalog.service";
 import {routineEnrollmentSchema} from "../types/routine-definition.types";
 import type {TestBuild} from "../types/test-build.types";
 import type {ReceivedTestHostState} from "./test-host-state.service";
@@ -41,7 +41,7 @@ test("never-bound Slack requirements require the exact original preparation dige
 
 // Old targeted test inputs are adapted into portable submission at the test boundary.
 class NightlyRoutineService extends ActualNightlyRoutineService {
-  constructor(...legacy: [catalog?: Pick<RoutineCatalogService, 'list'>,
+  constructor(...legacy: [catalog?: Pick<RoutineCatalogService, 'selection'>,
     builds?: {latestDev(platform: 'android' | 'ios-on-mac', before: string): Promise<TestBuild | null>; resolve(source: TestBuild['source'], platform: 'android' | 'ios-on-mac'): Promise<TestBuild>},
     hosts?: Pick<import('./test-host-state.service').TestHostStateService, 'get'>,
     requests?: Pick<TestRequestService, 'cancelPreparationSubmission' | 'get' | 'prepare'>,
@@ -121,6 +121,7 @@ function cancellationRepository() {
 function fixture(
   initial = [row("a-new-routine", "android"), row("different.routine", "ios-on-mac"), row("disabled-routine", "android", false)],
   repository?: NightlyPlanRepository,
+  selectedCatalog?: Pick<RoutineCatalogService, 'selection'>,
 ) {
   let catalog = initial, plan: NightlyPlan | null = null, finished: NightlyResult | null = null, reads = 0;
   let failId: string | undefined, cancelFailId: string | undefined, clock = now, selectedMain = mainRevision, sourceReads = 0, autoPrepare = true;
@@ -131,7 +132,7 @@ function fixture(
   const requestRows = new Map<string, any>();
   const requestErrors = new Map<string, Error>();
   const service = new NightlyRoutineService(
-    {async list() {reads++; return catalog;}} as Pick<RoutineCatalogService, "list">,
+    selectedCatalog ?? {async selection() {reads++; return catalog;}} as unknown as Pick<RoutineCatalogService, "selection">,
     {async latestDev(platform, before) {buildReads.push("latest:" + platform); expect(before).toBe(startedAt); return build(platform);},
       async resolve(source, platform) {buildReads.push("resolve:" + platform); expect(source).toEqual(build(platform).source); return build(platform);}},
     {async get(id) {expect(id).toBe("mini"); return host;}},
@@ -147,6 +148,34 @@ function fixture(
   )
   return {service, admitted, get sourceReads() {return sourceReads;}, set main(value: string) {selectedMain = value;}, set autoPrepare(value: boolean) {autoPrepare = value;}, cancelled, completionEvents, buildReads, resultRows, requestRows, requestErrors, get plan() {return plan!;}, get reads() {return reads;}, set clock(value: number) {clock = value;}, set catalog(next: typeof initial) {catalog = next;}, set failId(value: string | undefined) {failId = value;}, set cancelFailId(value: string | undefined) {cancelFailId = value;}};
 }
+test('nightly selects enabled source definitions without executable catalog or evidence reads', async () => {
+  const definitions = [row('recorded-enabled', 'android'), row('recorded-disabled', 'ios-on-mac'), row('unrecorded', 'android')];
+  let cards = 0;
+  const catalog = new RoutineCatalogService({
+    async current() {throw Error('Executable catalog storage unavailable');},
+    async overview() {cards++; return definitions.map(({definition, routineSource: _source, ...identity}) => ({...identity,
+      definition: {title: definition.title, purpose: definition.purpose}}));},
+    async getCurrent() {throw Error('Unexpected executable selection');},
+  }, {
+    async latestPassing() {throw Error('Recorded example evidence unavailable');},
+    async history() {throw Error('Recorded example history unavailable');},
+  }, {
+    async list() {return [{routineId: 'recorded-disabled', platform: 'ios-on-mac', nightlyEnabled: false}];},
+    async get() {return null;}, async set() {},
+  });
+  const state = fixture(undefined, undefined, catalog), result = await state.service.start(occurrence);
+  expect(result.plan.members.map(member => [member.routineId, member.platform])).toEqual([
+    ['recorded-enabled', 'android'], ['unrecorded', 'android']]);
+  for (const member of result.plan.members) {
+    expect(member.routineRevision).toBe(mainRevision);
+    expect(member.selection!.build).toMatchObject({headSha: "e".repeat(40),
+      source: {channel: "dev", buildRunId: 21, publicationAttempt: 2}});
+    expect(member).not.toHaveProperty('input');
+    expect(member).not.toHaveProperty('routineSource');
+  }
+  expect(cards).toBe(1);
+});
+
 test("nightly pins fresh main for every enabled routine and freezes exact app artifacts", async () => {
   const state = fixture(), result = await state.service.start(occurrence);
   expect(result.plan.members.map(row => row.routineId)).toEqual(["a-new-routine", "different.routine"]);
@@ -181,7 +210,7 @@ test('delayed first delivery selects boundary main and frozen retry never consul
     throw new Error('Unexpected source read');
   });
   const jobs = {async submitFrozen() {return {} as any;}, async cancelFrozen() {return {} as any;}, async cancel() {return {} as any;}};
-  const service = new ActualNightlyRoutineService({async list() {return [row('delayed', 'android')];}} as any,
+  const service = new ActualNightlyRoutineService({async selection() {return [row('delayed', 'android')];}} as any,
     {async latestDev(platform, before) {expect(before).toBe(startedAt); return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
     {async get() {return null;}}, {...cancellationRepository(), async get() {return plan;}, async freeze(next) {plan ??= next; return plan;},
       async completed() {return null;}, async finish(_id, result) {return result;}}, undefined, () => now + 5 * 60_000, undefined, sources, jobs);
@@ -485,7 +514,7 @@ test("occurrence cancellation survives lost storage acknowledgement without rewr
 test("an admission completing across the deadline is cancelled through the ordinary request path", async () => {
   let clock = now, saved: NightlyPlan | null = null;
   const cancelled: string[] = [];
-  const service = new NightlyRoutineService({async list() {return [row("late-product", "android")];}} as any,
+  const service = new NightlyRoutineService({async selection() {return [row("late-product", "android")];}} as any,
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
     {async get() {return host;}}, {async get() {return null;}, async prepare() {clock = now + 3 * 3600_000; return {} as any;},
       async cancelPreparationSubmission(id) {cancelled.push(id); return {} as any;}},
@@ -502,7 +531,7 @@ test("a mismatched platform publication remains expected and missing anchor plat
     const mismatch = variant !== "missing";
     let saved: NightlyPlan | null = null;
     const service = new NightlyRoutineService(
-      {async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
+      {async selection() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
       {async latestDev(platform) {return mismatch ? {...build(platform), ...(variant === "release" ? {release: "dev.20"} : {})}
           : {...build(platform), availability: "unavailable", archive: undefined, receipt: undefined, reason: "APK missing"};},
         async resolve(source, platform) {return {...build(platform), source,
@@ -545,7 +574,7 @@ test("lane-specific exact-definition availability never disables the healthy sib
     observed.lanes[1]!.routineAvailability = [{routineId: "desktop-product", definitionRevision: "a".repeat(40), available: true}];
     let saved: NightlyPlan | null = null;
     const service = new NightlyRoutineService(
-      {async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
+      {async selection() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
       {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
       {async get() {return observed;}},
       {async cancelPreparationSubmission() {return {} as any;}, async get() {return null;}, async prepare(_hostId, input) {submitted.push(routineDispatchIntentSchema.parse(input).requestId); return {} as any;}},
@@ -582,7 +611,7 @@ test("nightly preparation reads only passed-once IDs and preferences, never old 
 
 test("unavailable main source cannot fall back to an old enrolled definition", async () => {
   let plan: NightlyPlan | null = null, available = false, preparations = 0, sourceReads = 0;
-  const service = new NightlyRoutineService({async list() {return [row("known-product", "android")];}} as any,
+  const service = new NightlyRoutineService({async selection() {return [row("known-product", "android")];}} as any,
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
     {async get() {return host;}}, {async get() {return null;}, async prepare() {preparations++; return {} as any;}, async cancelPreparationSubmission() {return {} as any;}},
     {...cancellationRepository(), async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
@@ -651,7 +680,7 @@ test('fleet nightly stores every portable member without a host and cancels abse
   }, async cancel(id: string, value: {reason: string}) {cancelled.push(id); requestRows.get(id).fleetCancellation = value; return {} as any;}};
   const repository = {...cancellationRepository(), async get() {return plan;}, async freeze(value: NightlyPlan) {plan ??= value; return plan;},
     async completed() {return null;}, async finish(_id: string, value: NightlyResult) {return value;}};
-  const service = new ActualNightlyRoutineService({async list() {return [row('portable-one', 'android'), row('portable-two', 'ios-on-mac')];}} as any,
+  const service = new ActualNightlyRoutineService({async selection() {return [row('portable-one', 'android'), row('portable-two', 'ios-on-mac')];}} as any,
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
     {async get(id) {return requestRows.get(id) ?? null;}}, repository, undefined, () => clock, undefined,
     {async resolve() {return mainRevision;}}, jobs);
@@ -687,7 +716,7 @@ test('early suite cancellation retains absent member fences without launching an
     }, async cancel() {throw new Error('Must not submit before the cancellation fence');}};
   const repository = {...cancellationRepository(), async get() {return plan;}, async freeze(value: NightlyPlan) {plan ??= value; return plan;},
     async completed() {return null;}, async finish(_id: string, value: NightlyResult) {return value;}};
-  const create = () => new ActualNightlyRoutineService({async list() {return [row('cancel-one', 'android'), row('cancel-two', 'ios-on-mac')];}} as any,
+  const create = () => new ActualNightlyRoutineService({async selection() {return [row('cancel-one', 'android'), row('cancel-two', 'ios-on-mac')];}} as any,
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
     {async get(id) {return requestRows.get(id) ?? null;}}, repository, undefined, () => now, undefined,
     {async resolve() {return mainRevision;}}, jobs);
@@ -812,7 +841,7 @@ test('actual fleet service preserves every nightly member through preparation, b
   const repository = {...cancellationRepository(), async get() {return copy(plan);}, async freeze(value: NightlyPlan) {plan ??= copy(value); return copy(plan);},
     async completed() {return copy(finished);}, async finish(_id: string, value: NightlyResult) {finished ??= copy(value); return copy(finished);}};
   const catalog = [row('lifecycle-one', 'android'), row('lifecycle-two', 'ios-on-mac')];
-  const create = () => new ActualNightlyRoutineService({async list() {return catalog;}} as any,
+  const create = () => new ActualNightlyRoutineService({async selection() {return catalog;}} as any,
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
     requests, repository, summary, () => clock, undefined, {async resolve() {return mainRevision;}}, jobs);
   const service = create(), first = await service.start(occurrence), frozenPlan = copy(first.plan);

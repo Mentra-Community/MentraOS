@@ -124,7 +124,8 @@ test('explicit canonical bundle and collection provenance survives legacy defaul
   const collection = {repository: canonical.repository, commit: revision, version: 2000, definitions: [routineEnrollmentSchema.parse(enrolled())]};
   const details = new TestingDetailStorage(f.storage, 'dev'), receipt = await writeRoutineCollection(collection, details);
   expect(await readRoutineCollection(receipt.detail, details)).toEqual(collection);
-  await expect(new RoutineDefinitionService().publishCollection({...collection, repository: legacy.repository})).rejects.toThrow('identity');
+  const metadataCollection = {...collection, definitions: collection.definitions.map(({routineSource: _source, verification: _verification, ...row}) => row)};
+  await expect(new RoutineDefinitionService().publishCollection({...metadataCollection, repository: legacy.repository})).rejects.toThrow('identity');
   await expect(publisher.publish(digest, {...metadata, repository: 'foreign/repo'}, stream(bytes), 'https://core.example')).rejects.toThrow();
 });
 

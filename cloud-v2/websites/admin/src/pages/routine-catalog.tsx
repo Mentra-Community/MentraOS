@@ -16,7 +16,7 @@ import {RecordingVideo} from "../components/recording-video";
 import {Switch} from "../components/ui/switch";
 import {TestHistoryTable} from "../components/test-history-table";
 import {testRunLocation} from "../lib/test-run-links";
-import type {RoutineEnrollment, RoutineCardDefinition} from "../../../../packages/core/src/types/routine-definition.types";
+import type {RoutineEnrollment, RoutineCatalogDefinition, RoutineCardDefinition} from "../../../../packages/core/src/types/routine-definition.types";
 import type {FrameworkRequestDisplay} from "../../../../packages/core/src/types/framework-request.types";
 import {Check, Circle, Loader2} from 'lucide-react';
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table';
@@ -35,7 +35,7 @@ export function requestLiveStatus(request: FrameworkRequestDisplay, now = Date.n
     elapsed: elapsedDuration(Math.max(0, Date.parse(live.progress.observedAt) - Date.parse(live.progress.startedAt)) + (stale ? 0 : age))};
 }
 
-type CatalogRow = RoutineEnrollment & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null; nightlyEnabled?: boolean};
+type CatalogRow = RoutineCatalogDefinition & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null; nightlyEnabled?: boolean};
 type Detail = CatalogRow & {history: CatalogHistoryRun[]; nextCursor: string | null};
 type CardRow = RoutineCardDefinition & Pick<CatalogRow, 'example' | 'latestAttempt' | 'nightlyEnabled'>;
 const PANEL = TESTING_PANEL;
@@ -81,19 +81,28 @@ export function matchesHistorySearch(entry: TestHistoryEntry, routines: RoutineC
   const members = entry.kind === "suite" ? entry.members ?? [] : [entry];
   return members.some(member => matchesRoutineSearch(runSearchMetadata(member, routines), memberFilters));
 }
+export function hasCatalogPassingRun(routine: {example: CatalogExample | null}, showWithoutPassingRun = false) {
+  return showWithoutPassingRun || routine.example !== null;
+}
 export function RoutineCatalogList() {
+  const [showWithoutPassingRun, setShowWithoutPassingRun] = useState(false);
   const [filters, setFilters] = useRoutineSearch();
   const catalog = useSearchCatalog();
   if (catalog.isPending) return <LoadingIndicator label="Loading routines" />;
   if (catalog.error && !catalog.data) return <p role="alert">Could not load routines: {catalog.error.message}</p>;
   const routines = catalog.data.routines;
-  const filtered = routines.filter(row => matchesRoutineSearch(searchableRoutine(row), filters));
+  const filtered = routines.filter(row => hasCatalogPassingRun(row, showWithoutPassingRun) && matchesRoutineSearch(searchableRoutine(row), filters));
   return <div className="space-y-5">
     <section className={PANEL} aria-label="Routine filters">
       <RoutineSearch filters={filters} onChange={setFilters} routines={routines.map(searchableRoutine)} countLabel={`Showing ${filtered.length} of ${routines.length} routines`} />
+      <div className="mt-3 flex items-center gap-2">
+        <Switch checked={showWithoutPassingRun} onChange={event => setShowWithoutPassingRun(event.currentTarget.checked)}>
+          Show routines without a passing run
+        </Switch>
+      </div>
     </section>
     {catalog.error && <p role="alert">Routines could not refresh: {catalog.error.message}</p>}
-    {!routines.length ? <p>No routine has a published passing example on the new framework yet.</p>
+    {!routines.length ? <p>No routine catalog has been processed yet.</p>
       : !filtered.length && <p>No routines match your filters. Try another search or clear the filters.</p>}
     <div className="grid gap-5 lg:grid-cols-2">{filtered.map(row => <EditableRoutineCatalogCard key={`${row.routineId}/${row.platform}`} routine={row} />)}</div>
   </div>;

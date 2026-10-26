@@ -22,21 +22,22 @@ test('public passing selector excludes verification candidates while retaining p
     // A history read is separate from eligibility; isolate this selector via a detail with mocked history.
     const history = spyOn(TestRunModel, 'find').mockReturnValue({sort() {return this;}, limit() {return this;}, select() {return this;},
       read() {return this;}, readConcern() {return this;}, lean: async () => []} as unknown as ReturnType<typeof TestRunModel.find>);
-    try {expect(await service.list()).toEqual([]);} finally {history.mockRestore();}
+    try {expect(await service.list()).toEqual([{...definition, example: null, latestAttempt: null, nightlyEnabled: true}]);} finally {history.mockRestore();}
     expect(find.mock.calls[0]?.[0]).toMatchObject({routineId: 'notes', platform: 'android', catalogEligible: {$ne: false}});
   } finally {find.mockRestore();}
 });
-test("a historical passing example retains catalog membership while new authoring work stays out", async () => {
+test("backend exposes both passing and unrecorded definitions independently of display preferences", async () => {
   const definitions = [{routineId: "notes", platform: "ios-on-mac", definitionRevision: "c".repeat(40)},
     {routineId: "gallery-sync", platform: "android", definitionRevision: "d".repeat(40)}] as RoutineEnrollment[];
   const service = new RoutineCatalogService({async current() {return definitions;}, async overview() {return this.current();}, async getCurrent() {return definitions[0]!;}}, {
     async history() {return [];}, async latestPassing(row) {return row.routineId === "notes" ? example : null;},
   }, preferences);
   const catalog = await service.list();
-  expect(catalog).toHaveLength(1);
+  expect(catalog).toHaveLength(2);
   expect(catalog[0]!.routineId).toBe("notes");
   expect(catalog[0]!.definitionRevision).toBe("c".repeat(40));
   expect(catalog[0]!.example).toEqual(example);
+  expect(catalog[1]!.routineId).toBe('gallery-sync'); expect(catalog[1]!.example).toBeNull(); expect(catalog[1]!.nightlyEnabled).toBe(true);
   expect((await service.detail("notes", "ios-on-mac")).example?.definitionRevision).toBe("a".repeat(40));
 });
 
@@ -138,4 +139,18 @@ test('overview retains passing proof and nightly preferences while full dispatch
   expect(full[0]?.example).toEqual(example);
   expect(full[0]?.nightlyEnabled).toBe(false);
   expect(fullReads).toBe(1);
+});
+
+
+test('unrecorded definitions can change nightly preferences without reading evidence', async () => {
+  const definition = {routineId: 'unrecorded', platform: 'android', definitionRevision: 'd'.repeat(40)} as RoutineEnrollment;
+  const writes: RoutinePreference[] = [];
+  const service = new RoutineCatalogService({async current() {return [definition];}, async overview() {return [definition];},
+    async getCurrent(id) {return id === definition.routineId ? definition : null;}}, {
+    async latestPassing() {throw Error('Evidence unavailable');}, async history() {throw Error('History unavailable');},
+  }, {async list() {return writes;}, async get() {return null;}, async set(row) {writes.push(row);}});
+  await service.setPreference('unrecorded', 'android', false);
+  expect(await service.selection()).toEqual([{...definition, nightlyEnabled: false}]);
+  await expect(service.setPreference('missing', 'android', true)).rejects.toThrow('not enrolled');
+  expect(writes).toHaveLength(1);
 });
