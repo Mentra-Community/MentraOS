@@ -383,6 +383,28 @@ export function candidatePrerequisiteIdentityMatches(pending: FleetCandidatePrep
       (!pending.backendTarget || isDeepStrictEqual(pending.backendTarget, purpose.target)) :
       (!pending.backendTarget || isDeepStrictEqual(pending.backendTarget, purpose.target))))
 }
+/** Core already accepted these original-controller returns. A later accepted
+ * reporter may preserve that closed UNKNOWN without asserting old-process
+ * cessation or qualifying the current resource. Successor-delivered returns
+ * still require their independently retained return continuation. */
+function returnedOriginalGraphUnknown(pending: FleetCandidatePreparation,
+  receipt: NonNullable<FleetCandidatePreparation['settlement']>, host: TestHostState) {
+  if (receipt.outcome !== 'unknown' || !receipt.hostWorkSettled || !receipt.graphChecks?.length ||
+    !receipt.graphChecks.every(check => check.outcome === 'unknown' && !check.backendConnectivity) ||
+    !graphCandidateHistoricalSettlement({...pending, settlement: receipt})) return false
+  const current = host.frameworkHistory?.at(-1), original = pending.candidate.controller,
+    sameController = host.incarnation === original.incarnation && host.incarnationGeneration === original.generation
+  return !!current && host.hostId === pending.hostId && !current.endedAt && !current.endReason &&
+    current.incarnation === host.incarnation && current.incarnationGeneration === host.incarnationGeneration &&
+    isDeepStrictEqual(current.binding, host.frameworkBinding) && isDeepStrictEqual(current.process, host.frameworkProcess) &&
+    current.effectiveAt === host.frameworkAcceptedAt && Date.parse(current.effectiveAt) <= Date.parse(host.observedAt) &&
+    (sameController || host.incarnation !== original.incarnation && host.incarnationGeneration! > original.generation) &&
+    pending.resourceReturns!.every(value => {
+      const returned = exclusiveResourceReturnSchema.parse(value)
+      return returned.controller.incarnation === original.incarnation && returned.controller.generation === original.generation &&
+        Date.parse(returned.release.releasedAt) <= Date.parse(sameController ? host.observedAt : current.effectiveAt)
+    })
+}
 export function reportedGraphCandidateSettlement(pending: FleetCandidatePreparation, host: TestHostState) {
   if (pending.target.purpose?.kind !== 'resource-readiness') return undefined
   const found = (host.resourceReservations?.candidatePrerequisites ?? []).filter(value => value.candidate.attemptId === pending.candidate.attemptId), receipt = found[0]
@@ -394,7 +416,8 @@ export function reportedGraphCandidateSettlement(pending: FleetCandidatePreparat
   const original = host.incarnation === pending.candidate.controller.incarnation &&
     host.incarnationGeneration === pending.candidate.controller.generation && isDeepStrictEqual(host.frameworkBinding, pending.target.acceptedBinding)
   if (!original && !(receipt.outcome === 'unknown' && receipt.graphChecks?.length &&
-    receipt.graphChecks.every(check => check.outcome === 'unknown' && !check.backendConnectivity) && graphReturnReporterMatches(pending, host))) return undefined
+    receipt.graphChecks.every(check => check.outcome === 'unknown' && !check.backendConnectivity) && graphReturnReporterMatches(pending, host)) &&
+    !returnedOriginalGraphUnknown(pending, receipt, host)) return undefined
   return receipt
 }
 export function graphCandidateHasOriginalCustody(pending: FleetCandidatePreparation, host: TestHostState, claims: unknown[]) {
@@ -428,16 +451,19 @@ export function candidateSettlement(pending: FleetCandidatePreparation, host: Te
       !pending.resourceReturns.every(returned => graphCandidateReturnMatches(pending, returned))) return undefined
     if (receipt.outcome !== (receipt.graphChecks.some(check => check.outcome === 'unknown' || check.backendConnectivity?.outcome === 'unknown') ? 'unknown' :
       receipt.graphChecks.some(check => check.outcome === 'failed' || check.backendConnectivity?.outcome === 'unqualified') ? 'unqualified' : 'qualified')) return undefined
+    const returnedUnknown = returnedOriginalGraphUnknown(pending, receipt, host)
     for (const member of purpose.resources) {
       const check = receipt.graphChecks.find(value => value.resourceId === member.id),
         returned = pending.resourceReturns.map(value => exclusiveResourceReturnSchema.parse(value)).find(value => value.resourceId === member.id),
         subject = host.resourceLifecycle?.subjects.find(value => value.subject.id === member.id)
       if (!check || !returned || !('kind' in returned.release) || returned.release.kind !== 'resource-check' ||
         !graphMemberOperationMatches(pending.targetInputSha256, member.id, check.checkOperationId) || check.contractVersion !== member.contractVersion ||
-        !subject?.current || subject.owner !== null || subject.generation !== check.subjectGeneration ||
-        subject.generation !== returned.release.subjectGeneration || subject.idle.acceptedCheck?.operationId !== check.checkOperationId ||
+        !subject?.current || subject.owner !== null || subject.subject.authorityHostId !== member.authorityHostId ||
+        check.subjectGeneration !== returned.release.subjectGeneration ||
+        (returnedUnknown ? subject.generation < check.subjectGeneration || returned.release.operationId !== check.checkOperationId :
+        subject.generation !== check.subjectGeneration || subject.idle.acceptedCheck?.operationId !== check.checkOperationId ||
         subject.idle.acceptedCheck.resultSha256 !== check.resultSha256 || subject.idle.acceptedCheck.subjectGeneration !== subject.generation ||
-        subject.idle.checkedAt !== check.checkedAt || Date.parse(check.checkedAt) < Date.parse(pending.candidate.requestedAt) ||
+        subject.idle.checkedAt !== check.checkedAt) || Date.parse(check.checkedAt) < Date.parse(pending.candidate.requestedAt) ||
         Date.parse(check.checkedAt) > Date.parse(returned.release.releasedAt)) return undefined
       if (check.backendConnectivity) {
         const health = check.backendConnectivity, app = permissionContext(pending.target.acceptedBinding, pending.target.selection.build, now)?.app
