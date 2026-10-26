@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { BillingTotal, LicenseBilling, Price } from "@mentra/workspace-contract/portal-billing";
+import type { LicenseBilling, Price } from "@mentra/workspace-contract/portal-billing";
 import {
   costFact,
   fitNote,
@@ -12,7 +12,6 @@ import {
   nameList,
   priceLine,
   taxNote,
-  totalSummary,
 } from "./billing-format";
 import { formatDate } from "./format";
 
@@ -173,25 +172,6 @@ describe("costFact", () => {
 
   test("a per-user price with no total from billing shows the unit price, and adds nothing up", () => {
     expect(costFact(license({ total: null }), "en-US")).toEqual({ value: "$29 per user a month", foot: "Before tax" });
-  });
-});
-
-describe("totalSummary", () => {
-  const total = (overrides: Partial<BillingTotal> = {}): BillingTotal => ({
-    amount: usd(29500),
-    recurrence: { interval: "month", count: 1 },
-    tax: "excluded",
-    licenseCount: 2,
-    ...overrides,
-  });
-
-  test("reads '2 products · $295 a month in total'", () => {
-    expect(totalSummary(total(), "en-US")).toEqual({ lead: "2 products", rest: "$295 a month in total" });
-  });
-
-  test("one product is singular, and a longer recurrence is spelled out", () => {
-    expect(totalSummary(total({ licenseCount: 1 }), "en-US").lead).toBe("1 product");
-    expect(totalSummary(total({ recurrence: { interval: "year", count: 1 } }), "en-US").rest).toBe("$295 a year in total");
   });
 });
 

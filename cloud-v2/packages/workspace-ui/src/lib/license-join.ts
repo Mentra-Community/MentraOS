@@ -65,8 +65,6 @@ export interface JoinedLicense {
   name: string;
   /** The catalog's short name, or `name`. */
   shortName: string;
-  /** The catalog's description; empty when the catalog lacks the product. */
-  description: string;
   /** The catalog's icon path, or null (a letter tile). */
   icon: string | null;
   features: readonly CatalogFeature[];
@@ -147,7 +145,6 @@ export function joinLicenses({ licenses, billing, catalog, purchase, locale = DE
       product,
       name: entry?.name ?? product,
       shortName: entry?.shortName ?? entry?.name ?? product,
-      description: entry?.description ?? "",
       icon: entry?.icon ?? null,
       features: entry?.features ?? [],
       catalog: entry,

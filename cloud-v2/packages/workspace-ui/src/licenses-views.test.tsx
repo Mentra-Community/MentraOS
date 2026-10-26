@@ -287,14 +287,17 @@ function watchText() {
 // ---- who sees what ------------------------------------------------------------------------------------------------
 
 describe("who sees what", () => {
-  test("a manager who is offered billing sees every license with its money and the page total", async () => {
+  test("a manager who is offered billing sees every license with its money, and no total above them", async () => {
     const r = rig();
     await mountView(r);
     expect(cardNames()).toEqual(["Fleet", "Mentra Call Unlimited"]);
     const call = text(cardNamed("Mentra Call Unlimited"));
     for (const expected of ["Active", "3 of 5 assigned", "Nov 20, 2026", "$145 a month", "Before tax"]) expect(call).toContain(expected);
     expect(text(cardNamed("Fleet"))).toContain("$150 a month");
-    expect(text()).toContain("2 products · $295 a month in total");
+    // Billing still sends its total; the page doesn't draw it: no line counts the products or adds them up.
+    expect(text()).not.toContain("in total");
+    expect(text()).not.toContain("$295");
+    expect(text()).not.toContain("2 products");
     // The header buttons are the host's to place (`WorkspaceLicensesHeaderActions`): the page draws none.
     expect(hasButton("Billing & invoices")).toBe(false);
     expect(hasButton("Buy licenses")).toBe(false);
@@ -388,7 +391,7 @@ describe("who sees what", () => {
     const r = rig({ detail });
     await mountView(r);
     expect(cardNames()).toEqual(["Fleet", "Mentra Call Unlimited"]);
-    expect(text()).toContain("2 products · $295 a month in total");
+    expect(text(cardNamed("Fleet"))).toContain("$150 a month");
   });
 
   test("a license that has ended is no card", async () => {
@@ -451,7 +454,7 @@ describe("unavailable", () => {
     await until(() => cardNames().length === 2, "the cards after Retry");
     expect(r.status.mock.calls.length).toBeGreaterThan(calls);
     expect(unavailable()).toBe(false);
-    expect(text()).toContain("2 products · $295 a month in total");
+    expect(text(cardNamed("Mentra Call Unlimited"))).toContain("$145 a month");
   });
 
   test("Retry also tells the host, so it can read what the page takes as given (whether billing is ready)", async () => {
@@ -587,23 +590,39 @@ describe("the layout", () => {
     expect(text(openDialogs()[0]!)).toContain(`Your workspace has ${PEOPLE.length} members.`);
   });
 
-  test("with licenses the total line follows billing's total, and the page draws no header buttons of its own", async () => {
-    const r = rig();
-    await mountView(r);
-    expect(text()).toContain("2 products · $295 a month in total");
-    expect(hasButton("Billing & invoices")).toBe(false);
-    expect(hasButton("Buy licenses")).toBe(false);
-    // The summary is billing's own total: with none there is no line, and Core adds nothing up.
+  test("with licenses the cards come first, with no total line above them, and the page draws no header buttons of its own", async () => {
+    for (const total of [TOTAL, null]) {
+      await mountView(rig({ status: statusFor({ total }) }));
+      expect(text()).not.toContain("in total");
+      expect(findAll("p").some((line) => /\bproducts?\b/.test(line.textContent ?? ""))).toBe(false);
+      expect(hasButton("Billing & invoices")).toBe(false);
+      expect(hasButton("Buy licenses")).toBe(false);
+      // The first thing on the page is a card.
+      expect(find("[data-slot='card']").getAttribute("aria-label")).toBe("Fleet");
+      expect(cardNames()).toEqual(["Fleet", "Mentra Call Unlimited"]);
+      await cleanup();
+    }
+  });
+
+  test("a product's description is for buying it: in the catalog and the Buy dialog, not on the card of one the workspace holds", async () => {
+    const CALL_PITCH = "Unlimited Teams calls in Mentra Call.";
+    const FLEET_PITCH = "Manage your members' phones and glasses, and the miniapps on them.";
+    await mountView(rig());
+    expect(text(cardNamed("Mentra Call Unlimited"))).not.toContain(CALL_PITCH);
+    expect(text(cardNamed("Fleet"))).not.toContain(FLEET_PITCH);
     await cleanup();
-    await mountView(rig({ status: statusFor({ total: null }) }));
-    expect(text()).not.toContain("a month in total");
-    expect(cardNames()).toEqual(["Fleet", "Mentra Call Unlimited"]);
+    // With no products the page is the catalog: each product says what it is.
+    await mountView(rig({ licenses: [], status: statusFor({ licenses: [], total: null }) }));
+    expect(text(find(`[data-product="${CALL}"]`))).toContain(CALL_PITCH);
+    expect(text(find(`[data-product="${FLEET}"]`))).toContain(FLEET_PITCH);
+    // And so does its Buy dialog.
+    await click(findAll<HTMLButtonElement>("button", find(`[data-product="${CALL}"]`)).find((button) => button.textContent === "Buy")!);
+    expect(text(openDialogs()[0]!)).toContain(CALL_PITCH);
   });
 
   test("with one license its roster is open", async () => {
     const r = rig({ licenses: [callLicense()], status: statusFor({ licenses: [callBilling()], total: { ...TOTAL, amount: usd(14500), licenseCount: 1 } }) });
     await mountView(r);
-    expect(text()).toContain("1 product · $145 a month in total");
     const card = cardNamed("Mentra Call Unlimited");
     expect(hasButton("Unassign Hannah Kim", card)).toBe(true);
     expect(hasButton("Assign licenses", card)).toBe(true);
@@ -684,22 +703,50 @@ describe("purchases", () => {
       purchase: purchaseOf(),
     });
   const ready = () => statusFor({ purchase: purchaseOf({ status: "ready", licenseId: "lic_call" }) });
+  const dialog = () => openDialogs()[0];
+  /**
+   * The view at `?purchase=pur_1`, and `closed()`: what the host does once the dialog is closed (it takes `?purchase=`
+   * out of the address, and the view is drawn again without it).
+   */
+  async function mountHosted(r: Rig) {
+    const { client, rerender } = await mountView(r, { purchaseId: "pur_1", ...POLL });
+    const closed = async () => {
+      await rerender(
+        <QueryClientProvider client={client}>
+          <WorkspaceLicensesView {...viewProps(r, { purchaseId: null, ...POLL })} />
+        </QueryClientProvider>,
+      );
+      await loaded();
+    };
+    return { client, closed };
+  }
 
-  test("?purchase gives the banner flow: setting up, then ready; the purchased card comes first, ringed, with its roster open", async () => {
+  test("?purchase opens a dialog over the page: setting up, then ready; the purchased card comes first, ringed, with its roster open", async () => {
     const r = rig({ licenses: [fleetLicense()], status: processing() });
     await mountView(r, { purchaseId: "pur_1", ...POLL });
     // Billing is asked about the purchase; the page is polling for the license to arrive.
     expect(r.status.mock.calls[0]).toEqual([workspaceScope(WS), { purchase: "pur_1" }]);
-    expect(text()).toContain("Payment received");
-    expect(text()).toContain("Setting up 5 Mentra Call Unlimited licenses. This takes a few seconds; you can stay on this page.");
+    // One modal dialog, titled with the product's name, with its icon beside the words: nothing above the cards.
+    expect(openDialogs()).toHaveLength(1);
+    expect(find("h2", dialog()!).textContent).toBe("Mentra Call Unlimited");
+    expect(findAll("img", dialog()!)).toHaveLength(1);
+    expect(text(dialog()!)).toContain("Payment received");
+    expect(text(dialog()!)).toContain("Setting up 5 Mentra Call Unlimited licenses. This takes a few seconds; you can stay on this page.");
+    expect(text(dialog()!)).toContain("Setting up…");
+    expect(findAll(".animate-spin", dialog()!)).toHaveLength(1);
+    // OK is there while it waits; the × is the dialog's own, and there is no other.
+    expect(buttons(dialog()!)).toEqual(["Close", "OK"]);
+    expect(findAll("section[role='status']")).toHaveLength(0);
     expect(cardNames()).toEqual(["Mentra Call Unlimited", "Fleet"]);
     expect(text(cardNamed("Mentra Call Unlimited"))).toContain("Setting up");
 
     r.answers.status = ready();
     r.answers.licenses = [fleetLicense(), callLicense({ seatsUsed: 0, seats: [] })];
-    await until(() => text().includes("Your 5 Mentra Call Unlimited licenses are ready"), "the banner to say ready");
-    expect(text()).toContain("Payment received, and Mentra Call Unlimited is active. Assign the licenses to members below.");
-    expect(buttons()).toContain("Dismiss");
+    await until(() => text(dialog() ?? document.body).includes("Your 5 Mentra Call Unlimited licenses are ready"), "the dialog to say ready");
+    expect(text(dialog()!)).toContain("Payment received, and Mentra Call Unlimited is active. Assign the licenses to members below.");
+    expect(findAll(".animate-spin", dialog()!)).toHaveLength(0);
+    expect(buttons(dialog()!)).toEqual(["Close", "OK"]);
+    expect(openDialogs()).toHaveLength(1);
     // Purchased card first (not by name: Fleet sorts before it), ringed in green, its roster open.
     expect(cardNames()).toEqual(["Mentra Call Unlimited", "Fleet"]);
     const card = cardNamed("Mentra Call Unlimited");
@@ -774,12 +821,12 @@ describe("purchases", () => {
     expect(timeouts).toContain(60000);
   });
 
-  test("a license that hasn't reached Core after the minute says so, with Reload, and polling stops", async () => {
+  test("a license that hasn't reached Core after the minute says so, with Reload and OK, and polling stops", async () => {
     const r = rig({ licenses: [fleetLicense()], status: processing() });
     await mountView(r, { purchaseId: "pur_1", pollMs: 15, timeoutMs: 120 });
-    await until(() => text().includes("Your payment went through"), "the timeout");
-    expect(text()).toContain("The licenses can take a few minutes to appear.");
-    expect(hasButton("Reload")).toBe(true);
+    await until(() => text(dialog() ?? document.body).includes("Your payment went through"), "the timeout");
+    expect(text(dialog()!)).toContain("The licenses can take a few minutes to appear.");
+    expect(buttons(dialog()!)).toEqual(["Close", "Reload", "OK"]);
     const calls = r.status.mock.calls.length;
     await delay(150);
     expect(r.status.mock.calls.length).toBeLessThanOrEqual(calls + 1);
@@ -795,8 +842,8 @@ describe("purchases", () => {
       const r = rig(answers);
       // The deadline is far enough ahead (about 25 polls) that a slow machine still sees the page poll before it comes.
       const { client } = await mountView(r, { purchaseId: "pur_1", pollMs: 15, timeoutMs: 400 });
-      // The page says so, and there is no banner to keep a clock.
-      expect([what, text().includes("Licenses are unavailable"), findAll("[data-phase]").length]).toEqual([what, true, 0]);
+      // The page says so, and there is no dialog to keep a clock.
+      expect([what, text().includes("Licenses are unavailable"), findAll("[data-phase]").length, openDialogs().length]).toEqual([what, true, 0, 0]);
       // It is still polling behind the card (this is what the deadline has to stop)...
       const early = r.status.mock.calls.length;
       await until(() => r.status.mock.calls.length >= early + 3, `${what}: polling behind the unavailable card`);
@@ -813,7 +860,7 @@ describe("purchases", () => {
     }
   });
 
-  test("the deadline runs from the purchase, not from when a banner first shows: it is set while the page is still loading", async () => {
+  test("the deadline runs from the purchase, not from when the dialog first shows: it is set while the page is still loading", async () => {
     const r = rig({ licenses: [fleetLicense()], status: processing() });
     const hold = deferred();
     r.gates.status = hold.promise;
@@ -831,7 +878,7 @@ describe("purchases", () => {
     } finally {
       globalThis.setTimeout = realTimeout;
     }
-    // Nothing to show yet, no banner, and the minute is already running.
+    // Nothing to show yet, no dialog, and the minute is already running.
     expect(timeouts).toContain(60000);
     r.gates.status = null;
     await act(async () => hold.resolve());
@@ -878,29 +925,99 @@ describe("purchases", () => {
     expect(text()).not.toContain("Payment received");
   });
 
-  test("Dismiss tells the host, which removes ?purchase=; the banner and the ring go", async () => {
+  test("OK closes the dialog and tells the host, which removes ?purchase=; the card stays first and ringed, and nothing reopens it", async () => {
     const r = rig({ status: ready() });
-    const { rerender, client } = await mountView(r, { purchaseId: "pur_1", ...POLL });
-    expect(cardNames()[0]).toBe("Mentra Call Unlimited");
-    expect(cardNamed("Mentra Call Unlimited").getAttribute("data-ring")).toBe("highlight");
-    await click(buttonNamed("Dismiss"));
+    const { closed } = await mountHosted(r);
+    expect(cardNames()).toEqual(["Mentra Call Unlimited", "Fleet"]);
+    expect(openDialogs()).toHaveLength(1);
+    await click(buttonNamed("OK", dialog()!));
     expect(r.onDone).toHaveBeenCalledTimes(1);
-    // Hidden at once, whatever the host does with the address.
+    // Closed at once, whatever the host does with the address.
+    expect(openDialogs()).toHaveLength(0);
+    await closed();
+    // The address has lost `?purchase=` and the page is drawn again: no dialog, and the license just bought is still
+    // first and ringed in green, so the person sees it once the dialog is gone.
+    expect(openDialogs()).toHaveLength(0);
     expect(text()).not.toContain("are ready");
-    await rerender(
-      <QueryClientProvider client={client}>
-        <WorkspaceLicensesView {...viewProps(r, { purchaseId: null, ...POLL })} />
-      </QueryClientProvider>,
-    );
-    await loaded();
-    expect(text()).not.toContain("are ready");
-    expect(cardNamed("Mentra Call Unlimited").getAttribute("data-ring")).toBeNull();
-    expect(cardNames()).toEqual(["Fleet", "Mentra Call Unlimited"]);
+    expect(cardNames()).toEqual(["Mentra Call Unlimited", "Fleet"]);
+    expect(cardNamed("Mentra Call Unlimited").getAttribute("data-ring")).toBe("highlight");
+    // The page still follows the purchase: billing is never asked for a status without it.
+    expect(r.status.mock.calls.every(([, options]) => options?.purchase === "pur_1")).toBe(true);
+    expect(r.onDone).toHaveBeenCalledTimes(1);
   });
 
-  test("an unknown or another owner's purchase (purchase: null) shows no banner and no polling", async () => {
+  test("the dialog's × closes it the same way as OK", async () => {
+    const r = rig({ status: ready() });
+    const { closed } = await mountHosted(r);
+    await click(buttonNamed("Close", dialog()!));
+    expect(r.onDone).toHaveBeenCalledTimes(1);
+    expect(openDialogs()).toHaveLength(0);
+    await closed();
+    expect(openDialogs()).toHaveLength(0);
+    expect(cardNamed("Mentra Call Unlimited").getAttribute("data-ring")).toBe("highlight");
+  });
+
+  test("OK while it is setting up closes it, and the page goes on reading: the card turns ready, first and ringed, with no dialog", async () => {
+    const r = rig({ licenses: [fleetLicense()], status: processing() });
+    const { closed } = await mountHosted(r);
+    expect(text(dialog()!)).toContain("Setting up 5 Mentra Call Unlimited licenses.");
+    await click(buttonNamed("OK", dialog()!));
+    expect(r.onDone).toHaveBeenCalledTimes(1);
+    await closed();
+    expect(openDialogs()).toHaveLength(0);
+    // Still reading, for the purchase it was opened with.
+    const before = r.status.mock.calls.length;
+    await until(() => r.status.mock.calls.length >= before + 2, "polling after the dialog closed");
+    expect(r.status.mock.calls.at(-1)).toEqual([workspaceScope(WS), { purchase: "pur_1" }]);
+    r.answers.status = ready();
+    r.answers.licenses = [fleetLicense(), callLicense({ seatsUsed: 0, seats: [] })];
+    await until(() => text(cardNamed("Mentra Call Unlimited")).includes("5 available licenses"), "the card to turn ready");
+    expect(cardNames()).toEqual(["Mentra Call Unlimited", "Fleet"]);
+    expect(cardNamed("Mentra Call Unlimited").getAttribute("data-ring")).toBe("highlight");
+    expect(text(cardNamed("Mentra Call Unlimited"))).toContain("Active");
+    // Ready doesn't bring the dialog back, and the reads stop.
+    expect(openDialogs()).toHaveLength(0);
+    await delay(POLL.pollMs * 4);
+    const after = r.status.mock.calls.length;
+    await delay(POLL.pollMs * 8);
+    expect(r.status.mock.calls.length).toBeLessThanOrEqual(after + 1);
+    expect(r.onDone).toHaveBeenCalledTimes(1);
+  });
+
+  test("the header keeps reading under the view's key after ?purchase= goes: billing is never asked without it", async () => {
+    const r = rig({ status: ready() });
+    const client = newClient();
+    const both = (purchaseId: string | null) => (
+      <QueryClientProvider client={client}>
+        <WorkspaceLicensesHeaderActions {...headerProps(r, { purchaseId })} />
+        <WorkspaceLicensesView {...viewProps(r, { purchaseId, ...POLL })} />
+      </QueryClientProvider>
+    );
+    const { rerender } = await render(both("pur_1"));
+    await loaded();
+    await click(buttonNamed("OK", dialog()!));
+    await rerender(both(null));
+    await idle(client);
+    expect(openDialogs()).toHaveLength(0);
+    expect(buttons()).toContain("Buy licenses");
+    expect(r.status.mock.calls.every(([, options]) => options?.purchase === "pur_1")).toBe(true);
+  });
+
+  test("only one dialog at a time: a link's answer first, and the purchase's once it is closed", async () => {
+    const r = rig({ status: ready() });
+    await mountView(r, { purchaseId: "pur_1", buyProduct: "mentra.nope", onBuyHandled: mock(() => {}), ...POLL });
+    await until(() => openDialogs().length === 1, "the link's dialog");
+    expect(text(dialog()!)).toContain("That product isn't for sale.");
+    expect(text()).not.toContain("are ready");
+    await click(buttonNamed("Done", dialog()!));
+    await until(() => openDialogs().length === 1 && text(dialog()!).includes("are ready"), "the purchase's dialog");
+    expect(openDialogs()).toHaveLength(1);
+  });
+
+  test("an unknown or another owner's purchase (purchase: null) shows no dialog and no polling", async () => {
     const r = rig({ status: statusFor({ purchase: null }) });
     await mountView(r, { purchaseId: "pur_nobody", ...POLL });
+    expect(openDialogs()).toHaveLength(0);
     expect(text()).not.toContain("Payment received");
     expect(r.status.mock.calls[0]).toEqual([workspaceScope(WS), { purchase: "pur_nobody" }]);
     const calls = r.status.mock.calls.length;
@@ -909,18 +1026,20 @@ describe("purchases", () => {
     expect(cardNames()).toEqual(["Fleet", "Mentra Call Unlimited"]);
   });
 
-  test("a viewer who isn't offered billing gets no purchase banner and no status request, whatever the address says", async () => {
+  test("a viewer who isn't offered billing gets no purchase dialog and no status request, whatever the address says", async () => {
     const r = rig();
     await mountView(r, { offer: { catalog: true, manage: false }, purchaseId: "pur_1", ...POLL });
     expect(r.status).not.toHaveBeenCalled();
+    expect(openDialogs()).toHaveLength(0);
     expect(text()).not.toContain("Payment received");
     expect(cardNames()).toEqual(["Fleet", "Mentra Call Unlimited"]);
   });
 
-  test("the banner names the product from the catalog, or by its key when the catalog lacks it", async () => {
+  test("the dialog names the product from the catalog, or by its key when the catalog lacks it, under the page's title", async () => {
     const r = rig({ status: statusFor({ purchase: purchaseOf({ product: "mentra.gone", status: "ready", licenseId: "lic_call", quantity: 2 }) }) });
     await mountView(r, { purchaseId: "pur_1", ...POLL });
-    expect(text()).toContain("Your 2 mentra.gone licenses are ready");
+    expect(find("h2", dialog()!).textContent).toBe("Licenses");
+    expect(text(dialog()!)).toContain("Your 2 mentra.gone licenses are ready");
   });
 });
 
@@ -1457,20 +1576,28 @@ describe("back from the hosted page (?added=)", () => {
   const POLL = { pollMs: 15, timeoutMs: 400 };
   const waiting = () => callLicense({ quantity: 6, seatsUsed: 3, seats: seatsOf([HANNAH, TOM, NOAH]) });
   const given = () => callLicense({ quantity: 6, seatsUsed: 4, seats: seatsOf([HANNAH, TOM, NOAH, SELF]) });
-  const banner = () => findAll('section[role="status"]')[0];
+  const dialog = () => openDialogs()[0];
+  const phase = () => dialog()?.querySelector("[data-phase]")?.getAttribute("data-phase") ?? null;
 
-  test("it shows nothing while the seat is on its way, and the assigned banner once a read shows the viewer's seat", async () => {
+  test("a dialog says it is setting up while the license is on its way, and that it is assigned once a read shows the viewer's", async () => {
     const r = rig({ licenses: [waiting(), fleetLicense()] });
     const done = mock(() => {});
     await mountView(r, { addedLicenseId: "lic_call", onAddedDone: done, ...POLL });
+    expect(openDialogs()).toHaveLength(1);
+    expect(find("h2", dialog()!).textContent).toBe("Mentra Call Unlimited");
+    expect(phase()).toBe("processing");
+    // One license, added to one the workspace has: it claims no payment.
+    expect(text(dialog()!)).toContain("Purchase complete");
+    expect(text(dialog()!)).toContain("Setting up 1 Mentra Call Unlimited license. This takes a few seconds; you can stay on this page.");
+    expect(buttons(dialog()!)).toEqual(["Close", "OK"]);
     await delay(60);
-    expect(banner()).toBeUndefined();
     expect(r.listLicenses.mock.calls.length).toBeGreaterThan(1);
     r.answers.licenses = [given(), fleetLicense()];
-    await until(() => banner() !== undefined, "the banner");
-    expect(text(banner()!)).toContain("Purchase complete");
-    expect(text(banner()!)).toContain("Mentra Call Unlimited is active, and it's assigned to you.");
-    expect(text(banner()!)).not.toContain("Payment received");
+    await until(() => phase() === "ready", "the dialog to say it is assigned");
+    expect(text(dialog()!)).toContain("Purchase complete");
+    expect(text(dialog()!)).toContain("Mentra Call Unlimited is active, and it's assigned to you.");
+    expect(text(dialog()!)).not.toContain("Payment received");
+    expect(buttons(dialog()!)).toEqual(["Close", "OK"]);
     // It stops reading once it has what it waited for.
     await delay(40);
     const reads = r.listLicenses.mock.calls.length;
@@ -1479,43 +1606,77 @@ describe("back from the hosted page (?added=)", () => {
     expect(done).not.toHaveBeenCalled();
   });
 
-  test("it shows once, however often the page reads again, and Dismiss tells the host", async () => {
+  test("it shows once, however often the page reads again, and OK tells the host", async () => {
     const r = rig({ licenses: [given(), fleetLicense()] });
     const done = mock(() => {});
     const { client } = await mountView(r, { addedLicenseId: "lic_call", onAddedDone: done, ...POLL });
-    await until(() => banner() !== undefined, "the banner");
+    await until(() => phase() === "ready", "the dialog");
     await act(async () => void (await client.invalidateQueries()));
-    expect(findAll('section[role="status"]')).toHaveLength(1);
-    await click(buttonNamed("Dismiss"));
+    expect(openDialogs()).toHaveLength(1);
+    await click(buttonNamed("OK", dialog()!));
     expect(done).toHaveBeenCalledTimes(1);
-    expect(banner()).toBeUndefined();
+    expect(openDialogs()).toHaveLength(0);
   });
 
-  test("a minute later (timeoutMs) it says the purchase went through, with Reload, and stops reading", async () => {
+  test("OK while it waits closes it, and the page goes on reading until the viewer holds it", async () => {
+    const r = rig({ licenses: [waiting(), fleetLicense()] });
+    const done = mock(() => {});
+    const { client, rerender } = await mountView(r, { addedLicenseId: "lic_call", onAddedDone: done, ...POLL });
+    await click(buttonNamed("OK", dialog()!));
+    expect(done).toHaveBeenCalledTimes(1);
+    // The host takes `?added=` out of the address.
+    await rerender(
+      <QueryClientProvider client={client}>
+        <WorkspaceLicensesView {...viewProps(r, { addedLicenseId: null, onAddedDone: done, ...POLL })} />
+      </QueryClientProvider>,
+    );
+    expect(openDialogs()).toHaveLength(0);
+    const before = r.listLicenses.mock.calls.length;
+    await until(() => r.listLicenses.mock.calls.length >= before + 2, "reading after the dialog closed");
+    r.answers.licenses = [given(), fleetLicense()];
+    await until(() => text(cardNamed("Mentra Call Unlimited")).includes("4 of 6 assigned"), "the viewer's license on the card");
+    expect(openDialogs()).toHaveLength(0);
+    await delay(40);
+    const reads = r.listLicenses.mock.calls.length;
+    await delay(80);
+    expect(r.listLicenses.mock.calls.length).toBe(reads);
+    expect(done).toHaveBeenCalledTimes(1);
+  });
+
+  test("a minute later (timeoutMs) it says the purchase went through, with Reload and OK, and stops reading", async () => {
     const r = rig({ licenses: [waiting(), fleetLicense()] });
     await mountView(r, { addedLicenseId: "lic_call", onAddedDone: mock(() => {}), pollMs: 15, timeoutMs: 120 });
-    await delay(60);
-    expect(banner()).toBeUndefined();
-    await until(() => banner() !== undefined, "the timeout banner");
-    expect(text(banner()!)).toContain("Your purchase went through");
-    expect(text(banner()!)).toContain("The licenses can take a few minutes to appear.");
-    expect(hasButton("Reload", banner()!)).toBe(true);
+    expect(phase()).toBe("processing");
+    await until(() => phase() === "timeout", "the timeout");
+    expect(text(dialog()!)).toContain("Your purchase went through");
+    expect(text(dialog()!)).toContain("The licenses can take a few minutes to appear.");
+    expect(buttons(dialog()!)).toEqual(["Close", "Reload", "OK"]);
     await delay(40);
     const reads = r.listLicenses.mock.calls.length;
     await delay(80);
     expect(r.listLicenses.mock.calls.length).toBe(reads);
   });
 
-  test("with no ?added= there is no banner and no polling", async () => {
+  test("a license Core doesn't list can't be named: no dialog until the minute is up, then the one that says so", async () => {
+    const r = rig({ licenses: [fleetLicense()] });
+    await mountView(r, { addedLicenseId: "lic_unknown", onAddedDone: mock(() => {}), pollMs: 15, timeoutMs: 120 });
+    await delay(60);
+    expect(openDialogs()).toHaveLength(0);
+    await until(() => phase() === "timeout", "the timeout");
+    expect(find("h2", dialog()!).textContent).toBe("Licenses");
+    expect(text(dialog()!)).toContain("Your purchase went through");
+  });
+
+  test("with no ?added= there is no dialog and no polling", async () => {
     const r = rig({ licenses: [waiting(), fleetLicense()] });
     await mountView(r, { ...POLL });
     await delay(80);
-    expect(banner()).toBeUndefined();
+    expect(openDialogs()).toHaveLength(0);
     expect(r.listLicenses).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("the purchase banner when the viewer was given a license", () => {
+describe("the purchase dialog when the viewer was given a license", () => {
   const POLL = { pollMs: 15, timeoutMs: 400 };
   const bought = (quantity: number, paid: boolean) => statusFor({ purchase: purchaseOf({ status: "ready", licenseId: "lic_call", quantity, paid }) });
   const withViewer = (quantity: number) => [callLicense({ quantity, seatsUsed: 1, seats: seatsOf([SELF]) })];
@@ -1576,11 +1737,10 @@ describe("test mode", () => {
     const note = find('[role="note"]');
     expect(note.textContent).toContain("Test mode · Staging");
     expect(note.textContent).toContain("4242 4242 4242 4242");
-    // First thing on the page: before the purchase banner and every card.
+    // First thing on the page, before every card. The purchase is a dialog over the page, not a line in it.
     expect(container.firstElementChild!.firstElementChild === note).toBe(true);
-    for (const later of [find("[data-phase]"), cardElements()[0]!]) {
-      expect(note.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    }
+    expect(note.compareDocumentPosition(cardElements()[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(findAll("dialog[open] [data-phase]")).toHaveLength(1);
   });
 
   test("it is above the catalog too, when there are no licenses", async () => {
@@ -1856,7 +2016,6 @@ describe("switching workspace on a mounted view", () => {
     const after = text();
     expect(cardNames()).toEqual(["Mentra Call Unlimited"]);
     expect(after).toContain("$58 a month");
-    expect(after).toContain("1 product · $58 a month in total");
     for (const aOnly of ["Fleet", "$145", "$150", "$295", "Test mode", "Staging"]) expect([aOnly, after.includes(aOnly)]).toEqual([aOnly, false]);
     // B listed no billing_and_invoices, so there is no such button, and nothing A offered is asked of B.
     expect(hasButton("Billing & invoices")).toBe(false);
@@ -2005,7 +2164,7 @@ describe("a card stays mounted through a refetch", () => {
     expect(r.leave).toHaveBeenCalledWith(PAGE);
   });
 
-  test("when ?purchase= is removed the status is read under a new key, and the cards are not swapped for a loading state", async () => {
+  test("when another ?purchase= is followed the status is read under a new key, and the cards are not swapped for a loading state", async () => {
     const r = rig({ status: statusFor({ purchase: purchaseOf({ status: "ready", licenseId: "lic_call" }) }) });
     const { rerender, client } = await mountView(r, { purchaseId: "pur_1", pollMs: 15 });
     const call = cardNamed("Mentra Call Unlimited");
@@ -2015,10 +2174,10 @@ describe("a card stays mounted through a refetch", () => {
     r.answers.status = statusFor();
     await rerender(
       <QueryClientProvider client={client}>
-        <WorkspaceLicensesView {...viewProps(r, { purchaseId: null, pollMs: 15 })} />
+        <WorkspaceLicensesView {...viewProps(r, { purchaseId: "pur_2", pollMs: 15 })} />
       </QueryClientProvider>,
     );
-    await until(() => r.status.mock.calls.some(([, options]) => options?.purchase === null), "the new read");
+    await until(() => r.status.mock.calls.some(([, options]) => options?.purchase === "pur_2"), "the new read");
     expect(text()).not.toMatch(/Loading (licenses|billing)/);
     expect(cardNamed("Mentra Call Unlimited") === call).toBe(true);
     expect(cardNamed("Fleet") === fleet).toBe(true);

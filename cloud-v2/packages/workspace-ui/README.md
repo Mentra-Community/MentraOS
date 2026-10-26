@@ -61,17 +61,17 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `WorkspaceSettingsPanel` (`onDeleted?`, `onLeft?`) | Name and workspace ID (with copy), then a danger zone to leave or delete |
 | `WorkspaceAuditPanel` | The workspace's audit log, paged: each event a sentence ("Changed priya@… from Member to Developer"), with the raw record behind Show details |
 | `WorkspaceLicensesView`, `WorkspaceLicensesHeaderActions` | The workspace's Licenses page, and the buttons for the title bar (Billing & invoices ↗, Buy licenses); props in [Licenses](#licenses) |
-| `LicenseCard` (`card`, `view`, `scope`, `billing`, `navigateOut`, `locale`, …) | One product's card: status badge, facts (Licenses, Renews or Ends, Cost), the notices for a failed or unfinished payment, who holds its licenses, and a "…" menu for billing's other actions; `view` is `workspace` or `member` |
+| `LicenseCard` (`card`, `view`, `scope`, `billing`, `navigateOut`, `locale`, …) | One product's card: its icon, name and feature chips (no description: that is the catalog's), status badge, facts (Licenses, Renews or Ends, Cost), the notices for a failed or unfinished payment, who holds its licenses, and a "…" menu for billing's other actions; `view` is `workspace` or `member` |
 | `SeatStrip`, `SeatRoster`, `AvatarStack`, `PeoplePickerDialog`, `seatHolders` | A product's licenses: the folded strip, the roster (Unassign, available licenses, search past 8 people), and the people picker that assigns them; `seatHolders` names who holds them |
 | `CatalogGrid`, `CatalogDialog`, `BuyDialog`, `CatalogCard`, `canBuy` | Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy licenses" dialog, a workspace's licenses step, and one product's card |
-| `PurchaseBanner`, `TestModeBanner`, `LicensesSummary`, `LicensesUnavailable`, `PURCHASE_POLL_MS`, `PURCHASE_TIMEOUT_MS` | The banners and states around the cards, and the pace of the poll after checkout (2 seconds, for a minute) |
+| `PurchaseDialog`, `TestModeBanner`, `LicensesUnavailable`, `PURCHASE_POLL_MS`, `PURCHASE_TIMEOUT_MS` | The dialog back from checkout (setting up, ready, or not in Core after a minute, with OK), the banner and state around the cards, and the pace of the poll after checkout (2 seconds, for a minute) |
 | `useHostedAction`, `HostedFeedback`, `NavigateOut`, `PortalTab` | How every ↗ button leaves the portal for a hosted page, its refusal in words, and the host's two ways out (see [Licenses](#licenses)) |
 | `ConfirmDialog` (`title`, `description`, `cancelLabel`, `confirmLabel`, `typeToConfirm?`, `onConfirm`, `onClose`), `useAsking`, `MembersLicenses` | A question in a modal for what can't be taken back (Unassign, Remove, Leave, Delete, Revoke): Cancel and a destructive button, a refusal shown inside with focus back on the button (a throw from `onConfirm` becomes the generic one), busy while the request is out, and `typeToConfirm` for a name to type back first; `useAsking` is how a list of rows opens one and where focus goes when it closes; and the source `WorkspaceMembersPanel` takes (see [Members' licenses](#members-licenses)) |
 | `ProductIcon`, `ProductChip`, `FeatureChips` | A product's look: its icon (a letter tile when it has none or it fails to load), icon and short name, and its feature chips (only with more than one feature) |
 | `Notice`, `Fact`, `Skeleton`, `StatusBadge`, `HostedPageButton`, `isHeldLicense` | The pieces the cards are made of: a status notice (`warn`, `info`, `neutral`), a label and value for a `<dl>`, a loading bar, a badge, a button that leaves the portal (its ↗ is an icon, so its name is the label alone), and the guard for a card Core also lists |
 | `joinLicenses`, `fitFor`, `seatCounts`, `holdsSeat`, `listedAction` | The page's logic, with no schemas at run time: Core's licenses joined to billing's entries and the catalog, in the page's order; what fits a product's available licenses; and the rules that gate what is offered |
 | `licenseStrings`, `refusalMessage` | Every sentence these pages show, in one module (see [Strings](#strings)) |
-| `formatMoney`, `formatRecurrence`, `formatDay`, `formatDayShort`, `formatDate`, `priceLine`, `costFact`, `totalSummary`, `taxNote`, `renewalCadence`, `fitNote`, `holderNames`, `nameList`, `groupCardNumber` | Billing's typed values as text, in the portal's locale (see [Formatting](#formatting)) |
+| `formatMoney`, `formatRecurrence`, `formatDay`, `formatDayShort`, `formatDate`, `priceLine`, `costFact`, `taxNote`, `renewalCadence`, `fitNote`, `holderNames`, `nameList`, `groupCardNumber` | Billing's typed values as text, in the portal's locale (see [Formatting](#formatting)) |
 | `InvitationAcceptView` (`token`, `onAccepted(workspaceId)`, `onDismiss?`, `viewerEmail?`, `onSwitchAccount?`, `onGone?`) | What an invitation link opens; for someone else's invitation it says so and offers Switch account instead of Accept |
 | `InvitationAcceptCard`, `useAcceptInvitation(api, {token} \| {invitationId}, …)`, `isInvitationForOtherAccount` | The same card for an invitation the host already has (one of `myInvitationsQuery`), and accepting it |
 | `describeAuditEvent`, `plainText` | An audit event as a sentence, for other screens |
@@ -273,7 +273,7 @@ const shared = {
 - **`NavigateOut {leave, openTab}`**, the host's only ways to take the browser to a hosted
   page; the package never sends the browser anywhere itself. What it does touch is the
   current page: it listens for `focus` and `visibilitychange` to read again after a page
-  that does not return (below), and the purchase banner's Reload calls
+  that does not return (below), and the purchase dialog's Reload calls
   `window.location.reload()`.
   - `leave(url)` goes in this tab. It is only given an address the client already
     accepted (`https:`, or `http:` to `localhost` or `127.0.0.1`), and it is skipped when
@@ -296,12 +296,20 @@ const shared = {
   `WorkspaceMembersPanel` takes it as `locale`.
 - **`purchaseId` and `onPurchaseDone`.** `purchaseId` is the `?purchase=` a checkout came back
   with. Pass the same value to the view and its header actions: it is part of the status
-  query's key, and sharing it is what makes the two read once. The view then polls billing's
-  status and Core's licenses together every `PURCHASE_POLL_MS` until the purchase is ready
-  and Core lists its license, for at most `PURCHASE_TIMEOUT_MS` (then the banner says
-  "Your payment went through" with Reload, and the polling stops), or until the banner is
-  dismissed. Dismiss calls `onPurchaseDone`, where the host removes `?purchase=`. Leave
-  `pollMs` and `timeoutMs` unset; they are for tests.
+  query's key, and sharing it is what makes the two read once. The view opens the purchase
+  dialog and polls billing's status and Core's licenses together every `PURCHASE_POLL_MS`
+  until the purchase is ready and Core lists its license, for at most `PURCHASE_TIMEOUT_MS`
+  (then the dialog says "Your payment went through" with Reload, and the polling stops).
+  Closing the dialog (OK, Escape, its × or the backdrop) calls `onPurchaseDone`, where the
+  host removes `?purchase=` in place. Both components keep following that purchase once it
+  is out of the address, under the same key, until another `purchaseId` or another
+  workspace: the polling goes on to its end and the card just bought stays first and ringed.
+  Leave `pollMs` and `timeoutMs` unset; they are for tests.
+- **`addedLicenseId` and `onAddedDone`** (optional), for a return from the hosted page that
+  added one license for the viewer (`?added=`). The view opens the same dialog, for one
+  unpaid license, and reads Core's licenses until the viewer holds its product, for at most
+  `PURCHASE_TIMEOUT_MS`. Closing the dialog calls `onAddedDone`, where the host removes
+  `?added=`; the view keeps reading to the end.
 - **`onRetry`** (workspace page, optional). Called when Retry is pressed on the unavailable
   page, after the view has read its own data again. A host re-reads what the view takes as
   given: the portal invalidates its `me`, so a page opened before billing was ready
@@ -322,8 +330,8 @@ const shared = {
 
 - **The page follows the viewer.**
   - An Admin or Owner who is offered billing (`offer.manage`) sees every product with who
-    holds its licenses, dates, cost and billing's actions, the page total ("2 products ·
-    $295 a month in total"), the test-mode banner, and buying: "Buy licenses", or the
+    holds its licenses, dates, cost and billing's actions, the test-mode banner, the
+    dialog back from checkout, and buying: "Buy licenses", or the
     catalog itself while there are no products. Buy opens the Buy dialog, which starts at the
     workspace's member count (held to what billing allows); a workspace of one member has no
     number to choose, and buys one license.
@@ -339,7 +347,7 @@ const shared = {
   without a list of people.
 - **A refetch never replaces the cards.** A page that has loaded keeps what is on screen
   through a refetch, and through one that fails. Billing's status keeps its last answer only
-  while the key changes in its `purchase` (so removing `?purchase=` does not blank the page);
+  while the key changes in its `purchase` (so following another purchase does not blank the page);
   another workspace, another locale or another base path never carries anything
   over.
 - **What cannot be read is "unavailable".** When Core's detail or licenses, the status for
@@ -358,9 +366,9 @@ const shared = {
 - **Changes of who holds a license mark billing's status stale** (assigning, unassigning, removing a member)
   so that a card's counts and costs are read again; the catalog and a role change leave it
   alone.
-- **Prices and counts are billing's, not Core's.** Core adds no amounts: the page total is
-  billing's own, and the one product computed is the Buy dialog's licenses × unit price, and only
-  for a per-user price.
+- **Prices and counts are billing's, not Core's.** Core adds no amounts: a card's cost is
+  billing's own total for that license, the page adds nothing up, and the one product computed
+  is the Buy dialog's licenses × unit price, and only for a per-user price.
 
 ### Members' licenses
 
@@ -398,7 +406,7 @@ sentence of its own, so it is the one module a translation touches.
 - **Each entry is a string, or a function of values already formatted.** Amounts and dates
   arrive formatted in the portal's locale, counts as numbers, and names as they are. A
   sentence with a part a screen styles comes back in parts (a notice's `{title, body}`, the
-  summary's `{lead, rest}`), so no screen takes a sentence apart.
+  test-mode notice's bold lead), so no screen takes a sentence apart.
 - **Billing's own content is shown as sent, never worded here:** product, feature and miniapp
   names, descriptions, and the `fallback*` labels. It arrives localized.
 - **The words are the Microsoft 365 ones.** A license is one person's right to use a product.
@@ -407,7 +415,7 @@ sentence of its own, so it is the one module a translation touches.
   `aria-label` or hidden text; code and the API keep their names (`seats`, `seatsUsed`,
   `add_seats`, `SeatStrip`, `MAX_SEAT_ASSIGNMENTS`). The strings test scans every sentence for the
   word, this package's `no-seat-words.test.tsx` reads every literal in the components and
-  renders the banners, and the portal's `no-seat-words.test.tsx` drives the pages through their
+  renders the dialogs and banners, and the portal's `no-seat-words.test.tsx` drives the pages through their
   states and reads everything a person or a screen reader gets.
 - **Nothing names the payment processor.** The strings test calls every function with sample
   arguments and scans each sentence for the processor's name, `undefined`, `NaN` and
@@ -504,7 +512,7 @@ holds the frame (`app-shell`, `workspace-switcher`, `brand`, `centered-layout`, 
 
 `src/components/licenses/` holds the Licenses page and its pieces (`licenses-view`,
 `license-card`, `seats`, `people-picker`, `catalog`,
-`assign-licenses`, `banners`, `hosted-action`, `parts`, `product`); `src/strings/licenses.ts`
+`assign-licenses`, `banners`, `purchase-dialog`, `hosted-action`, `parts`, `product`); `src/strings/licenses.ts`
 holds every sentence they show, and `src/lib/` the formatting (`billing-format`, `format`)
 and the join (`license-join`). Tests for the DOM use `src/test-dom.tsx` (happy-dom, with
 `act` around every helper). It is for tests only: the package exports it as the subpath

@@ -4,8 +4,8 @@
  * code names keep `seats`, `add_seats` and the rest.
  *
  * Two guards that the page-level one can't give:
- * - the banners, in every state they have, including the ones that need a minute of polling to reach on a page
- *   (a purchase that has not reached Core, and the buyer's own license among the new ones);
+ * - the dialogs and banners, in every state they have, including the ones that need a minute of polling to reach on a
+ *   page (a purchase that has not reached Core, and the buyer's own license among the new ones);
  * - the components' own text. A sentence belongs in `strings/licenses.ts`, and a literal or an `aria-label` written
  *   in a component is where a stray word would hide, so every string, template and piece of JSX text in the
  *   components, the controls and the audit labels is read for the word, whether or not any screen draws it.
@@ -17,9 +17,10 @@ import { join, relative } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import ts from "typescript";
 import type { ReactElement } from "react";
-import { AddedBanner, LicensesSummary, LicensesUnavailable, PurchaseBanner, TestModeBanner } from "./components/licenses/banners";
+import { LicensesUnavailable, TestModeBanner } from "./components/licenses/banners";
 import { LinkDialog, type LinkOutcome } from "./components/licenses/buy-link";
 import { NoSeat } from "./components/licenses/page-parts";
+import { PurchaseDialog } from "./components/licenses/purchase-dialog";
 import { catalogEntryFor } from "./test-billing-fixtures";
 import { cleanup, render, setupDom, teardownDom, wordsUnder } from "./test-dom";
 import { detailFor, offlineApi } from "./test-fixtures";
@@ -35,7 +36,7 @@ async function draw(ui: ReactElement) {
   return wordsUnder();
 }
 
-describe("the banners, in every state", () => {
+describe("the dialogs and banners, in every state", () => {
   const noop = () => {};
 
   test("after checkout, with and without the buyer's own license: setting up, ready, and not in Core after a minute", async () => {
@@ -51,19 +52,20 @@ describe("the banners, in every state", () => {
           ];
           for (const state of states) {
             const words = await draw(
-              <PurchaseBanner
+              <PurchaseDialog
                 purchase={{ status: state.status, quantity, paid }}
                 productName="Mentra Call Unlimited"
+                entry={catalogEntryFor()}
                 assigned={assigned}
                 listed={state.listed}
                 timedOut={state.timedOut}
-                onDismiss={noop}
+                onClose={noop}
                 onReload={noop}
               />,
             );
             const where = JSON.stringify({ assigned, paid, quantity, ...state });
             expect([where, words.filter((word) => SEAT.test(word))]).toEqual([where, []]);
-            // The banner said something.
+            // The dialog said something.
             expect(words.length).toBeGreaterThan(2);
             drawn++;
             await cleanup();
@@ -76,16 +78,26 @@ describe("the banners, in every state", () => {
 
   test("back from the hosted page that added a license, in each state it shows", async () => {
     for (const state of [
+      { held: false, timedOut: false },
       { held: true, timedOut: false },
       { held: false, timedOut: true },
     ]) {
-      const words = await draw(<AddedBanner productName="Mentra Call Unlimited" onDismiss={noop} onReload={noop} {...state} />);
+      const words = await draw(
+        <PurchaseDialog
+          purchase={{ status: state.held ? "ready" : "processing", quantity: 1, paid: false }}
+          productName="Mentra Call Unlimited"
+          entry={catalogEntryFor()}
+          listed={state.held}
+          assigned={state.held}
+          timedOut={state.timedOut}
+          onClose={noop}
+          onReload={noop}
+        />,
+      );
       expect([JSON.stringify(state), words.filter((word) => SEAT.test(word))]).toEqual([JSON.stringify(state), []]);
       expect(words.length).toBeGreaterThan(2);
       await cleanup();
     }
-    // While it waits it draws nothing.
-    expect(await draw(<AddedBanner productName="Mentra Call Unlimited" held={false} timedOut={false} onDismiss={noop} />)).toEqual([]);
   });
 
   test("every answer the ?buy= link can give", async () => {
@@ -123,16 +135,9 @@ describe("the banners, in every state", () => {
     }
   });
 
-  test("test mode, the total, a member with nothing, and the unavailable pages", async () => {
+  test("test mode, a member with nothing, and the unavailable pages", async () => {
     const screens: Array<[string, ReactElement]> = [
       ["test mode", <TestModeBanner testMode={{ cardNumber: "4242424242424242", environment: "Staging" }} />],
-      [
-        "the total",
-        <LicensesSummary
-          total={{ amount: { amountMinor: 29500, currency: "USD" }, recurrence: { interval: "month", count: 1 }, tax: "excluded", licenseCount: 2 }}
-          locale="en-US"
-        />,
-      ],
       ["a member with no license", <NoSeat workspaceName="Acme Field Services" />],
       ["unavailable", <LicensesUnavailable onRetry={noop} />],
       ["unavailable, retrying", <LicensesUnavailable onRetry={noop} retrying />],

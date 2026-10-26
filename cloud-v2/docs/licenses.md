@@ -218,12 +218,13 @@ for what its viewer's view needs ([Who sees what](#who-sees-what)).
   a failed one included.
 - **Cards.** One per product that has not ended: payment failed first, then
   payment incomplete, then products with more licenses assigned than are paid
-  for, then the product just bought, then by name. Above them, one line counts
-  them: "2 products · $295 a month in total".
+  for, then the product just bought, then by name. Nothing above them counts
+  the products or adds up what they cost: each card has its own cost.
   - The head has the product's icon (a letter tile when billing sends none the
-    portal may show), its name and description, one status badge, and, for a
-    product with more than one feature, a chip per feature with the miniapp it
-    works in.
+    portal may show), its name, one status badge, and, for a product with more
+    than one feature, a chip per feature with the miniapp it works in. It has no
+    description: the catalog and the Buy dialog say what a product is, for
+    someone deciding whether to buy it.
   - The badge says "Active", "Ends Nov 20" (it will not renew), "Payment failed",
     "Payment incomplete", "Setting up" (paid for, and Core has not received it)
     or "2 over" (more licenses assigned than are paid for).
@@ -315,35 +316,53 @@ for what its viewer's view needs ([Who sees what](#who-sees-what)).
   for a person offered billing, in a workspace that has products (with none, the
   page is the catalog). A refusal shows under them.
 - **Back from checkout.** A completed checkout returns to the Licenses page with
-  `?purchase=<purchaseId>`. The page shows a banner, "Setting up 5 Call Unlimited
-  licenses. This takes a few seconds; you can stay on this page.", and reads
-  billing's status and Core's licenses every 2 seconds for up to a minute. When
-  billing says the purchase is ready and Core lists it, the banner says "Your 5
-  Call Unlimited licenses are ready", the card for that product is first and
-  ringed in green, and Dismiss removes `?purchase=` from the address in place, so
-  Back does not return to the banner. After a minute the reads stop and the
-  banner says "Your payment went through" with Reload, because the licenses can
-  take a few minutes to appear; a product that arrives later still turns it ready. A
-  purchase that collected no payment says "Purchase complete" and never "Payment
-  received". An unknown purchase, or another owner's, shows no banner.
+  `?purchase=<purchaseId>`. The page opens a dialog over the cards, like the
+  link's dialogs below: titled with the product's name, its icon beside the
+  words, and one OK. While the license is set up it says "Payment received" and
+  "Setting up 5 Call Unlimited licenses. This takes a few seconds; you can stay
+  on this page.", with a spinner, and the page reads billing's status and Core's
+  licenses every 2 seconds for up to a minute. When billing says the purchase is
+  ready and Core lists it, the dialog says "Your 5 Call Unlimited licenses are
+  ready" and "Payment received, and Call Unlimited is active. Assign the
+  licenses to members below.", and the card for that product is first and
+  ringed in green. After a minute the reads stop and the dialog says "Your
+  payment went through" and "The licenses can take a few minutes to appear.",
+  with Reload beside OK; a product that arrives later still turns it ready. A
+  purchase that collected no payment says "Purchase complete" and never
+  "Payment received". An unknown purchase, or another owner's, opens no dialog.
   When the new license's holders include the viewer, whom billing named the
-  buyer when it made the purchase, the banner says so: "Your Call Unlimited
+  buyer when it made the purchase, the dialog says so: "Your Call Unlimited
   license is ready" and "Payment received, and it's assigned to you." for one
   license ("Purchase complete" and "Call Unlimited is active, and it's assigned
   to you." when no payment was collected), or "Your 5 Call Unlimited licenses
   are ready" and "Payment received, and one is assigned to you. Assign the rest
-  to members below." for more. Otherwise the banner says what it said before.
+  to members below." for more.
+  OK closes the dialog in every state, and so do Escape, its × and the
+  backdrop. Closing it removes `?purchase=` from the address in place, so
+  neither Back nor a reload opens it again. Nothing else stops: the page goes on
+  reading until the license is there or the minute is up, so a person who
+  presses OK while it is setting up sees the card turn ready, and the card stays
+  first and ringed for as long as the page is open.
 - **Back from the page that added a license for the person.** The hosted page of
   row 5 above returns to `/licenses?workspace=<id>&added=<licenseId>`. The page
-  reads Core's licenses (and billing's status, for a person offered billing)
-  every 2 seconds for up to a minute, until the person's membership holds a seat
-  of that license's product, and shows nothing while it waits. Then it shows the
-  assigned banner for one unpaid license, "Purchase complete" and "<product> is
-  active, and it's assigned to you." (the add may be charged now or on the next
-  invoice, so it claims no payment), and Dismiss removes `?added=` from the
-  address in place. If the person does not hold the product by the end of the
-  minute, the banner says "Your purchase went through" and "The licenses can take
-  a few minutes to appear.", with Reload.
+  opens the same dialog, for one unpaid license (the add may be charged now or
+  on the next invoice, so it claims no payment), and reads Core's licenses (and
+  billing's status, for a person offered billing) every 2 seconds for up to a
+  minute, until the person's membership holds a seat of that license's product.
+  While it waits the dialog says "Purchase complete" and "Setting up 1
+  <product> license. This takes a few seconds; you can stay on this page."; then
+  "<product> is active, and it's assigned to you." If the person does not hold
+  the product by the end of the minute, it says "Your purchase went through"
+  and "The licenses can take a few minutes to appear.", with Reload. A license
+  Core does not list cannot be named, so for one the dialog opens only at the
+  end of the minute. OK (or Escape, the × or the backdrop) closes it and
+  removes `?added=` from the address in place, and the page goes on reading
+  until the person holds the product or the minute is up.
+- **One dialog at a time.** A link's answer (below) comes first, then the
+  dialog back from checkout, then the one back from the page that added a
+  license. The link's `?buy=` leaves the address before the browser goes to
+  checkout, so the return finds no link; the order only matters for an address
+  made by hand.
 - **A link that asks to buy.** A person who follows
   `/licenses?buy=<product>` (a product's key) signs in if they have to (the
   sign-in page says "Sign in to buy <product's name>.", from a public read of the
@@ -491,7 +510,7 @@ the page does.
 | Viewer | The page shows | The page reads |
 | --- | --- | --- |
 | **A plain member** (Member or Developer) | Only the products they hold a license for, each as "Assigned to you" with "Your license" since when, "Given by" the workspace, and the miniapps it works in. No totals, no money, no one else's licenses, no controls. The Licenses item is in their sidebar while they hold a license. | Their licenses from Core, and the catalog for names and icons. Not billing's status, not the members. |
-| **A billing manager** (an Admin or Owner offered billing) | Every product with its licenses and who holds each. They assign and unassign, from a card (Unassign asks in a dialog) or the people picker. Each license's cost and dates, the total, billing's actions and the failed-payment notices, buying, the header actions, and the banner after checkout. Where billing uses a test key, a test-mode banner above it all. | Core's licenses and the members, billing's catalog and billing's status. |
+| **A billing manager** (an Admin or Owner offered billing) | Every product with its licenses and who holds each. They assign and unassign, from a card (Unassign asks in a dialog) or the people picker. Each license's cost and dates, billing's actions and the failed-payment notices, buying, the header actions, and the dialog after checkout. Where billing uses a test key, a test-mode banner above it all. | Core's licenses and the members, billing's catalog and billing's status. |
 
 - **Who is a billing manager.** Billing is offered when `modules.billing` is true
   and the person holds `workspace.billing.manage`. The roles hold the three

@@ -12,14 +12,8 @@ import { workspaceScope } from "./billing-scope";
 import { formatMoney } from "./lib/billing-format";
 import { AlertText, ErrorNotice } from "./components/common";
 import { LicenseCard, type LicenseCardProps } from "./components/licenses/license-card";
-import {
-  LicensesSummary,
-  LicensesUnavailable,
-  PURCHASE_POLL_MS,
-  PURCHASE_TIMEOUT_MS,
-  PurchaseBanner,
-  TestModeBanner,
-} from "./components/licenses/banners";
+import { LicensesUnavailable, TestModeBanner } from "./components/licenses/banners";
+import { PURCHASE_POLL_MS, PURCHASE_TIMEOUT_MS, PurchaseDialog } from "./components/licenses/purchase-dialog";
 import { PeoplePickerDialog } from "./components/licenses/people-picker";
 import { memberLabel } from "./components/licenses/parts";
 import { SeatRoster, seatHolders, type SeatHolder } from "./components/licenses/seats";
@@ -205,9 +199,11 @@ describe("an active license", () => {
   test("shows its badge, licenses, renewal and cost", async () => {
     await mountCard(rig(), joined(coreLicense(5, [HANNAH, TOM, NOAH]), {}));
     const card = text(theCard());
-    for (const expected of ["Mentra Call Unlimited", "Unlimited Teams calls in Mentra Call.", "Active", "3 of 5 assigned", "Renews", "Nov 20, 2026", "$145 a month", "Before tax"]) {
+    for (const expected of ["Mentra Call Unlimited", "Active", "3 of 5 assigned", "Renews", "Nov 20, 2026", "$145 a month", "Before tax"]) {
       expect(card).toContain(expected);
     }
+    // A product the workspace holds needs no pitch: the catalog's description is for buying, not on the card.
+    expect(card).not.toContain("Unlimited Teams calls in Mentra Call.");
     // The lines the meter, the date and the amount already say are not repeated: the count of licenses available, the
     // recurrence under the renewal date, and the quantity × unit under the cost.
     for (const gone of ["available", "Every month", "5 ×", "× $29"]) expect(card).not.toContain(gone);
@@ -981,6 +977,7 @@ describe("a member's own view", () => {
     expect(card).toContain("Works in");
     expect(card).toContain("Mentra Call");
     expect(card).toContain("The next time you open it");
+    expect(card).not.toContain("Unlimited Teams calls in Mentra Call.");
     // No totals, no money, no controls, nobody else.
     // The badge says "Assigned to you"; what is absent is the roster ("Assigned to"), the count of licenses assigned, and any button.
     const rest = card.replace("Assigned to you", "");
@@ -1737,77 +1734,124 @@ describe("the people picker", () => {
   });
 });
 
-// ---- the banners -----------------------------------------------------------------------------------------------
+// ---- back from checkout, and the banners --------------------------------------------------------------------------
 
-describe("the purchase banner", () => {
+describe("the purchase dialog", () => {
   const processing = { status: "processing", quantity: 5, paid: true };
   const ready = { status: "ready", quantity: 5, paid: true };
-  const banner = (props: Partial<Parameters<typeof PurchaseBanner>[0]> = {}) => (
-    <PurchaseBanner purchase={ready} productName="Mentra Call Unlimited" listed onDismiss={() => {}} {...props} />
+  const dialog = (props: Partial<Parameters<typeof PurchaseDialog>[0]> = {}) => (
+    <PurchaseDialog purchase={ready} productName="Mentra Call Unlimited" entry={catalogEntryFor()} listed onClose={() => {}} {...props} />
   );
+  const theDialog = () => find<HTMLDialogElement>("dialog");
+  const words = () => text(find("[data-phase]"));
+  const phase = () => find("[data-phase]").getAttribute("data-phase");
+  const again = (view: { rerender(ui: ReactElement): Promise<void> }, props: Partial<Parameters<typeof PurchaseDialog>[0]>) =>
+    view.rerender(<QueryClientProvider client={newClient()}>{dialog(props)}</QueryClientProvider>);
 
-  test("is 'Payment received' and 'Setting up…' while billing is still working", async () => {
-    await mount(banner({ purchase: processing, listed: false }));
-    const words = text(find("section"));
-    expect(words).toContain("Payment received");
-    expect(words).toContain("Setting up 5 Mentra Call Unlimited licenses. This takes a few seconds; you can stay on this page.");
-    expect(words).toContain("Setting up…");
-    expect(find("section").getAttribute("role")).toBe("status");
-    expect(findAll(".animate-spin", find("section"))).toHaveLength(1);
-    expect(hasButton("Dismiss")).toBe(false);
+  test("is a modal dialog titled with the product's name and icon, with one OK and the dialog's own ×", async () => {
+    await mount(dialog());
+    expect(theDialog().open).toBe(true);
+    expect(find("h2", theDialog()).textContent).toBe("Mentra Call Unlimited");
+    expect(find<HTMLImageElement>("img", theDialog()).getAttribute("src")).toBe("/api/portal/billing/ui/icons/mentra-call.png");
+    expect(buttons(theDialog())).toEqual(["Close", "OK"]);
+    // It opens on OK, so Enter closes it and the × is not where the eye lands.
+    expect(document.activeElement === buttonNamed("OK", theDialog())).toBe(true);
+    // No banner in the page's flow: the words are inside the dialog, a live region as they change.
+    expect(findAll("section")).toHaveLength(0);
+    expect(find("[data-phase]").getAttribute("role")).toBe("status");
+  });
+
+  test("without the catalog's entry it is titled 'Licenses', with no icon, and names the product by what it was given", async () => {
+    await mount(dialog({ entry: null, productName: "mentra.gone", purchase: { ...ready, quantity: 2 } }));
+    expect(find("h2", theDialog()).textContent).toBe("Licenses");
+    expect(findAll("img", theDialog())).toHaveLength(0);
+    expect(words()).toContain("Your 2 mentra.gone licenses are ready");
+  });
+
+  test("is 'Payment received' and 'Setting up…' while billing is still working, and OK is already there", async () => {
+    const closed = mock(() => {});
+    await mount(dialog({ purchase: processing, listed: false, onClose: closed }));
+    expect(words()).toContain("Payment received");
+    expect(words()).toContain("Setting up 5 Mentra Call Unlimited licenses. This takes a few seconds; you can stay on this page.");
+    expect(words()).toContain("Setting up…");
+    expect(findAll(".animate-spin", theDialog())).toHaveLength(1);
+    expect(buttons(theDialog())).toEqual(["Close", "OK"]);
+    await press("OK");
+    expect(closed).toHaveBeenCalledTimes(1);
   });
 
   test("moves to ready when billing says ready and Core lists the license", async () => {
-    const dismissed = mock(() => {});
-    const view = await render(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false, onDismiss: dismissed })}</QueryClientProvider>);
+    const closed = mock(() => {});
+    const view = await render(<QueryClientProvider client={newClient()}>{dialog({ purchase: processing, listed: false, onClose: closed })}</QueryClientProvider>);
     // Billing is ready, Core hasn't got it: still setting up.
-    await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: ready, listed: false, onDismiss: dismissed })}</QueryClientProvider>);
-    expect(text(find("section"))).toContain("Payment received");
-    expect(find("section").getAttribute("data-phase")).toBe("processing");
+    await again(view, { purchase: ready, listed: false, onClose: closed });
+    expect(words()).toContain("Payment received");
+    expect(phase()).toBe("processing");
     // Core has it, billing is still working: also setting up.
-    await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: true, onDismiss: dismissed })}</QueryClientProvider>);
-    expect(find("section").getAttribute("data-phase")).toBe("processing");
-    await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: ready, listed: true, onDismiss: dismissed })}</QueryClientProvider>);
-    const words = text(find("section"));
-    expect(find("section").getAttribute("data-phase")).toBe("ready");
-    expect(words).toContain("Your 5 Mentra Call Unlimited licenses are ready");
-    expect(words).toContain("Payment received, and Mentra Call Unlimited is active. Assign the licenses to members below.");
+    await again(view, { purchase: processing, listed: true, onClose: closed });
+    expect(phase()).toBe("processing");
+    await again(view, { purchase: ready, listed: true, onClose: closed });
+    expect(phase()).toBe("ready");
+    expect(words()).toContain("Your 5 Mentra Call Unlimited licenses are ready");
+    expect(words()).toContain("Payment received, and Mentra Call Unlimited is active. Assign the licenses to members below.");
     expect(findAll(".animate-spin")).toHaveLength(0);
-    await press("Dismiss");
-    expect(dismissed).toHaveBeenCalledTimes(1);
+    // The same dialog all along: it changed its words, it didn't close and open again.
+    expect(findAll("dialog")).toHaveLength(1);
+    expect(closed).not.toHaveBeenCalled();
+    await press("OK");
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+
+  test("the ×, Escape and the backdrop close it too", async () => {
+    for (const how of ["×", "Escape", "backdrop"] as const) {
+      const closed = mock(() => {});
+      await mount(dialog({ onClose: closed }));
+      if (how === "×") await press("Close");
+      else if (how === "Escape")
+        await act(async () => {
+          if (theDialog().dispatchEvent(new Event("cancel", { cancelable: true }))) theDialog().close();
+        });
+      else await click(theDialog());
+      expect([how, closed.mock.calls.length]).toEqual([how, 1]);
+      await cleanup();
+    }
   });
 
   test("one license says 'is ready'", async () => {
-    await mount(banner({ purchase: { ...ready, quantity: 1 } }));
-    expect(text(find("section"))).toContain("Your 1 Mentra Call Unlimited license is ready");
+    await mount(dialog({ purchase: { ...ready, quantity: 1 } }));
+    expect(words()).toContain("Your 1 Mentra Call Unlimited license is ready");
   });
 
-  test("told it has timed out it says the payment went through, with Reload; until then it is still setting up", async () => {
+  test("told it has timed out it says the payment went through, with Reload and OK; until then it is still setting up", async () => {
     const onReload = mock(() => {});
-    const view = await render(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false, onReload })}</QueryClientProvider>);
+    const closed = mock(() => {});
+    const view = await render(<QueryClientProvider client={newClient()}>{dialog({ purchase: processing, listed: false, onReload, onClose: closed })}</QueryClientProvider>);
     expect(PURCHASE_TIMEOUT_MS).toBe(60_000);
-    expect(find("section").getAttribute("data-phase")).toBe("processing");
-    await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false, onReload, timedOut: true })}</QueryClientProvider>);
-    const words = text(find("section"));
-    expect(find("section").getAttribute("data-phase")).toBe("timeout");
-    expect(words).toContain("Your payment went through");
-    expect(words).toContain("The licenses can take a few minutes to appear.");
-    expect(hasButton("Dismiss")).toBe(false);
+    expect(phase()).toBe("processing");
+    expect(hasButton("Reload")).toBe(false);
+    await again(view, { purchase: processing, listed: false, onReload, onClose: closed, timedOut: true });
+    expect(phase()).toBe("timeout");
+    expect(words()).toContain("Your payment went through");
+    expect(words()).toContain("The licenses can take a few minutes to appear.");
+    expect(buttons(theDialog())).toEqual(["Close", "Reload", "OK"]);
     await press("Reload");
     expect(onReload).toHaveBeenCalledTimes(1);
+    expect(closed).not.toHaveBeenCalled();
+    await press("OK");
+    expect(closed).toHaveBeenCalledTimes(1);
   });
 
   test("keeps no clock of its own: the page's flow says when the minute is up", async () => {
-    // Not on fake timers (see `turn` in test-dom): the banner is shown to start no timer on the page's scale, which
+    // Not on fake timers (see `turn` in test-dom): the dialog is shown to start no timer on the page's scale, which
     // is what a clock of its own would be. The library's zero-length turns are not one.
     const timeouts = spyOn(globalThis, "setTimeout");
     const intervals = spyOn(globalThis, "setInterval");
     try {
-      const view = await render(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false })}</QueryClientProvider>);
-      await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false })}</QueryClientProvider>);
+      const view = await render(<QueryClientProvider client={newClient()}>{dialog({ purchase: processing, listed: false })}</QueryClientProvider>);
+      await again(view, { purchase: processing, listed: false });
       // Nobody has said the minute is up: it is still setting up.
-      expect(find("section").getAttribute("data-phase")).toBe("processing");
-      expect(findAll(".animate-spin", find("section"))).toHaveLength(1);
+      expect(phase()).toBe("processing");
+      expect(findAll(".animate-spin", theDialog())).toHaveLength(1);
       const started = [...timeouts.mock.calls, ...intervals.mock.calls].map(([, delay]) => Number(delay ?? 0));
       expect(started.length).toBeGreaterThan(0);
       expect(started.filter((delay) => delay >= PURCHASE_POLL_MS)).toEqual([]);
@@ -1818,43 +1862,44 @@ describe("the purchase banner", () => {
   });
 
   test("a license that arrives after the minute still turns it ready, and a ready one never reads as timed out", async () => {
-    const view = await render(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false, timedOut: true })}</QueryClientProvider>);
-    expect(find("section").getAttribute("data-phase")).toBe("timeout");
-    await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: ready, listed: true, timedOut: true })}</QueryClientProvider>);
-    expect(find("section").getAttribute("data-phase")).toBe("ready");
+    const view = await render(<QueryClientProvider client={newClient()}>{dialog({ purchase: processing, listed: false, timedOut: true })}</QueryClientProvider>);
+    expect(phase()).toBe("timeout");
+    await again(view, { purchase: ready, listed: true, timedOut: true });
+    expect(phase()).toBe("ready");
+    expect(hasButton("Reload")).toBe(false);
     await cleanup();
-    await mount(banner({ purchase: ready, listed: true, timedOut: true }));
-    expect(find("section").getAttribute("data-phase")).toBe("ready");
+    await mount(dialog({ purchase: ready, listed: true, timedOut: true }));
+    expect(phase()).toBe("ready");
   });
 
   test("a checkout that collected no payment says 'Purchase complete' and never 'Payment received'", async () => {
     const free = { ...processing, paid: false };
-    const view = await render(<QueryClientProvider client={newClient()}>{banner({ purchase: free, listed: false })}</QueryClientProvider>);
-    const seen: string[] = [text(find("section"))];
+    const view = await render(<QueryClientProvider client={newClient()}>{dialog({ purchase: free, listed: false })}</QueryClientProvider>);
+    const seen: string[] = [words()];
     expect(seen[0]).toContain("Purchase complete");
-    await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: free, listed: false, timedOut: true })}</QueryClientProvider>);
-    seen.push(text(find("section")));
+    await again(view, { purchase: free, listed: false, timedOut: true });
+    seen.push(words());
     expect(seen[1]).toContain("Your purchase went through");
-    await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: { ...ready, paid: false }, listed: true })}</QueryClientProvider>);
-    seen.push(text(find("section")));
+    await again(view, { purchase: { ...ready, paid: false }, listed: true });
+    seen.push(words());
     expect(seen[2]).toContain("Mentra Call Unlimited is active. Assign the licenses");
-    for (const words of seen) {
-      expect(words).not.toContain("Payment received");
-      expect(words).not.toContain("payment went through");
+    for (const said of seen) {
+      expect(said).not.toContain("Payment received");
+      expect(said).not.toContain("payment went through");
     }
   });
 
   test("given the viewer's own license it says so; that is only in the ready state", async () => {
-    await mount(banner({ purchase: { ...ready, quantity: 1 }, assigned: true }));
-    expect(text(find("section"))).toContain("Your Mentra Call Unlimited license is ready");
-    expect(text(find("section"))).toContain("Payment received, and it's assigned to you.");
+    await mount(dialog({ purchase: { ...ready, quantity: 1 }, assigned: true }));
+    expect(words()).toContain("Your Mentra Call Unlimited license is ready");
+    expect(words()).toContain("Payment received, and it's assigned to you.");
     await cleanup();
-    await mount(banner({ purchase: { ...ready, quantity: 5, paid: false }, assigned: true }));
-    expect(text(find("section"))).toContain("Your 5 Mentra Call Unlimited licenses are ready");
-    expect(text(find("section"))).toContain("Mentra Call Unlimited is active, and one is assigned to you. Assign the rest to members below.");
+    await mount(dialog({ purchase: { ...ready, quantity: 5, paid: false }, assigned: true }));
+    expect(words()).toContain("Your 5 Mentra Call Unlimited licenses are ready");
+    expect(words()).toContain("Mentra Call Unlimited is active, and one is assigned to you. Assign the rest to members below.");
     await cleanup();
-    await mount(banner({ purchase: processing, listed: false, assigned: true }));
-    expect(text(find("section"))).not.toContain("assigned to you");
+    await mount(dialog({ purchase: processing, listed: false, assigned: true }));
+    expect(words()).not.toContain("assigned to you");
   });
 });
 
@@ -2013,18 +2058,7 @@ describe("the test-mode banner", () => {
   });
 });
 
-describe("the summary and the unavailable state", () => {
-  test("the summary is billing's total: '2 products · $295 a month in total'", async () => {
-    await mount(<LicensesSummary total={{ amount: usd(29500), recurrence: { interval: "month", count: 1 }, tax: "excluded", licenseCount: 2 }} locale="en-US" />);
-    expect(text()).toBe("2 products · $295 a month in total");
-    expect(find("p span.font-semibold").textContent).toBe("2 products");
-  });
-
-  test("with no total from billing there is no line", async () => {
-    await mount(<LicensesSummary total={null} locale="en-US" />);
-    expect(text()).toBe("");
-  });
-
+describe("the unavailable state", () => {
   test("unavailable says so and offers Retry", async () => {
     const retry = mock(() => {});
     await mount(<LicensesUnavailable onRetry={retry} />);

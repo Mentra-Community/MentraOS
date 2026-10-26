@@ -4,13 +4,12 @@
  * tag it renders in, which it also sends billing) and puts the words in `strings/licenses.ts`, so this file
  * decides how a value is formatted and that file decides what is said.
  *
- * Core adds no amounts. A total on a page is billing's, and the one product shown (seats × unit, in the Buy
+ * Core adds no amounts. A license's cost is billing's total, and the one product shown (seats × unit, in the Buy
  * dialog) is the caller's.
  */
 
 import {
   isPerSeat,
-  type BillingTotal,
   type LicenseBilling,
   type Money,
   type Price,
@@ -113,15 +112,6 @@ export function costFact(
     value: t.facts.cost.value(formatMoney(license.total, locale), formatRecurrence(price.recurrence, locale)),
     foot,
   };
-}
-
-/** The line above the cards: "2 products" (for bold) and "$295 a month in total", from billing's own total. */
-export function totalSummary(total: BillingTotal, locale: string): { lead: string; rest: string } {
-  return t.summary({
-    count: total.licenseCount,
-    amount: formatMoney(total.amount, locale),
-    rate: formatRecurrence(total.recurrence, locale),
-  });
 }
 
 /** Who holds the seats, for a strip: "Dana Reyes, Priya Natarajan and 8 others", or "No one has a license yet". */
