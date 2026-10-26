@@ -1420,6 +1420,50 @@ test('serialized stage rechecks the original baseline after its recorder authori
  });
 });
 
+test('routing skips known-empty recorder returns and reuses its unchanged host read, while selected admission still reconciles',async()=>{
+ await withLocalResources(async(f,_hosts,counters)=>{
+  const serviceHosts=(f.service as unknown as {hosts:{list:()=>Promise<ReceivedTestHostState[]>}}).hosts;
+  const list=spyOn(serviceHosts,'list'),reconcile=spyOn(routineJobRepository,'reconcileRecorderHost');
+  try {
+   const prepared=await f.prepare();
+   expect((prepared as {resourceTarget?:{hostId:string;laneId:string}}).resourceTarget).toBeDefined();
+   expect({hostLists:list.mock.calls.length,recorderReconciliations:reconcile.mock.calls.length}).toEqual({hostLists:1,recorderReconciliations:1});
+   expect(counters.host).toBeGreaterThan(0);expect(counters.request).toBeGreaterThan(0);
+   expect(f.row!.fleetResourceReservation?.requestId).toBe(selection.requestId);
+   expect(f.row!.fleetBinding).toBeUndefined();
+  }finally{list.mockRestore();reconcile.mockRestore()}
+ });
+});
+
+test('an unchanged live recorder claim keeps custody without a second full host read',async()=>{
+ await withLocalResources(async(f,hosts,_counters,pastRows)=>{
+  for(const h of hosts.values()) {
+   const at=h.receivedAt.toISOString(),claim={id:'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',requestId:`active-${h.hostId}`,fleetInputSha256:'c'.repeat(64),hostId:h.hostId,laneId:'android',poolId:`${h.hostId}:disk:1`,minimumAvailableBytes:3*1024**3,reservedAt:at};
+   h.resourceReservations=[claim];pastRows.set(claim.requestId,{requestId:claim.requestId,fleetInputSha256:claim.fleetInputSha256,state:'running'} as StoredRoutineJob);
+  }
+  const originalClaims=[...hosts.values()].map(h=>structuredClone(h.resourceReservations));
+  const serviceHosts=(f.service as unknown as {hosts:{list:()=>Promise<ReceivedTestHostState[]>}}).hosts;
+  const list=spyOn(serviceHosts,'list'),reconcile=spyOn(routineJobRepository,'reconcileRecorderHost');
+  try {
+   expect((await f.prepare()).waitingReason).toBeDefined();
+   expect({hostLists:list.mock.calls.length,recorderReconciliations:reconcile.mock.calls.length}).toEqual({hostLists:1,recorderReconciliations:2});
+   expect([...hosts.values()].map(h=>h.resourceReservations)).toEqual(originalClaims);
+   expect(f.row!.fleetResourceReservation).toBeUndefined();expect(f.row!.fleetBinding).toBeUndefined();
+  }finally{list.mockRestore();reconcile.mockRestore()}
+ });
+});
+
+test('missing authority inventory still receives ordinary recorder return reconciliation',async()=>{
+ await withLocalResources(async(f)=>{
+  const serviceHosts=(f.service as unknown as {hosts:{list:()=>Promise<ReceivedTestHostState[]>}}).hosts,originalList=serviceHosts.list;
+  const list=spyOn(serviceHosts,'list').mockImplementation(async()=>
+   (await originalList()).map(({authorityReservations:_,...host})=>host));
+  const reconcile=spyOn(routineJobRepository,'reconcileRecorderHost');
+  try {await f.prepare();expect(list).toHaveBeenCalledTimes(1);expect(reconcile).toHaveBeenCalledTimes(3)}
+  finally{list.mockRestore();reconcile.mockRestore()}
+ });
+});
+
 for(const platform of ['android','ios-on-mac'] as const)test(`a completed ${platform} recorder claim reconciles before selecting the next SAME job`,async()=>{
  await withLocalResources(async(f,hosts,_counters,pastRows)=>{
   const at=hosts.get('mini').receivedAt.toISOString();
@@ -1431,7 +1475,9 @@ for(const platform of ['android','ios-on-mac'] as const)test(`a completed ${plat
   const first=await f.service.submit(selection), selectedDefinition={...definition,platforms:[platform],execution:{resourceKinds:['phone','app','recorder','network'],policy:{estimatedOutputBytes:1024**3}},source:definition.source};
   if(platform==='ios-on-mac'){const row=structuredClone(f.row!);row.fleetSelection.platform=platform;row.fleetSelectionSha256=requestInputDigest(row.fleetSelection);f.restore(row)}
   const row=f.row!;await f.service.prepared(selection.requestId,{inputSha256:row.fleetSelectionSha256,routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});
-  const prepared=await f.service.preparation(selection.requestId);
+  const serviceHosts=(f.service as unknown as {hosts:{list:()=>Promise<ReceivedTestHostState[]>}}).hosts;
+  const list=spyOn(serviceHosts,'list');let prepared:Awaited<ReturnType<RoutineJobService['preparation']>>;
+  try {prepared=await f.service.preparation(selection.requestId);expect(list).toHaveBeenCalledTimes(2)} finally {list.mockRestore()}
   expect((prepared as {resourceTarget?:{hostId:string;laneId:string}}).resourceTarget).toBeDefined();
   expect([...hosts.values()].flatMap(h=>h.resourceReservations).some(claim=>claim.requestId.startsWith('prior-'))).toBe(false);
   expect(f.row!.requestId).toBe(selection.requestId);expect(f.row!.fleetSelection.build).toEqual(row.fleetSelection.build);expect(f.row!.fleetDeadline).toEqual(row.fleetDeadline);expect(f.row!.fleetBinding).toBeUndefined();
@@ -1464,9 +1510,11 @@ for(const refusal of ['missing-request','changed-digest','active-offer','wrong-p
   const replace=resourceReservationRepository.replace;
   if(refusal==='report-race')resourceReservationRepository.replace=async(host,claims)=>{h.sequence++;return replace(host,claims)};
   if(refusal==='lost-cas')resourceReservationRepository.replace=async()=>{throw Error('Original CAS reply lost')};
+  let returned=0;
   try {
-   if(refusal==='lost-cas')await expect(routineJobRepository.reconcileRecorderHost!('mini',h.receivedAt)).rejects.toThrow('Original CAS reply lost');
-   else await routineJobRepository.reconcileRecorderHost!('mini',h.receivedAt);
+   if(refusal==='lost-cas')await expect(routineJobRepository.reconcileRecorderHost!('mini',h.receivedAt,undefined,()=>{returned++})).rejects.toThrow('Original CAS reply lost');
+   else await routineJobRepository.reconcileRecorderHost!('mini',h.receivedAt,undefined,()=>{returned++});
+   expect(returned).toBe(0);
    expect(h.resourceReservations).toEqual([claim]);expect(f.row).toBeNull();
   }finally{resourceReservationRepository.replace=replace}
  });

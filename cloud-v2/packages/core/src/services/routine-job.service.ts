@@ -50,7 +50,7 @@ export interface RoutineJobRepository {
   preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
   selectedLanes?(hostIds: string[]): Promise<SelectedRoutineLane[]>;
   recorderClaims?(jobId: string): Promise<RecorderHostReservation[]>;
-  reconcileRecorderHost?(hostId: string, now: Date, onPhase?: RoutinePreparationPhase): Promise<boolean>;
+  reconcileRecorderHost?(hostId: string, now: Date, onPhase?: RoutinePreparationPhase, onReturned?: () => void): Promise<boolean>;
   checkpointBackendRecorder?(row: StoredRoutineJob, claim: RecorderHostReservation, now: Date): Promise<StoredRoutineJob | null>;
   reconcileBackendRecorderCancellation?(jobId: string, now: Date): Promise<void>;
   reserveResources?(jobId: string, inputSha256: string, hostId: string, laneId: string, now: Date,
@@ -78,7 +78,7 @@ export const routineJobRepository: RoutineJobRepository = {
   async completionRequest(requestId) {return await TestRequestModel.findOne({requestId})
     .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob | null;},
   async recorderClaims(requestId) {return resourceReservationRepository.recorderClaims!(requestId);},
-  async reconcileRecorderHost(hostId, now, onPhase) {
+  async reconcileRecorderHost(hostId, now, onPhase, onReturned) {
     // Return reconciliation precedes readiness routing. Raw claims remain custody
     // until the original request and a later fresh same-pool offer prove return.
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -113,7 +113,9 @@ export const routineJobRepository: RoutineJobRepository = {
       if (!returned.length) return true;
       if (!freshRoutineHost(host.receivedAt, Date.now()) || !freshRoutineHost(host.snapshot.observedAt, Date.now())) return false;
       onPhase?.('recorder-return-CAS', {attempt, claimCount: claims.length});
-      if (await resourceReservationRepository.replace(host, all.filter(claim => !returned.includes(claim as RecorderHostReservation)))) return true;
+      if (await resourceReservationRepository.replace(host, all.filter(claim => !returned.includes(claim as RecorderHostReservation)))) {
+        onReturned?.(); return true;
+      }
     }
     return false;
   },
@@ -1662,13 +1664,17 @@ export class RoutineJobService {
     if (row.state !== 'awaiting-runner' || row.fleetCancellation || row.fleetDeadline.getTime() <= this.now())
       return {...routineJobRouting(recorderCapacityRequirements(row.fleetPreparation!), hosts, this.now(), row.fleetTarget, row.fleetSelection.build, true, original), waitingReason: RESOURCE_ADMISSION_WAIT};
     if (this.rows.reconcileRecorderHost) {
+      let returned = false;
       for (const [hostIndex, host] of hosts.entries()) {
+        if (host.authorityReservations && !host.authorityReservations.some(claim => !isExclusiveHostReservation(claim))) continue;
         onPhase?.('recorder-return-reconciliation', {hostCount: hosts.length, hostIndex});
         await this.rows.reconcileRecorderHost(host.hostId, new Date(this.now()),
-          (phase, counts) => onPhase?.(phase, {hostCount: hosts.length, hostIndex, ...counts}));
+          (phase, counts) => onPhase?.(phase, {hostCount: hosts.length, hostIndex, ...counts}), () => {returned = true;});
       }
-      onPhase?.('refreshed-host-read', {hostCount: hosts.length});
-      hosts = await this.hosts.list?.() ?? [];
+      if (returned) {
+        onPhase?.('refreshed-host-read', {hostCount: hosts.length});
+        hosts = await this.hosts.list?.() ?? [];
+      }
     }
     if (row.fleetCandidatePreparation) return {...routineJobRouting(recorderCapacityRequirements(row.fleetPreparation!), hosts, this.now(), row.fleetTarget, row.fleetSelection.build, true, original),
       waitingReason: row.fleetCandidatePreparation.target.purpose?.kind === 'resource-readiness'
