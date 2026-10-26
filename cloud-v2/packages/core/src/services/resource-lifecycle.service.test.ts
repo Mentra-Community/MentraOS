@@ -46,6 +46,19 @@ test('resource-only passive custody can omit an execution lane',()=>{
 const canonical='google-account-opaque-1';
 const claim={kind:'exclusive' as const,id:'d7811de8-f7e7-4808-aef6-a2d97ecbc853',resourceId:canonical,authorityHostId:'host-a',borrowerHostId:'host-b',laneId:'android',operationId:'run:run-1',intentSha256:'a'.repeat(64),inputSha256:'b'.repeat(64),owner:{id:'run-1',kind:'run' as const},controllerIncarnation:'process-1',controllerGeneration:7,borrowerSequence:12,reservedAt:at};
 function fleetRows(held=true) {return [{hostId:'host-a',receivedAt:new Date('2020-01-01'),resourceReservationVersion:9,resourceReservations:held?[claim]:[],snapshot:{hostId:'host-a',lanes:[{id:'android',resources:[{exclusiveDependencies:[{resourceId:canonical,authorityHostId:'host-a',capability:'google-login'}]}]}]}},{hostId:'host-b',receivedAt:new Date(at),snapshot:{hostId:'host-b',lanes:[{id:'android',resources:[{exclusiveDependencies:[{resourceId:canonical,authorityHostId:'host-a',capability:'google-login'}]}]}]}}]}
+test('ordinary fleet claim preserves the accepted historical checklist without promoting readiness or changing custody',()=>{
+ const checked:ResourceLifecycleSubject={...subject,subject:{...subject.subject,id:canonical},idle:{...subject.idle,report:{resourceId:canonical,
+  authorityHostId:'host-a',contractVersion:'account-v1',operationId:'check-2',checkedAt:at,resultSha256:'a'.repeat(64),outcome:'passed',evidenceRefs:[],
+  conditions:[{id:'session-closed',label:'Session closed',status:'passed',reportedStatus:'passed',observed:null,expected:null,explanation:null,repairAction:null,evidenceRefs:[],source:null}]}}};
+ const original=structuredClone(checked),authority={...row(checked),resourceReservationVersion:9,resourceReservations:[claim]};
+ for(const time of [now,now+3600000]) {
+  const value=projectResourceLifecycle([authority],time).subjects[0]!;
+  expect(value.idle.report).toEqual(checked.idle.report);
+  expect(value).toMatchObject({status:'reserved',generation:9,owner:{id:'run-1',generation:null,hostId:'host-b'},supportedActions:[]});
+  expect(value.idle.outcome).toBe('not-checked');expect(value.idle.acceptedCheck).toBeNull();
+ }
+ expect(checked).toEqual(original);
+});
 test('fleet claim appears once across aliases without fabricated owner generation',()=>{
  const result=projectResourceLifecycle(fleetRows(),now);expect(result.subjects).toHaveLength(1);
  const value=result.subjects[0]!;expect(value.subject.id).toBe(canonical);expect(value.status).toBe('reserved');expect(value.generation).toBe(9);expect(value.owner?.generation).toBeNull();expect(value.owner?.hostId).toBe('host-b');expect(value.resource.memberships).toEqual([]);expect(value.idle.outcome).toBe('not-checked');expect(value.supportedActions).toEqual([]);

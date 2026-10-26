@@ -15,6 +15,21 @@ let clock: ReturnType<typeof spyOn<typeof Date, 'now'>>;
 beforeEach(() => {clock = spyOn(Date, 'now').mockReturnValue(now);});
 afterEach(() => {clock.mockRestore();});
 
+test('initial resource loading is distinct from an actual refresh error', () => {
+  const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
+  client.setQueryData(['lane-overview'], {hosts: [host], freshForMs: 120_000});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LaneHealthSection /></QueryClientProvider>);
+  expect(html).toContain('Loading physical resource reports');
+  expect(html).not.toContain('Resource reports could not refresh');
+  expect(html).not.toContain('Required resource membership not reported');
+  client.setQueryData(['resource-lifecycle'], {subjects: [], generatedAt: at, history: [], truncated: false});
+  client.getQueryCache().find({queryKey: ['resource-lifecycle']})!.setState({status: 'error', error: new Error('Refresh failed')});
+  const failed = renderToStaticMarkup(<QueryClientProvider client={client}><LaneHealthSection /></QueryClientProvider>);
+  expect(failed).toContain('Physical resource reports could not refresh');
+  expect(failed).not.toContain('Loading physical resource reports');
+  client.clear();
+});
+
 test("main System Health shows controller lanes independently of host monitoring", () => {
   const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
   client.setQueryData(["test-host-health"], {hosts: []});

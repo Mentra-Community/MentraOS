@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {resourceCheckReportSchema} from './resource-check-report.types';
 import {frameworkIdentitySchema as id} from './framework-request.types';
 const timestamp = z.string().datetime({offset:true});
 const generation = z.number().int().nonnegative().safe();
@@ -20,7 +21,7 @@ export const resourceLifecycleSubjectSchema = z.object({
   owner:z.object({id,kind:z.enum(['run','authoring','boundary-cleanup','fixer']),generation:generation.nullable(),hostId:id,laneId:id.optional(),requestId:id.optional()}).strict().nullable(),
   idle:z.object({contractVersion:id,outcome:z.enum(['passed','failed','unknown','not-checked']),checkedAt:timestamp.nullable(),
     acceptedCheck:z.object({operationId:id,subjectGeneration:generation,resultSha256:z.string().regex(/^[a-f0-9]{64}$/),acceptedAt:timestamp}).strict().nullable(),
-    qualifiedScope:qualifiedScopeSchema,evidenceRefs:z.array(id).max(100)}).strict(),
+    qualifiedScope:qualifiedScopeSchema,evidenceRefs:z.array(id).max(100),report:resourceCheckReportSchema.optional()}).strict(),
   repair:z.object({configured:z.boolean(),state:z.enum(['none','queued','running','needs-input','halted']),interruptionId:id.optional(),executionId:id.optional()}).strict(),
   supportedActions:z.array(z.enum(['reserve','release','check','repair','retry-repair','stop-repair','mark-out-of-service'])).max(7),
   resource:z.object({kind:id,capabilities:z.array(id).max(30),memberships:z.array(z.object({hostId:id,laneId:id}).strict()).max(100),dependencies:z.array(id).max(100),placement:z.enum(['installed','fleet'])}).strict(),

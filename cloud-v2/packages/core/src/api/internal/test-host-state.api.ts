@@ -20,7 +20,7 @@ export function createTestHostStateApi(service = new TestHostStateService(), cre
   app.post("/", frameworkBodyLimit(), async c => {
     const input = await frameworkJson(c) as {laneControls?: unknown}
     const receipt = await service.report(input, c.var.testHostId)
-    return c.json({...receipt, ...(input.laneControls === undefined ? {} : {
+    return c.json({...receipt, resourceCheckReports: true, ...(input.laneControls === undefined ? {} : {
       laneControls: await controls.exchange(c.var.testHostId, input.laneControls)})})
   })
   app.post("/deployment", frameworkBodyLimit(), async (c) =>

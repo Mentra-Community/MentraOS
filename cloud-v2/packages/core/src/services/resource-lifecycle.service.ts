@@ -164,6 +164,7 @@ function projectFleetResourceAuthorities(rows:ResourceLifecycleRow[],subjects:Re
         owner:claim?{...claim.owner,generation:null,hostId:claim.borrowerHostId,laneId:claim.laneId}:null,
         idle:{contractVersion:'not-commissioned',outcome:'not-checked',checkedAt:null,acceptedCheck:null,qualifiedScope:{kind:'unqualified'},evidenceRefs:[]},
         repair:{configured:false,state:'none'},supportedActions:[],resource:{kind:'exclusive-dependency',capabilities:[...offer.capabilities],memberships:[],dependencies:[],placement:'fleet'}};
+      if (existing >= 0 && subjects[existing]!.idle.report) value.idle.report = subjects[existing]!.idle.report;
       if ((claim?.prerequisite || claim?.resourceCheck) && existing >= 0) {
         const phone = subjects[existing]!;
         // The raw claim fences this installed phone. Preserve its real local generation and idle/repair semantics.
