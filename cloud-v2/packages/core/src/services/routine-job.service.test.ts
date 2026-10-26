@@ -33,7 +33,6 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
     async get(id){return row?.requestId===id?copy(row):null},async insert(value){if(row)throw Object.assign(Error('duplicate'),{code:11000});row=copy(value)},
     async prepare(id,digest,prepared,inputSha256,now){if(!row||row.requestId!==id||row.state!=='awaiting-source'||row.fleetSelectionSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
       row={...row,fleetPreparation:copy(prepared),fleetInputSha256:inputSha256,state:'awaiting-runner'};return copy(row)},
-    async exhaustPreparation(id,completed,now){if(!row||row.requestId!==id||row.fleetPreparation||row.fleetBinding||row.fleetCancellation||row.fleetDispatch?.attempts!==20||row.fleetActions?.some(run=>!completed.includes(run.actionsRunId)))return null;row={...row,state:'terminal',terminalStatus:'not-run',fleetCancellation:{requestedAt:now.toISOString(),reason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'}};return copy(row)},
     async preparationStatus(id,value,now){if(!row||row.requestId!==id||row.fleetPreparation||row.fleetBinding||row.fleetCancellation||row.state==='terminal'||row.fleetActions?.some(run=>BigInt(run.actionsRunId)>BigInt(value.actionsRunId)))return null;
       row={...row,fleetPreparationStatus:copy(value),...(!value.retryable?{state:'terminal' as const,terminalStatus:value.code==='not-applicable'?'not-applicable':'not-run',fleetCancellation:{requestedAt:now.toISOString(),reason:value.reason}}:{})};return copy(row)},
     async reserveResources(id,digest,hostId,laneId,now) {if(!row||row.requestId!==id||row.fleetInputSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
@@ -892,15 +891,18 @@ test('known exact iOS-only source is refused before Android insertion while unkn
   expect(f.row).toBeNull();
   const unknown=fixture();expect((await unknown.service.submit(selection)).state).toBe('awaiting-source');
 });
-test('completed preparation retries end after twenty deliveries rather than waiting until the deadline', async () => {
-  const f=fixture();await f.service.submit(selection);
-  await f.rows.dispatch!(selection.requestId,undefined,{attempts:20,lastAttemptAt:'2026-10-07T23:59:00.000Z'});
-  (f.service as any).actionsTransport={async dispatch(){throw Error('No twenty-first attempt')},async runs(){return [{actionsRunId:'100',status:'completed',conclusion:'failure'}]},async cancel(){}};
-  expect((await f.service.observation(selection.requestId)).terminal).toBe(false);
-  f.advance(61_000);
-  const observed=await f.service.observation(selection.requestId);
-  expect(observed).toMatchObject({terminal:true,state:'terminal',terminalStatus:'not-run'});
-  expect(observed.waitingReason).toContain('exhausted 20');
+test('a prepared original job retries beyond twenty completed deliveries without replacing its inputs or custody', async () => {
+ const f=fixture();await f.prepare();const original=structuredClone(f.row!);
+ const target={repository:'Mentra-Community/Mentra' as const,ref:'refs/heads/dev' as const,sourceRoot:'testing/' as const,workflow:'Mentra-Community/Mentra/.github/workflows/routine-device.yml@refs/heads/dev' as const};
+ const receipt={attempts:20,firstAttemptAt:'2026-10-07T23:00:00.000Z',lastAttemptAt:'2026-10-07T23:59:00.000Z',acknowledgedAt:'2026-10-07T23:59:01.000Z',target};
+ const history=Array.from({length:20},(_,n)=>({actionsRunId:String(n+1),recordedAt:'2026-10-07T23:59:01.000Z'}));f.restore({...original,fleetDispatch:receipt,fleetActions:history});
+ let calls=0;let runs=history.map(v=>({...v,status:'completed',conclusion:'failure' as string|null}));
+ (f.service as any).actionsTransport={async dispatch(id:string,value:unknown){expect(id).toBe(original.requestId);expect(value).toEqual(target);calls++},async runs(){return runs},async cancel(){}};
+ await (f.service as any).deliver(f.row!);expect(calls).toBe(1);expect(f.row?.fleetDispatch).toMatchObject({attempts:21,firstAttemptAt:receipt.firstAttemptAt,target});
+ for(const key of ['fleetSelection','fleetSelectionSha256','fleetInputSha256','fleetDeadline','fleetResourceReservation','fleetResourceAdmission','fleetCandidatePreparations'] as const)expect(f.row?.[key]).toEqual(original[key]);
+ expect(typeof f.row?.fleetDispatch?.acknowledgedAt).toBe('string');expect(f.row?.fleetActions).toEqual(history);expect(f.row?.fleetBinding).toBeUndefined();
+ f.advance(30_001);runs=[...runs,{actionsRunId:'21',recordedAt:'2026-10-08T00:00:00.000Z',status:'queued',conclusion:null}];await (f.service as any).deliver(f.row!);expect(calls).toBe(1);expect(f.row?.fleetActions).toHaveLength(21);
+ f.restore({...f.row!,fleetCancellation:{requestedAt:'2026-10-08T00:00:00Z',reason:'original cancellation'}});f.advance(30_001);await (f.service as any).deliver(f.row!);expect(calls).toBe(1);
 });
 
 test('preparation status database write fences source, custody, deadline and newest numeric workflow', async () => {
@@ -915,13 +917,17 @@ test('preparation status database write fences source, custody, deadline and new
  }finally{TestRequestModel.collection.findOneAndUpdate=original}
 });
 
-test('retry exhaustion database write cannot cancel concurrently prepared, bound or newer delivered work', async () => {
- const original=TestRequestModel.collection.findOneAndUpdate,cas=mock(async(_filter:any,_update:any,_options:any)=>null);TestRequestModel.collection.findOneAndUpdate=cas as any;
- const now=new Date('2026-10-08T00:00:00Z');
- try {await routineJobRepository.exhaustPreparation!('job-one',['100'],now);
-  expect(cas.mock.calls[0]![0]).toMatchObject({requestId:'job-one',state:'awaiting-source',fleetPreparation:{$exists:false},fleetBinding:{$exists:false},fleetCancellation:{$exists:false},'fleetDispatch.attempts':20,fleetDeadline:{$gt:now},$expr:{$setIsSubset:[{$ifNull:['$fleetActions.actionsRunId',[]]},{$literal:['100']}]}});
-  expect(cas.mock.calls[0]![1]).toMatchObject({$set:{state:'terminal',terminalStatus:'not-run'}});
- }finally{TestRequestModel.collection.findOneAndUpdate=original}
+test('delivery history retains the twenty-first exact workflow and pending reconciliation has only temporal limits', async () => {
+ const write=TestRequestModel.findOneAndUpdate,find=TestRequestModel.find;
+ const cas=mock((_filter:any,_update:any,_options:any)=>({lean:async()=>null}));TestRequestModel.findOneAndUpdate=cas as any;
+ const query=mock((_filter:any)=>{const chain:any={sort:()=>chain,limit:()=>chain,read:()=>chain,readConcern:()=>chain,lean:async()=>[]};return chain});TestRequestModel.find=query as any;
+ try {
+  await routineJobRepository.actions!('job-one','a'.repeat(64),{actionsRunId:'21',recordedAt:'2026-10-08T00:00:00Z'});
+  expect(cas.mock.calls[0]![0]).toEqual({requestId:'job-one',$or:[{fleetInputSha256:'a'.repeat(64)},{fleetSelectionSha256:'a'.repeat(64)}],'fleetActions.actionsRunId':{$ne:'21'}});
+  expect(cas.mock.calls[0]![1]).toEqual({$push:{fleetActions:{actionsRunId:'21',recordedAt:'2026-10-08T00:00:00Z'}}});
+  await routineJobRepository.pending!(20,new Date('2026-10-08T00:00:00Z'));const filter=query.mock.calls[0]![0],text=JSON.stringify(filter);
+  expect(text).not.toContain('fleetDispatch.attempts');expect(text).toContain('fleetDeadline');expect(text).toContain('fleetBinding');expect(text).toContain('2026-10-07T23:59:30.000Z');expect(text).toContain('fleetCancellation');
+ }finally{TestRequestModel.findOneAndUpdate=write;TestRequestModel.find=find}
 });
 
 test('frozen Android admissions cannot bypass an exact iOS-only declaration', async () => {
@@ -929,13 +935,12 @@ test('frozen Android admissions cannot bypass an exact iOS-only declaration', as
  (f.service as any).definitions={async getExact(_id:string,platform:string){return platform==='ios-on-mac'?{definition:{platforms:['ios-on-mac']}}:null}};
  await expect(f.service.submitFrozen(known,'2026-10-08T01:00:00Z')).rejects.toThrow('does not support android');expect(f.row).toBeNull();
 });
-test('twenty failed deliveries with no created workflow terminate after the absence window', async () => {
- const f=fixture();await f.service.submit(selection);
- await f.rows.dispatch!(selection.requestId,undefined,{attempts:20,lastAttemptAt:'2026-10-07T23:59:00.000Z'});
- (f.service as any).actionsTransport={async dispatch(){throw Error('No further dispatch')},async runs(){return []},async cancel(){}};
- expect((await f.service.observation(selection.requestId)).terminal).toBe(false);
- f.advance(61_000);
- expect(await f.service.observation(selection.requestId)).toMatchObject({terminal:true,terminalStatus:'not-run',waitingReason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'});
+test('unprepared repeated delivery remains deadline-bound rather than terminalizing from its counter', async () => {
+ const f=fixture();await f.service.submit(selection);let calls=0;
+ await f.rows.dispatch!(selection.requestId,undefined,{attempts:20,firstAttemptAt:'2026-10-07T23:00:00.000Z',lastAttemptAt:'2026-10-07T23:59:00.000Z',acknowledgedAt:'2026-10-07T23:59:01.000Z'});
+ (f.service as any).actionsTransport={async dispatch(){calls++},async runs(){return []},async cancel(){}};
+ f.advance(61_000);await (f.service as any).deliver(f.row!);expect(calls).toBe(1);expect(f.row).toMatchObject({state:'awaiting-source',fleetDispatch:{attempts:21}});expect(f.row?.fleetCancellation).toBeUndefined();
+ f.advance(3*3600_000);await (f.service as any).deliver(f.row!);expect(calls).toBe(1);
 });
 
 test('permanent preparation reports use the settled fence consumed by rerun readers', async () => {

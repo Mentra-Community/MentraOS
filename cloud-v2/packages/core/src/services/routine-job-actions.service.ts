@@ -78,8 +78,8 @@ export class GithubRoutineJobActions implements RoutineJobActions {
   }
   private async discover(start: number, target: TestingTarget): Promise<z.infer<typeof run>[]> {
     const result:z.infer<typeof run>[]=[];
-    // GitHub caps this filtered endpoint at 1,000 results. A 26-member suite
-    // can create 520 bounded preparation attempts, so five pages is incomplete.
+    // Retained suite delivery history can span all ten provider pages.
+    // Never interpret the provider result ceiling as absence of active work.
     for(let page=1;page<=10;page++) {
       const query=new URLSearchParams({event:'workflow_dispatch',branch:target.ref.slice('refs/heads/'.length),created:`>=${new Date(start).toISOString()}`,per_page:'100',page:String(page)});
       const response=await this.request(`workflows/routine-device.yml/runs?${query}`, target);
@@ -99,7 +99,7 @@ export class GithubRoutineJobActions implements RoutineJobActions {
 }
 /** Bound work never reoffers; an acknowledged workflow retries only after discovery proves no active delivery. */
 export function routineActionsRetry(receipt: RoutineActionsDispatch | undefined, runs: readonly RoutineActionsRun[], now: number) {
-  if((receipt?.attempts??0)>=20 || receipt && now-Date.parse(receipt.lastAttemptAt)<30_000)return false;
+  if(receipt && now-Date.parse(receipt.lastAttemptAt)<30_000)return false;
   if(runs.some(run=>run.status!=='completed'))return false;
   if(!receipt?.acknowledgedAt)return true;
   if(runs.length===0 && !receipt.firstAttemptAt)return false;

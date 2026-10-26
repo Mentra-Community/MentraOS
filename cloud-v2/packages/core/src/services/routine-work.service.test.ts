@@ -764,3 +764,15 @@ test('explicit NIMO authoring freezes diagnostic selection and rejects changed o
  const {diagnostic: _diagnostic, ...ordinary} = request;
  await expect(f.service.submit(ordinary)).rejects.toThrow('retry changed');
 });
+
+
+test('authoring delivery retains its existing twenty-attempt policy after the run retry limit is removed', async () => {
+ const f=fixture(),saved=await f.service.submit(input),now=Date.parse('2026-10-08T00:00:00Z'),deadline=new Date(now+3600_000);
+ const {target:_target,...portable}=saved.work,selection=portableAuthoringWorkSchema.parse(portable);
+ let row:RoutineWorkDelivery={...saved,fleetSelection:selection,fleetDeadline:deadline,fleetInputSha256:requestInputDigest({selection,deadline:deadline.toISOString()}),
+  fleetDispatch:{attempts:20,firstAttemptAt:'2026-10-07T23:00:00Z',lastAttemptAt:'2026-10-07T23:59:00Z',acknowledgedAt:'2026-10-07T23:59:01Z'},fleetActions:[{actionsRunId:'20',recordedAt:'2026-10-07T23:59:01Z'}]};
+ delete row.hostId;delete row.fleetBinding;let deliveries=0;
+ const rows:RoutineWorkRepository={...(f.service as any).rows,async get(){return structuredClone(row)},async dispatch(_id,previous,value){expect(previous?.attempts).toBe(20);row={...row,fleetDispatch:structuredClone(value)};return structuredClone(row)}};
+ const service=new ActualRoutineWorkService(rows,undefined,undefined,undefined,undefined,()=>now,{async dispatch(){deliveries++},async runs(){return [{actionsRunId:'20',status:'completed',conclusion:'failure'}]},async cancel(){}});
+ await (service as any).deliver(structuredClone(row));expect(deliveries).toBe(0);expect(row.fleetDispatch?.attempts).toBe(20);expect(row.fleetDispatch?.checkedAt).toBe(new Date(now).toISOString());
+});

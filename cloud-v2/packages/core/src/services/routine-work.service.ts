@@ -329,7 +329,7 @@ export class RoutineWorkService {
       if (previous) await this.rows.dispatch?.(row.workId, previous, {...previous, checkedAt: new Date(this.now()).toISOString(), error: 'Authoring Actions run discovery is unavailable'})
       return this.inspect(row.workId)
     }
-    if (!routineActionsRetry(previous, runs, this.now())) {
+    if ((previous?.attempts ?? 0) >= 20 || !routineActionsRetry(previous, runs, this.now())) {
       if (previous) await this.rows.dispatch?.(row.workId, previous, {...previous, checkedAt: new Date(this.now()).toISOString()})
       return this.inspect(row.workId)
     }

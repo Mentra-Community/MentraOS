@@ -1,5 +1,5 @@
 import {expect, test} from 'bun:test';
-import {GithubRoutineJobActions, cancelRoutineActions} from './routine-job-actions.service';
+import {GithubRoutineJobActions, cancelRoutineActions, routineActionsRetry} from './routine-job-actions.service';
 
 test('fleet transport can dispatch only the trusted Harness main workflow and cancels one member run',async()=>{
   const calls:Array<{url:string;input:RequestInit}>=[], scopes:string[]=[];
@@ -85,4 +85,16 @@ test('shared discovery failures are discarded and cannot become cancellation abs
  const results=await Promise.allSettled(Array.from({length:26},(_,index)=>actions.runs(`member-${index}`,'2026-10-08T00:00:00Z')));
  expect(calls).toBe(1);expect(results.every(result=>result.status==='rejected')).toBe(true);
  failed=false;expect(await actions.runs('member-0','2026-10-08T00:00:00Z')).toEqual([]);expect(calls).toBe(2);
+});
+
+
+test('completed delivery history does not impose a lifetime retry limit', () => {
+ const now=Date.parse('2026-10-08T00:10:00Z'), receipt={attempts:20,firstAttemptAt:'2026-10-08T00:00:00Z',lastAttemptAt:'2026-10-08T00:00:00Z',acknowledgedAt:'2026-10-08T00:00:01Z'};
+ const runs=Array.from({length:20},(_,n)=>({actionsRunId:String(n+1),status:'completed',conclusion:'failure'}));
+ expect(routineActionsRetry(receipt,runs,now)).toBe(true);
+ for(const status of ['queued','in_progress','waiting','pending'])expect(routineActionsRetry(receipt,[...runs,{actionsRunId:'21',status,conclusion:null}],now)).toBe(false);
+ expect(routineActionsRetry({...receipt,lastAttemptAt:new Date(now-29_999).toISOString()},runs,now)).toBe(false);
+ expect(routineActionsRetry({...receipt,firstAttemptAt:undefined},[],now)).toBe(false);
+ expect(routineActionsRetry({...receipt,acknowledgedAt:new Date(now-119_999).toISOString()},[],now)).toBe(false);
+ expect(routineActionsRetry(receipt,[],now)).toBe(true);
 });
