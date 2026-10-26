@@ -24,7 +24,6 @@ on:
           - account
   push:
     branches:
-      - dev
       - staging
       - main
     paths:

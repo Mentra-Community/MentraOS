@@ -2,8 +2,7 @@ name: OEM Example App APK
 
 # Publishes an installable APK of examples/oem-app — the reference second
 # host built against the public @mentra/engine entry — as a workflow artifact
-# on every dev push that touches its inputs (mirroring how the MentraOS app
-# APK is produced on dev pushes by "Mobile App Android Build").
+# on manual runs.
 #
 # Retention IS the cleanup story: artifacts expire after RETENTION_DAYS, so
 # nothing accumulates and no delete step is needed. The APK is a release
@@ -16,18 +15,6 @@ name: OEM Example App APK
 # proven in CI before landing on dev).
 
 on:
-  push:
-    branches:
-      - dev
-    paths:
-      - "mobile/modules/engine/**"
-      - "mobile/modules/bluetooth-sdk/**"
-      - "mobile/modules/crust/**"
-      - "mobile/modules/miniapp/**"
-      - "examples/oem-app/**"
-      - "examples/package.json"
-      - "examples/bun.lock"
-      - ".github/workflows/oem-app-apk.yml"
   pull_request:
     paths:
       - ".github/workflows/oem-app-apk.yml"

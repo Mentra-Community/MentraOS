@@ -30,25 +30,6 @@ name: Example App Builds
       - "cloud-v2/packages/cloud-client/**"
       - ".github/workflows/example-app-builds.yml"
       - ".github/workflows/reusable-bluetooth-examples.yml"
-  push:
-    branches:
-      - dev
-    paths:
-      - "examples/bluetooth/**"
-      - "examples/package.json"
-      - "examples/bun.lock"
-      - "examples/patches/**"
-      - "mobile/modules/bluetooth-sdk/**"
-      - "mobile/modules/engine/**"
-      - "mobile/modules/crust/**"
-      - "mobile/modules/jspolyfill/**"
-      - "mobile/modules/acs-meeting/**"
-      - "mobile/modules/glasses-media/**"
-      - "mobile/modules/miniapp/**"
-      - "cloud-v2/packages/protocol/**"
-      - "cloud-v2/packages/cloud-client/**"
-      - ".github/workflows/example-app-builds.yml"
-      - ".github/workflows/reusable-bluetooth-examples.yml"
   workflow_dispatch:
 
 permissions:

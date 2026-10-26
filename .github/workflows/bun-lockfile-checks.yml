@@ -19,24 +19,6 @@ on:
       - ".github/workflows/bun-lockfile-checks.yml"
       - ".github/workflows/ci-gate.yml"
       - ".github/scripts/no-workos.test.mjs"
-  push:
-    branches: [dev]
-    paths:
-      - "package.json"
-      - "bun.lock"
-      - "mobile/package.json"
-      - "mobile/bun.lock"
-      - "mobile/modules/**/package.json"
-      - "cloud-v2/bun.lock"
-      - "cloud-v2/packages/**/package.json"
-      - "miniapps/**/package.json"
-      - "sdk/bun.lock"
-      - "sdk/**/package.json"
-      - "examples/bun.lock"
-      - "examples/**/package.json"
-      - ".github/workflows/bun-lockfile-checks.yml"
-      - ".github/workflows/ci-gate.yml"
-      - ".github/scripts/no-workos.test.mjs"
   workflow_dispatch:
 
 concurrency:

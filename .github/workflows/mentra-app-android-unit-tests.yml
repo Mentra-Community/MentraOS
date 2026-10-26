@@ -19,7 +19,6 @@ on:
   push:
     branches:
       - main
-      - dev
     paths:
       - "mobile/modules/acs-meeting/**"
       - "mobile/modules/glasses-media/**"
