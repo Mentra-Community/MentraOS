@@ -5,6 +5,7 @@ import LocalMiniappView from "../LocalMiniappView"
 import {useNavigationStore} from "@/stores/navigation"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {miniappLauncher} from "@mentra/engine-host-internal"
+import {devServerBridge} from "@mentra/engine-host-internal/devtools"
 import {useStressTestStore} from "@/stores/stressTest"
 import {
   resetWebStorageMoveStateForTests,
@@ -37,6 +38,7 @@ jest.mock("../MiniappSplash", () => (props: {error?: string}) => {
 })
 /** The miniapp in front, as the engine's apps store holds it. */
 let mockForegroundedPackage: string | null = null
+let mockDevMode = false
 jest.mock("@mentra/engine-host-internal", () => ({
   miniappLauncher: {ensureRunning: jest.fn()},
   useAppStatusStore: {getState: () => ({foregroundedPackage: mockForegroundedPackage})},
@@ -66,10 +68,12 @@ jest.mock("@mentra/engine", () => ({
     clearTimeout: (id: ReturnType<typeof setTimeout>) => clearTimeout(id),
   },
   SETTINGS: {dev_mode: {key: "dev_mode"}},
-  useSetting: () => [false],
+  useSetting: () => [mockDevMode],
   engine: {miniapps: {clearForeground: jest.fn()}},
 }))
-jest.mock("@mentra/engine-host-internal/devtools", () => ({devServerBridge: {onReload: jest.fn()}}))
+jest.mock("@mentra/engine-host-internal/devtools", () => ({
+  devServerBridge: {onReload: jest.fn(), forwardLog: jest.fn()},
+}))
 jest.mock("@/services/streamPreview", () => {
   const coordinator = {
     bindView: jest.fn(),
@@ -277,6 +281,130 @@ describe("the screen's origin", () => {
     expect(second.props.source).toEqual(firstSource)
     expect(second.props.miniappOrigin.rootDir).toBe("file:///documents/lmas/com.mentra.test/1.0.1/")
     expect(() => first.props).toThrow(/unmounted/)
+  })
+})
+
+describe("the ready handshake", () => {
+  const READY_TIMEOUT_MS = 5000
+
+  /** One document load: its start, the shim's envelopes for it, then the WebView's load end. */
+  function load(view: ReturnType<typeof render>, ...envelopes: object[]) {
+    const webView = miniappWebView(view)!
+    act(() => {
+      webView.props.onLoadStart()
+      for (const envelope of envelopes) webView.props.onMessage({nativeEvent: {data: JSON.stringify(envelope)}})
+      webView.props.onLoadEnd()
+    })
+  }
+
+  function splashError(view: ReturnType<typeof render>) {
+    return view.getByTestId("splash-error").props.children
+  }
+
+  beforeEach(() => {
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(INSTALLED)
+    jest.spyOn(console, "log").mockImplementation(() => undefined)
+    jest.spyOn(console, "warn").mockImplementation(() => undefined)
+  })
+  afterEach(() => {
+    mockDevMode = false
+  })
+
+  it("fails a page that loaded without calling mentra.ready() at the first timeout", async () => {
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    load(view, {type: "page_loaded"})
+    act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS))
+    expect(splashError(view)).toBe("common:miniappFailedToLoad")
+    expect(devServerBridge.forwardLog).toHaveBeenCalledWith(
+      "com.mentra.test",
+      "error",
+      [expect.stringContaining("never called mentra.ready()")],
+      expect.any(Number),
+      "ui",
+    )
+  })
+
+  it("names the missing mentra.ready() call in developer mode", async () => {
+    mockDevMode = true
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    load(view, {type: "page_loaded"})
+    act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS))
+    expect(splashError(view)).toBe("common:miniappNeverReady")
+  })
+
+  it("lifts the splash for a page that calls mentra.ready()", async () => {
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    load(view, {type: "page_loaded"}, {type: "ready"})
+    act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS * 2))
+    expect(splashError(view)).toBeUndefined()
+  })
+
+  it("reloads a page the shim never reached, then reports a load failure", async () => {
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    for (let attempt = 1; attempt < 10; attempt++) {
+      load(view)
+      act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS))
+      expect(splashError(view)).toBeUndefined()
+    }
+    load(view)
+    act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS))
+    expect(splashError(view)).toBe("common:miniappFailedToLoad")
+    expect(devServerBridge.forwardLog).not.toHaveBeenCalled()
+  })
+
+  it("opens a page on the reload after its shim arrived too late to announce page_loaded", async () => {
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    load(view)
+    act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS))
+    load(view, {type: "page_loaded"}, {type: "ready"})
+    act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS * 2))
+    expect(splashError(view)).toBeUndefined()
+    expect(devServerBridge.forwardLog).not.toHaveBeenCalled()
+  })
+
+  it("fails a reloaded page that reached the shim but never called mentra.ready()", async () => {
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    load(view)
+    act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS))
+    expect(splashError(view)).toBeUndefined()
+    load(view, {type: "page_loaded"})
+    act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS))
+    expect(splashError(view)).toBe("common:miniappFailedToLoad")
+  })
+
+  it("retries a new document the shim never reached after an earlier one reported page_loaded", async () => {
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    const webView = miniappWebView(view)!
+    act(() => webView.props.onMessage({nativeEvent: {data: JSON.stringify({type: "page_loaded"})}}))
+    load(view)
+    act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS))
+    expect(splashError(view)).toBeUndefined()
+  })
+
+  it("retries a hot-reloaded development page the shim never reached", async () => {
+    const devUrl = "http://192.168.1.20:8081"
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue({
+      uiUri: `${devUrl}/dist/ui/index.html`,
+      uiOrigin: devUrl,
+      uiRootDir: null,
+      uiOriginName: null,
+      devBuild: true,
+    })
+    const view = render(<LocalMiniappView {...props} devUrl={devUrl} />)
+    await finishLaunch()
+    load(view, {type: "page_loaded"}, {type: "ready"})
+    act(() => jest.mocked(devServerBridge.onReload).mock.calls.at(-1)![0]("com.mentra.test"))
+    load(view)
+    act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS))
+    expect(splashError(view)).toBeUndefined()
+    expect(devServerBridge.forwardLog).not.toHaveBeenCalled()
   })
 })
 

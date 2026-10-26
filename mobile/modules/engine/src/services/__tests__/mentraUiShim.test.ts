@@ -20,8 +20,8 @@ interface ShimGlobals {
   clearInterval: typeof clearInterval
 }
 
-function evalShim(packageName = "com.test"): ShimGlobals {
-  const sandbox: Record<string, unknown> = {}
+function evalShim(packageName = "com.test", page: Record<string, unknown> = {}): ShimGlobals {
+  const sandbox: Record<string, unknown> = {...page}
   sandbox.globalThis = sandbox
   sandbox.window = sandbox
   sandbox.console = console
@@ -195,5 +195,49 @@ describe("buildMentraUiShim", () => {
     const b: unknown[] = []
     g.mentra!.on("b", (p) => b.push(p))
     expect(b).toEqual(["beta"])
+  })
+
+  /** A page whose `load` listeners the test fires, with `scripts` already parsed. */
+  function page(scripts: unknown[], readyState = "loading") {
+    const listeners: (() => void)[] = []
+    return {
+      fireLoad: () => listeners.forEach((cb) => cb()),
+      globals: {
+        document: {readyState, scripts},
+        addEventListener: (type: string, cb: () => void) => {
+          if (type === "load") listeners.push(cb)
+        },
+      },
+    }
+  }
+
+  test("posts 'page_loaded' on load when installed before the page's scripts", () => {
+    const {fireLoad, globals} = page([])
+    const g = evalShim("com.test", globals)
+    expect(g.outboundQueue).toHaveLength(0)
+    fireLoad()
+    expect(g.outboundQueue.map((s) => JSON.parse(s))).toEqual([{type: "page_loaded"}])
+  })
+
+  test("holds envelopes posted before the native bridge exists and sends them first, in order", () => {
+    const {fireLoad, globals} = page([])
+    const g = evalShim("com.test", globals)
+    const bridge = g.ReactNativeWebView
+    delete g.ReactNativeWebView
+    g.mentra!.send("early", 1)
+    g.mentra!.ready()
+    expect(g.outboundQueue).toHaveLength(0)
+    g.ReactNativeWebView = bridge
+    fireLoad()
+    expect(g.outboundQueue.map((s) => JSON.parse(s).type)).toEqual(["ready", "msg", "page_loaded"])
+  })
+
+  test("stays silent when installed after the page's scripts, so the host retries", () => {
+    for (const readyState of ["loading", "interactive", "complete"]) {
+      const {fireLoad, globals} = page([{src: "ui.js"}], readyState)
+      const g = evalShim("com.test", globals)
+      fireLoad()
+      expect(g.outboundQueue).toHaveLength(0)
+    }
   })
 })

@@ -52,7 +52,7 @@ import {getWebViewLoadErrorDiagnostics} from "./webViewLoadErrorDiagnostics"
  * Compositor only arms its edge-swipe once the WebView is at page 0.
  */
 
-// Reload-retry tuning for the miniapp `ready` handshake (see readyTimerRef).
+// Ready-handshake tuning (see readyTimerRef). Reloads only retry a page the shim reached late or not at all.
 const READY_TIMEOUT_MS = 5000
 const MAX_LOAD_ATTEMPTS = 10
 const UI_RESYNC_INTERVAL_MS = 10_000
@@ -143,8 +143,11 @@ function LocalMiniappView({
   // The `ready` handshake has exactly one source of truth: `connected`.
   // onLoadEnd only means the WebView painted — not that the miniapp UI JS
   // mounted and called mentra.ready(). After each load we arm a timer; if no
-  // `ready` envelope arrives within READY_TIMEOUT_MS we reload, up to
-  // MAX_LOAD_ATTEMPTS total, then give up with an error.
+  // `ready` envelope arrives within READY_TIMEOUT_MS, a page that announced
+  // `page_loaded` (the shim only does so when it ran before the page's
+  // scripts) never called mentra.ready() and fails at once. Any other page
+  // lost the shim injection race: reload it, up to MAX_LOAD_ATTEMPTS total,
+  // then give up with an error.
   //
   //   connected     — state; drives the splash (isLoaded) and re-renders.
   //   connectedRef  — ref mirror read inside handleLoadEnd and the ready
@@ -159,6 +162,7 @@ function LocalMiniappView({
   //                   reload side effect can't live inside a setLoadAttempts
   //                   updater — updaters must stay pure).
   //   readyTimerRef — the pending ready-timeout timer, if any.
+  //   pageLoadedRef — the shim announced `page_loaded` for the current document.
   const [connected, setConnected] = useState(false)
   const [contentRevealed, setContentRevealed] = useState(false)
   const handleSplashHidden = useCallback(() => {
@@ -172,6 +176,7 @@ function LocalMiniappView({
   const [loadAttempts, setLoadAttempts] = useState(0)
   const attemptsRef = useRef(0)
   const readyTimerRef = useRef<number | null>(null)
+  const pageLoadedRef = useRef(false)
 
   const clearReadyTimer = useCallback(() => {
     if (readyTimerRef.current) {
@@ -210,6 +215,7 @@ function LocalMiniappView({
   const resetLoadState = useCallback(() => {
     connectedRef.current = false
     setConnected(false)
+    pageLoadedRef.current = false
     attemptsRef.current = 0
     setLoadAttempts(0)
     clearReadyTimer()
@@ -594,6 +600,10 @@ function LocalMiniappView({
           setWebViewCanGoBack(message.depth > 0 || nativeCanGoBack.current)
           return
         }
+        if (message.type === "page_loaded") {
+          pageLoadedRef.current = true
+          return
+        }
       } catch {
         /* Other envelopes are handled by the UI router. */
       }
@@ -646,9 +656,17 @@ function LocalMiniappView({
     setWebViewCanGoBack(canGoBack || spaDepth.current > 0)
   }, [])
 
+  // A new document (a reload, a dev reload, the held source arriving) has not
+  // heard from its own shim yet.
+  const handleLoadStart = useCallback(() => {
+    pageLoadedRef.current = false
+  }, [])
+
   // onLoadEnd means the WebView painted, not that the miniapp is ready. Arm a
-  // timer; if the `ready` envelope hasn't arrived by READY_TIMEOUT_MS we count
-  // it as a failed attempt and reload, up to MAX_LOAD_ATTEMPTS, then error.
+  // timer; if the `ready` envelope hasn't arrived by READY_TIMEOUT_MS and the
+  // shim announced `page_loaded`, the page never called mentra.ready() and a
+  // reload would only repeat that. Otherwise the shim ran late or not at all:
+  // count a failed attempt and reload, up to MAX_LOAD_ATTEMPTS, then error.
   //
   // The attempt counter is bumped only when a timer actually fires without
   // `ready` — NOT on every onLoadEnd. A single page load can fire onLoadEnd
@@ -663,13 +681,26 @@ function LocalMiniappView({
     readyTimerRef.current = BgTimer.setTimeout(() => {
       readyTimerRef.current = null
       if (connectedRef.current) return
+      if (pageLoadedRef.current) {
+        devServerBridge.forwardLog(
+          packageName,
+          "error",
+          [
+            "The page loaded but never called mentra.ready(). Wrap the app in <MentraProvider>, or call mentra.ready() once it has mounted.",
+          ],
+          Date.now(),
+          "ui",
+        )
+        fail(translate(devMode || devUrl ? "common:miniappNeverReady" : "common:miniappFailedToLoad"))
+        return
+      }
       // A real "ready never arrived" timeout — this counts as one attempt.
       const attempt = attemptsRef.current + 1
       attemptsRef.current = attempt
       setLoadAttempts(attempt)
       if (attempt >= MAX_LOAD_ATTEMPTS) {
         console.warn(`LocalMiniappView: ${packageName} never sent ready after ${MAX_LOAD_ATTEMPTS} attempts`)
-        setErrorMessage("miniapp failed to load")
+        setErrorMessage(translate("common:miniappFailedToLoad"))
         setLabel(undefined)
       } else {
         console.log(`LocalMiniappView: reloading, attempt ${attempt} of ${MAX_LOAD_ATTEMPTS}`)
@@ -680,7 +711,7 @@ function LocalMiniappView({
         }
       }
     }, READY_TIMEOUT_MS)
-  }, [packageName, clearReadyTimer])
+  }, [packageName, clearReadyTimer, fail, devMode, devUrl])
 
   const handleTerminate = useCallback(() => {
     if (!packageName) return
@@ -796,6 +827,7 @@ function LocalMiniappView({
             injectedJavaScriptBeforeContentLoaded={injectedJS}
             injectedJavaScript={Platform.OS === "android" ? miniappHistoryBridge : undefined}
             onMessage={handleMessage}
+            onLoadStart={handleLoadStart}
             onLoadEnd={handleLoadEnd}
             onContentProcessDidTerminate={handleTerminate}
             onError={handleError}
