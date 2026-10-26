@@ -30,7 +30,6 @@ K900_server/*
 !.claude/skills
 !.claude/agents/
 .claude/agents/*
-!.claude/agents/routine-fixer.md
 aar_extract/*
 aar-extract/*
 temp_extract/*
