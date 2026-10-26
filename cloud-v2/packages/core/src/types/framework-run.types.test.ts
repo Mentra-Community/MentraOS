@@ -439,3 +439,22 @@ test('step source pins are bounded and tied to the recorded routine and installe
     {repository: 'someone/else'}, {path: 'framework/run.ts'}])
     expect(frameworkRunSchema.safeParse({...pinned, result: {...pinned.result, stepSources: {setup: [], test: [{...source, ...changes}], teardown: []}}}).success).toBe(false);
 });
+
+
+test.each([
+  ['Mentra-Community/Mentra-Automated-Testing', ''],
+  ['Mentra-Community/Mentra', 'testing/'],
+])('step provenance uses the repository root for routine and shared actions: %s', (repository, root) => {
+  const good = run(), action = {id: 'prepare', instruction: 'Prepare', expected: 'Ready', scope: 'routine', status: 'passed', durationMs: 1};
+  const routine = {id: 'settings', repository, revision: good.definitionRevision, path: `${root}routines/no-glasses/routine.ts`, line: 1};
+  const shared = {id: 'cleanup', repository, revision: good.frameworkBinding.revision, path: `${root}framework/run.ts`, line: 1};
+  const pinned = {...good, routineSource: {...good.routineSource, repository}, frameworkBinding: {...good.frameworkBinding, repository},
+    result: {...good.result, setup: {...good.result.setup, actions: [action]},
+    teardown: {...good.result.teardown, actions: [{...action, id: 'cleanup', scope: 'shared'}]},
+    stepSources: {setup: [{...routine, id: 'prepare', path: `${root}routines/no-glasses/fixture.ts`}], test: [routine], teardown: [shared]}}};
+  expect(frameworkRunSchema.safeParse(pinned).success).toBe(true);
+  for (const source of [{...routine, revision: good.frameworkBinding.revision}, {...shared, id: 'settings'}])
+    expect(frameworkRunSchema.safeParse({...pinned, result: {...pinned.result, stepSources: {...pinned.result.stepSources, test: [source]}}}).success).toBe(false);
+  expect(frameworkRunSchema.safeParse({...pinned, result: {...pinned.result,
+    stepSources: {...pinned.result.stepSources, teardown: [{...shared, revision: good.definitionRevision}]}}}).success).toBe(false);
+});

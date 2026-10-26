@@ -115,7 +115,7 @@ function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof 
     if (new Set(sources.map(source => source.id)).size !== sources.length) problem("Duplicate step source identity");
     for (const source of sources) {
       const action = actions.find(action => action.id === source.id);
-      const routine = source.path.startsWith("routines/");
+      const routine = source.path.startsWith(`${testingTarget(source.repository).sourceRoot}routines/`);
       if (!action || source.revision !== (routine ? run.definitionRevision : run.frameworkBinding?.revision)
         || phase === "test" && !routine) problem("Step source contradicts recorded run provenance");
     }
