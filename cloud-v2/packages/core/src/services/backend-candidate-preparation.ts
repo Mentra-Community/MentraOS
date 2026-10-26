@@ -1,5 +1,5 @@
 import {isDeepStrictEqual} from 'node:util'
-import {backendConnectivityObservationMatches, backendConnectivityObservationSchema, candidatePrerequisiteSettlementSchema, BACKEND_CANDIDATE_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
+import {backendConnectivityObservationMatches, backendConnectivityObservationSchema, candidatePrerequisiteSettlementSchema, BACKEND_CANDIDATE_ROUTINE_API_VERSION, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
 import {fleetCandidatePreparationSchema, MAX_FLEET_CANDIDATE_PREPARATIONS, type FleetCandidatePreparation, type StoredRoutineJob} from '../types/routine-job.types'
 import {exclusiveHostReservationSchema, exclusiveResourceIntentSchema, exclusiveResourceReturnSchema, resourceReservationObservationSchema, type ExclusiveResourceIntent} from '../types/resource-reservations.types'
 import {z} from 'zod'
@@ -172,8 +172,7 @@ export function qualifiedGraphCandidate(row: StoredRoutineJob, host: TestHostSta
         !purpose.resources.some(resource => resource.id === dependency.resourceId && resource.authorityHostId === dependency.authorityHostId))) return undefined
     const liveGlasses = host.lanes.some(lane => lane.glasses?.some(value => value.resourceId === member.id && value.model === 'mentra-live'))
     if (requireDynamicFreshness && (member.kind === 'phone' || liveGlasses) &&
-      (now - Date.parse(check.checkedAt) > (ref.idleContract.maximumAgeMs ?? 120_000) ||
-        check.checkOperationId !== graphFinalCheckOperationId(pending.targetInputSha256, member.id))) return undefined
+      check.checkOperationId !== graphFinalCheckOperationId(pending.targetInputSha256, member.id)) return undefined
   }
   if (pending.target.requirements.resources.some(value => value.kind === 'phone' && value.capabilities.includes('backend-connectivity'))) {
     const member = purpose.resources.find(value => value.kind === 'phone'),
@@ -191,10 +190,8 @@ export function qualifiedGraphCandidate(row: StoredRoutineJob, host: TestHostSta
       health.releasedGeneration !== checks.find(value => value.resourceId === member.id)?.subjectGeneration ||
       Date.parse(health.observedAt) < Date.parse(pending.candidate.requestedAt) || Date.parse(health.observedAt) > Date.parse(health.check.closedAt) ||
       Date.parse(health.check.closedAt) > Date.parse(pending.target.deadline) || requireDynamicFreshness &&
-      !backendConnectivityObservationMatches(health, member.id, {now, binding: pending.target.acceptedBinding!, app,
-        backend: {hostId: host.hostId, incarnation: host.incarnation, generation: host.incarnationGeneration,
-          resourceGenerations: host.resourceLifecycle?.subjects.map(subject => ({resourceId: subject.subject.id, generation: subject.generation,
-            current: subject.current && subject.subject.authorityHostId === host.hostId, unowned: subject.owner === null})) ?? []}})) return undefined
+      (pending.target.acceptedBinding!.routineApiVersion < BACKEND_CONNECTIVITY_ROUTINE_API_VERSION ||
+        Date.parse(health.check.closedAt) > now)) return undefined
   }
   return pending
 }

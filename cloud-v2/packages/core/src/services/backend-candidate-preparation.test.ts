@@ -390,6 +390,12 @@ async function returnedGraphFixture(platform: 'android'|'ios-on-mac') {
  f.row.fleetResourceReservation!.minimumAvailableBytes=recorderCapacityRequirements(f.row.fleetPreparation!).resources.find(ref=>ref.kind==='recorder')!.storage!.minimumAvailableBytes;
  f.hosts[0]!.authorityReservations=[structuredClone(f.row.fleetResourceReservation!)];return f;
 }
+/** Explicit withdrawal, rather than elapsed time, requires another graph check. */
+function withdrawGraphCheck(f: ReturnType<typeof routingGraphFixture>) {
+ const subject=f.hosts[0]!.resourceLifecycle!.subjects[0]!;
+ subject.status='unknown';subject.reason={code:'idle-check-required',message:'Accepted physical proof was withdrawn'};
+ subject.idle.outcome='not-checked';subject.idle.checkedAt=null;subject.idle.acceptedCheck=null;
+}
 async function returnedSecondaryGraphFixture(platform: 'android'|'ios-on-mac', exclusive: boolean, logicalWorkspace = false) {
  const f=routingGraphFixture(platform);
  for(const host of f.hosts){
@@ -555,7 +561,7 @@ for(const platform of ['android','ios-on-mac'] as const)for(const timing of ['in
   const f=await returnedGraphFixture(platform),original=structuredClone(f.row),host=f.hosts[0]!,claim=structuredClone(f.row.fleetResourceReservation!),
     foreign={...claim,id:'10000000-0000-4000-8000-000000000001',requestId:'foreign-job',fleetInputSha256:hash('f')},
     writes=f.writes,bindWrites=f.bindWrites;
-  f.advance(120001);let reads=0;
+  f.advance(120001);withdrawGraphCheck(f);let reads=0;
   const conflict=()=>{host.authorityReservations=[claim,foreign]};
   if(timing==='initial-read')conflict();
   f.rows.recorderClaims=async()=>[structuredClone(claim)];
@@ -575,7 +581,7 @@ for(const platform of ['android','ios-on-mac'] as const)for(const gap of ['missi
   const f=await returnedGraphFixture(platform),original=structuredClone(f.row),host=f.hosts[0]!,claim=structuredClone(f.row.fleetResourceReservation!),
     foreign={...claim,id:'10000000-0000-4000-8000-000000000001',hostId:'air2',poolId:'air2:disk'},
     writes=f.writes,bindWrites=f.bindWrites;
-  f.advance(120001);let reads=0,claims=[claim];
+  f.advance(120001);withdrawGraphCheck(f);let reads=0,claims=[claim];
   f.rows.recorderClaims=async()=>structuredClone(claims);
   const service=new RoutineJobService(f.rows,undefined,undefined,undefined,{async list(){return structuredClone(f.hosts)},async get(id){
     if(id===host.hostId&&++reads===2){if(gap==='missing-authority')host.authorityReservations=undefined;else claims=[claim,foreign]}
@@ -587,9 +593,9 @@ for(const platform of ['android','ios-on-mac'] as const)for(const gap of ['missi
   expect(host.sequence).toBe(1);expect(host.incarnation).toBe('air1-one');expect(host.resourceLifecycle).toEqual(lifecycle);
   if(gap==='missing-authority')expect(host.authorityReservations).toBeUndefined();else expect(claims).toEqual([claim,foreign]);
  });
-for(const platform of ['android','ios-on-mac'] as const)test(`${platform} whole-graph reservation expiry returns original custody then checks and binds a renewed graph`,async()=>{
+for(const platform of ['android','ios-on-mac'] as const)test(`${platform} whole-graph proof withdrawal returns original custody then checks and binds a renewed graph`,async()=>{
  const f=await returnedGraphFixture(platform),laneId=f.hosts[0]!.lanes[0]!.id,original=structuredClone(f.row),claim=structuredClone(f.row.fleetResourceReservation!);
- f.advance(120001);await f.service.preparation('job-one');const pending=structuredClone(f.row.fleetCandidatePreparation!);
+ f.advance(120001);withdrawGraphCheck(f);await f.service.preparation('job-one');const pending=structuredClone(f.row.fleetCandidatePreparation!);
  expect(pending.target.purpose?.kind).toBe('resource-readiness');expect(pending.candidate.previousAttemptId).toBe(original.fleetCandidatePreparations![0]!.candidate.attemptId);
  expect(pending.provisionalReturn?.recorder).toEqual(claim);expect(pending.claimReceipt).toBeUndefined();expect(pending.returnReceipt).toBeUndefined();
  expect(candidateRequestCurrent(f.row,pending,f.now)).toBe(false);expect(f.row.fleetBinding).toBeUndefined();
@@ -633,7 +639,7 @@ for(const platform of ['android','ios-on-mac'] as const)test(`${platform} whole-
   resourceReservationRepository.recorderClaims=claims;TestRequestModel.collection.findOne=find;TestRequestModel.collection.findOneAndUpdate=write;clock.mockRestore()}
 });
 for(const gap of ['missing-historical-return','owned-static-member','local-consumer','foreign-recorder','changed-controller'] as const)test(`whole-graph renewal cleanup retains original authority with ${gap}`,async()=>{
- const f=await returnedGraphFixture('android');f.advance(120001);await f.service.preparation('job-one');const pending=structuredClone(f.row.fleetCandidatePreparation!),host=graphRepositoryEnvelope(f);
+ const f=await returnedGraphFixture('android');f.advance(120001);withdrawGraphCheck(f);await f.service.preparation('job-one');const pending=structuredClone(f.row.fleetCandidatePreparation!),host=graphRepositoryEnvelope(f);
  if(gap==='missing-historical-return')f.row.fleetCandidatePreparations![0]!.resourceReturns!.pop();
  if(gap==='owned-static-member')host.snapshot.resourceLifecycle!.subjects.find(subject=>subject.resource.kind==='app')!.owner={kind:'run',id:'foreign',generation:8,hostId:'air1',laneId:'android'};
  if(gap==='local-consumer')host.snapshot.lanes[0]!.resources.find(ref=>ref.kind==='recorder')!.storage!.reservations=[{requestId:f.row.requestId,inputSha256:f.row.fleetInputSha256!,remainingOutputBytes:1}];
@@ -899,11 +905,11 @@ test(`historical ${outcome} repository ${boundary} preserves exact original sett
 
 for(const gap of ['none','reappeared-original-claim','changed-input','local-consumer','changed-controller'] as const)test(`interrupted original byte return retries metadata beside a later Check with ${gap}`,async()=>{
  const f=await returnedGraphFixture('android'),original=structuredClone(f.row),claim=structuredClone(f.row.fleetResourceReservation!);
- f.advance(120001);await f.service.preparation('job-one');const pending=structuredClone(f.row.fleetCandidatePreparation!);
+ f.advance(120001);withdrawGraphCheck(f);await f.service.preparation('job-one');const pending=structuredClone(f.row.fleetCandidatePreparation!);
  let host=graphRepositoryEnvelope(f),hostWrites=0,ackWrites=0,lost=true;
  const template=host.snapshot.resourceLifecycle!.subjects[0]!,lane=host.snapshot.lanes[0]!;
  lane.resources.push({id:'air1:glasses',kind:'glasses',capabilities:[],idleContract:{version:'glasses-baseline',maximumAgeMs:120000,conditions:['physical-baseline'],repairConfigured:true,dependencies:[],qualifiedScope:{kind:'same-controller',controllerId:'air1'}}});
- host.snapshot.resourceLifecycle!.subjects.push({...structuredClone(template),subject:{kind:'resource',id:'air1:glasses',authorityHostId:'air1'},generation:1,status:'idle',owner:null,idle:{...structuredClone(template.idle),contractVersion:'glasses-baseline'},resource:{kind:'glasses',capabilities:[],memberships:[{hostId:'air1',laneId:'android'}],dependencies:[],placement:'installed'}});
+ host.snapshot.resourceLifecycle!.subjects.push({...structuredClone(template),subject:{kind:'resource',id:'air1:glasses',authorityHostId:'air1'},generation:1,status:'idle',owner:null,idle:{...structuredClone(template.idle),outcome:'passed',checkedAt:host.snapshot.observedAt,contractVersion:'glasses-baseline'},resource:{kind:'glasses',capabilities:[],memberships:[{hostId:'air1',laneId:'android'}],dependencies:[],placement:'installed'}});
  lane.glasses=[{resourceId:'air1:glasses',deviceId:'cpu-only-glasses',model:'mentra-live',capabilities:[]}];const glass=host.snapshot.resourceLifecycle!.subjects.at(-1)!;glass.idle.acceptedCheck={operationId:'cpu-return:glasses',subjectGeneration:1,resultSha256:'c'.repeat(64),acceptedAt:host.snapshot.observedAt};
  const saved={get:routineJobRepository.get,read:resourceReservationRepository.get,replace:resourceReservationRepository.replace,write:TestRequestModel.collection.findOneAndUpdate};
  routineJobRepository.get=async()=>structuredClone(f.row);resourceReservationRepository.get=async()=>structuredClone(host);

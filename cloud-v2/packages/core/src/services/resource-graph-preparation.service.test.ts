@@ -326,11 +326,11 @@ test('logical workspace stays on its admission path instead of inventing a physi
 })
 
 
-test('old dynamic evidence requests a refresh without changing a passed resource to failed', () => {
+test('unchanged returned dynamic evidence remains qualified after its former age limit', () => {
   const f = closedGraphFixture(), now = f.now + 120_001, before = structuredClone(f.host.resourceLifecycle),
     snapshot = new Date(now).toISOString()
   f.host.observedAt = snapshot
-  expect(qualifiedGraphCandidate(f.row, f.host, 'lane', now, snapshot)).toBeUndefined()
+  expect(qualifiedGraphCandidate(f.row, f.host, 'lane', now, snapshot)).toBe(f.pending)
   const open = {...f.pending, settlement: undefined} as FleetCandidatePreparation
   expect(candidateSettlement(open, f.host, [], now)?.outcome).toBe('qualified')
   expect(f.host.resourceLifecycle).toEqual(before)
