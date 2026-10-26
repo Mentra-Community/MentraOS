@@ -2,7 +2,7 @@
  * Licenses in one workspace: `/licenses` (`?workspace=<workspaceId>` when it is not the one the bare address opens).
  *
  * The page is `WorkspaceLicensesView` (`@mentra/workspace-ui`): one card per license with its seats, dates, cost and
- * billing actions, the page total, and buying, as far as the viewer's role and what the portal offers them allow.
+ * billing actions, and buying, as far as the viewer's role and what the portal offers them allow.
  * Its header buttons ("Billing & invoices ↗", "Buy licenses") are `WorkspaceLicensesHeaderActions`, which the
  * workspace page puts in the title bar; both are given the same props, so billing is asked once.
  *
@@ -86,11 +86,12 @@ export function LicensesScreen({ workspaceId, me, detail }: LicensesProps) {
       // link and a reload does not open the dialog again.
       buyProduct={buyParam(search) ?? undefined}
       onBuyHandled={() => setQueryParam("buy", null, { replace: true })}
-      // Back from the hosted page that added a license for her: the view reads until she holds it and says so. Dismiss
-      // takes `?added=` out of the address in place, so Back does not return to the banner.
+      // Back from the hosted page that added a license for her: the view reads until she holds it and says so in a
+      // dialog. Closing it takes `?added=` out of the address in place, so Back and a reload do not open it again.
       addedLicenseId={addedParam(search) ?? undefined}
       onAddedDone={() => setQueryParam("added", null, { replace: true })}
-      // The banner was dismissed: the address loses `?purchase=` in place, so Back does not return to the banner.
+      // The purchase dialog was closed (OK, Escape, ×): the address loses `?purchase=` in place, so Back and a reload
+      // do not open it again. The view goes on following the purchase until its license is there.
       onPurchaseDone={() => setQueryParam("purchase", null, { replace: true })}
       // Retry also asks who the person is again: a page opened before billing was ready (`billing` false, with
       // licenses to name) can only recover when `me` says it is.

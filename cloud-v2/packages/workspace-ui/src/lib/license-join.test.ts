@@ -69,7 +69,6 @@ describe("joinLicenses: a card per license", () => {
       product: CALL,
       name: "Mentra Call Unlimited",
       shortName: "Call Unlimited",
-      description: "Unlimited Teams calls in Mentra Call.",
       icon: "/api/portal/billing/ui/icons/mentra-call.png",
       seats: { quantity: 5, used: 3, free: 2, over: 0 },
       problem: null,
@@ -99,20 +98,16 @@ describe("joinLicenses: a card per license", () => {
     expect(card).toMatchObject({ name: "Fleet", shortName: "Fleet", icon: null });
   });
 
-  test("a product the catalog lacks is shown by its key, with no icon, features or description", () => {
+  test("a product the catalog lacks is shown by its key, with no icon or features", () => {
     const [card] = joinLicenses({ licenses: [core("lic_x", "acme.secret", 2, 0)], catalog: CATALOG });
-    expect(card).toMatchObject({ name: "acme.secret", shortName: "acme.secret", description: "", icon: null, features: [], catalog: null });
+    expect(card).toMatchObject({ name: "acme.secret", shortName: "acme.secret", icon: null, features: [], catalog: null });
   });
 
   test("a held product the catalog no longer offers is still named: it has its name, icon and features", () => {
     // Billing sends every product the owner holds, even one it has stopped selling, so that its card has a name.
     const personOnly = fleetEntryFor({ offer: undefined, icon: "/api/portal/billing/ui/icons/fleet.png" });
     const [card] = joinLicenses({ licenses: [core("lic_fleet", FLEET, 10, 0)], catalog: [personOnly] });
-    expect(card).toMatchObject({
-      name: "Fleet",
-      icon: "/api/portal/billing/ui/icons/fleet.png",
-      description: "Manage your members' phones and glasses, and the miniapps on them.",
-    });
+    expect(card).toMatchObject({ name: "Fleet", icon: "/api/portal/billing/ui/icons/fleet.png" });
     expect(card!.catalog).toBe(personOnly);
     expect(card!.features.map((feature) => feature.key)).toEqual(["fleet.managed", "fleet.assignments", "fleet.usage"]);
   });

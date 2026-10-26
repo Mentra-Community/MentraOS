@@ -78,6 +78,7 @@ function Routes({ me }: { me: PortalMe }) {
 
 const text = () => document.body.textContent ?? "";
 const has = (needle: string) => text().includes(needle);
+const openDialog = () => document.querySelector<HTMLDialogElement>("dialog[open]");
 const buttonNamed = (name: RegExp) => findAll<HTMLElement>("button, a").find(element => name.test(element.textContent?.trim() ?? "") || name.test(element.getAttribute("aria-label") ?? ""));
 const hrefs = () => findAll<HTMLAnchorElement>("a[href]").map(anchor => anchor.getAttribute("href"));
 
@@ -148,15 +149,16 @@ const search = () => window.location.search;
 // ---- the Licenses page --------------------------------------------------------------------------------------------
 
 describe("the Licenses page", () => {
-  test("/licenses renders the view: the cards, the total and the header actions, with billing's data", async () => {
+  test("/licenses renders the view: the cards and the header actions, with billing's data, and no total line", async () => {
     const { core } = await open(`/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(find("h1").textContent).toBe("Licenses");
     // The title has no subtitle.
     expect(has("pays for")).toBe(false);
     expect(find("h1").nextElementSibling).toBeNull();
     expect(has("Fleet")).toBe(true);
-    expect(has("2 products")).toBe(true);
-    expect(has("$295 a month in total")).toBe(true);
+    // Each card has its own cost; nothing above them counts the products or adds them up.
+    expect(has("2 products")).toBe(false);
+    expect(has("in total")).toBe(false);
     // The header actions are in the title bar, beside the title.
     const header = find("header");
     expect(header.textContent).toContain("Billing & invoices");
@@ -245,8 +247,10 @@ describe("the Licenses page", () => {
 describe("coming back from checkout", () => {
   const bought = SCENARIOS.purchased;
 
-  test("?purchase=pur_1 reaches the view: billing is asked about it and the banner says the licenses are ready", async () => {
+  test("?purchase=pur_1 reaches the view: billing is asked about it and a dialog says the licenses are ready", async () => {
     const { core } = await open(`/licenses?purchase=pur_1`, bought(), { ready: "Your 10 Fleet licenses are ready" });
+    expect(openDialog()!.textContent).toContain("Your 10 Fleet licenses are ready");
+    expect(openDialog()!.querySelector("h2")!.textContent).toBe("Fleet");
     const statuses = billingRequests(core).filter(request => request.path.endsWith("/status"));
     expect(statuses.length).toBeGreaterThan(0);
     for (const request of statuses) expect(request.query.get("purchase")).toBe("pur_1");
@@ -254,18 +258,23 @@ describe("coming back from checkout", () => {
     expect(statuses).toHaveLength(1);
   });
 
-  test("dismissing the banner takes ?purchase= out of the address, and billing is asked without it from then on", async () => {
+  test("OK closes the dialog and takes ?purchase= out of the address in place; the page keeps the purchase it followed", async () => {
     const { core } = await open(`/licenses?purchase=pur_1`, bought(), { ready: "Your 10 Fleet licenses are ready" });
     const before = window.history.length;
-    await click(buttonNamed(/^Dismiss$/)!);
+    expect(buttonNamed(/^Dismiss$/)).toBeUndefined();
+    await click(buttonNamed(/^OK$/)!);
     expect(search()).toBe("");
     expect(window.location.pathname).toBe(`/licenses`);
-    // The address was changed in place: Back does not return to the banner.
+    // The address was changed in place: Back does not return to the dialog, and a reload does not open it again.
     expect(window.history.length).toBe(before);
+    expect(openDialog()).toBeNull();
     expect(has("Your 10 Fleet licenses are ready")).toBe(false);
-    await until(() => billingRequests(core).filter(request => request.path.endsWith("/status")).some(request => request.query.get("purchase") === null), "a status read without the purchase");
-    // The cards stayed.
+    // The cards stayed, the license just bought still first and ringed, and billing is asked about nothing else.
     expect(has("Mentra Call Unlimited")).toBe(true);
+    const first = document.querySelector('[data-slot="card"][role="group"]')!;
+    expect(first.getAttribute("aria-label")).toBe("Fleet");
+    expect(first.getAttribute("data-ring")).toBe("highlight");
+    expect(billingRequests(core).filter(request => request.path.endsWith("/status")).every(request => request.query.get("purchase") === "pur_1")).toBe(true);
   });
 });
 
@@ -404,46 +413,48 @@ describe("coming back from the page that added a license for her (?added=)", () 
     licenses: [{ ...CALL_LICENSE, quantity: 4, seatsUsed: 4, seats: [...CALL_LICENSE.seats!, { membershipId: "wm_dana", mentraUserId: "u_dana", assignedAt: "2026-10-21T12:00:00.000Z" }] }, FLEET_LICENSE],
     workspaceStatus: statusOf([{ ...CALL_BILLING, quantity: 4 }, FLEET_BILLING]),
   };
-  const banner = () => findAll('section[role="status"]')[0];
-
-  test("/licenses?added=<id> shows the assigned banner once the seat is there, and Dismiss leaves /licenses", async () => {
+  test("/licenses?added=<id> says it is assigned once the seat is there, in a dialog, and OK leaves /licenses", async () => {
     const before = window.history.length;
     await open("/licenses?added=lic_call", added, { ready: "Mentra Call Unlimited is active, and it's assigned to you." });
-    expect(banner()!.textContent).toContain("Purchase complete");
+    expect(openDialog()!.textContent).toContain("Purchase complete");
     expect(search()).toBe("?added=lic_call");
-    await click(buttonNamed(/^Dismiss$/)!);
+    await click(buttonNamed(/^OK$/)!);
     expect(window.location.pathname).toBe("/licenses");
     expect(search()).toBe("");
-    // The address was changed in place: Back does not return to the banner.
+    // The address was changed in place: Back does not return to the dialog.
     expect(window.history.length).toBe(before);
+    expect(openDialog()).toBeNull();
     expect(has("is active, and it's assigned to you.")).toBe(false);
   });
 
-  test("?workspace= and ?added= leave the address separately: dismissing keeps the workspace", async () => {
+  test("?workspace= and ?added= leave the address separately: closing keeps the workspace", async () => {
     await open(`/licenses?workspace=${ACME}&added=lic_call`, added, { ready: "is active, and it's assigned to you." });
-    await click(buttonNamed(/^Dismiss$/)!);
+    await click(buttonNamed(/^OK$/)!);
     expect(search()).not.toContain("added");
   });
 
-  test("while the seat is on its way the page shows nothing about it", async () => {
-    await open("/licenses?added=lic_call", SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
-    expect(banner()).toBeUndefined();
-    expect(has("Purchase complete")).toBe(false);
+  test("while the seat is on its way the dialog says it is being set up, and OK closes it", async () => {
+    await open("/licenses?added=lic_call", SCENARIOS.twoActive(), { ready: "Setting up 1 Mentra Call Unlimited license." });
+    expect(openDialog()!.textContent).toContain("Setting up…");
+    expect(has("is active, and it's assigned to you.")).toBe(false);
+    await click(buttonNamed(/^OK$/)!);
+    expect(openDialog()).toBeNull();
+    expect(search()).toBe("");
   });
 
-  test("no ?added= in the address, no banner", async () => {
+  test("no ?added= in the address, no dialog", async () => {
     await open("/licenses", added, { ready: "Mentra Call Unlimited" });
-    expect(banner()).toBeUndefined();
+    expect(openDialog()).toBeNull();
   });
 });
 
 describe("coming back from checkout, to the person's own workspace", () => {
-  test("/licenses?workspace=<own>&purchase=pur_1 shows the banner at /licenses?purchase=pur_1", async () => {
+  test("/licenses?workspace=<own>&purchase=pur_1 shows the dialog at /licenses?purchase=pur_1", async () => {
     await open(`/licenses?workspace=${ACME}&purchase=pur_1`, SCENARIOS.purchased(), { ready: "Your 10 Fleet licenses are ready" });
     await until(() => window.location.pathname + search() === "/licenses?purchase=pur_1", "the address to lose ?workspace=");
   });
 
-  test("the buyer was given one: the banner says it is hers", async () => {
+  test("the buyer was given one: the dialog says it is hers", async () => {
     await open(`/licenses?purchase=pur_1`, SCENARIOS.purchasedForYou(), { ready: "Your Mentra Call Unlimited license is ready" });
     expect(has("Payment received, and it's assigned to you.")).toBe(true);
   });
