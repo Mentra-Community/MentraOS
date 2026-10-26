@@ -1222,25 +1222,35 @@ export class RoutineJobService {
     for await (const row of rows) {
       const pending = row?.fleetCandidatePreparation, purpose = pending?.target.purpose
       if (!row || !pending || purpose?.kind !== 'resource-readiness' || !candidateRequestCurrent(row, pending, this.now()) ||
-        pending.hostId !== host.hostId || pending.laneId !== lane.id ||
-        pending.candidate.controller.incarnation !== host.incarnation || pending.candidate.controller.generation !== host.incarnationGeneration ||
-        !isDeepIdentity(pending.target.acceptedBinding, host.frameworkBinding) || owned && pending.targetInputSha256 !== owned.inputSha256) continue
-      const actualLane = host.lanes.find(value => value.id === lane.id), ownerId = `resource-graph:${pending.targetInputSha256}`,
-        ownedLane = actualLane?.activity?.owner.id === ownerId &&
-        actualLane.activity.owner.kind === 'boundary-cleanup' && ['reserved', 'running'].includes(lane.state)
-      if (!ownedLane && (lane.state !== 'idle' || actualLane?.activity) || purpose.resources.some(member => {
-        const subject = host.resourceLifecycle?.subjects.find(value => value.subject.id === member.id)
-        return !subject?.current || subject.subject.authorityHostId !== host.hostId ||
-          (ownedLane ? subject.owner?.id !== ownerId || subject.owner.kind !== 'boundary-cleanup' ||
-            owned && subject.owner.generation !== owned.generation : subject.owner !== null || subject.generation !== member.subjectGeneration)
-      })) continue
+        pending.laneId !== lane.id || !this.graphQualificationHostCurrent(host, pending, owned)) continue
       const current = await this.rows.get(row.requestId), finalHost = await this.hosts.get(host.hostId)
       if (!current || !candidateRequestCurrent(current, current.fleetCandidatePreparation, this.now()) ||
-        !isDeepIdentity(current.fleetCandidatePreparation, pending) || !finalHost || finalHost.sequence !== host.sequence ||
-        finalHost.incarnation !== host.incarnation || finalHost.incarnationGeneration !== host.incarnationGeneration || this.now() >= queryDeadline) return undefined
+        !isDeepIdentity(current.fleetCandidatePreparation, pending) || !finalHost ||
+        !this.graphQualificationHostCurrent(finalHost, pending, owned) || this.now() >= queryDeadline) return undefined
       return pending.target
     }
     return undefined
+  }
+  private graphQualificationHostCurrent(host: ReceivedTestHostState, pending: FleetCandidatePreparation, owned?: OwnedRoutineQualification) {
+    const purpose = pending.target.purpose, lane = host.lanes.find(value => value.id === pending.laneId),
+      ownerId = `resource-graph:${pending.targetInputSha256}`, received = Date.parse(host.receivedAt)
+    if (purpose?.kind !== 'resource-readiness' || host.hostId !== pending.hostId ||
+      host.resourceReservations?.resourceReadiness !== true || lane?.dispatchMode !== 'automatic' ||
+      !Number.isFinite(received) || received > this.now() || this.now() - received > 120_000 ||
+      pending.candidate.controller.incarnation !== host.incarnation || pending.candidate.controller.generation !== host.incarnationGeneration ||
+      !isDeepIdentity(pending.target.acceptedBinding, host.frameworkBinding) || owned && pending.targetInputSha256 !== owned.inputSha256) return false
+    const ownedLane = lane.activity?.owner.id === ownerId && lane.activity.owner.kind === 'boundary-cleanup' &&
+      ['reserved', 'running'].includes(lane.state)
+    if (!ownedLane && (lane.state !== 'idle' || lane.activity)) return false
+    // Periodic report sequences are not resource authority. Revalidate only this
+    // original graph; UNKNOWN baseline age may still receive its owned check.
+    return purpose.resources.every(member => {
+      const subject = host.resourceLifecycle?.subjects.find(value => value.subject.id === member.id)
+      return subject?.current && subject.subject.authorityHostId === host.hostId &&
+        subject.repair.state === 'none' && !['out-of-service', 'offline', 'in-repair'].includes(subject.status) &&
+        (ownedLane ? subject.owner?.id === ownerId && subject.owner.kind === 'boundary-cleanup' &&
+          (!owned || subject.owner.generation === owned.generation) : subject.owner === null && subject.generation === member.subjectGeneration)
+    })
   }
   private async makeGraphCandidatePreparation(row: StoredRoutineJob, host: ReceivedTestHostState, lane: RoutingTestHostState['lanes'][number]) {
     if (!this.rows.candidatePreparation || !host.frameworkBinding || host.resourceReservations?.resourceReadiness !== true) return undefined
