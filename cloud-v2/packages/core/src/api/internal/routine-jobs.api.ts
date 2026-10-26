@@ -1,6 +1,6 @@
 import {Hono, type Context} from 'hono';
 import {z, ZodError} from 'zod';
-import {RoutineJobService} from '../../services/routine-job.service';
+import {RoutineJobService, type RoutinePreparationPhase} from '../../services/routine-job.service';
 import {RoutineWorkService} from '../../services/routine-work.service';
 import {TestRunError} from '../../services/test-result-error';
 import {TestDispatchError} from '../../services/test-builds.service';
@@ -26,6 +26,30 @@ const failure = (error: Error, c: Context) => {
 };
 /** Trusted device-free preparation and duplicate observer access; never a host credential. */
 export function createRoutineJobsApi(service = new RoutineJobService(), authors = new RoutineWorkService()) {
+  const preparation = async <T>(c: Context<AppEnv>, operation: 'lookup' | 'save', run: (onPhase: RoutinePreparationPhase) => Promise<T>) => {
+    const startedAt = Date.now(); let phase = 'request', phaseStartedAt = startedAt, counts: Parameters<RoutinePreparationPhase>[1];
+    const fields = () => ({operation, phase, jobId: c.req.param('jobId'), reqId: c.var.reqId, ...counts,
+      stageElapsedMs: Math.max(0, Date.now() - phaseStartedAt), requestElapsedMs: Math.max(0, Date.now() - startedAt)});
+    const timer = setTimeout(() => c.var.logger?.warn(fields(), 'routine job preparation is slow'), 10_000);
+    const onPhase: RoutinePreparationPhase = (value, nextCounts) => {
+      c.var.logger?.info(fields(), 'routine job preparation stage completed');
+      phase = value; phaseStartedAt = Date.now(); counts = nextCounts;
+    };
+    try {
+      const value = await run(onPhase);
+      c.var.logger?.info(fields(), 'routine job preparation stage completed');
+      if (operation === 'lookup') {
+        const result = value as Partial<Awaited<ReturnType<RoutineJobService['preparation']>>> & {resourceTarget?: {hostId: string; laneId: string}};
+        c.var.logger?.info({...fields(), state: result.state, waitingReason: result.waitingReason?.slice(0, 512) ?? null,
+          resourceTarget: result.resourceTarget ?? null, routingLabelCount: result.routingLabels?.length ?? 0},
+          'routine job preparation matching completed');
+      }
+      return value;
+    } catch (error) {
+      c.var.logger?.error({...fields(), errorName: error instanceof Error ? error.name : 'unknown'}, 'routine job preparation failed');
+      throw error;
+    } finally {clearTimeout(timer);}
+  };
   const fallback = async <T>(run: () => Promise<T>, author: () => Promise<unknown>) => {
     try {return await run();} catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error; return author();}
   };
@@ -34,10 +58,12 @@ export function createRoutineJobsApi(service = new RoutineJobService(), authors 
   app.use('*', async (c, next) => {c.header('Cache-Control', 'no-store'); await next();});
   app.onError(failure);
   app.post('/', frameworkBodyLimit(4096), async c => c.json(await service.submit(await frameworkJson(c)), 202));
-  app.get('/:jobId/preparation', async c => c.json(await fallback(() => service.preparation(c.req.param('jobId')), () => authors.preparation(c.req.param('jobId')))));
+  app.get('/:jobId/preparation', async c => c.json(await preparation(c, 'lookup', onPhase => fallback(
+    () => service.preparation(c.req.param('jobId'), onPhase),
+    () => {onPhase('author-preparation'); return authors.preparation(c.req.param('jobId'));}))));
   app.post('/:jobId/preparation', frameworkBodyLimit(), async c => {
-    await service.prepared(c.req.param('jobId'), await frameworkJson(c));
-    return c.json(await service.preparation(c.req.param('jobId')));
+    const row = await preparation(c, 'save', async onPhase => service.prepared(c.req.param('jobId'), await frameworkJson(c), onPhase));
+    return c.json({jobId: row.requestId, inputSha256: row.fleetInputSha256 ?? row.fleetSelectionSha256, state: row.state});
   });
   app.post('/:jobId/preparation-status', frameworkBodyLimit(4096), async c => c.json(await service.preparationStatus(c.req.param('jobId'), await frameworkJson(c))));
   app.get('/:jobId/routine-source/inventory', async c => c.json(await service.inventory(c.req.param('jobId'))));

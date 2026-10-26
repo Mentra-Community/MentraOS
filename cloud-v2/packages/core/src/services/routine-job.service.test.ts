@@ -1,4 +1,6 @@
 import {TestRunError} from './test-result-error';
+import {Hono} from 'hono';
+import type {AppEnv} from '../types/hono.types';
 import {createHash} from 'node:crypto';
 import {expect, test, mock, spyOn} from 'bun:test';
 import {TestRequestModel} from '../models/test-request.model';
@@ -61,6 +63,132 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
     routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});return service.preparation(selection.requestId)};
   return {service,rows,lane,prepare,offer(hosts: (ReceivedTestHostState & Pick<RoutingTestHostState, 'authorityReservations'>)[]){offeredHosts=copy(hosts)}, restore(value:StoredRoutineJob){row=copy(value)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},queued(inputSha256:string){if(row)row={...row,state:'queued',inputSha256,hostReceipt:undefined} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256,hostReceipt:{requestId:row.requestId,hostId:row.hostId!,inputSha256,acceptedAt:new Date(time).toISOString()}} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:selection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
 }
+test('preparation POST saves exact source without matching; its existing GET still reserves resources', async () => {
+  const previousToken = process.env.TEST_RUN_INGEST_TOKEN;
+  process.env.TEST_RUN_INGEST_TOKEN = 'preparation-observer-token-at-least-thirty-two-characters';
+  try {
+    const f = fixture(), first = await f.service.submit(selection);
+    const input = {inputSha256: first.fleetSelectionSha256, routineSource: testRoutineSource(selection.routineRevision),
+      definitionSha256: requestInputDigest(definition), definition};
+    const app = createRoutineJobsApi(f.service), headers = {authorization: `Bearer ${process.env.TEST_RUN_INGEST_TOKEN}`,
+      'content-type': 'application/json'}, path = `/${selection.requestId}/preparation`;
+    const saved = await app.request(path, {method: 'POST', headers, body: JSON.stringify(input)});
+    expect(saved.status).toBe(200);
+    expect(f.row?.fleetPreparation?.definitionSha256).toBe(input.definitionSha256);
+    expect(f.row?.fleetResourceReservation).toBeUndefined();
+    expect(await saved.json()).toEqual({jobId: selection.requestId, inputSha256: f.row!.fleetInputSha256, state: 'awaiting-runner'});
+    const routed = await app.request(path, {headers});
+    expect(routed.status).toBe(200);
+    expect(f.row?.fleetResourceReservation?.requestId).toBe(selection.requestId);
+    const routing = await routed.json() as {jobId: string; resourceTarget: {hostId: string; laneId: string}; routingLabels: string[]};
+    expect(routing).toMatchObject({jobId: selection.requestId, resourceTarget: {hostId: 'mini', laneId: 'android'}});
+    expect(routing.routingLabels).toContain('mentra-platform-android');
+  } finally {
+    if (previousToken === undefined) delete process.env.TEST_RUN_INGEST_TOKEN;
+    else process.env.TEST_RUN_INGEST_TOKEN = previousToken;
+  }
+});
+
+test('unavailable matching cannot fail an already committed preparation acknowledgement', async () => {
+  const previousToken = process.env.TEST_RUN_INGEST_TOKEN;
+  process.env.TEST_RUN_INGEST_TOKEN = 'preparation-observer-token-at-least-thirty-two-characters';
+  const f = fixture(), first = await f.service.submit(selection);
+  const routing = spyOn(f.service, 'preparation').mockRejectedValue(new TestRunError(503, 'Matching is unavailable'));
+  try {
+    const input = {inputSha256: first.fleetSelectionSha256, routineSource: testRoutineSource(selection.routineRevision),
+      definitionSha256: requestInputDigest(definition), definition};
+    const app = createRoutineJobsApi(f.service), headers = {authorization: `Bearer ${process.env.TEST_RUN_INGEST_TOKEN}`,
+      'content-type': 'application/json'}, path = `/${selection.requestId}/preparation`;
+    const saved = await app.request(path, {method: 'POST', headers, body: JSON.stringify(input)});
+    expect(saved.status).toBe(200);
+    expect(f.row?.state).toBe('awaiting-runner');
+    expect(routing).not.toHaveBeenCalled();
+    expect((await app.request(path, {headers})).status).toBe(503);
+    expect(routing).toHaveBeenCalledTimes(1);
+  } finally {
+    routing.mockRestore();
+    if (previousToken === undefined) delete process.env.TEST_RUN_INGEST_TOKEN;
+    else process.env.TEST_RUN_INGEST_TOKEN = previousToken;
+  }
+});
+
+test('preparation acknowledgement retains frozen-input rejection before any matching', async () => {
+  const previousToken = process.env.TEST_RUN_INGEST_TOKEN;
+  process.env.TEST_RUN_INGEST_TOKEN = 'preparation-observer-token-at-least-thirty-two-characters';
+  const f = fixture(); await f.service.submit(selection);
+  const routing = spyOn(f.service, 'preparation');
+  try {
+    const app = createRoutineJobsApi(f.service), headers = {authorization: `Bearer ${process.env.TEST_RUN_INGEST_TOKEN}`,
+      'content-type': 'application/json'};
+    const response = await app.request(`/${selection.requestId}/preparation`, {method: 'POST', headers,
+      body: JSON.stringify({inputSha256: '0'.repeat(64), routineSource: testRoutineSource(selection.routineRevision),
+        definitionSha256: requestInputDigest(definition), definition})});
+    expect(response.status).toBe(409);
+    expect(f.row?.state).toBe('awaiting-source');
+    expect(f.row?.fleetPreparation).toBeUndefined();
+    expect(routing).not.toHaveBeenCalled();
+  } finally {
+    routing.mockRestore();
+    if (previousToken === undefined) delete process.env.TEST_RUN_INGEST_TOKEN;
+    else process.env.TEST_RUN_INGEST_TOKEN = previousToken;
+  }
+});
+
+test('preparation failures name the active database stage and retain request correlation without logging inputs', async () => {
+  const previousToken = process.env.TEST_RUN_INGEST_TOKEN;
+  process.env.TEST_RUN_INGEST_TOKEN = 'preparation-observer-token-at-least-thirty-two-characters';
+  try {
+    for (const stage of ['job-lookup', 'prepared-input-CAS', 'recorder-original-request-read'] as const) {
+      const f = fixture(), first = await f.service.submit(selection);
+      const input = {inputSha256: first.fleetSelectionSha256, routineSource: testRoutineSource(selection.routineRevision),
+        definitionSha256: requestInputDigest(definition), definition};
+      if (stage === 'recorder-original-request-read') await f.service.prepared(selection.requestId, input);
+      let now = 0;
+      const error = Object.assign(new Error('private database command and source body'), {name: 'MongoOperationTimeoutError'});
+      const reject = async () => {now = 21; throw error;};
+      const lookup = stage === 'job-lookup' ? spyOn(f.rows, 'get').mockImplementation(reject) : undefined;
+      const save = stage === 'prepared-input-CAS' ? spyOn(f.rows, 'prepare').mockImplementation(reject) : undefined;
+      if (stage === 'recorder-original-request-read') f.rows.reconcileRecorderHost = async (_hostId, _now, onPhase) => {
+        onPhase?.(stage, {attempt: 0, claimCount: 2});
+        return reject();
+      };
+      const records: {fields: Record<string, unknown>; message: string}[] = [];
+      const clock = spyOn(Date, 'now').mockImplementation(() => now);
+      const app = new Hono<AppEnv>();
+      app.use('*', async (c, next) => {
+        c.set('reqId', 'original-preparation-request');
+        c.set('logger', {info: (fields: Record<string, unknown>, message: string) => records.push({fields, message}),
+          error: (fields: Record<string, unknown>, message: string) => records.push({fields, message})} as any);
+        await next();
+      });
+      app.route('/', createRoutineJobsApi(f.service));
+      try {
+        const response = await app.request(`/${selection.requestId}/preparation`, {
+          ...(stage === 'prepared-input-CAS' ? {method: 'POST', body: JSON.stringify(input)} : {}),
+          headers: {authorization: `Bearer ${process.env.TEST_RUN_INGEST_TOKEN}`, 'content-type': 'application/json'},
+        });
+        expect(response.status).toBe(503);
+        const failed = records.filter(record => record.message === 'routine job preparation failed');
+        expect(failed).toHaveLength(1);
+        expect(failed[0]!.fields).toMatchObject({operation: stage === 'prepared-input-CAS' ? 'save' : 'lookup', phase: stage,
+          jobId: selection.requestId, reqId: 'original-preparation-request', stageElapsedMs: 21, requestElapsedMs: 21,
+          errorName: 'MongoOperationTimeoutError'});
+        if (stage === 'recorder-original-request-read') expect(failed[0]!.fields).toMatchObject({hostCount: 1, hostIndex: 0, attempt: 0, claimCount: 2});
+        expect(JSON.stringify(records)).not.toContain(error.message);
+        expect(JSON.stringify(records)).not.toContain(input.inputSha256);
+        expect(JSON.stringify(records)).not.toContain(input.routineSource.bundle.url);
+        expect(JSON.stringify(records)).not.toContain(process.env.TEST_RUN_INGEST_TOKEN!);
+        if (stage === 'prepared-input-CAS') expect(f.row?.fleetPreparation).toBeUndefined();
+      } finally {
+        lookup?.mockRestore(); save?.mockRestore(); clock.mockRestore();
+      }
+    }
+  } finally {
+    if (previousToken === undefined) delete process.env.TEST_RUN_INGEST_TOKEN;
+    else process.env.TEST_RUN_INGEST_TOKEN = previousToken;
+  }
+});
+
 test('dispatch persists its original target before I/O and legacy receipts remain on main after the selector changes', async () => {
   const previousSetting = process.env.TESTING_REPOSITORY;
   try {

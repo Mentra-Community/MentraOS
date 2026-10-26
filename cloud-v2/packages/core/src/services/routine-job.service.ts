@@ -37,6 +37,7 @@ import {currentGraphReturnContinuation} from './graph-return-continuation';
 const exclusiveResources = new ResourceReservationsService();
 const isDeepIdentity = (left: unknown, right: unknown) => requestInputDigest(left ?? null) === requestInputDigest(right ?? null);
 export type SelectedRoutineLane = {requestId: string; hostId: string; laneId: string};
+export type RoutinePreparationPhase = (phase: string, counts?: {hostCount?: number; hostIndex?: number; claimCount?: number; attempt?: number}) => void;
 type ObservationPhase = (value: 'request' | 'delivery' | 'cancellation' | 'result' | 'projection') => void;
 
 /** These are fields on the existing test_requests record, never a separate scheduling queue. */
@@ -49,7 +50,7 @@ export interface RoutineJobRepository {
   preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
   selectedLanes?(hostIds: string[]): Promise<SelectedRoutineLane[]>;
   recorderClaims?(jobId: string): Promise<RecorderHostReservation[]>;
-  reconcileRecorderHost?(hostId: string, now: Date): Promise<boolean>;
+  reconcileRecorderHost?(hostId: string, now: Date, onPhase?: RoutinePreparationPhase): Promise<boolean>;
   checkpointBackendRecorder?(row: StoredRoutineJob, claim: RecorderHostReservation, now: Date): Promise<StoredRoutineJob | null>;
   reconcileBackendRecorderCancellation?(jobId: string, now: Date): Promise<void>;
   reserveResources?(jobId: string, inputSha256: string, hostId: string, laneId: string, now: Date,
@@ -77,16 +78,18 @@ export const routineJobRepository: RoutineJobRepository = {
   async completionRequest(requestId) {return await TestRequestModel.findOne({requestId})
     .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob | null;},
   async recorderClaims(requestId) {return resourceReservationRepository.recorderClaims!(requestId);},
-  async reconcileRecorderHost(hostId, now) {
+  async reconcileRecorderHost(hostId, now, onPhase) {
     // Return reconciliation precedes readiness routing. Raw claims remain custody
     // until the original request and a later fresh same-pool offer prove return.
     for (let attempt = 0; attempt < 3; attempt++) {
+      onPhase?.('recorder-host-read', {attempt});
       const host = await resourceReservationRepository.get(hostId), checkedAt = Date.now();
       if (!host || host.hostId !== hostId || !freshRoutineHost(host.receivedAt, checkedAt) ||
         !freshRoutineHost(host.snapshot.observedAt, checkedAt) || Date.parse(host.snapshot.observedAt) > host.receivedAt.getTime()) return false;
       const all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []),
         claims = all.filter((claim): claim is RecorderHostReservation => !isExclusiveHostReservation(claim));
       if (!claims.length) return true;
+      onPhase?.('recorder-original-request-read', {attempt, claimCount: claims.length});
       const requests = await TestRequestModel.collection.find({requestId: {$in: claims.map(claim => claim.requestId)}},
         {projection: {requestId: 1, inputSha256: 1, fleetInputSha256: 1, fleetResourceReservation: 1, fleetBinding: 1, fleetCancellation: 1,
           dispatchCompletion: 1, input: 1, hostId: 1, state: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
@@ -109,6 +112,7 @@ export const routineJobRepository: RoutineJobRepository = {
       });
       if (!returned.length) return true;
       if (!freshRoutineHost(host.receivedAt, Date.now()) || !freshRoutineHost(host.snapshot.observedAt, Date.now())) return false;
+      onPhase?.('recorder-return-CAS', {attempt, claimCount: claims.length});
       if (await resourceReservationRepository.replace(host, all.filter(claim => !returned.includes(claim as RecorderHostReservation)))) return true;
     }
     return false;
@@ -1286,7 +1290,7 @@ export class RoutineJobService {
           (!owned || subject.owner.generation === owned.generation) : subject.owner === null)
     })
   }
-  private async makeGraphCandidatePreparation(row: StoredRoutineJob, host: ReceivedTestHostState, lane: RoutingTestHostState['lanes'][number]) {
+  private async makeGraphCandidatePreparation(row: StoredRoutineJob, host: ReceivedTestHostState, lane: RoutingTestHostState['lanes'][number], onPhase?: RoutinePreparationPhase) {
     if (!this.rows.candidatePreparation || !host.frameworkBinding || host.resourceReservations?.resourceReadiness !== true) return undefined
     const previous = candidateRenewal(row, host.hostId, lane.id)
     // UNKNOWN renewal has genuine unclaimed closure. The new target still
@@ -1328,16 +1332,19 @@ export class RoutineJobService {
         ...(previous && row.fleetResourceReservation ? {provisionalReturn: {recorder: row.fleetResourceReservation,
           ...(row.fleetResourceAdmission ? {admission: row.fleetResourceAdmission} : {}),
           ...(row.fleetExclusiveReservation ? {exclusive: row.fleetExclusiveReservation} : {})}} : {})})
+    onPhase?.('graph-candidate-host-read');
     const current = await this.hosts.get(host.hostId), currentLane = current?.lanes.find(value => value.id === lane.id)
     if (!current || !currentLane || current.sequence !== host.sequence || current.incarnation !== host.incarnation ||
       current.incarnationGeneration !== host.incarnationGeneration || currentLane.state !== 'idle' || currentLane.activity ||
       currentLane.dispatchMode !== 'automatic' || !isDeepIdentity(current.frameworkBinding, host.frameworkBinding) ||
       !isDeepIdentity(routineResourceReadinessPurpose(current, currentLane, row.fleetPreparation!.requirements, this.now(), original), purpose) ||
-      !current.authorityReservations || graphCandidateClaimConflict(row, current, lane.id, purpose, this.now()) ||
-      (await this.rows.recorderClaims?.(row.requestId) ?? []).some(claim => requestInputDigest(claim) !== requestInputDigest(row.fleetResourceReservation ?? null))) return undefined
+      !current.authorityReservations || graphCandidateClaimConflict(row, current, lane.id, purpose, this.now())) return undefined;
+    onPhase?.('graph-candidate-recorder-claims-read');
+    if ((await this.rows.recorderClaims?.(row.requestId) ?? []).some(claim => requestInputDigest(claim) !== requestInputDigest(row.fleetResourceReservation ?? null))) return undefined
+    onPhase?.('graph-candidate-CAS');
     return this.rows.candidatePreparation(row, pending, new Date(this.now()))
   }
-  private async makeCandidatePreparation(row: StoredRoutineJob, host: ReceivedTestHostState, lane: RoutingTestHostState['lanes'][number]) {
+  private async makeCandidatePreparation(row: StoredRoutineJob, host: ReceivedTestHostState, lane: RoutingTestHostState['lanes'][number], onPhase?: RoutinePreparationPhase) {
     const previous = candidateRenewal(row, host.hostId, lane.id);
     if (!this.rows.candidatePreparation || host.resourceReservations?.candidatePrerequisites === undefined || !host.frameworkBinding ||
       host.frameworkBinding.routineApiVersion < BACKEND_CANDIDATE_ROUTINE_API_VERSION ||
@@ -1373,6 +1380,7 @@ export class RoutineJobService {
         ...(previous && row.fleetResourceReservation ? {provisionalReturn: {recorder: row.fleetResourceReservation,
           ...(row.fleetResourceAdmission ? {admission: row.fleetResourceAdmission} : {}),
           ...(row.fleetExclusiveReservation ? {exclusive: row.fleetExclusiveReservation} : {})}} : {})});
+    onPhase?.('phone-candidate-host-read');
     const current = await this.hosts.get(host.hostId), currentLane = current?.lanes.find(value => value.id === lane.id),
       currentPhone = current?.resourceLifecycle?.subjects.find(value => value.subject.id === phone.id);
     if (!current || current.incarnation !== host.incarnation || current.incarnationGeneration !== host.incarnationGeneration ||
@@ -1383,11 +1391,13 @@ export class RoutineJobService {
       !selectableRoutineResources(current, row.fleetPreparation!.requirements, currentLane, this.now(), true,
         {requestId: row.requestId, inputSha256: row.fleetInputSha256!}) ||
       !currentPhone?.current || currentPhone.owner !== null || currentPhone.generation !== subject.generation ||
-      !current.authorityReservations || current.authorityReservations.some(claim => candidateClaimConflict(row, claim, host.hostId, lane.id)) ||
-      (await this.rows.recorderClaims?.(row.requestId) ?? []).some(claim => requestInputDigest(claim) !== requestInputDigest(row.fleetResourceReservation ?? null))) return undefined;
+      !current.authorityReservations || current.authorityReservations.some(claim => candidateClaimConflict(row, claim, host.hostId, lane.id))) return undefined;
+    onPhase?.('phone-candidate-recorder-claims-read');
+    if ((await this.rows.recorderClaims?.(row.requestId) ?? []).some(claim => requestInputDigest(claim) !== requestInputDigest(row.fleetResourceReservation ?? null))) return undefined;
+    onPhase?.('phone-candidate-CAS');
     return this.rows.candidatePreparation(row, pending, new Date(this.now()));
   }
-  private async reconcileCandidatePreparation(row: StoredRoutineJob, host: ReceivedTestHostState | undefined) {
+  private async reconcileCandidatePreparation(row: StoredRoutineJob, host: ReceivedTestHostState | undefined, onPhase?: RoutinePreparationPhase) {
     const pending = row.fleetCandidatePreparation;
     if (!pending || !host || Date.parse(host.receivedAt) > this.now() || this.now() - Date.parse(host.receivedAt) > 120_000 ||
       Date.parse(host.observedAt) > this.now() || this.now() - Date.parse(host.observedAt) > 120_000 || !host.authorityReservations) return row;
@@ -1400,9 +1410,13 @@ export class RoutineJobService {
     }), checked = continuation ? {...pending, resourceReturnContinuation: continuation} : pending;
     if (pending.resourceReturnContinuation && !continuation) return row;
     const settlement = candidateSettlement(checked, host, host.authorityReservations, this.now());
-    if (!settlement) return obsoleteUnboundGraphCandidate(row, host, this.now())
-      ? await this.rows.supersedeCandidatePreparation?.(row, new Date(this.now())) ?? row : row;
+    if (!settlement) {
+      if (!obsoleteUnboundGraphCandidate(row, host, this.now())) return row;
+      onPhase?.('candidate-supersession-CAS');
+      return await this.rows.supersedeCandidatePreparation?.(row, new Date(this.now())) ?? row;
+    }
     if (!this.rows.settleCandidatePreparation) return row;
+    onPhase?.('candidate-settlement-CAS');
     return await this.rows.settleCandidatePreparation(row, {...checked, settlement}, new Date(this.now())) ?? row;
   }
   /** A selected preparing receipt authorizes host-only preparation; only the owned check can observe the phone. */
@@ -1621,22 +1635,39 @@ export class RoutineJobService {
     const pending = await this.rows.pending?.(20, new Date(this.now())) ?? [];
     await Promise.allSettled(pending.map(row => row.fleetCancellation ? this.cancel(row.requestId,{reason:row.fleetCancellation.reason}) : this.observation(row.requestId)));
   }
-  async preparation(jobId: string) {
-    const row = await this.supersession(await this.job(jobId));
-    const routing: Partial<ReturnType<typeof routineJobRouting>> = row.fleetPreparation ? await this.routing(row) : {};
+  async preparation(jobId: string, onPhase?: RoutinePreparationPhase) {
+    onPhase?.('job-lookup');
+    const selected = await this.job(jobId);
+    onPhase?.('supersession');
+    const row = await this.supersession(selected);
+    const routing: Partial<ReturnType<typeof routineJobRouting>> = row.fleetPreparation ? await this.routing(row, onPhase) : {};
     return {jobId, kind: 'run' as const, inputSha256: row.fleetInputSha256 ?? row.fleetSelectionSha256, deadline: row.fleetDeadline.toISOString(),
       state: row.state, ...routing, ...(row.fleetCandidatePreparation ? {fleetCandidatePreparation: row.fleetCandidatePreparation} : {}), selection: row.fleetSelection, ...(row.fleetTarget ? {target: row.fleetTarget} : {}), ...(row.fleetPreparation ? {prepared: row.fleetPreparation} : {})};
   }
-  private async routing(row: StoredRoutineJob) {
+  private async routing(row: StoredRoutineJob, onPhase?: RoutinePreparationPhase) {
+    onPhase?.('initial-host-read');
     let hosts = await this.hosts.list?.() ?? [];
     const original = {requestId: row.requestId, inputSha256: row.fleetInputSha256!};
-    if (row.fleetCandidatePreparation?.provisionalReturn && !row.fleetCandidatePreparation.provisionalReturn.releasedAt)
+    if (row.fleetCandidatePreparation?.provisionalReturn && !row.fleetCandidatePreparation.provisionalReturn.releasedAt) {
+      onPhase?.('candidate-provisional-release');
       row = await this.rows.releaseCandidateProvisional?.(row, new Date(this.now())) ?? row;
-    row = await this.reconcileCandidatePreparation(row, row.fleetCandidatePreparation ? await this.hosts.get(row.fleetCandidatePreparation.hostId) ?? undefined : undefined);
+    }
+    let candidateHost: ReceivedTestHostState | undefined;
+    if (row.fleetCandidatePreparation) {
+      onPhase?.('candidate-host-read');
+      candidateHost = await this.hosts.get(row.fleetCandidatePreparation.hostId) ?? undefined;
+    }
+    onPhase?.('candidate-return-reconciliation');
+    row = await this.reconcileCandidatePreparation(row, candidateHost, onPhase);
     if (row.state !== 'awaiting-runner' || row.fleetCancellation || row.fleetDeadline.getTime() <= this.now())
       return {...routineJobRouting(recorderCapacityRequirements(row.fleetPreparation!), hosts, this.now(), row.fleetTarget, row.fleetSelection.build, true, original), waitingReason: RESOURCE_ADMISSION_WAIT};
     if (this.rows.reconcileRecorderHost) {
-      for (const host of hosts) await this.rows.reconcileRecorderHost(host.hostId, new Date(this.now()));
+      for (const [hostIndex, host] of hosts.entries()) {
+        onPhase?.('recorder-return-reconciliation', {hostCount: hosts.length, hostIndex});
+        await this.rows.reconcileRecorderHost(host.hostId, new Date(this.now()),
+          (phase, counts) => onPhase?.(phase, {hostCount: hosts.length, hostIndex, ...counts}));
+      }
+      onPhase?.('refreshed-host-read', {hostCount: hosts.length});
       hosts = await this.hosts.list?.() ?? [];
     }
     if (row.fleetCandidatePreparation) return {...routineJobRouting(recorderCapacityRequirements(row.fleetPreparation!), hosts, this.now(), row.fleetTarget, row.fleetSelection.build, true, original),
@@ -1645,6 +1676,7 @@ export class RoutineJobService {
         : 'Checking the selected phone and waiting for its complete return'};
     const requirements = recorderCapacityRequirements(row.fleetPreparation!);
     // Provisional physical custody is recovered independently of network-health requirements.
+    if (row.fleetSelection.platform === 'android') onPhase?.('original-recorder-claims-read');
     const originals = row.fleetSelection.platform === 'android' ? await this.rows.recorderClaims?.(row.requestId) ??
       hosts.flatMap(host => (host.authorityReservations ?? []).filter((claim): claim is RecorderHostReservation =>
         !isExclusiveHostReservation(claim) && claim.requestId === row.requestId)) : [];
@@ -1659,8 +1691,10 @@ export class RoutineJobService {
       // refuses cleanup-only receipts. Only expired/unqualified custody needs that
       // receipt before the original claim is returned; reserveResources rechecks
       // the authoritative proof before any admission effect.
+      onPhase?.('provisional-host-read');
       const host=await this.hosts.get(provisional.hostId);
       if (!host || !qualifiedCandidate(row,host,provisional.laneId,this.now(),host.receivedAt)) {
+        onPhase?.('backend-recorder-checkpoint');
         const checkpoint=await this.rows.checkpointBackendRecorder?.(row,provisional,new Date(this.now()));
         if (!checkpoint) return {...routineJobRouting(requirements,hosts,this.now(),provisional,row.fleetSelection.build,true,original),waitingReason:RESOURCE_ADMISSION_WAIT};
         row=checkpoint;
@@ -1677,15 +1711,18 @@ export class RoutineJobService {
     let waitingReason: string | undefined;
     const onWaiting = (reason: string) => {waitingReason = reason;};
     if (retained) {
+      if (row.fleetCandidateSelection) onPhase?.('retained-candidate-host-read');
       const candidateHost = row.fleetCandidateSelection && await this.hosts.get(retained.hostId), lane = candidateHost?.lanes.find(value => value.id === retained.laneId);
       if (candidateHost && lane && !qualifiedCandidate(row, candidateHost, retained.laneId, this.now(), candidateHost.receivedAt)) {
-        const graph = row.fleetCandidatePreparations?.at(-1)?.target.purpose?.kind === 'resource-readiness',
-          pending = graph ? await this.makeGraphCandidatePreparation(row, candidateHost, lane) : await this.makeCandidatePreparation(row, candidateHost, lane);
+        const graph = row.fleetCandidatePreparations?.at(-1)?.target.purpose?.kind === 'resource-readiness';
+        onPhase?.(graph ? 'retained-graph-candidate-preparation' : 'retained-phone-candidate-preparation');
+        const pending = graph ? await this.makeGraphCandidatePreparation(row, candidateHost, lane, onPhase) : await this.makeCandidatePreparation(row, candidateHost, lane, onPhase);
         if (pending?.fleetCandidatePreparation) return {...routed, waitingReason: graph
           ? 'Returning the original unused reservation before checking the complete required graph again'
           : 'Returning the original unused reservation before checking this phone again'};
         return {...routed, waitingReason: RESOURCE_ADMISSION_WAIT};
       }
+      onPhase?.('retained-resource-reservation');
       const checked = await this.rows.reserveResources?.(row.requestId, row.fleetInputSha256!, retained.hostId, retained.laneId, new Date(this.now()), onWaiting);
       if (!checked) {
         const targetInventory = routineJobRouting(inventoryRequirements, hosts, this.now(), retained, row.fleetSelection.build, true, original);
@@ -1710,6 +1747,7 @@ export class RoutineJobService {
         ? RECORDER_CAPACITY_WAIT : reasons.length && reasons.every(reason => reason === RECORDER_OBSERVATION_WAIT)
           ? RECORDER_OBSERVATION_WAIT : RESOURCE_ADMISSION_WAIT};
     }
+    if (!admitted) onPhase?.('selected-lanes-read');
     const selected = admitted ? [] : await this.rows.selectedLanes?.(hosts.map(host => host.hostId)) ?? [];
     const candidateReasons: (string | undefined)[] = [];
     const candidates = orderedRoutineCandidates(row.requestId, hosts, selected),
@@ -1736,19 +1774,23 @@ export class RoutineJobService {
             requirements.resources.find(resource => resource.kind === 'recorder')!.storage!.minimumAvailableBytes, this.now()));
         continue;
       }
+      if (requiresBackendConnectivity(row) || host.resourceReservations?.resourceReadiness === true) onPhase?.('routing-candidate-host-read');
       const observedHost = requiresBackendConnectivity(row) || host.resourceReservations?.resourceReadiness === true ? await this.hosts.get(host.hostId) : undefined;
       if (!retained && !admitted && !provisional && host.resourceReservations?.resourceReadiness === true &&
         (!observedHost || !qualifiedGraphCandidate(row, observedHost, lane.id, this.now(), observedHost.receivedAt))) {
-        const pending = observedHost && await this.makeGraphCandidatePreparation(row, observedHost, lane)
+        if (observedHost) onPhase?.('graph-candidate-preparation');
+        const pending = observedHost && await this.makeGraphCandidatePreparation(row, observedHost, lane, onPhase)
         if (pending?.fleetCandidatePreparation) return {...routed, waitingReason: 'Checking the complete required resource graph before assigning this test'}
         candidateReasons.push('Waiting for an original owned resource-graph preflight'); continue
       }
       if (!retained && !admitted && !provisional && requiresBackendConnectivity(row) && (!observedHost || !qualifiedCandidate(row, observedHost, lane.id, this.now(), observedHost.receivedAt))) {
-        const pending = observedHost && await this.makeCandidatePreparation(row, observedHost, lane);
+        if (observedHost) onPhase?.('phone-candidate-preparation');
+        const pending = observedHost && await this.makeCandidatePreparation(row, observedHost, lane, onPhase);
         if (pending?.fleetCandidatePreparation) return {...routed, waitingReason: 'Checking the next available phone before assigning this test'};
         candidateReasons.push('Waiting for a phone that supports an unassigned connection check'); continue;
       }
       let candidateReason: string | undefined, exclusiveBlocker = false;
+      onPhase?.('resource-reservation');
       const saved = await this.rows.reserveResources?.(row.requestId, row.fleetInputSha256!, host.hostId, lane.id, new Date(this.now()),
         (reason, exclusive) => {candidateReason = reason; exclusiveBlocker = Boolean(exclusive);});
       if (saved?.fleetResourceReservation) return {...routed, chosenModel: saved.fleetResourceReservation.chosenModel, resourceTarget: {hostId: saved.fleetResourceReservation.hostId, laneId: saved.fleetResourceReservation.laneId},
@@ -1791,12 +1833,18 @@ export class RoutineJobService {
     const row = await this.job(jobId);
     return this.sources.blob(file, routineSourceRepository(row.fleetSelection));
   }
-  async prepared(jobId: string, value: unknown) {
-    const input = completeRoutineJobPreparationSchema.parse(value), row = await this.job(jobId), selected = row.fleetSelection;
+  async prepared(jobId: string, value: unknown, onPhase?: RoutinePreparationPhase) {
+    const input = completeRoutineJobPreparationSchema.parse(value);
+    onPhase?.('job-lookup');
+    const row = await this.job(jobId), selected = row.fleetSelection;
     if (input.inputSha256 !== row.fleetSelectionSha256) throw new TestRequestConflict('Preparation changed the exact source selection');
+    onPhase?.('ordinary-enrollment-lookup');
     const ordinary = await this.definitions.getExact(selected.routineId, selected.platform, selected.routineRevision, true);
-    if (!ordinary && await this.definitions.getExact(selected.routineId, selected.platform, selected.routineRevision, false))
-      throw new TestRunError(422, 'Candidate-only source requires its accepted authoring job and review authorization');
+    if (!ordinary) {
+      onPhase?.('candidate-enrollment-lookup');
+      if (await this.definitions.getExact(selected.routineId, selected.platform, selected.routineRevision, false))
+        throw new TestRunError(422, 'Candidate-only source requires its accepted authoring job and review authorization');
+    }
     const definition = routineEnrollmentSchema.parse({routineId: selected.routineId, platform: selected.platform, definitionRevision: selected.routineRevision,
       routineSource: input.routineSource, definitionSha256: input.definitionSha256, definition: input.definition});
     if (input.routineSource.repository !== routineSourceRepository(selected) || requestInputDigest(input.definition) !== input.definitionSha256 || selected.routineSource &&
@@ -1810,7 +1858,9 @@ export class RoutineJobService {
       return row;
     }
     if (row.fleetCancellation || this.now() >= row.fleetDeadline.getTime()) return row;
+    onPhase?.('prepared-input-CAS');
     const saved = await this.rows.prepare(jobId, row.fleetSelectionSha256, prepared, digest, new Date(this.now()));
+    if (!saved) onPhase?.('prepared-input-winner-read');
     const winner = saved ?? await this.job(jobId);
     if (winner.fleetPreparation && winner.fleetInputSha256 !== digest) throw new TestRequestConflict('Prepared routine requirements changed after their first commit');
     return winner;
