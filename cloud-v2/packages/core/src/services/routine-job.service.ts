@@ -663,8 +663,7 @@ async function releaseCandidateProvisional(original: StoredRoutineJob, now: Date
     recorder.hostId !== pending.hostId || recorder.laneId !== pending.laneId ||
     admission && (!fleetResourceAdmissionSchema.safeParse(admission).success || admission.intent.owner.kind !== 'run' ||
       admission.intent.owner.id !== original.requestId || admission.intent.hostId !== pending.hostId || admission.intent.laneId !== pending.laneId ||
-      admission.intent.inputSha256 !== original.fleetInputSha256 || admission.intent.controller.incarnation !== pending.candidate.controller.incarnation ||
-      admission.intent.controller.generation !== pending.candidate.controller.generation) ||
+      admission.intent.inputSha256 !== original.fleetInputSha256) ||
     exclusive && (!admission || requestInputDigest(exclusive.intent) !== requestInputDigest(admission.intent) ||
       exclusive.origin.fleetInputSha256 !== original.fleetInputSha256 || exclusive.claims.length !== admission.dependencies.length ||
       exclusive.intentSha256 !== requestInputDigest({...admission.intent, controller: {incarnation: admission.intent.controller.incarnation,
@@ -691,6 +690,8 @@ async function releaseCandidateProvisional(original: StoredRoutineJob, now: Date
         : prior!.claimReceipt && prior!.returnReceipt && candidateReturnMatches(prior!, prior!.returnReceipt)) &&
       prior!.hostId === pending.hostId && prior!.laneId === pending.laneId &&
       prior!.candidate.fleetInputSha256 === current.fleetInputSha256 && prior!.candidate.selectionSha256 === current.fleetSelectionSha256 &&
+      (!admission || admission.intent.controller.incarnation === prior!.candidate.controller.incarnation &&
+        admission.intent.controller.generation === prior!.candidate.controller.generation) &&
       requestInputDigest(current.fleetResourceReservation) === requestInputDigest(returning.recorder) &&
       requestInputDigest(current.fleetResourceAdmission ?? null) === requestInputDigest(returning.admission ?? null) &&
       requestInputDigest(current.fleetExclusiveReservation ?? null) === requestInputDigest(returning.exclusive ?? null) ? current : null;
@@ -1295,15 +1296,16 @@ export class RoutineJobService {
   private async makeGraphCandidatePreparation(row: StoredRoutineJob, host: ReceivedTestHostState, lane: RoutingTestHostState['lanes'][number], onPhase?: RoutinePreparationPhase) {
     if (!this.rows.candidatePreparation || !host.frameworkBinding || host.resourceReservations?.resourceReadiness !== true) return undefined
     const previous = candidateRenewal(row, host.hostId, lane.id)
-    // UNKNOWN renewal has genuine unclaimed closure. The new target still
-    // validates and captures its current compatible build, binding and controller.
+    // Authenticated prior returns permit a new current-source/controller check
+    // for byte-only staging; retained dependency custody keeps its identity fence.
     if (!previous && row.fleetCandidatePreparations?.some(value => value.hostId === host.hostId && value.laneId === lane.id) ||
       (row.fleetResourceReservation || row.fleetResourceAdmission || row.fleetExclusiveReservation) && (!previous || !row.fleetResourceReservation) ||
       previous && (previous.target.purpose?.kind !== 'resource-readiness' || (previous.coordinatorSupersession
         ? !host.incarnationGeneration || host.incarnationGeneration < previous.coordinatorSupersession.controller.generation ||
           host.incarnation === previous.candidate.controller.incarnation
-        : previous.settlement?.outcome !== 'unknown' && (previous.candidate.controller.incarnation !== host.incarnation ||
-          previous.candidate.controller.generation !== host.incarnationGeneration || !isDeepIdentity(previous.target.acceptedBinding, host.frameworkBinding)))) ||
+        : previous.settlement?.outcome !== 'unknown' && (row.fleetResourceAdmission?.dependencies.length || row.fleetExclusiveReservation) &&
+          (previous.candidate.controller.incarnation !== host.incarnation || previous.candidate.controller.generation !== host.incarnationGeneration ||
+            !isDeepIdentity(previous.target.acceptedBinding, host.frameworkBinding)))) ||
       (row.fleetCandidatePreparations?.length ?? 0) >= MAX_FLEET_CANDIDATE_PREPARATIONS) return undefined
     const original = {requestId: row.requestId, inputSha256: row.fleetInputSha256!},
       purpose = routineResourceReadinessPurpose(host, lane, row.fleetPreparation!.requirements, this.now(), original)
