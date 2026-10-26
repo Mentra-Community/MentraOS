@@ -20,8 +20,7 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const positive = z.number().int().positive().safe();
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const repositorySchema = z.object({ full_name: z.string() });
-const sequenceTagSchema = z.object({sha, tag: z.string(), message: z.string(), object: z.object({type: z.string(), sha})});
-type SequenceTag = z.infer<typeof sequenceTagSchema>;
+type BuildMetadata = {value: unknown; sha256: string; url: string; size: number};
 const runSchema = z.object({
   id: positive, run_attempt: positive, head_sha: sha, head_branch: z.string(), path: z.string(),
   event: z.string(), status: z.string(), conclusion: z.string().nullable(), created_at: z.string(),
@@ -98,19 +97,18 @@ export interface TestBuildGateway {
 export class GithubTestBuildGateway implements TestBuildGateway {
   constructor(private readonly options: {
     repository?: AppRepository; token?: string; privateReadToken?: string; appAuth?: TestRunGithubApp; fetch?: typeof fetch; channels?: string[]; routines?: string[];
-  } = {}, private readonly selectionBoundary?: string,
-    private readonly tagObjects = new Map<string, Promise<SequenceTag>>()) { this.appAuth = options.appAuth ?? new TestRunGithubApp({ fetch: options.fetch }); }
+  } = {}, private readonly selectionBoundary?: string) { this.appAuth = options.appAuth ?? new TestRunGithubApp({ fetch: options.fetch }); }
   private readonly appAuth: TestRunGithubApp;
   private get repository(): AppRepository {return appRepositorySchema.parse(this.options.repository ?? REPOSITORY);}
   private get releaseWorkflow() {return this.repository === CANONICAL_REPOSITORY ? "release.yml" : RELEASE_WORKFLOW;}
   private get releaseFinalizer() {return this.repository === CANONICAL_REPOSITORY ? "finalize / Finalize the release manifest and tag" : RELEASE_FINALIZE_JOB;}
   private forRepository(repository: AppRepository) {
-    return new GithubTestBuildGateway({...this.options, appAuth: this.appAuth, repository: appRepositorySchema.parse(repository)}, this.selectionBoundary, this.tagObjects);
+    return new GithubTestBuildGateway({...this.options, appAuth: this.appAuth, repository: appRepositorySchema.parse(repository)}, this.selectionBoundary);
   }
   private releaseReads?: {runId: number; reads: Map<string, Promise<unknown>>};
   /** One selection only; never reuse mutable provider observations across occurrences. */
   forSelection(before: string): GithubTestBuildGateway {
-    return new GithubTestBuildGateway({...this.options, appAuth: this.appAuth}, before, this.tagObjects);
+    return new GithubTestBuildGateway({...this.options, appAuth: this.appAuth}, before);
   }
   private releaseRead<T>(runId: number, key: string, read: () => Promise<T>): Promise<T> {
     if (this.selectionBoundary === undefined) return read();
@@ -141,12 +139,12 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       throw new TestDispatchError(503, `Build information is unavailable because GitHub's request limit was reached. The limit resets at ${new Date(Number(reset) * 1000).toISOString()}.`);
     return parseJson(await readTestMetadata(response, 4 * 1024 * 1024));
   }
-  private async metadata(tag: string, name: string) {
+  private async metadata(tag: string, name: string, maxBytes = 1024 * 1024) {
     // Both segments are constructed from validated identities, never supplied URLs.
     requireThat(/^[A-Za-z0-9._-]+$/.test(tag) && /^[A-Za-z0-9._-]+$/.test(name), "Invalid artifact identity");
     const url = `${CDN}${tag}/${name}`;
     const read = async () => {
-      const bytes = await readTestMetadata(await this.fetcher(url));
+      const bytes = await readTestMetadata(await this.fetcher(url), maxBytes);
       return { value: parseJson(bytes), sha256: hash(bytes), url, size: bytes.byteLength };
     };
     return this.releaseReads ? this.releaseRead(this.releaseReads.runId, url, read) : read();
@@ -242,7 +240,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
           || !current[0]?.completed_at || !Number.isFinite(Date.parse(current[0].completed_at))
           || Date.parse(current[0].completed_at) > boundary) continue;
         // Dry runs can finalize successfully, but never produce the finalized result artifact.
-        if (!await this.releaseIdentity(run)) continue;
+        if (this.repository !== CANONICAL_REPOSITORY && !await this.releaseIdentity(run)) continue;
         // A published but missing platform artifact remains unavailable; do not silently use an older release.
         const publicationAttempt = Math.min(latest, ...finalizers.filter(job => job.started_at && job.completed_at
           && job.started_at === current[0]!.started_at && job.completed_at === current[0]!.completed_at
@@ -383,12 +381,11 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       result: { ...(diagnostic ? {diagnostic: "nimo-resource-v1" as const} : {}), receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
   }
   private releaseIdentity(run: GithubRun): Promise<string | null> {
-    if (this.repository === CANONICAL_REPOSITORY) return this.canonicalRelease(run).then(value => value.identity);
     return this.releaseRead(run.id, `identity:${run.head_sha}`, () => this.readReleaseIdentity(run));
   }
-  private canonicalRelease(run: GithubRun): Promise<{identity: string; sourceCommit: string}> {
+  private canonicalRelease(run: GithubRun, publicationEnd: string | null): Promise<{identity: string; sourceCommit: string; manifest: BuildMetadata}> {
     return this.releaseRead(run.id, "canonical:" + run.head_sha, async () => {
-      try {return await this.readCanonicalRelease(run);}
+      try {return await this.readCanonicalRelease(run, publicationEnd);}
       catch (error) {
         if (error instanceof TestDispatchError && error.status === 404)
           throw new TestDispatchError(502, "Original canonical release ledger metadata is not available");
@@ -396,56 +393,59 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       }
     });
   }
-  private sequenceTag(objectSha: string): Promise<SequenceTag> {
-    const key = this.repository + ":" + objectSha;
-    const retained = this.tagObjects.get(key);
-    if (retained) return retained;
-    // Only content-addressed objects survive an occurrence. References and publication
-    // observations remain fresh. Cap both the entry count and retained object size.
-    if (this.tagObjects.size >= 2000) this.tagObjects.delete(this.tagObjects.keys().next().value!);
-    const pending: Promise<SequenceTag> = this.api(this.repository + "/git/tags/" + objectSha).then(value => {
-      const tag = sequenceTagSchema.parse(value);
-      requireThat(tag.sha === objectSha, "Release sequence object differs from its requested SHA");
-      if (JSON.stringify(tag).length > 4096 && this.tagObjects.get(key) === pending) this.tagObjects.delete(key);
-      return tag;
-    }).catch(error => {
-      if (this.tagObjects.get(key) === pending) this.tagObjects.delete(key);
-      throw error;
-    });
-    this.tagObjects.set(key, pending);
-    return pending;
-  }
-  private async readCanonicalRelease(run: GithubRun): Promise<{identity: string; sourceCommit: string}> {
-    // The canonical producer uses an annotated public sequence tag, without Actions plan artifacts.
-    // Its public ledger requires its own repository-scoped App credential.
+  private async readCanonicalRelease(run: GithubRun, publicationEnd: string | null): Promise<{identity: string; sourceCommit: string; manifest: BuildMetadata}> {
+    // The source fixes the family; the existing CDN index discovers its finalized manifests.
+    // Publication ownership comes from their verified bytes, never the index or reservation tags.
+    const readSource = async (path: string) => {
+      const file = z.object({type: z.literal("file"), path: z.literal(path), encoding: z.literal("base64"),
+        size: positive.max(1024 * 1024), content: z.string().max(2 * 1024 * 1024)})
+        .parse(await this.api(CANONICAL_REPOSITORY + "/contents/" + path + "?ref=" + run.head_sha));
+      const bytes = Buffer.from(file.content, "base64");
+      requireThat(bytes.byteLength === file.size, "Canonical release family source is incomplete");
+      return parseJson(bytes);
+    };
+    const definition = z.object({versionSource: z.string().max(512).regex(/^[A-Za-z0-9._/-]+$/)
+      .refine(path => path.split("/").every(segment => segment && segment !== "." && segment !== ".."))})
+      .parse(await readSource("public/mentraos/.github/release-family.json"));
+    const family = z.object({version: z.string().regex(/^\d+\.\d+\.\d+$/)})
+      .parse(await readSource("public/mentraos/" + definition.versionSource)).version;
+    const tag = "mentra-builds-v" + family;
     const ledger = this.forRepository(REPOSITORY);
     const refSchema = z.object({ref: z.string(), object: z.object({type: z.string(), sha})});
-    const refs = z.array(refSchema).parse(await ledger.api(REPOSITORY + "/git/matching-refs/tags/mentra-sequence-"));
-    if (refs.length >= 2000) throw new TestDispatchError(502, "Release sequence history exceeds its complete-read limit");
-    requireThat(new Set(refs.map(ref => ref.ref)).size === refs.length && refs.every(ref =>
-      /^refs\/tags\/mentra-sequence-[1-9]\d*$/.test(ref.ref) && ref.object.type === "tag"), "Release sequence ledger is malformed");
-    const owned: {sequence: string; sourceCommit: string}[] = [];
-    // Refresh the complete references even when immutable tag objects are cached.
-    for (let offset = 0; offset < refs.length; offset += 8) {
-      const batch = await Promise.all(refs.slice(offset, offset + 8).map(async ref => {
-        const tag = await ledger.sequenceTag(ref.object.sha);
-        requireThat("refs/tags/" + tag.tag === ref.ref && tag.object.type === "commit",
-          "Release sequence annotation differs from its reference");
-        if (tag.message.replace(/\n$/, "") !== "monorepo-run:" + run.id) return null;
-        return {sequence: ref.ref.slice("refs/tags/mentra-sequence-".length), sourceCommit: tag.object.sha};
-      }));
-      owned.push(...batch.filter((value): value is NonNullable<typeof value> => value !== null));
-    }
-    if (owned.length === 0) throw new TestDispatchError(502, "Original canonical release sequence is not available");
-    requireThat(owned.length === 1, "Canonical release sequence is ambiguous");
-    const original = owned[0]!;
     const releases = z.array(refSchema).parse(await ledger.api(REPOSITORY + "/git/matching-refs/tags/mentra-v"));
     if (releases.length >= 2000) throw new TestDispatchError(502, "Release tag history exceeds its complete-read limit");
+    requireThat(new Set(releases.map(ref => ref.ref)).size === releases.length, "Release tag history is ambiguous");
     const channel = run.head_branch === "dev" ? "dev" : "beta";
-    const candidates = releases.filter(ref => new RegExp("^refs/tags/mentra-v\\d+\\.\\d+\\.\\d+-" + channel + "\\." + original.sequence + "$").test(ref.ref));
-    if (candidates.length === 0) throw new TestDispatchError(502, "Original completed release tag is not available");
-    requireThat(candidates.length === 1 && candidates[0]!.object.type === "commit" && candidates[0]!.object.sha === original.sourceCommit,
-      "Completed release tag differs from its original sequence");
+    const candidates = releases.filter(ref => new RegExp("^refs/tags/mentra-v" + family.replaceAll(".", "\\.") + "-" + channel + "\\.[1-9]\\d*$").test(ref.ref));
+    const index = z.object({schemaVersion: z.literal(1), repository: z.literal(REPOSITORY), tag: z.literal(tag),
+      assets: z.array(z.object({name: z.string(), size: z.number().int().nonnegative().safe(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+        state: z.literal("uploaded"), browser_download_url: z.string(), created_at: z.string().datetime()}))})
+      .parse((await this.metadata(tag, "_assets.json", 4 * 1024 * 1024)).value);
+    requireThat(new Set(index.assets.map(asset => asset.name)).size === index.assets.length, "Release artifact index is ambiguous");
+    const start = Date.parse(run.created_at), end = publicationEnd ? Date.parse(publicationEnd) : Infinity;
+    requireThat(Number.isFinite(start) && (end === Infinity || Number.isFinite(end)) && end >= start, "Canonical publication boundary is invalid");
+    const owned: {identity: string; sourceCommit: string; manifest: BuildMetadata}[] = [];
+    for (const ref of candidates) {
+      const identity = ref.ref.slice("refs/tags/mentra-v".length), name = "mentra-release-" + identity + ".json";
+      const asset = index.assets.find(asset => asset.name === name);
+      if (!asset) throw new TestDispatchError(502, "Completed release manifest is absent from the publication index");
+      requireThat(asset.browser_download_url === `${CDN}${tag}/${name}`, "Release manifest index URL differs");
+      const created = Date.parse(asset.created_at);
+      if (created < start || created > end) continue;
+      const url = `${CDN}${tag}/${name}`, bytes = await readTestMetadata(await this.fetcher(url));
+      const manifest = {value: parseJson(bytes), sha256: hash(bytes), size: bytes.byteLength, url};
+      requireThat(manifest.sha256 === asset.digest.slice(7) && manifest.size === asset.size, "Release manifest bytes differ from the publication index");
+      const data = z.object({schemaVersion: z.literal(1), releaseIdentity: z.string(), sourceCommit: sha,
+        artifacts: z.array(z.object({coordinate: z.string(), provenanceUrl: z.string()}))}).parse(manifest.value);
+      const apps = data.artifacts.filter(asset => asset.coordinate === `mentraos-${identity}-android.apk`);
+      if (!apps.some(asset => asset.provenanceUrl === runUrl(this.repository, run.id))) continue;
+      requireThat(apps.length === 1 && data.releaseIdentity === identity && ref.object.type === "commit" && ref.object.sha === data.sourceCommit,
+        "Canonical publication differs from its completed release tag");
+      owned.push({identity, sourceCommit: data.sourceCommit, manifest});
+    }
+    if (!owned.length) throw new TestDispatchError(502, "Original canonical published release is not available");
+    requireThat(owned.length === 1, "Canonical published release is ambiguous");
+    const original = owned[0]!;
     const commit = z.object({sha, message: z.string()}).parse(await ledger.api(REPOSITORY + "/git/commits/" + original.sourceCommit));
     const origins = [...commit.message.matchAll(/^GitOrigin-RevId: ([a-f0-9]{40})$/gm)];
     requireThat(commit.sha === original.sourceCommit && origins.length === 1, "Exported release has no unique canonical source");
@@ -463,7 +463,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       && (origin === run.head_sha ? comparison.total_commits === 0 : comparison.commits.at(-1)?.sha === run.head_sha)
       && comparison.files.every(file => !exported(file.filename) && (!file.previous_filename || !exported(file.previous_filename))),
       "Canonical producer changed the selected public export");
-    return {identity: candidates[0]!.ref.slice("refs/tags/mentra-v".length), sourceCommit: original.sourceCommit};
+    return original;
   }
   private async readReleaseIdentity(run: GithubRun): Promise<string | null> {
     const listed = z.object({ artifacts: z.array(z.object({ name: z.string(), expired: z.boolean(),
@@ -494,7 +494,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const attempt = Math.min(job.run_attempt, ...finalizers.filter(item => job.started_at && job.completed_at
       && item.started_at === job.started_at && item.completed_at === job.completed_at && item.conclusion === job.conclusion)
       .map(item => item.run_attempt));
-    const canonical = this.repository === CANONICAL_REPOSITORY ? await this.canonicalRelease(run) : undefined;
+    const canonical = this.repository === CANONICAL_REPOSITORY ? await this.canonicalRelease(run, job.completed_at) : undefined;
     const identity = canonical?.identity ?? await this.releaseIdentity(run);
     const sourceCommit = canonical?.sourceCommit ?? run.head_sha;
     const artifactSource = canonical ? {artifactSource: {repository: REPOSITORY as typeof REPOSITORY, headSha: sourceCommit}} : {};
@@ -509,10 +509,10 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     requireThat(plan.releaseIdentity === identity && plan.sourceCommit === sourceCommit && plan.channel === match[2]
       && plan.artifactContainerTag === tag && plan.artifactNames.otaManifest === `mentra-live-ota-${identity}.json`,
       "Published plan does not match the producing run");
-    if (platform === "android") {
+    if (platform === "android" || canonical) {
       requireThat(plan.artifactNames.androidApp === `mentraos-${identity}-android.apk`
         && plan.artifactNames.releaseManifest === `mentra-release-${identity}.json`, "Release plan has no matching Android APK");
-      const receipt = await this.metadata(tag, plan.artifactNames.releaseManifest);
+      const receipt = canonical?.manifest ?? await this.metadata(tag, plan.artifactNames.releaseManifest);
       const data = z.object({ schemaVersion: z.literal(1), releaseIdentity: z.string(), releaseSetId: z.string(), sourceCommit: sha,
         releasePlanSha256: digest, channel: z.string(),
         native: z.record(z.string(), z.unknown()),
@@ -529,9 +529,11 @@ export class GithubTestBuildGateway implements TestBuildGateway {
         && ["built", "published", "reused"].includes(String(assets[0]!.status))
         && (!canonical || assets[0]!.provenanceUrl === runUrl(this.repository, run.id)), "Android receipt does not match the selected coordinated release");
       const archive = assetSchema.parse({ name: assets[0]!.coordinate, sha256: assets[0]!.sha256, size: assets[0]!.size });
-      const ota = await this.metadata(tag, plan.artifactNames.otaManifest);
-      requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === identity, "OTA manifest release differs");
-      return { attempt, tag, archive, result: { ...artifactSource, release: identity, receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
+      if (platform === "android") {
+        const ota = await this.metadata(tag, plan.artifactNames.otaManifest);
+        requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === identity, "OTA manifest release differs");
+        return { attempt, tag, archive, result: { ...artifactSource, release: identity, receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
+      }
     }
     const receipt = await this.metadata(tag, `mentraos-${identity}-apple-downloads.json`);
     const data = z.object({ schemaVersion: z.literal(1), releaseIdentity: z.string(), sourceCommit: sha,

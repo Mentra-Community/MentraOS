@@ -2,6 +2,7 @@ import {expect, test} from "bun:test";
 import {selectedBuildInput, testBuildQuerySchema, testBuildSourceSchema} from '../types/test-build.types';
 import {GithubTestBuildGateway} from "./test-builds.service";
 import {createHash} from "node:crypto";
+import {readFileSync} from "node:fs";
 const REPO = "Mentra-Community/MentraOS";
 const API = `https://api.github.com/repos/${REPO}`;
 const CDN = `https://artifactscdn.mentraglass.com/${REPO}/releases/`;
@@ -259,7 +260,6 @@ const CANONICAL_REPO = "Mentra-Community/Mentra", CANONICAL_API = "https://api.g
 const CANONICAL_HEAD = "d8b2130461973d8daaaedbabd4a9a636de7544eb";
 const EXPORTED_HEAD = "b833ec868955b13601a917f81889bfa02194902f";
 const EXPORTED_ORIGIN = "2a5d4cc927c1c514bdb0df783cbd836c048677c3";
-const SEQUENCE_TAG = "4db74ed642933b09bb27c809054cc07c3a7615b4";
 function canonicalFixture() {
  const f = fixture(), id = 40098925744, identity = "3.4.0-dev.1097", tag = "mentra-builds-v3.4.0";
  const producer = run({id, head_sha: CANONICAL_HEAD, head_branch: "dev", event: "push",
@@ -272,12 +272,7 @@ function canonicalFixture() {
  f.rows.set(CANONICAL_API + "/actions/workflows/release.yml/runs?branch=dev&per_page=10", {workflow_runs: [producer]});
  f.rows.set(CANONICAL_API + "/actions/workflows/release.yml/runs?branch=dev&created=<=" +
   encodeURIComponent("2026-10-25T11:00:00Z") + "&per_page=100&page=1", {total_count: 1, workflow_runs: [producer]});
- const sequenceRef = {ref: "refs/tags/mentra-sequence-1097", object: {type: "tag", sha: SEQUENCE_TAG}};
- const sequence = {sha: SEQUENCE_TAG, tag: "mentra-sequence-1097", message: "monorepo-run:" + id,
-  object: {type: "commit", sha: EXPORTED_HEAD}};
  const releaseRef = {ref: "refs/tags/mentra-v" + identity, object: {type: "commit", sha: EXPORTED_HEAD}};
- f.rows.set(API + "/git/matching-refs/tags/mentra-sequence-", [sequenceRef]);
- f.rows.set(API + "/git/tags/" + SEQUENCE_TAG, sequence);
  f.rows.set(API + "/git/matching-refs/tags/mentra-v", [releaseRef]);
  f.rows.set(API + "/git/commits/" + EXPORTED_HEAD, {sha: EXPORTED_HEAD, message: "Export\n\nGitOrigin-RevId: " + EXPORTED_ORIGIN});
  const compare = {status: "ahead", base_commit: {sha: EXPORTED_ORIGIN}, merge_base_commit: {sha: EXPORTED_ORIGIN},
@@ -298,8 +293,23 @@ function canonicalFixture() {
  f.rows.set(planUrl, plan); f.rows.set(manifestUrl, manifest);
  f.rows.set(CDN + tag + "/" + plan.artifactNames.otaManifest, {releaseVersion: identity});
  f.rows.set("HEAD " + asset.url, new Response(null, {headers: {"Content-Length": String(asset.size)}}));
+ const familyPath = CANONICAL_API + "/contents/public/mentraos/.github/release-family.json?ref=" + CANONICAL_HEAD;
+ const familyBytes = readFileSync(new URL("../../../../../.github/release-family.json", import.meta.url), "utf8");
+ f.rows.set(familyPath, {type: "file", path: "public/mentraos/.github/release-family.json", encoding: "base64",
+  size: Buffer.byteLength(familyBytes), content: Buffer.from(familyBytes).toString("base64")});
+ const versionPath = CANONICAL_API + "/contents/public/mentraos/package.json?ref=" + CANONICAL_HEAD;
+ const versionBytes = JSON.stringify({name: "mentraos", version: "3.4.0"});
+ f.rows.set(versionPath, {type: "file", path: "public/mentraos/package.json", encoding: "base64",
+  size: Buffer.byteLength(versionBytes), content: Buffer.from(versionBytes).toString("base64")});
+ const indexUrl = CDN + tag + "/_assets.json";
+ const indexAsset = {name: plan.artifactNames.releaseManifest, size: 0, digest: "sha256:" + HASH,
+  state: "uploaded", browser_download_url: manifestUrl, created_at: "2026-10-24T14:38:00Z"};
+ const index = {schemaVersion: 1, repository: REPO, tag, assets: [indexAsset]};
+ const refreshIndex = () => {const bytes = JSON.stringify(f.rows.get(manifestUrl));
+  indexAsset.size = Buffer.byteLength(bytes); indexAsset.digest = "sha256:" + createHash("sha256").update(bytes).digest("hex");};
+ refreshIndex(); f.rows.set(indexUrl, index);
  const source = {repository: CANONICAL_REPO as "Mentra-Community/Mentra", channel: "dev" as const, buildRunId: id, publicationAttempt: 1};
- return {...f, id, identity, producer, job, sequenceRef, sequence, releaseRef, compare, plan, planUrl, manifest, manifestUrl, asset, source};
+ return {...f, id, identity, producer, job, releaseRef, compare, plan, planUrl, manifest, manifestUrl, asset, source, familyPath, versionPath, index, indexUrl, indexAsset, refreshIndex};
 }
 
 test("canonical normal release keeps producer head and verified public artifact source without Actions artifacts", async () => {
@@ -321,71 +331,77 @@ test("canonical inventory and original-boundary discovery use the real normal wo
   .latestDev("android", "2026-10-25T11:00:00Z");
  expect(selected).toMatchObject({availability: "available", source: f.source, release: f.identity});
  expect(f.calls.some(call => call.url.includes("/actions/workflows/coordinated-release.yml"))).toBe(false);
- const ledgerReads = f.calls.filter(call => call.url === API + "/git/matching-refs/tags/mentra-sequence-");
- expect(ledgerReads).toHaveLength(2); // Inventory and one occurrence each obtain their own immutable-source evidence.
+ const ledgerReads = f.calls.filter(call => call.url === API + "/git/matching-refs/tags/mentra-v");
+ expect(ledgerReads).toHaveLength(2);
 });
 
-test("canonical forks share immutable tag reads while references and publication checks remain fresh", async () => {
- const f = canonicalFixture(), tagUrl = API + "/git/tags/" + SEQUENCE_TAG;
- const first = await Promise.all([f.gateway.resolve(f.source, "android"), f.gateway.resolve(f.source, "android")]);
- expect(first.every(build => build.availability === "available")).toBe(true);
- expect(await f.gateway.forSelection("2026-10-25T11:00:00Z").resolve(f.source, "android")).toMatchObject({availability: "available"});
- const count = (url: string) => f.calls.filter(call => call.url === url).length;
- expect(count(tagUrl)).toBe(1);
- expect(count(API + "/git/matching-refs/tags/mentra-sequence-")).toBe(3);
- expect(count(API + "/git/matching-refs/tags/mentra-v")).toBe(3);
- expect(count(CANONICAL_API + "/actions/runs/" + f.id + "/jobs?filter=all&per_page=100&page=1")).toBe(3);
- f.rows.set(CANONICAL_API + "/actions/runs/" + f.id + "/jobs?filter=all&per_page=100&page=1",
-  new Response("temporarily unavailable", {status: 503}));
+test("canonical exact resolution has constant GitHub reads and never reads reservation history", async () => {
+ const f = canonicalFixture();
+ for (let n = 1; n <= 120; n++) {
+  const identity = `3.4.0-dev.${2000 + n}`, name = `mentra-release-${identity}.json`;
+  (f.rows.get(API + "/git/matching-refs/tags/mentra-v") as typeof f.releaseRef[]).push({...f.releaseRef, ref: "refs/tags/mentra-v" + identity});
+  f.index.assets.push({...f.indexAsset, name, browser_download_url: CDN + "mentra-builds-v3.4.0/" + name,
+   created_at: "2026-10-24T13:00:00Z"});
+ }
+ expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available"});
+ expect(f.calls.filter(call => call.url.startsWith("https://api.github.com/"))).toHaveLength(7);
+ expect(f.calls.some(call => /mentra-sequence-|\/git\/tags\//.test(call.url))).toBe(false);
+ expect(f.calls.filter(call => call.url.includes("mentra-release-") && call.url.endsWith(".json"))).toHaveLength(2);
+});
+
+test("canonical lookup derives its family from the actual declared version source at the producer SHA", async () => {
+ const f = canonicalFixture(), definition = JSON.parse(readFileSync(new URL("../../../../../.github/release-family.json", import.meta.url), "utf8"));
+ expect(definition.versionSource).toBe("package.json"); expect(definition.familyBaseVersion).toBeUndefined();
+ expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available", release: f.identity});
+ expect(f.calls.filter(call => call.url === f.familyPath)).toHaveLength(1);
+ expect(f.calls.filter(call => call.url === f.versionPath)).toHaveLength(1);
+ const pathCount = f.calls.filter(call => call.url.includes("/contents/")).length;
+ expect(pathCount).toBe(2);
+ const declared = f.rows.get(f.familyPath) as {content: string; size: number};
+ const bytes = JSON.stringify({...definition, versionSource: "../package.json"});
+ declared.content = Buffer.from(bytes).toString("base64"); declared.size = Buffer.byteLength(bytes);
+ await expect(f.gateway.resolve(f.source, "android")).rejects.toThrow();
+ expect(f.calls.filter(call => call.url.includes("/contents/")).length).toBe(pathCount + 1);
+});
+
+test("canonical publication refs, source and index remain fresh on every unscoped resolve", async () => {
+ const f = canonicalFixture();
+ expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available"});
+ f.asset.provenanceUrl = "https://github.com/" + CANONICAL_REPO + "/actions/runs/" + (f.id + 1); f.refreshIndex();
  await expect(f.gateway.forSelection("2026-10-25T12:00:00Z").resolve(f.source, "android"))
-  .rejects.toThrow("Build metadata unavailable (HTTP 503)");
+  .rejects.toThrow("Original canonical published release is not available");
+ expect(f.calls.filter(call => call.url === f.indexUrl)).toHaveLength(2);
+ expect(f.calls.filter(call => call.url === f.familyPath)).toHaveLength(2);
+ expect(f.calls.filter(call => call.url === API + "/git/matching-refs/tags/mentra-v")).toHaveLength(2);
 });
 
-test("cached canonical tags cannot hide changed references, duplicate owners or mismatched reference names", async () => {
- for (const mutation of ["changed-owner", "duplicate-owner", "reference-name"]) {
+test("canonical manifest discovery cannot borrow a publication outside its producer window", async () => {
+ for (const created_at of ["2026-10-24T13:36:59Z", "2026-10-24T14:39:01Z"]) {
+  const f = canonicalFixture(); f.indexAsset.created_at = created_at;
+  await expect(f.gateway.resolve(f.source, "android")).rejects.toThrow("Original canonical published release is not available");
+  expect(f.calls.some(call => call.url === f.manifestUrl)).toBe(false);
+ }
+});
+
+test("canonical index bytes and manifest claims never replace exact publication proof", async () => {
+ for (const mutation of ["index-digest", "index-size", "index-repository", "index-url", "duplicate-index", "forged-provenance", "plan-digest", "family-path", "family-size"]) {
   const f = canonicalFixture();
-  expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available"});
-  const otherSha = "f".repeat(40);
-  if (mutation === "changed-owner") {
-   f.rows.set(API + "/git/matching-refs/tags/mentra-sequence-", [{...f.sequenceRef, object: {type: "tag", sha: otherSha}}]);
-   f.rows.set(API + "/git/tags/" + otherSha, {...f.sequence, sha: otherSha, message: "monorepo-run:" + (f.id + 1)});
-   await expect(f.gateway.forSelection("2026-10-25T12:00:00Z").resolve(f.source, "android"))
-    .rejects.toThrow("Original canonical release sequence is not available");
-  } else {
-   const ref = {...f.sequenceRef, ref: "refs/tags/mentra-sequence-1098"};
-   if (mutation === "duplicate-owner") {
-    ref.object = {type: "tag", sha: otherSha};
-    f.rows.set(API + "/git/tags/" + otherSha, {...f.sequence, sha: otherSha, tag: "mentra-sequence-1098"});
-    f.rows.set(API + "/git/matching-refs/tags/mentra-sequence-", [f.sequenceRef, ref]);
-   } else f.rows.set(API + "/git/matching-refs/tags/mentra-sequence-", [ref]);
-   expect(await f.gateway.forSelection("2026-10-25T12:00:00Z").resolve(f.source, "android"))
-    .toMatchObject({availability: "unavailable", reason: mutation === "duplicate-owner"
-     ? "Canonical release sequence is ambiguous" : "Release sequence annotation differs from its reference"});
+  if (mutation === "index-digest") f.indexAsset.digest = "sha256:" + HASH;
+  if (mutation === "index-size") f.indexAsset.size++;
+  if (mutation === "index-repository") f.index.repository = CANONICAL_REPO;
+  if (mutation === "index-url") f.indexAsset.browser_download_url = "https://foreign.invalid/manifest.json";
+  if (mutation === "duplicate-index") f.index.assets.push({...f.indexAsset});
+  if (mutation === "forged-provenance") {f.asset.provenanceUrl = "https://github.com/" + CANONICAL_REPO + "/actions/runs/" + (f.id + 1); f.refreshIndex();}
+  if (mutation === "plan-digest") {f.manifest.releasePlanSha256 = HASH; f.refreshIndex();}
+  if (mutation.startsWith("family-")) {
+   const family = f.rows.get(f.familyPath) as {path: string; size: number};
+   if (mutation === "family-path") family.path = "another/release-family.json";
+   else family.size++;
   }
+  if (mutation === "forged-provenance" || mutation === "index-repository" || mutation === "family-path")
+   await expect(f.gateway.resolve(f.source, "android")).rejects.toThrow();
+  else expect((await f.gateway.resolve(f.source, "android")).availability).toBe("unavailable");
  }
-});
-
-test("failed canonical tag reads are evicted, including mismatched object SHAs", async () => {
- for (const mutation of ["provider", "object-sha"]) {
-  const f = canonicalFixture(), tagUrl = API + "/git/tags/" + SEQUENCE_TAG;
-  f.rows.set(tagUrl, mutation === "provider" ? new Response("private failure", {status: 503}) : {...f.sequence, sha: HEAD});
-  if (mutation === "provider") await expect(f.gateway.resolve(f.source, "android")).rejects.toThrow("Build metadata unavailable (HTTP 503)");
-  else expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "unavailable", reason: "Release sequence object differs from its requested SHA"});
-  f.rows.set(tagUrl, f.sequence);
-  expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available"});
-  expect(f.calls.filter(call => call.url === tagUrl)).toHaveLength(2);
- }
-});
-
-test("oversized unrelated annotations remain readable without accumulating in the tag cache", async () => {
- const f = canonicalFixture(), otherSha = "f".repeat(40), otherUrl = API + "/git/tags/" + otherSha;
- f.rows.set(API + "/git/matching-refs/tags/mentra-sequence-", [f.sequenceRef,
-  {ref: "refs/tags/mentra-sequence-1098", object: {type: "tag", sha: otherSha}}]);
- f.rows.set(otherUrl, {...f.sequence, sha: otherSha, tag: "mentra-sequence-1098", message: "x".repeat(5000)});
- expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available"});
- expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available"});
- expect(f.calls.filter(call => call.url === otherUrl)).toHaveLength(2);
- expect(f.calls.filter(call => call.url === API + "/git/tags/" + SEQUENCE_TAG)).toHaveLength(1);
 });
 
 test("configured canonical discovery changes new selection only, leaving absent original provenance legacy", async () => {
@@ -418,6 +434,13 @@ test("canonical Mac release verifies the public app source while retaining canon
  expect((await f.gateway.resolve(f.source, "ios-on-mac")).availability).toBe("unavailable");
 });
 
+test("canonical Mac selection requires the common finalized manifest's exact run ownership", async () => {
+ const f = canonicalFixture();
+ f.asset.provenanceUrl = "https://github.com/" + REPO + "/actions/runs/" + f.id; f.refreshIndex();
+ await expect(f.gateway.resolve(f.source, "ios-on-mac")).rejects.toThrow("Original canonical published release is not available");
+ expect(f.calls.some(call => call.url.endsWith("-apple-downloads.json"))).toBe(false);
+});
+
 test("canonical staging producer selects only its original beta identity and public export", async () => {
  const f = canonicalFixture(), beta = "3.4.0-beta.1097";
  for (const [key, value] of [...f.rows]) {
@@ -434,6 +457,8 @@ test("canonical staging producer selects only its original beta identity and pub
  const plan = f.rows.get(planUrl);
  const manifest = f.rows.get(manifestUrl) as {releasePlanSha256: string};
  manifest.releasePlanSha256 = createHash("sha256").update(JSON.stringify(plan)).digest("hex");
+ const index = f.rows.get(f.indexUrl) as typeof f.index; const bytes = JSON.stringify(manifest);
+ index.assets[0]!.size = Buffer.byteLength(bytes); index.assets[0]!.digest = "sha256:" + createHash("sha256").update(bytes).digest("hex");
  expect(await f.gateway.resolve({...f.source, channel: "staging"}, "android")).toMatchObject({availability: "available",
   headSha: CANONICAL_HEAD, release: beta, artifactSource: {headSha: EXPORTED_HEAD}});
 });
@@ -451,19 +476,19 @@ test("canonical resolver accepts the captured two-commit private-only source pro
   headSha: CANONICAL_HEAD, artifactSource: {headSha: EXPORTED_HEAD}});
 });
 
-test("canonical sequence annotation and final release must have one exact original owner and export", async () => {
- for (const mutation of ["owner", "duplicate", "tag", "object", "export", "release-sha", "duplicate-release", "origin", "duplicate-origin"]) {
+test("canonical finalized manifests require one exact run owner and completed public export", async () => {
+ for (const mutation of ["owner", "duplicate-owner", "object", "release-sha", "duplicate-release", "origin", "duplicate-origin"]) {
   const f = canonicalFixture();
-  if (mutation === "owner") f.sequence.message = "monorepo-run:" + (f.id + 1);
-  if (mutation === "duplicate") {
-   const otherSha = "e".repeat(40);
-   f.rows.set(API + "/git/matching-refs/tags/mentra-sequence-", [f.sequenceRef,
-    {ref: "refs/tags/mentra-sequence-1098", object: {type: "tag", sha: otherSha}}]);
-   f.rows.set(API + "/git/tags/" + otherSha, {...f.sequence, sha: otherSha, tag: "mentra-sequence-1098"});
+  if (mutation === "owner") {f.asset.provenanceUrl = "https://github.com/" + REPO + "/actions/runs/" + f.id; f.refreshIndex();}
+  if (mutation === "duplicate-owner") {
+   const identity = "3.4.0-dev.1098", name = "mentra-release-" + identity + ".json";
+   const manifest = {...f.manifest, releaseIdentity: identity, artifacts: [{...f.asset, coordinate: "mentraos-" + identity + "-android.apk"}]};
+   const bytes = JSON.stringify(manifest), url = CDN + "mentra-builds-v3.4.0/" + name;
+   f.rows.set(url, manifest); f.index.assets.push({...f.indexAsset, name, browser_download_url: url,
+    size: Buffer.byteLength(bytes), digest: "sha256:" + createHash("sha256").update(bytes).digest("hex")});
+   f.rows.set(API + "/git/matching-refs/tags/mentra-v", [f.releaseRef, {...f.releaseRef, ref: "refs/tags/mentra-v" + identity}]);
   }
-  if (mutation === "tag") f.sequence.tag = "mentra-sequence-1098";
-  if (mutation === "object") f.sequence.object.type = "tag";
-  if (mutation === "export") f.sequence.object.sha = HEAD;
+  if (mutation === "object") f.releaseRef.object.type = "tag";
   if (mutation === "release-sha") f.releaseRef.object.sha = HEAD;
   if (mutation === "duplicate-release") f.rows.set(API + "/git/matching-refs/tags/mentra-v", [f.releaseRef, f.releaseRef]);
   if (mutation === "origin") f.rows.set(API + "/git/commits/" + EXPORTED_HEAD, {sha: EXPORTED_HEAD, message: "Export without origin"});
@@ -529,14 +554,15 @@ test("canonical attempts and finalizers cannot borrow another execution or fall 
  }
 });
 
-test("canonical ledger failures remain bounded provider waits without older selection or leaked provider body", async () => {
- for (const mutation of ["missing-owner", "missing-release", "bound", "provider", "hidden-ledger"]) {
+test("canonical publication discovery failures remain bounded provider waits", async () => {
+ for (const mutation of ["missing-manifest", "missing-release", "bound", "provider", "hidden-index", "missing-index-entry"]) {
   const f = canonicalFixture();
-  if (mutation === "missing-owner") f.rows.set(API + "/git/matching-refs/tags/mentra-sequence-", []);
+  if (mutation === "missing-manifest") f.rows.delete(f.manifestUrl);
   if (mutation === "missing-release") f.rows.set(API + "/git/matching-refs/tags/mentra-v", []);
-  if (mutation === "bound") f.rows.set(API + "/git/matching-refs/tags/mentra-sequence-", Array.from({length: 2000}, () => f.sequenceRef));
-  if (mutation === "provider") f.rows.set(API + "/git/tags/" + SEQUENCE_TAG, new Response("private provider detail", {status: 503}));
-  if (mutation === "hidden-ledger") f.rows.delete(API + "/git/tags/" + SEQUENCE_TAG);
+  if (mutation === "bound") f.rows.set(API + "/git/matching-refs/tags/mentra-v", Array.from({length: 2000}, () => f.releaseRef));
+  if (mutation === "provider") f.rows.set(f.indexUrl, new Response("private provider detail", {status: 503}));
+  if (mutation === "hidden-index") f.rows.delete(f.indexUrl);
+  if (mutation === "missing-index-entry") f.index.assets = [];
   await expect(f.gateway.resolve(f.source, "android")).rejects.toMatchObject({status: 502});
   expect(f.calls.filter(call => call.url.includes("/attempts/"))).toHaveLength(1);
  }
