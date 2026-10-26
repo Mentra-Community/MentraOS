@@ -84,6 +84,8 @@ export const fleetCandidatePreparationSchema = z.object({candidate: backendCandi
   resourceClaims: z.array(z.unknown()).min(1).max(30).optional(), resourceReturns: z.array(z.unknown()).min(1).max(30).optional(),
   resourceReturnContinuation: resourceReturnContinuationSchema.optional(),
   noAcquisitionReceipt: z.unknown().optional(),
+  coordinatorSupersession: z.object({kind: z.literal('controller-replaced'), at: z.string().datetime(),
+    controller: z.object({incarnation: frameworkIdentitySchema, generation: z.number().int().positive().safe()}).strict()}).strict().optional(),
 }).strict().refine(value => value.target.purpose?.kind === 'resource-readiness'
   ? !value.claimReceipt && !value.returnReceipt
   : !value.resourceClaims && !value.resourceReturns && !value.resourceReturnContinuation && !value.settlement?.graphChecks,

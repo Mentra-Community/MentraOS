@@ -3,7 +3,7 @@ import {backendConnectivityObservationMatches, backendConnectivityObservationSch
 import {fleetCandidatePreparationSchema, MAX_FLEET_CANDIDATE_PREPARATIONS, type FleetCandidatePreparation, type StoredRoutineJob} from '../types/routine-job.types'
 import {exclusiveHostReservationSchema, exclusiveResourceIntentSchema, exclusiveResourceReturnSchema, resourceReservationObservationSchema, type ExclusiveResourceIntent} from '../types/resource-reservations.types'
 import {z} from 'zod'
-import type {TestHostState} from './test-host-state.service'
+import type {ReceivedTestHostState, TestHostState} from './test-host-state.service'
 import {permissionContext} from '../types/resource-permissions.types'
 import {requestInputDigest} from './test-request.service'
 import {graphReturnReporterMatches, graphReturnSuccessorMatches} from './graph-return-continuation'
@@ -199,9 +199,20 @@ export function qualifiedGraphCandidate(row: StoredRoutineJob, host: TestHostSta
   return pending
 }
 
-/** Only the immediately preceding returned positive can be remeasured on the same pair. */
+/** Returned positives may be remeasured; a fenced obsolete selection may use a new controller. */
 export function candidateRenewal(row: StoredRoutineJob, hostId: string, laneId: string) {
   const previous = row.fleetCandidatePreparations?.at(-1), selected = row.fleetCandidateSelection
+  if (previous?.coordinatorSupersession && fleetCandidatePreparationSchema.safeParse(previous).success) {
+    const {coordinatorSupersession, ...original} = previous
+    return previous.hostId === hostId && previous.laneId === laneId && !row.fleetCandidatePreparation && !selected &&
+      previous.target.purpose?.kind === 'resource-readiness' && !previous.settlement && previous.claimReceipt === undefined &&
+      previous.returnReceipt === undefined && previous.resourceClaims === undefined && previous.resourceReturns === undefined &&
+      !previous.provisionalReturn && !previous.resourceReturnContinuation &&
+      coordinatorSupersession.controller.generation > previous.candidate.controller.generation &&
+      coordinatorSupersession.controller.incarnation !== previous.candidate.controller.incarnation &&
+      candidateRequestCurrent({...row, fleetCandidatePreparation: original}, original, Date.parse(previous.candidate.requestedAt))
+      ? previous : undefined
+  }
   return previous?.settlement?.outcome === 'qualified' && previous.hostId === hostId && previous.laneId === laneId &&
     selected?.hostId === hostId && selected.laneId === laneId && selected.targetInputSha256 === previous.targetInputSha256 &&
     !row.fleetCandidatePreparation && !row.fleetBinding && !row.hostId && !row.dispatchIntent && !row.inputSha256 && !row.hostReceipt &&
@@ -299,7 +310,7 @@ export function candidateRequestCurrent(row: StoredRoutineJob | null, pending: F
   const provisional = pending?.provisionalReturn, returning = returningProvisional && provisional && !provisional.releasedAt &&
     isDeepStrictEqual(row?.fleetResourceReservation, provisional.recorder) && isDeepStrictEqual(row?.fleetResourceAdmission, provisional.admission) &&
     isDeepStrictEqual(row?.fleetExclusiveReservation, provisional.exclusive)
-  if (!row || !pending || !fleetCandidatePreparationSchema.safeParse(pending).success || row.state !== 'awaiting-runner' ||
+  if (!row || !pending || pending.coordinatorSupersession || !fleetCandidatePreparationSchema.safeParse(pending).success || row.state !== 'awaiting-runner' ||
     row.fleetBinding || row.hostId || row.inputSha256 || row.hostReceipt || row.runId || row.dispatchCompletion ||
     row.fleetCandidateSelection || !returning && (row.fleetResourceAdmission || row.fleetResourceReservation || row.fleetExclusiveReservation) || row.fleetCancellation ||
     pending.provisionalReturn && !pending.provisionalReturn.releasedAt && !returning ||
@@ -317,6 +328,32 @@ export function candidateRequestCurrent(row: StoredRoutineJob | null, pending: F
     requestInputDigest(pending.target.definition) !== pending.target.definitionSha256 ||
     row.fleetTarget && (row.fleetTarget.hostId !== pending.hostId || row.fleetTarget.laneId && row.fleetTarget.laneId !== pending.laneId)) return false
   return true
+}
+/** Coordinator history preserves unknown work; it never asserts a host closure or releases a claim. */
+export function obsoleteUnboundGraphCandidate(row: StoredRoutineJob, host: ReceivedTestHostState, now: number) {
+  const pending = row.fleetCandidatePreparation, history = row.fleetCandidatePreparations ?? []
+  if (!pending || pending.target.purpose?.kind !== 'resource-readiness' || !candidateRequestCurrent(row, pending, now) ||
+    history.length >= MAX_FLEET_CANDIDATE_PREPARATIONS || !history.every(value => fleetCandidatePreparationSchema.safeParse(value).success) ||
+    new Set([...history, pending].map(value => value.candidate.attemptId)).size !== history.length + 1 ||
+    pending.claimReceipt !== undefined || pending.returnReceipt !== undefined || pending.resourceClaims !== undefined ||
+    pending.resourceReturns !== undefined || pending.provisionalReturn || pending.resourceReturnContinuation || pending.settlement ||
+    host.hostId !== pending.hostId || !host.authorityReservations ||
+    [host.receivedAt, host.observedAt].some(at => !Number.isFinite(Date.parse(at)) || Date.parse(at) > now || now - Date.parse(at) > 120_000) ||
+    !host.incarnation || !host.incarnationGeneration || host.incarnationGeneration <= pending.candidate.controller.generation ||
+    host.incarnation === pending.candidate.controller.incarnation ||
+    !pending.target.purpose.resources.every(member => member.authorityHostId === host.hostId) ||
+    graphCandidateHasOriginalCustody(pending, host, [...host.authorityReservations, ...host.resourceReservations?.claims ?? []])) return
+  const original = host.frameworkHistory?.filter(value => value.incarnation === pending.candidate.controller.incarnation &&
+    value.incarnationGeneration === pending.candidate.controller.generation && isDeepStrictEqual(value.binding, pending.target.acceptedBinding)),
+    current = host.frameworkHistory?.filter(value => value.incarnation === host.incarnation &&
+      value.incarnationGeneration === host.incarnationGeneration && isDeepStrictEqual(value.binding, host.frameworkBinding))
+  if (original?.length !== 1 || current?.length !== 1 || original[0]!.endReason !== 'observed-stop' || !original[0]!.endedAt || current[0]!.endedAt ||
+    [original[0]!.effectiveAt, original[0]!.endedAt!, current[0]!.effectiveAt].some(at => !Number.isFinite(Date.parse(at))) ||
+    Date.parse(original[0]!.endedAt) > Date.parse(current[0]!.effectiveAt) || Date.parse(current[0]!.effectiveAt) > now ||
+    Date.parse(pending.candidate.requestedAt) < Date.parse(original[0]!.effectiveAt) ||
+    Date.parse(pending.candidate.requestedAt) > Date.parse(original[0]!.endedAt!)) return
+  return {...pending, coordinatorSupersession: {kind: 'controller-replaced' as const, at: new Date(now).toISOString(),
+    controller: {incarnation: host.incarnation, generation: host.incarnationGeneration}}}
 }
 export function candidatePrerequisiteRequestMatches(row: StoredRoutineJob | null, intent: ExclusiveResourceIntent, now: number) {
   return candidateRequestCurrent(row, row?.fleetCandidatePreparation, now) && candidatePrerequisiteIdentityMatches(row!.fleetCandidatePreparation, intent)

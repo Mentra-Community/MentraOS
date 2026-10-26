@@ -337,9 +337,22 @@ export class TestRequestService {
   }
   async preparationView(requestId: string, hostId: string) {
     const row = await this.repository.get(requestId), candidate = row as unknown as import('../types/routine-job.types').StoredRoutineJob | null;
+    // Controller ACK readers require settled history. Keep unresolved coordinator
+    // supersessions in storage; they are not a producer closure or a return ACK.
+    const {fleetCandidatePreparationSchema} = await import('../types/routine-job.types');
+    const unresolvedSupersession = (value: import('../types/routine-job.types').FleetCandidatePreparation) => {
+      const parsed = fleetCandidatePreparationSchema.safeParse(value), valid = parsed.success ? parsed.data : undefined, marker = valid?.coordinatorSupersession;
+      return Boolean(marker && valid?.target.purpose?.kind === 'resource-readiness' && !valid.settlement &&
+        valid.claimReceipt === undefined && valid.returnReceipt === undefined && valid.resourceClaims === undefined && valid.resourceReturns === undefined &&
+        !valid.provisionalReturn && !valid.resourceReturnContinuation && marker.controller.generation > valid.candidate.controller.generation &&
+        marker.controller.incarnation !== valid.candidate.controller.incarnation && Date.parse(marker.at) >= Date.parse(valid.candidate.requestedAt) &&
+        Date.parse(marker.at) < Date.parse(valid.target.deadline));
+    };
+    const controllerView = () => candidate!.fleetCandidatePreparations?.some(unresolvedSupersession)
+      ? {...candidate!, fleetCandidatePreparations: candidate!.fleetCandidatePreparations.filter(value => !unresolvedSupersession(value))} : candidate!;
     if (candidate && candidate.state === 'awaiting-runner' && !candidate.hostId && !candidate.fleetBinding &&
-      candidate.fleetCandidatePreparation?.hostId === hostId) return candidate;
-    if (candidate && (await import('./backend-candidate-preparation')).completedCandidatePreparationForHost(candidate, hostId)) return candidate;
+      candidate.fleetCandidatePreparation?.hostId === hostId) return controllerView();
+    if (candidate && (await import('./backend-candidate-preparation')).completedCandidatePreparationForHost(candidate, hostId)) return controllerView();
     return this.preparation(requestId, hostId);
   }
   async preparation(requestId: string, hostId: string, intentSha256?: string) {

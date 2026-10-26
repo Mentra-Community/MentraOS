@@ -31,7 +31,7 @@ import {backendRecorderClaimMatches, requiresBackendConnectivity, requiresSerial
 import {resourceLaneBlocker, resourceCandidateBlocker, requiredResourceBlocker} from './resource-readiness';
 import {routineLaneRequirementBlocker, type RoutineLaneEligibilityContext} from './routine-lane-eligibility';
 import {dependencyWaitingReason, recorderWait, RESOURCE_ADMISSION_WAIT, sharedResourceWaitingReason, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait';
-import {candidateRequestCurrent, candidateSettlement, qualifiedCandidate, qualifiedGraphCandidate, candidateRenewal, candidateReturnMatches, graphCandidateHistoricalSettlement} from './backend-candidate-preparation';
+import {candidateRequestCurrent, candidateSettlement, qualifiedCandidate, qualifiedGraphCandidate, candidateRenewal, candidateReturnMatches, graphCandidateHistoricalSettlement, obsoleteUnboundGraphCandidate} from './backend-candidate-preparation';
 import {currentGraphReturnContinuation} from './graph-return-continuation';
 const exclusiveResources = new ResourceReservationsService();
 const isDeepIdentity = (left: unknown, right: unknown) => requestInputDigest(left ?? null) === requestInputDigest(right ?? null);
@@ -57,6 +57,7 @@ export interface RoutineJobRepository {
   candidatePreparation?(row: StoredRoutineJob, value: FleetCandidatePreparation, now: Date): Promise<StoredRoutineJob | null>;
   releaseCandidateProvisional?(row: StoredRoutineJob, now: Date): Promise<StoredRoutineJob | null>;
   settleCandidatePreparation?(row: StoredRoutineJob, value: FleetCandidatePreparation, now: Date): Promise<StoredRoutineJob | null>;
+  supersedeCandidatePreparation?(row: StoredRoutineJob, now: Date): Promise<StoredRoutineJob | null>;
   pending?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
   qualificationCandidates?(hostId: string, laneId: string, limit: number, now: Date, timeoutMS: number, includeQueued: boolean, includeAccepted?: boolean, includePreparing?: boolean, platform?: 'android' | 'ios-on-mac', graphOnly?: boolean): AsyncIterable<StoredRoutineJob>;
   supersessionCandidates?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
@@ -208,6 +209,8 @@ export const routineJobRepository: RoutineJobRepository = {
   async candidatePreparation(row, value, now) {
     const previous = candidateRenewal(row, value.hostId, value.laneId), renewal = value.candidate.previousAttemptId;
     if (renewal ? !previous || previous.candidate.attemptId !== renewal : Boolean(row.fleetCandidateSelection)) return null;
+    if (previous?.coordinatorSupersession && (value.candidate.controller.generation < previous.coordinatorSupersession.controller.generation ||
+      value.candidate.controller.incarnation === previous.candidate.controller.incarnation)) return null;
     const provisional = value.provisionalReturn;
     if (provisional && (!renewal || requestInputDigest(provisional.recorder) !== requestInputDigest(row.fleetResourceReservation) ||
       requestInputDigest(provisional.admission ?? null) !== requestInputDigest(row.fleetResourceAdmission ?? null) ||
@@ -259,6 +262,20 @@ export const routineJobRepository: RoutineJobRepository = {
     return await TestRequestModel.collection.findOneAndUpdate({...filter, $or: [{state: {$ne: 'awaiting-runner'}},
       {fleetCancellation: {$exists: true}}, {hostCancellation: {$exists: true}}, {preparationCancellation: {$exists: true}}, {fleetDeadline: {$lte: now}}]},
       update, options) as unknown as StoredRoutineJob | null;
+  },
+  async supersedeCandidatePreparation(row, now) {
+    const pending = row.fleetCandidatePreparation, host = pending && await new TestHostStateService().get(pending.hostId),
+      preserved = host && obsoleteUnboundGraphCandidate(row, host, now.getTime())
+    if (!preserved) return null
+    return await TestRequestModel.collection.findOneAndUpdate({requestId: row.requestId, fleetInputSha256: row.fleetInputSha256,
+      state: 'awaiting-runner', fleetCandidatePreparation: pending, fleetCandidatePreparations: row.fleetCandidatePreparations ?? {$exists: false},
+      fleetCandidateSelection: {$exists: false}, fleetBinding: {$exists: false}, fleetResourceAdmission: {$exists: false},
+      fleetResourceReservation: {$exists: false}, fleetExclusiveReservation: {$exists: false}, fleetExclusiveExecutionBinding: {$exists: false},
+      hostId: {$exists: false}, inputSha256: {$exists: false}, hostReceipt: {$exists: false}, runId: {$exists: false}, dispatchIntent: {$exists: false},
+      dispatchCompletion: {$exists: false}, fleetCancellation: {$exists: false}, hostCancellation: {$exists: false},
+      preparationCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
+      {$unset: {fleetCandidatePreparation: ''}, $set: {fleetCandidatePreparations: [...row.fleetCandidatePreparations ?? [], preserved], updatedAt: now}},
+      {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}) as unknown as StoredRoutineJob | null
   },
   async selectedLanes(hostIds) {
     // Staged candidates can exist before the byte claim is acknowledged. Read only
@@ -1257,8 +1274,11 @@ export class RoutineJobService {
     const previous = candidateRenewal(row, host.hostId, lane.id)
     if (!previous && row.fleetCandidatePreparations?.some(value => value.hostId === host.hostId && value.laneId === lane.id) ||
       (row.fleetResourceReservation || row.fleetResourceAdmission || row.fleetExclusiveReservation) && (!previous || !row.fleetResourceReservation) ||
-      previous && (previous.target.purpose?.kind !== 'resource-readiness' || previous.candidate.controller.incarnation !== host.incarnation ||
-        previous.candidate.controller.generation !== host.incarnationGeneration || !isDeepIdentity(previous.target.acceptedBinding, host.frameworkBinding)) ||
+      previous && (previous.target.purpose?.kind !== 'resource-readiness' || (previous.coordinatorSupersession
+        ? !host.incarnationGeneration || host.incarnationGeneration < previous.coordinatorSupersession.controller.generation ||
+          host.incarnation === previous.candidate.controller.incarnation
+        : previous.candidate.controller.incarnation !== host.incarnation || previous.candidate.controller.generation !== host.incarnationGeneration ||
+          !isDeepIdentity(previous.target.acceptedBinding, host.frameworkBinding))) ||
       (row.fleetCandidatePreparations?.length ?? 0) >= MAX_FLEET_CANDIDATE_PREPARATIONS) return undefined
     const original = {requestId: row.requestId, inputSha256: row.fleetInputSha256!},
       purpose = routineResourceReadinessPurpose(host, lane, row.fleetPreparation!.requirements, this.now(), original)
@@ -1361,7 +1381,9 @@ export class RoutineJobService {
     }), checked = continuation ? {...pending, resourceReturnContinuation: continuation} : pending;
     if (pending.resourceReturnContinuation && !continuation) return row;
     const settlement = candidateSettlement(checked, host, host.authorityReservations, this.now());
-    if (!settlement || !this.rows.settleCandidatePreparation) return row;
+    if (!settlement) return obsoleteUnboundGraphCandidate(row, host, this.now())
+      ? await this.rows.supersedeCandidatePreparation?.(row, new Date(this.now())) ?? row : row;
+    if (!this.rows.settleCandidatePreparation) return row;
     return await this.rows.settleCandidatePreparation(row, {...checked, settlement}, new Date(this.now())) ?? row;
   }
   /** A selected preparing receipt authorizes host-only preparation; only the owned check can observe the phone. */
