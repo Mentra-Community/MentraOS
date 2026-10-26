@@ -12,8 +12,8 @@
  *
  * What it shows follows the viewer, as the spec's table has it:
  * - an Admin or Owner who is offered billing (`offer.manage`): every license with its seats, dates, cost and
- *   billing actions; the page total; buying ("Buy licenses", or the catalog itself while there are no licenses);
- *   the test-mode banner; and, back from checkout, the purchase banner;
+ *   billing actions; buying ("Buy licenses", or the catalog itself while there are no licenses); the test-mode
+ *   banner; and, back from checkout, the purchase dialog;
  * - an Admin or Owner who isn't offered it: every license with its seats and seat holders, and assigning and
  *   unassigning, and nothing from billing but the names: no money, no dates, no actions, no buying, no status request;
  * - anyone else (Members and Developers): only the licenses they hold a seat in, each as "Assigned to you", with no
@@ -31,7 +31,13 @@
  * `?buy=` already out of the address; otherwise a dialog says why not (they already have it, they should ask an Admin,
  * billing isn't offered, the workspace has it, or it isn't for sale). It is never a note above the cards. A
  * `?added=<licenseId>` is a return from the hosted page that added a license for the viewer: the page reads Core's
- * licenses until the viewer holds the product and then says so (`AddedBanner`).
+ * licenses until the viewer holds the product, in the same dialog as a return from checkout (`PurchaseDialog`).
+ *
+ * Back from checkout (`?purchase=`) or from that page (`?added=`), the page opens a dialog over the cards: setting up,
+ * then ready (or, after a minute, that it can take a few minutes, with Reload), and OK. Closing it tells the host, which
+ * takes the parameter out of the address, and the page goes on following the return (`useFollowed`): it keeps reading
+ * until the license is there or the minute is up, and the license just bought stays first and ringed. One dialog shows
+ * at a time: a link's answer first, then the purchase, then the added license.
  *
  * Which of these a viewer is, comes from Core's own answer for the workspace (their capabilities), and from the host's
  * `offer`: `catalog` is whether billing's catalog can be read (in the portal, `me.modules.billing`) and `manage` whether this
@@ -41,7 +47,7 @@
  *
  * Cards stay mounted through every refetch: they are keyed by license id, a read that is running or has failed
  * after the page loaded keeps what is on screen (no loading state replaces the cards), and billing's status keeps its
- * last answer while it is read under a key that differs only by `purchase` (when `?purchase=` goes), and never across
+ * last answer while it is read under a key that differs only by `purchase` (another purchase is followed), and never across
  * a change of workspace: a view that stays mounted when `workspaceId` changes shows a loading state until the new
  * workspace's status has answered, not the old one's billing. A card whose session request is out must
  * still be there when it answers, or its click would do nothing (a same-tab redirect is skipped for a card that
@@ -49,7 +55,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LicenseView, MemberView, WorkspaceDetail } from "@mentra/workspace-contract";
 import type { BillingStatus, CatalogEntry } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../../api";
@@ -60,12 +66,13 @@ import { billingCatalogQuery, billingStatusQuery, licensesQuery, membersQuery, s
 import { can } from "../../roles";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Loading, Restricted } from "../common";
-import { AddedBanner, LicensesSummary, LicensesUnavailable, PURCHASE_POLL_MS, PURCHASE_TIMEOUT_MS, PurchaseBanner, TestModeBanner } from "./banners";
+import { LicensesUnavailable, TestModeBanner } from "./banners";
 import { decideLink, LinkDialog, type LinkOutcome } from "./buy-link";
 import { BuyDialog, CatalogDialog, CatalogGrid, termsNow } from "./catalog";
 import { useHostedAction, type NavigateOut } from "./hosted-action";
 import { LicenseCard } from "./license-card";
-import { HeaderButtons, hasOffer, NoSeat, PageNote, readFailed, readRetrying, readWaiting, usePurchaseFlow, type PurchaseFlow } from "./page-parts";
+import { HeaderButtons, hasOffer, NoSeat, PageNote, readFailed, readRetrying, readWaiting, useFollowed, usePurchaseFlow, type PurchaseFlow } from "./page-parts";
+import { PURCHASE_POLL_MS, PURCHASE_TIMEOUT_MS, PurchaseDialog } from "./purchase-dialog";
 
 export interface WorkspaceLicensesViewProps {
   /** Core's workspace API: the workspace, its licenses and members, and the seat changes. */
@@ -79,7 +86,10 @@ export interface WorkspaceLicensesViewProps {
     /** The viewer is offered billing for this workspace: billing is ready and they hold `workspace.billing.manage`. */
     manage: boolean;
   };
-  /** The `?purchase=` a checkout came back with, or none. */
+  /**
+   * The `?purchase=` a checkout came back with, or none. Once given, the page follows it until another is given or the
+   * workspace changes, after the host has taken it out of the address too (see `onPurchaseDone`).
+   */
   purchaseId?: string | null;
   /**
    * The `?buy=` product the address named, or none. Once the page's reads are in it acts once: it opens the Buy
@@ -95,12 +105,12 @@ export interface WorkspaceLicensesViewProps {
   onBuyHandled?(): void;
   /**
    * The `?added=` license a return from the hosted page that added one license for the viewer came back with, or
-   * none. The page reads Core's licenses until the viewer holds the product, and then says so.
+   * none. The page reads Core's licenses until the viewer holds the product, saying so in a dialog.
    */
   addedLicenseId?: string | null;
-  /** The added banner was dismissed: remove `?added=` from the address. */
+  /** The dialog for `?added=` was closed: remove `?added=` from the address. */
   onAddedDone?(): void;
-  /** The purchase banner was dismissed: remove `?purchase=` from the address. */
+  /** The dialog for `?purchase=` was closed: remove `?purchase=` from the address. */
   onPurchaseDone(): void;
   /**
    * Retry was pressed on the unavailable page, after the view has read its own data again: a host re-reads what the
@@ -158,6 +168,8 @@ function useLicensesPage(
   wanted = true,
 ) {
   const scope = useMemo(() => workspaceScope(workspaceId), [workspaceId]);
+  // The purchase the page follows: the address's, and after its dialog is closed (and the host takes it out) the same one.
+  const followed = useFollowed(purchaseId, workspaceId);
   const detail = useQuery({ ...workspaceDetailQuery(api, workspaceId), enabled: wanted });
   const licenses = useQuery({ ...licensesQuery(api, workspaceId), enabled: wanted });
   const reads = can(detail.data, "workspace.licenses.read");
@@ -182,9 +194,9 @@ function useLicensesPage(
   const namesLink = buyProduct !== null && offer.catalog && detail.data !== undefined && !offer.manage;
   const catalog = useQuery({ ...billingCatalogQuery(billing, scope), enabled: wanted && offer.catalog && (needsCatalog || namesLink) });
   // Only a viewer offered billing is asked for the status (the route refuses anyone else). While it is read under a key
-  // that differs only by `purchase` (`?purchase=` came or went) it keeps its last answer, so that nothing swaps out the
+  // that differs only by `purchase` (another purchase is followed) it keeps its last answer, so that nothing swaps out the
   // cards; it never keeps another workspace's (see `statusPlaceholder`).
-  const statusOptions = billingStatusQuery(billing, scope, purchaseId);
+  const statusOptions = billingStatusQuery(billing, scope, followed);
   const status = useQuery({ ...statusOptions, enabled: wanted && offer.manage, placeholderData: statusPlaceholder<BillingStatus>(statusOptions.queryKey) });
 
   let state: "loading" | "unavailable" | "ready" = "ready";
@@ -208,7 +220,7 @@ function useLicensesPage(
       };
     }
   }
-  return { scope, state, data, canRead: reads, queries: { detail, licenses, members, catalog, status } };
+  return { scope, state, data, canRead: reads, followed, queries: { detail, licenses, members, catalog, status } };
 }
 
 export function WorkspaceLicensesView({
@@ -227,12 +239,12 @@ export function WorkspaceLicensesView({
   pollMs = PURCHASE_POLL_MS,
   timeoutMs = PURCHASE_TIMEOUT_MS,
 }: WorkspaceLicensesViewProps) {
-  const { scope, state, data, canRead, queries } = useLicensesPage({ api, billing, workspaceId, offer, purchaseId, buyProduct });
+  const { scope, state, data, canRead, followed, queries } = useLicensesPage({ api, billing, workspaceId, offer, purchaseId, buyProduct });
   const { detail, licenses, members, catalog, status } = queries;
 
   const answer = offer.manage ? status.data?.purchase : null;
   const flow = usePurchaseFlow({
-    purchaseId,
+    purchaseId: followed,
     offered: offer.manage,
     answer,
     listed: answer?.licenseId != null && (licenses.data ?? []).some((license) => license.licenseId === answer.licenseId),
@@ -245,8 +257,9 @@ export function WorkspaceLicensesView({
     timeoutMs,
     onDone: onPurchaseDone,
   });
+  const addedFollowed = useFollowed(addedLicenseId, workspaceId);
   const added = useAddedFlow({
-    addedLicenseId,
+    addedLicenseId: addedFollowed,
     licenses: licenses.data,
     membershipId: detail.data?.membership?.membershipId ?? null,
     poll: () => {
@@ -302,20 +315,25 @@ interface LicensesBodyProps {
 interface AddedFlow {
   /** The added license's product (its key), when Core lists the license; null while the page is not following a return. */
   product: string | null;
-  /** The page is following a return that has not been dismissed. */
-  showing: boolean;
+  /**
+   * The dialog is open: the page is following a return the person hasn't closed, and can name its product (Core lists
+   * the license) or has given up waiting for it.
+   */
+  open: boolean;
   /** The viewer holds the product now. */
   held: boolean;
   /** The page has waited a minute for it and stopped reading. */
   timedOut: boolean;
-  dismiss(): void;
+  /** OK, Escape, the × or the backdrop: the dialog closes, and the host is told so that it removes `?added=`. */
+  close(): void;
 }
 
 /**
  * After the hosted page that adds one license for the viewer, the page reads Core's licenses every `pollMs` for up to
  * `timeoutMs` (as `usePurchaseFlow` does after checkout), until the viewer's membership holds a seat of the added
- * license's product, and shows nothing while it waits. The minute is counted from when the page has a return to follow,
- * and ends with the wait (held, dismissed, unmounted). Dismiss tells the host so that it removes `?added=`.
+ * license's product. The dialog says it is being set up meanwhile. The minute is counted from when the page has a return
+ * to follow, and ends with the wait (held, or unmounted): closing the dialog stops neither, so the card still shows the
+ * viewer once they hold it. `addedLicenseId` is the return the page follows (`useFollowed`).
  */
 function useAddedFlow({
   addedLicenseId,
@@ -334,14 +352,14 @@ function useAddedFlow({
   timeoutMs: number;
   onDone(): void;
 }): AddedFlow {
-  const [dismissed, setDismissed] = useState<string | null>(null);
+  const [closed, setClosed] = useState<string | null>(null);
   const [gaveUp, setGaveUp] = useState<string | null>(null);
-  const showing = addedLicenseId !== null && dismissed !== addedLicenseId ? addedLicenseId : null;
-  const product = licenses?.find((license) => license.licenseId === addedLicenseId)?.product ?? null;
+  const following = addedLicenseId;
+  const product = licenses?.find((license) => license.licenseId === following)?.product ?? null;
   const held =
     product !== null && membershipId !== null && (licenses ?? []).some((license) => license.product === product && !license.endedAt && holdsSeat(license, membershipId));
-  const waiting = showing !== null && !held;
-  const timedOut = showing !== null && gaveUp === showing;
+  const waiting = following !== null && !held;
+  const timedOut = following !== null && gaveUp === following;
   const polling = waiting && !timedOut;
 
   const latest = useRef(poll);
@@ -353,18 +371,21 @@ function useAddedFlow({
   }, [polling, pollMs]);
 
   useEffect(() => {
-    if (!waiting || showing === null) return;
-    const timer = setTimeout(() => setGaveUp(showing), timeoutMs);
+    if (!waiting || following === null) return;
+    const timer = setTimeout(() => setGaveUp(following), timeoutMs);
     return () => clearTimeout(timer);
-  }, [waiting, showing, timeoutMs]);
+  }, [waiting, following, timeoutMs]);
 
+  // A license Core doesn't list yet can't be named: the dialog waits for it, or for the minute to be up.
+  const open = following !== null && closed !== following && (product !== null || timedOut);
   return {
     product,
-    showing: showing !== null,
+    open,
     held,
     timedOut,
-    dismiss: () => {
-      setDismissed(showing);
+    close: () => {
+      if (!open) return;
+      setClosed(following);
       onDone();
     },
   };
@@ -386,6 +407,8 @@ function useBuyLink({
   decide(product: string): LinkOutcome;
 }) {
   const [answer, setAnswer] = useState<{ outcome: LinkOutcome; serial: number } | null>(null);
+  // The product the page last acted on, as state: what a render can read to know a link is still to be answered.
+  const [acted, setActed] = useState<string | null>(null);
   const serial = useRef(0);
   const done = useRef<string | null>(null);
   const latest = useRef({ decide, onBuyHandled });
@@ -393,6 +416,7 @@ function useBuyLink({
   useEffect(() => {
     if (buyProduct === null) {
       done.current = null;
+      setActed(null);
       return;
     }
     if (done.current === buyProduct) return;
@@ -400,11 +424,14 @@ function useBuyLink({
     // `?buy=` leaves the address first: an answer that goes to a hosted page is never one that Back returns to.
     latest.current.onBuyHandled?.();
     setAnswer({ outcome: latest.current.decide(buyProduct), serial: ++serial.current });
+    setActed(buyProduct);
   }, [buyProduct]);
   // A dialog closing as it is replaced (the platform raises `close` as an open dialog turns shut) must not close the
   // one that replaced it: a close ends only the outcome it was drawn for.
   return {
     outcome: answer?.outcome ?? null,
+    /** A link is in the address that the page hasn't acted on yet: its answer is about to be drawn. */
+    pending: buyProduct !== null && acted !== buyProduct,
     serial: answer?.serial ?? 0,
     close: (closing: LinkOutcome | null) => setAnswer((current) => (current !== null && current.outcome === closing ? null : current)),
   };
@@ -430,25 +457,58 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, ad
     linked !== null && linked.kind !== "choose" ? (
       <LinkDialog key={link.serial} outcome={linked} workspace={workspace} api={api} billing={billing} scope={scope} navigateOut={navigateOut} onClose={() => link.close(linked)} />
     ) : null;
-  const addedBanner = added.showing ? (
-    <AddedBanner
-      productName={products.find((entry) => entry.product === added.product)?.name ?? added.product ?? ""}
-      held={added.held}
-      timedOut={added.timedOut}
-      onDismiss={added.dismiss}
-    />
-  ) : null;
+
+  // Back from checkout, or from the page that added a license: one dialog at a time, and none while a link is being
+  // answered (its dialog, or the Buy dialog, comes first; `?buy=` is out of the address before checkout, so the two
+  // only meet in an address made by hand).
+  const purchase = flow.purchase;
+  const entryOf = (product: string) => products.find((entry) => entry.product === product) ?? null;
+  const bought = purchase?.licenseId != null ? all.find((license) => license.licenseId === purchase.licenseId) : undefined;
+  let returnDialog: ReactNode = null;
+  if (!link.pending && linked === null) {
+    if (flow.open && purchase !== null) {
+      const entry = entryOf(purchase.product);
+      returnDialog = (
+        <PurchaseDialog
+          key={`purchase:${purchase.purchaseId}`}
+          purchase={purchase}
+          productName={entry?.name ?? purchase.product}
+          entry={entry}
+          listed={bought !== undefined}
+          // Billing hands the buyer one of the new licenses: the dialog says so.
+          assigned={bought !== undefined && workspace.membership !== null && holdsSeat(bought, workspace.membership.membershipId)}
+          timedOut={flow.timedOut}
+          onClose={flow.close}
+        />
+      );
+    } else if (added.open) {
+      const entry = added.product !== null ? entryOf(added.product) : null;
+      // One license, added to one the workspace has: it may be charged now or on the next invoice, so it claims no payment.
+      returnDialog = (
+        <PurchaseDialog
+          key="added"
+          purchase={{ status: added.held ? "ready" : "processing", quantity: 1, paid: false }}
+          productName={entry?.name ?? added.product ?? ""}
+          entry={entry}
+          listed={added.held}
+          assigned={added.held}
+          timedOut={added.timedOut}
+          onClose={added.close}
+        />
+      );
+    }
+  }
 
   // A member sees their own seats and nothing else.
   if (!reads) {
     return (
       <div className="space-y-5">
-        {addedBanner}
         {cards.map((card) => (
           <LicenseCard key={card.licenseId} card={card} view="member" scope={scope} billing={billing} navigateOut={navigateOut} locale={locale} workspaceName={workspaceName} />
         ))}
         {cards.length > 0 ? <PageNote>{t.page.adminsGiveOutSeats(workspaceName)}</PageNote> : <NoSeat workspaceName={workspaceName} />}
         {linkDialog}
+        {returnDialog}
       </div>
     );
   }
@@ -456,21 +516,10 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, ad
   // Buying is for a viewer billing offers something to: an entry with an `offer`.
   const offered = manage && hasOffer(products);
   const showCatalog = offered && cards.length === 0;
-  const purchase = flow.purchase;
-  const productName = purchase ? (products.find((entry) => entry.product === purchase.product)?.name ?? purchase.product) : "";
-  const bought = purchase?.licenseId != null ? all.find((license) => license.licenseId === purchase.licenseId) : undefined;
-  const listed = bought !== undefined;
-  // Billing hands the buyer one of the new licenses: the banner says so.
-  const assigned = bought !== undefined && workspace.membership !== null && holdsSeat(bought, workspace.membership.membershipId);
 
   return (
     <div className="space-y-5">
-      {addedBanner}
       {status?.testMode ? <TestModeBanner testMode={status.testMode} /> : null}
-      {purchase ? (
-        <PurchaseBanner purchase={purchase} productName={productName} listed={listed} assigned={assigned} timedOut={flow.timedOut} onDismiss={flow.dismiss} />
-      ) : null}
-      {manage && status && cards.length > 0 ? <LicensesSummary total={status.total} locale={locale} /> : null}
       {cards.map((card) => (
         <LicenseCard
           key={card.licenseId}
@@ -501,6 +550,7 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, ad
       ) : null}
       {cards.length === 0 && !showCatalog ? <Restricted>{t.page.noLicenses}</Restricted> : null}
       {linkDialog}
+      {returnDialog}
       <BuyDialog
         open={linked?.kind === "choose"}
         product={linked?.kind === "choose" ? termsNow(linked.entry, products) : null}

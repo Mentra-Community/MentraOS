@@ -393,7 +393,7 @@ describe("Members", () => {
   });
 });
 
-describe("banners", () => {
+describe("banners and the dialog back from checkout", () => {
   test("after checkout in a workspace", () => {
     const p = t.purchase;
     expect(p.headline(true)).toBe("Payment received");
@@ -410,7 +410,9 @@ describe("banners", () => {
       "Call Unlimited is active. Assign the licenses to members below.",
     );
     expect(p.settingUp).toBe("Setting up…");
-    expect(p.dismiss).toBe("Dismiss");
+    // One button closes the dialog, whatever it says.
+    expect(p.ok).toBe("OK");
+    expect("dismiss" in p).toBe(false);
   });
 
   test("after checkout, when the buyer was given one of the new licenses", () => {
@@ -446,9 +448,8 @@ describe("banners", () => {
     expect("note" in t.testMode).toBe(false);
   });
 
-  test("the page total counts products", () => {
-    expect(t.summary({ count: 2, amount: "$295", rate: "a month" })).toEqual({ lead: "2 products", rest: "$295 a month in total" });
-    expect(t.summary({ count: 1, amount: "$29", rate: "every 3 months" })).toEqual({ lead: "1 product", rest: "$29 every 3 months in total" });
+  test("there is no page total: the cards are not added up", () => {
+    expect("summary" in t).toBe(false);
   });
 });
 
@@ -665,5 +666,4 @@ const SAMPLES: Record<string, unknown[][]> = {
   ],
   "purchase.timeout.title": [[true], [false]],
   "testMode.label": [["Staging"]],
-  summary: [[{ count: 1, amount: "$29", rate: "a month" }], [{ count: 2, amount: "$295", rate: "a month" }]],
 };

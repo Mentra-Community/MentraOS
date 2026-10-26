@@ -56,7 +56,6 @@ export {
   priceLine,
   renewalCadence,
   taxNote,
-  totalSummary,
   type CostFact,
 } from "./lib/billing-format";
 export { formatDate } from "./lib/format";
@@ -170,8 +169,8 @@ export {
   type SeatCounts,
 } from "./lib/license-join";
 
-// The Licenses page's cards: a license with its seats, the people picker that fills them, and the banners and
-// states around them. `useHostedAction` is how every ↗ button leaves the portal, including the catalog's (`NavigateOut`
+// The Licenses page's cards: a license with its seats, the people picker that fills them, the banner and states around
+// them, and the dialog back from checkout. `useHostedAction` is how every ↗ button leaves the portal, including the catalog's (`NavigateOut`
 // is the host's side).
 export { LicenseCard, type LicenseCardProps, type LicenseCardView } from "./components/licenses/license-card";
 export {
@@ -187,15 +186,8 @@ export {
 } from "./components/licenses/hosted-action";
 export { AvatarStack, PersonLabel, SeatRoster, SeatStrip, seatHolders, type AddSeatsControl, type SeatHolder } from "./components/licenses/seats";
 export { PeoplePickerDialog } from "./components/licenses/people-picker";
-export {
-  AddedBanner,
-  LicensesSummary,
-  LicensesUnavailable,
-  PURCHASE_POLL_MS,
-  PURCHASE_TIMEOUT_MS,
-  PurchaseBanner,
-  TestModeBanner,
-} from "./components/licenses/banners";
+export { LicensesUnavailable, TestModeBanner } from "./components/licenses/banners";
+export { PURCHASE_POLL_MS, PURCHASE_TIMEOUT_MS, PurchaseDialog, type PurchaseDialogProps } from "./components/licenses/purchase-dialog";
 // Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy licenses" dialog, and the
 // seats step. Each takes billing's client and the host's `navigateOut`, and sends the browser to a hosted page.
 export {

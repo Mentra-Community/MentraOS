@@ -1,6 +1,6 @@
 /**
  * What the Licenses page and its header share: the header actions ("Billing & invoices ↗" and "Buy licenses"), the sentence the page says in place of cards, and what happens after checkout (which purchase the page is
- * showing, polling for its license, and dismissing it).
+ * following, polling for its license, and closing its dialog).
  *
  * No sentence is written here; the words are `strings/licenses.ts`.
  */
@@ -112,30 +112,52 @@ export function NoSeat({ workspaceName }: { workspaceName: string }) {
   );
 }
 
-/** What the page is doing about the purchase its address names (`?purchase=`). */
+/**
+ * The id a return names in the address (`?purchase=`, `?added=`) that the page follows: the address's, and once the host
+ * has taken it out of the address (the person closed its dialog) still the same one, so that the page goes on reading for
+ * it and keeps the license it made first and ringed. A new id replaces it; another workspace drops it. The page and its
+ * header both follow `?purchase=` this way, so they keep reading billing's status under one key.
+ */
+export function useFollowed(id: string | null, workspaceId: string): string | null {
+  const [kept, setKept] = useState<{ id: string; workspaceId: string } | null>(id === null ? null : { id, workspaceId });
+  // Kept during render, as React has state follow a prop: the next render already sees it.
+  if (id !== null && (kept?.id !== id || kept.workspaceId !== workspaceId)) setKept({ id, workspaceId });
+  if (id !== null) return id;
+  return kept !== null && kept.workspaceId === workspaceId ? kept.id : null;
+}
+
+/** What the page is doing about the purchase it follows (`?purchase=`, kept by `useFollowed`). */
 export interface PurchaseFlow {
-  /** Billing's answer for the purchase the page is showing (its banner, and the license just bought); null when there is none to show. */
+  /**
+   * Billing's answer for the purchase the page follows: the license just bought (first and ringed in green), and the
+   * dialog's words. Null when there is none to show. Closing the dialog leaves it: the card stays first and ringed.
+   */
   purchase: PurchaseStatus | null;
-  /** The minute is up and the page has stopped reading: the banner says the seats can take a few minutes. */
+  /** The minute is up and the page has stopped reading: the dialog says the licenses can take a few minutes. */
   timedOut: boolean;
-  /** The banner's Dismiss: it is hidden at once, and the host is told so that it takes `?purchase=` out of the address. */
-  dismiss(): void;
+  /** The dialog is open: there is a purchase to show and the person hasn't closed it. */
+  open: boolean;
+  /**
+   * OK, Escape, the × or the backdrop: the dialog closes at once, and the host is told so that it takes `?purchase=` out
+   * of the address. Nothing else stops: the page goes on reading until the license is listed or the minute is up.
+   */
+  close(): void;
 }
 
 /**
  * After checkout the page reads billing's status and Core's licenses together every `pollMs` (decision 18, 2 s) for up
- * to `timeoutMs` (a minute), and stops sooner when the purchase is `ready` and Core lists its license, when the person
- * dismisses it, or when the page goes away. Each read is the kind that doesn't cancel one still out, so a slow answer
- * is waited for, not restarted.
+ * to `timeoutMs` (a minute), and stops sooner when the purchase is `ready` and Core lists its license, or when the page
+ * goes away. Closing the dialog stops neither: a person who presses OK while it is setting up still sees the card turn
+ * ready. Each read is the kind that doesn't cancel one still out, so a slow answer is waited for, not restarted.
  *
  * The minute is counted here, from when the page has a purchase to follow, whatever it shows meanwhile: its reads may
- * be failing, with the page saying "unavailable" and no banner on screen, and the polling must still end. (A banner
+ * be failing, with the page saying "unavailable" and no dialog on screen, and the polling must still end. (A dialog
  * that kept its own clock would start it only when it first appeared, and never at all behind an unavailable page.)
- * It says so with `timedOut`, which is also what the banner shows its "payment went through" state by.
+ * It says so with `timedOut`, which is also what the dialog shows its "payment went through" state by.
  *
- * `answer` is `status.purchase`: null for an id billing doesn't know (or another owner's), which has no banner and
- * nothing to wait for; undefined while the status is loading or failed. `offered` is false for a viewer who isn't
- * asked for billing's status at all.
+ * `purchaseId` is the purchase the page follows (`useFollowed`). `answer` is `status.purchase`: null for an id billing
+ * doesn't know (or another owner's), which has no dialog and nothing to wait for; undefined while the status is loading
+ * or failed. `offered` is false for a viewer who isn't asked for billing's status at all.
  */
 export function usePurchaseFlow({
   purchaseId,
@@ -157,13 +179,13 @@ export function usePurchaseFlow({
   timeoutMs: number;
   onDone(): void;
 }): PurchaseFlow {
-  const [dismissed, setDismissed] = useState<string | null>(null);
+  const [closed, setClosed] = useState<string | null>(null);
   const [gaveUp, setGaveUp] = useState<string | null>(null);
-  const showing = offered && purchaseId !== null && dismissed !== purchaseId ? purchaseId : null;
-  const purchase = showing !== null ? (answer ?? null) : null;
+  const following = offered && purchaseId !== null ? purchaseId : null;
+  const purchase = following !== null ? (answer ?? null) : null;
   const ready = purchase?.status === "ready" && listed;
-  const waiting = showing !== null && answer !== null && !ready;
-  const timedOut = showing !== null && gaveUp === showing;
+  const waiting = following !== null && answer !== null && !ready;
+  const timedOut = following !== null && gaveUp === following;
   const polling = waiting && !timedOut;
 
   const latest = useRef(poll);
@@ -174,18 +196,21 @@ export function usePurchaseFlow({
     return () => clearInterval(timer);
   }, [polling, pollMs]);
 
-  // The deadline: it starts with the purchase and ends with the wait (ready, dismissed, unmounted).
+  // The deadline: it starts with the purchase and ends with the wait (ready, or unmounted).
   useEffect(() => {
-    if (!waiting || showing === null) return;
-    const timer = setTimeout(() => setGaveUp(showing), timeoutMs);
+    if (!waiting || following === null) return;
+    const timer = setTimeout(() => setGaveUp(following), timeoutMs);
     return () => clearTimeout(timer);
-  }, [waiting, showing, timeoutMs]);
+  }, [waiting, following, timeoutMs]);
 
+  const open = purchase !== null && closed !== following;
   return {
     purchase,
     timedOut,
-    dismiss: () => {
-      setDismissed(showing);
+    open,
+    close: () => {
+      if (!open) return;
+      setClosed(following);
       onDone();
     },
   };

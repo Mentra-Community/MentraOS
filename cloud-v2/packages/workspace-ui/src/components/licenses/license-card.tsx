@@ -1,6 +1,6 @@
 /**
  * One license on the Licenses page, drawn from a card the
- * join made (`joinLicenses`): the product's icon, name, description and features; one status badge; a strip of
+ * join made (`joinLicenses`): the product's icon, name and features; one status badge; a strip of
  * facts; a notice when something needs doing; the seats; and a "…" menu of what billing can do about the license.
  *
  * It has two views of the same license:
@@ -344,7 +344,6 @@ export function LicenseCard({
             <h2 className="text-lg leading-tight font-semibold">{card.name}</h2>
             {badge ? <StatusBadge status={badge} /> : null}
           </div>
-          {card.description ? <p className="text-muted-foreground mt-1 text-sm">{card.description}</p> : null}
           <div className="mt-3 empty:hidden">
             <FeatureChips product={card} />
           </div>

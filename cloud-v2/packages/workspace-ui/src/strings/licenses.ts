@@ -13,9 +13,9 @@
  *
  * The words are Microsoft 365's. A license is one person's right to use a product; a workspace buys some number
  * of licenses for a product, and each license is assigned to one member. What the workspace buys is a product (or a
- * subscription), never "a license", and the count above the cards counts products. A price per license is "per
- * user". "Seat" is not a word anyone reads: the API and the code keep their names
- * (`seats`, `seatsUsed`, `add_seats`, the keys of this object), and the strings test scans every sentence for it.
+ * subscription), never "a license". A price per license is "per user". "Seat" is not a word anyone reads: the API and
+ * the code keep their names (`seats`, `seatsUsed`, `add_seats`, the keys of this object), and the strings test scans
+ * every sentence for it.
  */
 
 import type { LicenseFit } from "../lib/license-join";
@@ -488,10 +488,15 @@ export const licenseStrings = {
     tooMany: (max: number) => `You can assign up to ${plural(max, "license")} at a time.`,
   },
 
+  /**
+   * The dialog back from checkout (`?purchase=`) or from the hosted page that added a license (`?added=`). It is titled
+   * with the product's name; these are its heading and its sentence in each state, and its buttons.
+   */
   purchase: {
     headline: (paid: boolean) => (paid ? "Payment received" : "Purchase complete"),
     settingUp: "Setting up…",
-    dismiss: "Dismiss",
+    /** Closes the dialog, in every state. */
+    ok: "OK",
     /** A workspace, while billing writes the license into Core. */
     settingUpSeats: ({ seats, product }: { seats: number; product: string }) =>
       `Setting up ${seats} ${product} ${seats === 1 ? "license" : "licenses"}. This takes a few seconds; you can stay on this page.`,
@@ -523,12 +528,6 @@ export const licenseStrings = {
     /** The × in the banner's corner: hides the notice for the rest of the browser session. */
     hide: "Hide the test mode notice",
   },
-
-  /** The total above the cards: "2 products" in bold, then "$295 a month in total". What is counted is what the workspace buys. */
-  summary: ({ count, amount, rate }: { count: number; amount: string; rate: string }) => ({
-    lead: plural(count, "product"),
-    rest: `${amount} ${rate} in total`,
-  }),
 
   refusal: {
     generic: GENERIC_REFUSAL,

@@ -308,12 +308,6 @@ describe("a license's card, in each state", () => {
     await open(`/licenses`, single(CALL_LICENSE, odd), "Mentra Call Unlimited");
     await exploreCards("an unknown status");
   });
-
-  test("the total counts products", async () => {
-    await open(`/licenses`, SCENARIOS.threeActive(), "Mentra Call Unlimited");
-    expect(has("3 products")).toBe(true);
-    expectNoSeat("the total");
-  });
 });
 
 // ---- a member's own card -----------------------------------------------------------------------------------------
@@ -373,7 +367,7 @@ describe("the catalog grid and the buy dialog", () => {
   });
 });
 
-// ---- banners -------------------------------------------------------------------------------------------------------
+// ---- back from checkout --------------------------------------------------------------------------------------------
 
 describe("after checkout", () => {
   test("setting up, and ready", async () => {
@@ -516,7 +510,6 @@ describe("the states were reached", () => {
     ["a link to a product not sold", t.page.buyLink.notForSale],
     ["a link a member can't follow", t.page.buyLink.askAnAdmin("Acme Field Services", "Mentra Call Unlimited")],
     ["a link where billing isn't offered", t.page.buyLink.notHere],
-    ["the total", "3 products"],
   ];
 
   test.each(WITNESSES)("%s", (_what, sentence) => {
