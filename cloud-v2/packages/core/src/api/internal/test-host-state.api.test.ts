@@ -2,11 +2,32 @@ import {expect, test} from "bun:test";
 import {createTestHostStateApi} from "./test-host-state.api";
 import {hostStateSchema, updaterDeploymentSchema, TestHostStateService} from "../../services/test-host-state.service"
 import {TestRunError} from "../../services/test-result-error";
+import {ZodError} from 'zod';
 const token = "synthetic-host-test-" + "x".repeat(32);
 const snapshot = {hostId: "mini", incarnation: "boot-1", incarnationGeneration: 1, sequence: 1, observedAt: "2026-10-02T18:00:00Z",
   lanes: [{id: "mac", platform: "ios-on-mac", dispatchMode: "automatic", state: "idle",
     resources: [{id: "mac-app", kind: "app"}, {id: "mac-recorder", kind: "recorder"}]}]};
 const headers = {"authorization": `Bearer ${token}`, "content-type": "application/json"}
+test('invalid host state reports bounded known field paths without private keys, values or messages', async () => {
+  class Service extends TestHostStateService {
+    override async report(): Promise<never> {
+      throw new ZodError(Array.from({length: 20}, () => ({code: 'custom' as const,
+        path: ['resourceReservations', 'localPrerequisites', 0, 'proposedInput', 'resources', 1, 'idleContract',
+          'maximumAgeMs', ...Array(20).fill('private-token-value')], message: 'Bearer private-token-value'})))
+    }
+  }
+  const api = createTestHostStateApi(new Service(), () => JSON.stringify({mini: token}))
+  const response = await api.request('/', {method: 'POST', headers, body: JSON.stringify(snapshot)})
+  expect(response.status).toBe(400)
+  const body = await response.json() as {error: string; issues: Array<{code: string; path: Array<string | number>}>}
+  expect(body.error).toBe('invalid_host_state')
+  expect(body.issues).toHaveLength(10)
+  expect(body.issues[0].path).toHaveLength(16)
+  expect(body.issues[0].path.slice(0, 8)).toEqual(['resourceReservations', 'localPrerequisites', 0, 'proposedInput',
+    'resources', 1, 'idleContract', 'maximumAgeMs'])
+  expect(JSON.stringify(body)).not.toContain('private-token-value')
+  expect(JSON.stringify(body)).not.toContain('Bearer')
+})
 test("capability reports are bound to the authenticated host and retain exact lane resources", async () => {
   let observed: unknown;
   class Service extends TestHostStateService {

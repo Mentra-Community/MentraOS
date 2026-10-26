@@ -14,7 +14,7 @@ import type {CandidateAuthorization} from './candidate-verification.service'
 
 const now = Date.parse('2026-10-19T15:00:00Z'), timestamp = new Date(now).toISOString(), expiry = now + 60_000,
   hash = 'a'.repeat(64), sha = 'b'.repeat(40), binding = {...testFrameworkBinding(), version: 1110, routineApiVersion: 61}
-function fixture(candidate = false) {
+function fixture(candidate = false, withIdleContracts = false) {
   let clock = now, alias: unknown = null, permitted = true, enrollment = true, candidateReads = 0
   const definition = {id: 'battery', minimumRoutineApiVersion: 1, title: 'Battery', purpose: 'Read battery', platforms: ['android'],
     entry: 'home', account: 'lane', requirements: [], fixtures: [], steps: [{id: 'battery', instruction: 'Read', expected: 'Read'}],
@@ -30,7 +30,11 @@ function fixture(candidate = false) {
   const verification = {workId: 'work:edit', attemptId: 3, sourceRevision: sha}
   const input = frameworkRequestInputSchema.parse({routineId: 'battery', platform: 'android', laneId: 'android', definitionRevision: sha,
     routineSource: enrolled.routineSource, build: frameworkExecutableBuild(build as never), policy: definition.execution.policy,
-    resources: [{kind: 'phone', id: 'phone'}, {kind: 'app', id: 'app'}, {kind: 'recorder', id: 'recorder'}],
+    resources: [{kind: 'phone', id: 'phone'}, {kind: 'app', id: 'app'}, {kind: 'recorder', id: 'recorder'}].map(resource => ({
+      ...resource, ...(withIdleContracts ? {idleContract: {version: `installed-${resource.kind}-baseline-v1`, maximumAgeMs: 120000,
+        qualifiedScope: {kind: 'same-controller', controllerId: 'mini'}, conditions: ['original-work-returned'], repairConfigured: true,
+        dependencies: resource.kind === 'app' ? ['phone'] : []}} : {}),
+    })),
     ...(candidate ? {verification} : {})})
   const observed: ReceivedTestHostState = {hostId: 'mini', incarnation: 'controller', incarnationGeneration: 1, sequence: 1,
     observedAt: timestamp, receivedAt: timestamp, frameworkBinding: structuredClone(binding), frameworkAcceptedAt: timestamp,
@@ -64,6 +68,30 @@ function fixture(candidate = false) {
     setClock(value: number) {clock = value}, setAlias(value: unknown) {alias = value}, cancel() {permitted = false}, unenroll() {enrollment = false},
     rehash() {const {inputSha256: _, ...body} = target; target.inputSha256 = requestInputDigest(body)}}
 }
+test('local host reports preserve installed idle contracts and their exact original input digests', async () => {
+  for (const withContracts of [false, true]) {
+    const f = fixture(false, withContracts), {receivedAt: _, ...snapshot} = f.observed
+    const accepted = hostStateSchema.parse(snapshot)
+    expect(accepted).toEqual(snapshot)
+    expect(accepted.resourceReservations!.localPrerequisites).toEqual([f.target])
+    expect(frameworkRequestInputSchema.parse(f.input)).toEqual(f.input)
+    expect(requestInputDigest(frameworkRequestInputSchema.parse(f.input))).toBe(f.target.local!.inputSha256)
+    expect(await f.service.qualificationTargets('mini')).toEqual([f.target])
+  }
+})
+test('local idle contract compatibility still rejects malformed and unknown contract fields', () => {
+  const f = fixture(false, true), contract = f.input.resources[0]!.idleContract!
+  for (const invalid of [null, {...contract, maximumAgeMs: 0}, {...contract, conditions: ['same', 'same']},
+    {...contract, dependencies: ['same', 'same']}, {...contract, qualifiedScope: {kind: 'same-controller'}},
+    {...contract, unexpected: true}]) {
+    const input = structuredClone(f.input)
+    Object.assign(input.resources[0]!, {idleContract: invalid})
+    expect(frameworkRequestInputSchema.safeParse(input).success).toBe(false)
+    const {receivedAt: _, ...snapshot} = structuredClone(f.observed)
+    snapshot.resourceReservations!.localPrerequisites = [{...f.target, proposedInput: input}]
+    expect(hostStateSchema.safeParse(snapshot).success).toBe(false)
+  }
+})
 test('local operator and candidate discovery preserves exact original source/target without fleet rows or mode changes', async () => {
   for (const candidate of [false, true]) {
     const f = fixture(candidate), before = structuredClone(f.observed)

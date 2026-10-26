@@ -7,8 +7,10 @@ import {candidateVerificationSchema} from './candidate-verification.types';
 import type {RoutineLiveProgress} from './routine-progress.types';
 import {exclusiveResourceDependenciesSchema} from './resource-reservations.types';
 import {testBuildArtifactSourceSchema} from './test-build.types';
+import {frameworkIdentitySchema} from './framework-identity.types';
+import {resourceIdleContractSchema} from './resource-lifecycle.types';
 
-export const frameworkIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/);
+export {frameworkIdentitySchema} from './framework-identity.types';
 export const frameworkBuildSchema = z.object({
   repository: z.string().regex(/^[\w-]+\/[\w.-]+$/),
   headSha: z.string().regex(/^[a-f0-9]{40}$/),
@@ -37,6 +39,7 @@ const frozenFrameworkRequestInputSchema = z.object({
     capabilities: z.array(routineIdentitySchema).max(30).optional(),
     permissionObservations: permissionObservationsSchema.optional(),
     exclusiveDependencies: exclusiveResourceDependenciesSchema.optional(),
+    idleContract: resourceIdleContractSchema.optional(),
   }).strict().refine(resource => resource.capabilities === undefined || routineResourceRequirementSchema.safeParse({
     kind: resource.kind, capabilities: resource.capabilities,
   }).success, "Resource capabilities must match their declared kind")),

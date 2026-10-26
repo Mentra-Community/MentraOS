@@ -241,6 +241,10 @@ export const hostStateSchema = z
     if (snapshot.resourceLifecycle?.subjects.some(subject => subject.subject.authorityHostId !== snapshot.hostId))
       ctx.addIssue({code: "custom", message: "Resource lifecycle must be reported by its authority host"})
     const local = (snapshot.resourceReservations?.localPrerequisites ?? []).map(value => routineQualificationTargetSchema.safeParse(value))
+    local.forEach((value, index) => {
+      if (!value.success) for (const issue of value.error.issues)
+        ctx.addIssue({...issue, path: ['resourceReservations', 'localPrerequisites', index, ...issue.path]})
+    })
     if (local.some(value => !value.success || !value.data.local || value.data.hostId !== snapshot.hostId ||
       !snapshot.lanes.some(lane => lane.id === value.data.laneId && lane.platform === 'android')) ||
       new Set(local.flatMap(value => value.success ? [value.data.jobId] : [])).size !== local.length ||

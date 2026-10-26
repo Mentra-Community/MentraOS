@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {resourceCheckReportSchema} from './resource-check-report.types';
-import {frameworkIdentitySchema as id} from './framework-request.types';
+import {frameworkIdentitySchema as id} from './framework-identity.types';
 const timestamp = z.string().datetime({offset:true});
 const generation = z.number().int().nonnegative().safe();
 export const qualifiedScopeSchema = z.discriminatedUnion('kind', [

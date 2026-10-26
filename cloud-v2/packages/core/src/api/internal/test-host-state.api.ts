@@ -6,13 +6,23 @@ import {frameworkBodyLimit, frameworkJson} from "./framework-json"
 import {TestHostStateService} from "../../services/test-host-state.service"
 import {TestRunError} from "../../services/test-result-error"
 import {ResourceReservationsService} from '../../services/resource-reservations.service'
+// Only known schema field names are public diagnostics. Record keys, values,
+// unknown property names and refinement messages may contain private input.
+const diagnosticFields = new Set(('hostId incarnation incarnationGeneration sequence observedAt lanes resources kind id laneId ' +
+  'resourceReservations localPrerequisites proposedInput idleContract version maximumAgeMs qualifiedScope controllerId controllerIds ' +
+  'conditions repairConfigured dependencies capabilities build routineId routineSource definitionRevision platform ' +
+  'resourceLifecycle subjects history storage stagingBudgetBytes availableBytes frameworkBinding local target selection').split(' '))
+function invalidStateIssues(error: ZodError) {
+  return error.issues.slice(0, 10).map(issue => ({code: issue.code,
+    path: issue.path.slice(0, 16).map(part => typeof part === 'number' ? part : diagnosticFields.has(part) ? part : '[field]')}))
+}
 export function createTestHostStateApi(service = new TestHostStateService(), credentials?: () => string | undefined,
   controls = new LaneControlsService(), resources = new ResourceReservationsService()) {
   const app = new Hono<TestHostEnv>()
   app.use("*", createTestHostAuth(credentials))
   app.onError((error, c) =>
     error instanceof ZodError
-      ? c.json({error: "invalid_host_state"}, 400)
+      ? c.json({error: "invalid_host_state", issues: invalidStateIssues(error)}, 400)
       : error instanceof TestRunError
         ? c.json({error: "host_state_conflict", message: error.message}, error.status)
         : c.json({error: "host_state_unavailable"}, 503),
