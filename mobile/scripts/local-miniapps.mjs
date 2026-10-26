@@ -1,6 +1,6 @@
 /**
- * The miniapps of this checkout, for builds of the Mentra App made on a developer's computer. CI packs its own
- * (.github/ci/pack-miniapps.sh in the monorepo) and never runs these.
+ * The miniapps of this checkout, for builds of the Mentra App made on a developer's computer. CI packs its own and
+ * never runs these.
  *
  * - A debug build (`bun start`, `bun android`, `bun ios`) gets every miniapp live: startDevMiniapps() starts each
  *   one's dev server (`mentra-miniapp dev`, frontend only: it calls the backend its .env names, else its
@@ -9,31 +9,25 @@
  *   EXPO_PUBLIC_DEV_MINIAPPS; the host is the one the bundle came from.
  * - Any other local build bundles them: packMiniapps() packs each from the working tree into assets/miniapps/.
  *
- * A bundled miniapp is a folder with a `pack` script:
- * - in the Mentra monorepo, miniapps/<name> (its own Bun workspace) and miniapps/public/<name> (a member of
- *   MentraOS's root workspace, so built from a copy at public/mentraos/miniapps/<name> that follows the original);
- * - in MentraOS, miniapps/<name>.
+ * A bundled miniapp is a folder with a `pack` script: miniapps/<name>, a member of the root Bun workspace, and each
+ * folder listed in MENTRA_EXTRA_MINIAPPS (separated like PATH), installed as its own Bun workspace.
  */
 import {spawn, spawnSync} from "node:child_process"
-import {copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, watch} from "node:fs"
+import {copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync} from "node:fs"
 import {createServer} from "node:net"
-import {basename, join} from "node:path"
-import {pathToFileURL} from "node:url"
+import {basename, delimiter, dirname, join, resolve} from "node:path"
+import {fileURLToPath, pathToFileURL} from "node:url"
 
 const FIRST_PORT = 3100
 
-// dotenv, loaded by the functions that read .env files: the mobile preinstall
-// (copyPublicMiniapps) runs before it is installed.
+// dotenv, loaded by the functions that read .env files.
 let parse
 const loadDotenv = async () => {
   parse ??= (await import("dotenv")).parse
 }
 
-const git = spawnSync("git", ["rev-parse", "--show-toplevel"], {encoding: "utf8"})
-const top = git.status === 0 ? git.stdout.trim() : ""
-const monorepo = existsSync(join(top, "public/mentraos/mobile"))
-const mentraos = monorepo ? join(top, "public/mentraos") : top
-const mobile = join(mentraos, "mobile")
+const mobile = dirname(dirname(fileURLToPath(import.meta.url)))
+const root = dirname(mobile)
 
 function packageJson(dir) {
   try {
@@ -50,20 +44,16 @@ function folders(dir) {
     .map((entry) => join(dir, entry.name))
 }
 
-/** The bundled miniapps: where each is edited (`source`), built (`dir`), and whether MentraOS's workspace holds it. */
+/** The bundled miniapps, and whether the root workspace holds each. */
 function bundledMiniapps() {
   const apps = []
-  const add = (dir, workspace, built = dir) => {
+  const add = (dir, workspace) => {
     const scripts = packageJson(dir)?.scripts ?? {}
     const dev = scripts["miniapp:dev"] ? "miniapp:dev" : "dev"
-    if (scripts.pack) apps.push({name: basename(dir), source: dir, dir: built, dev: scripts[dev] ? dev : null, workspace})
+    if (scripts.pack) apps.push({name: basename(dir), dir, dev: scripts[dev] ? dev : null, workspace})
   }
-  if (monorepo) {
-    for (const dir of folders(join(top, "miniapps"))) if (basename(dir) !== "public") add(dir, false)
-    for (const dir of folders(join(top, "miniapps/public"))) add(dir, true, join(mentraos, "miniapps", basename(dir)))
-  } else {
-    for (const dir of folders(join(top, "miniapps"))) add(dir, true)
-  }
+  for (const dir of folders(join(root, "miniapps"))) add(dir, true)
+  for (const dir of (process.env.MENTRA_EXTRA_MINIAPPS ?? "").split(delimiter)) if (dir) add(resolve(dir), false)
   return apps
 }
 
@@ -72,46 +62,12 @@ function run(command, args, cwd, env = process.env) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed in ${cwd}`)
 }
 
-/** Make a public miniapp's copy equal to the original, deletions included. */
-function copy(app) {
-  if (app.dir === app.source) return
-  // GNU rsync creates only the last component of the destination.
-  mkdirSync(app.dir, {recursive: true})
-  run("rsync", ["-a", "--delete", "--exclude", "node_modules", "--exclude", "dist", `${app.source}/`, app.dir], top)
-}
-
-/**
- * In the monorepo, put each public miniapp's copy in MentraOS's root workspace (public/mentraos/miniapps/<name>), so
- * that workspace's install matches its lockfile, which lists them. Nothing to do in MentraOS, where they live there.
- */
-export function copyPublicMiniapps() {
-  for (const app of bundledMiniapps()) if (app.workspace) copy(app)
-}
-
-/** Keep copying it on every change. */
-function follow(app) {
-  if (app.dir === app.source) return
-  let timer
-  watch(app.source, {recursive: true}, (_event, file) => {
-    if (file && /(^|\/)(node_modules|dist|build)(\/|$)/.test(file)) return
-    clearTimeout(timer)
-    timer = setTimeout(() => {
-      try {
-        copy(app)
-      } catch (error) {
-        console.warn(`[miniapps] ${app.name}: ${error.message}`)
-      }
-    }, 100)
-  })
-}
-
 /**
  * Install every miniapp's dependencies, then build the miniapp SDK they all build against: each install rebuilds it
  * (mobile/modules/miniapp's `prepare`), so none may run while a miniapp builds.
  */
 function prepare(apps) {
-  for (const app of apps) copy(app)
-  if (apps.some((app) => app.workspace)) run("bun", ["install", "--frozen-lockfile", "--ignore-scripts"], mentraos)
+  if (apps.some((app) => app.workspace)) run("bun", ["install", "--frozen-lockfile", "--ignore-scripts"], root)
   for (const app of apps) if (!app.workspace) run("bun", ["install", "--frozen-lockfile"], app.dir)
   run("bun", ["run", "build"], join(mobile, "modules/miniapp"))
 }
@@ -131,7 +87,7 @@ function mapboxToken() {
 function miniappEnv(app, extra = {}) {
   const values = {}
   for (const file of [".env.example", ".env"]) {
-    const path = join(app.source, file)
+    const path = join(app.dir, file)
     if (existsSync(path)) Object.assign(values, parse(readFileSync(path)))
   }
   const token = mapboxToken()
@@ -155,7 +111,7 @@ function newZips(dir, since) {
 
 /** Pack every bundled miniapp from the working tree into assets/miniapps/, or throw naming those that failed. */
 export async function packMiniapps() {
-  if (process.env.CI || !top) return
+  if (process.env.CI) return
   await loadDotenv()
   const apps = bundledMiniapps()
   const dest = join(mobile, "assets/miniapps")
@@ -212,7 +168,7 @@ async function servedPackage(port, child, timeoutMs) {
  * the dev servers reach phones over USB only.
  */
 function hasLanAddress() {
-  const lan = pathToFileURL(join(mentraos, "sdk/miniapp-cli/src/lan.ts")).href
+  const lan = pathToFileURL(join(root, "sdk/miniapp-cli/src/lan.ts")).href
   const result = spawnSync("bun", ["-e", `const {getLanIp} = await import(${JSON.stringify(lan)}); console.log(getLanIp() ?? "")`], {
     encoding: "utf8",
   })
@@ -248,12 +204,11 @@ function prefixed(name, stream, out) {
  * opens its own `adb reverse`).
  */
 export async function startDevMiniapps() {
-  if (process.env.CI || process.env.MENTRA_DEV_MINIAPPS === "0" || !top) return
+  if (process.env.CI || process.env.MENTRA_DEV_MINIAPPS === "0") return
   await loadDotenv()
   const apps = bundledMiniapps().filter((app) => app.dev)
   if (apps.length === 0) return
   prepare(apps)
-  for (const app of apps) follow(app)
 
   const children = []
   process.on("exit", () => children.forEach((child) => child.kill()))
