@@ -765,6 +765,21 @@ export class ResourceReservationsService {
     if (!lane || !['idle', 'offline'].includes(lane.state) || lane.activity || lane.dispatchMode !== 'automatic' || !lifecycle) return undefined
     const installed = [...lane.resources, ...host.snapshot.resources ?? []], visited = new Set<string>(),
       passivePhone = lane.platform === 'android' && installed.find(ref => ref.id === target)?.kind === 'phone'
+    const conditionsFor = (ref: typeof installed[number]): string[] | undefined => {
+      const version = ref.idleContract?.version
+      if (ref.kind === 'phone' && lane.platform === 'android') {
+        if (version === 'installed-phone-baseline-v2') return ['phone-identity', 'phone-same-boot']
+        if (version === 'installed-resource-baseline-v1') return ['phone-identity', 'phone-same-boot', 'phone-default-network', 'phone-network-stable']
+        return undefined
+      }
+      if (version !== 'installed-resource-baseline-v1') return undefined
+      if (ref.kind === 'app') return lane.platform === 'android' ?
+        ['app-phone-identity', 'app-phone-same-boot', 'app-package-absent', 'app-process-absent', 'app-data-absent'] :
+        ['app-managed-processes-absent', 'app-managed-storage-absent']
+      if (ref.kind === 'recorder') return ['recorder-native-children-settled', 'recorder-storage-available']
+      if (ref.kind === 'fixture-data') return ['fixture-owned-effects-returned', 'fixture-native-children-settled']
+      return undefined
+    }
     const scopeCurrent = (id: string): boolean => {
       if (visited.has(id)) return false
       visited.add(id)
@@ -775,16 +790,13 @@ export class ResourceReservationsService {
         !['idle', 'unknown'].includes(subject.status) || !subject.observedAt ||
         Date.parse(subject.observedAt) > Date.parse(host.snapshot.observedAt) ||
         !fresh({...host, snapshot: {...host.snapshot, observedAt: subject.observedAt}}, now) ||
-        contract.version !== 'installed-resource-baseline-v1' || subject.idle.contractVersion !== contract.version ||
+        subject.idle.contractVersion !== contract.version ||
         contract.qualifiedScope.kind !== 'same-controller' || contract.qualifiedScope.controllerId !== host.hostId ||
         !isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope) || ref.exclusiveDependencies?.length ||
         subject.resource.dependencies.length || subject.resource.memberships.length !== 1 ||
         subject.resource.memberships[0]!.hostId !== host.hostId || subject.resource.memberships[0]!.laneId !== lane.id) return false
-      const appConditions = lane.platform === 'android' ? ['app-phone-identity', 'app-phone-same-boot', 'app-package-absent', 'app-process-absent', 'app-data-absent'] :
-        ['app-managed-processes-absent', 'app-managed-storage-absent'],
-        conditions = !passivePhone && id === target ? appConditions : ['phone-identity', 'phone-same-boot', 'phone-default-network', 'phone-network-stable'],
-        dependencies = contract.dependencies ?? []
-      if (ref.kind !== (!passivePhone && id === target ? 'app' : 'phone') || contract.conditions.length !== conditions.length ||
+      const conditions = conditionsFor(ref), dependencies = contract.dependencies ?? []
+      if (!conditions || ref.kind !== (!passivePhone && id === target ? 'app' : 'phone') || contract.conditions.length !== conditions.length ||
         !conditions.every(condition => contract.conditions.includes(condition))) return false
       if (!passivePhone && id === target && lane.platform === 'android') return dependencies.length === 1 && scopeCurrent(dependencies[0]!)
       return dependencies.length === 0
@@ -806,9 +818,10 @@ export class ResourceReservationsService {
       const check = claim.resourceCheck, subject = lifecycle.subjects.find(value => value.subject.id === claim.resourceId),
         ref = lane.resources.find(value => value.id === claim.resourceId), accepted = subject?.idle.acceptedCheck,
         journals = host.snapshot.resourceReservations?.resourceChecks?.filter(value => value.operationId === claim.operationId),
-        journal = journals?.length === 1 ? journals[0] : undefined, contract = ref?.idleContract
+        journal = journals?.length === 1 ? journals[0] : undefined, contract = ref?.idleContract,
+        conditions = ref && conditionsFor(ref)
       if (!check || claim.authorityHostId !== host.hostId || claim.prerequisite || claim.origin || !subject?.current || !subject.observedAt || !contract ||
-        ref.kind !== (passivePhone ? 'app' : 'fixture-data') || subject.resource.kind !== ref.kind || subject.subject.authorityHostId !== host.hostId ||
+        (passivePhone ? ref.kind !== 'app' : !['fixture-data', 'recorder'].includes(ref.kind)) || subject.resource.kind !== ref.kind || subject.subject.authorityHostId !== host.hostId ||
         !isDeepStrictEqual(subject.owner && {id: subject.owner.id, kind: subject.owner.kind}, claim.owner) ||
         !Number.isSafeInteger(subject.owner?.generation) || subject.owner!.hostId !== host.hostId ||
         subject.owner!.laneId !== undefined && subject.owner!.laneId !== lane.id ||
@@ -819,9 +832,7 @@ export class ResourceReservationsService {
         contract.version !== 'installed-resource-baseline-v1' || !contract.repairConfigured ||
         contract.qualifiedScope.kind !== 'same-controller' || contract.qualifiedScope.controllerId !== host.hostId ||
         !isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope) ||
-        contract.conditions.length !== (passivePhone ? 5 : 2) || !(passivePhone ?
-          ['app-phone-identity', 'app-phone-same-boot', 'app-package-absent', 'app-process-absent', 'app-data-absent'] :
-          ['fixture-owned-effects-returned', 'fixture-native-children-settled']).every(id => contract.conditions.includes(id)) ||
+        !conditions || contract.conditions.length !== conditions.length || !conditions.every(id => contract.conditions.includes(id)) ||
         contract.dependencies?.length !== 1 || contract.dependencies[0] !== target || ref.exclusiveDependencies?.length ||
         subject.resource.dependencies.some(id => id !== target) || subject.resource.memberships.length !== 1 ||
         subject.resource.memberships[0]!.hostId !== host.hostId || subject.resource.memberships[0]!.laneId !== lane.id ||
@@ -830,8 +841,9 @@ export class ResourceReservationsService {
         accepted.subjectGeneration <= check.subjectGeneration || accepted.subjectGeneration + 1 !== subject.generation ||
         Date.parse(accepted.acceptedAt) < Date.parse(claim.reservedAt) ||
         // A late producer-accepted UNKNOWN and queued repair prove ceased work,
-        // not a timely result. Only the Android app's passive phone may proceed.
-        Date.parse(accepted.acceptedAt) > check.deadlineAt && (!passivePhone || subject.idle.outcome !== 'unknown') ||
+        // not a timely result. The fixed app/recorder observers can only admit
+        // their declared passive dependency; the original claim stays retained.
+        Date.parse(accepted.acceptedAt) > check.deadlineAt && (!passivePhone && ref.kind !== 'recorder' || subject.idle.outcome !== 'unknown') ||
         Date.parse(journal.observedAt) > Date.parse(accepted.acceptedAt) ||
         Date.parse(subject.observedAt) > Date.parse(host.snapshot.observedAt) ||
         !fresh({...host, snapshot: {...host.snapshot, observedAt: subject.observedAt}}, now) ||
@@ -843,7 +855,7 @@ export class ResourceReservationsService {
         queued = lifecycle.history.filter(event => event.resourceId === claim.resourceId && event.event === 'repair-queued' && event.subjectGeneration === subject.generation)
       if (failure.length !== 1 || queued.length !== 1 || Date.parse(queued[0]!.at) < Date.parse(accepted.acceptedAt) ||
         Date.parse(queued[0]!.at) > Date.parse(subject.observedAt)) return undefined
-      if (passivePhone && controls.some(row => 'subject' in row.command && row.command.subject.resourceId === claim.resourceId &&
+      if ((passivePhone || ref.kind === 'recorder') && controls.some(row => 'subject' in row.command && row.command.subject.resourceId === claim.resourceId &&
         (!row.receipt || row.receipt.result.status === 'accepted' &&
           (row.receipt.result.reservation && ['waiting', 'granted', 'returning'].includes(row.receipt.result.reservation.state) ||
             'check' in row.receipt.result && row.receipt.result.check && row.receipt.result.check.state !== 'settled' &&

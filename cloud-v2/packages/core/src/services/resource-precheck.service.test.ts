@@ -598,10 +598,13 @@ test('settled queued fixture permits its fresh app dependency baseline without r
   expect(f.host.snapshot.resourceLifecycle!.history).toContainEqual(f.queued)
   expect(f.subject().owner).toBeNull(); expect(f.subject().generation).toBe(0)
 })
-async function queuedAppPhoneRepair() {
+async function queuedAppPhoneRepair(phoneVersion = 'installed-resource-baseline-v1') {
   const f = await queuedFixtureRepair(), lane = f.host.snapshot.lanes[0]!, phone = f.subject(), app = f.fixtureSubject
   lane.platform = 'android'; lane.resources[0]!.kind = 'phone'; phone.resource.kind = 'phone'
-  lane.resources[0]!.idleContract!.conditions = ['phone-identity', 'phone-same-boot', 'phone-default-network', 'phone-network-stable']
+  lane.resources[0]!.idleContract!.version = phoneVersion
+  lane.resources[0]!.idleContract!.conditions = phoneVersion === 'installed-phone-baseline-v2' ? ['phone-identity', 'phone-same-boot'] :
+    ['phone-identity', 'phone-same-boot', 'phone-default-network', 'phone-network-stable']
+  phone.idle.contractVersion = phoneVersion; f.intent.resourceCheck!.contractVersion = phoneVersion
   lane.resources[1]!.kind = 'app'; app.resource.kind = 'app'
   lane.resources[1]!.idleContract!.conditions = ['app-phone-identity', 'app-phone-same-boot', 'app-package-absent', 'app-process-absent', 'app-data-absent']
   // The captured parent settled after its original deadline. That proves
@@ -625,6 +628,110 @@ test('settled queued Android app permits only its fresh passive phone baseline w
   expect(f.host.resourceReservations).toContainEqual(claim); expect(f.app).toEqual(parent)
   expect(f.phone.owner).toBeNull(); expect(f.phone.generation).toBe(0)
   expect(result.claims[0]!.resourceCheck!.deadlineAt).toBe(f.intent.resourceCheck!.deadlineAt)
+})
+async function queuedRecorderAppRepair(phoneVersion = 'installed-phone-baseline-v2') {
+  const f = await queuedFixtureRepair(), lane = f.host.snapshot.lanes[0]!, app = f.subject(), recorder = f.fixtureSubject
+  lane.platform = 'android'
+  lane.resources[0]!.idleContract!.conditions = ['app-phone-identity', 'app-phone-same-boot', 'app-package-absent', 'app-process-absent', 'app-data-absent']
+  lane.resources[0]!.idleContract!.dependencies = ['phone-dependency']
+  lane.resources[1]!.kind = 'recorder'; recorder.resource.kind = 'recorder'
+  lane.resources[1]!.idleContract!.conditions = ['recorder-native-children-settled', 'recorder-storage-available']
+  const phoneRef = {id: 'phone-dependency', kind: 'phone' as const, idleContract: {
+    ...structuredClone(lane.resources[0]!.idleContract!), version: phoneVersion,
+    conditions: phoneVersion === 'installed-phone-baseline-v2' ? ['phone-identity', 'phone-same-boot'] :
+      ['phone-identity', 'phone-same-boot', 'phone-default-network', 'phone-network-stable'], dependencies: []}}
+  lane.resources.push(phoneRef)
+  const phone = structuredClone(app)
+  phone.subject.id = phoneRef.id; phone.resource.kind = 'phone'; phone.idle.contractVersion = phoneRef.idleContract.version
+  f.host.snapshot.resourceLifecycle!.subjects.push(phone)
+  f.advance(88971)
+  const at = f.host.snapshot.observedAt
+  for (const subject of [app, phone, recorder]) {subject.observedAt = at; subject.receivedAt = at}
+  recorder.idle.checkedAt = at; recorder.idle.acceptedCheck!.acceptedAt = at; f.failure.at = at; f.queued.at = at
+  f.intent.controller.sequence = f.host.sequence; f.intent.resourceCheck!.deadlineAt = Date.parse(at) + 30000
+  const target = f.host.snapshot.resourceReservations!.resourceChecks![0]!
+  target.intent = structuredClone(f.intent); target.resourceCheck = structuredClone(f.intent.resourceCheck!)
+  target.intentSha256 = requestInputDigest({...f.intent, controller: f.intent.resourceCheck!.controller,
+    dependencies: [{resourceId: app.subject.id, authorityHostId: 'mini', capability: 'resource-idle'}]})
+  return {...f, app, recorder, phone, phoneRef}
+}
+test('queued recorder permits its current Android app dependency with accepted phone-v2 contract and retains late UNKNOWN custody', async () => {
+  const f = await queuedRecorderAppRepair(), original = structuredClone(f.recorder), claim = structuredClone(f.claim)
+  expect(Date.parse(original.idle.acceptedCheck!.acceptedAt)).toBeGreaterThan(claim.resourceCheck!.deadlineAt)
+  const result = await f.service.acquire(f.intent, 'mini')
+  expect(result.status).toBe('reserved'); expect(result.claims).toHaveLength(1)
+  expect(f.host.resourceReservations).toContainEqual(claim); expect(f.host.resourceReservations).toHaveLength(2)
+  expect(f.recorder).toEqual(original); expect(f.app.owner).toBeNull(); expect(f.phone.owner).toBeNull()
+})
+test('queued app phone dependency accepts the current phone-v2 family without network conditions', async () => {
+  const f = await queuedAppPhoneRepair('installed-phone-baseline-v2'), original = structuredClone(f.claim)
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('reserved')
+  expect(f.host.resourceReservations).toContainEqual(original); expect(f.app.owner!.id).toBe(original.owner.id)
+})
+test('queued recorder app dependency preserves the supported phone-v1 family', async () => {
+  const f = await queuedRecorderAppRepair('installed-resource-baseline-v1')
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('reserved')
+  expect(f.host.resourceReservations).toContainEqual(f.claim)
+})
+test('queued recorder dependency refuses incomplete original closure, foreign effects, changed contracts and stale authority', async () => {
+  const changes: Array<(f: Awaited<ReturnType<typeof queuedRecorderAppRepair>>) => void> = [
+    f => {f.recorder.idle.acceptedCheck = null},
+    // An original unclosed reader projects retained checking custody, not the
+    // producer-accepted UNKNOWN and queued repair needed by this exception.
+    f => {f.recorder.status = 'checking'; f.recorder.repair.state = 'none'; f.recorder.idle.acceptedCheck = null},
+    f => {f.recorder.repair.state = 'running'; f.recorder.repair.executionId = 'active-native-cleanup'},
+    f => {f.recorder.owner!.id = 'foreign-native-owner'},
+    f => {f.recorder.owner!.hostId = 'foreign-host'},
+    f => {f.recorder.idle.outcome = 'failed'}, // Late physical failure remains non-qualifying.
+    f => {f.recorder.generation++},
+    f => {f.recorder.current = false},
+    f => {f.journal.state = 'prepared'},
+    f => {f.journal.intent.inputSha256 = 'b'.repeat(64)},
+    f => {f.host.snapshot.resourceLifecycle!.history = [f.queued]},
+    f => {f.host.snapshot.resourceLifecycle!.history.push({...f.failure, id: 'duplicate-closed-check'})},
+    f => {f.host.snapshot.lanes[0]!.resources[1]!.idleContract!.dependencies = ['foreign-app']},
+    f => {f.host.snapshot.lanes[0]!.resources[1]!.idleContract!.conditions.pop()},
+    f => {f.host.snapshot.lanes[0]!.resources[1]!.idleContract!.version = 'unsupported-recorder-v2'},
+    f => {f.phoneRef.idleContract.version = 'unsupported-phone-v3'; f.phone.idle.contractVersion = 'unsupported-phone-v3'},
+    f => {f.phoneRef.idleContract.conditions.pop()},
+    f => {f.phoneRef.idleContract.conditions.push('phone-network-stable')},
+    f => {f.phone.idle.contractVersion = 'installed-resource-baseline-v1'},
+    f => {f.phone.owner = {id: 'unclosed-native-reader', kind: 'boundary-cleanup', generation: 1, hostId: 'mini', laneId: 'android'}},
+    f => {f.phone.status = 'out-of-service'; f.phone.idle.outcome = 'failed'},
+    f => {f.phone.resource.dependencies = [f.recorder.subject.id]},
+    f => {f.phone.resource.memberships[0]!.hostId = 'foreign-host'},
+    f => {f.app.owner = {id: 'foreign-app-writer', kind: 'run', generation: 1, hostId: 'mini', laneId: 'android'}},
+    f => {f.intent.resourceCheck!.subjectGeneration++},
+    f => {f.host.snapshot.frameworkBinding = {...f.intent.resourceCheck!.binding, revision: 'different-source'}},
+    f => {f.host.laneControls = [{command: {...f.control('mark-out-of-service'), operatorId: hash,
+      subject: {resourceId: f.recorder.subject.id, subjectGeneration: f.recorder.generation}}}]},
+    f => {f.advance(30001)},
+  ]
+  for (const change of changes) {
+    const f = await queuedRecorderAppRepair(); change(f)
+    const before = structuredClone(f.host.resourceReservations)
+    let status: string
+    try {status = (await f.service.acquire(f.intent, 'mini')).status} catch {status = 'invalid-report'}
+    expect(status).not.toBe('reserved'); expect(f.host.resourceReservations).toEqual(before); expect(f.writes).toHaveLength(1)
+  }
+})
+test('queued recorder dependency revalidates native custody and current contract at the host CAS', async () => {
+  for (const change of [
+    (f: Awaited<ReturnType<typeof queuedRecorderAppRepair>>) => {f.recorder.repair.state = 'running'},
+    (f: Awaited<ReturnType<typeof queuedRecorderAppRepair>>) => {f.phone.owner = {id: 'late-native-reader', kind: 'boundary-cleanup', generation: 1, hostId: 'mini', laneId: 'android'}},
+    (f: Awaited<ReturnType<typeof queuedRecorderAppRepair>>) => {f.phoneRef.idleContract.conditions.pop()},
+    (f: Awaited<ReturnType<typeof queuedRecorderAppRepair>>) => {f.advance(30001)},
+  ]) {
+    const f = await queuedRecorderAppRepair(), original = structuredClone(f.claim)
+    f.afterWrite(async () => {change(f)})
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+    expect(f.host.resourceReservations).toHaveLength(2); expect(f.host.resourceReservations).toContainEqual(original)
+    expect(f.writes).toHaveLength(2)
+  }
+  const f = await queuedRecorderAppRepair()
+  f.beforeWrite(async () => {f.recorder.repair.state = 'running'; f.advance()})
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+  expect(f.host.resourceReservations).toEqual([f.claim]); expect(f.writes).toHaveLength(1)
 })
 test('queued app phone dependency refuses incomplete settlement, running work, foreign scope and operator restrictions', async () => {
   const changes: Array<(f: Awaited<ReturnType<typeof queuedAppPhoneRepair>>) => void> = [
