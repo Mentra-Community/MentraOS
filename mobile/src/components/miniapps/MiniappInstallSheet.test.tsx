@@ -2,7 +2,7 @@ import {act, fireEvent, render, within} from "@testing-library/react-native"
 import i18n from "i18next"
 import {Alert} from "react-native"
 
-import type {MiniappInstallPreview} from "@mentra/engine"
+import {HardwareType, type MiniappInstallPreview} from "@mentra/engine"
 
 import {ModalProvider} from "@/contexts/ModalContext"
 import en from "@/i18n/en"
@@ -54,6 +54,7 @@ const preview = (overrides: Partial<MiniappInstallPreview> = {}): MiniappInstall
   ageRating: null,
   private: false,
   alreadyInstalled: false,
+  missingHardware: [],
   ...overrides,
 })
 
@@ -89,6 +90,26 @@ describe("the install sheet's copy", () => {
     expect(miniappInstallSheetCopy(preview({alreadyInstalled: true})).message).toBe(
       "From notes.example.com\n\nIt replaces the Notes you have now.",
     )
+  })
+
+  it("says what glasses it needs when the paired glasses (or none) lack it", () => {
+    expect(miniappInstallSheetCopy(preview({missingHardware: [HardwareType.CAMERA]})).message).toBe(
+      "From notes.example.com\n\nNeeds glasses with a camera.",
+    )
+    expect(
+      miniappInstallSheetCopy(preview({missingHardware: [HardwareType.CAMERA, HardwareType.DISPLAY]})).message,
+    ).toBe("From notes.example.com\n\nNeeds glasses with a camera and a display.")
+    expect(
+      miniappInstallSheetCopy(
+        preview({missingHardware: [HardwareType.CAMERA, HardwareType.DISPLAY, HardwareType.SPEAKER]}),
+      ).message,
+    ).toBe("From notes.example.com\n\nNeeds glasses with a camera, a display and a speaker.")
+  })
+
+  it("puts that line after the replace line", () => {
+    expect(
+      miniappInstallSheetCopy(preview({alreadyInstalled: true, missingHardware: [HardwareType.IMU]})).message,
+    ).toBe("From notes.example.com\n\nIt replaces the Notes you have now.\n\nNeeds glasses with a motion sensor.")
   })
 
   it("names the copy it replaces, which can carry another name", () => {

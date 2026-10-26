@@ -3,7 +3,9 @@
 import {beforeEach, describe, expect, mock, test} from "bun:test"
 
 import type {MiniappReleaseIdentity} from "../AppRegistry"
+import {DeviceTypes, getModelCapabilities} from "../../types"
 import {assertMiniappUpdateVersion, miniappInstallIdentityError} from "../miniappInstallIdentity"
+import {missingRequiredHardware} from "../miniappInstallCompatibility"
 import type {ReleaseInstallOptions} from "../miniappReleaseInstall"
 import {MiniappRunningError} from "../../utils/storeInstallRuntime"
 import {cloudClientService} from "./cloudClientServiceTestMock"
@@ -66,6 +68,7 @@ let zipManifest: {packageName: string; version: string} | null
 let installFailure: Error | undefined
 let allowed: boolean
 let hostVersion: string
+let glasses: DeviceTypes
 let session: number
 let kept: string[][]
 let warnings: string[]
@@ -140,14 +143,8 @@ function deps(overrides: Partial<InstallMiniappDependencies> = {}): InstallMinia
       steps.push("age gate")
       return ageVerdict()
     },
-    compatibilityPolicy: (source) =>
-      source === "assignment"
-        ? {hostVersion, supportedSdkRange: ">=3.0.0 <4.0.0"}
-        : {
-            hostVersion,
-            supportedSdkRange: ">=3.0.0 <4.0.0",
-            hardwareCapabilities: {} as never,
-          },
+    compatibilityPolicy: () => ({hostVersion, supportedSdkRange: ">=3.0.0 <4.0.0"}),
+    missingHardware: (requirements) => missingRequiredHardware(requirements, getModelCapabilities(glasses)),
     install: async (bundleUrl, options) => {
       // Like the installer: download through the caller's downloader, then read the identity, then the ZIP's manifest.
       const bytes = await options.downloadBundle!(bundleUrl)
@@ -218,6 +215,7 @@ beforeEach(async () => {
   installFailure = undefined
   allowed = true
   hostVersion = "3.4.0"
+  glasses = DeviceTypes.NONE
   session = 1
   kept = []
   warnings = []
@@ -261,6 +259,7 @@ describe("installing from a miniapp URL", () => {
         ageRating: "4+",
         private: false,
         alreadyInstalled: false,
+        missingHardware: [],
       },
     ])
     expect(installs).toHaveLength(1)
@@ -451,6 +450,44 @@ describe("what stops an install", () => {
     expect(await failure(promise)).toBe("needs_newer_app")
     expect(asked).toBe(true)
     expect(installs).toEqual([])
+  })
+
+  test("a miniapp that needs hardware installs on a phone with no glasses, and the sheet says what it needs", async () => {
+    served = manifest({
+      hardwareRequirements: [
+        {type: "CAMERA", level: "REQUIRED"},
+        {type: "DISPLAY", level: "OPTIONAL"},
+      ],
+    })
+    const previews: MiniappInstallPreview[] = []
+    const result = await install(url, {
+      confirm: async (preview) => {
+        previews.push(preview)
+        return true
+      },
+    })
+    expect(result.status).toBe("installed")
+    expect(previews[0]!.missingHardware).toEqual(["CAMERA"])
+    expect(installs).toHaveLength(1)
+    expect("hardwareCapabilities" in installs[0]!.options.compatibilityPolicy!).toBe(false)
+  })
+
+  test("the sheet names nothing when the paired glasses have what it needs", async () => {
+    served = manifest({hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}]})
+    glasses = DeviceTypes.LIVE
+    const previews: MiniappInstallPreview[] = []
+    await install(url, {
+      confirm: async (preview) => {
+        previews.push(preview)
+        return true
+      },
+    })
+    expect(previews[0]!.missingHardware).toEqual([])
+  })
+
+  test("a system miniapp's headless install of a miniapp that needs hardware goes ahead", async () => {
+    served = manifest({hardwareRequirements: [{type: "DISPLAY", level: "REQUIRED"}]})
+    expect((await install(url, {source: "system", confirm: undefined})).status).toBe("installed")
   })
 
   test("the server or the network failing is network", async () => {
@@ -999,6 +1036,7 @@ describe("a local-network address", () => {
         ageRating: "4+",
         private: false,
         alreadyInstalled: false,
+        missingHardware: [],
       },
     ])
     expect(localInstalls).toHaveLength(1)
@@ -1133,6 +1171,21 @@ describe("a local-network address", () => {
     serveLocal()
     expect(await failure(install(localUrl, {source: "local", confirm: async () => false}))).toBe("cancelled")
     expect(sent.map((request) => request.url)).toEqual([localManifestUrl])
+  })
+
+  test("a local build that needs hardware installs with no glasses paired", async () => {
+    serveLocal({hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}]})
+    const previews: MiniappInstallPreview[] = []
+    const result = await install(localUrl, {
+      source: "local",
+      confirm: async (preview) => {
+        previews.push(preview)
+        return true
+      },
+    })
+    expect(result.status).toBe("installed")
+    expect(previews[0]!.missingHardware).toEqual(["CAMERA"])
+    expect(localInstalls).toHaveLength(1)
   })
 
   test("a phone that can't run it needs a newer Mentra App", async () => {

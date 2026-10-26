@@ -70,6 +70,7 @@ const preview = {
   ageRating: null,
   private: false,
   alreadyInstalled: false,
+  missingHardware: [],
 }
 
 /** An engine install that asks through `confirm`, then answers. */

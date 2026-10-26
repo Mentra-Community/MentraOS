@@ -99,7 +99,9 @@ Each entry is `{ "type": "...", "level": "...", "description"?: "..." }`.
 |---|---|
 | `CAMERA`, `DISPLAY`, `MICROPHONE`, `SPEAKER`, `IMU`, `BUTTON`, `LIGHT`, `WIFI` | `REQUIRED` or `OPTIONAL` |
 
-- **`REQUIRED`**: glasses without this hardware can't install the miniapp.
+- **`REQUIRED`**: glasses without this hardware can't run the miniapp. It still
+  installs, with or without glasses paired, and the install sheet says which
+  glasses it needs.
 - **`OPTIONAL`**: incompatible glasses still run the miniapp, in a degraded state.
 
 <Note>

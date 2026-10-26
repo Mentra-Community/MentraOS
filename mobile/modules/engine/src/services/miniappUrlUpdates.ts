@@ -39,7 +39,7 @@ import semver from "semver"
 
 import {isPackageNameAllowedForUrl} from "./miniappDomainRule"
 import type {MiniappJsonResult} from "./miniappFetch"
-import {checkMiniappInstallCompatibility, type MiniappCompatibilityPolicy} from "./miniappInstallCompatibility"
+import {checkMiniappRunsOnPhone, type MiniappVersionPolicy} from "./miniappInstallCompatibility"
 import type {InstallableReleaseIdentity, MiniappReleaseIdentity} from "./AppRegistry"
 import type {ReleaseInstallOptions} from "./miniappReleaseInstall"
 
@@ -85,7 +85,7 @@ export interface MiniappUrlUpdaterDependencies {
   /** `<firstPartyMiniappsUrl><packageName>/` for a bundled package, or undefined. */
   firstPartyUrl(packageName: string): string | undefined
   hasDevelopmentSelection(packageName: string): boolean
-  compatibilityPolicy(): MiniappCompatibilityPolicy | null
+  compatibilityPolicy(): MiniappVersionPolicy | null
   /**
    * `miniapp.json`, conditional on `etag`, answering a sign-in challenge for `packageName` only, and answering a
    * redirect with its `location` instead of following it (`fetchMiniappJson` with `redirect: "manual"`). Throws
@@ -318,7 +318,7 @@ export class MiniappUrlUpdater {
     if (isCancelled()) return
 
     // A 304 is the manifest seen before. Its release is evaluated again: it may
-    // have waited for the miniapp to stop, failed, or needed hardware since added.
+    // have waited for the miniapp to stop, failed, or needed a newer Mentra App than this phone had.
     const cached = this.manifests.get(requestUrl)
     let served: {url: string; manifest: HostedMiniappManifest; private: boolean}
     if (result.status === 304 && cached) {
@@ -366,7 +366,7 @@ export class MiniappUrlUpdater {
 
     const policy = this.deps.compatibilityPolicy()
     if (!policy) return
-    const compatibility = checkMiniappInstallCompatibility(manifest, policy)
+    const compatibility = checkMiniappRunsOnPhone(manifest, policy)
     if (!compatibility.compatible) {
       this.deps.log(`${packageName}@${manifest.version} is not compatible with this phone: ${compatibility.reason}`)
       this.backoff.delete(packageName)

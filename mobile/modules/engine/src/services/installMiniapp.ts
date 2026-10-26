@@ -8,7 +8,8 @@
  *    be reached, or Core refuses the call, the install goes on, as for an entry only the phone can reach.
  * 4. Ask the person, unless the install is headless. First the age gate: a miniapp rated above the host app's own
  *    rating needs the person's declared age to be old enough. A headless install meets the gate when it first opens.
- * 5. Check the phone can run it: `minHostVersion`, `sdkVersion` and `hardwareRequirements`.
+ * 5. Check the phone can run it: `minHostVersion` and `sdkVersion`. `hardwareRequirements` describe the glasses, which
+ *    may not be paired yet, so they never refuse an install: the sheet says what the paired glasses lack.
  * 6. Download the ZIP (answering its server's challenge), check its SHA-256, and install it through the shared
  *    installer, which checks the ZIP's own package name and version and applies the signing and version rules.
  *
@@ -24,17 +25,21 @@ import {
   type ServedMiniappManifest,
 } from "@mentra/cloud-protocol/miniapp-url"
 
+import type {HardwareType} from "../types"
 import {getConfigValues, isDevMiniappAllowed, isInstalledMiniappAllowed} from "../runtime/bootstrap"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
 import appRegistry, {type InstallableReleaseIdentity, type MiniappReleaseIdentity} from "./AppRegistry"
 import {cloudClientService} from "./CloudClientService"
 import type {ManagedAssignment} from "./fleet/assignmentReconciler"
 import localMiniappRuntime from "./LocalMiniappRuntime"
-import {checkManifestVersions} from "./manifestVersionGate"
 import {checkMiniappAge, type AgeGateVerdict, type AgeRatedMiniapp} from "./miniappAgeGate"
 import {isPackageNameAllowedForUrl} from "./miniappDomainRule"
 import {fetchMiniappBundle, fetchMiniappJson, MiniappFetchError, type MiniappJsonResult} from "./miniappFetch"
-import {checkMiniappInstallCompatibility, type MiniappCompatibilityPolicy} from "./miniappInstallCompatibility"
+import {
+  checkMiniappRunsOnPhone,
+  missingRequiredHardware,
+  type MiniappVersionPolicy,
+} from "./miniappInstallCompatibility"
 import {
   installLocalBuild,
   restoreInstalledRelease,
@@ -67,6 +72,8 @@ export interface MiniappInstallPreview {
   private: boolean
   /** The package is installed already, from another source; installing replaces it. */
   alreadyInstalled: boolean
+  /** Required hardware the paired glasses lack (all of it with none paired). The sheet says so; the install goes on. */
+  missingHardware: HardwareType[]
 }
 
 export interface InstallMiniappOptions {
@@ -169,10 +176,10 @@ export interface InstallMiniappDependencies {
    * when the gate stops the install.
    */
   checkAge(miniapp: AgeRatedMiniapp): Promise<AgeGateVerdict>
-  /** The phone's compatibility policy, or null when the host configured none. Fleet's leaves out hardware. */
-  compatibilityPolicy(
-    source: InstallMiniappSource,
-  ): MiniappCompatibilityPolicy | Omit<MiniappCompatibilityPolicy, "hardwareCapabilities"> | null
+  /** What the phone can run (its Mentra App and SDK versions), or null when the host configured none. */
+  compatibilityPolicy(): MiniappVersionPolicy | null
+  /** The required hardware of these `hardwareRequirements` that the paired glasses (or none) lack. */
+  missingHardware(hardwareRequirements: unknown): HardwareType[]
   install(bundleUrl: string, options: ReleaseInstallOptions): Promise<void>
   /** Install a local-network build of the package ({@link installLocalBuild}). */
   installLocal(bundleUrl: string, install: LocalBuildInstall): Promise<void>
@@ -246,6 +253,7 @@ export function createMiniappInstaller(
       ageRating: manifest.ageRating ?? null,
       private: Boolean(served.challenge),
       alreadyInstalled: active !== null,
+      missingHardware: deps.missingHardware(manifest.hardwareRequirements),
     }
 
     // A newer release is installed already: it stays, and opens. Where a development build of its name runs in its
@@ -291,7 +299,7 @@ export function createMiniappInstaller(
       assertCurrent()
     }
 
-    const policy = assertCompatible(deps, options.source, manifest)
+    const policy = assertCompatible(deps, manifest)
 
     const headless = !options.confirm
     try {
@@ -383,13 +391,14 @@ async function installFromLocalNetwork(
         ageRating: manifest.ageRating ?? null,
         private: false,
         alreadyInstalled: deps.activeRelease(packageName) !== null || deps.hasDevelopmentSelection(packageName),
+        missingHardware: deps.missingHardware(manifest.hardwareRequirements),
       },
       assertCurrent,
     )
     assertCurrent()
   }
 
-  const policy = assertCompatible(deps, options.source, manifest)
+  const policy = assertCompatible(deps, manifest)
   const server = developmentServer(manifest, target.url, served.iconUrl)
   try {
     await deps.installLocal(served.bundleUrl, {
@@ -448,18 +457,14 @@ async function confirmInstall(
   if (!accepted) throw new InstallMiniappError("cancelled", `The install of ${preview.packageName} was declined`)
 }
 
-/** The phone's compatibility policy for this source, once the manifest is known to pass it; null when none. */
+/** The phone's compatibility policy, once the manifest is known to pass it; null when none. */
 function assertCompatible(
   deps: InstallMiniappDependencies,
-  source: InstallMiniappSource,
   manifest: ServedMiniappManifest,
-): ReturnType<InstallMiniappDependencies["compatibilityPolicy"]> {
-  const policy = deps.compatibilityPolicy(source)
+): MiniappVersionPolicy | null {
+  const policy = deps.compatibilityPolicy()
   if (!policy) return null
-  const compatibility =
-    "hardwareCapabilities" in policy
-      ? checkMiniappInstallCompatibility(manifest, policy)
-      : toCompatibility(checkManifestVersions(manifest, policy))
+  const compatibility = checkMiniappRunsOnPhone(manifest, policy)
   if (!compatibility.compatible) {
     throw new InstallMiniappError(
       "needs_newer_app",
@@ -638,12 +643,6 @@ async function register(deps: InstallMiniappDependencies, url: string, manifest:
   }
 }
 
-function toCompatibility(
-  result: ReturnType<typeof checkManifestVersions>,
-): {compatible: true} | {compatible: false; reason: string} {
-  return result.ok ? {compatible: true} : {compatible: false, reason: result.reason}
-}
-
 /** The version rule refused the release because a newer one is installed (`assertMiniappUpdateVersion`). */
 function isNewerInstalled(error: unknown): boolean {
   return error instanceof Error && /^Cannot install .+: version .+ is already installed$/.test(error.message)
@@ -673,7 +672,7 @@ function installError(error: unknown, packageName: string): InstallMiniappError 
   if (/does not allow miniapp development/i.test(message)) return fail("access_denied")
   if (/signature|signer|unsigned bundle|publisher/i.test(message)) return fail("signature_invalid")
   if (
-    /Requires Mentra App|Built for SDK|Invalid minimum Mentra App version|Invalid Mentra Miniapp SDK version|not available on your connected glasses/i.test(
+    /Requires Mentra App|Built for SDK|Invalid minimum Mentra App version|Invalid Mentra Miniapp SDK version/i.test(
       message,
     )
   )
@@ -713,12 +712,13 @@ const engineDependencies: InstallMiniappDependencies = {
   allowsRelease: (packageName, version, identity, source) =>
     isInstalledMiniappAllowed(packageName, version, identity, {assigned: source === "assignment"}),
   checkAge: (miniapp) => checkMiniappAge(miniapp, {interactive: true}),
-  compatibilityPolicy: (source) => {
+  compatibilityPolicy: () => {
     const policy = localMiniappRuntime.currentInstallCompatibilityPolicy()
-    if (!policy) return null
-    // An assignment installs whichever glasses are paired now, as Fleet always has.
-    if (source === "assignment") return {hostVersion: policy.hostVersion, supportedSdkRange: policy.supportedSdkRange}
-    return policy
+    return policy ? {hostVersion: policy.hostVersion, supportedSdkRange: policy.supportedSdkRange} : null
+  },
+  missingHardware: (hardwareRequirements) => {
+    const capabilities = localMiniappRuntime.currentInstallCompatibilityPolicy()?.hardwareCapabilities
+    return capabilities ? missingRequiredHardware(hardwareRequirements, capabilities) : []
   },
   install: (bundleUrl, options) => installMiniappRelease(bundleUrl, options),
   installLocal: (bundleUrl, install) => installLocalBuild(bundleUrl, install),

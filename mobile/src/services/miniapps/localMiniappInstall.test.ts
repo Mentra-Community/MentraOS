@@ -25,6 +25,7 @@ const preview: MiniappInstallPreview = {
   ageRating: null,
   private: false,
   alreadyInstalled: false,
+  missingHardware: [],
 }
 
 /** The engine's install error, as the engine throws it. */

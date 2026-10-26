@@ -2,9 +2,10 @@
  * The install sheet (spec, "Installing"): the Mentra App's standard alert sheet, never a native alert. It shows the
  * miniapp's icon, its name and age rating, and where it comes from: "From notes.example.com", the miniapp URL's own
  * host, or "From your local network" with the address. Install and Cancel; a swipe, a tap outside and Android back
- * all mean Cancel, so nothing installs without the person pressing Install.
+ * all mean Cancel, so nothing installs without the person pressing Install. When the paired glasses (or none) lack
+ * hardware the miniapp requires, a line says so ("Needs glasses with a camera."); the install goes on.
  */
-import type {MiniappInstallPreview} from "@mentra/engine"
+import {HardwareType, type MiniappInstallPreview} from "@mentra/engine"
 import {Image} from "expo-image"
 import {useState} from "react"
 import {View} from "react-native"
@@ -55,6 +56,34 @@ export function localMiniappAddress(url: string): string {
   }
 }
 
+const FEATURE_KEYS: Partial<Record<HardwareType, string>> = {
+  [HardwareType.CAMERA]: "miniappInstall:featureCamera",
+  [HardwareType.DISPLAY]: "miniappInstall:featureDisplay",
+  [HardwareType.MICROPHONE]: "miniappInstall:featureMicrophone",
+  [HardwareType.SPEAKER]: "miniappInstall:featureSpeaker",
+  [HardwareType.IMU]: "miniappInstall:featureMotion",
+  [HardwareType.BUTTON]: "miniappInstall:featureButton",
+  [HardwareType.LIGHT]: "miniappInstall:featureLight",
+  [HardwareType.WIFI]: "miniappInstall:featureWifi",
+}
+
+/** "Needs glasses with a camera and a display.", or null when the glasses lack nothing the miniapp requires. */
+function needsGlassesLine(missing: readonly HardwareType[]): string | null {
+  const features = missing.flatMap((type) => {
+    const key = FEATURE_KEYS[type]
+    return key ? [translate(key as never)] : []
+  })
+  if (features.length === 0) return null
+  const list =
+    features.length === 1
+      ? features[0]!
+      : translate("miniappInstall:featuresAnd", {
+          first: features.slice(0, -1).join(", "),
+          last: features[features.length - 1],
+        })
+  return translate("miniappInstall:needsGlasses", {features: list})
+}
+
 /**
  * The sheet's title and message for a miniapp. `installedName`: the name of the copy installed now, which the replace
  * line names (a development build of the package can carry another name); the miniapp's own name when unknown.
@@ -69,10 +98,13 @@ export function miniappInstallSheetCopy(
   const from = preview.local
     ? translate("miniappInstall:fromLocalNetwork", {address: localMiniappAddress(preview.url)})
     : translate("miniappInstall:from", {host: preview.host})
-  const message = preview.alreadyInstalled
-    ? `${from}\n\n${translate("miniappInstall:replaces", {name: installedName?.trim() || preview.name})}`
-    : from
-  return {title, message}
+  const lines = [from]
+  if (preview.alreadyInstalled) {
+    lines.push(translate("miniappInstall:replaces", {name: installedName?.trim() || preview.name}))
+  }
+  const needs = needsGlassesLine(preview.missingHardware)
+  if (needs) lines.push(needs)
+  return {title, message: lines.join("\n\n")}
 }
 
 type SheetChoice = "cancel" | "install"

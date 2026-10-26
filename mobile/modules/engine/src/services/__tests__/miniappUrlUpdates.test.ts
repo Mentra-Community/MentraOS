@@ -10,7 +10,6 @@ import type {
 } from "@mentra/cloud-protocol/miniapp-registry"
 import {normalizeMiniappUrl} from "@mentra/cloud-protocol/miniapp-url"
 
-import {DeviceTypes, getModelCapabilities} from "../../types"
 import type {MiniappReleaseIdentity} from "../AppRegistry"
 import type {ReleaseInstallOptions} from "../miniappReleaseInstall"
 import {
@@ -60,7 +59,7 @@ let kept: Array<{packageName: string; versions: string[]}>
 let devSelected: Set<string>
 let warnings: string[]
 let session: number
-let hardware: DeviceTypes
+let hostVersion: string
 let duringInstall: ((options: ReleaseInstallOptions) => void) | undefined
 let requireRegistry: boolean
 let core: string | null
@@ -98,9 +97,8 @@ function updaterDeps(): ConstructorParameters<typeof MiniappUrlUpdater>[0] {
     firstPartyUrl: (packageName) => `${host}${packageName}/`,
     hasDevelopmentSelection: (packageName) => devSelected.has(packageName),
     compatibilityPolicy: () => ({
-      hostVersion: "3.3.0",
+      hostVersion,
       supportedSdkRange: ">=0.3.0 <4.0.0",
-      hardwareCapabilities: getModelCapabilities(hardware),
     }),
     fetchManifest: async (url, {etag}) => {
       fetched.push({url, etag})
@@ -169,7 +167,7 @@ beforeEach(() => {
   devSelected = new Set()
   warnings = []
   session = 1
-  hardware = DeviceTypes.NONE
+  hostVersion = "3.3.0"
   duringInstall = undefined
   requireRegistry = true
   core = "https://core.example.com"
@@ -311,13 +309,20 @@ describe("updates from a miniapp's own URL", () => {
     expect(active[pkg]).toBe("1.1.0")
   })
 
-  test("a release that needs hardware installs once the phone has it, even after a 304", async () => {
-    const u = updater()
+  test("a release that needs hardware installs with no glasses paired: hardware describes the glasses", async () => {
     const needsDisplay = {hardwareRequirements: [{type: "DISPLAY", level: "REQUIRED"}]}
-    responses = [served(manifest("1.1.0", needsDisplay), {etag: '"v2"'})]
+    responses = [served(manifest("1.1.0", needsDisplay))]
+    await updater().check(pkg)
+    expect(installs).toHaveLength(1)
+    expect(active[pkg]).toBe("1.1.0")
+  })
+
+  test("a release that needs a newer Mentra App waits, and installs once the phone has it, even after a 304", async () => {
+    const u = updater()
+    responses = [served(manifest("1.1.0", {minHostVersion: "3.5.0"}), {etag: '"v2"'})]
     await u.check(pkg)
     expect(installs).toHaveLength(0)
-    hardware = DeviceTypes.G1
+    hostVersion = "3.5.0"
     responses = [{status: 304, url: `${sourceUrl}miniapp.json`}]
     await u.check(pkg)
     expect(installs).toHaveLength(1)

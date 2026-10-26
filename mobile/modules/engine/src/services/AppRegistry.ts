@@ -63,7 +63,7 @@ import {
 } from "./installOperation"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {linkedEntry} from "./miniappFiles"
-import {checkMiniappInstallCompatibility, type MiniappCompatibilityPolicy} from "./miniappInstallCompatibility"
+import {checkMiniappRunsOnPhone, type MiniappVersionPolicy} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
 import {normalizeManifestPermissions} from "./manifestPermissions"
 import {isFileUriInside} from "./miniappPaths"
@@ -261,8 +261,8 @@ export interface InstallBundleOptions {
    * installer still checks the size and `expectedBundleSha256` of what it returns.
    */
   downloadBundle?: (url: string) => Promise<Uint8Array>
-  /** Refuse a bundle this host or the user's glasses cannot run. */
-  compatibilityPolicy?: MiniappCompatibilityPolicy | Omit<MiniappCompatibilityPolicy, "hardwareCapabilities">
+  /** Refuse a bundle this host cannot run. Hardware is the glasses' business, and never refuses an install. */
+  compatibilityPolicy?: MiniappVersionPolicy
   onProgress?: (phase: InstallProgressPhase) => void
   /**
    * Runs once the bundle is downloaded, verified, checked against the signer,
@@ -509,12 +509,7 @@ function assertInstallCompatibility(
   manifest: Awaited<ReturnType<typeof validateInstallBundleArchive>>,
   policy: NonNullable<InstallBundleOptions["compatibilityPolicy"]>,
 ): void {
-  if (!("hardwareCapabilities" in policy)) {
-    const versions = checkManifestVersions(manifest, policy)
-    if (!versions.ok) throw new Error(versions.reason)
-    return
-  }
-  const compatibility = checkMiniappInstallCompatibility(manifest, policy)
+  const compatibility = checkMiniappRunsOnPhone(manifest, policy)
   if (!compatibility.compatible) throw new Error(compatibility.reason)
 }
 

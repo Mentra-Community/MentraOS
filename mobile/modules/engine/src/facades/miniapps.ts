@@ -47,7 +47,10 @@ const urlUpdater = new MiniappUrlUpdater({
   isSystemPackage: isSystemMiniappPackage,
   firstPartyUrl: (packageName) => firstPartyMiniappUrl(getConfigValues(), packageName),
   hasDevelopmentSelection: (packageName) => localMiniappRuntime.hasDevelopmentSelection(packageName),
-  compatibilityPolicy: () => localMiniappRuntime.currentInstallCompatibilityPolicy(),
+  compatibilityPolicy: () => {
+    const policy = localMiniappRuntime.currentInstallCompatibilityPolicy()
+    return policy ? {hostVersion: policy.hostVersion, supportedSdkRange: policy.supportedSdkRange} : null
+  },
   // Redirects come back to the updater, which follows moves itself.
   fetchManifest: (url, {etag, packageName}) =>
     fetchMiniappJson(url, {...(etag ? {etag} : {}), packageForChallenge: packageName, redirect: "manual"}),

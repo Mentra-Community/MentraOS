@@ -84,7 +84,9 @@ A failed install rejects with `INSTALL_FAILED`. Its `reason` says why:
 `signature_invalid`.
 
 `checkInstallCompatibility` checks a release's `minHostVersion`, `sdkVersion`
-and `hardwareRequirements` against the phone. `uninstall(packageName)` removes
+and `hardwareRequirements` against the phone and the paired glasses, and reports
+what it finds. Only a `host` or `sdk` blocker stops an install; a `hardware`
+blocker never does. `uninstall(packageName)` removes
 a miniapp installed from a miniapp URL; a miniapp the Mentra App bundles, one a
 workspace manages and a development build stay, with `NOT_PERMITTED`.
 
