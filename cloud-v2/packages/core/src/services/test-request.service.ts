@@ -40,6 +40,7 @@ export const hostCancellationSchema = z.object({requestId: frameworkIdentitySche
 export type HostCancellation = z.infer<typeof hostCancellationSchema>;
 type QueueCursor = {createdAt: Date; requestId: string};
 type CancellationCursor = {requestedAt: string; requestId: string};
+export type TestRequestDeliveryPhase = (phase: string, rowCount?: number) => void;
 export interface StoredTestRequest extends FleetClaimReceipts {
   requestId: string;
   inputSha256: string;
@@ -80,7 +81,7 @@ export interface TestRequestRepository {
   queued(hostId: string, after: QueueCursor | null, limit: number): Promise<StoredTestRequest[]>;
   cancellations(hostId: string, after: CancellationCursor | null, limit: number): Promise<StoredTestRequest[]>;
   insertPreparation?(request: StoredPreparingRequest): Promise<void>;
-  preparations?(hostId: string, limit: number, frameworkVersion?: number): Promise<StoredPreparingRequest[]>;
+  preparations?(hostId: string, limit: number, frameworkVersion?: number, onPhase?: TestRequestDeliveryPhase): Promise<StoredPreparingRequest[]>;
   preparationFrameworkMinimum?(hostId: string): Promise<number | null>;
   completePreparation?(requestId: string, hostId: string, intentSha256: string, input: unknown, inputSha256: string,
     exclusive?: {reservation: FleetExclusiveReservation; binding: FleetExclusiveExecutionBinding}, admission?: FleetResourceAdmission,
@@ -118,13 +119,16 @@ const mongoRepository: TestRequestRepository = {
   async insert(request) {await TestRequestModel.create([request], {writeConcern: testWriteConcern});},
   async get(requestId) {return await TestRequestModel.findOne({requestId}).read("primary").readConcern("majority").lean() as StoredRequest | null;},
   async insertPreparation(request) {await TestRequestModel.create([request], {writeConcern: testWriteConcern});},
-  async preparations(hostId, limit, frameworkVersion = 0) {
+  async preparations(hostId, limit, frameworkVersion = 0, onPhase) {
     const rows = await TestRequestModel.find({hostId, state: 'preparing', $or: [
       {'dispatchIntent.minimumFrameworkVersion': {$exists: false}}, {'dispatchIntent.minimumFrameworkVersion': {$lte: frameworkVersion}},
     ]}).sort({preparationCheckedAt: 1, createdAt: 1, requestId: 1})
       .limit(limit).read('primary').readConcern('majority').lean() as unknown as StoredPreparingRequest[];
-    if (rows.length) await TestRequestModel.updateMany({hostId, state: 'preparing', requestId: {$in: rows.map(row => row.requestId)}},
-      {$set: {preparationCheckedAt: new Date()}}, {writeConcern: testWriteConcern});
+    if (rows.length) {
+      onPhase?.('preparation-fairness-write', rows.length);
+      await TestRequestModel.updateMany({hostId, state: 'preparing', requestId: {$in: rows.map(row => row.requestId)}},
+        {$set: {preparationCheckedAt: new Date()}}, {writeConcern: testWriteConcern});
+    }
     return rows;
   },
   async preparationFrameworkMinimum(hostId) {
@@ -244,18 +248,23 @@ export class TestRequestService {
   /** An opt-in updater hint includes withheld work and disappears when its same request returns or is cancelled. */
   async preparationFrameworkMinimum(hostId: string) {return await this.repository.preparationFrameworkMinimum?.(hostId) ?? null;}
 
-  async queued(hostId: string, cursor: string | undefined, limit: number) {
+  async queued(hostId: string, cursor: string | undefined, limit: number, onPhase?: TestRequestDeliveryPhase) {
     this.validatePageLimit(limit);
     const parsed = this.decodeCursor(hostId, cursor, "createdAt");
     const after = parsed ? {createdAt: new Date(parsed.timestamp), requestId: parsed.requestId} : null;
+    onPhase?.('queued-request-read');
     const found = await this.repository.queued(hostId, after, limit + 1), requests = found.slice(0, limit), last = requests.at(-1);
+    onPhase?.('unfinished-dispatch-completions-read', requests.length);
     const dispatchCompletions = (await this.repository.pendingDispatchCompletions?.(hostId, limit) ?? []).map(row => ({
       requestId: row.requestId, hostId: row.hostId, inputSha256: row.inputSha256, laneId: (row.input as {laneId: string}).laneId}));
+    onPhase?.('accepted-framework-observation-read', dispatchCompletions.length);
     const binding = await this.currentPreparationFramework(hostId);
-    const preparations = (await this.repository.preparations?.(hostId, limit, binding?.version ?? 0) ?? [])
+    onPhase?.('preparing-request-read');
+    const preparations = (await this.repository.preparations?.(hostId, limit, binding?.version ?? 0, onPhase) ?? [])
       .filter(row => row.dispatchIntent.minimumFrameworkVersion === undefined || binding && binding.version >= row.dispatchIntent.minimumFrameworkVersion)
       .map(row => ({requestId: row.requestId,
       hostId: row.hostId, dispatchIntentSha256: row.dispatchIntentSha256, dispatchIntent: row.dispatchIntent}));
+    onPhase?.('queue-projection', preparations.length);
     return {requests: requests.map(row => ({...row, ...(row.fleetExclusiveReservation ? {fleetExclusive: fleetExclusiveDeliverySchema.parse({
       reservation: row.fleetExclusiveReservation, binding: row.fleetExclusiveExecutionBinding})} : {})})), preparations, dispatchCompletions,
       nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "createdAt", last.createdAt!.toISOString()) : null};

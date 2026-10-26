@@ -3,7 +3,7 @@ import {frameworkIdentitySchema} from "../../types/framework-request.types";
 import {z} from "zod";
 import {Hono} from "hono";
 import {frameworkBodyLimit, frameworkJson} from "./framework-json";
-import {hostCancellationSchema, hostRejectionSchema, TestRequestConflict, TestRequestService} from "../../services/test-request.service";
+import {hostCancellationSchema, hostRejectionSchema, TestRequestConflict, TestRequestService, type TestRequestDeliveryPhase} from "../../services/test-request.service";
 import {createTestHostAuth, type TestHostEnv} from "../middleware/test-host-auth.middleware";
 import {RoutineDispatchService} from '../../services/routine-dispatch.service';
 import {GithubRoutineSourceGateway} from '../../services/routine-source-selection.service';
@@ -36,7 +36,7 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
     if (minimum !== undefined && minimum !== '1') return c.json({error: 'invalid_request'}, 400);
     const ownedQuery = c.req.query('ownedQualification');
     if (ownedQuery !== undefined && (requested !== '1' || ownedQuery.length > 8192)) return c.json({error: 'invalid_request'}, 400);
-    let owned;
+    let owned: z.infer<typeof ownedRoutineQualificationSchema> | undefined;
     if (ownedQuery !== undefined) {
       let parsed: unknown;
       try {parsed = JSON.parse(ownedQuery);} catch {return c.json({error: 'invalid_request'}, 400);}
@@ -44,16 +44,47 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
     }
     const unclaimedQuery = c.req.query('unclaimedQualification');
     if (unclaimedQuery !== undefined && (requested !== '1' || ownedQuery !== undefined || unclaimedQuery.length > 8192)) return c.json({error: 'invalid_request'}, 400);
-    let unclaimed;
+    let unclaimed: z.infer<typeof unclaimedRoutineQualificationSchema> | undefined;
     if (unclaimedQuery !== undefined) {
       let parsed: unknown;
       try {parsed = JSON.parse(unclaimedQuery);} catch {return c.json({error: 'invalid_request'}, 400);}
       unclaimed = unclaimedRoutineQualificationSchema.parse(parsed);
     }
-    const page = await service.queued(c.var.testHostId, c.req.query("after"), Number(c.req.query("limit") ?? 50));
-    return c.json({...page, ...(minimum === '1' ? {minimumFrameworkVersion: await service.preparationFrameworkMinimum(c.var.testHostId)} : {}),
-      ...(requested === '1' ? {qualificationTargets: await qualifications.qualificationTargets(c.var.testHostId, owned, unclaimed),
-        ...(owned ? {ownedQualification: owned} : {}), ...(unclaimed ? {unclaimedQualification: unclaimed} : {})} : {})});
+    const startedAt = Date.now(); let phase = 'request', phaseStartedAt = startedAt, rowCount: number | undefined;
+    const fields = () => ({phase, hostId: c.var.testHostId, reqId: c.var.reqId, jobId: owned?.jobId ?? unclaimed?.jobId,
+      qualificationMode: owned ? 'owned' : unclaimed ? 'unclaimed' : requested === '1' ? 'discovery' : 'none',
+      minimumRequested: minimum === '1', rowCount,
+      stageElapsedMs: Math.max(0, Date.now() - phaseStartedAt), requestElapsedMs: Math.max(0, Date.now() - startedAt)});
+    const onPhase: TestRequestDeliveryPhase = (value, count) => {
+      c.var.logger?.info(fields(), 'controller request delivery stage completed');
+      phase = value; phaseStartedAt = Date.now(); rowCount = count;
+    };
+    const timer = setTimeout(() => c.var.logger?.warn(fields(), 'controller request delivery is slow'), 10_000);
+    try {
+      // Exact qualification revalidation consumes only its target and echoed descriptor.
+      // Ordinary intake retains queue/completion delivery and source preparation.
+      const page = owned || unclaimed ? {requests: [], preparations: [], dispatchCompletions: [], nextCursor: null} :
+        await service.queued(c.var.testHostId, c.req.query("after"), Number(c.req.query("limit") ?? 50), onPhase);
+      let minimumFrameworkVersion: number | null | undefined;
+      if (minimum === '1') {
+        onPhase('preparation-framework-minimum-read');
+        minimumFrameworkVersion = await service.preparationFrameworkMinimum(c.var.testHostId);
+      }
+      let qualificationTargets: Awaited<ReturnType<typeof qualifications.qualificationTargets>> | undefined;
+      if (requested === '1') {
+        onPhase('qualification-targets-read');
+        qualificationTargets = await qualifications.qualificationTargets(c.var.testHostId, owned, unclaimed);
+      }
+      c.var.logger?.info({...fields(), requestCount: page.requests.length, preparationCount: page.preparations.length,
+        completionCount: page.dispatchCompletions.length, qualificationTargetCount: qualificationTargets?.length},
+        'controller request delivery completed');
+      return c.json({...page, ...(minimum === '1' ? {minimumFrameworkVersion} : {}),
+        ...(requested === '1' ? {qualificationTargets, ...(owned ? {ownedQualification: owned} : {}),
+          ...(unclaimed ? {unclaimedQualification: unclaimed} : {})} : {})});
+    } catch (error) {
+      c.var.logger?.error({...fields(), errorName: error instanceof Error ? error.name : 'unknown'}, 'controller request delivery phase failed');
+      throw error;
+    } finally {clearTimeout(timer);}
   });
   app.get("/cancellations", async c => c.json(await service.cancellations(c.var.testHostId,
     c.req.query("after"), Number(c.req.query("limit") ?? 50))));
