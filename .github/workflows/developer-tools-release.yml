@@ -26,8 +26,10 @@ name: Release Mentra Developer Tools
 # rewritten to exact published versions (rewrite-file-deps.mjs) so wrappers
 # like @mentra/cli install cleanly for users.
 #
-# Requires repo secret NPM_TOKEN: an npm *automation* token (bypasses 2FA) for
-# an account with publish rights on the @mentra org. See sdk/PUBLISHING.md.
+# Publishing uses npm trusted publishing, without a token: each package's npm
+# settings name this workflow (Mentra-Community/MentraOS,
+# developer-tools-release.yml, no environment) as its trusted publisher, which
+# needs a GitHub-hosted runner and npm >= 11.5.1. See sdk/PUBLISHING.md.
 
 on:
   workflow_dispatch:
@@ -79,7 +81,11 @@ jobs:
     name: Publish ${{ matrix.pkg.name }}@${{ matrix.pkg.version }}
     needs: detect
     if: needs.detect.outputs.has_publishes == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # npm trusted publishing accepts only GitHub-hosted runners.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       # Sequential + dependency-ordered: the scaffolder's template pins
       # @mentra/miniapp-cli, so it publishes first.
@@ -107,14 +113,16 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Use npm with staged publishing support
-        # beta/latest publishes go through npm's staging queue for human
-        # approval. `npm stage publish` needs npm >=11.15.0; pin the major so
-        # the release path doesn't pick up whatever npm shipped this morning.
-        if: github.ref_name != 'dev'
+      - name: Use npm with trusted and staged publishing support
+        # Trusted publishing needs npm >=11.5.1; beta/latest publishes go
+        # through npm's staging queue for human approval, and `npm stage
+        # publish` needs npm >=11.15.0. Pin the major so the release path
+        # doesn't pick up whatever npm shipped this morning.
         run: |
           npm install -g npm@11
-          npm stage --help >/dev/null 2>&1 || { echo "::error::this npm ($(npm --version)) lacks 'npm stage' — staged publishing needs >=11.15.0."; exit 1; }
+          if [[ "${{ github.ref_name }}" != dev ]]; then
+            npm stage --help >/dev/null 2>&1 || { echo "::error::this npm ($(npm --version)) lacks 'npm stage' — staged publishing needs >=11.15.0."; exit 1; }
+          fi
 
       - name: Cache Bun cache
         uses: actions/cache@v4
@@ -222,8 +230,6 @@ jobs:
         if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && (github.ref_name == 'dev' || steps.registry.outputs.package_exists != 'true') && (steps.registry.outputs.package_exists == 'true' || needs.detect.outputs.force_release == 'true')
         working-directory: ${{ matrix.pkg.dir }}
         run: npm publish --tag "${{ matrix.pkg.tag }}" --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Stage for approval (beta/latest channels)
         if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && steps.registry.outputs.package_exists == 'true' && github.ref_name != 'dev'
@@ -246,8 +252,6 @@ jobs:
           else
             echo "::notice::${{ matrix.pkg.name }}@${{ matrix.pkg.version }} staged for '${{ matrix.pkg.tag }}' — a maintainer must approve it in the npm UI before it goes live."
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Summarize
         if: always()
