@@ -99,6 +99,9 @@ export const ownedRoutineQualificationSchema = z.object({jobId: frameworkIdentit
   binding: frameworkBindingSchema, controller: z.object({incarnation: frameworkIdentitySchema,
     generation: z.number().int().positive().safe()}).strict(), purpose: backendQualificationPurposeSchema.optional()}).strict();
 export type OwnedRoutineQualification = z.infer<typeof ownedRoutineQualificationSchema>;
+/** Original target lookup before acquisition; it supplies no owner or grant. */
+export const unclaimedRoutineQualificationSchema = ownedRoutineQualificationSchema.pick({jobId: true, inputSha256: true});
+export type UnclaimedRoutineQualification = z.infer<typeof unclaimedRoutineQualificationSchema>;
 export const completeRoutineJobPreparationSchema = routineJobPreparationSchema.omit({requirements: true}).extend({inputSha256: jobHashSchema});
 export const routineJobBindingSchema = z.object({jobId: frameworkIdentitySchema, requestId: frameworkIdentitySchema,
   hostId: frameworkIdentitySchema, laneId: frameworkIdentitySchema, descriptorRevision: jobHashSchema,

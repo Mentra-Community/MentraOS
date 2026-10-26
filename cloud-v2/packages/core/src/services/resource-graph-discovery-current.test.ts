@@ -1,7 +1,10 @@
-import {expect, test} from 'bun:test'
+import {expect, spyOn, test} from 'bun:test'
 import {routingGraphFixture} from './backend-candidate-preparation.test-support'
 import type {ReceivedTestHostState} from './test-host-state.service'
 import type {OwnedRoutineQualification} from '../types/routine-job.types'
+import {routineJobInputDigest, routineJobRepository} from './routine-job.service'
+import {requestInputDigest} from './test-request.service'
+import {TestRequestModel} from '../models/test-request.model'
 
 async function fixture(change: (host: ReceivedTestHostState) => void = () => {}) {
   const f = routingGraphFixture()
@@ -98,6 +101,7 @@ const withdrawals: [string, (host: ReceivedTestHostState) => void][] = [
 for (const [name, change] of withdrawals) test(`a final ${name} change still withdraws the original graph`, async () => {
   const {f, pending} = await fixture(change)
   expect(await f.service.qualificationTargets('air1')).toEqual([])
+  expect(await f.service.qualificationTargets('air1', undefined, {jobId: pending.target.jobId, inputSha256: pending.targetInputSha256})).toEqual([])
   expect(f.row.fleetCandidatePreparation).toEqual(pending)
   expect(f.bindWrites).toBe(0)
 })
@@ -129,4 +133,45 @@ test('a current owned graph remains discoverable across periodic reports', async
   const hosts = (f.service as unknown as {hosts: {get(id: string): Promise<ReceivedTestHostState | null>}}).hosts
   hosts.get = async () => ({...structuredClone(host), sequence: host.sequence + ++reads})
   expect((await f.service.qualificationTargets('air1', owned)).map(target => target.inputSha256)).toEqual([pending.targetInputSha256])
+  expect(await f.service.qualificationTargets('air1', undefined, {jobId: pending.target.jobId, inputSha256: pending.targetInputSha256})).toEqual([])
+})
+
+
+test('unclaimed current-target lookup preserves the delivered graph across concurrent candidate persistence', async () => {
+ const a = routingGraphFixture(), b = routingGraphFixture(), entered = Promise.withResolvers<void>(), persist = Promise.withResolvers<void>()
+ a.row = {...a.row, requestId: 'job-a', fleetSelection: {...a.row.fleetSelection, requestId: 'job-a'}}
+ a.row.fleetSelectionSha256 = requestInputDigest(a.row.fleetSelection); a.row.fleetInputSha256 = routineJobInputDigest(a.row)
+ b.row = {...b.row, requestId: 'job-b', fleetSelection: {...b.row.fleetSelection, requestId: 'job-b'}}
+ b.row.fleetSelectionSha256 = requestInputDigest(b.row.fleetSelection); b.row.fleetInputSha256 = routineJobInputDigest(b.row)
+ const commit = a.rows.candidatePreparation!.bind(a.rows)
+ a.rows.candidatePreparation = async (original, pending, at) => {entered.resolve(); await persist.promise; return commit(original, pending, at)}
+ const preparingA = a.service.preparation('job-a')
+ await entered.promise
+ expect(a.row.fleetCandidatePreparation).toBeUndefined()
+ b.advance(10); await b.service.preparation('job-b')
+ const delivered = (await b.service.qualificationTargets('air1'))[0]!
+ expect(delivered.jobId).toBe('job-b')
+ persist.resolve(); await preparingA
+ expect(Date.parse(a.row.fleetCandidatePreparation!.candidate.requestedAt)).toBeLessThan(Date.parse(delivered.candidate!.requestedAt))
+ b.rows.get = async id => structuredClone(id === a.row.requestId ? a.row : id === b.row.requestId ? b.row : null)
+ b.rows.qualificationCandidates = routineJobRepository.qualificationCandidates
+ const get = (value: unknown, path: string): any => path.split('.').reduce((at: any, key) => at?.[key], value)
+ const find = spyOn(TestRequestModel, 'find').mockImplementation(() => {
+  let order: Record<string, number> = {}, limit = 100
+  const chain: any = {sort(value: Record<string, number>) {order=value;return chain},limit(value:number){limit=value;return chain},
+   read(){return chain},readConcern(){return chain},setOptions(){return chain},lean(){return chain},cursor(){
+    const rows=[structuredClone(a.row),structuredClone(b.row)].sort((left,right)=>{
+     for(const[key,direction]of Object.entries(order)){const l=get(left,key),r=get(right,key);if(l<r)return-direction;if(l>r)return direction}return 0
+    }).slice(0,limit)
+    return {async *[Symbol.asyncIterator](){yield* rows},async close(){}}
+   }}
+  return chain
+ })
+ try {
+  const current = await b.service.qualificationTargets('air1', undefined, {jobId: delivered.jobId, inputSha256: delivered.inputSha256})
+  expect(current.map(target=>target.inputSha256)).toEqual([delivered.inputSha256])
+  expect(await b.service.qualificationTargets('air1', undefined, {jobId: delivered.jobId, inputSha256: 'f'.repeat(64)})).toEqual([])
+  expect(await b.service.qualificationTargets('air1', undefined, {jobId: 'missing-original', inputSha256: delivered.inputSha256})).toEqual([])
+  expect(b.bindWrites + a.bindWrites).toBe(0)
+ } finally {persist.resolve(); find.mockRestore()}
 })

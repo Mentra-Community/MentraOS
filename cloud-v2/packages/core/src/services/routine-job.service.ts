@@ -1,4 +1,5 @@
 import {TestHostStateModel} from '../models/test-host-state.model';
+import {unclaimedRoutineQualificationSchema, type UnclaimedRoutineQualification} from '../types/routine-job.types';
 import {hostResourceReservationsSchema, isExclusiveHostReservation, fleetResourceAdmissionSchema} from '../types/resource-reservations.types';
 import {recorderCapacityRequirement, recorderStorageAvailable, recorderHostReservationSchema, STORAGE_MARGIN_BYTES, type RecorderHostReservation, type RecorderStorageObservation} from '../types/recorder-storage.types';
 import {createHash, randomUUID} from 'node:crypto';
@@ -1055,8 +1056,10 @@ export class RoutineJobService {
       throw new TestRunError(503, 'Stored routine job exact inputs are unavailable');
   }
   /** Passive target discovery precedes permission matching; only local reservation can acquire resources. */
-  async qualificationTargets(hostId: string, ownedInput?: OwnedRoutineQualification): Promise<RoutineQualificationTarget[]> {
+  async qualificationTargets(hostId: string, ownedInput?: OwnedRoutineQualification, unclaimedInput?: UnclaimedRoutineQualification): Promise<RoutineQualificationTarget[]> {
     const owned = ownedInput && ownedRoutineQualificationSchema.parse(ownedInput);
+    const unclaimed = unclaimedInput && unclaimedRoutineQualificationSchema.parse(unclaimedInput);
+    if (owned && unclaimed) throw new TestRunError(400, 'Qualification lookup cannot be both owned and unclaimed');
     const now = this.now(), host = await this.hosts.get(hostId), binding = host?.frameworkBinding;
     if (!host || host.hostId !== hostId || !binding || binding.routineApiVersion < 38 ||
       !Number.isFinite(Date.parse(host.receivedAt)) || Date.parse(host.receivedAt) > now || now - Date.parse(host.receivedAt) > 120_000) return [];
@@ -1064,8 +1067,9 @@ export class RoutineJobService {
       requestInputDigest(binding) !== requestInputDigest(owned.binding))) return [];
     const targets: RoutineQualificationTarget[] = [], queryDeadline = now + 5_000;
     for (const lane of host.lanes) {
-      const graph = await this.candidateGraphQualificationTarget(host, lane, owned, queryDeadline)
+      const graph = await this.candidateGraphQualificationTarget(host, lane, owned, queryDeadline, unclaimed)
       if (graph) {targets.push(graph); continue}
+      if (unclaimed) continue
       if (lane.platform === 'android') {
         let localTarget: RoutineQualificationTarget | undefined;
         try {localTarget = await this.localBackendQualificationTarget(host, lane, owned, queryDeadline);}
@@ -1231,19 +1235,23 @@ export class RoutineJobService {
     return undefined;
   }
   private async candidateGraphQualificationTarget(host: ReceivedTestHostState, lane: RoutingTestHostState['lanes'][number],
-    owned: OwnedRoutineQualification | undefined, queryDeadline: number) {
+    owned: OwnedRoutineQualification | undefined, queryDeadline: number, unclaimed?: UnclaimedRoutineQualification) {
     if (host.resourceReservations?.resourceReadiness !== true || lane.dispatchMode !== 'automatic' ||
       this.now() >= queryDeadline || owned && (owned.laneId !== lane.id || owned.purpose?.kind !== 'resource-readiness')) return undefined
-    const rows = owned ? [await this.rows.get(owned.jobId)] : this.rows.qualificationCandidates?.(host.hostId, lane.id, 100,
+    if (unclaimed && (lane.state !== 'idle' || host.lanes.find(value => value.id === lane.id)?.activity)) return undefined
+    const rows = owned ? [await this.rows.get(owned.jobId)] : unclaimed ? [await this.rows.get(unclaimed.jobId, Math.max(1, queryDeadline - this.now()))] : this.rows.qualificationCandidates?.(host.hostId, lane.id, 100,
       new Date(this.now()), Math.max(1, queryDeadline - this.now()), false, false, false, lane.platform, true) ?? []
     for await (const row of rows) {
       const pending = row?.fleetCandidatePreparation, purpose = pending?.target.purpose
       if (!row || !pending || purpose?.kind !== 'resource-readiness' || !candidateRequestCurrent(row, pending, this.now()) ||
-        pending.laneId !== lane.id || !this.graphQualificationHostCurrent(host, pending, owned)) continue
+        pending.laneId !== lane.id || unclaimed && (row.requestId !== unclaimed.jobId || pending.targetInputSha256 !== unclaimed.inputSha256) ||
+        !this.graphQualificationHostCurrent(host, pending, owned)) continue
       const current = await this.rows.get(row.requestId), finalHost = await this.hosts.get(host.hostId)
       if (!current || !candidateRequestCurrent(current, current.fleetCandidatePreparation, this.now()) ||
         !isDeepIdentity(current.fleetCandidatePreparation, pending) || !finalHost ||
-        !this.graphQualificationHostCurrent(finalHost, pending, owned) || this.now() >= queryDeadline) return undefined
+        !this.graphQualificationHostCurrent(finalHost, pending, owned) ||
+        unclaimed && finalHost.lanes.some(value => value.id === lane.id && (value.state !== 'idle' || value.activity)) ||
+        this.now() >= queryDeadline) return undefined
       return pending.target
     }
     return undefined

@@ -8,7 +8,7 @@ import {createTestHostAuth, type TestHostEnv} from "../middleware/test-host-auth
 import {RoutineDispatchService} from '../../services/routine-dispatch.service';
 import {GithubRoutineSourceGateway} from '../../services/routine-source-selection.service';
 import {RoutineJobService} from '../../services/routine-job.service';
-import {ownedRoutineQualificationSchema} from '../../types/routine-job.types';
+import {ownedRoutineQualificationSchema, unclaimedRoutineQualificationSchema} from '../../types/routine-job.types';
 import {routineSourceRepository} from '../../types/testing-source.types';
 
 const acceptanceSchema = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
@@ -42,9 +42,18 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
       try {parsed = JSON.parse(ownedQuery);} catch {return c.json({error: 'invalid_request'}, 400);}
       owned = ownedRoutineQualificationSchema.parse(parsed);
     }
+    const unclaimedQuery = c.req.query('unclaimedQualification');
+    if (unclaimedQuery !== undefined && (requested !== '1' || ownedQuery !== undefined || unclaimedQuery.length > 8192)) return c.json({error: 'invalid_request'}, 400);
+    let unclaimed;
+    if (unclaimedQuery !== undefined) {
+      let parsed: unknown;
+      try {parsed = JSON.parse(unclaimedQuery);} catch {return c.json({error: 'invalid_request'}, 400);}
+      unclaimed = unclaimedRoutineQualificationSchema.parse(parsed);
+    }
     const page = await service.queued(c.var.testHostId, c.req.query("after"), Number(c.req.query("limit") ?? 50));
     return c.json({...page, ...(minimum === '1' ? {minimumFrameworkVersion: await service.preparationFrameworkMinimum(c.var.testHostId)} : {}),
-      ...(requested === '1' ? {qualificationTargets: await qualifications.qualificationTargets(c.var.testHostId, owned), ...(owned ? {ownedQualification: owned} : {})} : {})});
+      ...(requested === '1' ? {qualificationTargets: await qualifications.qualificationTargets(c.var.testHostId, owned, unclaimed),
+        ...(owned ? {ownedQualification: owned} : {}), ...(unclaimed ? {unclaimedQualification: unclaimed} : {})} : {})});
   });
   app.get("/cancellations", async c => c.json(await service.cancellations(c.var.testHostId,
     c.req.query("after"), Number(c.req.query("limit") ?? 50))));

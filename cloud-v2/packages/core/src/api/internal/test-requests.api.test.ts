@@ -114,3 +114,18 @@ test('owned qualification read is host-authenticated, exact, bounded and explici
  expect((await api.request('/?ownedQualification='+encodeURIComponent(JSON.stringify(owned)),{headers})).status).toBe(400);
  expect((await api.request('/?qualificationTargets=1&ownedQualification='+encodeURIComponent(JSON.stringify({...owned,hostId:'other'})),{headers})).status).toBe(400);
 });
+
+test('unclaimed qualification lookup is exact, host-authenticated and cannot carry invented custody', async () => {
+ const calls: unknown[] = [], unclaimed = {jobId: 'original', inputSha256: digest};
+ class Service extends TestRequestService {override async queued(){return {requests:[],preparations:[],dispatchCompletions:[],nextCursor:null};}}
+ const api = createTestRequestsApi(new Service(), () => JSON.stringify({mini: token}), undefined, undefined,
+  {async qualificationTargets(host, owned, value){calls.push({host, owned, value}); return [];}});
+ const query = new URLSearchParams({qualificationTargets: '1', unclaimedQualification: JSON.stringify(unclaimed)});
+ const result = await api.request(`/?${query}`, {headers}); expect(result.status).toBe(200);
+ expect(await result.json()).toMatchObject({unclaimedQualification: unclaimed, qualificationTargets: []});
+ expect(calls).toEqual([{host: 'mini', owned: undefined, value: unclaimed}]);
+ expect((await api.request(`/?${query}`, {headers: {}})).status).toBe(401);
+ expect((await api.request('/?unclaimedQualification='+encodeURIComponent(JSON.stringify(unclaimed)), {headers})).status).toBe(400);
+ expect((await api.request('/?qualificationTargets=1&unclaimedQualification='+encodeURIComponent(JSON.stringify({...unclaimed, ownerId: 'invented'})), {headers})).status).toBe(400);
+ expect((await api.request(`/?${query}&ownedQualification=ignored`, {headers})).status).toBe(400);
+});
