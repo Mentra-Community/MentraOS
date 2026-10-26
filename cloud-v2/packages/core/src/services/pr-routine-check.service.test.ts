@@ -115,6 +115,57 @@ test('no labels succeeds explicitly, unsupported selected source fails and same-
   }
 })
 
+test('empty requested coverage is delivered terminal immediately without a waiting budget or device work', async () => {
+  for (const labels of [[], ['bug', 'documentation']]) {
+    const f = fixture(); f.context.labels = labels;
+    await f.intake();
+    expect(f.checkPayloads).toHaveLength(1);
+    expect(f.checkPayloads[0]).toMatchObject({status: 'completed', conclusion: 'success',
+      started_at: new Date(f.now).toISOString(), completed_at: new Date(f.now).toISOString(),
+      output: {title: 'No routine tests requested.'}, actions: []});
+    expect(f.checkPayloads[0]!.output.summary).toContain('No routine tests requested.');
+    expect(f.checkPayloads[0]!.output.summary).not.toContain('deadline');
+    expect(f.gate().attempt.deadline).toBe(f.gate().attempt.acceptedAt);
+    expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+    expect(f.resolves).toBe(0); expect(f.buildCalls).toEqual([]); expect(f.inventoryQueries).toEqual([]);
+    expect(f.submissions).toEqual([]); expect(f.previews).toEqual([]); expect(f.rerunSubmits).toEqual([]);
+  }
+});
+
+test('removing coverage completes the empty check while retaining ordinary cleanup of its previous jobs', async () => {
+  const f = fixture(); await f.intake(); f.build(); await f.drain();
+  const original = f.gate().attempt.members[0]!.requestId!;
+  f.context.labels = []; await f.intake('remove-coverage');
+  expect(f.checkPayloads.at(-1)).toMatchObject({status: 'completed', conclusion: 'success',
+    output: {title: 'No routine tests requested.'}, actions: []});
+  expect(f.gate().retired[0]!.members[0]).toMatchObject({requestId: original, settled: false});
+  expect(f.stored.get(f.gate().gateId)!.nextAt).toBeDefined();
+  await f.drain(1); expect(f.cancellations).toContain(original);
+  expect(f.gate().retired[0]!.members[0]!.settled).toBe(false);
+  const request = f.requests.get(original); request.state = 'terminal'; request.terminalStatus = 'cancelled';
+  request.dispatchCompletion = {disposition: 'clean'}; await f.drain(2);
+  expect(f.gate().retired[0]!.members[0]!.settled).toBe(true);
+  expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+});
+
+test('empty coverage retries only its unchanged completed delivery and parks after acknowledgment', async () => {
+  const f = fixture(); f.context.labels = []; f.loseDelivery(); await f.intake();
+  const intended = f.checkPayloads[0]!;
+  expect(intended.status).toBe('completed'); expect(f.checkPayloads).toHaveLength(2);
+  f.restart(); await f.drain(1);
+  expect(f.checkPayloads.at(-1)).toEqual(intended);
+  expect(f.checkPayloads).toHaveLength(2);
+  expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+  expect(f.submissions).toEqual([]); expect(f.resolves).toBe(0);
+});
+
+test('ambiguous empty PR context still fails through ordinary context validation', async () => {
+  const f = fixture(); f.context.labels = []; f.context.peers = [12, 13];
+  await f.intake(); await f.drain(4);
+  expect(f.gate().attempt.conclusion).toBe('failure'); expect(f.gate().selectionError).toContain('Several open PRs');
+  expect(f.submissions).toEqual([]);
+});
+
 test('cancellation command redelivery preserves one attempt and waits for native cessation', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain()
   const g = f.gate(), command = {deliveryId: 'cancel-event', digest: 'c'.repeat(64), gateId: g.gateId,
