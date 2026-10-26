@@ -1100,7 +1100,7 @@ export class ResourceReservationsService {
       return member.authorityHostId === host.hostId && refs.length > 0 && refs.every(value => value.kind === ref!.kind &&
         isDeepStrictEqual(value.idleContract, ref!.idleContract) && isDeepStrictEqual(value.exclusiveDependencies, ref!.exclusiveDependencies)) &&
         ref?.kind === member.kind && ref.idleContract?.version === member.contractVersion && ref.idleContract.qualifiedScope.kind !== 'unqualified' &&
-        subject?.current && !!subject.resource && subject.subject.authorityHostId === host.hostId && subject.generation === member.subjectGeneration &&
+        subject?.current && !!subject.resource && subject.subject.authorityHostId === host.hostId &&
         subject.owner === null && subject.repair.state === 'none' && member.capabilities.every(value => ref.capabilities?.includes(value)) &&
         !(ref.idleContract.dependencies ?? []).some(id => !purpose.resources.some(value => value.id === id)) &&
         !subject.resource.dependencies.some(id => !purpose.resources.some(value => value.id === id)) &&
@@ -1139,10 +1139,14 @@ export class ResourceReservationsService {
         ? !disjointChecks?.has(claim.id) && claim.borrowerHostId === hostId && claim.laneId === intent.laneId
         : claim.hostId === hostId && claim.laneId === intent.laneId)) return unknown
       if (all.length + purpose.resources.length > 1000) throw new TestRunError(409, 'Resource authority is full; unresolved claims retain custody')
+      // The immutable target records delivery provenance. Capture current
+      // generations from the host snapshot protected by this acquisition CAS.
       const claims: ExclusiveHostReservation[] = purpose.resources.map(member => ({kind: 'exclusive', id: randomUUID(),
         resourceId: member.id, authorityHostId: hostId, borrowerHostId: hostId, laneId: intent.laneId, operationId: intent.operationId,
         intentSha256, inputSha256: intent.inputSha256, owner: intent.owner, prerequisite: purpose,
-        resourceCheck: {resourceId: member.id, subjectGeneration: member.subjectGeneration, contractVersion: member.contractVersion,
+        resourceCheck: {resourceId: member.id,
+          subjectGeneration: host.snapshot.resourceLifecycle!.subjects.find(subject => subject.subject.id === member.id)!.generation,
+          contractVersion: member.contractVersion,
           deadlineAt: Date.parse(pending.target.deadline), binding: purpose.binding, controller: purpose.candidate.controller},
         controllerIncarnation: intent.controller.incarnation, controllerGeneration: intent.controller.generation,
         borrowerSequence: intent.controller.sequence, reservedAt: new Date(this.now()).toISOString()}))
@@ -1152,6 +1156,8 @@ export class ResourceReservationsService {
         withoutOwn = {...after, resourceReservations: committed.filter(value => !claims.some(claim => isDeepStrictEqual(value, claim)))}
       if (!fresh(after, this.now()) || after.incarnation !== host.incarnation || after.incarnationGeneration !== host.incarnationGeneration ||
         !claims.every(claim => committed.some(value => isDeepStrictEqual(value, claim))) ||
+        !claims.every(claim => after.snapshot.resourceLifecycle?.subjects.find(subject => subject.subject.id === claim.resourceId)?.generation ===
+          claim.resourceCheck!.subjectGeneration) ||
         !this.graphSubjectsCurrent(withoutOwn, intent) ||
         !isDeepStrictEqual(this.disjointPassiveCheckClaims(withoutOwn, intent.laneId!, purpose.resources.map(member => member.id)), disjointChecks) ||
         !candidatePrerequisiteRequestMatches(await this.rows.request?.(purpose.jobId) ?? null, intent, this.now())) return unknown

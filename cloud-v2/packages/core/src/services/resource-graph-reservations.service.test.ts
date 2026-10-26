@@ -106,6 +106,90 @@ async function graphAuthorityFixture() {
   return {f, host, pending, purpose, intent, rows, service, writes, closedReturns, framework}
 }
 
+function currentPassedGraph(g: Awaited<ReturnType<typeof graphAuthorityFixture>>) {
+  g.host.sequence++
+  for (const subject of g.host.resourceLifecycle!.subjects) {
+    subject.generation += 3; subject.status = 'idle'; subject.owner = null
+    subject.idle.outcome = 'passed'; subject.idle.checkedAt = g.host.observedAt
+    subject.idle.acceptedCheck = {operationId: `manual-check:${subject.subject.id}`, subjectGeneration: subject.generation,
+      resultSha256: 'a'.repeat(64), acceptedAt: g.host.observedAt}
+  }
+}
+
+test('current physical PASS reserves fresh generations for the same immutable cached graph and returns its real claims', async () => {
+  const g = await graphAuthorityFixture(), original = structuredClone(g.pending.target)
+  currentPassedGraph(g)
+  const acquired = await g.service.acquire(g.intent, g.host.hostId)
+  expect(acquired.status).toBe('reserved')
+  if (acquired.status !== 'reserved') throw Error('Current passed graph was not reserved')
+  for (const claim of acquired.claims) {
+    const member = g.purpose.resources.find(member => member.id === claim.resourceId)!,
+      subject = g.host.resourceLifecycle!.subjects.find(subject => subject.subject.id === claim.resourceId)!
+    expect(claim.resourceCheck!.subjectGeneration).toBe(subject.generation)
+    expect(claim.resourceCheck!.subjectGeneration).toBeGreaterThan(member.subjectGeneration)
+    expect(graphCandidateClaimMatches(g.pending, claim)).toBe(true)
+  }
+  expect(g.pending.target).toEqual(original); expect(g.writes).toHaveLength(1)
+  for (const returned of g.closedReturns(acquired.claims as ExclusiveHostReservation[])) {
+    expect(await g.service.giveBack(returned, g.host.hostId)).toEqual({status: 'returned', claimId: returned.claimId})
+  }
+  expect(g.host.authorityReservations).toEqual([])
+  expect(g.pending.target).toEqual(original)
+})
+
+test('a passed-generation race loses the old CAS and retries the original graph against current unowned state', async () => {
+  const g = await graphAuthorityFixture(), original = structuredClone(g.pending.target), replace = g.rows.replaceBackend!.bind(g.rows)
+  currentPassedGraph(g)
+  let attempts = 0
+  g.rows.replaceBackend = async (...args) => {
+    if (++attempts === 1) currentPassedGraph(g)
+    return replace(...args)
+  }
+  const acquired = await g.service.acquire(g.intent, g.host.hostId)
+  expect(acquired.status).toBe('reserved'); expect(attempts).toBe(2); expect(g.writes).toHaveLength(1)
+  if (acquired.status !== 'reserved') throw Error('Current generation retry did not reserve')
+  expect(acquired.claims.every(claim => claim.resourceCheck!.subjectGeneration ===
+    g.host.resourceLifecycle!.subjects.find(subject => subject.subject.id === claim.resourceId)!.generation)).toBe(true)
+  expect(g.pending.target).toEqual(original)
+})
+
+test('a concurrent owner wins the current CAS without fabricating a failed physical check or graph grant', async () => {
+  const g = await graphAuthorityFixture(), replace = g.rows.replaceBackend!.bind(g.rows)
+  currentPassedGraph(g)
+  let attempts = 0
+  g.rows.replaceBackend = async (...args) => {
+    if (++attempts === 1) {
+      g.host.sequence++
+      g.host.resourceLifecycle!.subjects[0]!.owner = {id: 'actual-other-owner', kind: 'boundary-cleanup', generation: 2, hostId: g.host.hostId}
+      g.host.resourceLifecycle!.subjects[0]!.status = 'reserved'
+    }
+    return replace(...args)
+  }
+  expect((await g.service.acquire(g.intent, g.host.hostId)).status).toBe('unknown')
+  expect(attempts).toBe(1); expect(g.writes).toEqual([]); expect(g.pending.resourceClaims).toBeUndefined()
+  expect(g.host.resourceLifecycle!.subjects.every(subject => subject.idle.outcome === 'passed')).toBe(true)
+})
+
+test('a generation change after committed acquisition retains original custody and refuses a fresh grant', async () => {
+  const g = await graphAuthorityFixture(), original = structuredClone(g.pending.target), replace = g.rows.replaceBackend!.bind(g.rows)
+  currentPassedGraph(g)
+  g.rows.replaceBackend = async (...args) => {
+    const committed = await replace(...args)
+    if (committed) currentPassedGraph(g)
+    return committed
+  }
+  expect((await g.service.acquire(g.intent, g.host.hostId)).status).toBe('unknown')
+  expect(g.writes).toHaveLength(1); expect(g.pending.resourceClaims).toHaveLength(g.purpose.resources.length)
+  expect(isDeepStrictEqual(g.host.authorityReservations, g.pending.resourceClaims)).toBe(true)
+  expect(g.pending.target).toEqual(original)
+  expect(g.host.resourceLifecycle!.subjects.every(subject => subject.idle.outcome === 'passed')).toBe(true)
+  const retained = structuredClone(g.pending.resourceClaims)
+  expect((await g.service.observe({intent: g.intent, controller: {...g.pending.candidate.controller, sequence: g.host.sequence}}, g.host.hostId)).status).toBe('reserved')
+  expect(g.pending.resourceClaims).toEqual(retained)
+  expect((await g.service.acquire(g.intent, g.host.hostId)).status).toBe('reserved')
+  expect(g.writes).toHaveLength(1)
+})
+
 async function successorReturns() {
   const g = await graphAuthorityFixture(), acquired = await g.service.acquire(g.intent, g.host.hostId)
   if (acquired.status !== 'reserved') throw Error('Original graph was not acquired')
@@ -596,11 +680,10 @@ test.each([false, true])('an old acquisition CAS loses to original closure and a
   } finally {hook.mockRestore()}
 })
 
-test.each(['producer-absent', 'original-generation', 'new-dependency', 'operator-withdrawal', 'cancelled'] as const)(
+test.each(['producer-absent', 'new-dependency', 'operator-withdrawal', 'cancelled'] as const)(
   'graph acquisition refuses %s before any claim CAS', async changed => {
     const f = await graphAuthorityFixture()
     if (changed === 'producer-absent') delete f.host.resourceReservations!.resourceReadiness
-    if (changed === 'original-generation') f.host.resourceLifecycle!.subjects[0]!.generation++
     if (changed === 'new-dependency') f.host.lanes[0]!.resources[0]!.idleContract!.dependencies = ['missing-physical-peer']
     if (changed === 'operator-withdrawal') f.host.resourceLifecycle!.subjects[0]!.status = 'out-of-service'
     if (changed === 'cancelled') f.f.row.fleetCancellation = {requestedAt: new Date(f.f.now).toISOString(), reason: 'Original cancellation'}

@@ -1266,19 +1266,21 @@ export class RoutineJobService {
       return subject?.current && subject.subject.authorityHostId === host.hostId &&
         subject.repair.state === 'none' && !['out-of-service', 'offline', 'in-repair'].includes(subject.status) &&
         (ownedLane ? subject.owner?.id === ownerId && subject.owner.kind === 'boundary-cleanup' &&
-          (!owned || subject.owner.generation === owned.generation) : subject.owner === null && subject.generation === member.subjectGeneration)
+          (!owned || subject.owner.generation === owned.generation) : subject.owner === null)
     })
   }
   private async makeGraphCandidatePreparation(row: StoredRoutineJob, host: ReceivedTestHostState, lane: RoutingTestHostState['lanes'][number]) {
     if (!this.rows.candidatePreparation || !host.frameworkBinding || host.resourceReservations?.resourceReadiness !== true) return undefined
     const previous = candidateRenewal(row, host.hostId, lane.id)
+    // UNKNOWN renewal has genuine unclaimed closure. The new target still
+    // validates and captures its current compatible build, binding and controller.
     if (!previous && row.fleetCandidatePreparations?.some(value => value.hostId === host.hostId && value.laneId === lane.id) ||
       (row.fleetResourceReservation || row.fleetResourceAdmission || row.fleetExclusiveReservation) && (!previous || !row.fleetResourceReservation) ||
       previous && (previous.target.purpose?.kind !== 'resource-readiness' || (previous.coordinatorSupersession
         ? !host.incarnationGeneration || host.incarnationGeneration < previous.coordinatorSupersession.controller.generation ||
           host.incarnation === previous.candidate.controller.incarnation
-        : previous.candidate.controller.incarnation !== host.incarnation || previous.candidate.controller.generation !== host.incarnationGeneration ||
-          !isDeepIdentity(previous.target.acceptedBinding, host.frameworkBinding))) ||
+        : previous.settlement?.outcome !== 'unknown' && (previous.candidate.controller.incarnation !== host.incarnation ||
+          previous.candidate.controller.generation !== host.incarnationGeneration || !isDeepIdentity(previous.target.acceptedBinding, host.frameworkBinding)))) ||
       (row.fleetCandidatePreparations?.length ?? 0) >= MAX_FLEET_CANDIDATE_PREPARATIONS) return undefined
     const original = {requestId: row.requestId, inputSha256: row.fleetInputSha256!},
       purpose = routineResourceReadinessPurpose(host, lane, row.fleetPreparation!.requirements, this.now(), original)
@@ -1693,7 +1695,13 @@ export class RoutineJobService {
     }
     const selected = admitted ? [] : await this.rows.selectedLanes?.(hosts.map(host => host.hostId)) ?? [];
     const candidateReasons: (string | undefined)[] = [];
-    for (const {host, lane} of orderedRoutineCandidates(row.requestId, hosts, selected)) {
+    const candidates = orderedRoutineCandidates(row.requestId, hosts, selected),
+      attempts = (hostId: string, laneId: string) => row.fleetCandidatePreparations?.filter(value =>
+        value.hostId === hostId && value.laneId === laneId).length ?? 0;
+    // Try available alternatives before renewing a failed preparation. This is
+    // preference only; explicit targets and all custody/admission fences remain.
+    candidates.sort((a, b) => attempts(a.host.hostId, a.lane.id) - attempts(b.host.hostId, b.lane.id));
+    for (const {host, lane} of candidates) {
       // A staged admission may survive an interrupted authority/receipt write.
       // Continue that exact candidate; a preference change cannot move its custody.
       if (target?.hostId && target.hostId !== host.hostId || target?.laneId && target.laneId !== lane.id) continue;

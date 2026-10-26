@@ -46,9 +46,16 @@ function originalClaim(g: Awaited<ReturnType<typeof replacedGraphFixture>>): Exc
     controllerIncarnation: pending.candidate.controller.incarnation, controllerGeneration: pending.candidate.controller.generation,
     borrowerSequence: 1, reservedAt: pending.candidate.requestedAt}
 }
+function leaveOnlyCurrentHostAvailable(f: ReturnType<typeof routingGraphFixture>, hostId: string) {
+  // These cases exercise same-host controller replacement. An eligible untried
+  // alternate is intentionally preferred by ordinary dispatch.
+  for (const host of f.hosts) if (host.hostId !== hostId)
+    for (const lane of host.lanes) lane.state = 'out-of-service'
+}
 for (const destination of ['current-generation', 'alternate-host'] as const) test(`obsolete unbound graph preserves original history and prepares ${destination}`, async () => {
   const g = await replacedGraphFixture(), {f, host, pending} = g, original = structuredClone(f.row), authority = structuredClone(host.authorityReservations)
   try {
+    if (destination === 'current-generation') leaveOnlyCurrentHostAvailable(f, host.hostId)
     if (destination === 'alternate-host') {host.lanes[0]!.state = 'out-of-service'; f.rows.selectedLanes = async () => []}
     await f.service.preparation('job-one')
     const preserved = f.row.fleetCandidatePreparations![0]!
@@ -135,6 +142,7 @@ test('an old acquisition cannot commit its host claim after a strictly newer acc
 test('the controller ACK view preserves completed history while retaining unresolved supersession only in storage', async () => {
   const g = await replacedGraphFixture(), {f, host} = g
   try {
+    leaveOnlyCurrentHostAvailable(f, host.hostId)
     await f.service.preparation('job-one')
     const unresolved = structuredClone(f.row.fleetCandidatePreparations![0]!), fresh = structuredClone(f.row.fleetCandidatePreparation!)
     f.settleGraph('qualified'); await f.service.preparation('job-one')
@@ -154,6 +162,7 @@ for (const gap of ['ordinary-unknown', 'malformed-marker', 'original-claim'] as 
   test(`the controller ACK view never silently omits ${gap} history`, async () => {
     const g = await replacedGraphFixture(), {f, host} = g
     try {
+      leaveOnlyCurrentHostAvailable(f, host.hostId)
       await f.service.preparation('job-one')
       const history = f.row.fleetCandidatePreparations![0]!
       if (gap === 'ordinary-unknown') delete history.coordinatorSupersession

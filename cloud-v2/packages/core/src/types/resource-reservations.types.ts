@@ -97,7 +97,7 @@ export const exclusiveHostReservationSchema = z.object({kind: z.literal('exclusi
 }).strict().refine(value => (Boolean(value.laneId) || Boolean(value.resourceCheck && !value.prerequisite)) && (!value.resourceCheck || !value.origin && value.owner.kind === 'boundary-cleanup' &&
   value.resourceCheck.resourceId === value.resourceId && value.authorityHostId === value.borrowerHostId) && (!value.prerequisite || !value.origin && value.owner.kind === 'boundary-cleanup' &&
   (value.prerequisite.kind === 'resource-readiness' ? !!value.resourceCheck && value.prerequisite.resources.some(member =>
-    member.id === value.resourceId && member.authorityHostId === value.authorityHostId && member.subjectGeneration === value.resourceCheck!.subjectGeneration &&
+    member.id === value.resourceId && member.authorityHostId === value.authorityHostId &&
     member.contractVersion === value.resourceCheck!.contractVersion) && sameBinding(value.prerequisite.binding, value.resourceCheck.binding) &&
     value.resourceCheck.controller.incarnation === value.controllerIncarnation && value.resourceCheck.controller.generation === value.controllerGeneration &&
     value.operationId === `graph-prerequisite:${value.prerequisite.targetInputSha256}` : value.prerequisite.resourceId === value.resourceId) &&

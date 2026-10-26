@@ -29,7 +29,7 @@ export function graphCandidateClaimMatches(pending: FleetCandidatePreparation, v
     isDeepStrictEqual(claim.prerequisite.binding, pending.target.acceptedBinding) &&
     isDeepStrictEqual(claim.prerequisite.target, pending.backendTarget) &&
     isDeepStrictEqual(claim.prerequisite.resources, purpose.resources) &&
-    claim.resourceCheck.resourceId === member.id && claim.resourceCheck.subjectGeneration === member.subjectGeneration &&
+    claim.resourceCheck.resourceId === member.id &&
     claim.resourceCheck.contractVersion === member.contractVersion && claim.resourceCheck.deadlineAt === Date.parse(pending.target.deadline) &&
     isDeepStrictEqual(claim.resourceCheck.binding, pending.target.acceptedBinding) &&
     isDeepStrictEqual(claim.resourceCheck.controller, pending.candidate.controller))
@@ -199,9 +199,20 @@ export function qualifiedGraphCandidate(row: StoredRoutineJob, host: TestHostSta
   return pending
 }
 
-/** Returned positives may be remeasured; a fenced obsolete selection may use a new controller. */
+/** Returned positives and genuinely closed unclaimed graphs may be remeasured;
+ * a fenced obsolete selection may use a new controller. */
 export function candidateRenewal(row: StoredRoutineJob, hostId: string, laneId: string) {
-  const previous = row.fleetCandidatePreparations?.at(-1), selected = row.fleetCandidateSelection
+  // Another lane's later closure must not erase this lane's renewal lineage.
+  // Inspect its latest attempt first; never skip newer custody for an older pass.
+  const previous = row.fleetCandidatePreparations?.filter(value => value.hostId === hostId && value.laneId === laneId).at(-1),
+    selected = row.fleetCandidateSelection
+  if (previous?.target.purpose?.kind === 'resource-readiness' && previous.hostId === hostId && previous.laneId === laneId &&
+    previous.settlement?.outcome === 'unknown' && previous.settlement.hostWorkSettled && previous.settlement.graphChecks?.length === 0 &&
+    previous.settlement.targetInputSha256 === previous.targetInputSha256 && isDeepStrictEqual(previous.settlement.candidate, previous.candidate) &&
+    !row.fleetCandidatePreparation && !selected && !row.dispatchIntent && !row.fleetExclusiveExecutionBinding &&
+    !previous.resourceClaims && !previous.resourceReturns &&
+    !previous.provisionalReturn && !previous.resourceReturnContinuation && graphCandidateHistoricalSettlement(previous) &&
+    candidateRequestCurrent({...row, fleetCandidatePreparation: previous}, previous, Date.parse(previous.candidate.requestedAt))) return previous
   if (previous?.coordinatorSupersession && fleetCandidatePreparationSchema.safeParse(previous).success) {
     const {coordinatorSupersession, ...original} = previous
     return previous.hostId === hostId && previous.laneId === laneId && !row.fleetCandidatePreparation && !selected &&

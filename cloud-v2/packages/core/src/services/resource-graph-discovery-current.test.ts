@@ -45,6 +45,39 @@ test('unknown baseline age remains eligible for its original current graph check
   expect((await f.service.qualificationTargets('air1')).map(target => target.inputSha256)).toEqual([pending.targetInputSha256])
 })
 
+test('current passed physical checks preserve a target with older cached resource generations', async () => {
+  const f = routingGraphFixture(); await f.service.preparation('job-one')
+  const pending = structuredClone(f.row.fleetCandidatePreparation!), host = f.hosts[0]!
+  host.sequence++
+  for (const subject of host.resourceLifecycle!.subjects) {
+    subject.generation += 3; subject.status = 'idle'; subject.owner = null
+    subject.idle.outcome = 'passed'; subject.idle.checkedAt = host.observedAt
+    subject.idle.acceptedCheck = {operationId: `manual-check:${subject.subject.id}`, subjectGeneration: subject.generation,
+      resultSha256: 'a'.repeat(64), acceptedAt: host.observedAt}
+  }
+  const hosts = (f.service as unknown as {hosts: {get(id: string): Promise<ReceivedTestHostState | null>}}).hosts
+  hosts.get = async id => id === host.hostId ? structuredClone(host) : null
+  const purpose = pending.target.purpose!
+  expect(purpose.kind === 'resource-readiness' && purpose.resources.every(member =>
+    host.resourceLifecycle!.subjects.find(subject => subject.subject.id === member.id)!.generation > member.subjectGeneration)).toBe(true)
+  expect((await f.service.qualificationTargets('air1')).map(target => target.inputSha256)).toEqual([pending.targetInputSha256])
+  expect(f.row.fleetCandidatePreparation).toEqual(pending)
+  expect(f.bindWrites).toBe(0)
+})
+
+test('a final passed physical check advancing resource generations preserves discovery', async () => {
+  const {f, pending} = await fixture(host => {
+    for (const subject of host.resourceLifecycle!.subjects) {
+      subject.generation += 3; subject.status = 'idle'; subject.owner = null
+      subject.idle.outcome = 'passed'; subject.idle.checkedAt = host.observedAt
+      subject.idle.acceptedCheck = {operationId: `manual-check:${subject.subject.id}`, subjectGeneration: subject.generation,
+        resultSha256: 'a'.repeat(64), acceptedAt: host.observedAt}
+    }
+  })
+  expect((await f.service.qualificationTargets('air1')).map(target => target.inputSha256)).toEqual([pending.targetInputSha256])
+  expect(f.row.fleetCandidatePreparation).toEqual(pending)
+})
+
 const withdrawals: [string, (host: ReceivedTestHostState) => void][] = [
   ['controller incarnation', host => {host.incarnation = 'new-controller'}],
   ['controller generation', host => {host.incarnationGeneration++}],
@@ -54,7 +87,6 @@ const withdrawals: [string, (host: ReceivedTestHostState) => void][] = [
   ['lane mode', host => {host.lanes[0]!.dispatchMode = 'paused'}],
   ['lane state', host => {host.lanes[0]!.state = 'out-of-service'}],
   ['lane owner', host => {host.lanes[0]!.activity = {generation: 2, owner: {id: 'foreign-owner', kind: 'boundary-cleanup'}}}],
-  ['resource generation', host => {host.resourceLifecycle!.subjects[0]!.generation++}],
   ['resource owner', host => {host.resourceLifecycle!.subjects[0]!.owner = {id: 'foreign-owner', kind: 'boundary-cleanup', generation: 2, hostId: host.hostId}}],
   ['resource currentness', host => {host.resourceLifecycle!.subjects[0]!.current = false}],
   ['resource authority', host => {host.resourceLifecycle!.subjects[0]!.subject.authorityHostId = 'another-host'}],

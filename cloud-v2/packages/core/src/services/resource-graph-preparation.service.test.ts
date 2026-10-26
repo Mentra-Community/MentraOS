@@ -213,7 +213,7 @@ test('a backend refusal still retains its original candidate when normal resourc
   expect(f.row.fleetCandidatePreparation).toEqual(pending); expect(f.bindWrites).toBe(0)
 })
 
-test('a source-only preparation that never requested resources closes UNKNOWN and routes the same job to an alternate', async () => {
+test('a source-only preparation that never requested resources closes UNKNOWN and tries an untried eligible alternate', async () => {
   const f = routingGraphFixture(), original = structuredClone({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline,
     input: f.row.fleetInputSha256})
   await f.service.preparation('job-one'); f.settleNeverRequested()
