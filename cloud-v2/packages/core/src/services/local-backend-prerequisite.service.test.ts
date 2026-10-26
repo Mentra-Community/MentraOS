@@ -203,13 +203,65 @@ test('production local acquire uses existing host CAS and refuses a Core request
   } finally {get.mockRestore(); replace.mockRestore()}
 })
 
-test('reporter advancement during local lookup denies native authority without discarding historical intent', async () => {
-  const f = fixture(), service = new RoutineJobService(f.rows, undefined, undefined,
+test('heartbeat during local lookup preserves the exact eligible target without granting native authority', async () => {
+  const f = fixture(), original = structuredClone(f.observed), service = new RoutineJobService(f.rows, undefined, undefined,
     {async getExact() {f.observed.sequence++; return f.enrolled}}, {async get() {return structuredClone(f.observed)}},
     undefined, undefined, () => now, null, f.candidates, async () => {})
-  expect(await service.qualificationTargets('mini')).toEqual([])
+  expect((await service.qualificationTargets('mini')).map(target => target.inputSha256)).toEqual([f.target.inputSha256])
+  expect({...f.observed, sequence: original.sequence}).toEqual(original)
   expect(f.observed.resourceReservations!.localPrerequisites).toEqual([f.target])
 })
+
+test('heartbeat during the final host read preserves the same local target', async () => {
+  const f = fixture(), original = structuredClone(f.observed)
+  let hostReads = 0
+  const service = new RoutineJobService(f.rows, undefined, undefined,
+    {async getExact() {return structuredClone(f.enrolled)}}, {async get() {
+      if (++hostReads === 3) f.observed.sequence!++
+      return structuredClone(f.observed)
+    }}, undefined, undefined, () => now, null, f.candidates, async () => {})
+  expect((await service.qualificationTargets('mini')).map(target => target.inputSha256)).toEqual([f.target.inputSha256])
+  expect({...f.observed, sequence: original.sequence}).toEqual(original)
+})
+
+for (const boundary of ['definition-read', 'final-host-read'] as const)
+  test.each(['controller', 'controller-generation', 'binding', 'withdrawn-target', 'substituted-target', 'phone-owner', 'lane-owner',
+    'phone-identity', 'phone-capability', 'phone-currentness', 'resource-dependency', 'recorder-capacity', 'stale-host', 'expired-target'] as const)(
+    `local eligibility rejects %s changed at ${boundary} despite a heartbeat`, async changed => {
+      const f = fixture()
+      let hostReads = 0, clock = now
+      const mutate = () => {
+        f.observed.sequence!++
+        if (changed === 'controller') f.observed.incarnation = 'replacement'
+        if (changed === 'controller-generation') f.observed.incarnationGeneration!++
+        if (changed === 'binding') f.observed.frameworkBinding!.configurationSha256 = 'c'.repeat(64)
+        if (changed === 'withdrawn-target') f.observed.resourceReservations!.localPrerequisites = []
+        if (changed === 'substituted-target') {
+          const replacement = structuredClone(f.target)
+          replacement.local!.operationId = 'different-original'
+          const {inputSha256: _, ...body} = replacement
+          replacement.inputSha256 = requestInputDigest(body)
+          f.observed.resourceReservations!.localPrerequisites = [replacement]
+        }
+        if (changed === 'phone-owner') f.observed.resourceLifecycle!.subjects[0]!.owner =
+          {id: 'foreign', kind: 'boundary-cleanup', generation: 3, hostId: 'mini', laneId: 'android'}
+        if (changed === 'lane-owner') f.observed.lanes[0]!.activity =
+          {generation: 3, owner: {id: 'foreign', kind: 'boundary-cleanup'}}
+        if (changed === 'phone-identity') f.observed.lanes[0]!.resources[0]!.id = 'different-phone'
+        if (changed === 'phone-capability') f.observed.lanes[0]!.resources[0]!.capabilities = []
+        if (changed === 'phone-currentness') f.observed.resourceLifecycle!.subjects[0]!.current = false
+        if (changed === 'resource-dependency') f.observed.lanes[0]!.resources[0]!.exclusiveDependencies =
+          [{resourceId: 'foreign-resource', authorityHostId: 'mini', capability: 'original-work-returned'}]
+        if (changed === 'recorder-capacity') f.observed.lanes[0]!.resources[2]!.storage!.availableBytes = 0
+        if (changed === 'stale-host') f.observed.receivedAt = new Date(now - 120_001).toISOString()
+        if (changed === 'expired-target') clock = expiry
+      }
+      const service = new RoutineJobService(f.rows, undefined, undefined,
+        {async getExact() {if (boundary === 'definition-read') mutate(); return structuredClone(f.enrolled)}},
+        {async get() {if (++hostReads === 3 && boundary === 'final-host-read') mutate(); return structuredClone(f.observed)}},
+        undefined, undefined, () => clock, null, f.candidates, async () => {})
+      expect(await service.qualificationTargets('mini')).toEqual([])
+    })
 
 test('known local withdrawal preserves same-host Mac qualification while outage and unknown errors remain visible', async () => {
   for (const failure of [new TestRequestConflict('Enrollment removed'), new TestRunError(409, 'Candidate cancelled'),

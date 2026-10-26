@@ -1149,6 +1149,36 @@ export class RoutineJobService {
     }
     return targets;
   }
+  /** Revalidate local eligibility after a heartbeat; the acquisition CAS owns sequence fencing. */
+  private localBackendQualificationHostMatches(host: ReceivedTestHostState, target: RoutineQualificationTarget,
+    owned: OwnedRoutineQualification | undefined, now: number) {
+    const local = target.local, input = target.proposedInput, binding = host.frameworkBinding,
+      lane = host.lanes.find(value => value.id === target.laneId),
+      subject = host.resourceLifecycle?.subjects.find(value => value.subject.id === target.purpose?.resourceId),
+      reported = (host.resourceReservations?.localPrerequisites ?? []).map(value => routineQualificationTargetSchema.safeParse(value))
+        .flatMap(value => value.success && value.data.local ? [value.data] : []).filter(value => value.laneId === target.laneId &&
+        (!owned || value.jobId === owned.jobId && value.inputSha256 === owned.inputSha256));
+    if (!local || !input || target.purpose?.kind !== 'backend-connectivity' || !binding ||
+      binding.routineApiVersion < BACKEND_CONNECTIVITY_ROUTINE_API_VERSION || target.hostId !== host.hostId ||
+      requestInputDigest(target.acceptedBinding) !== requestInputDigest(binding) ||
+      host.incarnation !== local.controller.incarnation || host.incarnationGeneration !== local.controller.generation ||
+      !Number.isFinite(Date.parse(host.receivedAt)) || Date.parse(host.receivedAt) > now || now - Date.parse(host.receivedAt) > 120_000 ||
+      !Number.isFinite(Date.parse(host.observedAt)) || Date.parse(host.observedAt) > now || Date.parse(local.requestedAt) > Date.parse(host.observedAt) ||
+      Date.parse(local.requestedAt) > now || now >= local.admissionExpiresAt ||
+      reported.length !== 1 || requestInputDigest(reported[0]) !== requestInputDigest(target) ||
+      (input.minimumFrameworkVersion ?? 0) > binding.version || input.routineSource.minimumRoutineApiVersion > binding.routineApiVersion ||
+      lane?.state !== 'idle' || lane.activity ||
+      !lane.resources.some(value => value.id === target.purpose!.resourceId && value.kind === 'phone' && value.capabilities?.includes('backend-connectivity')) ||
+      !subject?.current || subject.subject.authorityHostId !== host.hostId ||
+      (owned ? subject.status !== 'checking' || subject.owner?.kind !== 'boundary-cleanup' || subject.owner.id !== owned.ownerId ||
+        subject.owner.generation !== owned.generation || subject.owner.laneId !== lane.id : Boolean(subject.owner)) ||
+      !compatibleStructuralRoutineLane(target.requirements, lane, routineLaneContext(host, target.selection.build, now), now) ||
+      !input.resources.some(ref => ref.kind === 'phone' && ref.id === target.purpose!.resourceId) ||
+      input.resources.length !== target.requirements.resources.length || target.requirements.resources.some(required =>
+        input.resources.filter(ref => ref.kind === required.kind && lane.resources.some(offered => offered.kind === ref.kind && offered.id === ref.id &&
+          requestInputDigest(offered.exclusiveDependencies ?? []) === requestInputDigest(ref.exclusiveDependencies ?? [])) && (!ref.laneId || ref.laneId === lane.id)).length !== 1)) return false;
+    return true;
+  }
   /** Local preparation is an authenticated immutable controller assertion, not a fabricated fleet preparing row. */
   private async localBackendQualificationTarget(host: ReceivedTestHostState,
     lane: RoutingTestHostState['lanes'][number], owned: OwnedRoutineQualification | undefined, queryDeadline: number) {
@@ -1157,21 +1187,10 @@ export class RoutineJobService {
       .flatMap(value => value.success && value.data.local ? [value.data] : [])
       .filter(value => value.laneId === lane.id && (!owned || value.jobId === owned.jobId && value.inputSha256 === owned.inputSha256));
     if (candidates.length !== 1) return undefined;
-    const target = candidates[0]!, local = target.local!, input = target.proposedInput!, binding = host.frameworkBinding,
-      subject = host.resourceLifecycle?.subjects.find(value => value.subject.id === target.purpose!.resourceId),
+    const target = candidates[0]!, local = target.local!, input = target.proposedInput!,
       {inputSha256: _, ...body} = target, now = this.now();
-    if (!binding || binding.routineApiVersion < BACKEND_CONNECTIVITY_ROUTINE_API_VERSION ||
-      target.hostId !== host.hostId || requestInputDigest(target.acceptedBinding) !== requestInputDigest(binding) ||
-      requestInputDigest(body) !== target.inputSha256 || requestInputDigest(input) !== local.inputSha256 ||
-      host.incarnation !== local.controller.incarnation || host.incarnationGeneration !== local.controller.generation ||
-      Date.parse(local.requestedAt) > now || Date.parse(local.requestedAt) > Date.parse(host.observedAt) ||
-      now >= local.admissionExpiresAt || now >= queryDeadline ||
-      (input.minimumFrameworkVersion ?? 0) > binding.version || input.routineSource.minimumRoutineApiVersion > binding.routineApiVersion || lane.state !== 'idle' ||
-      host.lanes.find(value => value.id === lane.id)?.activity ||
-      !lane.resources.some(value => value.id === target.purpose!.resourceId && value.kind === 'phone' && value.capabilities?.includes('backend-connectivity')) ||
-      !subject?.current || subject.subject.authorityHostId !== host.hostId ||
-      (owned ? subject.status !== 'checking' || subject.owner?.kind !== 'boundary-cleanup' || subject.owner.id !== owned.ownerId ||
-        subject.owner.generation !== owned.generation || subject.owner.laneId !== lane.id : Boolean(subject.owner))) return undefined;
+    if (requestInputDigest(body) !== target.inputSha256 || requestInputDigest(input) !== local.inputSha256 ||
+      now >= queryDeadline || !this.localBackendQualificationHostMatches(host, target, owned, now)) return undefined;
     // Every existing request identity, including a terminal tombstone, excludes pre-admission local qualification.
     if (await this.rows.get(target.jobId, Math.max(1, queryDeadline - this.now()))) return undefined;
     await this.localEnrollment(input);
@@ -1185,26 +1204,16 @@ export class RoutineJobService {
       requestInputDigest(definition.definition.execution?.policy ?? null) !== requestInputDigest(input.policy ?? null) ||
       requestInputDigest(routinePortableRequirements(definition)) !== requestInputDigest(target.requirements) ||
       requestInputDigest(frameworkExecutableBuild(target.selection.build, input.glassesModel)) !== requestInputDigest(input.build) ||
-      input.minimumFrameworkVersion !== target.selection.minimumFrameworkVersion ||
-      !compatibleStructuralRoutineLane(target.requirements, lane, routineLaneContext(host, target.selection.build, now), now) ||
-      !input.resources.some(ref => ref.kind === 'phone' && ref.id === target.purpose!.resourceId) ||
-      input.resources.length !== target.requirements.resources.length || target.requirements.resources.some(required =>
-        input.resources.filter(ref => ref.kind === required.kind && lane.resources.some(offered => offered.kind === ref.kind && offered.id === ref.id &&
-          requestInputDigest(offered.exclusiveDependencies ?? []) === requestInputDigest(ref.exclusiveDependencies ?? [])) && (!ref.laneId || ref.laneId === lane.id)).length !== 1)) return undefined;
+      input.minimumFrameworkVersion !== target.selection.minimumFrameworkVersion) return undefined;
     // Enrollment/work may change during definition and host reads. Recheck before exposing any reader authority.
     await this.localEnrollment(input);
     if (local.authority.kind === 'candidate') await this.localCandidates.authorize(local.authority.verification, host.hostId,
       {...input, requestId: target.jobId, admissionExpiresAt: local.admissionExpiresAt});
     const current = await this.hosts.get(host.hostId);
-    if (!current || !current.frameworkBinding || current.incarnation !== host.incarnation || current.incarnationGeneration !== host.incarnationGeneration ||
-      current.sequence !== host.sequence || requestInputDigest(current.frameworkBinding) !== requestInputDigest(binding) ||
-      requestInputDigest(current.resourceReservations?.localPrerequisites ?? []) !== requestInputDigest(values) ||
-      Date.parse(current.receivedAt) > this.now() || this.now() - Date.parse(current.receivedAt) > 120_000 ||
-      this.now() >= local.admissionExpiresAt || this.now() >= queryDeadline) return undefined;
+    if (!current || this.now() >= queryDeadline || !this.localBackendQualificationHostMatches(current, target, owned, this.now())) return undefined;
     if (await this.rows.get(target.jobId, Math.max(1, queryDeadline - this.now()))) return undefined;
     const finalHost = await this.hosts.get(host.hostId);
-    if (!finalHost || finalHost.sequence !== host.sequence || finalHost.incarnation !== host.incarnation ||
-      finalHost.incarnationGeneration !== host.incarnationGeneration || this.now() >= local.admissionExpiresAt || this.now() >= queryDeadline) return undefined;
+    if (!finalHost || this.now() >= queryDeadline || !this.localBackendQualificationHostMatches(finalHost, target, owned, this.now())) return undefined;
     return target;
   }
   private async candidateBackendQualificationTarget(host: ReceivedTestHostState, lane: RoutingTestHostState['lanes'][number],
