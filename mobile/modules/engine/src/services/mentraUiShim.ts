@@ -12,9 +12,10 @@
  *     WebView is the short-lived side and shouldn't drop user input).
  *   - Installs `window.__mentra.recv(envelope)` for the host to push
  *     background → WebView messages via `webview.injectJavaScript(...)`.
- *   - Posts `{type:'page_loaded'}` on the window `load` event, so the host
- *     can tell a page that never called `mentra.ready()` from a page the
- *     shim never reached.
+ *   - Posts `{type:'page_loaded'}` on the window `load` event when it was
+ *     installed before any of the page's scripts, so the host can tell a
+ *     page that never called `mentra.ready()` from one the shim reached
+ *     too late.
  *   - Sends `__heartbeat__` every 5s; host considers the WebView gone
  *     after 15s of silence.
  *   - Maintains monotonic seq numbers; the host's per-WebView dedup window
@@ -369,15 +370,19 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
     }
   }
 
-  // Tell the host the page finished loading with this bridge installed. If
-  // ready() still hasn't come, the page never called it: reloading cannot fix
-  // that, so the host reports it instead of retrying.
+  // Tell the host the page finished loading with this bridge in place before
+  // any of its scripts ran. If ready() still hasn't come, the page never
+  // called it: reloading cannot fix that, so the host reports it instead of
+  // retrying. A shim that arrives after the page's scripts (Android's
+  // onPageStarted fallback losing its race) stays silent: the bundle may
+  // already have failed without window.mentra, and a reload can recover it.
+  var doc = window.document;
+  var installedBeforePageScripts = !!(doc && doc.scripts && doc.scripts.length === 0);
   function announcePageLoaded() {
     postEnvelope({ type: 'page_loaded' });
   }
-  if (typeof window.addEventListener === 'function') {
-    if (window.document && window.document.readyState === 'complete') announcePageLoaded();
-    else window.addEventListener('load', announcePageLoaded, { once: true });
+  if (installedBeforePageScripts && typeof window.addEventListener === 'function') {
+    window.addEventListener('load', announcePageLoaded, { once: true });
   }
 
   window.mentra = {

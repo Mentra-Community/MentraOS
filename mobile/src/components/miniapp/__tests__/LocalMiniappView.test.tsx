@@ -356,6 +356,17 @@ describe("the ready handshake", () => {
     expect(devServerBridge.forwardLog).not.toHaveBeenCalled()
   })
 
+  it("opens a page on the reload after its shim arrived too late to announce page_loaded", async () => {
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    load(view)
+    act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS))
+    load(view, {type: "page_loaded"}, {type: "ready"})
+    act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS * 2))
+    expect(splashError(view)).toBeUndefined()
+    expect(devServerBridge.forwardLog).not.toHaveBeenCalled()
+  })
+
   it("fails a reloaded page that reached the shim but never called mentra.ready()", async () => {
     const view = render(<LocalMiniappView {...props} />)
     await finishLaunch()

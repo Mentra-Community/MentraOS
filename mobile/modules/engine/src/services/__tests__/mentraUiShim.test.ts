@@ -197,21 +197,34 @@ describe("buildMentraUiShim", () => {
     expect(b).toEqual(["beta"])
   })
 
-  test("posts 'page_loaded' when the page's load event fires", () => {
-    const listeners: Record<string, () => void> = {}
-    const g = evalShim("com.test", {
-      document: {readyState: "loading"},
-      addEventListener: (type: string, cb: () => void) => {
-        listeners[type] = cb
+  /** A page whose `load` listeners the test fires, with `scripts` already parsed. */
+  function page(scripts: unknown[], readyState = "loading") {
+    const listeners: (() => void)[] = []
+    return {
+      fireLoad: () => listeners.forEach((cb) => cb()),
+      globals: {
+        document: {readyState, scripts},
+        addEventListener: (type: string, cb: () => void) => {
+          if (type === "load") listeners.push(cb)
+        },
       },
-    })
+    }
+  }
+
+  test("posts 'page_loaded' on load when installed before the page's scripts", () => {
+    const {fireLoad, globals} = page([])
+    const g = evalShim("com.test", globals)
     expect(g.outboundQueue).toHaveLength(0)
-    listeners.load!()
+    fireLoad()
     expect(g.outboundQueue.map((s) => JSON.parse(s))).toEqual([{type: "page_loaded"}])
   })
 
-  test("posts 'page_loaded' at once when the page had already loaded", () => {
-    const g = evalShim("com.test", {document: {readyState: "complete"}, addEventListener: () => {}})
-    expect(g.outboundQueue.map((s) => JSON.parse(s))).toEqual([{type: "page_loaded"}])
+  test("stays silent when installed after the page's scripts, so the host retries", () => {
+    for (const readyState of ["loading", "interactive", "complete"]) {
+      const {fireLoad, globals} = page([{src: "ui.js"}], readyState)
+      const g = evalShim("com.test", globals)
+      fireLoad()
+      expect(g.outboundQueue).toHaveLength(0)
+    }
   })
 })

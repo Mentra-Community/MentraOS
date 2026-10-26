@@ -52,7 +52,7 @@ import {getWebViewLoadErrorDiagnostics} from "./webViewLoadErrorDiagnostics"
  * Compositor only arms its edge-swipe once the WebView is at page 0.
  */
 
-// Ready-handshake tuning (see readyTimerRef). Reloads only retry a page the shim never reached.
+// Ready-handshake tuning (see readyTimerRef). Reloads only retry a page the shim reached late or not at all.
 const READY_TIMEOUT_MS = 5000
 const MAX_LOAD_ATTEMPTS = 10
 const UI_RESYNC_INTERVAL_MS = 10_000
@@ -144,9 +144,10 @@ function LocalMiniappView({
   // onLoadEnd only means the WebView painted — not that the miniapp UI JS
   // mounted and called mentra.ready(). After each load we arm a timer; if no
   // `ready` envelope arrives within READY_TIMEOUT_MS, a page that announced
-  // `page_loaded` never called mentra.ready() and fails at once. Any other
-  // page lost the shim injection race: reload it, up to MAX_LOAD_ATTEMPTS
-  // total, then give up with an error.
+  // `page_loaded` (the shim only does so when it ran before the page's
+  // scripts) never called mentra.ready() and fails at once. Any other page
+  // lost the shim injection race: reload it, up to MAX_LOAD_ATTEMPTS total,
+  // then give up with an error.
   //
   //   connected     — state; drives the splash (isLoaded) and re-renders.
   //   connectedRef  — ref mirror read inside handleLoadEnd and the ready
@@ -664,8 +665,8 @@ function LocalMiniappView({
   // onLoadEnd means the WebView painted, not that the miniapp is ready. Arm a
   // timer; if the `ready` envelope hasn't arrived by READY_TIMEOUT_MS and the
   // shim announced `page_loaded`, the page never called mentra.ready() and a
-  // reload would only repeat that. Otherwise the shim never ran: count a
-  // failed attempt and reload, up to MAX_LOAD_ATTEMPTS, then error.
+  // reload would only repeat that. Otherwise the shim ran late or not at all:
+  // count a failed attempt and reload, up to MAX_LOAD_ATTEMPTS, then error.
   //
   // The attempt counter is bumped only when a timer actually fires without
   // `ready` — NOT on every onLoadEnd. A single page load can fire onLoadEnd
