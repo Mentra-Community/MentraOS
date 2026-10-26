@@ -964,3 +964,51 @@ for(const gap of ['none','reappeared-original-claim','changed-input','local-cons
   expect(hostWrites).toBe(2);expect(host.resourceReservations).toEqual(retained);expect(checkClaims).toHaveLength(1);expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations);expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);expect(f.row.fleetBinding).toBeUndefined();
  }finally{routineJobRepository.get=saved.get;resourceReservationRepository.get=saved.read;resourceReservationRepository.replace=saved.replace;TestRequestModel.collection.findOneAndUpdate=saved.write}
 })
+
+for (const kind of ['phone', 'graph'] as const) for (const availability of ['pending', 'missing-host'] as const)
+test(`pending ${kind} candidate ${availability} returns its wait without unrelated recorder queries`, async () => {
+ const f = kind === 'graph' ? routingGraphFixture() : fixture();
+ await f.service.preparation('job-one');
+ const original = structuredClone(f.row);
+ expect(original.fleetCandidatePreparation).toBeDefined();
+ if (availability === 'missing-host') f.hosts.splice(0, 1);
+ for (const host of f.hosts) host.authorityReservations = [{id: 'd0af6e63-513c-43d5-9392-ff2e672bab86',
+   requestId: 'unrelated-job', fleetInputSha256: hash('e'), hostId: host.hostId, laneId: 'android',
+   poolId: `${host.hostId}:disk`, minimumAvailableBytes: 1024, reservedAt: new Date(f.now).toISOString()}];
+ let queries = 0;
+ f.rows.reconcileRecorderHost = async () => {queries++; throw Error('Unrelated recorder query timed out');};
+ const phases: string[] = [];
+ const waiting = await f.service.preparation('job-one', phase => phases.push(phase));
+ expect(queries).toBe(0);
+ expect(phases).toContain('candidate-host-read');
+ expect(phases).toContain('candidate-return-reconciliation');
+ expect(phases).not.toContain('recorder-return-reconciliation');
+ expect(waiting.waitingReason).toContain(kind === 'graph' ? 'complete required resource graph' : 'selected phone');
+ expect((waiting as {resourceTarget?: unknown}).resourceTarget).toBeUndefined();
+ expect(f.row).toEqual(original);
+ expect(f.bindWrites).toBe(0);
+});
+
+for (const kind of ['phone', 'graph'] as const)
+test(`settled ${kind} candidate still reconciles recorder custody before allocation`, async () => {
+ const graph = kind === 'graph' ? routingGraphFixture() : undefined, f = graph ?? fixture();
+ await f.service.preparation('job-one');
+ const original = structuredClone(f.row);
+ if (graph) graph.settleGraph('qualified'); else f.settle('qualified');
+ for (const host of f.hosts) host.authorityReservations = [{id: 'd0af6e63-513c-43d5-9392-ff2e672bab86',
+   requestId: 'unrelated-job', fleetInputSha256: hash('e'), hostId: host.hostId, laneId: 'android',
+   poolId: `${host.hostId}:disk`, minimumAvailableBytes: 1024, reservedAt: new Date(f.now).toISOString()}];
+ let queries = 0;
+ f.rows.reconcileRecorderHost = async (hostId, _now, _phase, onReturned) => {queries++;
+   expect(f.row.fleetCandidatePreparation).toBeUndefined(); expect(f.bindWrites).toBe(0);
+   f.hosts.find(host => host.hostId === hostId)!.authorityReservations = []; onReturned?.(); return true;};
+ await f.service.preparation('job-one');
+ expect(queries).toBe(2);
+ expect(f.row.fleetCandidatePreparation).toBeUndefined();
+ expect(f.row.fleetCandidatePreparations).toHaveLength(1);
+ expect(f.bindWrites).toBe(1);
+ expect(f.row.fleetSelection).toEqual(original.fleetSelection);
+ expect(f.row.fleetInputSha256).toBe(original.fleetInputSha256);
+ expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);
+ expect(f.row.fleetBinding).toBeUndefined();
+});

@@ -1649,6 +1649,10 @@ export class RoutineJobService {
     row = await this.reconcileCandidatePreparation(row, candidateHost, onPhase);
     if (row.state !== 'awaiting-runner' || row.fleetCancellation || row.fleetDeadline.getTime() <= this.now())
       return {...routineJobRouting(recorderCapacityRequirements(row.fleetPreparation!), hosts, this.now(), row.fleetTarget, row.fleetSelection.build, true, original), waitingReason: RESOURCE_ADMISSION_WAIT};
+    if (row.fleetCandidatePreparation) return {...routineJobRouting(recorderCapacityRequirements(row.fleetPreparation!), hosts, this.now(), row.fleetTarget, row.fleetSelection.build, true, original),
+      waitingReason: row.fleetCandidatePreparation.target.purpose?.kind === 'resource-readiness'
+        ? 'Checking this candidate’s complete required resource graph and waiting for its original return'
+        : 'Checking the selected phone and waiting for its complete return'};
     if (this.rows.reconcileRecorderHost) {
       let returned = false;
       for (const [hostIndex, host] of hosts.entries()) {
@@ -1662,10 +1666,6 @@ export class RoutineJobService {
         hosts = await this.hosts.list?.() ?? [];
       }
     }
-    if (row.fleetCandidatePreparation) return {...routineJobRouting(recorderCapacityRequirements(row.fleetPreparation!), hosts, this.now(), row.fleetTarget, row.fleetSelection.build, true, original),
-      waitingReason: row.fleetCandidatePreparation.target.purpose?.kind === 'resource-readiness'
-        ? 'Checking this candidate’s complete required resource graph and waiting for its original return'
-        : 'Checking the selected phone and waiting for its complete return'};
     const requirements = recorderCapacityRequirements(row.fleetPreparation!);
     // Provisional physical custody is recovered independently of network-health requirements.
     if (row.fleetSelection.platform === 'android') onPhase?.('original-recorder-claims-read');
