@@ -1,4 +1,8 @@
 name: Release Mentra Developer Tools
+run-name: >-
+  ${{ github.event_name == 'repository_dispatch'
+  && format('Release Mentra Developer Tools ({0}), request {1}', github.event.client_payload.branch, github.event.client_payload.request)
+  || 'Release Mentra Developer Tools' }}
 
 # Publishes developer tooling that is intentionally outside the coordinated
 # Mentra product family: @mentra/miniapp-cli, create-mentra-miniapp,
@@ -11,8 +15,11 @@ name: Release Mentra Developer Tools
 #   dev      -> X.Y.Z-dev.N   (dev tag)
 #   staging  -> X.Y.Z-beta.N  (beta tag)
 #   main     -> X.Y.Z         (latest tag)
-# The operator dispatches this workflow on the selected branch after the
-# coordinated @mentra/miniapp version for that channel is publicly readable.
+# It runs from a manual dispatch on the selected branch, or from a
+# repository_dispatch `release-developer-tools` whose client_payload names the
+# branch and the commit to publish (sent when a version changes). Either way,
+# start it after the coordinated @mentra/miniapp version for that channel is
+# publicly readable.
 # A package publishes when its derived version is absent from npm (E404-strict),
 # so retries are no-ops. First-ever publishes additionally require
 # force_release=true.
@@ -44,13 +51,21 @@ on:
         required: true
         default: false
         type: boolean
+  repository_dispatch:
+    types: [release-developer-tools]
 
 concurrency:
-  group: developer-tools-release-${{ github.ref }}
+  group: developer-tools-release-${{ github.event.client_payload.branch || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
   contents: read
+
+# The branch whose channel publishes, and the commit to check out: the
+# dispatch's, else this run's. The scripts read MENTRA_RELEASE_BRANCH.
+env:
+  MENTRA_RELEASE_BRANCH: ${{ github.event.client_payload.branch || github.ref_name }}
+  RELEASE_REF: ${{ github.event.client_payload.commit || github.sha }}
 
 jobs:
   detect:
@@ -69,6 +84,26 @@ jobs:
         uses: actions/checkout@v4
         # Depth 1 is fine: the decision reads the working tree + the npm
         # registry, never git history.
+        with:
+          ref: ${{ env.RELEASE_REF }}
+
+      - name: Check the release branch and commit
+        env:
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          PAYLOAD_BRANCH: ${{ github.event.client_payload.branch }}
+          PAYLOAD_COMMIT: ${{ github.event.client_payload.commit }}
+        run: |
+          [[ "$MENTRA_RELEASE_BRANCH" =~ ^(dev|staging|main)$ ]] ||
+            { echo "::error::No developer-tools channel for branch '$MENTRA_RELEASE_BRANCH'"; exit 1; }
+          # A dispatch names both, or nothing publishes: never the default branch's head.
+          if [[ "$EVENT" == repository_dispatch ]]; then
+            [[ -n "$PAYLOAD_BRANCH" && "$PAYLOAD_COMMIT" =~ ^[0-9a-f]{40}$ ]] ||
+              { echo "::error::A release-developer-tools dispatch needs client_payload.branch and a full client_payload.commit"; exit 1; }
+            status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$PAYLOAD_COMMIT...$PAYLOAD_BRANCH" --jq .status)
+            [[ "$status" == ahead || "$status" == identical ]] ||
+              { echo "::error::$PAYLOAD_COMMIT is not on $PAYLOAD_BRANCH ($status)"; exit 1; }
+          fi
 
       - name: Decide developer-tool releases for this channel
         id: info
@@ -101,6 +136,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -120,7 +157,7 @@ jobs:
         # doesn't pick up whatever npm shipped this morning.
         run: |
           npm install -g npm@11
-          if [[ "${{ github.ref_name }}" != dev ]]; then
+          if [[ "$MENTRA_RELEASE_BRANCH" != dev ]]; then
             npm stage --help >/dev/null 2>&1 || { echo "::error::this npm ($(npm --version)) lacks 'npm stage' — staged publishing needs >=11.15.0."; exit 1; }
           fi
 
@@ -159,7 +196,7 @@ jobs:
         id: miniapp
         run: |
           set -euo pipefail
-          case "$GITHUB_REF_NAME" in
+          case "$MENTRA_RELEASE_BRANCH" in
             dev) tag=dev ;;
             staging) tag=beta ;;
             main) tag=latest ;;
@@ -227,12 +264,12 @@ jobs:
       # supervised force_release dispatches anyway). Everything else on
       # beta/latest goes through the staging queue below.
       - name: Publish to npm (dev channel / bootstrap)
-        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && (github.ref_name == 'dev' || steps.registry.outputs.package_exists != 'true') && (steps.registry.outputs.package_exists == 'true' || needs.detect.outputs.force_release == 'true')
+        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && (env.MENTRA_RELEASE_BRANCH == 'dev' || steps.registry.outputs.package_exists != 'true') && (steps.registry.outputs.package_exists == 'true' || needs.detect.outputs.force_release == 'true')
         working-directory: ${{ matrix.pkg.dir }}
         run: npm publish --tag "${{ matrix.pkg.tag }}" --access public
 
       - name: Stage for approval (beta/latest channels)
-        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && steps.registry.outputs.package_exists == 'true' && github.ref_name != 'dev'
+        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && steps.registry.outputs.package_exists == 'true' && env.MENTRA_RELEASE_BRANCH != 'dev'
         working-directory: ${{ matrix.pkg.dir }}
         # The tag is immutable once staged, so it must be right here. A staged
         # version is not live yet (npm view won't list it), so a re-merge before

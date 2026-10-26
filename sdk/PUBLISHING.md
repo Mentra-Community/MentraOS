@@ -25,8 +25,10 @@ selects its published channel:
 | `staging` | `0.2.0-beta.3`    | `beta`   |
 | `main`    | `0.2.0`           | `latest` |
 
-The workflow is manually dispatched on the selected branch after that channel's
-coordinated `@mentra/miniapp` version is publicly readable. This prevents the
+The workflow runs from a manual dispatch on the selected branch, or from a
+`release-developer-tools` repository dispatch naming the branch and commit (sent
+automatically when a tool's version changes), after that channel's coordinated
+`@mentra/miniapp` version is publicly readable. This prevents the
 scaffolder from racing the coordinated publisher and capturing a stale template
 pin. The workflow is registry-state driven and idempotent: it publishes only
 versions that are absent from npm, in dependency order. First-time package
