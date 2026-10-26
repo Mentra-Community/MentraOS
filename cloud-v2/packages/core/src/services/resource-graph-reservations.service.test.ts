@@ -179,6 +179,77 @@ function reportSuccessorSettlement(g: Awaited<ReturnType<typeof successorReturns
   return receipt
 }
 
+async function completedGraphReturns() {
+  const g = await successorReturns()
+  for (const returned of g.returns) await g.service.giveBack(returned, g.host.hostId)
+  reportSuccessorSettlement(g)
+  g.f.advance(400_000)
+  g.host.frameworkHistory!.at(-1)!.observedAt = g.host.observedAt
+  await g.f.service.preparation('job-one')
+  g.rows.candidateRequest = async (id, digest) => g.f.row.fleetCandidatePreparation?.hostId === id &&
+    g.f.row.fleetCandidatePreparation.targetInputSha256 === digest ? structuredClone(g.f.row) : null
+  g.rows.completedCandidateRequest = async (id, digest) => g.f.row.fleetCandidatePreparations?.some(value =>
+    value.hostId === id && value.targetInputSha256 === digest) ? structuredClone(g.f.row) : null
+  return g
+}
+
+test('a completed graph repeats only its saved return ACK after archival and later resource/controller reports', async () => {
+  const g = await completedGraphReturns()
+  try {
+    const before = structuredClone(g.f.row), writes = g.writes.length
+    for (const subject of g.host.resourceLifecycle!.subjects) subject.generation++
+    g.host.incarnation = 'later-accepted-controller'; g.host.incarnationGeneration!++; g.host.sequence = 1
+    const foreign = {...structuredClone(g.acquired.claims[0]!), id: '20000000-0000-4000-8000-000000000001',
+      inputSha256: 'c'.repeat(64), owner: {kind: 'boundary-cleanup' as const, id: 'unrelated-owner'}, prerequisite: undefined, resourceCheck: undefined}
+    g.host.authorityReservations = [foreign]
+    for (const returned of g.returns) {
+      const repeated = {...returned, controller: {incarnation: g.host.incarnation!, generation: g.host.incarnationGeneration!, sequence: g.host.sequence}}
+      expect(await g.service.giveBack(repeated, g.host.hostId)).toEqual({status: 'returned', claimId: returned.claimId})
+      g.host.sequence++
+      expect(await g.service.giveBack({...repeated, controller: {...repeated.controller, sequence: g.host.sequence}}, g.host.hostId))
+        .toEqual({status: 'returned', claimId: returned.claimId})
+    }
+    expect(g.f.row).toEqual(before); expect(g.writes).toHaveLength(writes)
+    expect(g.host.authorityReservations).toEqual([foreign])
+  } finally {g.close()}
+})
+
+test('a historical ACK preserves another current preparation without expanding current acquisition lookup', async () => {
+  const g = await completedGraphReturns()
+  try {
+    const other = structuredClone(g.pending)
+    other.candidate.attemptId = 'different-current-attempt'; other.targetInputSha256 = 'c'.repeat(64)
+    g.f.row.fleetCandidatePreparation = other
+    const before = structuredClone(g.f.row), writes = g.writes.length, returned = g.returns[0]!
+    expect(await g.rows.candidateRequest!(g.host.hostId, returned.inputSha256)).toBeNull()
+    expect(await g.service.giveBack({...returned, controller: {incarnation: g.host.incarnation!,
+      generation: g.host.incarnationGeneration!, sequence: g.host.sequence}}, g.host.hostId)).toEqual({status: 'returned', claimId: returned.claimId})
+    expect(g.f.row).toEqual(before); expect(g.writes).toHaveLength(writes)
+  } finally {g.close()}
+})
+
+test.each(['changed-proof', 'changed-owner', 'incomplete-graph', 'foreign-controller', 'foreign-generation', 'stale-sequence', 'live-original', 'duplicate-history',
+  'ambiguous-request', 'foreign-host'] as const)('completed graph ACK refuses %s without changing any custody', async changed => {
+  const g = await completedGraphReturns()
+  try {
+    const returned = {...structuredClone(g.returns[0]!), controller: {incarnation: g.host.incarnation!,
+      generation: g.host.incarnationGeneration!, sequence: g.host.sequence}}
+    if (changed === 'changed-proof') returned.release.releasedAt = new Date(g.f.now).toISOString()
+    if (changed === 'changed-owner') returned.originalOwner.id = 'foreign-original-owner'
+    if (changed === 'incomplete-graph') g.f.row.fleetCandidatePreparations![0]!.resourceReturns!.pop()
+    if (changed === 'foreign-controller') returned.controller.incarnation = 'foreign-controller'
+    if (changed === 'foreign-generation') returned.controller.generation++
+    if (changed === 'stale-sequence') returned.controller.sequence--
+    if (changed === 'live-original') g.host.authorityReservations = [structuredClone(g.acquired.claims[0]!)]
+    if (changed === 'duplicate-history') g.f.row.fleetCandidatePreparations!.push(structuredClone(g.f.row.fleetCandidatePreparations![0]!))
+    if (changed === 'ambiguous-request') g.rows.completedCandidateRequest = async () => null
+    if (changed === 'foreign-host') g.f.row.fleetCandidatePreparations![0]!.hostId = 'another-host'
+    const before = structuredClone(g.f.row), claims = structuredClone(g.host.authorityReservations), writes = g.writes.length
+    await expect(g.service.giveBack(returned, g.host.hostId)).rejects.toThrow()
+    expect(g.f.row).toEqual(before); expect(g.host.authorityReservations).toEqual(claims); expect(g.writes).toHaveLength(writes)
+  } finally {g.close()}
+})
+
 test.each(['heartbeat', 'restart-no-retry', 'restart-retry'] as const)('production UNKNOWN settlement completes after all ACKs and %s', async scenario => {
   const g = await successorReturns()
   try {

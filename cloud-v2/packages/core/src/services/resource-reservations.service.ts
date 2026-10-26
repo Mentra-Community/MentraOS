@@ -100,6 +100,7 @@ export interface ResourceReservationRepository {
   get(hostId: string): Promise<ResourceReservationHost | null>
   replace(host: ResourceReservationHost, claims: HostResourceReservation[]): Promise<boolean>
   candidateRequest?(hostId: string, targetInputSha256: string): Promise<StoredRoutineJob | null>
+  completedCandidateRequest?(hostId: string, targetInputSha256: string): Promise<StoredRoutineJob | null>
   request?(requestId: string): Promise<(StoredRoutineJob & {input?: unknown}) | null>
   stage?(requestId: string, digest: string, admission: FleetResourceAdmission, now: Date): Promise<StoredRoutineJob | null>
   stageBackend?(requestId: string, digest: string, admission: FleetResourceAdmission, host: ResourceReservationHost, now: Date): Promise<StoredRoutineJob | null>
@@ -180,6 +181,11 @@ export const resourceReservationRepository: ResourceReservationRepository = {
       'fleetCandidatePreparation.targetInputSha256': targetInputSha256}).limit(2).read('primary').readConcern('majority')
       .setOptions({timeoutMS: 5000}).lean();
     return rows.length === 1 ? rows[0] as unknown as StoredRoutineJob : null;
+  },
+  async completedCandidateRequest(hostId, targetInputSha256) {
+    const rows = await TestRequestModel.find({fleetCandidatePreparations: {$elemMatch: {hostId, targetInputSha256}}})
+      .limit(2).read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean()
+    return rows.length === 1 ? rows[0] as unknown as StoredRoutineJob : null
   },
   async request(requestId) {return await TestRequestModel.findOne({requestId}).read('primary').readConcern('majority')
     .setOptions({timeoutMS: 5000}).lean() as unknown as (StoredRoutineJob & {input?: unknown}) | null},
@@ -1195,6 +1201,10 @@ export class ResourceReservationsService {
       checked = pending && graphReturnCandidate(pending, returned, host, this.now()),
       release = returned.release, subject = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === returned.resourceId),
       proof = (({controller: _, ...value}) => value)(returned)
+    if (!pending) {
+      const acknowledged = await this.acknowledgeCompletedGraphReturn(returned, host, hostId)
+      if (acknowledged) return acknowledged
+    }
     if (!row || !pending || !checked || !graphCandidateReturnMatches(checked, returned) || !('kind' in release) || release.kind !== 'resource-check' ||
       !fresh(host, this.now()) || host.incarnation !== returned.controller.incarnation || host.incarnationGeneration !== returned.controller.generation ||
       host.sequence !== returned.controller.sequence || !subject?.current || subject.owner !== null ||
@@ -1224,6 +1234,23 @@ export class ResourceReservationsService {
       return {status: 'returned' as const, claimId: returned.claimId}
     }
     throw new TestRunError(409, 'Readiness graph authority changed; retain the same original member')
+  }
+  /** A completed original can repeat its saved acknowledgement without releasing current custody. */
+  private async acknowledgeCompletedGraphReturn(returned: ExclusiveResourceReturn, host: ResourceReservationHost, hostId: string) {
+    if (!fresh(host, this.now()) || host.incarnation !== returned.controller.incarnation ||
+      host.incarnationGeneration !== returned.controller.generation || host.sequence !== returned.controller.sequence) return
+    const row = await this.rows.completedCandidateRequest?.(hostId, returned.inputSha256),
+      originals = row?.fleetCandidatePreparations?.filter(value => value.hostId === hostId && value.targetInputSha256 === returned.inputSha256)
+    if (!row || originals?.length !== 1 || !completedCandidatePreparationForHost(row, hostId) ||
+      !completedCandidatePreparationForHost({...row, fleetCandidatePreparations: originals}, hostId)) return
+    const pending = originals[0]!, saved = pending.resourceReturns?.map(value => exclusiveResourceReturnSchema.parse(value))
+      .filter(value => value.claimId === returned.claimId), proof = (({controller: _, ...value}) => value)(returned)
+    if (pending.target.purpose?.kind !== 'resource-readiness' || saved?.length !== 1 ||
+      !isDeepStrictEqual((({controller: _, ...value}) => value)(saved[0]!), proof) ||
+      hostResourceReservationsSchema.parse(host.resourceReservations ?? []).filter(isExclusiveHostReservation).some(claim =>
+        claim.id === returned.claimId || claim.owner.id === returned.originalOwner.id ||
+        claim.resourceId === returned.resourceId && claim.inputSha256 === returned.inputSha256)) return
+    return {status: 'returned' as const, claimId: returned.claimId}
   }
   private async acquireResourceCheck(intent: ExclusiveResourceIntent, hostId: string) {
     const intentSha256 = this.resourceCheckIntentDigest(intent), unknown = {status: 'unknown' as const, intentSha256, claims: []}
