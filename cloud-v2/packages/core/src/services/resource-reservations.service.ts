@@ -1195,6 +1195,16 @@ export class ResourceReservationsService {
       return {status: 'reserved' as const, intentSha256, claims: relevant}
     const closed = reportedGraphCandidateSettlement(pending, host.snapshot), closedUnused =
       closed?.outcome === 'unknown' && closed.graphChecks?.length === 0
+    // An initial report/CAS race can leave this original open graph without any
+    // claim. The host then observes the same intent rather than sending another
+    // acquisition. Re-enter the existing current-candidate acquisition gates;
+    // closed, historical or partly acquired graphs retain their return path.
+    if (!historical && !saved && !closed && !relevant.length &&
+      !pending.resourceClaims?.length && !pending.resourceReturns?.length &&
+      candidatePrerequisiteRequestMatches(row, intent, this.now())) {
+      const recovered = await this.acquireGraphPrerequisite(intent, host.hostId)
+      return recovered.status === 'reserved' ? recovered : unknown
+    }
     if (pending.resourceClaims?.length || pending.resourceReturns?.length || !isDeepStrictEqual(host.snapshot.frameworkBinding, pending.target.acceptedBinding) ||
       controller.incarnation !== intent.controller.incarnation ||
       controller.generation !== intent.controller.generation || controller.sequence <= intent.controller.sequence ||

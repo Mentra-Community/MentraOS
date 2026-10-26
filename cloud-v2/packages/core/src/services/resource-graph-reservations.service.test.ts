@@ -170,6 +170,47 @@ test('a concurrent owner wins the current CAS without fabricating a failed physi
   expect(g.host.resourceLifecycle!.subjects.every(subject => subject.idle.outcome === 'passed')).toBe(true)
 })
 
+test('observation completes the same open graph after its initial acquisition loses every CAS attempt', async () => {
+  const g = await graphAuthorityFixture(), original = structuredClone(g.pending.target),
+    replace = g.rows.replaceBackend!.bind(g.rows)
+  let attempts = 0
+  g.rows.replaceBackend = async (...args) => ++attempts <= 3 ? false : replace(...args)
+  expect((await g.service.acquire(g.intent, g.host.hostId)).status).toBe('unknown')
+  expect(g.writes).toEqual([]); expect(g.pending.resourceClaims).toBeUndefined()
+  g.host.sequence++
+  const input = {intent: g.intent, controller: {...g.pending.candidate.controller, sequence: g.host.sequence}},
+    recovered = await g.service.observe(input, g.host.hostId)
+  expect(recovered.status).toBe('reserved'); expect(recovered.claims).toHaveLength(g.purpose.resources.length)
+  expect(attempts).toBe(4); expect(g.writes).toHaveLength(1)
+  expect(recovered.claims.every(claim => claim.operationId === g.intent.operationId &&
+    claim.owner.id === g.intent.owner.id && claim.inputSha256 === g.intent.inputSha256)).toBe(true)
+  expect(g.pending.target).toEqual(original)
+  expect(g.host.resourceLifecycle!.subjects.every(subject => subject.owner === null)).toBe(true)
+  expect(await g.service.observe(input, g.host.hostId)).toEqual(recovered)
+  expect(g.writes).toHaveLength(1)
+})
+
+test.each(['cancelled', 'expired', 'other-owner'] as const)(
+  'observation does not acquire an unclaimed original graph after %s', async changed => {
+    const g = await graphAuthorityFixture(), replace = g.rows.replaceBackend!.bind(g.rows)
+    g.rows.replaceBackend = async () => false
+    expect((await g.service.acquire(g.intent, g.host.hostId)).status).toBe('unknown')
+    g.rows.replaceBackend = replace
+    if (changed === 'cancelled') g.f.row.fleetCancellation = {requestedAt: new Date(g.f.now).toISOString(), reason: 'Original cancellation'}
+    if (changed === 'expired') {
+      g.f.advance(Date.parse(g.pending.target.deadline) - g.f.now + 1)
+      g.host.receivedAt = new Date(g.f.now).toISOString(); g.host.observedAt = g.host.receivedAt
+    }
+    if (changed === 'other-owner') {
+      g.host.resourceLifecycle!.subjects[0]!.owner = {id: 'actual-other-owner', kind: 'boundary-cleanup', generation: 2, hostId: g.host.hostId}
+      g.host.resourceLifecycle!.subjects[0]!.status = 'reserved'
+    }
+    g.host.sequence++
+    expect((await g.service.observe({intent: g.intent,
+      controller: {...g.pending.candidate.controller, sequence: g.host.sequence}}, g.host.hostId)).status).toBe('unknown')
+    expect(g.writes).toEqual([]); expect(g.pending.resourceClaims).toBeUndefined()
+  })
+
 test('a generation change after committed acquisition retains original custody and refuses a fresh grant', async () => {
   const g = await graphAuthorityFixture(), original = structuredClone(g.pending.target), replace = g.rows.replaceBackend!.bind(g.rows)
   currentPassedGraph(g)
@@ -550,31 +591,28 @@ test('an acquisition before absence receipt storage refuses the same authenticat
   } finally {hook.mockRestore()}
 })
 
-test('absence cannot open a post-fence host version before its original closed report exists', async () => {
+test('an open original observation can acquire but cannot record absence before host closure', async () => {
   const f = await graphAuthorityFixture(); f.f.advance(1); f.host.sequence++
   f.f.row.fleetCandidatePreparation!.backendTarget = f.intent.prerequisite!.target
-  let resume!: () => void, entered!: () => void, acquisition: ReturnType<typeof f.service.acquire> | undefined
+  let resume!: () => void, entered!: () => void
   const paused = new Promise<void>(resolve => {resume = resolve}), reached = new Promise<void>(resolve => {entered = resolve}),
-    replace = f.rows.replace.bind(f.rows), save = f.rows.recordCandidateNoAcquisition!.bind(f.rows),
+    replace = f.rows.replace.bind(f.rows),
     write = spyOn(f.rows, 'replace').mockImplementation(async (host, claims) => {
       if (claims.length) {entered(); await paused}
       return replace(host, claims)
-    }),
-    record = spyOn(f.rows, 'recordCandidateNoAcquisition').mockImplementation(async (id, pending, receipt) => {
-      // Retry reads the observer's newly advanced version and passes its final
-      // request check, but pauses before the independent host-row claim CAS.
-      acquisition = f.service.acquire(f.intent, f.host.hostId); await reached
-      return save(id, pending, receipt)
-    })
+    }), record = spyOn(f.rows, 'recordCandidateNoAcquisition'),
+    observation = f.service.observe({intent: f.intent,
+      controller: {...f.pending.candidate.controller, sequence: f.host.sequence}}, f.host.hostId)
   try {
-    const observed = await f.service.observe({intent: f.intent, controller: {...f.pending.candidate.controller, sequence: f.host.sequence}}, f.host.hostId)
-    resume(); await acquisition
-    expect(f.host.authorityReservations).toEqual([])
-    expect(observed.status).toBe('unknown')
+    await reached
     expect(record).not.toHaveBeenCalled(); expect(f.writes).toEqual([])
     expect(f.f.row.fleetCandidatePreparation!.noAcquisitionReceipt).toBeUndefined()
-    expect(f.host.authorityReservations).toEqual([])
-  } finally {resume(); await acquisition; write.mockRestore(); record.mockRestore()}
+    resume()
+    const observed = await observation
+    expect(observed.status).toBe('reserved'); expect(f.writes).toHaveLength(1)
+    expect(record).not.toHaveBeenCalled()
+    expect(f.f.row.fleetCandidatePreparation!.noAcquisitionReceipt).toBeUndefined()
+  } finally {resume(); await observation; write.mockRestore(); record.mockRestore()}
 })
 
 test('a recorded original not-acquired fence closes despite later unrelated occupancy without releasing those claims', async () => {
