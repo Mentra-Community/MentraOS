@@ -46,8 +46,11 @@ RUN bun install --frozen-lockfile
 # the install layer.
 COPY cloud-v2/ ./
 
-# Typecheck as a build-time gate so we don't deploy broken type code.
-RUN bun run typecheck
+# Typecheck as a build-time gate so we don't deploy broken type code. A build
+# whose source already passed the same typecheck in CI may skip it
+# (SKIP_TYPECHECK=true, the monorepo's direct dev deploy).
+ARG SKIP_TYPECHECK=false
+RUN if [ "$SKIP_TYPECHECK" = true ]; then echo "Typecheck skipped: passed in CI"; else bun run typecheck; fi
 
 # The admin portal's static build. A Mentra Private Cloud serves it from Core
 # itself (CLOUD_CORE_ADMIN_STATIC_DIR=/app/admin-dist); hosted Core does not use it.
