@@ -23,10 +23,16 @@ export function mentraOsPath(filename, repository) {
 }
 
 /**
- * Monorepo paths outside MentraOS that start the PR app builds (the paths of its root mentra-app-*-build.yml and
- * mentra-asg-client-build.yml workflows).
+ * Monorepo paths that start the PR app builds beyond MentraOS's own (the paths of its root mentra-app-*-build.yml and
+ * mentra-asg-client-build.yml workflows): its glasses firmware and build scripts, and the SDK packages the bundled
+ * miniapps are built with.
  */
 export const MONOREPO_PR_BUILD_PATHS = [
+  "public/mentraos/cloud-v2/tsconfig.base.json",
+  "public/mentraos/cloud-v2/packages/auth/*",
+  "public/mentraos/cloud-v2/packages/miniapp-tools/*",
+  "public/mentraos/cloud-v2/packages/protocol/*",
+  "public/mentraos/sdk/miniapp-cli/*",
   "mentra_live/bes/*",
   ".github/workflows/bes.yml",
   ".github/workflows/mentra-app-android-build.yml",
@@ -34,6 +40,7 @@ export const MONOREPO_PR_BUILD_PATHS = [
   ".github/workflows/mentra-asg-client-build.yml",
   ".github/workflows/reusable-pr-build-notification.yml",
   ".github/ci/pack-miniapps.sh",
+  ".github/ci/bundled-miniapps.sh",
   ".github/ci/asg-build-identity.mjs",
 ]
 
