@@ -48,7 +48,7 @@ my-miniapp/
 │   │   └── controllers/      # optional — split logic here as it grows
 │   ├── ui/                   # WebView entry — opens on demand
 │   │   ├── index.html
-│   │   ├── main.tsx          # mounts <App/>, calls mentra.ready()
+│   │   ├── main.tsx          # mounts <App/> inside <MentraProvider>
 │   │   └── App.tsx
 │   └── shared/
 │       ├── channels.ts       # typed channel registry — both sides import
@@ -129,8 +129,9 @@ The CLI's `mentra-miniapp pack` zips both folders into one bundle.
 1. **Install** — host downloads bundle, unzips, validates manifest,
    spawns the JSContext, runs `init(session)`. Background is alive.
 2. **User opens UI tile** — host creates a fresh WebView, injects the
-   `mentra` shim, loads `dist/ui/index.html`. WebView calls
-   `mentra.ready()`. `session.ui.onOpen` handlers fire in background.
+   `mentra` shim, loads `dist/ui/index.html`. Once the app mounts,
+   `<MentraProvider>` calls `mentra.ready()`. `session.ui.onOpen`
+   handlers fire in background.
 3. **User navigates away** — host destroys the WebView. JSContext
    stays alive. `session.ui.onClose` fires.
 4. **Disable / uninstall** — host calls `session.onBeforeDisconnect`

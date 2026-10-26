@@ -12,6 +12,9 @@
  *     WebView is the short-lived side and shouldn't drop user input).
  *   - Installs `window.__mentra.recv(envelope)` for the host to push
  *     background → WebView messages via `webview.injectJavaScript(...)`.
+ *   - Posts `{type:'page_loaded'}` on the window `load` event, so the host
+ *     can tell a page that never called `mentra.ready()` from a page the
+ *     shim never reached.
  *   - Sends `__heartbeat__` every 5s; host considers the WebView gone
  *     after 15s of silence.
  *   - Maintains monotonic seq numbers; the host's per-WebView dedup window
@@ -364,6 +367,17 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
     if (type === 'ack') {
       return;
     }
+  }
+
+  // Tell the host the page finished loading with this bridge installed. If
+  // ready() still hasn't come, the page never called it: reloading cannot fix
+  // that, so the host reports it instead of retrying.
+  function announcePageLoaded() {
+    postEnvelope({ type: 'page_loaded' });
+  }
+  if (typeof window.addEventListener === 'function') {
+    if (window.document && window.document.readyState === 'complete') announcePageLoaded();
+    else window.addEventListener('load', announcePageLoaded, { once: true });
   }
 
   window.mentra = {

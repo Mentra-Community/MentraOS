@@ -1314,6 +1314,8 @@ const en = {
   },
   common: {
     miniappUiUnavailable: "This miniapp has no page to display. You can minimize or close it.",
+    miniappFailedToLoad: "This miniapp couldn't load. You can minimize or close it.",
+    miniappNeverReady: "This miniapp's page loaded but never called mentra.ready(). You can minimize or close it.",
     ok: "OK",
     no: "No",
     cancel: "Cancel",

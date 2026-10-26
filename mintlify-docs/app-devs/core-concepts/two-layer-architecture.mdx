@@ -28,7 +28,7 @@ my-miniapp/
     │   └── index.ts          # registerMiniapp(session => …)
     ├── ui/
     │   ├── index.html
-    │   ├── main.tsx          # mounts <App/>, calls mentra.ready()
+    │   ├── main.tsx          # mounts <App/> inside <MentraProvider>
     │   └── App.tsx
     └── shared/
         └── channels.ts       # typed channel registry: both sides import it
@@ -143,8 +143,8 @@ Node APIs fail the build with the source location and a supported alternative.
 
 The UI is a normal React app. It has **zero** direct native access: it reaches
 the glasses only by sending messages to its own background layer. It mounts
-inside `<MentraProvider>` and must call `mentra.ready()` on boot so the host
-knows it's mounted.
+inside `<MentraProvider>`, which calls `mentra.ready()` once the app has
+mounted so the host knows the UI is up.
 
 ```tsx src/ui/main.tsx
 import { createRoot } from "react-dom/client";
@@ -156,8 +156,6 @@ createRoot(document.getElementById("root")!).render(
     <App />
   </MentraProvider>,
 );
-
-mentra.ready(); // flush any buffered messages from background
 ```
 
 ## Talking between layers
@@ -210,7 +208,8 @@ cross-miniapp RPC layer (`session.actions`).
    background JS context, and runs your `registerMiniapp` handler. Background is
    alive.
 2. **UI opens**: the user taps your tile; the host spawns a WebView, injects the
-   `mentra` shim, and loads `ui/index.html`. The WebView calls `mentra.ready()`.
+   `mentra` shim, and loads `ui/index.html`. Once your app mounts,
+   `<MentraProvider>` calls `mentra.ready()`.
    Once your background is ready (see
    [Startup](#startup-return-your-setup-promise)), the splash hides and
    `session.ui.onOpen` fires in the background.

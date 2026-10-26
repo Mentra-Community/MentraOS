@@ -20,8 +20,8 @@ interface ShimGlobals {
   clearInterval: typeof clearInterval
 }
 
-function evalShim(packageName = "com.test"): ShimGlobals {
-  const sandbox: Record<string, unknown> = {}
+function evalShim(packageName = "com.test", page: Record<string, unknown> = {}): ShimGlobals {
+  const sandbox: Record<string, unknown> = {...page}
   sandbox.globalThis = sandbox
   sandbox.window = sandbox
   sandbox.console = console
@@ -195,5 +195,23 @@ describe("buildMentraUiShim", () => {
     const b: unknown[] = []
     g.mentra!.on("b", (p) => b.push(p))
     expect(b).toEqual(["beta"])
+  })
+
+  test("posts 'page_loaded' when the page's load event fires", () => {
+    const listeners: Record<string, () => void> = {}
+    const g = evalShim("com.test", {
+      document: {readyState: "loading"},
+      addEventListener: (type: string, cb: () => void) => {
+        listeners[type] = cb
+      },
+    })
+    expect(g.outboundQueue).toHaveLength(0)
+    listeners.load!()
+    expect(g.outboundQueue.map((s) => JSON.parse(s))).toEqual([{type: "page_loaded"}])
+  })
+
+  test("posts 'page_loaded' at once when the page had already loaded", () => {
+    const g = evalShim("com.test", {document: {readyState: "complete"}, addEventListener: () => {}})
+    expect(g.outboundQueue.map((s) => JSON.parse(s))).toEqual([{type: "page_loaded"}])
   })
 })

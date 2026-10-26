@@ -36,7 +36,8 @@ interface UIModule {
 
 ```text
 WebView mounts ──▶ injected mentraUiShim wires window.mentra
-                ──▶ shim posts {type:"ready"} once page calls mentra.ready()
+                ──▶ shim posts {type:"ready"} once mentra.ready() is called
+                    (<MentraProvider> calls it after the app mounts)
                 ──▶ host's MentraUIRouter wraps into EVENT/_ui/UI_OPEN
                 ──▶ session.ui.onOpen handlers fire
                 ──▶ background pushes initial snapshot via session.ui.send

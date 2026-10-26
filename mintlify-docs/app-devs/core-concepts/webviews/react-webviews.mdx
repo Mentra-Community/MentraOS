@@ -10,7 +10,7 @@ import BetaNote from '/snippets/beta-note.mdx'
 
 The UI layer is the on-demand half of a [two-layer miniapp](/app-devs/core-concepts/two-layer-architecture). It is a normal React app that mounts when the user opens your tile and is destroyed when they leave. It has zero direct hardware access. To reach the glasses it sends messages to its own [background layer](/app-devs/core-concepts/session), which holds the `session` and translates those messages into `session.*` calls. The bridge is a single injected global named `mentra`.
 
-The entry point is small: create a React root, wrap it in `<MentraProvider>`, and call `mentra.ready()`.
+The entry point is small: create a React root and wrap it in `<MentraProvider>`. Once your app has mounted, the provider calls `mentra.ready()`, which hides the Mentra App's loading screen and opens the bridge to background.
 
 ```tsx src/ui/main.tsx
 import { createRoot } from "react-dom/client";
@@ -23,8 +23,6 @@ createRoot(document.getElementById("root")!).render(
     <App />
   </MentraProvider>,
 );
-
-mentra.ready(); // flush any messages background buffered while the WebView mounted
 ```
 
 UI imports come from two sub-paths. `@mentra/miniapp/ui` re-exports everything (the `mentra` global types, the React hooks, `<MentraProvider>`, `<MiniappHeader>`), and `@mentra/miniapp/react` exports the hooks and components directly. There is no `@mentra/sdk` here and no hosted server: the UI never authenticates, never opens a port, and never owns a session.
@@ -41,7 +39,7 @@ The host injects `mentra` into every UI WebView before your content loads. It ca
 mentra.send("ping", { at: Date.now() });             // fire-and-forget, UI → background
 const off = mentra.on("pong", ({ roundtripMs }) => { /* … */ }); // subscribe, returns an unsubscribe fn
 const res = await mentra.request("getNotes", {});    // request/response (RPC)
-mentra.ready();                                       // call once on bootstrap
+mentra.ready();                                       // <MentraProvider> calls this for you
 ```
 
 | Method | What it does |
@@ -51,7 +49,7 @@ mentra.ready();                                       // call once on bootstrap
 | `mentra.request(channel, payload, options?)` | Call a background `session.ui.handle(channel, …)` handler and await its return. No default timeout; pass `options.timeout` and `options.signal` to bound it. |
 | `mentra.onOpen(cb)` | Fires when the bridge is open and `send` is flushable. Fires immediately if you subscribe after `ready()`. Returns an unsubscribe function. |
 | `mentra.onClose(cb)` | Fires when the host is about to destroy the WebView. Snapshot state into background via `send` here if you want it to survive. |
-| `mentra.ready()` | Call once on bootstrap. Tells the host the WebView is mounted; background's `session.ui.onOpen` handlers fire after this lands. Idempotent. |
+| `mentra.ready()` | Tells the host the WebView is mounted. `<MentraProvider>` calls it once your app has mounted; call it yourself only without the provider, or with `autoReady={false}` to keep the loading screen up until your first screen is ready. The loading screen stays up until it lands, and a page that loads without calling it fails to open. Background's `session.ui.onOpen` handlers fire after it lands. Idempotent. |
 
 The two sides are asymmetric on purpose. `mentra.send` from the UI buffers until `ready()`, while `session.ui.send` from the background drops silently when no WebView is open. See [Talking between layers](/app-devs/core-concepts/two-layer-architecture#talking-between-layers) for the background side (`session.ui.handle`, `on`, `send`).
 
