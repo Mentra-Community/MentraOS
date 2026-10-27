@@ -63,12 +63,15 @@ tenant-wide consent for the Mobile app's delegated permissions (Core
 `mentra.session`, ACS `Teams.ManageCalls` and `Teams.ManageChats`) and the Core
 app's sign-in permissions (Microsoft Graph `openid`, `email` and `profile`). It
 needs a Global Administrator, Privileged Role Administrator, Cloud Application
-Administrator or Application Administrator.
+Administrator or Application Administrator, or a custom role with the
+permission to grant consent.
 
-Setup grants it when the operator holds one of these roles. Otherwise:
+Right after creating the apps, setup tries to grant it; Entra refuses an
+operator without such a role at once. Then:
 
-- The Azure preview says so before anything is created.
-- Right after creating the apps, setup prints a `Still to do - Admin consent`
+- When the operator holds none of these built-in roles, the Azure preview says
+  so before anything is created.
+- When the grant is refused, setup prints a `Still to do - Admin consent`
   message for the operator to forward. It links both apps' API permissions
   pages, where the administrator selects **Grant admin consent**, and the
   install continues meanwhile.
