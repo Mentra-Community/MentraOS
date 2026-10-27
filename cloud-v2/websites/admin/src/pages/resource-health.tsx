@@ -30,7 +30,8 @@ export function ResourceHealthSection() {
     {query.isPending?<p>Loading resources…</p>:query.isError?<p role="alert">Resources could not refresh. Current resource status is unknown.</p>:null}
     {!query.isPending && !query.isError && !query.data?.subjects.length?<p className="mt-4">No resource lifecycle observations have been reported.</p>:null}
     <div className="mt-4 grid gap-3 md:grid-cols-2">{query.data?.subjects.map(value=>{
-      const current=!query.isError && value.current && value.observedAt!==null && now-Date.parse(value.observedAt)<=180_000 && value.receivedAt!==null && now-Date.parse(value.receivedAt)<=180_000;
+      const current=!query.isError && value.current && value.receivedAt!==null &&
+        Date.parse(value.receivedAt)<=now+5000 && now-Date.parse(value.receivedAt)<=180_000;
       const events=query.data.history.filter(event=>event.resourceId===value.subject.id);
       return <article key={value.subject.id} id={`resource-${value.subject.id}`} className="scroll-mt-4 rounded-xl border border-[#e0e4de] p-4">
         <h3 className="font-semibold">{value.subject.id}</h3><ReservableStatusBadge status={value.status} current={current} />

@@ -5,7 +5,44 @@ const at='2026-10-16T20:00:00.000Z',now=Date.parse(at);
 const subject:ResourceLifecycleSubject={subject:{kind:'resource',id:'google-account-1',authorityHostId:'host-a'},generation:2,status:'idle',observedAt:at,receivedAt:null,current:true,reason:null,owner:null,
  idle:{contractVersion:'account-v1',outcome:'passed',checkedAt:at,acceptedCheck:{operationId:'check-2',subjectGeneration:2,resultSha256:'a'.repeat(64),acceptedAt:at},qualifiedScope:{kind:'fleet'},evidenceRefs:[]},
  repair:{configured:true,state:'none'},supportedActions:['check'],resource:{kind:'account',capabilities:[],memberships:[],dependencies:[],placement:'fleet'}};
-const row=(value=subject)=>({hostId:'host-a',receivedAt:new Date(at),snapshot:{hostId:'host-a',resourceLifecycle:{schemaVersion:1,subjects:[value],history:[{id:'journal-2',resourceId:value.subject.id,subjectGeneration:2,at,event:'released'}]}}});
+const row=(value=subject)=>({hostId:'host-a',receivedAt:new Date(at),snapshot:{hostId:'host-a',observedAt:at,resourceLifecycle:{schemaVersion:1,subjects:[value],history:[{id:'journal-2',resourceId:value.subject.id,subjectGeneration:2,at,event:'released'}]}}});
+test('fresh authority preserves an unchanged returned physical state beyond its transition age',()=>{
+ const elapsed=now+180001,reportedAt=new Date(elapsed).toISOString(),value={...row(),receivedAt:new Date(elapsed),snapshot:{...row().snapshot,observedAt:reportedAt}};
+ const original=structuredClone(value),current=projectResourceLifecycle([value],elapsed).subjects[0]!;
+ expect(current.current).toBe(true);expect(current.status).toBe('idle');expect(current.supportedActions).toEqual(['check']);
+ expect(current.observedAt).toBe(at);expect(current.idle.acceptedCheck).toEqual(subject.idle.acceptedCheck);expect(value).toEqual(original);
+ for(const changed of [
+  {...value,snapshot:{...value.snapshot,observedAt:at}},
+  {...value,receivedAt:new Date(at)},
+  {...value,snapshot:{...value.snapshot,resourceLifecycle:{...value.snapshot.resourceLifecycle,subjects:[{...subject,current:false}]}}},
+  {...value,snapshot:{...value.snapshot,resourceLifecycle:{...value.snapshot.resourceLifecycle,subjects:[{...subject,observedAt:new Date(elapsed+5001).toISOString()}]}}},
+ ]) {const refused=projectResourceLifecycle([changed],elapsed).subjects[0]!;expect(refused.current).toBe(false);expect(refused.status).toBe('unknown');expect(refused.supportedActions).toEqual([])}
+ const owned={...value,snapshot:{...value.snapshot,resourceLifecycle:{...value.snapshot.resourceLifecycle,subjects:[{...subject,status:'checking',supportedActions:[],owner:{kind:'fixer',id:'current-repair',generation:2,hostId:'host-a'}}]}}};
+ expect(projectResourceLifecycle([owned],elapsed).subjects[0]).toMatchObject({current:true,status:'checking',owner:{id:'current-repair'}});
+})
+test('current resource API reads fresh host timestamps and preserves stable physical facts and actual owner',async()=>{
+ const {spyOn}=await import('bun:test'),{TestHostStateModel}=await import('../models/test-host-state.model');
+ const elapsed=now+180001,observedAt=new Date(elapsed).toISOString(),fresh={...row(),receivedAt:new Date(elapsed),snapshot:{...row().snapshot,observedAt}};
+ let rows=[fresh];const selections:Record<string,unknown>[]=[],consistency:unknown[]=[];
+ const clock=spyOn(Date,'now').mockReturnValue(elapsed),read=spyOn(TestHostStateModel,'find').mockImplementation((()=>{
+  const query={select(value:Record<string,unknown>){selections.push(value);return query},sort(){return query},limit(){return query},maxTimeMS(){return query},
+   read(value:unknown){consistency.push(value);return query},readConcern(value:unknown){consistency.push(value);return query},lean:async()=>structuredClone(rows)};
+  return query;
+ }) as never);
+ try {
+  const service=new ResourceLifecycleService(),detail=await service.detail(subject.subject.id);
+  expect(detail.subject).toMatchObject({current:true,status:'idle',observedAt:at,owner:null});expect(detail.subject.idle).toEqual(subject.idle);
+  expect(selections[0]['snapshot.observedAt']).toBe(1);expect(consistency).toEqual(['primary','majority']);
+  for(const changed of [{...fresh,receivedAt:new Date(at)},
+    {...fresh,snapshot:{...fresh.snapshot,observedAt:at}},
+    {...fresh,snapshot:{...fresh.snapshot,observedAt:new Date(elapsed+5001).toISOString()}}]) {
+   rows=[changed];expect((await service.detail(subject.subject.id)).subject).toMatchObject({current:false,status:'unknown',supportedActions:[]});
+  }
+  rows=[{...fresh,snapshot:{...fresh.snapshot,resourceLifecycle:{...fresh.snapshot.resourceLifecycle,subjects:[{...subject,status:'checking',supportedActions:[],owner:{kind:'fixer',id:'current-repair',generation:2,hostId:'host-a'}}]}}} as typeof fresh];
+  expect((await service.detail(subject.subject.id)).subject).toMatchObject({current:true,status:'checking',owner:{id:'current-repair'}});
+  expect(fresh.snapshot.resourceLifecycle.subjects[0]).toEqual(subject);
+ } finally {clock.mockRestore();read.mockRestore()}
+})
 describe('resource lifecycle projection',()=>{
  test('fleet account has no invented machine placement and server receipt time',()=>{const result=projectResourceLifecycle([row()],now);expect(result.subjects[0]?.resource.memberships).toEqual([]);expect(result.subjects[0]?.receivedAt).toBe(at);expect(result.subjects[0]?.status).toBe('idle');expect(result.history).toHaveLength(1)});
  test('stale authority makes idle unknown while preserving custody and check context',()=>{const result=projectResourceLifecycle([row()],now+180001);expect(result.subjects[0]?.status).toBe('unknown');expect(result.subjects[0]?.idle.outcome).toBe('passed');expect(result.subjects[0]?.supportedActions).toEqual([])});
@@ -124,9 +161,10 @@ test('offset timestamps sort and retain by instant rather than lexical spelling'
 });
 
 test('fresh omissions retain their reason while stale authority remains stale',()=>{
- const value={...row(),resourceLifecycleCursor:row().snapshot.resourceLifecycle,snapshot:{hostId:'host-a'}};
+ const value={...row(),resourceLifecycleCursor:row().snapshot.resourceLifecycle,snapshot:{hostId:'host-a',observedAt:at}};
  expect(projectResourceLifecycle([value],now).subjects[0]?.reason?.code).toBe('observation-omitted');
  expect(projectResourceLifecycle([value],now+180001).subjects[0]?.reason?.code).toBe('stale-observation');
+ expect(projectResourceLifecycle([{...value,snapshot:{hostId:'host-a'}}],now).subjects[0]?.reason?.code).toBe('stale-observation');
 });
 
 test('resource history queries its own bounded host scope instead of the global overview window',async()=>{

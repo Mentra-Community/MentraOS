@@ -12,7 +12,7 @@ export interface ResourceLifecycleRow {hostId:string;receivedAt:Date;snapshot:un
 export function projectResourceLifecycle(rows:ResourceLifecycleRow[],now=Date.now(),resourceId?:string):ResourceLifecycleList {
   const subjects:ResourceLifecycleList['subjects']=[],history=new Map<string,ResourceLifecycleList['history'][number]>();
   for(const row of rows.slice(0,100)) {
-    const snapshot=row.snapshot as {hostId?:string;resourceLifecycle?:unknown};
+    const snapshot=row.snapshot as {hostId?:string;observedAt?:string;resourceLifecycle?:unknown};
     const cursor=row.resourceLifecycleCursor===undefined?undefined:resourceLifecycleSchema.parse(row.resourceLifecycleCursor);
     if(!snapshot.resourceLifecycle && !cursor) continue;
     const currentEnvelope=snapshot.resourceLifecycle===undefined?undefined:resourceLifecycleSchema.parse(snapshot.resourceLifecycle);
@@ -21,13 +21,14 @@ export function projectResourceLifecycle(rows:ResourceLifecycleRow[],now=Date.no
     const parsed=resourceLifecycleSchema.safeParse({schemaVersion:1,subjects:[...currentEnvelope?.subjects??[],...retained],history:cursor?.history??currentEnvelope?.history??[]});
     if(!parsed.success || snapshot.hostId!==row.hostId || parsed.data.subjects.some(v=>v.subject.authorityHostId!==row.hostId))
       throw new TestRunError(503,'Invalid resource lifecycle observation');
-    const receivedAt=row.receivedAt.toISOString();
+    const receivedAt=row.receivedAt.toISOString(),observedAt=Date.parse(snapshot.observedAt??''),
+      fresh=[observedAt,row.receivedAt.getTime()].every(time=>Number.isFinite(time)&&time<=now+5000&&now-time<=FRESH_MS);
     for(const value of parsed.data.subjects) {
       if(subjects.some(v=>v.subject.id===value.subject.id)) throw new TestRunError(503,'Conflicting resource authority observations');
       const at=value.observedAt ? Date.parse(value.observedAt):NaN;
-      const current=value.current && Number.isFinite(at) && at<=now+5000 && now-at<=FRESH_MS && row.receivedAt.getTime()<=now+5000 && now-row.receivedAt.getTime()<=FRESH_MS;
+      const current=value.current && Number.isFinite(at) && at<=observedAt && fresh;
       subjects.push({...value,receivedAt,current,status:current?value.status:'unknown',supportedActions:current?value.supportedActions:[],
-        reason:current?value.reason:value.reason?.code==='observation-omitted' && row.receivedAt.getTime()<=now+5000 && now-row.receivedAt.getTime()<=FRESH_MS?value.reason:{code:'stale-observation',message:'Current resource state is unknown; a fresh authority observation is required.'}});
+        reason:current?value.reason:value.reason?.code==='observation-omitted' && fresh?value.reason:{code:'stale-observation',message:'Current resource state is unknown; a fresh authority observation is required.'}});
     }
     for(const event of parsed.data.history) {
       const key=`${row.hostId}:${event.resourceId}:${event.id}`;
@@ -95,7 +96,7 @@ export class ResourceLifecycleService {
       {'snapshot.lanes.resources.exclusiveDependencies.resourceId':resourceId},
       {'snapshot.resourceReservations.returns.resourceId':resourceId},
     ]}:{};
-    const projection={hostId:1,receivedAt:1,'snapshot.hostId':1,'snapshot.resourceLifecycle':1,'snapshot.resources':1,'snapshot.lanes':1,'snapshot.resourceReservations':1,resourceLifecycleCursor:1,resourceReservationVersion:1,resourceReservations:1,_id:0};
+    const projection={hostId:1,receivedAt:1,'snapshot.hostId':1,'snapshot.observedAt':1,'snapshot.resourceLifecycle':1,'snapshot.resources':1,'snapshot.lanes':1,'snapshot.resourceReservations':1,resourceLifecycleCursor:1,resourceReservationVersion:1,resourceReservations:1,_id:0};
     const rows=await TestHostStateModel.find(filter).select(projection)
       .sort({hostId:1}).limit(101).maxTimeMS(5000).read('primary').readConcern('majority').lean();
     if(resourceId && rows.length>100) throw new TestRunError(503,'Resource authority/history scope exceeds the bounded 100-host observation');
