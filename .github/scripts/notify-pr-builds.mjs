@@ -174,10 +174,8 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   }
   if (routines.length) lines.push(slackRoutineSection({
     lines: routines.map(routine =>
-      `*Requested tests:* ${slackRoutineText(routine.title ?? routine.id, 200)}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n${[
-        routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable ? slackRoutineText(routine.resultsUnavailable, 200) : `Results link available with the ${routine.platform === "android" ? "Android" : "Mac"} build`,
-        link(routine.pipelineUrl, routine.pipelineLabel),
-      ].join(" · ")}`),
+      `*Requested tests:* ${slackRoutineText(routine.title ?? routine.id, 200)}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n${
+        routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable ? slackRoutineText(routine.resultsUnavailable, 200) : `Results link available with the ${routine.platform === "android" ? "Android" : "Mac"} build`}`),
     footer: "Results appear after the device run is uploaded.", overflowUrl, overflowLabel: "View all requested tests on the PR",
   }))
   lines.push(
@@ -224,18 +222,14 @@ export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId
 
 function requestedRoutineLinks({context, pr, sha, ios, android, requested, androidAvailable}) {
   const repository = `${context.repo.owner}/${context.repo.repo}`
-  const result = {
-    pipelineUrl: `https://github.com/${repository}/actions/workflows/request-e2e-routine.yml`,
-    pipelineLabel: "Request pipeline (workflow)",
-  }
   // Platform labels name published app builds, not inferred routine support or execution.
   const platforms = [...(androidAvailable ? ["android"] : []), ...(ios.assets ? ["ios-on-mac"] : [])]
-  return requested.flatMap(id => platforms.length ? platforms.map(platform => ({...result, id, title: id, platform,
+  return requested.flatMap(id => platforms.length ? platforms.map(platform => ({id, title: id, platform,
     ...(platform === "android" && android.receiptUnavailable
       ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
     resultsUrl: routineResultsUrl({repository, pr: pr.number, sha,
       archiveSha256: platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: id, platform})}))
-    : [{...result, id, title: id, resultsUnavailable: "No published app platform is available for this build; no execution is inferred."}])
+    : [{id, title: id, resultsUnavailable: "No published app platform is available for this build; no execution is inferred."}])
 }
 
 export function matchingBuildRun(runs, pr, sha) {
@@ -540,7 +534,6 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       `**Requested tests:** ${routine.title ?? routine.id}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n\n${[
         ...(routine.resultsUrl ? [`[View results](${routine.resultsUrl})`] : []),
         ...(routine.resultsUnavailable ? [routine.resultsUnavailable] : []),
-        `[${routine.pipelineLabel}](${routine.pipelineUrl})`,
       ].join(" · ")}\n\nResults appear after the device run is uploaded.`,
     )
   const body = `${marker}\n<!-- ${identity} -->\n${

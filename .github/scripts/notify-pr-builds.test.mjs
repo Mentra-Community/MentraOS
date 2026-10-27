@@ -89,8 +89,7 @@ test("Slack escapes PR text and includes all three firmware targets", () => {
 
 test("PR Slack bounds valid maximum routine titles and fifty selections while preserving install links", () => {
   const routines = Array.from({length: 50}, (_, index) => ({id: `selected-${index}`, title: "<&>".repeat(666) + "xx", platform: "android",
-    resultsUrl: `https://admin.dev.mentraglass.com/?routineId=selected-${index}`, pipelineUrl: "https://github.com/o/r/actions/workflows/request-e2e-routine.yml",
-    pipelineLabel: "Request pipeline (workflow)"}))
+    resultsUrl: `https://admin.dev.mentraglass.com/?routineId=selected-${index}`}))
   const payload = buildPost({pr: {...pr, title: "<&>".repeat(2000)}, sha, routines, androidUrl: "https://example.com/a.apk",
     manifestUrl: "https://example.com/m.json", targets: {...readOtaTargets(manifest, 123, sha), bes: "<&>".repeat(2000)},
     androidRunUrl: run.html_url, ios: {assets: {install: "https://example.com/install", manifest: "https://example.com/manifest",
@@ -107,17 +106,15 @@ test("PR Slack bounds valid maximum routine titles and fifty selections while pr
 })
 
 test("a requested-test section at exactly Slack's limit retains its rows without a second bounding pass", () => {
-  const routine = {id: "exact-limit", title: "Exact limit", platform: "android", resultsUrl: "https://admin.dev.mentraglass.com/?testRun=exact-limit",
-    pipelineUrl: "https://github.com/o/r/actions/workflows/request-e2e-routine.yml?padding=", pipelineLabel: "Request pipeline"}
+  const routine = {id: "exact-limit", title: "Exact limit", platform: "android", resultsUrl: "https://admin.dev.mentraglass.com/?testRun=exact-limit&padding="}
   const input = {pr, sha, error: "Android unavailable", androidRunUrl: run.html_url, routines: [routine]}
   const section = payload => payload.blocks.find(block => block.text?.text.includes("*Requested tests:*"))?.text.text
   const padding = 3000 - section(buildPost(input)).length
-  routine.pipelineUrl += "x".repeat(padding)
+  routine.resultsUrl += "x".repeat(padding)
   const rendered = section(buildPost(input))
   assert.equal(rendered.length, 3000)
   assert.match(rendered, /Requested tests:\* Exact limit/)
   assert.ok(rendered.includes(`<${routine.resultsUrl}|View results>`))
-  assert.ok(rendered.includes(`<${routine.pipelineUrl}|Request pipeline>`))
 })
 
 const iosRun = {...run, id: 3}
@@ -654,12 +651,12 @@ test("Android failure still allows verified iOS links; cancelled iOS suppresses 
   assert.equal(cancelled.posts.length, 0)
 })
 
-test("requested tests link the exact Mac archive and generic request workflow without waiting for results", async () => {
+test("requested tests link the exact Mac archive without waiting for results", async () => {
   const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: [{name: "routine:selected-mac"}]}})
   await notifyPrBuilds(h.args)
   const text = slack(h.posts[0])
   assert.match(text, /Requested tests:\* selected-mac · iOS on Mac/)
-  assert.match(text, /actions\/workflows\/request-e2e-routine.yml\|Request pipeline \(workflow\)/)
+  assert.doesNotMatch(text, /Request pipeline|actions\/workflows/)
   assert.doesNotMatch(text, /Tests passed|Test running|Ready to run|localhost|127\.0\.0\.1/)
   const results = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]))
     .find(url => url.searchParams.get("platform") === "ios-on-mac")

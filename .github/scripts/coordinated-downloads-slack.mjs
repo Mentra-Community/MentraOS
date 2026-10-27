@@ -121,9 +121,6 @@ export async function releaseFailureDetail(env, fetchImpl = fetch) {
 /** Current main routine IDs and exact published app platforms; neither implies compatibility or execution. */
 export async function coordinatedRoutineLinks(env, fetchImpl = fetch, {select = publishedCoordinatedBuild} = {}) {
   if (!["dev", "staging"].includes(env.BRANCH) || env.RELEASE_SCOPE === "examples") return []
-  const pipeline = new URL("https://github.com/Mentra-Community/MentraOS/actions/workflows/dispatch-device-routine.yml")
-  if (/^[1-9]\d*$/.test(env.RUN_ID ?? "") && /^[1-9]\d*$/.test(env.RUN_ATTEMPT ?? ""))
-    pipeline.searchParams.set("query", `\"Device request callback ${env.RUN_ID} / attempt ${env.RUN_ATTEMPT}\"`)
   let detail, lines = []
   if (env.FINALIZE_RESULT === "success" && env.REPOSITORY === "Mentra-Community/MentraOS") {
     try {
@@ -149,14 +146,14 @@ export async function coordinatedRoutineLinks(env, fetchImpl = fetch, {select = 
       detail = routines.length ? "Routine IDs come from current Harness main; platform labels identify available app builds. Compatibility is checked on request. Publishing this build does not request tests."
         : "No routine IDs are present in current Harness main."
 
-    } catch { detail = "The current Harness routine source inventory is unavailable. Inspect the test request pipeline; no test execution is inferred." }
+    } catch { detail = "The current Harness routine source inventory is unavailable; no test execution is inferred." }
   }
   if (!detail) detail = await releaseFailureDetail(env, fetchImpl)
   const botConfigured = env.SLACK_BUILDS_BOT_TOKEN && /^C[A-Z0-9]+$/.test(env.BRANCH === "dev"
     ? env.SLACK_DEV_BUILDS_CHANNEL_ID ?? "" : env.SLACK_STAGING_BUILDS_CHANNEL_ID ?? "")
-  const updates = botConfigured ? "" : "\nSlack result updates are not configured; use the results link when available."
+  const updates = botConfigured ? "" : "Slack result updates are not configured; use the results link when available."
   return [{type: "section", block_id: "mentra-release-routines", text: {type: "mrkdwn", text:
-    slackRoutineSection({heading: "*Routine results for published app builds*", detail, lines, footer: `<${pipeline.href}|Request pipeline>${updates}`,
+    slackRoutineSection({heading: "*Routine results for published app builds*", detail, lines, footer: updates,
       overflowUrl: "https://admin.dev.mentraglass.com/?routineCatalog=1", overflowLabel: "View routine inventory in Admin"})}}]
 }
 

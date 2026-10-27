@@ -2,8 +2,6 @@
 
 Routine identities, names, supported platforms, resource requirements and execution policies come from Core's enrolled definitions. GitHub workflows maintain no routine registry.
 
-Explicit requests use **Request device routine** on `dev`. Enter an enrolled routine ID and platform, the source channel, exact published build run ID and original publication attempt. PR sources also require the PR number. Core resolves the immutable app archive, freezes the definition and lane inputs, and queues the host request. Repeating the same source/routine/platform or rerunning that request workflow reconciles the same request. The completed **Routine tests** check's **Re-run routines** button is a separate linked-verification action.
-
 Add the relevant `routine:<id>` labels to your PR. Each ID selects its declared supported platforms. The App-owned **Routine tests** check is queued against the PR's exact head while app builds or compatible lanes are pending. It freezes one routine revision for the coverage and each platform's exact PR artifact; build callbacks reconcile the same work rather than starting another original.
 
 The GitHub check shows live phase, current test step, observed completed/total test steps and elapsed time. Open **Details** for each routine's lane, current activity, latest result link and authenticated Admin controls. A pending build, unavailable lane or stale observation is not a pass. **No routine tests requested** discloses that no coverage was selected; it does not mean a device test ran.
@@ -19,7 +17,7 @@ After a check finishes, its **Re-run routines** button verifies the latest unsuc
 
 Select coverage and wait for its pending check before enabling auto-merge. Disable auto-merge before changing routine labels on an already-green head; label changes cannot atomically invalidate GitHub's existing commit check. [PR routine check configuration](../cloud-v2/packages/core/docs/pr-routine-checks.md) describes App setup and required-check activation. Require the App-owned **Routine tests** context only after installed-App event and UI verification.
 
-Coordinated publication displays generic available-test and exact-build result links. Publication callbacks reconcile selected PR coverage; publication alone starts no routine. Explicit requests and the independently enabled dev nightly select coverage.
+Coordinated publication displays generic available-test and exact-build result links. Publication callbacks reconcile selected PR coverage; publication alone starts no routine.
 
 The internal catalog, dispatch and result endpoints require `TEST_RUN_INGEST_TOKEN_DEV`. Execution additionally requires Core's configured host/lane binding and a compatible enrolled definition. A queue acknowledgement is not a passing result.
 

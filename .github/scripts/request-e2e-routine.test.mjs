@@ -76,15 +76,6 @@ test("later admission rejection preserves earlier selectors and attempts subsequ
   assert.doesNotThrow(() => assertRoutineRequestOutcomes(result.outcomes.filter(outcome => outcome.status !== "failed")))
 })
 
-test("request workflow retains accepted selectors before reporting member failures, including failed summary", async () => {
-  const {readFile} = await import("node:fs/promises")
-  const workflow = await readFile(new URL("../workflows/request-e2e-routine.yml", import.meta.url), "utf8")
-  assert.match(workflow, /JSON\.stringify\(\{requestIds: result\.requestIds, outcomes: result\.outcomes\}\)/)
-  assert.equal((workflow.match(/if: always\(\) && steps\.queue\.outputs\.persisted == 'true'/g) ?? []).length, 2)
-  assert.ok(workflow.indexOf("actions/upload-artifact@v4") < workflow.indexOf("Report independent member admission failures"))
-  assert.ok(workflow.indexOf("core.setOutput('persisted', 'true')") < workflow.indexOf("core.summary"))
-})
-
 test("manual response loss retains accepted acknowledgements or durable uncertain selectors before outcome failure", async () => {
   for (const lookupStatus of [200, 503, 404]) {
     const f = routineFixture({channel: "dev"}), plan = planRoutineRequest({routineId: f.definition.id, platform: "ios-on-mac"}, f.source, {occurrenceId: "manual-100"})

@@ -53,7 +53,7 @@ test("one release message reports the release, the examples and the docs", (t) =
   assert.match(text, /Routine results for published app builds/)
   assert.match(text, /current Harness routine source inventory is unavailable/)
   assert.doesNotMatch(text, /No-glasses UI|Requested tests|reported separately|Starter Kit|Example finalize/)
-  assert.match(text, /Request pipeline/)
+  assert.doesNotMatch(text, /Request pipeline/)
 })
 
 test("page publication failure preserves core success and links the artifact container", () => {

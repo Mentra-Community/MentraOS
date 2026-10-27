@@ -94,7 +94,7 @@ test("source ID sections stay bounded for many routines with an inventory overfl
   const [block] = await coordinatedRoutineLinks(published, catalogFetch(rows), {select: async ({platform}) => ({archive: {
     url: platform === "android" ? published.MOBILE_APK_URL : published.MAC_URL, sha256: "d".repeat(64)}})})
   assert.ok(block.text.text.length <= 3000, block.text.text.length)
-  assert.match(block.text.text, /Request pipeline/)
+  assert.doesNotMatch(block.text.text, /Request pipeline|actions\/workflows/)
   assert.match(block.text.text, /routineCatalog=1\|View routine inventory in Admin/)
   const links = [...block.text.text.matchAll(/<(https:[^|]+)\|[^>]+>/g)]
   assert.ok(links.every(match => new URL(match[1]).protocol === "https:"))

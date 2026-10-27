@@ -190,8 +190,7 @@ test("coordinated routine links select the exact source and archive without clai
     assert.equal(results.searchParams.get("routineId"), "current-source-id")
     assert.equal(results.searchParams.get("channel"), channel)
     assert.equal(results.searchParams.has("pr"), false)
-    const pipeline = new URL(text.match(/<(https:\/\/github\.com\/[^|]+)\|/)[1])
-    assert.equal(pipeline.searchParams.get("query"), '"Device request callback 100 / attempt 2"')
+    assert.doesNotMatch(text, /Request pipeline|https:\/\/github\.com\/[^|]+\/actions\/workflows/)
     for (const override of [{FINALIZE_RESULT: "failure"}, {MAC_URL: "https://other.example/app.zip"}, {SHA: "f".repeat(40)}]) {
       const unavailable = JSON.stringify(await coordinatedRoutineLinks({...env, ...override}, fetchImpl))
       assert.match(unavailable, /Not requested|could not be verified/)
