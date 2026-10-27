@@ -7,15 +7,17 @@ import {candidateSettlement} from './backend-candidate-preparation'
 import {routineJobRepository} from './routine-job.service'
 import {requestInputDigest} from './test-request.service'
 
-async function closedOriginal() {
-  const f = routingGraphFixture('ios-on-mac')
+async function closedOriginal(platform: 'android' | 'ios-on-mac' = 'ios-on-mac', mixed = false) {
+  const f = routingGraphFixture(platform)
   await f.service.preparation('job-one')
   f.settleGraph('unknown')
   const host = f.hosts[0]!, pending = f.row.fleetCandidatePreparation!, receipt = host.resourceReservations!.candidatePrerequisites![0]!
   for (const check of receipt.graphChecks!) {
-    check.outcome = 'unknown'
+    check.outcome = mixed && pending.target.purpose?.kind === 'resource-readiness' &&
+      pending.target.purpose.resources.find(member => member.id === check.resourceId)?.kind === 'app' ? 'passed' : 'unknown'
+    delete check.backendConnectivity
     const subject = host.resourceLifecycle!.subjects.find(value => value.subject.id === check.resourceId)!
-    subject.status = 'unknown'; subject.idle.outcome = 'unknown'
+    subject.status = check.outcome === 'passed' ? 'idle' : 'unknown'; subject.idle.outcome = check.outcome
   }
   const original = structuredClone(pending), originalReceipt = structuredClone(receipt), releasedAt = f.now
   f.advance(2)
@@ -30,8 +32,8 @@ async function closedOriginal() {
   return {f, host, original, originalReceipt}
 }
 
-test('fully returned original UNKNOWN settles through the real service after accepted source replacement and tries the alternate', async () => {
-  const {f, host, original, originalReceipt} = await closedOriginal(), saved = structuredClone(f.row)
+test.each([false, true])('fully returned original UNKNOWN settles through the real service and tries the alternate (mixed: %s)', async mixed => {
+  const {f, host, original, originalReceipt} = await closedOriginal('ios-on-mac', mixed), saved = structuredClone(f.row)
   // The production archive writer runs; only its MongoDB CAS is a CPU seam.
   f.rows.settleCandidatePreparation = routineJobRepository.settleCandidatePreparation!
   const write = spyOn(TestRequestModel.collection, 'findOneAndUpdate').mockImplementation(async (filter: any, update: any) => {
@@ -69,30 +71,23 @@ test('later unowned subject observations cannot erase the already returned origi
   expect(candidateSettlement(f.row.fleetCandidatePreparation!, host, [], f.now)).toEqual(originalReceipt)
 })
 
-for (const gap of ['partial-return', 'changed-release', 'unclosed-work', 'missing-receipt', 'missing-current-history',
-  'changed-current-process', 'changed-current-controller', 'changed-current-binding', 'changed-accepted-time', 'ended-current',
-  'stale-host', 'stale-observation', 'release-after-acceptance', 'changed-original-generation', 'foreign-authority', 'foreign-owner',
-  'live-claim', 'changed-original-input'] as const)
+for (const gap of ['partial-return', 'changed-release', 'unclosed-work', 'missing-receipt', 'stale-host', 'stale-observation',
+  'future-original-release', 'changed-original-generation', 'foreign-original-authority', 'live-original-owner',
+  'live-original-claim', 'changed-original-input'] as const)
   test(`historical original UNKNOWN stays pending with ${gap}`, async () => {
     const {f, host} = await closedOriginal(), pending = f.row.fleetCandidatePreparation!
     if (gap === 'partial-return') pending.resourceReturns!.pop()
     if (gap === 'changed-release') (pending.resourceReturns![0] as any).release.operationId = 'unrelated-check'
     if (gap === 'unclosed-work') (host.resourceReservations!.candidatePrerequisites![0] as any).hostWorkSettled = false
     if (gap === 'missing-receipt') host.resourceReservations!.candidatePrerequisites = []
-    if (gap === 'missing-current-history') host.frameworkHistory = []
-    if (gap === 'changed-current-process') host.frameworkProcess = {...host.frameworkProcess!, pid: 9999}
-    if (gap === 'changed-current-controller') host.incarnationGeneration++
-    if (gap === 'changed-current-binding') host.frameworkBinding = {...host.frameworkBinding!, installationId: 'unaccepted-installation'}
-    if (gap === 'changed-accepted-time') host.frameworkAcceptedAt = host.observedAt
-    if (gap === 'ended-current') host.frameworkHistory![0]!.endedAt = host.observedAt
     if (gap === 'stale-host') host.receivedAt = new Date(f.now - 120_001).toISOString()
     if (gap === 'stale-observation') host.observedAt = new Date(f.now - 120_001).toISOString()
-    if (gap === 'release-after-acceptance') (pending.resourceReturns![0] as any).release.releasedAt = host.observedAt
+    if (gap === 'future-original-release') (pending.resourceReturns![0] as any).release.releasedAt = new Date(f.now + 1).toISOString()
     if (gap === 'changed-original-generation') (pending.resourceReturns![0] as any).release.subjectGeneration++
-    if (gap === 'foreign-authority') host.resourceLifecycle!.subjects[0]!.subject.authorityHostId = 'foreign'
-    if (gap === 'foreign-owner') host.resourceLifecycle!.subjects[0]!.owner = {id: 'live-reader', kind: 'run', generation: 1, hostId: host.hostId}
-    if (gap === 'live-claim') host.authorityReservations = [{...exclusiveHostReservationSchema.parse(pending.resourceClaims![0]),
-      owner: {id: 'live-native-reader', kind: 'run'}, prerequisite: undefined, resourceCheck: undefined}]
+    if (gap === 'foreign-original-authority') (pending.resourceReturns![0] as any).authorityHostId = 'foreign'
+    if (gap === 'live-original-owner') host.resourceLifecycle!.subjects[0]!.owner = {id: `resource-graph:${pending.targetInputSha256}`, kind: 'boundary-cleanup', generation: 1, hostId: host.hostId}
+    if (gap === 'live-original-claim') host.authorityReservations = [{...exclusiveHostReservationSchema.parse(pending.resourceClaims![0]),
+      owner: {id: `resource-graph:${pending.targetInputSha256}`, kind: 'boundary-cleanup'}}]
     if (gap === 'changed-original-input') pending.target.definitionSha256 = requestInputDigest('foreign-definition')
     const saved = structuredClone(f.row)
     await f.service.preparation('job-one')
@@ -135,3 +130,29 @@ test('original deadline expiry permits only historical UNKNOWN ingestion, withou
   expect(f.row.fleetDeadline).toEqual(deadline); expect(f.bindWrites).toBe(0)
   expect(f.row.fleetBinding).toBeUndefined(); expect(f.writes).toBe(1)
 })
+
+for (const platform of ['android', 'ios-on-mac'] as const)
+  test(`mixed returned UNKNOWN on ${platform} needs no current debug history and starts exactly one alternate check`, async () => {
+    const {f, host, original, originalReceipt} = await closedOriginal(platform, true), saved = structuredClone(f.row)
+    host.frameworkHistory = []
+    // This later, unrelated occupant cannot undo the original's accepted return.
+    host.authorityReservations = [{...exclusiveHostReservationSchema.parse(original.resourceClaims![0]),
+      id: '70000000-0000-4000-8000-000000000001', operationId: 'different-original-operation',
+      inputSha256: '7'.repeat(64), intentSha256: '8'.repeat(64),
+      owner: {id: 'different-original', kind: 'run'}, prerequisite: undefined, resourceCheck: undefined}]
+    host.resourceLifecycle!.subjects[0]!.owner = {id: 'different-original', kind: 'run', generation: 99, hostId: host.hostId}
+    await f.service.preparation('job-one')
+    expect(f.row.fleetCandidatePreparations?.[0]).toEqual({...original, settlement: originalReceipt})
+    expect(f.row.fleetCandidatePreparations?.[0]?.settlement?.outcome).toBe('unknown')
+    expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2')
+    expect(f.row.fleetCandidatePreparation?.candidate.attemptId).not.toBe(original.candidate.attemptId)
+    expect(f.writes).toBe(2); expect(f.bindWrites).toBe(0)
+    expect(f.row.fleetCandidateSelection).toBeUndefined(); expect(f.row.fleetResourceReservation).toBeUndefined()
+    expect(f.row.fleetBinding).toBeUndefined()
+    for (const key of ['requestId', 'fleetSelection', 'fleetSelectionSha256', 'fleetPreparation', 'fleetInputSha256', 'fleetDeadline'] as const)
+      expect(f.row[key]).toEqual(saved[key])
+    await f.service.preparation('job-one')
+    expect(f.writes).toBe(2); expect(f.bindWrites).toBe(0)
+    expect(exclusiveHostReservationSchema.parse(host.authorityReservations[0]).owner.id).toBe('different-original')
+    expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2')
+  })
