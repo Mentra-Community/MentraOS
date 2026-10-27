@@ -646,6 +646,110 @@ class GuidedTests(unittest.TestCase):
             self.assertEqual(setup.entra_handoffs(self.args, self.config, interactive=False), [])
         grant.assert_called_once()
 
+    def test_approving_roles_are_read_from_the_operators_directory_roles(self):
+        cloud_app_admin, user_admin = '158c047a-c907-4556-b7ef-446551a6b5f7', 'fe930be7-5e62-47db-91af-98c3a49a38b1'
+        for roles, expected in (([{'roleTemplateId': user_admin}, {'roleTemplateId': cloud_app_admin}], True),
+                                ([{'roleTemplateId': user_admin}], False), ([], False)):
+            with patch.object(setup, 'graph', return_value={'value': roles}):
+                self.assertIs(setup.can_approve_sign_in(self.config), expected)
+        # A service principal has no "me"; setup then simply tries.
+        with patch.object(setup, 'graph', side_effect=setup.GraphError(400)):
+            self.assertIsNone(setup.can_approve_sign_in(self.config))
+
+    def test_the_role_query_is_sent_as_an_advanced_query(self):
+        reply = unittest.mock.MagicMock()
+        reply.__enter__.return_value.read.return_value = b'{"value": []}'
+        with patch.object(setup, 'graph_token', return_value='t'), \
+             patch.object(setup.urllib.request, 'urlopen', return_value=reply) as urlopen:
+            self.assertIs(setup.can_approve_sign_in(self.config), False)
+        request = urlopen.call_args.args[0]
+        # Graph documents $count and ConsistencyLevel as required for an OData cast.
+        self.assertIn('/me/transitiveMemberOf/microsoft.graph.directoryRole?$count=true', request.full_url)
+        self.assertEqual(request.get_header('Consistencylevel'), 'eventual')
+        self.assertEqual(request.get_header('Authorization'), 'Bearer t')
+
+    def test_an_operator_who_cannot_approve_gets_the_message_at_once(self):
+        with patch.object(setup, 'mobile_access', return_value={'servicePrincipalId': 'sp-id', 'consent': False, 'assigned': True}), \
+             patch.object(setup, 'can_approve_sign_in', return_value=False), \
+             patch.object(setup, 'grant_admin_consent') as grant, contextlib.redirect_stdout(io.StringIO()) as out:
+            handoffs = setup.entra_handoffs(self.args, self.config, interactive=True)
+        # Asked of an account Entra will refuse, a grant would only stall.
+        grant.assert_not_called()
+        self.assertEqual(handoffs, [setup.consent_handoff(self.config)])
+        printed = out.getvalue()
+        self.assertIn('Still to do - Admin consent: employees cannot sign in until', printed)
+        self.assertIn('Application Administrator', printed)
+        for app_id in (TENANT, SUB):
+            self.assertIn(setup.permissions_page(app_id), printed)
+
+    def test_a_refused_grant_is_reported_with_the_message_to_send(self):
+        with patch.object(setup, 'mobile_access', return_value={'servicePrincipalId': 'sp-id', 'consent': False, 'assigned': True}), \
+             patch.object(setup, 'grant_admin_consent', side_effect=setup.SetupError('Authorization_RequestDenied')), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            handoffs = setup.entra_handoffs(self.args, self.config, interactive=False)
+        self.assertEqual(handoffs, [setup.consent_handoff(self.config)])
+        self.assertIn('Your account could not approve them.\n  Still to do - Admin consent', out.getvalue())
+
+    def test_the_preview_warns_an_operator_who_cannot_approve_sign_in(self):
+        self.config.update(coreApiClientId='', mobileClientId='')
+        self.write_state('initialized')
+        with self.steps(), patch.object(setup, 'can_approve_sign_in', return_value=False), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            setup.guided(self.args, self.directory)
+        self.assertIn('Your account cannot approve them for your organization', out.getvalue())
+
+    def test_an_approval_during_the_install_clears_the_step_before_the_summary(self):
+        self.write_state('identity_configured')
+        with self.steps(), patch.object(setup, 'entra_handoffs', return_value=[setup.consent_handoff(self.config)]), \
+             patch.object(setup, 'mobile_access', return_value={'consent': True}), \
+             patch.object(setup, 'wait_for_consent') as wait, contextlib.redirect_stdout(io.StringIO()) as out:
+            setup.guided(self.args, self.directory)
+        wait.assert_not_called()
+        self.assertNotIn('Still to do - Admin consent', out.getvalue())
+        self.assertIn('Employees: install the Mentra App', out.getvalue())
+
+    def test_an_interactive_run_waits_for_a_pending_approval_after_the_summary(self):
+        self.config['verifiedEmailDomains'] = ['acme.example']
+        self.write_state('infrastructure_verified', teamsOffered=True, outputs={'workspaceOrigin': 'https://acme.example'})
+        self.args.yes = False
+        order = []
+        with self.steps(), patch.object(setup, 'entra_handoffs', return_value=[setup.consent_handoff(self.config)]), \
+             patch.object(setup, 'mobile_access', return_value={'consent': False}), \
+             patch.object(setup.sys, 'stdin', unittest.mock.Mock(isatty=lambda: True)), \
+             patch.object(setup, 'finish', side_effect=lambda d, r: order.append('summary') or dict(r, phase='infrastructure_verified')), \
+             patch.object(setup, 'wait_for_consent', side_effect=lambda d, c: order.append('wait')):
+            setup.guided(self.args, self.directory)
+        # The summary, with the web address and the message to send, comes first.
+        self.assertEqual(order, ['summary', 'wait'])
+
+    def test_the_summary_holds_employees_back_until_approval(self):
+        self.write_state('infrastructure_verified', outputs={'workspaceOrigin': 'https://acme.example'},
+                         handoffs=[setup.consent_handoff(self.config)])
+        with contextlib.redirect_stdout(io.StringIO()) as out, patch.object(setup, 'meetings_consent', return_value=True):
+            setup.finish(self.directory, {})
+        self.assertIn('Employees cannot sign in yet', out.getvalue())
+        self.assertNotIn('Employees: install', out.getvalue())
+        self.assertIn('Still to do - Admin consent', out.getvalue())
+
+    def test_waiting_ends_when_the_approval_appears_and_clears_the_step(self):
+        self.write_state('infrastructure_verified', outputs={'workspaceOrigin': 'https://acme.example'},
+                         handoffs=[setup.consent_handoff(self.config), {'step': 'Employee access', 'action': 'kept'}])
+        with patch.object(setup, 'mobile_access', side_effect=[{'consent': False}, {'consent': True}]), \
+             patch('time.sleep') as sleep, contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertTrue(setup.wait_for_consent(self.directory, self.config))
+        sleep.assert_called_once_with(setup.CONSENT_POLL_SECONDS)
+        self.assertEqual([h['step'] for h in setup.read_json(self.directory / 'state.json')['handoffs']], ['Employee access'])
+        self.assertIn('Approved. Employees can sign in now.', out.getvalue())
+
+    def test_ctrl_c_stops_waiting_and_keeps_the_step(self):
+        self.write_state('infrastructure_verified', outputs={'workspaceOrigin': 'https://acme.example'},
+                         handoffs=[setup.consent_handoff(self.config)])
+        with patch.object(setup, 'mobile_access', side_effect=KeyboardInterrupt), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertFalse(setup.wait_for_consent(self.directory, self.config))
+        self.assertIn('Stopped waiting', out.getvalue())
+        self.assertEqual([h['step'] for h in setup.read_json(self.directory / 'state.json')['handoffs']], ['Admin consent'])
+
     def test_employees_are_assigned_once_and_problems_reported_per_entry(self):
         posted = []
         def graph(config, method, path, body=None, missing_ok=False):
