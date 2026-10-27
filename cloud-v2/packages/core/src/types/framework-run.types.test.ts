@@ -72,6 +72,47 @@ test('ready cleanup rejects failed/live outcomes and retains secondary errors fo
   }
 });
 
+test('cleaned resource return checklists publish unchanged without altering the frozen verdict', () => {
+  const good = run();
+  const outcomes = ['app', 'recorder'].map(resourceId => ({state: 'cleaned' as const, resourceId,
+    evidence: [`return:${resourceId}`], idleCheck: {resourceId, contractVersion: 'idle-v1', ownerGeneration: 7,
+      operationId: `idle-check:${resourceId}`, stage: 'after-teardown' as const, outcome: 'passed' as const,
+      checkedAt: good.finishedAt, conditions: [{id: 'original-process-absent', outcome: 'passed' as const}],
+      evidenceRefs: [`return:${resourceId}`], qualifiedScope: {kind: 'same-controller' as const, controllerId: good.hostId}}}));
+  for (const testOutcome of ['passed', 'failed'] as const) {
+    const error = {phase: 'test' as const, actionId: 'settings', message: 'Original product assertion failed'};
+    const result = {...good.result, test: testOutcome,
+      steps: [{...good.result.steps[0]!, status: testOutcome}],
+      failures: testOutcome === 'failed' ? [error] : [], teardown: {...good.result.teardown, outcomes}};
+    const published = frameworkRunSchema.parse({...good, result});
+    expect(published.result as unknown).toEqual(result);
+    expect(frameworkRunOutcome(published)).toBe(testOutcome === 'passed' ? 'pass' : 'failed');
+    expect(frameworkEvidenceComplete(published)).toBe(true);
+  }
+  expect(frameworkRunSchema.parse(good).result.teardown.outcomes).toEqual([]);
+});
+
+test('cleanup return diagnostics retain their typed bounds and do not admit arbitrary fields', () => {
+  const good = run();
+  const check = {resourceId: 'app', contractVersion: 'idle-v1', ownerGeneration: 7, operationId: 'idle-check:app',
+    stage: 'after-teardown', outcome: 'passed', checkedAt: good.finishedAt,
+    conditions: [{id: 'app-absent', outcome: 'passed'}], evidenceRefs: ['return:app'],
+    qualifiedScope: {kind: 'same-controller', controllerId: good.hostId}};
+  const withCheck = (idleCheck: unknown) => ({...good, result: {...good.result,
+    teardown: {...good.result.teardown, outcomes: [{state: 'cleaned', resourceId: 'app', evidence: [], idleCheck}]}}});
+  expect(frameworkRunSchema.safeParse(withCheck(check)).success).toBe(true);
+  for (const malformed of [
+    {...check, ownerGeneration: -1}, {...check, checkedAt: 'not-a-time'}, {...check, outcome: 'ready'},
+    {...check, unexpected: true}, {...check, qualifiedScope: {kind: 'same-controller'}},
+    {...check, conditions: [{id: 'app-absent', outcome: 'passed', arbitrary: true}]},
+    {...check, conditions: Array.from({length: 51}, () => check.conditions[0])},
+    {...check, evidenceRefs: Array.from({length: 101}, () => 'return:app')},
+  ]) expect(frameworkRunSchema.safeParse(withCheck(malformed)).success).toBe(false);
+  expect(frameworkRunSchema.safeParse({...good, result: {...good.result, teardown: {...good.result.teardown,
+    ready: false, outcomes: [{state: 'still-active', resourceId: 'app', writer: {pid: 1}, evidence: [], idleCheck: check}],
+    unavailableResources: [{resource: 'app', cause: 'Original writer active', nextAction: 'Inspect original process'}]}}}).success).toBe(false);
+});
+
 test('cleanup failures retain identical diagnostic JSON in every flattened copy and outcome state', () => {
   const good = run();
   const details = {measurements: [{mask: 'screen', pixels: 7}], context: {attempt: 1, settled: true}};

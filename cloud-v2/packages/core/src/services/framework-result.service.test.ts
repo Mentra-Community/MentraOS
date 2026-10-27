@@ -87,7 +87,7 @@ test('candidate result metadata remains outside immutable result and host reader
   expect(run).not.toHaveProperty('verification')
 })
 
-test("lost result acknowledgement returns same receipt and refuses rewritten terminal result", async () => {
+test("lost result acknowledgement retains return diagnostics and refuses rewritten terminal result", async () => {
   let stored: {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean} | null = null;
   const repository: FrameworkResultRepository = {
     async insert(payload, payloadSha256) {
@@ -112,7 +112,12 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
     finishedAt: "2026-10-02T19:01:00Z",
     assets: [],
     result: {runId: "r1", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "failed", actionId: "install"}, test: "not-run", steps: [{id: "required", status: "not-run", durationMs: 0, causedBy: "install"}],
-      teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      teardown: {ready: true, outcomes: ['app', 'recorder'].map(resourceId => ({state: 'cleaned', resourceId,
+        evidence: [`return:${resourceId}`], idleCheck: {resourceId, contractVersion: 'idle-v1', ownerGeneration: 7,
+          operationId: `idle-check:${resourceId}`, stage: 'after-teardown', outcome: 'passed',
+          checkedAt: '2026-10-02T19:01:00Z', conditions: [{id: 'original-writer-absent', outcome: 'passed'}],
+          evidenceRefs: [`return:${resourceId}`], qualifiedScope: {kind: 'same-controller', controllerId: 'mini'}}})),
+        errors: [], unavailableResources: []},
       failures: [{phase: "setup", actionId: "install", message: "install failed"}], evidence: [],
       timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 100, testMs: 0, teardownMs: 100}},
   }
@@ -141,6 +146,11 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
   expect(projectionAttempts).toBe(2);
   expect(first.created).toBe(true);
   expect(duplicate).toEqual({...first, created: false});
+  expect(first.payloadSha256).toBe(requestInputDigest(run));
+  expect((await service.detail('r1')).run.result.teardown.outcomes as unknown).toEqual(run.result.teardown.outcomes);
+  const rewritten = structuredClone(run);
+  rewritten.result.teardown.outcomes[0]!.idleCheck.conditions[0]!.id = 'changed-diagnostic';
+  await expect(service.ingest(rewritten, 'mini')).rejects.toThrow('different terminal result');
   expect((await service.detail("r1")).run.frameworkBinding).toEqual(testFrameworkBinding())
   expect((await service.detail("r1")).run.routineSource).toEqual(testRoutineSource())
   await expect(
