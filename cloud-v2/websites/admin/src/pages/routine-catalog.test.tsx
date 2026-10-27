@@ -1301,7 +1301,7 @@ test("failure summary follows the execution verdict and stays brief", () => {
     {phase: "evidence", actionId: "upload", message: "Upload failed"},
     {phase: "test", actionId: "connect", message: "Meeting did not connect.\nDetailed diagnostic"},
     {phase: "setup", actionId: "prepare", message: "Software preparation timed out"},
-  ], teardown: {unavailableResources: [{cause: "Camera is still active"}]}}} as any;
+  ], teardown: {errors: [], outcomes: [], unavailableResources: [{cause: "Camera is still active"}]}}} as any;
   expect(runFailureSummary(run, "failed", "failed")).toEqual({phase: "test", actionId: "connect", reason: "Test: Meeting did not connect.", target: "run-failure-test-0"});
   expect(runFailureSummary(run, "setup-failed", "failed")?.reason).toBe("Setup: Software preparation timed out");
   expect(runFailureSummary(run, "teardown-failed", "failed")).toMatchObject({reason: "Teardown: Camera is still active", target: "run-phase-teardown"});
@@ -1311,6 +1311,35 @@ test("failure summary follows the execution verdict and stays brief", () => {
   expect(runFailureSummary(run, "failed", "complete")?.reason).toBe("Test: Test failed. No detailed reason was recorded.");
   run.result.failures = [{phase: "test", actionId: "connect", message: "x".repeat(300)}];
   expect(runFailureSummary(run, "failed", "complete")?.reason.length).toBe(164);
+});
+
+test('cleanup-only failures display their actual cause, phase and image without flattened copies', () => {
+  for (const phase of ['teardown', 'evidence'] as const) for (const location of ['teardown', 'outcome'] as const) {
+    const error = {phase, actionId: 'recorder', message: `Original ${location} ${phase} cause`};
+    const image = {id: 'cleanup-image', kind: 'screenshot', path: 'screenshots/cleanup.png', sha256: 'a'.repeat(64), size: 10, mimeType: 'image/png'};
+    const run = recordedFrameworkRunSchema.parse({schemaVersion: 1, requestId: 'cleanup-only', hostId: 'mini', routineId: 'notes',
+      definitionRevision: 'c'.repeat(40), platform: 'android', laneId: 'phone',
+      build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+      startedAt: '2026-10-03T19:00:00Z', finishedAt: '2026-10-03T19:01:00Z', assets: [image],
+      result: {runId: 'cleanup-only', finishedAt: '2026-10-03T19:01:00Z', setup: {status: 'passed'}, test: 'passed',
+        steps: [{id: 'required', status: 'passed', durationMs: 1}], failures: [], evidence: [],
+        teardown: {ready: true, outcomes: location === 'outcome' ? [{state: 'cleaned', resourceId: 'recorder', evidence: [], errors: [error]}] : [],
+          errors: location === 'teardown' ? [error] : [], unavailableResources: []},
+        timing: {startedAt: '2026-10-03T19:00:00Z', setupMs: 0, testMs: 1, teardownMs: 0}}});
+    const outcome = phase === 'teardown' ? 'teardown-failed' : 'pass', evidenceStatus = phase === 'evidence' ? 'failed' : 'complete';
+    const screens = [{phase, actionId: error.actionId, assetId: image.id}], client = new QueryClient();
+    client.setQueryData(['framework-run', run.requestId], {run, definition: null, outcome, evidenceStatus, uploadsComplete: true, failureScreens: screens});
+    const before = JSON.stringify(run);
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+    expect(html).toContain(error.message); expect(html).toContain(`id="run-failure-${phase}-0"`);
+    expect(runFailureSummary(run, outcome, evidenceStatus)?.actionId).toBe(error.actionId);
+    expect(selectedFailureScreen(run, screens, error.actionId, phase)?.id).toBe(image.id);
+    if (phase === 'teardown') {
+      const section = html.slice(html.indexOf('<section id="run-phase-teardown"'), html.indexOf('<section id="run-phase-evidence"'));
+      expect(section).toContain('>Failed</span>'); expect(section).not.toContain('>Passed</span>');
+    }
+    expect(JSON.stringify(run)).toBe(before); client.clear();
+  }
 });
 
 test('failed run links to its reported incident without changing failure selection', () => {

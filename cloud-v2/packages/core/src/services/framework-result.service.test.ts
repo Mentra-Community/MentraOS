@@ -225,6 +225,48 @@ test("lost result acknowledgement retains return diagnostics and refuses rewritt
   expect((await service.detail("r1")).evidenceStatus).toBe("failed");
 })
 
+test('failed cleanup diagnostic copies publish once and retry only with the unchanged original digest', async () => {
+  const {frameworkRunSchema} = await import('../types/framework-run.types');
+  const original = {phase: 'teardown' as const, actionId: 'fixture', message: 'Original cleanup profile unavailable'};
+  const decorated = {...original, diagnostics: {screenshotAssetIds: ['cleanup.png']}};
+  const frozen = frameworkRunSchema.parse({schemaVersion: 1, routineSource: testRoutineSource(), frameworkBinding: testFrameworkBinding(),
+    hostId: 'mini', requestId: 'failed-cleanup-result', routineId: 'notes', definitionRevision: 'a'.repeat(40),
+    platform: 'ios-on-mac', laneId: 'mac', build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: '2026-10-02T19:00:00Z', finishedAt: '2026-10-02T19:01:00Z', assets: [],
+    result: {runId: 'failed-cleanup-result', finishedAt: '2026-10-02T19:01:00Z', setup: {status: 'failed', actionId: 'install'},
+      test: 'not-run', steps: [{id: 'required', status: 'not-run', durationMs: 0, causedBy: 'install'}],
+      teardown: {ready: false, actions: [{id: 'cleanup:fixture', instruction: 'Settle the original fixture',
+        expected: 'The original owner is returned', scope: 'shared', status: 'failed', durationMs: 10}],
+        outcomes: [{state: 'failed', resourceId: 'fixture', failure: decorated}], errors: [decorated,
+          {phase: 'teardown', actionId: 'fixture:readback', message: 'Owner readback unavailable'}],
+        unavailableResources: [{resource: 'fixture', cause: 'Cleanup failed', nextAction: 'Inspect the exact retained owner'}]},
+      failures: [{phase: 'setup', actionId: 'install', message: 'Setup did not begin'}, original], evidence: [],
+      timing: {startedAt: '2026-10-02T19:00:00Z', setupMs: 100, testMs: 0, teardownMs: 100}}});
+  let stored: {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean} | null = null;
+  let writes = 0;
+  const service = new FrameworkResultService({async insert(payload, payloadSha256) {
+    if (stored) throw Object.assign(new Error('duplicate'), {code: 11000});
+    stored = {payload, payloadSha256, uploadsComplete: true}; writes++;
+  }, async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset() {return null;}},
+  async () => ({hostId: frozen.hostId, input: {routineId: frozen.routineId, definitionRevision: frozen.definitionRevision,
+    routineSource: frozen.routineSource, platform: frozen.platform, laneId: frozen.laneId, build: frozen.build}}),
+  async () => {}, async () => ({definition: {steps: [{id: 'required'}]}}) as unknown as RoutineEnrollment);
+  const digest = requestInputDigest(frozen);
+  const first = await service.ingest(frozen, frozen.hostId);
+  expect(first).toMatchObject({created: true, payloadSha256: digest});
+  expect(await service.ingest(frozen, frozen.hostId)).toEqual({...first, created: false});
+  expect(writes).toBe(1);
+  const detail = await service.detail(frozen.requestId);
+  expect(detail.run).toEqual(frozen); expect(detail.outcome).toBe('setup-failed');
+  expect(detail.run.result.teardown.ready).toBe(false); expect(requestInputDigest(frozen)).toBe(digest);
+  const changed = structuredClone(frozen);
+  changed.result.teardown.errors[0]!.diagnostics = {screenshotAssetIds: ['different.png']};
+  await expect(service.ingest(changed, frozen.hostId)).rejects.toThrow('different terminal result');
+  await expect(service.ingest(frozen, 'foreign')).rejects.toThrow('accepted request');
+  await expect(service.ingest({...frozen, definitionRevision: 'c'.repeat(40)}, frozen.hostId)).rejects.toThrow('accepted request');
+  await expect(service.ingest({...frozen, build: {...frozen.build, headSha: 'c'.repeat(40)}}, frozen.hostId)).rejects.toThrow('accepted request');
+});
+
 test("a completed test can publish a teardown failure without becoming a catalog pass", async () => {
   const {frameworkRunSchema, frameworkRunOutcome} = await import("../types/framework-run.types");
   let stored: FrameworkRun | undefined;

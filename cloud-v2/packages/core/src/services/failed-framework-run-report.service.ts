@@ -1,6 +1,7 @@
 import {createHash} from "node:crypto"
 import {
   frameworkEvidenceComplete,
+  frameworkFailures,
   frameworkRunOutcome,
   recordedFrameworkRunSchema,
   type RecordedFrameworkRun,
@@ -19,7 +20,7 @@ export function failedRunNeedsReport(run: RecordedFrameworkRun) {
     run.result.setup.status === "failed" ||
     run.result.test === "failed" ||
     (!run.result.teardown.ready && run.result.test !== "cancelled" && run.result.setup.status !== "cancelled") ||
-    run.result.failures.length > 0
+    frameworkFailures(run.result).length > 0
   )
 }
 function adminBase() {
@@ -38,7 +39,8 @@ function adminBase() {
     : null
 }
 export function failedRunDiagnostics(run: RecordedFrameworkRun) {
-  const failures = run.result.failures.slice(0, MAX_FAILURES).map(({phase, actionId, message}) => ({
+  const recordedFailures = frameworkFailures(run.result)
+  const failures = recordedFailures.slice(0, MAX_FAILURES).map(({phase, actionId, message}) => ({
     phase,
     actionId,
     message: message.slice(0, MAX_MESSAGE_CHARS),
@@ -101,9 +103,9 @@ export function failedRunDiagnostics(run: RecordedFrameworkRun) {
     build,
     outcome: frameworkRunOutcome(run),
     evidenceComplete: frameworkEvidenceComplete(run),
-    phases: [...new Set(run.result.failures.map((failure) => failure.phase))],
+    phases: [...new Set(recordedFailures.map((failure) => failure.phase))],
     failures,
-    omittedFailures: Math.max(0, run.result.failures.length - MAX_FAILURES),
+    omittedFailures: Math.max(0, recordedFailures.length - MAX_FAILURES),
     failedStepIds: failedSteps.slice(0, 100),
     omittedFailedSteps: Math.max(0, failedSteps.length - 100),
     setup: run.result.setup.status,
@@ -183,7 +185,7 @@ export class FailedFrameworkRunReportService {
       throw new ReportArtifactError(409, "Routine incident frozen result digest differs")
     if (!failedRunNeedsReport(run)) return undefined
     let diagnostic: Record<string, unknown> = boundedDiagnostics(run)
-    const first = run.result.failures[0]
+    const first = frameworkFailures(run.result)[0]
     let actualBehavior = `${run.routineId} (${run.platform}) completed with ${diagnostic.outcome}${
       first ? `: ${first.phase}/${first.actionId}: ${first.message.slice(0, MAX_MESSAGE_CHARS)}` : "."
     }`

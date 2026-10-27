@@ -1,3 +1,4 @@
+import {frameworkFailures} from '../types/framework-run-failures';
 import {createHash} from 'node:crypto';
 import type {FrameworkFailureScreen, RecordedFrameworkRun} from '../types/framework-run.types';
 import {hasFailureImageProvenance, recordedFailureImageProvenance, type FailureImageProvenance} from './framework-failure-image-provenance';
@@ -69,7 +70,7 @@ export function recordedFailureScreens(run: RecordedFrameworkRun, diagnostic: un
     const assets = run.assets.filter(asset => asset.id === id && image(asset));
     return assets.length === 1 ? id : undefined;
   };
-  for (const failure of run.result.failures) {
+  for (const failure of frameworkFailures(run.result)) {
     const ids = associations.get(key(failure.phase, failure.actionId, failure.message));
     const assetId = resolve(ids?.app), desktopAssetId = resolve(ids?.desktop);
     screens.push({phase: failure.phase, actionId: failure.actionId,
@@ -79,12 +80,12 @@ export function recordedFailureScreens(run: RecordedFrameworkRun, diagnostic: un
   // cannot conflict, but every recorded source association must agree with that displayed failure.
   return screens.filter((screen, index) => screens.findIndex(other => other.phase === screen.phase && other.actionId === screen.actionId) === index)
     .map(screen => {
-      const same = run.result.failures.filter(failure => failure.phase === screen.phase && failure.actionId === screen.actionId)
+      const same = frameworkFailures(run.result).filter(failure => failure.phase === screen.phase && failure.actionId === screen.actionId)
         .map(failure => associations.get(key(failure.phase, failure.actionId, failure.message)));
       const app = new Set(same.flatMap(ids => [...ids?.app ?? []])), desktop = new Set(same.flatMap(ids => [...ids?.desktop ?? []]));
-      const values = new Set(run.result.failures.filter(failure => failure.phase === screen.phase && failure.actionId === screen.actionId)
+      const values = new Set(frameworkFailures(run.result).filter(failure => failure.phase === screen.phase && failure.actionId === screen.actionId)
         .flatMap(failure => [...provenance.get(key(failure.phase, failure.actionId, failure.message)) ?? []]));
-      const first = run.result.failures.find(failure => failure.phase === screen.phase && failure.actionId === screen.actionId)!;
+      const first = frameworkFailures(run.result).find(failure => failure.phase === screen.phase && failure.actionId === screen.actionId)!;
       const primary = provenance.get(key(first.phase, first.actionId, first.message));
       const recorded: FailureImageProvenance | undefined = primary?.size === 1 && values.size === 1 && !values.has('')
         ? JSON.parse([...values][0]!) : undefined;
@@ -101,7 +102,7 @@ export function recordedFailureScreens(run: RecordedFrameworkRun, diagnostic: un
 }
 
 export function failureDiagnosticAssets(run: RecordedFrameworkRun): Asset[] {
-  if (!run.result.failures.length) return [];
+  if (!frameworkFailures(run.result).length) return [];
   return run.assets.filter(asset => ['report', 'diagnostic'].includes(asset.kind) && asset.mimeType === 'application/json' &&
     (run.platform === 'android' ? asset.path === 'setup-evidence/setup-diagnostics.json'
       : isJournal(asset.path) || isBundle(asset.path)));

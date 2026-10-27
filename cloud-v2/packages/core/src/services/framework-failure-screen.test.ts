@@ -32,6 +32,20 @@ function fixture(platform: 'android' | 'ios-on-mac' = 'android') {
 }
 const association = [{phase: failure.phase, actionId: failure.actionId, assetId: screenshot.id}];
 
+test('cleanup-only causes retain exact recorded image associations and diagnostics without flattened copies', () => {
+  for (const phase of ['teardown', 'evidence'] as const) for (const location of ['teardown', 'outcome'] as const) {
+    const base = fixture(), error = {...failure, phase};
+    const run = {...base, result: {...base.result, failures: [], teardown: {...base.result.teardown,
+      errors: location === 'teardown' ? [error] : [], outcomes: location === 'outcome'
+        ? [{state: 'cleaned' as const, resourceId: 'recorder', evidence: [], errors: [error]}] : []}}};
+    const before = JSON.stringify(run);
+    expect(failureDiagnosticAssets(run)).toEqual([base.assets[1]!]);
+    expect(recordedFailureScreens(run, [{...diagnostic[0], phase}])).toEqual([{phase, actionId: failure.actionId, assetId: screenshot.id}]);
+    expect(recordedFailureScreens(run, [{...diagnostic[0], phase, screenshotAssetId: 'foreign'}])).toEqual([]);
+    expect(JSON.stringify(run)).toBe(before);
+  }
+});
+
 function crashWitnessFixture() {
   const run = fixture(), preceding = {...screenshot, id: 'preceding-app', path: 'screenshots/preceding.png'},
     system = {...screenshot, id: 'current-system', path: 'screenshots/system.png'},

@@ -1,3 +1,4 @@
+import {frameworkFailures} from '../../../../packages/core/src/types/framework-run-failures';
 import {StepSourceLink} from "../components/step-source-link";
 import {LoadingIndicator} from "../components/loading-indicator";
 import {HistoryStatus, runDisplayStatus} from "../components/test-history-table";
@@ -260,7 +261,7 @@ export function runFailureSummary(run: RecordedFrameworkRun, outcome: string, ev
   const phase: FrameworkFailureScreen['phase'] | null = outcome === "setup-failed" ? "setup" : outcome === "failed" ? "test" : outcome === "teardown-failed" ? "teardown"
     : evidenceStatus === "failed" ? "evidence" : null;
   if (!phase) return null;
-  const failure = run.result.failures.find(item => item.phase === phase);
+  const failure = frameworkFailures(run.result).find(item => item.phase === phase);
   const label = {setup: "Setup", test: "Test", teardown: "Teardown", evidence: "Evidence"}[phase];
   const message = failure?.message ?? (phase === "teardown" ? run.result.teardown.unavailableResources[0]?.cause : undefined)
     ?? `${label} failed. No detailed reason was recorded.`;
@@ -286,7 +287,7 @@ export function stepRecordingPlayback(run: RecordedFrameworkRun, step: RecordedF
 
 export function selectedFailureScreen(run: RecordedFrameworkRun, screens: FrameworkFailureScreen[] | undefined, actionId: string | undefined,
   phase: FrameworkFailureScreen['phase'], source: 'app' | 'desktop' | 'preceding' | 'system' = 'app') {
-  const failure = run.result.failures.find(failure => failure.actionId === actionId && failure.phase === phase);
+  const failure = frameworkFailures(run.result).find(failure => failure.actionId === actionId && failure.phase === phase);
   const screen = failure && screens?.find(screen => screen.phase === failure.phase && screen.actionId === failure.actionId);
   return screen && run.assets.find(asset => asset.id === (source === 'app' ? screen.assetId : source === 'desktop' ? screen.desktopAssetId
     : source === 'preceding' ? screen.precedingAppImage?.assetId : screen.currentPhoneImage?.source === 'system' ? screen.currentPhoneImage.assetId : undefined) && asset.kind === 'screenshot' &&
@@ -295,7 +296,7 @@ export function selectedFailureScreen(run: RecordedFrameworkRun, screens: Framew
 
 export function selectedFailureProvenance(run: RecordedFrameworkRun, screens: FrameworkFailureScreen[] | undefined,
   actionId: string | undefined, phase: FrameworkFailureScreen['phase']) {
-  return run.result.failures.some(failure => failure.phase === phase && failure.actionId === actionId)
+  return frameworkFailures(run.result).some(failure => failure.phase === phase && failure.actionId === actionId)
     ? screens?.find(screen => screen.phase === phase && screen.actionId === actionId) : undefined;
 }
 
@@ -484,7 +485,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       {!uploadsComplete && <p role="status" className="mt-3 text-sm text-[#747780]">Evidence upload pending.</p>}
     </section>
     <LifecyclePanel phase="setup" actions={run.result.setup.actions} status={run.result.setup.status}
-      actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} sources={run.result.stepSources?.setup} failures={run.result.failures.filter(failure => failure.phase === "setup")} />
+      actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} sources={run.result.stepSources?.setup} failures={frameworkFailures(run.result).filter(failure => failure.phase === "setup")} />
     <div className={hasMedia ? `grid gap-5 ${showMacScreens ? 'lg:h-[calc(var(--recording-height)+10rem)]' : 'lg:h-[calc(var(--recording-height)+8rem)]'} lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]` : "space-y-5"}>
     {hasMedia && <section aria-label="Run evidence viewer" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
@@ -550,20 +551,20 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
           </div>
         </li>;
       })}</ol>
-      {run.result.failures.filter(failure => failure.phase === "test").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
+      {frameworkFailures(run.result).filter(failure => failure.phase === "test").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
       </div>
     </section>
     </div>
     <LifecyclePanel phase="teardown" actions={run.result.teardown.actions} status={!run.result.teardown.ready
-      || run.result.failures.some(failure => failure.phase === 'teardown') ? "failed" : "passed"}
-      durationMs={run.result.timing.teardownMs} sources={run.result.stepSources?.teardown} failures={run.result.failures.filter(failure => failure.phase === "teardown")}
+      || frameworkFailures(run.result).some(failure => failure.phase === 'teardown') ? "failed" : "passed"}
+      durationMs={run.result.timing.teardownMs} sources={run.result.stepSources?.teardown} failures={frameworkFailures(run.result).filter(failure => failure.phase === "teardown")}
       unavailable={run.result.teardown.unavailableResources} ready={run.result.teardown.ready} />
     {!!run.result.diagnostics?.length && run.result.timing.diagnosticsMs !== undefined && <LifecyclePanel phase="diagnostics"
       actions={run.result.diagnostics} status={run.result.diagnostics.some(action => action.status === 'failed') ? 'failed'
         : run.result.diagnostics.some(action => action.status === 'cancelled') ? 'cancelled' : 'passed'}
       durationMs={run.result.timing.diagnosticsMs} failures={[]} />}
     <section id="run-phase-evidence" tabIndex={-1} className={PANEL}><h3 className="font-semibold">Evidence</h3>
-      {run.result.failures.filter(failure => failure.phase === "evidence").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
+      {frameworkFailures(run.result).filter(failure => failure.phase === "evidence").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
       <ul className="mt-3 space-y-2">{run.assets.map(asset => <li key={asset.id}>{uploadsComplete ? <a className={TESTING_LINK} href={assetHref(asset.id)}>{asset.path}</a> : asset.path} · {asset.kind}</li>)}</ul>
       <p className="mt-4 text-xs">Source revision: <code>{run.definitionRevision}</code></p>
     </section>
