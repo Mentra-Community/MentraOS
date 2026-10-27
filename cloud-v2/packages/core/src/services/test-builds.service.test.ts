@@ -312,6 +312,19 @@ function canonicalFixture() {
  return {...f, id, identity, producer, job, releaseRef, compare, plan, planUrl, manifest, manifestUrl, asset, source, familyPath, versionPath, index, indexUrl, indexAsset, refreshIndex};
 }
 
+test("canonical finalized CDN manifests do not depend on live public tag discovery", async () => {
+ for (const tags of [[], new Response("request limit reached", {status: 403,
+  headers: {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1793066874"}}),
+  [{ref: "refs/tags/mentra-v3.4.0-dev.1097", object: {type: "commit", sha: HEAD}}]]) {
+  const f = canonicalFixture(); f.rows.set(API + "/git/matching-refs/tags/mentra-v", tags);
+  expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available",
+   release: f.identity, headSha: CANONICAL_HEAD, artifactSource: {headSha: EXPORTED_HEAD}});
+  expect(f.calls.filter(call => call.url === API + "/git/matching-refs/tags/mentra-v")).toHaveLength(0);
+  expect(f.calls.filter(call => call.url === API + "/git/commits/" + EXPORTED_HEAD)).toHaveLength(1);
+  expect(f.calls.filter(call => call.url === CANONICAL_API + "/compare/" + EXPORTED_ORIGIN + "..." + CANONICAL_HEAD)).toHaveLength(1);
+ }
+});
+
 test("canonical normal release keeps producer head and verified public artifact source without Actions artifacts", async () => {
  const f = canonicalFixture(), selected = await f.gateway.resolve(f.source, "android");
  expect(selected).toMatchObject({availability: "available", source: f.source, headSha: CANONICAL_HEAD,
@@ -332,7 +345,7 @@ test("canonical inventory and original-boundary discovery use the real normal wo
  expect(selected).toMatchObject({availability: "available", source: f.source, release: f.identity});
  expect(f.calls.some(call => call.url.includes("/actions/workflows/coordinated-release.yml"))).toBe(false);
  const ledgerReads = f.calls.filter(call => call.url === API + "/git/matching-refs/tags/mentra-v");
- expect(ledgerReads).toHaveLength(2);
+ expect(ledgerReads).toHaveLength(0);
 });
 
 test("canonical exact resolution has constant GitHub reads and never reads reservation history", async () => {
@@ -344,7 +357,7 @@ test("canonical exact resolution has constant GitHub reads and never reads reser
    created_at: "2026-10-24T13:00:00Z"});
  }
  expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available"});
- expect(f.calls.filter(call => call.url.startsWith("https://api.github.com/"))).toHaveLength(7);
+ expect(f.calls.filter(call => call.url.startsWith("https://api.github.com/"))).toHaveLength(6);
  expect(f.calls.some(call => /mentra-sequence-|\/git\/tags\//.test(call.url))).toBe(false);
  expect(f.calls.filter(call => call.url.includes("mentra-release-") && call.url.endsWith(".json"))).toHaveLength(2);
 });
@@ -364,7 +377,7 @@ test("canonical lookup derives its family from the actual declared version sourc
  expect(f.calls.filter(call => call.url.includes("/contents/")).length).toBe(pathCount + 1);
 });
 
-test("canonical publication refs, source and index remain fresh on every unscoped resolve", async () => {
+test("canonical publication source and index remain fresh on every unscoped resolve", async () => {
  const f = canonicalFixture();
  expect(await f.gateway.resolve(f.source, "android")).toMatchObject({availability: "available"});
  f.asset.provenanceUrl = "https://github.com/" + CANONICAL_REPO + "/actions/runs/" + (f.id + 1); f.refreshIndex();
@@ -372,7 +385,7 @@ test("canonical publication refs, source and index remain fresh on every unscope
   .rejects.toThrow("Original canonical published release is not available");
  expect(f.calls.filter(call => call.url === f.indexUrl)).toHaveLength(2);
  expect(f.calls.filter(call => call.url === f.familyPath)).toHaveLength(2);
- expect(f.calls.filter(call => call.url === API + "/git/matching-refs/tags/mentra-v")).toHaveLength(2);
+ expect(f.calls.filter(call => call.url === API + "/git/matching-refs/tags/mentra-v")).toHaveLength(0);
 });
 
 test("canonical manifest discovery cannot borrow a publication outside its producer window", async () => {
@@ -477,7 +490,7 @@ test("canonical resolver accepts the captured two-commit private-only source pro
 });
 
 test("canonical finalized manifests require one exact run owner and completed public export", async () => {
- for (const mutation of ["owner", "duplicate-owner", "object", "release-sha", "duplicate-release", "origin", "duplicate-origin"]) {
+ for (const mutation of ["owner", "duplicate-owner", "identity", "source", "origin", "duplicate-origin"]) {
   const f = canonicalFixture();
   if (mutation === "owner") {f.asset.provenanceUrl = "https://github.com/" + REPO + "/actions/runs/" + f.id; f.refreshIndex();}
   if (mutation === "duplicate-owner") {
@@ -488,13 +501,12 @@ test("canonical finalized manifests require one exact run owner and completed pu
     size: Buffer.byteLength(bytes), digest: "sha256:" + createHash("sha256").update(bytes).digest("hex")});
    f.rows.set(API + "/git/matching-refs/tags/mentra-v", [f.releaseRef, {...f.releaseRef, ref: "refs/tags/mentra-v" + identity}]);
   }
-  if (mutation === "object") f.releaseRef.object.type = "tag";
-  if (mutation === "release-sha") f.releaseRef.object.sha = HEAD;
-  if (mutation === "duplicate-release") f.rows.set(API + "/git/matching-refs/tags/mentra-v", [f.releaseRef, f.releaseRef]);
+  if (mutation === "identity") {f.manifest.releaseIdentity = "3.4.0-dev.1098"; f.refreshIndex();}
+  if (mutation === "source") {f.manifest.sourceCommit = HEAD; f.refreshIndex();}
   if (mutation === "origin") f.rows.set(API + "/git/commits/" + EXPORTED_HEAD, {sha: EXPORTED_HEAD, message: "Export without origin"});
   if (mutation === "duplicate-origin") f.rows.set(API + "/git/commits/" + EXPORTED_HEAD, {sha: EXPORTED_HEAD,
    message: "GitOrigin-RevId: " + EXPORTED_ORIGIN + "\nGitOrigin-RevId: " + CANONICAL_HEAD});
-  if (mutation === "owner") await expect(f.gateway.resolve(f.source, "android")).rejects.toMatchObject({status: 502});
+  if (["owner", "source"].includes(mutation)) await expect(f.gateway.resolve(f.source, "android")).rejects.toMatchObject({status: 502});
   else expect((await f.gateway.resolve(f.source, "android")).availability).toBe("unavailable");
  }
 });
@@ -555,11 +567,9 @@ test("canonical attempts and finalizers cannot borrow another execution or fall 
 });
 
 test("canonical publication discovery failures remain bounded provider waits", async () => {
- for (const mutation of ["missing-manifest", "missing-release", "bound", "provider", "hidden-index", "missing-index-entry"]) {
+ for (const mutation of ["missing-manifest", "provider", "hidden-index", "missing-index-entry"]) {
   const f = canonicalFixture();
   if (mutation === "missing-manifest") f.rows.delete(f.manifestUrl);
-  if (mutation === "missing-release") f.rows.set(API + "/git/matching-refs/tags/mentra-v", []);
-  if (mutation === "bound") f.rows.set(API + "/git/matching-refs/tags/mentra-v", Array.from({length: 2000}, () => f.releaseRef));
   if (mutation === "provider") f.rows.set(f.indexUrl, new Response("private provider detail", {status: 503}));
   if (mutation === "hidden-index") f.rows.delete(f.indexUrl);
   if (mutation === "missing-index-entry") f.index.assets = [];
@@ -907,6 +917,23 @@ test("selection reuse does not retain authority across occurrences or hide missi
  }
 });
 
+
+test("build denial logging retains only its endpoint, consumer and parsed rate headers", async () => {
+ const f = canonicalFixture(), reports: Array<Record<string, unknown>> = [];
+ f.rows.set(CANONICAL_API + "/actions/runs/" + f.id + "/attempts/1", new Response("secret-provider-body", {status: 403,
+  headers: {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1793066874", "x-ratelimit-limit": "5000",
+   "x-ratelimit-used": "5000", "x-ratelimit-resource": "core", "x-github-request-id": "1234:ABCD:5678:EF90"}}));
+ const gateway = new GithubTestBuildGateway({token: "secret-token", fetch: f.fetch, report: value => reports.push(value)});
+ await expect(gateway.resolve(f.source, "android")).rejects.toMatchObject({status: 503});
+ expect(reports).toEqual([{consumer: "test-build-selection", endpoint: "/repos/" + CANONICAL_REPO + "/actions/runs/" + f.id + "/attempts/1",
+  method: "GET", status: 403, githubRequestId: "1234:ABCD:5678:EF90",
+  rateLimit: {limit: 5000, remaining: 0, reset: 1793066874, used: 5000, resource: "core"}}]);
+ expect(JSON.stringify(reports)).not.toContain("secret");
+ f.rows.set(CANONICAL_API + "/actions/runs/" + f.id + "/attempts/1", new Response("secret-provider-body", {status: 503,
+  headers: {"x-ratelimit-remaining": "secret-token", "x-github-request-id": "secret-provider-body", "retry-after": "secret-token"}}));
+ await expect(gateway.resolve(f.source, "android")).rejects.toMatchObject({status: 502});
+ expect(reports[1]).toEqual({consumer: "test-build-selection", endpoint: reports[0]!.endpoint, method: "GET", status: 503});
+});
 
 test("GitHub quota failures explain the proven limit and retain generic refusals otherwise", async () => {
  for (const status of [403, 429]) {

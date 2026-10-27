@@ -2,7 +2,11 @@ import {z} from 'zod';
 import {frameworkIdentitySchema} from '../types/framework-request.types';
 import {TestRunGithubApp} from './test-run-github-app';
 import {TestRunError} from './test-result-error';
+import {createLogger} from '@mentra/cloud-shared/logger';
+import {denialHeaders} from './routine-source-selection.service';
 import {configuredTestingTarget, retainedTestingTarget, type TestingTarget} from '../types/testing-source.types';
+
+const logger = createLogger('core').child({service: 'routine-job-actions.service'});
 
 export interface RoutineActionsRun {actionsRunId: string; status: string; conclusion: string | null}
 export interface RoutineActionsDispatch {
@@ -41,14 +45,20 @@ async function boundedRunBody(response: Response) {
 export class GithubRoutineJobActions implements RoutineJobActions {
   private readonly discoveryFlights = new Map<string, Promise<z.infer<typeof run>[]>>();
   constructor(private readonly app: Pick<TestRunGithubApp, 'token'> = new TestRunGithubApp(),
-    private readonly transport: (url: string, init: RequestInit) => Promise<Response> = fetch) {}
+    private readonly transport: (url: string, init: RequestInit) => Promise<Response> = fetch,
+    private readonly report: (value: Record<string, unknown>) => void = value => logger.warn(value, 'GitHub routine request refused')) {}
   private async request(path: string, target: TestingTarget, method = 'GET', body?: unknown) {
     try {
       const response = await this.transport(`https://api.github.com/repos/${target.repository}/actions/${path}`, {
         method, redirect: 'error', signal: AbortSignal.timeout(20_000), headers: {
           Authorization: `Bearer ${await this.app.token('dispatch', target.repository)}`, Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json'}, ...(body ? {body: JSON.stringify(body)} : {})});
-      if (!response.ok) throw new Error('GitHub refused routine delivery');
+      if (!response.ok) {
+        const {githubRequestId, rateLimit, retryAfter} = denialHeaders(response.headers);
+        this.report({consumer: 'routine-actions', endpoint: `/repos/${target.repository}/actions/${path.split('?')[0]}`, method, status: response.status,
+          ...(githubRequestId ? {githubRequestId} : {}), ...(rateLimit ? {rateLimit} : {}), ...(retryAfter !== undefined ? {retryAfter} : {})});
+        throw new Error('GitHub refused routine delivery');
+      }
       return response;
     } catch {throw new TestRunError(503, 'GitHub routine delivery is unavailable; verify the GitHub App Harness Actions write permission and retry the retained job');}
   }

@@ -4,6 +4,10 @@ import { z } from "zod";
 import {appRepositorySchema, type AppRepository} from '../types/testing-source.types';
 import type {TestBuildPlatform, TestBuild, TestBuildQuery, TestBuildSource} from "../types/test-build.types";
 import { TestRunGithubApp } from "./test-run-github-app";
+import {createLogger} from "@mentra/cloud-shared/logger";
+import {denialHeaders} from "./routine-source-selection.service";
+
+const logger = createLogger("core").child({service: "test-builds.service"});
 
 const REPOSITORY = "Mentra-Community/MentraOS";
 const CANONICAL_REPOSITORY = "Mentra-Community/Mentra";
@@ -97,6 +101,7 @@ export interface TestBuildGateway {
 export class GithubTestBuildGateway implements TestBuildGateway {
   constructor(private readonly options: {
     repository?: AppRepository; token?: string; privateReadToken?: string; appAuth?: TestRunGithubApp; fetch?: typeof fetch; channels?: string[]; routines?: string[];
+    report?: (value: Record<string, unknown>) => void;
   } = {}, private readonly selectionBoundary?: string) { this.appAuth = options.appAuth ?? new TestRunGithubApp({ fetch: options.fetch }); }
   private readonly appAuth: TestRunGithubApp;
   private get repository(): AppRepository {return appRepositorySchema.parse(this.options.repository ?? REPOSITORY);}
@@ -132,6 +137,13 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       ...init, headers: { Authorization: `Bearer ${credential}`, Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28", ...(init.body ? { "Content-Type": "application/json" } : {}) },
     });
+    if ([403, 429, 503].includes(response.status)) {
+      const {githubRequestId, rateLimit, retryAfter} = denialHeaders(response.headers);
+      (this.options.report ?? (value => logger.warn(value, "GitHub build request refused")))({
+        consumer: "test-build-selection", endpoint: "/repos/" + path.split("?")[0], method: init.method ?? "GET", status: response.status,
+        ...(githubRequestId ? {githubRequestId} : {}), ...(rateLimit ? {rateLimit} : {}), ...(retryAfter !== undefined ? {retryAfter} : {}),
+      });
+    }
     if (response.status === 404) throw new TestDispatchError(404, "Selected GitHub build was not found");
     const reset = response.headers.get("x-ratelimit-reset");
     if ([403, 429].includes(response.status) && response.headers.get("x-ratelimit-remaining") === "0"
@@ -411,12 +423,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       .parse(await readSource("public/mentraos/" + definition.versionSource)).version;
     const tag = "mentra-builds-v" + family;
     const ledger = this.forRepository(REPOSITORY);
-    const refSchema = z.object({ref: z.string(), object: z.object({type: z.string(), sha})});
-    const releases = z.array(refSchema).parse(await ledger.api(REPOSITORY + "/git/matching-refs/tags/mentra-v"));
-    if (releases.length >= 2000) throw new TestDispatchError(502, "Release tag history exceeds its complete-read limit");
-    requireThat(new Set(releases.map(ref => ref.ref)).size === releases.length, "Release tag history is ambiguous");
     const channel = run.head_branch === "dev" ? "dev" : "beta";
-    const candidates = releases.filter(ref => new RegExp("^refs/tags/mentra-v" + family.replaceAll(".", "\\.") + "-" + channel + "\\.[1-9]\\d*$").test(ref.ref));
     const index = z.object({schemaVersion: z.literal(1), repository: z.literal(REPOSITORY), tag: z.literal(tag),
       assets: z.array(z.object({name: z.string(), size: z.number().int().nonnegative().safe(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
         state: z.literal("uploaded"), browser_download_url: z.string(), created_at: z.string().datetime()}))})
@@ -425,10 +432,11 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const start = Date.parse(run.created_at), end = publicationEnd ? Date.parse(publicationEnd) : Infinity;
     requireThat(Number.isFinite(start) && (end === Infinity || Number.isFinite(end)) && end >= start, "Canonical publication boundary is invalid");
     const owned: {identity: string; sourceCommit: string; manifest: BuildMetadata}[] = [];
-    for (const ref of candidates) {
-      const identity = ref.ref.slice("refs/tags/mentra-v".length), name = "mentra-release-" + identity + ".json";
-      const asset = index.assets.find(asset => asset.name === name);
-      if (!asset) throw new TestDispatchError(502, "Completed release manifest is absent from the publication index");
+    // The completed publisher's digest-indexed manifests are the release inventory.
+    // Retain the exact producer and export proof below.
+    const manifestName = new RegExp("^mentra-release-" + family.replaceAll(".", "\\.") + "-" + channel + "\\.[1-9]\\d*\\.json$");
+    for (const asset of index.assets.filter(asset => manifestName.test(asset.name))) {
+      const name = asset.name, identity = name.slice("mentra-release-".length, -".json".length);
       requireThat(asset.browser_download_url === `${CDN}${tag}/${name}`, "Release manifest index URL differs");
       const created = Date.parse(asset.created_at);
       if (created < start || created > end) continue;
@@ -439,8 +447,8 @@ export class GithubTestBuildGateway implements TestBuildGateway {
         artifacts: z.array(z.object({coordinate: z.string(), provenanceUrl: z.string()}))}).parse(manifest.value);
       const apps = data.artifacts.filter(asset => asset.coordinate === `mentraos-${identity}-android.apk`);
       if (!apps.some(asset => asset.provenanceUrl === runUrl(this.repository, run.id))) continue;
-      requireThat(apps.length === 1 && data.releaseIdentity === identity && ref.object.type === "commit" && ref.object.sha === data.sourceCommit,
-        "Canonical publication differs from its completed release tag");
+      requireThat(apps.length === 1 && data.releaseIdentity === identity,
+        "Canonical publication differs from its completed release manifest");
       owned.push({identity, sourceCommit: data.sourceCommit, manifest});
     }
     if (!owned.length) throw new TestDispatchError(502, "Original canonical published release is not available");

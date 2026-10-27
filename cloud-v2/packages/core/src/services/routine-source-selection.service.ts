@@ -29,7 +29,7 @@ const denialMessages = [
 ] as const;
 
 /** Provider text is untrusted: retain fixed messages and strictly parsed header values only. */
-function denialHeaders(headers: Headers): SourceDenial {
+export function denialHeaders(headers: Headers): SourceDenial {
   const value: SourceDenial = {kind: 'unknown', message: 'GitHub refused the routine source download.', bodyState: 'unavailable'};
   const number = (name: string) => {
     const raw = headers.get(name);

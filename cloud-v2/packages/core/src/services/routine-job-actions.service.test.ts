@@ -17,6 +17,18 @@ test('provider failure is bounded and exposes no token or body while retaining a
   try {await actions.dispatch('retained')} catch(error){expect(String(error)).not.toContain('secret')}
 });
 
+test('Actions denial logging preserves parsed quota evidence without request bodies or credentials',async()=>{
+ const reports:Array<Record<string,unknown>>=[];
+ const actions=new GithubRoutineJobActions({async token(){return 'secret-token'}},async()=>new Response('secret-provider-body',{status:403,
+  headers:{'x-ratelimit-remaining':'0','x-ratelimit-reset':'1793066874','x-ratelimit-resource':'core','x-github-request-id':'1234:ABCD:5678:EF90'}}),value=>reports.push(value));
+ await expect(actions.runs('retained','2026-10-08T00:00:00Z')).rejects.toThrow('Harness Actions write permission');
+ expect(reports).toEqual([{consumer:'routine-actions',endpoint:'/repos/Mentra-Community/Mentra-Automated-Testing/actions/workflows/routine-device.yml/runs',
+  method:'GET',status:403,githubRequestId:'1234:ABCD:5678:EF90',rateLimit:{remaining:0,reset:1793066874,resource:'core'}}]);
+ await expect(actions.dispatch('retained')).rejects.toThrow('Harness Actions write permission');
+ expect(reports[1]).toMatchObject({consumer:'routine-actions',endpoint:'/repos/Mentra-Community/Mentra-Automated-Testing/actions/workflows/routine-device.yml/dispatches',method:'POST',status:403});
+ expect(JSON.stringify(reports)).not.toContain('secret');expect(JSON.stringify(reports)).not.toContain('retained');
+});
+
 test('run discovery correlates only the exact logical job on the trusted main workflow before preparation',async()=>{
  const rows=[{id:10,display_title:'routine-job:suite:one',event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/routine-device.yml',created_at:'2026-10-08T00:00:00Z',status:'queued',conclusion:null},
  {id:11,display_title:'routine-job:suite:two',event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/routine-device.yml',created_at:'2026-10-08T00:00:00Z',status:'queued',conclusion:null},
