@@ -79,7 +79,9 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
     if (!requiredCapabilities.every(capability => matches[0]!.capabilities?.includes(capability)))
       throw new TestRunError(409, `Configured lane has no required ${kind} resource capabilities.`);
     const context = permissionContext(host.frameworkBinding, build, now);
-    for (const value of requirement.permissions ?? []) if (!context || !permissionObservationMatches(
+    // The recipient app is installed by candidate qualification. Its grants are
+    // verified there; input construction only requires existing worker grants.
+    for (const value of (requirement.permissions ?? []).filter(value => value.recipient !== 'app')) if (!context || !permissionObservationMatches(
       matches[0]!.permissionObservations?.find(observation => observation.permission === value.permission), value.permission,
       {...context, recipient: value.recipient}))
       throw new TestRunError(409, `Configured lane has no current granted ${value.permission} permission for its ${value.recipient} recipient on ${kind}.`);

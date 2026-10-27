@@ -78,17 +78,19 @@ test('current binding, explicit recipient and immutable selected app tuple are a
   expect(permissionObservationMatches({...worker, recipient: {...workerRecipient, runtime: {path: '/other/bun', sha256: hash}}},
     'accessibility', {now, binding, recipient: 'worker'})).toBe(false);
 });
-test('Mac queue selection permits installation while execution routing and final direct admission require exact app observations', () => {
+test('Mac queue and input construction permit installation while execution qualification requires exact app observations', () => {
   const f = fixture(), required = f.row.fleetPreparation!.requirements, frozen = structuredClone(f.row);
   expect(routineJobRouting(required, [f.host], now, undefined, build).waitingReason).toBeUndefined();
   expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes.map(value => value.laneId)).toEqual(['mac']);
   expect(compatibleRoutineLane(required, f.lane, permissionContext(binding, build, now))).toBe(true);
-  for (const value of [undefined, {...observed, status: 'unknown' as const}, {...observed, observedAt: new Date(now - 120_001).toISOString()},
+  const expectedInput = routineAdmissionInput(f.definition, build, {hostId: 'mini', laneId: 'mac'}, f.host, now);
+  for (const value of [undefined, {...observed, status: 'denied' as const}, {...observed, status: 'unknown' as const}, {...observed, observedAt: new Date(now - 120_001).toISOString()},
     {...observed, recipient: {...appRecipient, selectedBuild: {...app, archiveSha256: 'f'.repeat(64)}}}]) {
     f.lane.resources[0]!.permissionObservations = value ? [value] : [];
     expect(routineJobRouting(required, [f.host], now, undefined, build).waitingReason).toBe('Awaiting a compatible enrolled runner');
     expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes.map(value => value.laneId)).toEqual(['mac']);
-    expect(() => routineAdmissionInput(f.definition, build, {hostId: 'mini', laneId: 'mac'}, f.host, now)).toThrow('camera permission for its app recipient');
+    expect(routineAdmissionInput(f.definition, build, {hostId: 'mini', laneId: 'mac'}, f.host, now)).toEqual(expectedInput);
+    expect(compatibleRoutineLane(required, f.lane, permissionContext(binding, build, now))).toBe(false);
   }
   expect(f.row).toEqual(frozen);
   f.definition.definition.resourceRequirements[0]!.permissions = undefined;
@@ -108,11 +110,35 @@ test('permission report churn never changes inventory descriptor or stable requi
   expect(routineLaneDescriptorRevision(f.lane)).toBe(revision);
 });
 
-test('fresh permission evidence is checked without entering the immutable queued input', () => {
+test('recipient permission evidence never changes preinstallation input but still controls execution qualification', () => {
   const f = fixture(), select = () => routineAdmissionInput(f.definition, build, {hostId: 'mini', laneId: 'mac'}, f.host, now);
   const initial = select(), digest = requestInputDigest(initial);
   f.lane.resources[0]!.permissionObservations = [{...observed, observedAt: new Date(now - 10).toISOString(), evidence: {sha256: 'f'.repeat(64)}}];
   expect(select()).toEqual(initial); expect(requestInputDigest(select())).toBe(digest);
   f.lane.resources[0]!.permissionObservations = [{...observed, status: 'denied'}];
-  expect(() => select()).toThrow('camera permission for its app recipient');
+  expect(select()).toEqual(initial); expect(requestInputDigest(select())).toBe(digest);
+  expect(compatibleRoutineLane(f.row.fleetPreparation!.requirements, f.lane, permissionContext(binding, build, now))).toBe(false);
+});
+
+test('preinstallation input keeps current worker permissions while deferring recipient app grants', () => {
+  const f = fixture();
+  f.definition.definition.resourceRequirements[1]!.permissions = [{permission: 'screen-recording', recipient: 'worker'}];
+  f.lane.resources[0]!.permissionObservations = [];
+  const recorder = f.lane.resources[1]!, worker: PermissionObservation = {...observed, permission: 'screen-recording',
+    recipient: {kind: 'worker', uid: 501, runtime: {path: '/accepted/bun', sha256: binding.runtimeSha256},
+      helper: {path: '/accepted/driver', sha256: hash}}};
+  recorder.permissionObservations = [worker];
+  const before = structuredClone({definition: f.definition, build, host: f.host});
+  const input = routineAdmissionInput(f.definition, build, {hostId: 'mini', laneId: 'mac'}, f.host, now);
+  expect(input.routineId).toBe('camera-check');
+  expect(input.resources.every(resource => !Object.hasOwn(resource, 'permissionObservations'))).toBe(true);
+  expect({definition: f.definition, build, host: f.host}).toEqual(before);
+  for (const value of [undefined, {...worker, status: 'denied' as const}, {...worker, status: 'unknown' as const},
+    {...worker, observedAt: new Date(now - 120_001).toISOString()},
+    {...worker, binding: {...binding, installationId: 'another-installation'}},
+    {...worker, recipient: {...worker.recipient, runtime: {path: '/other/bun', sha256: hash}}}]) {
+    recorder.permissionObservations = value ? [value] : [];
+    expect(() => routineAdmissionInput(f.definition, build, {hostId: 'mini', laneId: 'mac'}, f.host, now))
+      .toThrow('screen-recording permission for its worker recipient');
+  }
 });
