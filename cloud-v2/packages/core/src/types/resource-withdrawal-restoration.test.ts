@@ -194,7 +194,7 @@ test('a completed withdrawal stays completed at later generations while another 
   expect(manualWithdrawalNeedsRestoration(f.saved(), later, 'mini-controller', true, f.now + 180_000)).toBe(false)
   expect(resourceCandidateBlocker({hostId: 'mini-controller', receivedAt: observedAt,
     resourceControlRecords: [f.saved()], snapshot: {hostId: 'mini-controller', observedAt, lanes: [],
-      resourceLifecycle: {schemaVersion: 1, subjects: [later], history: []}}}, 'mini-mac-app', f.now)?.code).toBe('resource-baseline-unavailable')
+      resourceLifecycle: {schemaVersion: 1, subjects: [later]}}}, 'mini-mac-app', f.now)?.code).toBe('resource-baseline-unavailable')
 })
 
 test('a newer withdrawal is not completed by the older accepted restoration', () => {

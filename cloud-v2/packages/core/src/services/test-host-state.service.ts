@@ -1,7 +1,7 @@
 import {createLogger} from '@mentra/cloud-shared/logger'
 import type {ResourceReservationHost} from './resource-reservations.service'
 import {advanceResourceLifecycleCursor} from './resource-lifecycle.service'
-import {resourceIdleContractSchema,resourceLifecycleSchema} from '../types/resource-lifecycle.types'
+import {resourceIdleContractSchema,resourceLifecycleSchema,resourceLifecycleCurrentSchema} from '../types/resource-lifecycle.types'
 import {recorderStorageObservationSchema} from '../types/recorder-storage.types'
 import {exclusiveResourceDependenciesSchema, hostResourceReservationsSchema, isExclusiveHostReservation, resourceReservationObservationSchema, type HostResourceReservation} from '../types/resource-reservations.types'
 import {laneControlExchangeSchema} from '../types/lane-control.types'
@@ -131,7 +131,7 @@ const routingHostSchema = z.object({
   incarnationGeneration: z.number().int().positive().safe().optional(),
   frameworkBinding: frameworkBindingSchema.optional(),
   resourceReservations: z.object({resourceReadiness: z.literal(true).optional()}).strict().optional(),
-  resourceLifecycle: resourceLifecycleSchema.optional(),
+  resourceLifecycle: resourceLifecycleCurrentSchema.optional(),
   observedAt: z.string().datetime({offset: true}).optional(),
   laneControls: laneControlExchangeSchema.optional(),
   resources: z.array(resource).max(100).optional(),
@@ -139,9 +139,9 @@ const routingHostSchema = z.object({
 }).strict().superRefine(validateHostLaneInventory)
 export type RoutingTestHostState = z.infer<typeof routingHostSchema> & ResourceReadinessAuthority & {receivedAt: string; authorityReservations?: HostResourceReservation[]}
 // Permission observations remain fresh; only diagnostic/history fields are excluded at the database.
-const routingStateProjection = {hostId: 1, receivedAt: 1, resourceReservations: 1, laneControls: 1, resourceLifecycleCursor: 1,
+const routingStateProjection = {hostId: 1, receivedAt: 1, resourceReservations: 1, laneControls: 1, 'resourceLifecycleCursor.schemaVersion': 1, 'resourceLifecycleCursor.subjects': 1,
   'snapshot.resourceReservations.resourceReadiness': 1, 'snapshot.observedAt': 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
-  'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle': 1, 'snapshot.resources': 1,
+  'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle.schemaVersion': 1, 'snapshot.resourceLifecycle.subjects': 1, 'snapshot.resources': 1,
   'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
   'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
   'snapshot.lanes.glasses': 1, _id: 0} as const
@@ -496,7 +496,7 @@ export class TestHostStateService {
       const authorityReservations = hostResourceReservationsSchema.parse(row.resourceReservations ?? []);
       return {...snapshot, receivedAt: z.date().parse(row.receivedAt).toISOString(), authorityReservations,
         ...(row.laneControls === undefined ? {} : {resourceControlRecords: row.laneControls}),
-        ...(row.resourceLifecycleCursor === undefined ? {} : {resourceLifecycleCursor: row.resourceLifecycleCursor})};
+        ...(row.resourceLifecycleCursor === undefined ? {} : {resourceLifecycleCursor: resourceLifecycleCurrentSchema.parse(row.resourceLifecycleCursor)})};
     });
   }
   async get(hostId: string, options?: {frameworkHistory?: boolean}): Promise<ReceivedTestHostState | null> {

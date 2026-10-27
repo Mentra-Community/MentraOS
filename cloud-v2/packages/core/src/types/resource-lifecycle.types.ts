@@ -31,6 +31,13 @@ export const resourceLifecycleSubjectSchema = z.object({
     ctx.addIssue({code:'custom',message:'Idle requires unowned accepted generation-bound qualification'});
 });
 export const resourceLifecycleHistorySchema=z.object({id,resourceId:id,subjectGeneration:generation.nullable(),at:timestamp,event:id,ownerId:id.optional(),ownerGeneration:generation.optional(),hostId:id.optional(),laneId:id.optional(),reasonCode:id.optional(),checkOperationId:id.optional()}).strict();
+/** Current facts and their high-water marks do not depend on journal payloads. */
+export const resourceLifecycleCurrentSchema=z.object({schemaVersion:z.literal(1),subjects:z.array(resourceLifecycleSubjectSchema).max(200)})
+  .superRefine((value,ctx)=>{
+    if(new Set(value.subjects.map(v=>v.subject.id)).size!==value.subjects.length)
+      ctx.addIssue({code:'custom',message:'Duplicate resource lifecycle identity'});
+  });
+export type ResourceLifecycleCurrent=z.infer<typeof resourceLifecycleCurrentSchema>;
 export const resourceLifecycleSchema=z.object({schemaVersion:z.literal(1),subjects:z.array(resourceLifecycleSubjectSchema).max(200),history:z.array(resourceLifecycleHistorySchema).max(200)}).strict().superRefine((value,ctx)=>{
   if(new Set(value.subjects.map(v=>v.subject.id)).size!==value.subjects.length || new Set(value.history.map(v=>v.id)).size!==value.history.length)
     ctx.addIssue({code:'custom',message:'Duplicate resource lifecycle identity'});

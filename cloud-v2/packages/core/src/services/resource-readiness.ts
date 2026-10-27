@@ -3,14 +3,14 @@ import {z} from 'zod'
 import {laneControlRecordSchema, resourceControlRecordSchema, type LaneControlRecord, type ResourceControlRecord} from '../types/lane-control.types'
 import {reconcileControls} from './lane-controls.service'
 import {manualWithdrawalNeedsRestoration} from '../types/resource-control-authority'
-import {resourceLifecycleSchema, resourceLifecycleSubjectSchema} from '../types/resource-lifecycle.types'
+import {resourceLifecycleCurrentSchema, resourceLifecycleSubjectSchema, type ResourceLifecycleCurrent} from '../types/resource-lifecycle.types'
 import type {TestHostState} from './test-host-state.service'
 import {hostResourceReservationsSchema, isExclusiveHostReservation} from '../types/resource-reservations.types'
 
 /** Existing host-row authority accompanies a snapshot; it is never supplied by the worker. */
 export type ResourceReadinessAuthority = {resourceControlRecords?: unknown; resourceLifecycleCursor?: unknown; authorityReservations?: unknown}
 export type ResourceReadinessHost = ResourceReadinessAuthority & {hostId: string; receivedAt: string | Date;
-  snapshot: Pick<TestHostState, 'hostId' | 'lanes' | 'resources' | 'resourceLifecycle' | 'laneControls'> & {observedAt?: string}}
+  snapshot: Pick<TestHostState, 'hostId' | 'lanes' | 'resources' | 'laneControls'> & {observedAt?: string; resourceLifecycle?: ResourceLifecycleCurrent}}
 
 export type ResourceReadinessBlocker = {code: 'lane-resource-owned' | 'lane-operator-restriction' | 'resource-owned' |
   'resource-operator-restriction' | 'resource-restoration-required' | 'resource-baseline-unavailable' |
@@ -47,7 +47,7 @@ export function resourceLaneAvailable(host: ResourceReadinessAuthority, laneId: 
 
 /** Baseline admission is independent of executable app/permission qualification. */
 export function resourceBlocker(host: ResourceReadinessHost, resourceId: string, now: number, allowUnchecked = false,
-  original?: {requestId: string; inputSha256: string; laneId: string}, requireCurrentBaselineAge = true) {
+  original?: {requestId: string; inputSha256: string; laneId: string}) {
   if (hostResourceReservationsSchema.parse(host.authorityReservations ?? []).some(claim => isExclusiveHostReservation(claim) && claim.resourceId === resourceId &&
     !(original && claim.owner.kind === 'run' && claim.owner.id === original.requestId && claim.origin?.kind === 'fleet' &&
       claim.origin.fleetInputSha256 === original.inputSha256 && claim.inputSha256 === original.inputSha256 &&
@@ -60,7 +60,7 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
   const unknownChecks = relevant.filter(row => row.receipt?.result.status === 'accepted' && row.receipt.result.check?.state === 'unknown')
   const raw = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === resourceId)
   const parsed = resourceLifecycleSubjectSchema.safeParse(raw), subject = parsed.success ? parsed.data : undefined
-  const previous = host.resourceLifecycleCursor === undefined ? undefined : resourceLifecycleSchema.parse(host.resourceLifecycleCursor)
+  const previous = host.resourceLifecycleCursor === undefined ? undefined : resourceLifecycleCurrentSchema.parse(host.resourceLifecycleCursor)
     .subjects.find(value => value.subject.id === resourceId)
   const resource = host.snapshot.resources?.find(value => value.id === resourceId) ?? host.snapshot.lanes
     .flatMap(lane => lane.resources).find(value => value.id === resourceId), contract = resource?.idleContract
@@ -75,18 +75,18 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
   if (!fresh || !subject?.current || subject.subject.authorityHostId !== host.hostId || subject.owner !== null ||
     subject.repair.state !== 'none' || previous && (previous.subject.authorityHostId !== host.hostId || subject.generation < previous.generation) ||
     !Number.isFinite(observed) || observed > Date.parse(host.snapshot.observedAt ?? '') ||
-    Date.parse(host.snapshot.observedAt ?? '') > received || requireCurrentBaselineAge && now - observed > 120_000) return {code: 'resource-baseline-unavailable' as const, resourceId}
+    Date.parse(host.snapshot.observedAt ?? '') > received) return {code: 'resource-baseline-unavailable' as const, resourceId}
   // Host-only source preparation can tolerate an unknown app; an unassigned
   // phone check and its exact returned positive can tolerate an unknown phone.
   // Ordinary callers must supply that original candidate proof for the phone.
   if (allowUnchecked && subject.status === 'unknown' && ['unknown', 'not-checked'].includes(subject.idle.outcome))
     return unknownChecks.length ? {code: 'resource-operator-restriction' as const, resourceId} : undefined
   const checked = Date.parse(subject.idle.checkedAt ?? ''), accepted = Date.parse(subject.idle.acceptedCheck?.acceptedAt ?? '')
-  // Only volatile device observations expire. Static return facts stay tied to
-  // their accepted generation, contract and current unowned custody.
+  // Passed physical facts remain tied to the current generation, installed
+  // contract and unowned custody. The authenticated host report stays fresh.
   if (!(!!contract && subject.status === 'idle' && subject.idle.outcome === 'passed' && subject.idle.acceptedCheck?.subjectGeneration === subject.generation &&
     subject.idle.qualifiedScope.kind !== 'unqualified' && Number.isFinite(checked) && checked <= now &&
-    (!requireCurrentBaselineAge || !['phone', 'glasses'].includes(resource?.kind ?? '') || now - checked <= (contract?.maximumAgeMs ?? 120_000)) && Number.isFinite(accepted) && accepted >= checked && accepted <= observed &&
+    Number.isFinite(accepted) && accepted >= checked && accepted <= observed &&
     subject.idle.contractVersion === contract.version && isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope)))
     return {code: 'resource-idle-proof-unavailable' as const, resourceId}
   // UNKNOWN is the original Check outcome, not permanent custody after a later
@@ -102,11 +102,11 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
   return undefined
 }
 
-/** Eligibility only: an expired returned baseline may receive an owned current
- * preflight. This never supplies ordinary run readiness or changes its timestamp. */
+/** Candidate eligibility may tolerate an unchecked app; current execution
+ * still requires its declared passed baseline and separate job preparation. */
 export function resourceCandidateBlocker(host: ResourceReadinessHost, resourceId: string, now: number,
   original?: {requestId: string; inputSha256: string; laneId: string}) {
-  return resourceBlocker(host, resourceId, now, true, original, false)
+  return resourceBlocker(host, resourceId, now, true, original)
 }
 
 export function resourceAvailable(host: ResourceReadinessHost, resourceId: string, now: number, allowUnchecked = false,

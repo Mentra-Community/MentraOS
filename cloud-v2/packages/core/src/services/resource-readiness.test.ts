@@ -1,9 +1,11 @@
-import {expect, test} from 'bun:test'
+import {expect, test, spyOn} from 'bun:test'
 import {resourceControlRecordSchema, type ResourceControlRecord} from '../types/lane-control.types'
 import {resourceIdleContractSchema, type ResourceLifecycleSubject} from '../types/resource-lifecycle.types'
 import type {StoredRoutineJob} from '../types/routine-job.types'
 import {resourceBlocker, resourceCandidateBlocker, type ResourceReadinessHost} from './resource-readiness'
 import {routineJobRouting} from './routine-job.service'
+import {TestHostStateService} from './test-host-state.service'
+import {TestHostStateModel} from '../models/test-host-state.model'
 import {routineResourceBlocker, type ResourceReservationHost} from './resource-reservations.service'
 
 const oldAt = Date.parse('2026-10-25T11:04:05.662Z'), now = Date.parse('2026-10-25T13:07:34.133Z')
@@ -28,7 +30,7 @@ function fixture() {
   const host: ResourceReadinessHost = {hostId: 'host', receivedAt: at(now), resourceControlRecords: [control], authorityReservations: [],
     snapshot: {hostId: 'host', observedAt: at(now), laneControls: {schemaVersion: 1, receipts: [], resourceControls: true},
       lanes: [{id: laneId, platform: 'ios-on-mac', state: 'idle', dispatchMode: 'automatic', resources: [{id, kind: 'app', capabilities: ['relaunch'], idleContract: contract}]}],
-      resourceLifecycle: {schemaVersion: 1, subjects: [subject], history: []}}}
+      resourceLifecycle: {schemaVersion: 1, subjects: [subject]}}}
   return {host, subject, control, contract}
 }
 function check(control: ResourceControlRecord) {
@@ -55,12 +57,17 @@ test('the later manual receipt can follow baseline acceptance by31ms without bec
   expect(resourceCandidateBlocker(f.host, id, now)).toBeUndefined()
 })
 
-test.each(['phone', 'glasses'] as const)('an aged %s baseline requires current job preflight before ordinary execution', kind => {
-  const f = fixture(), later = now + 120_001
-  f.host.snapshot.lanes[0]!.resources[0]!.kind = kind; f.subject.resource!.kind = kind
-  f.host.receivedAt = at(later); f.host.snapshot.observedAt = at(later); f.subject.observedAt = at(later)
-  expect(resourceCandidateBlocker(f.host, id, later)).toBeUndefined()
-  expect(resourceBlocker(f.host, id, later)?.code).toBe('resource-idle-proof-unavailable')
+test.each(['phone', 'glasses'] as const)('an unchanged returned %s baseline is usable without renewing its physical timestamps', kind => {
+  for (const updateSubject of [false, true]) {
+    const f = fixture(), later = now + 120_001
+    f.host.snapshot.lanes[0]!.resources[0]!.kind = kind; f.subject.resource!.kind = kind
+    f.host.receivedAt = at(later); f.host.snapshot.observedAt = at(later)
+    if (updateSubject) f.subject.observedAt = at(later)
+    const original = structuredClone(f.host)
+    expect(resourceCandidateBlocker(f.host, id, later)).toBeUndefined()
+    expect(resourceBlocker(f.host, id, later)).toBeUndefined()
+    expect(f.host).toEqual(original)
+  }
 })
 test.each(['app', 'recorder', 'fixture-data', 'audio', 'browser'] as const)('an unchanged returned %s baseline remains available after its check ages', kind => {
   const f = fixture(), later = now + 24 * 60 * 60 * 1000
@@ -174,4 +181,48 @@ test('candidate selection still requires the original owned graph preflight befo
   const host = {...f.host, snapshot, receivedAt: new Date(now), incarnation: 'controller', incarnationGeneration: 1, sequence: 1,
     laneControls: f.host.resourceControlRecords, resourceReservations: []} as unknown as ResourceReservationHost
   expect(routineResourceBlocker(host, row, laneId, now)?.code).toBe('resource-idle-proof-unavailable')
+})
+
+
+test('current resource readiness does not parse retained debug history', () => {
+  const f = fixture()
+  f.host.resourceLifecycleCursor = {schemaVersion: 1, subjects: [structuredClone(f.subject)],
+    history: [{id: 'old-diagnostic', unrecordedLegacyShape: true}]}
+  const before = structuredClone(f.host)
+  expect(resourceCandidateBlocker(f.host, id, now)).toBeUndefined()
+  expect(resourceBlocker(f.host, id, now)).toBeUndefined()
+  expect(f.host).toEqual(before)
+})
+
+
+test('the current host query and ordinary matcher ignore legacy debug arrays but retain current custody', async () => {
+  const f = fixture(), selections: Record<string, number>[] = []
+  const legacyHistory = Array.from({length: 10000}, (_, id) => ({id: `legacy-${id}`, obsoleteDiagnostic: true}))
+  const snapshot = {...f.host.snapshot, resourceLifecycle: {...f.host.snapshot.resourceLifecycle!, history: legacyHistory}}
+  const find = spyOn(TestHostStateModel, 'find').mockImplementation((() => {
+    const query = {select(fields: Record<string, number>) {selections.push(fields); return query},
+      limit() {return query}, read() {return query}, readConcern() {return query},
+      async lean() {return [{hostId: 'host', snapshot: {...structuredClone(snapshot), resourceLifecycle: {...snapshot.resourceLifecycle, subjects: [structuredClone(f.subject)]}}, receivedAt: new Date(now),
+        laneControls: f.host.resourceControlRecords, resourceReservations: f.host.authorityReservations,
+        resourceLifecycleCursor: {schemaVersion: 1, subjects: [f.subject], history: legacyHistory}}]}}
+    return query
+  }) as never)
+  const previous = process.env.TEST_HOST_TOKENS
+  process.env.TEST_HOST_TOKENS = JSON.stringify({host: 't'.repeat(32)})
+  try {
+    const [host] = await new TestHostStateService().list()
+    expect(host.resourceLifecycle).toEqual(f.host.snapshot.resourceLifecycle)
+    expect(host.resourceLifecycleCursor).toEqual({schemaVersion: 1, subjects: [f.subject]})
+    expect(Object.keys(selections[0]!).some(key => key === 'resourceLifecycleCursor' || key === 'snapshot.resourceLifecycle' || key.includes('history'))).toBe(false)
+    const requirements = {platform: 'ios-on-mac' as const, resources: [{kind: 'app' as const, capabilities: ['relaunch']}]}
+    expect(routineJobRouting(requirements, [host], now).waitingReason).toBeUndefined()
+    f.subject.owner = {id: 'current-writer', kind: 'boundary-cleanup', hostId: 'host', generation: 1250}
+    f.subject.status = 'checking'; f.subject.idle.outcome = 'unknown'
+    const [owned] = await new TestHostStateService().list()
+    expect(routineJobRouting(requirements, [owned], now).waitingReason).toBeDefined()
+    expect(owned.resourceLifecycle!.subjects[0]!.owner?.id).toBe('current-writer')
+  } finally {
+    find.mockRestore()
+    if (previous === undefined) delete process.env.TEST_HOST_TOKENS; else process.env.TEST_HOST_TOKENS = previous
+  }
 })

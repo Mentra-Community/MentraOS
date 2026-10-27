@@ -902,7 +902,7 @@ for(const status of ['out-of-service','in-repair','reserved'] as const)test(`pho
 });
 
 
-for(const phase of ['stage-return','retained-read','claim-request','claim-host','post-cas'] as const)for(const boundary of ['baseline-exact','baseline-expired','deadline'] as const)test(`ordinary offline exclusive admission ${phase} ${boundary} retains committed custody without a false receipt`,async()=>{
+for(const phase of ['stage-return','retained-read','claim-request','claim-host','post-cas'] as const)for(const boundary of ['baseline-exact','physical-check-aged','deadline'] as const)test(`ordinary offline exclusive admission ${phase} ${boundary} retains committed custody without a false receipt`,async()=>{
  const f=await returnedFixture(true),host=repositoryEnvelope(f),claim=structuredClone(f.row.fleetResourceReservation!);
  f.row.fleetPreparation!.requirements.resources.find(required=>required.kind==='phone')!.capabilities=[];
  host.snapshot.lanes[0]!.resources[0]!.idleContract!.maximumAgeMs=1;
@@ -915,8 +915,8 @@ for(const phase of ['stage-return','retained-read','claim-request','claim-host',
   async stageBackend(_id,_digest,value){f.row.fleetResourceAdmission=structuredClone(value);if(phase==='stage-return')delay();return structuredClone(f.row)},
   async claimedHosts(){if(phase==='retained-read')delay();return []},async replace(_host,next){writes++;authority.resourceReservations=structuredClone(next);if(phase==='post-cas')delay();return true}},()=>f.now);
  const admitted=await service.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,'air1','android');
- expect(writes).toBe(boundary==='baseline-exact'||phase==='post-cas'?1:0);expect(authority.resourceReservations).toHaveLength(writes);
- if(boundary==='baseline-exact')expect(admitted?.claims).toEqual(hostResourceReservationsSchema.parse(authority.resourceReservations).filter(isExclusiveHostReservation));else expect(admitted).toBeNull();
+ expect(writes).toBe(boundary!=='deadline'||phase==='post-cas'?1:0);expect(authority.resourceReservations).toHaveLength(writes);
+ if(boundary!=='deadline')expect(admitted?.claims).toEqual(hostResourceReservationsSchema.parse(authority.resourceReservations).filter(isExclusiveHostReservation));else expect(admitted).toBeNull();
  expect(host.resourceReservations).toEqual([claim]);expect(f.row.fleetResourceReservation).toEqual(claim);expect(f.row.fleetResourceAdmission?.intent.hostId).toBe('air1');
  expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetSelection).toEqual(original.fleetSelection);expect(f.row.fleetPreparation).toEqual(original.fleetPreparation);expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);
 });

@@ -115,7 +115,7 @@ test('disjoint unknown baseline probes acquire separate original claims on the s
   expect(resourceAvailable({...f.host, authorityReservations: f.host.resourceReservations}, other.ref.id, start)).toBe(false)
 })
 
-test('six independent probes can hold original grants together without extending the120s baseline age', async () => {
+test('six independent probes retain their exact current returned baselines after observation age passes120s', async () => {
   const f = passiveScopeFixture(), kinds = ['glasses', 'app', 'recorder', 'audio', 'fixture-data'] as const,
     others = kinds.map((kind, i) => f.add(`independent-${i}`, [], kind))
   for (const intent of [f.intent, ...others.map(value => value.intent)])
@@ -123,7 +123,7 @@ test('six independent probes can hold original grants together without extending
   expect(f.host.resourceReservations).toHaveLength(6)
   // Six serialized successful29s observations would age the first145s before
   // the last return. Concurrent original claims avoid that forced serialization;
-  // qualification still requires actual observations and ordinary returns.
+  // each qualification still requires its actual observation and ordinary return; age cannot revoke a returned baseline.
   f.host.resourceReservations = []
   f.advance(6 * 29_000)
   for (const [i, subject] of f.lifecycle.subjects.entries()) {
@@ -131,7 +131,7 @@ test('six independent probes can hold original grants together without extending
     subject.status = 'idle'; subject.idle.outcome = 'passed'; subject.idle.checkedAt = new Date(start + (i + 1) * 29_000).toISOString()
     subject.idle.acceptedCheck = {operationId: `timing-${i}`, subjectGeneration: subject.generation, resultSha256: hash, acceptedAt: subject.idle.checkedAt}
   }
-  expect(resourceAvailable(f.host, f.subject().subject.id, start + 6 * 29_000)).toBe(false)
+  expect(resourceAvailable(f.host, f.subject().subject.id, start + 6 * 29_000)).toBe(true)
   expect(resourceAvailable(f.host, others.at(-1)!.ref.id, start + 6 * 29_000)).toBe(true)
 })
 
