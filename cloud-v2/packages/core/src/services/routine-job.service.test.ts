@@ -1819,7 +1819,15 @@ test('accepted current recorder snapshot returns only the completed original and
   });
 });
 
-test('recorder-only recovery selects current authority without either framework history copy', async () => {
+test('recorder return reconciliation reads the narrow recorder-return host view', async () => {
+  const get = spyOn(resourceReservationRepository, 'get').mockImplementation(async () => null);
+  try {
+    expect(await routineJobRepository.reconcileRecorderHost!('mini', new Date())).toBe(false);
+    expect(get.mock.calls).toEqual([['mini', {recorderReturn: true}]]);
+  } finally {get.mockRestore()}
+});
+
+test('recorder-only recovery selects current authority without check journals or history', async () => {
   const projections: any[] = [], reads: any[] = [];
   const find = spyOn(TestHostStateModel, 'findOne').mockImplementation(((filter: unknown) => {
     const query = {select(value: unknown) {projections.push(value); return query}, read(value: unknown) {reads.push(value); return query},
@@ -1827,10 +1835,15 @@ test('recorder-only recovery selects current authority without either framework 
     return query;
   }) as never);
   try {
-    expect(await resourceReservationRepository.get('mini', {frameworkHistory: false})).toBeNull();
-    expect(projections[0]).toHaveProperty('resourceReservations', 1); expect(projections[0]).toHaveProperty('resourceReservationVersion', 1);
-    expect(projections[0]['snapshot.lanes.resources']).toBe(1); expect(projections[0]).toHaveProperty('sequence', 1);
-    for (const key of ['snapshot', 'frameworkHistory', 'frameworkStopReceipts', 'snapshot.frameworkHistory']) expect(projections[0]).not.toHaveProperty(key);
+    expect(await resourceReservationRepository.get('mini', {recorderReturn: true})).toBeNull();
+    // Claims, recorder offers and every field of the replace() CAS fence.
+    for (const key of ['hostId', 'incarnation', 'incarnationGeneration', 'sequence', 'receivedAt', 'laneControlVersion', 'resourceReservationVersion',
+      'resourceReservations', 'snapshot.observedAt', 'snapshot.lanes.id', 'snapshot.lanes.state', 'snapshot.lanes.activity', 'snapshot.lanes.resources'])
+      expect(projections[0]).toHaveProperty([key], 1);
+    // Check journals, lifecycle history and repair diagnostics are hundreds of KB per host.
+    for (const key of ['snapshot', 'frameworkHistory', 'frameworkStopReceipts', 'snapshot.frameworkHistory', 'snapshot.resourceReservations',
+      'snapshot.resourceLifecycle', 'snapshot.restoration', 'resourceLifecycleCursor', 'laneControls', 'snapshot.laneControls'])
+      expect(projections[0]).not.toHaveProperty([key]);
     expect(reads).toEqual(['primary', 'majority', {timeoutMS: 5000}]);
   } finally {find.mockRestore()}
 });

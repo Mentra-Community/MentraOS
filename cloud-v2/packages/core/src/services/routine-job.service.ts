@@ -85,7 +85,7 @@ export const routineJobRepository: RoutineJobRepository = {
     // until the original request and a later fresh same-pool offer prove return.
     for (let attempt = 0; attempt < 3; attempt++) {
       onPhase?.('recorder-host-read', {attempt});
-      const host = attempt === 0 && acceptedHost?.hostId === hostId ? acceptedHost : await resourceReservationRepository.get(hostId, {frameworkHistory: false}), checkedAt = Date.now();
+      const host = attempt === 0 && acceptedHost?.hostId === hostId ? acceptedHost : await resourceReservationRepository.get(hostId, {recorderReturn: true}), checkedAt = Date.now();
       if (!host || host.hostId !== hostId || !freshRoutineHost(host.receivedAt, checkedAt) ||
         !freshRoutineHost(host.snapshot.observedAt, checkedAt) || Date.parse(host.snapshot.observedAt) > host.receivedAt.getTime()) return false;
       const all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []),
