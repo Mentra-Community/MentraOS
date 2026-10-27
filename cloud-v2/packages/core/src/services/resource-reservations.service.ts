@@ -968,7 +968,7 @@ export class ResourceReservationsService {
         lane.dispatchMode !== 'automatic' && !intent.prerequisite?.local : intent.prerequisite ||
         subject?.resource.memberships.length !== 0 || !host.snapshot.resources?.some(value => value.id === check.resourceId)) || !ref || !subject?.current ||
       subject.subject.authorityHostId !== host.hostId || subject.owner !== null || subject.generation !== check.subjectGeneration ||
-      subject.idle.contractVersion !== check.contractVersion || subject.status === 'in-repair' || subject.status === 'out-of-service' ||
+      !intent.prerequisite && subject.idle.contractVersion !== check.contractVersion || subject.status === 'in-repair' || subject.status === 'out-of-service' ||
       subject.status === 'offline' || subject.status === 'reserved' || subject.status === 'returning' ||
       subject.status === 'checking' || subject.status === 'active' || subject.repair.state !== 'none' ||
       intent.owner.id !== `resource-check:${requestInputDigest({operationId: intent.operationId, resourceId: check.resourceId})}` ||

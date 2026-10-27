@@ -1179,3 +1179,41 @@ test('a secondary target dependency claim on another lane still blocks baseline 
   expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(f.writes).toHaveLength(1)
   expect(f.host.resourceReservations).toContainEqual(held); expect(f.host.resourceReservations).toContainEqual(f.claim)
 })
+
+function backendPrecheckFixture() {
+  const f = fixture(), check = f.intent.resourceCheck!, target = {jobId: 'original-backend', hostId: f.host.hostId,
+    laneId: f.intent.laneId, inputSha256: hash, deadline: new Date(check.deadlineAt).toISOString(),
+    purpose: {kind: 'backend-connectivity', resourceId: check.resourceId}, acceptedBinding: check.binding,
+    preparing: {dispatchIntentSha256: hash, fleetInputSha256: hash, bindingSha256: hash, admissionSha256: hash, reservationSha256: hash}}
+  f.host.snapshot.lanes[0]!.resources[0]!.capabilities = ['backend-connectivity']
+  f.intent.resources[0]!.capabilities = ['backend-connectivity']; f.intent.inputSha256 = hash
+  f.intent.prerequisite = {kind: 'backend-connectivity', jobId: target.jobId, targetInputSha256: hash,
+    resourceId: check.resourceId, binding: check.binding, preparing: target.preparing}
+  check.contractVersion = `backend-connectivity:${'b'.repeat(64)}`
+  const journal = f.host.snapshot.resourceReservations!.resourceChecks![0]!
+  journal.intent = structuredClone(f.intent); journal.resourceCheck = structuredClone(check)
+  journal.intentSha256 = requestInputDigest({...f.intent, controller: {incarnation: f.intent.controller.incarnation, generation: f.intent.controller.generation},
+    dependencies: [{resourceId: check.resourceId, authorityHostId: f.host.hostId, capability: 'backend-connectivity'}]})
+  let targets = [target]
+  ;(f.service as any).qualificationTargets = async () => structuredClone(targets)
+  return {...f, target, setTargets(value: typeof targets) {targets = value}}
+}
+test('backend capability precheck selects its exact target without equating its scope hash to the installed idle baseline', async () => {
+  const f = backendPrecheckFixture(), before = structuredClone(f.host)
+  expect(f.intent.resourceCheck!.contractVersion).not.toBe(f.subject().idle.contractVersion)
+  expect(await (f.service as any).resourceCheckTargetCurrent(f.host, f.intent)).toBe(true)
+  expect(f.host).toEqual(before); expect(f.writes).toEqual([])
+})
+for (const changed of ['target', 'source', 'owner', 'generation', 'deadline', 'baseline'] as const)
+test(`backend capability precheck preserves ${changed} refusal without claiming the phone`, async () => {
+  const f = backendPrecheckFixture()
+  if (changed === 'target') f.setTargets([{...f.target, inputSha256: 'c'.repeat(64)}])
+  if (changed === 'source') f.host.snapshot.frameworkBinding!.revision = 'c'.repeat(40)
+  if (changed === 'owner') {f.subject().status = 'reserved'; f.subject().owner = {id: 'foreign-owner', kind: 'run', hostId: f.host.hostId, generation: 1}}
+  if (changed === 'generation') {f.subject().generation++; f.subject().idle.acceptedCheck!.subjectGeneration++}
+  if (changed === 'deadline') f.advance(60001)
+  if (changed === 'baseline') {delete f.intent.prerequisite; f.intent.resources[0]!.capabilities = ['resource-idle'];
+    const journal = f.host.snapshot.resourceReservations!.resourceChecks![0]!; journal.intent = structuredClone(f.intent)}
+  expect(await (f.service as any).resourceCheckTargetCurrent(f.host, f.intent)).toBe(false)
+  expect(f.writes).toEqual([]); expect(f.host.resourceReservations).toEqual([])
+})
