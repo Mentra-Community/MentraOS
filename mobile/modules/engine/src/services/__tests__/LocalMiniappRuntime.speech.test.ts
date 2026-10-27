@@ -8,7 +8,14 @@ import {prepareTtsSentences} from "../TtsTextSanitizer"
 // Exercise the real handlers without booting the engine's native dependencies,
 // following LocalMiniappRuntime.mic.test.ts.
 const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
-const methods = ["handleSpeak", "cancelSpeech"]
+const methods = [
+  "handleSpeak",
+  "cancelSpeech",
+  "beginSpeakerOperation",
+  "isCurrentSpeakerOperation",
+  "finishSpeakerOperation",
+  "stopActiveSpeakerStream",
+]
   .map((name) => {
     const start = source.search(new RegExp(`^  private (?:async )?${name}\\(`, "m"))
     if (start < 0) throw new Error(`Missing runtime method ${name}`)
@@ -78,6 +85,8 @@ function createHost(
   )
   const host = new Host()
   host.speechRuns = new Map()
+  host.connectedApps = new Map()
+  host.speakerOperationCounter = 0
   host.setSpeakerState = mock(() => {})
   host.sendResult = mock(() => {})
   return {host, plays, ttsModelManager, cleanup, cloudCleanup, downloadCloudTtsAudio}
