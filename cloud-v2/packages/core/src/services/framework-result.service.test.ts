@@ -115,8 +115,10 @@ test("lost result acknowledgement retains return diagnostics and refuses rewritt
       teardown: {ready: true, outcomes: ['app', 'recorder'].map(resourceId => ({state: 'cleaned', resourceId,
         evidence: [`return:${resourceId}`], idleCheck: {resourceId, contractVersion: 'idle-v1', ownerGeneration: 7,
           operationId: `idle-check:${resourceId}`, stage: 'after-teardown', outcome: 'passed',
-          checkedAt: '2026-10-02T19:01:00Z', conditions: [{id: 'original-writer-absent', outcome: 'passed'}],
-          evidenceRefs: [`return:${resourceId}`], qualifiedScope: {kind: 'same-controller', controllerId: 'mini'}}})),
+          checkedAt: '2026-10-02T19:01:00Z', conditions: [{id: 'original-writer-absent', outcome: 'passed',
+            observed: {processes: []}}], futureDetails: {settled: true},
+          evidenceRefs: [`return:${resourceId}`], qualifiedScope: {kind: 'same-controller', controllerId: 'mini'}},
+        newDiagnostic: {hostId: 'mini', requestId: 'r1', sourceRevision: 'a'.repeat(40), verdict: 'pass'}})),
         errors: [], unavailableResources: []},
       failures: [{phase: "setup", actionId: "install", message: "install failed"}], evidence: [],
       timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 100, testMs: 0, teardownMs: 100}},
@@ -148,9 +150,13 @@ test("lost result acknowledgement retains return diagnostics and refuses rewritt
   expect(duplicate).toEqual({...first, created: false});
   expect(first.payloadSha256).toBe(requestInputDigest(run));
   expect((await service.detail('r1')).run.result.teardown.outcomes as unknown).toEqual(run.result.teardown.outcomes);
+  expect((await service.detail('r1')).outcome).toBe('setup-failed');
   const rewritten = structuredClone(run);
   rewritten.result.teardown.outcomes[0]!.idleCheck.conditions[0]!.id = 'changed-diagnostic';
   await expect(service.ingest(rewritten, 'mini')).rejects.toThrow('different terminal result');
+  const rewrittenDiagnostic = structuredClone(run);
+  rewrittenDiagnostic.result.teardown.outcomes[0]!.newDiagnostic.verdict = 'failed';
+  await expect(service.ingest(rewrittenDiagnostic, 'mini')).rejects.toThrow('different terminal result');
   expect((await service.detail("r1")).run.frameworkBinding).toEqual(testFrameworkBinding())
   expect((await service.detail("r1")).run.routineSource).toEqual(testRoutineSource())
   await expect(

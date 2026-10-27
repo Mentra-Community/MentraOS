@@ -92,25 +92,38 @@ test('cleaned resource return checklists publish unchanged without altering the 
   expect(frameworkRunSchema.parse(good).result.teardown.outcomes).toEqual([]);
 });
 
-test('cleanup return diagnostics retain their typed bounds and do not admit arbitrary fields', () => {
+test('cleanup diagnostics evolve without changing typed outcomes or the frozen verdict', () => {
   const good = run();
-  const check = {resourceId: 'app', contractVersion: 'idle-v1', ownerGeneration: 7, operationId: 'idle-check:app',
-    stage: 'after-teardown', outcome: 'passed', checkedAt: good.finishedAt,
-    conditions: [{id: 'app-absent', outcome: 'passed'}], evidenceRefs: ['return:app'],
-    qualifiedScope: {kind: 'same-controller', controllerId: good.hostId}};
-  const withCheck = (idleCheck: unknown) => ({...good, result: {...good.result,
-    teardown: {...good.result.teardown, outcomes: [{state: 'cleaned', resourceId: 'app', evidence: [], idleCheck}]}}});
-  expect(frameworkRunSchema.safeParse(withCheck(check)).success).toBe(true);
+  const error = {phase: 'teardown' as const, actionId: 'app', message: 'Original cleanup failed'};
+  const diagnostics = {idleCheck: {conditions: [{id: 'app-absent', outcome: 'unknown', observed: {processes: []}}],
+    futureDetails: {interpretation: null, measurements: [true, 1, 'private-observation']}},
+    newDiagnostic: {verdict: 'pass', owner: {id: 'foreign', generation: 9000}}};
+  for (const state of ['cleaned', 'still-active', 'failed'] as const) {
+    const outcome = state === 'failed' ? {state, resourceId: 'app', failure: error, ...diagnostics}
+      : state === 'still-active' ? {state, resourceId: 'app', writer: {pid: 1}, evidence: [], ...diagnostics}
+        : {state, resourceId: 'app', evidence: [], ...diagnostics};
+    const result = {...good.result, failures: state === 'failed' ? [error] : [],
+      teardown: {...good.result.teardown, ready: state === 'cleaned', outcomes: [outcome],
+        errors: state === 'failed' ? [error] : [], unavailableResources: state === 'cleaned' ? []
+          : [{resource: 'app', cause: 'Original cleanup unresolved', nextAction: 'Inspect original process'}]}};
+    const published = frameworkRunSchema.parse({...good, result});
+    expect(published.result as unknown).toEqual(result);
+    expect(frameworkRunOutcome(published)).toBe(state === 'cleaned' ? 'pass' : 'teardown-failed');
+  }
+});
+
+test('opaque cleanup observations cannot replace authoritative outcome fields or contain non-JSON data', () => {
+  const good = run();
+  const cleaned = {state: 'cleaned', resourceId: 'app', evidence: [], diagnostic: {settled: true}};
+  const withOutcome = (outcome: unknown) => ({...good, result: {...good.result,
+    teardown: {...good.result.teardown, outcomes: [outcome]}}});
   for (const malformed of [
-    {...check, ownerGeneration: -1}, {...check, checkedAt: 'not-a-time'}, {...check, outcome: 'ready'},
-    {...check, unexpected: true}, {...check, qualifiedScope: {kind: 'same-controller'}},
-    {...check, conditions: [{id: 'app-absent', outcome: 'passed', arbitrary: true}]},
-    {...check, conditions: Array.from({length: 51}, () => check.conditions[0])},
-    {...check, evidenceRefs: Array.from({length: 101}, () => 'return:app')},
-  ]) expect(frameworkRunSchema.safeParse(withCheck(malformed)).success).toBe(false);
-  expect(frameworkRunSchema.safeParse({...good, result: {...good.result, teardown: {...good.result.teardown,
-    ready: false, outcomes: [{state: 'still-active', resourceId: 'app', writer: {pid: 1}, evidence: [], idleCheck: check}],
-    unavailableResources: [{resource: 'app', cause: 'Original writer active', nextAction: 'Inspect original process'}]}}}).success).toBe(false);
+    {...cleaned, state: 'ready'}, {...cleaned, resourceId: ''}, {...cleaned, evidence: [false]},
+    {...cleaned, errors: [{phase: 'arbitrary', actionId: 'app', message: 'Invalid failure phase'}]},
+    {...cleaned, diagnostic: {measurement: Infinity}}, {...cleaned, diagnostic: () => true},
+    {state: 'still-active', resourceId: 'app', evidence: [], diagnostic: {writer: 'absent'}},
+    {state: 'failed', resourceId: 'app', diagnostic: {failure: 'none'}},
+  ]) expect(frameworkRunSchema.safeParse(withOutcome(malformed)).success).toBe(false);
 });
 
 test('cleanup failures retain identical diagnostic JSON in every flattened copy and outcome state', () => {

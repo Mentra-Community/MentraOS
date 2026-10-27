@@ -3,7 +3,6 @@ import {z} from "zod";
 import {frameworkBuildSchema, frameworkIdentitySchema} from "./framework-request.types";
 import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
 import {testingRepositorySchema, testingTarget} from './testing-source.types';
-import {qualifiedScopeSchema} from './resource-lifecycle.types';
 
 export const frameworkRunIdSchema = frameworkIdentitySchema;
 /** Bounded manifest cardinality; the publication route separately retains its 1 MiB JSON body limit. */
@@ -31,20 +30,12 @@ const json: z.ZodType<unknown> = z.lazy(() => z.union([z.null(), z.boolean(), z.
 const failure = z.object({phase: z.enum(["setup", "test", "teardown", "evidence"]),
   actionId: id, message: z.string().min(1).max(20000),
   diagnostics: json.refine(value => Buffer.byteLength(JSON.stringify(value)) <= 64 * 1024, 'Failure diagnostics exceed 64 KiB').optional()}).strict();
-// The Harness appends its existing passive return observation to cleaned resources.
-// Retain that bounded diagnostic without changing the run's recorded verdict.
-const cleanupIdleCheck = z.object({resourceId: id, contractVersion: id,
-  ownerGeneration: z.number().int().nonnegative().safe(), operationId: id,
-  stage: z.enum(['before-setup', 'after-teardown', 'between-runs']),
-  outcome: z.enum(['passed', 'failed', 'unknown']), checkedAt: z.string().datetime({offset: true}),
-  conditions: z.array(z.object({id, outcome: z.enum(['passed', 'failed', 'unknown'])}).strict()).max(50),
-  evidenceRefs: z.array(id).max(100), qualifiedScope: qualifiedScopeSchema,
-}).strict();
+// Cleanup fields determine the verdict; additional JSON observations are retained
+// under the existing publication body limit without a shared diagnostic schema.
 const cleanupOutcome = z.discriminatedUnion("state", [
-  z.object({state: z.literal("cleaned"), resourceId: id, evidence: z.array(z.string()), errors: z.array(failure).optional(),
-    idleCheck: cleanupIdleCheck.optional()}).strict(),
-  z.object({state: z.literal("still-active"), resourceId: id, writer: json, evidence: z.array(z.string()), errors: z.array(failure).optional()}).strict(),
-  z.object({state: z.literal("failed"), resourceId: id, failure, errors: z.array(failure).optional()}).strict(),
+  z.object({state: z.literal("cleaned"), resourceId: id, evidence: z.array(z.string()), errors: z.array(failure).optional()}).catchall(json),
+  z.object({state: z.literal("still-active"), resourceId: id, writer: json, evidence: z.array(z.string()), errors: z.array(failure).optional()}).catchall(json),
+  z.object({state: z.literal("failed"), resourceId: id, failure, errors: z.array(failure).optional()}).catchall(json),
 ]);
 const frozenFrameworkRunSchema = z.object({
   schemaVersion: z.literal(1), requestId: id, hostId: id, routineId: routineIdentitySchema,
