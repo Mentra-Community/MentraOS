@@ -21,7 +21,8 @@ export function routineLaneRequirementBlocker(requirements: PortableRequirements
         (backendHealth ? backendConnectivityObservationMatches(offered.backendConnectivity, offered.id, context) :
           context.binding.routineApiVersion >= BACKEND_CONNECTIVITY_ROUTINE_API_VERSION))) &&
       (!required.storage || recorderStorageAvailable(offered.storage, required.storage, now)) &&
-      (required.permissions ?? []).every(value => Boolean(context && permissionObservationMatches(
+      // Mac app grants belong to the owned installed app and are checked after installation.
+      (required.permissions ?? []).every(value => !backendHealth && lane.platform === 'ios-on-mac' && value.recipient === 'app' || Boolean(context && permissionObservationMatches(
         offered.permissionObservations?.find(observation => observation.permission === value.permission), value.permission,
         {...context, recipient: value.recipient}))))) return {code: 'job-resource-incompatible', resourceKind: required.kind};
   }

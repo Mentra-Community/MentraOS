@@ -78,7 +78,7 @@ test('current binding, explicit recipient and immutable selected app tuple are a
   expect(permissionObservationMatches({...worker, recipient: {...workerRecipient, runtime: {path: '/other/bun', sha256: hash}}},
     'accessibility', {now, binding, recipient: 'worker'})).toBe(false);
 });
-test('routing, queue and final direct admission share the same exact observation predicate', () => {
+test('Mac queue selection permits installation while execution routing and final direct admission require exact app observations', () => {
   const f = fixture(), required = f.row.fleetPreparation!.requirements, frozen = structuredClone(f.row);
   expect(routineJobRouting(required, [f.host], now, undefined, build).waitingReason).toBeUndefined();
   expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes.map(value => value.laneId)).toEqual(['mac']);
@@ -87,7 +87,7 @@ test('routing, queue and final direct admission share the same exact observation
     {...observed, recipient: {...appRecipient, selectedBuild: {...app, archiveSha256: 'f'.repeat(64)}}}]) {
     f.lane.resources[0]!.permissionObservations = value ? [value] : [];
     expect(routineJobRouting(required, [f.host], now, undefined, build).waitingReason).toBe('Awaiting a compatible enrolled runner');
-    expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes).toEqual([]);
+    expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes.map(value => value.laneId)).toEqual(['mac']);
     expect(() => routineAdmissionInput(f.definition, build, {hostId: 'mini', laneId: 'mac'}, f.host, now)).toThrow('camera permission for its app recipient');
   }
   expect(f.row).toEqual(frozen);
