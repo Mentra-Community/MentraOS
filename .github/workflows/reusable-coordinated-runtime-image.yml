@@ -342,10 +342,24 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      # GITHUB_TOKEN can never hold the workflows permission, so GitHub checks
+      # each new tag's workflow files against the default branch (dev). Staging
+      # has diverged far from dev, and that check times out as HTTP 403. The
+      # release coordinator App's token holds the permission and skips it.
+      - name: Mint release token
+        id: release-token
+        if: inputs.dry_run != true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Publish persistent installer downloads
         if: inputs.dry_run != true
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
           ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
           ARTIFACTS_R2_BUCKET: artifactscdn
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}

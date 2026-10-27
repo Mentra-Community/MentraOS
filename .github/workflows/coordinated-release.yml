@@ -695,10 +695,24 @@ jobs:
               --repository "${{ github.repository }}"
           done
 
+      # GITHUB_TOKEN can never hold the workflows permission, so GitHub checks
+      # each new tag's workflow files against the default branch (dev). Staging
+      # has diverged far from dev, and that check times out as HTTP 403. The
+      # release coordinator App's token holds the permission and skips it.
+      - name: Mint release token
+        id: release-token
+        if: needs.plan.outputs.dry_run != 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Tag and verify the completed release set
         if: needs.plan.outputs.dry_run != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
         run: |
           set -euo pipefail
           source_tag="mentra-v${{ steps.results.outputs.identity }}"
@@ -746,9 +760,19 @@ jobs:
           name: coordinated-release-result-${{ needs.plan.outputs.release_set_id }}
           path: release-page-input
 
+      # Page releases need the App token too; see "Mint release token" in finalize.
+      - name: Mint release token
+        id: release-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Publish direct app downloads from the completed release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
         run: >-
           node .github/scripts/publish-coordinated-release-page.mjs
           --plan "release-page-input/mentra-release-plan-${{ needs.plan.outputs.release_identity }}.json"
