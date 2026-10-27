@@ -1591,7 +1591,9 @@ export class RoutineJobService {
       throw new TestRequestConflict('Routine job identity already has different exact inputs');
     if (retained.fleetDeadline.getTime() <= this.now() && !retained.fleetCancellation)
       await this.cancel(retained.requestId, {reason: 'Routine job reached its three-hour deadline'});
-    return this.deliver(await this.job(row.requestId));
+    // The existing pending tick delivers this durable original. Frozen batch
+    // admission must not wait for GitHub discovery or dispatch acknowledgements.
+    return this.job(row.requestId);
   }
   /** A cancelled absent member first becomes visible with its fence; it is never admitted for cancellation. */
   async cancelFrozen(selection: PortableRoutineSelection, deadline: string, value: {reason: string}, target?: StoredRoutineJob['fleetTarget']) {

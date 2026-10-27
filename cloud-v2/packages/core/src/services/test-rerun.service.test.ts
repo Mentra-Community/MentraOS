@@ -63,10 +63,10 @@ test('new preparation records still require routine bundle provenance when read'
  const request=f.requests.get(p.plan.members[0]!.requestId);delete request.input.routineSource;request.inputSha256=requestInputDigest(request.input);
  await expect(f.service.detail('new')).rejects.toThrow('frozen input');
 });
-function fixture(){
+function fixture(memberCount = 28){
  const rows=new Map<string,RerunRecord>(),claims=new Set<string>(),requests=new Map<string,any>(),results=new Map<string,any>();
  let time=Date.parse('2026-10-06T12:00:00Z'),prepared=0,failId='',executions=0;
- const members=Array.from({length:28},(_,i)=>({memberId:`member-${i}`,requestId:`original-${i}`,routineId:'captions',platform:'android',status:i<20?'pass':i<22?'failed':'setup-failed',publicationComplete:true,routineSource:testRoutineSource()}));
+ const members=Array.from({length:memberCount},(_,i)=>({memberId:`member-${i}`,requestId:`original-${i}`,routineId:'captions',platform:'android',status:i<20?'pass':i<22?'failed':'setup-failed',publicationComplete:true,routineSource:testRoutineSource()}));
  for(const member of members) requests.set(member.requestId,{requestId:member.requestId,hostId:'mini',state:'terminal',input:nativeInput,inputSha256:requestInputDigest(nativeInput)});
  const store:RerunRepository={async get(id){return structuredClone(rows.get(id)??null)},async insert(row){if(rows.has(row.rerunId))throw Object.assign(new Error(),{code:11000});rows.set(row.rerunId,structuredClone(row));},async accept(id,digest,keys,acceptedAt){const row=rows.get(id)!;if(row.state==='accepted')return null;if(keys.some(k=>claims.has(k)))throw Object.assign(new Error(),{code:11000});keys.forEach(k=>claims.add(k));row.state='accepted';row.acceptedAt=acceptedAt;return structuredClone(row);},async latest(roots:string[]){return [...rows.values()].filter(row=>row.state==='accepted'&&row.plan.members.some(member=>roots.includes(member.rootKey))).map(row=>structuredClone(row))},async history(root,before,limit){return [...rows.values()].filter(r=>r.state==='accepted'&&r.plan.members.some(m=>m.rootKey===root&&m.attemptNumber<before)).sort((a,b)=>b.plan.members.find(m=>m.rootKey===root)!.attemptNumber-a.plan.members.find(m=>m.rootKey===root)!.attemptNumber).slice(0,limit).map(r=>structuredClone(r));},async children(id,before,limit){const cursor=before?JSON.parse(Buffer.from(before,"base64url").toString()):null;return [...rows.values()].filter(r=>r.state==='accepted'&&'suiteId' in r.plan.parent&&r.plan.parent.suiteId===id&&(!cursor||r.acceptedAt!<cursor.acceptedAt||(r.acceptedAt===cursor.acceptedAt&&r.rerunId<cursor.rerunId))).sort((a,b)=>b.acceptedAt!.localeCompare(a.acceptedAt!)||b.rerunId.localeCompare(a.rerunId)).slice(0,limit)},async byRequest(id){return [...rows.values()].find(r=>r.state==='accepted'&&r.plan.members.some(m=>m.requestId===id))??null}};
  const jobs={async cancelFrozen(selection:any,deadline:string,value:{reason:string}) {const old=requests.get(selection.requestId); if (!old) requests.set(selection.requestId,{requestId:selection.requestId,fleetSelection:selection,fleetSelectionSha256:requestInputDigest(selection),fleetDeadline:new Date(deadline),state:'terminal',terminalStatus:'not-run',fleetCancellation:value}); else old.fleetCancellation=value;return {} as any},async freezeSelection(selected:any,inherited?:any){prepared++;return {...selected,build:inherited??{...structuredClone(nativeInput.build),source:selected.source}}},
@@ -82,6 +82,29 @@ test('28-member suite selects only its eight failures; preview queues nothing an
  expect(await f.preview()).toEqual(p);expect(f.prepared).toBe(8);
  const input={rerunId:p.rerunId,previewDigest:p.previewDigest};await f.service.submit(input);await f.service.submit(input);expect(f.executions).toBe(8);expect(f.members).toEqual(original);
  await expect(f.service.preview({rerunId:'repair',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},source,reason:'different'},'admin')).rejects.toThrow('different selection');
+});
+
+test('35 frozen rerun admissions acknowledge without Actions inventory; normal ticks deliver each original once', async () => {
+ const f=fixture(35), originals=structuredClone([...f.requests]), time=Date.parse('2026-10-06T12:00:00Z');
+ let githubReads=0; const dispatched:string[]=[];
+ const rows={async get(id:string){return structuredClone(f.requests.get(id)??null)},
+  async insert(row:any){if(f.requests.has(row.requestId))throw Object.assign(Error('duplicate'),{code:11000});f.requests.set(row.requestId,structuredClone(row));},
+  async pending(limit:number){return [...f.requests.values()].filter(row=>row.fleetSelection&&!row.fleetDispatch&&!row.fleetCancellation).slice(0,limit).map(row=>structuredClone(row));},
+  async dispatch(id:string,previous:any,value:any){const row=f.requests.get(id);if(requestInputDigest(row.fleetDispatch??null)!==requestInputDigest(previous??null))return null;row.fleetDispatch=structuredClone(value);return structuredClone(row);}};
+ const jobs=new RoutineJobService(rows as any,undefined,undefined,{async getExact(){return null}} as any,undefined,undefined,undefined,()=>time,
+  {async runs(){githubReads++;return []},async dispatch(id){dispatched.push(id)},async cancel(){}});
+ (f.service as any).jobs.submitFrozen=jobs.submitFrozen.bind(jobs);
+ const preview=await f.preview('all35',{memberIds:f.members.map(member=>member.memberId)}), input={rerunId:preview.rerunId,previewDigest:preview.previewDigest};
+ const acknowledgement=await f.service.submit(input);
+ expect(acknowledgement.admissions).toHaveLength(35);expect(acknowledgement.admissions.every(value=>value.admitted)).toBe(true);
+ expect(githubReads).toBe(0);expect(dispatched).toEqual([]);
+ for(const member of preview.plan.members){const row=f.requests.get(member.requestId);expect(row).toMatchObject({state:'awaiting-source',fleetSelection:member.selection,fleetSelectionSha256:requestInputDigest(member.selection)});expect(row.fleetDeadline.toISOString()).toBe('2026-10-06T15:00:00.000Z');expect(row.fleetBinding).toBeUndefined();}
+ await f.service.submit(input);expect(githubReads).toBe(0);
+ await jobs.reconcilePending();expect(dispatched).toHaveLength(20);
+ await jobs.reconcilePending();expect(dispatched).toHaveLength(35);expect(new Set(dispatched).size).toBe(35);
+ await jobs.reconcilePending();expect(dispatched).toHaveLength(35);
+ expect(dispatched.slice().sort()).toEqual(preview.plan.members.map(member=>member.requestId).sort());
+ for(const [id,row] of originals)expect(f.requests.get(id)).toEqual(row);
 });
 
 test('a linked minimum worker version is frozen into every selected request and immutable retries',async()=>{

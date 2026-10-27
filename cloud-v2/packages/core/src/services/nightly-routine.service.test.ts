@@ -804,6 +804,7 @@ test('actual fleet service preserves every nightly member through preparation, b
   const copy = <T>(value: T): T => structuredClone(value);
   const rows: RoutineJobRepository = {
     async get(id) {return copy(requestRows.get(id) ?? null);},
+    async pending(limit) {return [...requestRows.values()].filter(value => !value.fleetBinding && !value.fleetCancellation).slice(0, limit).map(copy);},
     async insert(value) {if (requestRows.has(value.requestId)) throw Object.assign(new Error('duplicate'), {code: 11000}); requestRows.set(value.requestId, copy(value));},
     async prepare(id, digest, preparation, inputSha256) {
       const value = requestRows.get(id); if (!value || value.fleetCancellation || value.fleetSelectionSha256 !== digest) return null;
@@ -847,6 +848,8 @@ test('actual fleet service preserves every nightly member through preparation, b
   const service = create(), first = await service.start(occurrence), frozenPlan = copy(first.plan);
   const {nightlySuiteProjection} = await import('./test-suite.service');
   const project = async () => nightlySuiteProjection(first.plan.suite!, first.plan, await service.detail(occurrence.occurrenceId));
+  expect(dispatches).toBe(0);
+  await jobs.reconcilePending();
   expect(dispatches).toBe(2); expect((await project()).members.every(member => member.status === 'waiting' && !member.hostId && !member.laneId)).toBe(true);
   for (const member of first.plan.members) {
     const definition = {...row(member.routineId, member.platform).definition, source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: mainRevision, path: `routines/${member.routineId}/routine.ts`}};

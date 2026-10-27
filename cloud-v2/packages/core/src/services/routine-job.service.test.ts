@@ -601,6 +601,25 @@ test('lost dispatch response retries retained logical job after backoff and ackn
   f.advance(30_001);await f.service.submit(selection);expect(attempts).toBe(2);expect(f.row?.fleetSelectionSha256).toBe(first.fleetSelectionSha256);
 });
 
+test('frozen admission acknowledges its durable original before the existing tick delivers it', async () => {
+  let discoveries = 0, dispatches = 0;
+  const f = fixture(definition, {async runs() {discoveries++; return dispatches ? [{actionsRunId: '10', status: 'queued', conclusion: null}] : [];},
+    async dispatch() {dispatches++;}, async cancel() {}});
+  const frozen = await f.service.freezeSelection(selection), deadline = '2026-10-08T03:00:00.000Z', target = {hostId: 'mini', laneId: 'android'};
+  const admitted = await f.service.submitFrozen(frozen, deadline, target);
+  expect(admitted).toMatchObject({state: 'awaiting-source', fleetSelection: frozen, fleetSelectionSha256: requestInputDigest(frozen), fleetTarget: target});
+  expect(admitted.fleetDeadline.toISOString()).toBe(deadline);
+  expect(admitted.fleetDispatch).toBeUndefined(); expect(discoveries).toBe(0); expect(dispatches).toBe(0);
+  f.rows.pending = async () => [structuredClone(f.row!)];
+  await f.service.reconcilePending();
+  expect(f.row?.fleetDispatch?.acknowledgedAt).toBeDefined(); expect(dispatches).toBe(1);
+  await f.service.submitFrozen(frozen, deadline, target);
+  expect(discoveries).toBe(0); expect(dispatches).toBe(1);
+  f.advance(30_001); await f.service.reconcilePending();
+  expect(discoveries).toBeGreaterThan(0); expect(dispatches).toBe(1); expect(f.row?.fleetBinding).toBeUndefined();
+  expect(f.row?.fleetSelection).toEqual(frozen); expect(f.row?.fleetDeadline.toISOString()).toBe(deadline);
+});
+
 
 test('Actions registration after cancellation cancels the late workflow without creating a binding',async()=>{
   const f=fixture(),prepared=await f.prepare(),cancelled:string[]=[];
