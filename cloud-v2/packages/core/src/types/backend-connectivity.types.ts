@@ -96,7 +96,7 @@ const sameIdentity = (left: object, right: object) => {
   return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right))
 }
 
-function currentBackendConnectivityObservation(observation: BackendConnectivityObservation | undefined, resourceId: string,
+export function currentBackendConnectivityObservation(observation: BackendConnectivityObservation | undefined, resourceId: string,
   context: {now: number; binding: FrameworkBinding; app?: z.infer<typeof permissionBuildSchema>; backend?: BackendConnectivityContext}) {
   const parsed = backendConnectivityObservationSchema.safeParse(observation)
   if (!parsed.success || !context.app || !context.backend) return undefined

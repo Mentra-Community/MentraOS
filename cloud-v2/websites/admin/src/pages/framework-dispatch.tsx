@@ -7,6 +7,7 @@ import {routineDispatchSchema} from "../../../../packages/core/src/types/routine
 import type {TestBuild, TestBuildSource} from "../../../../packages/core/src/types/test-build.types";
 import {Button} from "../components/ui/button";
 import {api} from "../lib/api";
+import {RequestMatchReport} from '../components/request-match-report';
 
 type DeliveryRequest = Pick<import('../../../../packages/core/src/types/framework-request.types').FrameworkRequestDisplay,
   'requestId' | 'hostId' | 'state' | 'createdAt' | 'routineId' | 'laneId' | 'platform' | 'reason' | 'definitionRevision'>;
@@ -32,6 +33,7 @@ export function NativeActivityPanel({active = true}: {active?: boolean} = {}) {
           <span className="rounded-lg bg-blue-50 px-2 py-1 text-sm text-blue-800">{status.label}</span></div>
         <p className="mt-2 text-sm">{status.explanation}</p>
         {row.reason && <p className="mt-2 text-sm">{row.reason}</p>}
+        <RequestMatchReport requestId={row.requestId} />
         <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm">
           {row.platform && <div><dt className="text-[#68746d]">Platform</dt><dd>{row.platform === "ios-on-mac" ? "Mac" : row.platform === "android" ? "Android" : readableName(row.platform)}</dd></div>}
           <div><dt className="text-[#68746d]">Computer</dt><dd>{row.hostId ? readableName(row.hostId) : "Awaiting assignment"}</dd></div>

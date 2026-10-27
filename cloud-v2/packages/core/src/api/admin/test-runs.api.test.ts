@@ -14,6 +14,18 @@ import {frameworkRunSchema} from "../../types/framework-run.types";
 import {TestRequestProgressService} from '../../services/test-request-progress.service';
 import {TestHostStateService} from '../../services/test-host-state.service';
 import {sharedResourceWait} from '../../services/routine-resource-wait';
+import {TestRequestMatchService} from '../../services/test-request-match.service';
+
+test('exact original matching route returns identical no-store JSON outside generic result lookup', async () => {
+  const report = {requestId: 'exact-original', stage: 'Candidate check and return', lanes: []}
+  const matching = spyOn(TestRequestMatchService.prototype, 'get').mockResolvedValue(report as never)
+  const result = spyOn(FrameworkResultService.prototype, 'detailByRun').mockRejectedValue(new Error('must not inspect run history'))
+  try {
+    const response = await createTestRunAdminApi().request('/requests/exact-original/matching')
+    expect(response.status).toBe(200); expect(response.headers.get('Cache-Control')).toBe('no-store')
+    expect(await response.json()).toEqual(report); expect(matching).toHaveBeenCalledWith('exact-original'); expect(result).not.toHaveBeenCalled()
+  } finally {matching.mockRestore(); result.mockRestore()}
+});
 
 test('the ordinary run detail carries live progress until its published result replaces the request', async () => {
   const input = {routineSource: testRoutineSource(), routineId: 'miniapps', definitionRevision: 'a'.repeat(40), platform: 'android',

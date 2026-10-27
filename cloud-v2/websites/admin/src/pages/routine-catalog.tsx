@@ -1,4 +1,5 @@
 import {frameworkFailures} from '../../../../packages/core/src/types/framework-run-failures';
+import {RequestMatchReport} from '../components/request-match-report';
 import {StepSourceLink} from "../components/step-source-link";
 import {LoadingIndicator} from "../components/loading-indicator";
 import {HistoryStatus, runDisplayStatus} from "../components/test-history-table";
@@ -250,6 +251,7 @@ function RequestCard({request, responseReceivedAt, observing, refreshing, onRefr
     {request.createdAt && <p className="mt-2 text-sm">Requested {new Date(request.createdAt).toLocaleString()}</p>}
     {request.acceptedAt && <p className="mt-2 text-sm">Host accepted {new Date(request.acceptedAt).toLocaleString()}</p>}
     {request.reason && <p className="mt-3">{request.reason}</p>}
+    <RequestMatchReport requestId={request.requestId} />
     {request.cancellationRequested && <p className="mt-2 text-sm">Cancellation requested · {!request.inputSha256 ? "Cancelled before execution." : request.cancellationAcknowledged ? "Host acknowledged; cleanup may still be running." : "Awaiting host acknowledgement."}</p>}
     <p className="mt-3 text-sm text-[#68746d]">{live ? 'Final result and evidence are pending.' : 'No routine result has been published.'}{request.state !== "terminal" && " This request refreshes automatically."}
       {request.terminalStatus === "cancelled" && (observing ? " Checking for final host custody or a published result for ten minutes." : "Automatic observation has ended. Refresh to check for later host custody or results.")}</p>

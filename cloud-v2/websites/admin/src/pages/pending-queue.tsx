@@ -5,6 +5,7 @@ import {TESTING_PANEL, TESTING_LINK, TestingButton} from '../components/testing-
 import {LoadingIndicator} from '../components/loading-indicator';
 import {api} from '../lib/api';
 import {laneDisplayLabel, laneHistoryHref, readableLaneIdentity} from '../lib/lane-links';
+import {RequestMatchReport} from '../components/request-match-report';
 
 function LaneLabel({lane}: {lane: PendingQueueLane}) {
   return <a className={`${TESTING_LINK} rounded-lg border border-[#dfe5dd] px-2 py-1 text-xs`} href={laneHistoryHref(lane.hostId, lane.laneId)}>
@@ -43,6 +44,7 @@ export function PendingQueueSection() {
             <p className="mt-2">Next action: {item.diagnosis.nextAction}</p>
           </details>}
           {item.assignment && <p className="mt-2 text-sm">Assigned lane: <a className={TESTING_LINK} href={laneHistoryHref(item.assignment.hostId, item.assignment.laneId)}>{readableLaneIdentity(item.assignment.hostId)} · {readableLaneIdentity(item.assignment.laneId)}</a></p>}
+          <RequestMatchReport requestId={item.requestId} />
           <p className="mt-2 text-xs font-medium">{item.compatibilityKnown ? 'Compatible lanes' : 'Compatibility pending source preparation'}</p>
           <div className="mt-2 flex flex-wrap gap-2">{item.compatibilityKnown ? item.compatibleLanes.length ? item.compatibleLanes.map(lane => <LaneLabel key={`${lane.hostId}/${lane.laneId}`} lane={lane} />) :
             <span className="text-sm text-[#68746d]">No compatible lanes reported.</span> : <>

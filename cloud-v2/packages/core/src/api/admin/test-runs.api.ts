@@ -23,10 +23,11 @@ import {PrRerunReferenceService} from '../../services/pr-rerun-reference.service
 import {TestRequestProgressService} from '../../services/test-request-progress.service';
 import {TestHostStateService, type RoutingTestHostState} from '../../services/test-host-state.service';
 import {sharedResourceWaitingReason} from '../../services/routine-resource-wait';
+import {TestRequestMatchService} from '../../services/test-request-match.service';
 
 /** Results and delivery projections only; the host controller owns lanes and repairs. */
 export function createTestRunAdminApi(health = new TestHostHealthService(), history = new TestHistoryService(),
-  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), checks = new PrRoutineCheckService(), controls = new LaneControlsService(), rerunLabels = new PrRerunReferenceService(), progress = new TestRequestProgressService(), hosts: Pick<TestHostStateService, 'list'> = new TestHostStateService()) {
+  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), checks = new PrRoutineCheckService(), controls = new LaneControlsService(), rerunLabels = new PrRerunReferenceService(), progress = new TestRequestProgressService(), hosts: Pick<TestHostStateService, 'list'> = new TestHostStateService(), matching = new TestRequestMatchService(hosts)) {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
   app.onError((error, c) => {
@@ -52,6 +53,7 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   app.get("/suites/:suiteId", async c => c.json(await suites.detail(c.req.param("suiteId"))));
   app.get("/", async c => c.json(await results.list(c.req.query())));
   app.get("/pending-queue", async c => c.json(await new TestPendingQueueService().list(c.req.query("cursor"))));
+  app.get('/requests/:requestId/matching', async c => c.json(await matching.get(c.req.param('requestId'))));
   app.get("/activity", async c => {
     const rows = await TestRequestModel.find({state: {$ne: "terminal"}})
       .sort({createdAt: 1, requestId: 1}).limit(100).select({requestId: 1, hostId: 1, state: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1, preparation: 1, preparationRejection: 1, preparationCancellation: 1, hostReceipt: 1, hostRejection: 1, hostCancellation: 1, cancellationAcknowledged: 1, createdAt: 1, fleetSelection: 1, fleetSelectionSha256: 1, fleetInputSha256: 1, fleetBinding: 1, fleetCancellation: 1, fleetDispatch: 1, fleetActions: 1, fleetPreparationStatus: 1, fleetResourceAdmission: 1})
