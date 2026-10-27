@@ -13,7 +13,6 @@ import appRegistry from "../services/AppRegistry"
 import {onDeferredMiniappUpdateReady} from "../services/deferredMiniappUpdates"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
 import {installMiniappRelease} from "../services/miniappReleaseInstall"
-import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
 import {fetchHostedManifest, MiniappUrlUpdater} from "../services/miniappUrlUpdates"
 import {
   onRunningUpdateFailed,
@@ -23,7 +22,7 @@ import {
 } from "../services/runningUpdatePrompt"
 import {isSystemMiniappPackage} from "../services/SystemMiniappPolicy"
 import {firstPartyMiniappUrl} from "../services/systemMiniappTrust"
-import {useAppStatusStore} from "../stores/apps"
+import {onMiniappOpenedByUser, useAppStatusStore} from "../stores/apps"
 import type {ClientApp} from "../types"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
 
@@ -92,28 +91,20 @@ export const miniapps = {
     timeoutMs?: number,
   ): Promise<unknown> => localMiniappRuntime.invokeActionFromHost(packageName, actionId, params, timeoutMs),
   /**
-   * Check every installed miniapp's own URL and install newer releases. A
-   * running miniapp's update is staged and asked about, or waits until it stops.
+   * Check every installed miniapp's own URL and install newer releases,
+   * silently. A running miniapp's update waits until it stops.
    */
   checkForUpdates: (): Promise<void> => urlUpdater.checkAll(),
-  /** Check a miniapp the user just opened, unless it was checked within the last minute. */
+  /**
+   * Check a miniapp a person just opened, unless it was checked within the
+   * last minute. Its update is staged and asked about.
+   */
   checkOpenedForUpdate: (packageName: string): Promise<void> => urlUpdater.checkOpened(packageName),
-  /** A miniapp started running. Returns an unsubscribe. */
-  onOpened: (listener: (packageName: string) => void): (() => void) => {
-    let running = new Set(miniappRunningRegistry.getAll())
-    return miniappRunningRegistry.subscribe(() => {
-      const now = miniappRunningRegistry.getAll()
-      for (const packageName of now) {
-        if (running.has(packageName)) continue
-        try {
-          listener(packageName)
-        } catch (error) {
-          console.warn("Miniapp opened listener threw", error)
-        }
-      }
-      running = new Set(now)
-    })
-  },
+  /**
+   * A person started a miniapp and it now runs. Automatic starts (restoring
+   * what ran before, an update's restart) are not announced. Returns an unsubscribe.
+   */
+  onOpened: (listener: (packageName: string) => void): (() => void) => onMiniappOpenedByUser(listener),
   /**
    * Render "update now?" prompts for running miniapps and answer each one. The
    * engine decides when one may appear (foreground, one at a time, once per

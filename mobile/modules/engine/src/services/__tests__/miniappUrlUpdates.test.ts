@@ -154,10 +154,43 @@ describe("updates from a miniapp's own URL", () => {
       expectedVersion: "1.1.0",
       expectedBundleSha256: sha,
       onlyIfStopped: true,
-      askIfRunning: true,
+      askIfRunning: false,
       releaseIdentity: {source: "url", sourceUrl, bundleSha256: sha},
     })
     expect(kept).toEqual([{packageName: pkg, versions: ["1.1.0", "1.0.0"]}])
+  })
+
+  test("only a miniapp a person opens is asked about; every other check is silent", async () => {
+    responses = [served(manifest("1.1.0")), served(manifest("1.1.0"))]
+    installError = new RunningError("running")
+    const u = updater()
+    await u.check(pkg)
+    await u.checkOpened(pkg)
+    expect(installs.map((install) => install.options.askIfRunning)).toEqual([false, true])
+  })
+
+  test("an open during a background check of the same miniapp checks again so it can ask", async () => {
+    installError = new RunningError("running")
+    responses = [served(manifest("1.1.0"), {etag: '"v2"'}), {status: 304, url: `${sourceUrl}miniapp.json`}]
+    const u = updater()
+    let opened: Promise<void> | undefined
+    duringInstall = () => {
+      duringInstall = undefined
+      opened = u.checkOpened(pkg)
+    }
+    await u.checkAll()
+    await opened
+    expect(installs.map((install) => install.options.askIfRunning)).toEqual([false, true])
+  })
+
+  test("a running miniapp's waiting update is checked again the next time it opens, even within a minute", async () => {
+    installError = new RunningError("running")
+    responses = [served(manifest("1.1.0"), {etag: '"v2"'}), {status: 304, url: `${sourceUrl}miniapp.json`}]
+    const u = updater()
+    await u.checkOpened(pkg)
+    await u.checkOpened(pkg)
+    expect(fetched).toHaveLength(2)
+    expect(installs.map((install) => install.options.askIfRunning)).toEqual([true, true])
   })
 
   test("a bundled miniapp updated from one host follows the host its deployment names now", async () => {
