@@ -1012,3 +1012,50 @@ test(`settled ${kind} candidate still reconciles recorder custody before allocat
  expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);
  expect(f.row.fleetBinding).toBeUndefined();
 });
+
+for (const kind of ['phone', 'graph'] as const)
+test(`pending ${kind} candidate reads only its exact host before returning`, async () => {
+ const f = kind === 'graph' ? routingGraphFixture() : fixture();
+ await f.service.preparation('job-one'); const original = structuredClone(f.row);
+ const hosts = (f.service as unknown as {hosts: {get: (id: string, options?: {frameworkHistory?: boolean}) => Promise<ReceivedTestHostState | null>; list: () => Promise<ReceivedTestHostState[]>}}).hosts;
+ const list = spyOn(hosts, 'list').mockRejectedValue(Error('Unrelated fleet lookup timed out'));
+ const get = spyOn(hosts, 'get');
+ try {
+  const phases: string[] = [], waiting = await f.service.preparation('job-one', phase => phases.push(phase));
+  expect(list).not.toHaveBeenCalled(); expect(get).toHaveBeenCalledTimes(1);
+  expect(get.mock.calls[0]).toEqual([original.fleetCandidatePreparation!.hostId, {frameworkHistory: false}]);
+  expect(phases).not.toContain('initial-host-read');
+  expect(waiting.waitingReason).toBeDefined(); expect(waiting.fleetCandidatePreparation).toEqual(original.fleetCandidatePreparation);
+  expect((waiting as {resourceTarget?: unknown}).resourceTarget).toBeUndefined(); expect(f.row).toEqual(original); expect(f.bindWrites).toBe(0);
+ } finally {list.mockRestore(); get.mockRestore();}
+});
+
+for (const changed of ['controller', 'binding']) test(`pending candidate retains history read for changed ${changed}`, async () => {
+ const f = routingGraphFixture(); await f.service.preparation('job-one'); const original = structuredClone(f.row);
+ const host = f.hosts.find(value => value.hostId === original.fleetCandidatePreparation!.hostId)!;
+ if (changed === 'controller') {host.incarnation = 'replacement'; host.incarnationGeneration!++;}
+ else host.frameworkBinding = {...host.frameworkBinding!, version: host.frameworkBinding!.version + 1};
+ const hosts = (f.service as unknown as {hosts: {get: (id: string, options?: {frameworkHistory?: boolean}) => Promise<ReceivedTestHostState | null>; list: () => Promise<ReceivedTestHostState[]>}}).hosts;
+ const list = spyOn(hosts, 'list').mockRejectedValue(Error('Unrelated fleet lookup')); const get = spyOn(hosts, 'get');
+ try {
+  await f.service.preparation('job-one'); expect(list).not.toHaveBeenCalled(); expect(get).toHaveBeenCalledTimes(2);
+  expect(get.mock.calls).toEqual([[host.hostId, {frameworkHistory: false}], [host.hostId]]);
+  expect(f.row).toEqual(original); expect(f.bindWrites).toBe(0);
+ } finally {list.mockRestore(); get.mockRestore();}
+});
+
+for (const kind of ['phone', 'graph'] as const)
+test(`pending ${kind} candidate retains custody when the current report omits framework binding`, async () => {
+ const f = kind === 'graph' ? routingGraphFixture() : fixture();
+ await f.service.preparation('job-one'); const original = structuredClone(f.row);
+ const host = f.hosts.find(value => value.hostId === original.fleetCandidatePreparation!.hostId)!;
+ delete host.frameworkBinding; delete host.frameworkAcceptedAt; delete host.frameworkProcess;
+ const hosts = (f.service as unknown as {hosts: {get: (id: string, options?: {frameworkHistory?: boolean}) => Promise<ReceivedTestHostState | null>; list: () => Promise<ReceivedTestHostState[]>}}).hosts;
+ const list = spyOn(hosts, 'list').mockRejectedValue(Error('Unrelated fleet lookup')); const get = spyOn(hosts, 'get');
+ try {
+  const waiting = await f.service.preparation('job-one');
+  expect(list).not.toHaveBeenCalled(); expect(get.mock.calls).toEqual([[host.hostId, {frameworkHistory: false}], [host.hostId]]);
+  expect(waiting.waitingReason).toBeDefined(); expect(waiting.fleetCandidatePreparation).toEqual(original.fleetCandidatePreparation);
+  expect((waiting as {resourceTarget?: unknown}).resourceTarget).toBeUndefined(); expect(f.row).toEqual(original); expect(f.bindWrites).toBe(0);
+ } finally {list.mockRestore(); get.mockRestore();}
+});

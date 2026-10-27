@@ -989,3 +989,25 @@ test('routing carries only the installed whole-resource producer flag, keeping h
     expect(Object.keys(offered?.resourceReservations ?? {})).toEqual(['resourceReadiness'])
   } finally {find.mockRestore(); if (previous === undefined) delete process.env.TEST_HOST_TOKENS; else process.env.TEST_HOST_TOKENS = previous}
 })
+
+for (const includeHistory of [false, true]) test(`selected host read projects only current return state with history=${includeHistory}`, async () => {
+ const selections: Record<string, number>[] = [], row = {snapshot: snapshot(1, 1), receivedAt: new Date('2026-10-03T01:00:00Z'),
+   resourceReservations: [], laneControls: [], frameworkHistory: [], repairDiagnostics: 'unrelated'.repeat(19000)};
+ const find = spyOn(TestHostStateModel, 'findOne').mockImplementation(((filter: unknown) => {
+  expect(filter).toEqual({hostId: 'mini'}); let selected: Record<string, number>;
+  const query = {select(value: Record<string, number>) {selected = value; selections.push(value); return query}, async lean() {
+   return {...Object.fromEntries(Object.entries(row).filter(([key]) => selected[key] === 1)), snapshot: row.snapshot};
+  }}; return query;
+ }) as never);
+ try {
+  const result = await new TestHostStateService().get('mini', {frameworkHistory: includeHistory});
+  expect(result?.incarnation).toBe('boot-1'); expect(result?.authorityReservations).toEqual([]);
+  expect(result?.frameworkHistory).toEqual([]); expect(result).not.toHaveProperty('repairDiagnostics');
+  expect(selections).toEqual([{resourceReservations: 1, laneControls: 1, resourceLifecycleCursor: 1, receivedAt: 1,
+    ...(includeHistory ? {snapshot: 1, frameworkHistory: 1} : {
+      'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.sequence': 1,
+      'snapshot.observedAt': 1, 'snapshot.resources': 1, 'snapshot.lanes': 1, 'snapshot.resourceLifecycle': 1,
+      'snapshot.laneControls': 1, 'snapshot.resourceReservations': 1, 'snapshot.frameworkBinding': 1,
+      'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1}), _id: 0}]);
+ } finally {find.mockRestore();}
+});

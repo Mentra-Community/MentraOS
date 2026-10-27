@@ -490,8 +490,14 @@ export class TestHostStateService {
         ...(row.resourceLifecycleCursor === undefined ? {} : {resourceLifecycleCursor: row.resourceLifecycleCursor})};
     });
   }
-  async get(hostId: string): Promise<ReceivedTestHostState | null> {
-    const row = await TestHostStateModel.findOne({hostId}).lean()
+  async get(hostId: string, options?: {frameworkHistory?: boolean}): Promise<ReceivedTestHostState | null> {
+    const row = await TestHostStateModel.findOne({hostId}).select({resourceReservations: 1, laneControls: 1,
+      resourceLifecycleCursor: 1, receivedAt: 1, ...(options?.frameworkHistory === false ? {
+        'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.sequence': 1,
+        'snapshot.observedAt': 1, 'snapshot.resources': 1, 'snapshot.lanes': 1, 'snapshot.resourceLifecycle': 1,
+        'snapshot.laneControls': 1, 'snapshot.resourceReservations': 1, 'snapshot.frameworkBinding': 1,
+        'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1,
+      } : {snapshot: 1, frameworkHistory: 1}), _id: 0}).lean()
     return row
       ? {
           ...hostStateSchema.parse(row.snapshot),

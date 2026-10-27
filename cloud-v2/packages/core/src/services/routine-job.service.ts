@@ -1633,8 +1633,6 @@ export class RoutineJobService {
       state: row.state, ...routing, ...(row.fleetCandidatePreparation ? {fleetCandidatePreparation: row.fleetCandidatePreparation} : {}), selection: row.fleetSelection, ...(row.fleetTarget ? {target: row.fleetTarget} : {}), ...(row.fleetPreparation ? {prepared: row.fleetPreparation} : {})};
   }
   private async routing(row: StoredRoutineJob, onPhase?: RoutinePreparationPhase) {
-    onPhase?.('initial-host-read');
-    let hosts = await this.hosts.list?.() ?? [];
     const original = {requestId: row.requestId, inputSha256: row.fleetInputSha256!};
     if (row.fleetCandidatePreparation?.provisionalReturn && !row.fleetCandidatePreparation.provisionalReturn.releasedAt) {
       onPhase?.('candidate-provisional-release');
@@ -1643,16 +1641,26 @@ export class RoutineJobService {
     let candidateHost: ReceivedTestHostState | undefined;
     if (row.fleetCandidatePreparation) {
       onPhase?.('candidate-host-read');
-      candidateHost = await this.hosts.get(row.fleetCandidatePreparation.hostId) ?? undefined;
+      const pending = row.fleetCandidatePreparation, history = Boolean(pending.resourceReturnContinuation || pending.resourceReturns?.length);
+      candidateHost = await this.hosts.get(pending.hostId, {frameworkHistory: history}) ?? undefined;
+      if (candidateHost && !history && (candidateHost.incarnation !== pending.candidate.controller.incarnation ||
+        candidateHost.incarnationGeneration !== pending.candidate.controller.generation ||
+        !isDeepIdentity(candidateHost.frameworkBinding, pending.target.acceptedBinding))) {
+        onPhase?.('candidate-return-history-read');
+        candidateHost = await this.hosts.get(pending.hostId) ?? undefined;
+      }
     }
     onPhase?.('candidate-return-reconciliation');
     row = await this.reconcileCandidatePreparation(row, candidateHost, onPhase);
+    let hosts: RoutingTestHostState[] = candidateHost ? [candidateHost] : [];
     if (row.state !== 'awaiting-runner' || row.fleetCancellation || row.fleetDeadline.getTime() <= this.now())
       return {...routineJobRouting(recorderCapacityRequirements(row.fleetPreparation!), hosts, this.now(), row.fleetTarget, row.fleetSelection.build, true, original), waitingReason: RESOURCE_ADMISSION_WAIT};
     if (row.fleetCandidatePreparation) return {...routineJobRouting(recorderCapacityRequirements(row.fleetPreparation!), hosts, this.now(), row.fleetTarget, row.fleetSelection.build, true, original),
       waitingReason: row.fleetCandidatePreparation.target.purpose?.kind === 'resource-readiness'
         ? 'Checking this candidate’s complete required resource graph and waiting for its original return'
         : 'Checking the selected phone and waiting for its complete return'};
+    onPhase?.('initial-host-read');
+    hosts = await this.hosts.list?.() ?? [];
     if (this.rows.reconcileRecorderHost) {
       let returned = false;
       for (const [hostIndex, host] of hosts.entries()) {
