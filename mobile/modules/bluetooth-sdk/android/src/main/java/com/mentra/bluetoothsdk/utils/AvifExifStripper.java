@@ -10,7 +10,7 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Removes the Exif metadata item from glasses BLE AVIF so {@link com.radzivon.bartoshyk.avif.coder.HeifCoder}
+ * Removes the Exif metadata item from glasses BLE AVIF so {@link com.radzivon.bartoshyk.avif.coder.Coder}
  * can decode the image. EXIF is appended to {@code mdat} by the glasses encoder; libavif then fails if that
  * trailer is present. IMU JSON must be read from the original bytes before stripping.
  */
@@ -41,7 +41,7 @@ final class AvifExifStripper {
 
     /**
      * Truncates mdat at the {@code Exif\0\0} byte position, then removes the Exif item from
-     * iloc/iinf/iref so HeifCoder does not try to seek to the now-absent data.
+     * iloc/iinf/iref so Coder does not try to seek to the now-absent data.
      */
     private static byte[] stripMdatTailAndMeta(byte[] avif, int exifMarker) throws IOException {
         List<BmffBox> top = parseTopLevel(avif);

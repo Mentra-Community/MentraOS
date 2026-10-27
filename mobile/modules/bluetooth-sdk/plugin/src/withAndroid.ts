@@ -12,6 +12,7 @@ import {
 
 import {type BluetoothSdkPluginProps} from "./index"
 import {resolveAnalyticsProps} from "./analyticsProps"
+import {withKotlinVersion} from "./withKotlinVersion"
 
 const META_ANALYTICS_DISABLED = "com.mentra.bluetoothsdk.analytics.disabled"
 const META_ANALYTICS_ENVIRONMENT = "com.mentra.bluetoothsdk.analytics.environment"
@@ -205,6 +206,7 @@ function withAnalyticsManifestMetadata(config: any, props: BluetoothSdkPluginPro
 }
 
 export const withAndroidConfiguration: ConfigPlugin<BluetoothSdkPluginProps> = (config, props) => {
+  config = withKotlinVersion(config)
   config = withSettingsGradleModifications(config)
   config = withSherpaOnnxLocalMavenRepo(config)
   config = withAnalyticsManifestMetadata(config, props)

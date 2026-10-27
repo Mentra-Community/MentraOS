@@ -46,6 +46,8 @@ changes. Adding this JS package alone cannot reroute logs in an older binary.
 - React Native `0.72+`.
 - Expo `49+` when using Expo.
 - Android min SDK `28+`.
+- Android source builds use Kotlin `2.3.0+`; the Expo config plugin selects it
+  automatically. The public Maven SDK still targets Kotlin 2.1 consumers.
 - iOS deployment target `15.1+`.
 - Native macOS deployment target `13+`. The Starter Kit's separate
   `react-native-macos` host requires macOS `14+` and a matching React Native / Expo
