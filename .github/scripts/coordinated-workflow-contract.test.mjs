@@ -1440,3 +1440,27 @@ test("the docs verification receives the release identity and both example links
     assert.match(script, new RegExp(`process\\.env\\.${name}`), name)
   }
 })
+
+// GITHUB_TOKEN cannot hold the workflows permission, and GitHub's workflow-file
+// check for a new tag on a branch far from dev times out as HTTP 403. Every
+// step that creates a release tag uses the release coordinator App's token.
+test("release tags are created with the release coordinator App token", () => {
+  const steps = [
+    ["reusable-coordinated-runtime-image.yml", "Publish persistent installer downloads"],
+    ["coordinated-release.yml", "Tag and verify the completed release set"],
+    ["coordinated-release.yml", "Publish direct app downloads from the completed release"],
+  ]
+  for (const [file, name] of steps) {
+    const source = workflow(file)
+    const start = source.indexOf(`      - name: ${name}\n`)
+    assert.ok(start > 0, `${file}: ${name}`)
+    const step = source.slice(start).split("\n      - name:")[0]
+    assert.match(step, /GH_TOKEN: \$\{\{ steps\.release-token\.outputs\.token \}\}/, `${file}: ${name}`)
+    const mint = source.slice(source.lastIndexOf("      - name: Mint release token\n", start), start)
+    assert.match(mint, /uses: actions\/create-github-app-token@/, `${file}: ${name}`)
+    assert.match(mint, /app-id: \$\{\{ vars\.STARTER_KIT_COORDINATOR_APP_ID \}\}/)
+    assert.match(mint, /permission-workflows: write/)
+    assert.match(mint, /permission-contents: write/)
+    assert.doesNotMatch(mint, /\n      - name: (?!Mint release token)/, `${file}: ${name} must follow its own mint step`)
+  }
+})
