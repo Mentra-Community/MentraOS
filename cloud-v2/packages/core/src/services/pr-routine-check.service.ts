@@ -7,6 +7,7 @@ import {RoutineJobService} from './routine-job.service'
 import {RoutineDispatchService} from './routine-dispatch.service'
 import {RoutineDefinitionService} from './routine-definition.service'
 import {GithubTestBuildGateway} from './test-builds.service'
+import {selectedBuildInput} from '../types/test-build.types'
 import {TestRequestService, requestInputDigest} from './test-request.service'
 import {FrameworkResultService} from './framework-result.service'
 import {TestSuiteService} from './test-suite.service'
@@ -15,6 +16,7 @@ import {TestHostStateService} from './test-host-state.service'
 import {TestRunError} from './test-result-error'
 import {frameworkRequestInputSchema} from '../types/framework-request.types'
 import type {StoredRoutineJob} from '../types/routine-job.types'
+import {routinePreparedBuildSchema} from '../types/routine-dispatch.types'
 import {GithubRoutineSourceGateway} from './routine-source-selection.service'
 import {PrBuildDispatchFailure, GithubPrRoutineChecks, type PrRoutineGithub} from './pr-routine-check-github'
 import {prRoutineCheckRepository, type PrRoutineCheckRepository} from './pr-routine-check.repository'
@@ -392,7 +394,9 @@ export class PrRoutineCheckService {
         member.requestId = id(gate, member.memberId)
         member.requestDeadline = attempt.deadline
         member.selection = await this.jobs.freezeSelection({requestId: member.requestId, routineId: member.routineId,
-          platform: member.platform, routineRevision: gate.routineRevision, routineRepository: testingTarget(gate.routineRepository).repository, source: eligible[0].source})
+          platform: member.platform, routineRevision: gate.routineRevision, routineRepository: testingTarget(gate.routineRepository).repository, source: eligible[0].source},
+          routinePreparedBuildSchema.parse({...selectedBuildInput(eligible[0], member.platform),
+            ...(eligible[0].manifest ? {manifest: eligible[0].manifest, manifestSha256: eligible[0].manifestSha256} : {})}))
         changed = true
       }
     }
@@ -706,6 +710,9 @@ export class PrRoutineCheckService {
           }
         }
       }
+      // Retire a stale error only after ordinary cancellation and suite
+      // finalization have succeeded, rather than skipping their retained work.
+      delete gate.reporting.error
     } catch (error) {
       reconciled = false
       gate.reporting.error = 'Routine check reconciliation is unavailable; retained work will retry.'
@@ -766,7 +773,9 @@ export class PrRoutineCheckService {
       }
       gate.checkId = await this.github.deliver(gate.checkId, intended.payload, allowCreate, routineCheckRepository(gate.context))
       gate.reporting.deliveredDigest = intended.digest; gate.reporting.deliveredAt = iso(this.now())
-      gate.reporting.nextAt = iso(this.now() + 15_000); delete gate.reporting.intended; delete gate.reporting.error
+      gate.reporting.nextAt = iso(this.now() + 15_000); delete gate.reporting.intended
+      // A delivered verdict cannot acknowledge a failed suite/custody operation.
+      if (gate.reporting.error !== 'Routine check reconciliation is unavailable; retained work will retry.') delete gate.reporting.error
     } catch {gate.reporting.error = 'GitHub App check delivery is unavailable; verify checks:write and webhook installation.'}
     await this.rows.save(row, gate, this.next(gate, this.now() + 15_000))
   }

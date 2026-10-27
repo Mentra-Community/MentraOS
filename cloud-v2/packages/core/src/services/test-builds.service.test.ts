@@ -3,6 +3,8 @@ import {selectedBuildInput, testBuildQuerySchema, testBuildSourceSchema} from '.
 import {GithubTestBuildGateway} from "./test-builds.service";
 import {createHash} from "node:crypto";
 import {readFileSync} from "node:fs";
+import {RoutineJobService} from './routine-job.service';
+import {PrRoutineCheckService} from './pr-routine-check.service';
 const REPO = "Mentra-Community/MentraOS";
 const API = `https://api.github.com/repos/${REPO}`;
 const CDN = `https://artifactscdn.mentraglass.com/${REPO}/releases/`;
@@ -1001,4 +1003,45 @@ test("app build GitHub grants follow the selected repository and cannot relabel 
  expect(await gateway.isPrSuperseded(12, HEAD)).toBe(false);
  expect(targets).toEqual([{scope: "source", repository}, {scope: "source", repository: REPO}]);
  expect(urls).toEqual([`https://api.github.com/repos/${repository}/pulls/12`, `${API}/pulls/12`]);
+});
+
+test('PR admission freezes every member from its already verified inventory build', async () => {
+  const f = fixture(), source = {channel: 'pr' as const, prNumber: 12, buildRunId: 50, publicationAttempt: 1};
+  const verified = await f.gateway.resolve(source, 'ios-on-mac');
+  expect(verified.availability).toBe('available');
+  const baselineReads = f.calls.filter(call => call.url.startsWith('https://api.github.com/')).length;
+  expect(baselineReads).toBe(4);
+  let inventories = 0;
+  const checks = new PrRoutineCheckService(undefined, undefined, new RoutineJobService(undefined, f.gateway), undefined, undefined,
+    {async inventory() {inventories++; return [verified]}});
+  const gate = {gateId: 'pr-build-reuse', headSha: HEAD, coverageGeneration: 1, context: pr,
+    routineRevision: HEAD, routineRepository: 'Mentra-Community/Mentra',
+    attempt: {generation: 1, deadline: '2026-10-27T20:00:00Z', members: ['alpha', 'beta', 'gamma'].map(id =>
+      ({memberId: id, routineId: id, platform: 'ios-on-mac', title: id}))}};
+  f.calls.length = 0;
+  expect(await (checks as any).freezeAdmissions(gate)).toBe(true);
+  expect(inventories).toBe(1);
+  expect(f.calls.filter(call => call.url.startsWith('https://api.github.com/'))).toHaveLength(0);
+  expect(f.calls).toHaveLength(0);
+  for (const member of gate.attempt.members as any[]) {
+    expect(member.selection.build).toEqual({...selectedBuildInput(verified, 'ios-on-mac'),
+      ...(verified.manifest ? {manifest: verified.manifest, manifestSha256: verified.manifestSha256} : {})});
+    expect(member.selection.source).toEqual(source);
+    expect(member.selection.routineRevision).toBe(HEAD);
+    expect(member.requestDeadline).toBe(gate.attempt.deadline);
+  }
+  expect(await (checks as any).freezeAdmissions(gate)).toBe(false);
+  expect(inventories).toBe(1);
+});
+
+test('PR inventory verification remains required before inherited build admission', async () => {
+  const f = fixture();
+  const checks = new PrRoutineCheckService(undefined, undefined, new RoutineJobService(undefined, f.gateway), undefined, undefined,
+    {async inventory() {throw new Error('initial publication verification unavailable')}});
+  const gate = {gateId: 'pr-build-refused', headSha: HEAD, coverageGeneration: 1, context: pr,
+    routineRevision: HEAD, attempt: {generation: 1, deadline: '2026-10-27T20:00:00Z',
+      members: [{memberId: 'alpha', routineId: 'alpha', platform: 'ios-on-mac', title: 'Alpha'}]}};
+  await expect((checks as any).freezeAdmissions(gate)).rejects.toThrow('initial publication verification unavailable');
+  expect((gate.attempt.members[0] as any).selection).toBeUndefined();
+  expect(f.calls).toHaveLength(0);
 });
