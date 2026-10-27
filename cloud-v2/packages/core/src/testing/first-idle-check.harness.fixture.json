@@ -1,0 +1,243 @@
+{
+  "purpose": "Actual cleanLane and freezeRunExport output from CPU-only provider doubles; no hardware or deployment evidence.",
+  "producerHead": "dc6d35fbce8122f55a45b11da610f47066644858",
+  "definition": {
+    "steps": [
+      {
+        "id": "cpu-only-step"
+      }
+    ],
+    "fixtures": [],
+    "setup": [],
+    "teardown": []
+  },
+  "run": {
+    "schemaVersion": 1,
+    "requestId": "cpu-only-idle-diagnostics",
+    "hostId": "cpu-only-host",
+    "routineId": "cpu-only-idle-diagnostics",
+    "definitionRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "platform": "android",
+    "laneId": "cpu-only-lane",
+    "build": {
+      "repository": "Mentra-Community/MentraOS",
+      "channel": "dev",
+      "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "routineSource": {
+      "repository": "Mentra-Community/Mentra-Automated-Testing",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bundle": {
+        "url": "https://source.example/routine-fixture.tar.gz",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "size": 123
+      },
+      "minimumRoutineApiVersion": 1
+    },
+    "frameworkBinding": {
+      "version": 40,
+      "revision": "ffffffffffffffffffffffffffffffffffffffff",
+      "installationId": "software-framework-fixture",
+      "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "runtimeSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "routineApiVersion": 1,
+      "publicApiSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "startedAt": "2026-10-27T20:29:13.312Z",
+    "finishedAt": "2026-10-27T20:29:13.315Z",
+    "assets": [],
+    "result": {
+      "runId": "cpu-only-idle-diagnostics",
+      "finishedAt": "2026-10-27T20:29:13.315Z",
+      "setup": {
+        "status": "passed",
+        "actions": []
+      },
+      "test": "passed",
+      "steps": [
+        {
+          "id": "cpu-only-step",
+          "status": "passed",
+          "durationMs": 0
+        }
+      ],
+      "teardown": {
+        "ready": true,
+        "outcomes": [
+          {
+            "state": "cleaned",
+            "resourceId": "cpu-only-app",
+            "evidence": [],
+            "idleCheck": {
+              "resourceId": "cpu-only-app",
+              "contractVersion": "installed-resource-baseline-v1",
+              "ownerGeneration": 7,
+              "operationId": "idle-check:10980378-ebdd-43b3-8d6d-6a5902efa943",
+              "stage": "after-teardown",
+              "outcome": "passed",
+              "checkedAt": "2026-10-27T20:29:13.315Z",
+              "conditions": [
+                {
+                  "id": "app-phone-identity",
+                  "outcome": "passed"
+                },
+                {
+                  "id": "app-phone-same-boot",
+                  "outcome": "passed"
+                },
+                {
+                  "id": "app-package-absent",
+                  "outcome": "passed"
+                },
+                {
+                  "id": "app-process-absent",
+                  "outcome": "passed"
+                },
+                {
+                  "id": "app-data-absent",
+                  "outcome": "passed"
+                }
+              ],
+              "evidenceRefs": [
+                "cpu-only-reader:2"
+              ],
+              "qualifiedScope": {
+                "kind": "same-controller",
+                "controllerId": "cpu-only-host"
+              }
+            }
+          }
+        ],
+        "errors": [
+          {
+            "phase": "teardown",
+            "actionId": "cpu-only-app",
+            "message": "Resource idle return unknown: cpu-only-app",
+            "diagnostics": {
+              "idleCheck": {
+                "check": {
+                  "resourceId": "cpu-only-app",
+                  "contractVersion": "installed-resource-baseline-v1",
+                  "ownerGeneration": 7,
+                  "operationId": "idle-check:bcbeb629-3196-48b9-8296-f2c0fbd15da0",
+                  "stage": "after-teardown",
+                  "outcome": "unknown",
+                  "checkedAt": "2026-10-27T20:29:13.314Z",
+                  "conditions": [
+                    {
+                      "id": "app-phone-identity",
+                      "outcome": "passed"
+                    },
+                    {
+                      "id": "app-phone-same-boot",
+                      "outcome": "passed"
+                    },
+                    {
+                      "id": "app-package-absent",
+                      "outcome": "passed"
+                    },
+                    {
+                      "id": "app-process-absent",
+                      "outcome": "unknown"
+                    },
+                    {
+                      "id": "app-data-absent",
+                      "outcome": "passed"
+                    }
+                  ],
+                  "evidenceRefs": [
+                    "cpu-only-reader:1"
+                  ],
+                  "qualifiedScope": {
+                    "kind": "same-controller",
+                    "controllerId": "cpu-only-host"
+                  }
+                },
+                "context": {
+                  "operationId": "idle-check:bcbeb629-3196-48b9-8296-f2c0fbd15da0",
+                  "stage": "after-teardown",
+                  "notBefore": 1793132953314
+                }
+              }
+            }
+          }
+        ],
+        "unavailableResources": [],
+        "actions": [
+          {
+            "id": "cleanup:cpu-only-app",
+            "instruction": "Clean up the test’s app resource.",
+            "expected": "The test resource is cleaned up and ready to release.",
+            "scope": "shared",
+            "stage": "resource-cleanup",
+            "status": "failed",
+            "durationMs": 1.5272079999999981,
+            "startedAt": "2026-10-27T20:29:13.313Z",
+            "finishedAt": "2026-10-27T20:29:13.315Z"
+          }
+        ]
+      },
+      "failures": [
+        {
+          "phase": "teardown",
+          "actionId": "cpu-only-app",
+          "message": "Resource idle return unknown: cpu-only-app",
+          "diagnostics": {
+            "idleCheck": {
+              "check": {
+                "resourceId": "cpu-only-app",
+                "contractVersion": "installed-resource-baseline-v1",
+                "ownerGeneration": 7,
+                "operationId": "idle-check:bcbeb629-3196-48b9-8296-f2c0fbd15da0",
+                "stage": "after-teardown",
+                "outcome": "unknown",
+                "checkedAt": "2026-10-27T20:29:13.314Z",
+                "conditions": [
+                  {
+                    "id": "app-phone-identity",
+                    "outcome": "passed"
+                  },
+                  {
+                    "id": "app-phone-same-boot",
+                    "outcome": "passed"
+                  },
+                  {
+                    "id": "app-package-absent",
+                    "outcome": "passed"
+                  },
+                  {
+                    "id": "app-process-absent",
+                    "outcome": "unknown"
+                  },
+                  {
+                    "id": "app-data-absent",
+                    "outcome": "passed"
+                  }
+                ],
+                "evidenceRefs": [
+                  "cpu-only-reader:1"
+                ],
+                "qualifiedScope": {
+                  "kind": "same-controller",
+                  "controllerId": "cpu-only-host"
+                }
+              },
+              "context": {
+                "operationId": "idle-check:bcbeb629-3196-48b9-8296-f2c0fbd15da0",
+                "stage": "after-teardown",
+                "notBefore": 1793132953314
+              }
+            }
+          }
+        }
+      ],
+      "evidence": [],
+      "timing": {
+        "startedAt": "2026-10-27T20:29:13.312Z",
+        "setupMs": 0,
+        "testMs": 0,
+        "teardownMs": 1.5272079999999981
+      }
+    }
+  }
+}
