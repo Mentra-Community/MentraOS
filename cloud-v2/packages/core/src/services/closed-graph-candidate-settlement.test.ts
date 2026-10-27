@@ -99,13 +99,16 @@ for (const gap of ['partial-return', 'changed-release', 'unclosed-work', 'missin
     expect(f.row).toEqual(saved); expect(f.bindWrites).toBe(0)
   })
 
-test('returned positive cannot use the historical UNKNOWN ingestion path after source replacement', async () => {
+test('returned positive archives original history after source replacement without current execution authority', async () => {
   const {f, host} = await closedOriginal(), receipt = host.resourceReservations!.candidatePrerequisites![0]!
   receipt.outcome = 'qualified'
   for (const check of receipt.graphChecks!) check.outcome = 'passed'
-  const saved = structuredClone(f.row)
+  const original = structuredClone(f.row.fleetCandidatePreparation!), originalReceipt = structuredClone(receipt)
   await f.service.preparation('job-one')
-  expect(f.row).toEqual(saved); expect(f.bindWrites).toBe(0)
+  expect(f.row.fleetCandidatePreparations?.[0]).toEqual({...original, settlement: originalReceipt})
+  expect(f.row.fleetCandidatePreparation?.candidate.attemptId).not.toBe(original.candidate.attemptId)
+  expect(f.row.fleetCandidateSelection).toBeUndefined(); expect(f.row.fleetResourceReservation).toBeUndefined()
+  expect(f.row.fleetBinding).toBeUndefined(); expect(f.bindWrites).toBe(0)
 })
 
 test('lost original archive CAS leaves the original pending and cannot start another candidate', async () => {

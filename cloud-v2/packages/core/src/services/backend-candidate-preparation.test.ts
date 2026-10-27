@@ -1,7 +1,8 @@
 import {backendCandidateFixture, routingGraphFixture} from './backend-candidate-preparation.test-support'
 import {expect, test, spyOn} from 'bun:test'
 import {RoutineJobService, routineJobInputDigest, routineJobRepository, recorderCapacityRequirements, compatibleStructuralRoutineLane, routineLaneContext, routineLaneDescriptorRevision} from './routine-job.service'
-import {candidateRequestCurrent, candidateSettlement, qualifiedCandidate, candidatePrerequisiteRequestMatches, candidateReturnMatches, candidateRenewal, completedCandidatePreparationForHost} from './backend-candidate-preparation'
+import {candidateRequestCurrent, candidateSettlement, qualifiedCandidate, qualifiedGraphCandidate, candidatePrerequisiteRequestMatches, candidateReturnMatches, candidateRenewal, completedCandidatePreparationForHost, graphCheckOperationId, graphFinalCheckOperationId} from './backend-candidate-preparation'
+import {resourceLaneBlocker} from './resource-readiness'
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures'
 import {requestInputDigest, TestRequestService, type TestRequestRepository} from './test-request.service'
 import type {RoutineJobRepository} from './routine-job.service'
@@ -18,6 +19,74 @@ import type {RecorderHostReservation} from '../types/recorder-storage.types'
 const initialNow = Date.parse('2026-10-20T12:00:00Z'), hash = (c: string) => c.repeat(64)
 
 const fixture = backendCandidateFixture
+
+async function advancedReturnedGraph(platform: 'android'|'ios-on-mac', outcome: 'qualified'|'unqualified' = 'qualified') {
+ const f=routingGraphFixture(platform);await f.service.preparation('job-one');f.settleGraph(outcome);
+ const pending=structuredClone(f.row.fleetCandidatePreparation!),host=f.hosts[0]!;
+ host.incarnationGeneration!++;host.frameworkBinding={...host.frameworkBinding!,version:host.frameworkBinding!.version+1};
+ for(const subject of host.resourceLifecycle!.subjects){subject.generation++;subject.idle.acceptedCheck={
+   operationId:'later-authorized-check',subjectGeneration:subject.generation,resultSha256:hash('b'),acceptedAt:host.observedAt};}
+ return {f,pending,host,receipt:host.resourceReservations!.candidatePrerequisites![0]!};
+}
+for(const platform of ['android','ios-on-mac'] as const)for(const outcome of ['qualified','unqualified'] as const)
+test(`${platform} complete original ${outcome} graph settles after later controller and physical checks without granting execution`,async()=>{
+ const {f,pending,host,receipt}=await advancedReturnedGraph(platform,outcome),original=structuredClone(pending);
+ const foreign={id:'d0af6e63-513c-43d5-9392-ff2e672bab86',requestId:'foreign-caption',fleetInputSha256:hash('b'),
+   hostId:host.hostId,laneId:pending.laneId,poolId:`${host.hostId}:disk`,minimumAvailableBytes:1024,reservedAt:host.observedAt};
+ host.authorityReservations=[foreign];
+ expect(candidateSettlement(pending,host,host.authorityReservations,f.now)).toEqual(receipt);
+ expect(pending).toEqual(original);expect(f.row.fleetCandidatePreparation).toEqual(original);
+ const selected={...f.row,fleetCandidatePreparation:undefined,fleetCandidatePreparations:[{...pending,settlement:receipt}],
+   fleetCandidateSelection:{hostId:host.hostId,laneId:pending.laneId,targetInputSha256:pending.targetInputSha256}};
+ expect(qualifiedGraphCandidate(selected,host,pending.laneId,f.now,host.receivedAt,false)).toBeUndefined();
+ expect(resourceLaneBlocker(host,pending.laneId,{requestId:f.row.requestId,inputSha256:f.row.fleetInputSha256!,hostId:host.hostId})?.code).toBe('lane-resource-owned');
+ expect(host.authorityReservations).toEqual([foreign]);expect(f.row.fleetBinding).toBeUndefined();expect(f.bindWrites).toBe(0);
+});
+for(const change of ['missing-return','duplicate-return','foreign-return','wrong-check-operation','future-return','check-before-original',
+ 'check-after-return','wrong-generation','wrong-contract','wrong-outcome','wrong-input','own-byte-claim','own-local-claim','active-original'] as const)
+test(`complete original graph closure retains ${change} refusal after current state advances`,async()=>{
+ const {f,pending,host,receipt}=await advancedReturnedGraph('ios-on-mac'),returned=pending.resourceReturns![0] as any,check=receipt.graphChecks![0]!;
+ if(change==='missing-return')pending.resourceReturns!.pop();
+ if(change==='duplicate-return')pending.resourceReturns![1]=structuredClone(returned);
+ if(change==='foreign-return')returned.originalOwner.id='foreign';
+ if(change==='wrong-check-operation')check.checkOperationId=check.checkOperationId===graphCheckOperationId(pending.targetInputSha256,check.resourceId)
+   ?graphFinalCheckOperationId(pending.targetInputSha256,check.resourceId):graphCheckOperationId(pending.targetInputSha256,check.resourceId);
+ if(change==='future-return')returned.release.releasedAt=new Date(f.now+1).toISOString();
+ if(change==='check-before-original')check.checkedAt=new Date(Date.parse(pending.candidate.requestedAt)-1).toISOString();
+ if(change==='check-after-return')check.checkedAt=new Date(Date.parse(returned.release.releasedAt)+1).toISOString();
+ if(change==='wrong-generation')check.subjectGeneration++;
+ if(change==='wrong-contract')check.contractVersion='foreign-contract';
+ if(change==='wrong-outcome')receipt.outcome='unqualified';
+ if(change==='wrong-input')pending.target.inputSha256=hash('b');
+ const own={id:'d0af6e63-513c-43d5-9392-ff2e672bab86',requestId:f.row.requestId,fleetInputSha256:f.row.fleetInputSha256!,
+   hostId:host.hostId,laneId:pending.laneId,poolId:`${host.hostId}:disk`,minimumAvailableBytes:1024,reservedAt:host.observedAt};
+ if(change==='own-byte-claim')host.authorityReservations=[own];
+ if(change==='own-local-claim')host.resourceReservations!.claims=[structuredClone(pending.resourceClaims![0]) as any];
+ if(change==='active-original')host.lanes[0]!.activity={kind:'qualification',owner:{id:f.row.requestId,kind:'run'}} as any;
+ expect(candidateSettlement(pending,host,host.authorityReservations??[],f.now)).toBeUndefined();
+ expect(f.row.fleetBinding).toBeUndefined();expect(f.bindWrites).toBe(0);
+});
+for(const change of ['missing-health','foreign-source','foreign-backend','foreign-result-operation','nonfinal-operation','closed-after-deadline'] as const)
+test(`complete original positive graph retains required backend ${change} refusal`,async()=>{
+ const {f,pending,host,receipt}=await advancedReturnedGraph('android'),check=receipt.graphChecks!.find(check=>check.backendConnectivity)!;
+ if(change==='missing-health')delete check.backendConnectivity;
+ if(change==='foreign-source')check.backendConnectivity!.binding={...check.backendConnectivity!.binding,version:9999};
+ if(change==='foreign-backend')check.backendConnectivity!.target={...check.backendConnectivity!.target,coreUrl:'https://foreign.example/'};
+ if(change==='foreign-result-operation')check.backendConnectivity!.check.operationId='foreign-operation';
+ if(change==='nonfinal-operation'){
+   const operationId=graphCheckOperationId(pending.targetInputSha256,check.resourceId);
+   check.checkOperationId=check.backendConnectivity!.check.operationId=operationId;
+   (pending.resourceReturns!.find((returned:any)=>returned.resourceId===check.resourceId) as any).release.operationId=operationId;
+ }
+ if(change==='closed-after-deadline'){
+   const closedAt=new Date(Date.parse(pending.target.deadline)+1).toISOString();
+   check.backendConnectivity!.check.closedAt=closedAt;
+   (pending.resourceReturns!.find((returned:any)=>returned.resourceId===check.resourceId) as any).release.releasedAt=closedAt;
+   f.advance(300002);
+ }
+ expect(candidateSettlement(pending,host,host.authorityReservations??[],f.now)).toBeUndefined();
+ expect(f.row.fleetBinding).toBeUndefined();expect(f.bindWrites).toBe(0);
+});
 
 test('unknown first phone is probed unbound; settled negative falls back within the same original request, positive permits resource selection',async()=>{
  const f=fixture();await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparation?.hostId).toBe('air1');expect(f.bindWrites).toBe(0);expect(f.row.fleetBinding).toBeUndefined()

@@ -412,7 +412,10 @@ export function reportedGraphCandidateSettlement(pending: FleetCandidatePreparat
     host.hostId !== pending.hostId) return undefined
   const original = host.incarnation === pending.candidate.controller.incarnation &&
     host.incarnationGeneration === pending.candidate.controller.generation && isDeepStrictEqual(host.frameworkBinding, pending.target.acceptedBinding)
-  if (!original && !(receipt.outcome === 'unknown' && receipt.graphChecks?.length &&
+  const returnedOriginal = receipt.outcome !== 'unknown' && fleetCandidatePreparationSchema.safeParse(pending).success &&
+    pending.target.inputSha256 === pending.targetInputSha256 && isDeepStrictEqual(pending.candidate, pending.target.candidate) &&
+    graphCandidateHistoricalSettlement({...pending, settlement: receipt})
+  if (!original && !returnedOriginal && !(receipt.outcome === 'unknown' && receipt.graphChecks?.length &&
     receipt.graphChecks.every(check => check.outcome === 'unknown' && !check.backendConnectivity) && graphReturnReporterMatches(pending, host)) &&
     !returnedOriginalGraphUnknown(pending, receipt, host)) return undefined
   return receipt
@@ -428,7 +431,8 @@ export function graphCandidateHasOriginalCustody(pending: FleetCandidatePreparat
     !!host.resourceLifecycle?.subjects.some(subject => originalOwner(subject.owner?.id)) ||
     host.lanes.some(lane => originalOwner(lane.activity?.owner.id) || lane.activity?.owner.requestId === pending.target.jobId)
 }
-/** Raw-work closure is a current authenticated producer account, separate from phone return proof. */
+/** Exact original work/return closure is historical evidence. Current execution
+ * eligibility remains independently guarded by qualifiedGraphCandidate. */
 export function candidateSettlement(pending: FleetCandidatePreparation, host: TestHostState, claims: unknown[], now: number) {
   if (pending.target.purpose?.kind === 'resource-readiness') {
     const purpose = pending.target.purpose, receipt = reportedGraphCandidateSettlement(pending, host)
@@ -439,7 +443,10 @@ export function candidateSettlement(pending: FleetCandidatePreparation, host: Te
       if (graphCandidateHasOriginalCustody(pending, host, claims)) return undefined
       return (receipt.neverRequested ? graphCandidateNeverRequestedMatches(pending, receipt) : graphCandidateNoAcquisitionMatches(pending)) ? receipt : undefined
     }
-    if (claims.some(value => {const claim = value as {kind?: string; borrowerHostId?: string; laneId?: string; resourceId?: string}
+    const returnedOriginal = receipt.outcome !== 'unknown' && fleetCandidatePreparationSchema.safeParse(pending).success &&
+      pending.target.inputSha256 === pending.targetInputSha256 && isDeepStrictEqual(pending.candidate, pending.target.candidate) &&
+      graphCandidateHistoricalSettlement({...pending, settlement: receipt})
+    if (returnedOriginal ? graphCandidateHasOriginalCustody(pending, host, [...claims, ...host.resourceReservations?.claims ?? []]) : claims.some(value => {const claim = value as {kind?: string; borrowerHostId?: string; laneId?: string; resourceId?: string}
       return claim.kind === 'exclusive' && (purpose.resources.some(member => member.id === claim.resourceId) ||
         claim.borrowerHostId === pending.hostId && claim.laneId === pending.laneId)})) return undefined
     if (!receipt.graphChecks || receipt.graphChecks.length !== purpose.resources.length ||
@@ -448,6 +455,9 @@ export function candidateSettlement(pending: FleetCandidatePreparation, host: Te
       !pending.resourceReturns.every(returned => graphCandidateReturnMatches(pending, returned))) return undefined
     if (receipt.outcome !== (receipt.graphChecks.some(check => check.outcome === 'unknown' || check.backendConnectivity?.outcome === 'unknown') ? 'unknown' :
       receipt.graphChecks.some(check => check.outcome === 'failed' || check.backendConnectivity?.outcome === 'unqualified') ? 'unqualified' : 'qualified')) return undefined
+    if (returnedOriginal && receipt.outcome === 'qualified' && pending.target.requirements.resources.some(member =>
+      member.kind === 'phone' && member.capabilities.includes('backend-connectivity')) && !receipt.graphChecks.some(check =>
+      purpose.resources.some(member => member.id === check.resourceId && member.kind === 'phone') && check.backendConnectivity)) return undefined
     const returnedUnknown = returnedOriginalGraphUnknown(pending, receipt, host)
     for (const member of purpose.resources) {
       const check = receipt.graphChecks.find(value => value.resourceId === member.id),
@@ -455,13 +465,13 @@ export function candidateSettlement(pending: FleetCandidatePreparation, host: Te
         subject = host.resourceLifecycle?.subjects.find(value => value.subject.id === member.id)
       if (!check || !returned || !('kind' in returned.release) || returned.release.kind !== 'resource-check' ||
         !graphMemberOperationMatches(pending.targetInputSha256, member.id, check.checkOperationId) || check.contractVersion !== member.contractVersion ||
-        !subject?.current || subject.owner !== null || subject.subject.authorityHostId !== member.authorityHostId ||
-        check.subjectGeneration !== returned.release.subjectGeneration ||
+        returnedOriginal && returned.release.operationId !== check.checkOperationId || check.subjectGeneration !== returned.release.subjectGeneration ||
+        !returnedOriginal && (!subject?.current || subject.owner !== null || subject.subject.authorityHostId !== member.authorityHostId ||
         (returnedUnknown ? subject.generation < check.subjectGeneration || returned.release.operationId !== check.checkOperationId :
         subject.generation !== check.subjectGeneration || subject.idle.acceptedCheck?.operationId !== check.checkOperationId ||
         subject.idle.acceptedCheck.resultSha256 !== check.resultSha256 || subject.idle.acceptedCheck.subjectGeneration !== subject.generation ||
-        subject.idle.checkedAt !== check.checkedAt) || Date.parse(check.checkedAt) < Date.parse(pending.candidate.requestedAt) ||
-        Date.parse(check.checkedAt) > Date.parse(returned.release.releasedAt)) return undefined
+        subject.idle.checkedAt !== check.checkedAt)) || Date.parse(check.checkedAt) < Date.parse(pending.candidate.requestedAt) ||
+        Date.parse(check.checkedAt) > Date.parse(returned.release.releasedAt) || returnedOriginal && Date.parse(returned.release.releasedAt) > now) return undefined
       if (check.backendConnectivity) {
         const health = check.backendConnectivity, app = permissionContext(pending.target.acceptedBinding, pending.target.selection.build, now)?.app
         if (member.kind !== 'phone' || !member.capabilities.includes('backend-connectivity') || !pending.backendTarget || !app ||
@@ -472,6 +482,8 @@ export function candidateSettlement(pending: FleetCandidatePreparation, host: Te
           health.qualification.inputSha256 !== requestInputDigest(pending.target.proposedInput) ||
           !isDeepStrictEqual(health.qualification.candidate, pending.candidate) || health.qualification.preparing || health.qualification.local ||
           health.check.operationId !== check.checkOperationId || health.releasedGeneration !== check.subjectGeneration ||
+          receipt.outcome === 'qualified' && (health.check.operationId !== graphFinalCheckOperationId(pending.targetInputSha256, member.id) ||
+            Date.parse(health.check.closedAt) > Date.parse(pending.target.deadline)) ||
           Date.parse(health.observedAt) < Date.parse(pending.candidate.requestedAt) || Date.parse(health.observedAt) > Date.parse(pending.target.deadline) ||
           Date.parse(health.observedAt) > Date.parse(health.check.closedAt) || Date.parse(health.check.closedAt) > Date.parse(returned.release.releasedAt) ||
           Date.parse(returned.release.releasedAt) > now) return undefined
@@ -481,7 +493,7 @@ export function candidateSettlement(pending: FleetCandidatePreparation, host: Te
       fleetCandidateSelection: {hostId: pending.hostId, laneId: pending.laneId, targetInputSha256: pending.targetInputSha256},
       fleetInputSha256: pending.candidate.fleetInputSha256, fleetSelectionSha256: pending.candidate.selectionSha256,
       fleetDeadline: new Date(pending.target.deadline)} as StoredRoutineJob
-    if (receipt.outcome === 'qualified' && !qualifiedGraphCandidate(current, host, pending.laneId, now, host.observedAt, false)) return undefined
+    if (receipt.outcome === 'qualified' && !returnedOriginal && !qualifiedGraphCandidate(current, host, pending.laneId, now, host.observedAt, false)) return undefined
     return receipt
   }
   const phoneId = pending.target.purpose!.resourceId, lane = host.lanes.find(value => value.id === pending.laneId),
