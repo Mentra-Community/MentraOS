@@ -7,7 +7,7 @@ import {laneControlInputSchema, laneControlRecordSchema, laneControlReceiptSchem
   type LaneControlInput, type LaneControlView, type LaneControlRecord, type LaneControlsView,
   type ResourceControlInput, type ResourceControlRecord, type ResourceControlView, type ResourceControlsView} from '../types/lane-control.types'
 import {resourceLifecycleSchema, type ResourceLifecycleSubject} from '../types/resource-lifecycle.types'
-import {manualWithdrawalNeedsRestoration, resourceReservationIdentity, advanceResourceReservation, resourceReservationGenerationConstraint} from '../types/resource-control-authority'
+import {acceptedManualRestoration, manualWithdrawalNeedsRestoration, resourceReservationIdentity, advanceResourceReservation, resourceReservationGenerationConstraint} from '../types/resource-control-authority'
 import {ResourceLifecycleService} from './resource-lifecycle.service'
 import {requestInputDigest} from './test-request.service'
 import {TestRunError} from './test-result-error'
@@ -233,7 +233,7 @@ export class LaneControlsService {
   }
   async exchange(hostId: string, value: unknown) {
     const exchange = laneControlExchangeSchema.parse(value)
-    return this.update(hostId, (_host, records) => {
+    return this.update(hostId, (host, records) => {
       const next = records.map(row => {
         const receipt = exchange.receipts.find(receipt => receipt.operationId === row.command.operationId)
         if (!receipt) return row
@@ -248,8 +248,17 @@ export class LaneControlsService {
       // Forgotten receipts cannot perform an operation; retained commands remain the only source of effects.
       if (exchange.receipts.some(receipt => receipt.hostId !== hostId))
         throw new TestRunError(409, 'Lane control receipt names another computer')
-      const reconciled = reconcileControls(next)
-      return {records: reconciled, result: {schemaVersion: 1 as const,
+      const lifecycle = resourceLifecycleSchema.safeParse(host.snapshot.resourceLifecycle)
+      let acceptedRestoration = false
+      const reconciled = reconcileControls(next).map(row => {
+        if (!isResource(row)) return row
+        const subject = lifecycle.success ? lifecycle.data.subjects.find(value => value.subject.id === row.command.subject.resourceId) : undefined,
+          restoredBy = acceptedManualRestoration(row, subject, hostId, fresh(host, this.now()), this.now())
+        if (!restoredBy || restoredBy === row.restoredBy) return row
+        acceptedRestoration = true
+        return {...row, restoredBy}
+      })
+      return {records: reconciled, resourceAuthority: acceptedRestoration, result: {schemaVersion: 1 as const,
         commands: reconciled.filter(row => !delivered(row) || activeReservation(row) || activeCheck(row)).map(row => row.command)}}
     })
   }

@@ -25,16 +25,33 @@ export function advanceResourceReservation<T extends ReservationObservation>(pri
   return rank[next.state] >= rank[prior.state] ? next : prior
 }
 
-/** A delivered manual withdrawal stays restrictive until its later accepted baseline restores the exact subject. */
+/** Completion belongs to this withdrawal; subsequent checks cannot reopen it. */
+export function acceptedManualRestoration(row: ResourceControlRecord, subject: ResourceLifecycleSubject | undefined,
+  hostId: string, hostCurrent: boolean, now: number): ResourceControlRecord['restoredBy'] {
+  if (row.command.action !== 'mark-out-of-service' || row.receipt?.result.status !== 'accepted' || !row.receipt.result.resource) return
+  const marked = row.receipt.result.resource, receipt = row.receipt,
+    matches = (proof: NonNullable<ResourceControlRecord['restoredBy']>) =>
+      row.command.hostId === hostId && receipt.hostId === hostId && row.command.subject.resourceId === marked.resourceId &&
+      proof.hostId === hostId && proof.resourceId === marked.resourceId && proof.subjectGeneration > marked.generation &&
+      Date.parse(proof.acceptedAt) >= Date.parse(receipt.completedAt) && Date.parse(proof.acceptedAt) <= now
+  if (row.restoredBy && matches(row.restoredBy)) return row.restoredBy
+  const check = subject?.idle.acceptedCheck, observed = Date.parse(subject?.observedAt ?? ''), report = subject?.idle.report,
+    passed = subject?.status === 'idle' && subject.idle.outcome === 'passed',
+    retainedPass = subject?.status === 'unknown' && subject.reason?.code === 'idle-check-required' &&
+      report?.outcome === 'passed' && report.reportedOutcome === 'passed' && report.resourceId === marked.resourceId &&
+      report.authorityHostId === hostId && report.operationId === check?.operationId && report.resultSha256 === check?.resultSha256 &&
+      report.contractVersion === subject.idle.contractVersion && report.checkedAt === subject.idle.checkedAt
+  if (!hostCurrent || !subject?.current || subject.subject.id !== marked.resourceId || subject.subject.authorityHostId !== hostId ||
+    subject.owner !== null || subject.repair.state !== 'none' || !check || check.subjectGeneration !== subject.generation ||
+    subject.idle.qualifiedScope.kind === 'unqualified' || (!passed && !retainedPass) ||
+    !Number.isFinite(observed) || observed > now || Date.parse(check.acceptedAt) > observed) return
+  const proof = {hostId, resourceId: marked.resourceId, ...check}
+  return matches(proof) ? proof : undefined
+}
+
+/** A delivered withdrawal stays restrictive until its authenticated restoration is accepted. */
 export function manualWithdrawalNeedsRestoration(row: ResourceControlRecord, subject: ResourceLifecycleSubject | undefined,
   hostId: string, hostCurrent: boolean, now: number) {
   if (row.command.action !== 'mark-out-of-service' || row.receipt?.result.status !== 'accepted' || !row.receipt.result.resource) return false
-  const marked = row.receipt.result.resource, observed = Date.parse(subject?.observedAt ?? ''),
-    accepted = Date.parse(subject?.idle.acceptedCheck?.acceptedAt ?? '')
-  return row.command.hostId !== hostId || row.receipt.hostId !== hostId || row.command.subject.resourceId !== marked.resourceId ||
-    !subject?.current || subject.subject.id !== marked.resourceId || subject.subject.authorityHostId !== hostId ||
-    subject.status !== 'idle' || subject.owner !== null || subject.generation <= marked.generation || subject.idle.outcome !== 'passed' ||
-    subject.idle.acceptedCheck?.subjectGeneration !== subject.generation || subject.idle.qualifiedScope.kind === 'unqualified' ||
-    !hostCurrent || !Number.isFinite(observed) || observed > now || now - observed > 120_000 || !Number.isFinite(accepted) ||
-    accepted < Date.parse(row.receipt.completedAt) || accepted > now
+  return !acceptedManualRestoration(row, subject, hostId, hostCurrent, now)
 }

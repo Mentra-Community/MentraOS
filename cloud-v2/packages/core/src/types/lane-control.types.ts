@@ -95,7 +95,10 @@ export const resourceControlReceiptSchema = z.object({operationId: z.string().uu
 export type ResourceControlReceipt = z.infer<typeof resourceControlReceiptSchema>
 export const resourceControlRecordSchema = z.object({command: resourceControlCommandSchema,
   receipt: resourceControlReceiptSchema.optional(), operatorLabel: z.string().min(1).max(320).optional(),
-  reservationGenerationConstraint: z.number().int().positive().safe().optional()}).strict()
+  reservationGenerationConstraint: z.number().int().positive().safe().optional(),
+  restoredBy: z.object({hostId: identity, resourceId: identity, operationId: identity,
+    subjectGeneration: z.number().int().nonnegative().safe(), resultSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    acceptedAt: z.string().datetime({offset: true})}).strict().optional()}).strict()
 export type ResourceControlRecord = z.infer<typeof resourceControlRecordSchema>
 export type ResourceControlView = {operationId: string; hostId: string; subject: ResourceControlInput['subject'];
   action: ResourceControlInput['action']; expiresAt: number; receipt?: ResourceControlReceipt; reservationGenerationConstraint?: number}
