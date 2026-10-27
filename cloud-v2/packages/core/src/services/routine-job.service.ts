@@ -372,6 +372,28 @@ export const routineJobRepository: RoutineJobRepository = {
       if (!recorderStorageAvailable(offered, required, now.getTime(), unobserved)) {
         onWaiting?.(recorderWait(offered, required.minimumAvailableBytes, now.getTime(), unobserved) ?? RESOURCE_ADMISSION_WAIT); return null;
       }
+      // A selected local Mac claim is already reserved. Validate its original
+      // admission here; binding supplies the atomic authority CAS, not a second
+      // reservation write. Exclusive dependencies keep their authority path.
+      if (selected && lane.platform === 'ios-on-mac' && row.fleetResourceAdmission?.dependencies.length === 0 &&
+        !row.fleetExclusiveReservation && requirements.resources.every(required => !lane.resources.find(resource => resource.kind === required.kind)!
+          .exclusiveDependencies?.some(dependency => required.capabilities.includes(dependency.capability)))) {
+        const admission = fleetResourceAdmissionSchema.safeParse(row.fleetResourceAdmission);
+        if (!admission.success) return null;
+        const intent = admission.data.intent;
+        const expected = {operationId: `run:${requestId}`, hostId, laneId, inputSha256: fleetInputSha256,
+          owner: {id: requestId, kind: 'run'}, controller: intent.controller,
+          resources: requirements.resources.map(required => ({id: lane.resources.find(resource => resource.kind === required.kind)!.id,
+            capabilities: [...required.capabilities]}))};
+        if (!isDeepIdentity(intent, expected) || intent.controller.incarnation !== host.incarnation ||
+          intent.controller.generation !== host.incarnationGeneration || !isDeepIdentity(own, selected)) return null;
+        const authorities = await resourceReservationRepository.claimedHosts!(requestId), checkedAt = Date.now();
+        if (!authorities || authorities.length || row.fleetDeadline.getTime() <= checkedAt || !routineResourcesAvailable({hostId: host.hostId,
+          incarnation: host.incarnation, incarnationGeneration: host.incarnationGeneration, sequence: host.sequence, receivedAt: hostRow.receivedAt,
+          snapshot: host, laneControls: hostRow.laneControls, resourceReservations: hostRow.resourceReservations,
+          resourceLifecycleCursor: hostRow.resourceLifecycleCursor}, row, laneId, checkedAt)) return null;
+        return row;
+      }
       const chosenModel = row.fleetPreparation.requirements.glasses ? lane.glasses!.find(value =>
         row!.fleetPreparation!.requirements.glasses!.models.includes(value.model))!.model : undefined;
       const claim = own ?? {id: randomUUID(), requestId, fleetInputSha256, hostId, laneId, poolId: offered.poolId,

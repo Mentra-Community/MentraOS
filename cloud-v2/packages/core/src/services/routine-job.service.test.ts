@@ -1402,6 +1402,78 @@ test('an ordinary claim on another Mac lane sharing the disk does not prevent th
   expect(h.resourceReservations).toEqual(claims);
  });
 });
+async function withSelectedMacReservation(body: (f: ReturnType<typeof fixture>, host: any, counters: {host: number; request: number}) => Promise<void>) {
+ await withLocalResources(async(f,hosts,counters)=>{
+  const snapshots=new Map([...hosts].map(([id,h])=>[id,structuredClone(h.snapshot)]));
+  for(const h of hosts.values())unavailableLocal(h,'out-of-service');await f.prepare();
+  for(const[id,h]of hosts)h.snapshot=structuredClone(snapshots.get(id));
+  const h=hosts.get('mini'),row=structuredClone(f.row!);h.snapshot.lanes[0].platform='ios-on-mac';
+  h.snapshot.lanes[0].descriptorRevision=routineLaneDescriptorRevision(h.snapshot.lanes[0]);
+  row.fleetSelection.platform='ios-on-mac';row.fleetPreparation!.requirements.platform='ios-on-mac';
+  row.fleetSelectionSha256=requestInputDigest(row.fleetSelection);row.fleetInputSha256=routineJobInputDigest(row);f.restore(row);
+  const selected=await routineJobRepository.reserveResources!(row.requestId,row.fleetInputSha256!,h.hostId,'android',h.receivedAt);
+  expect(selected?.fleetResourceReservation).toEqual(h.resourceReservations[0]);expect(counters.host).toBe(1);
+  expect(f.row!.fleetResourceAdmission!.dependencies).toEqual([]);await body(f,h,counters);
+ });
+}
+test('selected Mac byte claim bypasses re-planning and a redundant host CAS but still atomically binds',async()=>{
+ await withSelectedMacReservation(async(f,h,counters)=>{
+  const row=structuredClone(f.row!),before={...counters},claims=structuredClone(h.resourceReservations);
+  const replan=spyOn(ResourceReservationsService.prototype,'reserveFleet'),extraCas=spyOn(TestHostStateModel.collection,'findOneAndUpdate').mockResolvedValue(null as never),bindCas=spyOn(resourceReservationRepository,'replace');
+  try {
+   const selected=await routineJobRepository.reserveResources!(row.requestId,row.fleetInputSha256!,h.hostId,'android',h.receivedAt);
+   expect({planningCalls:replan.mock.calls.length,extraClaimCasCalls:extraCas.mock.calls.length}).toEqual({planningCalls:0,extraClaimCasCalls:0});
+   expect(selected).toEqual(row);expect(counters).toEqual(before);
+   const binding={jobId:row.requestId,requestId:row.requestId,hostId:h.hostId,laneId:'android',descriptorRevision:h.snapshot.lanes[0].descriptorRevision,actionsRunId:'10',actionsJobId:'20',boundAt:h.receivedAt.toISOString()};
+   expect((await routineJobRepository.bind(row.requestId,row.fleetInputSha256!,binding,{},h.receivedAt))?.fleetBinding).toEqual(binding);
+   expect(bindCas).toHaveBeenCalledTimes(1);expect(h.resourceReservations).toEqual(claims);
+   expect(f.row!.fleetResourceReservation).toEqual(row.fleetResourceReservation);expect(f.row!.fleetDeadline).toEqual(row.fleetDeadline);
+  } finally {replan.mockRestore();extraCas.mockRestore();bindCas.mockRestore()}
+ });
+});
+for(const changed of ['stale-host','claim-id','claim-input','claim-pool','claim-bytes','missing-claim','foreign-lane-owner','unknown-pool','physical-failure','disk-shortage','staging-shortage','controller','admission-owner','admission-resources','exclusive-custody'] as const)test(`selected Mac claim ${changed} refuses without reallocation`,async()=>{
+ await withSelectedMacReservation(async(f,h,counters)=>{
+  const original=structuredClone(f.row!),at=h.receivedAt.getTime(),claim=h.resourceReservations[0],storage=h.snapshot.lanes[0].resources.find((resource:any)=>resource.kind==='recorder').storage;
+  if(changed==='stale-host')h.receivedAt=new Date(at-120001);
+  if(changed==='claim-id')claim.id='ef303cad-e9b5-4d3c-b9ea-91c1846a8dab';
+  if(changed==='claim-input')claim.fleetInputSha256='f'.repeat(64);
+  if(changed==='claim-pool')claim.poolId='changed:disk:2';
+  if(changed==='claim-bytes')claim.minimumAvailableBytes++;
+  if(changed==='missing-claim')h.resourceReservations=[];
+  if(changed==='foreign-lane-owner'||changed==='unknown-pool')h.resourceReservations.push({...structuredClone(claim),id:'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',requestId:'unknown-foreign-original',fleetInputSha256:'f'.repeat(64),...(changed==='unknown-pool'?{laneId:'other-lane',poolId:'unknown:disk:2'}:{})});
+  if(changed==='physical-failure')unavailableLocal(h,'out-of-service','app');
+  if(changed==='disk-shortage')storage.availableBytes=claim.minimumAvailableBytes-1;
+  if(changed==='staging-shortage')storage.stagingBudgetBytes=1024**3-1;
+  if(changed==='controller'){h.incarnation='changed-controller';h.snapshot.incarnation=h.incarnation}
+  if(changed==='admission-owner'){const row=structuredClone(f.row!);row.fleetResourceAdmission!.intent.owner.id='foreign-original';f.restore(row)}
+  if(changed==='admission-resources'){const row=structuredClone(f.row!);row.fleetResourceAdmission!.intent.resources.pop();f.restore(row)}
+  const before={...counters},claims=structuredClone(h.resourceReservations),claimed=resourceReservationRepository.claimedHosts;
+  if(changed==='exclusive-custody')resourceReservationRepository.claimedHosts=async()=>[structuredClone(h)];
+  try {
+   expect(await routineJobRepository.reserveResources!(original.requestId,original.fleetInputSha256!,h.hostId,'android',new Date(at))).toBeNull();
+   expect(counters).toEqual(before);expect(h.resourceReservations).toEqual(changed==='claim-id'?[]:claims);expect(f.row!.fleetBinding).toBeUndefined();
+   expect(f.row!.fleetResourceReservation).toEqual(original.fleetResourceReservation);expect(f.row!.fleetDeadline).toEqual(original.fleetDeadline);
+  } finally {resourceReservationRepository.claimedHosts=claimed}
+ });
+});
+test('selected Mac admission retains dependency validation when an installed exclusive dependency changes',async()=>{
+ await withSelectedMacReservation(async(f,h,counters)=>{
+  const row=structuredClone(f.row!),before={...counters};h.snapshot.lanes[0].resources.find((resource:any)=>resource.kind==='glasses').exclusiveDependencies=[{resourceId:'remote-glasses',authorityHostId:'remote-host',capability:'connection'}];
+  const replan=spyOn(ResourceReservationsService.prototype,'reserveFleet');
+  try {expect(await routineJobRepository.reserveResources!(row.requestId,row.fleetInputSha256!,h.hostId,'android',h.receivedAt)).toBeNull();expect(replan).toHaveBeenCalledTimes(1);expect(counters).toEqual(before);expect(f.row!.fleetBinding).toBeUndefined()}
+  finally{replan.mockRestore()}
+ });
+});
+test('selected Mac claim remains held after the actual binding authority CAS loses its race',async()=>{
+ await withSelectedMacReservation(async(f,h,counters)=>{
+  const row=structuredClone(f.row!),before={...counters},claims=structuredClone(h.resourceReservations),bindCas=spyOn(resourceReservationRepository,'replace').mockResolvedValue(false);
+  try {
+   expect(await routineJobRepository.reserveResources!(row.requestId,row.fleetInputSha256!,h.hostId,'android',h.receivedAt)).toEqual(row);
+   expect(await routineJobRepository.bind(row.requestId,row.fleetInputSha256!,{jobId:row.requestId,requestId:row.requestId,hostId:h.hostId,laneId:'android',descriptorRevision:h.snapshot.lanes[0].descriptorRevision,actionsRunId:'10',actionsJobId:'20',boundAt:h.receivedAt.toISOString()}, {},h.receivedAt)).toBeNull();
+   expect(bindCas).toHaveBeenCalledTimes(1);expect(counters).toEqual(before);expect(h.resourceReservations).toEqual(claims);expect(f.row!.fleetBinding).toBeUndefined();expect(f.row!.fleetResourceReservation).toEqual(row.fleetResourceReservation);
+  } finally {bindCas.mockRestore()}
+ });
+});
 for(const platform of ['android','ios-on-mac'] as const)for(const expiry of ['baseline','deadline'] as const)test(`preclaim ${platform} ${expiry} expiry refuses before the first recorder claim or stage`,async()=>{
  await withLocalResources(async(f,hosts,counters)=>{
   const originals=new Map([...hosts].map(([id,h])=>[id,structuredClone(h.snapshot)]));for(const h of hosts.values())unavailableLocal(h,'out-of-service');await f.prepare();
