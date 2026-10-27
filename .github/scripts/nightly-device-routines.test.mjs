@@ -56,6 +56,61 @@ test("a transient admission or complete outage retries the original boundary and
     ? {...terminal(), status: "running", finishedAt: undefined} : {plan: {...occurrence, members: []}, admissions: []})}), /terminal receipt/)
 })
 
+for (const operation of ["start", "complete"]) test(`${operation} response-body timeout retries the original occurrence and preserves its failed receipt`, async () => {
+  let clock = 0, interrupted = false
+  const calls = [], receipt = {...terminal(), status: "failed", passed: 0,
+    members: [{...terminal().members[0], status: "setup-failed", publicationComplete: false, assignmentEvidence: "invalid"}]}
+  const result = await reconcileNightlyOccurrence({token: "fixture", occurrence, deadline: 100, now: () => clock,
+    sleep: async ms => {clock += ms}, pollMilliseconds: 10, fetchImpl: async (url, options) => {
+      calls.push({url, options})
+      const currentOperation = url.endsWith("/complete") ? "complete" : "start"
+      if (currentOperation === operation && !interrupted) {
+        interrupted = true
+        return new Response(new ReadableStream({pull(controller) {
+          controller.error(new DOMException("The operation was aborted due to timeout", "TimeoutError"))
+        }}))
+      }
+      return Response.json(currentOperation === "complete" ? receipt : {plan: {...occurrence, members: receipt.members}, admissions: []})
+    }})
+  assert.deepEqual(result, receipt)
+  assert.equal(clock, 10)
+  assert.equal(calls.length, operation === "start" ? 3 : 4)
+  assert.deepEqual(calls.filter(call => !call.url.endsWith("/complete")).map(call => JSON.parse(call.options.body)), [occurrence, occurrence])
+  assert.equal(nightlySummary(result).passed, false)
+  assert.deepEqual(nightlyMemberContext(result.members[0]), {machine: "unknown", lane: "unknown", resources: ["unknown"]})
+})
+
+test("invalid JSON remains a permanent response refusal", async () => {
+  let calls = 0
+  await assert.rejects(reconcileNightlyOccurrence({token: "fixture", occurrence, deadline: 100, now: () => 0,
+    sleep: async () => assert.fail("Invalid JSON must not retry"), fetchImpl: async () => {
+      calls++; return new Response('{"plan":')
+    }}), error => error instanceof SyntaxError && !error.retryable)
+  assert.equal(calls, 1)
+})
+
+test("HTTP and occurrence validation refusals remain permanent after response-body retry handling", async () => {
+  for (const status of [400, 401, 403]) await assert.rejects(nightlyApi({token: "fixture", occurrence,
+    fetchImpl: async () => new Response(null, {status})}), error => error.retryable === false && error.message.endsWith(`(${status})`))
+  await assert.rejects(nightlyApi({token: "fixture", occurrence,
+    fetchImpl: async () => Response.json({plan: {...occurrence, occurrenceId: "another-occurrence", members: []}})}),
+  error => !error.retryable && /acknowledgement differs/.test(error.message))
+})
+
+test("response-body outages do not extend the reconciliation deadline or invent a terminal receipt", async () => {
+  let clock = 0
+  const boundaries = []
+  await assert.rejects(reconcileNightlyOccurrence({token: "fixture", occurrence, deadline: 10, now: () => clock,
+    sleep: async ms => {clock += ms}, pollMilliseconds: 30_000, fetchImpl: async (_, options) => {
+      boundaries.push(JSON.parse(options.body))
+      return new Response(new ReadableStream({pull(controller) {
+        controller.error(new DOMException("The operation was aborted due to timeout", "TimeoutError"))
+      }}))
+    }}), /terminal receipt before the reconciliation deadline/)
+  assert.equal(clock, 10)
+  assert.deepEqual(boundaries, [occurrence, occurrence])
+})
+
 test("expired trigger reconciles the original occurrence without resetting its start boundary", async () => {
   const delayed = scheduledOccurrence("0 11 * * *", "2026-10-03T14:30:00Z")
   assert.deepEqual(delayed, occurrence)

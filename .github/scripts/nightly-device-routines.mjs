@@ -38,17 +38,21 @@ export async function nightlyApi({token, occurrence, occurrenceId = occurrence?.
   requireThat(token && ["start", "read", "complete"].includes(operation) &&
     /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/.test(occurrenceId ?? ""), "Invalid nightly API capability or identity")
   const suffix = operation === "start" ? "" : `/${encodeURIComponent(occurrenceId)}${operation === "complete" ? "/complete" : ""}`
-  let response
+  let response, result
   try {response = await fetchImpl(`${ENDPOINT}${suffix}`, {method: operation === "read" ? "GET" : "POST",
     redirect: "error", signal: AbortSignal.timeout(30_000), headers: {Authorization: `Bearer ${token}`, "Content-Type": "application/json"},
-    ...(operation === "start" ? {body: JSON.stringify(occurrence)} : {})})}
-  catch {const error = new Error(`Nightly API ${operation} response is unavailable`); error.retryable = true; throw error}
+    ...(operation === "start" ? {body: JSON.stringify(occurrence)} : {})})
+    if (response.ok) result = await response.json()}
+  catch (cause) {
+    if (cause instanceof SyntaxError) throw cause
+    const error = new Error(`Nightly API ${operation} response is unavailable`); error.retryable = true; throw error
+  }
   if (!response.ok) {
     const error = new Error(`Nightly API ${operation} failed (${response.status})`)
     error.retryable = response.status >= 500 || response.status === 429
     throw error
   }
-  const result = await response.json(), acknowledged = operation === "start" ? result.plan : result
+  const acknowledged = operation === "start" ? result.plan : result
   requireThat(acknowledged?.occurrenceId === occurrenceId && Array.isArray(acknowledged.members), "Nightly API acknowledgement differs")
   if (operation === "start") requireThat(acknowledged.startedAt === occurrence.startedAt && acknowledged.trigger === occurrence.trigger,
     "Nightly API changed the original occurrence boundary")
