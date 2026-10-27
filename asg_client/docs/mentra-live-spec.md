@@ -81,6 +81,10 @@ For some outbound commands, `B` is a JSON object serialized as a string inside t
 
 Mentra Live supports photo capture and video recording from the glasses camera.
 
+Local video recordings use H.264 in MP4 with a target video bitrate of 10 Mbps at
+1080p and 5 Mbps at 720p. Recording audio uses AAC at 128 kbps and 44.1 kHz.
+These recording targets are separate from live-streaming bitrate settings.
+
 After a photo completes, the camera normally stays warm for 8 seconds for successive shots.
 
 Bluetooth SDK photo requests can opt into `presend_thumbnail: true`. Compatible

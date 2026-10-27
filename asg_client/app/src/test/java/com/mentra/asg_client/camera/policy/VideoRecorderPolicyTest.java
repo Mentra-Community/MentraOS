@@ -17,14 +17,14 @@ public class VideoRecorderPolicyTest {
 
     @Test
     public void videoEncodingBitRate_1080pClass() {
-        assertThat(VideoRecorderPolicy.videoEncodingBitRateForWidth(1920)).isEqualTo(16_000_000);
-        assertThat(VideoRecorderPolicy.videoEncodingBitRateForWidth(3840)).isEqualTo(16_000_000);
+        assertThat(VideoRecorderPolicy.videoEncodingBitRateForWidth(1920)).isEqualTo(10_000_000);
+        assertThat(VideoRecorderPolicy.videoEncodingBitRateForWidth(3840)).isEqualTo(10_000_000);
     }
 
     @Test
     public void videoEncodingBitRate_below1080pWidth() {
-        assertThat(VideoRecorderPolicy.videoEncodingBitRateForWidth(1280)).isEqualTo(8_000_000);
-        assertThat(VideoRecorderPolicy.videoEncodingBitRateForWidth(1919)).isEqualTo(8_000_000);
+        assertThat(VideoRecorderPolicy.videoEncodingBitRateForWidth(1280)).isEqualTo(5_000_000);
+        assertThat(VideoRecorderPolicy.videoEncodingBitRateForWidth(1919)).isEqualTo(5_000_000);
     }
 
     @Test
