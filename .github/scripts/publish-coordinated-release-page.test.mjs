@@ -10,26 +10,33 @@ import {
   updateDownloadNotes,
 } from "./publish-coordinated-release-page.mjs"
 
+const missing = () => Object.assign(new Error("Not Found"), {status: 404})
+
 function fixture(existing = null) {
   const input = finalizedBeta()
   const writes = []
+  const delays = []
   return {
     ...input,
     writes,
+    delays,
+    wait: async (delay) => delays.push(delay),
+    log: () => {},
     api: (route, options = {}) => {
       if (options.method) {
         writes.push({route, ...options})
-        return {...options.data, html_url: "https://github.com/release"}
+        return {id: 7, ...options.data, html_url: "https://github.com/release"}
       }
       if (route.includes("git/ref/tags/")) return {object: {type: "commit", sha: input.plan.sourceCommit}}
+      if (!existing) throw missing()
       return existing
     },
   }
 }
 
-test("creates a prerelease page at the completed source tag with exact mobile download URLs", () => {
+test("creates a prerelease page at the completed source tag with exact mobile download URLs", async () => {
   const input = fixture()
-  publishCoordinatedReleasePage(input)
+  await publishCoordinatedReleasePage(input)
   assert.equal(input.writes.length, 1)
   const {data} = input.writes[0]
   assert.equal(data.tag_name, `mentra-v${input.plan.releaseIdentity}`)
@@ -43,30 +50,30 @@ test("creates a prerelease page at the completed source tag with exact mobile do
   assert.match(data.body, /Android phone APK — install the Mentra App/)
 })
 
-test("repairs an existing page without changing manual notes or release metadata", () => {
+test("repairs an existing page without changing manual notes or release metadata", async () => {
   const input = fixture({id: 42, draft: false, prerelease: true, body: "Manual notes"})
-  publishCoordinatedReleasePage(input)
+  await publishCoordinatedReleasePage(input)
   const write = input.writes[0]
   assert.equal(write.method, "PATCH")
   assert.deepEqual(Object.keys(write.data), ["body"])
   assert.ok(write.data.body.startsWith("Manual notes\n\n"))
   const retry = fixture({id: 42, draft: false, prerelease: true, body: write.data.body})
-  publishCoordinatedReleasePage(retry)
+  await publishCoordinatedReleasePage(retry)
   assert.equal(retry.writes.length, 0)
 })
 
-test("refuses a mismatched source tag, incomplete release, production plan, or draft", () => {
+test("refuses a mismatched source tag, incomplete release, production plan, or draft", async () => {
   const wrongTag = fixture()
   wrongTag.api = () => ({object: {type: "commit", sha: "f".repeat(40)}})
-  assert.throws(() => publishCoordinatedReleasePage(wrongTag), /completed source/)
+  await assert.rejects(publishCoordinatedReleasePage(wrongTag), /completed source/)
   const incomplete = fixture()
   incomplete.manifest.artifacts.pop()
-  assert.throws(() => publishCoordinatedReleasePage(incomplete), /Missing required artifact/)
+  await assert.rejects(publishCoordinatedReleasePage(incomplete), /Missing required artifact/)
   assert.equal(incomplete.writes.length, 0)
   const production = fixture()
   production.plan.releaseIdentity = production.plan.familyBaseVersion
-  assert.throws(() => publishCoordinatedReleasePage(production), /development and beta/)
-  assert.throws(() => publishCoordinatedReleasePage(fixture({draft: true})), /draft/)
+  await assert.rejects(publishCoordinatedReleasePage(production), /development and beta/)
+  await assert.rejects(publishCoordinatedReleasePage(fixture({draft: true})), /draft/)
 })
 
 test("managed notes are replaceable and preserve surrounding content", () => {
@@ -77,7 +84,7 @@ test("managed notes are replaceable and preserve surrounding content", () => {
   assert.throws(() => updateDownloadNotes("<!-- mentra-release-downloads:start -->", notes), /Malformed/)
 })
 
-test("a failed page publication can retry the same archived manifest without changing its bytes", () => {
+test("a failed page publication can retry the same archived manifest without changing its bytes", async () => {
   const input = fixture()
   const before = JSON.stringify({plan: input.plan, manifest: input.manifest})
   const api = input.api
@@ -89,14 +96,14 @@ test("a failed page publication can retry the same archived manifest without cha
     }
     return api(route, options)
   }
-  assert.throws(() => publishCoordinatedReleasePage(input), /temporarily unavailable/)
+  await assert.rejects(publishCoordinatedReleasePage(input), /temporarily unavailable/)
   assert.equal(JSON.stringify({plan: input.plan, manifest: input.manifest}), before)
-  publishCoordinatedReleasePage(input)
+  await publishCoordinatedReleasePage(input)
   assert.equal(input.writes.length, 1)
   assert.equal(JSON.stringify({plan: input.plan, manifest: input.manifest}), before)
 })
 
-test("the one dev or beta page writer lists the OTA bundle, and the example apps when they were published", () => {
+test("the one dev or beta page writer lists the OTA bundle, and the example apps when they were published", async () => {
   const input = fixture()
   const without = releaseDownloadNotes(input)
   const bundle = input.manifest.artifacts.find((a) => a.coordinate === input.plan.artifactNames.otaBundle)
@@ -114,7 +121,7 @@ test("the one dev or beta page writer lists the OTA bundle, and the example apps
   )
   // One managed block: a rerun of the same page writer replaces it in place.
   const page = fixture({id: 42, draft: false, prerelease: true, body: updateDownloadNotes("Manual notes", without)})
-  publishCoordinatedReleasePage({...page, examples: true})
+  await publishCoordinatedReleasePage({...page, examples: true})
   const body = page.writes[0].data.body
   assert.ok(body.startsWith("Manual notes\n\n"))
   assert.equal(body.match(/mentra-release-downloads:start/g).length, 1)
@@ -216,4 +223,27 @@ test("updating a draft production page keeps its tag; a published page sends onl
     assert.deepEqual(Object.keys(writes[0]).sort(), draft ? ["body", "tag_name"] : ["body"])
     if (draft) assert.equal(writes[0].tag_name, `mentra-v${identity}`)
   }
+})
+
+// Staging run 39991316447 failed here: GitHub's workflow-file check for the
+// release timed out and was reported as a 403.
+test("retries a page creation denied by an incomplete workflow-file check", async () => {
+  const input = fixture()
+  const api = input.api
+  let denied = false
+  input.api = (route, options) => {
+    if (options?.method === "POST" && !denied) {
+      denied = true
+      throw Object.assign(new Error("Resource not accessible by integration"), {
+        status: 403,
+        acceptedPermissions: "contents=write; contents=write,workflows=write",
+      })
+    }
+    return api(route, options)
+  }
+  const release = await publishCoordinatedReleasePage(input)
+  assert.equal(release.tag_name, `mentra-v${input.plan.releaseIdentity}`)
+  assert.deepEqual(input.delays, [5000])
+  assert.equal(input.writes.filter((write) => write.method === "POST").length, 1)
+  assert.equal(input.writes.filter((write) => write.method === "PATCH").length, 0)
 })

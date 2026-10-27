@@ -1,41 +1,20 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict"
-import {execFileSync} from "node:child_process"
 import path from "node:path"
 import {setTimeout as sleep} from "node:timers/promises"
 import {pathToFileURL} from "node:url"
 
-import {githubError} from "./publish-immutable-release-asset.mjs"
+import {createRelease, githubApi} from "./github-release-create.mjs"
 
-function githubApi(route, {method = "GET", data} = {}) {
-  try {
-    const output = execFileSync(
-      "gh",
-      ["api", "--include", "--method", method, route, ...(data ? ["--input", "-"] : [])],
-      {encoding: "utf8", input: data ? JSON.stringify(data) : undefined, timeout: 120_000, stdio: ["pipe", "pipe", "pipe"]},
-    )
-    return JSON.parse(output.replace(/^HTTP\/\S+ \d{3}[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*\r?\n/gm, ""))
-  } catch (error) {
-    throw githubError(error, String(error.stdout || ""), String(error.stderr || ""))
-  }
-}
+export {workflowCheckDenied} from "./github-release-create.mjs"
 
-function transient(error) {
-  return (
-    [408, 429, 500, 502, 503, 504].includes(error.status) ||
-    (error.status === 403 && (error.rateLimited || error.retryAfterMs !== undefined)) ||
-    ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EPIPE", "EAI_AGAIN", "ENETUNREACH"].includes(error.code) ||
-    error.cause?.signal === "SIGTERM"
-  )
-}
-
-// Creation can commit before its response is lost. Look up the same immutable
-// tag after every retry delay instead of blindly repeating the POST.
+// The release for an installer version is immutable: reuse it when its
+// coordinates match, otherwise create it through the shared retry, which also
+// absorbs GitHub's workflow-file check timeouts for the new tag.
 export async function ensureInstallerRelease({repository, tag, sourceCommit, api = githubApi, wait = sleep, log = console.error}) {
   if (!/^[\w-][\w.-]*\/[\w-][\w.-]*$/.test(repository || "")) throw new Error("Invalid repository")
   const version = /^mentra-private-cloud-(\d+\.\d+\.\d+(?:-(?:dev|beta)\.[1-9]\d*)?)$/.exec(tag || "")?.[1]
   if (!version || !/^[a-f0-9]{40}$/.test(sourceCommit || "")) throw new Error("Invalid immutable installer coordinates")
-  const route = `repos/${repository}/releases`
   const validate = (release) => {
     assert.equal(release.tag_name, tag, "Installer release tag does not match")
     assert.equal(release.target_commitish, sourceCommit, "Installer release source does not match")
@@ -44,55 +23,23 @@ export async function ensureInstallerRelease({repository, tag, sourceCommit, api
     assert.ok(Number.isSafeInteger(release.id) && release.id > 0, "Invalid installer release ID")
     return release
   }
-  const lookup = async () => {
-    try {
-      return validate(await api(`${route}/tags/${tag}`))
-    } catch (error) {
-      if (error.status === 404) return null
-      throw error
-    }
-  }
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    let error
-    try {
-      const existing = await lookup()
-      if (existing) return existing
-      try {
-        return validate(await api(route, {
-          method: "POST",
-          data: {
-            tag_name: tag,
-            target_commitish: sourceCommit,
-            name: `Mentra Private Cloud ${version}`,
-            body: "Versioned Azure installer, checksum and publication evidence. Obtain the private IT guide and approved image access from Mentra before deployment.",
-            draft: false,
-            prerelease: true,
-            make_latest: "false",
-          },
-        }))
-      } catch (creationError) {
-        // A concurrent publisher may have won the same tag. It must match all
-        // coordinates; other validation errors are not retried.
-        if (creationError.status === 422) {
-          const existing = await lookup()
-          if (existing) return existing
-        }
-        throw creationError
-      }
-    } catch (caught) {
-      error = caught
-    }
-    if (!transient(error)) throw error
-    const delay = Math.max(5000 * 2 ** (attempt - 1), error.retryAfterMs || 0)
-    if (delay > 120_000) throw error
-    log(`Installer release lookup/create failed (${error.status ? `HTTP ${error.status}` : "transport error"}); reconciling the same tag after ${delay / 1000}s`)
-    await wait(delay)
-    if (attempt === 3) {
-      const existing = await lookup()
-      if (existing) return existing
-      throw error
-    }
-  }
+  return createRelease({
+    repository,
+    release: {
+      tag_name: tag,
+      target_commitish: sourceCommit,
+      name: `Mentra Private Cloud ${version}`,
+      body: "Versioned Azure installer, checksum and publication evidence. Obtain the private IT guide and approved image access from Mentra before deployment.",
+      draft: false,
+      prerelease: true,
+      make_latest: "false",
+    },
+    lookupFirst: true,
+    validate,
+    api,
+    wait,
+    log,
+  })
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

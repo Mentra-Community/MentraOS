@@ -16,6 +16,7 @@ import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {isDeepStrictEqual} from "node:util"
 
+import {createRelease} from "./github-release-create.mjs"
 import {validateSelectedBeta} from "./prepare-production-promotion.mjs"
 import {RELEASE_LIST_FIELDS, parseJsonLines} from "./production-promotion-assets.mjs"
 import {createReleasePlan, loadReleaseFamily, serializeReleaseRecord} from "./release-family.mjs"
@@ -125,23 +126,17 @@ function listReleases(repository) {
   )
 }
 
-function ensureStableContainer({repository, plan}) {
+async function ensureStableContainer({repository, plan}) {
   const allocation = planStableContainer(listReleases(repository), plan)
   if (allocation.action === "reuse") return allocation.release
-  try {
-    const created = JSON.parse(
-      gh(["api", "--method", "POST", `repos/${repository}/releases`, "--input", "-"], {
-        input: JSON.stringify(allocation.payload),
-      }),
-    )
-    return requireStableContainer(created, plan)
-  } catch (error) {
-    // Another workflow (the rollout finalization) may have created the same
-    // tag between our listing and this POST; accept it if it matches.
-    const retry = planStableContainer(listReleases(repository), plan)
-    if (retry.action === "reuse") return retry.release
-    throw error
-  }
+  // Another workflow (the rollout finalization) may create the same draft
+  // between our listing and this POST; the shared create retries GitHub's
+  // transient refusals and reuses a matching draft before every retry.
+  return createRelease({
+    repository,
+    release: allocation.payload,
+    validate: (release) => requireStableContainer(release, plan),
+  })
 }
 
 function parseArgs(args) {
@@ -165,7 +160,7 @@ function readJson(file) {
   return JSON.parse(readFileSync(path.resolve(file), "utf8"))
 }
 
-function main() {
+async function main() {
   const command = process.argv[2]
   const args = parseArgs(process.argv.slice(3))
   if (command === "plan") {
@@ -193,11 +188,11 @@ function main() {
     return
   }
   if (command === "ensure-container") {
-    const release = ensureStableContainer({repository: args.repository, plan: readJson(args.plan)})
+    const release = await ensureStableContainer({repository: args.repository, plan: readJson(args.plan)})
     output({release_id: release.id, tag: release.tag_name}, args["github-output"])
     return
   }
   throw new Error(`Unknown production packages command ${JSON.stringify(command)}`)
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main()

@@ -136,7 +136,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
 
     @objc private func connect() {
         guard devices.indices.contains(picker.indexOfSelectedItem) else { return }
-        do { try sdk.connect(to: devices[picker.indexOfSelectedItem]); action.stringValue = "Connecting..." }
+        let device = devices[picker.indexOfSelectedItem]
+        scanSession?.stop()
+        scanSession = nil
+        do { try sdk.connect(to: device); action.stringValue = "Connecting..." }
         catch { action.stringValue = error.localizedDescription }
     }
 

@@ -5,7 +5,8 @@ import type {ClientApp, OrderMap} from "@mentra/engine"
 import {AppsGrid} from "./AppsGrid"
 
 let mockApps: ClientApp[] = []
-let mockOrder: OrderMap = {}
+// null models a Home layout that has never been saved (storage.load fails).
+let mockOrder: OrderMap | null = {}
 const mockStart = jest.fn()
 const mockPush = jest.fn()
 const mockPermissions = jest.fn()
@@ -18,7 +19,8 @@ jest.mock("@mentra/engine", () => ({
   HardwareType: {EXIST: "EXIST"},
   SETTINGS: {},
   useSetting: () => [false],
-  getAppsOrder: () => ({is_ok: () => true, value: {...mockOrder}}),
+  getAppsOrder: () =>
+    mockOrder === null ? {is_ok: () => false, error: new Error("missing")} : {is_ok: () => true, value: {...mockOrder}},
   saveAppsOrder: (order: OrderMap) => {
     mockOrder = {...order}
   },
@@ -31,7 +33,7 @@ jest.mock("@mentra/engine", () => ({
       list: () => mockApps,
       setHiddenStatus: (pkg: string, hidden: boolean) => {
         mockApps = mockApps.map((app) => (app.packageName === pkg ? {...app, hidden} : app))
-        if (!hidden) delete mockOrder[pkg]
+        if (!hidden && mockOrder) delete mockOrder[pkg]
       },
     },
   },
@@ -202,4 +204,18 @@ test("Remove on a managed miniapp only takes it off Home: nothing is uninstalled
   fireEvent.press(screen.getByText("appInfo:remove"))
   expect(mockApps.find((entry) => entry.packageName === "app.0")?.hidden).toBe(true)
   expect(jest.requireMock("@/utils/uninstallAppUI").uninstallAppUI).not.toHaveBeenCalled()
+})
+
+test("adds a miniapp after the existing Home apps when no Home layout was ever saved", () => {
+  mockOrder = null
+  mockApps = [app(0), app(1), app(2), app(3), app(4, true), app(5, true), app(6, true), app(7, true)]
+  const view = render(<HomeAndDrawer />)
+  expect(["app.0", "app.1", "app.2", "app.3"].every((pkg) => screen.queryByTestId(`home.miniapp.${pkg}`))).toBe(true)
+  openDrawerMenu("app.7")
+  fireEvent.press(screen.getByText("appInfo:addToHome"))
+  view.rerender(<HomeAndDrawer />)
+  for (const pkg of ["app.0", "app.1", "app.2", "app.3", "app.7"]) {
+    expect(screen.getByTestId(`home.miniapp.${pkg}`)).toBeTruthy()
+  }
+  expect(mockOrder).toEqual({"app.0": 0, "app.1": 1, "app.2": 2, "app.3": 3, "app.7": 4})
 })

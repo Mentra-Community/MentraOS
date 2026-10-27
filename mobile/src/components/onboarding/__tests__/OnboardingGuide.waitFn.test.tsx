@@ -22,7 +22,10 @@ jest.mock("expo-video", () => {
   return {
     __esModule: true,
     useVideoPlayer: () => player,
-    VideoView: () => null,
+    VideoView: () => {
+      const {View} = require("react-native")
+      return require("react").createElement(View, {testID: "onboarding-video"})
+    },
   }
 })
 
@@ -210,6 +213,38 @@ describe("OnboardingGuide waitFn lifecycle", () => {
 
     expect(getByText("First lesson")).toBeTruthy()
     expect(queryByText("Welcome to Mentra")).toBeNull()
+  })
+
+  it("keeps the video players from taking touches meant for the start button over them", () => {
+    const {getAllByTestId} = render(
+      <OnboardingGuide
+        autoStart={false}
+        startButtonText="Continue onboarding"
+        steps={[
+          {
+            type: "video",
+            source: "welcome.mp4",
+            name: "Welcome",
+            playCount: 1,
+            transition: true,
+            fadeOut: true,
+            title: "Welcome to Mentra Live",
+          },
+        ]}
+      />,
+    )
+
+    // On Android a VideoView under a button cancels the button's press, so every
+    // player must sit inside a pointerEvents="none" container.
+    const videos = getAllByTestId("onboarding-video")
+    expect(videos.length).toBeGreaterThan(0)
+    for (const video of videos) {
+      let node = video.parent
+      while (node && node.props.pointerEvents !== "none") {
+        node = node.parent
+      }
+      expect(node).not.toBeNull()
+    }
   })
 
   it("navigates back to a peer first step without reopening the start gate", () => {

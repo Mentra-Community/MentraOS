@@ -210,11 +210,15 @@ interface StoredRegistryStatus {
 
 const PERMANENT_REDIRECTS = new Set([301, 308])
 
+/**
+ * Background checks are silent: a running miniapp's update waits until it
+ * stops. Only a check of a miniapp a person just opened asks about it.
+ */
 export class MiniappUrlUpdater {
   private readonly manifests = new Map<string, CachedManifest>()
   private readonly backoff = new Map<string, Backoff>()
   private readonly lastCheckedAt = new Map<string, number>()
-  private readonly inFlight = new Map<string, {session: number; check: Promise<void>}>()
+  private readonly inFlight = new Map<string, {session: number; ask: boolean; check: Promise<void>}>()
   /** The kept status answer: undefined until read. */
   private status: StoredRegistryStatus | null | undefined
   /** The refresh in flight, and the Core it asks. */
@@ -239,26 +243,37 @@ export class MiniappUrlUpdater {
     }
   }
 
-  /** Check a miniapp the user just opened, unless it was checked moments ago. */
+  /**
+   * Check a miniapp a person just opened, unless it was checked moments ago.
+   * The update of an open miniapp is staged and asked about.
+   */
   checkOpened(packageName: string): Promise<void> {
-    const last = this.lastCheckedAt.get(packageName)
+    // A silent check in flight has not decided yet; the open follows it.
+    const last = this.inFlight.has(packageName) ? undefined : this.lastCheckedAt.get(packageName)
     if (last !== undefined && this.deps.now() - last < OPEN_CHECK_INTERVAL_MS) return Promise.resolve()
-    return this.check(packageName)
+    return this.check(packageName, this.deps.installSession(), {ask: true})
   }
 
-  /** Check one miniapp. Checks of it during the same engine session share one request. */
-  check(packageName: string, session = this.deps.installSession()): Promise<void> {
+  /**
+   * Check one miniapp. Checks of it during the same engine session share one
+   * request; a check that asks follows a silent one already in flight.
+   */
+  check(packageName: string, session = this.deps.installSession(), {ask = false}: {ask?: boolean} = {}): Promise<void> {
     const running = this.inFlight.get(packageName)
-    if (running?.session === session) return running.check
-    const entry = {session, check: Promise.resolve()}
-    entry.check = this.run(packageName, session).finally(() => {
+    if (running?.session === session) {
+      if (running.ask || !ask) return running.check
+      const askAfter = () => this.check(packageName, session, {ask})
+      return running.check.then(askAfter, askAfter)
+    }
+    const entry = {session, ask, check: Promise.resolve()}
+    entry.check = this.run(packageName, session, ask).finally(() => {
       if (this.inFlight.get(packageName) === entry) this.inFlight.delete(packageName)
     })
     this.inFlight.set(packageName, entry)
     return entry.check
   }
 
-  private async run(packageName: string, session: number): Promise<void> {
+  private async run(packageName: string, session: number, ask: boolean): Promise<void> {
     // An install started in an ended session must not activate.
     const isCancelled = () => this.deps.installSession() !== session
     if (isCancelled()) return
@@ -398,7 +413,7 @@ export class MiniappUrlUpdater {
         expectedBundleSha256: manifest.bundle.sha256,
         compatibilityPolicy: policy,
         onlyIfStopped: true,
-        askIfRunning: true,
+        askIfRunning: ask,
         isCancelled,
         beforeActivate: () => {
           if (this.deps.hasDevelopmentSelection(packageName)) {
@@ -418,8 +433,12 @@ export class MiniappUrlUpdater {
     } catch (error) {
       // The session ended: the next session checks again.
       if (isCancelled()) return
-      // A running miniapp's update waits for it to stop, or for the user's answer.
-      if (this.deps.isRunningError(error)) return
+      // A running miniapp's update waits for it to stop, or for the user's
+      // answer. The next open checks again, however soon.
+      if (this.deps.isRunningError(error)) {
+        this.lastCheckedAt.delete(packageName)
+        return
+      }
       this.fail(packageName, `could not install ${packageName}@${manifest.version}`, error)
       return
     }

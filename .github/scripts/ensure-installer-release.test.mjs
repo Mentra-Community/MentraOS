@@ -1,17 +1,24 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {ensureInstallerRelease} from "./ensure-installer-release.mjs"
+import {ensureInstallerRelease, workflowCheckDenied} from "./ensure-installer-release.mjs"
+import {githubError} from "./publish-immutable-release-asset.mjs"
 
 const coordinates = {repository: "owner/repo", tag: "mentra-private-cloud-3.3.0-dev.941", sourceCommit: "a".repeat(40)}
 const release = {id: 42, tag_name: coordinates.tag, target_commitish: coordinates.sourceCommit, draft: false, prerelease: true}
 const failure = (status, properties = {}) => Object.assign(new Error("API failed"), {status, ...properties})
+// Tag lookups (the shared create verifies the tag's real commit) are answered
+// from the source commit and kept out of the request sequence under test.
 function fixture(responses) {
-  const calls = [], delays = [], logs = []
+  const calls = [], delays = [], logs = [], refCalls = []
   return {
     args: {
       ...coordinates,
       api: async (route, options = {}) => {
+        if (route.includes("/git/ref/tags/")) {
+          refCalls.push(route)
+          return {object: {type: "commit", sha: coordinates.sourceCommit}}
+        }
         calls.push({route, ...options})
         const response = responses.shift()
         assert.notEqual(response, undefined, "unexpected API request")
@@ -21,7 +28,7 @@ function fixture(responses) {
       wait: async (delay) => delays.push(delay),
       log: (message) => logs.push(message),
     },
-    calls, delays, logs,
+    calls, delays, logs, refCalls,
   }
 }
 
@@ -98,18 +105,49 @@ test("recovers a concurrent tag conflict only when the existing release matches"
   assert.deepEqual(absent.delays, [])
 })
 
+const budget = [5000, 10000, 20000, 40000, 60000, 60000]
+const failedAttempts = (error) => Array.from({length: budget.length}, () => [failure(404), error]).flat()
+
 test("reconciles a committed last attempt before declaring failure", async () => {
-  const f = fixture([failure(404), failure(500), failure(404), failure(500), failure(404), failure(500), release])
+  const f = fixture([...failedAttempts(failure(500)), release])
   assert.deepEqual(await ensureInstallerRelease(f.args), release)
-  assert.deepEqual(f.delays, [5000, 10000, 20000])
-  assert.equal(f.calls.filter((call) => call.method === "POST").length, 3)
+  assert.deepEqual(f.delays, budget)
+  assert.equal(f.calls.filter((call) => call.method === "POST").length, budget.length)
 })
 
 test("bounds attempts and preserves the failure if no release was committed", async () => {
-  const f = fixture([failure(404), failure(500), failure(404), failure(500), failure(404), failure(500), failure(404)])
+  const f = fixture([...failedAttempts(failure(500)), failure(404)])
   await assert.rejects(ensureInstallerRelease(f.args), (error) => error.status === 500)
-  assert.equal(f.calls.length, 7)
-  assert.deepEqual(f.delays, [5000, 10000, 20000])
+  assert.equal(f.calls.length, 2 * budget.length + 1)
+  assert.deepEqual(f.delays, budget)
+})
+
+// GitHub's workflow-file check for the new tag can time out; it then denies
+// GITHUB_TOKEN as if `workflows` were required (observed on staging 2026-10-23).
+const workflowCheck = () => failure(403, {acceptedPermissions: "contents=write; contents=write,workflows=write"})
+
+test("retries a tag creation denied by an incomplete workflow-file check", async () => {
+  const f = fixture([failure(404), workflowCheck(), failure(404), workflowCheck(), failure(404), release])
+  assert.deepEqual(await ensureInstallerRelease(f.args), release)
+  assert.deepEqual(f.delays, [5000, 10000])
+  assert.equal(f.calls.filter((call) => call.method === "POST").length, 3)
+  assert.match(f.logs[0], /workflow-file check/)
+})
+
+test("stops after the bounded budget when the workflow-file check keeps denying", async () => {
+  const f = fixture([...failedAttempts(workflowCheck()), failure(404)])
+  await assert.rejects(ensureInstallerRelease(f.args), (error) => error.status === 403)
+  assert.deepEqual(f.delays, budget)
+})
+
+test("classifies only workflow-check 403s from GitHub's accepted-permissions header", () => {
+  const output = "HTTP/2.0 403 Forbidden\r\nX-Accepted-Github-Permissions: contents=write; contents=write,workflows=write\r\n\r\n{}"
+  const parsed = githubError(new Error("gh failed"), output, "gh: Resource not accessible by integration (HTTP 403)")
+  assert.equal(parsed.acceptedPermissions, "contents=write; contents=write,workflows=write")
+  assert.equal(workflowCheckDenied(parsed), true)
+  assert.equal(workflowCheckDenied(failure(403)), false)
+  assert.equal(workflowCheckDenied(failure(403, {acceptedPermissions: "contents=write"})), false)
+  assert.equal(workflowCheckDenied(failure(401, {acceptedPermissions: "contents=write,workflows=write"})), false)
 })
 
 for (const status of [400, 401, 403]) {
@@ -141,6 +179,15 @@ test("transport errors reconcile the same tag and never echo raw request data", 
   await ensureInstallerRelease(f.args)
   assert.equal(f.logs.length, 1)
   assert.doesNotMatch(f.logs[0], /Bearer|private-token|secret=value|https:/)
+})
+
+test("refuses to attach the release to a tag that already identifies another commit", async () => {
+  const f = fixture([failure(404)])
+  const api = f.args.api
+  f.args.api = async (route, options) =>
+    route.includes("/git/ref/tags/") ? {object: {type: "commit", sha: "b".repeat(40)}} : api(route, options)
+  await assert.rejects(ensureInstallerRelease(f.args), /already identifies/)
+  assert.equal(f.calls.filter((call) => call.method === "POST").length, 0)
 })
 
 test("invalid coordinates never reach GitHub", async () => {

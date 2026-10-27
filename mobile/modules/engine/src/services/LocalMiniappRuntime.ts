@@ -6595,7 +6595,7 @@ class LocalMiniappRuntime {
       return
     }
     // Pre-flight the hardware gate so the caller gets a precise reason rather
-    // than a generic rejection (start()'s own gate would otherwise alert + abort).
+    // than a generic rejection (start()'s own gate would refuse it silently).
     if (app.compatibility && app.compatibility.isCompatible === false) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.APP_NOT_COMPATIBLE,

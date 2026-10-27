@@ -155,18 +155,15 @@ jobs:
 
           tag=$(jq -er .artifactContainerTag "$plan")
           release_name=$(jq -er .artifactContainerName "$plan")
-          matches=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq --arg tag "$tag" 'add | [.[] | select(.tag_name == $tag)]')
-          [[ "$(jq length <<< "$matches")" -le 1 ]]
-          if [[ "$(jq length <<< "$matches")" == 0 ]]; then
-            payload=$(jq -n \
-              --arg tag "$tag" \
-              --arg target "$(jq -er .sourceCommit "$plan")" \
-              --arg name "$release_name" \
-              '{tag_name: $tag, target_commitish: $target, name: $name, body: "Canonical production release records. Publish manually only after the completed promotion and final public-availability checks.", draft: true, prerelease: false}')
-            stable_release=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" --input - <<< "$payload")
-          else
-            stable_release=$(jq '.[0]' <<< "$matches")
-          fi
+          payload=$(jq -n \
+            --arg tag "$tag" \
+            --arg target "$(jq -er .sourceCommit "$plan")" \
+            --arg name "$release_name" \
+            '{tag_name: $tag, target_commitish: $target, name: $name, body: "Canonical production release records. Publish manually only after the completed promotion and final public-availability checks.", draft: true, prerelease: false}')
+          # Reuses the one release already on this tag (draft or published);
+          # more than one is refused.
+          stable_release=$(node .github/scripts/github-release-create.mjs release \
+            --repository "$GITHUB_REPOSITORY" --input - <<< "$payload")
           [[ "$(jq -r .draft <<< "$stable_release")" == true ]]
           [[ "$(jq -r .prerelease <<< "$stable_release")" == false ]]
           [[ "$(jq -r .name <<< "$stable_release")" == "$release_name" ]]

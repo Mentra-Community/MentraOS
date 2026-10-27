@@ -33,6 +33,8 @@ let notInstalled = false
 const stored = new Map<string, unknown>()
 // Like the real registry, the running flag projects the running-app registry.
 let isProjected: (packageName: string) => boolean = () => false
+// Whether the glasses this miniapp needs are connected.
+let compatible = true
 
 function deferred() {
   let resolve!: () => void
@@ -137,7 +139,10 @@ mock.module("../NotificationsEmitter", () => ({islandNotifications: {emit: () =>
 mock.module("../STTModelManager", () => ({default: {isModelAvailable: async () => true}}))
 mock.module("../../utils/hardware/hardware", () => ({
   HardwareCompatibility: {
-    checkCompatibility: () => ({isCompatible: true, missingRequired: [], missingOptional: [], warnings: []}),
+    checkCompatibility: () =>
+      compatible
+        ? {isCompatible: true, missingRequired: [], missingOptional: [], warnings: []}
+        : {isCompatible: false, missingRequired: [{type: "EXIST"}], missingOptional: [], warnings: []},
   },
 }))
 mock.module("../../types/hardware", () => ({getModelCapabilities: () => ({})}))
@@ -164,7 +169,7 @@ const {classifyManagedInstallError, installMiniappRelease, MiniappInstallCancell
 const {miniappLauncher} = await import("../MiniappLauncher")
 const {miniappRunningRegistry} = await import("../MiniappRunningRegistry")
 isProjected = (packageName) => miniappRunningRegistry.has(packageName)
-const {useAppStatusStore, installAppStoreHooks} = await import("../../stores/apps")
+const {useAppStatusStore, installAppStoreHooks, onMiniappOpenedByUser} = await import("../../stores/apps")
 const prompt = await import("../runningUpdatePrompt")
 const deferredUpdates = await import("../deferredMiniappUpdates")
 
@@ -192,6 +197,8 @@ let answer: "update" | "not_now" | "hold" = "update"
 const prompts: PendingRunningUpdatePrompt[] = []
 const failures: unknown[] = []
 const blocked: string[] = []
+const incompatible: string[] = []
+const openedByUser: string[] = []
 
 function release(options: Partial<Parameters<typeof installMiniappRelease>[1]> = {}) {
   return installMiniappRelease("https://store.example/notes-1.1.0.zip", {
@@ -213,7 +220,11 @@ async function runApp({open}: {open: boolean}) {
 beforeAll(() => {
   configure({auth: {}})
   miniappLauncher.configure({router})
-  installAppStoreHooks({onUpdateBlocked: (app) => blocked.push(app.packageName)})
+  installAppStoreHooks({
+    onUpdateBlocked: (app) => blocked.push(app.packageName),
+    onIncompatibleBlocked: (app) => incompatible.push(app.packageName),
+  })
+  onMiniappOpenedByUser((packageName) => openedByUser.push(packageName))
 })
 afterAll(() => {
   prompt.setRunningUpdatePromptEnvironmentForTests(null)
@@ -237,6 +248,9 @@ beforeEach(async () => {
   prompts.length = 0
   failures.length = 0
   blocked.length = 0
+  incompatible.length = 0
+  openedByUser.length = 0
+  compatible = true
   stored.clear()
   deferredUpdates.resetDeferredMiniappUpdatesForTests()
   prompt.setRunningUpdatePromptEnvironmentForTests({
@@ -264,23 +278,30 @@ describe("automatic update of an idle miniapp", () => {
     expect(useAppStatusStore.getState().apps[0]).toMatchObject({version: "1.1.0", updating: false})
   })
 
-  test("shows the updating state and refuses opens while it downloads and installs", async () => {
+  test("is silent: the miniapp never shows an updating state", async () => {
+    const states: boolean[] = []
+    const unsubscribe = useAppStatusStore.subscribe((state) => states.push(Boolean(state.apps[0]?.updating)))
+    await release()
+    unsubscribe()
+    expect(active).toBe("1.1.0")
+    expect(states).not.toContain(true)
+  })
+
+  test("an open while it downloads opens at once, and the update waits for the miniapp to stop", async () => {
     const download = deferred()
     downloadGate = download.promise
     const update = release()
     await Promise.resolve()
     const app = useAppStatusStore.getState().apps[0]
-    expect(app.updating).toBe(true)
-    expect(await useAppStatusStore.getState().start(app)).toBe(false)
+    expect(app.updating).toBe(false)
+    expect(await useAppStatusStore.getState().start(app, {trigger: "user"})).toBe(true)
     await useAppStatusStore.getState().setForeground(pkg)
-    expect(blocked).toEqual([pkg, pkg])
-    expect(useAppStatusStore.getState().foregroundedPackage).toBeNull()
+    expect(blocked).toEqual([])
+    expect(useAppStatusStore.getState().foregroundedPackage).toBe(pkg)
     download.resolve()
-    await update
-    expect(calls).toEqual(["download", "verify", "unpack", "activate"])
-    expect(useAppStatusStore.getState().apps[0].updating).toBe(false)
-    expect(await useAppStatusStore.getState().start(useAppStatusStore.getState().apps[0])).toBe(true)
-    expect(calls.at(-1)).toBe(`start:${pkg}@1.1.0`)
+    await expect(update).rejects.toBeInstanceOf(MiniappRunningError)
+    expect(active).toBe("1.0.0")
+    expect(calls).toEqual(["download", `start:${pkg}@1.0.0`, "verify", "unpack"])
   })
 
   test("a network failure releases the reservation so the installed version stays usable", async () => {
@@ -325,6 +346,26 @@ describe("update prompt for a running miniapp", () => {
     unsubscribe()
     expect(states).toContain(true)
     expect(states.at(-1)).toBe(false)
+  })
+
+  test("its restart is silent, and skipped when the glasses it needs aren't connected", async () => {
+    await runApp({open: true})
+    compatible = false
+    await release()
+    expect(calls).toEqual(["download", "verify", "unpack", "prompt", `stop:${pkg}`, "activate"])
+    expect(active).toBe("1.1.0")
+    expect(incompatible).toEqual([])
+    expect(blocked).toEqual([])
+    expect(miniappRunningRegistry.has(pkg)).toBe(false)
+    expect(useAppStatusStore.getState().foregroundedPackage).toBeNull()
+  })
+
+  test("its restart is not a person opening the miniapp", async () => {
+    await runApp({open: false})
+    openedByUser.length = 0
+    await release()
+    expect(miniappRunningRegistry.has(pkg)).toBe(true)
+    expect(openedByUser).toEqual([])
   })
 
   test("a miniapp running without its screen open starts again without opening", async () => {

@@ -135,7 +135,7 @@ describe("miniapp update availability", () => {
       const outcome = update.catch((error: Error) => error)
       expect(apps.getState().apps[0].updating).toBe(true)
       // Deliberately pass the old object captured before the update started.
-      expect(await apps.getState().start(target)).toBe(false)
+      expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
       await apps.getState().setForeground(target.packageName)
       expect(blocked).toHaveBeenCalledTimes(2)
       expect(opened).not.toHaveBeenCalled()
@@ -184,7 +184,7 @@ describe("miniapp update availability", () => {
     const end = apps.getState().beginUpdate(target.packageName)
     expect(() => apps.getState().beginUpdate(target.packageName)).toThrow("already updating")
     expect(apps.getState().apps[0].updating).toBe(true)
-    expect(await apps.getState().start(target)).toBe(false)
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
     expect(blocked).toHaveBeenCalledTimes(1)
     end()
     end()
@@ -196,7 +196,7 @@ describe("miniapp update availability", () => {
     const accessRevoked = mock(() => {})
     installHooks({onUpdateBlocked: blocked, onOpenRequested: opened, onAccessRevoked: accessRevoked})
     revoked.add(target.packageName)
-    expect(await apps.getState().start(target)).toBe(false)
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
     expect(accessRevoked).toHaveBeenCalledTimes(1)
     expect(accessRevoked).toHaveBeenCalledWith(
       expect.objectContaining({packageName: target.packageName, name: "Notes"}),

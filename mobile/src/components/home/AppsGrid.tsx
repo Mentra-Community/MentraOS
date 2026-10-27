@@ -686,19 +686,31 @@ export function AppsGrid({
       const packageName = app.packageName
       engine.miniapps.setHiddenStatus(packageName, false)
 
+      // Never fall back to this grid's own orderMap: All Apps lays out its
+      // items in drawer-only coordinates (100+), and saving those as the Home
+      // layout pushed every Home app past the visible slots. Without a saved
+      // layout, Home renders its apps contiguously in homePackageNames order.
       const latestOrder = getAppsOrder()
-      const currentOrder = latestOrder.is_ok() ? latestOrder.value : orderMap
+      const currentOrder: OrderMap = latestOrder.is_ok()
+        ? latestOrder.value
+        : Object.fromEntries(homePackageNames.map((pkg, index) => [pkg, index]))
       const nextOrder: OrderMap = {...currentOrder}
       delete nextOrder[packageName]
 
       const emptySlot = Object.entries(nextOrder)
         .filter(([pkg, index]) => pkg.startsWith("@empty") && index < PRIMARY_HOME_SLOT_COUNT)
         .sort(([, a], [, b]) => a - b)[0]
+      const usedIndices = new Set(Object.values(nextOrder))
+      const freeIndex = Array.from({length: PRIMARY_HOME_SLOT_COUNT}, (_, index) => index).find(
+        (index) => !usedIndices.has(index),
+      )
 
       if (emptySlot) {
         const [emptyPackageName, emptyIndex] = emptySlot
         delete nextOrder[emptyPackageName]
         nextOrder[packageName] = emptyIndex
+      } else if (freeIndex !== undefined) {
+        nextOrder[packageName] = freeIndex
       } else {
         for (const [pkg, index] of Object.entries(nextOrder)) {
           nextOrder[pkg] = index + 1
@@ -710,7 +722,7 @@ export function AppsGrid({
       saveAppsOrder(nextOrder)
       onAddToHome?.(app)
     },
-    [onAddToHome, orderMap],
+    [onAddToHome, homePackageNames],
   )
 
   const popoverActions: PopoverAction[] = useMemo(

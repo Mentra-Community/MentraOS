@@ -77,3 +77,23 @@ test("constrains the external Engine asset peer to the mobile Expo SDK", () => {
   })
   assert.equal(JSON.parse(readFileSync(path.join(output, "package.json"), "utf8")).dependencies["expo-asset"], expected)
 })
+
+// @dr.pogodin/react-native-fs 2.41.0 declares an `ArrayBuffer` TurboModule type
+// that React Native 0.83's codegen rejects, which breaks pod install and the
+// Android codegen for any host that resolves it fresh. The app, the Engine peer
+// and the OEM example pin one version below it; move all three together when the
+// app moves to a React Native whose codegen supports it.
+test("pins react-native-fs below the release React Native 0.83 codegen rejects", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+  const readPackage = (relativePath) => JSON.parse(readFileSync(path.join(root, relativePath), "utf8"))
+  const specs = [
+    readPackage("mobile/package.json").dependencies["@dr.pogodin/react-native-fs"],
+    readPackage("mobile/modules/engine/package.json").peerDependencies["@dr.pogodin/react-native-fs"],
+    readPackage("examples/oem-app/package.json").dependencies["@dr.pogodin/react-native-fs"],
+  ]
+  assert.equal(new Set(specs).size, 1, `one react-native-fs version everywhere: ${specs.join(", ")}`)
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(specs[0])
+  assert.ok(match, `react-native-fs is pinned to an exact version: ${specs[0]}`)
+  const [major, minor] = [Number(match[1]), Number(match[2])]
+  assert.ok(major === 2 && minor >= 37 && minor < 41, `react-native-fs ${specs[0]} is below 2.41.0`)
+})

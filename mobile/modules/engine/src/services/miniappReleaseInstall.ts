@@ -46,13 +46,15 @@ export interface ReleaseInstallOptions extends InstallBundleOptions {
   expectedVersion: string
   /**
    * An automatic update: replace only an installed miniapp and never stop a
-   * running one. A running or starting miniapp defers it with
+   * running one. It shows nothing: no updating state, and opens are not
+   * refused. A running or starting miniapp defers it with
    * {@link MiniappRunningError}; it resumes when the miniapp stops.
    */
   onlyIfStopped?: boolean
   /**
-   * With `onlyIfStopped`: when the user is running the miniapp, stage the
-   * release and ask whether to update now. Declined or unshown prompts defer.
+   * With `onlyIfStopped`: when the miniapp is running, stage the release and
+   * ask whether to update now. Only for a miniapp a person just opened.
+   * Declined or unshown prompts defer.
    */
   askIfRunning?: boolean
   /**
@@ -88,11 +90,13 @@ export class MiniappInstallCancelledError extends Error {
  *
  * - Explicit installs stop a running miniapp, install, and restart it; its
  *   launches wait until the install commits or rolls back.
- * - Automatic updates of an idle miniapp mark it as updating before the
- *   download and hold launches only while its files change.
+ * - Automatic updates of an idle miniapp are silent: nothing shows it as
+ *   updating, and launches wait only while its files change. A launch before
+ *   then wins, and the update waits for the miniapp to stop.
  * - Automatic updates of a running miniapp with `askIfRunning` download,
  *   verify and unpack first, then ask; on Update the miniapp closes, the
- *   release commits, and the miniapp reopens.
+ *   release commits, and the miniapp restarts silently (not at all when the
+ *   glasses it needs are not connected).
  * - A managed first install (`firstInstall`) of a package that is not
  *   installed shows nothing and holds launches only while its files change.
  */
@@ -193,22 +197,24 @@ function installFirstWhenIdle(
   )
 }
 
+/**
+ * A background update shows nothing. Uninstall is serialized with the
+ * installer, and the launcher holds launches only while files change.
+ */
 function installIdleUpdate(
   install: ArchiveInstaller,
   options: InstallBundleOptions,
   packageName: string,
 ): Promise<void> {
   return miniappLauncher.installWhenIdle(packageName, (reserveActivation) =>
-    useAppStatusStore.getState().runUpdate(packageName, () =>
-      install({
-        ...options,
-        beforeActivate: () => {
-          options.beforeActivate?.()
-          assertStillInstalled(packageName)
-          reserveActivation()
-        },
-      }),
-    ),
+    install({
+      ...options,
+      beforeActivate: () => {
+        options.beforeActivate?.()
+        assertStillInstalled(packageName)
+        reserveActivation()
+      },
+    }),
   )
 }
 
@@ -279,6 +285,7 @@ async function installRunningUpdate(
 
   // Reopen what the user had: the new release after a commit, otherwise the
   // version that is still installed. Nothing restarts into an ended session.
+  // The restart is automatic: refused silently when its glasses aren't connected.
   const cancelled = isCancelled?.() === true
   if (stopped && !cancelled) await restartAfterUpdate(packageName, stopped.reopen)
   if (!committed && accepted && !cancelled) emitRunningUpdateFailed({packageName, displayName, installedVersion})
@@ -290,7 +297,7 @@ async function restartAfterUpdate(packageName: string, reopen: boolean): Promise
     await useAppStatusStore.getState().refresh()
     const app = useAppStatusStore.getState().apps.find((candidate) => candidate.packageName === packageName)
     if (!app) return
-    const started = await useAppStatusStore.getState().start(app, {skipNavigation: true})
+    const started = await useAppStatusStore.getState().start(app, {skipNavigation: true, trigger: "automatic"})
     if (started && reopen) await useAppStatusStore.getState().setForeground(packageName)
   } catch (error) {
     // A launch error is reported by the runtime; it does not undo a committed release.

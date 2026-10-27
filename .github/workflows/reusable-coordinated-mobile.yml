@@ -125,6 +125,12 @@ on:
         value: ${{ jobs.status.outputs.ipa_url }}
       play_install_url:
         value: ${{ jobs.android.outputs.play_install_url }}
+      android_version_code:
+        description: The app's versionCode, as Google Play Console shows it
+        value: ${{ jobs.android.outputs.version_code }}
+      ios_build_number:
+        description: The iOS build number (CFBundleVersion), as App Store Connect shows it
+        value: ${{ jobs.prepare.outputs.build_number }}
       testflight_install_url:
         value: ${{ jobs.ios-store.outputs.install_url }}
       testflight_distribution_status:
@@ -337,6 +343,7 @@ jobs:
     timeout-minutes: 60
     outputs:
       play_install_url: ${{ steps.play-link.outputs.install_url }}
+      version_code: ${{ steps.android-code.outputs.code }}
     env:
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
