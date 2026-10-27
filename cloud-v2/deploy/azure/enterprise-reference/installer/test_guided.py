@@ -668,19 +668,14 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual(request.get_header('Consistencylevel'), 'eventual')
         self.assertEqual(request.get_header('Authorization'), 'Bearer t')
 
-    def test_an_operator_who_cannot_approve_gets_the_message_at_once(self):
+    def test_an_operator_without_a_built_in_role_is_still_tried(self):
+        # A custom role can grant consent too; only Entra's answer decides.
         with patch.object(setup, 'mobile_access', return_value={'servicePrincipalId': 'sp-id', 'consent': False, 'assigned': True}), \
              patch.object(setup, 'can_approve_sign_in', return_value=False), \
              patch.object(setup, 'grant_admin_consent') as grant, contextlib.redirect_stdout(io.StringIO()) as out:
-            handoffs = setup.entra_handoffs(self.args, self.config, interactive=True)
-        # Asked of an account Entra will refuse, a grant would only stall.
-        grant.assert_not_called()
-        self.assertEqual(handoffs, [setup.consent_handoff(self.config)])
-        printed = out.getvalue()
-        self.assertIn('Still to do - Admin consent: employees cannot sign in until', printed)
-        self.assertIn('Application Administrator', printed)
-        for app_id in (TENANT, SUB):
-            self.assertIn(setup.permissions_page(app_id), printed)
+            self.assertEqual(setup.entra_handoffs(self.args, self.config, interactive=False), [])
+        grant.assert_called_once()
+        self.assertNotIn('Still to do', out.getvalue())
 
     def test_a_refused_grant_is_reported_with_the_message_to_send(self):
         with patch.object(setup, 'mobile_access', return_value={'servicePrincipalId': 'sp-id', 'consent': False, 'assigned': True}), \
@@ -689,6 +684,11 @@ class GuidedTests(unittest.TestCase):
             handoffs = setup.entra_handoffs(self.args, self.config, interactive=False)
         self.assertEqual(handoffs, [setup.consent_handoff(self.config)])
         self.assertIn('Your account could not approve them.\n  Still to do - Admin consent', out.getvalue())
+        printed = out.getvalue()
+        self.assertIn('Still to do - Admin consent: employees cannot sign in until', printed)
+        self.assertIn('Application Administrator', printed)
+        for app_id in (TENANT, SUB):
+            self.assertIn(setup.permissions_page(app_id), printed)
 
     def test_the_preview_warns_an_operator_who_cannot_approve_sign_in(self):
         self.config.update(coreApiClientId='', mobileClientId='')
@@ -696,7 +696,7 @@ class GuidedTests(unittest.TestCase):
         with self.steps(), patch.object(setup, 'can_approve_sign_in', return_value=False), \
              contextlib.redirect_stdout(io.StringIO()) as out:
             setup.guided(self.args, self.directory)
-        self.assertIn('Your account cannot approve them for your organization', out.getvalue())
+        self.assertIn('your account is none of these. If approval fails', out.getvalue())
 
     def test_an_approval_during_the_install_clears_the_step_before_the_summary(self):
         self.write_state('identity_configured')

@@ -46,8 +46,9 @@ PORTAL_SECRET_LABEL = 'Mentra admin portal'
 PORTAL_CALLBACK = '/interaction/callback/workforce'
 PORTAL_STEP = 'Admin portal sign-in'
 SIGN_IN_SCOPES = ('openid', 'email', 'profile')
-# Directory roles (by role template ID) that can grant the sign-in apps' delegated
-# permissions for the whole organization.
+# Built-in directory roles (by role template ID) that can grant the sign-in apps'
+# delegated permissions for the whole organization. A custom role can too, so the
+# grant itself, not this list, decides.
 CONSENT_ROLES = ('62e90394-69f5-4237-9190-012177145e10',  # Global Administrator
                  'e8611ab8-c189-46e8-94e1-60213ab1f814',  # Privileged Role Administrator
                  '158c047a-c907-4556-b7ef-446551a6b5f7',  # Cloud Application Administrator
@@ -1676,7 +1677,7 @@ CONSENT_STEP = 'Admin consent'
 
 
 def can_approve_sign_in(config):
-    """Whether the signed-in operator holds a role that can grant the sign-in apps' consent; None if unknown."""
+    """Whether the signed-in operator holds a built-in role that can grant the sign-in apps' consent; None if unknown."""
     try:
         # An OData cast is an advanced query: Graph requires $count and eventual consistency for it.
         roles = graph(config, 'GET', 'me/transitiveMemberOf/microsoft.graph.directoryRole?$count=true&$select=roleTemplateId',
@@ -1703,9 +1704,8 @@ def ensure_admin_consent(config, consented, interactive):
     """Grants tenant-wide consent for the sign-in apps when it is missing; returns the step left, if any."""
     if consented:
         return []
-    # An operator without an approving role is handed off at once instead of waiting on a refused grant.
-    if can_approve_sign_in(config) is not False and confirm(
-            'Grant tenant-wide consent for the Mentra sign-in apps now? (needs an Entra admin role)', True, interactive):
+    # Always tried: a custom Entra role can also grant consent, and Entra refuses everyone else at once.
+    if confirm('Grant tenant-wide consent for the Mentra sign-in apps now? (needs an Entra admin role)', True, interactive):
         print('  Approving the sign-in apps for your organization...', flush=True)
         try:
             # Success means consent was granted; Graph can take a while to list it.
@@ -2407,8 +2407,9 @@ def guided(args, directory):
             print(f"Setup also creates two Microsoft Entra app registrations for employee sign-in: "
                   f"\"{app_name(config, 'Core')}\" and \"{app_name(config, 'Mobile')}\".")
             if can_approve_sign_in(config) is False:
-                print(f'Your account cannot approve them for your organization: that takes an Entra {CONSENT_APPROVERS}. '
-                      'Right after creating them, setup prints a message to send to one; the install continues meanwhile.')
+                print(f'Approving them for your organization usually takes an Entra {CONSENT_APPROVERS}, '
+                      'and your account is none of these. If approval fails, setup prints a message to send to one '
+                      'right after creating them; the install continues meanwhile.')
         print('These resources incur Azure charges; this profile uses authenticated public endpoints.')
         if not confirm('Create these resources now? This takes about 20 minutes.', True, interactive):
             if checks['resourceGroup'] == 'new':

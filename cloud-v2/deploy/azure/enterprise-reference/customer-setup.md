@@ -69,7 +69,7 @@ interrupted install, finishes after a handoff, or upgrades. Guided setup:
    `rg-<deployment>` is not someone else's resource group.
 3. Creates the empty resource group and prints Azure's what-if preview,
    naming the Entra apps `<Company> Mentra Core (<deployment name>)` and `<Company> Mentra Mobile (<deployment name>)`.
-   When the operator's account cannot consent to them, it says so here.
+   When the operator holds no built-in role that can consent to them, it says so here.
    It asks one confirmation. Declining deletes the empty group, so nothing is
    created.
 4. Only after that confirmation, creates the two Entra apps
