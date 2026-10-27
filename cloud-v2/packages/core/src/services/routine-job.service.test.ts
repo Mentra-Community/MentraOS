@@ -463,6 +463,48 @@ test('descriptor/capability and target fences reject incompatible assignments be
   f.lane.resources.find(resource => resource.kind === 'network')!.capabilities=[];f.lane.descriptorRevision=routineLaneDescriptorRevision(f.lane);
   await expect(f.service.bind(selection.requestId,'mini',{...input,descriptorRevision:f.lane.descriptorRevision})).rejects.toThrow('compatible');expect(f.row?.fleetBinding).toBeUndefined();
 });
+test('bind checklist names the pre-reservation refusal without evaluating later checks', async () => {
+  const f = fixture(), prepared = await f.prepare(), before = structuredClone(f.row);
+  const reserve = spyOn(f.rows, 'reserveResources'), bind = spyOn(f.rows, 'bind');
+  try {
+    const error = await f.service.bind(selection.requestId, 'mini', {inputSha256: prepared.inputSha256, laneId: f.lane.id,
+      descriptorRevision: 'f'.repeat(64), actionsRunId: '10', actionsJobId: '20'}).catch(error => error);
+    expect(error.diagnostics).toMatchObject({stage: 'before-reservation', hostId: 'mini', laneId: 'android'});
+    expect(error.diagnostics.conditions.filter((condition: {status: string}) => condition.status === 'failed'))
+      .toEqual([{id: 'reported-descriptor', status: 'failed', expected: `Runner descriptor: ${'f'.repeat(64)}`, observed: f.lane.descriptorRevision}]);
+    expect(error.diagnostics.conditions.slice(-3).map((condition: {status: string}) => condition.status)).toEqual(['not-evaluated', 'not-evaluated', 'not-evaluated']);
+    expect(reserve).not.toHaveBeenCalled(); expect(bind).not.toHaveBeenCalled(); expect(f.row).toEqual(before);
+  } finally {reserve.mockRestore(); bind.mockRestore();}
+});
+test('bind checklist separates a changed post-reservation lane while retaining original custody', async () => {
+  const f = fixture(), prepared = await f.prepare(), hosts = (f.service as any).hosts;
+  const original = await hosts.get('mini'), changed = structuredClone(original); changed.lanes[0].dispatchMode = 'manual';
+  const get = spyOn(hosts, 'get').mockResolvedValueOnce(original).mockResolvedValueOnce(changed),
+    reserve = spyOn(f.rows, 'reserveResources'), bind = spyOn(f.rows, 'bind'), claim = structuredClone(f.row!.fleetResourceReservation);
+  try {
+    const error = await f.service.bind(selection.requestId, 'mini', {inputSha256: prepared.inputSha256, laneId: f.lane.id,
+      descriptorRevision: f.lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'}).catch(error => error);
+    expect(error.diagnostics).toMatchObject({stage: 'after-reservation'});
+    expect(error.diagnostics.conditions.find((condition: {status: string}) => condition.status === 'failed'))
+      .toMatchObject({id: 'lane-automatic', observed: 'manual'});
+    expect(reserve).toHaveBeenCalledTimes(1); expect(get).toHaveBeenCalledTimes(2); expect(bind).not.toHaveBeenCalled();
+    expect(f.row!.fleetResourceReservation).toEqual(claim); expect(f.row!.fleetBinding).toBeUndefined();
+  } finally {get.mockRestore(); reserve.mockRestore(); bind.mockRestore();}
+});
+test('bind checklist reuses the exact resource blocker rather than treating own claims as unavailable', async () => {
+  for (const foreign of [false, true]) {
+    const f = fixture(), prepared = await f.prepare(), host = await (f.service as any).hosts.get('mini');
+    host.authorityReservations = [{...f.row!.fleetResourceReservation!, ...(foreign ? {requestId: 'foreign-original', fleetInputSha256: 'f'.repeat(64)} : {})}];
+    f.offer([host]);
+    const result = await f.service.bind(selection.requestId, 'mini', {inputSha256: prepared.inputSha256, laneId: f.lane.id,
+      descriptorRevision: f.lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'}).catch(error => error);
+    if (foreign) {
+      expect(result.diagnostics.conditions.find((condition: {status: string}) => condition.status === 'failed'))
+        .toMatchObject({id: 'resource-state', observed: {code: 'lane-resource-owned', laneId: 'android'}});
+      expect(f.row!.fleetBinding).toBeUndefined(); expect(host.authorityReservations[0].requestId).toBe('foreign-original');
+    } else {expect(result.execute).toBe(true); expect(f.row!.fleetBinding?.hostId).toBe('mini');}
+  }
+});
 test('phone backend readiness capability cannot be supplied by the host uplink or an older phone provider', async () => {
   const f = fixture({...definition, resourceRequirements: definition.resourceRequirements.map(resource =>
     resource.kind === 'phone' ? {...resource, capabilities: ['backend-connectivity']} : resource)});

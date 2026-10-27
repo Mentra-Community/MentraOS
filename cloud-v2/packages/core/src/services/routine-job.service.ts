@@ -29,7 +29,7 @@ import {FrameworkResultService} from './framework-result.service';
 import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type RoutineActionsCancellation, type RoutineJobActions} from './routine-job-actions.service';
 import {TestRunError} from './test-result-error';
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
-import {backendRecorderClaimMatches, requiresBackendConnectivity, requiresSerializedAndroidPreparation, resourceReservationRepository, routineResourcesAvailable, ResourceReservationsService, type ResourceReservationHost} from './resource-reservations.service';
+import {backendRecorderClaimMatches, requiresBackendConnectivity, requiresSerializedAndroidPreparation, resourceReservationRepository, routineResourceBlocker, routineResourcesAvailable, ResourceReservationsService, type ResourceReservationHost} from './resource-reservations.service';
 import {resourceLaneBlocker, resourceCandidateBlocker, requiredResourceBlocker} from './resource-readiness';
 import {routineLaneRequirementBlocker, type RoutineLaneEligibilityContext} from './routine-lane-eligibility';
 import {dependencyWaitingReason, recorderWait, RESOURCE_ADMISSION_WAIT, sharedResourceWaitingReason, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait';
@@ -40,6 +40,19 @@ const isDeepIdentity = (left: unknown, right: unknown) => requestInputDigest(lef
 export type SelectedRoutineLane = {requestId: string; hostId: string; laneId: string};
 export type RoutinePreparationPhase = (phase: string, counts?: {hostCount?: number; hostIndex?: number; claimCount?: number; attempt?: number}) => void;
 type ObservationPhase = (value: 'request' | 'delivery' | 'cancellation' | 'result' | 'projection') => void;
+type LaneAcceptanceCondition = {id: string; status: 'passed' | 'failed' | 'not-evaluated'; expected: string;
+  observed?: string | number | boolean | null | {code: string; resourceId?: string; laneId?: string; resourceKind?: string}};
+export class RoutineLaneAcceptanceConflict extends TestRequestConflict {
+  constructor(readonly diagnostics: {stage: 'before-reservation' | 'after-reservation'; hostId: string; laneId: string;
+    conditions: LaneAcceptanceCondition[]}) {
+    const failed = diagnostics.conditions.find(condition => condition.status === 'failed');
+    // The installed worker accepts only the existing error/message envelope.
+    // Keep the human checklist there; structured conditions use its current logger.
+    super(`Selected host has no current accepting compatible lane descriptor. ${diagnostics.stage}: ${failed?.id}; ` +
+      `expected ${failed?.expected}; observed ${JSON.stringify(failed?.observed)}. Checks: ` +
+      diagnostics.conditions.map(condition => `${condition.id}=${condition.status}`).join(', '));
+  }
+}
 
 const recorderReturnLogger = createLogger('core').child({service: 'recorder-return'});
 
@@ -1922,28 +1935,61 @@ export class RoutineJobService {
     if (row.fleetResourceReservation && (row.fleetResourceReservation.hostId !== hostId || row.fleetResourceReservation.laneId !== input.laneId))
       throw new TestRequestConflict('Device runner differs from its reserved recorder capacity');
     const requirements = recorderCapacityRequirements(row.fleetPreparation);
-    const accepting = (host: Awaited<ReturnType<TestHostStateService['get']>>) => {
+    const accepting = (host: Awaited<ReturnType<TestHostStateService['get']>>, stage: 'before-reservation' | 'after-reservation') => {
       const lane = host?.lanes.find(lane => lane.id === input.laneId);
-      return host?.hostId === hostId && Number.isFinite(Date.parse(host.receivedAt)) && Date.parse(host.receivedAt) <= this.now() &&
-        this.now() - Date.parse(host.receivedAt) <= 120_000 && lane?.dispatchMode === 'automatic' && lane.state === 'idle' &&
-        (!row.fleetTarget?.hostId || row.fleetTarget.hostId === hostId) && (!row.fleetTarget?.laneId || row.fleetTarget.laneId === input.laneId) &&
-        lane.descriptorRevision === input.descriptorRevision && routineLaneDescriptorRevision(lane) === input.descriptorRevision &&
-        routineResourcesAvailable({hostId: host.hostId, incarnation: host.incarnation!, incarnationGeneration: host.incarnationGeneration!,
-          sequence: host.sequence!, receivedAt: new Date(host.receivedAt), snapshot: host, laneControls: host.resourceControlRecords, resourceReservations: host.authorityReservations,
-          resourceLifecycleCursor: host.resourceLifecycleCursor}, row, input.laneId, this.now()) &&
-        compatibleStructuralRoutineLane(requirements, {...lane, resources: lane.resources.map(resource => resource.storage ? {...resource,
+      const conditions: LaneAcceptanceCondition[] = [
+        ['enrolled-host', 'The current enrolled report belongs to the authenticated host.'],
+        ['report-timestamp', 'The accepted report timestamp is valid.'],
+        ['report-not-future', 'The accepted report is not from the future.'],
+        ['report-fresh', 'The accepted report is at most 120 seconds old.'],
+        ['lane-automatic', 'The selected lane advertises automatic dispatch.'],
+        ['lane-idle', 'The selected lane advertises idle state.'],
+        ['selected-host', 'The original target permits this host.'],
+        ['selected-lane', 'The original target permits this lane.'],
+        ['reported-descriptor', `Runner descriptor: ${input.descriptorRevision}`],
+        ['computed-descriptor', `Runner descriptor: ${input.descriptorRevision}`],
+        ['resource-state', 'Current original resource readiness and custody permit this request.'],
+        ['job-compatibility', 'The current lane supports the frozen job requirements.'],
+      ].map(([id, expected]) => ({id: id!, expected: expected!, status: 'not-evaluated'}));
+      let index = 0;
+      const check = (passed: boolean, observed: LaneAcceptanceCondition['observed']) => {
+        Object.assign(conditions[index++]!, {status: passed ? 'passed' : 'failed', observed}); return passed;
+      };
+      // Keep the original short-circuit order. Later conditions remain unknown,
+      // and the same pure blocker computes both the verdict and its diagnostic.
+      let blocker: ReturnType<typeof routineResourceBlocker> | ReturnType<typeof routineLaneRequirementBlocker> = undefined;
+      let descriptor: string | undefined;
+      const resources = () => {
+        blocker = routineResourceBlocker({hostId: host!.hostId, incarnation: host!.incarnation!, incarnationGeneration: host!.incarnationGeneration!,
+          sequence: host!.sequence!, receivedAt: new Date(host!.receivedAt), snapshot: host!, laneControls: host!.resourceControlRecords,
+          resourceReservations: host!.authorityReservations, resourceLifecycleCursor: host!.resourceLifecycleCursor}, row, input.laneId, this.now());
+        return blocker === undefined;
+      };
+      const compatible = () => {
+        blocker = routineLaneRequirementBlocker(requirements, {...lane!, resources: lane!.resources.map(resource => resource.storage ? {...resource,
           storage: {...resource.storage, reservations: resource.storage.reservations.filter(value =>
             value.requestId !== jobId || value.inputSha256 !== row.inputSha256)}} : resource)},
-        routineLaneContext(host, row.fleetSelection.build, this.now()), this.now());
+          routineLaneContext(host!, row.fleetSelection.build, this.now()), this.now(), false);
+        return blocker === undefined;
+      };
+      if (!(check(host?.hostId === hostId, host?.hostId ?? null) &&
+        check(Number.isFinite(Date.parse(host!.receivedAt)), host!.receivedAt) &&
+        check(Date.parse(host!.receivedAt) <= this.now(), host!.receivedAt) &&
+        check(this.now() - Date.parse(host!.receivedAt) <= 120_000, host!.receivedAt) &&
+        check(lane?.dispatchMode === 'automatic', lane?.dispatchMode ?? null) && check(lane!.state === 'idle', lane!.state) &&
+        check(!row.fleetTarget?.hostId || row.fleetTarget.hostId === hostId, row.fleetTarget?.hostId ?? null) &&
+        check(!row.fleetTarget?.laneId || row.fleetTarget.laneId === input.laneId, row.fleetTarget?.laneId ?? null) &&
+        check(lane!.descriptorRevision === input.descriptorRevision, lane!.descriptorRevision ?? null) &&
+        check((descriptor = routineLaneDescriptorRevision(lane!)) === input.descriptorRevision, descriptor) &&
+        check(resources(), blocker ?? null) && check(compatible(), blocker ?? null)))
+        throw new RoutineLaneAcceptanceConflict({stage, hostId, laneId: input.laneId, conditions});
     };
-    if (!accepting(await this.hosts.get(hostId)))
-      throw new TestRequestConflict('Selected host has no current accepting compatible lane descriptor');
+    accepting(await this.hosts.get(hostId), 'before-reservation');
     const reserved = await this.rows.reserveResources?.(jobId, input.inputSha256, hostId, input.laneId, new Date(this.now()));
     if (!reserved)
       throw new TestRequestConflict('Reserved recorder disk capacity is no longer available');
     row = reserved;
-    if (!accepting(await this.hosts.get(hostId)))
-      throw new TestRequestConflict('Selected host has no current accepting compatible lane descriptor');
+    accepting(await this.hosts.get(hostId), 'after-reservation');
     const binding: RoutineJobBinding = {jobId, requestId: jobId, hostId, laneId: input.laneId,
       descriptorRevision: input.descriptorRevision, actionsJobId: input.actionsJobId, actionsRunId: input.actionsRunId, boundAt: new Date(this.now()).toISOString()};
     const intent = routineDispatchIntentSchema.parse({...row.fleetSelection, routineSource: row.fleetPreparation!.routineSource, laneId: input.laneId});
