@@ -26,8 +26,9 @@ app stops setup with `Entra already has an app registration named ... that this
 setup did not create`. Rename or delete that app, or configure the existing apps
 by client ID as shown below.
 
-After the apps exist, setup offers tenant-wide consent and asks which employees
-or groups can sign in (`--employees` for automation). Before deploying Core it
+After the apps exist, setup offers tenant-wide consent (or prints the
+[consent](#consent) message for an administrator) and asks which employees or
+groups can sign in (`--employees` for automation). Before deploying Core it
 adds a client secret to the Core app, and once Core has its address it registers
 the admin portal's redirect URI; see [admin portal sign-in](#admin-portal-sign-in).
 
@@ -57,15 +58,26 @@ in the deployment's tenant.
 
 ## Consent
 
-Tenant-wide consent for the Mobile app's delegated permissions (Core
+Employees cannot sign in until the organization consents to both apps. That is
+tenant-wide consent for the Mobile app's delegated permissions (Core
 `mentra.session`, ACS `Teams.ManageCalls` and `Teams.ManageChats`) and the Core
-app's sign-in permissions (Microsoft Graph `openid`, `email` and `profile`) needs
-a Global Administrator, Privileged Role Administrator or Cloud Application
-Administrator. Setup grants both when the operator has the role. Otherwise the
-summary shows a `Still to do - Admin consent` line with both apps' API
-permissions pages, where the administrator selects **Grant admin consent**.
-Setup rechecks consent on every run and keeps showing the line until it is
-granted. The meetings app's Microsoft Graph application permission
+app's sign-in permissions (Microsoft Graph `openid`, `email` and `profile`). It
+needs a Global Administrator, Privileged Role Administrator, Cloud Application
+Administrator or Application Administrator.
+
+Setup grants it when the operator holds one of these roles. Otherwise:
+
+- The Azure preview says so before anything is created.
+- Right after creating the apps, setup prints a `Still to do - Admin consent`
+  message for the operator to forward. It links both apps' API permissions
+  pages, where the administrator selects **Grant admin consent**, and the
+  install continues meanwhile.
+- The summary rechecks consent. While it is missing, the summary says employees
+  cannot sign in yet, repeats the message, and an interactive run then waits for
+  the approval (Ctrl+C stops waiting).
+
+Consent takes effect at once; nothing is redeployed. Setup rechecks it on every
+run and keeps the line until it is granted. The meetings app's Microsoft Graph application permission
 (`OnlineMeetings.ReadWrite.All`) needs a Global Administrator or Privileged
 Role Administrator; see [meeting creation](#meeting-creation).
 
