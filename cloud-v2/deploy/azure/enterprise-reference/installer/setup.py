@@ -1390,14 +1390,14 @@ def graph_token(tenant):
     return token
 
 
-def graph(config, method, path, body=None, missing_ok=False):
+def graph(config, method, path, body=None, missing_ok=False, headers=None):
     import time
     url = path if path.startswith('https://') else 'https://graph.microsoft.com/v1.0/' + path
     data = None if body is None else json.dumps(body).encode()
     for attempt in range(GRAPH_ATTEMPTS):
         request = urllib.request.Request(url, data=data, method=method,
                                          headers={'Authorization': 'Bearer ' + graph_token(config['tenantId']),
-                                                  'Content-Type': 'application/json'})
+                                                  'Content-Type': 'application/json', **(headers or {})})
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 raw = response.read()
@@ -1678,7 +1678,9 @@ CONSENT_STEP = 'Admin consent'
 def can_approve_sign_in(config):
     """Whether the signed-in operator holds a role that can grant the sign-in apps' consent; None if unknown."""
     try:
-        roles = graph(config, 'GET', 'me/transitiveMemberOf/microsoft.graph.directoryRole?$select=roleTemplateId')['value']
+        # An OData cast is an advanced query: Graph requires $count and eventual consistency for it.
+        roles = graph(config, 'GET', 'me/transitiveMemberOf/microsoft.graph.directoryRole?$count=true&$select=roleTemplateId',
+                      headers={'ConsistencyLevel': 'eventual'})['value']
     except (GraphError, KeyError, TypeError):
         # A service principal has no "me"; the grant itself is then the test.
         return None

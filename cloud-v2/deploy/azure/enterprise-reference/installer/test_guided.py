@@ -656,6 +656,18 @@ class GuidedTests(unittest.TestCase):
         with patch.object(setup, 'graph', side_effect=setup.GraphError(400)):
             self.assertIsNone(setup.can_approve_sign_in(self.config))
 
+    def test_the_role_query_is_sent_as_an_advanced_query(self):
+        reply = unittest.mock.MagicMock()
+        reply.__enter__.return_value.read.return_value = b'{"value": []}'
+        with patch.object(setup, 'graph_token', return_value='t'), \
+             patch.object(setup.urllib.request, 'urlopen', return_value=reply) as urlopen:
+            self.assertIs(setup.can_approve_sign_in(self.config), False)
+        request = urlopen.call_args.args[0]
+        # Graph documents $count and ConsistencyLevel as required for an OData cast.
+        self.assertIn('/me/transitiveMemberOf/microsoft.graph.directoryRole?$count=true', request.full_url)
+        self.assertEqual(request.get_header('Consistencylevel'), 'eventual')
+        self.assertEqual(request.get_header('Authorization'), 'Bearer t')
+
     def test_an_operator_who_cannot_approve_gets_the_message_at_once(self):
         with patch.object(setup, 'mobile_access', return_value={'servicePrincipalId': 'sp-id', 'consent': False, 'assigned': True}), \
              patch.object(setup, 'can_approve_sign_in', return_value=False), \
