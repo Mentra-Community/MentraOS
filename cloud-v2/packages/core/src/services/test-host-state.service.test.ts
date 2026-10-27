@@ -100,7 +100,7 @@ test('routing reads only fresh current offers and preserves permission and physi
   }
 })
 
-function fixture() {
+function fixture(onAccepted?: (host: unknown) => Promise<unknown>) {
   let row: Record<string, any> | null = null,
     now = Date.parse("2026-10-03T01:00:00Z"),
     writes = 0,
@@ -155,7 +155,7 @@ function fixture() {
       },
     }; return query}) as any)
   return {
-    service: new TestHostStateService(() => now),
+    service: new TestHostStateService(() => now, onAccepted as never),
     advance: (ms: number) => (now += ms),
     writes: () => writes,
     reads: () => reads,
@@ -1010,4 +1010,24 @@ for (const includeHistory of [false, true]) test(`selected host read projects on
       'snapshot.laneControls': 1, 'snapshot.resourceReservations': 1, 'snapshot.frameworkBinding': 1,
       'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1}), _id: 0}]);
  } finally {find.mockRestore();}
+});
+
+for (const unavailable of [false, true]) test(`accepted idle report schedules current recorder cleanup without another host read (unavailable=${unavailable})`, async () => {
+  const hosts: any[] = [], f = fixture(async host => {hosts.push(host); if (unavailable) throw Error('cleanup unavailable')});
+  try {
+    await f.service.report(snapshot(1, 1), 'mini');
+    expect(hosts).toHaveLength(0);
+    const claim = {id: 'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab', requestId: 'original', fleetInputSha256: 'c'.repeat(64),
+      hostId: 'mini', laneId: 'mac', poolId: 'mini:disk:1', minimumAvailableBytes: 3 * 1024 ** 3, reservedAt: '2026-10-03T01:00:00Z'};
+    Object.assign(f.row(), {resourceReservations: [claim], resourceReservationVersion: 7, laneControlVersion: 4});
+    f.advance(1000); const newer = snapshot(1, 2, '2026-10-03T01:00:01Z'), reads = f.reads();
+    expect(await f.service.report(newer, 'mini')).toEqual({hostId: 'mini', incarnation: 'boot-1', incarnationGeneration: 1, sequence: 2});
+    await Promise.resolve();
+    expect(f.reads() - reads).toBe(1); expect(hosts).toHaveLength(1);
+    expect(hosts[0]).toMatchObject({hostId: 'mini', incarnationGeneration: 1, sequence: 2,
+      resourceReservations: [claim], resourceReservationVersion: 7, laneControlVersion: 4, snapshot: newer});
+    expect(hosts[0]).not.toHaveProperty('frameworkHistory');
+    await expect(f.service.report(newer, 'foreign')).rejects.toThrow('authenticated controller');
+    expect(hosts).toHaveLength(1);
+  } finally {f.stop()}
 });

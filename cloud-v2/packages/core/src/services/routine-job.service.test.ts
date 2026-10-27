@@ -1765,3 +1765,53 @@ for(const laneKind of ['mac','android','serialized-android'] as const)for(const 
   }finally{TestRequestModel.collection.findOneAndUpdate=write;fleetClock.mockRestore();clock.mockRestore()}
  });
 });
+
+test('verified clean completion schedules only its original recorder cleanup without delaying the immutable ACK', async () => {
+  const f = fixture(), prepared = await f.prepare(), input = {inputSha256: prepared.inputSha256, laneId: f.lane.id,
+    descriptorRevision: f.lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'};
+  await f.service.bind(selection.requestId, 'mini', input); f.accepted('c'.repeat(64));
+  const calls: unknown[][] = [], completion = {inputSha256: 'c'.repeat(64), disposition: 'clean' as const, completedAt: '2026-10-08T00:01:00Z'};
+  f.rows.reconcileRecorderHost = async (...args) => {calls.push(args); throw Error('cleanup unavailable')};
+  await expect(f.service.complete(selection.requestId, 'foreign', completion)).rejects.toThrow('host');
+  expect(calls).toHaveLength(0);
+  expect(await f.service.complete(selection.requestId, 'mini', completion)).toEqual(completion);
+  await Promise.resolve(); expect(calls).toHaveLength(1);
+  expect(calls[0]?.[0]).toBe('mini'); expect(calls[0]?.[5]).toBe(selection.requestId);
+  expect(f.row!.dispatchCompletion).toEqual(completion);
+  expect(await f.service.complete(selection.requestId, 'mini', completion)).toEqual(completion);
+  await Promise.resolve(); expect(calls).toHaveLength(2);
+  await expect(f.service.complete(selection.requestId, 'mini', {...completion, inputSha256: 'e'.repeat(64)})).rejects.toThrow('exact executable input');
+  expect(calls).toHaveLength(2);
+});
+
+test('accepted current recorder snapshot returns only the completed original and keeps foreign byte custody', async () => {
+  await withLocalResources(async (_f, hosts, counters, pastRows) => {
+    const h = hosts.get('mini'), at = h.receivedAt.toISOString(), claim = {id: 'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',
+      requestId: 'original', fleetInputSha256: 'c'.repeat(64), hostId: 'mini', laneId: 'android', poolId: 'mini:disk:1', minimumAvailableBytes: 3 * 1024 ** 3, reservedAt: at},
+      foreign = {...claim, id: '8b224b98-f1f6-4e91-8fc8-2d6fb2f3638b', requestId: 'foreign'};
+    h.resourceReservations = [claim, foreign];
+    pastRows.set(claim.requestId, {requestId: claim.requestId, fleetInputSha256: claim.fleetInputSha256, inputSha256: 'd'.repeat(64),
+      dispatchCompletion: {inputSha256: 'd'.repeat(64), disposition: 'clean', completedAt: at}} as StoredRoutineJob);
+    const get = spyOn(resourceReservationRepository, 'get');
+    try {
+      await routineJobRepository.reconcileRecorderHost!('mini', h.receivedAt, undefined, undefined, structuredClone(h), claim.requestId);
+      expect(get).toHaveBeenCalledTimes(0); expect(h.resourceReservations).toEqual([foreign]);
+    } finally {get.mockRestore()}
+  });
+});
+
+test('recorder-only recovery selects current authority without either framework history copy', async () => {
+  const projections: any[] = [], reads: any[] = [];
+  const find = spyOn(TestHostStateModel, 'findOne').mockImplementation(((filter: unknown) => {
+    const query = {select(value: unknown) {projections.push(value); return query}, read(value: unknown) {reads.push(value); return query},
+      readConcern(value: unknown) {reads.push(value); return query}, setOptions(value: unknown) {reads.push(value); return query}, async lean() {return null}};
+    return query;
+  }) as never);
+  try {
+    expect(await resourceReservationRepository.get('mini', {frameworkHistory: false})).toBeNull();
+    expect(projections[0]).toHaveProperty('resourceReservations', 1); expect(projections[0]).toHaveProperty('resourceReservationVersion', 1);
+    expect(projections[0]['snapshot.lanes.resources']).toBe(1); expect(projections[0]).toHaveProperty('sequence', 1);
+    for (const key of ['snapshot', 'frameworkHistory', 'frameworkStopReceipts', 'snapshot.frameworkHistory']) expect(projections[0]).not.toHaveProperty(key);
+    expect(reads).toEqual(['primary', 'majority', {timeoutMS: 5000}]);
+  } finally {find.mockRestore()}
+});

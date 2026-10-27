@@ -1,3 +1,4 @@
+import {createLogger} from '@mentra/cloud-shared/logger';
 import {TestHostStateModel} from '../models/test-host-state.model';
 import {unclaimedRoutineQualificationSchema, type UnclaimedRoutineQualification} from '../types/routine-job.types';
 import {hostResourceReservationsSchema, isExclusiveHostReservation, fleetResourceAdmissionSchema} from '../types/resource-reservations.types';
@@ -28,7 +29,7 @@ import {FrameworkResultService} from './framework-result.service';
 import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type RoutineActionsCancellation, type RoutineJobActions} from './routine-job-actions.service';
 import {TestRunError} from './test-result-error';
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
-import {backendRecorderClaimMatches, requiresBackendConnectivity, requiresSerializedAndroidPreparation, resourceReservationRepository, routineResourcesAvailable, ResourceReservationsService} from './resource-reservations.service';
+import {backendRecorderClaimMatches, requiresBackendConnectivity, requiresSerializedAndroidPreparation, resourceReservationRepository, routineResourcesAvailable, ResourceReservationsService, type ResourceReservationHost} from './resource-reservations.service';
 import {resourceLaneBlocker, resourceCandidateBlocker, requiredResourceBlocker} from './resource-readiness';
 import {routineLaneRequirementBlocker, type RoutineLaneEligibilityContext} from './routine-lane-eligibility';
 import {dependencyWaitingReason, recorderWait, RESOURCE_ADMISSION_WAIT, sharedResourceWaitingReason, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait';
@@ -40,6 +41,8 @@ export type SelectedRoutineLane = {requestId: string; hostId: string; laneId: st
 export type RoutinePreparationPhase = (phase: string, counts?: {hostCount?: number; hostIndex?: number; claimCount?: number; attempt?: number}) => void;
 type ObservationPhase = (value: 'request' | 'delivery' | 'cancellation' | 'result' | 'projection') => void;
 
+const recorderReturnLogger = createLogger('core').child({service: 'recorder-return'});
+
 /** These are fields on the existing test_requests record, never a separate scheduling queue. */
 export interface RoutineJobRepository {
   get(jobId: string, timeoutMS?: number): Promise<StoredRoutineJob | null>;
@@ -49,7 +52,7 @@ export interface RoutineJobRepository {
   preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
   selectedLanes?(hostIds: string[]): Promise<SelectedRoutineLane[]>;
   recorderClaims?(jobId: string): Promise<RecorderHostReservation[]>;
-  reconcileRecorderHost?(hostId: string, now: Date, onPhase?: RoutinePreparationPhase, onReturned?: () => void): Promise<boolean>;
+  reconcileRecorderHost?(hostId: string, now: Date, onPhase?: RoutinePreparationPhase, onReturned?: () => void, acceptedHost?: ResourceReservationHost, requestId?: string): Promise<boolean>;
   checkpointBackendRecorder?(row: StoredRoutineJob, claim: RecorderHostReservation, now: Date): Promise<StoredRoutineJob | null>;
   reconcileBackendRecorderCancellation?(jobId: string, now: Date): Promise<void>;
   reserveResources?(jobId: string, inputSha256: string, hostId: string, laneId: string, now: Date,
@@ -77,16 +80,16 @@ export const routineJobRepository: RoutineJobRepository = {
   async completionRequest(requestId) {return await TestRequestModel.findOne({requestId})
     .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob | null;},
   async recorderClaims(requestId) {return resourceReservationRepository.recorderClaims!(requestId);},
-  async reconcileRecorderHost(hostId, now, onPhase, onReturned) {
+  async reconcileRecorderHost(hostId, now, onPhase, onReturned, acceptedHost, requestId) {
     // Return reconciliation precedes readiness routing. Raw claims remain custody
     // until the original request and a later fresh same-pool offer prove return.
     for (let attempt = 0; attempt < 3; attempt++) {
       onPhase?.('recorder-host-read', {attempt});
-      const host = await resourceReservationRepository.get(hostId), checkedAt = Date.now();
+      const host = attempt === 0 && acceptedHost?.hostId === hostId ? acceptedHost : await resourceReservationRepository.get(hostId, {frameworkHistory: false}), checkedAt = Date.now();
       if (!host || host.hostId !== hostId || !freshRoutineHost(host.receivedAt, checkedAt) ||
         !freshRoutineHost(host.snapshot.observedAt, checkedAt) || Date.parse(host.snapshot.observedAt) > host.receivedAt.getTime()) return false;
       const all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []),
-        claims = all.filter((claim): claim is RecorderHostReservation => !isExclusiveHostReservation(claim));
+        claims = all.filter((claim): claim is RecorderHostReservation => !isExclusiveHostReservation(claim) && (!requestId || claim.requestId === requestId));
       if (!claims.length) return true;
       onPhase?.('recorder-original-request-read', {attempt, claimCount: claims.length});
       const requests = await TestRequestModel.collection.find({requestId: {$in: claims.map(claim => claim.requestId)}},
@@ -1998,6 +2001,10 @@ export class RoutineJobService {
     }
     if (requestInputDigest(saved.dispatchCompletion) !== requestInputDigest(input))
       throw new TestRequestConflict('Dispatch completion changed its original custody disposition');
+    // Cleanup follows the exact durable completion; a failed return never changes its ACK.
+    if (saved.fleetResourceReservation && this.rows.reconcileRecorderHost) void this.rows.reconcileRecorderHost(
+      hostId, new Date(this.now()), undefined, undefined, undefined, jobId).catch(() =>
+      recorderReturnLogger.warn({hostId, requestId: jobId}, 'Recorder return remains pending after completion'));
     if (!publicationFailure) return saved.dispatchCompletion;
     if (saved.publicationFailure && requestInputDigest(saved.publicationFailure) !== requestInputDigest(publicationFailure))
       throw new TestRequestConflict('Publication failure changed its original frozen receipt');

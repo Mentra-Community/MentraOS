@@ -1,3 +1,4 @@
+import {routineJobRepository} from '../../services/routine-job.service'
 import {LaneControlsService} from '../../services/lane-controls.service'
 import {Hono} from "hono"
 import {ZodError} from "zod"
@@ -16,7 +17,8 @@ function invalidStateIssues(error: ZodError) {
   return error.issues.slice(0, 10).map(issue => ({code: issue.code,
     path: issue.path.slice(0, 16).map(part => typeof part === 'number' ? part : diagnosticFields.has(part) ? part : '[field]')}))
 }
-export function createTestHostStateApi(service = new TestHostStateService(), credentials?: () => string | undefined,
+export function createTestHostStateApi(service = new TestHostStateService(Date.now, host => routineJobRepository.reconcileRecorderHost!(
+  host.hostId, new Date(), undefined, undefined, host)), credentials?: () => string | undefined,
   controls = new LaneControlsService(), resources = new ResourceReservationsService()) {
   const app = new Hono<TestHostEnv>()
   app.use("*", createTestHostAuth(credentials))

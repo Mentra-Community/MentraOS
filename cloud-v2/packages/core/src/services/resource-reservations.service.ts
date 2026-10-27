@@ -97,7 +97,7 @@ function dependencyEnrolled(host: ResourceReservationHost, dependency: Exclusive
 }
 export type ExclusiveResourceBlocker = {resourceId: string; hostId: string; laneId?: string; owner: ExclusiveHostReservation['owner']}
 export interface ResourceReservationRepository {
-  get(hostId: string): Promise<ResourceReservationHost | null>
+  get(hostId: string, options?: {frameworkHistory?: boolean}): Promise<ResourceReservationHost | null>
   replace(host: ResourceReservationHost, claims: HostResourceReservation[]): Promise<boolean>
   candidateRequest?(hostId: string, targetInputSha256: string): Promise<StoredRoutineJob | null>
   completedCandidateRequest?(hostId: string, targetInputSha256: string): Promise<StoredRoutineJob | null>
@@ -156,14 +156,14 @@ function localBackendIntentMatches(host: ResourceReservationHost, intent: Exclus
     isDeepStrictEqual(targets[0]!.local, local) && isDeepStrictEqual(targets[0]!.acceptedBinding, intent.prerequisite!.binding);
 }
 export const resourceReservationRepository: ResourceReservationRepository = {
-  async get(hostId) {
+  async get(hostId, options) {
     return await TestHostStateModel.findOne({hostId}).select({hostId: 1, incarnation: 1, incarnationGeneration: 1,
       sequence: 1, receivedAt: 1, laneControlVersion: 1, laneControls: 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1,
       'snapshot.sequence': 1, 'snapshot.observedAt': 1, 'snapshot.lanes.id': 1, 'snapshot.lanes.platform': 1,
       'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.activity': 1,
       'snapshot.lanes.resources': 1, 'snapshot.lanes.glasses': 1, 'snapshot.resources': 1, 'snapshot.resourceReservations': 1,
       'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1,
-      frameworkHistory: 1, frameworkStopReceipts: 1,
+      ...(options?.frameworkHistory === false ? {} : {frameworkHistory: 1, frameworkStopReceipts: 1}),
       'snapshot.resourceLifecycle': 1, resourceLifecycleCursor: 1, resourceReservationVersion: 1, resourceReservations: 1})
       .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() as ResourceReservationHost | null
   },

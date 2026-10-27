@@ -1,7 +1,9 @@
+import {createLogger} from '@mentra/cloud-shared/logger'
+import type {ResourceReservationHost} from './resource-reservations.service'
 import {advanceResourceLifecycleCursor} from './resource-lifecycle.service'
 import {resourceIdleContractSchema,resourceLifecycleSchema} from '../types/resource-lifecycle.types'
 import {recorderStorageObservationSchema} from '../types/recorder-storage.types'
-import {exclusiveResourceDependenciesSchema, hostResourceReservationsSchema, resourceReservationObservationSchema, type HostResourceReservation} from '../types/resource-reservations.types'
+import {exclusiveResourceDependenciesSchema, hostResourceReservationsSchema, isExclusiveHostReservation, resourceReservationObservationSchema, type HostResourceReservation} from '../types/resource-reservations.types'
 import {laneControlExchangeSchema} from '../types/lane-control.types'
 import type {ResourceReadinessAuthority} from './resource-readiness'
 import {z} from "zod"
@@ -305,8 +307,9 @@ async function retryHostStateWrite<T>(write: () => Promise<T | undefined>, confl
   }
   throw new TestRunError(409, conflict)
 }
+const recorderReturnLogger = createLogger('core').child({service: 'recorder-return'})
 export class TestHostStateService {
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(private readonly now: () => number = Date.now, private readonly onAccepted?: (host: ResourceReservationHost) => Promise<unknown>) {}
   async report(input: unknown, hostId: string) {
     const snapshot = hostStateSchema.parse(input)
     return retryHostStateWrite(
@@ -455,8 +458,14 @@ export class TestHostStateService {
           },
         },
         {upsert: !current, new: true, writeConcern: testWriteConcern},
-      ).select({hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1}).lean()
+      ).select({hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1, receivedAt: 1,
+        laneControlVersion: 1, resourceReservationVersion: 1, resourceReservations: 1}).lean()
       if (!saved) return undefined
+      // Reuse the accepted current snapshot. Its exact host/version CAS still fences a later writer.
+      const claims = hostResourceReservationsSchema.safeParse(saved.resourceReservations ?? [])
+      if (this.onAccepted && claims.success && claims.data.some(claim => !isExclusiveHostReservation(claim)))
+        void this.onAccepted({...saved, snapshot} as ResourceReservationHost).catch(() =>
+          recorderReturnLogger.warn({hostId}, 'Recorder return remains pending after accepted host report'))
       return {
         hostId,
         incarnation: saved.incarnation,
