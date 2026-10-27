@@ -46,6 +46,15 @@ PORTAL_SECRET_LABEL = 'Mentra admin portal'
 PORTAL_CALLBACK = '/interaction/callback/workforce'
 PORTAL_STEP = 'Admin portal sign-in'
 SIGN_IN_SCOPES = ('openid', 'email', 'profile')
+# Built-in directory roles (by role template ID) that can grant the sign-in apps'
+# delegated permissions for the whole organization. A custom role can too, so the
+# grant itself, not this list, decides.
+CONSENT_ROLES = ('62e90394-69f5-4237-9190-012177145e10',  # Global Administrator
+                 'e8611ab8-c189-46e8-94e1-60213ab1f814',  # Privileged Role Administrator
+                 '158c047a-c907-4556-b7ef-446551a6b5f7',  # Cloud Application Administrator
+                 '9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3')  # Application Administrator
+CONSENT_APPROVERS = 'Global Administrator, Cloud Application Administrator or Application Administrator'
+CONSENT_POLL_SECONDS = 30
 # Core treats an Entra email as verified only in the organization's own domains,
 # and refuses Mentra's.
 MENTRA_EMAIL_DOMAINS = ('mentra.glass', 'mentraglass.com')
@@ -1382,14 +1391,14 @@ def graph_token(tenant):
     return token
 
 
-def graph(config, method, path, body=None, missing_ok=False):
+def graph(config, method, path, body=None, missing_ok=False, headers=None):
     import time
     url = path if path.startswith('https://') else 'https://graph.microsoft.com/v1.0/' + path
     data = None if body is None else json.dumps(body).encode()
     for attempt in range(GRAPH_ATTEMPTS):
         request = urllib.request.Request(url, data=data, method=method,
                                          headers={'Authorization': 'Bearer ' + graph_token(config['tenantId']),
-                                                  'Content-Type': 'application/json'})
+                                                  'Content-Type': 'application/json', **(headers or {})})
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 raw = response.read()
@@ -1667,20 +1676,75 @@ def consented_scopes(config, sp_id):
 CONSENT_STEP = 'Admin consent'
 
 
+def can_approve_sign_in(config):
+    """Whether the signed-in operator holds a built-in role that can grant the sign-in apps' consent; None if unknown."""
+    try:
+        # An OData cast is an advanced query: Graph requires $count and eventual consistency for it.
+        roles = graph(config, 'GET', 'me/transitiveMemberOf/microsoft.graph.directoryRole?$count=true&$select=roleTemplateId',
+                      headers={'ConsistencyLevel': 'eventual'})['value']
+    except (GraphError, KeyError, TypeError):
+        # A service principal has no "me"; the grant itself is then the test.
+        return None
+    return any(role.get('roleTemplateId') in CONSENT_ROLES for role in roles)
+
+
+def consent_handoff(config):
+    # A message the operator forwards as is. Consent takes effect at once: nothing is redeployed.
+    return {'step': CONSENT_STEP, 'action': (
+        f'employees cannot sign in until an Entra {CONSENT_APPROVERS} approves Mentra. Send them this:\n'
+        f"    Please approve the Mentra sign-in apps for {config['displayName']}, so employees can sign in to the "
+        'Mentra App with their work account and join Teams meetings from their glasses. On each of these two pages, '
+        'select "Grant admin consent" and confirm:\n'
+        f"      {permissions_page(config['mobileClientId'])}\n"
+        f"      {permissions_page(config['coreApiClientId'])}\n"
+        '  Employees can sign in as soon as both are approved.')}
+
+
 def ensure_admin_consent(config, consented, interactive):
     """Grants tenant-wide consent for the sign-in apps when it is missing; returns the step left, if any."""
     if consented:
         return []
+    # Always tried: a custom Entra role can also grant consent, and Entra refuses everyone else at once.
     if confirm('Grant tenant-wide consent for the Mentra sign-in apps now? (needs an Entra admin role)', True, interactive):
+        print('  Approving the sign-in apps for your organization...', flush=True)
         try:
             # Success means consent was granted; Graph can take a while to list it.
             grant_admin_consent(config)
             return []
         except SetupError:
-            pass
-    return [{'step': CONSENT_STEP, 'action': 'A Global Administrator, Privileged Role Administrator or '
-             'Cloud Application Administrator opens these pages and selects "Grant admin consent" on each: '
-             f"{permissions_page(config['mobileClientId'])} and {permissions_page(config['coreApiClientId'])}"}]
+            print('  Your account could not approve them.')
+    handoff = consent_handoff(config)
+    print(f"  Still to do - {handoff['step']}: {handoff['action']}")
+    return [handoff]
+
+
+def refresh_consent_handoff(directory, config):
+    """Rechecks a pending admin consent step against Entra; returns True while it is still needed."""
+    state = read_json(directory / 'state.json')
+    if not any(h.get('step') == CONSENT_STEP for h in state.get('handoffs') or []):
+        return False
+    try:
+        if not mobile_access(config)['consent']:
+            return True
+    except GraphError:
+        return True
+    checkpoint(directory, state, state['phase'], handoffs=other_handoffs(state, CONSENT_STEP))
+    return False
+
+
+def wait_for_consent(directory, config):
+    """Waits after the summary until an administrator grants the pending consent; Ctrl+C stops waiting."""
+    import time
+    print(f'\nWaiting for the approval. Setup checks every {CONSENT_POLL_SECONDS} seconds; press Ctrl+C to stop waiting.',
+          flush=True)
+    try:
+        while refresh_consent_handoff(directory, config):
+            time.sleep(CONSENT_POLL_SECONDS)
+    except KeyboardInterrupt:
+        print(f'\nStopped waiting. Employees can sign in as soon as it is approved; run {setup_command()} to check.')
+        return False
+    print('Approved. Employees can sign in now.')
+    return True
 
 
 def mobile_access(config):
@@ -2342,6 +2406,10 @@ def guided(args, directory):
         if entra_missing:
             print(f"Setup also creates two Microsoft Entra app registrations for employee sign-in: "
                   f"\"{app_name(config, 'Core')}\" and \"{app_name(config, 'Mobile')}\".")
+            if can_approve_sign_in(config) is False:
+                print(f'Approving them for your organization usually takes an Entra {CONSENT_APPROVERS}, '
+                      'and your account is none of these. If approval fails, setup prints a message to send to one '
+                      'right after creating them; the install continues meanwhile.')
         print('These resources incur Azure charges; this profile uses authenticated public endpoints.')
         if not confirm('Create these resources now? This takes about 20 minutes.', True, interactive):
             if checks['resourceGroup'] == 'new':
@@ -2402,7 +2470,12 @@ def guided(args, directory):
                 print(f'  Meeting creation was not set up: {error}')
                 print(f'  Set it up later with: {setup_command()} configure-teams')
             config, state, release = load(directory)
-    return finish(directory, dict(result, admin=admin))
+    # An administrator may have approved sign-in during the install.
+    consent_pending = refresh_consent_handoff(directory, config)
+    result = finish(directory, dict(result, admin=admin))
+    if consent_pending and interactive and result['phase'] == 'infrastructure_verified':
+        wait_for_consent(directory, config)
+    return result
 
 
 def print_teams(teams):
@@ -2427,7 +2500,12 @@ def finish(directory, result):
     section('Done' if state['phase'] == 'infrastructure_verified' else 'Status')
     if state['phase'] == 'infrastructure_verified':
         print(f'Mentra Private Cloud is running at {origin}')
-        print(f'Employees: install the Mentra App, tap Sign in to your organization, and enter {origin.removeprefix("https://")}.')
+        sign_in = f'install the Mentra App, tap Sign in to your organization, and enter {origin.removeprefix("https://")}.'
+        if any(h.get('step') == CONSENT_STEP for h in state.get('handoffs') or []):
+            print('Employees cannot sign in yet: an Entra administrator must approve Mentra first (see "Still to do - '
+                  f'{CONSENT_STEP}" below). Then employees {sign_in}')
+        else:
+            print(f'Employees: {sign_in}')
         core = state.get('outputs', {}).get('coreOrigin')
         if core and config.get('adminPortalSignIn') is True:
             print(f'Admin portal: {core}/ (Organization Admins sign in with their work account)')

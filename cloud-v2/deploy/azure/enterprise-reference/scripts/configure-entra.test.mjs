@@ -246,7 +246,17 @@ else if (command === "ad app show") {
   if (option("--method") === "GET" && uri.includes("/owners")) reply({value: (world.owners || []).map((id) => ({id}))})
   else if (option("--method") === "GET" && uri.includes("oauth2PermissionGrants")) reply({value: []})
   else if (option("--method") === "GET" && uri.includes("/servicePrincipals/")) reply({tags: []})
-  else if (option("--method") === "PATCH" || option("--method") === "POST") {
+  else if (option("--method") === "POST" && uri.endsWith("/oauth2PermissionGrants") && world.grantErrors?.length) {
+    // Each POST answers with the next scripted error, then succeeds.
+    const counter = process.env.ENTRA_TEST_CALLS + ".grants"
+    const n = fs.existsSync(counter) ? Number(fs.readFileSync(counter, "utf8")) : 0
+    fs.writeFileSync(counter, String(n + 1))
+    if (n < world.grantErrors.length) {
+      console.error(world.grantErrors[n])
+      process.exit(1)
+    }
+    fs.appendFileSync(process.env.ENTRA_TEST_CALLS + ".writes", JSON.stringify({method: "POST", uri, body: JSON.parse(option("--body"))}) + "\\n")
+  } else if (option("--method") === "PATCH" || option("--method") === "POST") {
     fs.appendFileSync(process.env.ENTRA_TEST_CALLS + ".writes", JSON.stringify({method: option("--method"), uri, body: JSON.parse(option("--body"))}) + "\\n")
   } else process.exit(9)
 } else {
@@ -271,7 +281,7 @@ function coreApp(overrides = {}) {
   }
 }
 
-function entra(t, cliArgs, {apps = [coreApp()], scopes = signInScopes, owners = [], env = {}, graph = {}} = {}) {
+function entra(t, cliArgs, {apps = [coreApp()], scopes = signInScopes, owners = [], env = {}, graph = {}, grantErrors = []} = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "entra-portal-"))
   t.after(() => rmSync(root, {recursive: true, force: true}))
   const callsFile = path.join(root, "calls.jsonl")
@@ -285,7 +295,7 @@ function entra(t, cliArgs, {apps = [coreApp()], scopes = signInScopes, owners = 
     {id: "mobile-sp", appId: MOBILE},
     {id: "other-sp", appId: "66666666-6666-6666-6666-666666666666", oauth2PermissionScopes: [{value: "Other.Read", id: "kept"}]},
   ]
-  writeFileSync(path.join(root, "world.json"), JSON.stringify({tenantId: "tenant", apps, sps, owners}))
+  writeFileSync(path.join(root, "world.json"), JSON.stringify({tenantId: "tenant", apps, sps, owners, grantErrors}))
   const result = spawnSync("/bin/bash", [new URL("configure-entra.sh", import.meta.url).pathname, ...cliArgs], {
     encoding: "utf8",
     env: {...process.env, PATH: `${root}:${process.env.PATH}`, ENTRA_WORLD: path.join(root, "world.json"),
@@ -392,6 +402,28 @@ test("consent-only grants Core's sign-in scopes along with Mobile's", (t) => {
     {clientId: "core-sp", consentType: "AllPrincipals", resourceId: "graph-sp", scope: "openid email profile"},
   ])
   assert.equal(JSON.parse(result.stdout).coreApiClientId, CORE)
+})
+
+function consentPosts(result) {
+  return result.calls.filter((call) => call.includes("POST") && call.some((arg) => arg.endsWith("/oauth2PermissionGrants"))).length
+}
+
+test("a grant Entra refuses for lack of a role fails at once", (t) => {
+  const mobile = {id: "mobile-object", appId: MOBILE, requiredResourceAccess: [{resourceAppId: GRAPH, resourceAccess: [{id: "id-user-read", type: "Scope"}]}]}
+  const denied = 'Forbidden({"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges to complete the operation."}})'
+  const result = entra(t, ["--consent-only", "--mobile-client-id", MOBILE], {apps: [mobile], grantErrors: [denied, denied, denied]})
+  assert.notEqual(result.status, 0)
+  assert.equal(consentPosts(result), 1)
+  assert.match(result.stderr, /Authorization_RequestDenied/)
+})
+
+test("a grant is retried while a new service principal replicates", (t) => {
+  const mobile = {id: "mobile-object", appId: MOBILE, requiredResourceAccess: [{resourceAppId: GRAPH, resourceAccess: [{id: "id-user-read", type: "Scope"}]}]}
+  const missing = 'Bad Request({"error":{"code":"Request_ResourceNotFound","message":"Resource does not exist."}})'
+  const result = entra(t, ["--consent-only", "--mobile-client-id", MOBILE], {apps: [mobile], grantErrors: [missing, missing]})
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(consentPosts(result), 3)
+  assert.equal(result.stderr, "")
 })
 
 for (const [cliArgs, message] of [

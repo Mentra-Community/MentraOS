@@ -192,11 +192,25 @@ grant_admin_consent() {
       az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGrants/$grant" \
         --headers 'Content-Type=application/json' --body "$(jq -cn --arg scope "$scopes" '{scope: $scope}')" --output none
     else
-      retry az rest --method POST --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGrants" \
-        --headers 'Content-Type=application/json' --output none --body "$(jq -cn --arg client "$client_sp" \
-          --arg resource "$resource_id" --arg scope "$scopes" \
-          '{clientId: $client, consentType: "AllPrincipals", resourceId: $resource, scope: $scope}')"
+      post_grant "$(jq -cn --arg client "$client_sp" --arg resource "$resource_id" --arg scope "$scopes" \
+        '{clientId: $client, consentType: "AllPrincipals", resourceId: $resource, scope: $scope}')"
     fi
+  done
+}
+
+# A new app's service principal can take a while to be usable in a grant, so
+# retry like retry() does. Entra's refusal of an operator without an approving
+# role is final: report it at once instead of retrying it for a minute.
+post_grant() {
+  local attempt output
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    output="$(az rest --method POST --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGrants" \
+      --headers 'Content-Type=application/json' --output none --body "$1" 2>&1)" && return 0
+    if [[ "$attempt" == 12 ]] || grep -q -E 'Authorization_RequestDenied|Forbidden' <<<"$output"; then
+      printf '%s\n' "$output" >&2
+      return 1
+    fi
+    sleep "${MENTRA_ENTRA_RETRY_SECONDS:-5}"
   done
 }
 

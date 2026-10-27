@@ -69,11 +69,13 @@ interrupted install, finishes after a handoff, or upgrades. Guided setup:
    `rg-<deployment>` is not someone else's resource group.
 3. Creates the empty resource group and prints Azure's what-if preview,
    naming the Entra apps `<Company> Mentra Core (<deployment name>)` and `<Company> Mentra Mobile (<deployment name>)`.
+   When the operator holds no built-in role that can consent to them, it says so here.
    It asks one confirmation. Declining deletes the empty group, so nothing is
    created.
 4. Only after that confirmation, creates the two Entra apps
-   (`configure-entra.sh --installer-owner`), offers tenant-wide consent, and
-   assigns the employees or groups the operator names (`--employees`).
+   (`configure-entra.sh --installer-owner`), grants tenant-wide consent or
+   prints the administrator message for it, and assigns the employees or groups
+   the operator names (`--employees`).
 5. Installs with progress lines. Before Core is deployed it adds a client secret
    to the Core app for admin portal sign-in, stores it in Key Vault and turns on
    `adminPortalSignIn` in the saved configuration. It
@@ -82,7 +84,8 @@ interrupted install, finishes after a handoff, or upgrades. Guided setup:
    registers the admin portal's redirect URI on the Core app, creates the
    administrator key, and offers Teams meeting creation.
 
-The final summary prints the workspace, the admin portal address
+The final summary prints the workspace (with a note that employees cannot sign
+in yet while consent is missing), the admin portal address
 (`https://<core host>/`) and its client secret's expiry date, the
 `az keyvault secret show` command for the administrator key, a `curl` command
 for `<core>/api/admin/reports` using that key, and every pending administrator
@@ -106,9 +109,13 @@ step as a `Still to do` line:
   ~/mentra-install/mentra-private-cloud/setup.sh configure-entra \
     --core-client-id CORE_ID --mobile-client-id MOBILE_ID
   ```
-- **Admin consent.** A Global Administrator, Privileged Role Administrator or
-  Cloud Application Administrator selects **Grant admin consent** on the Mobile
-  and Core apps' API permissions pages. Setup rechecks consent on every run and
+- **Admin consent.** Employees cannot sign in until a Global Administrator,
+  Privileged Role Administrator, Cloud Application Administrator or Application
+  Administrator selects **Grant admin consent** on the Mobile and Core apps' API
+  permissions pages. Setup prints this message right after creating the apps,
+  so the install continues while the administrator approves. While consent is
+  missing, the summary says employees cannot sign in yet, and an interactive
+  run then waits for the approval. Setup rechecks consent on every run and
   keeps the line until it is granted.
 - **Admin portal sign-in.** When setup cannot register the portal's redirect
   URI on the Core app, an Application Administrator or Cloud Application
