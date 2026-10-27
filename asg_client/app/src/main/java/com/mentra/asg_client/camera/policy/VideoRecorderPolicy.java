@@ -26,11 +26,11 @@ public final class VideoRecorderPolicy {
     private VideoRecorderPolicy() {}
 
     /**
-     * H.264 video bitrate: higher for 1080p-class width, lower for 720p and below.
-     * Matches historical {@code CameraNeoService.setupMediaRecorder} (width ≥ 1920 → 16 Mbps).
+     * H.264 recording targets: 10 Mbps for 1080p-class width, 5 Mbps for 720p and below.
+     * Keeps local recordings smaller to reduce storage use and gallery transfer sizes.
      */
     public static int videoEncodingBitRateForWidth(int widthPx) {
-        return (widthPx >= 1920) ? 16_000_000 : 8_000_000;
+        return (widthPx >= 1920) ? 10_000_000 : 5_000_000;
     }
 
     public static int videoFrameRate(VideoSettings settings) {
