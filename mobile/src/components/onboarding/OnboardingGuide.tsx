@@ -617,7 +617,10 @@ export function OnboardingGuide({
     let showPlayer2 = activePlayer === 2 && !showPoster && !exitRequested
     return (
       <>
-        <View className={`absolute top-0 left-0 right-0 bottom-0 ${s.containerClassName}`}>
+        {/* The videos never take touches: on Android, expo-video's VideoView re-sends touches to JS in its own
+            coordinates, so a button drawn over it (the start button on wide screens like a Fold) sees the press
+            leave its bounds and never fires onPress. */}
+        <View pointerEvents="none" className={`absolute top-0 left-0 right-0 bottom-0 ${s.containerClassName}`}>
           <VideoView
             player={player1}
             style={{
@@ -630,7 +633,7 @@ export function OnboardingGuide({
             onFirstFrameRender={() => {}}
           />
         </View>
-        <View className={`absolute top-0 left-0 right-0 bottom-0 ${s.containerClassName}`}>
+        <View pointerEvents="none" className={`absolute top-0 left-0 right-0 bottom-0 ${s.containerClassName}`}>
           <VideoView
             player={player2}
             style={{
@@ -675,6 +678,7 @@ export function OnboardingGuide({
       <>
         <View className="relative flex-col w-full">
           <View
+            pointerEvents="none"
             className={`flex flex-row w-full z-100 px-20 bg-chart-4/20 rounded-lg ${
               Platform.OS === "ios" ? "absolute" : ""
             }`}>
