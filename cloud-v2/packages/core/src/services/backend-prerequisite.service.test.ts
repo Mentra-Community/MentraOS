@@ -279,8 +279,8 @@ test('owned lookup requires exact resource check owner and original target while
   expect((await original.service.qualificationTargets('mini', f.owned()))[0]?.inputSha256).toBe(f.target.inputSha256)
   expect(await original.service.qualificationTargets('mini', {...f.owned(), generation: 3})).toEqual([])
 })
-test('owned lookup can omit the unchanged exact phone target during a same-reporter heartbeat', async () => {
-  for (const advanceAt of [2, 3]) {
+test('owned lookup preserves the unchanged exact phone target during a same-reporter heartbeat', async () => {
+  for (const advanceAt of [2]) {
     const claim = await claimFixture(), f = fixture(); f.observed.resourceLifecycle = claim.observed.resourceLifecycle
     const before = structuredClone(f.original), target = (await f.service.qualificationTargets('mini', claim.owned()))[0]!
     let reads = 0, advancing = true
@@ -289,7 +289,7 @@ test('owned lookup can omit the unchanged exact phone target during a same-repor
         if (++reads === advanceAt && advancing) f.observed.sequence++
         return structuredClone(f.observed)
       }}, undefined, undefined, () => now)
-    expect(await service.qualificationTargets('mini', claim.owned())).toEqual([])
+    expect(await service.qualificationTargets('mini', claim.owned())).toEqual([target])
     expect(f.observed.incarnation).toBe('controller'); expect(f.observed.incarnationGeneration).toBe(1)
     expect(f.observed.lanes[0]!.state).toBe('idle')
     expect(f.observed.resourceLifecycle!.subjects[0]!.owner).toMatchObject({id: claim.owned().ownerId, generation: 2})
@@ -1239,3 +1239,39 @@ test('candidate target checkpoint survives a lost host CAS or interrupted writer
     } finally {checkpoint.mockRestore()}
   }
 })
+
+
+test('ordinary current host reports preserve the exact selected preparing phone target without a sequence gate', async () => {
+  for (const owned of [false, true]) {
+    const f = fixture(), before = structuredClone(f.original);
+    let target = (await f.service.qualificationTargets('mini'))[0]!, input: OwnedRoutineQualification | undefined;
+    if (owned) {
+      const claim = await claimFixture(); f.observed.resourceLifecycle = claim.observed.resourceLifecycle;
+      target = claim.target; input = claim.owned();
+    }
+    let reads = 0;
+    (f.service as any).hosts.get = async () => ({...structuredClone(f.observed), sequence: ++reads});
+    expect(await f.service.qualificationTargets('mini', input)).toEqual([target]);
+    expect(reads).toBe(2); expect(f.original).toEqual(before);
+  }
+});
+
+test('preparing phone readback still refuses changed current target, source, custody and eligibility', async () => {
+  for (const change of [
+    (h: ReceivedTestHostState) => {h.incarnation = 'replaced'},
+    (h: ReceivedTestHostState) => {h.incarnationGeneration!++},
+    (h: ReceivedTestHostState) => {h.frameworkBinding = {...h.frameworkBinding!, installationId: 'replacement'}},
+    (h: ReceivedTestHostState) => {h.receivedAt = new Date(now - 120001).toISOString()},
+    (h: ReceivedTestHostState) => {h.lanes[0]!.state = 'reserved'; h.lanes[0]!.activity = {owner: {id: 'foreign', kind: 'run'}, generation: 7}},
+    (h: ReceivedTestHostState) => {h.resourceLifecycle!.subjects[0]!.generation++},
+    (h: ReceivedTestHostState) => {h.resourceLifecycle!.subjects[0]!.owner = {id: 'foreign', kind: 'boundary-cleanup', generation: 7, hostId: 'mini', laneId: 'android'}},
+    (h: ReceivedTestHostState) => {h.resourceLifecycle!.subjects[0]!.current = false},
+    (h: ReceivedTestHostState) => {h.lanes[0]!.resources[0]!.capabilities = []},
+    (h: ReceivedTestHostState) => {h.lanes[0]!.resources[2]!.storage!.availableBytes = 1},
+  ]) {
+    const f = fixture(); let reads = 0;
+    (f.service as any).hosts.get = async () => {const current = structuredClone(f.observed); current.sequence = ++reads; if (reads > 1) change(current); return current};
+    expect(await f.service.qualificationTargets('mini')).toEqual([]);
+    expect(f.original).not.toHaveProperty('input');
+  }
+});

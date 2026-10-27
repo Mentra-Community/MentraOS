@@ -1486,16 +1486,6 @@ export class RoutineJobService {
         target: {hostId: host.hostId, laneId: lane.id}},
         projected = routineQualificationTargetSchema.parse({...target, inputSha256: requestInputDigest(target)});
       if (owned && projected.inputSha256 !== owned.inputSha256) continue;
-      // An awaited request read cannot renew a replaced reporter or transfer the original phone check owner.
-      const current = await this.hosts.get(host.hostId), currentLane = current?.lanes.find(value => value.id === lane.id),
-        currentSubject = current?.resourceLifecycle?.subjects.find(value => value.subject.id === phone.id);
-      if (!current || current.incarnation !== host.incarnation || current.incarnationGeneration !== host.incarnationGeneration ||
-        current.sequence !== host.sequence || requestInputDigest(current.frameworkBinding) !== requestInputDigest(binding) ||
-        Date.parse(current.receivedAt) > this.now() || this.now() - Date.parse(current.receivedAt) > 120_000 ||
-        currentLane?.state !== 'idle' || currentLane.activity || currentLane.dispatchMode !== 'automatic' ||
-        !currentLane.resources.some(resource => resource.id === phone.id && resource.kind === 'phone') ||
-        owned && (!currentSubject?.current || currentSubject.owner?.id !== owned.ownerId ||
-          currentSubject.owner.kind !== 'boundary-cleanup' || currentSubject.owner.generation !== owned.generation)) return undefined;
       const original = await this.rows.get(row.requestId, Math.max(1, queryDeadline - this.now()));
       if (!original?.fleetPreparation || this.now() >= queryDeadline || !preparingQualificationReceipt(original, host.hostId, lane) ||
         requestInputDigest(preparingQualificationReceipt(original, host.hostId, lane)) !== requestInputDigest(preparing) ||
@@ -1504,9 +1494,37 @@ export class RoutineJobService {
         original.preparationRejection || original.fleetCancellation || original.fleetDeadline.getTime() <= this.now() ||
         routineJobInputDigest(original) !== row.fleetInputSha256 || original.fleetInputSha256 !== row.fleetInputSha256 ||
         requestInputDigest(original.fleetSelection) !== row.fleetSelectionSha256) return undefined;
-      const finalHost = await this.hosts.get(host.hostId);
-      if (!finalHost || finalHost.sequence !== host.sequence || finalHost.incarnation !== host.incarnation ||
-        finalHost.incarnationGeneration !== host.incarnationGeneration || this.now() >= queryDeadline) return undefined;
+      // Readback validates current selected authority, not an observation counter.
+      // An ordinary heartbeat cannot withdraw an unchanged preparing target.
+      const finalHost = await this.hosts.get(host.hostId), finalLane = finalHost?.lanes.find(value => value.id === lane.id),
+        finalPhone = finalHost?.resourceLifecycle?.subjects.find(value => value.subject.id === phone.id);
+      if (!finalHost || finalHost.incarnation !== host.incarnation || finalHost.incarnationGeneration !== host.incarnationGeneration ||
+        !isDeepIdentity(finalHost.frameworkBinding, binding) || this.now() >= queryDeadline ||
+        [finalHost.receivedAt, finalHost.observedAt].some(at => !at || Date.parse(at) > this.now() || this.now() - Date.parse(at) > 120_000) ||
+        finalLane?.state !== 'idle' || finalLane.activity || finalLane.dispatchMode !== 'automatic' ||
+        !finalPhone?.current || finalPhone.subject.authorityHostId !== host.hostId ||
+        (owned ? finalPhone.status !== 'checking' || finalPhone.owner?.id !== owned.ownerId ||
+          finalPhone.owner.kind !== 'boundary-cleanup' || finalPhone.owner.generation !== owned.generation || finalPhone.owner.laneId !== lane.id
+          : Boolean(finalPhone.owner)) ||
+        !isDeepIdentity(preparingQualificationReceipt(original, host.hostId, finalLane), preparing) ||
+        requirements.resources.some(required => {
+          const resourceId = lane.resources.find(value => value.kind === required.kind)?.id,
+            before = host.resourceLifecycle?.subjects.find(value => value.subject.id === resourceId),
+            after = finalHost.resourceLifecycle?.subjects.find(value => value.subject.id === resourceId);
+          return !isDeepIdentity({generation: before?.generation ?? null, owner: before?.owner ?? null},
+            {generation: after?.generation ?? null, owner: after?.owner ?? null});
+        })) return undefined;
+      const currentLane = {...finalLane, resources: finalLane.resources.map(resource => resource.storage ? {...resource,
+        storage: {...resource.storage, reservations: resource.storage.reservations.filter(value =>
+          value.requestId !== row.requestId || value.inputSha256 !== row.fleetInputSha256)}} : resource)},
+        currentHost = {...finalHost, lanes: finalHost.lanes.map(value => value.id === lane.id ? currentLane : value)};
+      if (!compatibleStructuralRoutineLane(requirements, currentLane, routineLaneContext(finalHost, row.fleetSelection.build, this.now()), this.now())) return undefined;
+      try {
+        const input = routineAdmissionInput(enrollment, recordedRoutineBuild(row.fleetSelection.build, row.fleetSelection.source, 'android'),
+          {hostId: host.hostId, laneId: lane.id}, currentHost, this.now(), {minimumFrameworkVersion: row.fleetSelection.minimumFrameworkVersion});
+        input.build = frameworkExecutableBuild(row.fleetSelection.build, input.glassesModel);
+        if (!isDeepIdentity(input, proposedInput)) return undefined;
+      } catch (error) {if (error instanceof TestRunError && error.status === 409) return undefined; throw error;}
       return projected;
     }
     return undefined;
