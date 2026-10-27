@@ -147,9 +147,10 @@ export class NightlyRoutineService {
     if (!plan) plan = await this.repository.freeze(await this.select(occurrence, suiteId));
     if (requestInputDigest({occurrenceId: plan.occurrenceId, startedAt: plan.startedAt, trigger: plan.trigger}) !== requestInputDigest(occurrence))
       throw new TestRunError(409, "Occurrence retry changed its original trigger or boundary");
+    if (await this.repository.completed(suiteId)) return {plan, admissions: []};
     // Each member is independent. A failed queue write is retried with its original immutable request ID/intent.
     const cancellation = await this.repository.cancellation(suiteId);
-    if (cancellation || await this.repository.completed(suiteId) || this.now() >= Date.parse(plan.startedAt) + 3 * 3600_000) {
+    if (cancellation || this.now() >= Date.parse(plan.startedAt) + 3 * 3600_000) {
       await this.cancelAdmissions(plan, cancellation);
       return {plan, admissions: []};
     }
@@ -392,9 +393,9 @@ export class NightlyRoutineService {
   }
 
   async complete(occurrenceId: string) {
-    const plan = await this.plan(occurrenceId), completed = await this.repository.completed(plan.suiteId),
-      cancellation = await this.repository.cancellation(plan.suiteId);
-    if (completed) {await this.cancelAdmissions(plan, cancellation); return completed;}
+    const plan = await this.plan(occurrenceId), completed = await this.repository.completed(plan.suiteId);
+    if (completed) return completed;
+    const cancellation = await this.repository.cancellation(plan.suiteId);
     const deadline = Date.parse(plan.startedAt) + 3 * 3600_000;
     let deadlineReached = this.now() >= deadline;
     if (deadlineReached || cancellation) await this.cancelAdmissions(plan, cancellation);

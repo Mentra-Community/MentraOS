@@ -249,7 +249,7 @@ test("evidence reads crossing the deadline cancel every member before freezing t
   expect(result.members[0]!.unavailableReason).toContain("Evidence unavailable");
   expect(result.members.every(member => member.status === "incomplete")).toBe(true);
   expect(await state.service.complete(occurrence.occurrenceId)).toEqual(result);
-  expect(state.cancelled).toHaveLength(4);
+  expect(state.cancelled).toHaveLength(2);
 });
 
 test("result matching refuses changed artifact/source identity and terminal receipts fence later changes", async () => {
@@ -421,6 +421,43 @@ test("deadline cancellation uses the original requests and prevents retrying pen
   expect(state.admitted).toHaveLength(2);
 });
 
+for (const boundary of ["published", "deadline"] as const) test(`frozen ${boundary} nightly acknowledgement does not repeat original cancellation`, async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence);
+  if (boundary === "published")
+    for (const member of plan.members) state.resultRows.set(member.requestId, publishedResult(member, true));
+  else state.clock = now + 3 * 3600_000;
+  const terminal = await state.service.complete(occurrence.occurrenceId), frozen = JSON.stringify(terminal);
+  expect(terminal.finishedAt).toBeDefined();
+  expect(state.cancelled).toEqual(plan.members.map(member => member.requestId));
+  const events = [...state.completionEvents], reads = state.reads, buildReads = [...state.buildReads];
+  state.cancelFailId = plan.members[0]!.requestId;
+  state.clock = now + 4 * 3600_000;
+  state.resultRows.clear(); state.requestErrors.set(plan.members[0]!.requestId, new TestRunError(503, "Later request storage unavailable."));
+  expect(await state.service.start(occurrence)).toEqual({plan, admissions: []});
+  expect(JSON.stringify(await state.service.complete(occurrence.occurrenceId))).toBe(frozen);
+  expect(state.cancelled).toEqual(plan.members.map(member => member.requestId));
+  expect(state.completionEvents).toEqual(events);
+  expect(state.admitted).toHaveLength(plan.members.length);
+  expect(state.reads).toBe(reads); expect(state.buildReads).toEqual(buildReads);
+  await expect(state.service.start({...occurrence, startedAt: "2026-10-03T11:01:00Z"})).rejects.toThrow("Occurrence retry changed");
+});
+
+test("a frozen nightly acknowledgement does not depend on a later occurrence cancellation read", async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence);
+  state.clock = now + 3 * 3600_000;
+  const terminal = await state.service.complete(occurrence.occurrenceId);
+  let cancellationReads = 0;
+  const retry = fixture([], {
+    async get() {return plan;}, async completed() {return terminal;},
+    async cancellation() {cancellationReads++; throw new TestRunError(503, "Later cancellation storage unavailable.");},
+    async requestCancellation() {throw new Error("Unexpected cancellation write");},
+    async freeze() {throw new Error("Unexpected plan write");}, async finish() {throw new Error("Unexpected result write");},
+  });
+  expect(await retry.service.start(occurrence)).toEqual({plan, admissions: []});
+  expect(await retry.service.complete(occurrence.occurrenceId)).toBe(terminal);
+  expect(cancellationReads).toBe(0); expect(retry.cancelled).toEqual([]); expect(retry.admitted).toEqual([]);
+});
+
 test("deadline cancellation reconciles every request despite a member evidence 503 and freezes each truthful outcome", async () => {
   const state = fixture(), {plan} = await state.service.start(occurrence), [unreadable, healthy] = plan.members;
   state.resultRows.set(unreadable!.requestId, new TestRunError(503, "Result storage temporarily unavailable."));
@@ -442,7 +479,7 @@ test("deadline cancellation reconciles every request despite a member evidence 5
   expect(receipt.members[1]).toMatchObject({status: "pass", publicationComplete: true, runId: healthy!.requestId});
   state.resultRows.set(unreadable!.requestId, publishedResult(unreadable!, true));
   expect(await state.service.complete(occurrence.occurrenceId)).toEqual(receipt);
-  expect(state.cancelled).toHaveLength(4);
+  expect(state.cancelled).toHaveLength(2);
 });
 
 test("a request receipt read failure remains an incomplete member without suppressing cancellation or its neighbor", async () => {

@@ -266,6 +266,7 @@ for (const boundary of ['definition-read', 'final-host-read'] as const)
 test('known local withdrawal preserves same-host Mac qualification while outage and unknown errors remain visible', async () => {
   for (const failure of [new TestRequestConflict('Enrollment removed'), new TestRunError(409, 'Candidate cancelled'),
     new TestRunError(503, 'Candidate store unavailable'), Error('Unknown candidate read failure')]) {
+    const message = failure.message, knownWithdrawal = failure instanceof TestRunError && failure.status === 409 || failure instanceof TestRequestConflict
     const f = fixture(true), source = {channel: 'dev' as const, buildRunId: 100, publicationAttempt: 1},
       build = {...f.target.selection.build, kind: 'mac-ci-package' as const},
       selection = {...f.target.selection, requestId: 'other-mac', platform: 'ios-on-mac' as const, source, build},
@@ -280,9 +281,9 @@ test('known local withdrawal preserves same-host Mac qualification while outage 
     const rows = {...f.rows, async *qualificationCandidates() {yield row}}, candidates = {async authorize() {throw failure}},
       service = new RoutineJobService(rows, undefined, undefined, {async getExact() {return f.enrolled}},
         {async get() {return structuredClone(f.observed)}}, undefined, undefined, () => now, null, candidates, async () => {})
-    if (failure instanceof TestRequestConflict || failure instanceof TestRunError && failure.status === 409) {
+    if (knownWithdrawal) {
       const targets = await service.qualificationTargets('mini'); expect(targets.map(value => value.jobId)).toEqual(['other-mac'])
-    } else await expect(service.qualificationTargets('mini')).rejects.toThrow(failure.message)
+    } else await expect(service.qualificationTargets('mini')).rejects.toThrow(message)
   }
 })
 
