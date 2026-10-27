@@ -30,6 +30,18 @@ export function PendingQueueSection() {
           </div>
           {item.createdAt && <p className="mt-1 text-xs text-[#68746d]">Submitted {new Date(item.createdAt).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'})}</p>}
           {item.reason && <p className="mt-1 text-sm text-[#68746d]">{item.reason}</p>}
+          {item.diagnosis && <details className="mt-2 rounded-lg border border-[#dfe5dd] p-3 text-sm">
+            <summary className="cursor-pointer font-medium">Waiting stage: {item.diagnosis.stage}</summary>
+            <ul className="mt-2 space-y-2">{item.diagnosis.conditions.map((condition, index) => <li key={index}>
+              <span>{condition.status === 'passed' ? '✅' : condition.status === 'failed' ? '❌' : condition.status === 'waiting' ? '⏳' : '❔'} {condition.label}</span>
+              <p className="text-xs text-[#68746d]">Expected: {condition.expected}</p>
+              <p className="text-xs">Observed: {condition.observed}</p>
+              {condition.hostId && <p className="text-xs">{condition.laneId ? <a className={TESTING_LINK} href={laneHistoryHref(condition.hostId, condition.laneId)}>{readableLaneIdentity(condition.hostId)} · {readableLaneIdentity(condition.laneId)}</a> : readableLaneIdentity(condition.hostId)}</p>}
+              {condition.resourceId && <p className="text-xs">Resource: {condition.resourceId}</p>}
+              {condition.owner && <p className="text-xs">Owner: {condition.owner}</p>}
+            </li>)}</ul>
+            <p className="mt-2">Next action: {item.diagnosis.nextAction}</p>
+          </details>}
           {item.assignment && <p className="mt-2 text-sm">Assigned lane: <a className={TESTING_LINK} href={laneHistoryHref(item.assignment.hostId, item.assignment.laneId)}>{readableLaneIdentity(item.assignment.hostId)} · {readableLaneIdentity(item.assignment.laneId)}</a></p>}
           <p className="mt-2 text-xs font-medium">{item.compatibilityKnown ? 'Compatible lanes' : 'Compatibility pending source preparation'}</p>
           <div className="mt-2 flex flex-wrap gap-2">{item.compatibilityKnown ? item.compatibleLanes.length ? item.compatibleLanes.map(lane => <LaneLabel key={`${lane.hostId}/${lane.laneId}`} lane={lane} />) :

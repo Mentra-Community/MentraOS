@@ -150,7 +150,86 @@ test('pending queue shows an existing staged exclusive blocker without taking or
   const before = structuredClone(row), snapshot = structuredClone(observed);
   const item = pendingQueueItem(row, [observed], now);
   expect(item.reason).toBe(sharedResourceWait('google-authentication')); expect(item.reason).not.toContain('private-account');
+  const blocker = item.diagnosis?.conditions.find(value => value.resourceId === 'private-account');
+  expect(blocker?.owner).toBe('run:private-owner');
+  expect(blocker?.hostId).toBe('elsewhere'); expect(blocker?.laneId).toBe('private-lane');
   expect(row).toEqual(before); expect(observed).toEqual(snapshot);
   observed.authorityReservations = [];
-  expect(pendingQueueItem(row, [observed], now).reason).toBeUndefined();
+  expect(pendingQueueItem(row, [observed], now).reason).toContain('admission has not reached a bound worker');
+});
+
+test('every exact pending original explains its current stage without inventing a matching refusal', () => {
+  const {row, host} = fixture(), before = structuredClone(row);
+  const projected = pendingQueueItem(row, [host], now);
+  expect(projected.reason).toContain('exact blocking condition is not recorded');
+  expect(projected.diagnosis?.stage).toBe('Awaiting matching decision');
+  expect(projected.diagnosis?.conditions[0]!.status).toBe('unknown');
+  expect(projected.diagnosis?.nextAction).toContain('existing preparation stage logs');
+  expect(row).toEqual(before);
+});
+test('a recorded candidate selection is named without inventing a reservation or physical readiness', () => {
+  const {row, host} = fixture(); row.fleetCandidateSelection = {hostId: host.hostId, laneId: 'idle', targetInputSha256: 'e'.repeat(64)};
+  const original = structuredClone(row), item = pendingQueueItem(row, [host], now);
+  expect(item.diagnosis?.stage).toBe('Selected candidate'); expect(item.reason).not.toContain('no selected candidate');
+  expect(item.diagnosis?.conditions[0]!.hostId).toBe(host.hostId); expect(item.diagnosis?.conditions[0]!.laneId).toBe('idle');
+  expect(item.diagnosis?.conditions.at(-1)!.status).toBe('unknown'); expect(row).toEqual(original);
+});
+test('pending candidate identifies its exact original attempt and current foreign custody', () => {
+  const {row, host} = fixture();
+  row.fleetCandidatePreparation = {hostId: host.hostId, laneId: 'idle', candidate: {attemptId: 'original-attempt', requestedAt: new Date(now).toISOString()}} as any;
+  const current = {...host, authorityReservations: [{id: 'claim-id', requestId: 'foreign-original', hostId: host.hostId,
+    laneId: 'idle', poolId: 'original-disk', fleetInputSha256: 'f'.repeat(64), reservedAt: new Date(now).toISOString(), minimumAvailableBytes: 1}]};
+  const before = structuredClone(row), snapshot = structuredClone(current), projected = pendingQueueItem(row, [current], now);
+  expect(projected.diagnosis?.stage).toBe('Candidate check and return');
+  expect(projected.reason).toContain('complete return');
+  expect(projected.diagnosis?.conditions.some(value => value.owner === 'run:foreign-original' && value.resourceId === 'original-disk')).toBe(true);
+  expect(projected.diagnosis?.conditions.at(-1)!.observed).toContain('original-attempt');
+  expect(row).toEqual(before); expect(current).toEqual(snapshot);
+});
+test('bound execution reports missing original completion without calling a failed device a pass', () => {
+  const {row, host} = fixture(); row.state = 'preparing';
+  row.fleetBinding = {jobId: row.requestId, requestId: row.requestId, hostId: host.hostId, laneId: 'idle',
+    descriptorRevision: 'f'.repeat(64), actionsRunId: '123', actionsJobId: '456', boundAt: new Date(now).toISOString()};
+  const projected = pendingQueueItem(row, [host], now);
+  expect(projected.diagnosis?.stage).toBe('Bound execution');
+  expect(projected.diagnosis?.conditions.at(-1)!.status).toBe('waiting');
+  expect(projected.diagnosis?.conditions.at(-1)!.observed).toContain('run 123, job 456');
+  expect(projected.diagnosis?.nextAction).toContain('do not dispatch a duplicate');
+});
+test('missing permission observation is reported as unknown separately from a reported denial', () => {
+  const {row, host} = fixture(), prepared = row.fleetPreparation!;
+  prepared.definition.execution!.resourceKinds = ['app'];
+  prepared.definition.resourceRequirements = [{kind: 'app', capabilities: [], permissions: [{permission: 'camera', recipient: 'app'}]}];
+  prepared.definitionSha256 = requestInputDigest(prepared.definition);
+  prepared.requirements = routinePortableRequirements({platform: 'android', definition: prepared.definition} as any);
+  row.fleetInputSha256 = routineJobInputDigest(row); host.frameworkBinding = testFrameworkBinding();
+  host.lanes = [{id: 'idle', platform: 'android', state: 'idle', dispatchMode: 'automatic', resources: [{id: 'exact-app', kind: 'app'}]}];
+  const missing = pendingQueueItem(row, [host], now);
+  expect(missing.reason).toContain('missing, not reported as denied');
+  expect(missing.diagnosis?.conditions[0]!.status).toBe('unknown');
+  expect(missing.diagnosis?.conditions[0]!.resourceId).toBe('exact-app');
+  const observation = {permission: 'camera' as const, status: 'denied' as const, rawStatus: 'denied', binding: host.frameworkBinding!, observedAt: new Date(now).toISOString(),
+    recipient: {kind: 'app' as const, uid: 501, pid: 50, processStartedAt: 'owned lifetime', launchedAt: now - 1000,
+      bundleId: 'com.mentra.mentra' as const, bundlePath: '/Applications/Mentra.app', executablePath: '/Applications/Mentra.app/Mentra',
+      version: '3.4.0', build: '1137', teamId: 'T5XXXL6N36', codeRequirement: 'verified signed requirement',
+      selectedBuild: {headSha: row.fleetSelection.build.headSha, archiveSha256: row.fleetSelection.build.archive!.sha256, receiptSha256: row.fleetSelection.build.receipt!.sha256}}, evidence: {sha256: 'e'.repeat(64)}};
+  host.lanes[0]!.resources[0]!.permissionObservations = [observation];
+  const denied = pendingQueueItem(row, [host], now);
+  expect(denied.diagnosis?.conditions[0]!.status).toBe('failed');
+  expect(denied.diagnosis?.conditions[0]!.observed).toContain('denied');
+  host.lanes[0]!.resources[0]!.permissionObservations = [{...observation, observedAt: new Date(now - 120_001).toISOString()}];
+  expect(pendingQueueItem(row, [host], now).diagnosis?.conditions[0]!.status).toBe('waiting');
+});
+test('expired originals report deadline settlement while preserving outstanding custody', () => {
+  const {row, host} = fixture(); row.fleetDeadline = new Date(now - 1); row.fleetInputSha256 = routineJobInputDigest(row); const original = structuredClone(row);
+  const item = pendingQueueItem(row, [host], now);
+  expect(item.diagnosis?.stage).toBe('Original deadline reached');
+  expect(item.diagnosis?.nextAction).toContain('do not extend the deadline'); expect(row).toEqual(original);
+});
+test('terminal originals preserve their result instead of appearing as waiting cancellation', () => {
+  const {row, host} = fixture(); row.state = 'terminal'; row.terminalStatus = 'not-run';
+  row.fleetCancellation = {requestedAt: new Date(now).toISOString(), reason: 'deadline'} as any;
+  const original = structuredClone(row), item = pendingQueueItem(row, [host], now);
+  expect(item.diagnosis?.stage).toBe('Terminal original result');
+  expect(item.reason).toContain('not pending delivery'); expect(row).toEqual(original);
 });
