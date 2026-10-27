@@ -664,7 +664,7 @@ function graphCandidateClaimConflict(row: StoredRoutineJob, host: ReceivedTestHo
   const permitted = exclusiveResources.disjointPassiveCheckClaims({hostId: host.hostId, incarnation: host.incarnation!,
     incarnationGeneration: host.incarnationGeneration!, sequence: host.sequence!, receivedAt: new Date(host.receivedAt),
     snapshot: host, laneControls: host.resourceControlRecords, resourceReservations: host.authorityReservations,
-    resourceLifecycleCursor: host.resourceLifecycleCursor}, laneId, purpose.resources.map(member => member.id), now)
+    resourceLifecycleCursor: host.resourceLifecycleCursor}, laneId, purpose.resources.map(member => member.id), now, undefined, purpose.resources)
   return host.authorityReservations?.some(claim => candidateClaimConflict(row, claim, host.hostId, laneId) &&
     (!isExclusiveHostReservation(claim) || !permitted?.has(claim.id)))
 }
@@ -954,8 +954,9 @@ export function routineResourceReadinessPurpose(host: RoutingTestHostState, lane
         authorityReservations: host.authorityReservations}, id, now, original && {...original, laneId: lane.id})) return false
     if (selected.has(id)) return true
     visiting.add(id)
-    const dependencies = new Set([...contract.dependencies ?? [], ...subject.resource.dependencies])
-    for (const dependency of ref.exclusiveDependencies ?? []) {
+    const capabilities = requiredCapabilities ?? ref.capabilities ?? [],
+      dependencies = new Set([...contract.dependencies ?? [], ...subject.resource.dependencies])
+    for (const dependency of (ref.exclusiveDependencies ?? []).filter(value => capabilities.includes(value.capability))) {
       if (dependency.authorityHostId !== host.hostId) return false
       dependencies.add(dependency.resourceId)
     }
@@ -963,7 +964,7 @@ export function routineResourceReadinessPurpose(host: RoutingTestHostState, lane
     visiting.delete(id)
     const parsed = resourceReadinessMemberSchema.safeParse({id, kind: ref.kind,
       authorityHostId: host.hostId, subjectGeneration: subject.generation, contractVersion: contract.version,
-      capabilities: [...requiredCapabilities ?? ref.capabilities ?? []]})
+      capabilities: [...capabilities]})
     if (!parsed.success) return false
     selected.set(id, parsed.data)
     return selected.size <= 30

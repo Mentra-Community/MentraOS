@@ -86,11 +86,31 @@ for(const state of ['prepared','began'] as const){
    expect(x.writes).toBe(1);expect(x.h.authorityReservations!.find(c=>c.id===original.id)).toEqual(original)
  })
 }
+test('an unrequested foreign capability does not expand the graph beside a real disjoint Check', async () => {
+ const advertise = (x: ReturnType<typeof fixture>) => {
+   const ref=x.lane.resources.find(resource=>resource.kind==='recorder')!
+   ref.capabilities=['google-authentication']
+   ref.exclusiveDependencies=[{resourceId:'conference-account',authorityHostId:'mini',capability:'google-authentication'}]
+ }
+ const producer=fixture();advertise(producer);occupy(producer)
+ expect((await prepare(producer))?.target.purpose?.kind).toBe('resource-readiness')
+ expect(producer.h.authorityReservations).toEqual([producer.claim])
+ const authority=await authorityFixture();advertise(authority);occupy(authority)
+ expect((await authority.service.acquire(authority.intent,authority.h.hostId)).status).toBe('reserved')
+ expect(authority.h.authorityReservations!.find(claim=>claim.id===authority.claim.id)).toEqual(authority.claim)
+ expect(authority.writes).toBe(1)
+})
 const refusals: Array<[string,(x: ReturnType<typeof fixture>)=>void]>=[
  ['required direct overlap',x=>{x.claim.resourceId='air1:phone';x.claim.resourceCheck=undefined}],
  ['secondary Check dependency overlap',x=>{x.lane.resources.find(r=>r.kind==='glasses')!.idleContract!.dependencies=['air1:app']}],
  ['required contract dependency overlap',x=>{x.lane.resources.find(r=>r.kind==='app')!.idleContract!.dependencies!.push('air1:glasses')}],
- ['required exclusive dependency overlap',x=>{x.lane.resources.find(r=>r.kind==='recorder')!.capabilities=['resource-idle'];x.lane.resources.find(r=>r.kind==='recorder')!.exclusiveDependencies=[{resourceId:'air1:glasses',authorityHostId:'air1',capability:'resource-idle'}]}],
+ ['required exclusive dependency overlap',x=>{
+   x.lane.resources.find(r=>r.kind==='recorder')!.capabilities=['resource-idle']
+   x.lane.resources.find(r=>r.kind==='recorder')!.exclusiveDependencies=[{resourceId:'air1:glasses',authorityHostId:'air1',capability:'resource-idle'}]
+   x.f.row.fleetPreparation!.definition.resourceRequirements.find(resource=>resource.kind==='recorder')!.capabilities=['resource-idle']
+   x.f.row.fleetPreparation!.definitionSha256=requestInputDigest(x.f.row.fleetPreparation!.definition)
+   x.f.row.fleetInputSha256=routineJobInputDigest(x.f.row)
+ }],
  ['foreign dependency authority',x=>{x.lane.resources.find(r=>r.kind==='glasses')!.capabilities=['resource-idle'];x.lane.resources.find(r=>r.kind==='glasses')!.exclusiveDependencies=[{resourceId:'air1:app',authorityHostId:'foreign',capability:'resource-idle'}]}],
  ['conflicting canonical alias',x=>{const ref=x.lane.resources.find(r=>r.kind==='glasses')!;x.h.lanes.push({...structuredClone(x.lane),id:'alias',resources:[{...structuredClone(ref),idleContract:{...ref.idleContract!,dependencies:['air1:app']}}]});x.h.resourceLifecycle!.subjects.find(s=>s.subject.id===ref.id)!.resource.memberships.push({hostId:'air1',laneId:'alias'})}],
  ['changed controller',x=>{x.claim.controllerIncarnation='foreign-controller'}],

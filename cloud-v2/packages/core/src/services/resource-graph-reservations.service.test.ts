@@ -1,17 +1,17 @@
 import {expect, test, spyOn} from 'bun:test'
 import {isDeepStrictEqual} from 'node:util'
-import {backendCandidateFixture} from './backend-candidate-preparation.test-support'
+import {backendCandidateFixture, routingGraphFixture} from './backend-candidate-preparation.test-support'
 import {candidatePrerequisiteRequestMatches, candidateSettlement, graphCandidateClaimMatches, graphCandidateReturnMatches, graphCandidateHistoricalSettlement, graphCheckOperationId} from './backend-candidate-preparation'
 import {ResourceReservationsService, resourceReservationRepository, type ResourceReservationHost, type ResourceReservationRepository} from './resource-reservations.service'
 import {TestRequestModel} from '../models/test-request.model'
 import {TestHostStateService} from './test-host-state.service'
-import {routineJobRepository} from './routine-job.service'
+import {routineJobRepository, routineJobInputDigest, routineResourceReadinessPurpose} from './routine-job.service'
 import {requestInputDigest} from './test-request.service'
 import {exclusiveResourceIntentSchema, exclusiveResourceReturnSchema, type ExclusiveHostReservation, type ExclusiveResourceReturn} from '../types/resource-reservations.types'
 
 /** Real service and existing host-row CAS; provider observations are inert fixtures. */
-async function graphAuthorityFixture() {
-  const f = backendCandidateFixture(), versions = new Map<string, number>(), writes: string[][] = [],
+async function graphAuthorityFixture(f = backendCandidateFixture(), configure: (f: ReturnType<typeof backendCandidateFixture>) => void = () => {}) {
+  const versions = new Map<string, number>(), writes: string[][] = [],
     framework: {history?: unknown[]; stops?: unknown[]} = {}
   for (const host of f.hosts) {
     host.resourceReservations!.resourceReadiness = true
@@ -23,11 +23,12 @@ async function graphAuthorityFixture() {
         repairConfigured: true, qualifiedScope: {kind: 'same-controller', controllerId: host.hostId}}
       return {...structuredClone(previous), subject: {kind: 'resource', id: ref.id, authorityHostId: host.hostId},
         supportedActions: ['mark-out-of-service'], idle: {...previous.idle, contractVersion: ref.idleContract.version},
-        resource: {kind: ref.kind, capabilities: ref.capabilities ?? [], memberships: [{hostId: host.hostId, laneId: 'android'}],
+        resource: {kind: ref.kind, capabilities: ref.capabilities ?? [], memberships: [{hostId: host.hostId, laneId: host.lanes[0]!.id}],
           dependencies: [], placement: 'installed'}}
     })
     versions.set(host.hostId, 0)
   }
+  configure(f)
   await f.service.preparation('job-one')
   const pending = f.row.fleetCandidatePreparation!, purpose = pending.target.purpose
   if (purpose?.kind !== 'resource-readiness') throw Error('Expected the real graph candidate')
@@ -105,6 +106,65 @@ async function graphAuthorityFixture() {
   }
   return {f, host, pending, purpose, intent, rows, service, writes, closedReturns, framework}
 }
+
+// Feedback requests a scoped report reader, not the fixture's optional Google account.
+function feedbackGraphFixture(capabilities = ['scoped-report-read']) {
+  const f = routingGraphFixture('ios-on-mac'), prepared = f.row.fleetPreparation!, definition = prepared.definition
+  definition.execution!.resourceKinds = ['app', 'recorder', 'fixture-data']
+  definition.resourceRequirements = [{kind: 'app', capabilities: []},
+    {kind: 'recorder', capabilities: [], storage: {minimumAvailableBytes: 5 * 1024 ** 3}},
+    {kind: 'fixture-data', capabilities}]
+  definition.fixtures = [{provider: 'feedback-data', description: 'Lane scoped report reader'}]
+  delete definition.glasses
+  prepared.requirements = {platform: 'ios-on-mac', resources: definition.resourceRequirements}
+  prepared.definitionSha256 = requestInputDigest(definition)
+  f.row.fleetInputSha256 = routineJobInputDigest(f.row)
+  const configure = (fixture: ReturnType<typeof backendCandidateFixture>) => {
+    for (const host of fixture.hosts) {
+      const lane = host.lanes[0]!, template = host.resourceLifecycle!.subjects[0]!, id = `${host.hostId}:fixtures`
+      const idleContract = {version: 'fixture-baseline', maximumAgeMs: 120_000, conditions: ['fixture-owned-effects-returned'],
+        dependencies: [`${host.hostId}:app`], repairConfigured: true,
+        qualifiedScope: {kind: 'same-controller' as const, controllerId: host.hostId}}
+      lane.resources.push({id, kind: 'fixture-data', capabilities: ['scoped-report-read', 'google-authentication'], idleContract,
+        exclusiveDependencies: [{resourceId: 'conference-account', authorityHostId: 'mini', capability: 'google-authentication'}]})
+      host.resourceLifecycle!.subjects.push({...structuredClone(template), subject: {kind: 'resource', id, authorityHostId: host.hostId},
+        idle: {...template.idle, contractVersion: idleContract.version},
+        resource: {kind: 'fixture-data', capabilities: ['scoped-report-read', 'google-authentication'],
+          memberships: [{hostId: host.hostId, laneId: lane.id}], dependencies: [`${host.hostId}:app`], placement: 'installed'}})
+    }
+  }
+  return {f, configure}
+}
+
+test('scoped report readiness and acquisition omit the fixture optional foreign Google dependency', async () => {
+  const {f, configure} = feedbackGraphFixture(), original = structuredClone({selection: f.row.fleetSelection,
+    inputSha256: f.row.fleetInputSha256, deadline: f.row.fleetDeadline}), g = await graphAuthorityFixture(f, configure)
+  expect(g.purpose.resources.map(member => member.id).sort()).toEqual(['air1:app', 'air1:fixtures', 'air1:recorder'])
+  expect(g.purpose.resources.find(member => member.kind === 'fixture-data')!.capabilities).toEqual(['scoped-report-read'])
+  const answer = await g.service.acquire(g.intent, g.host.hostId)
+  expect(answer.status).toBe('reserved')
+  expect(answer.claims.map(claim => claim.resourceId).sort()).toEqual(['air1:app', 'air1:fixtures', 'air1:recorder'])
+  expect(g.writes).toHaveLength(1)
+  expect({selection: f.row.fleetSelection, inputSha256: f.row.fleetInputSha256, deadline: f.row.fleetDeadline}).toEqual(original)
+})
+
+test('requesting Google authentication still requires its original foreign authority', () => {
+  const {f, configure} = feedbackGraphFixture(['google-authentication']); configure(f)
+  expect(routineResourceReadinessPurpose(f.hosts[0]!, f.hosts[0]!.lanes[0]!, f.row.fleetPreparation!.requirements, f.now)).toBeUndefined()
+  expect(f.writes).toBe(0)
+})
+
+test('scoped report readiness keeps actual native dependency and fixture writer fences', () => {
+  for (const block of ['native-dependency', 'fixture-owner'] as const) {
+    const {f, configure} = feedbackGraphFixture(); configure(f)
+    const host = f.hosts[0]!, ref = host.lanes[0]!.resources.find(ref => ref.kind === 'fixture-data')!
+    if (block === 'native-dependency') ref.idleContract!.dependencies!.push('unreported-native-writer')
+    else host.resourceLifecycle!.subjects.find(subject => subject.subject.id === ref.id)!.owner =
+      {id: 'foreign-writer', kind: 'boundary-cleanup', hostId: host.hostId, generation: 1}
+    expect(routineResourceReadinessPurpose(host, host.lanes[0]!, f.row.fleetPreparation!.requirements, f.now)).toBeUndefined()
+    expect(f.writes).toBe(0)
+  }
+})
 
 function currentPassedGraph(g: Awaited<ReturnType<typeof graphAuthorityFixture>>) {
   g.host.sequence++

@@ -15,7 +15,7 @@ import {frameworkRequestInputSchema} from '../types/framework-request.types'
 import {routineQualificationTargetSchema, MAX_FLEET_CANDIDATE_PREPARATIONS, type StoredRoutineJob, type OwnedRoutineQualification, type RoutineQualificationTarget, type FleetCandidatePreparation} from '../types/routine-job.types'
 import {preparationRejectionSchema} from '../types/routine-dispatch.types'
 import {z} from 'zod'
-import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
+import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION, type ResourceReadinessPurpose} from '../types/backend-connectivity.types'
 import {currentGraphReturnContinuation} from './graph-return-continuation'
 import {candidatePrerequisiteRequestMatches, qualifiedCandidate, candidateReturnMatches, qualifiedGraphCandidate,
   graphCandidateClaimMatches, graphCandidateReturnMatches, graphCandidateHasOriginalCustody, graphCandidateNoAcquisitionMatches,
@@ -1003,18 +1003,20 @@ export class ResourceReservationsService {
   }
   /** Membership alone is not reader scope. Protect every declared graph member
    * while retaining the same original passive-check identity and custody proof. */
-  disjointPassiveCheckClaims(host: ResourceReservationHost, laneId: string, resourceIds: string[], now = this.now(), acquired?: ExclusiveHostReservation) {
+  disjointPassiveCheckClaims(host: ResourceReservationHost, laneId: string, resourceIds: string[], now = this.now(),
+    acquired?: ExclusiveHostReservation, requestedMembers?: ResourceReadinessPurpose['resources']) {
     const lifecycle = host.snapshot.resourceLifecycle,
       installed = [...host.snapshot.lanes.flatMap(lane => lane.resources), ...host.snapshot.resources ?? []],
       all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []).filter(claim => !acquired || !isDeepStrictEqual(claim, acquired))
     if (!lifecycle) return undefined
-    const scope = (root: string) => {
+    const scope = (root: string, members?: ResourceReadinessPurpose['resources']) => {
       const visited = new Set<string>(), visiting = new Set<string>()
       const visit = (id: string): boolean => {
         if (visiting.has(id)) return false
         if (visited.has(id)) return true
         const refs = installed.filter(ref => ref.id === id), ref = refs[0], contract = ref?.idleContract,
-          subject = lifecycle.subjects.find(value => value.subject.id === id)
+          subject = lifecycle.subjects.find(value => value.subject.id === id), capabilities = members?.find(member => member.id === id)?.capabilities,
+          exclusive = (ref?.exclusiveDependencies ?? []).filter(dependency => capabilities === undefined || capabilities.includes(dependency.capability))
         if (!ref || !contract || contract.qualifiedScope.kind === 'unqualified' || !subject?.current ||
           subject.subject.authorityHostId !== host.hostId || subject.resource.kind !== ref.kind ||
           subject.idle.contractVersion !== contract.version || !isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope) ||
@@ -1024,10 +1026,10 @@ export class ResourceReservationsService {
             !isDeepStrictEqual(other.exclusiveDependencies ?? [], ref.exclusiveDependencies ?? [])) ||
           subject.resource.memberships.some(member => member.hostId !== host.hostId || !host.snapshot.lanes.some(lane =>
             lane.id === member.laneId && lane.resources.some(resource => resource.id === id))) ||
-          ref.exclusiveDependencies?.some(dependency => dependency.authorityHostId !== host.hostId)) return false
+          exclusive.some(dependency => dependency.authorityHostId !== host.hostId)) return false
         visiting.add(id)
         if (![...contract.dependencies ?? [], ...subject.resource.dependencies,
-          ...ref.exclusiveDependencies?.map(dependency => dependency.resourceId) ?? []].every(visit)) return false
+          ...exclusive.map(dependency => dependency.resourceId)].every(visit)) return false
         visiting.delete(id); visited.add(id)
         return true
       }
@@ -1042,7 +1044,7 @@ export class ResourceReservationsService {
     })
     const target = new Set<string>()
     if (!resourceIds.length || !resourceIds.every(id => {
-      const footprint = scope(id)
+      const footprint = scope(id, requestedMembers)
       if (!footprint || !free(footprint)) return false
       for (const member of footprint) target.add(member)
       return true
@@ -1116,7 +1118,7 @@ export class ResourceReservationsService {
         subject.owner === null && subject.repair.state === 'none' && member.capabilities.every(value => ref.capabilities?.includes(value)) &&
         !(ref.idleContract.dependencies ?? []).some(id => !purpose.resources.some(value => value.id === id)) &&
         !subject.resource.dependencies.some(id => !purpose.resources.some(value => value.id === id)) &&
-        !(ref.exclusiveDependencies ?? []).some(dependency => dependency.authorityHostId !== host.hostId ||
+        !(ref.exclusiveDependencies ?? []).filter(dependency => member.capabilities.includes(dependency.capability)).some(dependency => dependency.authorityHostId !== host.hostId ||
           !purpose.resources.some(value => value.id === dependency.resourceId)) &&
         resourceCandidateBlocker({...host, resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations}, member.id, this.now()) === undefined
     })
@@ -1146,7 +1148,7 @@ export class ResourceReservationsService {
         await this.checkpointGraphClaims(intent, relevant) ? {status: 'reserved' as const, intentSha256, claims: relevant} : unknown
       if (pending.noAcquisitionReceipt || reportedGraphCandidateSettlement(pending, host.snapshot) ||
         !candidatePrerequisiteRequestMatches(row ?? null, intent, this.now()) || !this.graphSubjectsCurrent(host, intent)) return unknown
-      const disjointChecks = this.disjointPassiveCheckClaims(host, intent.laneId!, purpose.resources.map(member => member.id))
+      const disjointChecks = this.disjointPassiveCheckClaims(host, intent.laneId!, purpose.resources.map(member => member.id), this.now(), undefined, purpose.resources)
       if (all.some(claim => isExclusiveHostReservation(claim)
         ? !disjointChecks?.has(claim.id) && claim.borrowerHostId === hostId && claim.laneId === intent.laneId
         : claim.hostId === hostId && claim.laneId === intent.laneId)) return unknown
@@ -1171,7 +1173,7 @@ export class ResourceReservationsService {
         !claims.every(claim => after.snapshot.resourceLifecycle?.subjects.find(subject => subject.subject.id === claim.resourceId)?.generation ===
           claim.resourceCheck!.subjectGeneration) ||
         !this.graphSubjectsCurrent(withoutOwn, intent) ||
-        !isDeepStrictEqual(this.disjointPassiveCheckClaims(withoutOwn, intent.laneId!, purpose.resources.map(member => member.id)), disjointChecks) ||
+        !isDeepStrictEqual(this.disjointPassiveCheckClaims(withoutOwn, intent.laneId!, purpose.resources.map(member => member.id), this.now(), undefined, purpose.resources), disjointChecks) ||
         !candidatePrerequisiteRequestMatches(await this.rows.request?.(purpose.jobId) ?? null, intent, this.now())) return unknown
       return {status: 'reserved' as const, intentSha256, claims}
     }
