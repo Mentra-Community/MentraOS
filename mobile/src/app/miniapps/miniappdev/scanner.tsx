@@ -95,7 +95,9 @@ export default function MiniappDeveloperScannerScreen() {
       }
       clearHistoryAndGoHome()
       leftScanner = true
-      if (await engine.miniapps.start(app, {skipNavigation: true})) await engine.miniapps.setForeground(packageName)
+      // Opening what they just scanned is the person's own choice.
+      if (await engine.miniapps.start(app, {skipNavigation: true, trigger: "user"}))
+        await engine.miniapps.setForeground(packageName)
     } catch (error) {
       console.warn(`Failed to open ${packageName} after installing it:`, error)
       if (!leftScanner) showOnHomeScreen()

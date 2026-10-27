@@ -43,13 +43,15 @@ export interface StartOptions {
   /** Present the app after launch checks, before bundle loading and runtime startup. */
   onAccepted?: () => void | Promise<void>
   /**
-   * Who started the miniapp, for Fleet's launch record: `"user"` for a person's own choice (a tap on Home, a pick
-   * from the glasses menu), `"automatic"` for everything else. It is the default, and it changes nothing about the
-   * launch.
+   * Who started the miniapp: `"user"` for a person's own choice (a tap on Home, a pick from the glasses menu),
+   * `"automatic"` for everything else. It is the default. Fleet's launch record names it, and only a person's start
+   * shows UI: an automatic start that a check refuses (glasses not connected, an update in progress, no speech
+   * model) is refused silently.
    */
   trigger?: "user" | "automatic"
 }
 
+/** Host seams for a start. The refusal explanations are only for a person's own start. */
 export interface AppStoreHooks {
   /** An open was refused because the miniapp is updating; the host explains why. */
   onUpdateBlocked?: (app: ClientApp) => void
@@ -76,9 +78,32 @@ export interface AppStoreHooks {
 
 let hostHooks: AppStoreHooks = {}
 const uninstallingPackages = new Set<string>()
+const openedByUserListeners = new Set<(packageName: string) => void>()
 
 export function installAppStoreHooks(hooks: AppStoreHooks): void {
   hostHooks = {...hostHooks, ...hooks}
+}
+
+/**
+ * A person started a miniapp (a `"user"` start) and it now runs. Re-opening one
+ * that already runs, and automatic starts (restoring what ran before, an
+ * update's restart), are not announced. Returns an unsubscribe.
+ */
+export function onMiniappOpenedByUser(listener: (packageName: string) => void): () => void {
+  openedByUserListeners.add(listener)
+  return () => {
+    openedByUserListeners.delete(listener)
+  }
+}
+
+function announceOpenedByUser(packageName: string): void {
+  for (const listener of [...openedByUserListeners]) {
+    try {
+      listener(packageName)
+    } catch (error) {
+      console.warn("Miniapp opened listener threw", error)
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +426,9 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   start: reportingLaunches(async (clientApp: ClientApp, opts: StartOptions | undefined, attempt: LaunchAttempt) => {
     const state = get()
     const packageName = clientApp.packageName
+    // Only a person's own start explains a refusal; anything else is refused silently.
+    const byUser = opts?.trigger === "user"
+    const explain = byUser ? hostHooks : {}
     if (!isMiniappAvailable(packageName)) return false
     const app = state.apps.find((a) => a.packageName === packageName)
     if (!app) {
@@ -408,7 +436,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return false
     }
     if (state.updatingPackages.has(packageName)) {
-      hostHooks.onUpdateBlocked?.(app)
+      explain.onUpdateBlocked?.(app)
       return false
     }
 
@@ -430,9 +458,9 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return false
     }
 
-    // Hardware-compatibility gate — engine decides and blocks; the host renders
-    // its branded alert via onIncompatibleBlocked (and/or the structured
-    // notification below). `!isCompatible` (not `=== false`) keeps the semantics
+    // Hardware-compatibility gate — engine decides and blocks; for a person's
+    // start the host renders its branded alert via onIncompatibleBlocked
+    // (and/or the structured notification below). `!isCompatible` (not `=== false`) keeps the semantics
     // of the host gate this replaces: an unknown verdict blocks, not launches.
     if (!app.compatibility?.isCompatible) {
       islandNotifications.emit({
@@ -442,7 +470,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
         metadata: {missingRequired: app.compatibility?.missingRequired ?? []},
         timestamp: Date.now(),
       })
-      hostHooks.onIncompatibleBlocked?.(app)
+      explain.onIncompatibleBlocked?.(app)
       return false
     }
 
@@ -456,13 +484,13 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
         reason: `${app.name ?? packageName} needs an on-device speech model before it can start`,
         timestamp: Date.now(),
       })
-      hostHooks.onMissingSpeechModel?.(app)
+      explain.onMissingSpeechModel?.(app)
       return false
     }
 
     // A model check above may have yielded while an update started.
     if (get().updatingPackages.has(packageName)) {
-      hostHooks.onUpdateBlocked?.(app)
+      explain.onUpdateBlocked?.(app)
       return false
     }
 
@@ -533,6 +561,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       }
     }
 
+    if (byUser) announceOpenedByUser(packageName)
     return true
   }),
 

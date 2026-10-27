@@ -42,6 +42,7 @@ mock.module("../settings", () => ({
 let apps: typeof import("../apps").useAppStatusStore
 let installHooks: typeof import("../apps").installAppStoreHooks
 let useStart: typeof import("../apps").useStart
+let onOpenedByUser: typeof import("../apps").onMiniappOpenedByUser
 
 const target: ClientApp = {
   packageName: "com.test.notes",
@@ -71,6 +72,7 @@ beforeAll(async () => {
   apps = module.useAppStatusStore
   installHooks = module.installAppStoreHooks
   useStart = module.useStart
+  onOpenedByUser = module.onMiniappOpenedByUser
 })
 
 afterAll(resetForTests)
@@ -97,6 +99,75 @@ beforeEach(() => {
 afterEach(() => {
   stopListening()
   for (const spy of quiet) spy.mockRestore()
+})
+
+describe("what a start shows", () => {
+  const incompatible = {...target, compatibility: {...compatible, isCompatible: false}}
+  const speech = {...target, packageName: "com.test.speech", name: "Speech"}
+  let shown: string[] = []
+  beforeEach(() => {
+    shown = []
+    installHooks({
+      onUpdateBlocked: (app) => shown.push(`updating:${app.packageName}`),
+      onIncompatibleBlocked: (app) => shown.push(`incompatible:${app.packageName}`),
+      onMissingSpeechModel: (app) => shown.push(`speech:${app.packageName}`),
+    })
+  })
+
+  test("a person's start explains why it was refused", async () => {
+    apps.setState({apps: [incompatible]})
+    expect(await apps.getState().start(incompatible, {trigger: "user"})).toBe(false)
+    apps.setState({apps: [speech]})
+    modelAvailable = false
+    expect(await apps.getState().start(speech, {trigger: "user"})).toBe(false)
+    apps.setState({apps: [target], updatingPackages: new Set([target.packageName])})
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
+    expect(shown).toEqual(["incompatible:com.test.notes", "speech:com.test.speech", "updating:com.test.notes"])
+  })
+
+  test("an automatic start is refused silently", async () => {
+    apps.setState({apps: [incompatible]})
+    expect(await apps.getState().start(incompatible)).toBe(false)
+    apps.setState({apps: [speech]})
+    modelAvailable = false
+    expect(await apps.getState().start(speech, {trigger: "automatic"})).toBe(false)
+    apps.setState({apps: [target], updatingPackages: new Set([target.packageName])})
+    expect(await apps.getState().start(target, {skipNavigation: true})).toBe(false)
+    expect(shown).toEqual([])
+    expect(ensureRunning).not.toHaveBeenCalled()
+  })
+})
+
+describe("a person opening a miniapp", () => {
+  let opened: string[] = []
+  let unsubscribe: () => void = () => {}
+  beforeEach(() => {
+    opened = []
+    unsubscribe = onOpenedByUser((packageName) => opened.push(packageName))
+  })
+  afterEach(() => unsubscribe())
+
+  test("is announced once the miniapp runs", async () => {
+    ensureRunning.mockImplementationOnce(async () => {
+      expect(opened).toEqual([])
+      return {}
+    })
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(true)
+    expect(opened).toEqual([target.packageName])
+  })
+
+  test("is not an automatic start, a refused or failed start, or re-opening a running miniapp", async () => {
+    expect(await apps.getState().start(target)).toBe(true)
+    apps.setState({apps: [{...target, running: true}]})
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(true)
+    apps.setState({apps: [target]})
+    ensureRunning.mockRejectedValueOnce(new Error("spawn failed"))
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
+    const incompatible = {...target, compatibility: {...compatible, isCompatible: false}}
+    apps.setState({apps: [incompatible]})
+    expect(await apps.getState().start(incompatible, {trigger: "user"})).toBe(false)
+    expect(opened).toEqual([])
+  })
 })
 
 describe("launch reports", () => {
