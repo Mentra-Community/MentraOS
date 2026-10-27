@@ -66,12 +66,27 @@ export interface LicenseWrite {
    * an older revision decides nothing. A Core that predates it ignores it.
    */
   seatRequest?: {requestId: string; mentraUserId: string; quantity: number}
+  /**
+   * Present exactly when the subscription is cancelled and `paidThrough` has passed: the license is over and drops
+   * off the Licenses page. Core ends it (`endedAt` set, `endedReason` this, its seats freed with reason
+   * `license_ended`) on the first applied write that carries it, and a repeat of that revision changes nothing. A
+   * later, newer write without it makes the license stand again (a lapsed license is a fact about its subscription,
+   * not a one-way door), which a cancelled subscription never does. A Core that predates it ignores it and does not
+   * answer `ended: true`. Core also ends a license that has not ended when the write repeats the revision it has.
+   */
+  endedReason?: LicenseWriteEndedReason
 }
 
-/** Core's answer to a license write that it accepted: whether it changed anything, and the revision it has. */
+/**
+ * Core's answer to a license write that it accepted: whether it changed anything, and the revision it has.
+ * `ended` is true exactly when the write carried `endedReason` and Core has the license ended by it, so billing
+ * can tell a Core that ended the license from one that predates the ending, which stores the revision and
+ * drops the field: billing keeps sending such a write until it is answered with `ended: true`.
+ */
 export interface LicenseWriteResponse {
   applied: boolean
   revision: number
+  ended?: true
 }
 
 /** One seat of a workspace license: the membership that holds it. Times are ISO 8601 UTC. */
@@ -83,11 +98,11 @@ export interface LicenseSeatView {
 
 /**
  * A license as Core holds it. `seatsUsed` is how many seats are assigned, and may exceed `quantity` after a
- * write lowered it: Core frees no seat on its own. `endedAt` is set when its workspace was deleted; Core then
- * refuses further writes for it.
+ * write lowered it: Core frees no seat on its own. `endedAt` is set when its workspace was deleted (Core then
+ * refuses further writes for it) or when billing wrote that it lapsed (`LicenseWrite.endedReason`).
  * `seats` is present where Core lists who holds them (the workspace routes).
  */
-export interface LicenseView extends Omit<LicenseWrite, "licenseId" | "assignTo" | "seatRequest"> {
+export interface LicenseView extends Omit<LicenseWrite, "licenseId" | "assignTo" | "seatRequest" | "endedReason"> {
   licenseId: string
   seatsUsed: number
   endedAt: string | null
@@ -137,9 +152,17 @@ export const SEAT_RELEASE_REASONS = [
 ] as const
 export type SeatReleaseReason = (typeof SEAT_RELEASE_REASONS)[number]
 
-/** Why a license ended, in `license.ended`'s `after.reason`: its workspace was deleted. */
-export const LICENSE_ENDED_REASONS = ["workspace_deleted"] as const
+/**
+ * Why a license ended, in `license.ended`'s `after.reason`: its workspace was deleted (`workspace_deleted`), or its
+ * subscription was cancelled and its paid term has run out (`lapsed`, which billing writes: see
+ * {@link LicenseWrite.endedReason}).
+ */
+export const LICENSE_ENDED_REASONS = ["workspace_deleted", "lapsed"] as const
 export type LicenseEndedReason = (typeof LICENSE_ENDED_REASONS)[number]
+
+/** The reasons billing can end a license with, in a write: Core ends the rest itself. */
+export const LICENSE_WRITE_ENDED_REASONS = ["lapsed"] as const
+export type LicenseWriteEndedReason = (typeof LICENSE_WRITE_ENDED_REASONS)[number]
 
 /** `error` of the 409 a license write older than the one Core has gets. The body's `revision` is Core's. */
 export const STALE_REVISION_ERROR = "stale_revision"

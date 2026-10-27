@@ -639,7 +639,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       if (typeof raw.applied !== "boolean" || typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision)) {
         throw badResponse(path, "missing applied or a whole revision")
       }
-      return {applied: raw.applied, revision: raw.revision}
+      return {applied: raw.applied, revision: raw.revision, ...(raw.ended === true ? {ended: true as const} : {})}
     },
 
     async listLicenses(workspaceId) {

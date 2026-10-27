@@ -46,6 +46,10 @@
  * transaction (`releaseSeatsForMembership`), and a rejoined member has a new membership and no seat.
  * Deleting a workspace ends its licenses and releases their seats inside the deletion's transaction
  * (`endLicensesForOwner`). Deleting an account ends no license: the person's seats go with their memberships.
+ * A write that carries `endedReason: "lapsed"` (billing: the subscription is cancelled and its term has run
+ * out) ends its license in the write's own transaction: its seats are released (`license_ended`), `endedAt` is
+ * set once, `license.ended` is recorded, and it gives its buyer and any request no seat. A repeat of that revision
+ * changes nothing, and a newer write without it makes the license stand again.
  *
  * **The buyer's seat.** A write of a license may name the purchase's buyer (`assignTo`). Only
  * the write that creates the license honors it, inside its transaction (`assignBuyer`): one seat, through
@@ -71,6 +75,7 @@
 
 import {
   capabilitiesForRole,
+  LICENSE_WRITE_ENDED_REASONS,
   MAX_SEAT_ASSIGNMENTS,
   type LicenseEndedReason,
   type LicenseFeature,
@@ -130,8 +135,8 @@ function invalid(message: string): never {
 /**
  * The license write in `body`, for the license the path names (`licenseId`), with only the write's own
  * fields. Anything malformed is `invalid_request` (400), saying what: an owner that is not a workspace among
- * them, and a term whose `paidThrough` is before its `validFrom`. `assignTo` is absent or `{mentraUserId}`, and
- * `seatRequest` absent or `{requestId, mentraUserId, quantity}`.
+ * them, and a term whose `paidThrough` is before its `validFrom`. `assignTo` is absent or `{mentraUserId}`,
+ * `seatRequest` absent or `{requestId, mentraUserId, quantity}`, and `endedReason` absent or `lapsed`.
  */
 export function parseLicenseWrite(body: unknown, licenseId: string): LicenseWrite {
   if (!isRecord(body)) invalid("a license write must be a JSON object")
@@ -157,6 +162,11 @@ export function parseLicenseWrite(body: unknown, licenseId: string): LicenseWrit
     write.assignTo = {mentraUserId: body.assignTo.mentraUserId}
   }
   if (body.seatRequest !== undefined) write.seatRequest = parseSeatRequest(body.seatRequest)
+  if (body.endedReason !== undefined) {
+    const reason = LICENSE_WRITE_ENDED_REASONS.find(known => known === body.endedReason)
+    if (!reason) invalid(`endedReason must be one of: ${LICENSE_WRITE_ENDED_REASONS.join(", ")}`)
+    write.endedReason = reason
+  }
   return write
 }
 
@@ -272,18 +282,49 @@ async function applyWorkspaceLicenseWrite(
     if (workspace?.status !== "active") fail("owner_not_found", "the workspace is deleted or does not exist")
     // Writing the workspace conflicts with its deletion, so a license never lands after the workspace is gone.
     await touchWorkspace(session, workspaceId)
+    // A write that carries the ending frees the seats the license has, before it is saved ended.
+    const freed = write.endedReason && !existing?.endedAt ? await freeSeatsOfLapsed(session, write, actor) : 0
     if (!(await saveLicense(session, existing, write)))
       throw new Error(`license ${write.licenseId} changed during its write`)
+    // An ended license gives no seat: not to its buyer, and not to a person's request.
+    const ending = write.endedReason !== undefined
     // Only the write that creates the license gives its buyer one: a repeat was answered above, and a later
     // revision finds the license.
-    const buyer = existing ? [] : await assignBuyer(session, write, workspaceId, actor)
+    const buyer = existing || ending ? [] : await assignBuyer(session, write, workspaceId, actor)
     // A seat request is decided against the license as it was before this write (`existing`), as
     // `saveLicense` recorded it.
-    const requested = await assignRequested(session, existing, write, workspaceId, actor)
+    const requested = ending ? [] : await assignRequested(session, existing, write, workspaceId, actor)
     // `license.written` first, then the buyer's `seat.assigned` and the request's, as the transaction's last writes.
-    await recordWorkspaceEvents(session, [writtenEvent(existing, write, actor), ...buyer, ...requested])
-    return {applied: true, revision: write.revision}
+    await recordWorkspaceEvents(session, [
+      writtenEvent(existing, write, actor),
+      ...(ending && !existing?.endedAt ? [lapsedEvent(write, actor, freed)] : []),
+      ...buyer,
+      ...requested,
+    ])
+    return {applied: true, revision: write.revision, ...(ending ? {ended: true as const} : {})}
   })
+}
+
+/**
+ * Release every seat of the license `write` ends (`seat.released`, reason `license_ended`), in the write's
+ * transaction, and answer how many there were.
+ */
+async function freeSeatsOfLapsed(session: ClientSession, write: LicenseWrite, actor: Actor): Promise<number> {
+  const seats = await LicenseSeatModel.find({licenseId: write.licenseId}).session(session).lean<LicenseSeatRow[]>()
+  if (seats.length > 0) await releaseSeats(session, seats, "license_ended", actor)
+  return seats.length
+}
+
+/** `license.ended`: billing wrote that the license's subscription ended and its term ran out. */
+function lapsedEvent(write: LicenseWrite, actor: Actor, releasedSeats: number): WorkspaceAuditEventInput {
+  return {
+    workspaceId: write.owner.workspaceId,
+    action: "license.ended",
+    actor: auditActor(actor),
+    target: {licenseId: write.licenseId, product: write.product, owner: write.owner},
+    before: {endedAt: null},
+    after: {endedAt: new Date().toISOString(), reason: write.endedReason, releasedSeats},
+  }
 }
 
 /**
@@ -387,20 +428,32 @@ function decide(existing: LicenseRow | null, write: LicenseWrite): LicenseWriteR
   return byRevision(existing, write)
 }
 
-/** Refuse a write that would change the license's owner (400), or one for a license that ended with its workspace (404). */
+/**
+ * Refuse a write that would change the license's owner (400), or one for a license that ended with its workspace
+ * (404). A license that lapsed is writable: by revision, as any other.
+ */
 function refuseUnwritable(existing: LicenseRow | null, write: LicenseWrite): void {
   if (!existing) return
   if (!sameOwner(ownerOf(existing.owner), write.owner)) invalid("a license's owner never changes")
-  if (existing.endedAt) fail("owner_not_found", "the license ended with its workspace")
+  // A lapsed license is billing's to write on: it is decided by revision like any other, and a newer write
+  // without the ending makes it stand again. One that ended with its workspace takes no write.
+  if (existing.endedAt && existing.endedReason !== "lapsed") fail("owner_not_found", "the license ended with its workspace")
 }
 
-/** By revision: null for a newer write (apply it), a no-op answer for a repeat, `stale_revision` for an older one. */
+/**
+ * By revision: null for a newer write (apply it), a no-op answer for a repeat, `stale_revision` for an older one.
+ * A repeat that carries the ending for a license that has not ended is applied, though: a Core that predated the
+ * ending stored the revision and dropped the field, and billing sends it again until it is answered `ended: true`.
+ */
 function byRevision(existing: LicenseRow | null, write: LicenseWrite): LicenseWriteResponse | null {
   if (!existing) return null
   if (write.revision < existing.revision) {
     fail("stale_revision", `Core has revision ${existing.revision} of this license`, {revision: existing.revision})
   }
-  if (write.revision === existing.revision) return {applied: false, revision: existing.revision}
+  if (write.revision === existing.revision) {
+    if (write.endedReason && !existing.endedAt) return null
+    return {applied: false, revision: existing.revision, ...(write.endedReason && existing.endedAt ? {ended: true as const} : {})}
+  }
   return null
 }
 
@@ -419,18 +472,22 @@ async function saveLicense(session: ClientSession, existing: LicenseRow | null, 
     paidThrough: new Date(write.paidThrough),
     revision: write.revision,
   }
-  const request = undecidedRequest(existing, write)
+  const request = write.endedReason ? null : undecidedRequest(existing, write)
+  // The ending a write carries (kept at the time it first ended); a write without it makes a lapsed license stand.
+  const ending = write.endedReason
+    ? {endedAt: existing?.endedAt ?? new Date(), endedReason: write.endedReason, ...(existing?.endedAt ? {} : {seatsUsed: 0})}
+    : {endedAt: null, endedReason: null}
   if (!existing) {
     const requests = request ? {seatRequests: [request.requestId]} : {}
-    await LicenseModel.create([{_id: write.licenseId, owner: write.owner, ...terms, seatsUsed: 0, ...requests}], {
+    await LicenseModel.create([{_id: write.licenseId, owner: write.owner, ...terms, seatsUsed: 0, ...ending, ...requests}], {
       session,
     })
     return true
   }
   const updated = await LicenseModel.updateOne(
-    {_id: write.licenseId, revision: existing.revision, endedAt: null},
+    {_id: write.licenseId, revision: existing.revision, endedAt: existing.endedAt ?? null},
     {
-      $set: terms,
+      $set: {...terms, ...ending},
       ...(request ? {$push: {seatRequests: {$each: [request.requestId], $slice: -MAX_SEAT_REQUESTS}}} : {}),
     },
     {session},
@@ -920,7 +977,7 @@ function seatTarget(
 export async function endLicensesForOwner(
   session: ClientSession,
   owner: LicenseOwner,
-  reason: LicenseEndedReason,
+  reason: Extract<LicenseEndedReason, "workspace_deleted">,
   actor: Actor,
 ): Promise<string[]> {
   const filter = ownerFilter(owner)

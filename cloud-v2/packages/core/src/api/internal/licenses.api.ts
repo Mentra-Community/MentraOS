@@ -13,7 +13,9 @@
  * `PUT` takes a `LicenseWrite` for the license the path names, and applies it only when its revision is
  * newer than Core's (`license.service`): an equal revision answers 200 `applied: false`, an older one 409
  * `stale_revision` (with Core's `revision`), and a write for a workspace that is deleted or never existed 404
- * `owner_not_found`. A malformed write, one for another license than the path's, one whose owner is not a
+ * `owner_not_found`. A write that carries `endedReason: "lapsed"` ends the license and is answered `ended: true`; a
+ * repeat of its revision for a license that has not ended (stored by a Core that predated the ending) ends it too.
+ * A malformed write, one for another license than the path's, one whose owner is not a
  * workspace (a person included) and a change of owner are 400 `invalid_request`. A list for any `ownerType`
  * but `workspace` is 400 too: a license has no other owner.
  */

@@ -237,7 +237,7 @@ async function workspaceLicense(workspaceId: string, overrides: Partial<LicenseW
 /** The license as Core shows it, without seats. */
 function viewOf(write: LicenseWrite, fields: {seatsUsed: number; endedAt?: string | null}): LicenseView {
   // Whom billing named to assign, and a seat request, are the write's, not the license's.
-  const {licenseId, assignTo: _assignTo, seatRequest: _seatRequest, ...rest} = write
+  const {licenseId, assignTo: _assignTo, seatRequest: _seatRequest, endedReason: _endedReason, ...rest} = write
   return {licenseId, ...rest, seatsUsed: fields.seatsUsed, endedAt: fields.endedAt ?? null}
 }
 
@@ -1604,6 +1604,168 @@ describe("ending with the owner", () => {
     await removeDeletedUserFromWorkspaces(ws.member.mentraUserId)
     expect(await audit("seat.released")).toHaveLength(2)
     expect(await audit("license.ended")).toEqual([])
+  })
+})
+
+// --- A license that lapsed ---------------------------------------------------
+
+describe("a license that lapsed", () => {
+  const lapsed = (write: LicenseWrite, revision = write.revision + 1): LicenseWrite => ({
+    ...write,
+    revision,
+    endedReason: "lapsed",
+  })
+
+  test("billing's write that carries it ends the license, frees its seats and records why", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 3})
+    const other = await workspaceLicense(ws.workspaceId, {product: "mentra.other", quantity: 2})
+    for (const membershipId of [ws.memberMembershipId, ws.developerMembershipId]) {
+      await assignSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, membershipId)
+    }
+
+    expect(await store().putLicense(lapsed(license))).toEqual({applied: true, revision: 2, ended: true})
+
+    const ended = (await licenseRow(license.licenseId))!
+    expect(ended).toMatchObject({endedReason: "lapsed", seatsUsed: 0, revision: 2})
+    expect(ended.endedAt).toBeInstanceOf(Date)
+    expect(await seatsOf(license.licenseId)).toEqual([])
+    // Another license of the workspace is untouched.
+    expect(await licenseRow(other.licenseId)).toMatchObject({endedAt: null, endedReason: null})
+    const listed = (await store().listLicenses(ws.workspaceId)).licenses.find((entry) => entry.licenseId === license.licenseId)
+    expect(listed).toMatchObject({seatsUsed: 0, endedAt: ended.endedAt!.toISOString(), revision: 2})
+
+    expect((await audit("seat.released")).map((event) => event.after?.reason)).toEqual(["license_ended", "license_ended"])
+    const events = await audit("license.ended")
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      workspaceId: ws.workspaceId,
+      target: {licenseId: license.licenseId},
+      after: {reason: "lapsed", releasedSeats: 2},
+    })
+    // `license.written` is still recorded, before the ending.
+    const actions = (await audit("license.written")).filter((event) => event.target?.licenseId === license.licenseId)
+    expect(actions).toHaveLength(2)
+  })
+
+  test("repeating the ending changes nothing, and an older revision is stale", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 3})
+    await store().putLicense(lapsed(license))
+    const first = (await licenseRow(license.licenseId))!
+
+    expect(await store().putLicense(lapsed(license))).toEqual({applied: false, revision: 2, ended: true})
+    await expectClientError(store().putLicense(license), "stale_revision", 409)
+
+    const again = (await licenseRow(license.licenseId))!
+    expect(again.endedAt!.getTime()).toBe(first.endedAt!.getTime())
+    expect(await audit("license.ended")).toHaveLength(1)
+  })
+
+  test("a write only says the license ended (ended: true) when it did", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 3})
+    expect(await store().putLicense({...license, revision: 2})).toEqual({applied: true, revision: 2})
+  })
+
+  test("the ending sent again at a revision a Core without it had already stored ends the license", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 3})
+    await assignSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, ws.memberMembershipId)
+    // A Core that predates the ending applied revision 2 and dropped `endedReason`.
+    await store().putLicense({...license, revision: 2})
+    expect((await licenseRow(license.licenseId))!.endedAt).toBeNull()
+
+    expect(await store().putLicense(lapsed(license, 2))).toEqual({applied: true, revision: 2, ended: true})
+
+    expect(await licenseRow(license.licenseId)).toMatchObject({endedReason: "lapsed", seatsUsed: 0, revision: 2})
+    expect(await seatsOf(license.licenseId)).toEqual([])
+    expect(await audit("license.ended")).toHaveLength(1)
+    // And that is the last time: a third delivery changes nothing.
+    expect(await store().putLicense(lapsed(license, 2))).toEqual({applied: false, revision: 2, ended: true})
+    expect(await audit("license.ended")).toHaveLength(1)
+  })
+
+  test("an ended license takes no seat", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 3})
+    await store().putLicense(lapsed(license))
+    const error = await refusal(assignSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, ws.memberMembershipId))
+    expect(error.code).toBe("license_ended")
+    expect(await seatsOf(license.licenseId)).toEqual([])
+  })
+
+  test("a license first written already lapsed is created ended, and gives its buyer no seat", async () => {
+    const ws = await newWorkspace()
+    const write = licenseWrite(
+      {type: "workspace", workspaceId: ws.workspaceId},
+      {quantity: 3, endedReason: "lapsed", assignTo: {mentraUserId: ws.member.mentraUserId}},
+    )
+
+    expect(await store().putLicense(write)).toEqual({applied: true, revision: 1, ended: true})
+
+    expect(await licenseRow(write.licenseId)).toMatchObject({endedReason: "lapsed", seatsUsed: 0})
+    expect((await licenseRow(write.licenseId))!.endedAt).toBeInstanceOf(Date)
+    expect(await seatsOf(write.licenseId)).toEqual([])
+    expect(await audit("seat.assigned")).toEqual([])
+    expect(await audit("license.ended")).toHaveLength(1)
+  })
+
+  test("a newer write without the ending makes the license stand again", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 3})
+    await store().putLicense(lapsed(license))
+
+    const {endedReason: _ended, ...standing} = lapsed(license, 3)
+    expect(await store().putLicense(standing)).toEqual({applied: true, revision: 3})
+
+    expect(await licenseRow(license.licenseId)).toMatchObject({endedAt: null, endedReason: null, revision: 3})
+  })
+
+  test("a license that ended with its workspace still refuses every write, a lapsed ending included", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 3})
+    await deleteWorkspace(actorOf(ws.owner), ws.workspaceId, {confirmName: ws.name})
+    await expectClientError(store().putLicense(lapsed(license)), "owner_not_found", 404)
+    expect(await licenseRow(license.licenseId)).toMatchObject({endedReason: "workspace_deleted"})
+  })
+
+  test("a lapsed license keeps its reason when its workspace is deleted later", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 3})
+    await store().putLicense(lapsed(license))
+    await deleteWorkspace(actorOf(ws.owner), ws.workspaceId, {confirmName: ws.name})
+    expect(await licenseRow(license.licenseId)).toMatchObject({endedReason: "lapsed"})
+    expect(await audit("license.ended")).toHaveLength(1)
+  })
+
+  test("a later purchase of the product is a new license the buyer gets a seat of, beside the lapsed one", async () => {
+    const ws = await newWorkspace()
+    const inTerm = {
+      validFrom: new Date(Date.now() - 86_400_000).toISOString(),
+      paidThrough: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+    }
+    const old = await workspaceLicense(ws.workspaceId, {quantity: 1, ...inTerm, assignTo: {mentraUserId: ws.member.mentraUserId}})
+    expect(await seatsOf(old.licenseId)).toHaveLength(1)
+    await store().putLicense(lapsed(old))
+
+    const again = licenseWrite(
+      {type: "workspace", workspaceId: ws.workspaceId},
+      {quantity: 2, ...inTerm, assignTo: {mentraUserId: ws.member.mentraUserId}},
+    )
+    expect(await store().putLicense(again)).toEqual({applied: true, revision: 1})
+
+    expect((await seatsOf(again.licenseId)).map((seat) => seat.membershipId)).toEqual([ws.memberMembershipId])
+    const standing = (await store().listLicenses(ws.workspaceId)).licenses.filter((entry) => !entry.endedAt)
+    expect(standing.map((entry) => entry.licenseId)).toEqual([again.licenseId])
+  })
+
+  test("the workspace's licenses list keeps the lapsed license, ended, for the page to leave out", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 3})
+    await store().putLicense(lapsed(license))
+    const listed = await listWorkspaceLicenses(ws.workspaceId, "everyone")
+    expect(listed.map((entry) => [entry.licenseId, entry.endedAt !== null])).toEqual([[license.licenseId, true]])
   })
 })
 
