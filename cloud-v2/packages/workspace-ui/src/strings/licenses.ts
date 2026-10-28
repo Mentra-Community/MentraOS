@@ -90,6 +90,8 @@ const youNowHave = (product: string, seats = 1) => ({
 /** What billing's actions say. `label` returns these, so a wording changes in one place. */
 const actions = {
   addSeats: "Buy subscriptions",
+  /** The same, on a card whose subscriptions are all assigned. */
+  addMoreSeats: "Buy more subscriptions",
   /** "Buy 2 subscriptions": the over-assigned notice's button. */
   addSeatsCount: (n: number) => `Buy ${plural(n, "subscription")}`,
   changeSeats: "Change subscription count",

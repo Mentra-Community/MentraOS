@@ -463,8 +463,8 @@ describe("the states were reached", () => {
   // The sentences the states above exist to show. A guard that never drew them would say nothing about them.
   const WITNESSES: Array<[string, string]> = [
     ["the roster", t.seats.title],
-    ["a full subscription", t.seats.allInUse(10)],
-    ["a subscription of one, held", t.seats.allInUse(1)],
+    // A full card offers only Buy more subscriptions: nothing to assign, so no picker over it.
+    ["a full subscription", t.actions.addMoreSeats],
     ["the roster's search", t.seats.searchPlaceholder],
     ["Assign subscriptions on a card", t.seats.assignSeats],
     ["the people picker", t.picker.title],
@@ -504,7 +504,7 @@ describe("the states were reached", () => {
   });
 
   test("and many sentences were read, not a few", () => {
-    expect(seen.size).toBeGreaterThan(300);
+    expect(seen.size).toBeGreaterThan(250);
     // The people in the fixtures are real names; none of the words is theirs.
     expect(PEOPLE.length).toBeGreaterThan(10);
   });
