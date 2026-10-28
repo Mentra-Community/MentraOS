@@ -24,7 +24,7 @@ import {
   type PortalRoute,
   type WorkspaceSection,
 } from "./lib/routes";
-import { loginHref, signOut as signOutEverywhere } from "./lib/session";
+import { loginHref, returningFromSignIn, sendToSignIn, signOut as signOutEverywhere } from "./lib/session";
 import { usePortalInvitations } from "./lib/use-portal-invitations";
 import { takePendingInvite } from "./lib/workspace-invite";
 import { EnterpriseScreen } from "./pages/enterprise";
@@ -66,6 +66,10 @@ function safeSessionStorage(): Storage | null {
   }
 }
 
+// Whether this page load is the person coming back from sign-in (lib/session). Still signed out, they get the sign-in
+// button rather than being sent again.
+const backFromSignIn = typeof window !== "undefined" ? returningFromSignIn(sessionStore) : true;
+
 function PortalPage() {
   const qc = useQueryClient();
   const pathname = usePathname();
@@ -93,7 +97,7 @@ function PortalPage() {
   if (signOutState === "leaving") return <Splash label="Signing out" />;
   if (signOutState === "signed-out") return <SignedOutScreen signInHref={invites.inviteToken ? INVITATION_PATH : "/"} />;
   if (me.isLoading) return <Splash label="Checking your session" />;
-  if (me.isError || !me.data) return <LoginGate invitePending={invites.inviteToken !== null} />;
+  if (me.isError || !me.data) return <LoginGate invitePending={invites.inviteToken !== null} autoSignIn={!backFromSignIn} />;
 
   async function signOut() {
     setSignOutState("signing-out");
@@ -282,7 +286,7 @@ function InvitationRoute() {
 
 /**
  * What the sign-in gate says to someone who followed a `?buy=<product>` link: "Sign in to buy <product's name>." with the
- * name from the public read (no sign-in needed), or "Sign in to buy a license." where it can't be read. Nothing until that
+ * name from the public read (no sign-in needed), or "Sign in to buy a subscription." where it can't be read. Nothing until that
  * read has answered, so the line is never rewritten under the person.
  */
 function SignInToBuy({ product }: { product: string }) {
@@ -299,21 +303,45 @@ function SignInToBuy({ product }: { product: string }) {
   const name = answer?.product === product ? answer.name : undefined;
   return (
     <p className="text-muted-foreground mb-7 min-h-6">
-      {name === undefined ? null : name === null ? "Sign in to buy a license." : `Sign in to buy ${name}.`}
+      {name === undefined ? null : name === null ? "Sign in to buy a subscription." : `Sign in to buy ${name}.`}
     </p>
   );
 }
 
+/**
+ * A signed-out page. With `autoSignIn` it sends the person straight to sign in (lib/session's `sendToSignIn`) and shows
+ * only a spinner; otherwise, or where it can't, it says what the sign-in is for, with the button.
+ */
 export function LoginGate({
   invitePending = false,
   loginUrl = loginHref(window.location, invitePending),
   buyProduct = typeof window === "undefined" ? null : buyParam(window.location.search),
+  autoSignIn = false,
+  storage = sessionStore,
+  go,
 }: {
   invitePending?: boolean;
   loginUrl?: string;
   /** The `?buy=` product the address named; the gate says what the sign-in is for. */
   buyProduct?: string | null;
+  /** Go to sign-in with no click: false when the person has just come back from it still signed out. */
+  autoSignIn?: boolean;
+  /** Where the tab notes that it sent the person to sign in; this tab's session storage unless given. */
+  storage?: Storage | null;
+  /** Leaves for sign-in; `location.replace` unless given. */
+  go?: (url: string) => void;
 }) {
+  const [sending, setSending] = useState(autoSignIn);
+  // React's strict mode runs an effect twice from the same render: the person is sent once.
+  const sent = useRef(false);
+  useEffect(() => {
+    if (!autoSignIn || sent.current) return;
+    sent.current = true;
+    if (!sendToSignIn(loginUrl, storage, { go })) setSending(false);
+    // Once, for the gate this was mounted as.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (sending) return <Splash label="Signing in" />;
   return (
     <BrandPage title="Sign into Mentra Portal">
       {buyProduct !== null && !invitePending ? (

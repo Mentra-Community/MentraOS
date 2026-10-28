@@ -41,10 +41,10 @@ const ACTION_LABELS: Record<string, string> = {
   "invitation.revoked": "Invitation revoked",
   "credential.created": "Key created",
   "credential.revoked": "Key revoked",
-  "license.written": "Licenses bought or changed",
-  "license.ended": "Licenses ended",
-  "seat.assigned": "License assigned",
-  "seat.released": "License released",
+  "license.written": "Subscriptions bought or changed",
+  "license.ended": "Subscriptions ended",
+  "seat.assigned": "Subscription assigned",
+  "seat.released": "Subscription released",
 };
 
 /** A readable name for an audit action; an action this UI does not know shows as its raw name. */
@@ -208,7 +208,7 @@ const INTERNAL_FIELD = /(^id$|Ids?$)/;
 const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
 /** Fields whose name is not the word a person reads: a license is one person's right to a product, so `seatsUsed` counts licenses assigned. */
-const FIELD_LABELS: Record<string, string> = { seatsUsed: "Licenses assigned" };
+const FIELD_LABELS: Record<string, string> = { seatsUsed: "Subscriptions assigned" };
 
 /** "expiresAt" as "Expires at", "packageNames" as "Package names". */
 function fieldLabel(field: string): string {

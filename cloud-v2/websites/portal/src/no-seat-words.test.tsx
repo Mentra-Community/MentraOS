@@ -1,13 +1,13 @@
 /**
- * The word "seat" is not one a person reads. A license is one person's right to a product (the Microsoft 365
- * meaning): a workspace buys a number of licenses for a product, and each is assigned to one member. API and code
- * names keep `seats`, `add_seats` and the rest; this guard is about what the pages show.
+ * The words "seat" and "license" are not ones a person reads. A subscription is one person's right to a product: a
+ * workspace buys a number of subscriptions for a product, and each is assigned to one member. API and code names keep
+ * `licenses`, `seats`, `add_seats` and the rest; this guard is about what the pages show.
  *
  * It mounts the real pages over the fake Core, drives them through every state and dialog the Licenses page and the
  * Members list have, and after each step takes everything a person or a screen reader
  * can get from the page: its text (visually hidden text included, and the text of dialogs that are closed) and the
  * words in its attributes (`aria-label`, `title`, `alt`, `placeholder` and the like). None may match
- * `/\bseats?\b/i`.
+ * `/\b(seats?|licenses?)\b/i`.
  *
  * A guard that never reached a state would pass for it, so the last test checks that the sentences the states exist
  * to show were on some screen.
@@ -53,15 +53,17 @@ afterEach(async () => {
 
 /** The word, whole: `seatsUsed` and `add_seats` are code, and are never on a page; "Seat holders" and "free seats" are. */
 const SEAT = /\bseats?\b/i;
+/** What a page never says: "seat", nor "license" (a person reads "subscription"). */
+const UNREAD = /\b(seats?|licenses?)\b/i;
 
 /** Everything any screen showed, for the last test. */
 const seen = new Set<string>();
 
-/** Fails, naming the screen, if anything a person can read or hear on the page (see `wordsUnder`) says "seat". */
+/** Fails, naming the screen, if anything a person can read or hear on the page (see `wordsUnder`) says "seat" or "license". */
 function expectNoSeat(screen: string) {
   const words = wordsUnder();
   for (const word of words) seen.add(word.replace(/^<[^>]*> /, ""));
-  expect([screen, words.filter((word) => SEAT.test(word))]).toEqual([screen, []]);
+  expect([screen, words.filter((word) => UNREAD.test(word))]).toEqual([screen, []]);
 }
 
 describe("the guard sees what it should", () => {
@@ -72,7 +74,7 @@ describe("the guard sees what it should", () => {
       <button aria-label="One seat fewer">-</button>
       <div title="Seats">x</div>
       <input placeholder="Search seat holders">
-      <p>Licenses and the seatsUsed code</p>`;
+      <p>Subscriptions and the seatsUsed code</p>`;
     const found = wordsUnder().filter((word) => SEAT.test(word));
     expect(found).toEqual([
       "<p> Seat holders",
@@ -221,13 +223,13 @@ describe("a license's card, in each state", () => {
 
   test("a single license shows its roster at once, and the full one offers Add licenses", async () => {
     await open(`/licenses`, single(FLEET_LICENSE, FLEET_BILLING), "Fleet");
-    await exploreCards("one full license");
+    await exploreCards("one full subscription");
   });
 
   test("a single license of one, held: 'the license is assigned'", async () => {
     const license = coreLicense(CALL_LICENSE, 1, ["hannah"]);
     await open(`/licenses`, single(license, entry(CALL_BILLING, { quantity: 1 })), "Mentra Call Unlimited");
-    await exploreCards("one license of one");
+    await exploreCards("one subscription of one");
   });
 
   test("nobody holds any: more than three available fold into one row", async () => {
@@ -303,7 +305,7 @@ describe("a license's card, in each state", () => {
     const odd = entry(CALL_BILLING, {
       status: "paused",
       fallbackStatusLabel: "Paused",
-      actions: [action("add_seats", "Add licenses"), action("change_seats", "Change license count"), action("pause_collection", "Pause billing")],
+      actions: [action("add_seats", "Buy subscriptions"), action("change_seats", "Change subscription count"), action("pause_collection", "Pause billing")],
     });
     await open(`/licenses`, single(CALL_LICENSE, odd), "Mentra Call Unlimited");
     await exploreCards("an unknown status");
@@ -347,17 +349,6 @@ describe("the catalog grid and the buy dialog", () => {
     expectNoSeat("the buy step with the most");
   });
 
-  test("the dialog from the header, with a product the workspace holds and ones it doesn't", async () => {
-    await open(`/licenses`, SCENARIOS.twoActive(), "Mentra Call Unlimited");
-    await click(one(t.page.buyLicenses));
-    await until(() => has(t.catalog.dialog.description), "the catalog dialog");
-    expectNoSeat("the catalog dialog");
-    expect(has(t.catalog.youHaveSeats(5))).toBe(true);
-    await click(one("Buy", find("[data-product='example.addon']")));
-    await until(() => has(t.buy.continue), "the buy step");
-    expectNoSeat("the buy step over the dialog");
-  });
-
   test("test mode", async () => {
     await open(`/licenses`, SCENARIOS.testMode(), t.testMode.label(TEST_MODE.environment));
     expectNoSeat("test mode");
@@ -379,12 +370,13 @@ describe("after checkout", () => {
     expectNoSeat("setting up");
     await cleanup();
     mock.restore();
-    await open(`/licenses?purchase=pur_1`, SCENARIOS.purchased(), t.purchase.readyTitle({ seats: 10, product: "Fleet" }));
+    // Dana holds one of the new Fleet subscriptions.
+    await open(`/licenses?purchase=pur_1`, SCENARIOS.purchased(), t.purchase.youNowHave("Fleet", 10).title);
     expectNoSeat("ready");
   });
 
   test("a license given to the buyer: one, and many", async () => {
-    await open(`/licenses?purchase=pur_1`, SCENARIOS.purchasedForYou(), t.purchase.givenTitle({ seats: 1, product: "Mentra Call Unlimited", paid: true }));
+    await open(`/licenses?purchase=pur_1`, SCENARIOS.purchasedForYou(), t.purchase.youNowHave("Mentra Call Unlimited").title);
     expectNoSeat("given, one");
     await cleanup();
     mock.restore();
@@ -393,7 +385,7 @@ describe("after checkout", () => {
       workspaceStatus: ({ purchase }) =>
         statusOf([entry(FLEET_BILLING, { quantity: 3 })], { purchase: purchase === "pur_1" ? purchaseOf({ status: "ready", quantity: 3, licenseId: "lic_fleet" }) : null }),
     };
-    await open(`/licenses?purchase=pur_1`, many, t.purchase.givenBody({ seats: 3, product: "Fleet", paid: true }));
+    await open(`/licenses?purchase=pur_1`, many, t.purchase.youNowHave("Fleet", 3).body);
     expectNoSeat("given, many");
   });
 });
@@ -408,7 +400,7 @@ describe("a link to buy one product", () => {
     expectNoSeat("held");
     await cleanup();
     mock.restore();
-    await open(link, SCENARIOS.twoActive(), t.page.buyLink.youNowHave("Mentra Call Unlimited"));
+    await open(link, SCENARIOS.twoActive(), t.page.buyLink.youNowHave("Mentra Call Unlimited").title);
     expectNoSeat("assigned");
     await cleanup();
     mock.restore();
@@ -437,13 +429,13 @@ describe("a link to buy one product", () => {
 describe("Members", () => {
   test("the list, with its licenses column", async () => {
     await open(`/members`, SCENARIOS.threeActive(), "Hannah Kim");
-    await until(() => findAll("ul[aria-label='Licenses']").length > 0, "the Licenses column");
+    await until(() => findAll("ul[aria-label='Subscriptions']").length > 0, "the Subscriptions column");
     expectNoSeat("the Members list");
   });
 
   test("the row's menu, for a person, a developer, an admin and one who hasn't signed in", async () => {
     await open(`/members`, SCENARIOS.threeActive(), "Hannah Kim");
-    await until(() => findAll("ul[aria-label='Licenses']").length > 0, "the Licenses column");
+    await until(() => findAll("ul[aria-label='Subscriptions']").length > 0, "the Subscriptions column");
     for (const name of ["Hannah Kim", "Sofia Alvarez", "Priya Natarajan", "Grace Oduya"]) {
       const menu = find(`button[aria-label='More for ${name}']`);
       await click(menu);
@@ -471,27 +463,22 @@ describe("the states were reached", () => {
   // The sentences the states above exist to show. A guard that never drew them would say nothing about them.
   const WITNESSES: Array<[string, string]> = [
     ["the roster", t.seats.title],
-    ["an available license", t.seats.freeSeat],
-    ["available licenses folded", t.seats.freeSeats(7)],
-    ["a full license", t.seats.allInUse(10)],
-    ["a license of one, held", t.seats.allInUse(1)],
+    ["a full subscription", t.seats.allInUse(10)],
+    ["a subscription of one, held", t.seats.allInUse(1)],
     ["the roster's search", t.seats.searchPlaceholder],
-    ["Assign licenses on a card", t.seats.assignSeats],
-    ["nobody holds one", t.seats.nobodyYet],
+    ["Assign subscriptions on a card", t.seats.assignSeats],
     ["the people picker", t.picker.title],
     ["a person who has one", t.picker.hasASeat],
     ["a person who hasn't signed in", t.picker.afterFirstSignIn],
     ["the buy step", t.buy.seats],
     ["one fewer", t.buy.fewer],
-    ["a failed payment's day", "Licenses stop working on"],
-    ["a day that has passed", "Licenses stopped working on"],
+    ["a failed payment's day", "Subscriptions stop working on"],
+    ["a day that has passed", "Subscriptions stopped working on"],
     ["a failed payment with no day", t.notice.pastDue({ date: null, stopped: false }).body!],
     ["the over-assigned notice", t.notice.over({ used: 5, quantity: 3, canAddSeats: true }).title],
     ["a member's own card", t.facts.own.seat],
     ["a member's badge", t.status.youHaveASeat],
-    ["the catalog's held row", t.catalog.youHaveSeats(5)],
-    ["the workspace's header button", t.page.buyLicenses],
-    ["the workspace's catalog dialog", t.catalog.dialog.title],
+    ["the workspace's header button", t.actions.billingAndInvoices],
     ["the row's menu: Remove", t.members.remove],
     ["the row's menu: a role", t.members.changeRoleTo("Developer")],
     ["Remove's dialog", t.members.removePrompt("Tom Becker")],
@@ -500,13 +487,13 @@ describe("the states were reached", () => {
     ["the unassign dialog's Cancel", t.seats.cancel],
     ["test mode", t.testMode.lead],
     ["the test-mode notice's ×", t.testMode.hide],
-    ["the page without the notice", "Buy licenses for your members"],
+    ["the page without the notice", "Buy subscriptions for your members"],
     ["setting up", t.purchase.settingUpSeats({ seats: 10, product: "Fleet" })],
-    ["ready", t.purchase.readyTitle({ seats: 10, product: "Fleet" })],
-    ["a license given to the buyer", t.purchase.givenTitle({ seats: 1, product: "Mentra Call Unlimited", paid: true })],
-    ["the same, for many", t.purchase.givenBody({ seats: 3, product: "Fleet", paid: true })],
+    ["ready, with one of them the buyer's", t.purchase.youNowHave("Fleet", 10).title],
+    ["a subscription given to the buyer", t.purchase.youNowHave("Mentra Call Unlimited").title],
+    ["the same, for many", t.purchase.youNowHave("Fleet", 3).body],
     ["a link to a product held", t.page.buyLink.held("Fleet")],
-    ["a link to a free license", t.page.buyLink.youNowHave("Mentra Call Unlimited")],
+    ["a link to a free subscription", t.page.buyLink.youNowHave("Mentra Call Unlimited").title],
     ["a link to a product not sold", t.page.buyLink.notForSale],
     ["a link a member can't follow", t.page.buyLink.askAnAdmin("Acme Field Services", "Mentra Call Unlimited")],
     ["a link where billing isn't offered", t.page.buyLink.notHere],

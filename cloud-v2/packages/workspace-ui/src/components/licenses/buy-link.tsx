@@ -141,7 +141,7 @@ export interface LinkDialogProps {
 
 /**
  * The answer to a link, started once when it is mounted (give it a `key` per link). `assign` assigns the free license to
- * the viewer's membership and then says "You now have <product>."; `add` and `buy` ask billing for the hosted page and
+ * the viewer's membership and then says "You now have <product>!" and to open the Mentra App; `add` and `buy` ask billing for the hosted page and
  * send this tab there, saying "Opening checkout…" meanwhile; a refusal of any is a dialog with its words and Done. The
  * other outcomes are a dialog that says why.
  */
@@ -194,8 +194,10 @@ export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOu
       break;
     case "assign":
       // While it is being assigned the page shows nothing; once it is, the person is told.
-      if (assign.isSuccess) lines = [words.youNowHave(name)];
-      else if (assign.isError) body = "assignment";
+      if (assign.isSuccess) {
+        const now = words.youNowHave(name);
+        lines = [now.title, now.body];
+      } else if (assign.isError) body = "assignment";
       else return null;
       break;
     case "add":

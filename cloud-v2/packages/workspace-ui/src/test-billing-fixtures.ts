@@ -57,8 +57,8 @@ export function licenseBillingFor(overrides: Partial<LicenseBilling> = {}): Lice
     total: usd(14500),
     tax: "excluded",
     actions: [
-      { kind: "add_seats", fallbackLabel: "Add licenses" },
-      { kind: "change_seats", fallbackLabel: "Change license count" },
+      { kind: "add_seats", fallbackLabel: "Buy subscriptions" },
+      { kind: "change_seats", fallbackLabel: "Change subscription count" },
       { kind: "cancel", fallbackLabel: "Cancel" },
     ],
     ...overrides,

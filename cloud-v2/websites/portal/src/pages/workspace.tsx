@@ -326,7 +326,7 @@ export function WorkspaceScreen({
         )
       ) : waitingForLicenses ? (
         <div role="status" className="text-muted-foreground flex items-center gap-2.5 text-sm">
-          <Spinner /> {section === "licenses" ? "Loading licenses" : "Loading workspace"}
+          <Spinner /> {section === "licenses" ? "Loading subscriptions" : "Loading workspace"}
         </div>
       ) : !active ? (
         // `/`, or a section this viewer does not have: open the first one they do. The query and hash stay, so a

@@ -93,6 +93,7 @@ export function WorkspacesPage({ fleetInstalled = false, portalUrl = WORKSPACE_P
   return (
     <div className="space-y-6">
       <AllWorkspaces
+        portalUrl={portalUrl}
         openWorkspaceId={workspaceId}
         onOpen={id => {
           setWorkspaceId(id);
@@ -169,7 +170,7 @@ function OpenWorkspaceHeading({ workspaceId, fleetUrl }: { workspaceId: string; 
   );
 }
 
-function AllWorkspaces({ openWorkspaceId, onOpen }: { openWorkspaceId: string | null; onOpen(workspaceId: string): void }) {
+function AllWorkspaces({ openWorkspaceId, onOpen, portalUrl }: { openWorkspaceId: string | null; onOpen(workspaceId: string): void; portalUrl: string | null }) {
   const client = useQueryClient();
   const all = useInfiniteQuery({
     queryKey: ORGANIZATION_WORKSPACES_KEY,
@@ -237,6 +238,13 @@ function AllWorkspaces({ openWorkspaceId, onOpen }: { openWorkspaceId: string | 
                   </div>
                   {active ? (
                     <div className="flex flex-wrap gap-2">
+                      {portalUrl ? (
+                        <Button asChild size="sm">
+                          <a href={`${portalUrl}/?workspace=${encodeURIComponent(workspace.workspaceId)}`} target="_blank" rel="noreferrer" aria-label={`Manage workspace ${workspace.name}`}>
+                            Manage workspace ↗
+                          </a>
+                        </Button>
+                      ) : null}
                       <Button variant="secondary" size="sm" aria-label={`Open ${workspace.name}`} onClick={() => onOpen(workspace.workspaceId)}>
                         Open
                       </Button>

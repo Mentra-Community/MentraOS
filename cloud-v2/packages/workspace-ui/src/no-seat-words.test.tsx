@@ -1,7 +1,8 @@
 /**
- * The word "seat" is not one a person reads: a license is one person's right to a product, and a workspace buys a
- * number of licenses for a product (see the portal's `no-seat-words.test.tsx`, which drives the whole pages). API and
- * code names keep `seats`, `add_seats` and the rest.
+ * The words "seat" and "license" are not ones a person reads: a subscription is one person's right to a product, and a
+ * workspace buys a number of subscriptions for a product (see the portal's `no-seat-words.test.tsx`, which drives the
+ * whole pages). API and code names keep `licenses`, `seats`, `add_seats` and the rest, so the components' own text is
+ * read for "seat" only.
  *
  * Two guards that the page-level one can't give:
  * - the dialogs and banners, in every state they have, including the ones that need a minute of polling to reach on a
@@ -30,6 +31,8 @@ afterAll(teardownDom);
 afterEach(cleanup);
 
 const SEAT = /\bseats?\b/i;
+/** What a drawn screen never says: "seat", nor "license" (a person reads "subscription"). Code keeps both words. */
+const UNREAD = /\b(seats?|licenses?)\b/i;
 
 async function draw(ui: ReactElement) {
   await render(<QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>);
@@ -64,7 +67,7 @@ describe("the dialogs and banners, in every state", () => {
               />,
             );
             const where = JSON.stringify({ assigned, paid, quantity, ...state });
-            expect([where, words.filter((word) => SEAT.test(word))]).toEqual([where, []]);
+            expect([where, words.filter((word) => UNREAD.test(word))]).toEqual([where, []]);
             // The dialog said something.
             expect(words.length).toBeGreaterThan(2);
             drawn++;
@@ -94,7 +97,7 @@ describe("the dialogs and banners, in every state", () => {
           onReload={noop}
         />,
       );
-      expect([JSON.stringify(state), words.filter((word) => SEAT.test(word))]).toEqual([JSON.stringify(state), []]);
+      expect([JSON.stringify(state), words.filter((word) => UNREAD.test(word))]).toEqual([JSON.stringify(state), []]);
       expect(words.length).toBeGreaterThan(2);
       await cleanup();
     }
@@ -102,7 +105,7 @@ describe("the dialogs and banners, in every state", () => {
 
   test("every answer the ?buy= link can give", async () => {
     const entry = catalogEntryFor();
-    const add = { kind: "add_seats", fallbackLabel: "Add licenses" };
+    const add = { kind: "add_seats", fallbackLabel: "Buy subscriptions" };
     const outcomes: Array<Exclude<LinkOutcome, { kind: "choose" }>> = [
       { product: entry.product, entry, kind: "held" },
       { product: entry.product, entry, kind: "assign", licenseId: "lic_call" },
@@ -128,7 +131,7 @@ describe("the dialogs and banners, in every state", () => {
           onClose={noop}
         />,
       );
-      expect([outcome.kind, words.filter((word) => SEAT.test(word))]).toEqual([outcome.kind, []]);
+      expect([outcome.kind, words.filter((word) => UNREAD.test(word))]).toEqual([outcome.kind, []]);
       // An assignment draws nothing until it is done.
       if (outcome.kind !== "assign") expect(words.length).toBeGreaterThan(2);
       await cleanup();
@@ -138,13 +141,13 @@ describe("the dialogs and banners, in every state", () => {
   test("test mode, a member with nothing, and the unavailable pages", async () => {
     const screens: Array<[string, ReactElement]> = [
       ["test mode", <TestModeBanner testMode={{ cardNumber: "4242424242424242", environment: "Staging" }} />],
-      ["a member with no license", <NoSeat workspaceName="Acme Field Services" />],
+      ["a member with no subscription", <NoSeat workspaceName="Acme Field Services" />],
       ["unavailable", <LicensesUnavailable onRetry={noop} />],
       ["unavailable, retrying", <LicensesUnavailable onRetry={noop} retrying />],
     ];
     for (const [screen, ui] of screens) {
       const words = await draw(ui);
-      expect([screen, words.filter((word) => SEAT.test(word))]).toEqual([screen, []]);
+      expect([screen, words.filter((word) => UNREAD.test(word))]).toEqual([screen, []]);
       expect(words.length).toBeGreaterThan(0);
       await cleanup();
     }

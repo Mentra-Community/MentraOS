@@ -175,7 +175,7 @@ describe("the catalog grid", () => {
   test("a workspace's reads 'Buy licenses for your members', with one card per product, its price and Buy", async () => {
     const { ui } = grid();
     await mount(ui);
-    expect(find("h2").textContent).toBe("Buy licenses for your members");
+    expect(find("h2").textContent).toBe("Buy subscriptions for your members");
     expect(text()).not.toContain("secure payment page");
     expect(findAll("[data-product]").map((element) => element.getAttribute("data-product"))).toEqual([
       "mentra.call.unlimited",
@@ -250,8 +250,8 @@ describe("a product the owner holds", () => {
   test("a workspace sees 'You have 5 licenses' and 'Add licenses', and no Buy for it", async () => {
     await mount(grid({ licenses: held }).ui);
     const mine = card("mentra.call.unlimited");
-    expect(mine.textContent).toContain("You have 5 licenses");
-    expect(buttons(mine).map((button) => button.textContent)).toEqual(["Add licenses"]);
+    expect(mine.textContent).toContain("You have 5 subscriptions");
+    expect(buttons(mine).map((button) => button.textContent)).toEqual(["Buy subscriptions"]);
     expect(mine.textContent).not.toContain("$29");
     // The others are still for sale.
     expect(buttons(card("mentra.fleet")).map((button) => button.textContent)).toEqual(["Buy"]);
@@ -259,14 +259,14 @@ describe("a product the owner holds", () => {
 
   test("one license is 'You have 1 license'", async () => {
     await mount(grid({ licenses: [licenseBillingFor({ quantity: 1 })] }).ui);
-    expect(card("mentra.call.unlimited").textContent).toContain("You have 1 license");
-    expect(card("mentra.call.unlimited").textContent).not.toContain("1 licenses");
+    expect(card("mentra.call.unlimited").textContent).toContain("You have 1 subscription");
+    expect(card("mentra.call.unlimited").textContent).not.toContain("1 subscriptions");
   });
 
   test("Add licenses is offered only when billing lists it for that license", async () => {
     const noAddSeats = licenseBillingFor({ quantity: 5, actions: [{ kind: "cancel", fallbackLabel: "Cancel" }] });
     await mount(grid({ licenses: [noAddSeats] }).ui);
-    expect(card("mentra.call.unlimited").textContent).toContain("You have 5 licenses");
+    expect(card("mentra.call.unlimited").textContent).toContain("You have 5 subscriptions");
     expect(buttons(card("mentra.call.unlimited"))).toHaveLength(0);
   });
 
@@ -282,7 +282,7 @@ describe("a product the owner holds", () => {
   test("Add licenses asks billing for add_seats on that license and goes to its page", async () => {
     const { ui, session, leave, openTab } = grid({ licenses: [licenseBillingFor({ licenseId: "lic_call_9", quantity: 5 })] });
     await mount(ui);
-    await click(buttonNamed("Add licenses"));
+    await click(buttonNamed("Buy subscriptions"));
     await settle();
     expect(session).toHaveBeenCalledTimes(1);
     expect(session.mock.calls[0]).toEqual([WS, { action: "add_seats", licenseId: "lic_call_9" }]);
@@ -299,7 +299,7 @@ describe("a product the owner holds", () => {
     await mount(
       <CatalogGrid products={WORKSPACE_CATALOG} licenses={[licenseBillingFor({ licenseId: "lic_call_9", quantity: 5 })]} scope={WS} billing={wire.billing} navigateOut={out.navigateOut} />,
     );
-    await click(buttonNamed("Add licenses"));
+    await click(buttonNamed("Buy subscriptions"));
     await settle();
     expect(wire.requests.map((request) => request.body)).toEqual([{ action: "add_seats", licenseId: "lic_call_9", locale: "en-US" }]);
   });
@@ -310,11 +310,11 @@ describe("a product the owner holds", () => {
     const { ui, session } = grid({ licenses: both });
     session.mockImplementation(() => pending.promise);
     await mount(ui);
-    await click(buttonNamed("Add licenses", card("mentra.fleet")));
+    await click(buttonNamed("Buy subscriptions", card("mentra.fleet")));
     await settle();
     expect(session.mock.calls).toEqual([[WS, { action: "add_seats", licenseId: "lic_fleet" }]]);
-    expect(buttonNamed("Add licenses", card("mentra.fleet")).getAttribute("aria-busy")).toBe("true");
-    const other = buttonNamed("Add licenses", card("mentra.call.unlimited"));
+    expect(buttonNamed("Buy subscriptions", card("mentra.fleet")).getAttribute("aria-busy")).toBe("true");
+    const other = buttonNamed("Buy subscriptions", card("mentra.call.unlimited"));
     expect(other.disabled).toBe(true);
     expect(other.hasAttribute("aria-busy")).toBe(false);
     await act(async () => pending.reject(new BillingRefusedError("unknown_action", {}, 400)));
@@ -326,17 +326,17 @@ describe("a product the owner holds", () => {
     const { ui, session, leave } = grid({ licenses: held });
     session.mockImplementation(() => pending.promise);
     await mount(ui);
-    await click(buttonNamed("Add licenses"));
+    await click(buttonNamed("Buy subscriptions"));
     await settle();
     expect(session).toHaveBeenCalledTimes(1);
-    expect(buttonNamed("Add licenses").disabled).toBe(true);
-    expect(buttonNamed("Add licenses").getAttribute("aria-busy")).toBe("true");
+    expect(buttonNamed("Buy subscriptions").disabled).toBe(true);
+    expect(buttonNamed("Buy subscriptions").getAttribute("aria-busy")).toBe("true");
     expect(buttons(card("mentra.fleet"))[0]!.disabled).toBe(true);
     await act(async () => pending.reject(new BillingRefusedError("unknown_action", {}, 400)));
     await settle();
     expect(find('[role="alert"]').textContent).toBe("That isn't available for this subscription any more. Reload the page and try again.");
     expect(leave).not.toHaveBeenCalled();
-    expect(buttonNamed("Add licenses").disabled).toBe(false);
+    expect(buttonNamed("Buy subscriptions").disabled).toBe(false);
   });
 });
 
@@ -347,7 +347,7 @@ describe("Add licenses when billing lists it with returns: false", () => {
     licenseBillingFor({
       licenseId: "lic_call_9",
       quantity: 5,
-      actions: [{ kind: "add_seats", fallbackLabel: "Add licenses", returns: false }],
+      actions: [{ kind: "add_seats", fallbackLabel: "Buy subscriptions", returns: false }],
     }),
   ];
   const INVOICE = "https://invoice.example.test/i/9";
@@ -357,7 +357,7 @@ describe("Add licenses when billing lists it with returns: false", () => {
     const { ui, session, events, leave, tab, openTab } = grid({ licenses: detached() });
     session.mockImplementation(() => pending.promise);
     await mount(ui);
-    const button = buttonNamed("Add licenses");
+    const button = buttonNamed("Buy subscriptions");
     let openedInTheClick = -1;
     // Only the synchronous part of the click runs inside this callback: a browser allows the tab only there.
     act(() => {
@@ -377,7 +377,7 @@ describe("Add licenses when billing lists it with returns: false", () => {
 
   test("says to a screen reader that it opens in a new tab", async () => {
     await mount(grid({ licenses: detached() }).ui);
-    const hint = document.getElementById(buttonNamed("Add licenses").getAttribute("aria-describedby")!.split(" ").at(-1)!);
+    const hint = document.getElementById(buttonNamed("Buy subscriptions").getAttribute("aria-describedby")!.split(" ").at(-1)!);
     expect(hint?.textContent).toBe("Opens a secure billing page in a new tab");
   });
 
@@ -387,7 +387,7 @@ describe("Add licenses when billing lists it with returns: false", () => {
       throw new BillingRefusedError("unknown_action", {}, 400);
     });
     await mount(ui);
-    await click(buttonNamed("Add licenses"));
+    await click(buttonNamed("Buy subscriptions"));
     await settle();
     expect(events).toEqual(["openTab", "close"]);
     expect(leave).not.toHaveBeenCalled();
@@ -398,7 +398,7 @@ describe("Add licenses when billing lists it with returns: false", () => {
     const out = ways({ blocked: true });
     const stub = stubBilling();
     await mount(<CatalogGrid products={WORKSPACE_CATALOG} licenses={detached()} scope={WS} billing={stub.billing} navigateOut={out.navigateOut} />);
-    await click(buttonNamed("Add licenses"));
+    await click(buttonNamed("Buy subscriptions"));
     await settle();
     expect(out.leave).not.toHaveBeenCalled();
     const link = find<HTMLAnchorElement>("a[data-hosted-page]");
@@ -413,7 +413,7 @@ describe("Add licenses when billing lists it with returns: false", () => {
     await mount(
       <CatalogDialog open onClose={() => {}} products={WORKSPACE_CATALOG} licenses={detached()} scope={WS} billing={stub.billing} navigateOut={out.navigateOut} />,
     );
-    await click(buttonNamed("Add licenses", find('[data-product="mentra.call.unlimited"]', topDialog())));
+    await click(buttonNamed("Buy subscriptions", find('[data-product="mentra.call.unlimited"]', topDialog())));
     await settle();
     expect(out.events).toEqual(["openTab", `go:${PAY}`]);
     expect(out.leave).not.toHaveBeenCalled();
@@ -435,7 +435,7 @@ describe("the licenses step", () => {
     const dialog = topDialog();
     expect(find("h2", dialog).textContent).toBe("Buy Fleet");
     expect(dialog.textContent).toContain("Manage your members' phones and glasses, and the miniapps on them.");
-    expect(dialog.textContent).toContain("$15 per user a month · Renews every month. Change the number of licenses or cancel at any time.");
+    expect(dialog.textContent).toContain("$15 per user a month · Renews every month. Change the number of subscriptions or cancel at any time.");
     expect(stepper(dialog).getAttribute("aria-valuenow")).toBe("14");
     expect(stepper(dialog).value).toBe("14");
     expect(dialog.textContent).toContain("Your workspace has 14 members.");
@@ -449,26 +449,26 @@ describe("the licenses step", () => {
   test("it shows '10 licenses × $15 · $150 a month · before tax', and follows the stepper", async () => {
     await openBuyFleet();
     const dialog = topDialog();
-    expect(byText("10 licenses × $15 · $150 a month · before tax", "p", dialog)).toBeTruthy();
-    await click(find('[aria-label="One license more"]', dialog));
+    expect(byText("10 subscriptions × $15 · $150 a month · before tax", "p", dialog)).toBeTruthy();
+    await click(find('[aria-label="One subscription more"]', dialog));
     expect(stepper(dialog).value).toBe("11");
-    expect(byText("11 licenses × $15 · $165 a month · before tax", "p", dialog)).toBeTruthy();
-    await click(find('[aria-label="One license fewer"]', dialog));
-    await click(find('[aria-label="One license fewer"]', dialog));
-    expect(byText("9 licenses × $15 · $135 a month · before tax", "p", dialog)).toBeTruthy();
+    expect(byText("11 subscriptions × $15 · $165 a month · before tax", "p", dialog)).toBeTruthy();
+    await click(find('[aria-label="One subscription fewer"]', dialog));
+    await click(find('[aria-label="One subscription fewer"]', dialog));
+    expect(byText("9 subscriptions × $15 · $135 a month · before tax", "p", dialog)).toBeTruthy();
   });
 
   test("one license is '1 license × $15'", async () => {
     await openBuyFleet({ memberCount: 2, products: [fleet({ offer: workspaceOffer(1500, { buy: { minSeats: 1, maxSeats: 5 } }) })] });
-    await click(find('[aria-label="One license fewer"]', topDialog()));
-    expect(byText("1 license × $15 · $15 a month · before tax", "p", topDialog())).toBeTruthy();
+    await click(find('[aria-label="One subscription fewer"]', topDialog()));
+    expect(byText("1 subscription × $15 · $15 a month · before tax", "p", topDialog())).toBeTruthy();
   });
 
   test("the stepper is bounded by minSeats and maxSeats, and the sum follows the bound", async () => {
     await openBuyFleet({ memberCount: 11, products: [fleet({ offer: workspaceOffer(1500, { buy: { minSeats: 2, maxSeats: 12 } }) })] });
     const dialog = topDialog();
-    const more = find<HTMLButtonElement>('[aria-label="One license more"]', dialog);
-    const fewer = find<HTMLButtonElement>('[aria-label="One license fewer"]', dialog);
+    const more = find<HTMLButtonElement>('[aria-label="One subscription more"]', dialog);
+    const fewer = find<HTMLButtonElement>('[aria-label="One subscription fewer"]', dialog);
     expect(stepper(dialog).getAttribute("aria-valuemin")).toBe("2");
     expect(stepper(dialog).getAttribute("aria-valuemax")).toBe("12");
     await click(more);
@@ -479,7 +479,7 @@ describe("the licenses step", () => {
     for (let step = 0; step < 12; step += 1) if (!fewer.disabled) await click(fewer);
     expect(stepper(dialog).value).toBe("2");
     expect(fewer.disabled).toBe(true);
-    expect(byText("2 licenses × $15 · $30 a month · before tax", "p", dialog)).toBeTruthy();
+    expect(byText("2 subscriptions × $15 · $30 a month · before tax", "p", dialog)).toBeTruthy();
   });
 
   test("a member count outside the bounds starts at the nearest bound", async () => {
@@ -501,14 +501,14 @@ describe("the licenses step", () => {
     );
     const limits = (buy: { minSeats: number; maxSeats: number }) => fleet({ offer: workspaceOffer(1500, { buy }) });
     const view = await render(dialog(limits({ minSeats: 1, maxSeats: 500 })));
-    await click(find('[aria-label="One license more"]', topDialog()));
-    await click(find('[aria-label="One license more"]', topDialog()));
+    await click(find('[aria-label="One subscription more"]', topDialog()));
+    await click(find('[aria-label="One subscription more"]', topDialog()));
     expect(stepper(topDialog()).value).toBe("12");
     // The ceiling comes down below the choice.
     await view.rerender(dialog(limits({ minSeats: 1, maxSeats: 8 })));
     expect(stepper(topDialog()).value).toBe("8");
     expect(stepper(topDialog()).getAttribute("aria-valuemax")).toBe("8");
-    expect(byText("8 licenses × $15 · $120 a month · before tax", "p", topDialog())).toBeTruthy();
+    expect(byText("8 subscriptions × $15 · $120 a month · before tax", "p", topDialog())).toBeTruthy();
     await click(buttonNamed("Continue to payment", topDialog()));
     await settle();
     expect(purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 8 }]]);
@@ -535,7 +535,7 @@ describe("the licenses step", () => {
     expect(stepper(topDialog()).value).toBe("10");
     await view.rerender(dialog(15));
     expect(stepper(topDialog()).value).toBe("15");
-    expect(byText("15 licenses × $15 · $225 a month · before tax", "p", topDialog())).toBeTruthy();
+    expect(byText("15 subscriptions × $15 · $225 a month · before tax", "p", topDialog())).toBeTruthy();
     await view.rerender(dialog(1));
     expect(stepper(topDialog()).value).toBe("15");
   });
@@ -558,16 +558,16 @@ describe("the licenses step", () => {
       const { billing, purchase } = stubBilling();
       const view = await render(gridOf(billing, client, withFleet(fleet())));
       await click(buttonNamed("Buy", card("mentra.fleet")));
-      await click(find('[aria-label="One license more"]', topDialog()));
-      await click(find('[aria-label="One license more"]', topDialog()));
-      expect(byText("12 licenses × $15 · $180 a month · before tax", "p", topDialog())).toBeTruthy();
+      await click(find('[aria-label="One subscription more"]', topDialog()));
+      await click(find('[aria-label="One subscription more"]', topDialog()));
+      expect(byText("12 subscriptions × $15 · $180 a month · before tax", "p", topDialog())).toBeTruthy();
       // Billing reads again: a dearer price, and a ceiling under the choice.
       const dearer = fleet({ offer: workspaceOffer(1800, { buy: { minSeats: 1, maxSeats: 8 } }) });
       await view.rerender(gridOf(billing, client, withFleet(dearer)));
       expect(topDialog().textContent).toContain("$18 per user a month");
       expect(stepper(topDialog()).getAttribute("aria-valuemax")).toBe("8");
       expect(stepper(topDialog()).value).toBe("8");
-      expect(byText("8 licenses × $18 · $144 a month · before tax", "p", topDialog())).toBeTruthy();
+      expect(byText("8 subscriptions × $18 · $144 a month · before tax", "p", topDialog())).toBeTruthy();
       await click(buttonNamed("Continue to payment", topDialog()));
       await settle();
       expect(purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 8 }]]);
@@ -578,10 +578,10 @@ describe("the licenses step", () => {
       const { billing } = stubBilling();
       const view = await render(dialogOf(billing, client, withFleet(fleet())));
       await click(buttonNamed("Buy", find('[data-product="mentra.fleet"]', topDialog())));
-      expect(byText("10 licenses × $15 · $150 a month · before tax", "p", topDialog())).toBeTruthy();
+      expect(byText("10 subscriptions × $15 · $150 a month · before tax", "p", topDialog())).toBeTruthy();
       await view.rerender(dialogOf(billing, client, withFleet(fleet({ offer: workspaceOffer(1800) }))));
       expect(openDialogs()).toHaveLength(2);
-      expect(byText("10 licenses × $18 · $180 a month · before tax", "p", topDialog())).toBeTruthy();
+      expect(byText("10 subscriptions × $18 · $180 a month · before tax", "p", topDialog())).toBeTruthy();
     });
 
     test("a product that can no longer be bought keeps the terms it was chosen with, and the step stays open", async () => {
@@ -593,14 +593,14 @@ describe("the licenses step", () => {
       await view.rerender(gridOf(billing, client, withFleet(fleet({ offer: undefined }))));
       expect(openDialogs()).toHaveLength(1);
       expect(find("h2", topDialog()).textContent).toBe("Buy Fleet");
-      expect(byText("10 licenses × $15 · $150 a month · before tax", "p", topDialog())).toBeTruthy();
+      expect(byText("10 subscriptions × $15 · $150 a month · before tax", "p", topDialog())).toBeTruthy();
       await view.rerender(gridOf(billing, client, withFleet(fleet({ offer: workspaceOffer(1500, { buy: null }) }))));
       expect(openDialogs()).toHaveLength(1);
-      expect(byText("10 licenses × $15 · $150 a month · before tax", "p", topDialog())).toBeTruthy();
+      expect(byText("10 subscriptions × $15 · $150 a month · before tax", "p", topDialog())).toBeTruthy();
       // Gone from the catalog altogether.
       await view.rerender(gridOf(billing, client, [callFor(), addOn()]));
       expect(openDialogs()).toHaveLength(1);
-      expect(byText("10 licenses × $15 · $150 a month · before tax", "p", topDialog())).toBeTruthy();
+      expect(byText("10 subscriptions × $15 · $150 a month · before tax", "p", topDialog())).toBeTruthy();
     });
   });
 
@@ -612,20 +612,20 @@ describe("the licenses step", () => {
     expect(stepper(dialog).getAttribute("aria-valuemax")).toBe("9007");
     for (let step = 0; step < 10; step += 1) await press(stepper(dialog), "ArrowUp");
     expect(stepper(dialog).value).toBe("9007");
-    expect(find<HTMLButtonElement>('[aria-label="One license more"]', dialog).disabled).toBe(true);
+    expect(find<HTMLButtonElement>('[aria-label="One subscription more"]', dialog).disabled).toBe(true);
   });
 
   test("'before tax' appears only when tax is excluded", async () => {
     const withTax = (tax: string) => [fleet({ offer: workspaceOffer(1500, { tax }) })];
     await openBuyFleet({ products: withTax("included") });
-    expect(byText("10 licenses × $15 · $150 a month · including tax", "p", topDialog())).toBeTruthy();
+    expect(byText("10 subscriptions × $15 · $150 a month · including tax", "p", topDialog())).toBeTruthy();
     expect(topDialog().textContent).not.toContain("before tax");
     await cleanup();
     await openBuyFleet({ products: withTax("none") });
-    expect(byText("10 licenses × $15 · $150 a month", "p", topDialog())).toBeTruthy();
+    expect(byText("10 subscriptions × $15 · $150 a month", "p", topDialog())).toBeTruthy();
     await cleanup();
     await openBuyFleet({ products: withTax("reverse_charge") });
-    expect(byText("10 licenses × $15 · $150 a month", "p", topDialog())).toBeTruthy();
+    expect(byText("10 subscriptions × $15 · $150 a month", "p", topDialog())).toBeTruthy();
   });
 
   test("the sum is in the price's currency and recurrence", async () => {
@@ -633,14 +633,14 @@ describe("the licenses step", () => {
     await openBuyFleet({ products: [fleet({ offer: workspaceOffer(0, { price: yearly, tax: "included" }) })] });
     const dialog = topDialog();
     expect(dialog.textContent).toContain("€140 per user a year · Renews every year.");
-    expect(byText("10 licenses × €140 · €1,400 a year · including tax", "p", dialog)).toBeTruthy();
+    expect(byText("10 subscriptions × €140 · €1,400 a year · including tax", "p", dialog)).toBeTruthy();
   });
 
   test("Continue to payment calls purchase({product, seats}) and goes to the page it answers", async () => {
     const { billing, requests } = payingAt(PAY);
     const { leave } = await openBuyFleet({ billing });
     const dialog = topDialog();
-    await click(find('[aria-label="One license more"]', dialog));
+    await click(find('[aria-label="One subscription more"]', dialog));
     await click(buttonNamed("Continue to payment", dialog));
     await settle();
     expect(requests).toEqual([
@@ -691,13 +691,13 @@ describe("the licenses step", () => {
 
   test("Cancel and Escape close it without buying, and reopening starts fresh", async () => {
     const { purchase, leave } = await openBuyFleet();
-    await click(find('[aria-label="One license more"]', topDialog()));
+    await click(find('[aria-label="One subscription more"]', topDialog()));
     expect(stepper(topDialog()).value).toBe("11");
     await click(buttonNamed("Cancel", topDialog()));
     expect(openDialogs()).toHaveLength(0);
     await click(buttonNamed("Buy", card("mentra.fleet")));
     expect(stepper(topDialog()).value).toBe("10");
-    await click(find('[aria-label="One license more"]', topDialog()));
+    await click(find('[aria-label="One subscription more"]', topDialog()));
     await escape();
     expect(openDialogs()).toHaveLength(0);
     await click(buttonNamed("Buy", card("mentra.fleet")));
@@ -754,7 +754,7 @@ describe("the licenses step starts at the workspace's member count", () => {
   test("14 members start at 14", async () => {
     await openWith(14);
     expect(stepper(topDialog()).value).toBe("14");
-    expect(byText("14 licenses × $15 · $210 a month · before tax", "p", topDialog())).toBeTruthy();
+    expect(byText("14 subscriptions × $15 · $210 a month · before tax", "p", topDialog())).toBeTruthy();
     expect(topDialog().textContent).toContain("Your workspace has 14 members.");
   });
 
@@ -772,8 +772,8 @@ describe("the licenses step starts at the workspace's member count", () => {
     const setup = await openWith(1);
     const dialog = topDialog();
     expect(findAll('[role="spinbutton"]', dialog)).toHaveLength(0);
-    expect(findAll('[aria-label="One license more"]', dialog)).toHaveLength(0);
-    expect(byText("1 license · $15 a month · before tax", "p", dialog)).toBeTruthy();
+    expect(findAll('[aria-label="One subscription more"]', dialog)).toHaveLength(0);
+    expect(byText("1 subscription · $15 a month · before tax", "p", dialog)).toBeTruthy();
     expect(dialog.textContent).not.toContain("It's yours once payment goes through.");
     expect(dialog.textContent).not.toContain("secure payment page");
     expect(dialog.textContent).not.toContain("Your workspace has");
@@ -796,7 +796,7 @@ describe("the licenses step starts at the workspace's member count", () => {
     expect(stepper(topDialog()).value).toBe("2");
     await view.rerender(dialog(1));
     expect(findAll('[role="spinbutton"]', topDialog())).toHaveLength(0);
-    expect(byText("1 license · $15 a month · before tax", "p", topDialog())).toBeTruthy();
+    expect(byText("1 subscription · $15 a month · before tax", "p", topDialog())).toBeTruthy();
     await click(buttonNamed("Continue to payment", topDialog()));
     await settle();
     expect(purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 1 }]]);
@@ -862,7 +862,7 @@ describe("a price of a scheme the portal doesn't know", () => {
     const { ui, purchase, leave } = grid({ products: [unknown()], memberCount: 10 });
     await mount(ui);
     await click(buttonNamed("Buy"));
-    await click(find('[aria-label="One license fewer"]', topDialog()));
+    await click(find('[aria-label="One subscription fewer"]', topDialog()));
     await click(buttonNamed("Continue to payment", topDialog()));
     await settle();
     expect(purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 9 }]]);
@@ -902,7 +902,7 @@ describe("unsafe purchase addresses", () => {
     const { billing } = payingAt("javascript:alert(1)");
     const { ui, leave } = grid({ billing, licenses: [licenseBillingFor()] });
     await mount(ui);
-    await click(buttonNamed("Add licenses"));
+    await click(buttonNamed("Buy subscriptions"));
     await settle();
     expect(leave).not.toHaveBeenCalled();
     expect(find('[role="alert"]').textContent).toBe(refused);
@@ -956,7 +956,7 @@ describe("refusals", () => {
     const client = new QueryClient();
     const invalidate = spyOn(client, "invalidateQueries");
     const { leave } = await buyFleet(refusing(409, "already_licensed", { licenseId: "lic_fleet" }).billing, client);
-    expect(find('[role="alert"]', topDialog()).textContent).toBe("You already have Fleet. Add licenses instead.");
+    expect(find('[role="alert"]', topDialog()).textContent).toBe("You already have Fleet. Buy more subscriptions instead.");
     expect(invalidate).toHaveBeenCalledWith({ queryKey: billingKeys.owner(WS) });
     expect(leave).not.toHaveBeenCalled();
     // It is held now: another try would only be refused again.
@@ -980,7 +980,7 @@ describe("refusals", () => {
     expect(find('[role="alert"]', topDialog()).textContent).toBe("Fleet isn't for sale right now.");
     await cleanup();
     await buyFleet(refusing(400, "invalid_seats").billing);
-    expect(find('[role="alert"]', topDialog()).textContent).toBe("That number of licenses isn't available. Choose a different number.");
+    expect(find('[role="alert"]', topDialog()).textContent).toBe("That number of subscriptions isn't available. Choose a different number.");
     await cleanup();
     await buyFleet(refusing(418, "teapot").billing);
     expect(find('[role="alert"]', topDialog()).textContent).toBe(t.refusal.generic);
@@ -1027,16 +1027,16 @@ describe("the catalog dialog", () => {
 
   test("is 'Buy licenses', with what to do for a product you have", async () => {
     await mount(dialogFor({ licenses: held }).ui);
-    expect(find("h2", topDialog()).textContent).toBe("Buy licenses");
-    expect(topDialog().textContent).toContain("Products for your workspace. For one you have, add licenses instead.");
+    expect(find("h2", topDialog()).textContent).toBe("Buy subscriptions");
+    expect(topDialog().textContent).toContain("Products for your workspace. For one you have, buy more subscriptions instead.");
   });
 
   test("a held product shows 'You have <n> licenses' and Add licenses; any other shows its price and Buy", async () => {
     await mount(dialogFor({ licenses: held }).ui);
-    expect(row("mentra.call.unlimited").textContent).toContain("You have 5 licenses");
-    expect(buttons(row("mentra.call.unlimited")).map((button) => button.textContent)).toEqual(["Add licenses"]);
-    expect(row("mentra.fleet").textContent).toContain("You have 10 licenses");
-    expect(buttons(row("mentra.fleet")).map((button) => button.textContent)).toEqual(["Add licenses"]);
+    expect(row("mentra.call.unlimited").textContent).toContain("You have 5 subscriptions");
+    expect(buttons(row("mentra.call.unlimited")).map((button) => button.textContent)).toEqual(["Buy subscriptions"]);
+    expect(row("mentra.fleet").textContent).toContain("You have 10 subscriptions");
+    expect(buttons(row("mentra.fleet")).map((button) => button.textContent)).toEqual(["Buy subscriptions"]);
     expect(row("mentra.example").textContent).toContain("Example Add-on");
     expect(row("mentra.example").textContent).toContain("$9 per user a month");
     expect(buttons(row("mentra.example")).map((button) => button.textContent)).toEqual(["Buy"]);
@@ -1054,16 +1054,16 @@ describe("the catalog dialog", () => {
     await click(buttonNamed("Buy", row("mentra.example")));
     expect(openDialogs()).toHaveLength(2);
     expect(find("h2", topDialog()).textContent).toBe("Buy Example Add-on");
-    expect(byText("10 licenses × $9 · $90 a month · before tax", "p", topDialog())).toBeTruthy();
+    expect(byText("10 subscriptions × $9 · $90 a month · before tax", "p", topDialog())).toBeTruthy();
     await click(buttonNamed("Cancel", topDialog()));
     expect(openDialogs()).toHaveLength(1);
-    expect(find("h2", topDialog()).textContent).toBe("Buy licenses");
+    expect(find("h2", topDialog()).textContent).toBe("Buy subscriptions");
   });
 
   test("Add licenses on a row asks for add_seats and goes to the page", async () => {
     const { ui, session, leave } = dialogFor({ licenses: held });
     await mount(ui);
-    await click(buttonNamed("Add licenses", row("mentra.fleet")));
+    await click(buttonNamed("Buy subscriptions", row("mentra.fleet")));
     await settle();
     expect(session.mock.calls).toEqual([[WS, { action: "add_seats", licenseId: "lic_fleet" }]]);
     expect(leave).toHaveBeenCalledWith(PAY);
@@ -1072,7 +1072,7 @@ describe("the catalog dialog", () => {
   test("a refusal on a row is shown in the list", async () => {
     const { billing } = realBilling(() => ({ status: 400, body: { error: "unknown_action" } }));
     await mount(dialogFor({ billing, licenses: held }).ui);
-    await click(buttonNamed("Add licenses", row("mentra.fleet")));
+    await click(buttonNamed("Buy subscriptions", row("mentra.fleet")));
     await settle();
     expect(find('[role="alert"]', topDialog()).textContent).toBe("That isn't available for this subscription any more. Reload the page and try again.");
   });
@@ -1098,7 +1098,7 @@ describe("the catalog dialog", () => {
     const { billing } = realBilling(() => ({ status: 400, body: { error: "unknown_action" } }));
     const setup = dialogFor({ billing, licenses: held });
     const { rerender } = await mount(setup.ui);
-    await click(buttonNamed("Add licenses", row("mentra.fleet")));
+    await click(buttonNamed("Buy subscriptions", row("mentra.fleet")));
     await settle();
     expect(findAll('[role="alert"]')).toHaveLength(1);
     await click(find('[aria-label="Close"]', topDialog()));
@@ -1142,7 +1142,7 @@ describe("the catalog dialog", () => {
     const buy = buttonNamed("Buy", row("mentra.example"));
     const describedBy = buy.getAttribute("aria-describedby")!.split(" ").map((id) => document.getElementById(id)?.textContent);
     expect(describedBy).toContain("Example Add-on");
-    const add = buttonNamed("Add licenses", row("mentra.fleet"));
+    const add = buttonNamed("Buy subscriptions", row("mentra.fleet"));
     expect(add.getAttribute("aria-describedby")!.split(" ").map((id) => document.getElementById(id)?.textContent)).toContain("Fleet");
     expect(findAll("select")).toHaveLength(0);
     expect(text()).not.toMatch(NAMES_THE_PROCESSOR);
@@ -1155,20 +1155,20 @@ describe("the grid's heading", () => {
   test("are drawn only when at least one entry has an offer for this viewer", async () => {
     await mount(grid({ products: [callFor({ offer: undefined }), fleet({ offer: undefined })] }).ui);
     expect(findAll("h2")).toHaveLength(0);
-    expect(text()).not.toContain("Buy licenses");
+    expect(text()).not.toContain("Buy subscriptions");
     expect(text()).not.toContain("secure payment page");
     // The products themselves are display content: named, described, and nothing to buy.
     expect(findAll("[data-product]")).toHaveLength(2);
     expect(buttons()).toHaveLength(0);
     await cleanup();
     await mount(grid({ products: [callFor({ offer: undefined }), fleet()] }).ui);
-    expect(find("h2").textContent).toBe("Buy licenses for your members");
+    expect(find("h2").textContent).toBe("Buy subscriptions for your members");
     expect(text()).not.toContain("secure payment page");
   });
 
   test("follow the offer, not whether Buy is possible: an offer billing won't sell now still has them", async () => {
     await mount(grid({ products: [callFor({ offer: workspaceOffer(2900, { buy: null }) })] }).ui);
-    expect(find("h2").textContent).toBe("Buy licenses for your members");
+    expect(find("h2").textContent).toBe("Buy subscriptions for your members");
   });
 
 });
@@ -1192,7 +1192,7 @@ describe("a product whose first payment isn't finished", () => {
     const mine = card("mentra.call.unlimited");
     expect(mine.textContent).toContain("Payment incomplete");
     expect(mine.textContent).not.toContain("You have");
-    expect(mine.textContent).not.toContain("5 licenses");
+    expect(mine.textContent).not.toContain("5 subscriptions");
     // Amber, as a payment that needs the buyer.
     expect(byText("Payment incomplete", "p", mine).className).toContain("text-error-foreground");
     // Nothing is bought or added to it; the other products are as they were.
@@ -1241,7 +1241,7 @@ describe("a product whose first payment isn't finished", () => {
   test("never offers Add licenses, even if billing listed it", async () => {
     const both = incomplete({
       actions: [
-        { kind: "add_seats", fallbackLabel: "Add licenses" },
+        { kind: "add_seats", fallbackLabel: "Buy subscriptions" },
         { kind: "complete_payment", fallbackLabel: "Complete payment" },
       ],
     });
@@ -1268,8 +1268,8 @@ describe("a product whose first payment isn't finished", () => {
   test("a failed payment on an active product is another matter: it still has its licenses, and Add licenses", async () => {
     const failed = licenseBillingFor({ status: "past_due", fallbackStatusLabel: "Past due", quantity: 5 });
     await mount(grid({ licenses: [failed] }).ui);
-    expect(card("mentra.call.unlimited").textContent).toContain("You have 5 licenses");
-    expect(buttons(card("mentra.call.unlimited")).map((button) => button.textContent)).toEqual(["Add licenses"]);
+    expect(card("mentra.call.unlimited").textContent).toContain("You have 5 subscriptions");
+    expect(buttons(card("mentra.call.unlimited")).map((button) => button.textContent)).toEqual(["Buy subscriptions"]);
   });
 });
 

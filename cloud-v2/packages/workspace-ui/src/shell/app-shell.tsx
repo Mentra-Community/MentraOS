@@ -292,7 +292,7 @@ export function AccountFooter({
   useDismiss(ref, open, close);
 
   return (
-    <div ref={ref} className="relative shrink-0 border-t px-4 py-3">
+    <div ref={ref} className="relative shrink-0 border-t px-4 py-1.5">
       {open ? (
         <div className="rounded-menu bg-popover shadow-menu absolute right-3 bottom-[66px] left-3 z-40 overflow-hidden border p-1.5">
           {items.map(item => {
@@ -341,7 +341,14 @@ export function AccountFooter({
           </button>
         </div>
       ) : null}
-      <div className="flex items-center gap-3">
+      {/* The whole row opens the menu: who is signed in, and the "…" that says it is a menu. */}
+      <button
+        type="button"
+        className="hover:bg-hover -mx-2 flex w-[calc(100%+1rem)] cursor-pointer items-center gap-3 rounded-[12px] px-2 py-1.5 text-left"
+        aria-label="Open account menu"
+        aria-expanded={open}
+        onClick={() => setOpen(value => !value)}
+      >
         <Avatar label={userName?.trim() || userEmail} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold" title={userName?.trim() ? userEmail : undefined}>
@@ -349,18 +356,10 @@ export function AccountFooter({
           </div>
           <div className="text-muted-foreground truncate text-xs">Account</div>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground"
-          aria-label="Open account menu"
-          aria-expanded={open}
-          onClick={() => setOpen(value => !value)}
-        >
+        <span className="text-muted-foreground flex size-9 shrink-0 items-center justify-center">
           <MoreHorizontal className="size-4" />
-        </Button>
-      </div>
+        </span>
+      </button>
     </div>
   );
 }

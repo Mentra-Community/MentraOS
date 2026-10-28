@@ -207,18 +207,18 @@ describe("audit events as sentences", () => {
 
   test("product and license events read as plain labels, not their action names", () => {
     expect(["license.written", "license.ended", "seat.assigned", "seat.released"].map(actionLabel)).toEqual([
-      "Licenses bought or changed",
-      "Licenses ended",
-      "License assigned",
-      "License released",
+      "Subscriptions bought or changed",
+      "Subscriptions ended",
+      "Subscription assigned",
+      "Subscription released",
     ]);
     const assigned = event("seat.assigned", {
       target: { licenseId: "lic_1", membershipId: "wm_1", mentraUserId: "mu_1", email: "priya@acme.test" },
       after: { assignedAt: "2026-10-12T10:00:00.000Z", seatsUsed: 1, quantity: 5 },
     });
-    expect(say(assigned)).toBe("License assigned");
-    // The field is `seatsUsed`; the person reads "Licenses assigned".
-    expect(notes(assigned)).toEqual(expect.arrayContaining(["Licenses assigned: 1", "Quantity: 5"]));
+    expect(say(assigned)).toBe("Subscription assigned");
+    // The field is `seatsUsed`; the person reads "Subscriptions assigned".
+    expect(notes(assigned)).toEqual(expect.arrayContaining(["Subscriptions assigned: 1", "Quantity: 5"]));
     expect([...notes(assigned), say(assigned)].filter((line) => /\bseats?\b/i.test(line))).toEqual([]);
     expect(notes(assigned).join("\n")).not.toContain("wm_");
   });

@@ -1,7 +1,7 @@
 /**
  * Leaving the portal for one of billing's hosted pages: ask billing for a session (or a checkout), then send the
- * person to its URL. Every ↗ button on the Licenses page (a card's actions, the roster's Add licenses,
- * the over notice's "Add 2 licenses", the picker's Add licenses, and the catalog's Continue to payment and Add
+ * person to its URL. Every ↗ button on the Licenses page (a card's actions, the roster's Buy subscriptions,
+ * the over notice's "Buy 2 subscriptions", the picker's Buy subscriptions, and the catalog's Continue to payment and Add
  * licenses) goes through one `useHostedAction`, so they all behave alike.
  *
  * - An action that returns to the portal, and every purchase, navigates this tab.
