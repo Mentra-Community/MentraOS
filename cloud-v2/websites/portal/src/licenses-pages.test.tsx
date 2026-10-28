@@ -22,7 +22,6 @@ import {
   FLEET_LICENSE,
   FLEET_PAST_DUE,
   HOSTED,
-  PEOPLE,
   SCENARIOS,
   TEST_MODE,
   fakeCore,
@@ -162,7 +161,7 @@ describe("the Licenses page", () => {
     // The header action is in the title bar, beside the title: Billing, and no Buy (buying more is on each card).
     const header = find("header");
     expect(header.textContent).toContain("Billing");
-    expect(header.textContent).not.toContain("Buy subscriptions");
+    expect(header.textContent).not.toContain("Buy more seats");
     // Billing was asked in the portal's locale, for this workspace.
     const asked = billingRequests(core);
     expect(asked.map(request => request.path)).toEqual(expect.arrayContaining([`/api/portal/billing/workspaces/${ACME}/catalog`, `/api/portal/billing/workspaces/${ACME}/status`]));
@@ -189,7 +188,7 @@ describe("the Licenses page", () => {
   test("an Owner offered billing sees the money, and may buy; the page is the view, not the old panel", async () => {
     await open(`/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(has("$145")).toBe(true);
-    expect(buttonNamed(/^Buy subscriptions$/)).toBeDefined();
+    expect(buttonNamed(/^Buy more seats$/)).toBeDefined();
     expect(buttonNamed(/^Billing$/)).toBeDefined();
     // Core's roster of who holds a license is the new card's: the folded strip of people.
     expect(has("Assigned to")).toBe(true);
@@ -250,7 +249,8 @@ describe("coming back from checkout", () => {
   test("?purchase=pur_1 reaches the view: billing is asked about it and a dialog says the licenses are ready", async () => {
     const { core } = await open(`/licenses?purchase=pur_1`, bought(), { ready: "You now have Fleet!" });
     expect(openDialog()!.textContent).toContain("You now have Fleet!");
-    expect(openDialog()!.querySelector("h2")!.textContent).toBe("Fleet");
+    // Dana holds one of them: the dialog is titled with that, not the product.
+    expect(openDialog()!.querySelector("h2")!.textContent).toBe("You now have Fleet!");
     const statuses = billingRequests(core).filter(request => request.path.endsWith("/status"));
     expect(statuses.length).toBeGreaterThan(0);
     for (const request of statuses) expect(request.query.get("purchase")).toBe("pur_1");
@@ -656,14 +656,14 @@ describe("leaving for a hosted page", () => {
   test("a purchase goes the same way: the checkout's URL to this tab", async () => {
     const { core } = await open(`/licenses`, answering(HOSTED.checkout, SCENARIOS.catalog()), { ready: "Mentra Call Unlimited" });
     const out = ways();
+    // Buy goes straight to checkout, with no step in between.
     await click(findAll<HTMLElement>("button").find(button => button.textContent?.trim() === "Buy")!);
-    await until(() => has("Continue to payment"), "the subscriptions step");
-    await click(buttonNamed(/Continue to payment/)!);
     await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
     expect(out.assign.mock.calls).toEqual([[HOSTED.checkout]]);
+    expect(has("Continue to payment")).toBe(false);
     const posted = core.requests.find(request => request.method === "POST" && request.path.endsWith("/purchase"))!;
-    // The number to buy starts at the workspace's member count.
-    expect(posted.body).toMatchObject({ seats: PEOPLE.length, locale: "en-US" });
+    // Billing's smallest purchase: more seats are bought from the card afterwards.
+    expect(posted.body).toMatchObject({ seats: 1, locale: "en-US" });
   });
 });
 

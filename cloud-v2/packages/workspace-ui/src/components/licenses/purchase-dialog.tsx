@@ -52,7 +52,8 @@ export interface PurchaseDialogProps {
  * dialog ready, whatever `timedOut` says.
  *
  * `assigned` is whether the new license's seats include the viewer's own (billing hands the buyer one): the ready
- * dialog then says "You now have <product>!" and to open the Mentra App, and with more than one bought, to assign the rest.
+ * dialog is then titled "You now have <product>!", with no product header or icon, and says only to open the Mentra App
+ * (and, with more than one bought, to assign the rest).
  *
  * Mount it open and unmount it to close it, as the link's dialogs are: its content is drawn only while it is open.
  * It opens with focus on OK, so Enter closes it and the × is not what the eye lands on.
@@ -64,39 +65,42 @@ export function PurchaseDialog({ purchase, productName, entry, listed, assigned 
   const ready = purchase.status === "ready" && listed;
   const { paid, quantity } = purchase;
   const phase = ready ? "ready" : timedOut ? "timeout" : "processing";
-  const given = t.purchase.youNowHave(productName, quantity);
+  // The viewer holds one now: the dialog is just "You now have <product>!" and what to do next, with no product header.
+  const given = phase === "ready" && assigned ? t.purchase.youNowHave(productName, quantity) : null;
   const headline =
     phase === "ready"
-      ? assigned
-        ? given.title
-        : t.purchase.readyTitle({ seats: quantity, product: productName })
+      ? t.purchase.readyTitle({ seats: quantity, product: productName })
       : phase === "timeout"
         ? t.purchase.timeout.title(paid)
         : t.purchase.headline(paid);
   const body =
     phase === "ready"
-      ? assigned
-        ? given.body
-        : t.purchase.readyBody({ product: productName, paid })
+      ? t.purchase.readyBody({ product: productName, paid })
       : phase === "timeout"
         ? t.purchase.timeout.body
         : t.purchase.settingUpSeats({ seats: quantity, product: productName });
   return (
-    <Dialog open onClose={onClose} title={entry?.name ?? t.page.title} className="max-w-[480px]">
-      <div className="flex items-start gap-3">
-        {entry ? <ProductIcon product={entry} size={40} /> : null}
-        {/* A live region: the words change as the purchase is set up, while the dialog stays open. */}
-        <div role="status" data-phase={phase} className="min-w-0 flex-1 space-y-2 text-[15px] leading-6">
-          <p className="font-semibold">{headline}</p>
-          <p>{body}</p>
-          {phase === "processing" ? (
-            <p className="text-muted-foreground flex items-center gap-2.5 text-sm font-semibold">
-              <Spinner className="size-4" />
-              {t.purchase.settingUp}
-            </p>
-          ) : null}
+    <Dialog open onClose={onClose} title={given ? given.title : (entry?.name ?? t.page.title)} className="max-w-[480px]">
+      {given ? (
+        <p role="status" data-phase={phase} className="text-[15px] leading-6">
+          {given.body}
+        </p>
+      ) : (
+        <div className="flex items-start gap-3">
+          {entry ? <ProductIcon product={entry} size={40} /> : null}
+          {/* A live region: the words change as the purchase is set up, while the dialog stays open. */}
+          <div role="status" data-phase={phase} className="min-w-0 flex-1 space-y-2 text-[15px] leading-6">
+            <p className="font-semibold">{headline}</p>
+            <p>{body}</p>
+            {phase === "processing" ? (
+              <p className="text-muted-foreground flex items-center gap-2.5 text-sm font-semibold">
+                <Spinner className="size-4" />
+                {t.purchase.settingUp}
+              </p>
+            ) : null}
+          </div>
         </div>
-      </div>
+      )}
       <div className="-mx-6 -mb-6 flex flex-wrap items-center justify-end gap-2 border-t px-6 py-4 sm:-mx-7 sm:-mb-7 sm:px-7">
         {phase === "timeout" ? (
           <Button type="button" variant="secondary" onClick={onReload ?? (() => window.location.reload())}>

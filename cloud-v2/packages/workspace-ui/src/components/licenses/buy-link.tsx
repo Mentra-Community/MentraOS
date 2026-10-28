@@ -187,6 +187,8 @@ export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOu
   }, []);
 
   let lines: string[] = [];
+  // Assigned: the dialog is titled "You now have <product>!" and says only what to do next, with no product header.
+  let title: string | null = null;
   let body: "lines" | "opening" | "assignment" | "hosted" = "lines";
   switch (outcome.kind) {
     case "held":
@@ -196,7 +198,8 @@ export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOu
       // While it is being assigned the page shows nothing; once it is, the person is told.
       if (assign.isSuccess) {
         const now = words.youNowHave(name);
-        lines = [now.title, now.body];
+        title = now.title;
+        lines = [now.body];
       } else if (assign.isError) body = "assignment";
       else return null;
       break;
@@ -226,10 +229,10 @@ export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOu
 
   const opening = body === "opening";
   return (
-    <Dialog open onClose={onClose} locked={opening} title={entry?.name ?? t.page.title} className="max-w-[480px]">
+    <Dialog open onClose={onClose} locked={opening} title={title ?? entry?.name ?? t.page.title} className="max-w-[480px]">
       <div data-link={outcome.kind} className="space-y-5">
         <div className="flex items-start gap-3">
-          {entry ? <ProductIcon product={entry} size={40} /> : null}
+          {entry && title === null ? <ProductIcon product={entry} size={40} /> : null}
           <div className="min-w-0 flex-1 space-y-2 text-[15px] leading-6">
             {opening ? (
               <p role="status" className="flex items-center gap-2.5">

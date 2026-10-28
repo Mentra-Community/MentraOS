@@ -77,14 +77,13 @@ export function taxNote(tax: Tax): string | null {
 }
 
 /**
- * A price as the catalog shows it: "$15 per user a month". A price of
+ * A price as the catalog shows it: "$15 per user per month". A price of
  * a scheme Core doesn't know is billing's own `fallbackLabel`.
  */
 export function priceLine(price: Price, locale: string): string {
   if (!isPerSeat(price)) return price.fallbackLabel;
-  const unit = formatMoney(price.unit, locale);
-  const rate = formatRecurrence(price.recurrence, locale);
-  return t.price.perSeat(unit, rate);
+  const { interval, count } = price.recurrence;
+  return t.price.perSeat(formatMoney(price.unit, locale), interval, count, new Intl.NumberFormat(usableLocale(locale)).format(count));
 }
 
 /**

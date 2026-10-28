@@ -22,6 +22,7 @@ import { LicensesUnavailable, TestModeBanner } from "./components/licenses/banne
 import { LinkDialog, type LinkOutcome } from "./components/licenses/buy-link";
 import { NoSeat } from "./components/licenses/page-parts";
 import { PurchaseDialog } from "./components/licenses/purchase-dialog";
+import { licenseStrings as t } from "./strings/licenses";
 import { catalogEntryFor } from "./test-billing-fixtures";
 import { cleanup, render, setupDom, teardownDom, wordsUnder } from "./test-dom";
 import { detailFor, offlineApi } from "./test-fixtures";
@@ -33,6 +34,8 @@ afterEach(cleanup);
 const SEAT = /\bseats?\b/i;
 /** What a drawn screen never says: "seat", nor "license" (a person reads "subscription"). Code keeps both words. */
 const UNREAD = /\b(seats?|licenses?)\b/i;
+/** The one place a person reads the word: the button Alex named "Buy more seats". */
+const withoutBuyMoreSeats = (text: string) => text.replaceAll(t.actions.addSeats, "");
 
 async function draw(ui: ReactElement) {
   await render(<QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>);
@@ -105,7 +108,7 @@ describe("the dialogs and banners, in every state", () => {
 
   test("every answer the ?buy= link can give", async () => {
     const entry = catalogEntryFor();
-    const add = { kind: "add_seats", fallbackLabel: "Buy subscriptions" };
+    const add = { kind: "add_seats", fallbackLabel: "Buy more seats" };
     const outcomes: Array<Exclude<LinkOutcome, { kind: "choose" }>> = [
       { product: entry.product, entry, kind: "held" },
       { product: entry.product, entry, kind: "assign", licenseId: "lic_call" },
@@ -206,7 +209,7 @@ describe("the components' own text", () => {
   test("none says seat", () => {
     const stray = files.flatMap((file) =>
       literals(file)
-        .filter((entry) => SEAT.test(entry.text))
+        .filter((entry) => SEAT.test(withoutBuyMoreSeats(entry.text)))
         .map((entry) => `${relative(SRC, file)}:${entry.line} ${entry.text}`),
     );
     expect(stray).toEqual([]);

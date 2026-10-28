@@ -545,7 +545,6 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, ad
           billing={billing}
           navigateOut={navigateOut}
           api={api}
-          memberCount={memberCount}
         />
       ) : null}
       {cards.length === 0 && !showCatalog ? <Restricted>{t.page.noLicenses}</Restricted> : null}
@@ -569,7 +568,7 @@ export type WorkspaceLicensesHeaderActionsProps = Pick<WorkspaceLicensesViewProp
 
 /**
  * The Licenses page's header action, for the host to put in its title bar beside the page's title: "Billing ↗".
- * Buying more is on each card ("Buy subscriptions ↗"). Mount it with the same props as the view (all but the callbacks
+ * Buying more is on each card ("Buy more seats"). Mount it with the same props as the view (all but the callbacks
  * and the pace): it reads through the same query keys, so each request is made once however many of the two are
  * mounted, and it agrees with the view on what there is to show. Like the view it needs a `QueryClientProvider` above it.
  *

@@ -97,8 +97,8 @@ describe("the catalog and buying", () => {
 
   test("the licenses step", () => {
     expect(t.buy.title("Fleet")).toBe("Buy Fleet");
-    expect(t.buy.terms("$15 per user a month", "month")).toBe(
-      "$15 per user a month · Renews every month. Change the number of subscriptions or cancel at any time.",
+    expect(t.buy.terms("$15 per user per month", "month")).toBe(
+      "$15 per user per month · Renews every month. Change the number of subscriptions or cancel at any time.",
     );
     expect(t.buy.terms("$15 per user every 3 months", "3 months")).toBe(
       "$15 per user every 3 months · Renews every 3 months. Change the number of subscriptions or cancel at any time.",
@@ -237,7 +237,7 @@ describe("billing's actions", () => {
     for (const kind of KNOWN_ACTION_KINDS) expect(a.label(kind, "FALLBACK")).not.toBe("FALLBACK");
     // The words themselves, as the spec has them.
     expect([a.addSeats, a.changeSeats, a.cancel, a.renew, a.updatePayment, a.completePayment, a.billingAndInvoices]).toEqual([
-      "Buy subscriptions",
+      "Buy more seats",
       "Change subscription count",
       "Cancel",
       "Renew",
@@ -254,8 +254,9 @@ describe("billing's actions", () => {
 
   test("adding a number of licenses, and the link for a blocked tab", () => {
     expect([t.actions.addSeatsCount(2), t.actions.addSeatsCount(1)]).toEqual(["Buy 2 subscriptions", "Buy 1 subscription"]);
-    // A card whose subscriptions are all assigned says "more".
-    expect([t.actions.addSeats, t.actions.addMoreSeats]).toEqual(["Buy subscriptions", "Buy more subscriptions"]);
+    // One label for adding seats, whatever is assigned.
+    expect(t.actions.addSeats).toBe("Buy more seats");
+    expect("addMoreSeats" in t.actions).toBe(false);
     expect(t.actions.openPaymentPage).toBe("Open the payment page");
   });
 });
@@ -269,7 +270,7 @@ describe("licenses held", () => {
     expect(t.seats.cancel).toBe("Cancel");
     // Unassign asks in a dialog: its title, and one plain line under it.
     expect(t.seats.unassignPrompt("Hannah Kim")).toBe("Unassign Hannah Kim?");
-    expect(t.seats.unassignBody("Hannah Kim", "Mentra Call Unlimited")).toBe("Hannah Kim loses Mentra Call Unlimited the next time they open it.");
+    expect(t.seats.unassignBody("Hannah Kim", "Mentra Call Unlimited")).toBe("Hannah Kim will lose access to Mentra Call Unlimited.");
     expect(t.seats.assignSeats).toBe("Assign subscriptions");
     // Seats nobody holds have no rows, so nothing names them.
     expect("freeSeat" in t.seats).toBe(false);
@@ -461,7 +462,7 @@ describe("banners and the dialog back from checkout", () => {
 
 describe("refusals", () => {
   test("the two the screens act on name the product", () => {
-    expect(refusalMessage("already_licensed", { product: "Fleet" })).toBe("You already have Fleet. Buy more subscriptions instead.");
+    expect(refusalMessage("already_licensed", { product: "Fleet" })).toBe("You already have Fleet. Buy more seats instead.");
     expect(refusalMessage("checkout_in_progress", { product: "Fleet" })).toBe(
       "A purchase of Fleet is already under way. Finish it, or try again in a minute.",
     );
@@ -519,7 +520,8 @@ describe("refusals", () => {
     expect(outputs.filter((text) => processor.test(text) || /paid through/i.test(text))).toEqual([]);
     // A subscription is one person's right to a product, and "seat" and "license" are not words a person reads. API and
     // code names keep them (`licenses`, `seats`, `add_seats`), so only the sentences are scanned.
-    expect(outputs.filter((text) => /\b(seats?|licenses?)\b/i.test(text))).toEqual([]);
+    // The one exception is the button Alex named "Buy more seats".
+    expect(outputs.filter((text) => /\b(seats?|licenses?)\b/i.test(text.replaceAll(t.actions.addSeats, "")))).toEqual([]);
     // A count of one never sits beside a plural noun ("1 of 1 subscriptions"): every sentence that counts goes through `plural`.
     expect(outputs.filter((text) => /\b1 (subscriptions|products|members|users|people|persons|others)\b/.test(text))).toEqual([]);
     // Samples that fit their function leave no hole in a sentence.
@@ -560,10 +562,10 @@ const SAMPLES: Record<string, unknown[][]> = {
   "page.noSeat.title": [["Acme Field Services"]],
   "recurrence.rate": [["month", 1], ["month", 3], ["year", 2, "2"]],
   "recurrence.cadence": [["month", 1], ["month", 3], ["week", 2, "2"]],
-  "price.perSeat": [["$15", "a month"]],
+  "price.perSeat": [["$15", "month", 1], ["$15", "month", 3]],
   "catalog.youHaveSeats": [[1], [5]],
   "buy.title": [["Fleet"]],
-  "buy.terms": [["$15 per user a month", "month"]],
+  "buy.terms": [["$15 per user per month", "month"]],
   "buy.members": [[1], [14]],
   "buy.solo": [[{ total: "$29", rate: "a month", note: "before tax" }], [{ total: "$29", rate: "a month", note: null }]],
   "buy.summary": [
