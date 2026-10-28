@@ -186,8 +186,9 @@ function PickerBody({
         </ul>
       </div>
       <div className="-mx-6 -mb-6 flex flex-wrap items-center justify-between gap-3 border-t px-6 py-4 sm:-mx-7 sm:-mb-7 sm:px-7">
-        <span className="text-muted-foreground text-sm">{t.picker.chosen(people.length, counts.free)}</span>
-        <div className="flex gap-2">
+        {/* The count gives way, never the buttons: they stay at the right whatever Assign says. */}
+        <span className="text-muted-foreground min-w-0 flex-1 basis-32 text-sm">{t.picker.chosen(people.length, counts.free)}</span>
+        <div className="ml-auto flex shrink-0 gap-2">
           <Button type="button" variant="secondary" onClick={onClose}>
             {t.picker.cancel}
           </Button>

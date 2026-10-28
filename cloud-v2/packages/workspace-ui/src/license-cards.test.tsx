@@ -322,11 +322,11 @@ describe("an ending license", () => {
     expect(text(theCard())).not.toContain("Buy subscriptions");
   });
 
-  test("a full ending product offers no way to add licenses: only Assign subscriptions heads its roster", async () => {
+  test("a full ending product offers no way to add licenses, and nothing to assign", async () => {
     await mountCard(rig(), joined(coreLicense(3, [HANNAH, TOM, NOAH]), { status: "ending", fallbackStatusLabel: "Ending", endsAt: "2026-11-20T12:00:00.000Z", actions: [{ kind: "renew", fallbackLabel: "Renew" }] }));
     const card = text(theCard());
-    expect(card).not.toContain("Buy subscriptions");
-    expect(hasButton("Assign subscriptions", theCard())).toBe(true);
+    expect(card).not.toContain("Buy");
+    expect(hasButton("Assign subscriptions", theCard())).toBe(false);
     // No row for a full roster: the facts already say it.
     expect(card).not.toContain("All 3 subscriptions are assigned.");
   });
@@ -757,15 +757,15 @@ describe("the portal's locale", () => {
 describe("only the actions billing lists", () => {
   test("a license whose billing lists no add_seats has no Add licenses in its strip, roster or over notice, and words its sentences without it", async () => {
     const noAdd = { actions: [{ kind: "cancel", fallbackLabel: "Cancel" }] };
-    // Full, in the roster: Assign subscriptions still heads it, alone.
+    // Full, in the roster: nothing to buy and nothing to assign.
     await mountCard(rig(), joined(coreLicense(3, [HANNAH, TOM, NOAH]), noAdd));
-    expect(text(theCard())).not.toContain("Buy subscriptions");
-    expect(hasButton("Assign subscriptions", theCard())).toBe(true);
+    expect(text(theCard())).not.toContain("Buy");
+    expect(hasButton("Assign subscriptions", theCard())).toBe(false);
     await cleanup();
     // Full, in the strip.
     await mountCard(rig(), joined(coreLicense(3, [HANNAH, TOM, NOAH]), noAdd), { folded: true });
-    expect(hasButton("Buy subscriptions")).toBe(false);
-    expect(hasButton("Assign subscriptions")).toBe(true);
+    expect(hasButton("Buy more subscriptions")).toBe(false);
+    expect(hasButton("Assign subscriptions")).toBe(false);
     await cleanup();
     // Over.
     await mountCard(rig(), joined(coreLicense(3, [HANNAH, TOM, NOAH, DANA, PRIYA]), noAdd));
@@ -1062,9 +1062,10 @@ describe("who holds the licenses", () => {
     const stack = find("[data-slot='avatar-stack']", theCard());
     expect(stack.getAttribute("aria-hidden")).toBe("true");
     expect(findAll("span", stack).map((span) => span.textContent).filter(Boolean)).toEqual(["DR", "PN", "MC", "SA", "+6"]);
-    // All ten are taken: both actions are still there, whatever is assigned.
-    expect(hasButton("Buy subscriptions")).toBe(true);
-    expect(hasButton("Assign subscriptions")).toBe(true);
+    // All ten are taken: nothing to assign, only Buy more subscriptions.
+    expect(hasButton("Buy more subscriptions")).toBe(true);
+    expect(hasButton("Buy subscriptions")).toBe(false);
+    expect(hasButton("Assign subscriptions")).toBe(false);
   });
 
   test("an empty strip says no one has a license yet, and offers Assign licenses", async () => {
@@ -1150,13 +1151,14 @@ describe("who holds the licenses", () => {
     expect(findAll("input[type=search]", theCard())).toHaveLength(0);
   });
 
-  test("the full roster still has Buy subscriptions ↗ and Assign subscriptions at its head", async () => {
+  test("a full roster has only Buy more subscriptions ↗ at its head: nothing to assign", async () => {
     const r = rig();
     await mountCard(r, joined(coreLicense(3, [HANNAH, TOM, NOAH]), {}));
     expect(rosterRows()).toHaveLength(3);
     expect(text(theCard())).not.toContain("All 3 subscriptions are assigned.");
-    expect(hasButton("Assign subscriptions", theCard())).toBe(true);
-    await press("Buy subscriptions", theCard());
+    expect(hasButton("Assign subscriptions", theCard())).toBe(false);
+    expect(hasButton("Buy subscriptions", theCard())).toBe(false);
+    await press("Buy more subscriptions", theCard());
     await flush();
     expect(r.session).toHaveBeenCalledWith(workspaceScope(WS), { action: "add_seats", licenseId: "lic_call" });
     expect(r.leave).toHaveBeenCalledWith(PAGE);
@@ -1310,6 +1312,7 @@ function Roster({ initial, when }: { initial: readonly MemberView[]; when: "befo
       locale="en-US"
       productName="Mentra Call Unlimited"
       canAssign
+      full={people.length >= 5}
       addSeats={null}
       onAssign={() => {}}
       onUnassign={async (holder) => {
@@ -1706,7 +1709,7 @@ describe("the people picker", () => {
       },
     });
     await mountCard(r, joined(coreLicense(3, [HANNAH, TOM, NOAH]), {}));
-    await press("Buy subscriptions", theCard());
+    await press("Buy more subscriptions", theCard());
     await flush();
     expect(findAll("dialog [role='alert']")).toHaveLength(0);
     expect(find('[role="alert"]', theCard()).textContent).toBe("That subscription no longer exists. Reload the page.");

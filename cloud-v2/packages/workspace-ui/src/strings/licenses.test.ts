@@ -254,6 +254,8 @@ describe("billing's actions", () => {
 
   test("adding a number of licenses, and the link for a blocked tab", () => {
     expect([t.actions.addSeatsCount(2), t.actions.addSeatsCount(1)]).toEqual(["Buy 2 subscriptions", "Buy 1 subscription"]);
+    // A card whose subscriptions are all assigned says "more".
+    expect([t.actions.addSeats, t.actions.addMoreSeats]).toEqual(["Buy subscriptions", "Buy more subscriptions"]);
     expect(t.actions.openPaymentPage).toBe("Open the payment page");
   });
 });

@@ -467,7 +467,7 @@ function SeatsLayout({
 }) {
   const [open, setOpen] = useState(false);
   const holders = seatHolders(license, members);
-  const controls = { holders, canAssign, blocked: counts.over > 0, addSeats, onAssign };
+  const controls = { holders, canAssign, full: counts.free === 0, addSeats, onAssign };
   if (folded && !open) return <SeatStrip {...controls} onOpen={() => setOpen(true)} />;
   return (
     <div className="space-y-3 p-6 max-sm:p-5">
