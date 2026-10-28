@@ -132,52 +132,45 @@ describe("priceLine", () => {
 });
 
 describe("costFact", () => {
-  test("is billing's total with its recurrence, and 'Before tax' under it: no quantity × unit", () => {
-    expect(costFact(license(), "en-US")).toEqual({ value: "$145 a month", foot: "Before tax" });
+  test("is billing's total with its recurrence, and nothing else: no tax note, no quantity × unit", () => {
+    expect(costFact(license(), "en-US")).toBe("$145 a month");
   });
 
   test("formats in the portal's locale and the currency's own digits", () => {
     const euro: Price = { scheme: "per_seat", unit: { amountMinor: 2900, currency: "EUR" }, recurrence: { interval: "month", count: 1 } };
-    const german = costFact(license({ price: euro, total: { amountMinor: 14500, currency: "EUR" } }), "de-DE");
-    expect(german.value).toBe("145 € a month");
-    expect(german.foot).toBe("Before tax");
+    expect(costFact(license({ price: euro, total: { amountMinor: 14500, currency: "EUR" } }), "de-DE")).toBe("145 € a month");
 
     const yen: Price = { scheme: "per_seat", unit: { amountMinor: 2900, currency: "JPY" }, recurrence: { interval: "month", count: 1 } };
-    expect(costFact(license({ price: yen, total: { amountMinor: 14500, currency: "JPY" } }), "en-US")).toEqual({ value: "¥14,500 a month", foot: "Before tax" });
+    expect(costFact(license({ price: yen, total: { amountMinor: 14500, currency: "JPY" } }), "en-US")).toBe("¥14,500 a month");
   });
 
   test("a three-month recurrence is 'every 3 months'", () => {
     const quarterly: Price = { scheme: "per_seat", unit: usd(2900), recurrence: { interval: "month", count: 3 } };
-    expect(costFact(license({ price: quarterly, total: usd(14500) }), "en-US").value).toBe("$145 every 3 months");
+    expect(costFact(license({ price: quarterly, total: usd(14500) }), "en-US")).toBe("$145 every 3 months");
   });
 
-  test("only 'excluded' has a sub-line: 'included', 'none' and an unknown value say nothing", () => {
-    expect(costFact(license({ tax: "excluded" }), "en-US").foot).toBe("Before tax");
-    expect(costFact(license({ tax: "included" }), "en-US").foot).toBeNull();
-    expect(costFact(license({ tax: "none" }), "en-US").foot).toBeNull();
-    expect(costFact(license({ tax: "something_new" }), "en-US").foot).toBeNull();
+  test("tax changes nothing: 'excluded', 'included', 'none' and an unknown value read the same", () => {
+    for (const tax of ["excluded", "included", "none", "something_new"]) expect(costFact(license({ tax }), "en-US")).toBe("$145 a month");
   });
 
-  test("one license is '$29 a month' over 'Before tax'", () => {
-    const single = license({ quantity: 1, total: usd(2900) });
-    expect(costFact(single, "en-US")).toEqual({ value: "$29 a month", foot: "Before tax" });
-    expect(costFact({ ...single, tax: "none" }, "en-US")).toEqual({ value: "$29 a month", foot: null });
+  test("one subscription is '$29 a month'", () => {
+    expect(costFact(license({ quantity: 1, total: usd(2900) }), "en-US")).toBe("$29 a month");
   });
 
-  test("an unknown scheme is billing's label with no foot, whatever its total", () => {
+  test("an unknown scheme is billing's label, whatever its total", () => {
     const tiered: Price = { scheme: "tiered", fallbackLabel: "From $10 per user a month" };
-    expect(costFact(license({ price: tiered, total: null }), "en-US")).toEqual({ value: "From $10 per user a month", foot: null });
-    expect(costFact(license({ price: tiered, total: usd(100) }), "en-US")).toEqual({ value: "From $10 per user a month", foot: null });
+    expect(costFact(license({ price: tiered, total: null }), "en-US")).toBe("From $10 per user a month");
+    expect(costFact(license({ price: tiered, total: usd(100) }), "en-US")).toBe("From $10 per user a month");
   });
 
   test("a per-user price with no total from billing shows the unit price, and adds nothing up", () => {
-    expect(costFact(license({ total: null }), "en-US")).toEqual({ value: "$29 per user a month", foot: "Before tax" });
+    expect(costFact(license({ total: null }), "en-US")).toBe("$29 per user a month");
   });
 });
 
 describe("holderNames and nameList", () => {
   test("lists up to three, then the first two and a count", () => {
-    expect(holderNames([])).toBe("No one has a license yet");
+    expect(holderNames([])).toBe("No one has a subscription yet");
     expect(holderNames(["Dana Reyes"])).toBe("Dana Reyes");
     expect(holderNames(["Dana Reyes", "Priya Natarajan"])).toBe("Dana Reyes and Priya Natarajan");
     expect(holderNames(["A", "B", "C"])).toBe("A, B and C");
@@ -196,8 +189,8 @@ describe("holderNames and nameList", () => {
 
 describe("fitNote", () => {
   test("says how many fit and what to do about the rest", () => {
-    expect(fitNote({ fit: 3, needed: 4, canAddSeats: true })).toBe("3 of 4 fit: remove one or add licenses.");
-    expect(fitNote({ fit: 2, needed: 5, canAddSeats: true })).toBe("2 of 5 fit: remove 3 or add licenses.");
+    expect(fitNote({ fit: 3, needed: 4, canAddSeats: true })).toBe("3 of 4 fit: remove one or buy subscriptions.");
+    expect(fitNote({ fit: 2, needed: 5, canAddSeats: true })).toBe("2 of 5 fit: remove 3 or buy subscriptions.");
   });
 
   test("drops the 'add seats' half where billing lists no add_seats", () => {

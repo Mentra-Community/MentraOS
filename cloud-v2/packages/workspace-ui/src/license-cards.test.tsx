@@ -17,7 +17,7 @@ import { PURCHASE_POLL_MS, PURCHASE_TIMEOUT_MS, PurchaseDialog } from "./compone
 import { PeoplePickerDialog } from "./components/licenses/people-picker";
 import { memberLabel } from "./components/licenses/parts";
 import { SeatRoster, seatHolders, type SeatHolder } from "./components/licenses/seats";
-import { joinLicenses, seatCounts, type JoinedLicense } from "./lib/license-join";
+import { joinLicenses, type JoinedLicense } from "./lib/license-join";
 import { billingKeys, billingStatusQuery, licensesQuery, workspaceKeys } from "./queries";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor, perSeat, usd } from "./test-billing-fixtures";
 import { cleanup, click, find, findAll, isNeutral, press as pressKey, render, setupDom, teardownDom, typeInto } from "./test-dom";
@@ -71,7 +71,7 @@ function coreLicense(quantity: number, holders: readonly MemberView[], extra: Pa
   return licenseFor({ licenseId: "lic_call", quantity, seatsUsed: holders.length, seats: seatsOf(holders), ...extra });
 }
 
-/** Core's license (or none) joined with billing's entry (or none), as the page would have it. */
+/** Core's subscription (or none) joined with billing's entry (or none), as the page would have it. */
 function joined(license: LicenseView | null, billing: Partial<LicenseBilling> | null, entry: CatalogEntry = catalogEntryFor()): JoinedLicense {
   const [card] = joinLicenses({
     licenses: license ? [license] : [],
@@ -199,7 +199,7 @@ describe("an active license", () => {
   test("shows its badge, licenses, renewal and cost", async () => {
     await mountCard(rig(), joined(coreLicense(5, [HANNAH, TOM, NOAH]), {}));
     const card = text(theCard());
-    for (const expected of ["Mentra Call Unlimited", "Active", "3 of 5 assigned", "Renews", "Nov 20, 2026", "$145 a month", "Before tax"]) {
+    for (const expected of ["Mentra Call Unlimited", "Active", "3 of 5 assigned", "Renews", "Nov 20, 2026", "$145 a month"]) {
       expect(card).toContain(expected);
     }
     // A product the workspace holds needs no pitch: the catalog's description is for buying, not on the card.
@@ -208,12 +208,12 @@ describe("an active license", () => {
     // recurrence under the renewal date, and the quantity × unit under the cost.
     for (const gone of ["available", "Every month", "5 ×", "× $29"]) expect(card).not.toContain(gone);
     // The facts are one description list: label, value and foot in groups.
-    expect(findAll("dl > div > dt", theCard()).map((term) => term.textContent)).toEqual(["Licenses", "Renews", "Cost"]);
+    expect(findAll("dl > div > dt", theCard()).map((term) => term.textContent)).toEqual(["Subscriptions", "Renews", "Cost"]);
     const groups = findAll("dl > div", theCard());
-    // Licenses: the value and the meter, no foot. Renews: the date alone. Cost: the amount, and "Before tax" as its one sub-line.
+    // Subscriptions: the value and the meter, no foot. Renews: the date alone. Cost: the amount alone.
     expect([...groups[0]!.querySelectorAll("dd")].map((dd) => dd.textContent)).toEqual(["3 of 5 assigned", ""]);
     expect([...groups[1]!.querySelectorAll("dd")].map((dd) => dd.textContent)).toEqual(["Nov 20, 2026"]);
-    expect([...groups[2]!.querySelectorAll("dd")].map((dd) => dd.textContent)).toEqual(["$145 a month", "Before tax"]);
+    expect([...groups[2]!.querySelectorAll("dd")].map((dd) => dd.textContent)).toEqual(["$145 a month"]);
   });
 
   test("the cost's value carries the recurrence, so no other line has to: a year, and every three months", async () => {
@@ -231,19 +231,19 @@ describe("an active license", () => {
     expect(text(theCard())).not.toContain("Every 3 months");
   });
 
-  test("'Before tax' is the cost's only sub-line, and only where tax is excluded", async () => {
+  test("the cost has no sub-line, whatever the tax", async () => {
     const costGroup = () => [...findAll("dl > div", theCard())[2]!.querySelectorAll("dd")].map((dd) => dd.textContent);
-    for (const [tax, sub] of [["excluded", ["Before tax"]], ["included", []], ["none", []], ["something_new", []]] as const) {
+    for (const tax of ["excluded", "included", "none", "something_new"]) {
       await mountCard(rig(), joined(coreLicense(5, [HANNAH]), { tax }));
-      expect([tax, costGroup()]).toEqual([tax, ["$145 a month", ...sub]]);
+      expect([tax, costGroup()]).toEqual([tax, ["$145 a month"]]);
       await cleanup();
     }
   });
 
-  test("a license billing has no total for shows its unit price, and 'Before tax' under it", async () => {
+  test("a license billing has no total for shows its unit price, and nothing under it", async () => {
     await mountCard(rig(), joined(coreLicense(5, [HANNAH]), { total: null }));
     const group = [...findAll("dl > div", theCard())[2]!.querySelectorAll("dd")].map((dd) => dd.textContent);
-    expect(group).toEqual(["$29 per user a month", "Before tax"]);
+    expect(group).toEqual(["$29 per user a month"]);
   });
 
   test("feature chips show only for a product with more than one feature", async () => {
@@ -300,14 +300,15 @@ describe("an ending license", () => {
       ...extra,
     });
 
-  test("says when it ends and that it doesn't renew, with no more charges", async () => {
+  test("says when it ends and that it doesn't renew, with no line under the cost", async () => {
     await mountCard(rig(), ending());
     const card = text(theCard());
     expect(card).toContain("Ends Nov 20");
     expect(card).toContain("Ends");
     expect(card).toContain("Nov 20, 2026");
     expect(card).toContain("Doesn't renew");
-    expect(card).toContain("No more charges");
+    expect(card).not.toContain("No more charges");
+    expect([...findAll("dl > div", theCard())[2]!.querySelectorAll("dd")].map((dd) => dd.textContent)).toEqual(["$145 a month"]);
     expect(card).not.toContain("Renews");
     // Grey: the customer chose it.
     expect(find("span.bg-surface", theCard()).textContent).toBe("Ends Nov 20");
@@ -318,15 +319,16 @@ describe("an ending license", () => {
     expect(hasButton("Renew")).toBe(false);
     await openMenu();
     expect(menuItems()).toEqual(["RenewOpens a secure billing page"]);
-    expect(text(theCard())).not.toContain("Add licenses");
+    expect(text(theCard())).not.toContain("Buy subscriptions");
   });
 
-  test("a full ending product asks to unassign, and offers no way to add licenses", async () => {
+  test("a full ending product offers no way to add licenses: only Assign subscriptions heads its roster", async () => {
     await mountCard(rig(), joined(coreLicense(3, [HANNAH, TOM, NOAH]), { status: "ending", fallbackStatusLabel: "Ending", endsAt: "2026-11-20T12:00:00.000Z", actions: [{ kind: "renew", fallbackLabel: "Renew" }] }));
     const card = text(theCard());
-    expect(card).toContain("All 3 licenses are assigned.");
-    expect(card).toContain("Unassign someone to free their license.");
-    expect(card).not.toContain("Add licenses");
+    expect(card).not.toContain("Buy subscriptions");
+    expect(hasButton("Assign subscriptions", theCard())).toBe(true);
+    // No row for a full roster: the facts already say it.
+    expect(card).not.toContain("All 3 subscriptions are assigned.");
   });
 });
 
@@ -352,7 +354,7 @@ describe("a payment that failed", () => {
     expect(theCard().className).toContain("ring-error");
     const card = text(theCard());
     expect(card).toContain("Payment failed");
-    expect(card).toContain("Licenses stop working on Nov 23, 2026 unless payment goes through.");
+    expect(card).toContain("Subscriptions stop working on Nov 23, 2026 unless payment goes through.");
     expect(card).toContain("Update the payment method to keep them.");
     expect(card).toContain("Renewal");
     expect(card).toContain("Oct 30, 2026");
@@ -380,7 +382,7 @@ describe("a payment that failed", () => {
     // The failure is still the card's state: the badge, the ring, the notice and its deadline.
     expect(theCard().getAttribute("data-ring")).toBe("warn");
     expect(card).toContain("Payment failed");
-    expect(card).toContain("Licenses stop working on Nov 23, 2026 unless payment goes through.");
+    expect(card).toContain("Subscriptions stop working on Nov 23, 2026 unless payment goes through.");
     expect(buttons(find(".rounded-notice"))).toEqual(["Update payment method", "Complete payment"]);
   });
 
@@ -430,7 +432,7 @@ describe("a payment that failed", () => {
   test("after the date it says the licenses stopped and that they come back", async () => {
     await mountCard(rig(), failed(), { now: Date.parse("2026-12-01T12:00:00.000Z") });
     const card = text(theCard());
-    expect(card).toContain("Licenses stopped working on Nov 23, 2026. They come back once payment goes through.");
+    expect(card).toContain("Subscriptions stopped working on Nov 23, 2026. They come back once payment goes through.");
     expect(card).not.toContain("unless payment goes through");
   });
 
@@ -438,7 +440,7 @@ describe("a payment that failed", () => {
     await mountCard(rig(), failed({ seatsStopAt: undefined }));
     const card = text(theCard());
     expect(card).toContain("The last payment didn't go through.");
-    expect(card).toContain("Update the payment method to keep the licenses.");
+    expect(card).toContain("Update the payment method to keep the subscriptions.");
     expect(card).not.toContain("Nov 23");
   });
 
@@ -735,7 +737,6 @@ describe("the portal's locale", () => {
     // German puts a no-break space before the currency sign; the card's text has plain spaces.
     const euros = (minor: number) => formatMoney(usd(minor), "de-DE").replace(/\s+/g, " ");
     expect(card).toContain(`${euros(14500)} a month`);
-    expect(card).toContain("Before tax");
     expect(card).not.toContain("×");
     expect(card).not.toContain("$145");
   });
@@ -756,23 +757,23 @@ describe("the portal's locale", () => {
 describe("only the actions billing lists", () => {
   test("a license whose billing lists no add_seats has no Add licenses in its strip, roster or over notice, and words its sentences without it", async () => {
     const noAdd = { actions: [{ kind: "cancel", fallbackLabel: "Cancel" }] };
-    // Full, in the roster.
+    // Full, in the roster: Assign subscriptions still heads it, alone.
     await mountCard(rig(), joined(coreLicense(3, [HANNAH, TOM, NOAH]), noAdd));
-    expect(text(theCard())).toContain("Unassign someone to free their license.");
-    expect(text(theCard())).not.toContain("Add licenses");
+    expect(text(theCard())).not.toContain("Buy subscriptions");
+    expect(hasButton("Assign subscriptions", theCard())).toBe(true);
     await cleanup();
     // Full, in the strip.
     await mountCard(rig(), joined(coreLicense(3, [HANNAH, TOM, NOAH]), noAdd), { folded: true });
-    expect(hasButton("Add licenses")).toBe(false);
-    expect(hasButton("Assign licenses")).toBe(false);
+    expect(hasButton("Buy subscriptions")).toBe(false);
+    expect(hasButton("Assign subscriptions")).toBe(true);
     await cleanup();
     // Over.
     await mountCard(rig(), joined(coreLicense(3, [HANNAH, TOM, NOAH, DANA, PRIYA]), noAdd));
     const over = text(find(".rounded-notice"));
-    expect(over).toContain("Unassign 2 of them. No one else can get a license until then.");
-    expect(over).not.toContain("add 2 licenses");
-    expect(text(theCard())).not.toContain("Add 2 licenses");
-    expect(text(theCard())).not.toContain("Add licenses");
+    expect(over).toContain("Unassign 2 of them. No one else can get a subscription until then.");
+    expect(over).not.toContain("add 2 subscriptions");
+    expect(text(theCard())).not.toContain("Buy 2 subscriptions");
+    expect(text(theCard())).not.toContain("Buy subscriptions");
   });
 
   test("the picker says '3 of 4 fit: remove one.' and has no Add licenses", async () => {
@@ -780,13 +781,13 @@ describe("only the actions billing lists", () => {
     await mount(<PeoplePickerDialog open onClose={() => {}} api={r.api} workspaceId={WS} license={coreLicense(5, [DANA, PRIYA])} productName="Mentra Call Unlimited" members={PEOPLE} addSeats={null} />);
     for (const member of [HANNAH, TOM, NOAH, INES]) await click(checkboxFor(member.name!));
     expect(text()).toContain("3 of 4 fit: remove one.");
-    expect(text()).not.toContain("or add licenses");
-    expect(hasButton("Add licenses")).toBe(false);
+    expect(text()).not.toContain("or buy subscriptions");
+    expect(hasButton("Buy subscriptions")).toBe(false);
   });
 
   test("an active license that lists add_seats has it with its seats", async () => {
     await mountCard(rig(), joined(coreLicense(5, [HANNAH, TOM, NOAH]), {}));
-    expect(hasButton("Add licenses", theCard())).toBe(true);
+    expect(hasButton("Buy subscriptions", theCard())).toBe(true);
   });
 });
 
@@ -796,7 +797,7 @@ describe("what a card never shows", () => {
     const card = text(theCard());
     expect(card).toContain("Active");
     expect(card).not.toContain("Nov 23");
-    expect(card).not.toContain("Licenses stop");
+    expect(card).not.toContain("Subscriptions stop");
   });
 
   test("no state says 'Paid through'", async () => {
@@ -820,14 +821,14 @@ describe("what a card never shows", () => {
 });
 
 describe("more licenses assigned than are paid for", () => {
-  const over = () => joined(coreLicense(3, [HANNAH, TOM, NOAH, DANA, PRIYA]), { actions: [{ kind: "add_seats", fallbackLabel: "Add licenses" }, { kind: "cancel", fallbackLabel: "Cancel" }] });
+  const over = () => joined(coreLicense(3, [HANNAH, TOM, NOAH, DANA, PRIYA]), { actions: [{ kind: "add_seats", fallbackLabel: "Buy subscriptions" }, { kind: "cancel", fallbackLabel: "Cancel" }] });
 
   test("is an amber '2 over' with the notice and the licenses' amber foot", async () => {
     await mountCard(rig(), over());
     const card = text(theCard());
     expect(card).toContain("2 over");
-    expect(card).toContain("5 people are assigned but only 3 licenses are paid for.");
-    expect(card).toContain("Unassign 2 of them, or add 2 licenses. No one else can get a license until then.");
+    expect(card).toContain("5 people are assigned but only 3 subscriptions are paid for.");
+    expect(card).toContain("Unassign 2 of them, or buy 2 subscriptions. No one else can get a subscription until then.");
     expect(card).toContain("5 assigned");
     expect(card).toContain("2 more than the 3 covered");
     expect(find("span.bg-error", theCard()).textContent).toBe("2 over");
@@ -835,10 +836,10 @@ describe("more licenses assigned than are paid for", () => {
 
   test("turns assigning off: nobody can be assigned, but a license can still be unassigned", async () => {
     await mountCard(rig(), over());
-    expect(hasButton("Assign licenses")).toBe(false);
+    expect(hasButton("Assign subscriptions")).toBe(false);
     expect(hasButton("Assign")).toBe(false);
-    expect(text(theCard())).not.toContain("Available license");
-    expect(text(theCard())).not.toContain("All 3 licenses are assigned");
+    expect(text(theCard())).not.toContain("Available subscription");
+    expect(text(theCard())).not.toContain("All 3 subscriptions are assigned");
     expect(buttons().filter((name) => name.startsWith("Unassign "))).toHaveLength(5);
     expect(document.querySelector("dialog[open]")).toBeNull();
   });
@@ -846,7 +847,7 @@ describe("more licenses assigned than are paid for", () => {
   test("'Add 2 licenses' asks for the session with that many licenses, and leaves", async () => {
     const r = rig();
     await mountCard(r, over());
-    await press("Add 2 licenses", find(".rounded-notice"));
+    await press("Buy 2 subscriptions", find(".rounded-notice"));
     await flush();
     expect(r.session).toHaveBeenCalledWith(workspaceScope(WS), { action: "add_seats", licenseId: "lic_call", seats: 2 });
     expect(r.leave).toHaveBeenCalledWith(PAGE);
@@ -857,8 +858,8 @@ describe("more licenses assigned than are paid for", () => {
     const card = text(theCard());
     expect(card).toContain("Payment failed");
     expect(card).not.toContain("1 over");
-    expect(card).toContain("Licenses stop working on Nov 23, 2026");
-    expect(card).toContain("4 people are assigned but only 3 licenses are paid for.");
+    expect(card).toContain("Subscriptions stop working on Nov 23, 2026");
+    expect(card).toContain("4 people are assigned but only 3 subscriptions are paid for.");
   });
 });
 
@@ -882,9 +883,9 @@ describe("values the card doesn't know", () => {
   });
 
   test("a known kind with no place on the card (a payment action on an active license) is in the menu, not lost", async () => {
-    await mountCard(rig(), joined(coreLicense(5, [HANNAH]), { actions: [{ kind: "update_payment", fallbackLabel: "Update payment method" }, { kind: "change_seats", fallbackLabel: "Change license count" }] }));
+    await mountCard(rig(), joined(coreLicense(5, [HANNAH]), { actions: [{ kind: "update_payment", fallbackLabel: "Update payment method" }, { kind: "change_seats", fallbackLabel: "Change subscription count" }] }));
     await openMenu();
-    expect(menuItems()).toEqual(["Update payment methodOpens a secure billing page", "Change license countOpens a secure billing page"]);
+    expect(menuItems()).toEqual(["Update payment methodOpens a secure billing page", "Change subscription countOpens a secure billing page"]);
   });
 
   test("an unknown price scheme shows billing's label and adds nothing up", async () => {
@@ -915,7 +916,7 @@ describe("a license being set up, or whose first payment isn't finished", () => 
     await mountCard(rig(), joined(null, { licenseId: "lic_new", status: "processing", fallbackStatusLabel: "Setting up", actions: [] }));
     const card = text(theCard());
     expect(card).toContain("Setting up");
-    expect(findAll("dl > div > dt", theCard()).map((term) => term.textContent)).toEqual(["Licenses", "Renews", "Cost"]);
+    expect(findAll("dl > div > dt", theCard()).map((term) => term.textContent)).toEqual(["Subscriptions", "Renews", "Cost"]);
     expect(findAll("dl span.bg-surface", theCard()).length).toBeGreaterThanOrEqual(6);
     expect(card).not.toContain("$");
     expect(card).not.toContain("assigned");
@@ -951,17 +952,17 @@ describe("a viewer who isn't offered billing", () => {
     expect(card).not.toContain("Renews");
     expect(card).not.toContain("Cost");
     expect(card).not.toContain("Active");
-    expect(findAll("dl > div > dt", theCard()).map((term) => term.textContent)).toEqual(["Licenses"]);
+    expect(findAll("dl > div > dt", theCard()).map((term) => term.textContent)).toEqual(["Subscriptions"]);
     expect(findAll('[aria-haspopup="menu"]')).toHaveLength(0);
-    expect(hasButton("Add licenses")).toBe(false);
+    expect(hasButton("Buy subscriptions")).toBe(false);
     // The seats still work.
-    expect(hasButton("Assign licenses")).toBe(true);
+    expect(hasButton("Assign subscriptions")).toBe(true);
   });
 
   test("still sees that the license is over-assigned", async () => {
     await mountCard(rig(), joined(coreLicense(3, [HANNAH, TOM, NOAH, DANA]), null));
     expect(text(theCard())).toContain("1 over");
-    expect(text(theCard())).toContain("Unassign 1 of them. No one else can get a license until then.");
+    expect(text(theCard())).toContain("Unassign 1 of them. No one else can get a subscription until then.");
   });
 });
 
@@ -971,7 +972,7 @@ describe("a member's own view", () => {
     await mountCard(rig(), joined(own, null), { view: "member", api: undefined, members: [] });
     const card = text(theCard());
     expect(card).toContain("Assigned to you");
-    expect(card).toContain("Your license");
+    expect(card).toContain("Your subscription");
     expect(card).toContain("Since Oct 20, 2026");
     expect(card).toContain("Given by Acme Field Services");
     expect(card).toContain("Works in");
@@ -996,7 +997,7 @@ describe("a member's own view", () => {
     const own = coreLicense(5, [], { product: FLEET, seats: [{ membershipId: "wm_me", mentraUserId: "u_me", assignedAt: START }], seatsUsed: 1 });
     const [card] = joinLicenses({ licenses: [own], catalog: [fleetEntryFor()] });
     await mountCard(rig(), card!, { view: "member", api: undefined });
-    expect(text(theCard())).toContain("Your license");
+    expect(text(theCard())).toContain("Your subscription");
     expect(text(theCard())).not.toContain("Works in");
   });
 });
@@ -1061,15 +1062,15 @@ describe("who holds the licenses", () => {
     const stack = find("[data-slot='avatar-stack']", theCard());
     expect(stack.getAttribute("aria-hidden")).toBe("true");
     expect(findAll("span", stack).map((span) => span.textContent).filter(Boolean)).toEqual(["DR", "PN", "MC", "SA", "+6"]);
-    // All ten are taken: the next action is Add seats.
-    expect(hasButton("Add licenses")).toBe(true);
-    expect(hasButton("Assign licenses")).toBe(false);
+    // All ten are taken: both actions are still there, whatever is assigned.
+    expect(hasButton("Buy subscriptions")).toBe(true);
+    expect(hasButton("Assign subscriptions")).toBe(true);
   });
 
   test("an empty strip says no one has a license yet, and offers Assign licenses", async () => {
     await mountCard(rig(), fleet([]), { folded: true });
-    expect(text(theCard())).toContain("No one has a license yet");
-    expect(hasButton("Assign licenses")).toBe(true);
+    expect(text(theCard())).toContain("No one has a subscription yet");
+    expect(hasButton("Assign subscriptions")).toBe(true);
     expect(findAll("[data-slot='avatar-stack']", theCard())).toHaveLength(0);
   });
 
@@ -1079,9 +1080,9 @@ describe("who holds the licenses", () => {
     const toggle = buttonNamed("Assigned to");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     await click(toggle);
-    expect(rosterRows()).toHaveLength(11);
-    expect(text(theCard())).toContain("All 10 licenses are assigned.");
-    expect(text(theCard())).toContain("Add licenses to give one to someone else, or unassign someone to free theirs.");
+    // A row per holder and nothing else: no "all assigned" row.
+    expect(rosterRows()).toHaveLength(10);
+    expect(text(theCard())).not.toContain("All 10 subscriptions are assigned.");
     const close = find("h3 button", theCard());
     expect(close.getAttribute("aria-expanded")).toBe("true");
     await click(close);
@@ -1113,25 +1114,28 @@ describe("who holds the licenses", () => {
     expect(text(rosterRows()[0]!)).toContain("u_hannah");
   });
 
-  test("available licenses: up to three are a row each with Assign; Add licenses and Assign licenses head the roster", async () => {
+  test("available licenses have no rows: Buy subscriptions and Assign subscriptions head the roster", async () => {
     await mountCard(rig(), joined(coreLicense(5, [HANNAH, TOM, NOAH]), {}));
-    expect(rosterRows().filter((row) => text(row).startsWith("Available license"))).toHaveLength(2);
-    expect(buttons(theCard()).filter((name) => name === "Assign")).toHaveLength(2);
-    expect(hasButton("Add licenses", theCard())).toBe(true);
-    expect(hasButton("Assign licenses", theCard())).toBe(true);
+    expect(rosterRows()).toHaveLength(3);
+    expect(text(theCard())).not.toContain("Available subscription");
+    expect(buttons(theCard()).filter((name) => name === "Assign")).toHaveLength(0);
+    expect(hasButton("Buy subscriptions", theCard())).toBe(true);
+    expect(hasButton("Assign subscriptions", theCard())).toBe(true);
   });
 
-  test("more than three available licenses fold into one row", async () => {
+  test("with nobody assigned there is no list at all, only the actions", async () => {
     await mountCard(rig(), joined(coreLicense(5, []), {}));
-    expect(text(theCard())).toContain("5 available licenses");
-    expect(text(theCard())).toContain("No one has a license yet.");
-    expect(rosterRows().filter((row) => text(row).startsWith("Available license"))).toHaveLength(0);
+    expect(find("h3", theCard()).textContent).toBe("Assigned to0");
+    expect(findAll("ul.divide-y", theCard())).toHaveLength(0);
+    expect(text(theCard())).not.toContain("available subscriptions");
+    expect(hasButton("Buy subscriptions", theCard())).toBe(true);
+    expect(hasButton("Assign subscriptions", theCard())).toBe(true);
   });
 
   test("the roster searches by name or email once there are more than eight holders", async () => {
     await mountCard(rig(), fleet(TEN));
     const search = find<HTMLInputElement>("input[type=search]", theCard());
-    expect(search.getAttribute("aria-label")).toBe("Search people with a license");
+    expect(search.getAttribute("aria-label")).toBe("Search people with a subscription");
     expect(rosterRows().filter((row) => text(row).includes("@acme.test"))).toHaveLength(10);
     await typeInto(search, "omar");
     expect(rosterRows().map((row) => text(row))).toEqual([expect.stringContaining("Omar Haddad")]);
@@ -1146,12 +1150,13 @@ describe("who holds the licenses", () => {
     expect(findAll("input[type=search]", theCard())).toHaveLength(0);
   });
 
-  test("the full roster has Add licenses ↗ in its last row", async () => {
+  test("the full roster still has Buy subscriptions ↗ and Assign subscriptions at its head", async () => {
     const r = rig();
     await mountCard(r, joined(coreLicense(3, [HANNAH, TOM, NOAH]), {}));
-    const last = rosterRows().at(-1)!;
-    expect(text(last)).toContain("All 3 licenses are assigned.");
-    await press("Add licenses", last);
+    expect(rosterRows()).toHaveLength(3);
+    expect(text(theCard())).not.toContain("All 3 subscriptions are assigned.");
+    expect(hasButton("Assign subscriptions", theCard())).toBe(true);
+    await press("Buy subscriptions", theCard());
     await flush();
     expect(r.session).toHaveBeenCalledWith(workspaceScope(WS), { action: "add_seats", licenseId: "lic_call" });
     expect(r.leave).toHaveBeenCalledWith(PAGE);
@@ -1282,14 +1287,10 @@ describe("who holds the licenses", () => {
   test("Assign licenses opens the picker for that license", async () => {
     await mountCard(rig(), joined(coreLicense(5, [HANNAH, TOM, NOAH]), {}));
     expect(find("dialog").hasAttribute("open")).toBe(false);
-    await press("Assign licenses", theCard());
+    await press("Assign subscriptions", theCard());
     expect(find("dialog").hasAttribute("open")).toBe(true);
-    expect(text(find("dialog"))).toContain("Assign licenses");
-    expect(text(find("dialog"))).toContain("Mentra Call Unlimited · 2 available licenses");
-    // A free seat's own Assign opens it too.
-    await click(find('dialog button[aria-label="Close"]'));
-    await press("Assign", rosterRows().find((row) => text(row).startsWith("Available license"))!);
-    expect(find("dialog").hasAttribute("open")).toBe(true);
+    expect(text(find("dialog"))).toContain("Assign subscriptions");
+    expect(text(find("dialog"))).toContain("Mentra Call Unlimited · 2 available subscriptions");
   });
 });
 
@@ -1300,14 +1301,12 @@ describe("who holds the licenses", () => {
  */
 let applyLater: (() => void) | null = null;
 function Roster({ initial, when }: { initial: readonly MemberView[]; when: "before" | "after" }) {
-  const license = coreLicense(5, initial);
   const [people, setPeople] = useState(initial);
   const holders: SeatHolder[] = seatHolders({ seats: seatsOf(people) }, PEOPLE);
   const without = (holder: SeatHolder) => setPeople((current) => current.filter((member) => member.membershipId !== holder.membershipId));
   return (
     <SeatRoster
       holders={holders}
-      counts={seatCounts({ quantity: license.quantity, seatsUsed: people.length })}
       locale="en-US"
       productName="Mentra Call Unlimited"
       canAssign
@@ -1385,7 +1384,7 @@ function checkboxFor(name: string): HTMLInputElement {
   if (!row) throw new Error(`no picker row for ${name}`);
   return find<HTMLInputElement>("input[type=checkbox]", row);
 }
-const assignButton = () => findAll<HTMLButtonElement>("dialog button").find((button) => /^Assign( \d+ licenses?)?$/.test(nameOf(button)))!;
+const assignButton = () => findAll<HTMLButtonElement>("dialog button").find((button) => /^Assign( \d+ subscriptions?)?$/.test(nameOf(button)))!;
 
 describe("the people picker", () => {
   const picker = (r: Rig, license: LicenseView, over: { onClose?: () => void; addSeats?: Parameters<typeof PeoplePickerDialog>[0]["addSeats"] } = {}) => (
@@ -1405,9 +1404,9 @@ describe("the people picker", () => {
     const r = rig();
     await mount(picker(r, coreLicense(5, [DANA, PRIYA])));
     const dialog = text(find("dialog"));
-    expect(dialog).toContain("Assign licenses");
-    expect(dialog).toContain("Mentra Call Unlimited · 3 available licenses");
-    expect(dialog).toContain("0 of 3 available licenses chosen");
+    expect(dialog).toContain("Assign subscriptions");
+    expect(dialog).toContain("Mentra Call Unlimited · 3 available subscriptions");
+    expect(dialog).toContain("0 of 3 available subscriptions chosen");
     expect(assignButton().hasAttribute("disabled")).toBe(true);
     expect(nameOf(assignButton())).toBe("Assign");
   });
@@ -1431,13 +1430,13 @@ describe("the people picker", () => {
     await mount(picker(rig(), coreLicense(5, [DANA, PRIYA])));
     const rows = findAll("dialog li");
     const row = (name: string) => rows.find((item) => text(item).includes(name))!;
-    expect(text(row("Dana Reyes"))).toContain("Has a license");
+    expect(text(row("Dana Reyes"))).toContain("Has a subscription");
     expect(text(row("Grace Oduya"))).toContain("After first sign-in");
     expect(checkboxFor("Dana Reyes").disabled).toBe(true);
     expect(checkboxFor("Grace Oduya").disabled).toBe(true);
     expect(checkboxFor("Luis Ortega").disabled).toBe(false);
     // People who can be chosen come first, then those who haven't signed in, then holders.
-    const order = rows.map((item) => (text(item).includes("Has a license") ? "holds" : text(item).includes("After first sign-in") ? "pending" : "open"));
+    const order = rows.map((item) => (text(item).includes("Has a subscription") ? "holds" : text(item).includes("After first sign-in") ? "pending" : "open"));
     expect(order).toEqual([...Array(11).fill("open"), "pending", "holds", "holds"]);
   });
 
@@ -1447,19 +1446,19 @@ describe("the people picker", () => {
     expect(label.textContent).toContain("Luis Ortega");
     await click(label);
     expect(checkboxFor("Luis Ortega").checked).toBe(true);
-    expect(text(find("dialog"))).toContain("1 of 4 available licenses chosen");
-    expect(nameOf(assignButton())).toBe("Assign 1 license");
+    expect(text(find("dialog"))).toContain("1 of 4 available subscriptions chosen");
+    expect(nameOf(assignButton())).toBe("Assign 1 subscription");
   });
 
   test("four chosen with three free says '3 of 4 fit: remove one or add licenses.', with Assign off", async () => {
     const add = mock(() => {});
     await mount(picker(rig(), coreLicense(5, [DANA, PRIYA]), { addSeats: { onClick: add } }));
     for (const member of [HANNAH, TOM, NOAH, INES]) await click(checkboxFor(member.name!));
-    expect(text(find("dialog"))).toContain("3 of 4 fit: remove one or add licenses.");
-    expect(text(find("dialog"))).toContain("4 of 3 available licenses chosen");
+    expect(text(find("dialog"))).toContain("3 of 4 fit: remove one or buy subscriptions.");
+    expect(text(find("dialog"))).toContain("4 of 3 available subscriptions chosen");
     expect(assignButton().hasAttribute("disabled")).toBe(true);
     // Adding seats is how to fit them, and it leaves for billing.
-    await click(buttonNamed("Add licenses", find("dialog")));
+    await click(buttonNamed("Buy subscriptions", find("dialog")));
     expect(add).toHaveBeenCalledTimes(1);
     // Removing one makes it fit.
     await click(checkboxFor("Ines Moreau"));
@@ -1473,19 +1472,19 @@ describe("the people picker", () => {
     const notice = find("dialog .rounded-notice");
     expect(notice.className).toContain("bg-surface");
     expect(notice.className).not.toContain("bg-error");
-    expect(text(notice)).toContain("1 of 2 fit: remove one or add licenses.");
+    expect(text(notice)).toContain("1 of 2 fit: remove one or buy subscriptions.");
   });
 
   test("its failures are neutral too: the conflict, and anything else", async () => {
     const r = rig();
     r.assignSeats.mockImplementation(async () => {
-      throw new WorkspaceApiError(409, "no_seats_available", "every license is assigned");
+      throw new WorkspaceApiError(409, "no_seats_available", "every subscription is assigned");
     });
     await mount(picker(r, coreLicense(5, [DANA])));
     await click(checkboxFor("Luis Ortega"));
     await click(assignButton());
     await flush();
-    expect(findAll('dialog [role="alert"]').map((alert) => [alert.textContent?.startsWith("Licenses changed"), isNeutral(alert)])).toEqual([[true, true]]);
+    expect(findAll('dialog [role="alert"]').map((alert) => [alert.textContent?.startsWith("Subscriptions changed"), isNeutral(alert)])).toEqual([[true, true]]);
     r.assignSeats.mockImplementation(async () => {
       throw new WorkspaceApiError(403, "forbidden", "forbidden");
     });
@@ -1499,7 +1498,7 @@ describe("the people picker", () => {
     const onClose = mock(() => {});
     await mount(picker(r, coreLicense(5, [DANA, PRIYA]), { onClose }));
     for (const member of [HANNAH, TOM, NOAH]) await click(checkboxFor(member.name!));
-    expect(nameOf(assignButton())).toBe("Assign 3 licenses");
+    expect(nameOf(assignButton())).toBe("Assign 3 subscriptions");
     await click(assignButton());
     await flush();
     expect(r.assignSeats).toHaveBeenCalledTimes(1);
@@ -1529,16 +1528,16 @@ describe("the people picker", () => {
     await act(async () => {
       for (const box of boxes.slice(0, MAX_SEAT_ASSIGNMENTS)) box.click();
     });
-    expect(nameOf(assignButton())).toBe("Assign 500 licenses");
+    expect(nameOf(assignButton())).toBe("Assign 500 subscriptions");
     expect(assignButton().hasAttribute("disabled")).toBe(false);
     expect(assignButton().hasAttribute("aria-describedby")).toBe(false);
     expect(reason()).toBeUndefined();
 
     // The 501st is not stopped from being chosen, but Assign goes off, and the reason sits under it, named by it.
     await click(boxes[MAX_SEAT_ASSIGNMENTS]!);
-    expect(nameOf(assignButton())).toBe("Assign 501 licenses");
+    expect(nameOf(assignButton())).toBe("Assign 501 subscriptions");
     expect(assignButton().hasAttribute("disabled")).toBe(true);
-    expect(reason()!.textContent).toBe("You can assign up to 500 licenses at a time.");
+    expect(reason()!.textContent).toBe("You can assign up to 500 subscriptions at a time.");
     expect(assignButton().getAttribute("aria-describedby")).toBe(reason()!.id);
     // The seats were enough, so this is no "fit" notice, and no request goes out from a disabled button.
     expect(text(find("dialog"))).not.toContain("fit:");
@@ -1585,7 +1584,7 @@ describe("the people picker", () => {
     for (const member of [HANNAH, TOM]) await click(checkboxFor(member.name!));
     await click(assignButton());
     await flush();
-    expect(find('dialog [role="alert"]').textContent).toBe("Licenses changed while you were choosing. Nothing was assigned. Check the counts and try again.");
+    expect(find('dialog [role="alert"]').textContent).toBe("Subscriptions changed while you were choosing. Nothing was assigned. Check the counts and try again.");
     expect(r.listLicenses).toHaveBeenCalledTimes(2);
     expect(client.getQueryState(billingKeys.status(r.billing, scope))?.isInvalidated).toBe(true);
     expect(onClose).not.toHaveBeenCalled();
@@ -1628,10 +1627,10 @@ describe("the people picker", () => {
       },
     });
     await mountCard(r, joined(coreLicense(5, [HANNAH, TOM, NOAH]), {}));
-    await press("Assign licenses", theCard());
+    await press("Assign subscriptions", theCard());
     for (const member of [LUIS, AMARA, INES]) await click(checkboxFor(member.name!));
-    expect(text(find("dialog"))).toContain("2 of 3 fit: remove one or add licenses.");
-    await press("Add licenses", find("dialog"));
+    expect(text(find("dialog"))).toContain("2 of 3 fit: remove one or buy subscriptions.");
+    await press("Buy subscriptions", find("dialog"));
     await flush();
     expect(r.session).toHaveBeenCalledTimes(1);
     expect(r.session).toHaveBeenCalledWith(workspaceScope(WS), { action: "add_seats", licenseId: "lic_call" });
@@ -1641,7 +1640,7 @@ describe("the people picker", () => {
     expect(alerts[0]!.closest("dialog")).not.toBeNull();
     // The choice is still there to act on, and the button can be pressed again.
     expect(checkboxFor("Luis Ortega").checked).toBe(true);
-    expect(buttonNamed("Add licenses", find("dialog")).hasAttribute("disabled")).toBe(false);
+    expect(buttonNamed("Buy subscriptions", find("dialog")).hasAttribute("disabled")).toBe(false);
     // Closing the dialog doesn't lose it: the card shows it.
     await click(find('dialog button[aria-label="Close"]'));
     const after = findAll('[role="alert"]');
@@ -1657,16 +1656,16 @@ describe("the people picker", () => {
       },
     });
     await mountCard(r, joined(coreLicense(5, [HANNAH, TOM, NOAH]), {}));
-    await press("Assign licenses", theCard());
+    await press("Assign subscriptions", theCard());
     for (const member of [LUIS, AMARA, INES]) await click(checkboxFor(member.name!));
-    await press("Add licenses", find("dialog"));
+    await press("Buy subscriptions", find("dialog"));
     await flush();
     expect(findAll('dialog [role="alert"]')).toHaveLength(1);
     await click(find('dialog button[aria-label="Close"]'));
     // Closed, the card shows it (nothing is lost) ...
     expect(findAll('[role="alert"]', theCard())).toHaveLength(1);
     // ... and a new opening starts clean: not in the dialog, and not behind it either.
-    await press("Assign licenses", theCard());
+    await press("Assign subscriptions", theCard());
     expect(findAll('[role="alert"]')).toHaveLength(0);
     await click(find('dialog button[aria-label="Close"]'));
     expect(findAll('[role="alert"]')).toHaveLength(0);
@@ -1674,14 +1673,14 @@ describe("the people picker", () => {
 
   test("and so is the link of a blocked tab the picker showed", async () => {
     const r = rig({ blocked: true });
-    await mountCard(r, joined(coreLicense(5, [HANNAH, TOM, NOAH]), { actions: [{ kind: "add_seats", fallbackLabel: "Add licenses", returns: false }] }));
-    await press("Assign licenses", theCard());
+    await mountCard(r, joined(coreLicense(5, [HANNAH, TOM, NOAH]), { actions: [{ kind: "add_seats", fallbackLabel: "Buy subscriptions", returns: false }] }));
+    await press("Assign subscriptions", theCard());
     for (const member of [LUIS, AMARA, INES]) await click(checkboxFor(member.name!));
-    await press("Add licenses", find("dialog"));
+    await press("Buy subscriptions", find("dialog"));
     await flush();
     expect(findAll("dialog a[data-hosted-page]")).toHaveLength(1);
     await click(find('dialog button[aria-label="Close"]'));
-    await press("Assign licenses", theCard());
+    await press("Assign subscriptions", theCard());
     expect(findAll("a[data-hosted-page]")).toHaveLength(0);
   });
 
@@ -1692,10 +1691,10 @@ describe("the people picker", () => {
       },
     });
     await mountCard(r, joined(coreLicense(3, [HANNAH, TOM]), {}));
-    await press("Add licenses", theCard());
+    await press("Buy subscriptions", theCard());
     await flush();
     expect(findAll('[role="alert"]', theCard())).toHaveLength(1);
-    await press("Assign licenses", theCard());
+    await press("Assign subscriptions", theCard());
     expect(findAll('[role="alert"]', theCard())).toHaveLength(1);
     expect(findAll('dialog [role="alert"]')).toHaveLength(0);
   });
@@ -1707,7 +1706,7 @@ describe("the people picker", () => {
       },
     });
     await mountCard(r, joined(coreLicense(3, [HANNAH, TOM, NOAH]), {}));
-    await press("Add licenses", theCard());
+    await press("Buy subscriptions", theCard());
     await flush();
     expect(findAll("dialog [role='alert']")).toHaveLength(0);
     expect(find('[role="alert"]', theCard()).textContent).toBe("That subscription no longer exists. Reload the page.");
@@ -1715,10 +1714,10 @@ describe("the people picker", () => {
 
   test("a blocked tab for Add licenses pressed in the picker gives its link inside the picker", async () => {
     const r = rig({ blocked: true });
-    await mountCard(r, joined(coreLicense(5, [HANNAH, TOM, NOAH]), { actions: [{ kind: "add_seats", fallbackLabel: "Add licenses", returns: false }] }));
-    await press("Assign licenses", theCard());
+    await mountCard(r, joined(coreLicense(5, [HANNAH, TOM, NOAH]), { actions: [{ kind: "add_seats", fallbackLabel: "Buy subscriptions", returns: false }] }));
+    await press("Assign subscriptions", theCard());
     for (const member of [LUIS, AMARA, INES]) await click(checkboxFor(member.name!));
-    await press("Add licenses", find("dialog"));
+    await press("Buy subscriptions", find("dialog"));
     await flush();
     const links = findAll<HTMLAnchorElement>("a[data-hosted-page]");
     expect(links).toHaveLength(1);
@@ -1729,7 +1728,7 @@ describe("the people picker", () => {
   test("a full license says so, and offers nothing to assign", async () => {
     await mount(picker(rig(), coreLicense(2, [DANA, PRIYA]), { addSeats: null }));
     await click(checkboxFor("Luis Ortega"));
-    expect(text(find("dialog"))).toContain("All 2 licenses are assigned.");
+    expect(text(find("dialog"))).toContain("All 2 subscriptions are assigned.");
     expect(assignButton().hasAttribute("disabled")).toBe(true);
   });
 });
@@ -1763,16 +1762,16 @@ describe("the purchase dialog", () => {
 
   test("without the catalog's entry it is titled 'Licenses', with no icon, and names the product by what it was given", async () => {
     await mount(dialog({ entry: null, productName: "mentra.gone", purchase: { ...ready, quantity: 2 } }));
-    expect(find("h2", theDialog()).textContent).toBe("Licenses");
+    expect(find("h2", theDialog()).textContent).toBe("Subscriptions");
     expect(findAll("img", theDialog())).toHaveLength(0);
-    expect(words()).toContain("Your 2 mentra.gone licenses are ready");
+    expect(words()).toContain("Your 2 mentra.gone subscriptions are ready");
   });
 
   test("is 'Payment received' and 'Setting up…' while billing is still working, and OK is already there", async () => {
     const closed = mock(() => {});
     await mount(dialog({ purchase: processing, listed: false, onClose: closed }));
     expect(words()).toContain("Payment received");
-    expect(words()).toContain("Setting up 5 Mentra Call Unlimited licenses. This takes a few seconds; you can stay on this page.");
+    expect(words()).toContain("Setting up 5 Mentra Call Unlimited subscriptions. This takes a few seconds; you can stay on this page.");
     expect(words()).toContain("Setting up…");
     expect(findAll(".animate-spin", theDialog())).toHaveLength(1);
     expect(buttons(theDialog())).toEqual(["Close", "OK"]);
@@ -1792,8 +1791,8 @@ describe("the purchase dialog", () => {
     expect(phase()).toBe("processing");
     await again(view, { purchase: ready, listed: true, onClose: closed });
     expect(phase()).toBe("ready");
-    expect(words()).toContain("Your 5 Mentra Call Unlimited licenses are ready");
-    expect(words()).toContain("Payment received, and Mentra Call Unlimited is active. Assign the licenses to members below.");
+    expect(words()).toContain("Your 5 Mentra Call Unlimited subscriptions are ready");
+    expect(words()).toContain("Payment received, and Mentra Call Unlimited is active. Assign the subscriptions to members below.");
     expect(findAll(".animate-spin")).toHaveLength(0);
     // The same dialog all along: it changed its words, it didn't close and open again.
     expect(findAll("dialog")).toHaveLength(1);
@@ -1819,7 +1818,7 @@ describe("the purchase dialog", () => {
 
   test("one license says 'is ready'", async () => {
     await mount(dialog({ purchase: { ...ready, quantity: 1 } }));
-    expect(words()).toContain("Your 1 Mentra Call Unlimited license is ready");
+    expect(words()).toContain("Your 1 Mentra Call Unlimited subscription is ready");
   });
 
   test("told it has timed out it says the payment went through, with Reload and OK; until then it is still setting up", async () => {
@@ -1832,7 +1831,7 @@ describe("the purchase dialog", () => {
     await again(view, { purchase: processing, listed: false, onReload, onClose: closed, timedOut: true });
     expect(phase()).toBe("timeout");
     expect(words()).toContain("Your payment went through");
-    expect(words()).toContain("The licenses can take a few minutes to appear.");
+    expect(words()).toContain("The subscriptions can take a few minutes to appear.");
     expect(buttons(theDialog())).toEqual(["Close", "Reload", "OK"]);
     await press("Reload");
     expect(onReload).toHaveBeenCalledTimes(1);
@@ -1882,24 +1881,25 @@ describe("the purchase dialog", () => {
     expect(seen[1]).toContain("Your purchase went through");
     await again(view, { purchase: { ...ready, paid: false }, listed: true });
     seen.push(words());
-    expect(seen[2]).toContain("Mentra Call Unlimited is active. Assign the licenses");
+    expect(seen[2]).toContain("Mentra Call Unlimited is active. Assign the subscriptions");
     for (const said of seen) {
       expect(said).not.toContain("Payment received");
       expect(said).not.toContain("payment went through");
     }
   });
 
-  test("given the viewer's own license it says so; that is only in the ready state", async () => {
+  test("given the viewer's own license it says they have it and to open the Mentra App; that is only in the ready state", async () => {
     await mount(dialog({ purchase: { ...ready, quantity: 1 }, assigned: true }));
-    expect(words()).toContain("Your Mentra Call Unlimited license is ready");
-    expect(words()).toContain("Payment received, and it's assigned to you.");
+    expect(words()).toContain("You now have Mentra Call Unlimited!");
+    expect(words()).toContain("Open the Mentra App now to use it on your smart glasses.");
+    expect(words()).not.toContain("Assign the rest");
     await cleanup();
     await mount(dialog({ purchase: { ...ready, quantity: 5, paid: false }, assigned: true }));
-    expect(words()).toContain("Your 5 Mentra Call Unlimited licenses are ready");
-    expect(words()).toContain("Mentra Call Unlimited is active, and one is assigned to you. Assign the rest to members below.");
+    expect(words()).toContain("You now have Mentra Call Unlimited!");
+    expect(words()).toContain("Open the Mentra App now to use it on your smart glasses. Assign the rest to members below.");
     await cleanup();
     await mount(dialog({ purchase: processing, listed: false, assigned: true }));
-    expect(words()).not.toContain("assigned to you");
+    expect(words()).not.toContain("You now have");
   });
 });
 
@@ -2062,7 +2062,7 @@ describe("the unavailable state", () => {
   test("unavailable says so and offers Retry", async () => {
     const retry = mock(() => {});
     await mount(<LicensesUnavailable onRetry={retry} />);
-    expect(text()).toContain("Licenses are unavailable");
+    expect(text()).toContain("Subscriptions are unavailable");
     expect(text()).toContain("They can't be shown right now. Try again in a moment.");
     await press("Retry");
     expect(retry).toHaveBeenCalledTimes(1);
@@ -2070,7 +2070,7 @@ describe("the unavailable state", () => {
 
   test("Retry is off while it retries", async () => {
     await mount(<LicensesUnavailable retrying onRetry={() => {}} />);
-    expect(text()).toContain("Licenses are unavailable");
+    expect(text()).toContain("Subscriptions are unavailable");
     expect(buttonNamed("Retry").hasAttribute("disabled")).toBe(true);
   });
 });

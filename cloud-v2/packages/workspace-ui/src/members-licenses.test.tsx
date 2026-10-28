@@ -202,7 +202,7 @@ describe("the Licenses column", () => {
     // Someone who hasn't signed in can hold no license, and says when they can.
     expect(rowOf("grace@acme.test").textContent).toContain("After first sign-in");
     expect(rowOf("grace@acme.test").textContent).not.toContain("None");
-    expect(columns()).toContain("Licenses");
+    expect(columns()).toContain("Subscriptions");
   });
 
   test("draws the chip from billing's catalog: the short name, else the name", async () => {
@@ -228,28 +228,28 @@ describe("the Licenses column", () => {
   test("is absent without workspace.licenses.read, without licenses, or without a licenses source", async () => {
     const noRead = { ...detailFor("admin"), capabilities: detailFor("admin").capabilities.filter((capability) => !capability.startsWith("workspace.licenses.")) };
     await mount({ viewer: noRead });
-    expect(columns()).not.toContain("Licenses");
+    expect(columns()).not.toContain("Subscriptions");
     expect(rowOf("Dana Reyes").textContent).not.toContain("None");
     await cleanup();
 
     await mount({ licenses: [] });
-    expect(columns()).not.toContain("Licenses");
+    expect(columns()).not.toContain("Subscriptions");
     await cleanup();
 
     await mount({ source: false });
-    expect(columns()).not.toContain("Licenses");
+    expect(columns()).not.toContain("Subscriptions");
   });
 
   test("a license that has ended is not a chip, and a workspace with only ended licenses has no column", async () => {
     const ended = { ...BOTH(), endedAt: "2026-10-01T00:00:00.000Z" };
     await mount({ licenses: [ended] });
-    expect(columns()).not.toContain("Licenses");
+    expect(columns()).not.toContain("Subscriptions");
   });
 
   test("when the catalog can't be read, the column is gone and the rest of the list works", async () => {
     await mount({ catalog: undefined });
-    expect(columns()).not.toContain("Licenses");
-    expect(document.body.textContent).not.toContain("Assign licenses");
+    expect(columns()).not.toContain("Subscriptions");
+    expect(document.body.textContent).not.toContain("Assign subscriptions");
     // The list, its roles and the row's menu are all still there.
     expect(rowOf("Dana Reyes").textContent).toContain("Developer");
     expect(await offered("Dana Reyes")).toContain("Remove from workspace");
@@ -258,7 +258,7 @@ describe("the Licenses column", () => {
   test("the chips only show: nothing in them is a button, a link or a field, and no row opens anything", async () => {
     await mount();
     for (const label of ["Dana Reyes", "Amara Okafor", "Luis Ortega"]) {
-      expect(findAll("button, a, input, [role=button]", find("ul[aria-label='Licenses']", rowOf(label)))).toHaveLength(0);
+      expect(findAll("button, a, input, [role=button]", find("ul[aria-label='Subscriptions']", rowOf(label)))).toHaveLength(0);
     }
   });
 });
@@ -471,7 +471,7 @@ describe("the row's menu: Change role and Remove from workspace", () => {
       await click(item("Remove from workspace"));
       const dialog = removeDialog();
       expect(find("h2", dialog).textContent).toBe("Remove max@acme.test from this workspace?");
-      expect(dialog.textContent).toContain("They lose access to this workspace, and any licenses assigned to them are freed.");
+      expect(dialog.textContent).toContain("They lose access to this workspace, and any subscriptions assigned to them are freed.");
       expect(findAll("button", dialog).map((button) => button.getAttribute("aria-label") ?? button.textContent!.trim())).toEqual(["Close", "Cancel", "Remove"]);
       expect(byText("Remove", "button", dialog).className).toContain("bg-destructive");
       // Nothing is sent until the second step, and the row is still there.
@@ -721,7 +721,7 @@ describe("the admin portal's Members list", () => {
     // A member who hasn't signed in has no ID to copy.
     expect(rowOf("grace@acme.test").textContent).not.toContain("u_");
     // No licenses column, no checkboxes.
-    expect(columns()).not.toContain("Licenses");
+    expect(columns()).not.toContain("Subscriptions");
     expect(findAll("input[type=checkbox]")).toHaveLength(0);
   });
 

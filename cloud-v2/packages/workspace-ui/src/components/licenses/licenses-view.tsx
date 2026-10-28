@@ -6,13 +6,13 @@
  * It needs a `QueryClientProvider` above it, like every screen of this package: it reads through TanStack Query
  * (the workspace and its licenses and members through `api`, billing through `billing`), and what it refreshes
  * after a purchase or a seat change it refreshes in that cache. It draws the page's content only. The title and the
- * description (`licenseStrings.page`) belong to the portal's frame, and so do the header buttons ("Billing &
- * invoices ↗", "Buy licenses"): `WorkspaceLicensesHeaderActions` is the component for the frame's title bar. It
- * reads under the same keys as the view, owns the catalog dialog, and draws nothing where there is nothing to act on.
+ * description (`licenseStrings.page`) belong to the portal's frame, and so does the header button ("Billing ↗"):
+ * `WorkspaceLicensesHeaderActions` is the component for the frame's title bar. It reads under the same keys as the
+ * view, and draws nothing where there is nothing to act on.
  *
  * What it shows follows the viewer, as the spec's table has it:
  * - an Admin or Owner who is offered billing (`offer.manage`): every license with its seats, dates, cost and
- *   billing actions; buying ("Buy licenses", or the catalog itself while there are no licenses); the test-mode
+ *   billing actions; buying ("Buy subscriptions" on each card, or the catalog itself while there are none); the test-mode
  *   banner; and, back from checkout, the purchase dialog;
  * - an Admin or Owner who isn't offered it: every license with its seats and seat holders, and assigning and
  *   unassigning, and nothing from billing but the names: no money, no dates, no actions, no buying, no status request;
@@ -68,7 +68,7 @@ import { licenseStrings as t } from "../../strings/licenses";
 import { Loading, Restricted } from "../common";
 import { LicensesUnavailable, TestModeBanner } from "./banners";
 import { decideLink, LinkDialog, type LinkOutcome } from "./buy-link";
-import { BuyDialog, CatalogDialog, CatalogGrid, termsNow } from "./catalog";
+import { BuyDialog, CatalogGrid, termsNow } from "./catalog";
 import { useHostedAction, type NavigateOut } from "./hosted-action";
 import { LicenseCard } from "./license-card";
 import { HeaderButtons, hasOffer, NoSeat, PageNote, readFailed, readRetrying, readWaiting, useFollowed, usePurchaseFlow, type PurchaseFlow } from "./page-parts";
@@ -568,42 +568,21 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, ad
 export type WorkspaceLicensesHeaderActionsProps = Pick<WorkspaceLicensesViewProps, "api" | "billing" | "workspaceId" | "offer" | "purchaseId" | "navigateOut">;
 
 /**
- * The Licenses page's header actions, for the host to put in its title bar beside the page's title, as the design
- * draws them: "Billing & invoices ↗" and "Buy licenses" (which opens the catalog as a dialog this component owns).
- * Mount it with the same props as the view (all but the callbacks and the pace): it reads through the same query keys, so
- * each request is made once however many of the two are mounted, and it agrees with the view on what there is to show.
- * Like the view it needs a `QueryClientProvider` above it.
+ * The Licenses page's header action, for the host to put in its title bar beside the page's title: "Billing ↗".
+ * Buying more is on each card ("Buy subscriptions ↗"). Mount it with the same props as the view (all but the callbacks
+ * and the pace): it reads through the same query keys, so each request is made once however many of the two are
+ * mounted, and it agrees with the view on what there is to show. Like the view it needs a `QueryClientProvider` above it.
  *
  * It draws nothing until everything it needs has been read, and then only for someone offered billing in a workspace
- * that has licenses: with none the page is the catalog, which has its own buying copy. "Billing & invoices" is there only
- * once billing lists `billing_and_invoices` for the account, and "Buy licenses" only where billing offers workspaces
- * something to buy or to add licenses to. Billing's refusal of the ↗ button shows under the buttons.
+ * that has licenses (with none the page is the catalog), once billing lists `billing_and_invoices` for the account.
+ * Billing's refusal of the ↗ button shows under it.
  */
 export function WorkspaceLicensesHeaderActions({ api, billing, workspaceId, offer, purchaseId = null, navigateOut }: WorkspaceLicensesHeaderActionsProps) {
   const { scope, data } = useLicensesPage({ api, billing, workspaceId, offer, purchaseId }, offer.manage);
   const hosted = useHostedAction({ billing, scope, navigateOut, api });
-  const [buying, setBuying] = useState(false);
   if (data === null || !offer.manage || !data.reads || data.status === null) return null;
   const { products, status, shown } = data;
-  // The same cards the page draws: the buttons are for a workspace that has some.
+  // The same cards the page draws: the button is for a workspace that has some.
   if (joinLicenses({ licenses: shown, billing: status.licenses, catalog: products }).length === 0) return null;
-  const offered = hasOffer(products);
-  return (
-    <>
-      <HeaderButtons invoices={listedAction(status, "billing_and_invoices")} onBuy={offered ? () => setBuying(true) : null} buyLabel={t.page.buyLicenses} hosted={hosted} />
-      {offered ? (
-        <CatalogDialog
-          open={buying}
-          onClose={() => setBuying(false)}
-          products={products}
-          licenses={status.licenses}
-          scope={scope}
-          billing={billing}
-          navigateOut={navigateOut}
-          api={api}
-          memberCount={data.memberCount}
-        />
-      ) : null}
-    </>
-  );
+  return <HeaderButtons invoices={listedAction(status, "billing_and_invoices")} hosted={hosted} />;
 }

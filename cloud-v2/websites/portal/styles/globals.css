@@ -1,6 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-/* Mentra's brand tokens, font and focus ring, shared with the admin portal and the workspace screens. */
+/* Mentra's brand tokens and font, shared with the admin portal and the workspace screens. */
 @import "@mentra/workspace-ui/mentra.css";
 
 @custom-variant dark (&:is(.dark *));
@@ -11,5 +11,9 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+  /* No green focus ring (mentra.css draws one): the portal shows focus by a control's own hover look. */
+  :focus-visible {
+    outline: none;
   }
 }

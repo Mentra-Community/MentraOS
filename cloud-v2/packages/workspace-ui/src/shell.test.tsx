@@ -168,6 +168,15 @@ describe("the account menu", () => {
     expect(markup).not.toContain("Sign out");
   });
 
+  test("the whole row is the menu's button: who is signed in, not just the …", () => {
+    const markup = renderToStaticMarkup(<AccountFooter userEmail="sam@acme.test" />);
+    const button = /<button[^>]*aria-label="Open account menu"[^>]*>(.*?)<\/button>/.exec(markup);
+    expect(button).not.toBeNull();
+    expect(button![1]).toContain("sam@acme.test");
+    expect(button![1]).toContain("Account");
+    expect(markup.match(/<button/g)).toHaveLength(1);
+  });
+
   test("is part of the shell, with the shell's items", () => {
     const markup = renderToStaticMarkup(
       <AppShell brandTitle="Mentra Portal" nav={[]} userEmail="sam@acme.test" accountItems={[]}>

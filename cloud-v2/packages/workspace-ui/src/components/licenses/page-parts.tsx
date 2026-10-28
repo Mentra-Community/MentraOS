@@ -1,15 +1,13 @@
 /**
- * What the Licenses page and its header share: the header actions ("Billing & invoices ↗" and "Buy licenses"), the sentence the page says in place of cards, and what happens after checkout (which purchase the page is
+ * What the Licenses page and its header share: the header action ("Billing ↗"), the sentence the page says in place of cards, and what happens after checkout (which purchase the page is
  * following, polling for its license, and closing its dialog).
  *
  * No sentence is written here; the words are `strings/licenses.ts`.
  */
 
-import { PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { BillingAction, CatalogEntry, PurchaseStatus } from "@mentra/workspace-contract/portal-billing";
 import { licenseStrings as t } from "../../strings/licenses";
-import { Button } from "../../ui/button";
 import { Card } from "../../ui/card";
 import { HostedFeedback, type HostedAction } from "./hosted-action";
 import { HostedPageButton } from "./parts";
@@ -39,48 +37,34 @@ export const readWaiting = (result: ReadResult): boolean => result.data === unde
 export const readRetrying = (result: ReadResult): boolean => result.isFetching && readFailed(result);
 
 /**
- * The page's header actions: "Billing & invoices ↗" (only where billing lists that action for the account) and "Buy licenses" (only where `onBuy` is given: there is something to buy, or to add licenses to). Billing's refusal of the ↗
- * button, or the link for a tab the browser blocked, shows under them.
+ * The page's header action: "Billing ↗", only where billing lists `billing_and_invoices` for the account. Billing's
+ * refusal of it, or the link for a tab the browser blocked, shows under it.
  *
- * They are drawn by the page's header component (`WorkspaceLicensesHeaderActions`)
+ * It is drawn by the page's header component (`WorkspaceLicensesHeaderActions`)
  * for the host to put in its title bar, not by the view.
  */
 export function HeaderButtons({
   invoices,
-  onBuy,
-  buyLabel,
   hosted,
 }: {
   /** The account's `billing_and_invoices` as billing listed it, or null. */
   invoices: BillingAction | null;
-  /** Opens the catalog dialog; null where there is nothing to open it for. */
-  onBuy: (() => void) | null;
-  /** What the button says: "Buy licenses". */
-  buyLabel: string;
   /** The header's hosted-page flow, which the ↗ button uses. */
   hosted: HostedAction;
 }) {
-  if (invoices === null && onBuy === null) return null;
+  if (invoices === null) return null;
   return (
     <div className="flex flex-col items-end gap-3">
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {invoices !== null ? (
-          <HostedPageButton
-            variant="secondary"
-            newTab={invoices.returns === false}
-            pending={hosted.pending === invoices.kind}
-            disabled={hosted.pending !== null}
-            onClick={() => hosted.run({ action: invoices })}
-          >
-            {t.actions.label(invoices.kind, invoices.fallbackLabel)}
-          </HostedPageButton>
-        ) : null}
-        {onBuy !== null ? (
-          <Button type="button" onClick={onBuy}>
-            <PlusIcon aria-hidden="true" />
-            {buyLabel}
-          </Button>
-        ) : null}
+        <HostedPageButton
+          variant="secondary"
+          newTab={invoices.returns === false}
+          pending={hosted.pending === invoices.kind}
+          disabled={hosted.pending !== null}
+          onClick={() => hosted.run({ action: invoices })}
+        >
+          {t.actions.label(invoices.kind, invoices.fallbackLabel)}
+        </HostedPageButton>
       </div>
       <div className="max-w-sm empty:hidden">
         <HostedFeedback action={hosted} />
@@ -91,7 +75,7 @@ export function HeaderButtons({
 
 /**
  * Whether billing offers the workspace something to do with the catalog: an entry with an `offer`. It is what makes
- * buying copy, and "Buy licenses", exist for a viewer at all.
+ * buying copy exist for a viewer at all.
  */
 export function hasOffer(products: readonly CatalogEntry[]): boolean {
   return products.some((entry) => entry.offer !== undefined);
