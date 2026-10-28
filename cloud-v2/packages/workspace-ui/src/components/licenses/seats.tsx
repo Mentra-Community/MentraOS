@@ -59,24 +59,24 @@ export interface AddSeatsControl {
   link?: string | null;
 }
 
-function AddSeatsButton({ control }: { control: AddSeatsControl }) {
+function AddSeatsButton({ control, label }: { control: AddSeatsControl; label: string }) {
   return (
     <HostedPageButton variant="secondary" pending={control.pending} newTab={control.newTab} disabled={control.disabled} onClick={control.onClick}>
-      {t.actions.addSeats}
+      {label}
     </HostedPageButton>
   );
 }
 
 /**
- * What a viewer who may assign can do about the seats, whatever is assigned: "Buy subscriptions ↗" where billing lists
- * it, and "Assign subscriptions" unless more are assigned than paid for (`blocked`). Null for anyone else.
+ * What a viewer who may assign can do about the seats: "Buy subscriptions ↗" (where billing lists it) and "Assign
+ * subscriptions" while some are free; once none is (`full`), only "Buy more subscriptions ↗". Null for anyone else.
  */
-function SeatActions({ canAssign, blocked, addSeats, onAssign, primary }: Pick<SeatControls, "canAssign" | "blocked" | "addSeats" | "onAssign"> & { primary: boolean }) {
-  if (!canAssign || (blocked && addSeats === null)) return null;
+function SeatActions({ canAssign, full, addSeats, onAssign, primary }: Pick<SeatControls, "canAssign" | "full" | "addSeats" | "onAssign"> & { primary: boolean }) {
+  if (!canAssign || (full && addSeats === null)) return null;
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {addSeats ? <AddSeatsButton control={addSeats} /> : null}
-      {blocked ? null : (
+      {addSeats ? <AddSeatsButton control={addSeats} label={full ? t.actions.addMoreSeats : t.actions.addSeats} /> : null}
+      {full ? null : (
         <Button variant={primary ? "default" : "secondary"} size="sm" onClick={onAssign}>
           <PlusIcon aria-hidden="true" />
           {t.seats.assignSeats}
@@ -119,8 +119,8 @@ interface SeatControls {
   holders: readonly SeatHolder[];
   /** The viewer may assign and unassign (`workspace.licenses.assign`). */
   canAssign: boolean;
-  /** More seats are assigned than the license covers: no new assignments until it is back within the quantity. */
-  blocked?: boolean;
+  /** No seat is free: every one is assigned, or more are than the license covers. Nobody can be assigned until one is. */
+  full: boolean;
   /** Billing's `add_seats`, or null where it lists none. */
   addSeats: AddSeatsControl | null;
   /** Opens the people picker. */
@@ -134,7 +134,7 @@ interface SeatControls {
 export function SeatStrip({
   holders,
   canAssign,
-  blocked = false,
+  full,
   addSeats,
   onAssign,
   onOpen,
@@ -146,7 +146,7 @@ export function SeatStrip({
     <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-6 py-4 max-sm:px-5">
       {holders.length > 0 ? <AvatarStack holders={holders} /> : null}
       <p className="min-w-0 flex-1 basis-48 text-sm font-semibold">{t.names.holders(holders.map((holder) => holder.label))}</p>
-      <SeatActions canAssign={canAssign} blocked={blocked} addSeats={addSeats} onAssign={onAssign} primary={false} />
+      <SeatActions canAssign={canAssign} full={full} addSeats={addSeats} onAssign={onAssign} primary={false} />
       <Button variant="ghost" size="sm" className="text-muted-foreground" aria-expanded={false} onClick={onOpen}>
         {t.seats.title}
         <ChevronDownIcon aria-hidden="true" />
@@ -161,8 +161,8 @@ const SEARCH_FROM = 8;
 /**
  * The roster: the seat actions ({@link SeatActions}) beside its title, whatever is assigned, then who holds each
  * subscription (their name over their email, since when, and Unassign, which asks first in a dialog). Seats nobody
- * holds have no rows: the Subscriptions fact counts them. With more people than subscriptions (`blocked`) nobody can
- * be assigned, so no assigning control shows; Unassign still does.
+ * holds have no rows: the Subscriptions fact counts them. With none free (`full`) nobody can be assigned, so no
+ * assigning control shows; Unassign still does.
  *
  * Unassign opens a modal: "Unassign <name>?" with one plain line, Cancel and a destructive Unassign. Cancel, Escape, the
  * × and the backdrop close it with no request and put focus back on the row's button; a refusal is shown inside it,
@@ -175,7 +175,7 @@ export function SeatRoster({
   locale,
   productName,
   canAssign,
-  blocked = false,
+  full,
   addSeats,
   onAssign,
   onUnassign,
@@ -242,7 +242,7 @@ export function SeatRoster({
             <span className="flex items-center gap-2">{title}</span>
           )}
         </h3>
-        <SeatActions canAssign={canAssign} blocked={blocked} addSeats={addSeats} onAssign={onAssign} primary={true} />
+        <SeatActions canAssign={canAssign} full={full} addSeats={addSeats} onAssign={onAssign} primary={true} />
       </div>
       {searchable ? (
         <div className="relative">
