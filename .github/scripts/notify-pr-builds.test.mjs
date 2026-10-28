@@ -10,6 +10,7 @@ import {
   iosBuildRequired,
   buildPost,
   matchingBuildRun,
+  NO_BUILD_RUN_NAME,
   notifyPrBuilds,
   readOtaTargets,
   verifyIosTextArtifact,
@@ -60,6 +61,8 @@ test("uses explicit full MTK target and rejects stale/incomplete manifests", () 
 })
 test("matching runs require the exact PR head and repository", () => {
   assert.equal(matchingBuildRun([run, {...run, id: 2, head_sha: "other"}], pr, sha), run)
+  // A newer label change that requests no build is never the build.
+  assert.equal(matchingBuildRun([run, {...run, id: 3, display_title: NO_BUILD_RUN_NAME}], pr, sha), run)
 })
 test("Slack escapes PR text and includes all three firmware targets", () => {
   const payload = buildPost({

@@ -232,11 +232,15 @@ function requestedRoutineLinks({context, pr, sha, ios, android, requested, andro
     : [{id, title: id, resultsUnavailable: "No published app platform is available for this build; no execution is inferred."}])
 }
 
+// The run name of a label change that requests no build: never the build.
+export const NO_BUILD_RUN_NAME = "No build: label change"
+
 export function matchingBuildRun(runs, pr, sha) {
   return runs
     .filter(
       (run) =>
         run.event === "pull_request" &&
+        run.display_title !== NO_BUILD_RUN_NAME &&
         run.head_sha === sha &&
         run.head_branch === pr.head.ref &&
         run.head_repository?.full_name === pr.head.repo.full_name,
