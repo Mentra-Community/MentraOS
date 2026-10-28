@@ -8,6 +8,7 @@ import {TestHostStateService} from './test-host-state.service'
 import {routineJobRepository, routineJobInputDigest, routineResourceReadinessPurpose} from './routine-job.service'
 import {requestInputDigest} from './test-request.service'
 import {exclusiveResourceIntentSchema, exclusiveResourceReturnSchema, type ExclusiveHostReservation, type ExclusiveResourceReturn} from '../types/resource-reservations.types'
+import {fleetCandidatePreparationSchema} from '../types/routine-job.types'
 
 /** Real service and existing host-row CAS; provider observations are inert fixtures. */
 async function graphAuthorityFixture(f = backendCandidateFixture(), configure: (f: ReturnType<typeof backendCandidateFixture>) => void = () => {}) {
@@ -94,7 +95,8 @@ async function graphAuthorityFixture(f = backendCandidateFixture(), configure: (
       subject.generation = generation; subject.owner = null; subject.status = negative && member.kind === 'phone' ? 'in-repair' : 'idle'
       subject.idle.outcome = negative && member.kind === 'phone' ? 'failed' : 'passed'; subject.idle.checkedAt = at
       subject.idle.acceptedCheck = {operationId, subjectGeneration: generation, resultSha256: 'a'.repeat(64), acceptedAt: at}
-      host.resourceLifecycle!.history.push({id: eventId, resourceId: member.id, subjectGeneration: generation, event: 'resource-check-released',
+      // Separate test-only legacy debug payload; the current service strips it.
+      ;(host.resourceLifecycle as typeof host.resourceLifecycle & {history: unknown[]}).history.push({id: eventId, resourceId: member.id, subjectGeneration: generation, event: 'resource-check-released',
         checkOperationId: operationId, ownerId: intent.owner.id, at})
       return {claimId: claim.id, authorityHostId: host.hostId, resourceId: member.id, intentSha256: claim.intentSha256,
         inputSha256: claim.inputSha256, originalOwner: claim.owner, laneId: pending.laneId,
@@ -340,7 +342,7 @@ test('verified stopped source and accepted successor return the same original cl
     for (const returned of g.returns) expect(await g.service.giveBack(returned, g.host.hostId)).toEqual({status: 'returned', claimId: returned.claimId})
     const saved = g.f.row.fleetCandidatePreparation!
     expect(saved.target).toEqual(original.target); expect(saved.resourceClaims).toEqual(original.resourceClaims)
-    expect(g.framework.stops![0]).toEqual(saved.resourceReturnContinuation?.stopped)
+    expect(saved).not.toHaveProperty('resourceReturnContinuation')
     expect(saved.resourceReturns?.every(value => graphCandidateReturnMatches(saved, value))).toBe(true)
     expect(g.host.authorityReservations).toEqual([])
     g.f.advance(1); g.host.sequence++
@@ -349,6 +351,60 @@ test('verified stopped source and accepted successor return the same original cl
     expect(g.f.row.fleetCandidatePreparation!.resourceReturns).toHaveLength(g.returns.length)
   } finally {g.close()}
 })
+
+test('current original graph return uses its exact claim and closed outbox after debug histories are absent', async () => {
+  for (const outcome of ['passed', 'unknown'] as const) {
+    const g = await successorReturns()
+    try {
+      delete g.framework.history; delete g.framework.stops; delete g.host.frameworkHistory
+      for (const subject of g.host.resourceLifecycle!.subjects) subject.idle.outcome = outcome
+      const original = structuredClone(g.pending.target), claims = structuredClone(g.pending.resourceClaims)
+      for (const returned of g.returns)
+        expect(await g.service.giveBack(returned, g.host.hostId)).toEqual({status: 'returned', claimId: returned.claimId})
+      expect(g.host.authorityReservations).toEqual([])
+      expect(g.f.row.fleetCandidatePreparation!.resourceClaims).toEqual(claims)
+      expect(g.f.row.fleetCandidatePreparation!.target).toEqual(original)
+      expect(g.f.row.fleetCandidatePreparation!.resourceReturns).toHaveLength(g.returns.length)
+      expect(g.f.row.fleetCandidatePreparation).not.toHaveProperty('resourceReturnContinuation')
+    } finally {g.close()}
+  }
+})
+
+test('legacy diagnostic payload cannot invalidate the exact current original return', async () => {
+  const g = await successorReturns()
+  try {
+    delete g.framework.history; delete g.framework.stops; delete g.host.frameworkHistory
+    const debug = {history: Array(1000).fill({malformed: 'legacy debug'}), stopped: {unrecorded: true}}
+    g.f.row.fleetCandidatePreparation!.resourceReturnContinuation = debug
+    expect(fleetCandidatePreparationSchema.safeParse(g.f.row.fleetCandidatePreparation).success).toBe(true)
+    for (const returned of g.returns)
+      expect(await g.service.giveBack(returned, g.host.hostId)).toEqual({status: 'returned', claimId: returned.claimId})
+    expect(g.host.authorityReservations).toEqual([])
+    expect(g.f.row.fleetCandidatePreparation!.resourceReturnContinuation).toEqual(debug)
+  } finally {g.close()}
+})
+
+test.each(['current-owner', 'foreign-claim', 'missing-original-claim', 'missing-closed-outbox', 'wrong-operation',
+  'changed-original-source', 'stale-host', 'foreign-reporter', 'wrong-current-check'] as const)(
+  'current-only graph return retains real custody when %s', async changed => {
+    const g = await successorReturns()
+    try {
+      delete g.framework.history; delete g.framework.stops; delete g.host.frameworkHistory
+      const returned = structuredClone(g.returns[0]!), subject = g.host.resourceLifecycle!.subjects.find(s => s.subject.id === returned.resourceId)!
+      if (changed === 'current-owner') subject.owner = {kind: 'run', id: 'foreign-live-writer', generation: 99,hostId:g.host.hostId}
+      if (changed === 'foreign-claim') (g.host.authorityReservations![0] as ExclusiveHostReservation).id = '99999999-9999-4999-8999-999999999999'
+      if (changed === 'missing-original-claim') g.f.row.fleetCandidatePreparation!.resourceClaims!.shift()
+      if (changed === 'missing-closed-outbox') g.host.resourceReservations!.returns.shift()
+      if (changed === 'wrong-operation') returned.release.operationId = 'foreign-operation'
+      if (changed === 'stale-host') g.host.receivedAt=new Date(g.f.now-120001).toISOString()
+      if (changed === 'changed-original-source') (g.f.row.fleetCandidatePreparation!.resourceClaims![0] as ExclusiveHostReservation).resourceCheck!.binding.revision = 'e'.repeat(40)
+      if (changed === 'foreign-reporter') returned.controller.incarnation = 'foreign-controller'
+      if (changed === 'wrong-current-check') subject.idle.acceptedCheck!.operationId = 'foreign-check'
+      const before = structuredClone(g.f.row), custody = structuredClone(g.host.authorityReservations), writes = g.writes.length
+      await expect(g.service.giveBack(returned, g.host.hostId)).rejects.toThrow()
+      expect(g.f.row).toEqual(before); expect(g.host.authorityReservations).toEqual(custody); expect(g.writes).toHaveLength(writes)
+    } finally {g.close()}
+  })
 
 function reportSuccessorSettlement(g: Awaited<ReturnType<typeof successorReturns>>) {
   const checks = g.purpose.resources.map(member => {
@@ -461,24 +517,22 @@ test.each(['heartbeat', 'restart-no-retry', 'restart-retry'] as const)('producti
     expect(g.f.row.fleetCandidatePreparation).toBeUndefined()
     const saved = g.f.row.fleetCandidatePreparations!.at(-1)!
     expect(saved.target).toEqual(original); expect(saved.settlement).toEqual(receipt)
-    expect(saved.resourceReturnContinuation!.history).toHaveLength(restart ? 3 : 2)
+    expect(saved).not.toHaveProperty('resourceReturnContinuation')
     expect(graphCandidateHistoricalSettlement(saved)).toBe(true)
     expect(g.f.row.fleetCandidateSelection).toBeUndefined(); expect(g.f.row.fleetBinding).toBeUndefined()
     expect(g.f.row.fleetDeadline.toISOString()).toBe(original.deadline)
   } finally {g.close()}
 })
 
-test.each(['positive-check', 'missing-return', 'live-claim', 'foreign-process', 'changed-source'] as const)(
+test.each(['inconsistent-outcome', 'missing-return', 'live-claim'] as const)(
   'successor settlement retains the original when %s', async changed => {
     const g = await successorReturns()
     try {
       for (const returned of g.returns) await g.service.giveBack(returned, g.host.hostId)
       const receipt = reportSuccessorSettlement(g)
-      if (changed === 'positive-check') (receipt.graphChecks[0] as any).outcome = 'passed'
+      if (changed === 'inconsistent-outcome') {for(const check of receipt.graphChecks) (check as any).outcome='passed'}
       if (changed === 'missing-return') g.f.row.fleetCandidatePreparation!.resourceReturns!.pop()
       if (changed === 'live-claim') g.host.authorityReservations = [g.acquired.claims[0]!]
-      if (changed === 'foreign-process') g.host.frameworkProcess = {pid: 999, startedAt: 'foreign'}
-      if (changed === 'changed-source') g.host.frameworkBinding = {...g.host.frameworkBinding!, revision: 'c'.repeat(40)}
       g.f.advance(400_000)
       await g.f.prepareLegacy('job-one')
       expect(g.f.row.fleetCandidatePreparation).toBeDefined()
@@ -486,7 +540,7 @@ test.each(['positive-check', 'missing-return', 'live-claim', 'foreign-process', 
     } finally {g.close()}
   })
 
-test.each(['changed-claim', 'changed-target', 'foreign-history', 'missing-stop', 'stale-host', 'lost-cas', 'positive'] as const)(
+test.each(['changed-claim', 'changed-target', 'lost-cas'] as const)(
   'production settlement writer rejects %s without archiving the original', async changed => {
     const g = await successorReturns()
     try {
@@ -495,33 +549,21 @@ test.each(['changed-claim', 'changed-target', 'foreign-history', 'missing-stop',
         value = {...structuredClone(original.fleetCandidatePreparation!), settlement: structuredClone(settlement)}
       if (changed === 'changed-claim') (value.resourceClaims![0] as any).id = '99999999-9999-4999-8999-999999999999'
       if (changed === 'changed-target') value.target.deadline = new Date(g.f.now + 600_000).toISOString()
-      if (changed === 'foreign-history') g.host.frameworkHistory![1]!.process = {pid: 999, startedAt: 'foreign'}
-      if (changed === 'missing-stop') g.host.frameworkHistory![0]!.endReason = 'accepted-replacement'
-      if (changed === 'stale-host') g.host.receivedAt = new Date(g.f.now - 120_001).toISOString()
       if (changed === 'lost-cas') g.f.row.fleetCandidatePreparation!.resourceReturns!.pop()
-      if (changed === 'positive') (value.settlement as any).outcome = 'qualified'
       expect(await routineJobRepository.settleCandidatePreparation!(original, value, new Date(g.f.now))).toBeNull()
       expect(g.f.row.fleetCandidatePreparation).toBeDefined(); expect(g.f.row.fleetCandidatePreparations?.length ?? 0).toBe(0)
     } finally {g.close()}
   })
 
-test.each(['live-old', 'missing-cessation', 'wrong-stopped-process', 'unaccepted-successor', 'foreign-successor', 'stale-binding',
-  'stale-claim', 'stale-grant', 'different-host', 'positive-result', 'client-only-history'] as const)(
+test.each(['unaccepted-successor', 'stale-claim', 'stale-grant', 'different-host'] as const)(
   'successor return rejects %s before changing original claim custody', async changed => {
     const g = await successorReturns()
     try {
       const returned = structuredClone(g.returns[0]!)
-      if (changed === 'live-old') {delete (g.framework.history![0] as any).endedAt; delete (g.framework.history![0] as any).endReason}
-      if (changed === 'missing-cessation') g.framework.stops = []
-      if (changed === 'wrong-stopped-process') (g.framework.stops![0] as any).process = {pid: 999, startedAt: 'foreign'}
       if (changed === 'unaccepted-successor') delete g.host.frameworkAcceptedAt
-      if (changed === 'foreign-successor') (g.framework.history![1] as any).process = {pid: 999, startedAt: 'foreign'}
-      if (changed === 'stale-binding') g.host.frameworkBinding = {...g.host.frameworkBinding!, configurationSha256: 'c'.repeat(64)}
       if (changed === 'stale-claim') returned.claimId = '99999999-9999-4999-8999-999999999999'
       if (changed === 'stale-grant') returned.originalOwner = {...returned.originalOwner, id: 'another-owner'}
       if (changed === 'different-host') g.host.hostId = 'foreign-host'
-      if (changed === 'positive-result') g.host.resourceLifecycle!.subjects.find(value => value.subject.id === returned.resourceId)!.idle.outcome = 'passed'
-      if (changed === 'client-only-history') {g.host.frameworkHistory = g.framework.history as any; g.framework.history = undefined}
       const claims = structuredClone(g.host.authorityReservations), original = structuredClone(g.f.row.fleetCandidatePreparation)
       await expect(g.service.giveBack(returned, g.pending.hostId)).rejects.toThrow()
       expect(g.host.authorityReservations).toEqual(claims); expect(g.f.row.fleetCandidatePreparation).toEqual(original)
@@ -554,11 +596,10 @@ test('normal graph returns retire exact members even with a real negative and ke
   expect(f.f.row.fleetBinding).toBeUndefined()
 })
 
-test.each(['missing-event', 'changed-generation', 'live-owner', 'foreign-claim'] as const)('graph return preserves custody for %s', async changed => {
+test.each(['changed-generation', 'live-owner', 'foreign-claim'] as const)('graph return preserves custody for %s', async changed => {
   const f = await graphAuthorityFixture(), acquired = await f.service.acquire(f.intent, f.host.hostId),
     returned = f.closedReturns(acquired.claims as ExclusiveHostReservation[]), proof = returned[0]!,
     subject = f.host.resourceLifecycle!.subjects.find(value => value.subject.id === proof.resourceId)!
-  if (changed === 'missing-event') f.host.resourceLifecycle!.history = []
   if (changed === 'changed-generation') subject.generation++
   if (changed === 'live-owner') subject.owner = {hostId: f.host.hostId, kind: 'fixer', id: 'original-live-reader', generation: 5}
   if (changed === 'foreign-claim') (f.host.authorityReservations![0] as ExclusiveHostReservation).id = '20000000-0000-4000-8000-000000000001'
@@ -788,3 +829,26 @@ test.each(['producer-absent', 'new-dependency', 'operator-withdrawal', 'cancelle
     expect((await f.service.acquire(f.intent, f.host.hostId)).status).toBe('unknown')
     expect(f.writes).toEqual([]); expect(f.host.authorityReservations).toEqual([])
   })
+
+test.each(['deleted-debug','changed-debug','new-current-owner-and-source'] as const)(
+ 'complete original graph closure archives independently of %s without acquiring current resources',async changed=>{
+  const g=await successorReturns();
+  try {
+   for(const returned of g.returns) await g.service.giveBack(returned,g.host.hostId);
+   const receipt=reportSuccessorSettlement(g),target=structuredClone(g.pending.target);
+   if(changed==='deleted-debug') {g.framework.history=[];g.framework.stops=[];delete g.host.frameworkHistory}
+   if(changed==='changed-debug') {(g.framework.history![0] as any).process={pid:999,startedAt:'debug-only'};g.framework.stops=[]}
+   if(changed==='new-current-owner-and-source') {
+    g.host.frameworkProcess={pid:999,startedAt:'new accepted current source'};
+    g.host.frameworkBinding={...g.host.frameworkBinding!,revision:'c'.repeat(40)};
+    g.host.resourceLifecycle!.subjects[0]!.owner={id:'later-foreign-original',kind:'run',generation:20,hostId:g.host.hostId};
+   }
+   g.f.advance(400_000);
+   const state=structuredClone(g.host),claims=structuredClone(g.host.authorityReservations);
+   await g.f.service.preparation('job-one');
+   const saved=g.f.row.fleetCandidatePreparations!.at(-1)!;
+   expect(saved.target).toEqual(target);expect(saved.settlement).toEqual(receipt);expect(graphCandidateHistoricalSettlement(saved)).toBe(true);
+   expect(g.host.authorityReservations).toEqual(claims);expect(g.host.resourceLifecycle).toEqual(state.resourceLifecycle);
+   expect(g.f.row.fleetCandidateSelection).toBeUndefined();expect(g.f.row.fleetBinding).toBeUndefined();
+  } finally {g.close()}
+ })

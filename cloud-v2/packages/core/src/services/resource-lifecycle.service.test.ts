@@ -1,5 +1,6 @@
 import {describe,test,expect,spyOn} from 'bun:test';
-import {validateResourceLifecycleAdvance,ResourceLifecycleService,projectResourceLifecycle} from './resource-lifecycle.service';
+import {testHostHistoryRepository} from './test-host-history.repository';
+import {validateResourceLifecycleAdvance,advanceResourceLifecycleCursor as advanceDebugFreeCursor,ResourceLifecycleService,projectResourceLifecycle} from './resource-lifecycle.service';
 import {resourceLifecycleSchema,type ResourceLifecycleSubject} from '../types/resource-lifecycle.types';
 const at='2026-10-16T20:00:00.000Z',now=Date.parse(at);
 const subject:ResourceLifecycleSubject={subject:{kind:'resource',id:'google-account-1',authorityHostId:'host-a'},generation:2,status:'idle',observedAt:at,receivedAt:null,current:true,reason:null,owner:null,
@@ -9,8 +10,9 @@ const row=(value=subject)=>({hostId:'host-a',receivedAt:new Date(at),snapshot:{h
 
 async function readHistory(rows:Parameters<typeof projectResourceLifecycle>[0],resourceId:string,cursor?:string) {
  const {TestHostStateModel}=await import('../models/test-host-state.model');
+ const debugRead=spyOn(testHostHistoryRepository,'detail').mockImplementation(async hostId=>({resourceHistory:rows.filter(value=>value.hostId===hostId).flatMap(value=>(value.snapshot as any)?.resourceLifecycle?.history??[])}));
  const read=spyOn(TestHostStateModel,'find').mockImplementation((()=>{const query={select(){return query},sort(){return query},limit(){return query},maxTimeMS(){return query},read(){return query},readConcern(){return query},lean:async()=>rows};return query}) as never);
- try {return await new ResourceLifecycleService().history(resourceId,cursor)}finally {read.mockRestore()}
+ try {return await new ResourceLifecycleService().history(resourceId,cursor)}finally {read.mockRestore();debugRead.mockRestore()}
 }
 test('fresh authority preserves an unchanged returned physical state beyond its transition age',()=>{
  const elapsed=now+180001,reportedAt=new Date(elapsed).toISOString(),value={...row(),receivedAt:new Date(elapsed),snapshot:{...row().snapshot,observedAt:reportedAt}};
@@ -57,19 +59,21 @@ describe('resource lifecycle projection',()=>{
  test('idle rejects missing or stale generation qualification and ownership',()=>{for(const value of [{...subject,owner:{id:'run-1',kind:'run',generation:1,hostId:'host-a',laneId:'lane-a'}},{...subject,generation:3},{...subject,idle:{...subject.idle,qualifiedScope:{kind:'unqualified'}}}])expect(resourceLifecycleSchema.safeParse({schemaVersion:1,subjects:[value],history:[]}).success).toBe(false)});
 });
 
-test('accepted subject generation cannot regress and original journal IDs cannot change',()=>{
+test('accepted subject generation cannot regress while debug event changes cannot gate current state',()=>{
  const before=row().snapshot.resourceLifecycle;
  const next=structuredClone(before);next.subjects[0]!.generation=1;next.subjects[0]!.idle.acceptedCheck!.subjectGeneration=1;next.history[0]!.subjectGeneration=1;
  expect(()=>validateResourceLifecycleAdvance(before,next)).toThrow('generation regressed');
  const changed=structuredClone(before);changed.history[0]!.event='active';
- expect(()=>validateResourceLifecycleAdvance(before,changed)).toThrow('immutable');
+ expect(()=>validateResourceLifecycleAdvance(before,changed)).not.toThrow();
+ expect(advanceDebugFreeCursor(before,changed)).not.toHaveProperty('history');
  expect(()=>validateResourceLifecycleAdvance(before,structuredClone(before))).not.toThrow();
 });
-test('retained history pages are bounded with explicit coverage and strict cursors',async()=>{
- const value=row();value.snapshot.resourceLifecycle.history=Array.from({length:60},(_,i)=>({...value.snapshot.resourceLifecycle.history[0]!,id:`event-${String(i).padStart(2,'0')}`}));
- const first=await readHistory([value],subject.subject.id);expect(first.events).toHaveLength(50);expect(first.nextCursor).toBe('event-49');
- expect((await readHistory([value],subject.subject.id,'event-49')).events).toHaveLength(10);
- expect(first.coverage).toContain('200 events');
+test('retained history pages use the separate debug store with bounded coverage and strict cursors',async()=>{
+ const value=row(),current=projectResourceLifecycle([value],now);
+ value.snapshot.resourceLifecycle.history=Array.from({length:60},(_,i)=>({...value.snapshot.resourceLifecycle.history[0]!,id:`event-${String(i).padStart(3,'0')}`}));
+ const first=await readHistory([value],subject.subject.id);expect(first.events).toHaveLength(50);expect(first.nextCursor).toBe('event-049');
+ expect((await readHistory([value],subject.subject.id,'event-049')).events).toHaveLength(10);
+ expect(first.coverage).toContain('200 events');expect(current).not.toHaveProperty('history');
  await expect(readHistory([value],subject.subject.id,'/bad')).rejects.toThrow('cursor');
 });
 
@@ -136,7 +140,7 @@ test('fleet history preserves original borrower release lineage without inventin
  const history=await readHistory(rows,canonical);expect(history.events[0]?.event).toBe('return-reported');expect(history.events[0]?.ownerId).toBe('run-1');expect(history.events[0]?.ownerGeneration).toBe(4);expect(history.events[0]?.subjectGeneration).toBeNull();expect(result.subjects[0]?.status).toBe('unknown');expect(result).not.toHaveProperty('history');
 });
 
-test('comparison cursor keeps subject high-water marks within a fixed bound and bounds retained history', async()=>{
+test('comparison cursor retains only bounded current subject high-water marks', async()=>{
  const {advanceResourceLifecycleCursor}=await import('./resource-lifecycle.service');
  const first=row().snapshot.resourceLifecycle;
  const cursor=advanceResourceLifecycleCursor(first,{schemaVersion:1,subjects:[],history:[]})!;
@@ -144,24 +148,21 @@ test('comparison cursor keeps subject high-water marks within a fixed bound and 
  const full={schemaVersion:1,subjects:Array.from({length:200},(_,i)=>({...subject,subject:{...subject.subject,id:`resource-${i}`}})),history:[]};
  expect(()=>advanceResourceLifecycleCursor(full,first)).toThrow('explicit retirement');
  const events=Array.from({length:200},(_,i)=>({...first.history[0]!,id:`old-${i}`}));
- expect(advanceResourceLifecycleCursor({...first,history:events},first)!.history).toHaveLength(200);
+ expect(advanceResourceLifecycleCursor({...first,history:events},first)).not.toHaveProperty('history');
 });
 test('idle contract rejects duplicate dependencies like the harness contract',async()=>{
  const {resourceIdleContractSchema}=await import('../types/resource-lifecycle.types');
  expect(resourceIdleContractSchema.safeParse({version:'v1',maximumAgeMs:1000,qualifiedScope:{kind:'fleet'},conditions:['closed'],repairConfigured:true,dependencies:['browser','browser']}).success).toBe(false);
 });
 
-test('offset timestamps sort and retain by instant rather than lexical spelling', async()=>{
- const {advanceResourceLifecycleCursor}=await import('./resource-lifecycle.service');
- const value=row();
- value.snapshot.resourceLifecycle.history=[
+test('explicit debug history sorts offset timestamps by instant without entering the current cursor',async()=>{
+ const value=row(),events=[
   {...value.snapshot.resourceLifecycle.history[0]!,id:'earlier-offset',at:'2026-01-01T01:00:00+02:00'},
   {...value.snapshot.resourceLifecycle.history[0]!,id:'later-utc',at:'2026-01-01T00:30:00Z'},
  ];
+ value.snapshot.resourceLifecycle.history=events;
  expect((await readHistory([value],subject.subject.id)).events.map(event=>event.id)).toEqual(['later-utc','earlier-offset']);
- const history=Array.from({length:199},(_,i)=>({...value.snapshot.resourceLifecycle.history[0]!,id:`old-${i}`,at:'2025-01-01T00:00:00Z'}));
- const cursor=advanceResourceLifecycleCursor({...value.snapshot.resourceLifecycle,history},{...value.snapshot.resourceLifecycle})!;
- expect(cursor.history).toHaveLength(200);expect(cursor.history[0]?.id).toBe('later-utc');expect(cursor.history[1]?.id).toBe('earlier-offset');
+ expect(advanceDebugFreeCursor({...value.snapshot.resourceLifecycle,history:events},value.snapshot.resourceLifecycle)).not.toHaveProperty('history');
 });
 
 test('fresh omissions retain their reason while stale authority remains stale',()=>{
@@ -179,6 +180,7 @@ test('resource history queries its own bounded host scope instead of the global 
  })];
  expect(projectResourceLifecycle(rows,now)).not.toHaveProperty('history');
  const queries:unknown[]=[];let limit=0;
+ const debugRead=spyOn(testHostHistoryRepository,'detail').mockImplementation(async hostId=>hostId===target.hostId?{resourceHistory:target.snapshot.resourceLifecycle.history}:null);
  const mock=spyOn(TestHostStateModel,'find').mockImplementation(((filter:unknown)=>{queries.push(filter);const query={select(){return query},sort(){return query},limit(value:number){limit=value;return query},maxTimeMS(){return query},read(){return query},readConcern(){return query},lean:async()=>rows};return query}) as never);
  try {
   const service=new ResourceLifecycleService();const first=await service.history(subject.subject.id);
@@ -188,7 +190,7 @@ test('resource history queries its own bounded host scope instead of the global 
   expect(limit).toBe(101);
   rows.push(...Array.from({length:88},()=>target));
   await expect(service.history(subject.subject.id)).rejects.toThrow('bounded 100-host');
- } finally {mock.mockRestore()}
+ } finally {mock.mockRestore();debugRead.mockRestore()}
 });
 
 test('resource-scoped reads fetch the existing fleet authority anchor after its claim returned',async()=>{

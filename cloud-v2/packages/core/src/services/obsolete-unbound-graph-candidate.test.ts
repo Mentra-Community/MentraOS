@@ -22,6 +22,7 @@ async function replacedGraphFixture(loseCas = false) {
   host.frameworkHistory = [{...old, endedAt: stoppedAt, endReason: 'observed-stop'},
     {binding: structuredClone(host.frameworkBinding), incarnation: host.incarnation, incarnationGeneration: host.incarnationGeneration!,
       process: {pid: 200, startedAt: 'current-process'}, effectiveAt: host.observedAt, observedAt: host.observedAt}]
+  host.frameworkProcess={pid:200,startedAt:'current-process'};host.frameworkAcceptedAt=host.observedAt
   let cas = 0
   const get = spyOn(TestHostStateService.prototype, 'get').mockImplementation(async id => id === host.hostId ? structuredClone(host) : null),
     write = spyOn(TestRequestModel.collection, 'findOneAndUpdate').mockImplementation(async (filter: any, update: any): Promise<any> => {
@@ -52,6 +53,40 @@ function leaveOnlyCurrentHostAvailable(f: ReturnType<typeof routingGraphFixture>
   for (const host of f.hosts) if (host.hostId !== hostId)
     for (const lane of host.lanes) lane.state = 'out-of-service'
 }
+test('obsolete unbound graph uses current accepted process and custody without debug history', async () => {
+  const g = await replacedGraphFixture(), {f, host, pending} = g
+  try {
+    host.frameworkProcess = {pid: 200, startedAt: 'current-process'}
+    host.frameworkAcceptedAt = host.observedAt
+    delete host.frameworkHistory
+    const before = structuredClone(f.row), custody = structuredClone(host.authorityReservations),
+      obsolete = obsoleteUnboundGraphCandidate(f.row, host, f.now)
+    expect(obsolete?.candidate).toEqual(pending.candidate)
+    expect(obsolete?.target).toEqual(pending.target)
+    expect(obsolete?.coordinatorSupersession?.controller).toEqual({incarnation: host.incarnation, generation: host.incarnationGeneration})
+    expect(obsolete?.settlement).toBeUndefined(); expect(obsolete?.resourceReturns).toBeUndefined()
+    expect(graphCandidateHistoricalSettlement(obsolete!)).toBe(false)
+    expect(f.row).toEqual(before); expect(host.authorityReservations).toEqual(custody)
+  } finally {g.close()}
+})
+test.each(['unknown-current-process', 'live-original-claim', 'live-original-owner', 'stale-host', 'changed-input', 'same-original-controller'] as const)(
+  'current-only coordinator observation retains unresolved original when %s', async changed => {
+    const g = await replacedGraphFixture(), {f, host, pending} = g
+    try {
+      host.frameworkProcess = {pid: 200, startedAt: 'current-process'}; host.frameworkAcceptedAt = host.observedAt
+      delete host.frameworkHistory
+      if (changed === 'unknown-current-process') delete host.frameworkProcess
+      if (changed === 'live-original-claim') host.authorityReservations = [originalClaim(g)]
+      if (changed === 'live-original-owner') host.resourceLifecycle!.subjects[0]!.owner = {
+        kind: 'boundary-cleanup', id: `resource-graph:${pending.targetInputSha256}`, generation: 2,hostId:host.hostId}
+      if (changed === 'stale-host') host.receivedAt = new Date(f.now - 120_001).toISOString()
+      if (changed === 'changed-input') f.row.fleetInputSha256 = 'c'.repeat(64)
+      if (changed === 'same-original-controller') {host.incarnation = pending.candidate.controller.incarnation; host.incarnationGeneration = pending.candidate.controller.generation}
+      const before = structuredClone(f.row), custody = structuredClone(host.authorityReservations)
+      expect(obsoleteUnboundGraphCandidate(f.row, host, f.now)).toBeUndefined()
+      expect(f.row).toEqual(before); expect(host.authorityReservations).toEqual(custody)
+    } finally {g.close()}
+  })
 for (const destination of ['current-generation', 'alternate-host'] as const) test(`obsolete unbound graph preserves original history without manufacturing a ${destination} qualification`, async () => {
   const g = await replacedGraphFixture(), {f, host, pending} = g, original = structuredClone(f.row), authority = structuredClone(host.authorityReservations)
   try {
@@ -103,21 +138,15 @@ test('coordinator supersession retains unanswered input and unrelated custody wi
     expect(host.authorityReservations).toEqual(authority); expect(g.cas).toBe(1)
   } finally {g.close()}
 })
-for (const gap of ['same-generation', 'missing-stop', 'changed-binding', 'live-claim', 'client-claim', 'recorded-claim',
-  'live-owner', 'expired', 'cancelled', 'duplicate-history', 'missing-history', 'stale-host', 'foreign-current-binding', 'current-stopped', 'malformed-stop', 'bound-request', 'changed-input', 'recorded-return'] as const) test(`obsolete unbound graph refuses ${gap}`, async () => {
+for (const gap of ['same-generation', 'live-claim', 'client-claim', 'recorded-claim',
+  'live-owner', 'expired', 'cancelled', 'duplicate-history', 'stale-host', 'bound-request', 'changed-input', 'recorded-return'] as const) test(`obsolete unbound graph refuses ${gap}`, async () => {
   const g = await replacedGraphFixture(), {f, host, pending} = g
   try {
-    if (gap === 'missing-history') host.frameworkHistory = []
     if (gap === 'stale-host') host.receivedAt = new Date(f.now - 120_001).toISOString()
-    if (gap === 'foreign-current-binding') host.frameworkHistory![1]!.binding!.installationId = 'foreign-current-installation'
-    if (gap === 'current-stopped') host.frameworkHistory![1]!.endedAt = new Date(f.now).toISOString()
-    if (gap === 'malformed-stop') host.frameworkHistory![0]!.endedAt = 'not-a-date'
     if (gap === 'bound-request') f.row.hostId = host.hostId
     if (gap === 'changed-input') f.row.fleetInputSha256 = 'f'.repeat(64)
     if (gap === 'recorded-return') f.row.fleetCandidatePreparation!.resourceReturns = [{}]
     if (gap === 'same-generation') {host.incarnation = pending.candidate.controller.incarnation; host.incarnationGeneration!--}
-    if (gap === 'missing-stop') delete host.frameworkHistory![0]!.endedAt
-    if (gap === 'changed-binding') host.frameworkHistory![0]!.binding!.installationId = 'foreign-installation'
     if (gap === 'live-claim') host.authorityReservations = [originalClaim(g)]
     if (gap === 'client-claim') host.resourceReservations!.claims = [originalClaim(g)] as any
     if (gap === 'recorded-claim') f.row.fleetCandidatePreparation!.resourceClaims = [originalClaim(g)]
@@ -191,3 +220,19 @@ for (const gap of ['ordinary-unknown', 'malformed-marker', 'original-claim'] as 
       expect(f.row).toEqual(original)
     } finally {g.close()}
   })
+
+test.each(['missing','malformed','contradictory'] as const)('debug %s history cannot veto current coordinator supersession or manufacture original closure',async kind=>{
+ const g=await replacedGraphFixture(),before=structuredClone(g.f.row),claims=structuredClone(g.host.authorityReservations)
+ try {
+  if(kind==='missing')delete g.host.frameworkHistory
+  else g.host.frameworkHistory=kind==='malformed'?[{invalid:true}] as never:[{...g.host.frameworkHistory![0]!,binding:{...g.host.frameworkHistory![0]!.binding,installationId:'unrelated-debug-source'}}]
+  await g.f.prepareLegacy('job-one')
+  const preserved=g.f.row.fleetCandidatePreparations![0]!
+  expect(preserved.candidate).toEqual(before.fleetCandidatePreparation!.candidate)
+  expect(preserved.target).toEqual(before.fleetCandidatePreparation!.target)
+  expect(graphCandidateHistoricalSettlement(preserved)).toBe(false)
+  expect(preserved.resourceReturns).toBeUndefined();expect(preserved.settlement).toBeUndefined()
+  expect(g.f.row.fleetBinding).toBeUndefined();expect(g.f.row.fleetResourceReservation).toBeUndefined()
+  expect(g.host.authorityReservations).toEqual(claims)
+ }finally{g.close()}
+})

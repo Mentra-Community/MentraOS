@@ -26,11 +26,11 @@ export interface TestHostHealthRepository {
 const duplicate = (error: unknown) => (error as { code?: number })?.code === 11000;
 export class MongoTestHostHealthRepository implements TestHostHealthRepository {
   async insert(sample: StoredHostSample) {
-    try { await TestHostSampleModel.collection.insertOne(sample, { writeConcern: { w: "majority", j: true } }); return true; }
+    try { await TestHostSampleModel.collection.insertOne({...sample, kind: 'health'}, { writeConcern: { w: "majority", j: true } }); return true; }
     catch (error) { if (duplicate(error)) return false; throw error; }
   }
   async get(hostId: string, sampleId: string) {
-    return await TestHostSampleModel.collection.findOne({ hostId, sampleId }, { readPreference: "primary" }) as StoredHostSample | null;
+    return await TestHostSampleModel.collection.findOne({ hostId, sampleId, kind: {$ne: 'framework-debug'} }, { readPreference: "primary" }) as StoredHostSample | null;
   }
   async updateLatest(sample: StoredHostSample) {
     const { hostId, sampleId, sampledAt, receivedAt, payload } = sample;
@@ -52,7 +52,7 @@ export class MongoTestHostHealthRepository implements TestHostHealthRepository {
       .sort({ hostId: 1 }).limit(limit).maxTimeMS(5_000).toArray();
   }
   async history(hostId: string, from: Date, to: Date, limit: number) {
-    const rows = await TestHostSampleModel.collection.find<{ payload: HostHistorySample }>({ hostId, sampledAt: { $gte: from, $lte: to } },
+    const rows = await TestHostSampleModel.collection.find<{ payload: HostHistorySample }>({ hostId, kind: {$ne: 'framework-debug'}, sampledAt: { $gte: from, $lte: to } },
       { projection: hostHistoryProjection }).sort({ sampledAt: -1, sampleId: -1 }).hint("host_sample_history")
       .limit(limit).maxTimeMS(5_000).toArray();
     return rows.map(row => row.payload);

@@ -172,9 +172,9 @@ test('framework read uses compact primary/majority accepted identity and refuses
     const query = {select(value: unknown) {calls.push(value); return query}, read(value: unknown) {calls.push(value); return query},
       readConcern(value: unknown) {calls.push(value); return query}, setOptions(value: unknown) {calls.push(value); return query}, async lean() {
         const time = new Date(now).toISOString(), process = {pid: 123, startedAt: 'exact-process-lifetime'};
-        return {hostId: 'pro', receivedAt: new Date(now), snapshot: {hostId: 'pro', incarnation: 'current', observedAt: time,
+        return {hostId: 'pro', receivedAt: new Date(now), snapshot: {hostId: 'pro', incarnation: 'current', incarnationGeneration:1, observedAt: time,
           frameworkBinding: malformed ? {...current, version: '1085'} : current, frameworkAcceptedAt: time, frameworkProcess: process}, frameworkHistory: [{binding: current, incarnation: 'current',
-          incarnationGeneration: 1, process, effectiveAt: time, observedAt: time, ...(ended ? {endedAt: time, endReason: 'observed-stop'} : {})}]};
+          incarnationGeneration: 1, process, effectiveAt: time, observedAt: time}],...(ended?{frameworkCurrentStop:{installationId:current.installationId,process,observedAt:time}}:{})};
       }}; return query;
   }) as never);
   try {

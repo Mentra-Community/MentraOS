@@ -62,7 +62,7 @@ function fixture() {
   const service = new TestRequestService(undefined, undefined, null, new TestHostStateService(() => now), () => now);
   const replace = (stop = false) => {
     host.sequence++; host.snapshot.sequence++;
-    if (stop) host.frameworkHistory[0].endedAt = time;
+    if (stop) host.frameworkCurrentStop = {installationId:binding.installationId,process,observedAt:time};
     else {
       host.incarnation = host.snapshot.incarnation = 'successor'; host.incarnationGeneration = host.snapshot.incarnationGeneration = 2;
       host.snapshot.frameworkBinding = {...binding, version: 1086, installationId: 'replacement'};

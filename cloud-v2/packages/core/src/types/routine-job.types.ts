@@ -7,7 +7,6 @@ import {consistentRoutineSource, routineDispatchSelectionSchema, routinePrepared
 import {backendQualificationPurposeSchema, backendLocalPrerequisiteSchema, backendPreparingReceiptSchema, backendCandidatePrerequisiteSchema, backendConnectivityTargetSchema, candidatePrerequisiteSettlementSchema, backendPrerequisiteOrigin} from './backend-connectivity.types';
 import {recorderHostReservationSchema} from './recorder-storage.types';
 import {fleetResourceAdmissionSchema, fleetExclusiveReservationSchema} from './resource-reservations.types';
-import {resourceReturnContinuationSchema} from './resource-return-continuation.types';
 
 const canonicalTarget = (value: unknown): unknown => Array.isArray(value) ? value.map(canonicalTarget) :
   value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
@@ -82,7 +81,8 @@ export const fleetCandidatePreparationSchema = z.object({candidate: backendCandi
     exclusive: fleetExclusiveReservationSchema.optional(), releasedAt: z.string().datetime({offset: true}).optional()}).strict().optional(),
   claimReceipt: z.unknown().optional(), returnReceipt: z.unknown().optional(), settlement: candidatePrerequisiteSettlementSchema.optional(),
   resourceClaims: z.array(z.unknown()).min(1).max(30).optional(), resourceReturns: z.array(z.unknown()).min(1).max(30).optional(),
-  resourceReturnContinuation: resourceReturnContinuationSchema.optional(),
+  // Retained legacy diagnostics are not replayed to validate current custody.
+  resourceReturnContinuation: z.unknown().optional(),
   noAcquisitionReceipt: z.unknown().optional(),
   coordinatorSupersession: z.object({kind: z.literal('controller-replaced'), at: z.string().datetime(),
     controller: z.object({incarnation: frameworkIdentitySchema, generation: z.number().int().positive().safe()}).strict()}).strict().optional(),

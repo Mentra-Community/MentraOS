@@ -1,7 +1,7 @@
 import {createLogger} from '@mentra/cloud-shared/logger'
 import type {ResourceReservationHost} from './resource-reservations.service'
 import {advanceResourceLifecycleCursor} from './resource-lifecycle.service'
-import {resourceIdleContractSchema,resourceLifecycleSchema,resourceLifecycleCurrentSchema} from '../types/resource-lifecycle.types'
+import {resourceIdleContractSchema,resourceLifecycleCurrentSchema} from '../types/resource-lifecycle.types'
 import {recorderStorageObservationSchema} from '../types/recorder-storage.types'
 import {exclusiveResourceDependenciesSchema, hostResourceReservationsSchema, isExclusiveHostReservation, resourceReservationObservationSchema, type HostResourceReservation} from '../types/resource-reservations.types'
 import {laneControlExchangeSchema} from '../types/lane-control.types'
@@ -12,12 +12,12 @@ import {testWriteConcern} from "../models/test-write-concern"
 import {frameworkIdentitySchema} from "../types/framework-request.types"
 import {glassesModelSchema, routineIdentitySchema, routinePlatformSchema} from "../types/routine-definition.types"
 import {
-  laneRestorationProjectionSchema,
   frameworkDeploymentSchema,
   frameworkHistoryEntrySchema,
   frameworkProcessSchema,
   type FrameworkHistoryEntry,
   laneActivitySchema,
+  laneRepairStatusSchema,
 } from "../types/lane-restoration.types"
 import {frameworkBindingSchema} from "../types/framework-version.types"
 import {permissionObservationsSchema} from "../types/resource-permissions.types"
@@ -28,6 +28,9 @@ import {routineQueuedBlockSchema, routineProgressSchema} from '../types/routine-
 import {TestRequestModel} from '../models/test-request.model'
 import {isDeepStrictEqual} from 'node:util'
 import {preparationFrameworkAdmissionSchema, type PreparationFrameworkAdmission, type PreparationFrameworkEffect} from '../types/routine-dispatch.types'
+import {currentAcceptedFramework, testHostHistoryRepository,
+  type TestHostHistoryRepository} from './test-host-history.repository'
+const logger = createLogger('core').child({component: 'test-host-state'})
 const resource = z
   .object({
     id: frameworkIdentitySchema,
@@ -139,9 +142,11 @@ const routingHostSchema = z.object({
 }).strict().superRefine(validateHostLaneInventory)
 export type RoutingTestHostState = z.infer<typeof routingHostSchema> & ResourceReadinessAuthority & {receivedAt: string; authorityReservations?: HostResourceReservation[]}
 // Permission observations remain fresh; only diagnostic/history fields are excluded at the database.
-const routingStateProjection = {hostId: 1, receivedAt: 1, resourceReservations: 1, laneControls: 1, 'resourceLifecycleCursor.schemaVersion': 1, 'resourceLifecycleCursor.subjects': 1,
+const routingStateProjection = {hostId: 1, receivedAt: 1, resourceReservations: 1, laneControls: 1,
+  'resourceLifecycleCursor.schemaVersion': 1, 'resourceLifecycleCursor.subjects': 1,
   'snapshot.resourceReservations.resourceReadiness': 1, 'snapshot.observedAt': 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
-  'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle.schemaVersion': 1, 'snapshot.resourceLifecycle.subjects': 1, 'snapshot.resources': 1,
+  'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1,
+  'snapshot.resourceLifecycle.schemaVersion': 1, 'snapshot.resourceLifecycle.subjects': 1, 'snapshot.resources': 1,
   'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
   'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
   'snapshot.lanes.glasses': 1, _id: 0} as const
@@ -153,7 +158,17 @@ const routineAvailability = z
     reason: z.string().min(1).max(2000).optional(),
   })
   .strict()
-export const hostStateSchema = z
+function currentHostInput(input: unknown) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return input
+  const {frameworkHistory: _history, restoration, ...current} = input as Record<string, any>
+  const attempts = restoration && Array.isArray(restoration.attempts) ? restoration.attempts : undefined
+  const ownedRepairs = new Set((Array.isArray(current.lanes) ? current.lanes : []).flatMap((lane: any) =>
+    lane?.activity?.owner?.kind === 'fixer' ? [lane.activity.owner.id] : []))
+  return {...current, ...(attempts && current.repairStatuses === undefined ? {repairStatuses: attempts.filter((attempt: any) => attempt?.current || ownedRepairs.has(attempt?.executionId)).map((attempt: any) =>
+    Object.fromEntries(['executionId', 'interruptionId', 'laneId', 'state', 'current', 'startedAt', 'finishedAt', 'haltDecisionId']
+      .filter(key => attempt[key] !== undefined).map(key => [key, attempt[key]])))} : {})}
+}
+export const hostStateSchema = z.preprocess(currentHostInput, z
   .object({
     hostId: frameworkIdentitySchema,
     incarnation: frameworkIdentitySchema,
@@ -191,15 +206,14 @@ export const hostStateSchema = z
           }),
       )
       .max(100),
-    resourceLifecycle: resourceLifecycleSchema.optional(),
+    resourceLifecycle: resourceLifecycleCurrentSchema.optional(),
     laneControls: laneControlExchangeSchema.optional(),
     resourceReservations: resourceReservationObservationSchema.optional(),
-    restoration: laneRestorationProjectionSchema.optional(),
+    repairStatuses: z.array(laneRepairStatusSchema).max(100).optional(),
     frameworkBinding: frameworkBindingSchema.optional(),
     frameworkAcceptedAt: z.string().datetime({offset: true}).optional(),
     frameworkProcess: frameworkProcessSchema.optional(),
     deployment: frameworkDeploymentSchema.optional(),
-    frameworkHistory: z.array(frameworkHistoryEntrySchema).max(100).optional(),
   })
   .strict()
   .superRefine((snapshot, ctx) => {
@@ -211,25 +225,10 @@ export const hostStateSchema = z
       0
     )
       ctx.addIssue({code: "custom", message: "Actual framework requires accepted time and process identity"})
-    const history = snapshot.frameworkHistory ?? []
-    if (
-      new Set(history.map((value) => value.incarnation)).size !== history.length ||
-      new Set(history.map((value) => value.incarnationGeneration)).size !== history.length
-    )
-      ctx.addIssue({code: "custom", message: "Accepted framework history must have unique controller incarnations"})
-    for (const interval of history)
-      if (
-        interval.incarnationGeneration === snapshot.incarnationGeneration &&
-        interval.incarnation !== snapshot.incarnation
-      )
-        ctx.addIssue({
-          code: "custom",
-          message: "Framework history current generation differs from reporting incarnation",
-        })
     for (const lane of snapshot.lanes) if (lane.progress && (lane.progress.controllerIncarnation !== snapshot.incarnation ||
         lane.progress.sequence !== snapshot.sequence || lane.progress.observedAt !== snapshot.observedAt))
       ctx.addIssue({code: 'custom', message: 'Routine progress differs from its controller observation'})
-    if (snapshot.restoration?.attempts.some((attempt) => !snapshot.lanes.some((lane) => lane.id === attempt.laneId)))
+    if (snapshot.repairStatuses?.some((attempt) => !snapshot.lanes.some((lane) => lane.id === attempt.laneId)))
       ctx.addIssue({code: "custom", message: "Restoration attempt names an unknown host lane"})
     const storage = snapshot.lanes.flatMap(lane => lane.resources.flatMap(resource => resource.storage ? [resource.storage] : []))
     if (storage.some(value => Date.parse(value.observedAt) > Date.parse(snapshot.observedAt) || JSON.stringify(value) !== JSON.stringify(storage[0])))
@@ -237,8 +236,7 @@ export const hostStateSchema = z
     for (const lane of snapshot.lanes) if (lane.waiting?.some(value => Date.parse(value.observedAt) > Date.parse(snapshot.observedAt)) ||
       new Set(lane.waiting?.map(value => value.requestId)).size !== (lane.waiting?.length ?? 0))
       ctx.addIssue({code: 'custom', message: 'Queued blocker observations must have unique identities and actual past timestamps'})
-    if (snapshot.resourceLifecycle && [...snapshot.resourceLifecycle.subjects.map(subject=>subject.observedAt),
-        ...snapshot.resourceLifecycle.history.map(event=>event.at)].some(at=>at!==null && Date.parse(at)>Date.parse(snapshot.observedAt)))
+    if (snapshot.resourceLifecycle?.subjects.some(subject=>subject.observedAt!==null && Date.parse(subject.observedAt)>Date.parse(snapshot.observedAt)))
       ctx.addIssue({code: 'custom', message: 'Resource observation is newer than host observation'})
     if (snapshot.resourceLifecycle?.subjects.some(subject => subject.subject.authorityHostId !== snapshot.hostId))
       ctx.addIssue({code: "custom", message: "Resource lifecycle must be reported by its authority host"})
@@ -253,7 +251,7 @@ export const hostStateSchema = z
       new Set(local.flatMap(value => value.success ? [value.data.laneId] : [])).size !== local.length)
       ctx.addIssue({code: 'custom', message: 'Local prerequisites must retain unique original inputs on their authority host'})
     validateHostLaneInventory(snapshot, ctx)
-  })
+  }))
 export type TestHostState = z.infer<typeof hostStateSchema>
 const frameworkStopSchema = z.object({
   installationId: frameworkIdentitySchema,
@@ -261,26 +259,79 @@ const frameworkStopSchema = z.object({
   observedAt: z.string().datetime({offset: true}),
 }).strict()
 type FrameworkStop = z.infer<typeof frameworkStopSchema>
+// Optional telemetry can omit framework metadata. Retain its last accepted
+// identity for custody continuity, never as evidence that an omitted report is available.
+const frameworkAcceptedIdentitySchema=z.object({frameworkBinding:frameworkBindingSchema,
+  frameworkProcess:frameworkProcessSchema,frameworkAcceptedAt:z.string().datetime({offset:true}),
+  incarnation:frameworkIdentitySchema,incarnationGeneration:z.number().int().positive().safe()}).strict()
+// Unaccepted process points are operational state. Unknown matching metadata
+// must still refuse acceptance; unrelated points never validate current state.
+const frameworkUnacceptedStopsSchema=z.array(z.unknown()).max(100)
+const firstMatchingStop = (installationId: unknown, processId: unknown, processBirth: unknown) => ({$arrayElemAt:[
+  {$filter:{input:{$cond:[{$isArray:'$frameworkStopReceipts'},'$frameworkStopReceipts',[]]},as:'stop',cond:{$and:[
+    ...[installationId,processId,processBirth].map(value=>({$ne:[{$ifNull:[value,null]},null]})),
+    {$eq:['$$stop.installationId',installationId]},{$eq:['$$stop.process.pid',processId]},
+    {$eq:['$$stop.process.startedAt',processBirth]},
+  ]}}},0,
+]})
+// Select one exact process point from an old document; no event array crosses
+// the current read boundary. The next authenticated writer retains it below.
+const acceptedFrameworkField=(field:string)=>({$ifNull:[`$snapshot.${field}`,`$frameworkAcceptedIdentity.${field}`]})
+export const currentFrameworkStopProjection={$cond:[{$and:[
+  {$eq:['$frameworkCurrentStop.installationId',acceptedFrameworkField('frameworkBinding.installationId')]},
+  {$eq:['$frameworkCurrentStop.process.pid',acceptedFrameworkField('frameworkProcess.pid')]},
+  {$eq:['$frameworkCurrentStop.process.startedAt',acceptedFrameworkField('frameworkProcess.startedAt')]},
+  {$ne:[{$ifNull:[acceptedFrameworkField('frameworkBinding.installationId'),null]},null]},
+]},'$frameworkCurrentStop',firstMatchingStop(acceptedFrameworkField('frameworkBinding.installationId'),
+  acceptedFrameworkField('frameworkProcess.pid'),acceptedFrameworkField('frameworkProcess.startedAt'))]}
+const legacyStopTime={$convert:{input:'$$stop.observedAt',to:'date',onError:null,onNull:null}}
+const legacyUnacceptedStops={$filter:{input:{$cond:[{$isArray:'$frameworkStopReceipts'},'$frameworkStopReceipts',[]]},as:'stop',cond:{$and:[
+  ...['installationId','process.pid','process.startedAt'].map(field=>({$ne:[{$ifNull:[`$$stop.${field}`,null]},null]})),
+  {$not:[{$and:[{$eq:['$$stop.installationId',acceptedFrameworkField('frameworkBinding.installationId')]},
+    {$eq:['$$stop.process.pid',acceptedFrameworkField('frameworkProcess.pid')]},{$eq:['$$stop.process.startedAt',acceptedFrameworkField('frameworkProcess.startedAt')]}]}]},
+  {$or:[{$eq:[legacyStopTime,null]},{$gte:[legacyStopTime,{$convert:{input:acceptedFrameworkField('frameworkAcceptedAt'),to:'date',onError:null,onNull:null}}]}]},
+]}}}
+function exactStop(value:unknown, installationId:string,process:FrameworkStop['process']) {
+ const stop=value as Partial<FrameworkStop>|null
+ return stop?.installationId===installationId&&stop.process?.pid===process.pid&&stop.process.startedAt===process.startedAt
+}
+function unacceptedStopPoints(value:unknown) {
+ const points=z.array(z.unknown()).max(200).parse(value??[]),distinct=new Map<string,unknown>()
+ for(const point of points) {
+  const stop=point as Partial<FrameworkStop>|null,key=JSON.stringify([stop?.installationId,stop?.process?.pid,stop?.process?.startedAt])
+  if(!distinct.has(key)||!frameworkStopSchema.safeParse(distinct.get(key)).success&&frameworkStopSchema.safeParse(point).success)distinct.set(key,point)
+ }
+ return frameworkUnacceptedStopsSchema.parse([...distinct.values()])
+}
+/** The updater's latest unresolved stop is current process state. It is
+ * consumed by the matching delayed acceptance, never an event replay. */
+function currentFrameworkInterval(row: {snapshot?: Record<string, any>; incarnation?: string; incarnationGeneration?: number;
+  frameworkAcceptedIdentity?:unknown;frameworkCurrentStop?: unknown;legacyFrameworkInterval?:unknown}) {
+  const hasSnapshot=Boolean(row.snapshot?.frameworkBinding)
+  const identity=hasSnapshot||row.frameworkAcceptedIdentity===undefined?undefined:
+    frameworkAcceptedIdentitySchema.parse(row.frameworkAcceptedIdentity)
+  // Only authenticated writer reads select this single legacy operational point.
+  // A current scalar wins over same-generation debug; a later old writer's
+  // authentic acceptance remains the fence when its latest telemetry omitted it.
+  const legacy=!hasSnapshot&&row.legacyFrameworkInterval&&(!identity||
+    (row.legacyFrameworkInterval as FrameworkHistoryEntry).incarnationGeneration>identity.incarnationGeneration)
+    ? frameworkHistoryEntrySchema.parse({...row.legacyFrameworkInterval as Record<string,unknown>,observedAt:row.snapshot?.observedAt}):undefined
+  const snapshot=hasSnapshot?row.snapshot:identity
+  if(!snapshot?.frameworkBinding&&!legacy) return undefined
+  const interval=legacy??currentAcceptedFramework({...snapshot,observedAt:row.snapshot?.observedAt??snapshot?.frameworkAcceptedAt,
+    incarnation:hasSnapshot?row.incarnation??snapshot?.incarnation:snapshot?.incarnation,
+    incarnationGeneration:hasSnapshot?row.incarnationGeneration??snapshot?.incarnationGeneration:snapshot?.incarnationGeneration} as Parameters<typeof currentAcceptedFramework>[0])!
+  const stop=row.frameworkCurrentStop===undefined?undefined:frameworkStopSchema.parse(row.frameworkCurrentStop)
+  return stop&&sameStoppedProcess(stop,interval.binding.installationId,interval.process)
+    ? frameworkHistoryEntrySchema.parse({...interval,endedAt:stop.observedAt,endReason:'observed-stop'}) : interval
+}
 const sameStoppedProcess = (stop: FrameworkStop, installationId: string, process: FrameworkStop['process']) =>
   stop.installationId === installationId && stop.process.pid === process.pid && stop.process.startedAt === process.startedAt
-function reconcileFrameworkStops(history: FrameworkHistoryEntry[], stops: FrameworkStop[]) {
-  for (const stop of stops) {
-    const matching = history.filter(value => sameStoppedProcess(stop, value.binding.installationId, value.process))
-    const interval = matching.filter(value => Date.parse(value.effectiveAt) <= Date.parse(stop.observedAt))
-      .sort((a, b) => Date.parse(b.effectiveAt) - Date.parse(a.effectiveAt) || b.incarnationGeneration - a.incarnationGeneration)[0]
-      ?? matching.sort((a, b) => Date.parse(a.effectiveAt) - Date.parse(b.effectiveAt))[0]
-    if (!interval) continue
-    if (Date.parse(stop.observedAt) < Date.parse(interval.effectiveAt))
-      throw new TestRunError(409, "Observed framework stop precedes its accepted startup")
-    // A controller may report its later recovery inspection before the updater
-    // delivers the original supervisor observation. The independently retained
-    // stop can shorten that interval, but never extend it or change its identity.
-    if (!interval.endedAt || Date.parse(stop.observedAt) <= Date.parse(interval.endedAt)) {
-      interval.endedAt = stop.observedAt
-      interval.endReason = 'observed-stop'
-    }
-  }
-}
+const acceptedIdentity = (interval:FrameworkHistoryEntry)=>({frameworkBinding:interval.binding,
+  frameworkProcess:interval.process,frameworkAcceptedAt:interval.effectiveAt,
+  incarnation:interval.incarnation,incarnationGeneration:interval.incarnationGeneration})
+const observedIntervalStop = (interval:FrameworkHistoryEntry|undefined)=>interval?.endReason==='observed-stop'&&interval.endedAt
+  ? frameworkStopSchema.parse({installationId:interval.binding.installationId,process:interval.process,observedAt:interval.endedAt}):undefined
 export const updaterDeploymentSchema = z
   .object({
     hostId: frameworkIdentitySchema,
@@ -291,14 +342,60 @@ export const updaterDeploymentSchema = z
     stopped: frameworkStopSchema.optional(),
   })
   .strict()
-export type ReceivedTestHostState = TestHostState & ResourceReadinessAuthority & {receivedAt: string; frameworkHistory?: FrameworkHistoryEntry[]; authorityReservations?: HostResourceReservation[]}
+export type ReceivedTestHostState = TestHostState & ResourceReadinessAuthority & {receivedAt: string;
+  frameworkCurrentStop?: FrameworkStop; frameworkHistory?: FrameworkHistoryEntry[]; authorityReservations?: HostResourceReservation[]}
+// Old documents keep their owned repair inside restoration diagnostics. Select
+// only current owner-linked fields until the normal report extracts them.
+export const currentOwnedRepairProjection={$ifNull:['$snapshot.repairStatuses',{$map:{
+  input:{$filter:{input:{$cond:[{$isArray:'$snapshot.restoration.attempts'},'$snapshot.restoration.attempts',[]]},
+    as:'repair',cond:{$in:[['$$repair.laneId','$$repair.executionId'],{$map:{
+      input:{$filter:{input:'$snapshot.lanes',as:'lane',cond:{$eq:['$$lane.activity.owner.kind','fixer']}}},
+      as:'lane',in:['$$lane.id','$$lane.activity.owner.id'],
+    }}]}}},as:'repair',in:Object.fromEntries(
+      ['executionId','interruptionId','laneId','state','current','startedAt','finishedAt','haltDecisionId']
+        .map(field=>[field,`$$repair.${field}`])),
+}}]}
+export const currentHostStateProjection = {hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1,
+  receivedAt: 1, resourceReservations: 1, laneControls: 1, frameworkCurrentStop: currentFrameworkStopProjection,
+  'resourceLifecycleCursor.schemaVersion': 1, 'resourceLifecycleCursor.subjects': 1,
+  'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.sequence': 1,
+  'snapshot.observedAt': 1, 'snapshot.resources': 1, 'snapshot.lanes.id': 1, 'snapshot.lanes.platform': 1,
+  'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.dispatchMode': 1,
+  'snapshot.lanes.resources': 1, 'snapshot.lanes.glasses': 1, 'snapshot.lanes.activity': 1,
+  'snapshot.lanes.progress': 1, 'snapshot.lanes.waiting': 1, 'snapshot.lanes.routineAvailability': 1, 'snapshot.repairStatuses': currentOwnedRepairProjection,
+  'snapshot.resourceLifecycle.schemaVersion': 1, 'snapshot.resourceLifecycle.subjects': 1,
+  'snapshot.laneControls': 1, 'snapshot.resourceReservations': 1, 'snapshot.frameworkBinding': 1,
+  'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1, 'snapshot.deployment': 1, _id: 0} as const
 const deploymentCursor = (row: {deploymentGeneration?: number; deploymentSequence?: number}) => ({
   deploymentGeneration: row.deploymentGeneration ?? {$exists: false},
   deploymentSequence: row.deploymentSequence ?? {$exists: false},
 })
-// Host snapshots contain repair diagnostics; reporting needs only their accepted cursor and history.
-const reportingStateProjection = {hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1,
-  deploymentGeneration: 1, deploymentSequence: 1, frameworkHistory: 1, frameworkStopReceipts: 1, 'snapshot.resourceLifecycle': 1, resourceLifecycleCursor: 1} as const
+// Current reporting never loads journal or repair debug payloads.
+const reportingCurrentFields = {hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1,
+  deploymentGeneration: 1, deploymentSequence: 1, frameworkAcceptedIdentity: 1, frameworkCurrentStop: 1, frameworkUnacceptedStops: 1,
+  'snapshot.observedAt': 1, 'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1,
+  'snapshot.resourceLifecycle.schemaVersion': 1, 'snapshot.resourceLifecycle.subjects': 1,
+  'resourceLifecycleCursor.schemaVersion': 1, 'resourceLifecycleCursor.subjects': 1} as const
+// Before extraction an old writer may already have omitted optional metadata.
+// Retain one accepted tuple by its monotonic controller generation, not a
+// diagnostic replay. No legacy event array crosses the writer read boundary.
+const legacyAcceptedFrameworkProjection={$let:{vars:{point:{$reduce:{
+  input:{$cond:[{$isArray:'$frameworkHistory'},'$frameworkHistory',[]]},initialValue:null,
+  in:{$cond:[{$and:[{$lte:['$$this.incarnationGeneration','$incarnationGeneration']},
+    {$gt:['$$this.incarnationGeneration',{$ifNull:['$$value.incarnationGeneration',0]}]}]},'$$this','$$value']},
+}}},in:{$cond:[{$ne:['$$point',null]},Object.fromEntries(
+  ['binding','process','incarnation','incarnationGeneration','effectiveAt','endedAt','endReason'].map(field=>[field,`$$point.${field}`])),null]}}}
+// Older writers retained their first exact stop in a bounded array. At this
+// ordinary writer boundary project only the relevant current process point;
+// unrelated diagnostic entries are neither returned nor validated.
+const reportingStateProjection = (incoming?: TestHostState) => ({...reportingCurrentFields,
+  legacyFrameworkInterval:legacyAcceptedFrameworkProjection,
+  frameworkCurrentStop:currentFrameworkStopProjection,
+  frameworkUnacceptedStops:{$concatArrays:[{$ifNull:['$frameworkUnacceptedStops',[]]},legacyUnacceptedStops]},
+  ...(incoming?.frameworkBinding&&incoming.frameworkProcess?{incomingFrameworkStop:firstMatchingStop(
+    {$literal:incoming.frameworkBinding.installationId},{$literal:incoming.frameworkProcess.pid},{$literal:incoming.frameworkProcess.startedAt})}:{}),
+})
+
 async function retryHostStateWrite<T>(write: () => Promise<T | undefined>, conflict: string): Promise<T> {
   // Only an atomic write collision returns undefined; semantic conflicts and database errors propagate.
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -309,13 +406,23 @@ async function retryHostStateWrite<T>(write: () => Promise<T | undefined>, confl
 }
 const recorderReturnLogger = createLogger('core').child({service: 'recorder-return'})
 export class TestHostStateService {
-  constructor(private readonly now: () => number = Date.now, private readonly onAccepted?: (host: ResourceReservationHost) => Promise<unknown>) {}
+  constructor(private readonly now: () => number = Date.now, private readonly onAccepted?: (host: ResourceReservationHost) => Promise<unknown>,
+    private readonly history: TestHostHistoryRepository = testHostHistoryRepository) {}
   async report(input: unknown, hostId: string) {
     const snapshot = hostStateSchema.parse(input)
-    return retryHostStateWrite(
+    const receipt = await retryHostStateWrite(
       () => this.reportSnapshot(snapshot, hostId),
       'Controller snapshot advanced concurrently; retry current observation',
     )
+    const raw = input as Record<string, any>
+    // Reporting current state does not await, parse or depend on debug delivery.
+    void this.history.debug({hostId, incarnationGeneration: snapshot.incarnationGeneration, sequence: snapshot.sequence,
+      receivedAt: new Date(this.now()), payload: {
+        ...(Array.isArray(raw.frameworkHistory) ? {frameworkHistory: raw.frameworkHistory.slice(-100)} : {}),
+        ...(Array.isArray(raw.resourceLifecycle?.history) ? {resourceHistory: raw.resourceLifecycle.history.slice(-200)} : {}),
+        ...(raw.restoration ? {restoration: raw.restoration} : {}),
+      }}).catch(error => logger.warn({hostId, error}, 'Host debug history delivery failed'))
+    return receipt
   }
   private async reportSnapshot(snapshot: TestHostState, hostId: string) {
     if (snapshot.hostId !== hostId) throw new TestRunError(409, "Host snapshot differs from authenticated controller")
@@ -334,7 +441,7 @@ export class TestHostStateService {
         .read('primary').readConcern('majority').setOptions({timeoutMS: 10_000}).lean()
       if (!request) throw new TestRunError(409, 'Routine progress differs from its authenticated accepted request')
     }
-    const current = await TestHostStateModel.findOne({hostId}).select(reportingStateProjection).lean()
+    const current = await TestHostStateModel.findOne({hostId}).select(reportingStateProjection(snapshot)).lean()
     if (current) {
       if (
         snapshot.incarnationGeneration === current.incarnationGeneration &&
@@ -364,83 +471,26 @@ export class TestHostStateService {
           ...deploymentCursor(current),
         }
       : {hostId, incarnationGeneration: {$exists: false}}
-    const history: FrameworkHistoryEntry[] = (current?.frameworkHistory ?? []).map((value) =>
-      frameworkHistoryEntrySchema.parse(value),
-    )
-    const stops = (current?.frameworkStopReceipts ?? []).map(value => frameworkStopSchema.parse(value))
-    for (const interval of snapshot.frameworkHistory ?? []) {
-      if (interval.incarnationGeneration > snapshot.incarnationGeneration)
-        throw new TestRunError(409, "Framework history names a future controller generation")
-      const prior = history.find((value) => value.incarnation === interval.incarnation)
-      if (prior) {
-        if (
-          JSON.stringify(prior.binding) !== JSON.stringify(interval.binding) ||
-          JSON.stringify(prior.process) !== JSON.stringify(interval.process) ||
-          prior.effectiveAt !== interval.effectiveAt ||
-          prior.incarnationGeneration !== interval.incarnationGeneration
-        )
-          throw new TestRunError(409, "Durable framework history changed accepted identity")
-        if (!prior.endedAt && interval.endedAt) {
-          prior.endedAt = interval.endedAt
-          prior.endReason = interval.endReason
-        }
-      } else history.push(frameworkHistoryEntrySchema.parse(interval))
-    }
-    history.sort((a, b) => a.incarnationGeneration - b.incarnationGeneration)
-    // A late history-bearing restart may already have inserted the successor. Move the process stop
-    // to its applicable interval while preserving the earlier controller replacement boundary.
-    for (let index = 1; index < history.length; index++) {
-      const prior = history[index - 1]!, next = history[index]!
-      if (prior.endReason === 'observed-stop' && Date.parse(prior.endedAt!) >= Date.parse(next.effectiveAt) &&
-        sameStoppedProcess({installationId: prior.binding.installationId, process: prior.process, observedAt: prior.endedAt!},
-          next.binding.installationId, next.process)) {
-        prior.endedAt = next.effectiveAt
-        prior.endReason = 'accepted-replacement'
-      }
-    }
-    if (snapshot.frameworkBinding) {
-      const last = history.at(-1),
-        same =
-          last &&
-          JSON.stringify(last.binding) === JSON.stringify(snapshot.frameworkBinding) &&
-          last.incarnation === snapshot.incarnation
-      if (last?.incarnation === snapshot.incarnation && !same)
-        throw new TestRunError(409, "Framework binding cannot change within a controller incarnation")
-      if (same) {
-        if (
-          JSON.stringify(last.process) !== JSON.stringify(snapshot.frameworkProcess) ||
-          last.effectiveAt !== snapshot.frameworkAcceptedAt
-        )
-          throw new TestRunError(409, "Framework accepted identity changed within one controller incarnation")
-        if (last.endedAt)
-          throw new TestRunError(409, "A controller observed stopped cannot assert another running observation")
-        last.observedAt = snapshot.observedAt
-      } else {
-        const sharedStoppedProcess = last?.endReason === 'observed-stop' && snapshot.frameworkProcess &&
-          sameStoppedProcess({installationId: last.binding.installationId, process: last.process, observedAt: last.endedAt!},
-            snapshot.frameworkBinding.installationId, snapshot.frameworkProcess) &&
-          Date.parse(snapshot.frameworkAcceptedAt!) >= Date.parse(last.effectiveAt) &&
-          Date.parse(snapshot.frameworkAcceptedAt!) <= Date.parse(last.endedAt!)
-        if (last && !sharedStoppedProcess && Date.parse(snapshot.frameworkAcceptedAt!) < Date.parse(last.endedAt ?? last.effectiveAt))
-          throw new TestRunError(409, "Framework replacement precedes the last accepted interval")
-        if (last && (!last.endedAt || sharedStoppedProcess)) {
-          last.endedAt = snapshot.frameworkAcceptedAt
-          last.endReason = "accepted-replacement"
-        }
-        history.push(
-          frameworkHistoryEntrySchema.parse({
-            binding: snapshot.frameworkBinding,
-            incarnation: snapshot.incarnation,
-            incarnationGeneration: snapshot.incarnationGeneration,
-            process: snapshot.frameworkProcess,
-            effectiveAt: snapshot.frameworkAcceptedAt,
-            observedAt: snapshot.observedAt,
-          }),
-        )
-      }
-    }
-    // Startup/history may arrive after the updater already acknowledged the exact process's stop.
-    reconcileFrameworkStops(history, stops)
+    const prior = current ? currentFrameworkInterval(current) : undefined
+    const unaccepted=unacceptedStopPoints(current?.frameworkUnacceptedStops)
+    const incomingStop=unaccepted.find(stop=>snapshot.frameworkBinding&&snapshot.frameworkProcess&&
+      exactStop(stop,snapshot.frameworkBinding.installationId,snapshot.frameworkProcess))??
+      (current as {incomingFrameworkStop?:unknown}|null)?.incomingFrameworkStop
+    const interval = currentFrameworkInterval({snapshot,frameworkCurrentStop:incomingStop??current?.frameworkCurrentStop})
+    const retainedStops=interval?unaccepted.filter(stop=>!exactStop(stop,interval.binding.installationId,interval.process)&&
+      !(frameworkStopSchema.safeParse(stop).success&&Date.parse((stop as FrameworkStop).observedAt)<Date.parse(interval.effectiveAt))):unaccepted
+    if (prior && interval && prior.incarnation === interval.incarnation &&
+      (!isDeepStrictEqual(prior.binding, interval.binding) || !isDeepStrictEqual(prior.process, interval.process) ||
+        prior.effectiveAt !== interval.effectiveAt || prior.endedAt))
+      throw new TestRunError(409, 'Framework accepted identity changed or stopped within one controller incarnation')
+    if (prior && interval && prior.endedAt &&
+      sameStoppedProcess({installationId: prior.binding.installationId, process: prior.process, observedAt: prior.endedAt},
+        interval.binding.installationId, interval.process))
+      throw new TestRunError(409, 'A controller observed stopped cannot assert another running observation')
+    if (prior && interval && prior.incarnation !== interval.incarnation &&
+      Date.parse(interval.effectiveAt) < Date.parse(prior.endedAt ?? prior.effectiveAt))
+      throw new TestRunError(409, 'Framework replacement precedes the last accepted interval')
+    const accepted=interval??prior,retainedStop=observedIntervalStop(accepted)
     try {
       const saved = await TestHostStateModel.findOneAndUpdate(
         filter,
@@ -453,14 +503,27 @@ export class TestHostStateService {
             observedAt: new Date(snapshot.observedAt),
             receivedAt: new Date(this.now()),
             snapshot,
-            frameworkHistory: history.slice(-100),
+            ...(accepted?{frameworkAcceptedIdentity:acceptedIdentity(accepted)}:{}),
+            frameworkUnacceptedStops:retainedStops,
+            ...(retainedStop?{frameworkCurrentStop:retainedStop}:{}),
             ...(resourceLifecycleCursor ? {resourceLifecycleCursor} : {}),
           },
+          $unset: {frameworkHistory: '',
+            ...(accepted?{frameworkStopReceipts:''}:{}),
+            ...(interval && !interval.endedAt ? {frameworkCurrentStop:''} : {})},
         },
-        {upsert: !current, new: true, writeConcern: testWriteConcern},
+        // The parsed envelope and patch above are server-constructed. Preserve
+        // unsets for retired schema paths without restoring those stored fields.
+        {upsert: !current, new: true, strict: false, writeConcern: testWriteConcern},
       ).select({hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1, receivedAt: 1,
         laneControlVersion: 1, resourceReservationVersion: 1, resourceReservations: 1}).lean()
       if (!saved) return undefined
+      if(interval&&(!prior||prior.incarnation!==interval.incarnation)) {
+        const finished=prior&&!prior.endedAt?{...prior,endedAt:interval.effectiveAt,endReason:'accepted-replacement'}:prior
+        void this.history.debug({hostId,incarnationGeneration:snapshot.incarnationGeneration,sequence:snapshot.sequence,
+          receivedAt:new Date(this.now()),payload:{frameworkHistory:[...(finished?[finished]:[]),interval]}})
+          .catch(error=>logger.warn({hostId,error},'Accepted framework debug delivery failed'))
+      }
       // Reuse the accepted current snapshot. Its exact host/version CAS still fences a later writer.
       const claims = hostResourceReservationsSchema.safeParse(saved.resourceReservations ?? [])
       if (this.onAccepted && claims.success && claims.data.some(claim => !isExclusiveHostReservation(claim)))
@@ -499,41 +562,37 @@ export class TestHostStateService {
         ...(row.resourceLifecycleCursor === undefined ? {} : {resourceLifecycleCursor: resourceLifecycleCurrentSchema.parse(row.resourceLifecycleCursor)})};
     });
   }
-  async get(hostId: string, options?: {frameworkHistory?: boolean}): Promise<ReceivedTestHostState | null> {
-    const row = await TestHostStateModel.findOne({hostId}).select({resourceReservations: 1, laneControls: 1,
-      resourceLifecycleCursor: 1, receivedAt: 1, ...(options?.frameworkHistory === false ? {
-        'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.sequence': 1,
-        'snapshot.observedAt': 1, 'snapshot.resources': 1, 'snapshot.lanes': 1, 'snapshot.resourceLifecycle': 1,
-        'snapshot.laneControls': 1, 'snapshot.resourceReservations': 1, 'snapshot.frameworkBinding': 1,
-        'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1,
-      } : {snapshot: 1, frameworkHistory: 1}), _id: 0}).lean()
-    return row
-      ? {
-          ...hostStateSchema.parse(row.snapshot),
-          authorityReservations: hostResourceReservationsSchema.parse(row.resourceReservations ?? []),
-          ...(row.laneControls === undefined ? {} : {resourceControlRecords: row.laneControls}),
-          ...(row.resourceLifecycleCursor === undefined ? {} : {resourceLifecycleCursor: row.resourceLifecycleCursor}),
-          receivedAt: row.receivedAt.toISOString(),
-          frameworkHistory: (row.frameworkHistory ?? []).map((value) => frameworkHistoryEntrySchema.parse(value)),
-        }
-      : null
+  /** Current selected-host state. Debug and source journals have separate readers. */
+  async get(hostId: string): Promise<ReceivedTestHostState | null> {
+    const row = await TestHostStateModel.findOne({hostId}).select(currentHostStateProjection)
+      .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean()
+    if (!row) return null
+    return {...hostStateSchema.parse(row.snapshot),
+      authorityReservations: hostResourceReservationsSchema.parse(row.resourceReservations ?? []),
+      ...(row.laneControls === undefined ? {} : {resourceControlRecords: row.laneControls}),
+      ...(row.resourceLifecycleCursor === undefined ? {} : {resourceLifecycleCursor: resourceLifecycleCurrentSchema.parse(row.resourceLifecycleCursor)}),
+      ...(row.frameworkCurrentStop ? {frameworkCurrentStop: frameworkStopSchema.parse(row.frameworkCurrentStop)} : {}),
+      receivedAt: row.receivedAt.toISOString()}
   }
-  /** Source preparation needs the accepted current framework, without device or repair diagnostics. */
+  /** Preparation validates only the accepted current source identity. */
   async frameworkObservation(hostId: string) {
     const row = await TestHostStateModel.findOne({hostId}).select({hostId: 1, receivedAt: 1,
-      'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.observedAt': 1, 'snapshot.frameworkBinding': 1,
-      'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1, frameworkHistory: 1, _id: 0})
-      .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean();
-    const parsed = z.object({hostId: frameworkIdentitySchema, receivedAt: z.date(), snapshot: z.object({
-      hostId: frameworkIdentitySchema, incarnation: frameworkIdentitySchema, observedAt: z.string().datetime({offset: true}),
+      frameworkCurrentStop:currentFrameworkStopProjection, 'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1,
+      'snapshot.observedAt': 1, 'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1, _id: 0})
+      .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean()
+    const snapshot = z.object({hostId: frameworkIdentitySchema, incarnation: frameworkIdentitySchema,
+      incarnationGeneration: z.number().int().positive().safe(), observedAt: z.string().datetime({offset: true}),
       frameworkBinding: frameworkBindingSchema, frameworkAcceptedAt: z.string().datetime({offset: true}),
-      frameworkProcess: frameworkProcessSchema}), frameworkHistory: z.array(frameworkHistoryEntrySchema).max(100)}).safeParse(row);
-    if (!parsed.success || parsed.data.hostId !== hostId || parsed.data.snapshot.hostId !== hostId) return null;
-    const {snapshot, frameworkHistory, receivedAt} = parsed.data, current = frameworkHistory.at(-1);
-    if (!current || current.endedAt || current.incarnation !== snapshot.incarnation ||
-      JSON.stringify(current.binding) !== JSON.stringify(snapshot.frameworkBinding) ||
-      JSON.stringify(current.process) !== JSON.stringify(snapshot.frameworkProcess) || current.effectiveAt !== snapshot.frameworkAcceptedAt) return null;
-    return {binding: snapshot.frameworkBinding, receivedAt: receivedAt.toISOString(), observedAt: snapshot.observedAt};
+      frameworkProcess: frameworkProcessSchema}).safeParse(row?.snapshot)
+    const receivedAt = z.date().safeParse(row?.receivedAt)
+    if (!snapshot.success || !receivedAt.success || row?.hostId !== hostId || snapshot.data.hostId !== hostId) return null
+    const parsedInterval = frameworkHistoryEntrySchema.safeParse(currentFrameworkInterval({...row,snapshot:snapshot.data}))
+    const interval = parsedInterval.success ? parsedInterval.data : undefined
+    if (!interval || interval.endedAt || interval.incarnation !== snapshot.data.incarnation ||
+      interval.incarnationGeneration !== snapshot.data.incarnationGeneration ||
+      !isDeepStrictEqual(interval.binding, snapshot.data.frameworkBinding) || !isDeepStrictEqual(interval.process, snapshot.data.frameworkProcess) ||
+      interval.effectiveAt !== snapshot.data.frameworkAcceptedAt) return null
+    return {binding: snapshot.data.frameworkBinding, receivedAt: receivedAt.data.toISOString(), observedAt: snapshot.data.observedAt}
   }
   async preparationFrameworkAdmission(hostId: string, requestId: string) {
     const row = await TestHostStateModel.findOne({hostId}).select({preparationFrameworkAdmissions: 1, _id: 0})
@@ -548,7 +607,7 @@ export class TestHostStateService {
       const row = await TestHostStateModel.findOne({hostId}).select({hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1,
         deploymentGeneration: 1, deploymentSequence: 1, receivedAt: 1,
         'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.sequence': 1,
-        'snapshot.observedAt': 1, 'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1, frameworkHistory: 1,
+        'snapshot.observedAt': 1, 'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1, frameworkCurrentStop:currentFrameworkStopProjection,
         preparationFrameworkAdmissions: 1, preparationFrameworkAdmissionVersion: 1})
         .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean();
       const admissions = z.array(preparationFrameworkAdmissionSchema).max(100).parse(row?.preparationFrameworkAdmissions ?? []);
@@ -564,7 +623,8 @@ export class TestHostStateService {
         observedAt: z.string().datetime({offset: true}), frameworkBinding: frameworkBindingSchema,
         frameworkAcceptedAt: z.string().datetime({offset: true}), frameworkProcess: frameworkProcessSchema}).safeParse(row?.snapshot),
         receivedAt = z.date().safeParse(row?.receivedAt);
-      const history = z.array(frameworkHistoryEntrySchema).max(100).safeParse(row?.frameworkHistory), current = history.success ? history.data.at(-1) : undefined;
+      const interval = frameworkHistoryEntrySchema.safeParse(row && snapshot.success ? currentFrameworkInterval({...row,snapshot:snapshot.data}) : undefined),
+        current = interval.success ? interval.data : undefined;
       const now = this.now();
       if (!row || !snapshot.success || !receivedAt.success || snapshot.data.hostId !== hostId ||
         row.incarnation !== snapshot.data.incarnation || row.incarnationGeneration !== snapshot.data.incarnationGeneration || row.sequence !== snapshot.data.sequence ||
@@ -589,7 +649,7 @@ export class TestHostStateService {
         receivedAt: receivedAt.data.toISOString(), observedAt: snapshot.data.observedAt, admittedAt: new Date(now).toISOString()});
       const saved = await TestHostStateModel.findOneAndUpdate({hostId, incarnation: row.incarnation,
         incarnationGeneration: row.incarnationGeneration, sequence: row.sequence, ...deploymentCursor(row),
-        frameworkHistory: row.frameworkHistory, receivedAt: row.receivedAt,
+        receivedAt: row.receivedAt,
         preparationFrameworkAdmissionVersion: row.preparationFrameworkAdmissionVersion ?? {$exists: false}},
         {$set: {preparationFrameworkAdmissions: [...retained, admission]}, $inc: {preparationFrameworkAdmissionVersion: 1}},
         {new: true, writeConcern: testWriteConcern}).select({hostId: 1}).setOptions({timeoutMS: 5000}).lean();
@@ -621,7 +681,7 @@ export class TestHostStateService {
   private async reportDeploymentObservation(observation: z.infer<typeof updaterDeploymentSchema>, hostId: string) {
     if (observation.hostId !== hostId)
       throw new TestRunError(409, "Deployment observation differs from authenticated host")
-    const current = await TestHostStateModel.findOne({hostId}).select(reportingStateProjection).lean()
+    const current = await TestHostStateModel.findOne({hostId}).select(reportingStateProjection()).lean()
     if (!current) throw new TestRunError(409, "Controller host enrollment must exist before updater observations")
     if (
       observation.generation < (current.deploymentGeneration ?? 0) ||
@@ -629,13 +689,26 @@ export class TestHostStateService {
         observation.sequence <= (current.deploymentSequence ?? 0))
     )
       return {hostId, generation: current.deploymentGeneration ?? 0, sequence: current.deploymentSequence ?? 0}
-    const history: FrameworkHistoryEntry[] = (current.frameworkHistory ?? []).map((value) =>
-      frameworkHistoryEntrySchema.parse(value),
-    )
-    const stops = (current.frameworkStopReceipts ?? []).map(value => frameworkStopSchema.parse(value))
     const stop = observation.stopped
-    if (stop && !stops.some(value => sameStoppedProcess(value, stop.installationId, stop.process))) stops.push(stop)
-    reconcileFrameworkStops(history, stops)
+    const priorStop=frameworkStopSchema.safeParse(current.frameworkCurrentStop)
+    // A fresh authenticated supervisor observation can answer unknown current
+    // metadata. It does not need a fabricated prior ending or debug receipt.
+    let interval = currentFrameworkInterval({...current,frameworkCurrentStop:priorStop.success?priorStop.data:undefined})
+    const earlierStop=observedIntervalStop(interval)??(priorStop.success?priorStop.data:undefined)
+    const unaccepted=unacceptedStopPoints(current.frameworkUnacceptedStops)
+    if(stop&&(!interval||!sameStoppedProcess(stop,interval.binding.installationId,interval.process)&&
+      Date.parse(stop.observedAt)>=Date.parse(interval.effectiveAt))&&
+      !unaccepted.some(value=>exactStop(value,stop.installationId,stop.process))) unaccepted.push(stop)
+    // Capacity is explicit. Never acknowledge a new stop by dropping another
+    // unresolved process point; the updater retains an unacknowledged delivery.
+    frameworkUnacceptedStopsSchema.parse(unaccepted)
+    const unresolvedStop=stop&&(!interval||sameStoppedProcess(stop,interval.binding.installationId,interval.process))
+      ? earlierStop&&sameStoppedProcess(earlierStop,stop.installationId,stop.process)?earlierStop:stop : earlierStop??current.frameworkCurrentStop
+    if (interval && stop && sameStoppedProcess(stop, interval.binding.installationId, interval.process)) {
+      if (Date.parse(stop.observedAt) < Date.parse(interval.effectiveAt))
+        throw new TestRunError(409, 'Observed framework stop precedes its accepted startup')
+      interval = frameworkHistoryEntrySchema.parse({...interval, endedAt: frameworkStopSchema.parse(unresolvedStop).observedAt, endReason: 'observed-stop'})
+    }
     const saved = await TestHostStateModel.findOneAndUpdate(
       {
         hostId,
@@ -650,14 +723,19 @@ export class TestHostStateService {
           deploymentSequence: observation.sequence,
           deploymentObservation: observation.deployment,
           deploymentReceivedAt: new Date(this.now()),
-          frameworkHistory: history,
-          // Same bound as accepted history; unmatched receipts survive delayed controller delivery.
-          frameworkStopReceipts: stops.slice(-100),
+          ...(interval?{frameworkAcceptedIdentity:acceptedIdentity(interval)}:{}),
+          ...(unresolvedStop?{frameworkCurrentStop:unresolvedStop}:{}),
+          frameworkUnacceptedStops:unaccepted,
         },
+        $unset: {frameworkHistory: '',...(interval||unresolvedStop?{frameworkStopReceipts:''}:{})},
       },
-      {new: true, writeConcern: testWriteConcern},
+      {new: true, strict: false, writeConcern: testWriteConcern},
     ).select({deploymentGeneration: 1, deploymentSequence: 1}).lean()
     if (!saved) return undefined
+    if (stop) void this.history.debug({hostId, incarnationGeneration: current.incarnationGeneration,
+      sequence: current.sequence, receivedAt: new Date(this.now()), payload: {frameworkStopReceipts: [stop],
+        ...(interval?.endedAt&&sameStoppedProcess(stop,interval.binding.installationId,interval.process)?{frameworkHistory:[interval]}:{})}})
+      .catch(error => logger.warn({hostId, error}, 'Host stop debug history delivery failed'))
     return {hostId, generation: saved.deploymentGeneration ?? 0, sequence: saved.deploymentSequence ?? 0}
   }
 }

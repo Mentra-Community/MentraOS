@@ -85,7 +85,8 @@ test("framework health distinguishes current accepted source, API, pending targe
       nextAction: "Wait for safe boundary",
     },
   }
-  const html = renderToStaticMarkup(<FrameworkHealth host={current} fresh />)
+  const live={...current,frameworkCurrentInterval:current.frameworkHistory[0]}
+  const html = renderToStaticMarkup(<FrameworkHealth host={live} fresh />)
   expect(html).toContain("Running framework")
   expect(html).toContain("Version 450 · Routine API 7")
   expect(html).toContain("Version 452 · Routine API 7")
@@ -93,20 +94,21 @@ test("framework health distinguishes current accepted source, API, pending targe
   expect(html).toContain("Allocated test is still active")
   expect(html).toContain("End not observed")
   for (const changed of [
-    {fresh: false, host: current},
+    {fresh: false, host: live},
     {
       fresh: true,
       host: {
-        ...current,
+        ...live,
+        frameworkCurrentInterval:{...live.frameworkCurrentInterval,endedAt:at,endReason:"observed-stop" as const},
         frameworkHistory: [{...current.frameworkHistory[0], endedAt: at, endReason: "observed-stop" as const}],
       },
     },
-    {fresh: true, host: {...current, frameworkBinding: undefined}},
+    {fresh: true, host: {...live, frameworkCurrentInterval:undefined,frameworkBinding: undefined}},
   ]) {
     const stale = renderToStaticMarkup(<FrameworkHealth {...changed} />)
     expect(stale).not.toContain("Running framework")
     expect(stale).toContain("Last confirmed framework")
-    expect(stale).toContain("Version 450")
+    if(changed.host.frameworkBinding)expect(stale).toContain("Version 450")
   }
   expect(renderToStaticMarkup(<FrameworkHealth host={host} fresh />)).not.toContain("Running framework")
 })
@@ -226,4 +228,15 @@ test('admin reservation email is readable and stale attribution stays historical
   expect(renderToStaticMarkup(<LaneHealthHost host={{...reserved, lanes: [{...reserved.lanes[0], reservedBy: null}]}} fresh />))
     .toContain('Reserved by: User not recorded')
   expect(renderToStaticMarkup(<LaneHealthHost host={host} fresh />)).not.toContain('Reserved by:')
+})
+
+test('diagnostic installation history cannot define current running framework',()=>{
+ const binding={version:1,revision:'a'.repeat(40),installationId:'current',configurationSha256:'b'.repeat(64),
+  runtimeSha256:'c'.repeat(64),routineApiVersion:111,publicApiSha256:'d'.repeat(64)}
+ const interval={binding,incarnation:'boot',incarnationGeneration:1,process:{pid:42,startedAt:'current'},effectiveAt:at,observedAt:at}
+ const current={...host,frameworkBinding:binding,frameworkAcceptedAt:at,frameworkCurrentInterval:interval,
+  frameworkHistory:[{...interval,endedAt:at,endReason:'observed-stop' as const}]}
+ expect(renderToStaticMarkup(<FrameworkHealth host={current} fresh />)).toContain('Running framework')
+ const missing={...current,frameworkCurrentInterval:undefined,frameworkHistory:[interval]}
+ expect(renderToStaticMarkup(<FrameworkHealth host={missing} fresh />)).not.toContain('Running framework')
 })

@@ -62,7 +62,7 @@ function backendAuthoringFixture(options: {permission?: boolean; storage?: boole
       qualifiedScope: {kind: 'unqualified'}, evidenceRefs: []}, repair: {configured: false, state: 'none'}, supportedActions: [],
     resource: {kind: 'phone', capabilities: ['backend-connectivity'], memberships: [{hostId: 'mini', laneId: 'phone'}], dependencies: [], placement: 'installed'}})
   const host: import('./test-host-state.service').ReceivedTestHostState = {hostId: 'mini', incarnation: 'original-controller', incarnationGeneration: 1,
-    sequence: 1, observedAt: at, receivedAt: at, frameworkBinding: binding, resourceLifecycle: {schemaVersion: 1, subjects: [phone], history: []},
+    sequence: 1, observedAt: at, receivedAt: at, frameworkBinding: binding, resourceLifecycle: {schemaVersion: 1, subjects: [phone]},
     lanes: [{id: 'phone', platform: 'android', state: 'idle', dispatchMode: 'automatic', resources: [
       {id: 'phone', kind: 'phone', capabilities: ['backend-connectivity']}, {id: 'app', kind: 'app'}, {id: 'recorder', kind: 'recorder'}]}]}
   const lane = host.lanes[0]!

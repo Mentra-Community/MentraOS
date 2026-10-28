@@ -3,7 +3,9 @@ import {createElement} from "react";
 import {renderToStaticMarkup} from "react-dom/server";
 import type {LaneRestorationAttempt, LaneRestorationHost} from "../../../../packages/core/src/types/lane-restoration.types";
 import {restorationHostIsFresh} from "../../../../packages/core/src/types/lane-restoration.types";
-import {restorationElapsed, restorationOutcome, RestorationHost} from "./lane-restoration";
+import {restorationElapsed, restorationOutcome, RestorationHost, LaneRestorationPage} from "./lane-restoration";
+import {QueryClient, QueryClientProvider} from '@tanstack/react-query';
+import {act, create} from 'react-test-renderer';
 const at = "2026-10-05T01:00:00Z";
 const attempt: LaneRestorationAttempt = {executionId: "fixer:first", interruptionId: "repair:mac:1", laneId: "mac", generation: 1,
   current: true, state: "stopped", assignedAt: at, handedOffAt: at, startedAt: at, finishedAt: "2026-10-05T01:02:03Z",
@@ -77,4 +79,22 @@ test('restoration uses the same exact-owner invocation evidence as System health
   expect(stale).toContain('Current repair execution is unknown');
   expect(render({...current, restoration: {...current.restoration, attempts: [{...working, state: 'halted', current: false}]}}))
     .toContain('Repair halted');
+});
+
+test('restoration page loads existing per-host debug detail only when its history is opened', async()=>{
+ const originalFetch=globalThis.fetch, calls:string[]=[],client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ const resumed={...attempt,state:'resumed' as const,resume:{status:'accepted' as const,decisionId:'resume:first',calledAt:at,reason:null}};
+ globalThis.fetch=(async input=>{const url=String(input);calls.push(url);return Response.json({hosts:[url.includes('?hostId=')?{...host,restoration:{schemaVersion:1,attempts:[resumed],truncated:false}}:{...host,restoration:null}],freshForMs:120000})}) as typeof fetch;
+ let view:ReturnType<typeof create>|undefined;
+ try {
+  await act(async()=>{view=create(createElement(QueryClientProvider,{client},createElement(LaneRestorationPage)))});
+  await act(async()=>{await new Promise(resolve=>setTimeout(resolve,20))});
+  expect(calls).toEqual(['/api/admin/test-runs/restoration/list']);
+  const disclosure=view!.root.findAllByType('details').find(value=>value.findAllByType('summary').some(summary=>summary.children.includes('Repair history and resume receipts')))!;
+  await act(async()=>{disclosure.props.onToggle({currentTarget:{open:true}})});
+  await act(async()=>{await new Promise(resolve=>setTimeout(resolve,20))});
+  expect(calls).toEqual(['/api/admin/test-runs/restoration/list','/api/admin/test-runs/restoration/list?hostId=mini']);
+  expect(JSON.stringify(view!.toJSON())).toContain('Scheduling resumed');
+  expect(JSON.stringify(view!.toJSON())).toContain('called and accepted');
+ }finally{await act(async()=>view?.unmount());client.clear();globalThis.fetch=originalFetch}
 });

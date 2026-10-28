@@ -68,7 +68,6 @@ function begin(x: ReturnType<typeof fixture>) {
  const subject=x.h.resourceLifecycle!.subjects.find(s=>s.subject.id==='air1:glasses')!
  subject.generation++;subject.status='checking';subject.owner={...x.claim.owner,hostId:x.h.hostId,laneId:x.lane.id,generation:1}
  x.journal.state='began' as 'prepared';Object.assign(x.journal,{eventId:`resource-check-began:${x.claim.operationId}`})
- x.h.resourceLifecycle!.history.push({id:'glasses-checking',resourceId:subject.subject.id,event:'checking',subjectGeneration:subject.generation,at:x.h.observedAt})
 }
 for(const state of ['prepared','began'] as const){
  test(`real producer admits complete graph beside an authentic ${state} disjoint Check without changing its claim`,async()=>{
@@ -131,7 +130,6 @@ const refusals: Array<[string,(x: ReturnType<typeof fixture>)=>void]>=[
  ['missing optional reader actions',x=>{x.h.resourceLifecycle!.subjects.find(s=>s.subject.id==='air1:glasses')!.supportedActions=[]}],
  ['cyclic optional dependency',x=>{x.lane.resources.find(r=>r.kind==='glasses')!.idleContract!.dependencies=['air1:glasses']}],
  ['missing optional dependency',x=>{x.lane.resources.find(r=>r.kind==='glasses')!.idleContract!.dependencies=['unreported-resource']}],
- ['began without history',x=>{begin(x);x.h.resourceLifecycle!.history=[]}],
  ['began with another owner',x=>{begin(x);x.h.resourceLifecycle!.subjects.find(s=>s.subject.id==='air1:glasses')!.owner!.id='another-owner'}],
 ]
 for(const [name,mutate] of refusals){

@@ -6,19 +6,20 @@ import {laneControlInputSchema, laneControlRecordSchema, laneControlReceiptSchem
   resourceControlInputSchema, resourceControlCommandSchema, resourceControlRecordSchema, resourceControlReceiptSchema,
   type LaneControlInput, type LaneControlView, type LaneControlRecord, type LaneControlsView,
   type ResourceControlInput, type ResourceControlRecord, type ResourceControlView, type ResourceControlsView} from '../types/lane-control.types'
-import {resourceLifecycleSchema, type ResourceLifecycleSubject} from '../types/resource-lifecycle.types'
+import {resourceLifecycleCurrentSchema, type ResourceLifecycleSubject} from '../types/resource-lifecycle.types'
 import {acceptedManualRestoration, manualWithdrawalNeedsRestoration, resourceReservationIdentity, advanceResourceReservation, resourceReservationGenerationConstraint} from '../types/resource-control-authority'
 import {ResourceLifecycleService} from './resource-lifecycle.service'
 import {requestInputDigest} from './test-request.service'
 import {TestRunError} from './test-result-error'
 import {laneRepairStatusSchema, type LaneRepairStatus, type LaneActivity} from '../types/lane-restoration.types'
+import {currentOwnedRepairProjection} from './test-host-state.service'
 
 type ControlRecord = LaneControlRecord | ResourceControlRecord
 const recordsSchema = z.array(z.union([laneControlRecordSchema, resourceControlRecordSchema])).max(100)
 export {laneControlExchangeSchema} from '../types/lane-control.types'
 import {laneControlExchangeSchema} from '../types/lane-control.types'
 export type LaneControlHost = {hostId: string; laneControlVersion?: number; laneControls?: unknown; resourceReservationVersion?: number;
-  receivedAt: Date; observedAt: Date; snapshot: {laneControls?: unknown; resourceLifecycle?: unknown; restoration?: {attempts: LaneRepairStatus[]};
+  receivedAt: Date; observedAt: Date; snapshot: {laneControls?: unknown; resourceLifecycle?: unknown; repairStatuses?: LaneRepairStatus[];
     lanes: Array<{id: string; dispatchMode: string; state?: string; activity?: LaneActivity}>}}
 export interface LaneControlRepository {
   get(hostId: string): Promise<LaneControlHost | null>
@@ -28,11 +29,8 @@ export const laneControlRepository: LaneControlRepository = {
   async get(hostId) {
     return await TestHostStateModel.findOne({hostId}).select({hostId: 1, laneControls: 1, laneControlVersion: 1, resourceReservationVersion: 1,
       receivedAt: 1, observedAt: 1, 'snapshot.lanes.id': 1, 'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.activity': 1,
-      'snapshot.restoration.attempts.executionId': 1, 'snapshot.restoration.attempts.interruptionId': 1,
-      'snapshot.restoration.attempts.laneId': 1, 'snapshot.restoration.attempts.state': 1,
-      'snapshot.restoration.attempts.current': 1, 'snapshot.restoration.attempts.startedAt': 1,
-      'snapshot.restoration.attempts.finishedAt': 1, 'snapshot.restoration.attempts.haltDecisionId': 1,
-      'snapshot.resourceLifecycle': 1, 'snapshot.laneControls': 1})
+      'snapshot.repairStatuses': currentOwnedRepairProjection, 'snapshot.resourceLifecycle.schemaVersion': 1,
+      'snapshot.resourceLifecycle.subjects': 1, 'snapshot.laneControls': 1})
       .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() as LaneControlHost | null
   },
   async replace(hostId, version, records, resourceAuthority) {
@@ -40,7 +38,8 @@ export const laneControlRepository: LaneControlRepository = {
       ...(version === 0 ? [{laneControlVersion: {$exists: false}}] : [])],
       ...(resourceAuthority ? {resourceReservationVersion:resourceAuthority.resourceReservationVersion??{$exists:false},
         receivedAt:resourceAuthority.receivedAt,observedAt:resourceAuthority.observedAt,
-        'snapshot.resourceLifecycle':resourceAuthority.snapshot.resourceLifecycle,
+        'snapshot.resourceLifecycle.schemaVersion':(resourceAuthority.snapshot.resourceLifecycle as {schemaVersion?:unknown})?.schemaVersion,
+        'snapshot.resourceLifecycle.subjects':(resourceAuthority.snapshot.resourceLifecycle as {subjects?:unknown})?.subjects,
         'snapshot.laneControls':resourceAuthority.snapshot.laneControls}: {})},
       {$set: {laneControls: records}, $inc: {laneControlVersion: 1}}, {new: true, writeConcern: testWriteConcern})
       .select({hostId: 1}).setOptions({timeoutMS: 5000}).lean()
@@ -60,7 +59,7 @@ const isResource = (row: ControlRecord): row is ResourceControlRecord => 'subjec
 /** An operator withdrawal remains durable until its later authentic baseline restores this subject. */
 function retainedRestriction(row:ControlRecord,host:LaneControlHost,now:number) {
   if(!isResource(row))return false;
-  const values=resourceLifecycleSchema.safeParse(host.snapshot.resourceLifecycle),
+  const values=resourceLifecycleCurrentSchema.safeParse(host.snapshot.resourceLifecycle),
     subject=values.success?values.data.subjects.find(value=>value.subject.id===row.command.subject.resourceId):undefined;
   return manualWithdrawalNeedsRestoration(row,subject,host.hostId,fresh(host,now),now);
 }
@@ -69,7 +68,7 @@ function pendingRestorationSlot(records:ControlRecord[],host:LaneControlHost,now
   const restrictions=records.filter(isResource).filter(row=>row.command.action==='mark-out-of-service'&&
     (!delivered(row)||retainedRestriction(row,host,now)));
   if(!restrictions.length)return 0;
-  const lifecycle=resourceLifecycleSchema.safeParse(host.snapshot.resourceLifecycle);
+  const lifecycle=resourceLifecycleCurrentSchema.safeParse(host.snapshot.resourceLifecycle);
   return records.some(row=>isResource(row)&&row.command.action==='check'&&(!delivered(row)||activeCheck(row))&&
     restrictions.some(marker=>{
       const markedGeneration=marker.receipt?.result.status==='accepted'?marker.receipt.result.resource?.generation:undefined;
@@ -110,7 +109,7 @@ export class LaneControlsService {
       .filter(row => row.command.operatorId === operatorIdentity(operator)).map(view)}
   }
   private currentResource(host: LaneControlHost, subject: {resourceId: string; subjectGeneration: number}) {
-    const lifecycle = resourceLifecycleSchema.safeParse(host.snapshot.resourceLifecycle), values = lifecycle.success
+    const lifecycle = resourceLifecycleCurrentSchema.safeParse(host.snapshot.resourceLifecycle), values = lifecycle.success
       ? lifecycle.data.subjects.filter(value => value.subject.id === subject.resourceId && value.subject.authorityHostId === host.hostId) : [],
       actual = values.length === 1 ? values[0] : undefined, at = Date.parse(actual?.observedAt ?? '');
     return actual?.current && actual.generation === subject.subjectGeneration && Number.isFinite(at) && at <= this.now() + 5000 &&
@@ -196,7 +195,7 @@ export class LaneControlsService {
         throw new TestRunError(409, 'Refresh lane status; this controller is not currently accepting dashboard controls')
       if (input.action === 'reopen-repair') {
         if (!supportsRepairReopen(host)) throw new TestRunError(409, 'This controller has not enabled recovery retries')
-        const attempts = host.snapshot.restoration?.attempts.filter(row => row.laneId === lane.id &&
+        const attempts = host.snapshot.repairStatuses?.filter(row => row.laneId === lane.id &&
           row.executionId === lane.activity?.owner.id) ?? []
         const attempt = attempts.length === 1 ? laneRepairStatusSchema.safeParse(attempts[0]) : null
         if (lane.state !== 'out-of-service' || lane.activity?.owner.kind !== 'fixer' || !attempt?.success ||
@@ -248,7 +247,7 @@ export class LaneControlsService {
       // Forgotten receipts cannot perform an operation; retained commands remain the only source of effects.
       if (exchange.receipts.some(receipt => receipt.hostId !== hostId))
         throw new TestRunError(409, 'Lane control receipt names another computer')
-      const lifecycle = resourceLifecycleSchema.safeParse(host.snapshot.resourceLifecycle)
+      const lifecycle = resourceLifecycleCurrentSchema.safeParse(host.snapshot.resourceLifecycle)
       let acceptedRestoration = false
       const reconciled = reconcileControls(next).map(row => {
         if (!isResource(row)) return row

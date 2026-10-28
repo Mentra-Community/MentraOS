@@ -35,7 +35,7 @@ function phoneSubject() {
 function host(): ReceivedTestHostState {
   return {hostId: 'mini', incarnation: 'controller', incarnationGeneration: 1, sequence: 1, observedAt: timestamp,
     receivedAt: timestamp, frameworkBinding: structuredClone(binding), frameworkAcceptedAt: timestamp,
-    frameworkProcess: {pid: 100, startedAt: 'framework lifetime'}, resourceLifecycle: {schemaVersion: 1, subjects: [phoneSubject()], history: []},
+    frameworkProcess: {pid: 100, startedAt: 'framework lifetime'}, resourceLifecycle: {schemaVersion: 1, subjects: [phoneSubject()]},
     lanes: [{id: 'android', platform: 'android', dispatchMode: 'automatic', state: 'idle', resources: [
       {id: 'phone', kind: 'phone', capabilities: ['backend-connectivity']}, {id: 'app', kind: 'app'},
       {id: 'recorder', kind: 'recorder', storage: {poolId: 'mini:disk', observedAt: timestamp, availableBytes: 10e9,
@@ -399,10 +399,9 @@ test('only real settled resource check event/current unowned generation returns 
     controller: {incarnation: 'controller', generation: 1, sequence: 2},
     release: {kind: 'resource-check', operationId: 'probe', subjectGeneration: 3, releasedAt: timestamp, eventId: 'settled-check'}}
   const {controller: _, ...receipt} = proof
-  f.row.snapshot.resourceReservations = {claims: [], returns: [receipt]}
+  f.row.snapshot.resourceReservations = {claims: [], returns: []}
   await expect(f.service.giveBack(proof, 'mini')).rejects.toThrow('exact settled')
-  f.row.snapshot.resourceLifecycle!.history = [{id: 'settled-check', resourceId: 'phone', subjectGeneration: 3,
-    at: timestamp, event: 'resource-check-released', checkOperationId: 'probe'}]
+  f.row.snapshot.resourceReservations.returns=[receipt]
   expect((await f.service.giveBack(proof, 'mini')).status).toBe('returned')
   expect(hostResourceReservationsSchema.parse(f.row.resourceReservations)).toEqual([])
   expect(subject.idle.outcome).toBe('not-checked')
@@ -417,7 +416,7 @@ function acceptPhoneIdle(observed: ReturnType<typeof host>) {
 }
 
 function acceptCurrentIdle(observed: Pick<ReceivedTestHostState, 'hostId' | 'lanes' | 'resourceLifecycle'> & Partial<Pick<ReceivedTestHostState, 'receivedAt'>>) {
-  observed.resourceLifecycle ??= {schemaVersion: 1, subjects: [], history: []};
+  const lifecycle = observed.resourceLifecycle ??= {schemaVersion: 1, subjects: []};
   for (const resource of observed.lanes.flatMap(lane => lane.resources)) {
     resource.idleContract = {version: 'current-physical-baseline', maximumAgeMs: 120000,
       qualifiedScope: {kind: 'same-controller', controllerId: observed.hostId}, conditions: ['observed-idle'], repairConfigured: true};
@@ -428,8 +427,8 @@ function acceptCurrentIdle(observed: Pick<ReceivedTestHostState, 'hostId' | 'lan
         acceptedCheck: {operationId: `idle:${resource.id}`, subjectGeneration: 2, resultSha256: hash, acceptedAt: timestamp},
         qualifiedScope: resource.idleContract.qualifiedScope, evidenceRefs: []}, repair: {configured: true, state: 'none'}, supportedActions: [],
       resource: {kind: resource.kind, capabilities: resource.capabilities ?? [], memberships: [{hostId: observed.hostId, laneId}], dependencies: [], placement: 'installed'}});
-    const index = observed.resourceLifecycle.subjects.findIndex(value => value.subject.id === resource.id);
-    if (index < 0) observed.resourceLifecycle.subjects.push(subject); else observed.resourceLifecycle.subjects[index] = subject;
+    const index = lifecycle.subjects.findIndex(value => value.subject.id === resource.id);
+    if (index < 0) lifecycle.subjects.push(subject); else lifecycle.subjects[index] = subject;
   }
 }
 
@@ -821,8 +820,6 @@ test('same-phone queued preparation progresses one original at a time even with 
         release: {kind: 'resource-check', operationId, subjectGeneration: 3, releasedAt: timestamp, eventId: 'first-reader-return'}}
       const {controller: _, ...returned} = proof
       f.current.host.snapshot.resourceReservations = {claims: [], returns: [returned]}
-      f.current.host.snapshot.resourceLifecycle!.history = [{id: 'first-reader-return', resourceId: 'phone', subjectGeneration: 3,
-        at: timestamp, event: 'resource-check-released', checkOperationId: operationId}]
       expect((await check.giveBack(proof, 'mini')).status).toBe('returned')
       const health = qualified(); health.binding=f.current.host.snapshot.frameworkBinding!;health.releasedGeneration = 3; health.check.operationId = operationId
       health.qualification = {jobId: 'original', targetInputSha256: target.inputSha256,
@@ -991,17 +988,19 @@ test('delayed original acquire and no-claim observation compete in one host CAS 
  resume.resolve();expect((await acquiring).claims).toEqual(observed.claims)
  expect(f.writes).toHaveLength(1);expect(f.row.resourceReservations).toEqual(observed.claims)
 })
-test('no-claim observe cannot revive released original checks or cancelled, expired and replaced authority',async()=>{
+test('no-claim observe fences released originals without reacquiring, and retains cancelled, expired and replaced authority',async()=>{
  for(const reason of ['released','cancelled','expired','replaced','different-check'] as const){
   const f=await claimFixture();f.row.sequence++;f.row.snapshot.sequence=f.row.sequence;f.observed.sequence=f.row.sequence
-  if(reason==='released')f.row.snapshot.resourceLifecycle!.history.push({id:'release',resourceId:'phone',subjectGeneration:2,at:timestamp,event:'resource-check-released',checkOperationId:f.intent.operationId})
+  if(reason==='released') {f.row.snapshot.resourceLifecycle!.subjects[0]!.owner=null;(f.row.snapshot.resourceReservations??={claims:[],returns:[]}).returns=[{claimId:'11111111-1111-4111-8111-111111111111',resourceId:'phone',authorityHostId:'mini',inputSha256:f.intent.inputSha256,intentSha256:'a'.repeat(64),originalOwner:f.intent.owner,laneId:'android',release:{kind:'resource-check',operationId:f.intent.operationId,subjectGeneration:3,releasedAt:timestamp,eventId:'release'}}]}
   if(reason==='cancelled')f.original.fleetCancellation={requestedAt:timestamp,reason:'Cancelled before observation'}
   if(reason==='expired')f.original.fleetDeadline=new Date(now)
   if(reason==='replaced'){f.row.incarnation='new';f.row.incarnationGeneration++;f.row.snapshot.incarnation='new';f.row.snapshot.incarnationGeneration++}
   if(reason==='different-check')f.row.snapshot.resourceLifecycle!.subjects[0]!.owner!.id='different-check'
   const controller={incarnation:f.row.incarnation,generation:f.row.incarnationGeneration,sequence:f.row.sequence}
-  expect((await f.service.observe({intent:f.intent,controller},'mini')).status).toBe('unknown')
-  expect(f.writes).toEqual([]);expect(f.row.resourceReservations).toEqual([])
+  const result=await f.service.observe({intent:f.intent,controller},'mini')
+  expect({reason,status:result.status}).toEqual({reason,status:reason==='released'?'not-acquired':'unknown'})
+  expect(f.writes).toEqual(reason==='released'?[[]]:[]);expect(f.row.resourceReservations).toEqual([])
+  expect(result).not.toHaveProperty('release');expect(result).not.toHaveProperty('idleCheck')
  }
 })
 

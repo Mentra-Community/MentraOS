@@ -1,6 +1,7 @@
 import {expect, spyOn, test} from 'bun:test';
 import {createTestRunAdminApi} from '../api/admin/test-runs.api';
 import {TestHostStateModel} from '../models/test-host-state.model';
+import {TestHostSampleModel} from '../models/test-host-health.model';
 import {ResourceLifecycleService} from './resource-lifecycle.service';
 import type {ResourceLifecycleSubject} from '../types/resource-lifecycle.types';
 
@@ -39,7 +40,13 @@ async function withStore(run:(rows:ReturnType<typeof fleet>,selections:Record<st
   const query={select(value:Record<string,unknown>){selection=value;selections.push(value);return query},sort(){return query},limit(){return query},maxTimeMS(){return query},read(){return query},readConcern(){return query},lean:async()=>rows.map(row=>project(row,selection))};
   return query;
  }) as never);
- try {await run(rows,selections)}finally {find.mockRestore();clock.mockRestore()}
+ const samples=spyOn(TestHostSampleModel.collection,'find').mockImplementation(((query:any,options:any)=>{
+  expect(query.kind).toBe('framework-debug');expect(options.projection).toEqual({payload:1,_id:0});
+  const cursor={sort(){return cursor},hint(index:string){expect(index).toBe('host_sample_history');return cursor},limit(count:number){expect(count).toBe(100);return cursor},maxTimeMS(){return cursor},async toArray(){
+   return rows.filter(row=>row.hostId===query.hostId).map(row=>({payload:{resourceHistory:structuredClone(row.resourceLifecycleCursor.history)}}))
+  }};return cursor;
+ }) as never);
+ try {await run(rows,selections)}finally {find.mockRestore();samples.mockRestore();clock.mockRestore()}
 }
 
 test('ordinary overview and detail read 51 current subjects without selecting or returning 1000 debug events',async()=>withStore(async(rows,selections)=>{
@@ -81,12 +88,12 @@ test('debug history is a separate requested read with bounded pages and errors i
  const page=await response.json() as {events:{id:string;resourceId:string}[];nextCursor:string;coverage:string};
  expect(page.events).toHaveLength(50);expect(page.events.every(event=>event.resourceId===resourceId)).toBe(true);
  expect(page.nextCursor).toBe('host-0-event-049');expect(page.coverage).toContain('200 events');
- expect(selections[0]!['snapshot.resourceLifecycle.history']).toBe(1);expect(selections[0]!['resourceLifecycleCursor.history']).toBe(1);
+ expect(selections[0]!['snapshot.resourceLifecycle.history']).toBeUndefined();expect(selections[0]!['resourceLifecycleCursor.history']).toBeUndefined();
  const next=await app.request(`/resources/${resourceId}/history?cursor=${page.nextCursor}`);expect(next.status).toBe(200);
  expect((await next.json() as {events:{id:string}[]}).events[0]!.id).toBe('host-0-event-050');
  rows[0]!.snapshot.resourceLifecycle.history[0]!.subjectGeneration=999;
  expect((await app.request('/resources/overview')).status).toBe(200);
- expect((await app.request(`/resources/${resourceId}/history`)).status).toBe(400);
+ expect((await app.request(`/resources/${resourceId}/history`)).status).toBe(200);
  expect((await app.request('/resources/overview')).status).toBe(200);
 }));
 

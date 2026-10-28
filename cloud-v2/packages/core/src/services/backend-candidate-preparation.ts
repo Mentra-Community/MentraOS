@@ -6,7 +6,7 @@ import {z} from 'zod'
 import type {ReceivedTestHostState, TestHostState} from './test-host-state.service'
 import {permissionContext} from '../types/resource-permissions.types'
 import {requestInputDigest} from './test-request.service'
-import {graphReturnReporterMatches, graphReturnSuccessorMatches} from './graph-return-continuation'
+import {frameworkProcessSchema} from '../types/lane-restoration.types'
 
 export const graphCheckOperationId = (targetInputSha256: string, resourceId: string) =>
   `graph-check:${targetInputSha256}:${requestInputDigest(resourceId).slice(0, 24)}`
@@ -47,8 +47,9 @@ export function graphCandidateReturnMatches(pending: FleetCandidatePreparation, 
     returned.authorityHostId === original.authorityHostId && returned.resourceId === original.resourceId &&
     returned.intentSha256 === original.intentSha256 && returned.inputSha256 === original.inputSha256 &&
     returned.laneId === original.laneId && isDeepStrictEqual(returned.originalOwner, original.owner) &&
-    (returned.controller.incarnation === original.controllerIncarnation && returned.controller.generation === original.controllerGeneration &&
-      returned.controller.sequence > original.borrowerSequence || graphReturnSuccessorMatches(pending, returned)) &&
+    (returned.controller.generation > original.controllerGeneration ||
+      returned.controller.incarnation === original.controllerIncarnation && returned.controller.generation === original.controllerGeneration &&
+      returned.controller.sequence > original.borrowerSequence) &&
     release.subjectGeneration > original.resourceCheck!.subjectGeneration &&
     Date.parse(release.releasedAt) >= Date.parse(original.reservedAt)
 }
@@ -351,15 +352,9 @@ export function obsoleteUnboundGraphCandidate(row: StoredRoutineJob, host: Recei
     host.incarnation === pending.candidate.controller.incarnation ||
     !pending.target.purpose.resources.every(member => member.authorityHostId === host.hostId) ||
     graphCandidateHasOriginalCustody(pending, host, [...host.authorityReservations, ...host.resourceReservations?.claims ?? []])) return
-  const original = host.frameworkHistory?.filter(value => value.incarnation === pending.candidate.controller.incarnation &&
-    value.incarnationGeneration === pending.candidate.controller.generation && isDeepStrictEqual(value.binding, pending.target.acceptedBinding)),
-    current = host.frameworkHistory?.filter(value => value.incarnation === host.incarnation &&
-      value.incarnationGeneration === host.incarnationGeneration && isDeepStrictEqual(value.binding, host.frameworkBinding))
-  if (original?.length !== 1 || current?.length !== 1 || original[0]!.endReason !== 'observed-stop' || !original[0]!.endedAt || current[0]!.endedAt ||
-    [original[0]!.effectiveAt, original[0]!.endedAt!, current[0]!.effectiveAt].some(at => !Number.isFinite(Date.parse(at))) ||
-    Date.parse(original[0]!.endedAt) > Date.parse(current[0]!.effectiveAt) || Date.parse(current[0]!.effectiveAt) > now ||
-    Date.parse(pending.candidate.requestedAt) < Date.parse(original[0]!.effectiveAt) ||
-    Date.parse(pending.candidate.requestedAt) > Date.parse(original[0]!.endedAt!)) return
+  const accepted = Date.parse(host.frameworkAcceptedAt ?? '')
+  if (!host.frameworkBinding || !frameworkProcessSchema.safeParse(host.frameworkProcess).success ||
+    !Number.isFinite(accepted) || accepted > Date.parse(host.observedAt)) return
   return {...pending, coordinatorSupersession: {kind: 'controller-replaced' as const, at: new Date(now).toISOString(),
     controller: {incarnation: host.incarnation, generation: host.incarnationGeneration}}}
 }
@@ -393,8 +388,7 @@ export function reportedGraphCandidateSettlement(pending: FleetCandidatePreparat
   const returnedOriginal = fleetCandidatePreparationSchema.safeParse(pending).success &&
     pending.target.inputSha256 === pending.targetInputSha256 && isDeepStrictEqual(pending.candidate, pending.target.candidate) &&
     graphCandidateHistoricalSettlement({...pending, settlement: receipt})
-  if (!original && !returnedOriginal && !(receipt.outcome === 'unknown' && receipt.graphChecks?.length &&
-    receipt.graphChecks.every(check => check.outcome === 'unknown' && !check.backendConnectivity) && graphReturnReporterMatches(pending, host))) return undefined
+  if (!original && !returnedOriginal) return undefined
   return receipt
 }
 export function graphCandidateHasOriginalCustody(pending: FleetCandidatePreparation, host: TestHostState, claims: unknown[]) {

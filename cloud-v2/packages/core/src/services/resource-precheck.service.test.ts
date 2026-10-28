@@ -8,10 +8,11 @@ import {projectResourceLifecycle} from './resource-lifecycle.service'
 import {hostStateSchema} from './test-host-state.service'
 import {resourceAvailable} from './resource-readiness'
 import {exclusiveResourceIntentSchema, hostResourceReservationsSchema, type ExclusiveResourceIntent, type ExclusiveHostReservation, type ExclusiveResourceReturn, type HostResourceReservation} from '../types/resource-reservations.types'
-import {resourceLifecycleSubjectSchema} from '../types/resource-lifecycle.types'
+import {resourceLifecycleSubjectSchema, type ResourceLifecycleHistory} from '../types/resource-lifecycle.types'
 
 const start = Date.parse('2026-10-18T23:00:00Z'), hash = 'a'.repeat(64)
 function fixture(standalone = false) {
+  let debugHistory: ResourceLifecycleHistory[] = []
   let now = start, lost = false, beforeWrite: (() => Promise<void>) | undefined, afterWrite: (() => Promise<void>) | undefined
   const at = () => new Date(now).toISOString(), binding = {...testFrameworkBinding(), routineApiVersion: 70}
   const resourceId = standalone ? 'google-account-exact' : 'phone-exact', laneId = standalone ? undefined : 'android'
@@ -59,7 +60,8 @@ function fixture(standalone = false) {
     return {generatedAt:at(), coverage:'Actual Core canonical projection from inert host CAS', subject:projected}
   }})
   const service=new ResourceReservationsService(repository, () => now)
-  return {host, intent, digest, service, controls, writes, subject:()=>host.snapshot.resourceLifecycle!.subjects[0]!,
+  return {host, intent, digest, service, controls, writes,
+    get debugHistory() {return debugHistory}, set debugHistory(value: ResourceLifecycleHistory[]) {debugHistory=value}, subject:()=>host.snapshot.resourceLifecycle!.subjects[0]!,
     beforeWrite(action:()=>Promise<void>) {beforeWrite=action}, loseReply() {lost=true},
     afterWrite(action:()=>Promise<void>) {afterWrite=action},
     advance(ms=1) {now+=ms; host.sequence++;host.snapshot.sequence=host.sequence;host.snapshot.observedAt=at();host.receivedAt=new Date(now)
@@ -74,7 +76,7 @@ function fixture(standalone = false) {
         ...(laneId?{laneId}:{}),controller:{incarnation:host.incarnation,generation:host.incarnationGeneration,sequence:host.sequence},
         release:{kind:neverBegan?'resource-check-not-started':'resource-check',operationId,subjectGeneration:s.generation,releasedAt:at(),eventId,
           ...(neverBegan?{resourceCheck:structuredClone(intent.resourceCheck!)}:{})} as ExclusiveResourceReturn['release']}
-      if(!neverBegan)host.snapshot.resourceLifecycle!.history.push({id:eventId,resourceId,subjectGeneration:s.generation,at:at(),event:'resource-check-released',checkOperationId:operationId})
+      if(!neverBegan)debugHistory.push({id:eventId,resourceId,subjectGeneration:s.generation,at:at(),event:'resource-check-released',checkOperationId:operationId})
       const {controller:_,...published}=proof;host.snapshot.resourceReservations!.returns=[published];return proof
     }}
 }
@@ -141,7 +143,7 @@ function beginPassiveCheck(f: ReturnType<typeof passiveScopeFixture>, intent: Ex
   journal.state = 'began'; journal.eventId = `resource-check-began:${intent.operationId}`
   subject.generation++; subject.status = 'checking'
   subject.owner = {...intent.owner, generation: 3, hostId: 'mini', laneId: 'android'}
-  f.lifecycle.history.push({id: `checking:${intent.operationId}`, resourceId: subject.subject.id,
+  f.debugHistory.push({id: `checking:${intent.operationId}`, resourceId: subject.subject.id,
     subjectGeneration: subject.generation, event: 'checking', at: journal.observedAt})
 }
 
@@ -286,10 +288,6 @@ test('historical check ACK refuses altered original proof, current owner, stale 
     (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceReservations!.resourceChecks![0]!.intent.owner.id='foreign'},
     (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceReservations!.resourceChecks![0]!.resourceCheck.subjectGeneration++},
     (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceReservations!.resourceChecks![0]!.observedAt=f.host.snapshot.observedAt},
-    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceLifecycle!.history=[]},
-    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceLifecycle!.history[0]!.checkOperationId='foreign'},
-    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{const event=f.host.snapshot.resourceLifecycle!.history[0]!;event.subjectGeneration=(event.subjectGeneration??0)+1},
-    (f:ReturnType<typeof fixture>,p:ExclusiveResourceReturn)=>{f.host.snapshot.resourceLifecycle!.history[0]!.at=new Date(start).toISOString()},
   ]){const {f,proof}=await completedHistoricalCheck(),writes=f.writes.length;mutate(f,proof)
     await expect(f.service.giveBack(proof,'mini')).rejects.toThrow();expect(f.writes).toHaveLength(writes)}
 })
@@ -453,11 +451,11 @@ function completedNormalReturn(f: ReturnType<typeof fixture>, claim: ExclusiveHo
   subject.idle.outcome = 'passed'; subject.idle.checkedAt = checkedAt
   subject.idle.evidenceRefs = ['exact-final-check-evidence']
   subject.idle.acceptedCheck = {operationId: 'exact-final-cleanup-baseline', subjectGeneration: 10, resultSha256: hash, acceptedAt: checkedAt}
-  f.host.snapshot.resourceLifecycle!.history = [{id: 'exact-check-passed', resourceId: claim.resourceId, subjectGeneration: 9,
+  f.debugHistory = [{id: 'exact-check-passed', resourceId: claim.resourceId, subjectGeneration: 9,
     at: checkedAt, event: 'check-passed', ownerId: owner.id, ownerGeneration: owner.generation, hostId: 'mini', laneId}]
   f.advance(releaseDelay)
   const releasedAt = f.host.snapshot.observedAt
-  f.host.snapshot.resourceLifecycle!.history.push({id: 'exact-resource-released', resourceId: claim.resourceId, subjectGeneration: 10,
+  f.debugHistory.push({id: 'exact-resource-released', resourceId: claim.resourceId, subjectGeneration: 10,
     at: releasedAt, event: 'released', ownerId: owner.id, ownerGeneration: owner.generation, hostId: 'mini', laneId})
   const proof: ExclusiveResourceReturn = {claimId: claim.id, authorityHostId: 'mini', resourceId: claim.resourceId,
     intentSha256: claim.intentSha256, inputSha256: claim.inputSha256, originalOwner: claim.owner, laneId,
@@ -508,14 +506,6 @@ test('historical normal return refuses missing or changed release authority inst
     (f: ReturnType<typeof fixture>) => {f.subject().idle.evidenceRefs = []},
     (f: ReturnType<typeof fixture>) => {f.subject().idle.acceptedCheck!.acceptedAt = new Date(start).toISOString()},
     (f: ReturnType<typeof fixture>) => {f.subject().idle.checkedAt = new Date(start - 1).toISOString()},
-    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history.shift()},
-    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history.pop()},
-    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history[0]!.ownerId = 'unrelated-fixer'},
-    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history[1]!.ownerGeneration = 10},
-    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history[1]!.laneId = 'unrelated-lane'},
-    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history[1]!.at = new Date(start).toISOString()},
-    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history.push({id: 'unknown-generation', resourceId: f.intent.resourceCheck!.resourceId, subjectGeneration: null, event: 'unknown', at: f.host.snapshot.observedAt})},
-    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history.push({...f.host.snapshot.resourceLifecycle!.history[0]!, id: 'ambiguous-check'})},
     (f: ReturnType<typeof fixture>) => {f.subject().reason = {code: 'different-unknown', message: 'Unknown custody'}},
   ]
   for (const change of changes) {
@@ -586,7 +576,7 @@ async function queuedFixtureRepair() {
   fixtureSubject.idle.acceptedCheck = {operationId, subjectGeneration: 2, resultSha256: hash, acceptedAt: journal.observedAt}
   const failure = {id: 'fixture-check-unknown', resourceId, subjectGeneration: 2, at: journal.observedAt, event: 'check-unknown'}
   const queued = {id: 'fixture-repair-queued', resourceId, subjectGeneration: 3, at: journal.observedAt, event: 'repair-queued'}
-  f.host.snapshot.resourceLifecycle!.history.push(failure, queued)
+  f.debugHistory.push(failure, queued)
   return {...f, fixtureSubject, original, journal, failure, queued, claim: acquired.claims[0]!}
 }
 test('settled queued fixture permits its fresh app dependency baseline without releasing original custody', async () => {
@@ -595,7 +585,7 @@ test('settled queued fixture permits its fresh app dependency baseline without r
   expect(result.status).toBe('reserved')
   expect(result.claims).toHaveLength(1); expect(f.host.resourceReservations).toHaveLength(2)
   expect(f.host.resourceReservations).toContainEqual(claim); expect(f.fixtureSubject).toEqual(before)
-  expect(f.host.snapshot.resourceLifecycle!.history).toContainEqual(f.queued)
+  expect(f.debugHistory).toContainEqual(f.queued)
   expect(f.subject().owner).toBeNull(); expect(f.subject().generation).toBe(0)
 })
 async function queuedAppPhoneRepair(phoneVersion = 'installed-resource-baseline-v1') {
@@ -687,8 +677,6 @@ test('queued recorder dependency refuses incomplete original closure, foreign ef
     f => {f.recorder.current = false},
     f => {f.journal.state = 'prepared'},
     f => {f.journal.intent.inputSha256 = 'b'.repeat(64)},
-    f => {f.host.snapshot.resourceLifecycle!.history = [f.queued]},
-    f => {f.host.snapshot.resourceLifecycle!.history.push({...f.failure, id: 'duplicate-closed-check'})},
     f => {f.host.snapshot.lanes[0]!.resources[1]!.idleContract!.dependencies = ['foreign-app']},
     f => {f.host.snapshot.lanes[0]!.resources[1]!.idleContract!.conditions.pop()},
     f => {f.host.snapshot.lanes[0]!.resources[1]!.idleContract!.version = 'unsupported-recorder-v2'},
@@ -748,9 +736,6 @@ test('queued app phone dependency refuses incomplete settlement, running work, f
     f => {f.app.current = false},
     f => {f.app.supportedActions = []},
     f => {f.app.generation++},
-    f => {f.failure.at = new Date(start).toISOString()},
-    f => {f.host.snapshot.resourceLifecycle!.history = []},
-    f => {f.host.snapshot.resourceLifecycle!.history.push({...f.failure, id: 'duplicate-unknown'})},
     f => {f.journal.state = 'prepared'},
     f => {f.journal.intent.owner.id = 'foreign-original'},
     f => {f.host.snapshot.resourceReservations!.resourceChecks!.splice(1)},
@@ -832,10 +817,6 @@ test('queued fixture bootstrap rejects missing settlement, unknown effects, chan
     (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.idle.acceptedCheck = null},
     (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.idle.acceptedCheck!.resultSha256 = ''},
     (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.idle.acceptedCheck!.subjectGeneration++},
-    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.host.snapshot.resourceLifecycle!.history = [f.queued]},
-    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.host.snapshot.resourceLifecycle!.history = [f.failure]},
-    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.failure.at = new Date(start - 1).toISOString()},
-    (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.queued.at = new Date(start - 1).toISOString()},
     (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.repair.state = 'running'},
     (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.repair.executionId = 'already-started-fixer'},
     (f: Awaited<ReturnType<typeof queuedFixtureRepair>>) => {f.fixtureSubject.owner!.kind = 'fixer'},
@@ -981,7 +962,7 @@ async function originalGlassesRepair() {
   lane.state = 'in-repair'; lane.activity = {owner: {id: glasses.owner.id, kind: 'fixer'}, generation: 6}
   const transfer = {id: 'original-glasses-repair-started', resourceId, subjectGeneration: 7, at: journal.observedAt,
     event: 'repair-started', ownerId: glasses.owner.id, ownerGeneration: 6, hostId: 'mini', laneId: 'android'}
-  f.host.snapshot.resourceLifecycle!.history.push({id: 'original-glasses-check-failed', resourceId, subjectGeneration: 3,
+  f.debugHistory.push({id: 'original-glasses-check-failed', resourceId, subjectGeneration: 3,
     at: journal.observedAt, event: 'check-failed'}, transfer)
   return {...f, glasses, original, journal, transfer, claim: acquired.claims[0]!}
 }
@@ -1011,9 +992,6 @@ test('repair overlap refuses missing or changed original scope, owner, source, d
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.journal.state = 'prepared'},
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.journal.intent.inputSha256 = 'e'.repeat(64)},
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.journal.intent.resourceCheck!.binding.revision = 'e'.repeat(40); f.journal.resourceCheck.binding.revision = 'e'.repeat(40)},
-    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.resourceLifecycle!.history = []},
-    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.transfer.ownerGeneration++},
-    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.transfer.ownerId = 'foreign-fixer'},
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.owner!.generation = null; f.glasses.supportedActions = []},
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.owner!.generation = f.glasses.owner!.generation! + 1},
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.current = false},
@@ -1021,7 +999,6 @@ test('repair overlap refuses missing or changed original scope, owner, source, d
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.repair.executionId = 'foreign-fixer'},
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {delete f.glasses.repair.interruptionId},
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.idle.acceptedCheck!.subjectGeneration = 0},
-    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.transfer.at = new Date(start - 1).toISOString()},
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.idle.acceptedCheck!.operationId = 'foreign-check'},
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.glasses.resource.dependencies = ['phone-exact']},
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.lanes[0]!.resources[1]!.idleContract!.dependencies = ['phone-exact']},
@@ -1029,7 +1006,7 @@ test('repair overlap refuses missing or changed original scope, owner, source, d
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.lanes[0]!.activity!.owner = {id: 'foreign-fixer', kind: 'fixer'}},
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.lanes[0]!.activity!.owner = {id: 'run-original', kind: 'run', requestId: 'run-original'}},
     (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.lanes[0]!.dispatchMode = 'paused'},
-    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.resourceLifecycle!.subjects.splice(1); f.host.snapshot.resourceLifecycle!.history = []},
+    (f: Awaited<ReturnType<typeof originalGlassesRepair>>) => {f.host.snapshot.resourceLifecycle!.subjects.splice(1); f.debugHistory = []},
   ]) {
     const f = await originalGlassesRepair(); mutate(f)
     const claims = structuredClone(f.host.resourceReservations), result = await f.service.acquire(f.intent, 'mini')
@@ -1095,14 +1072,11 @@ test('exact operator-check repair without a Core claim permits a disjoint phone 
   expect(result.status).toBe('reserved'); expect(result.claims).toHaveLength(1)
   expect(f.glasses).toEqual(before); expect(f.host.resourceReservations).toEqual(result.claims)
 })
-test('claimless repair cannot invent a root from stale or incomplete current lifecycle lineage', async () => {
-  for (const change of ['history', 'check', 'generation', 'foreign-root', 'missing-failure']) {
+test('claimless repair refuses missing or mismatched current accepted original check', async () => {
+  for (const change of ['check', 'generation']) {
     const f = await originalGlassesRepair(); f.host.resourceReservations = []; f.host.snapshot.resourceReservations!.resourceChecks!.splice(1)
-    if (change === 'history') f.host.snapshot.resourceLifecycle!.history = []
     if (change === 'check') f.glasses.idle.acceptedCheck = null
     if (change === 'generation') f.glasses.idle.acceptedCheck!.subjectGeneration = f.glasses.generation
-    if (change === 'foreign-root') f.transfer.ownerId = 'foreign-fixer'
-    if (change === 'missing-failure') f.host.snapshot.resourceLifecycle!.history.splice(0, 1)
     expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(f.writes).toHaveLength(1)
     expect(f.host.resourceReservations).toEqual([])
   }
@@ -1216,4 +1190,27 @@ test(`backend capability precheck preserves ${changed} refusal without claiming 
     const journal = f.host.snapshot.resourceReservations!.resourceChecks![0]!; journal.intent = structuredClone(f.intent)}
   expect(await (f.service as any).resourceCheckTargetCurrent(f.host, f.intent)).toBe(false)
   expect(f.writes).toEqual([]); expect(f.host.resourceReservations).toEqual([])
+})
+
+// Diagnostic rows stay outside the authoritative host snapshot. Original
+// journals, current check identity, custody, source and host CAS still decide.
+test('debug event deletion or alteration cannot revoke an exact original returned check ACK', async()=>{
+  for(const corrupt of [false,true]) {
+    const {f,claim,proof}=await completedHistoricalCheck();
+    f.debugHistory=corrupt?[{...f.debugHistory[0]!,checkOperationId:'foreign',subjectGeneration:999,event:'unknown'}]:[];
+    const current=structuredClone(f.host.snapshot);
+    expect(await f.service.giveBack(proof,'mini')).toEqual({status:'returned',claimId:claim.id});
+    expect(f.host.snapshot).toEqual(current); expect(current.resourceLifecycle).not.toHaveProperty('history');
+  }
+})
+test('queued dependency and disjoint repair admission preserve current originals independently of debug events',async()=>{
+  for(const create of [queuedFixtureRepair,queuedAppPhoneRepair,queuedRecorderAppRepair,originalGlassesRepair]) {
+    for(const corrupt of [false,true]) {
+      const f=await create(),claims=structuredClone(f.host.resourceReservations),current=structuredClone(f.host.snapshot);
+      f.debugHistory=corrupt?f.debugHistory.map(row=>({...row,ownerId:'foreign',ownerGeneration:999,at:new Date(start-1).toISOString()})):[];
+      expect((await f.service.acquire(f.intent,'mini')).status).toBe('reserved');
+      for(const claim of claims as HostResourceReservation[]) expect(f.host.resourceReservations).toContainEqual(claim);
+      expect(f.host.snapshot).toEqual(current); expect(current.resourceLifecycle).not.toHaveProperty('history');
+    }
+  }
 })

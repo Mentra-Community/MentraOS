@@ -146,7 +146,7 @@ function halted(f: ReturnType<typeof fixture>) {
   f.host().snapshot.laneControls = {schemaVersion: 1, receipts: [], reopenRepair: true}
   f.host().snapshot.lanes = [{id: 'phone', state: 'out-of-service', dispatchMode: 'automatic',
     activity: {generation: 99, owner: {id: repair.executionId, kind: 'fixer'}}}]
-  f.host().snapshot.restoration = {attempts: [repair]}
+  f.host().snapshot.repairStatuses = [repair]
   return {repair, input: f.input('reopen-repair', {repair: {interruptionId: repair.interruptionId,
     expectedHaltDecisionId: repair.haltDecisionId, changedConditions: 'I allowed the requested microphone permission.'}})}
 }
@@ -175,11 +175,11 @@ test('recovery admission refuses old halt, changed repair, active fixer, missing
     (f: ReturnType<typeof fixture>) => {f.host().snapshot.laneControls = {schemaVersion: 1, receipts: []}},
     (f: ReturnType<typeof fixture>) => {f.host().snapshot.lanes[0]!.state = 'in-repair'},
     (f: ReturnType<typeof fixture>) => {f.host().snapshot.lanes[0]!.activity!.owner.id = 'fixer:other'},
-    (f: ReturnType<typeof fixture>) => {f.host().snapshot.restoration!.attempts[0]!.state = 'working'},
-    (f: ReturnType<typeof fixture>) => {f.host().snapshot.restoration!.attempts[0]!.current = true},
-    (f: ReturnType<typeof fixture>) => {delete f.host().snapshot.restoration!.attempts[0]!.haltDecisionId},
-    (f: ReturnType<typeof fixture>) => {f.host().snapshot.restoration!.attempts[0]!.haltDecisionId = 'halt:new'},
-    (f: ReturnType<typeof fixture>) => {f.host().snapshot.restoration!.attempts.push({...f.host().snapshot.restoration!.attempts[0]!})},
+    (f: ReturnType<typeof fixture>) => {f.host().snapshot.repairStatuses![0]!.state = 'working'},
+    (f: ReturnType<typeof fixture>) => {f.host().snapshot.repairStatuses![0]!.current = true},
+    (f: ReturnType<typeof fixture>) => {delete f.host().snapshot.repairStatuses![0]!.haltDecisionId},
+    (f: ReturnType<typeof fixture>) => {f.host().snapshot.repairStatuses![0]!.haltDecisionId = 'halt:new'},
+    (f: ReturnType<typeof fixture>) => {f.host().snapshot.repairStatuses!.push({...f.host().snapshot.repairStatuses![0]!})},
   ]) {
     const f = fixture(), {input} = halted(f); change(f)
     await expect(f.service.submit(input, 'alice')).rejects.toThrow()

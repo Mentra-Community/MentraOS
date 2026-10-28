@@ -39,7 +39,7 @@ function fixture(candidate = false, withIdleContracts = false) {
   const observed: ReceivedTestHostState = {hostId: 'mini', incarnation: 'controller', incarnationGeneration: 1, sequence: 1,
     observedAt: timestamp, receivedAt: timestamp, frameworkBinding: structuredClone(binding), frameworkAcceptedAt: timestamp,
     frameworkProcess: {pid: 100, startedAt: 'framework lifetime'}, resourceReservations: {claims: [], returns: []},
-    resourceLifecycle: {schemaVersion: 1, history: [], subjects: [resourceLifecycleSubjectSchema.parse({
+    resourceLifecycle: {schemaVersion: 1, subjects: [resourceLifecycleSubjectSchema.parse({
       subject: {kind: 'resource', id: 'phone', authorityHostId: 'mini'}, generation: 2, status: 'unknown', observedAt: timestamp,
       receivedAt: timestamp, current: true, reason: null, owner: null, idle: {contractVersion: 'not-commissioned', outcome: 'not-checked',
         checkedAt: null, acceptedCheck: null, qualifiedScope: {kind: 'unqualified'}, evidenceRefs: []}, repair: {configured: false, state: 'none'},
@@ -188,10 +188,9 @@ test('cancelled local target accepts only authentic settled release and return A
   const proof: ExclusiveResourceReturn = {claimId: claim.id, authorityHostId: 'mini', resourceId: 'phone', intentSha256: claim.intentSha256,
     inputSha256: claim.inputSha256, originalOwner: claim.owner, laneId: 'android', controller: {incarnation: 'controller', generation: 1, sequence: 2},
     release: {kind: 'resource-check', operationId: 'probe', subjectGeneration: 3, releasedAt: timestamp, eventId: 'closed'}}
-  const {controller: _, ...receipt} = proof; f.row.snapshot.resourceReservations!.returns = [receipt]
+  const {controller: _, ...receipt} = proof; f.row.snapshot.resourceReservations!.returns = []
   await expect(f.service.giveBack(proof, 'mini')).rejects.toThrow('exact settled')
-  f.row.snapshot.resourceLifecycle!.history = [{id: 'closed', resourceId: 'phone', subjectGeneration: 3, at: timestamp,
-    event: 'resource-check-released', checkOperationId: 'probe'}]
+  f.row.snapshot.resourceReservations!.returns=[receipt]
   expect((await f.service.giveBack(proof, 'mini')).status).toBe('returned')
   expect((await f.service.giveBack(proof, 'mini')).status).toBe('returned'); expect(f.row.resourceReservations).toEqual([])
 })

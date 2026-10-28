@@ -16,7 +16,6 @@ import {routineQualificationTargetSchema, MAX_FLEET_CANDIDATE_PREPARATIONS, type
 import {preparationRejectionSchema} from '../types/routine-dispatch.types'
 import {z} from 'zod'
 import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION, type ResourceReadinessPurpose} from '../types/backend-connectivity.types'
-import {currentGraphReturnContinuation} from './graph-return-continuation'
 import {candidatePrerequisiteRequestMatches, qualifiedCandidate, candidateReturnMatches, qualifiedGraphCandidate,
   graphCandidateClaimMatches, graphCandidateReturnMatches, graphCandidateHasOriginalCustody, graphCandidateNoAcquisitionMatches,
   candidatePrerequisiteIdentityMatches, reportedGraphCandidateSettlement, completedCandidatePreparationForHost} from './backend-candidate-preparation'
@@ -42,10 +41,8 @@ function graphReturnCandidate(pending: FleetCandidatePreparation, returned: Excl
   if (returned.controller.incarnation === pending.candidate.controller.incarnation &&
     returned.controller.generation === pending.candidate.controller.generation) return pending
   if (!host || !fresh(host, now) || host.incarnation !== returned.controller.incarnation ||
-    host.incarnationGeneration !== returned.controller.generation || host.sequence !== returned.controller.sequence ||
-    host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === returned.resourceId)?.idle.outcome !== 'unknown') return
-  const continuation = currentGraphReturnContinuation(pending, host)
-  return continuation ? {...pending, resourceReturnContinuation: continuation} : undefined
+    host.incarnationGeneration !== returned.controller.generation || host.sequence !== returned.controller.sequence) return
+  return pending
 }
 /** Installed resource controls and new fleet claims contend on the same authority row. */
 function dependencyAvailable(host: ResourceReservationHost, dependency: ExclusiveResourceDependency, now: number) {
@@ -112,7 +109,7 @@ function dependencyEnrolled(host: ResourceReservationHost, dependency: Exclusive
 export type ExclusiveResourceBlocker = {resourceId: string; hostId: string; laneId?: string; owner: ExclusiveHostReservation['owner']}
 export interface ResourceReservationRepository {
   /** `recorderReturn` reads only what recorder-claim return reconciliation and its CAS need. */
-  get(hostId: string, options?: {frameworkHistory?: boolean; recorderReturn?: boolean}): Promise<ResourceReservationHost | null>
+  get(hostId: string, options?: {recorderReturn?: boolean}): Promise<ResourceReservationHost | null>
   replace(host: ResourceReservationHost, claims: HostResourceReservation[]): Promise<boolean>
   candidateRequest?(hostId: string, targetInputSha256: string): Promise<StoredRoutineJob | null>
   completedCandidateRequest?(hostId: string, targetInputSha256: string): Promise<StoredRoutineJob | null>
@@ -177,18 +174,21 @@ const recorderReturnProjection = {hostId: 1, incarnation: 1, incarnationGenerati
   laneControlVersion: 1, resourceReservationVersion: 1, resourceReservations: 1,
   'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.sequence': 1, 'snapshot.observedAt': 1,
   'snapshot.lanes.id': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.activity': 1, 'snapshot.lanes.resources': 1, _id: 0} as const
+const resourceReservationCurrentProjection = {hostId: 1, incarnation: 1, incarnationGeneration: 1,
+  sequence: 1, receivedAt: 1, laneControlVersion: 1, laneControls: 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1,
+  'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.sequence': 1, 'snapshot.observedAt': 1,
+  'snapshot.lanes.id': 1, 'snapshot.lanes.platform': 1, 'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1,
+  'snapshot.lanes.activity': 1, 'snapshot.lanes.resources': 1, 'snapshot.lanes.glasses': 1, 'snapshot.resources': 1,
+  'snapshot.resourceReservations': 1, 'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1,
+  'snapshot.frameworkProcess': 1,
+  'snapshot.resourceLifecycle.schemaVersion': 1, 'snapshot.resourceLifecycle.subjects': 1,
+  'resourceLifecycleCursor.schemaVersion': 1, 'resourceLifecycleCursor.subjects': 1,
+  resourceReservationVersion: 1, resourceReservations: 1, _id: 0} as const
 export const resourceReservationRepository: ResourceReservationRepository = {
   async get(hostId, options) {
     if (options?.recorderReturn) return await TestHostStateModel.findOne({hostId}).select(recorderReturnProjection)
       .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() as ResourceReservationHost | null
-    return await TestHostStateModel.findOne({hostId}).select({hostId: 1, incarnation: 1, incarnationGeneration: 1,
-      sequence: 1, receivedAt: 1, laneControlVersion: 1, laneControls: 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1,
-      'snapshot.sequence': 1, 'snapshot.observedAt': 1, 'snapshot.lanes.id': 1, 'snapshot.lanes.platform': 1,
-      'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.activity': 1,
-      'snapshot.lanes.resources': 1, 'snapshot.lanes.glasses': 1, 'snapshot.resources': 1, 'snapshot.resourceReservations': 1,
-      'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1,
-      ...(options?.frameworkHistory === false ? {} : {frameworkHistory: 1, frameworkStopReceipts: 1}),
-      'snapshot.resourceLifecycle': 1, resourceLifecycleCursor: 1, resourceReservationVersion: 1, resourceReservations: 1})
+    return await TestHostStateModel.findOne({hostId}).select(resourceReservationCurrentProjection)
       .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() as ResourceReservationHost | null
   },
   async replace(host, claims) {
@@ -271,8 +271,7 @@ export const resourceReservationRepository: ResourceReservationRepository = {
         (({controller: _, ...proof}) => proof)(value))
       return Boolean(await TestRequestModel.collection.findOneAndUpdate({requestId, fleetCandidatePreparation: pending,
         fleetBinding: {$exists: false}, fleetResourceAdmission: {$exists: false}},
-        {$set: {'fleetCandidatePreparation.resourceReturns': [...prior, value],
-          ...(checked.resourceReturnContinuation ? {'fleetCandidatePreparation.resourceReturnContinuation': checked.resourceReturnContinuation} : {})}},
+        {$set: {'fleetCandidatePreparation.resourceReturns': [...prior, value]}},
         {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}))
     }
     if (!candidateReturnMatches(pending, returned)) return false;
@@ -324,7 +323,7 @@ export const resourceReservationRepository: ResourceReservationRepository = {
   },
   async claimedHosts(requestId) {
     return await TestHostStateModel.find({resourceReservations: {$elemMatch: {kind: 'exclusive', 'owner.id': requestId, 'owner.kind': 'run', 'origin.kind': 'fleet'}}})
-      .limit(2).read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() as unknown as ResourceReservationHost[]
+      .select(resourceReservationCurrentProjection).limit(2).read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() as unknown as ResourceReservationHost[]
   },
 }
 const fresh = (host: ResourceReservationHost, now: number) => [host.receivedAt.getTime(), Date.parse(host.snapshot.observedAt)]
@@ -348,17 +347,9 @@ function closedNormalResourceReturn(host: ResourceReservationHost, claim: Exclus
     ![checkedAt, acceptedAt, releasedAt, observedAt, subjectObservedAt].every(Number.isFinite) || checkedAt < Date.parse(claim.reservedAt) ||
     checkedAt > acceptedAt || acceptedAt > releasedAt || releasedAt > subjectObservedAt || subjectObservedAt > observedAt || observedAt - subjectObservedAt > 120_000 ||
     releasedAt - checkedAt > contract.maximumAgeMs) return false
-  const history = host.snapshot.resourceLifecycle!.history.filter(event => event.resourceId === claim.resourceId),
-    matchingOwner = (event: typeof history[number]) => event.ownerId === release.owner.id &&
-      event.ownerGeneration === release.owner.generation && event.hostId === host.hostId && event.laneId === returned.laneId,
-    releases = history.filter(event => event.subjectGeneration === subject.generation),
-    checks = history.filter(event => event.subjectGeneration === subject.generation - 1)
-  // Exact consecutive generations prove the accepted check carried into this
-  // release, with no intervening resource transition or later replacement.
-  return releases.length === 1 && checks.length === 1 && releases[0]!.event === 'released' && checks[0]!.event === 'check-passed' &&
-    matchingOwner(releases[0]!) && matchingOwner(checks[0]!) && Date.parse(checks[0]!.at) === acceptedAt &&
-    Date.parse(releases[0]!.at) >= acceptedAt && Date.parse(releases[0]!.at) <= releasedAt &&
-    !history.some(event => event.subjectGeneration === null || event.subjectGeneration > subject.generation || Date.parse(event.at) > Date.parse(releases[0]!.at))
+  // The accepted current check and original release journal are operational
+  // authority. A duplicate event log cannot veto the same returned resource.
+  return true
 }
 const dependencies = (host: ResourceReservationHost, intent: ExclusiveResourceIntent, observation = false): ExclusiveResourceDependency[] => {
   const lane = host.snapshot.lanes.find(value => value.id === intent.laneId), dispatch = intent.localDispatch,
@@ -394,8 +385,7 @@ export class ResourceReservationsService {
   private async host(hostId: string) {
     const host = await this.rows.get(hostId)
     if (!host || host.hostId !== hostId) throw new TestRunError(404, 'Resource authority host was not found')
-    host.snapshot = hostStateSchema.parse(host.snapshot)
-    return host
+    return {...host, snapshot: hostStateSchema.parse(host.snapshot)}
   }
   /** One request CAS selects the original candidate before exclusive authority or Actions device binding.
    * Backend-required work first retains its byte claim on the borrower's existing host CAS.
@@ -863,11 +853,6 @@ export class ResourceReservationsService {
         passivePhone && (claim.controllerGeneration !== host.incarnationGeneration || claim.controllerIncarnation !== host.incarnation) ||
         claim.controllerGeneration > host.incarnationGeneration || claim.controllerGeneration === host.incarnationGeneration &&
           (claim.controllerIncarnation !== host.incarnation || claim.borrowerSequence > host.sequence)) return undefined
-      const failure = lifecycle.history.filter(event => event.resourceId === claim.resourceId &&
-        event.event === `check-${subject.idle.outcome}` && event.subjectGeneration === accepted.subjectGeneration && event.at === accepted.acceptedAt),
-        queued = lifecycle.history.filter(event => event.resourceId === claim.resourceId && event.event === 'repair-queued' && event.subjectGeneration === subject.generation)
-      if (failure.length !== 1 || queued.length !== 1 || Date.parse(queued[0]!.at) < Date.parse(accepted.acceptedAt) ||
-        Date.parse(queued[0]!.at) > Date.parse(subject.observedAt)) return undefined
       if ((passivePhone || ref.kind === 'recorder') && controls.some(row => 'subject' in row.command && row.command.subject.resourceId === claim.resourceId &&
         (!row.receipt || row.receipt.result.status === 'accepted' &&
           (row.receipt.result.reservation && ['waiting', 'granted', 'returning'].includes(row.receipt.result.reservation.state) ||
@@ -926,16 +911,9 @@ export class ResourceReservationsService {
     const claims = retained.filter(claim => claim.borrowerHostId === host.hostId && claim.laneId === lane.id)
     // Operator checks have no Core preclaim, but their exact failed-check repair
     // still supplies the same current resource lifecycle transfer authority.
-    const roots = owned.filter(subject => lifecycle.history.some(event => event.resourceId === subject.subject.id &&
-      event.event === 'repair-started' && event.subjectGeneration === subject.generation && event.ownerId === activity.owner.id &&
-      event.ownerGeneration === activity.generation && event.hostId === host.hostId && event.laneId === lane.id &&
-      Date.parse(event.at) <= Date.parse(subject.observedAt!) && Date.parse(event.at) <= now &&
-      subject.idle.acceptedCheck && subject.idle.acceptedCheck.subjectGeneration < event.subjectGeneration &&
-      Date.parse(subject.idle.acceptedCheck.acceptedAt) <= Date.parse(event.at) &&
-      lifecycle.history.some(failure => failure.resourceId === subject.subject.id &&
-        ['check-failed', 'check-unknown'].includes(failure.event) &&
-        failure.subjectGeneration === subject.idle.acceptedCheck!.subjectGeneration &&
-        failure.at === subject.idle.acceptedCheck!.acceptedAt)))
+    const roots = owned.filter(subject => ['failed', 'unknown'].includes(subject.idle.outcome) &&
+      subject.idle.acceptedCheck && subject.idle.acceptedCheck.subjectGeneration < subject.generation &&
+      Date.parse(subject.idle.acceptedCheck.acceptedAt) <= Date.parse(subject.observedAt!))
     if (!roots.length || owned.some(subject => !roots.some(root =>
       root.subject.id === subject.subject.id || root.resource.dependencies.includes(subject.subject.id) ||
       installed.find(ref => ref.id === root.subject.id)?.idleContract?.dependencies?.includes(subject.subject.id)))) return undefined
@@ -950,17 +928,12 @@ export class ResourceReservationsService {
         subject.idle.acceptedCheck?.operationId !== claim.operationId || subject.idle.contractVersion !== check.contractVersion ||
         claim.controllerIncarnation !== host.incarnation || claim.controllerGeneration !== host.incarnationGeneration ||
         claim.borrowerSequence > host.sequence) return undefined
-      const transfer = lifecycle.history.filter(event => event.resourceId === claim.resourceId && event.event === 'repair-started' &&
-        event.subjectGeneration === subject.generation && event.ownerId === activity.owner.id && event.ownerGeneration === activity.generation &&
-        event.hostId === host.hostId && event.laneId === lane.id)
-      if (transfer.length !== 1 || subject.generation <= check.subjectGeneration ||
+      if (subject.generation <= check.subjectGeneration ||
         subject.idle.acceptedCheck!.subjectGeneration <= check.subjectGeneration ||
         subject.idle.acceptedCheck!.subjectGeneration > subject.generation ||
         Date.parse(subject.idle.acceptedCheck!.acceptedAt) < Date.parse(claim.reservedAt) ||
-        Date.parse(subject.idle.acceptedCheck!.acceptedAt) > Date.parse(transfer[0]!.at) ||
-        Date.parse(transfer[0]!.at) < Date.parse(claim.reservedAt) ||
-        Date.parse(journal.observedAt) > Date.parse(transfer[0]!.at) || Date.parse(transfer[0]!.at) > Date.parse(host.snapshot.observedAt) ||
-        Date.parse(transfer[0]!.at) > now) return undefined
+        Date.parse(subject.idle.acceptedCheck!.acceptedAt) > Date.parse(subject.observedAt!) ||
+        Date.parse(journal.observedAt) > Date.parse(subject.observedAt!)) return undefined
       admitted.add(claim.id)
     }
     return admitted
@@ -985,8 +958,8 @@ export class ResourceReservationsService {
       subject.status === 'offline' || subject.status === 'reserved' || subject.status === 'returning' ||
       subject.status === 'checking' || subject.status === 'active' || subject.repair.state !== 'none' ||
       intent.owner.id !== `resource-check:${requestInputDigest({operationId: intent.operationId, resourceId: check.resourceId})}` ||
-      host.snapshot.resourceLifecycle!.history.some(value => value.resourceId === check.resourceId && value.checkOperationId === intent.operationId &&
-        value.event === 'resource-check-released')) return false
+      host.snapshot.resourceReservations?.returns.some(value => value.resourceId === check.resourceId &&
+        'kind' in value.release && value.release.operationId === intent.operationId)) return false
     const records = z.array(z.union([laneControlRecordSchema, resourceControlRecordSchema])).max(100).parse(host.laneControls ?? [])
     if (records.some(row => ('subject' in row.command ? row.command.subject.resourceId === check.resourceId :
       row.command.laneId === intent.laneId) && (!row.receipt || row.receipt.result.status === 'accepted' &&
@@ -1088,9 +1061,7 @@ export class ResourceReservationsService {
           !isDeepStrictEqual(subject.owner && {id: subject.owner.id, kind: subject.owner.kind}, claim.owner) ||
           subject.owner?.hostId !== host.hostId || subject.owner.laneId !== undefined && subject.owner.laneId !== laneId ||
           subject.generation !== check.subjectGeneration + 1 || Date.parse(journal.observedAt) < Date.parse(claim.reservedAt) ||
-          !free(footprint, claim.resourceId) || !lifecycle.history.some(event => event.resourceId === claim.resourceId &&
-            event.event === 'checking' && event.subjectGeneration === subject.generation &&
-            Date.parse(event.at) >= Date.parse(claim.reservedAt) && Date.parse(event.at) <= Date.parse(journal.observedAt))) return undefined
+          !free(footprint, claim.resourceId)) return undefined
       } else return undefined
       for (const id of footprint) occupied.add(id)
       permitted.add(claim.id)
@@ -1255,17 +1226,13 @@ export class ResourceReservationsService {
       subject.idle.acceptedCheck?.operationId !== release.operationId || subject.idle.acceptedCheck.subjectGeneration !== subject.generation ||
       Date.parse(release.releasedAt) > this.now() || Date.parse(release.releasedAt) > Date.parse(host.snapshot.observedAt) ||
       !host.snapshot.resourceReservations?.returns.some(value => isDeepStrictEqual(value, proof)) ||
-      release.eventId !== `resource-lifecycle:${requestInputDigest({id: returned.resourceId, subjectGeneration: release.subjectGeneration})}` ||
-      !host.snapshot.resourceLifecycle?.history.some(event => event.id === release.eventId && event.event === 'resource-check-released' &&
-        event.resourceId === returned.resourceId && event.checkOperationId === release.operationId && event.subjectGeneration === release.subjectGeneration &&
-        event.at === release.releasedAt && event.ownerId === returned.originalOwner.id))
+      release.eventId !== `resource-lifecycle:${requestInputDigest({id: returned.resourceId, subjectGeneration: release.subjectGeneration})}`)
       throw new TestRunError(409, 'Readiness graph return requires its exact owned check and normal released member')
     for (let attempt = 0; attempt < 3; attempt++) {
       const current = await this.host(hostId), all = hostResourceReservationsSchema.parse(current.resourceReservations ?? []),
         claim = all.filter(isExclusiveHostReservation).find(value => value.resourceId === returned.resourceId)
       if (!fresh(current, this.now()) || current.incarnation !== host.incarnation || current.incarnationGeneration !== host.incarnationGeneration ||
-        current.sequence !== host.sequence || !isDeepStrictEqual(current.frameworkHistory, host.frameworkHistory) ||
-        !isDeepStrictEqual(current.frameworkStopReceipts, host.frameworkStopReceipts) || !isDeepStrictEqual(current.snapshot.resourceLifecycle, host.snapshot.resourceLifecycle) ||
+        current.sequence !== host.sequence || !isDeepStrictEqual(current.snapshot.resourceLifecycle, host.snapshot.resourceLifecycle) ||
         !isDeepStrictEqual(current.snapshot.resourceReservations, host.snapshot.resourceReservations))
         throw new TestRunError(409, 'Readiness graph original return changed; retain the same member')
       if (claim && (claim.id !== returned.claimId || !graphCandidateClaimMatches(pending, claim) || claim.intentSha256 !== returned.intentSha256))
@@ -1390,9 +1357,7 @@ export class ResourceReservationsService {
       !isDeepStrictEqual(journal.intent.owner, returned.originalOwner) || this.resourceCheckIntentDigest(journal.intent) !== returned.intentSha256 ||
       historical && (release.subjectGeneration <= journal.resourceCheck.subjectGeneration || Date.parse(journal.observedAt) > at) ||
       (release.kind === 'resource-check-not-started' ? journal.state !== 'never-began' || journal.eventId !== release.eventId ||
-        journal.observedAt !== release.releasedAt || !isDeepStrictEqual(journal.resourceCheck, release.resourceCheck) : journal.state !== 'began' ||
-        !host.snapshot.resourceLifecycle?.history.some(event => event.id === release.eventId && event.event === 'resource-check-released' &&
-          event.resourceId === returned.resourceId && event.checkOperationId === release.operationId && event.subjectGeneration === release.subjectGeneration && event.at === release.releasedAt)))
+        journal.observedAt !== release.releasedAt || !isDeepStrictEqual(journal.resourceCheck, release.resourceCheck) : journal.state !== 'began'))
       throw new TestRunError(409, 'Resource precheck has no authentic never-began or completed local check return')
     for (let attempt = 0; attempt < 3; attempt++) {
       const authority = await this.host(hostId), all = hostResourceReservationsSchema.parse(authority.resourceReservations ?? []),
@@ -1464,8 +1429,8 @@ export class ResourceReservationsService {
       subject.status !== 'checking' || subject.owner?.kind !== 'boundary-cleanup' || subject.owner.id !== intent.owner.id ||
       originalCheck && (subject.generation !== originalCheck.generation || !isDeepStrictEqual(subject.owner, originalCheck.owner)) ||
       subject.owner.generation === null || subject.owner.generation === undefined || subject.owner.laneId !== intent.laneId ||
-      host.snapshot.resourceLifecycle?.history.some(value => value.resourceId === purpose.resourceId &&
-        value.checkOperationId === intent.operationId && value.event === 'resource-check-released') ||
+      host.snapshot.resourceReservations?.returns.some(value => value.resourceId === purpose.resourceId &&
+        'kind' in value.release && value.release.operationId === intent.operationId) ||
       intent.owner.id !== `resource-check:${requestInputDigest({operationId: intent.operationId, resourceId: purpose.resourceId})}`)
       return false
     const targets = await this.qualificationTargets(host.hostId, {jobId: purpose.jobId, laneId: lane.id,
@@ -1543,14 +1508,11 @@ export class ResourceReservationsService {
   private async giveBackBackendPrerequisite(returned: z.infer<typeof exclusiveResourceReturnSchema>, borrower: ResourceReservationHost, hostId: string) {
     if (!('kind' in returned.release)) throw new TestRunError(409, 'Resource check release is unavailable')
     const release = returned.release, at = Date.parse(release.releasedAt),
-      subject = borrower.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === returned.resourceId),
-      event = borrower.snapshot.resourceLifecycle?.history.find(value => value.id === release.eventId)
+      subject = borrower.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === returned.resourceId)
     if (!fresh(borrower, this.now()) || borrower.incarnation !== returned.controller.incarnation ||
       borrower.incarnationGeneration !== returned.controller.generation || borrower.sequence !== returned.controller.sequence ||
       returned.authorityHostId !== hostId || !subject?.current || subject.owner !== null || subject.subject.authorityHostId !== hostId ||
       subject.generation !== release.subjectGeneration || Date.parse(borrower.snapshot.observedAt) < at ||
-      !event || event.resourceId !== returned.resourceId || event.subjectGeneration !== release.subjectGeneration ||
-      event.at !== release.releasedAt || event.event !== 'resource-check-released' || event.checkOperationId !== release.operationId ||
       !borrower.snapshot.resourceReservations?.returns.some(receipt =>
         isDeepStrictEqual(receipt, (({controller: _, ...proof}) => proof)(returned))))
       throw new TestRunError(409, 'Resource check return requires its exact settled local resource release and current unowned generation')

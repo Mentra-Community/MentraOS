@@ -107,8 +107,17 @@ interval. The latest interval preserves observed-stop information. System health
 and lane pages share this query; current status does not wait for history.
 Lane detail retrieves retained repair and installation history separately with
 `GET /api/admin/test-runs/restoration/list?hostId=<controller>`, scoped to that
-controller. The dedicated repair overview keeps the full bounded list. No
-history or controller authority is removed by the compact projection.
+controller. The repair overview fetches each controller's bounded history only
+when its history is opened. Current lane state does not wait for that read.
+
+An updater stop can arrive before its process's accepted snapshot. Exact
+installation/PID/birth cessation points remain compact unfinished state under
+the host CAS until the matching acceptance, or a later accepted startup,
+supersedes them. Current readers select only the point for their accepted
+process. A new stop at the 100-unresolved-point capacity refuses delivery
+without discarding another point; the updater retains its unacknowledged
+observation. This is a storage capacity limit, not a protocol bound or an
+expiry rule for physical state.
 
 Open **Lane restoration attempts & resume decisions** from System health. The
 page reads the controller's durable repair records, separately from passive
@@ -180,14 +189,15 @@ cannot change their contents.
 
 Read-only admin endpoints:
 
-- `GET /api/admin/test-runs/resources/overview` returns canonical subjects and a
-  bounded recent history, with explicit truncation.
+- `GET /api/admin/test-runs/resources/overview` returns current canonical subjects
+  and current ownership, with explicit truncation. Debug history loads only from
+  the separate history endpoint.
 - `GET /api/admin/test-runs/resources/:resourceId/detail` returns the latest subject.
 - `GET /api/admin/test-runs/resources/:resourceId/history?cursor=<last-event-id>`
   returns up to 50 events and a next cursor. An evicted cursor returns 409 rather
   than silently skipping or duplicating a shifted offset.
 
-History coverage is the retained authority journal window (at most 200 events per
+History coverage is the separate diagnostic journal window (at most 200 events per
 host), not an archival completeness claim. Resource check/repair control actions
 are not exposed by these read endpoints. Mobile walkthrough routines do not cover
 Admin resource cards; frontend render tests cover canonical identity, fleet
@@ -238,3 +248,25 @@ resource scope, independently of the overview's 2000-event display cap. Reads
 remain bounded to 100 matching hosts; an overflowing resource scope fails
 explicitly rather than silently excluding its authority. Journal ordering and
 retention compare timestamp instants, including timestamps with UTC offsets.
+
+
+Current host documents contain the latest accepted snapshot, current subjects,
+ownership, unresolved resource-check journals and the exact current stopped
+process when one was observed. Current overview, matching and preparation do not
+read or validate diagnostic event arrays. Installation, resource and restoration
+diagnostics use the existing host sample history; archive delivery can fail
+without rejecting an otherwise valid current observation.
+
+Roll out current readers before the extracting writer. Readers select current
+fields from old full snapshots. At an ordinary authenticated controller/updater
+report, the existing host CAS preserves the relevant installation/PID/birth stop,
+then removes completed event arrays. A stopped process cannot become running by
+changing its incarnation; a genuine different accepted process remains eligible.
+Original request/claim records retain unfinished authority. This changes neither
+original run verdicts nor physical checks or return acknowledgements.
+
+Operators use the existing `resource.inspect`, `resource.check` and
+`resource.reconcile-check` controller methods, or the current scoped fixer tools,
+to observe and repair machine state. A passed current check does not itself
+release an original claim or fabricate native writer cessation. Debug history
+is available separately for diagnosis and is not a prerequisite for these actions.

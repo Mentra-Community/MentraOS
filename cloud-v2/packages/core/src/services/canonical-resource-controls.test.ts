@@ -115,7 +115,7 @@ test('canonical authority reader retains the existing lifecycle cursor with its 
  const host=hosts().get(authority)!,original=TestHostStateModel.findOne;let projection:Record<string,unknown>|undefined;
  const query={select(value:Record<string,unknown>){projection=value;return query},read(){return query},readConcern(){return query},setOptions(){return query},lean:async()=>host};
  TestHostStateModel.findOne=mock(()=>query) as never;
- try{expect(await resourceReservationRepository.get(authority)).toEqual(host);expect(projection).toMatchObject({resourceLifecycleCursor:1,'snapshot.resourceLifecycle':1,laneControls:1,sequence:1,receivedAt:1})}finally{TestHostStateModel.findOne=original}
+ try{expect(await resourceReservationRepository.get(authority)).toEqual(host);expect(projection).toMatchObject({'resourceLifecycleCursor.subjects':1,'snapshot.resourceLifecycle.subjects':1,laneControls:1,sequence:1,receivedAt:1});expect(projection).not.toHaveProperty('resourceLifecycleCursor');expect(projection).not.toHaveProperty('snapshot.resourceLifecycle')}finally{TestHostStateModel.findOne=original}
 });
 
 for(const order of ['grant-first','cancel-first'] as const)test(`waiting cancellation and granted generation reconcile one original in ${order} receipt order`,async()=>{
@@ -165,7 +165,8 @@ test('new resource delivery CAS binds the same raw-claim version and exact authe
  try{
   expect(await laneControlRepository.replace(authority,0,[],current)).toBe(false);
   expect(filter).toMatchObject({hostId:authority,resourceReservationVersion:0,receivedAt:host.receivedAt,observedAt:new Date(now),
-    'snapshot.resourceLifecycle':host.snapshot.resourceLifecycle,'snapshot.laneControls':host.snapshot.laneControls});
+    'snapshot.resourceLifecycle.schemaVersion':(host.snapshot.resourceLifecycle as {schemaVersion:number}).schemaVersion,
+    'snapshot.resourceLifecycle.subjects':(host.snapshot.resourceLifecycle as {subjects:unknown[]}).subjects,'snapshot.laneControls':host.snapshot.laneControls});
   expect(await laneControlRepository.replace(authority,0,[])).toBe(false);expect(filter.resourceReservationVersion).toBeUndefined();expect(filter['snapshot.resourceLifecycle']).toBeUndefined();
  }finally{TestHostStateModel.findOneAndUpdate=original}
 });

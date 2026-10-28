@@ -658,7 +658,7 @@ for(const condition of ['valid','missing-membership','future-subject','owned-sub
  f.row.fleetResourceAdmission={intent,dependencies:[dependency]};f.row.fleetExclusiveReservation={intent,origin,intentSha256:digest,claims:[exclusive]};f.hosts[0]!.authorityReservations=[claim,exclusive];
  f.advance(120001);historicalPendingReturn(f);const pending=structuredClone(f.row.fleetCandidatePreparation!);expect(pending.provisionalReturn?.exclusive?.claims).toEqual([exclusive]);
  const borrower=repositoryEnvelope(f);borrower.resourceReservations=[claim];borrower.receivedAt=new Date(f.now);borrower.snapshot.observedAt=new Date(f.now).toISOString();borrower.snapshot.lanes[0]!.resources.find(r=>r.kind==='recorder')!.storage!.observedAt=borrower.snapshot.observedAt;
- const authority:ResourceReservationHost={...structuredClone(borrower),hostId:'air2',incarnation:'air2-one',resourceReservations:[exclusive],snapshot:{...structuredClone(borrower.snapshot),hostId:'air2',incarnation:'air2-one',lanes:[{id:'account',platform:'ios-on-mac',dispatchMode:'automatic',state:'idle',resources:[{id:'shared-account',kind:'fixture-data',capabilities:['google-authentication']}]}],resourceLifecycle:{schemaVersion:1,history:[],subjects:[{...structuredClone(borrower.snapshot.resourceLifecycle!.subjects[0]!),subject:{kind:'resource',id:'shared-account',authorityHostId:'air2'},observedAt:new Date(f.now).toISOString()}]}}};
+ const authority:ResourceReservationHost={...structuredClone(borrower),hostId:'air2',incarnation:'air2-one',resourceReservations:[exclusive],snapshot:{...structuredClone(borrower.snapshot),hostId:'air2',incarnation:'air2-one',lanes:[{id:'account',platform:'ios-on-mac',dispatchMode:'automatic',state:'idle',resources:[{id:'shared-account',kind:'fixture-data',capabilities:['google-authentication']}]}],resourceLifecycle:{schemaVersion:1,subjects:[{...structuredClone(borrower.snapshot.resourceLifecycle!.subjects[0]!),subject:{kind:'resource',id:'shared-account',authorityHostId:'air2'},observedAt:new Date(f.now).toISOString()}]}}};
  if(condition==='missing-membership')authority.snapshot.lanes[0]!.resources=[];
  if(condition==='future-subject')authority.snapshot.resourceLifecycle!.subjects[0]!.observedAt=new Date(f.now+1).toISOString();
  if(condition==='owned-subject')authority.snapshot.resourceLifecycle!.subjects[0]!.owner={kind:'run',id:'other-run',hostId:'air2',laneId:'account',generation:1};
@@ -976,29 +976,29 @@ for (const kind of ['phone', 'graph'] as const)
 test(`pending ${kind} candidate reads only its exact host before returning`, async () => {
  const f = kind === 'graph' ? routingGraphFixture() : fixture();
  await f.prepareLegacy('job-one'); const original = structuredClone(f.row);
- const hosts = (f.service as unknown as {hosts: {get: (id: string, options?: {frameworkHistory?: boolean}) => Promise<ReceivedTestHostState | null>; list: () => Promise<ReceivedTestHostState[]>}}).hosts;
+ const hosts = (f.service as unknown as {hosts: {get: (id: string) => Promise<ReceivedTestHostState | null>; list: () => Promise<ReceivedTestHostState[]>}}).hosts;
  const list = spyOn(hosts, 'list').mockRejectedValue(Error('Unrelated fleet lookup timed out'));
  const get = spyOn(hosts, 'get');
  try {
   const phases: string[] = [], waiting = await f.prepareLegacy('job-one', phase => phases.push(phase));
   expect(list).not.toHaveBeenCalled(); expect(get).toHaveBeenCalledTimes(1);
-  expect(get.mock.calls[0]).toEqual([original.fleetCandidatePreparation!.hostId, {frameworkHistory: false}]);
+  expect(get.mock.calls[0]).toEqual([original.fleetCandidatePreparation!.hostId]);
   expect(phases).not.toContain('initial-host-read');
   expect(waiting.waitingReason).toBeDefined(); expect(waiting.fleetCandidatePreparation).toEqual(original.fleetCandidatePreparation);
   expect((waiting as {resourceTarget?: unknown}).resourceTarget).toBeUndefined(); expect(f.row).toEqual(original); expect(f.bindWrites).toBe(0);
  } finally {list.mockRestore(); get.mockRestore();}
 });
 
-for (const changed of ['controller', 'binding']) test(`pending candidate retains history read for changed ${changed}`, async () => {
+for (const changed of ['controller', 'binding']) test(`pending candidate reads only current exact host for changed ${changed}`, async () => {
  const f = routingGraphFixture(); await f.prepareLegacy('job-one'); const original = structuredClone(f.row);
  const host = f.hosts.find(value => value.hostId === original.fleetCandidatePreparation!.hostId)!;
  if (changed === 'controller') {host.incarnation = 'replacement'; host.incarnationGeneration!++;}
  else host.frameworkBinding = {...host.frameworkBinding!, version: host.frameworkBinding!.version + 1};
- const hosts = (f.service as unknown as {hosts: {get: (id: string, options?: {frameworkHistory?: boolean}) => Promise<ReceivedTestHostState | null>; list: () => Promise<ReceivedTestHostState[]>}}).hosts;
+ const hosts = (f.service as unknown as {hosts: {get: (id: string) => Promise<ReceivedTestHostState | null>; list: () => Promise<ReceivedTestHostState[]>}}).hosts;
  const list = spyOn(hosts, 'list').mockRejectedValue(Error('Unrelated fleet lookup')); const get = spyOn(hosts, 'get');
  try {
-  await f.prepareLegacy('job-one'); expect(list).not.toHaveBeenCalled(); expect(get).toHaveBeenCalledTimes(2);
-  expect(get.mock.calls).toEqual([[host.hostId, {frameworkHistory: false}], [host.hostId]]);
+  await f.prepareLegacy('job-one'); expect(list).not.toHaveBeenCalled(); expect(get).toHaveBeenCalledTimes(1);
+  expect(get.mock.calls).toEqual([[host.hostId]]);
   expect(f.row).toEqual(original); expect(f.bindWrites).toBe(0);
  } finally {list.mockRestore(); get.mockRestore();}
 });
@@ -1009,11 +1009,11 @@ test(`pending ${kind} candidate retains custody when the current report omits fr
  await f.prepareLegacy('job-one'); const original = structuredClone(f.row);
  const host = f.hosts.find(value => value.hostId === original.fleetCandidatePreparation!.hostId)!;
  delete host.frameworkBinding; delete host.frameworkAcceptedAt; delete host.frameworkProcess;
- const hosts = (f.service as unknown as {hosts: {get: (id: string, options?: {frameworkHistory?: boolean}) => Promise<ReceivedTestHostState | null>; list: () => Promise<ReceivedTestHostState[]>}}).hosts;
+ const hosts = (f.service as unknown as {hosts: {get: (id: string) => Promise<ReceivedTestHostState | null>; list: () => Promise<ReceivedTestHostState[]>}}).hosts;
  const list = spyOn(hosts, 'list').mockRejectedValue(Error('Unrelated fleet lookup')); const get = spyOn(hosts, 'get');
  try {
   const waiting = await f.prepareLegacy('job-one');
-  expect(list).not.toHaveBeenCalled(); expect(get.mock.calls).toEqual([[host.hostId, {frameworkHistory: false}], [host.hostId]]);
+  expect(list).not.toHaveBeenCalled(); expect(get.mock.calls).toEqual([[host.hostId]]);
   expect(waiting.waitingReason).toBeDefined(); expect(waiting.fleetCandidatePreparation).toEqual(original.fleetCandidatePreparation);
   expect((waiting as {resourceTarget?: unknown}).resourceTarget).toBeUndefined(); expect(f.row).toEqual(original); expect(f.bindWrites).toBe(0);
  } finally {list.mockRestore(); get.mockRestore();}
