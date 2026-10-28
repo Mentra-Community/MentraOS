@@ -982,6 +982,49 @@ test('disjoint original glasses-check repair admits phone baseline while preserv
   expect(f.host.resourceReservations).toContainEqual(claim); expect(f.host.resourceReservations).toHaveLength(2)
   expect(f.glasses).toEqual(before); expect(f.subject().generation).toBe(0); expect(f.subject().owner).toBeNull()
 })
+async function haltedFixtureRepair() {
+  const f = await originalGlassesRepair(), lane = f.host.snapshot.lanes[0]!, target = f.subject(),
+    journal = f.host.snapshot.resourceReservations!.resourceChecks![0]!
+  lane.platform = 'ios-on-mac'; lane.resources[0]!.kind = 'fixture-data'; target.resource.kind = 'fixture-data'
+  lane.state = 'out-of-service'; f.glasses.status = 'out-of-service'; f.glasses.repair.state = 'halted'
+  f.advance(); f.host.incarnation = 'replacement-controller'; f.host.incarnationGeneration = 2
+  f.host.snapshot.incarnation = f.host.incarnation; f.host.snapshot.incarnationGeneration = 2
+  f.intent.controller = {incarnation: f.host.incarnation, generation: 2, sequence: f.host.sequence}
+  f.intent.resourceCheck!.controller = {incarnation: f.host.incarnation, generation: 2}
+  journal.intent = structuredClone(f.intent); journal.resourceCheck = structuredClone(f.intent.resourceCheck!)
+  journal.intentSha256 = requestInputDigest({...f.intent, controller: f.intent.resourceCheck!.controller,
+    dependencies: [{resourceId: target.subject.id, authorityHostId: 'mini', capability: 'resource-idle'}]})
+  return f
+}
+test('unowned fixture baseline survives a halted disjoint glasses repair and controller replacement', async () => {
+  const f = await haltedFixtureRepair(), retained = structuredClone(f.claim), glasses = structuredClone(f.glasses)
+  const result = await f.service.acquire(f.intent, 'mini')
+  expect(result.status).toBe('reserved'); expect(result.claims).toHaveLength(1)
+  expect(f.host.resourceReservations).toContainEqual(retained); expect(f.glasses).toEqual(glasses)
+  expect(f.subject().owner).toBeNull(); expect(f.subject().generation).toBe(0)
+})
+for (const conflict of ['target-owner', 'target-dependency', 'repair-dependency', 'unknown-scope', 'noncurrent', 'exclusive-fixer', 'unscoped-effect'] as const)
+test(`halted repair does not relax current fixture conflict: ${conflict}`, async () => {
+  const f = await haltedFixtureRepair(), lane = f.host.snapshot.lanes[0]!
+  if (conflict === 'target-owner') f.subject().owner = {id: 'target-writer', kind: 'run', hostId: 'mini', laneId: lane.id, generation: 1}
+  if (conflict === 'target-dependency') lane.resources[0]!.idleContract!.dependencies = [f.glasses.subject.id]
+  if (conflict === 'repair-dependency') f.glasses.resource.dependencies = [f.subject().subject.id]
+  if (conflict === 'unknown-scope') delete lane.resources[1]!.idleContract
+  if (conflict === 'noncurrent') f.glasses.current = false
+  if (conflict === 'exclusive-fixer') lane.activity!.owner.id = 'controller-exclusive-fixer'
+  if (conflict === 'unscoped-effect') f.host.resourceReservations = [...hostResourceReservationsSchema.parse(f.host.resourceReservations),
+    {...structuredClone(f.claim), id: randomUUID(), resourceId: 'unscoped-effect', resourceCheck: undefined,
+      owner: {id: 'unknown-writer', kind: 'run'}, operationId: 'unknown-effect'}]
+  const claims = structuredClone(f.host.resourceReservations)
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+  expect(f.host.resourceReservations).toEqual(claims); expect(f.writes).toHaveLength(1)
+})
+test('new fixture dependency winning host CAS retains halted repair custody without admitting the probe', async () => {
+  const f = await haltedFixtureRepair()
+  f.beforeWrite(async () => {f.advance(); f.subject().resource.dependencies.push(f.glasses.subject.id)})
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+  expect(f.host.resourceReservations).toEqual([f.claim]); expect(f.writes).toHaveLength(1)
+})
 test('own prepared baseline remains eligible without the projected check action', async () => {
   const f = initialBaseline(fixture()); f.subject().supportedActions = ['mark-out-of-service']
   expect((await f.service.acquire(f.intent, 'mini')).status).toBe('reserved'); expect(f.writes).toHaveLength(1)

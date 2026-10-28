@@ -863,19 +863,20 @@ export class ResourceReservationsService {
     }
     return admitted.size ? admitted : undefined
   }
-  /** Only an original resource-check repair may share controller capacity with a disjoint baseline.
-   * The installed controller still checks its complete native/repair history before preparing
-   * this intent and again before dispatch. Reported claim IDs alone are not physical scope. */
+  /** A resource-scoped failed-check repair does not own a disjoint passive baseline.
+   * Current custody and both declared dependency footprints decide; a halted lane or
+   * replacement controller does not renew or release the original repair claim. */
   private disjointResourceCheckRepairClaims(host: ResourceReservationHost, intent: ExclusiveResourceIntent): Set<string> | undefined {
     if (intent.prerequisite || !intent.laneId) return undefined
     const lane = host.snapshot.lanes.find(value => value.id === intent.laneId), activity = lane?.activity,
       lifecycle = host.snapshot.resourceLifecycle, now = this.now()
-    if (!lane || lane.state !== 'in-repair' || lane.dispatchMode !== 'automatic' || activity?.owner.kind !== 'fixer' || !lifecycle) return undefined
+    if (!lane || lane.dispatchMode !== 'automatic' || activity?.owner.kind !== 'fixer' || !lifecycle) return undefined
     const owned = lifecycle.subjects.filter(subject => subject.owner?.id === activity.owner.id)
     if (!owned.length || owned.some(subject => !subject.current || subject.subject.authorityHostId !== host.hostId ||
       subject.subject.id === intent.resourceCheck!.resourceId || subject.owner?.kind !== 'fixer' ||
       subject.owner.hostId !== host.hostId || subject.owner.laneId !== lane.id || subject.owner.generation !== activity.generation ||
-      subject.status !== 'in-repair' || subject.repair.state !== 'running' || !subject.repair.configured ||
+      !['running', 'needs-input', 'halted'].includes(subject.repair.state) ||
+      subject.status !== (subject.repair.state === 'halted' ? 'out-of-service' : 'in-repair') || !subject.repair.configured ||
       !subject.repair.interruptionId || subject.repair.executionId !== activity.owner.id || !subject.observedAt ||
       Date.parse(subject.observedAt) > Date.parse(host.snapshot.observedAt) ||
       !fresh({...host, snapshot: {...host.snapshot, observedAt: subject.observedAt}}, now))) return undefined
@@ -925,9 +926,7 @@ export class ResourceReservationsService {
       if (!subject || !check || claim.prerequisite || claim.origin || !journal || journal.state !== 'began' ||
         !this.resourceCheckClaimMatches(claim, journal.intent, this.resourceCheckIntentDigest(journal.intent)) ||
         !isDeepStrictEqual(journal.resourceCheck, check) || !isDeepStrictEqual(this.resourceCheckJournal(host, journal.intent), journal) ||
-        subject.idle.acceptedCheck?.operationId !== claim.operationId || subject.idle.contractVersion !== check.contractVersion ||
-        claim.controllerIncarnation !== host.incarnation || claim.controllerGeneration !== host.incarnationGeneration ||
-        claim.borrowerSequence > host.sequence) return undefined
+        subject.idle.acceptedCheck?.operationId !== claim.operationId || subject.idle.contractVersion !== check.contractVersion) return undefined
       if (subject.generation <= check.subjectGeneration ||
         subject.idle.acceptedCheck!.subjectGeneration <= check.subjectGeneration ||
         subject.idle.acceptedCheck!.subjectGeneration > subject.generation ||
