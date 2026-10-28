@@ -10,8 +10,6 @@ import {routineDispatchIntentSchema, preparationStatusSchema, preparationRejecti
 import {hostRequestDeliveryFilter, hostCancellationDeliveryFilter} from './test-request-activity';
 import {fleetExclusiveDeliverySchema, type FleetExclusiveReservation, type FleetExclusiveExecutionBinding, type FleetResourceAdmission} from '../types/resource-reservations.types';
 import {fleetResourceExecutionBinding, assertFleetResourceAdmission} from './fleet-resource-binding';
-import {backendConnectivityObservationMatches, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types';
-import {permissionContext} from '../types/resource-permissions.types';
 import {TestHostStateService} from './test-host-state.service';
 import {frameworkBindingSchema, frameworkVersionSchema, type FrameworkBinding} from '../types/framework-version.types';
 
@@ -395,67 +393,14 @@ export class TestRequestService {
     if (row.state !== 'preparing') return row;
     await this.enrolled?.(frozen);
     let frameworkFence: Record<string, unknown> | undefined = await this.admitPreparationFramework(row, {kind: 'complete', inputSha256: digest}, responseBinding, !trustedCachedSource);
-    if (frozen.platform === 'android' && row.fleetPreparation?.requirements.resources.some(resource =>
-      resource.kind === 'phone' && resource.capabilities.includes('backend-connectivity'))) {
-      const {qualifiedCandidate} = await import('./backend-candidate-preparation');
-      const candidateSource = row as unknown as import('../types/routine-job.types').StoredRoutineJob,
-        candidateHost = candidateSource.fleetCandidatePreparations ? await this.backendHosts?.get(hostId) : undefined,
-        candidate = candidateHost && qualifiedCandidate(candidateSource, candidateHost, frozen.laneId, this.now(), candidateHost.receivedAt);
-      if (candidate) {
-        if (!candidate || requestInputDigest(candidate.target.proposedInput) !== digest || candidateSource.fleetCandidatePreparation ||
-          !candidateSource.fleetPreparation || candidateSource.fleetDeadline.getTime() <= this.now())
-          throw new TestRunError(409, 'Prepared executable requires the exact returned pre-binding phone candidate');
-        const current = await this.preparation(requestId, hostId, intentSha256), currentHost = await this.backendHosts?.get(hostId);
-        if (!currentHost || !qualifiedCandidate(current as unknown as import('../types/routine-job.types').StoredRoutineJob, currentHost, frozen.laneId, this.now(), currentHost.receivedAt) ||
-          requestInputDigest((current as unknown as import('../types/routine-job.types').StoredRoutineJob).fleetCandidatePreparations) !== requestInputDigest(candidateSource.fleetCandidatePreparations) ||
-          (current as unknown as import('../types/routine-job.types').StoredRoutineJob).fleetCancellation ||
-          (current as unknown as import('../types/routine-job.types').StoredRoutineJob).preparationCancellation ||
-          (current as unknown as import('../types/routine-job.types').StoredRoutineJob).preparationRejection)
-          throw new PreparationRequestChanged('Original pre-binding phone candidate changed before executable admission');
-        frameworkFence = {...frameworkFence, ...this.preparationFrameworkFence(row), fleetCandidatePreparation: {$exists: false},
-          fleetCandidatePreparations: candidateSource.fleetCandidatePreparations, fleetCandidateSelection: candidateSource.fleetCandidateSelection,
-          fleetPreparation: candidateSource.fleetPreparation,
-          $and: [{fleetDeadline: candidateSource.fleetDeadline}, {fleetDeadline: {$gt: new Date(this.now())}}]};
-      } else {
-      const {preparingQualificationReceipt,recorderCapacityRequirements} = await import('./routine-job.service');
-      const host = await this.backendHosts?.get(hostId), lane = host?.lanes.find(value => value.id === frozen.laneId),
-        phone = lane?.resources.find(value => value.kind === 'phone'), preparing = host && lane && preparingQualificationReceipt(row as unknown as import('../types/routine-job.types').StoredRoutineJob, hostId, lane),
-        qualification = phone?.backendConnectivity?.qualification, context = host && permissionContext(host.frameworkBinding, intent.build, this.now());
-      if (!host || !phone || !context || !preparing || !qualification || qualification.local || !qualification.preparing || qualification.jobId !== requestId ||
-        qualification.inputSha256 !== digest || requestInputDigest(qualification.preparing) !== requestInputDigest(preparing) ||
-        phone.backendConnectivity!.check.operationId !== `backend-prerequisite:${qualification.targetInputSha256}` ||
-        !host.authorityReservations || host.authorityReservations.some(claim => 'kind' in claim && claim.prerequisite && claim.resourceId === phone.id) ||
-        !host.authorityReservations.some(claim => !('kind' in claim) && requestInputDigest(claim) === requestInputDigest((row as unknown as {fleetResourceReservation:unknown}).fleetResourceReservation)) ||
-        host.frameworkBinding!.routineApiVersion < BACKEND_CONNECTIVITY_ROUTINE_API_VERSION ||
-        Date.parse(host.receivedAt) > this.now() || this.now() - Date.parse(host.receivedAt) > 120_000 ||
-        !backendConnectivityObservationMatches(phone.backendConnectivity, phone.id, {...context, backend: {
-          hostId, incarnation: host.incarnation!, generation: host.incarnationGeneration!, resourceGenerations:
-            host.resourceLifecycle?.subjects.map(subject => ({resourceId: subject.subject.id, generation: subject.generation,
-              current: subject.current && subject.subject.authorityHostId === hostId, unowned: subject.owner === null})) ?? []}}))
-        throw new TestRunError(409, 'Prepared executable requires the current settled phone backend prerequisite');
-      const current = await this.preparation(requestId, hostId, intentSha256), source = row as unknown as import('../types/routine-job.types').StoredRoutineJob,
-        currentSource = current as unknown as import('../types/routine-job.types').StoredRoutineJob;
-      const target = {jobId: requestId,hostId,laneId:frozen.laneId,deadline:source.fleetDeadline.toISOString(),
-        selection:{...source.fleetSelection,routineSource:source.fleetPreparation!.routineSource},
-        requirements:recorderCapacityRequirements(source.fleetPreparation!),preparing,proposedInput:frozen,
-        purpose:{kind:'backend-connectivity',resourceId:phone.id},acceptedBinding:host.frameworkBinding,
-        target:{hostId,laneId:frozen.laneId}};
-      if (current.state !== 'preparing' || !source.fleetDeadline || source.fleetDeadline.getTime() <= this.now() ||
-        qualification.targetInputSha256 !== requestInputDigest(target) ||
-        this.now()-Date.parse(phone.backendConnectivity!.observedAt)>120_000 || this.now()-Date.parse(host.receivedAt)>120_000 ||
-        this.preparationFrameworkFenceDigest(current) !== this.preparationFrameworkFenceDigest(row) ||
-        requestInputDigest(currentSource.fleetPreparation) !== requestInputDigest(source.fleetPreparation) ||
-        requestInputDigest(currentSource.fleetResourceReservation) !== requestInputDigest(source.fleetResourceReservation) ||
-        requestInputDigest(currentSource.fleetResourceAdmission) !== requestInputDigest(source.fleetResourceAdmission) ||
-        currentSource.fleetCancellation || current.preparationCancellation || current.preparationRejection)
-        throw new PreparationRequestChanged('Original phone prerequisite preparation changed before executable admission');
-      // One request-row CAS adopts this exact selected preparation. No cross-document transaction or fallback.
-      frameworkFence = {...frameworkFence, ...this.preparationFrameworkFence(row),
-        fleetPreparation: source.fleetPreparation, fleetResourceReservation: source.fleetResourceReservation,
-        fleetCandidatePreparation: {$exists: false}, fleetCandidatePreparations: source.fleetCandidatePreparations ?? {$exists: false},
-        fleetCandidateSelection: source.fleetCandidateSelection ?? {$exists: false},
+    if (row.fleetSelection) {
+      // Current machine readiness was checked at reservation and binding. Setup
+      // fills this original input once; it does not create another phone check.
+      const source = row as unknown as import('../types/routine-job.types').StoredRoutineJob;
+      frameworkFence = {...frameworkFence, ...this.preparationFrameworkFence(row), fleetPreparation: source.fleetPreparation,
+        fleetResourceReservation: source.fleetResourceReservation,
+        fleetCandidatePreparation: {$exists: false},
         $and: [{fleetDeadline: source.fleetDeadline}, {fleetDeadline: {$gt: new Date(this.now())}}]};
-      }
     }
     if (!this.repository.completePreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
     const saved = await this.repository.completePreparation(requestId, hostId, intentSha256, frozen, digest, exclusive, row.fleetResourceAdmission, frameworkFence) ??

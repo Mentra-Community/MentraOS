@@ -9,7 +9,7 @@ import type {StoredRoutineJob} from '../types/routine-job.types'
 import {fleetResourceExecutionBinding} from './fleet-resource-binding'
 import {requestInputDigest} from './test-request.service'
 import {frameworkRequestInputSchema} from '../types/framework-request.types'
-import {testRoutineSource} from '../testing/framework-fixtures'
+import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures'
 
 const at = Date.parse('2026-10-15T21:10:00Z'), dependency = {resourceId: 'conference-account', authorityHostId: 'mini', capability: 'google-authentication'}
 const intent = (hostId: string, owner = hostId): ExclusiveResourceIntent => ({operationId: `request-${owner}`, hostId, laneId: 'mac',
@@ -19,7 +19,7 @@ function fixture(options: {race?: boolean; afterCommit?: (requests: Map<string, 
   let now = at, raced = false
   const rows = new Map<string, ResourceReservationHost>(['mini', 'air1', 'air2'].map(hostId => [hostId, {hostId,
     incarnation: `${hostId}-process`, incarnationGeneration: 1, sequence: 1, receivedAt: new Date(at), resourceReservationVersion: 0,
-    resourceReservations: [], snapshot: {hostId, incarnation: `${hostId}-process`, incarnationGeneration: 1, sequence: 1,
+    resourceReservations: [], snapshot: {hostId, frameworkBinding: testFrameworkBinding(), frameworkAcceptedAt: new Date(at).toISOString(), frameworkProcess: {pid:100,startedAt:'software-current-controller'}, incarnation: `${hostId}-process`, incarnationGeneration: 1, sequence: 1,
       observedAt: new Date(at).toISOString(), lanes: [{id: 'mac', platform: 'ios-on-mac', state: 'idle', dispatchMode: 'automatic',
         resources: [{id: 'fixtures', kind: 'fixture-data', capabilities: ['google-authentication', 'clipboard'], exclusiveDependencies: [dependency]}]}]}}]))
   const writes: HostResourceReservation[][] = [], requests = new Map<string, StoredRoutineJob & {input?: unknown}>()
@@ -63,8 +63,8 @@ test('two hosts requesting one account use one existing authority CAS and only o
 
 function fleetRequest(requestId: string): StoredRoutineJob {
   return {requestId, state: 'awaiting-runner', fleetSelectionSha256: 'b'.repeat(64), fleetInputSha256: 'a'.repeat(64),
-    fleetDeadline: new Date(at + 60_000), fleetSelection: {requestId} as StoredRoutineJob['fleetSelection'],
-    fleetPreparation: {requirements: {resources: [{kind: 'fixture-data', capabilities: ['google-authentication']}]}} as StoredRoutineJob['fleetPreparation']}
+    fleetDeadline: new Date(at + 60_000), fleetSelection: {requestId, build: {headSha: 'a'.repeat(40)}} as StoredRoutineJob['fleetSelection'],
+    fleetPreparation: {requirements: {platform: 'ios-on-mac', resources: [{kind: 'fixture-data', capabilities: ['google-authentication']}]}} as StoredRoutineJob['fleetPreparation']}
 }
 test('portable requests contend on the same existing authority before binding and repeated delivery retains the original controller intent', async () => {
   const f = fixture(); f.requests.set('first', fleetRequest('first')); f.requests.set('second', fleetRequest('second'))

@@ -4,7 +4,7 @@ import {createTestRequestsApi} from '../api/internal/test-requests.api';
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures';
 import {portableRequirementsSchema, portableRoutineSelectionSchema, routineQualificationTargetSchema, type StoredRoutineJob} from '../types/routine-job.types';
 import type {PermissionObservation} from '../types/resource-permissions.types';
-import {RoutineJobService, routineJobInputDigest, routineJobRepository, routineLaneDescriptorRevision, type RoutineJobRepository} from './routine-job.service';
+import {RoutineJobService, preparingQualificationReceipt, recorderCapacityRequirements, routineJobInputDigest, routineJobRepository, routineLaneDescriptorRevision, type RoutineJobRepository} from './routine-job.service';
 import {requestInputDigest, TestRequestService} from './test-request.service';
 import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {frameworkRequestInputSchema} from '../types/framework-request.types';
@@ -68,92 +68,72 @@ function fixture(rows = [row()], observed = host()) {
     {async get(id) {expect(id).toBe('pro1'); return structuredClone(observed);}}, {cancel: forbidden}, {detail: forbidden}, () => now);
   return {service, reads, rows, observed};
 }
+/** An immutable target saved by the former producer. This fixture is input to
+ * the real owned recovery endpoint, never a replacement qualification result. */
+function historicalTarget(original: StoredRoutineJob, observed: ReceivedTestHostState, laneId = 'pro1-mac') {
+  const lane = observed.lanes.find(lane => lane.id === laneId)!, accepted = original.state === 'accepted', preparing = original.state === 'preparing',
+    bound = accepted || preparing || original.state === 'queued', preparation = preparing ? preparingQualificationReceipt(original, observed.hostId, lane) : undefined;
+  const body = {jobId: original.requestId, hostId: observed.hostId, laneId, deadline: original.fleetDeadline.toISOString(),
+    selection: accepted || preparing ? {...original.fleetSelection, routineSource: original.fleetPreparation!.routineSource} : original.fleetSelection,
+    requirements: accepted || preparing ? recorderCapacityRequirements(original.fleetPreparation!) : original.fleetPreparation!.requirements,
+    ...preparation ? {preparing: preparation} : {},
+    ...accepted ? {accepted: {...original.hostReceipt!, binding: observed.frameworkBinding!, controller: {incarnation: observed.incarnation, generation: observed.incarnationGeneration}}} : {},
+    ...(bound || original.fleetResourceAdmission ? {target: {hostId: observed.hostId, laneId}} : original.fleetTarget ? {target: original.fleetTarget} : {})};
+  return routineQualificationTargetSchema.parse({...body, inputSha256: requestInputDigest(body)});
+}
+function ownedFixture(original = row(), observed = host(), target = historicalTarget(original, observed)) {
+  const f = fixture([original], observed), lane = f.observed.lanes.find(lane => lane.id === target.laneId)!;
+  lane.state = 'reserved'; lane.activity = {owner: {id: 'passive-owner', kind: 'authoring'}, generation: 44};
+  const owned = {jobId: target.jobId, laneId: target.laneId, inputSha256: target.inputSha256, ownerId: 'passive-owner', generation: 44,
+    binding: observed.frameworkBinding!, controller: {incarnation: observed.incarnation, generation: observed.incarnationGeneration}};
+  return {...f, target, owned, targets: () => f.service.qualificationTargets('pro1', owned)};
+}
 
-test('an unseen selected build becomes a bounded read-only target while its original job remains unbound', async () => {
-  const f = fixture(), before = structuredClone(f.rows), targets = await f.service.qualificationTargets('pro1');
-  expect(targets).toHaveLength(1);
-  const {inputSha256, ...target} = targets[0]!;
-  expect(target).toEqual({jobId: 'pending-ota', hostId: 'pro1', laneId: 'pro1-mac', deadline: new Date(now + 60_000).toISOString(),
-    selection: f.rows[0]!.fleetSelection, requirements});
-  expect(inputSha256).toBe(requestInputDigest(target));
-  expect(inputSha256).not.toBe(f.rows[0]!.fleetInputSha256);
-  expect(f.reads).toEqual([{hostId: 'pro1', laneId: 'pro1-mac', limit: 100, at: new Date(now), timeoutMS: 5000, includeQueued: true, includeAccepted: false, includePreparing: false}]);
-  expect(f.rows).toEqual(before);
-  expect(f.rows[0]).not.toHaveProperty('fleetBinding');
-  expect(f.rows[0]).not.toHaveProperty('hostReceipt');
-  expect(f.rows[0]).not.toHaveProperty('dispatchIntent');
-  expect(requestInputDigest({...target, selection: {...target.selection, build: {...target.selection.build, headSha: 'c'.repeat(40)}}})).not.toBe(inputSha256);
+test('an unseen selected build does not create a new app qualification target or mutate the unbound original',async()=>{
+ const f=fixture(),before=structuredClone(f.rows);
+ expect(await f.service.qualificationTargets('pro1')).toEqual([]);expect(f.reads).toEqual([]);expect(f.rows).toEqual(before);
+ expect(f.rows[0]).not.toHaveProperty('fleetBinding');expect(f.rows[0]).not.toHaveProperty('hostReceipt');expect(f.rows[0]).not.toHaveProperty('dispatchIntent');
 });
 
-test('target constraints, cancellation, expiry, bound state and structural mismatches cannot produce a candidate', async () => {
-  const invalid = [
-    {...row('other-host'), fleetTarget: {hostId: 'other'}},
-    {...row('other-lane'), fleetTarget: {hostId: 'pro1', laneId: 'other'}},
-    {...row('cancelled'), fleetCancellation: {requestedAt: new Date(now).toISOString(), reason: 'Cancelled'}},
-    {...row('expired'), fleetDeadline: new Date(now)},
-    {...row('accepted'), state: 'accepted' as const, hostId: 'pro1'},
-    {...row('unprepared'), state: 'awaiting-source' as const, fleetPreparation: undefined},
-  ];
-  expect(await fixture(invalid).service.qualificationTargets('pro1')).toEqual([]);
-  const selected = row(); selected.fleetTarget = {hostId: 'pro1', laneId: 'pro1-mac'};
-  selected.fleetInputSha256 = routineJobInputDigest(selected);
-  expect((await fixture([selected]).service.qualificationTargets('pro1'))[0]?.target).toEqual(selected.fleetTarget);
-  const wrongResources = host(); wrongResources.lanes[0]!.resources[0]!.capabilities = [];
-  expect(await fixture([row()], wrongResources).service.qualificationTargets('pro1')).toEqual([]);
+test('unowned jobs never create app targets regardless of placement, cancellation, deadline or admission stage',async()=>{
+ for(const original of [row(),{...row(),fleetTarget:{hostId:'other'}},{...row(),fleetCancellation:{requestedAt:new Date(now).toISOString(),reason:'cancelled'}},
+  {...row(),fleetDeadline:new Date(now)},queuedRow(),acceptedRow(),preparingFixture().value]){
+  const f=fixture([original]);expect(await f.service.qualificationTargets('pro1')).toEqual([]);expect(f.reads).toEqual([]);
+ }
 });
 
-test('an unaccepted queued handoff refreshes only its exact assigned build and lane without replacing input or ownership', async () => {
-  const original = queuedRow(), observed = host(); observed.lanes.push({...structuredClone(observed.lanes[0]!), id: 'other-mac'});
-  const f = fixture([original], observed), before = structuredClone(original), targets = await f.service.qualificationTargets('pro1');
-  expect(targets).toHaveLength(1);
-  expect(targets[0]).toMatchObject({jobId: original.requestId, hostId: 'pro1', laneId: 'pro1-mac', deadline: original.fleetDeadline.toISOString(),
-    selection: original.fleetSelection, target: {hostId: 'pro1', laneId: 'pro1-mac'}});
-  expect(f.rows[0]).toEqual(before); expect(f.rows[0]!.inputSha256).toBe(original.inputSha256);
-  const fresh = host(); fresh.lanes[0]!.resources[0]!.permissionObservations = [granted()];
-  expect(await fixture([original], fresh).service.qualificationTargets('pro1')).toEqual([]);
+test('an already-owned queued handoff recovers only its frozen assigned build and lane without replacing input or ownership',async()=>{
+ const original=queuedRow(),observed=host();observed.lanes.push({...structuredClone(observed.lanes[0]!),id:'other-mac'});
+ const f=ownedFixture(original,observed),before=structuredClone(original);
+ expect(await f.service.qualificationTargets('pro1')).toEqual([]);expect(await f.targets()).toEqual([f.target]);
+ expect(f.target).toMatchObject({jobId:original.requestId,target:{hostId:'pro1',laneId:'pro1-mac'}});expect(f.rows[0]).toEqual(before);
+ f.observed.lanes[0]!.resources[0]!.permissionObservations=[granted()];expect(await f.targets()).toEqual([f.target]);
 });
 
-test('staged resource admission qualifies only its original host and lane without choosing another compatible target', async () => {
-  const original = row(), observed = host();
-  original.fleetResourceAdmission = {intent: {operationId: `run:${original.requestId}`, hostId: 'pro1', laneId: 'pro1-mac',
-    controller: {incarnation: observed.incarnation, generation: observed.incarnationGeneration, sequence: observed.sequence},
-    owner: {id: original.requestId, kind: 'run'}, inputSha256: original.fleetInputSha256!,
-    resources: [{id: 'app', capabilities: ['relaunch']}, {id: 'recorder', capabilities: []}]}, dependencies: []};
-  observed.lanes.push({...structuredClone(observed.lanes[0]!), id: 'other-mac'});
-  const f = fixture([original], observed), before = structuredClone(original);
-  expect((await f.service.qualificationTargets('pro1')).map(target => target.target)).toEqual([{hostId: 'pro1', laneId: 'pro1-mac'}]);
-  expect(f.rows[0]).toEqual(before);
-  const changedInventory = host(); changedInventory.lanes[0]!.resources[0]!.id = 'replacement-app';
-  expect(await fixture([original], changedInventory).service.qualificationTargets('pro1')).toEqual([]);
-  for (const change of [
-    (value: typeof original) => {value.fleetResourceAdmission!.intent.hostId = 'other';},
-    (value: typeof original) => {value.fleetResourceAdmission!.intent.laneId = 'other';},
-    (value: typeof original) => {value.fleetResourceAdmission!.intent.owner.id = 'other';},
-    (value: typeof original) => {value.fleetResourceAdmission!.intent.inputSha256 = 'c'.repeat(64);},
-    (value: typeof original) => {value.fleetResourceAdmission!.intent.resources.pop();},
-    (value: typeof original) => {value.fleetResourceAdmission!.intent.resources[0]!.capabilities = [];},
-  ]) {
-    const value = structuredClone(original); change(value);
-    expect(await fixture([value]).service.qualificationTargets('pro1')).toEqual([]);
-  }
+test('an already-owned staged admission recovers only its original resources and lane',async()=>{
+ const original=row(),observed=host();original.fleetResourceAdmission={intent:{operationId:`run:${original.requestId}`,hostId:'pro1',laneId:'pro1-mac',
+  controller:{incarnation:'boot',generation:1,sequence:1},owner:{id:original.requestId,kind:'run'},inputSha256:original.fleetInputSha256!,
+  resources:[{id:'app',capabilities:['relaunch']},{id:'recorder',capabilities:[]}]},dependencies:[]};
+ const target=historicalTarget(original,observed),f=ownedFixture(original,observed,target),before=structuredClone(original);
+ expect(await f.targets()).toEqual([target]);expect(f.rows[0]).toEqual(before);
+ for(const change of [(value:StoredRoutineJob)=>{value.fleetResourceAdmission!.intent.hostId='other'},(value:StoredRoutineJob)=>{value.fleetResourceAdmission!.intent.laneId='other'},
+  (value:StoredRoutineJob)=>{value.fleetResourceAdmission!.intent.owner.id='other'},(value:StoredRoutineJob)=>{value.fleetResourceAdmission!.intent.inputSha256='c'.repeat(64)},
+  (value:StoredRoutineJob)=>{value.fleetResourceAdmission!.intent.resources.pop()},(value:StoredRoutineJob)=>{value.fleetResourceAdmission!.intent.resources[0]!.capabilities=[]}]){
+  const altered=structuredClone(original);change(altered);expect(await ownedFixture(altered,host(),target).targets()).toEqual([]);
+ }
+ const changed=host();changed.lanes[0]!.resources[0]!.id='replacement';expect(await ownedFixture(original,changed,target).targets()).toEqual([]);
 });
 
-test('only the compatible canonical framework source receives queued targets; older workers retain unbound discovery', async () => {
-  for (const routineApiVersion of [38, 43]) {
-    const old = host(); old.frameworkBinding = {...binding, version: 998, routineApiVersion};
-    expect(await fixture([queuedRow()], old).service.qualificationTargets('pro1')).toEqual([]);
-    expect((await fixture([row()], old).service.qualificationTargets('pro1'))[0]?.jobId).toBe('pending-ota');
-    const many = fixture([...Array.from({length: 101}, (_, index) => queuedRow(`queued-${index}`)), row()], old);
-    expect((await many.service.qualificationTargets('pro1'))[0]?.jobId).toBe('pending-ota');
-    expect(many.reads[0]).toMatchObject({includeQueued: false, limit: 100});
-  }
-  for (const version of [999, 1000]) {
-    const current = host(); current.frameworkBinding = {...binding, version, routineApiVersion: 43};
-    expect((await fixture([queuedRow()], current).service.qualificationTargets('pro1'))[0]?.target).toEqual({hostId: 'pro1', laneId: 'pro1-mac'});
-  }
+test('owned queued recovery retains its framework boundary while all workers omit new unbound discovery',async()=>{
+ for(const version of [998,999,1000]){
+  const observed=host();observed.frameworkBinding={...binding,version,routineApiVersion:43};
+  const f=ownedFixture(queuedRow(),observed);expect(await f.targets()).toEqual(version>=999?[f.target]:[]);
+  expect(await fixture([row()],observed).service.qualificationTargets('pro1')).toEqual([]);
+ }
 });
 
 test('queued handoff proof refuses changed process selection, immutable input, source, resources or original binding', async () => {
+  const originalTarget = historicalTarget(queuedRow(), host());
   const changes: Array<(value: ReturnType<typeof queuedRow>) => void> = [
     value => {value.hostId = 'other';}, value => {value.fleetBinding.hostId = 'other';}, value => {value.fleetBinding.laneId = 'other';},
     value => {value.fleetBinding.jobId = 'other';}, value => {value.fleetBinding.requestId = 'other';},
@@ -168,23 +148,23 @@ test('queued handoff proof refuses changed process selection, immutable input, s
     value => {value.input.policy = {estimatedOutputBytes: 1}; value.inputSha256 = requestInputDigest(value.input);},
     value => {value.dispatchIntent = {...value.dispatchIntent, laneId: 'other'}; value.dispatchIntentSha256 = requestInputDigest(value.dispatchIntent);},
   ];
-  for (const change of changes) {const value = queuedRow(); change(value); expect(await fixture([value]).service.qualificationTargets('pro1')).toEqual([]);}
+  for (const change of changes) {const value = queuedRow(); change(value); expect(await ownedFixture(value, host(), originalTarget).targets()).toEqual([]);}
   const changed = host(); changed.lanes[0]!.resources[0]!.capabilities!.push('launch');
-  expect(await fixture([queuedRow()], changed).service.qualificationTargets('pro1')).toEqual([]);
+  expect(await ownedFixture(queuedRow(), changed, originalTarget).targets()).toEqual([]);
 });
 
 test('a queued state cannot obscure accepted, canceled, rejected, completed or active custody', async () => {
-  const original = queuedRow();
+  const original = queuedRow(), target = historicalTarget(original, host());
   for (const evidence of [{hostReceipt: {requestId: original.requestId, hostId: 'pro1', inputSha256: original.inputSha256, acceptedAt: new Date(now).toISOString()}},
     {runId: original.requestId}, {dispatchCompletion: {inputSha256: original.inputSha256, disposition: 'clean' as const, completedAt: new Date(now).toISOString()}},
     {hostCancellation: {requestedAt: new Date(now).toISOString(), reason: 'Canceled'}}, {hostRejection: {code: 'invalid-source', reason: 'Rejected'}},
     {fleetCancellation: {requestedAt: new Date(now).toISOString(), reason: 'Canceled'}},
     {preparationCancellation: {requestedAt: new Date(now).toISOString(), reason: 'Canceled'}}, {preparationRejection: {code: 'invalid-source', reason: 'Rejected'}}])
-    expect(await fixture([{...original, ...evidence}]).service.qualificationTargets('pro1')).toEqual([]);
+    expect(await ownedFixture({...original, ...evidence}, host(), target).targets()).toEqual([]);
   for (const state of ['accepted', 'running', 'terminal'] as const)
-    expect(await fixture([{...original, state}]).service.qualificationTargets('pro1')).toEqual([]);
-  const busy = host(); busy.lanes[0]!.state = 'reserved';
-  expect(await fixture([original], busy).service.qualificationTargets('pro1')).toEqual([]);
+    expect(await ownedFixture({...original, state}, host(), target).targets()).toEqual([]);
+  const busy = ownedFixture(original, host(), target); busy.observed.lanes[0]!.activity!.owner.id = 'foreign-owner';
+  expect(await busy.targets()).toEqual([]);
 });
 
 test('active custody, paused/offline lanes, stale reports and older worker API never start target discovery', async () => {
@@ -202,48 +182,31 @@ test('active custody, paused/offline lanes, stale reports and older worker API n
     expect(await f.service.qualificationTargets('pro1')).toEqual([]); expect(f.reads).toEqual([]);}
 });
 
-test('an exact fresh app grant skips preparation; stale or different selected-build evidence still needs qualification', async () => {
-  for (const qualificationNeeded of [false, true]) {
-    const observed = host(), observation = granted();
-    if (qualificationNeeded) observation.recipient = {...observation.recipient, selectedBuild: {headSha: 'c'.repeat(40), archiveSha256: hash, receiptSha256: hash}} as PermissionObservation['recipient'];
-    observed.lanes[0]!.resources[0]!.permissionObservations = [observation];
-    expect(await fixture([row()], observed).service.qualificationTargets('pro1')).toHaveLength(qualificationNeeded ? 1 : 0);
-  }
-  const observed = host(); observed.lanes[0]!.resources[0]!.permissionObservations = [{...granted(), observedAt: new Date(now - 120_001).toISOString()}];
-  expect(await fixture([row()], observed).service.qualificationTargets('pro1')).toHaveLength(1);
+test('missing, stale or different selected-app permissions cannot reintroduce pre-install target discovery',async()=>{
+ for(const evidence of [undefined,granted(),{...granted(),observedAt:new Date(now-120001).toISOString()},
+  {...granted(),recipient:{...granted().recipient,selectedBuild:{headSha:'c'.repeat(40),archiveSha256:hash,receiptSha256:hash}}}]){
+  const observed=host();if(evidence)observed.lanes[0]!.resources[0]!.permissionObservations=[evidence as PermissionObservation];
+  const f=fixture([row()],observed);expect(await f.service.qualificationTargets('pro1')).toEqual([]);expect(f.reads).toEqual([]);
+ }
 });
 
-test('one candidate per lane does not replace permissionless jobs or expose inconsistent exact inputs', async () => {
-  const observed = host(); observed.lanes.push({...structuredClone(observed.lanes[0]!), id: 'second-mac'});
-  const f = fixture([row(), row('later')], observed), targets = await f.service.qualificationTargets('pro1');
-  expect(targets.map(value => [value.jobId, value.laneId])).toEqual([['pending-ota', 'pro1-mac'], ['pending-ota', 'second-mac']]);
-  expect(targets[0]!.inputSha256).not.toBe(targets[1]!.inputSha256);
-  const plain = row(); delete plain.fleetPreparation!.requirements.resources[0]!.permissions;
-  plain.fleetInputSha256 = routineJobInputDigest(plain);
-  expect(await fixture([plain]).service.qualificationTargets('pro1')).toEqual([]);
-  const corrupted = row(); corrupted.fleetSelection.build.headSha = 'c'.repeat(40);
-  await expect(fixture([corrupted]).service.qualificationTargets('pro1')).rejects.toThrow('Stored routine job exact inputs are unavailable');
-  expect(routineQualificationTargetSchema.safeParse({...targets[0], jobId: 'other'}).success).toBe(false);
+test('owned recovery validates its exact historical input rather than choosing any unbound candidate',async()=>{
+ const original=row(),f=ownedFixture(original);expect(await f.targets()).toEqual([f.target]);
+ const corrupted=structuredClone(original);corrupted.fleetSelection.build.headSha='c'.repeat(40);
+ await expect(ownedFixture(corrupted,host(),f.target).targets()).rejects.toThrow('Stored routine job exact inputs are unavailable');
+ const plain=structuredClone(original);delete plain.fleetPreparation!.requirements.resources[0]!.permissions;plain.fleetInputSha256=routineJobInputDigest(plain);
+ expect(await ownedFixture(plain,host(),f.target).targets()).toEqual([]);
+ expect(routineQualificationTargetSchema.safeParse({...f.target,jobId:'other'}).success).toBe(false);
 });
 
-test('ordered streaming skips incompatible and already qualified rows without a separate query-language matcher', async () => {
-  const first = row('already-qualified'), later = row('unseen-build');
-  later.fleetSelection.build.headSha = 'c'.repeat(40);
-  later.fleetSelectionSha256 = requestInputDigest(later.fleetSelection);
-  later.fleetInputSha256 = routineJobInputDigest(later);
-  const observed = host(); observed.lanes[0]!.resources[0]!.permissionObservations = [granted()];
-  expect((await fixture([...Array.from({length: 26}, () => structuredClone(first)), later], observed)
-    .service.qualificationTargets('pro1'))[0]?.jobId).toBe('unseen-build');
-  expect(await fixture([...Array.from({length: 100}, () => structuredClone(first)), later], observed)
-    .service.qualificationTargets('pro1')).toEqual([]);
+test('owned historical recovery reads only the exact original and never scans unrelated candidates',async()=>{
+ const f=ownedFixture(row('owned-original'));expect(await f.targets()).toEqual([f.target]);
+ expect(f.reads).toEqual([{jobId:'owned-original',timeoutMS:5000}]);
 });
 
-test('all candidate streams share the query deadline and stop before a target is returned after it expires', async () => {
-  const f = fixture(), service = f.service as unknown as {now: () => number};
-  const times = [now, now + 1, now + 2, now + 5_000];
-  service.now = () => times.shift() ?? now + 5_000;
-  expect(await f.service.qualificationTargets('pro1')).toEqual([]);
-  expect(f.reads).toEqual([{hostId: 'pro1', laneId: 'pro1-mac', limit: 100, at: new Date(now), timeoutMS: 4998, includeQueued: true, includeAccepted: false, includePreparing: false}]);
+test('owned recovery stops before an exact lookup starts after its finite query budget',async()=>{
+ const f=ownedFixture(),times=[now,now+5000];(f.service as unknown as {now:()=>number}).now=()=>times.shift()??now+5000;
+ expect(await f.targets()).toEqual([]);expect(f.reads).toEqual([]);
 });
 
 test('the authenticated poll only includes explicitly requested targets and does not bind or acknowledge a product', async () => {
@@ -256,7 +219,7 @@ test('the authenticated poll only includes explicitly requested targets and does
   const response = await api.request('/?qualificationTargets=1&hostId=other', {headers});
   expect(response.status).toBe(200);
   const page = await response.json() as {qualificationTargets: unknown[]};
-  expect(routineQualificationTargetSchema.parse(page.qualificationTargets[0])).toMatchObject({hostId: 'pro1', laneId: 'pro1-mac'});
+  expect(page.qualificationTargets).toEqual([]); expect(f.reads).toEqual([]);
   expect((await api.request('/?qualificationTargets=0', {headers})).status).toBe(400);
   expect((await api.request('/?qualificationTargets=1')).status).toBe(401);
   expect(f.rows[0]!.state).toBe('awaiting-runner');
@@ -310,55 +273,35 @@ function acceptedRow() {
  return{...value,state:'accepted' as const,hostReceipt:{requestId:value.requestId,hostId:'pro1',inputSha256:value.inputSha256,
   acceptedAt:new Date(now-500).toISOString()}}
 }
-test('an accepted original remains reachable before the finite cap of earlier incompatible candidates', async () => {
- const original=acceptedRow(), rows=[...Array.from({length:100},(_,index)=>{
-  const value=row(`earlier-${index}`);value.fleetPreparation!.requirements.resources[0]!.capabilities=['unoffered'];
-  value.fleetInputSha256=routineJobInputDigest(value);return value;
- }),original];
- let order:Record<string,number>={},limit=0,scanned=0,closed=false;
- const query={sort(value:Record<string,number>){order=value;return this},limit(value:number){limit=value;return this},
-  read(){return this},readConcern(){return this},setOptions(){return this},lean(){return this},cursor(){return{
-   async *[Symbol.asyncIterator](){
-    const ordered=[...rows].sort((left,right)=>{for(const[field,direction]of Object.entries(order)){
-     const read=(row:unknown)=>field.split('.').reduce<unknown>((value,key)=>value&&typeof value==='object'?(value as Record<string,unknown>)[key]:undefined,row);
-     const a=read(left),b=read(right);if(a===b)continue;if(a===undefined)return-direction;if(b===undefined)return direction;
-     return(String(a)<String(b)?-1:1)*direction;
-    }return 0});
-    for(const value of ordered.slice(0,limit)){scanned++;yield value}
-   },async close(){closed=true},
-  }}};
- const find=TestRequestModel.find,f=fixture([],acceptedHost());
- (f.service as unknown as {rows:RoutineJobRepository}).rows.qualificationCandidates=routineJobRepository.qualificationCandidates;
- try{TestRequestModel.find=mock(()=>query) as unknown as typeof find;
-  expect((await f.service.qualificationTargets('pro1')).map(value=>value.jobId)).toEqual([original.requestId]);
-  expect(limit).toBe(100);expect(scanned).toBe(1);expect(closed).toBe(true);
- }finally{TestRequestModel.find=find}
+test('an already-owned accepted original uses a point lookup despite unrelated candidates',async()=>{
+ const original=acceptedRow(),f=ownedFixture(original,acceptedHost());f.rows.push(...Array.from({length:100},(_,index)=>row(`unrelated-${index}`)));
+ expect(await f.targets()).toEqual([f.target]);expect(f.reads).toEqual([{jobId:original.requestId,timeoutMS:5000}]);
 });
 test('exact accepted unstarted request gets a current-binding target with a separate immutable executable digest',async()=>{
  const original=acceptedRow(),current=acceptedHost()
- const f=fixture([original],current),before=structuredClone(original),targets=await f.service.qualificationTargets('pro1')
+ const f=ownedFixture(original,current),before=structuredClone(original),targets=await f.targets()
  expect(targets).toHaveLength(1)
  expect(targets[0]).toMatchObject({jobId:original.requestId,hostId:'pro1',laneId:'pro1-mac',deadline:original.fleetDeadline.toISOString(),
   accepted:{...original.hostReceipt,binding:current.frameworkBinding,controller:{incarnation:current.incarnation,generation:current.incarnationGeneration}},
   selection:{...original.fleetSelection,routineSource:original.fleetPreparation!.routineSource},target:{hostId:'pro1',laneId:'pro1-mac'}})
  const{inputSha256,...body}=targets[0]!;expect(inputSha256).toBe(requestInputDigest(body));expect(inputSha256).not.toBe(original.inputSha256)
- expect(f.rows[0]).toEqual(before);expect(f.reads[0]).toMatchObject({includeAccepted:true})
- const old=host();old.frameworkBinding={...binding,version:1053,routineApiVersion:50};expect(await fixture([original],old).service.qualificationTargets('pro1')).toEqual([])
+ expect(f.rows[0]).toEqual(before);expect(f.reads[0]).toEqual({jobId:original.requestId,timeoutMS:5000})
+ const old=host();old.frameworkBinding={...binding,version:1053,routineApiVersion:50};expect(await ownedFixture(original,old,f.target).targets()).toEqual([])
 })
 test('accepted target rejects wrong receipt, original source and canceled/running/completed identities',async()=>{
- const current=acceptedHost()
+ const current=acceptedHost(),target=historicalTarget(acceptedRow(),current)
  for(const change of [
   (v:ReturnType<typeof acceptedRow>)=>{v.hostReceipt.requestId='other'},
   (v:ReturnType<typeof acceptedRow>)=>{v.hostReceipt.inputSha256='f'.repeat(64)},
   (v:ReturnType<typeof acceptedRow>)=>{v.hostReceipt.hostId='other'},
   (v:ReturnType<typeof acceptedRow>)=>{v.hostReceipt.acceptedAt=new Date(now+1).toISOString()},
   (v:ReturnType<typeof acceptedRow>)=>{v.input.resources[0]!.id='other';v.inputSha256=requestInputDigest(v.input);v.hostReceipt.inputSha256=v.inputSha256},
- ]){const value=acceptedRow();change(value);expect(await fixture([value],current).service.qualificationTargets('pro1')).toEqual([])}
+ ]){const value=acceptedRow();change(value);expect(await ownedFixture(value,structuredClone(current),target).targets()).toEqual([])}
  for(const extra of [{runId:'original'},{dispatchCompletion:{inputSha256:acceptedRow().inputSha256,disposition:'clean' as const,completedAt:new Date(now).toISOString()}},
   {fleetCancellation:{requestedAt:new Date(now).toISOString(),reason:'Original canceled'}},
   {hostCancellation:{requestedAt:new Date(now).toISOString(),reason:'Original canceled'}},
   {state:'running' as const},{state:'terminal' as const}]){
-  expect(await fixture([{...acceptedRow(),...extra}],current).service.qualificationTargets('pro1')).toEqual([])
+  expect(await ownedFixture({...acceptedRow(),...extra},structuredClone(current),target).targets()).toEqual([])
  }
 })
 
@@ -383,15 +326,15 @@ test('accepted target preserves exact dependency authority and counts its own re
  // Routing descriptor excludes observation values, but includes dependency identities.
  original.fleetBinding.descriptorRevision=routineLaneDescriptorRevision(current.lanes[0]!);
  original.fleetInputSha256=routineJobInputDigest(original);
- const targets=await fixture([original],current).service.qualificationTargets('pro1');expect(targets).toHaveLength(1);
+ const f=ownedFixture(original,current),targets=await f.targets();expect(targets).toHaveLength(1);
  expect(targets[0]!.requirements.resources.find(value=>value.kind==='recorder')!.storage!.minimumAvailableBytes).toBe(5*gib);
  const wrong=structuredClone(current);(wrong.lanes[0]!.resources.at(-1) as any).exclusiveDependencies[0].resourceId='different';
  original.fleetBinding.descriptorRevision=routineLaneDescriptorRevision(wrong.lanes[0]!);
- expect(await fixture([original],wrong).service.qualificationTargets('pro1')).toEqual([]);
+ expect(await ownedFixture(original,wrong,f.target).targets()).toEqual([]);
 });
 
 test('exact passive owner status preserves original target during busy-lane discovery omission without writes',async()=>{
- const f=fixture(),target=(await f.service.qualificationTargets('pro1'))[0]!,before=structuredClone(f.rows);
+ const f=fixture(),target=historicalTarget(f.rows[0]!,f.observed),before=structuredClone(f.rows);
  f.observed.lanes[0]!.state='reserved';f.observed.lanes[0]!.activity={owner:{id:'passive-owner',kind:'authoring'},generation:44};
  const owned={jobId:target.jobId,laneId:target.laneId,inputSha256:target.inputSha256,ownerId:'passive-owner',generation:44,
   binding,controller:{incarnation:'boot',generation:1}};
@@ -400,7 +343,7 @@ test('exact passive owner status preserves original target during busy-lane disc
  expect(f.reads).toEqual([{jobId:target.jobId,timeoutMS:5000}]);expect(f.rows).toEqual(before);
 });
 test('owned lookup rejects cancellation, expiry, terminal effects, changed frozen inputs and another borrower',async()=>{
- const baseline=fixture(),target=(await baseline.service.qualificationTargets('pro1'))[0]!;
+ const baseline=fixture(),target=historicalTarget(baseline.rows[0]!,baseline.observed);
  const owned={jobId:target.jobId,laneId:target.laneId,inputSha256:target.inputSha256,ownerId:'passive-owner',generation:44,
   binding,controller:{incarnation:'boot',generation:1}};
  const changes:Array<(value:StoredRoutineJob)=>void>=[
@@ -418,7 +361,7 @@ test('owned lookup rejects cancellation, expiry, terminal effects, changed froze
  }
 });
 test('owned target refuses stale or replacement reporter, grant, binding and substituted executable digest',async()=>{
- const f=fixture(),target=(await f.service.qualificationTargets('pro1'))[0]!;
+ const f=fixture(),target=historicalTarget(f.rows[0]!,f.observed);
  f.observed.lanes[0]!.state='reserved';f.observed.lanes[0]!.activity={owner:{id:'passive-owner',kind:'authoring'},generation:44};
  const owned={jobId:target.jobId,laneId:target.laneId,inputSha256:target.inputSha256,ownerId:'passive-owner',generation:44,
   binding,controller:{incarnation:'boot',generation:1}};
@@ -438,7 +381,7 @@ test('exact owned primary-majority query applies its remaining client and databa
 });
 test('late or failed owned database read cannot produce positive target authority',async()=>{
  for(const unavailable of [false,true]){
-  const f=fixture(),target=(await f.service.qualificationTargets('pro1'))[0]!;f.observed.lanes[0]!.state='reserved';
+  const f=fixture(),target=historicalTarget(f.rows[0]!,f.observed);f.observed.lanes[0]!.state='reserved';
   f.observed.lanes[0]!.activity={owner:{id:'passive-owner',kind:'authoring'},generation:44};
   const owned={jobId:target.jobId,laneId:target.laneId,inputSha256:target.inputSha256,ownerId:'passive-owner',generation:44,binding,controller:{incarnation:'boot',generation:1}};
   let elapsed=now;
@@ -489,19 +432,9 @@ function repositoryRows(rows: StoredRoutineJob[], onClosed?: () => void) {
  }) as unknown as typeof find;
  return {reads,get scanned(){return scanned},get closed(){return closed},restore(){TestRequestModel.find=find}};
 }
-test('preparing remains reachable ahead of 100 already incompatible queued rows through the real repository stream',async()=>{
- const {value,observed}=preparingFixture();
- const queued=Array.from({length:100},(_,index)=>{
-  const candidate=queuedRow(`already-queued-${index}`);candidate.fleetPreparation!.requirements.resources[0]!.capabilities=['unoffered'];
-  candidate.fleetInputSha256=routineJobInputDigest(candidate);return candidate;
- });
- const db=repositoryRows([...queued,value]),f=fixture([],observed);
- (f.service as unknown as {rows:RoutineJobRepository}).rows.qualificationCandidates=routineJobRepository.qualificationCandidates;
- try{
-  expect((await f.service.qualificationTargets('pro1')).map(target=>target.jobId)).toEqual([value.requestId]);
-  expect(db.reads.map(value=>value.filter.state)).toEqual(['accepted','preparing']);
-  expect(db.scanned).toBe(1);expect(db.closed).toBe(2);expect(db.reads.every(value=>value.limit===100)).toBe(true);
- }finally{db.restore()}
+test('an already-owned preparing original is recovered directly without scanning queued work',async()=>{
+ const {value,observed}=preparingFixture(),f=ownedFixture(value,observed);f.rows.push(...Array.from({length:100},(_,index)=>queuedRow(`unrelated-${index}`)));
+ expect(await f.targets()).toEqual([f.target]);expect(f.reads).toEqual([{jobId:value.requestId,timeoutMS:5000}]);
 });
 test('custody priority shares one candidate count and shrinking query budget across accepted, preparing, queued and unbound streams',async()=>{
  const preparing=preparingFixture().value,accepted=acceptedRow(),queued=queuedRow(),unbound=row(),db=repositoryRows([unbound,queued,preparing,accepted]);
@@ -531,8 +464,8 @@ test('prioritized database discovery closes the cursor and refuses a late row or
  }finally{lateClock.mockRestore();late.restore()}
 });
 test('a bound preparing original qualifies its exact selected app without constructing an executable or replacing its staged claims',async()=>{
- const {value,observed}=preparingFixture(),before=structuredClone(value),f=fixture([value],observed);
- const targets=await f.service.qualificationTargets('pro1');expect(targets).toHaveLength(1);
+ const {value,observed}=preparingFixture(),before=structuredClone(value),f=ownedFixture(value,observed);
+ const targets=await f.targets();expect(targets).toHaveLength(1);
  expect(targets[0]).toMatchObject({jobId:value.requestId,target:{hostId:'pro1',laneId:'pro1-mac'},selection:{routineSource:value.fleetPreparation!.routineSource},
   preparing:{dispatchIntentSha256:value.dispatchIntentSha256,fleetInputSha256:value.fleetInputSha256,bindingSha256:requestInputDigest(value.fleetBinding),
    admissionSha256:requestInputDigest(value.fleetResourceAdmission),reservationSha256:requestInputDigest(value.fleetResourceReservation)}});
@@ -557,21 +490,21 @@ test('preparing target refuses cancellation, expired source, substituted staging
   (value:any)=>{value.fleetCancellation={requestedAt:new Date(now).toISOString(),reason:'withdrawn'}},
   (value:any)=>{value.preparationCancellation={requestedAt:new Date(now).toISOString(),reason:'withdrawn'}},
   (value:any)=>{value.fleetDeadline=new Date(now)},(value:any)=>{value.input={}},(value:any)=>{value.inputSha256=hash}]){
-  const {value,observed}=preparingFixture();change(value);expect(await fixture([value],observed).service.qualificationTargets('pro1')).toEqual([]);
+  const {value,observed}=preparingFixture(),target=historicalTarget(value,observed);change(value);expect(await ownedFixture(value,observed,target).targets()).toEqual([]);
  }
- const {value,observed}=preparingFixture();observed.frameworkBinding={...observed.frameworkBinding!,version:1069};
- expect(await fixture([value],observed).service.qualificationTargets('pro1')).toEqual([]);
+ const {value,observed}=preparingFixture(),target=historicalTarget(value,observed);observed.frameworkBinding={...observed.frameworkBinding!,version:1069};
+ expect(await ownedFixture(value,observed,target).targets()).toEqual([]);
 });
 test('preparing capacity counts its retained output exactly once and never drops another or substituted claim',async()=>{
  const {value,observed}=preparingFixture(),recorder=observed.lanes[0]!.resources.find(resource=>resource.kind==='recorder')!;
  recorder.storage={...recorder.storage!,availableBytes:7*1024**3,stagingBudgetBytes:5*1024**3,
   reservations:[{requestId:value.requestId,inputSha256:value.fleetInputSha256!,remainingOutputBytes:5*1024**3}]};
- expect(await fixture([value],observed).service.qualificationTargets('pro1')).toHaveLength(1);
+ const f=ownedFixture(value,observed);expect(await f.targets()).toHaveLength(1);
  recorder.storage.reservations[0]!.inputSha256='f'.repeat(64);
- expect(await fixture([value],observed).service.qualificationTargets('pro1')).toEqual([]);
+ expect(await ownedFixture(value,observed,f.target).targets()).toEqual([]);
  recorder.storage.reservations[0]!.inputSha256=value.fleetInputSha256!;
  recorder.storage.reservations.push({requestId:'another-original',inputSha256:'f'.repeat(64),remainingOutputBytes:1});
- expect(await fixture([value],observed).service.qualificationTargets('pro1')).toEqual([]);
+ expect(await ownedFixture(value,observed,f.target).targets()).toEqual([]);
 });
 test('preparing owns exactly its retained Bluetooth stage while source, deadline and configuration remain current',async()=>{
  const {value,observed}=preparingFixture(),lane=observed.lanes[0]!;
@@ -581,7 +514,7 @@ test('preparing owns exactly its retained Bluetooth stage while source, deadline
  value.fleetInputSha256=routineJobInputDigest(value);
  value.fleetResourceReservation.fleetInputSha256=value.fleetInputSha256!;
  value.fleetResourceAdmission.intent.inputSha256=value.fleetInputSha256!;
- const f=fixture([value],observed),target=(await f.service.qualificationTargets('pro1'))[0]!;
+ const f=ownedFixture(value,observed),target=f.target;
  expect(target.requirements.resources[0]!.permissions).toEqual([{permission:'bluetooth',recipient:'app'}]);
  const owned={jobId:value.requestId,laneId:lane.id,inputSha256:target.inputSha256,ownerId:'passive-owner',generation:44,
   binding:observed.frameworkBinding!,controller:{incarnation:'boot',generation:1}};

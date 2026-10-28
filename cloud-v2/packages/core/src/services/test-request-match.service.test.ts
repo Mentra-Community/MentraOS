@@ -41,7 +41,7 @@ test('complete frozen requirements and every requested provider appear on every 
   expect(report.requirements?.effective.resources[2]?.storage?.minimumAvailableBytes).toBe(3_254_779_904)
   expect(report.requirements?.effective.resources.every(value => !value.permissions?.length)).toBe(true)
   expect(report.lanes[0]?.resources.map(value => value.kind)).toEqual(['phone', 'app', 'recorder'])
-  expect(report.lanes[0]?.resources[0]?.conditions.find(value => value.id === 'execution:backend-connectivity')).toMatchObject({status: 'unknown', observed: expect.stringContaining('not a reported failed connection')})
+  expect(report.lanes[0]?.resources[0]?.conditions.find(value => value.id === 'backend-connectivity')).toMatchObject({category: 'source', status: 'match', observed: 'Routine API 111'})
   expect(report.lanes[0]?.candidateMatch).toBe(routineJobRouting(row.fleetPreparation!.requirements, [host], now, undefined, row.fleetSelection.build, true,
     {requestId: row.requestId, inputSha256: row.fleetInputSha256!}).waitingReason ? 'blocked' : 'match')
   expect({row, host}).toEqual(original)
@@ -58,7 +58,7 @@ test('global provider counts cannot combine resources across different lanes', (
 })
 test('per-lane routing keeps required same-host dependency offers from other lanes', () => {
   const {row, host} = fixture(), at = new Date(now).toISOString()
-  host.frameworkBinding!.routineApiVersion = 110
+  host.frameworkBinding!.routineApiVersion = 111
   host.resourceReservations = {schemaVersion: 1, resourceReadiness: true} as never
   host.lanes.push({id: 'other-lane', platform: 'android', state: 'idle', dispatchMode: 'automatic', resources: [{id: 'shared-helper', kind: 'browser', capabilities: []}]})
   for (const lane of host.lanes) for (const resource of lane.resources) resource.idleContract = {version: 'baseline', maximumAgeMs: 120000,
@@ -86,7 +86,7 @@ test('current foreign byte ownership is named while exact original ownership is 
   expect(report.lanes[0]?.resources[2]?.conditions.find(value => value.id.startsWith('claim:'))).toMatchObject({status: 'blocked', observed: expect.stringContaining('run:foreign-original')})
   expect(host).toEqual(before)
   host.authorityReservations[0] = {...host.authorityReservations[0]!, requestId: row.requestId, fleetInputSha256: row.fleetInputSha256!} as never
-  expect(testRequestMatchReport(row, [host], now).lanes[0]?.resources[2]?.conditions.find(value => value.id.startsWith('claim:'))?.status).toBe('unknown')
+  expect(testRequestMatchReport(row, [host], now).lanes[0]?.resources[2]?.conditions.find(value => value.id.startsWith('claim:'))?.status).toBe('match')
 })
 test('source, stale physical observation and explicit target are separate refusals', () => {
   const {row, host} = fixture()

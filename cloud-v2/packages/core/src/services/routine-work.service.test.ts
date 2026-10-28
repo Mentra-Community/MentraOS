@@ -9,6 +9,7 @@ import {testFrameworkBinding} from '../testing/framework-fixtures'
 import {backendConnectivityObservationSchema} from '../types/backend-connectivity.types'
 import {resourceLifecycleSubjectSchema} from '../types/resource-lifecycle.types'
 import {permissionContext} from '../types/resource-permissions.types'
+import {routineLaneRequirementBlocker} from './routine-lane-eligibility'
 
 
 // Existing status/cursor regression cases operate after the single host binding.
@@ -38,14 +39,15 @@ export const input = routineWorkRequestSchema.parse({
   buildSource: {channel: 'pr', prNumber: 12, buildRunId: 55, publicationAttempt: 2},
 })
 
-function backendAuthoringFixture(options: {permission?: boolean; storage?: boolean} = {}) {
+function backendAuthoringFixture(options: {permission?: boolean; storage?: boolean; workerPermission?: boolean} = {}) {
   const now = Date.parse('2026-10-19T23:00:00Z'), at = new Date(now).toISOString()
   const binding = {...testFrameworkBinding(), routineApiVersion: 61}
   const {buildSource: _, ...fields} = input
   const work = portableAuthoringWorkSchema.parse({...fields,
     requirements: {...input.requirements, resources: input.requirements.resources.map(resource => resource.kind === 'phone'
       ? {...resource, capabilities: ['backend-connectivity']} : resource.kind === 'app' && options.permission
-        ? {...resource, permissions: [{permission: 'camera', recipient: 'app'}]} : resource.kind === 'recorder' && options.storage
+        ? {...resource, permissions: [{permission: 'camera', recipient: 'app'}]} : resource.kind === 'recorder' && options.workerPermission
+          ? {...resource, permissions: [{permission: 'screen-recording', recipient: 'worker'}]} : resource.kind === 'recorder' && options.storage
           ? {...resource, storage: {minimumAvailableBytes: 100}} : resource)},
     build: {repository: input.origin.repository, headSha: input.origin.headSha, kind: 'android-apk', channel: 'pr', prNumber: 12,
       source: input.buildSource, archive: {name: 'candidate.apk', url: 'https://artifactscdn.mentraglass.com/candidate.apk', size: 100, sha256: 'c'.repeat(64)},
@@ -64,6 +66,21 @@ function backendAuthoringFixture(options: {permission?: boolean; storage?: boole
     lanes: [{id: 'phone', platform: 'android', state: 'idle', dispatchMode: 'automatic', resources: [
       {id: 'phone', kind: 'phone', capabilities: ['backend-connectivity']}, {id: 'app', kind: 'app'}, {id: 'recorder', kind: 'recorder'}]}]}
   const lane = host.lanes[0]!
+  // Authoring still borrows real operational resources, independently of the
+  // selected app's later install and backend setup.
+  for (const resource of lane.resources) {
+    const contract = {version: 'current-physical-baseline', maximumAgeMs: 120000,
+      qualifiedScope: {kind: 'same-controller' as const, controllerId: host.hostId}, conditions: ['managed-writers-absent'], repairConfigured: true};
+    resource.idleContract = contract;
+    const subject = resourceLifecycleSubjectSchema.parse({subject: {kind: 'resource', id: resource.id, authorityHostId: host.hostId},
+      generation: 2, status: 'idle', current: true, observedAt: at, receivedAt: at, reason: null, owner: null,
+      idle: {contractVersion: contract.version, outcome: 'passed', checkedAt: at,
+        acceptedCheck: {operationId: `idle:${resource.id}`, subjectGeneration: 2, resultSha256: 'e'.repeat(64), acceptedAt: at},
+        qualifiedScope: contract.qualifiedScope, evidenceRefs: []}, repair: {configured: true, state: 'none'}, supportedActions: [],
+      resource: {kind: resource.kind, capabilities: resource.capabilities ?? [], memberships: [{hostId: 'mini', laneId: 'phone'}], dependencies: [], placement: 'installed'}});
+    const index = host.resourceLifecycle!.subjects.findIndex(value => value.subject.id === resource.id);
+    if (index < 0) host.resourceLifecycle!.subjects.push(subject); else host.resourceLifecycle!.subjects[index] = subject;
+  }
   lane.descriptorRevision = routineLaneDescriptorRevision(lane)
   let binds = 0
   const unexpected = async (): Promise<never> => {throw Error('Unexpected authoring operation')}
@@ -88,26 +105,26 @@ function backendAuthoringFixture(options: {permission?: boolean; storage?: boole
   return {service, host, lane, work, row, now, bindInput, qualified, binds: () => binds}
 }
 
-test('Android authoring preparation routes structurally before its selected backend check exists', async () => {
+test('Android authoring uses current machine readiness before installing its selected app', async () => {
   const f = backendAuthoringFixture()
   expect(await f.service.preparation(f.work.workId)).toMatchObject({kind: 'author', state: 'awaiting-runner'})
   expect((await f.service.preparation(f.work.workId)).waitingReason).toBeUndefined()
   expect(compatibleRoutineLane({platform: 'android', resources: f.work.requirements.resources}, f.lane,
-    routineLaneContext(f.host, f.work.build, f.now))).toBe(false)
+    routineLaneContext(f.host, f.work.build, f.now))).toBe(true)
   expect(f.binds()).toBe(0)
   expect((await f.service.bind(f.work.workId, f.host.hostId, f.bindInput)).execute).toBe(true)
   expect(f.binds()).toBe(1)
 })
 
-test('Android authoring binds the exact structural lane even with valid health that permissionContext cannot authorize', async () => {
+test('Android authoring defers app backend work while exact backend diagnostics remain strict', async () => {
   const f = backendAuthoringFixture(); f.qualified()
   const requirements = {platform: 'android' as const, resources: f.work.requirements.resources}
   expect(compatibleRoutineLane(requirements, f.lane, routineLaneContext(f.host, f.work.build, f.now))).toBe(true)
-  expect(compatibleRoutineLane(requirements, f.lane, permissionContext(f.host.frameworkBinding, f.work.build, f.now))).toBe(false)
+  expect(compatibleRoutineLane(requirements, f.lane, permissionContext(f.host.frameworkBinding, f.work.build, f.now))).toBe(true)
   expect((await f.service.bind(f.work.workId, f.host.hostId, f.bindInput)).execute).toBe(true)
   expect(f.binds()).toBe(1)
   delete f.lane.resources[0]!.backendConnectivity
-  expect(compatibleRoutineLane(requirements, f.lane, routineLaneContext(f.host, f.work.build, f.now))).toBe(false)
+  expect(routineLaneRequirementBlocker(requirements, f.lane, routineLaneContext(f.host, f.work.build, f.now), f.now, true) === undefined).toBe(false)
   for (const change of [
     () => {f.lane.resources[0]!.backendConnectivity!.observedAt = new Date(f.now - 120_001).toISOString()},
     () => {f.lane.resources[0]!.backendConnectivity!.app.archiveSha256 = '0'.repeat(64)},
@@ -115,7 +132,7 @@ test('Android authoring binds the exact structural lane even with valid health t
     () => {f.lane.resources[0]!.backendConnectivity!.releasedGeneration = 3},
   ]) {
     f.qualified(); change()
-    expect(compatibleRoutineLane(requirements, f.lane, routineLaneContext(f.host, f.work.build, f.now))).toBe(false)
+    expect(routineLaneRequirementBlocker(requirements, f.lane, routineLaneContext(f.host, f.work.build, f.now), f.now, true) === undefined).toBe(false)
   }
 })
 
@@ -138,12 +155,15 @@ test('structural Android authoring still refuses incompatible API, offers, polic
     await expect(f.service.bind(f.work.workId, f.host.hostId, f.bindInput)).rejects.toThrow()
     expect(f.binds()).toBe(0)
   }
-  for (const option of [{permission: true}, {storage: true}]) {
+  for (const option of [{workerPermission: true}, {storage: true}]) {
     const f = backendAuthoringFixture(option)
     expect((await f.service.preparation(f.work.workId)).waitingReason).toBeDefined()
     await expect(f.service.bind(f.work.workId, f.host.hostId, f.bindInput)).rejects.toThrow('compatible authoring lane descriptor')
     expect(f.binds()).toBe(0)
   }
+  const deferred = backendAuthoringFixture({permission: true});
+  expect((await deferred.service.preparation(deferred.work.workId)).waitingReason).toBeUndefined();
+  expect((await deferred.service.bind(deferred.work.workId, deferred.host.hostId, deferred.bindInput)).execute).toBe(true);
 })
 test('invalid portable author fixtures fail intake before any persistence or Actions delivery', async () => {
   const previous = process.env.TEST_RUN_INGEST_TOKEN, token = 'f'.repeat(40)

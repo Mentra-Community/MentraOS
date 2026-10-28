@@ -5,17 +5,24 @@ import {portableRoutineSelectionSchema, routineJobPreparationSchema, type Stored
 import type {PendingQueueItem, PendingQueuePage} from '../types/test-pending-queue.types';
 import type {StoredRequest} from './test-request.service';
 import {requestInputDigest} from './test-request.service';
-import {compatibleStructuralRoutineLane, routineJobInputDigest, routinePortableRequirements} from './routine-job.service';
+import {routineJobInputDigest, routinePortableRequirements} from './routine-job.service';
 import {TestHostStateService, type RoutingTestHostState} from './test-host-state.service';
 import {TestRunError} from './test-result-error';
 import {permissionContext} from '../types/resource-permissions.types';
 import {pendingRequestFilter} from './test-request-activity';
 import {sharedResourceWaitingReason} from './routine-resource-wait';
-import {routineLaneRequirementBlocker} from './routine-lane-eligibility';
-import {permissionObservationMatches} from '../types/resource-permissions.types';
+import {evaluateRoutineLaneReadiness} from './routine-lane-eligibility';
 import {isExclusiveHostReservation} from '../types/resource-reservations.types';
 
-/** Read-only projection; compatible hardware is distinct from current acceptance. */
+const currentLaneReadiness = (row: StoredRoutineJob, host: RoutingTestHostState, lane: RoutingTestHostState['lanes'][number], now: number) =>
+  evaluateRoutineLaneReadiness(row.fleetPreparation!.requirements, host, lane, permissionContext(host.frameworkBinding, row.fleetSelection.build, now), now,
+    {requestId: row.requestId, inputSha256: row.fleetInputSha256!, executionInputSha256: row.inputSha256}, {
+      minimumRoutineApiVersion: row.fleetPreparation!.routineSource.minimumRoutineApiVersion,
+      minimumFrameworkVersion: row.fleetSelection.minimumFrameworkVersion, target: row.fleetTarget,
+      deadline: row.fleetDeadline, cancelled: Boolean(row.fleetCancellation),
+    });
+
+/** The pending queue uses the ordinary dispatcher's current checklist. */
 function projectPendingQueueItem(row: StoredRoutineJob, hosts: RoutingTestHostState[], now: number): PendingQueueItem {
   const base: PendingQueueItem = {requestId: row.requestId, state: row.state, createdAt: row.createdAt?.toISOString(),
     compatibilityKnown: false, compatibleLanes: [], platformCandidates: []};
@@ -60,7 +67,7 @@ function projectPendingQueueItem(row: StoredRoutineJob, hosts: RoutingTestHostSt
         glassesModels: (lane.glasses ?? []).map(value => value.model), state: lane.state, dispatchMode: lane.dispatchMode,
         fresh: Number.isFinite(Date.parse(host.receivedAt)) && now - Date.parse(host.receivedAt) <= 120_000}})));
   return {...item, compatibilityKnown: !!requirements,
-    compatibleLanes: requirements ? lanes.filter(({host, lane}) => compatibleStructuralRoutineLane(requirements, lane, permissionContext(host.frameworkBinding, selected.build, now))).map(value => value.label) : [],
+    compatibleLanes: requirements ? lanes.filter(({host, lane}) => currentLaneReadiness(row, host, lane, now).ready).map(value => value.label) : [],
     platformCandidates: requirements ? [] : lanes.map(value => value.label)};
 }
 /** Bad persisted rows cannot hide valid neighbors, including malformed timestamps. */
@@ -83,7 +90,7 @@ function diagnosePendingQueueItem(item: PendingQueueItem, row: StoredRoutineJob,
         expected: 'Current refusal evidence for this stage', observed: item.reason.slice(0, 2000)}] : [])]}};
   };
   const pending = row.fleetCandidatePreparation, admission = row.fleetResourceAdmission;
-  const selected = row.fleetBinding ?? pending ?? admission?.intent ?? row.fleetResourceReservation ?? row.fleetCandidateSelection ?? item.assignment;
+  const selected = row.fleetBinding ?? pending ?? admission?.intent ?? row.fleetResourceReservation ?? item.assignment;
   const host = selected && hosts.find(value => value.hostId === selected.hostId);
   const lane = host?.lanes.find(value => value.id === selected?.laneId);
   const location = selected ? {hostId: selected.hostId, laneId: selected.laneId} : {};
@@ -135,46 +142,28 @@ function diagnosePendingQueueItem(item: PendingQueueItem, row: StoredRoutineJob,
       {label: 'Atomic reservation and binding', status: 'waiting', ...location,
         expected: 'Exact original admission and reservation accepted by the existing bind authority',
         observed: `${admission?.intent.operationId ?? 'No admission intent'}; ${admission?.dependencies.length ?? 0} exclusive dependencies; ${row.fleetResourceReservation ? `byte reservation ${row.fleetResourceReservation.id}` : 'no byte reservation recorded'}`}]);
-  if (row.fleetCandidateSelection) return finish('Selected candidate', 'An original candidate is recorded, but no reservation or bound worker is recorded; the exact blocking condition is not recorded.',
-    'Inspect the selected original candidate and existing admission stage logs; preserve its identity and any outstanding claims.', [...current,
-      {label: 'Selected candidate admission', status: 'unknown', ...location,
-        expected: 'The existing authority records a reservation or an explicit refusal for this original selection',
-        observed: `Selected target ${row.fleetCandidateSelection.targetInputSha256}; no reservation or specific refusal is recorded`}]);
   if (!item.compatibleLanes.length && row.fleetPreparation) {
     const conditions: Condition[] = [];
     for (const candidate of hosts) for (const offered of candidate.lanes) {
       if (offered.platform !== item.platform || row.fleetTarget?.hostId && row.fleetTarget.hostId !== candidate.hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== offered.id) continue;
-      const context = permissionContext(candidate.frameworkBinding, row.fleetSelection.build, now);
-      const blocker = routineLaneRequirementBlocker(row.fleetPreparation.requirements, offered, context, now, false);
-      if (!blocker) continue;
-      const required = row.fleetPreparation.requirements.resources.find(value => value.kind === blocker.resourceKind);
-      const resource = offered.resources.find(value => value.kind === blocker.resourceKind);
-      const fields = {hostId: candidate.hostId, laneId: offered.id, ...(resource ? {resourceId: resource.id} : {})};
-      let explained = false;
-      for (const permission of resource && required?.capabilities.every(value => resource.capabilities?.includes(value)) ? required.permissions ?? [] : []) {
-        if (offered.platform === 'ios-on-mac' && permission.recipient === 'app') continue;
-        const observation = resource?.permissionObservations?.find(value => value.permission === permission.permission);
-        if (context && permissionObservationMatches(observation, permission.permission, {...context, recipient: permission.recipient})) continue;
-        explained = true;
-        const currentObservation = Boolean(context && observation && permissionObservationMatches({...observation, status: 'granted'},
-          permission.permission, {...context, recipient: permission.recipient}));
-        conditions.push({label: `${permission.recipient} permission: ${permission.permission}`, status: observation?.status === 'denied' && currentObservation ? 'failed' : observation ? 'waiting' : 'unknown',
-          ...fields, expected: 'Fresh granted observation for the exact selected recipient and source',
-          observed: observation ? `${observation.status}; recipient ${observation.recipient.kind}; observed ${observation.observedAt}; grant does not match the current selection` : 'No observation reported; this is not a denied permission'});
-      }
-      if (!explained) conditions.push({label: 'Exact routine compatibility', status: 'waiting', ...fields,
-        expected: required ? `${required.kind}: ${required.capabilities.join(', ') || 'required provider'}${required.storage ? '; required recorder capacity' : ''}` : 'Matching lane and glasses inventory',
-        observed: `${blocker.code}${blocker.resourceKind ? ` (${blocker.resourceKind})` : ''}; ${resource ? `offered capabilities: ${resource.capabilities?.join(', ') || 'none'}` : 'required provider not reported'}`});
+      const readiness = currentLaneReadiness(row, candidate, offered, now),
+        fields = {hostId: candidate.hostId, laneId: offered.id};
+      for (const check of readiness.conditions) if (check.status === 'blocked' || check.status === 'unknown')
+        conditions.push({label: check.label, status: check.status === 'blocked' ? 'failed' : 'unknown', ...fields,
+          expected: check.expected, observed: check.observed});
+      for (const resource of readiness.resources) for (const check of resource.conditions) if (check.status === 'blocked' || check.status === 'unknown')
+        conditions.push({label: check.label, status: check.status === 'blocked' ? 'failed' : 'unknown', ...fields,
+          ...(resource.resourceId ? {resourceId: resource.resourceId} : {}), expected: check.expected, observed: check.observed});
     }
     const reason = conditions.some(value => value.observed.startsWith('No observation')) ? 'No compatible lane: required observations are missing, not reported as denied.' :
       'No lane currently matches the exact routine requirements.';
     return finish('Lane compatibility', reason, 'Inspect the listed requirement and the owning lane’s current resource checklist; provide the missing observation or repair the reported condition.', conditions.length ? conditions :
       [{label: 'Platform inventory', status: 'unknown', expected: `A reported ${item.platform} lane matching this original target`, observed: 'No matching platform/target lane is reported'}]);
   }
-  return finish('Awaiting matching decision', 'Compatible lanes are reported, but this original has no selected candidate or bound reservation; the exact blocking condition is not recorded.',
+  return finish('Awaiting matching decision', 'The current checklist matches at least one lane, but no atomic reservation or bound worker is recorded; the exact blocking condition is not recorded.',
     'Inspect existing preparation stage logs for this original request and the compatible lanes’ resource checklists.',
     [{label: 'Current matching decision', status: 'unknown', expected: 'A recorded candidate, reservation, or explicit refusal from the existing matcher',
-      observed: `${item.compatibleLanes.length} structurally compatible lanes; no selected candidate or reservation recorded`}]);
+      observed: `${item.compatibleLanes.length} currently matching idle lanes; no reservation recorded`}]);
 }
 export class TestPendingQueueService {
   constructor(private readonly hosts = new TestHostStateService(), private readonly now = Date.now) {}

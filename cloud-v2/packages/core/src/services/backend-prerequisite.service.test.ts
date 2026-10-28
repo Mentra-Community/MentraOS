@@ -2,10 +2,10 @@ import {expect, spyOn, test} from 'bun:test'
 import {isDeepStrictEqual} from 'node:util'
 import {requestInputDigest, TestRequestService, type TestRequestRepository, type StoredRequest, type StoredTestRequest} from './test-request.service'
 import {backendPrerequisiteRequestMatches, resourceReservationRepository, ResourceReservationsService, type ResourceReservationHost, type ResourceReservationRepository} from './resource-reservations.service'
-import {RoutineJobService, compatibleRoutineLane, reconcileRecorderHostReservations, routineJobInputDigest, routineJobRepository, routineLaneContext, routineLaneDescriptorRevision, type RoutineJobRepository} from './routine-job.service'
+import {RoutineJobService, compatibleRoutineLane, reconcileRecorderHostReservations, routineJobInputDigest, routineJobRepository, routineLaneContext, routineLaneDescriptorRevision, preparingQualificationReceipt, recorderCapacityRequirements, type RoutineJobRepository} from './routine-job.service'
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures'
 import {routineDispatchIntentSchema} from '../types/routine-dispatch.types'
-import {portableRoutineSelectionSchema, type OwnedRoutineQualification, type StoredRoutineJob, type FleetCandidatePreparation} from '../types/routine-job.types'
+import {portableRoutineSelectionSchema, type OwnedRoutineQualification, type StoredRoutineJob, type FleetCandidatePreparation, routineQualificationTargetSchema, fleetCandidatePreparationSchema} from '../types/routine-job.types'
 import {hostStateSchema, type ReceivedTestHostState} from './test-host-state.service'
 import {backendConnectivityObservationSchema} from '../types/backend-connectivity.types'
 import {resourceLifecycleSubjectSchema} from '../types/resource-lifecycle.types'
@@ -15,10 +15,15 @@ import {TestRequestModel} from '../models/test-request.model'
 import {projectResourceLifecycle} from './resource-lifecycle.service'
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
 import {candidateSettlement, candidatePrerequisiteRequestMatches, completedCandidatePreparationForHost} from './backend-candidate-preparation'
+import {routineLaneRequirementBlocker} from './routine-lane-eligibility'
+import {routineAdmissionInput} from './routine-admission.service'
+import {routineEnrollmentSchema} from '../types/routine-definition.types'
+import {recordedRoutineBuild} from './routine-dispatch.service'
+import {frameworkExecutableBuild} from '../types/framework-request.types'
 import {BACKEND_CANDIDATE_ROUTINE_API_VERSION, backendConnectivityObservationRefusesPreparation} from '../types/backend-connectivity.types'
 
 const now = Date.parse('2026-10-18T23:00:00Z'), timestamp = new Date(now).toISOString(), hash = 'a'.repeat(64), sha = 'b'.repeat(40)
-const binding = {...testFrameworkBinding(), version: 1110, routineApiVersion: 61}
+const binding = {...testFrameworkBinding(), version: 1110, routineApiVersion: 111}
 function phoneSubject() {
   return resourceLifecycleSubjectSchema.parse({subject: {kind: 'resource', id: 'phone', authorityHostId: 'mini'}, generation: 2,
     status: 'unknown', observedAt: timestamp, receivedAt: timestamp, current: true, reason: null, owner: null,
@@ -90,21 +95,38 @@ function unqualified() {
   return value
 }
 
+/** A retained legacy intent is immutable test input, not new discovery work. */
+function legacyTarget(value: StoredRoutineJob, observed: ReceivedTestHostState, laneId = 'android', candidate = false) {
+  const lane = observed.lanes.find(lane => lane.id === laneId)!, preparation = value.fleetPreparation!,
+    enrollment = routineEnrollmentSchema.parse({routineId: value.fleetSelection.routineId, platform: 'android',
+      definitionRevision: value.fleetSelection.routineRevision, definition: preparation.definition,
+      definitionSha256: preparation.definitionSha256, routineSource: preparation.routineSource}),
+    proposedInput = routineAdmissionInput(enrollment, recordedRoutineBuild(value.fleetSelection.build, value.fleetSelection.source, 'android'),
+      {hostId: observed.hostId, laneId}, observed, now);
+  proposedInput.build = frameworkExecutableBuild(value.fleetSelection.build, proposedInput.glassesModel);
+  const body = {jobId: value.requestId, hostId: observed.hostId, laneId, deadline: value.fleetDeadline.toISOString(),
+    selection: {...value.fleetSelection, routineSource: preparation.routineSource}, requirements: recorderCapacityRequirements(preparation),
+    ...(candidate ? {candidate: {attemptId: `candidate:${value.requestId}:${(value.fleetCandidatePreparations?.length ?? 0) + 1}`,
+      requestedAt: timestamp, fleetInputSha256: value.fleetInputSha256!, selectionSha256: value.fleetSelectionSha256,
+      controller: {incarnation: observed.incarnation!, generation: observed.incarnationGeneration!}},
+      definition: preparation.definition, definitionSha256: preparation.definitionSha256} :
+      {preparing: preparingQualificationReceipt(value, observed.hostId, lane)}), proposedInput,
+    purpose: {kind: 'backend-connectivity' as const, resourceId: lane.resources.find(resource => resource.kind === 'phone')!.id},
+    acceptedBinding: observed.frameworkBinding!, target: {hostId: observed.hostId, laneId}};
+  return routineQualificationTargetSchema.parse({...body, inputSha256: requestInputDigest(body)});
+}
+function retainedCandidate(value: StoredRoutineJob, observed: ReceivedTestHostState, laneId = 'android') {
+  const target = legacyTarget(value, observed, laneId, true);
+  return fleetCandidatePreparationSchema.parse({candidate: target.candidate, hostId: observed.hostId, laneId,
+    target, targetInputSha256: target.inputSha256});
+}
 /** Later admission/CAS fixtures begin after an authentic candidate contract has returned. */
 async function returnedCandidateFixture(value: StoredRoutineJob, observed: ReceivedTestHostState, laneId = 'android') {
-  observed.frameworkBinding = {...observed.frameworkBinding!, routineApiVersion: BACKEND_CANDIDATE_ROUTINE_API_VERSION}
+  observed.frameworkBinding = {...observed.frameworkBinding!, routineApiVersion: 111}
   observed.resourceReservations = {claims: [], returns: [], candidatePrerequisites: []}
   observed.authorityReservations = []
-  const repository = {async get() {return structuredClone(value)}, async recorderClaims() {return []}, async selectedLanes() {return []},
-    async candidatePreparation(_row: StoredRoutineJob, pending: FleetCandidatePreparation) {value.fleetCandidatePreparation = structuredClone(pending); return structuredClone(value)},
-    async reserveResources() {throw Error('Candidate construction cannot claim run capacity')},
-  } as unknown as RoutineJobRepository
-  const service = new RoutineJobService(repository, undefined, undefined, undefined,
-    {async get() {return structuredClone(observed)}, async list() {return [structuredClone(observed)]}}, undefined, undefined, () => now)
-  const offered = observed.lanes; observed.lanes = offered.filter(lane => lane.id === laneId)
-  try {await service.preparation(value.requestId)} finally {observed.lanes = offered}
-  const pending = value.fleetCandidatePreparation
-  if (!pending) throw Error('Fixture must construct the real pre-binding target')
+  const pending = retainedCandidate(value, observed, laneId);
+  value.fleetCandidatePreparation = pending;
   const lane = observed.lanes.find(lane => lane.id === laneId)!, phone = lane.resources.find(resource => resource.kind === 'phone')!,
     subject = observed.resourceLifecycle!.subjects.find(subject => subject.subject.id === phone.id)!, operationId = `backend-prerequisite:${pending.targetInputSha256}`,
     owner = {id: `fixture-check:${value.requestId}`, kind: 'boundary-cleanup' as const}, health = qualified()
@@ -135,7 +157,7 @@ async function returnedCandidateFixture(value: StoredRoutineJob, observed: Recei
 async function executableFixture() {
   const f = fixture(); f.original.fleetDeadline = new Date(now + 300_000)
   f.original.fleetInputSha256 = routineJobInputDigest(f.original); selectPreparing(f.original, f.observed)
-  const target = (await f.service.qualificationTargets('mini'))[0]!, input = target.proposedInput!, writes: unknown[] = []
+  const target = legacyTarget(f.original, f.observed), input = target.proposedInput!, writes: unknown[] = []
   let clock = now
   const observation = qualified()
   observation.qualification = {jobId: 'original', targetInputSha256: target.inputSha256,
@@ -147,6 +169,11 @@ async function executableFixture() {
     async completePreparation(_requestId: string, _hostId: string, _intent: string, saved: unknown, digest: string, _exclusive: unknown, _admission: unknown, fence: Record<string, unknown>) {
       expect(fence.fleetResourceReservation).toEqual(f.original.fleetResourceReservation)
       if (f.original.state !== 'preparing' || f.original.fleetCancellation || f.original.fleetDeadline.getTime() <= clock) return null
+      for (const [field, value] of Object.entries(fence)) {
+        if (field === '$and') continue;
+        const actual = (f.original as unknown as Record<string, unknown>)[field];
+        if (value && typeof value === 'object' && '$exists' in value ? (value as {$exists: boolean}).$exists !== (actual !== undefined) : !isDeepStrictEqual(value, actual)) return null;
+      }
       writes.push(saved); f.original.state = 'queued'; Object.assign(f.original, {input: saved, inputSha256: digest})
       return structuredClone(f.original) as unknown as StoredTestRequest
     }} as unknown as TestRequestRepository
@@ -164,47 +191,32 @@ test('executable adoption uses one late fresh original proof after preparation e
   f.observed.receivedAt = late; f.observed.observedAt = late; observation.observedAt = late; observation.check.closedAt = late
   resume.resolve(); expect((await completing).state).toBe('queued'); expect(f.writes).toHaveLength(1)
 })
-test('executable adoption refuses stale, different original, unknown, changed generation or retained phone claim', async () => {
+test('ordinary preparation commits without another job-specific phone qualification', async () => {
   for (const mutate of [
-    (f: Awaited<ReturnType<typeof executableFixture>>) => {f.setClock(now + 120_001)},
-    (f: Awaited<ReturnType<typeof executableFixture>>) => {delete f.observed.lanes[0]!.resources[0]!.backendConnectivity!.qualification},
-    (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.qualification!.jobId = 'other'},
-    (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.qualification!.inputSha256 = 'f'.repeat(64)},
-    (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.qualification!.preparing!.bindingSha256 = 'f'.repeat(64)},
+    (f: Awaited<ReturnType<typeof executableFixture>>) => {delete f.observed.lanes[0]!.resources[0]!.backendConnectivity},
     (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.outcome = 'unknown'},
-    (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.resourceLifecycle!.subjects[0]!.generation++},
-    (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.authorityReservations = []},
-    (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.frameworkBinding!.revision = 'e'.repeat(40)},
-  ]) {const f = await executableFixture(); mutate(f); await expect(f.complete()).rejects.toThrow('current settled'); expect(f.writes).toEqual([])}
-  const wrong=await executableFixture(),value=wrong.observed.lanes[0]!.resources[0]!.backendConnectivity!
-  value.qualification!.targetInputSha256='f'.repeat(64);value.check.operationId=`backend-prerequisite:${'f'.repeat(64)}`
-  await expect(wrong.complete()).rejects.toThrow('changed before executable admission');expect(wrong.writes).toEqual([])
+    (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.qualification!.jobId = 'previous-job'},
+  ]) {const f = await executableFixture(); mutate(f); expect((await f.complete()).state).toBe('queued'); expect(f.writes).toHaveLength(1)}
 })
-test('cancellation or source replacement during current host read cannot adopt executable input', async () => {
-  for (const cancel of [true, false]) {
-    const f = await executableFixture(), get = async () => {
-      if (cancel) f.original.fleetCancellation = {requestedAt: timestamp, reason: 'Cancelled during host read'}
-      else f.original.fleetPreparation!.routineSource = testRoutineSource('e'.repeat(40))
-      return structuredClone(f.observed)
-    }
-    await expect(f.complete(f.make(null, get))).rejects.toThrow('changed before executable admission')
-    expect(f.writes).toEqual([])
+test('original cancellation, expiry and frozen-source replacement during preparation still refuse executable input', async () => {
+  for (const cancel of ['cancel', 'expire', 'source', 'selection', 'binding'] as const) {
+    const f = await executableFixture();
+    const service = f.make(async () => {
+      if (cancel === 'cancel') f.original.fleetCancellation = {requestedAt: timestamp, reason: 'Cancelled during source enrollment'};
+      if (cancel === 'expire') f.setClock(now + 300000);
+      if (cancel === 'source') f.original.fleetPreparation!.routineSource = testRoutineSource('e'.repeat(40));
+      if (cancel === 'selection') f.original.fleetSelection.routineRevision = 'e'.repeat(40);
+      if (cancel === 'binding') f.original.fleetBinding!.descriptorRevision = 'e'.repeat(64);
+    });
+    const result = await f.complete(service);
+    expect(result.state).not.toBe('queued'); expect(f.writes).toEqual([]); expect('input' in f.original).toBe(false);
   }
 })
-
-test('Android discovery returns exact selected preparing target and legacy API cannot discover it', async () => {
-  const f = fixture(), before = structuredClone(f.original), targets = await f.service.qualificationTargets('mini')
-  expect(targets).toHaveLength(1)
-  expect(targets[0]!.purpose).toEqual({kind: 'backend-connectivity', resourceId: 'phone'})
-  const {inputSha256, ...target} = targets[0]!
-  expect(inputSha256).toBe(requestInputDigest(target)); expect(f.original).toEqual(before)
-  expect(targets[0]!.preparing?.reservationSha256).toBe(requestInputDigest(f.original.fleetResourceReservation)); expect(targets[0]!.proposedInput).toBeDefined()
-  f.observed.lanes[0]!.dispatchMode = 'paused'
-  expect(await f.service.qualificationTargets('mini')).toEqual([])
-  f.observed.lanes[0]!.dispatchMode = 'automatic'
-  f.observed.frameworkBinding!.routineApiVersion = 60
-  expect(await f.service.qualificationTargets('mini')).toEqual([])
+test('ordinary Android discovery does not construct a second preparing phone target', async () => {
+  const f = fixture(), before = structuredClone(f.original);
+  expect(await f.service.qualificationTargets('mini')).toEqual([]); expect(f.original).toEqual(before);
 })
+
 test('cancelled, expired, selected or structurally unsuitable Android work cannot qualify', async () => {
   for (const mutate of [
     (f: ReturnType<typeof fixture>) => {f.original.fleetCancellation = {requestedAt: timestamp, reason: 'Cancelled'}},
@@ -215,15 +227,16 @@ test('cancelled, expired, selected or structurally unsuitable Android work canno
     (f: ReturnType<typeof fixture>) => {f.observed.lanes[0]!.resources[0]!.capabilities = []},
   ]) {const f = fixture(); mutate(f); expect(await f.service.qualificationTargets('mini')).toEqual([])}
 })
+const diagnosticCompatible = (...args: Parameters<typeof compatibleRoutineLane>) => routineLaneRequirementBlocker(...args) === undefined
 test('backend health matches current APK/controller/released resource generation without physical idle proof', async () => {
   const f = fixture(), lane = f.observed.lanes[0]!, requirements = f.original.fleetPreparation!.requirements
-  expect(compatibleRoutineLane(requirements, lane, routineLaneContext(f.observed, f.original.fleetSelection.build, now))).toBe(false)
+  expect(diagnosticCompatible(requirements, lane, routineLaneContext(f.observed, f.original.fleetSelection.build, now))).toBe(false)
   lane.resources[0]!.backendConnectivity = qualified()
-  expect(compatibleRoutineLane(requirements, lane, routineLaneContext(f.observed, f.original.fleetSelection.build, now))).toBe(true)
+  expect(diagnosticCompatible(requirements, lane, routineLaneContext(f.observed, f.original.fleetSelection.build, now))).toBe(true)
   const context = routineLaneContext(f.observed, f.original.fleetSelection.build, now)
   context!.binding = Object.fromEntries(Object.entries(context!.binding).reverse()) as NonNullable<typeof context>['binding']
   context!.app = Object.fromEntries(Object.entries(context!.app!).reverse()) as NonNullable<typeof context>['app']
-  expect(compatibleRoutineLane(requirements, lane, context)).toBe(true)
+  expect(diagnosticCompatible(requirements, lane, context)).toBe(true)
   expect(f.observed.resourceLifecycle!.subjects[0]!.idle.outcome).toBe('not-checked')
   for (const mutate of [
     (f: ReturnType<typeof fixture>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.observedAt = new Date(now - 120_001).toISOString()},
@@ -235,14 +248,14 @@ test('backend health matches current APK/controller/released resource generation
     (f: ReturnType<typeof fixture>) => {f.observed.resourceLifecycle!.subjects[0]!.current = false},
     (f: ReturnType<typeof fixture>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.outcome = 'unknown'},
   ]) {const f = fixture(); f.observed.lanes[0]!.resources[0]!.backendConnectivity = qualified(); mutate(f)
-    expect(compatibleRoutineLane(f.original.fleetPreparation!.requirements, f.observed.lanes[0]!, routineLaneContext(f.observed, f.original.fleetSelection.build, now))).toBe(false)}
+    expect(diagnosticCompatible(f.original.fleetPreparation!.requirements, f.observed.lanes[0]!, routineLaneContext(f.observed, f.original.fleetSelection.build, now))).toBe(false)}
   const offline = {...requirements, resources: requirements.resources.map(resource => resource.kind === 'phone' ? {...resource, capabilities: []} : resource)}
   delete lane.resources[0]!.backendConnectivity
-  expect(compatibleRoutineLane(offline, lane, routineLaneContext(f.observed, f.original.fleetSelection.build, now))).toBe(true)
+  expect(diagnosticCompatible(offline, lane, routineLaneContext(f.observed, f.original.fleetSelection.build, now))).toBe(true)
 })
 
 async function claimFixture(options: {cancelAfterWrite?: boolean; loseAnswer?: boolean; advanceBeforeRelease?: boolean} = {}) {
-  const f = fixture(), target = (await f.service.qualificationTargets('mini'))[0]!, operationId = 'probe',
+  const f = fixture(), target = legacyTarget(f.original, f.observed), operationId = 'probe',
     ownerId = `resource-check:${requestInputDigest({operationId, resourceId: 'phone'})}`,
     subject = f.observed.resourceLifecycle!.subjects[0]!
   subject.status = 'checking'; subject.owner = {id: ownerId, kind: 'boundary-cleanup', generation: 2, hostId: 'mini', laneId: 'android'}
@@ -403,6 +416,23 @@ function acceptPhoneIdle(observed: ReturnType<typeof host>) {
     acceptedCheck:{operationId:'phone-idle',subjectGeneration:subject.generation,resultSha256:hash,acceptedAt:timestamp},qualifiedScope:phone.idleContract.qualifiedScope,evidenceRefs:[]}
 }
 
+function acceptCurrentIdle(observed: Pick<ReceivedTestHostState, 'hostId' | 'lanes' | 'resourceLifecycle'> & Partial<Pick<ReceivedTestHostState, 'receivedAt'>>) {
+  observed.resourceLifecycle ??= {schemaVersion: 1, subjects: [], history: []};
+  for (const resource of observed.lanes.flatMap(lane => lane.resources)) {
+    resource.idleContract = {version: 'current-physical-baseline', maximumAgeMs: 120000,
+      qualifiedScope: {kind: 'same-controller', controllerId: observed.hostId}, conditions: ['observed-idle'], repairConfigured: true};
+    const laneId = observed.lanes.find(lane => lane.resources.includes(resource))!.id;
+    const subject = resourceLifecycleSubjectSchema.parse({subject: {kind: 'resource', id: resource.id, authorityHostId: observed.hostId},
+      generation: 2, status: 'idle', owner: null, current: true, observedAt: timestamp, receivedAt: timestamp, reason: null,
+      idle: {contractVersion: resource.idleContract.version, outcome: 'passed', checkedAt: timestamp,
+        acceptedCheck: {operationId: `idle:${resource.id}`, subjectGeneration: 2, resultSha256: hash, acceptedAt: timestamp},
+        qualifiedScope: resource.idleContract.qualifiedScope, evidenceRefs: []}, repair: {configured: true, state: 'none'}, supportedActions: [],
+      resource: {kind: resource.kind, capabilities: resource.capabilities ?? [], memberships: [{hostId: observed.hostId, laneId}], dependencies: [], placement: 'installed'}});
+    const index = observed.resourceLifecycle.subjects.findIndex(value => value.subject.id === resource.id);
+    if (index < 0) observed.resourceLifecycle.subjects.push(subject); else observed.resourceLifecycle.subjects[index] = subject;
+  }
+}
+
 /** Exercise the production host/request CAS paths without database transaction support. */
 async function portableFixture() {
   const f = await claimFixture(); f.original = job()
@@ -414,6 +444,7 @@ async function portableFixture() {
   await returnedCandidateFixture(current.request, returnedHost)
   const {receivedAt: _receivedAt, authorityReservations: _claims, ...returnedSnapshot} = returnedHost
   current.host.snapshot = hostStateSchema.parse(returnedSnapshot)
+  acceptCurrentIdle(current.host.snapshot)
   const requests = new Map([['original', current.request]])
   const clock = spyOn(Date, 'now').mockReturnValue(now)
   const reserveFleet = ResourceReservationsService.prototype.reserveFleet
@@ -491,122 +522,27 @@ async function portableFixture() {
     async reserve(hostId = 'mini', laneId = 'android', id = 'original', at = now, onWaiting?: (reason: string) => void) {return routineJobRepository.reserveResources!(id, requests.get(id)!.fleetInputSha256!, hostId, laneId, new Date(at), onWaiting)},
     restore() {for (const mock of [reserveClock, clock, requestGet, hostGet, originalGet, claimedHosts, recorderClaims, requestRead, requestList, hostRead, hostWrite, replace, requestWrite]) mock.mockRestore()}}
 }
-test('fresh settled negative refuses repeated new original admissions before any custody write', async () => {
-  const f = await portableFixture()
+test.each(['unqualified', 'unknown', 'qualified'] as const)('old selected-app %s evidence does not replace the current physical baseline', async outcome => {
+  const f = await portableFixture();
   try {
-    f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = {...unqualified(),binding:f.current.host.snapshot.frameworkBinding!}
-    const reasons: string[] = []
-    for (let i = 0; i < 10; i++) {
-      const id = `scheduled-original-${i}`; f.addRequest(id)
-      expect(await f.reserve('mini', 'android', id, now, reason => {reasons.push(reason)})).toBeNull()
-      expect(f.requests.get(id)!.fleetResourceAdmission).toBeUndefined()
-      expect(f.requests.get(id)!.fleetResourceReservation).toBeUndefined()
-    }
-    expect(reasons).toEqual(Array(10).fill('The phone’s internet connection check failed. Waiting for a new check.'))
-    expect(f.events).toEqual([]); expect(f.current.host.resourceReservations).toEqual([])
-    const offline = f.addRequest('offline-original', true)
-    acceptPhoneIdle({...f.current.host.snapshot,receivedAt:timestamp})
-    expect(await f.reserve('mini', 'android', offline.requestId)).not.toBeNull()
+    f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = {...unqualified(), outcome,
+      binding: f.current.host.snapshot.frameworkBinding!};
+    expect(await f.reserve()).not.toBeNull(); expect(f.current.request.fleetResourceReservation).toBeDefined();
+    expect(f.current.request.fleetCandidatePreparation).toBeUndefined();
   } finally {f.restore()}
 })
-test('new preparation selects a healthy alternative while preserving an already selected original', async () => {
-  const observed = host(), other = structuredClone(observed), negative = unqualified()
-  observed.lanes[0]!.resources[0]!.backendConnectivity = negative
-  other.hostId = 'other'; other.lanes[0]!.id = 'other-android'
-  other.resourceLifecycle!.subjects[0]!.subject.authorityHostId = 'other'
-  const original = job(), choices: string[] = []
-  const rows: RoutineJobRepository = {async get() {return structuredClone(original)},
-    async insert() {throw Error('No insert')}, async prepare() {throw Error('No prepare')}, async bind() {throw Error('No bind')}, async cancel() {throw Error('No cancel')},
-    async reserveResources(id, digest, hostId, laneId) {choices.push(hostId); return {...structuredClone(original), fleetResourceReservation: {
-      id: 'd7f3b61c-083b-44d6-8b4e-29b088424e97', requestId: id, fleetInputSha256: digest, hostId, laneId,
-      poolId: 'mini:disk', minimumAvailableBytes: 2147483648, reservedAt: timestamp}}}, async recorderClaims() {return []}}
-  const service = new RoutineJobService(rows, undefined, undefined, undefined,
-    {async get(id) {return structuredClone(id === 'mini' ? observed : other)}, async list() {return [structuredClone(observed), structuredClone(other)]}},
-    undefined, undefined, () => now)
-  for (let i = 0; i < 10; i++) {
-    original.requestId = `next-${i}`
-    original.fleetSelection.requestId = original.requestId; original.fleetSelectionSha256 = requestInputDigest(original.fleetSelection);original.fleetInputSha256 = routineJobInputDigest(original)
-    delete original.fleetResourceReservation; delete original.fleetCandidateSelection; delete original.fleetCandidatePreparations
-    await returnedCandidateFixture(original, other, 'other-android')
-    expect(await service.preparation(original.requestId)).toMatchObject({resourceTarget: {hostId: 'other', laneId: 'other-android'}})
-  }
-  expect(choices).toEqual(Array(10).fill('other'))
-  original.fleetResourceReservation = {id: 'd7f3b61c-083b-44d6-8b4e-29b088424e97', requestId: original.requestId,
-    fleetInputSha256: original.fleetInputSha256!, hostId: 'mini', laneId: 'android', poolId: 'mini:disk', minimumAvailableBytes: 2147483648, reservedAt: timestamp}
-  delete original.fleetCandidateSelection;delete original.fleetCandidatePreparations
-  expect(await service.preparation(original.requestId)).toMatchObject({resourceTarget: {hostId: 'mini', laneId: 'android'}})
-  expect(choices.at(-1)).toBe('mini')
-  const bound = fixture(); bound.observed.lanes[0]!.resources[0]!.backendConnectivity = negative
-  expect((await bound.service.qualificationTargets('mini'))[0]!.jobId).toBe('original')
-})
-test('the original negative expires after 120 seconds without renewing its timestamp or creating an earlier claim', async () => {
-  const f = await portableFixture()
+test.each(['failed', 'unknown', 'owner', 'generation', 'not-current'] as const)('current physical %s still prevents reservation', async changed => {
+  const f = await portableFixture();
   try {
-    const value = {...unqualified(),binding:f.current.host.snapshot.frameworkBinding!}, original = f.current.request, observedAt = new Date(now - 120_000).toISOString()
-    value.observedAt = value.check.closedAt = observedAt
-    original.fleetDeadline = new Date(now + 300_000); original.fleetInputSha256 = routineJobInputDigest(original)
-    f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = value
-    expect(await f.reserve()).toBeNull(); expect(f.events).toEqual([])
-    const later = now + 1
-    expect(await f.reserve('mini', 'android', 'original', later)).toBeNull()
-    expect(value.observedAt).toBe(observedAt); expect(value.check.closedAt).toBe(observedAt)
-    expect(f.events).toEqual([]); expect(f.current.request.fleetResourceReservation).toBeUndefined()
+    const subject = f.current.host.snapshot.resourceLifecycle!.subjects[0]!;
+    if (changed === 'failed' || changed === 'unknown') {subject.idle.outcome = changed; subject.status = 'unknown';}
+    if (changed === 'owner') {subject.status = 'checking'; subject.owner = {id: 'foreign', kind: 'boundary-cleanup', generation: 2, hostId: 'mini', laneId: 'android'};}
+    if (changed === 'generation') {subject.generation++; subject.status = 'unknown';}
+    if (changed === 'not-current') subject.current = false;
+    expect(await f.reserve()).toBeNull(); expect(f.events).toEqual([]); expect(f.current.request.fleetResourceAdmission).toBeUndefined();
   } finally {f.restore()}
 })
-test('a late negative cannot move or erase the original provisional claim after a lost reply', async () => {
-  const f = await portableFixture()
-  try {
-    f.loseHost(); await expect(f.reserve()).rejects.toThrow('Host CAS answer lost')
-    const claim = structuredClone((f.current.host.resourceReservations as RecorderHostReservation[])[0]!)
-    f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = {...unqualified(),binding:f.current.host.snapshot.frameworkBinding!}
-    expect(await f.reserve()).toBeNull()
-    expect(f.current.request.fleetResourceReservation).toBeUndefined()
-    expect(f.current.host.resourceReservations).toEqual([claim])
-    expect(f.events).toEqual(['host-claim'])
-  } finally {f.restore()}
-})
-test('a negative reported after lane preference still refuses the authoritative new claim', async () => {
-  const f = await portableFixture()
-  try {
-    const before = {...structuredClone(f.current.host.snapshot), receivedAt: timestamp}
-    const rows: RoutineJobRepository = {...routineJobRepository,
-      async get(id) {return structuredClone(f.requests.get(id) ?? null)}, async recorderClaims() {return []},
-      async selectedLanes() {return []}, async reserveResources(id, _digest, hostId, laneId) {
-        f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = {...unqualified(),binding:f.current.host.snapshot.frameworkBinding!}
-        return f.reserve(hostId, laneId, id)
-      }}
-    const service = new RoutineJobService(rows, undefined, undefined, undefined,
-      {async get() {return structuredClone(before)}, async list() {return [structuredClone(before)]}}, undefined, undefined, () => now)
-    expect(await service.preparation('original')).toMatchObject({state: 'awaiting-runner'})
-    expect(f.events).toEqual([]); expect(f.current.host.resourceReservations).toEqual([])
-    expect(f.current.request.fleetResourceAdmission).toBeUndefined()
-  } finally {f.restore()}
-})
-test.each(['stale', 'future', 'binding', 'incarnation', 'controller-generation', 'phone-generation', 'not-current', 'owned', 'apk', 'receipt', 'unknown', 'qualified', 'boot', 'operation'])(
-  'a %s negative cannot suppress a new original prerequisite', async kind => {
-    const f = await portableFixture()
-    try {
-      const value = {...unqualified(),binding:f.current.host.snapshot.frameworkBinding!}, subject = f.current.host.snapshot.resourceLifecycle!.subjects[0]!
-      f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = value
-      if (kind === 'stale') value.observedAt = value.check.closedAt = new Date(now - 120_001).toISOString()
-      if (kind === 'future') value.observedAt = value.check.closedAt = new Date(now + 1).toISOString()
-      if (kind === 'binding') value.binding = {...value.binding, revision: 'e'.repeat(40)}
-      if (kind === 'incarnation') value.controller.incarnation = 'other'
-      if (kind === 'controller-generation') value.controller.generation++
-      if (kind === 'phone-generation') subject.generation++
-      if (kind === 'not-current') subject.current = false
-      if (kind === 'owned') subject.owner = {id: 'other', kind: 'boundary-cleanup', generation: 2, hostId: 'mini', laneId: 'android'}
-      if (kind === 'apk') value.app.archiveSha256 = 'd'.repeat(64)
-      if (kind === 'receipt') value.app.receiptSha256 = 'd'.repeat(64)
-      if (kind === 'unknown') value.outcome = 'unknown'
-      if (kind === 'qualified') value.outcome = 'qualified'
-      if (kind === 'boot') value.bootId = null
-      if (kind === 'operation') value.check.operationId = 'foreign'
-      expect(backendConnectivityObservationRefusesPreparation(value,'phone',routineLaneContext(f.current.host.snapshot,f.current.request.fleetSelection.build,now)!)).toBe(false)
-      expect(await f.reserve()).toBeNull();expect(f.events).toEqual([]);expect(f.current.request.fleetResourceAdmission).toBeUndefined()
-    } finally {f.restore()}
-  }
-)
+
 test('portable backend admission retains the byte claim before staging and refuses a stale probe CAS', async () => {
   const f = await portableFixture()
   try {
@@ -656,18 +592,6 @@ test('portable admission refuses unavailable host CAS without a stage or fallbac
     expect(f.events).toEqual([]); expect(f.current.host.resourceReservations).toEqual([])
     expect(f.current.request.fleetResourceAdmission).toBeUndefined()
   } finally {f.restore()}
-})
-test('negative or expired capability health cannot claim run capacity before fresh candidate qualification', async () => {
-  for (const outcome of ['unqualified', 'unknown'] as const) {
-    const f = await portableFixture()
-    try {
-      f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity!.outcome = outcome
-      f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity!.observedAt = new Date(now - 120001).toISOString()
-      expect(await f.reserve()).toBeNull()
-      expect(f.current.request.fleetResourceAdmission).toBeUndefined(); expect(f.current.request.fleetBinding).toBeUndefined()
-      expect((f.current.request as unknown as {input?:unknown}).input).toBeUndefined(); expect(f.current.request.inputSha256).toBeUndefined()
-    } finally {f.restore()}
-  }
 })
 test('an ambiguous late provisional claimant cannot overwrite the immutable staged winner', async () => {
   const f = await portableFixture()
@@ -878,7 +802,7 @@ test('same-phone queued preparation progresses one original at a time even with 
         async *qualificationCandidates() {yield structuredClone(f.current.request)}} as unknown as RoutineJobRepository,
         undefined, undefined, undefined, {async get() {return {...structuredClone(f.current.host.snapshot), receivedAt: timestamp}}},
         undefined, undefined, () => now)
-      const target = (await service.qualificationTargets('mini'))[0]!
+      const target = legacyTarget(f.current.request, {...f.current.host.snapshot, receivedAt: timestamp})
       const subject = f.current.host.snapshot.resourceLifecycle!.subjects[0]!, operationId = `backend-prerequisite:${target.inputSha256}`,
         owner = {id: `resource-check:${requestInputDigest({operationId, resourceId: 'phone'})}`, kind: 'boundary-cleanup' as const}
       subject.status = 'checking'; subject.owner = {...owner, generation: 2, hostId: 'mini', laneId: 'android'}
@@ -915,8 +839,10 @@ test('same-phone queued preparation progresses one original at a time even with 
       // Only the original normal completion plus a current empty recorder offer
       // removes its retained byte claim; elapsed time/health alone never does.
       f.current.request.dispatchCompletion = {inputSha256: f.current.request.inputSha256!, disposition: 'clean', completedAt: timestamp}
+      // The real reader return is authenticated above. Its newer current
+      // physical check, rather than old per-request backend health, makes the phone idle.
+      acceptPhoneIdle({...f.current.host.snapshot, receivedAt: timestamp});
       if(!offline)await f.prepareCandidate('second')
-      else acceptPhoneIdle({...f.current.host.snapshot,receivedAt:timestamp})
       expect(await f.reserve('mini', 'android', 'second')).not.toBeNull()
       expect(second.fleetResourceReservation?.requestId).toBe('second')
       expect((f.current.host.resourceReservations as RecorderHostReservation[]).map(value => value.requestId)).toEqual(['second'])
@@ -944,7 +870,7 @@ test('serialized phone preparation retains other-lane capacity and refuses unkno
     const otherLane = structuredClone(f.current.host.snapshot.lanes[0]!)
     otherLane.id = 'other-android'; otherLane.resources = otherLane.resources.map(({backendConnectivity: _, ...resource}) => ({...resource, id: `other-${resource.id}`}))
     f.current.host.snapshot.lanes.push(otherLane)
-    f.current.host.snapshot.resourceLifecycle!.subjects.push({...structuredClone(f.current.host.snapshot.resourceLifecycle!.subjects[0]!),subject:{kind:'resource',id:'other-phone',authorityHostId:'mini'}})
+    acceptCurrentIdle({...f.current.host.snapshot,receivedAt:timestamp})
     await f.prepareCandidate('second','other-android')
     expect(await f.reserve('mini', 'other-android', 'second')).not.toBeNull()
     expect((f.current.host.resourceReservations as RecorderHostReservation[]).map(value => value.requestId)).toEqual(['original', 'second'])
@@ -1089,7 +1015,7 @@ async function precheckBackendFixture() {
   f.original.fleetDeadline=new Date(now+300000);f.original.fleetInputSha256=routineJobInputDigest(f.original);selectPreparing(f.original,f.observed)
   const prerequisite=f.intent.prerequisite
   if(prerequisite?.kind!=='backend-connectivity')throw new Error('Expected the original backend prerequisite fixture')
-  const target=(await f.targets('mini'))[0]!, intent:ExclusiveResourceIntent={...f.intent,inputSha256:target.inputSha256,
+  const target=legacyTarget(f.original, f.observed), intent:ExclusiveResourceIntent={...f.intent,inputSha256:target.inputSha256,
     prerequisite:{...prerequisite,targetInputSha256:target.inputSha256,binding:target.acceptedBinding!,preparing:target.preparing!},
     resourceCheck:{resourceId:'phone',subjectGeneration:subject.generation,contractVersion:subject.idle.contractVersion,
       deadlineAt:now+60000,binding:target.acceptedBinding!,controller:{incarnation:'controller',generation:1}}}
@@ -1097,6 +1023,7 @@ async function precheckBackendFixture() {
     dependencies:[{resourceId:'phone',authorityHostId:'mini',capability:'backend-connectivity'}]})
   f.row.snapshot.resourceReservations={claims:[],returns:[],resourceChecks:[{intentSha256:digest,operationId:intent.operationId,
     resourceId:'phone',intent:structuredClone(intent),resourceCheck:intent.resourceCheck!,state:'prepared',observedAt:timestamp}]}
+  f.observed.resourceReservations = structuredClone(f.row.snapshot.resourceReservations);
   return {...f,intent,target,digest}
 }
 test('backend precheck claims before a local check exists using exact actual preparation target and source',async()=>{
@@ -1128,8 +1055,7 @@ async function candidatePrecheckFixture() {
     async settleCandidatePreparation(_row:StoredRoutineJob,value:FleetCandidatePreparation){original.fleetCandidatePreparations=[...(original.fleetCandidatePreparations??[]),structuredClone(value)];delete original.fleetCandidatePreparation;return structuredClone(original)},
     async reserveResources(){throw Error('No candidate execution allocation')}} as unknown as RoutineJobRepository
   const jobsService=new RoutineJobService(jobs,undefined,undefined,undefined,{async get(){return structuredClone(observed)},async list(){return [structuredClone(observed)]}},undefined,undefined,()=>time)
-  await jobsService.preparation(original.requestId);const pending=original.fleetCandidatePreparation!
-  if(!pending)throw Error('Real service must construct original unbound candidate')
+  const pending = original.fleetCandidatePreparation = retainedCandidate(original, observed)
   const operationId=`backend-prerequisite:${pending.targetInputSha256}`,owner={id:`resource-check:${requestInputDigest({operationId,resourceId:'phone'})}`,kind:'boundary-cleanup' as const}
   const intent:ExclusiveResourceIntent={operationId,hostId:'mini',laneId:'android',controller:{incarnation:'controller',generation:1,sequence:0},owner,
     inputSha256:pending.targetInputSha256,resources:[{id:'phone',capabilities:['backend-connectivity']}],
@@ -1244,15 +1170,15 @@ test('candidate target checkpoint survives a lost host CAS or interrupted writer
 test('ordinary current host reports preserve the exact selected preparing phone target without a sequence gate', async () => {
   for (const owned of [false, true]) {
     const f = fixture(), before = structuredClone(f.original);
-    let target = (await f.service.qualificationTargets('mini'))[0]!, input: OwnedRoutineQualification | undefined;
+    let target = legacyTarget(f.original, f.observed), input: OwnedRoutineQualification | undefined;
     if (owned) {
       const claim = await claimFixture(); f.observed.resourceLifecycle = claim.observed.resourceLifecycle;
       target = claim.target; input = claim.owned();
     }
     let reads = 0;
     (f.service as any).hosts.get = async () => ({...structuredClone(f.observed), sequence: ++reads});
-    expect(await f.service.qualificationTargets('mini', input)).toEqual([target]);
-    expect(reads).toBe(2); expect(f.original).toEqual(before);
+    expect(await f.service.qualificationTargets('mini', input)).toEqual(owned ? [target] : []);
+    expect(reads).toBe(owned ? 2 : 1); expect(f.original).toEqual(before);
   }
 });
 

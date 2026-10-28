@@ -18,17 +18,17 @@ const requirements = (platform: 'android' | 'ios-on-mac', recipient: 'app' | 'wo
 test('Mac structural selection can install the exact app before its app permission observation exists', () => {
   const offered = lane('ios-on-mac'), required = requirements('ios-on-mac', 'app');
   expect(compatibleStructuralRoutineLane(required, offered)).toBe(true);
-  expect(compatibleRoutineLane(required, offered)).toBe(false);
+  expect(compatibleRoutineLane(required, offered)).toBe(true);
 });
 test('Mac structural selection still requires worker permission observations', () => {
   const offered = lane('ios-on-mac'), required = requirements('ios-on-mac', 'worker');
   expect(compatibleStructuralRoutineLane(required, offered)).toBe(false);
   expect(compatibleRoutineLane(required, offered)).toBe(false);
 });
-test('Android permission selection and execution checks remain unchanged', () => {
+test('Android selection defers app grants until owned installation', () => {
   const offered = lane('android'), required = requirements('android', 'app');
-  expect(compatibleStructuralRoutineLane(required, offered)).toBe(false);
-  expect(compatibleRoutineLane(required, offered)).toBe(false);
+  expect(compatibleStructuralRoutineLane(required, offered)).toBe(true);
+  expect(compatibleRoutineLane(required, offered)).toBe(true);
 });
 test('Mac app permission deferral does not admit missing resources or capabilities', () => {
   const required = requirements('ios-on-mac', 'app');
@@ -36,7 +36,7 @@ test('Mac app permission deferral does not admit missing resources or capabiliti
   required.resources[0]!.capabilities = ['required-app-capability'];
   expect(compatibleStructuralRoutineLane(required, lane('ios-on-mac'))).toBe(false);
 });
-test('Mac execution still requires a fresh granted observation for the exact installed app', () => {
+test('installed-app permission diagnostics still require fresh exact recipient observations', () => {
   const now = Date.parse('2026-10-26T00:00:00Z'), binding = testFrameworkBinding();
   const app = {headSha: 'a'.repeat(40), archiveSha256: 'b'.repeat(64), receiptSha256: 'c'.repeat(64)};
   const offered = lane('ios-on-mac'), required = requirements('ios-on-mac', 'app');
@@ -45,14 +45,14 @@ test('Mac execution still requires a fresh granted observation for the exact ins
       bundleId: 'com.mentra.mentra' as const, bundlePath: '/Applications/Mentra.app', executablePath: '/Applications/Mentra.app/Mentra',
       version: '3.4.0', build: '1137', teamId: 'T5XXXL6N36', codeRequirement: 'verified signed requirement', selectedBuild: app}, evidence: {sha256: 'd'.repeat(64)}};
   offered.resources[0]!.permissionObservations = [observation];
-  expect(compatibleRoutineLane(required, offered, {now, binding, app})).toBe(true);
+  expect(evaluateRoutineLaneRequirements(required, offered, {now, binding, app}).blocker === undefined).toBe(true);
   for (const status of ['denied', 'unknown', 'unavailable'] as const) {
     offered.resources[0]!.permissionObservations = [{...observation, status}];
-    expect(compatibleRoutineLane(required, offered, {now, binding, app})).toBe(false);
+    expect(evaluateRoutineLaneRequirements(required, offered, {now, binding, app}).blocker === undefined).toBe(false);
   }
   offered.resources[0]!.permissionObservations = [observation];
-  expect(compatibleRoutineLane(required, offered, {now: now + 120_001, binding, app})).toBe(false);
-  expect(compatibleRoutineLane(required, offered, {now, binding, app: {...app, headSha: 'e'.repeat(40)}})).toBe(false);
+  expect(evaluateRoutineLaneRequirements(required, offered, {now: now + 120_001, binding, app}).blocker === undefined).toBe(false);
+  expect(evaluateRoutineLaneRequirements(required, offered, {now, binding, app: {...app, headSha: 'e'.repeat(40)}}).blocker === undefined).toBe(false);
 });
 
 test('current negative phone outcome differs from stale, wrong-source and explicitly unknown evidence', () => {

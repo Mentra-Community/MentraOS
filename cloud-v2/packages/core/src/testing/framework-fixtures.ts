@@ -16,7 +16,9 @@ export function testFrameworkBinding(): FrameworkBinding {
     installationId: "software-framework-fixture",
     configurationSha256: "b".repeat(64),
     runtimeSha256: "c".repeat(64),
-    routineApiVersion: 1,
+    // Ordinary current-readiness dispatch uses the current controller protocol.
+    // Historical acquisition/recovery tests provide their original API explicitly.
+    routineApiVersion: 111,
     publicApiSha256: "d".repeat(64),
   }
 }

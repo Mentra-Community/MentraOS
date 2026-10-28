@@ -10,7 +10,7 @@ import {hostStateSchema} from './test-host-state.service';
 import {resourceLifecycleSubjectSchema} from '../types/resource-lifecycle.types';
 import {resourceAvailable, requiredResourceBlocker} from './resource-readiness';
 import {createRoutineJobsApi} from '../api/internal/routine-jobs.api';
-import {testRoutineSource} from '../testing/framework-fixtures';
+import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures';
 import {requestInputDigest, TestRequestService, type TestRequestRepository, type HostAcceptance} from './test-request.service';
 import {RoutineJobService, isAutomaticPrRoutineJob, routineJobRepository, routineJobInputDigest, orderedRoutineCandidates, routineLaneDescriptorRevision, routineRequirementLabels, compatibleRoutineLane, type RoutineJobRepository} from './routine-job.service';
 import type {StoredRoutineJob} from '../types/routine-job.types';
@@ -51,7 +51,7 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
   const lane:ReceivedTestHostState['lanes'][number]={id:'android',platform:'android',state:'idle',dispatchMode:'automatic',resources:[
     {id:'phone:android',kind:'phone'}, {id:'app:android',kind:'app'}, {id:'recorder:android',kind:'recorder',storage:{poolId:'mini:disk:1',observedAt:new Date(time).toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}}, {id:'network:uplink',kind:'network',capabilities:['independent-uplink']}]};
   lane.descriptorRevision=routineLaneDescriptorRevision(lane);
-  const host=(hostId:string):ReceivedTestHostState=>({hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:new Date(time).toISOString(),receivedAt:new Date(time).toISOString(),lanes:[{...copy(lane),resources:lane.resources.map(resource=>resource.storage?{...resource,storage:{...resource.storage,observedAt:new Date(time).toISOString()}}:resource)}]});
+  const host=(hostId:string):ReceivedTestHostState=>({hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:new Date(time).toISOString(),receivedAt:new Date(time).toISOString(),frameworkBinding:testFrameworkBinding(),lanes:[{...copy(lane),resources:lane.resources.map(resource=>resource.storage?{...resource,storage:{...resource.storage,observedAt:new Date(time).toISOString()}}:resource)}]});
   const service=new RoutineJobService(rows,{async resolve(value,platform){resolves++;return {source:value,platform,availability:'available',title:'App',headSha:'c'.repeat(40),createdAt:new Date(time).toISOString(),buildUrl:'https://github.com/Mentra-Community/MentraOS/actions/runs/55',
     archive:{name:'app.apk',size:100,sha256:'d'.repeat(64),url:'https://artifactscdn.mentraglass.com/app.apk'},receipt:{size:10,sha256:'e'.repeat(64),url:'https://artifactscdn.mentraglass.com/receipt.json'}}}},
     {async resolve(revision){sources++;return revision??selection.routineRevision},async inventory(commit){return {commit,files:[]}},async blob(){return new Uint8Array()}},
@@ -60,7 +60,7 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
   // Result lookup intentionally uses the same 404 class as existing Core result APIs.
   const prepare=async()=>{const first=await service.submit(selection);await service.prepared(selection.requestId,{inputSha256:first.fleetSelectionSha256,
     routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});return service.preparation(selection.requestId)};
-  return {service,rows,lane,prepare,offer(hosts: (ReceivedTestHostState & Pick<RoutingTestHostState, 'authorityReservations'>)[]){offeredHosts=copy(hosts)}, restore(value:StoredRoutineJob){row=copy(value)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},queued(inputSha256:string){if(row)row={...row,state:'queued',inputSha256,hostReceipt:undefined} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256,hostReceipt:{requestId:row.requestId,hostId:row.hostId!,inputSha256,acceptedAt:new Date(time).toISOString()}} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:selection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
+  return {service,rows,lane,prepare,offer(hosts: (ReceivedTestHostState & Pick<RoutingTestHostState, 'authorityReservations'>)[]){offeredHosts=copy(hosts).map(host=>({...host,frameworkBinding:host.frameworkBinding??testFrameworkBinding()}))}, restore(value:StoredRoutineJob){row=copy(value)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},queued(inputSha256:string){if(row)row={...row,state:'queued',inputSha256,hostReceipt:undefined} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256,hostReceipt:{requestId:row.requestId,hostId:row.hostId!,inputSha256,acceptedAt:new Date(time).toISOString()}} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:selection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
 }
 test('preparation POST saves exact source without matching; its existing GET still reserves resources', async () => {
   const previousToken = process.env.TEST_RUN_INGEST_TOKEN;
@@ -1014,12 +1014,12 @@ test('permanent preparation reports use the settled fence consumed by rerun read
 });
 
 
-test('an expired app grant refuses fleet binding before consuming the pending job; a fresh exact grant admits it', async () => {
+test('APP permission is checked after owned install rather than requiring an earlier job grant to bind', async () => {
   const selected = {...definition, resourceRequirements: definition.resourceRequirements.map(resource => resource.kind === 'app'
     ? {...resource, permissions: [{permission: 'camera', recipient: 'app'}]} : resource)};
   const f = fixture(selected), prepared = await f.prepare(), frozen = structuredClone(f.row), time = Date.parse('2026-10-08T00:00:00Z');
   const binding = {version: 938, revision: 'a'.repeat(40), installationId: 'accepted', configurationSha256: 'b'.repeat(64),
-    runtimeSha256: 'c'.repeat(64), routineApiVersion: 37, publicApiSha256: 'd'.repeat(64)};
+    runtimeSha256: 'c'.repeat(64), routineApiVersion: 111, publicApiSha256: 'd'.repeat(64)};
   const lane = structuredClone(f.lane);
   const observed = {permission: 'camera' as const, status: 'granted' as const, rawStatus: 'authorized', observedAt: new Date(time - 120_001).toISOString(), binding,
     recipient: {kind: 'app' as const, uid: 501, pid: 50, processStartedAt: 'verified lifetime', launchedAt: time - 1000,
@@ -1031,9 +1031,7 @@ test('an expired app grant refuses fleet binding before consuming the pending jo
     observedAt: new Date(time).toISOString(), receivedAt: new Date(time).toISOString(), frameworkBinding: binding, lanes: [lane]};
   f.offer([host]);
   const input = {inputSha256: prepared.inputSha256, laneId: lane.id, descriptorRevision: lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'};
-  await expect(f.service.bind(selection.requestId, host.hostId, input)).rejects.toThrow('compatible lane descriptor');
   expect(f.row).toEqual(frozen);
-  observed.observedAt = new Date(time).toISOString(); f.offer([host]);
   await f.service.preparation(selection.requestId);
   expect((await f.service.bind(selection.requestId, host.hostId, input)).execute).toBe(true);
   expect(f.row!.fleetBinding!.hostId).toBe(host.hostId);
@@ -1243,7 +1241,7 @@ async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: M
   const subjects=lane.resources.map(resource=>resourceLifecycleSubjectSchema.parse({subject:{kind:'resource',id:resource.id,authorityHostId:hostId},generation:7,status:'idle',observedAt:at,receivedAt:null,current:true,reason:null,owner:null,
    idle:{contractVersion:'synthetic-baseline',outcome:'passed',checkedAt:at,acceptedCheck:{operationId:`check:${resource.id}`,subjectGeneration:7,resultSha256:'a'.repeat(64),acceptedAt:at},qualifiedScope:resource.idleContract!.qualifiedScope,evidenceRefs:[]},
    repair:{configured:true,state:'none'},supportedActions:['reserve','check','mark-out-of-service'],resource:{kind:resource.kind,capabilities:resource.capabilities??[],memberships:[{hostId,laneId:lane.id}],dependencies:[],placement:'installed'}}));
-  const snapshot=hostStateSchema.parse({hostId,incarnation:`${hostId}:original`,incarnationGeneration:1,sequence:1,observedAt:at,
+  const snapshot=hostStateSchema.parse({hostId,incarnation:`${hostId}:original`,incarnationGeneration:1,sequence:1,observedAt:at,frameworkBinding:testFrameworkBinding(),frameworkAcceptedAt:at,frameworkProcess:{pid:100,startedAt:'software-current-controller'},
    laneControls:{schemaVersion:1,receipts:[],resourceControls:true},resourceLifecycle:{schemaVersion:1,subjects,history:[]},lanes:[lane]});
   hosts.set(hostId,{hostId,incarnation:snapshot.incarnation,incarnationGeneration:1,sequence:1,receivedAt:new Date(now),resourceReservationVersion:0,resourceReservations:[],laneControlVersion:0,laneControls:[],snapshot});
  }
@@ -1902,4 +1900,30 @@ test('recorder-only recovery selects current authority without check journals or
       expect(projections[0]).not.toHaveProperty([key]);
     expect(reads).toEqual(['primary', 'majority', {timeoutMS: 5000}]);
   } finally {find.mockRestore()}
+});
+
+test('current phone baseline reaches the real serialized recorder, admission and bind CAS without a candidate graph', async () => {
+ await withLocalResources(async(f,hosts,counters)=>{
+  const snapshots = new Map([...hosts].map(([id,h])=>[id,structuredClone(h.snapshot)]));
+  for(const h of hosts.values())unavailableLocal(h,'out-of-service','phone');
+  await f.prepare();
+  for(const [id,h] of hosts){h.snapshot=structuredClone(snapshots.get(id));
+   h.snapshot.frameworkBinding={version:1535,revision:'a'.repeat(40),installationId:'current',configurationSha256:'b'.repeat(64),runtimeSha256:'c'.repeat(64),routineApiVersion:111,publicApiSha256:'d'.repeat(64)};
+   h.snapshot.frameworkAcceptedAt=h.snapshot.observedAt;h.snapshot.frameworkProcess={pid:100,startedAt:'original-current-worker'};
+   h.snapshot.resourceReservations={claims:[],returns:[],resourceReadiness:true};
+   h.snapshot.lanes[0].resources.find((ref:any)=>ref.kind==='phone').capabilities=['backend-connectivity'];
+   h.snapshot.lanes[0].descriptorRevision=routineLaneDescriptorRevision(h.snapshot.lanes[0]);
+  }
+  const row=structuredClone(f.row!);row.fleetPreparation!.definition.resourceRequirements.find(ref=>ref.kind==='phone')!.capabilities=['backend-connectivity'];
+  row.fleetPreparation!.requirements.resources.find(ref=>ref.kind==='phone')!.capabilities=['backend-connectivity'];
+  row.fleetPreparation!.definitionSha256=requestInputDigest(row.fleetPreparation!.definition);row.fleetInputSha256=routineJobInputDigest(row);f.restore(row);
+  const original=structuredClone(f.row!),prepared=await f.service.preparation(row.requestId),target=(prepared as {resourceTarget?:{hostId:string;laneId:string}}).resourceTarget;
+  expect(target).toBeDefined();expect(f.row!.fleetResourceAdmission?.intent.operationId).toBe(`run:${row.requestId}`);
+  expect(f.row!.fleetCandidatePreparation).toBeUndefined();expect(f.row!.fleetCandidatePreparations).toBeUndefined();
+  expect(f.row!.fleetResourceReservation?.requestId).toBe(row.requestId);expect(counters.host).toBeGreaterThan(0);expect(counters.request).toBeGreaterThan(0);
+  const host=hosts.get(target!.hostId);
+  const bound=await f.service.bind(row.requestId,target!.hostId,{inputSha256:row.fleetInputSha256,laneId:target!.laneId,descriptorRevision:host.snapshot.lanes[0].descriptorRevision,actionsRunId:'10',actionsJobId:'20'});
+  expect(bound.execute).toBe(true);expect(f.row!.fleetBinding?.hostId).toBe(target!.hostId);
+  for(const key of ['fleetSelection','fleetDeadline','fleetInputSha256'] as const)expect(f.row![key]).toEqual(original[key]);
+ });
 });

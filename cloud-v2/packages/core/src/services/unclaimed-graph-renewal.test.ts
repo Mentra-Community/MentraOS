@@ -1,14 +1,12 @@
-import {expect, spyOn, test} from 'bun:test'
-import {TestRequestModel} from '../models/test-request.model'
+import {expect, test} from 'bun:test'
 import {exclusiveResourceIntentSchema} from '../types/resource-reservations.types'
 import {candidateRenewal, candidateSettlement, graphCandidateHistoricalSettlement} from './backend-candidate-preparation'
 import {routingGraphFixture} from './backend-candidate-preparation.test-support'
-import {routineJobRepository} from './routine-job.service'
 import {requestInputDigest} from './test-request.service'
 
 async function closedUnclaimedGraph(kind: 'never-requested' | 'not-acquired' = 'never-requested') {
   const f = routingGraphFixture()
-  await f.service.preparation(f.row.requestId)
+  await f.prepareLegacy(f.row.requestId)
   const {pending, host, receipt} = f.settleNeverRequested()
   if (kind === 'not-acquired') {
     delete receipt.neverRequested
@@ -40,141 +38,6 @@ async function closedUnclaimedGraph(kind: 'never-requested' | 'not-acquired' = '
   return {f, host, previous, original}
 }
 
-test('closed source preparation failure tries an untried eligible lane before unchanged renewal', async () => {
-  const f = routingGraphFixture()
-  await f.service.preparation(f.row.requestId)
-  const first = f.row.fleetCandidatePreparation!
-  const {pending, host} = f.settleNeverRequested()
-  const settlement = candidateSettlement(pending, host, [], f.now)
-  expect(settlement?.outcome).toBe('unknown')
-  await f.rows.settleCandidatePreparation!(f.row, {...pending, settlement}, new Date(f.now))
-  const original = structuredClone(f.row)
-  f.advance(1)
-
-  await f.service.preparation(f.row.requestId)
-  const alternate = f.row.fleetCandidatePreparation!
-  expect(alternate.hostId).not.toBe(first.hostId)
-  expect(alternate.candidate.previousAttemptId).toBeUndefined()
-  expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
-  expect(f.row.fleetInputSha256).toBe(original.fleetInputSha256)
-  expect(f.row.fleetDeadline).toEqual(original.fleetDeadline)
-  expect(f.bindWrites).toBe(0)
-
-  f.settleGraph('qualified')
-  await f.service.preparation(f.row.requestId)
-  expect(f.row.fleetCandidateSelection?.hostId).toBe(alternate.hostId)
-  expect(f.row.fleetResourceReservation?.hostId).toBe(alternate.hostId)
-  expect(f.bindWrites).toBe(1)
-  expect(f.row.fleetInputSha256).toBe(original.fleetInputSha256)
-  expect(f.row.fleetDeadline).toEqual(original.fleetDeadline)
-})
-
-test('unavailable untried lane does not prevent an operational original from renewing', async () => {
-  const f = routingGraphFixture()
-  await f.service.preparation(f.row.requestId)
-  const {pending, host} = f.settleNeverRequested()
-  await f.rows.settleCandidatePreparation!(f.row, {...pending,
-    settlement: candidateSettlement(pending, host, [], f.now)}, new Date(f.now))
-  f.hosts.find(value => value.hostId !== host.hostId)!.lanes[0]!.state = 'out-of-service'
-  f.advance(1)
-  await f.service.preparation(f.row.requestId)
-  expect(f.row.fleetCandidatePreparation?.hostId).toBe(host.hostId)
-  expect(f.row.fleetCandidatePreparation?.candidate.previousAttemptId).toBe(pending.candidate.attemptId)
-  expect(f.bindWrites).toBe(0)
-})
-
-async function twoClosedUnclaimedLanes() {
-  const f = routingGraphFixture(), previous = []
-  for (let attempt = 0; attempt < 2; attempt++) {
-    await f.service.preparation(f.row.requestId)
-    const {pending, host} = f.settleNeverRequested(), settlement = candidateSettlement(pending, host, [], f.now)
-    expect(settlement?.outcome).toBe('unknown')
-    await f.rows.settleCandidatePreparation!(f.row, {...pending, settlement}, new Date(f.now))
-    previous.push(structuredClone(pending)); f.advance(1)
-  }
-  expect(previous[0]!.hostId).not.toBe(previous[1]!.hostId)
-  return {f, previous}
-}
-
-test('both closed unclaimed lanes can recover the earlier available lane when the latest lane is unavailable', async () => {
-  const {f, previous} = await twoClosedUnclaimedLanes(), first = previous[0]!, last = previous[1]!, original = structuredClone(f.row),
-    available = f.hosts.find(host => host.hostId === first.hostId)!
-  f.hosts.find(host => host.hostId === last.hostId)!.lanes[0]!.state = 'out-of-service'
-  for (const subject of available.resourceLifecycle!.subjects) {
-    subject.generation += 3; subject.status = 'idle'; subject.owner = null; subject.idle.outcome = 'passed'
-    subject.idle.checkedAt = available.observedAt
-    subject.idle.acceptedCheck = {operationId: `actual-current-check:${subject.subject.id}`, subjectGeneration: subject.generation,
-      resultSha256: 'd'.repeat(64), acceptedAt: available.observedAt}
-  }
-  let writes = 0
-  const write = spyOn(TestRequestModel.collection, 'findOneAndUpdate').mockImplementation(async (filter: any, update: any) => {
-    expect(filter.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
-    expect(filter.fleetCandidatePreparation).toEqual({$exists: false})
-    expect(filter.fleetBinding).toEqual({$exists: false})
-    expect(filter.fleetCancellation).toEqual({$exists: false})
-    expect(filter.fleetDeadline.$gt.getTime()).toBe(f.now)
-    writes++; f.row = {...f.row, fleetCandidatePreparation: structuredClone(update.$set.fleetCandidatePreparation)}
-    return structuredClone(f.row) as any
-  })
-  f.rows.candidatePreparation = routineJobRepository.candidatePreparation
-  try {
-    await f.service.preparation(f.row.requestId)
-    const next = f.row.fleetCandidatePreparation!
-    expect(next).toBeDefined()
-    expect(next.hostId).toBe(first.hostId)
-    expect(next.candidate.previousAttemptId).toBe(first.candidate.attemptId)
-    expect(next.targetInputSha256).not.toBe(first.targetInputSha256)
-    expect(next.target.acceptedBinding).toEqual(available.frameworkBinding)
-    expect(next.candidate.controller).toEqual({incarnation: available.incarnation, generation: available.incarnationGeneration})
-    expect(next.target.deadline).toBe(original.fleetDeadline.toISOString())
-    expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
-    expect(f.row.fleetInputSha256).toBe(original.fleetInputSha256)
-    expect(f.row.fleetDeadline).toEqual(original.fleetDeadline)
-    expect(writes).toBe(1); expect(f.bindWrites).toBe(0)
-  } finally {write.mockRestore()}
-})
-
-test('closed unclaimed renewal keeps least-attempt ordering and each lane latest predecessor', async () => {
-  const {f, previous} = await twoClosedUnclaimedLanes(), original = structuredClone(f.row)
-  await f.service.preparation(f.row.requestId)
-  const renewed = f.row.fleetCandidatePreparation!
-  expect(renewed.hostId).toBe(previous[0]!.hostId)
-  expect(renewed.candidate.previousAttemptId).toBe(previous[0]!.candidate.attemptId)
-  const {pending, host} = f.settleNeverRequested()
-  await f.rows.settleCandidatePreparation!(f.row, {...pending, settlement: candidateSettlement(pending, host, [], f.now)}, new Date(f.now))
-  f.advance(1)
-  expect(candidateRenewal(f.row, renewed.hostId, renewed.laneId)?.candidate.attemptId).toBe(renewed.candidate.attemptId)
-  await f.service.preparation(f.row.requestId)
-  const next = f.row.fleetCandidatePreparation!
-  expect(next.hostId).toBe(previous[1]!.hostId)
-  expect(next.candidate.previousAttemptId).toBe(previous[1]!.candidate.attemptId)
-  expect(f.row.fleetCandidatePreparations).toHaveLength(3)
-  expect(f.row.fleetCandidatePreparations!.slice(0, 2)).toEqual(original.fleetCandidatePreparations!)
-  expect(f.row.fleetDeadline).toEqual(original.fleetDeadline)
-  expect(f.row.fleetInputSha256).toBe(original.fleetInputSha256)
-  expect(f.bindWrites).toBe(0)
-})
-
-test('renewal cannot skip a newer same-lane UNKNOWN attempt with real claims and completed checks', async () => {
-  const {f, previous} = await twoClosedUnclaimedLanes()
-  await f.service.preparation(f.row.requestId)
-  const pending = f.row.fleetCandidatePreparation!, host = f.hosts.find(value => value.hostId === pending.hostId)!
-  f.settleGraph('unknown')
-  const settlement = candidateSettlement(pending, host, [], f.now)
-  expect(settlement?.outcome).toBe('unknown')
-  expect(pending.resourceClaims!.length).toBeGreaterThan(0)
-  expect(settlement!.graphChecks!.length).toBeGreaterThan(0)
-  await f.rows.settleCandidatePreparation!(f.row, {...pending, settlement}, new Date(f.now))
-  f.hosts.find(value => value.hostId === previous[1]!.hostId)!.lanes[0]!.state = 'out-of-service'
-  const original = structuredClone(f.row); f.advance(1)
-  expect(candidateRenewal(f.row, pending.hostId, pending.laneId)).toBeUndefined()
-  await f.service.preparation(f.row.requestId)
-  expect(f.row.fleetCandidatePreparation).toBeUndefined()
-  expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
-  expect(f.row.fleetDeadline).toEqual(original.fleetDeadline)
-  expect(f.bindWrites).toBe(0)
-})
-
 for (const kind of ['never-requested', 'not-acquired'] as const) {
   test(`genuine ${kind} closed UNKNOWN history permits same-lane renewal, never execution`, async () => {
     const {f, previous} = await closedUnclaimedGraph(kind)
@@ -186,53 +49,28 @@ for (const kind of ['never-requested', 'not-acquired'] as const) {
   })
 
   for (const restarted of [false, true])
-  test(`real service renews ${kind} on current resources${restarted ? ' after a compatible restart' : ''} with the original request CAS and deadline`, async () => {
+  test(`a closed ${kind} original reserves its current passed baseline${restarted ? ' after a compatible restart' : ''} without another qualification`, async () => {
     const {f, host, previous, original} = await closedUnclaimedGraph(kind)
     if (restarted) {
       host.incarnation = 'accepted-new-controller'; host.incarnationGeneration++
       host.frameworkBinding = {...host.frameworkBinding!, version: host.frameworkBinding!.version + 1,
         installationId: 'accepted-new-installation', runtimeSha256: 'e'.repeat(64)}
     }
-    let writes = 0
-    const write = spyOn(TestRequestModel.collection, 'findOneAndUpdate').mockImplementation(async (filter: any, update: any) => {
-      expect(filter.requestId).toBe(original.requestId)
-      expect(filter.fleetInputSha256).toBe(original.fleetInputSha256)
-      expect(filter.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
-      expect(filter.fleetCandidatePreparation).toEqual({$exists: false})
-      expect(filter.fleetBinding).toEqual({$exists: false})
-      expect(filter.fleetCancellation).toEqual({$exists: false})
-      expect(filter.fleetDeadline.$gt.getTime()).toBe(f.now)
-      writes++
-      f.row = {...f.row, fleetCandidatePreparation: structuredClone(update.$set.fleetCandidatePreparation)}
-      return structuredClone(f.row) as any
-    })
-    f.rows.candidatePreparation = routineJobRepository.candidatePreparation
-    try {
-      await f.service.preparation(f.row.requestId)
-      const current = f.row.fleetCandidatePreparation!
-      expect(current).toBeDefined()
-      expect(current.candidate.previousAttemptId).toBe(previous.candidate.attemptId)
-      expect(current.targetInputSha256).not.toBe(previous.targetInputSha256)
-      expect(current.target.jobId).toBe(original.requestId)
-      expect(current.candidate.controller).toEqual({incarnation: host.incarnation, generation: host.incarnationGeneration})
-      expect(current.target.acceptedBinding).toEqual(host.frameworkBinding)
-      expect(current.target.deadline).toBe(original.fleetDeadline.toISOString())
-      expect(current.target.selection).toEqual({...original.fleetSelection, routineSource: original.fleetPreparation!.routineSource})
-      expect(current.target.purpose?.kind).toBe('resource-readiness')
-      if (current.target.purpose?.kind === 'resource-readiness')
-        expect(current.target.purpose.resources.map(member => member.subjectGeneration)).toEqual(
-          current.target.purpose.resources.map(member => host.resourceLifecycle!.subjects.find(subject => subject.subject.id === member.id)!.generation))
-      expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
-      expect(f.row.fleetInputSha256).toBe(original.fleetInputSha256)
-      expect(f.row.fleetDeadline).toEqual(original.fleetDeadline)
-      expect(writes).toBe(1); expect(f.bindWrites).toBe(0)
-    } finally {write.mockRestore()}
+    await f.prepareLegacy(f.row.requestId)
+    expect(f.row.fleetCandidatePreparation).toBeUndefined()
+    expect(f.row.fleetResourceReservation?.hostId).toBe(host.hostId)
+    expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
+    expect(f.row.fleetCandidatePreparations![0]!.settlement!.outcome).toBe('unknown')
+    expect(f.row.fleetBinding).toBeUndefined(); expect(f.bindWrites).toBe(1); expect(f.writes).toBe(1)
+    for (const key of ['requestId', 'fleetSelection', 'fleetSelectionSha256', 'fleetPreparation', 'fleetInputSha256', 'fleetDeadline'] as const)
+      expect(f.row[key]).toEqual(original[key])
+    expect(previous.target.deadline).toBe(original.fleetDeadline.toISOString())
   })
 }
 
 for (const gap of ['unclosed', 'missing-proof', 'partial-claim', 'partial-return', 'unanswered-acquisition', 'provisional',
   'wrong-parent', 'wrong-candidate', 'wrong-target', 'cancelled', 'bound', 'exclusive-execution'] as const)
-test(`UNKNOWN renewal preserves the existing fence with ${gap}`, async () => {
+test(`historical UNKNOWN continuation classification preserves the ${gap} fence`, async () => {
   const {f, previous} = await closedUnclaimedGraph()
   if (gap === 'unclosed') delete previous.settlement
   if (gap === 'missing-proof') delete previous.settlement!.neverRequested
@@ -248,45 +86,32 @@ test(`UNKNOWN renewal preserves the existing fence with ${gap}`, async () => {
   if (gap === 'exclusive-execution') f.row.fleetExclusiveExecutionBinding = {} as any
   const before = structuredClone(f.row)
   expect(candidateRenewal(f.row, previous.hostId, previous.laneId)).toBeUndefined()
-  await f.service.preparation(f.row.requestId)
   expect(f.row.fleetCandidatePreparation).toBeUndefined()
   expect(f.row.fleetCandidatePreparations).toEqual(before.fleetCandidatePreparations)
   expect(f.bindWrites).toBe(0)
 })
 
-for (const gap of ['expired', 'incompatible-binding', 'controller-race', 'binding-race', 'resource-owner', 'resource-repair', 'concurrent-request'] as const)
-test(`real service refuses unclaimed renewal after ${gap}`, async () => {
-  const {f, host, original} = await closedUnclaimedGraph()
+for (const gap of ['expired', 'incompatible-binding', 'resource-owner', 'resource-repair', 'current-claim', 'pending-original'] as const)
+test(`current baseline allocation preserves ${gap} refusal after a closed original`, async () => {
+  const {f, host, previous, original} = await closedUnclaimedGraph()
   if (gap === 'expired') f.advance(300_000)
   if (gap === 'incompatible-binding') host.frameworkBinding!.routineApiVersion = 0
-  if (gap === 'controller-race' || gap === 'binding-race') {
-    const hosts = (f.service as any).hosts, get = hosts.get.bind(hosts)
-    let reads = 0
-    hosts.get = async (id: string) => {
-      const current = await get(id)
-      if (++reads > 1 && current) {
-        if (gap === 'controller-race') current.incarnation = 'different-controller'
-        else current.frameworkBinding.runtimeSha256 = 'e'.repeat(64)
-      }
-      return current
-    }
-  }
   if (gap === 'resource-owner') host.resourceLifecycle!.subjects[0]!.owner = {id: 'actual-owner', kind: 'boundary-cleanup', hostId: host.hostId, generation: 2}
   if (gap === 'resource-repair') host.resourceLifecycle!.subjects[0]!.repair.state = 'queued'
-  const write = gap === 'concurrent-request' ? spyOn(TestRequestModel.collection, 'findOneAndUpdate').mockImplementation(async (filter: any) => {
-    expect(filter.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
-    expect(filter.fleetCandidatePreparation).toEqual({$exists: false})
-    return null as any
-  }) : undefined
-  if (write) f.rows.candidatePreparation = routineJobRepository.candidatePreparation
-  try {
-    await f.service.preparation(f.row.requestId)
-    expect(f.row.fleetCandidatePreparation).toBeUndefined()
-    expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
-    expect(f.row.fleetDeadline).toEqual(original.fleetDeadline)
-    expect(f.bindWrites).toBe(0)
-    if (write) expect(write).toHaveBeenCalledTimes(1)
-  } finally {write?.mockRestore()}
+  if (gap === 'current-claim') host.authorityReservations = [{id: '10000000-0000-4000-8000-000000000001', requestId: 'foreign-original',
+    fleetInputSha256: 'f'.repeat(64), hostId: host.hostId, laneId: previous.laneId, poolId: `${host.hostId}:disk`,
+    minimumAvailableBytes: 1024, reservedAt: new Date(f.now).toISOString()}]
+  if (gap === 'pending-original') {
+    f.row.fleetCandidatePreparation = {...structuredClone(previous), settlement: undefined, noAcquisitionReceipt: {status: 'unknown'}}
+    host.resourceReservations!.candidatePrerequisites = []
+  }
+  const pending = structuredClone(f.row.fleetCandidatePreparation), claims = structuredClone(host.authorityReservations)
+  await f.prepareLegacy(f.row.requestId)
+  expect(f.row.fleetCandidatePreparation).toEqual(pending)
+  expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
+  expect(f.row.fleetDeadline).toEqual(original.fleetDeadline)
+  expect(host.authorityReservations).toEqual(claims)
+  expect(f.bindWrites).toBe(0); expect(f.row.fleetResourceReservation).toBeUndefined()
 })
 
 for (const gap of ['unanswered', 'partial-claim', 'foreign-controller', 'incomplete-fence'] as const)

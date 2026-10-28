@@ -172,57 +172,55 @@ import {routineJobInputDigest} from './routine-job.service'
 test('a returned offline-phone graph selects a ready alternate with the same original job/build/routine/deadline', async () => {
   const f = routingGraphFixture(), original = structuredClone({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline,
     input: f.row.fleetInputSha256})
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparation?.hostId).toBe('air1'); expect(f.bindWrites).toBe(0)
-  f.settleGraph('unqualified'); await f.service.preparation('job-one')
+  f.settleGraph('unqualified'); f.passCurrentBaseline('air2'); f.rows.selectedLanes = async () => []
+  await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparations?.[0]?.settlement?.outcome).toBe('unqualified')
-  expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2'); expect(f.bindWrites).toBe(0)
-  f.settleGraph('qualified'); await f.service.preparation('job-one')
-  expect(f.row.fleetCandidatePreparations?.[1]?.settlement?.outcome).toBe('qualified')
+  expect(f.row.fleetCandidatePreparation).toBeUndefined(); expect(f.bindWrites).toBe(1)
+  expect(f.row.fleetCandidatePreparations).toHaveLength(1)
   expect(f.row.fleetResourceReservation?.hostId).toBe('air2')
   expect({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline, input: f.row.fleetInputSha256}).toEqual(original)
 })
 
 test('an offline result without the original whole-graph return ACK retains custody and cannot dispatch an alternate', async () => {
-  const f = routingGraphFixture(); await f.service.preparation('job-one'); f.settleGraph('unqualified', false)
+  const f = routingGraphFixture(); await f.prepareLegacy('job-one'); f.settleGraph('unqualified', false)
   const pending = structuredClone(f.row.fleetCandidatePreparation)
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparation).toEqual(pending); expect(f.writes).toBe(1); expect(f.bindWrites).toBe(0)
 })
 
-test.each(['unqualified', 'unknown'] as const)('a physically healthy phone with %s backend evidence returns and selects an alternate', async outcome => {
+test.each(['unqualified', 'unknown'] as const)('a current passed physical baseline does not require the historical %s app-backend result', async outcome => {
   const f = routingGraphFixture(), original = structuredClone({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline,
     input: f.row.fleetInputSha256})
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   f.settleGraph(outcome, true, 'passed')
   const phone = f.hosts[0]!.resourceLifecycle!.subjects.find(subject => subject.resource?.kind === 'phone')!
   expect(phone.status).toBe('idle'); expect(phone.idle.outcome).toBe('passed')
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparations?.[0]?.settlement?.outcome).toBe(outcome)
-  expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2'); expect(f.bindWrites).toBe(0)
-  f.settleGraph('qualified'); await f.service.preparation('job-one')
-  expect(f.row.fleetResourceReservation?.hostId).toBe('air2')
+  expect(f.row.fleetCandidatePreparation).toBeUndefined(); expect(f.bindWrites).toBe(1)
+  expect(f.row.fleetResourceReservation?.hostId).toBe('air1')
   expect(phone.status).toBe('idle'); expect(phone.idle.outcome).toBe('passed')
   expect({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline, input: f.row.fleetInputSha256}).toEqual(original)
 })
 
 test('a backend refusal still retains its original candidate when normal resource return is unknown', async () => {
-  const f = routingGraphFixture(); await f.service.preparation('job-one'); f.settleGraph('unqualified', false, 'passed')
+  const f = routingGraphFixture(); await f.prepareLegacy('job-one'); f.settleGraph('unqualified', false, 'passed')
   const pending = structuredClone(f.row.fleetCandidatePreparation)
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparation).toEqual(pending); expect(f.bindWrites).toBe(0)
 })
 
-test('a source-only preparation that never requested resources closes UNKNOWN and tries an untried eligible alternate', async () => {
+test('a source-only original closes UNKNOWN without manufacturing a check for unknown current baselines', async () => {
   const f = routingGraphFixture(), original = structuredClone({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline,
     input: f.row.fleetInputSha256})
-  await f.service.preparation('job-one'); f.settleNeverRequested()
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one'); f.settleNeverRequested()
+  await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparations?.[0]?.settlement?.outcome).toBe('unknown')
   expect(f.row.fleetCandidatePreparations?.[0]?.settlement?.neverRequested).toBe(true)
-  expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2'); expect(f.bindWrites).toBe(0)
-  f.settleGraph('qualified'); await f.service.preparation('job-one')
-  expect(f.row.fleetResourceReservation?.hostId).toBe('air2')
+  expect(f.row.fleetCandidatePreparation).toBeUndefined(); expect(f.bindWrites).toBe(0)
+  expect(f.row.fleetResourceReservation).toBeUndefined()
   expect({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline, input: f.row.fleetInputSha256}).toEqual(original)
 })
 
@@ -242,10 +240,10 @@ function unrelatedGraphClaim(pending: FleetCandidatePreparation) {
   return claim
 }
 
-test('a never-requested original tries an alternate while a different graph retains its lane and overlapping claims', async () => {
+test('a never-requested original settles without touching foreign claims or inventing current physical observations', async () => {
   const f = routingGraphFixture(), original = structuredClone({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline,
     input: f.row.fleetInputSha256})
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   const {pending, host} = f.settleNeverRequested(), claim = unrelatedGraphClaim(pending)
   host.authorityReservations = [claim]
   host.lanes[0]!.activity = {generation: 4, owner: claim.owner}
@@ -253,16 +251,16 @@ test('a never-requested original tries an alternate while a different graph reta
     subject.owner = {...claim.owner, hostId: host.hostId, generation: 4}; subject.generation++
   }
   const retained = structuredClone({claims: host.authorityReservations, lifecycle: host.resourceLifecycle, activity: host.lanes[0]!.activity})
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparations?.[0]?.settlement?.neverRequested).toBe(true)
-  expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2'); expect(f.bindWrites).toBe(0)
+  expect(f.row.fleetCandidatePreparation).toBeUndefined(); expect(f.bindWrites).toBe(0)
   expect({claims: host.authorityReservations, lifecycle: host.resourceLifecycle, activity: host.lanes[0]!.activity}).toEqual(retained)
   expect({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline, input: f.row.fleetInputSha256}).toEqual(original)
 })
 
 test.each(['owner', 'operation', 'input', 'job', 'target', 'attempt', 'subject-owner', 'lane-owner'] as const)(
   'never-requested closure retains a partially identified original %s even when other claim fields disagree', async changed => {
-    const f = routingGraphFixture(); await f.service.preparation('job-one')
+    const f = routingGraphFixture(); await f.prepareLegacy('job-one')
     const {pending, host} = f.settleNeverRequested(), claim = unrelatedGraphClaim(pending), owner = `resource-graph:${pending.targetInputSha256}`
     if (changed === 'owner') claim.owner.id = owner
     if (changed === 'operation') claim.operationId = `graph-prerequisite:${pending.targetInputSha256}`
@@ -281,7 +279,7 @@ test.each(['owner', 'operation', 'input', 'job', 'target', 'attempt', 'subject-o
 
 test.each(['backend-target', 'claim', 'return', 'absence-receipt', 'parent', 'candidate', 'not-never-requested'] as const)(
   'never-requested cannot hide %s or invent an alternate dispatch', async changed => {
-    const f = routingGraphFixture(); await f.service.preparation('job-one')
+    const f = routingGraphFixture(); await f.prepareLegacy('job-one')
     const {pending, receipt} = f.settleNeverRequested()
     if (changed === 'backend-target') pending.backendTarget = {schemaVersion: 1, coreUrl: 'https://core.example/'}
     if (changed === 'claim') pending.resourceClaims = [{id: 'unknown-original-claim'}]
@@ -291,18 +289,18 @@ test.each(['backend-target', 'claim', 'return', 'absence-receipt', 'parent', 'ca
     if (changed === 'candidate') receipt.candidate = {...receipt.candidate, attemptId: 'foreign-candidate'}
     if (changed === 'not-never-requested') delete receipt.neverRequested
     const before = structuredClone(f.row.fleetCandidatePreparation)
-    await f.service.preparation('job-one')
+    await f.prepareLegacy('job-one')
     expect(f.row.fleetCandidatePreparation).toEqual(before); expect(f.bindWrites).toBe(0)
     expect(f.row.fleetCandidatePreparations).toBeUndefined()
   })
 
 test('switching a lane out of service does not strand closed source-only work or authorize that lane', async () => {
-  const f = routingGraphFixture(); await f.service.preparation('job-one')
+  const f = routingGraphFixture(); await f.prepareLegacy('job-one')
   const {host} = f.settleNeverRequested()
   host.lanes[0]!.state = 'out-of-service'; host.lanes[0]!.dispatchMode = 'paused'
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparations?.[0]?.settlement?.outcome).toBe('unknown')
-  expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2'); expect(f.bindWrites).toBe(0)
+  expect(f.row.fleetCandidatePreparation).toBeUndefined(); expect(f.bindWrites).toBe(0)
 })
 
 test('logical workspace stays on its admission path instead of inventing a physical baseline provider', async () => {
@@ -314,14 +312,14 @@ test('logical workspace stays on its admission path instead of inventing a physi
   prepared.definition.resourceRequirements = [...prepared.definition.resourceRequirements!, required]
   prepared.definitionSha256 = requestInputDigest(prepared.definition)
   f.row.fleetInputSha256 = routineJobInputDigest(f.row)
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   const pending = f.row.fleetCandidatePreparation!, purpose = pending?.target.purpose
   expect(pending?.hostId).toBe('air1'); expect(purpose?.kind).toBe('resource-readiness')
   if (purpose?.kind !== 'resource-readiness') throw new Error('Expected physical preflight with logical workspace admission')
   expect(purpose.resources.map(member => member.kind)).toEqual(['phone', 'app', 'recorder'])
   expect(pending.target.proposedInput!.resources.some(resource => resource.kind === 'workspace')).toBe(true)
   expect(pending.target.requirements.resources).toContainEqual(required)
-  f.settleGraph('qualified'); await f.service.preparation('job-one')
+  f.settleGraph('qualified'); await f.prepareLegacy('job-one')
   expect(f.row.fleetResourceReservation?.hostId).toBe('air1')
 })
 
@@ -336,25 +334,24 @@ test('unchanged returned dynamic evidence remains qualified after its former age
   expect(f.host.resourceLifecycle).toEqual(before)
 })
 
-test('two returned offline graphs leave the same job unassigned instead of dispatching onto a broken phone', async () => {
+test('a returned offline original leaves unobserved alternatives unassigned', async () => {
   const f = routingGraphFixture(), original = structuredClone(f.row.fleetSelection), deadline = f.row.fleetDeadline
-  await f.service.preparation('job-one'); f.settleGraph('unqualified'); await f.service.preparation('job-one')
-  f.settleGraph('unqualified'); await f.service.preparation('job-one')
-  expect(f.row.fleetCandidatePreparations?.map(candidate => candidate.settlement?.outcome)).toEqual(['unqualified', 'unqualified'])
+  await f.prepareLegacy('job-one'); f.settleGraph('unqualified'); await f.prepareLegacy('job-one')
+  expect(f.row.fleetCandidatePreparations?.map(candidate => candidate.settlement?.outcome)).toEqual(['unqualified'])
   expect(f.row.fleetCandidatePreparation).toBeUndefined(); expect(f.row.fleetBinding).toBeUndefined(); expect(f.bindWrites).toBe(0)
   expect(f.row.fleetSelection).toEqual(original); expect(f.row.fleetDeadline).toEqual(deadline)
 })
 
 test('cancellation retains graph settlement history and cannot accept a returned positive as execution authority', async () => {
-  const f = routingGraphFixture(); await f.service.preparation('job-one'); f.settleGraph('qualified')
+  const f = routingGraphFixture(); await f.prepareLegacy('job-one'); f.settleGraph('qualified')
   f.row = {...f.row, state: 'terminal', terminalStatus: 'cancelled', fleetCancellation: {requestedAt: new Date(f.now).toISOString(), reason: 'Cancelled original'}}
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparations?.[0]?.settlement?.outcome).toBe('qualified')
   expect(f.row.fleetCandidatePreparation).toBeUndefined(); expect(f.row.fleetCandidateSelection).toBeUndefined(); expect(f.bindWrites).toBe(0)
 })
 
 test('ordinary idle PASS without selected-build backend evidence cannot qualify a backend-dependent job', async () => {
-  const f = routingGraphFixture(); await f.service.preparation('job-one'); f.settleGraph('qualified')
+  const f = routingGraphFixture(); await f.prepareLegacy('job-one'); f.settleGraph('qualified')
   const open = f.row.fleetCandidatePreparation!, host = f.hosts[0]!, completed = {...open,
     settlement: host.resourceReservations!.candidatePrerequisites![0]!} as FleetCandidatePreparation,
     row = {...f.row, fleetCandidatePreparation: undefined, fleetCandidatePreparations: [completed],

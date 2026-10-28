@@ -32,14 +32,12 @@ function fixture(){
 function occupy(x:ReturnType<typeof fixture>){x.h.authorityReservations=[x.claim];x.h.resourceReservations!.claims=[x.claim];x.h.resourceReservations!.resourceChecks=[x.journal]}
 
 async function prepare(x: ReturnType<typeof fixture>) {
- const row = await (x.f.service as unknown as {makeGraphCandidatePreparation: (
-   row: typeof x.f.row, host: typeof x.h, lane: typeof x.lane) => Promise<typeof x.f.row | undefined>})
-   .makeGraphCandidatePreparation(x.f.row,x.h,x.lane)
- return row?.fleetCandidatePreparation
+ await x.f.prepareLegacy()
+ return x.f.row.fleetCandidatePreparation
 }
 async function authorityFixture() {
  const x=fixture(),pending=await prepare(x)
- if(pending?.target.purpose?.kind!=='resource-readiness')throw Error('Expected the real graph producer')
+ if(pending?.target.purpose?.kind!=='resource-readiness')throw Error('Expected the frozen historical graph')
  const purpose=pending.target.purpose,intent=exclusiveResourceIntentSchema.parse({operationId:`graph-prerequisite:${pending.targetInputSha256}`,
    hostId:x.h.hostId,laneId:x.lane.id,controller:{...pending.candidate.controller,sequence:x.h.sequence},
    owner:{id:`resource-graph:${pending.targetInputSha256}`,kind:'boundary-cleanup'},inputSha256:pending.targetInputSha256,
@@ -137,9 +135,7 @@ const refusals: Array<[string,(x: ReturnType<typeof fixture>)=>void]>=[
  ['began with another owner',x=>{begin(x);x.h.resourceLifecycle!.subjects.find(s=>s.subject.id==='air1:glasses')!.owner!.id='another-owner'}],
 ]
 for(const [name,mutate] of refusals){
- test(`${name} blocks producer and acquisition without changing custody`,async()=>{
-   const producer=fixture();occupy(producer);mutate(producer);const before=structuredClone(producer.h.authorityReservations)
-   expect(await prepare(producer)).toBeUndefined();expect(producer.f.writes).toBe(0);expect(producer.h.authorityReservations).toEqual(before)
+ test(`${name} blocks historical graph acquisition without changing custody`,async()=>{
    const authority=await authorityFixture();occupy(authority);mutate(authority);const retained=structuredClone(authority.h.authorityReservations)
    expect(await authority.service.acquire(authority.intent,authority.h.hostId)).toMatchObject({status:'unknown',claims:[]})
    expect(authority.writes).toBe(0);expect(authority.h.authorityReservations).toEqual(retained)
@@ -169,9 +165,3 @@ for(const [name,mutate] of [
    expect(x.writes).toBe(0);expect(x.h.authorityReservations).toEqual(before)
  })
 }
-test('changed optional proof on the producer current reread cannot create a candidate',async()=>{
- const x=fixture();occupy(x)
- const hosts=(x.f.service as unknown as {hosts:{get(id:string):Promise<typeof x.h|null>}}).hosts,original=hosts.get.bind(hosts)
- hosts.get=async id=>{x.journal.state='never-began' as 'prepared';Object.assign(x.journal,{eventId:`resource-check-never-began:${x.claim.operationId}`});return original(id)}
- expect(await prepare(x)).toBeUndefined();expect(x.f.writes).toBe(0);expect(x.h.authorityReservations).toEqual([x.claim])
-})

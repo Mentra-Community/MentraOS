@@ -12,7 +12,7 @@ import {TestHostStateService} from './test-host-state.service'
 
 async function replacedGraphFixture(loseCas = false) {
   const f = routingGraphFixture()
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   const pending = structuredClone(f.row.fleetCandidatePreparation!), host = f.hosts.find(value => value.hostId === pending.hostId)!,
     old = {binding: structuredClone(host.frameworkBinding!), incarnation: host.incarnation!, incarnationGeneration: host.incarnationGeneration!,
       process: {pid: 100, startedAt: 'original-process'}, effectiveAt: host.observedAt, observedAt: host.observedAt}
@@ -52,26 +52,39 @@ function leaveOnlyCurrentHostAvailable(f: ReturnType<typeof routingGraphFixture>
   for (const host of f.hosts) if (host.hostId !== hostId)
     for (const lane of host.lanes) lane.state = 'out-of-service'
 }
-for (const destination of ['current-generation', 'alternate-host'] as const) test(`obsolete unbound graph preserves original history and prepares ${destination}`, async () => {
+for (const destination of ['current-generation', 'alternate-host'] as const) test(`obsolete unbound graph preserves original history without manufacturing a ${destination} qualification`, async () => {
   const g = await replacedGraphFixture(), {f, host, pending} = g, original = structuredClone(f.row), authority = structuredClone(host.authorityReservations)
   try {
     if (destination === 'current-generation') leaveOnlyCurrentHostAvailable(f, host.hostId)
     if (destination === 'alternate-host') {host.lanes[0]!.state = 'out-of-service'; f.rows.selectedLanes = async () => []}
-    await f.service.preparation('job-one')
+    await f.prepareLegacy('job-one')
     const preserved = f.row.fleetCandidatePreparations![0]!
     expect(preserved.target).toEqual(pending.target); expect(preserved.candidate).toEqual(pending.candidate)
     expect(preserved.settlement).toBeUndefined(); expect(preserved.returnReceipt).toBeUndefined(); expect(preserved.resourceReturns).toBeUndefined()
     expect(graphCandidateHistoricalSettlement(preserved)).toBe(false)
     expect(preserved.coordinatorSupersession?.controller.generation).toBe(host.incarnationGeneration)
-    expect(f.row.fleetCandidatePreparation?.hostId).toBe(destination === 'current-generation' ? host.hostId : 'air2')
-    expect(f.row.fleetCandidatePreparation?.candidate.controller.incarnation).not.toBe(pending.candidate.controller.incarnation)
-    expect(f.row.fleetCandidatePreparation?.targetInputSha256).not.toBe(pending.targetInputSha256)
+    expect(f.row.fleetCandidatePreparation).toBeUndefined()
     for (const field of ['requestId', 'fleetSelection', 'fleetSelectionSha256', 'fleetPreparation', 'fleetInputSha256', 'fleetDeadline'] as const)
       expect(f.row[field]).toEqual(original[field])
     expect(f.row.fleetBinding).toBeUndefined(); expect(f.row.fleetResourceReservation).toBeUndefined()
     expect(host.authorityReservations).toEqual(authority); expect(g.cas).toBe(1)
   } finally {g.close()}
 })
+
+/** A separately returned historical original for the pure controller ACK reader. */
+async function appendCompletedHistoricalOriginal(f: ReturnType<typeof routingGraphFixture>, host: typeof f.hosts[number]) {
+  const completed = routingGraphFixture()
+  completed.row = {...completed.row, fleetCandidatePreparations: structuredClone(f.row.fleetCandidatePreparations)}
+  completed.hosts[0] = structuredClone(host)
+  completed.advance(f.now - completed.now)
+  await completed.prepareLegacy('job-one'); completed.settleGraph('qualified')
+  const pending = completed.row.fleetCandidatePreparation!, target = structuredClone(pending.target),
+    settlement = candidateSettlement(pending, completed.hosts[0]!, [], completed.now)
+  expect(settlement?.outcome).toBe('qualified')
+  await completed.rows.settleCandidatePreparation!(completed.row, {...pending, settlement}, new Date(completed.now))
+  f.row = {...f.row, fleetCandidatePreparations: structuredClone(completed.row.fleetCandidatePreparations)}
+  return target
+}
 test('coordinator supersession retains unanswered input and unrelated custody without manufacturing producer closure', async () => {
   const g = await replacedGraphFixture(), {f, host} = g
   try {
@@ -80,7 +93,7 @@ test('coordinator supersession retains unanswered input and unrelated custody wi
       operationId: 'unrelated-operation', inputSha256: 'b'.repeat(64), owner: {kind: 'boundary-cleanup' as const, id: 'unrelated-owner'}}
     host.authorityReservations = [unrelated]
     const authority = structuredClone(host.authorityReservations)
-    await f.service.preparation('job-one')
+    await f.prepareLegacy('job-one')
     const preserved = f.row.fleetCandidatePreparations![0]!
     expect(preserved.backendTarget).toEqual({schemaVersion: 1, coreUrl: 'https://core.example/'})
     expect(preserved.noAcquisitionReceipt).toBeUndefined(); expect(preserved.settlement).toBeUndefined()
@@ -143,15 +156,14 @@ test('the controller ACK view preserves completed history while retaining unreso
   const g = await replacedGraphFixture(), {f, host} = g
   try {
     leaveOnlyCurrentHostAvailable(f, host.hostId)
-    await f.service.preparation('job-one')
-    const unresolved = structuredClone(f.row.fleetCandidatePreparations![0]!), fresh = structuredClone(f.row.fleetCandidatePreparation!)
-    f.settleGraph('qualified'); await f.service.preparation('job-one')
+    await f.prepareLegacy('job-one')
+    const unresolved = structuredClone(f.row.fleetCandidatePreparations![0]!), fresh = await appendCompletedHistoricalOriginal(f, host)
     const stored = structuredClone(f.row), completed = structuredClone(f.row.fleetCandidatePreparations![1]!)
     const requests = new TestRequestService({get: async () => structuredClone(f.row)} as any)
     const view = await requests.preparationView('job-one', host.hostId) as any
     expect(view.fleetCandidatePreparations).toEqual([completed])
     expect(view.fleetCandidatePreparations[0].settlement).toEqual(completed.settlement)
-    expect(view.fleetCandidatePreparations[0].target).toEqual(fresh.target)
+    expect(view.fleetCandidatePreparations[0].target).toEqual(fresh)
     expect(f.row).toEqual(stored); expect(f.row.fleetCandidatePreparations![0]).toEqual(unresolved)
     expect(unresolved.settlement).toBeUndefined(); expect(g.cas).toBe(1)
     await expect(requests.preparationView('job-one', 'foreign-host')).rejects.toThrow('Assigned routine request was not found')
@@ -163,15 +175,19 @@ for (const gap of ['ordinary-unknown', 'malformed-marker', 'original-claim'] as 
     const g = await replacedGraphFixture(), {f, host} = g
     try {
       leaveOnlyCurrentHostAvailable(f, host.hostId)
-      await f.service.preparation('job-one')
+      await f.prepareLegacy('job-one')
+      await appendCompletedHistoricalOriginal(f, host)
       const history = f.row.fleetCandidatePreparations![0]!
       if (gap === 'ordinary-unknown') delete history.coordinatorSupersession
       if (gap === 'malformed-marker') history.coordinatorSupersession!.controller.generation = 0
       if (gap === 'original-claim') history.resourceClaims = [originalClaim(g)]
       const original = structuredClone(f.row)
       const requests = new TestRequestService({get: async () => structuredClone(f.row)} as any)
-      const view = await requests.preparationView('job-one', host.hostId) as any
-      expect(view.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
+      if (gap === 'malformed-marker') await expect(requests.preparationView('job-one', host.hostId)).rejects.toThrow('Assigned routine request was not found')
+      else {
+        const view = await requests.preparationView('job-one', host.hostId) as any
+        expect(view.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
+      }
       expect(f.row).toEqual(original)
     } finally {g.close()}
   })

@@ -29,7 +29,7 @@ async function graphAuthorityFixture(f = backendCandidateFixture(), configure: (
     versions.set(host.hostId, 0)
   }
   configure(f)
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   const pending = f.row.fleetCandidatePreparation!, purpose = pending.target.purpose
   if (purpose?.kind !== 'resource-readiness') throw Error('Expected the real graph candidate')
   const members = purpose.resources
@@ -370,7 +370,7 @@ async function completedGraphReturns() {
   reportSuccessorSettlement(g)
   g.f.advance(400_000)
   g.host.frameworkHistory!.at(-1)!.observedAt = g.host.observedAt
-  await g.f.service.preparation('job-one')
+  await g.f.prepareLegacy('job-one')
   g.rows.candidateRequest = async (id, digest) => g.f.row.fleetCandidatePreparation?.hostId === id &&
     g.f.row.fleetCandidatePreparation.targetInputSha256 === digest ? structuredClone(g.f.row) : null
   g.rows.completedCandidateRequest = async (id, digest) => g.f.row.fleetCandidatePreparations?.some(value =>
@@ -457,7 +457,7 @@ test.each(['heartbeat', 'restart-no-retry', 'restart-retry'] as const)('producti
     const receipt = reportSuccessorSettlement(g), original = structuredClone(g.pending.target)
     g.f.advance(400_000)
     g.host.frameworkHistory!.at(-1)!.observedAt = g.host.observedAt
-    await g.f.service.preparation('job-one')
+    await g.f.prepareLegacy('job-one')
     expect(g.f.row.fleetCandidatePreparation).toBeUndefined()
     const saved = g.f.row.fleetCandidatePreparations!.at(-1)!
     expect(saved.target).toEqual(original); expect(saved.settlement).toEqual(receipt)
@@ -480,7 +480,7 @@ test.each(['positive-check', 'missing-return', 'live-claim', 'foreign-process', 
       if (changed === 'foreign-process') g.host.frameworkProcess = {pid: 999, startedAt: 'foreign'}
       if (changed === 'changed-source') g.host.frameworkBinding = {...g.host.frameworkBinding!, revision: 'c'.repeat(40)}
       g.f.advance(400_000)
-      await g.f.service.preparation('job-one')
+      await g.f.prepareLegacy('job-one')
       expect(g.f.row.fleetCandidatePreparation).toBeDefined()
       expect(g.f.row.fleetCandidatePreparations?.length ?? 0).toBe(0)
     } finally {g.close()}
@@ -601,7 +601,7 @@ async function lostAbsenceFixture() {
   }
   f.host.authorityReservations = claims; f.host.lanes[0]!.state = 'reserved'; f.host.lanes[0]!.activity = {generation: 4, owner: claims[0]!.owner}
   for (const subject of f.host.resourceLifecycle!.subjects) {subject.owner = {...claims[0]!.owner, hostId: f.host.hostId, generation: 4}; subject.generation++}
-  await f.f.service.preparation('job-one')
+  await f.f.prepareLegacy('job-one')
   expect(f.f.row.fleetCandidatePreparations?.[0]?.targetInputSha256).toBe(f.pending.targetInputSha256)
   expect(f.f.row.fleetCandidatePreparation?.hostId).not.toBe(f.host.hostId)
   return f
@@ -766,7 +766,7 @@ test.each([false, true])('an old acquisition CAS loses to original closure and a
       if (archived) {
         // The real router consumes that exact negative history before the
         // caller's older claim CAS resumes its independent host write.
-        await f.f.service.preparation('job-one')
+        await f.f.prepareLegacy('job-one')
         expect(f.f.row.fleetCandidatePreparations![0]!.targetInputSha256).toBe(f.pending.targetInputSha256)
       }
     }

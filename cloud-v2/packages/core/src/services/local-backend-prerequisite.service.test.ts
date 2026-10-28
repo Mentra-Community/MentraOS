@@ -282,7 +282,7 @@ test('known local withdrawal preserves same-host Mac qualification while outage 
       service = new RoutineJobService(rows, undefined, undefined, {async getExact() {return f.enrolled}},
         {async get() {return structuredClone(f.observed)}}, undefined, undefined, () => now, null, candidates, async () => {})
     if (knownWithdrawal) {
-      const targets = await service.qualificationTargets('mini'); expect(targets.map(value => value.jobId)).toEqual(['other-mac'])
+      const targets = await service.qualificationTargets('mini'); expect(targets.map(value => value.jobId)).toEqual([])
     } else await expect(service.qualificationTargets('mini')).rejects.toThrow(message)
   }
 })

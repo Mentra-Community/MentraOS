@@ -1,4 +1,5 @@
 import {expect, test, spyOn} from 'bun:test'
+import {testFrameworkBinding} from '../testing/framework-fixtures'
 import {resourceControlRecordSchema, type ResourceControlRecord} from '../types/lane-control.types'
 import {resourceIdleContractSchema, type ResourceLifecycleSubject} from '../types/resource-lifecycle.types'
 import type {StoredRoutineJob} from '../types/routine-job.types'
@@ -170,17 +171,17 @@ test('an outstanding exact resource claim survives a newer reported PASS', () =>
   expect(f.host.authorityReservations).toEqual(before)
 })
 
-test('candidate selection still requires the original owned graph preflight before ordinary admission', () => {
-  const f = fixture(), snapshot = {...f.host.snapshot, resourceReservations: {resourceReadiness: true as const}},
+test('ordinary admission uses current returned physical proof rather than an old per-request graph', () => {
+  const f = fixture(), snapshot = {...f.host.snapshot, frameworkBinding: testFrameworkBinding(), resourceReservations: {resourceReadiness: true as const}},
     routingHost = {...snapshot, receivedAt: at(now), authorityReservations: [], resourceControlRecords: f.host.resourceControlRecords},
     requirements = {platform: 'ios-on-mac' as const, resources: [{kind: 'app' as const, capabilities: ['relaunch']}]}
   expect(routineJobRouting(requirements, [routingHost], now, undefined, undefined, true).waitingReason).toBeUndefined()
-  const row = {requestId: 'original', fleetInputSha256: 'f'.repeat(64), fleetPreparation: {requirements},
+  const row = {requestId: 'original', fleetInputSha256: 'f'.repeat(64), fleetSelection: {build: {headSha:'a'.repeat(40)}}, fleetDeadline: new Date(now + 60000), fleetPreparation: {requirements},
     fleetCandidatePreparations: [{target: {purpose: {kind: 'resource-readiness', resourceId: id,
       resources: [{id, kind: 'app', authorityHostId: 'host', subjectGeneration: 1250, contractVersion: 'baseline', capabilities: ['relaunch']}]}}}]} as unknown as StoredRoutineJob
   const host = {...f.host, snapshot, receivedAt: new Date(now), incarnation: 'controller', incarnationGeneration: 1, sequence: 1,
     laneControls: f.host.resourceControlRecords, resourceReservations: []} as unknown as ResourceReservationHost
-  expect(routineResourceBlocker(host, row, laneId, now)?.code).toBe('resource-idle-proof-unavailable')
+  expect(routineResourceBlocker(host, row, laneId, now)).toBeUndefined()
 })
 
 

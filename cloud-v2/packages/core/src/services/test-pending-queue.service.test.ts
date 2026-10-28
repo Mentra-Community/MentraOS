@@ -24,7 +24,7 @@ function fixture() {
     fleetPreparation:{routineSource:testRoutineSource('a'.repeat(40)),definition:definition as any,definitionSha256:requestInputDigest(definition),
       requirements:routinePortableRequirements({platform:'android',definition} as any)}};
   row.fleetInputSha256 = routineJobInputDigest(row);
-  const host: ReceivedTestHostState = {hostId:'mini',receivedAt:new Date(now).toISOString(), lanes:[
+  const host: ReceivedTestHostState = {hostId:'mini',frameworkBinding:testFrameworkBinding(),receivedAt:new Date(now).toISOString(),observedAt:new Date(now).toISOString(), lanes:[
     {id:'idle',platform:'android',state:'idle',dispatchMode:'automatic',resources:[{id:'phone',kind:'phone',capabilities:['bluetooth-observe']}]},
     {id:'busy',platform:'android',state:'running',dispatchMode:'automatic',resources:[{id:'phone',kind:'phone',capabilities:['bluetooth-observe']}]},
     {id:'paused',platform:'android',state:'idle',dispatchMode:'paused',resources:[{id:'phone',kind:'phone',capabilities:['bluetooth-observe']}]},
@@ -39,7 +39,7 @@ function backendFixture() {
   prepared.definitionSha256 = requestInputDigest(prepared.definition);
   prepared.requirements = routinePortableRequirements({platform: 'android', definition: prepared.definition} as any);
   f.row.fleetInputSha256 = routineJobInputDigest(f.row);
-  f.host.frameworkBinding = {...testFrameworkBinding(), routineApiVersion: 61};
+  f.host.frameworkBinding = {...testFrameworkBinding(), routineApiVersion: 111};
   for (const lane of f.host.lanes.slice(0, 3)) lane.resources[0]!.capabilities = ['backend-connectivity'];
   const context = {...permissionContext(f.host.frameworkBinding, f.row.fleetSelection.build, now)!, backend: {
     hostId: f.host.hostId, incarnation: 'original-controller', generation: 1,
@@ -57,25 +57,25 @@ test('pending backend-capable hardware stays visible before health while executa
   const f = backendFixture(), before = structuredClone(f);
   const projected = pendingQueueItem(f.row, [f.host], now);
   expect(projected.compatibilityKnown).toBe(true);
-  expect(projected.compatibleLanes.map(lane => lane.laneId)).toEqual(['idle', 'busy', 'paused']);
+  expect(projected.compatibleLanes.map(lane => lane.laneId)).toEqual(['idle']);
   expect(projected.compatibleLanes.map(lane => [lane.state, lane.dispatchMode])).toEqual([
-    ['idle', 'automatic'], ['running', 'automatic'], ['idle', 'paused']]);
-  expect(compatibleRoutineLane(f.requirements, f.host.lanes[0]!, f.context)).toBe(false);
+    ['idle', 'automatic']]);
+  expect(compatibleRoutineLane(f.requirements, f.host.lanes[0]!, f.context)).toBe(true);
   expect(f).toEqual(before);
 });
 test('pending hardware compatibility accepts valid health without conflating withdrawn health with missing hardware', () => {
   const f = backendFixture(), phone = f.host.lanes[0]!.resources[0]!;
   phone.backendConnectivity = structuredClone(f.health);
   expect(compatibleRoutineLane(f.requirements, f.host.lanes[0]!, f.context)).toBe(true);
-  expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes.map(lane => lane.laneId)).toEqual(['idle', 'busy', 'paused']);
+  expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes.map(lane => lane.laneId)).toEqual(['idle']);
   for (const change of [
     () => {phone.backendConnectivity!.observedAt = new Date(now - 120_001).toISOString();},
     () => {phone.backendConnectivity!.app.archiveSha256 = '0'.repeat(64);},
     () => {phone.backendConnectivity!.outcome = 'unknown';},
   ]) {
     phone.backendConnectivity = structuredClone(f.health); change();
-    expect(compatibleRoutineLane(f.requirements, f.host.lanes[0]!, f.context)).toBe(false);
-    expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes.map(lane => lane.laneId)).toEqual(['idle', 'busy', 'paused']);
+    expect(compatibleRoutineLane(f.requirements, f.host.lanes[0]!, f.context)).toBe(true);
+    expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes.map(lane => lane.laneId)).toEqual(['idle']);
   }
   f.host.frameworkBinding!.routineApiVersion = 60;
   expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes).toEqual([]);
@@ -97,14 +97,14 @@ test('an assigned preparing job reports its unmet framework floor without changi
 test('pending projection labels every compatible lane and keeps availability separate', () => {
   const {row,host} = fixture(), item = pendingQueueItem(row,[host],now);
   expect(item.compatibilityKnown).toBe(true);
-  expect(item.compatibleLanes.map(lane=>lane.laneId)).toEqual(['idle','busy','paused']);
-  expect(item.compatibleLanes[1]!.state).toBe('running'); expect(item.compatibleLanes[2]!.dispatchMode).toBe('paused');
+  expect(item.compatibleLanes.map(lane=>lane.laneId)).toEqual(['idle']);
+  expect(item.compatibleLanes).toHaveLength(1);
   host.receivedAt = new Date(now-120_001).toISOString();
-  expect(pendingQueueItem(row,[host],now).compatibleLanes.every(lane=>!lane.fresh)).toBe(true);
+  expect(pendingQueueItem(row,[host],now).compatibleLanes).toEqual([]);
 });
 test('exact targets restrict compatibility and unknown source preparation has only candidates', () => {
   const {row,host} = fixture(); row.fleetTarget={hostId:'mini',laneId:'busy'}; row.fleetInputSha256=routineJobInputDigest(row);
-  expect(pendingQueueItem(row,[host],now).compatibleLanes.map(lane=>lane.laneId)).toEqual(['busy']);
+  expect(pendingQueueItem(row,[host],now).compatibleLanes.map(lane=>lane.laneId)).toEqual([]);
   delete row.fleetPreparation; delete row.fleetInputSha256; row.state='awaiting-source';
   const unknown=pendingQueueItem(row,[host],now);
   expect(unknown.compatibilityKnown).toBe(false); expect(unknown.compatibleLanes).toEqual([]);
@@ -124,29 +124,30 @@ test('pending fixture requirements exclude generic fixtures and keep capable bus
   host.lanes[1]!.resources.push({id: 'reviewed-fixture', kind: 'fixture-data', capabilities: ['reviewed-miniapp-appearance', 'media-decode']});
   const item = pendingQueueItem(row, [host], now);
   expect(item.compatibilityKnown).toBe(true);
-  expect(item.compatibleLanes.map(lane => lane.laneId)).toEqual(['busy']);
-  expect(item.compatibleLanes[0]!.state).toBe('running');
+  expect(item.compatibleLanes).toEqual([]);
+  host.lanes[1]!.state='idle';
+  expect(pendingQueueItem(row,[host],now).compatibleLanes.map(lane=>lane.laneId)).toEqual(['busy']);
   expect(row.fleetPreparation!.definition.fixtures[0]!.provider).toBe('miniapp-appearance');
 });
 test('corrupt exact requirements cannot produce compatible lane claims or hide neighboring rows', () => {
   const {row,host} = fixture(); row.fleetPreparation!.requirements.resources[0]!.capabilities=[];
   const item=pendingQueueItem(row,[host],now); expect(item.compatibleLanes).toEqual([]); expect(item.reason).toContain('unavailable');
-  expect(pendingQueueItem(fixture().row,[host],now).compatibleLanes).toHaveLength(3);
+  expect(pendingQueueItem(fixture().row,[host],now).compatibleLanes).toHaveLength(1);
 });
 
 test('malformed persisted dates remain visible without hiding valid neighbors', () => {
   const {row,host}=fixture(), deadline={...row,fleetDeadline:new Date('invalid')}, created={...row,createdAt:new Date('invalid')};
   const page=[deadline,created,row].map(value=>pendingQueueItem(value,[host],now));
   expect(page).toHaveLength(3); expect(page[0]!.reason).toContain('unavailable'); expect(page[1]!.reason).toContain('unavailable');
-  expect(page[2]!.compatibleLanes).toHaveLength(3);
+  expect(page[2]!.compatibleLanes).toHaveLength(1);
 });
 test('pending queue shows an existing staged exclusive blocker without taking or returning custody', () => {
   const {row, host} = fixture();
   row.fleetResourceAdmission = {intent: {operationId: 'run:request', hostId: 'mini', laneId: 'idle', inputSha256: row.fleetInputSha256!,
     owner: {id: 'request', kind: 'run'}, controller: {incarnation: 'one', generation: 1, sequence: 1}, resources: [{id: 'phone', capabilities: ['bluetooth-observe']}]},
     dependencies: [{resourceId: 'private-account', authorityHostId: 'mini', capability: 'google-authentication'}]};
-  const observed = {...host, authorityReservations: [{kind: 'exclusive', resourceId: 'private-account', authorityHostId: 'mini',
-    owner: {id: 'private-owner', kind: 'run'}, borrowerHostId: 'elsewhere', laneId: 'private-lane'}]} as any;
+  const observed = {...host, authorityReservations: [{kind: 'exclusive', id:'10000000-0000-4000-8000-000000000001',resourceId: 'private-account', authorityHostId: 'mini',
+    owner: {id: 'private-owner', kind: 'run'}, borrowerHostId: 'elsewhere', laneId: 'private-lane',operationId:'run:private-owner',intentSha256:'f'.repeat(64),inputSha256:'e'.repeat(64),controllerIncarnation:'foreign-controller',controllerGeneration:1,borrowerSequence:1,reservedAt:new Date(now).toISOString()}]} as any;
   const before = structuredClone(row), snapshot = structuredClone(observed);
   const item = pendingQueueItem(row, [observed], now);
   expect(item.reason).toBe(sharedResourceWait('google-authentication')); expect(item.reason).not.toContain('private-account');
@@ -167,17 +168,17 @@ test('every exact pending original explains its current stage without inventing 
   expect(projected.diagnosis?.nextAction).toContain('existing preparation stage logs');
   expect(row).toEqual(before);
 });
-test('a recorded candidate selection is named without inventing a reservation or physical readiness', () => {
+test('historic candidate qualification does not become current reservation authority', () => {
   const {row, host} = fixture(); row.fleetCandidateSelection = {hostId: host.hostId, laneId: 'idle', targetInputSha256: 'e'.repeat(64)};
   const original = structuredClone(row), item = pendingQueueItem(row, [host], now);
-  expect(item.diagnosis?.stage).toBe('Selected candidate'); expect(item.reason).not.toContain('no selected candidate');
-  expect(item.diagnosis?.conditions[0]!.hostId).toBe(host.hostId); expect(item.diagnosis?.conditions[0]!.laneId).toBe('idle');
+  expect(item.diagnosis?.stage).toBe('Awaiting matching decision'); expect(item.reason).toContain('no atomic reservation');
+  expect(item.compatibleLanes.map(lane=>lane.laneId)).toEqual(['idle']);
   expect(item.diagnosis?.conditions.at(-1)!.status).toBe('unknown'); expect(row).toEqual(original);
 });
 test('pending candidate identifies its exact original attempt and current foreign custody', () => {
   const {row, host} = fixture();
   row.fleetCandidatePreparation = {hostId: host.hostId, laneId: 'idle', candidate: {attemptId: 'original-attempt', requestedAt: new Date(now).toISOString()}} as any;
-  const current = {...host, authorityReservations: [{id: 'claim-id', requestId: 'foreign-original', hostId: host.hostId,
+  const current = {...host, authorityReservations: [{id: '10000000-0000-4000-8000-000000000002', requestId: 'foreign-original', hostId: host.hostId,
     laneId: 'idle', poolId: 'original-disk', fleetInputSha256: 'f'.repeat(64), reservedAt: new Date(now).toISOString(), minimumAvailableBytes: 1}]};
   const before = structuredClone(row), snapshot = structuredClone(current), projected = pendingQueueItem(row, [current], now);
   expect(projected.diagnosis?.stage).toBe('Candidate check and return');
@@ -196,29 +197,27 @@ test('bound execution reports missing original completion without calling a fail
   expect(projected.diagnosis?.conditions.at(-1)!.observed).toContain('run 123, job 456');
   expect(projected.diagnosis?.nextAction).toContain('do not dispatch a duplicate');
 });
-test('missing permission observation is reported as unknown separately from a reported denial', () => {
+test('missing current worker observation differs from a reported denial; app consent is owned setup', () => {
   const {row, host} = fixture(), prepared = row.fleetPreparation!;
   prepared.definition.execution!.resourceKinds = ['app'];
-  prepared.definition.resourceRequirements = [{kind: 'app', capabilities: [], permissions: [{permission: 'camera', recipient: 'app'}]}];
+  prepared.definition.resourceRequirements = [{kind: 'app', capabilities: [], permissions: [{permission: 'accessibility', recipient: 'worker'}]}];
   prepared.definitionSha256 = requestInputDigest(prepared.definition);
   prepared.requirements = routinePortableRequirements({platform: 'android', definition: prepared.definition} as any);
   row.fleetInputSha256 = routineJobInputDigest(row); host.frameworkBinding = testFrameworkBinding();
   host.lanes = [{id: 'idle', platform: 'android', state: 'idle', dispatchMode: 'automatic', resources: [{id: 'exact-app', kind: 'app'}]}];
   const missing = pendingQueueItem(row, [host], now);
-  expect(missing.reason).toContain('missing, not reported as denied');
-  expect(missing.diagnosis?.conditions[0]!.status).toBe('unknown');
-  expect(missing.diagnosis?.conditions[0]!.resourceId).toBe('exact-app');
-  const observation = {permission: 'camera' as const, status: 'denied' as const, rawStatus: 'denied', binding: host.frameworkBinding!, observedAt: new Date(now).toISOString(),
-    recipient: {kind: 'app' as const, uid: 501, pid: 50, processStartedAt: 'owned lifetime', launchedAt: now - 1000,
-      bundleId: 'com.mentra.mentra' as const, bundlePath: '/Applications/Mentra.app', executablePath: '/Applications/Mentra.app/Mentra',
-      version: '3.4.0', build: '1137', teamId: 'T5XXXL6N36', codeRequirement: 'verified signed requirement',
-      selectedBuild: {headSha: row.fleetSelection.build.headSha, archiveSha256: row.fleetSelection.build.archive!.sha256, receiptSha256: row.fleetSelection.build.receipt!.sha256}}, evidence: {sha256: 'e'.repeat(64)}};
-  host.lanes[0]!.resources[0]!.permissionObservations = [observation];
-  const denied = pendingQueueItem(row, [host], now);
-  expect(denied.diagnosis?.conditions[0]!.status).toBe('failed');
-  expect(denied.diagnosis?.conditions[0]!.observed).toContain('denied');
-  host.lanes[0]!.resources[0]!.permissionObservations = [{...observation, observedAt: new Date(now - 120_001).toISOString()}];
-  expect(pendingQueueItem(row, [host], now).diagnosis?.conditions[0]!.status).toBe('waiting');
+  expect(missing.compatibleLanes).toEqual([]);
+  expect(missing.diagnosis?.conditions.some(condition=>condition.status==='unknown'&&condition.resourceId==='exact-app'&&condition.label.includes('accessibility'))).toBe(true);
+  const observation = {permission: 'accessibility' as const, status: 'denied' as const, rawStatus: 'denied', binding: host.frameworkBinding!, observedAt: new Date(now).toISOString(),
+    recipient: {kind: 'worker' as const, uid: 501, runtime:{path:'/worker',sha256:host.frameworkBinding.runtimeSha256},helper:{path:'/helper',sha256:'e'.repeat(64)}}, evidence:{sha256:'e'.repeat(64)}};
+  host.lanes[0]!.resources[0]!.permissionObservations=[observation];
+  expect(pendingQueueItem(row,[host],now).diagnosis?.conditions.some(condition=>condition.status==='failed'&&condition.observed.includes('denied'))).toBe(true);
+  host.lanes[0]!.resources[0]!.permissionObservations=[{...observation,status:'granted'}];
+  expect(pendingQueueItem(row,[host],now).compatibleLanes).toHaveLength(1);
+  prepared.definition.resourceRequirements=[{kind:'app',capabilities:[],permissions:[{permission:'bluetooth',recipient:'app'}]}];
+  prepared.definitionSha256=requestInputDigest(prepared.definition);prepared.requirements=routinePortableRequirements({platform:'android',definition:prepared.definition} as any);
+  row.fleetInputSha256=routineJobInputDigest(row);host.lanes[0]!.resources[0]!.permissionObservations=[];
+  expect(pendingQueueItem(row,[host],now).compatibleLanes).toHaveLength(1);
 });
 test('expired originals report deadline settlement while preserving outstanding custody', () => {
   const {row, host} = fixture(); row.fleetDeadline = new Date(now - 1); row.fleetInputSha256 = routineJobInputDigest(row); const original = structuredClone(row);

@@ -111,7 +111,7 @@ const build = (platform: "android" | "ios-on-mac"): TestBuild => ({source: {chan
   title: "dev", headSha: "e".repeat(40), buildUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/21", createdAt: startedAt,
   availability: "available", archive: {name: "app", size: 100, sha256: "f".repeat(64), url: "https://artifactscdn.mentraglass.com/app"},
   receipt: {size: 10, sha256: "1".repeat(64), url: "https://artifactscdn.mentraglass.com/receipt"}});
-const host: ReceivedTestHostState = {hostId: "mini", incarnation: "one", incarnationGeneration: 1, sequence: 1, observedAt: startedAt, receivedAt: startedAt,
+const host: ReceivedTestHostState = {hostId: "mini", incarnation: "one", incarnationGeneration: 1, sequence: 1, observedAt: startedAt, receivedAt: startedAt, frameworkBinding: testFrameworkBinding(),
   lanes: ["android", "ios-on-mac"].map(platform => ({id: platform, platform: platform as "android" | "ios-on-mac", dispatchMode: "automatic", state: "running",
     resources: [{id: `app:${platform}`, kind: "app"}]}))};
 function cancellationRepository() {
@@ -873,8 +873,8 @@ test('actual fleet service preserves every nightly member through preparation, b
   const requests = {async get(id: string) {reads++; return copy(requestRows.get(id) ?? null) as any;}, async cancel() {return null;}};
   const summary = {async summary(id: string) {const result = results.get(id); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, 'No result'); return result;}, async detail() {throw new TestRunError(404, 'No result');}};
   const jobs = new RoutineJobService(rows, undefined, undefined, {async getExact() {return null;}},
-    {async list(){return [{hostId:'real-host',receivedAt:new Date(clock).toISOString(),lanes}];},async get(hostId) {return {hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
-      observedAt: new Date(clock).toISOString(), receivedAt: new Date(clock).toISOString(), lanes};}}, requests, summary, () => clock,
+    {async list(){return [{hostId:'real-host',receivedAt:new Date(clock).toISOString(),frameworkBinding:testFrameworkBinding(),lanes}];},async get(hostId) {return {hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+      observedAt: new Date(clock).toISOString(), receivedAt: new Date(clock).toISOString(), frameworkBinding:testFrameworkBinding(), lanes};}}, requests, summary, () => clock,
     {async dispatch() {dispatches++;}, async cancel() {}});
   const repository = {...cancellationRepository(), async get() {return copy(plan);}, async freeze(value: NightlyPlan) {plan ??= copy(value); return copy(plan);},
     async completed() {return copy(finished);}, async finish(_id: string, value: NightlyResult) {finished ??= copy(value); return copy(finished);}};

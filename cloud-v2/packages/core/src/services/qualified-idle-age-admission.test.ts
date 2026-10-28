@@ -5,9 +5,9 @@ import {routineResourceReadinessPurpose} from './routine-job.service'
 
 async function returnedGraph(platform: 'android' | 'ios-on-mac' = 'android') {
   const f = routingGraphFixture(platform)
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   f.settleGraph('qualified')
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   const original = structuredClone(f.row)
   f.advance(120_001)
   const host = f.hosts[0]!, pending = f.row.fleetCandidatePreparations!.at(-1)!, lane = host.lanes[0]!
@@ -17,7 +17,7 @@ async function returnedGraph(platform: 'android' | 'ios-on-mac' = 'android') {
 for (const platform of ['android', 'ios-on-mac'] as const) test(`${platform} unchanged returned graph stays eligible after 120 seconds without another check`, async () => {
   const {f, host, pending, lane, original} = await returnedGraph(platform)
   expect(qualifiedGraphCandidate(f.row, host, lane.id, f.now, host.receivedAt)).toBe(pending)
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparation).toBeUndefined()
   expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
   expect(f.row.fleetCandidateSelection).toEqual(original.fleetCandidateSelection)

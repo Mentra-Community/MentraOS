@@ -1,4 +1,5 @@
 import {expect, test, spyOn} from 'bun:test'
+import {testFrameworkBinding} from '../testing/framework-fixtures'
 import {routineJobRepository, reconcileRecorderHostReservations, unobservedRecorderHostReservations, compatibleRoutineLane, routinePortableRequirements} from './routine-job.service'
 import {recorderStorageAvailable, STORAGE_MARGIN_BYTES} from '../types/recorder-storage.types'
 import {TestRequestModel} from '../models/test-request.model'
@@ -66,7 +67,7 @@ function admissionFixture(options:{reportRace?:boolean;missing?:boolean;offline?
  beforeStage?:(admission:FleetResourceAdmission)=>Promise<void>}={}) {
  const clock=spyOn(Date,'now').mockReturnValue(now.getTime())
  const hosts=new Map<string,any>(['host','other'].map(hostId=>[hostId,{hostId,incarnation:'one',incarnationGeneration:1,sequence:1,receivedAt:now,resourceReservationVersion:0,resourceReservations:[],
- snapshot:{hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:now.toISOString(),lanes:['mac','android'].map(id=>({id,platform:'ios-on-mac',state:options.offline?'offline':'idle',dispatchMode:'automatic',resources:[{id:`${id}-rec`,kind:'recorder',storage:{...offer,poolId:`${hostId}:disk:1`}}]}))}}]))
+ snapshot:{hostId,frameworkBinding:testFrameworkBinding(),frameworkAcceptedAt:now.toISOString(),frameworkProcess:{pid:100,startedAt:'software-current-controller'},incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:now.toISOString(),lanes:['mac','android'].map(id=>({id,platform:'ios-on-mac',state:options.offline?'offline':'idle',dispatchMode:'automatic',resources:[{id:`${id}-rec`,kind:'recorder',storage:{...offer,poolId:`${hostId}:disk:1`}}]}))}}]))
  const requests=new Map<string,any>(), writes:any[]=[];let raced=false,selectionFailed=false
  const dependency={resourceId:'conference-account',authorityHostId:'host',capability:'google-authentication'}, exclusiveCalls:string[]=[]
  let answerLost=false

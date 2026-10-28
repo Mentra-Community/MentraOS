@@ -23,6 +23,8 @@ import {candidatePrerequisiteRequestMatches, qualifiedCandidate, candidateReturn
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
 import {resourceAvailable, resourceBlocker, resourceCandidateBlocker, resourceLaneBlocker, requiredResourceBlocker, type ResourceReadinessBlocker} from './resource-readiness'
 import {laneControlRecordSchema, resourceControlRecordSchema, type ResourceControlRecord} from '../types/lane-control.types'
+import {evaluateRoutineLaneReadiness, type RoutineLaneRequirementBlocker} from './routine-lane-eligibility'
+import {permissionContext} from '../types/resource-permissions.types'
 import {manualWithdrawalNeedsRestoration} from '../types/resource-control-authority'
 
 /** A phone check and ordinary preparation must not queue conflicting owners on one physical Android lane. */
@@ -51,15 +53,27 @@ function dependencyAvailable(host: ResourceReservationHost, dependency: Exclusiv
 }
 /** Ordinary backend work needs current returned phone proof; other providers keep their idle baseline. */
 export function routineResourceBlocker(host: ResourceReservationHost, row: StoredRoutineJob, laneId: string, now: number, candidateCheck = false):
-  ResourceReadinessBlocker | {code: 'routine-lane-unavailable' | 'routine-preparation-unavailable' | 'routine-lane-not-idle' | 'routine-backend-proof-unavailable'; laneId: string} | undefined {
+  ResourceReadinessBlocker | RoutineLaneRequirementBlocker | {code: 'routine-lane-unavailable' | 'routine-preparation-unavailable' | 'routine-lane-not-idle' | 'routine-backend-proof-unavailable'; laneId: string} | undefined {
   const lane = host.snapshot.lanes.find(value => value.id === laneId)
   if (!lane) return {code: 'routine-lane-unavailable', laneId}
   if (!row.fleetPreparation) return {code: 'routine-preparation-unavailable', laneId}
   if (!candidateCheck && (lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic')) return {code: 'routine-lane-not-idle', laneId}
   const readinessHost = {...host, resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations},
-    original = {requestId: row.requestId, inputSha256: row.fleetInputSha256!},
+    original = {requestId: row.requestId, inputSha256: row.fleetInputSha256!, executionInputSha256: row.inputSha256},
     laneBlocker = resourceLaneBlocker(readinessHost, laneId, {...original, hostId: host.hostId})
   if (laneBlocker) return laneBlocker
+  if (!candidateCheck) {
+    const snapshot = {...host.snapshot, receivedAt: host.receivedAt.toISOString(), resourceControlRecords: host.laneControls,
+      resourceLifecycleCursor: host.resourceLifecycleCursor, authorityReservations: hostResourceReservationsSchema.parse(host.resourceReservations ?? [])}
+    return evaluateRoutineLaneReadiness(row.fleetPreparation.requirements, snapshot, lane,
+      permissionContext(host.snapshot.frameworkBinding, row.fleetSelection.build, now), now, original, {
+        minimumRoutineApiVersion: row.fleetPreparation.routineSource?.minimumRoutineApiVersion,
+        minimumFrameworkVersion: row.fleetSelection.minimumFrameworkVersion, target: row.fleetTarget,
+        deadline: row.fleetDeadline, cancelled: Boolean(row.fleetCancellation),
+      }).blocker
+  }
+  // Existing original qualification/recovery keeps its original authority path;
+  // ordinary new selection never enters this branch.
   const phone = lane.resources.find(value => value.kind === 'phone')
   const graph = qualifiedGraphCandidate(row, host.snapshot, laneId, now, host.receivedAt)
   const retainedPurpose = row.fleetCandidatePreparations?.at(-1)?.target.purpose
@@ -201,15 +215,12 @@ export const resourceReservationRepository: ResourceReservationRepository = {
     .setOptions({timeoutMS: 5000}).lean() as unknown as (StoredRoutineJob & {input?: unknown}) | null},
   async stage(requestId, digest, fleetResourceAdmission, now) {
     const row = await this.request!(requestId);
-    if (row?.fleetCandidatePreparation || row && requiresBackendConnectivity(row) &&
-      (!row.fleetCandidateSelection || row.fleetCandidateSelection.hostId !== fleetResourceAdmission.intent.hostId ||
-        row.fleetCandidateSelection.laneId !== fleetResourceAdmission.intent.laneId)) return null;
+    if (row?.fleetCandidatePreparation) return null;
     const host = await this.get(fleetResourceAdmission.intent.hostId), laneId = fleetResourceAdmission.intent.laneId,
       stagedAt = new Date(Date.now());
     if (!row || !host || !laneId || row.fleetDeadline <= stagedAt ||
       !routineResourcesAvailable(host, row, laneId, stagedAt.getTime())) return null;
-    return await TestRequestModel.collection.findOneAndUpdate({...stageFilter(requestId, digest, stagedAt),
-      ...(row && requiresBackendConnectivity(row) ? {fleetCandidateSelection: row.fleetCandidateSelection} : {})},
+    return await TestRequestModel.collection.findOneAndUpdate(stageFilter(requestId, digest, stagedAt),
       {$set: {fleetResourceAdmission}}, {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}) as unknown as StoredRoutineJob | null
   },
   async stageBackend(requestId, digest, fleetResourceAdmission, host, now) {
@@ -397,7 +408,6 @@ export class ResourceReservationsService {
       row.hostId || row.inputSha256 || row.input || row.fleetDeadline.getTime() <= this.now()) return null
     if (row.fleetResourceAdmission && (row.fleetResourceAdmission.intent.hostId !== hostId || row.fleetResourceAdmission.intent.laneId !== laneId)) return null
     const borrower = await this.host(hostId), lane = borrower.snapshot.lanes.find(value => value.id === laneId)
-    if (requiresBackendConnectivity(row) && !row.fleetResourceAdmission && !qualifiedCandidate(row, borrower.snapshot, laneId, this.now(), borrower.receivedAt)) return null
     if (!fresh(borrower, this.now()) ||
       !lane || lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic') return null
     if (!routineResourcesAvailable(borrower, row, laneId, this.now())) return null
@@ -475,14 +485,7 @@ export class ResourceReservationsService {
         if (current.fleetDeadline.getTime() <= this.now() || !routineResourcesAvailable(borrower, current, laneId, this.now())) return null
         return row.fleetExclusiveReservation && !isDeepStrictEqual(row.fleetExclusiveReservation, receipt) ? null : receipt
       }
-      if (selected.some(dependency => {
-        const graph = qualifiedGraphCandidate(current, borrower.snapshot, laneId, this.now(), borrower.receivedAt)
-        return graph?.target.purpose?.kind === 'resource-readiness' && authority.hostId === hostId &&
-          graph.target.purpose.resources.some(member => member.id === dependency.resourceId)
-          ? resourceCandidateBlocker({...authority, resourceControlRecords: authority.laneControls, authorityReservations: authority.resourceReservations},
-            dependency.resourceId, this.now(), {requestId, inputSha256: digest, laneId}) !== undefined
-          : !dependencyAvailable(authority, dependency, this.now())
-      })) return null
+      if (selected.some(dependency => !dependencyAvailable(authority, dependency, this.now()))) return null
       if (claims.length + selected.length > 1000) return null
       const intentSha256 = requestInputDigest({...intent, controller: {incarnation: intent.controller.incarnation,
         generation: intent.controller.generation}, origin, dependencies: selected}),

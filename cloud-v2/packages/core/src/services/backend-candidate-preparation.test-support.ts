@@ -1,4 +1,4 @@
-import {RoutineJobService, routineJobInputDigest, type RoutineJobRepository} from './routine-job.service'
+import {RoutineJobService, recorderCapacityRequirements, routineResourceReadinessPurpose, routineJobInputDigest, type RoutineJobRepository} from './routine-job.service'
 import {candidateRenewal, graphCheckOperationId, graphFinalCheckOperationId} from './backend-candidate-preparation'
 import {expect} from 'bun:test'
 import type {ResourceReadinessCheck} from '../types/backend-connectivity.types'
@@ -6,6 +6,38 @@ import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixt
 import {requestInputDigest} from './test-request.service'
 import type {StoredRoutineJob, FleetCandidatePreparation} from '../types/routine-job.types'
 import type {ReceivedTestHostState} from './test-host-state.service'
+import {fleetCandidatePreparationSchema} from '../types/routine-job.types'
+import {routineEnrollmentSchema} from '../types/routine-definition.types'
+import {frameworkExecutableBuild} from '../types/framework-request.types'
+import {routineAdmissionInput} from './routine-admission.service'
+import {recordedRoutineBuild} from './routine-dispatch.service'
+
+/** An explicit historical original, not a new qualification producer or physical PASS. */
+export function legacyCandidate(row: StoredRoutineJob, host: ReceivedTestHostState, now: number) {
+  const lane = host.lanes[0]!, prepared = row.fleetPreparation!, selection = row.fleetSelection,
+    enrollment = routineEnrollmentSchema.parse({routineId: selection.routineId, platform: selection.platform,
+      definitionRevision: selection.routineRevision, definition: prepared.definition,
+      definitionSha256: prepared.definitionSha256, routineSource: prepared.routineSource}),
+    proposedInput = routineAdmissionInput(enrollment, recordedRoutineBuild(selection.build, selection.source, selection.platform),
+      {hostId: host.hostId, laneId: lane.id}, host, now, {minimumFrameworkVersion: selection.minimumFrameworkVersion})
+  proposedInput.build = frameworkExecutableBuild(selection.build, proposedInput.glassesModel)
+  const purpose = host.resourceReservations?.resourceReadiness ? routineResourceReadinessPurpose(host, lane, prepared.requirements,
+    now, {requestId: row.requestId, inputSha256: row.fleetInputSha256!}) : {kind: 'backend-connectivity' as const,
+      resourceId: lane.resources.find(value => value.kind === 'phone')!.id}
+  if (!purpose) throw Error('Historical fixture requires an explicit resource graph')
+  const prior = row.fleetCandidatePreparations?.at(-1),
+    candidate = {attemptId: `candidate:${row.requestId}:${(row.fleetCandidatePreparations?.length ?? 0) + 1}`, requestedAt: new Date(now).toISOString(),
+    fleetInputSha256: row.fleetInputSha256!, selectionSha256: row.fleetSelectionSha256,
+    ...(prior ? {previousAttemptId: prior.candidate.attemptId} : {}),
+    controller: {incarnation: host.incarnation, generation: host.incarnationGeneration}},
+    body = {jobId: row.requestId, hostId: host.hostId, laneId: lane.id, deadline: row.fleetDeadline.toISOString(), candidate,
+      selection: {...selection, routineSource: prepared.routineSource}, requirements: recorderCapacityRequirements(prepared),
+      definition: prepared.definition, definitionSha256: prepared.definitionSha256, purpose, proposedInput,
+      acceptedBinding: host.frameworkBinding, target: {hostId: host.hostId, laneId: lane.id}},
+    targetInputSha256 = requestInputDigest(body)
+  return fleetCandidatePreparationSchema.parse({candidate, hostId: host.hostId, laneId: lane.id,
+    target: {...body, inputSha256: targetInputSha256}, targetInputSha256})
+}
 
 const initialNow = Date.parse('2026-10-20T12:00:00Z'), hash = (c: string) => c.repeat(64)
 export function backendCandidateFixture(exclusive = false) {
@@ -22,7 +54,7 @@ export function backendCandidateFixture(exclusive = false) {
     fleetDeadline:new Date(now+300_000),createdAt:new Date(now)} as unknown as StoredRoutineJob
   row.fleetSelectionSha256=requestInputDigest(row.fleetSelection);row.fleetInputSha256=routineJobInputDigest(row)
   const hosts = ['air1','air2'].map(hostId => ({hostId,incarnation:`${hostId}-one`,incarnationGeneration:1,sequence:1,
-    observedAt:new Date(now).toISOString(),receivedAt:new Date(now).toISOString(),frameworkBinding:{...testFrameworkBinding(),version:1200,routineApiVersion:70},
+    observedAt:new Date(now).toISOString(),receivedAt:new Date(now).toISOString(),frameworkBinding:{...testFrameworkBinding(),version:1200,routineApiVersion:111},
     resourceReservations:{claims:[],returns:[],candidatePrerequisites:[]},authorityReservations:[],lanes:[{id:'android',platform:'android',state:'idle',dispatchMode:'automatic',resources:[
       {id:`${hostId}:phone`,kind:'phone',capabilities:['backend-connectivity']},{id:`${hostId}:app`,kind:'app'},
       {id:`${hostId}:recorder`,kind:'recorder',storage:{poolId:`${hostId}:disk`,observedAt:new Date(now).toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}},
@@ -39,9 +71,36 @@ export function backendCandidateFixture(exclusive = false) {
     async candidatePreparation(original:StoredRoutineJob,pending:FleetCandidatePreparation){if(row.fleetCandidatePreparation||row.fleetCandidateSelection && candidateRenewal(row,pending.hostId,pending.laneId)?.candidate.attemptId!==pending.candidate.previousAttemptId||JSON.stringify(original)!==JSON.stringify(row))return null;writes++;row={...row,fleetCandidatePreparation:copy(pending),fleetCandidateSelection:undefined};return copy(row)},
     async settleCandidatePreparation(original:StoredRoutineJob,pending:FleetCandidatePreparation){if(JSON.stringify(original)!==JSON.stringify(row))return null;row={...row,fleetCandidatePreparations:[...row.fleetCandidatePreparations??[],copy(pending)],fleetCandidatePreparation:undefined,
       ...(pending.settlement?.outcome==='qualified'&&row.state==='awaiting-runner'&&!row.fleetCancellation&&row.fleetDeadline.getTime()>now?{fleetCandidateSelection:{hostId:pending.hostId,laneId:pending.laneId,targetInputSha256:pending.targetInputSha256}}:{})};return copy(row)},
-    async reserveResources(_id:string,_sha:string,hostId:string,laneId:string){bindWrites++;row={...row,fleetResourceReservation:{id:'d0af6e63-513c-43d5-9392-ff2e672bab86',requestId:row.requestId,fleetInputSha256:row.fleetInputSha256!,hostId,laneId,poolId:`${hostId}:disk`,minimumAvailableBytes:1024,reservedAt:new Date(now).toISOString(),...(row.fleetPreparation?.requirements.glasses?{chosenModel:hosts.find(host=>host.hostId===hostId)?.lanes.find(lane=>lane.id===laneId)?.glasses?.[0]?.model}:{})}};return copy(row)},
+    async reserveResources(_id:string,_sha:string,hostId:string,laneId:string){
+      if(_id!==row.requestId||_sha!==row.fleetInputSha256)return null
+      if(row.fleetResourceReservation)return row.fleetResourceReservation.hostId===hostId&&row.fleetResourceReservation.laneId===laneId?copy(row):null
+      bindWrites++;row={...row,fleetResourceReservation:{id:'d0af6e63-513c-43d5-9392-ff2e672bab86',requestId:row.requestId,fleetInputSha256:row.fleetInputSha256!,hostId,laneId,poolId:`${hostId}:disk`,minimumAvailableBytes:1024,reservedAt:new Date(now).toISOString(),...(row.fleetPreparation?.requirements.glasses?{chosenModel:hosts.find(host=>host.hostId===hostId)?.lanes.find(lane=>lane.id===laneId)?.glasses?.[0]?.model}:{})}};return copy(row)
+    },
   } as unknown as RoutineJobRepository
   const service = new RoutineJobService(rows,undefined,undefined,undefined,{async get(id){return copy(hosts.find(h=>h.hostId===id)??null)},async list(){return copy(hosts)}},undefined,undefined,()=>now)
+  let legacySeeded = false
+  async function prepareLegacy(requestId = row.requestId, onPhase?: Parameters<RoutineJobService['preparation']>[1]) {
+    if (!legacySeeded) {
+      legacySeeded = true
+      if (requestId !== row.requestId) throw Error('Historical fixture request differs from its frozen original')
+      await rows.candidatePreparation!(copy(row), legacyCandidate(row, hosts[0]!, now), new Date(now))
+    }
+    return service.preparation(requestId, onPhase)
+  }
+  /** Independent current checker fixtures; never infer a PASS from historical UNKNOWN. */
+  function passCurrentBaseline(hostId: string) {
+    const host = hosts.find(value => value.hostId === hostId)!, template = host.resourceLifecycle!.subjects[0]!, checkedAt = new Date(now).toISOString()
+    host.resourceLifecycle!.subjects = host.lanes[0]!.resources.filter(ref => ref.kind !== 'network').map(ref => {
+      ref.idleContract ??= {version: `${ref.kind}-baseline`, maximumAgeMs: 120_000, qualifiedScope: {kind: 'same-controller', controllerId: hostId},
+        conditions: ['cpu-current-checker'], repairConfigured: true, dependencies: []}
+      const prior = host.resourceLifecycle!.subjects.find(subject => subject.subject.id === ref.id) ?? template
+      return {...copy(prior), subject: {kind: 'resource' as const, id: ref.id, authorityHostId: hostId}, current: true, status: 'idle' as const,
+        owner: null, idle: {...prior.idle, outcome: 'passed' as const, contractVersion: ref.idleContract.version, checkedAt,
+          acceptedCheck: {operationId: `cpu-current-checker:${ref.id}`, subjectGeneration: prior.generation, resultSha256: hash('a'), acceptedAt: checkedAt}},
+        resource: {kind: ref.kind, capabilities: ref.capabilities ?? [], memberships: [{hostId, laneId: host.lanes[0]!.id}],
+          dependencies: [], placement: 'installed' as const}}
+    })
+  }
   function settle(outcome:'qualified'|'unqualified'|'unknown', rawClosed=true, returnAck=true) {
     const p=row.fleetCandidatePreparation!,host=hosts.find(h=>h.hostId===p.hostId)!,phone=host.lanes[0]!.resources[0]!,subject=host.resourceLifecycle!.subjects[0]!,op=`backend-prerequisite:${p.targetInputSha256}`
     p.backendTarget={schemaVersion:1,coreUrl:'https://core.example/'};subject.generation=3
@@ -57,7 +116,7 @@ export function backendCandidateFixture(exclusive = false) {
       originalOwner:{id:'original-check-owner',kind:'boundary-cleanup'},laneId:'android',controller:{incarnation:host.incarnation,generation:1,sequence:2},release:{kind:'resource-check',operationId:op,subjectGeneration:3,releasedAt:new Date(now).toISOString(),eventId:'released'}}
     if(rawClosed)host.resourceReservations!.candidatePrerequisites=[{targetInputSha256:p.targetInputSha256,candidate:p.candidate,outcome,hostWorkSettled:true,checkOperationId:op}]
   }
-  return {service,rows,hosts,settle,get row(){return row},set row(v){row=v},get writes(){return writes},get bindWrites(){return bindWrites},advance(ms:number){now+=ms;for(const h of hosts){h.observedAt=h.receivedAt=new Date(now).toISOString();for(const subject of h.resourceLifecycle?.subjects??[])subject.observedAt=h.observedAt;h.lanes[0]!.resources.find(r=>r.kind==='recorder')!.storage!.observedAt=new Date(now).toISOString()}},get now(){return now}}
+  return {service,rows,hosts,settle,prepareLegacy,passCurrentBaseline,get row(){return row},set row(v){row=v},get writes(){return writes},get bindWrites(){return bindWrites},advance(ms:number){now+=ms;for(const h of hosts){h.observedAt=h.receivedAt=new Date(now).toISOString();for(const subject of h.resourceLifecycle?.subjects??[])subject.observedAt=h.observedAt;h.lanes[0]!.resources.find(r=>r.kind==='recorder')!.storage!.observedAt=new Date(now).toISOString()}},get now(){return now}}
 }
 
 export function routingGraphFixture(platform: 'android' | 'ios-on-mac' = 'android') {

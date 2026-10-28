@@ -82,11 +82,11 @@ test('routing reads only fresh current offers and preserves permission and physi
       frameworkHistory: [], restoration: {diagnostics: 'baggage'.repeat(10000)}, receivedAt: offered.receivedAt};
     expect(routineJobRouting(requirements, [offered], now, undefined, build)).toEqual(routineJobRouting(requirements, [full], now, undefined, build));
     expect(compatibleRoutineLane(requirements, offered.lanes[0], permissionContext(binding, build, now))).toBe(true);
-    expect(compatibleRoutineLane(requirements, offered.lanes[0], permissionContext(binding, {...build, headSha: '0'.repeat(40)}, now))).toBe(false);
+    expect(compatibleRoutineLane(requirements, offered.lanes[0], permissionContext(binding, {...build, headSha: '0'.repeat(40)}, now))).toBe(true);
     observation.observedAt = new Date(now - 120001).toISOString();
     const [fresh] = await service.list();
     expect(reads).toBe(2);
-    expect(compatibleRoutineLane(requirements, fresh.lanes[0], permissionContext(binding, build, now))).toBe(false);
+    expect(compatibleRoutineLane(requirements, fresh.lanes[0], permissionContext(binding, build, now))).toBe(true);
     current.lanes[0].glasses[0].resourceId = 'unoffered';
     await expect(service.list()).rejects.toThrow('Glasses inventory must exactly identify declared glasses resources');
     current.lanes[0].glasses[0].resourceId = 'glasses';

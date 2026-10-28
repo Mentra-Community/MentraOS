@@ -9,7 +9,7 @@ import {requestInputDigest} from './test-request.service'
 
 async function closedOriginal(platform: 'android' | 'ios-on-mac' = 'ios-on-mac', mixed = false) {
   const f = routingGraphFixture(platform)
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   f.settleGraph('unknown')
   const host = f.hosts[0]!, pending = f.row.fleetCandidatePreparation!, receipt = host.resourceReservations!.candidatePrerequisites![0]!
   for (const check of receipt.graphChecks!) {
@@ -32,8 +32,9 @@ async function closedOriginal(platform: 'android' | 'ios-on-mac' = 'ios-on-mac',
   return {f, host, original, originalReceipt}
 }
 
-test.each([false, true])('fully returned original UNKNOWN settles through the real service and tries the alternate (mixed: %s)', async mixed => {
+test.each([false, true])('fully returned original UNKNOWN settles and reserves a separately current-checked alternate (mixed: %s)', async mixed => {
   const {f, host, original, originalReceipt} = await closedOriginal('ios-on-mac', mixed), saved = structuredClone(f.row)
+  f.passCurrentBaseline('air2'); f.rows.selectedLanes = async () => []
   // The production archive writer runs; only its MongoDB CAS is a CPU seam.
   f.rows.settleCandidatePreparation = routineJobRepository.settleCandidatePreparation!
   const write = spyOn(TestRequestModel.collection, 'findOneAndUpdate').mockImplementation(async (filter: any, update: any) => {
@@ -49,13 +50,13 @@ test.each([false, true])('fully returned original UNKNOWN settles through the re
     return structuredClone(f.row) as any
   })
   try {
-    await f.service.preparation('job-one')
+    await f.prepareLegacy('job-one')
     expect(write).toHaveBeenCalledTimes(1)
     expect(f.row.fleetCandidatePreparations?.[0]).toEqual({...original, settlement: originalReceipt})
-    expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2')
-    expect(f.row.fleetCandidatePreparation?.candidate.attemptId).not.toBe(original.candidate.attemptId)
+    expect(f.row.fleetCandidatePreparation).toBeUndefined()
+    expect(f.row.fleetResourceReservation?.hostId).toBe('air2')
     expect(host.resourceReservations!.candidatePrerequisites).toEqual([originalReceipt])
-    expect(f.bindWrites).toBe(0); expect(f.row.fleetBinding).toBeUndefined()
+    expect(f.bindWrites).toBe(1); expect(f.row.fleetBinding).toBeUndefined()
     for (const key of ['requestId', 'fleetSelection', 'fleetSelectionSha256', 'fleetPreparation', 'fleetInputSha256', 'fleetDeadline'] as const)
       expect(f.row[key]).toEqual(saved[key])
   } finally {write.mockRestore()}
@@ -90,7 +91,7 @@ for (const gap of ['partial-return', 'changed-release', 'unclosed-work', 'missin
       owner: {id: `resource-graph:${pending.targetInputSha256}`, kind: 'boundary-cleanup'}}]
     if (gap === 'changed-original-input') pending.target.definitionSha256 = requestInputDigest('foreign-definition')
     const saved = structuredClone(f.row)
-    await f.service.preparation('job-one')
+    await f.prepareLegacy('job-one')
     expect(f.row).toEqual(saved); expect(f.bindWrites).toBe(0)
   })
 
@@ -99,10 +100,11 @@ test('returned positive archives original history after source replacement witho
   receipt.outcome = 'qualified'
   for (const check of receipt.graphChecks!) check.outcome = 'passed'
   const original = structuredClone(f.row.fleetCandidatePreparation!), originalReceipt = structuredClone(receipt)
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparations?.[0]).toEqual({...original, settlement: originalReceipt})
-  expect(f.row.fleetCandidatePreparation?.candidate.attemptId).not.toBe(original.candidate.attemptId)
-  expect(f.row.fleetCandidateSelection).toBeUndefined(); expect(f.row.fleetResourceReservation).toBeUndefined()
+  expect(f.row.fleetCandidatePreparation).toBeUndefined()
+  expect(f.row.fleetCandidateSelection).toEqual({hostId: original.hostId, laneId: original.laneId,
+    targetInputSha256: original.targetInputSha256}); expect(f.row.fleetResourceReservation).toBeUndefined()
   expect(f.row.fleetBinding).toBeUndefined(); expect(f.bindWrites).toBe(0)
 })
 
@@ -115,7 +117,7 @@ test('lost original archive CAS leaves the original pending and cannot start ano
     return null as any
   })
   try {
-    await f.service.preparation('job-one')
+    await f.prepareLegacy('job-one')
     expect(write).toHaveBeenCalledTimes(1)
     expect(f.row).toEqual(saved); expect(f.bindWrites).toBe(0)
   } finally {write.mockRestore()}
@@ -124,7 +126,7 @@ test('lost original archive CAS leaves the original pending and cannot start ano
 test('original deadline expiry permits only historical UNKNOWN ingestion, without another candidate or grant', async () => {
   const {f, original, originalReceipt} = await closedOriginal(), deadline = structuredClone(f.row.fleetDeadline)
   f.advance(deadline.getTime() - f.now + 1)
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparations?.[0]).toEqual({...original, settlement: originalReceipt})
   expect(f.row.fleetCandidatePreparation).toBeUndefined()
   expect(f.row.fleetDeadline).toEqual(deadline); expect(f.bindWrites).toBe(0)
@@ -141,18 +143,17 @@ for (const platform of ['android', 'ios-on-mac'] as const)
       inputSha256: '7'.repeat(64), intentSha256: '8'.repeat(64),
       owner: {id: 'different-original', kind: 'run'}, prerequisite: undefined, resourceCheck: undefined}]
     host.resourceLifecycle!.subjects[0]!.owner = {id: 'different-original', kind: 'run', generation: 99, hostId: host.hostId}
-    await f.service.preparation('job-one')
+    await f.prepareLegacy('job-one')
     expect(f.row.fleetCandidatePreparations?.[0]).toEqual({...original, settlement: originalReceipt})
     expect(f.row.fleetCandidatePreparations?.[0]?.settlement?.outcome).toBe('unknown')
-    expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2')
-    expect(f.row.fleetCandidatePreparation?.candidate.attemptId).not.toBe(original.candidate.attemptId)
-    expect(f.writes).toBe(2); expect(f.bindWrites).toBe(0)
+    expect(f.row.fleetCandidatePreparation).toBeUndefined()
+    expect(f.writes).toBe(1); expect(f.bindWrites).toBe(0)
     expect(f.row.fleetCandidateSelection).toBeUndefined(); expect(f.row.fleetResourceReservation).toBeUndefined()
     expect(f.row.fleetBinding).toBeUndefined()
     for (const key of ['requestId', 'fleetSelection', 'fleetSelectionSha256', 'fleetPreparation', 'fleetInputSha256', 'fleetDeadline'] as const)
       expect(f.row[key]).toEqual(saved[key])
-    await f.service.preparation('job-one')
-    expect(f.writes).toBe(2); expect(f.bindWrites).toBe(0)
+    await f.prepareLegacy('job-one')
+    expect(f.writes).toBe(1); expect(f.bindWrites).toBe(0)
     expect(exclusiveHostReservationSchema.parse(host.authorityReservations[0]).owner.id).toBe('different-original')
-    expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2')
+    expect(f.row.fleetCandidatePreparation).toBeUndefined()
   })

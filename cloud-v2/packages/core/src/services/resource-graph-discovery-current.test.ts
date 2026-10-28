@@ -8,7 +8,7 @@ import {TestRequestModel} from '../models/test-request.model'
 
 async function fixture(change: (host: ReceivedTestHostState) => void = () => {}) {
   const f = routingGraphFixture()
-  await f.service.preparation('job-one')
+  await f.prepareLegacy('job-one')
   const pending = structuredClone(f.row.fleetCandidatePreparation!), original = structuredClone(f.hosts[0]!)
   let reads = 0
   const hosts = (f.service as unknown as {hosts: {get(id: string): Promise<ReceivedTestHostState | null>}}).hosts
@@ -49,7 +49,7 @@ test('unknown baseline age remains eligible for its original current graph check
 })
 
 test('current passed physical checks preserve a target with older cached resource generations', async () => {
-  const f = routingGraphFixture(); await f.service.preparation('job-one')
+  const f = routingGraphFixture(); await f.prepareLegacy('job-one')
   const pending = structuredClone(f.row.fleetCandidatePreparation!), host = f.hosts[0]!
   host.sequence++
   for (const subject of host.resourceLifecycle!.subjects) {
@@ -123,7 +123,7 @@ test('a final read reaching the unchanged five-second budget does not publish a 
 })
 
 test('a current owned graph remains discoverable across periodic reports', async () => {
-  const f = routingGraphFixture(); await f.service.preparation('job-one')
+  const f = routingGraphFixture(); await f.prepareLegacy('job-one')
   const pending = f.row.fleetCandidatePreparation!, host = f.hosts[0]!, ownerId = `resource-graph:${pending.targetInputSha256}`
   host.lanes[0]!.state = 'reserved'; host.lanes[0]!.activity = {generation: 2, owner: {id: ownerId, kind: 'boundary-cleanup'}}
   for (const subject of host.resourceLifecycle!.subjects) subject.owner = {id: ownerId, kind: 'boundary-cleanup', generation: 2, hostId: host.hostId}
@@ -145,10 +145,10 @@ test('unclaimed current-target lookup preserves the delivered graph across concu
  b.row.fleetSelectionSha256 = requestInputDigest(b.row.fleetSelection); b.row.fleetInputSha256 = routineJobInputDigest(b.row)
  const commit = a.rows.candidatePreparation!.bind(a.rows)
  a.rows.candidatePreparation = async (original, pending, at) => {entered.resolve(); await persist.promise; return commit(original, pending, at)}
- const preparingA = a.service.preparation('job-a')
+ const preparingA = a.prepareLegacy('job-a')
  await entered.promise
  expect(a.row.fleetCandidatePreparation).toBeUndefined()
- b.advance(10); await b.service.preparation('job-b')
+ b.advance(10); await b.prepareLegacy('job-b')
  const delivered = (await b.service.qualificationTargets('air1'))[0]!
  expect(delivered.jobId).toBe('job-b')
  persist.resolve(); await preparingA

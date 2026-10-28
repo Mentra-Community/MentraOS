@@ -12,7 +12,7 @@ import {pendingQueueItem} from './test-pending-queue.service';
 import {requestInputDigest} from './test-request.service';
 const now = Date.parse('2026-10-13T18:00:00Z'), revision = 'a'.repeat(40), hash = 'b'.repeat(64);
 const binding = {version: 938, revision, installationId: 'accepted-runtime', configurationSha256: hash,
-  runtimeSha256: 'c'.repeat(64), routineApiVersion: 37, publicApiSha256: 'd'.repeat(64)};
+  runtimeSha256: 'c'.repeat(64), routineApiVersion: 111, publicApiSha256: 'd'.repeat(64)};
 const build: TestBuild = {source: {channel: 'dev', buildRunId: 10, publicationAttempt: 1}, platform: 'ios-on-mac', title: 'Exact app',
   availability: 'available', headSha: revision, buildUrl: 'https://github.com/Mentra-Community/MentraOS/actions/runs/10', createdAt: new Date(now).toISOString(),
   archive: {name: 'app.zip', sha256: hash, size: 100, url: 'https://artifactscdn.mentraglass.com/app.zip'},
@@ -78,7 +78,7 @@ test('current binding, explicit recipient and immutable selected app tuple are a
   expect(permissionObservationMatches({...worker, recipient: {...workerRecipient, runtime: {path: '/other/bun', sha256: hash}}},
     'accessibility', {now, binding, recipient: 'worker'})).toBe(false);
 });
-test('Mac queue and input construction permit installation while execution qualification requires exact app observations', () => {
+test('Mac matching defers recipient grants until the owned app is installed', () => {
   const f = fixture(), required = f.row.fleetPreparation!.requirements, frozen = structuredClone(f.row);
   expect(routineJobRouting(required, [f.host], now, undefined, build).waitingReason).toBeUndefined();
   expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes.map(value => value.laneId)).toEqual(['mac']);
@@ -87,10 +87,10 @@ test('Mac queue and input construction permit installation while execution quali
   for (const value of [undefined, {...observed, status: 'denied' as const}, {...observed, status: 'unknown' as const}, {...observed, observedAt: new Date(now - 120_001).toISOString()},
     {...observed, recipient: {...appRecipient, selectedBuild: {...app, archiveSha256: 'f'.repeat(64)}}}]) {
     f.lane.resources[0]!.permissionObservations = value ? [value] : [];
-    expect(routineJobRouting(required, [f.host], now, undefined, build).waitingReason).toBe('Awaiting a compatible enrolled runner');
+    expect(routineJobRouting(required, [f.host], now, undefined, build).waitingReason).toBeUndefined();
     expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes.map(value => value.laneId)).toEqual(['mac']);
     expect(routineAdmissionInput(f.definition, build, {hostId: 'mini', laneId: 'mac'}, f.host, now)).toEqual(expectedInput);
-    expect(compatibleRoutineLane(required, f.lane, permissionContext(binding, build, now))).toBe(false);
+    expect(compatibleRoutineLane(required, f.lane, permissionContext(binding, build, now))).toBe(true);
   }
   expect(f.row).toEqual(frozen);
   f.definition.definition.resourceRequirements[0]!.permissions = undefined;
@@ -102,7 +102,7 @@ test('Mac queue and input construction permit installation while execution quali
 test('permission report churn never changes inventory descriptor or stable requirement labels', () => {
   const f = fixture(), revision = routineLaneDescriptorRevision(f.lane), required = f.row.fleetPreparation!.requirements;
   const labels = routineRequirementLabels(required);
-  expect(labels).toContain(`mentra-permission-${requestInputDigest('app:app:camera').slice(0, 24)}`);
+  expect(labels).not.toContain(`mentra-permission-${requestInputDigest('app:app:camera').slice(0, 24)}`);
   f.lane.resources[0]!.permissionObservations = [{...observed, observedAt: new Date(now + 10).toISOString(), evidence: {sha256: 'f'.repeat(64)}}];
   expect(routineLaneDescriptorRevision(f.lane)).toBe(revision);
   expect(routineRequirementLabels(required)).toEqual(labels);
@@ -110,14 +110,14 @@ test('permission report churn never changes inventory descriptor or stable requi
   expect(routineLaneDescriptorRevision(f.lane)).toBe(revision);
 });
 
-test('recipient permission evidence never changes preinstallation input but still controls execution qualification', () => {
+test('recipient permission evidence never changes preinstallation input or current machine selection', () => {
   const f = fixture(), select = () => routineAdmissionInput(f.definition, build, {hostId: 'mini', laneId: 'mac'}, f.host, now);
   const initial = select(), digest = requestInputDigest(initial);
   f.lane.resources[0]!.permissionObservations = [{...observed, observedAt: new Date(now - 10).toISOString(), evidence: {sha256: 'f'.repeat(64)}}];
   expect(select()).toEqual(initial); expect(requestInputDigest(select())).toBe(digest);
   f.lane.resources[0]!.permissionObservations = [{...observed, status: 'denied'}];
   expect(select()).toEqual(initial); expect(requestInputDigest(select())).toBe(digest);
-  expect(compatibleRoutineLane(f.row.fleetPreparation!.requirements, f.lane, permissionContext(binding, build, now))).toBe(false);
+  expect(compatibleRoutineLane(f.row.fleetPreparation!.requirements, f.lane, permissionContext(binding, build, now))).toBe(true);
 });
 
 test('preinstallation input keeps current worker permissions while deferring recipient app grants', () => {
