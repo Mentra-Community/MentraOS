@@ -1,6 +1,6 @@
 /**
  * Buying from billing's catalog, as the approved design draws it (its `parts2.tsx`): the grid of products a workspace
- * with nothing yet is offered, the "Buy licenses" dialog a workspace with licenses opens, and the seats step.
+ * with nothing yet is offered, the "Buy subscriptions" dialog, and the seats step.
  *
  * Everything is drawn from what billing sent for each product: its name, description, icon and features, and, for
  * a viewer who may manage the owner's billing, its `offer` (the price, the tax treatment and what buying allows).
@@ -11,12 +11,12 @@
  * seats step's seats × unit. Any other price shows its `fallbackLabel` exactly, with no arithmetic, no renewal
  * claim and no tax note. "before tax" appears only where billing says tax is `excluded`.
  *
- * Every button that leaves the portal for a hosted page is a `HostedPageButton` (marked ↗): Add licenses (or, on a product
+ * Every button that leaves the portal for a hosted page is a `HostedPageButton` (marked ↗): Buy subscriptions (or, on a product
  * whose first payment isn't finished, Complete payment) and Continue to payment. Buy only opens the seats step, so it
  * is a plain button; the step starts at the workspace's member count, and a workspace of one has no number to choose.
  * They all leave the way every
  * other billing button does, through `useHostedAction` and the host's `NavigateOut`: the client has already refused
- * any address the contract doesn't accept, and an Add licenses billing lists with `returns: false` opens its tab in the
+ * any address the contract doesn't accept, and an Buy subscriptions billing lists with `returns: false` opens its tab in the
  * click.
  *
  * Words are in `strings/licenses.ts`. This file imports the client's type only, never its schemas.
@@ -110,7 +110,7 @@ function seatBounds(buy: Buy, price: Price, memberCount: number | undefined): Se
 // ---- asking billing ---------------------------------------------------------------------------------------------
 
 // Each container below (the grid, the dialog's rows, the seats step) has its own `useHostedAction(host)`: one request
-// at a time to billing, for a purchase or for Add licenses, and on to the page it answers. A refusal is drawn where its
+// at a time to billing, for a purchase or for Buy subscriptions, and on to the page it answers. A refusal is drawn where its
 // container is, and goes with it.
 
 /** What pressing Buy on `entry` does: opens the seats step (`choose`), for an entry billing offers for sale. */
@@ -118,11 +118,11 @@ const chooseToBuy = (choose: (entry: CatalogEntry) => void) => (entry: CatalogEn
   if (canBuy(entry)) choose(entry);
 };
 
-/** Add licenses on a held product's license, by the action billing listed for it: its page opens in a tab where billing says it doesn't return. */
+/** Buy subscriptions on a held product's license, by the action billing listed for it: its page opens in a tab where billing says it doesn't return. */
 const addSeatsOf = (hosted: HostedAction) => (license: LicenseBilling, entry: CatalogEntry, action: BillingAction) =>
   hosted.run({ action, licenseId: license.licenseId, name: entry.name });
 
-/** Whether the request out is the one that `entry`'s button (Buy, or Add licenses on its held `license`) made. */
+/** Whether the request out is the one that `entry`'s button (Buy, or Buy subscriptions on its held `license`) made. */
 function isPendingFor(request: HostedRequest | null, entry: CatalogEntry, held: LicenseBilling | null): boolean {
   if (request === null) return false;
   return "action" in request ? held !== null && request.licenseId === held.licenseId : request.product === entry.product;
@@ -148,7 +148,7 @@ function heldState(license: LicenseBilling): { text: string; warn: boolean } {
 
 /**
  * The one thing billing lists for a held product that this screen offers: Complete payment for a first payment that
- * isn't finished, else Add licenses. Null where billing lists neither. Nothing is added to a license that isn't paid
+ * isn't finished, else Buy subscriptions. Null where billing lists neither. Nothing is added to a license that isn't paid
  * for, whatever is listed.
  */
 function heldAction(license: LicenseBilling): BillingAction | null {
@@ -186,7 +186,7 @@ function BuyButton({
 }
 
 /**
- * The ↗ button for a held product: Add licenses on its license, or Complete payment for a first payment that isn't
+ * The ↗ button for a held product: Buy subscriptions on its license, or Complete payment for a first payment that isn't
  * finished (see `heldAction`), by the action billing listed. Null where there is none. It opens its page in a tab
  * where billing lists the action with `returns: false`.
  */
@@ -252,13 +252,13 @@ export interface CatalogCardProps {
   /** It is this card's own request that is out. */
   pending: boolean;
   onBuy(entry: CatalogEntry): void;
-  /** The held license's button was pressed: Add licenses, or Complete payment on an unfinished first payment, by the action billing listed. */
+  /** The held license's button was pressed: Buy subscriptions, or Complete payment on an unfinished first payment, by the action billing listed. */
   onAddSeats(license: LicenseBilling, entry: CatalogEntry, action: BillingAction): void;
 }
 
 /**
  * One product: icon, name, description, its features as a list when it has more than one, and then its price and
- * Buy, or, for a product the workspace holds, "You have 5 licenses" and Add licenses.
+ * Buy, or, for a product the workspace holds, "You have 5 licenses" and Buy subscriptions.
  */
 export function CatalogCard({ entry, locale, held, busy, pending, onBuy, onAddSeats }: CatalogCardProps) {
   const nameId = useId();
@@ -368,7 +368,7 @@ export function CatalogGrid({ products, licenses, memberCount, ...host }: Catalo
 
 // ---- Buy licenses, as a dialog ---------------------------------------------------------------------------------
 
-/** One product as a row: icon and name, then what you have or what it costs, and Buy or Add licenses. */
+/** One product as a row: icon and name, then what you have or what it costs, and Buy or Buy subscriptions. */
 function CatalogRow({
   entry,
   locale,
@@ -435,7 +435,7 @@ function CatalogRows({
 
 /**
  * "Buy licenses": the same catalog as rows, for a workspace that already holds licenses. A product it holds offers
- * Add licenses instead of Buy; any other shows its price and Buy. Buy opens the seats step over the list.
+ * Buy subscriptions instead of Buy; any other shows its price and Buy. Buy opens the seats step over the list.
  */
 export function CatalogDialog({ open, onClose, products, licenses, memberCount, ...host }: CatalogProps & { open: boolean; onClose(): void }) {
   const [buying, setBuying] = useState<CatalogEntry | null>(null);

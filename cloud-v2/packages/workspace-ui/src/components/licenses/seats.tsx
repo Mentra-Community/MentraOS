@@ -2,14 +2,13 @@
  * A license's seats as the Licenses page draws them (the design's `parts.tsx` and `parts2.tsx`): who holds each
  * one, as a roster, or folded into a strip on a page with several licenses. They only draw. The card (and the
  * people picker) own the data and the requests, and pass in what to run: assigning opens the picker, Unassign
- * asks first in a dialog, and "Add licenses ↗" is there only where billing lists the action.
+ * asks first in a dialog, and "Buy subscriptions ↗" is there only where billing lists the action.
  */
 
-import { ChevronDownIcon, ChevronUpIcon, CheckIcon, PlusIcon, SearchIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, PlusIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { LicenseView, MemberView } from "@mentra/workspace-contract";
 import { formatDate } from "../../lib/format";
-import type { SeatCounts } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
@@ -60,11 +59,30 @@ export interface AddSeatsControl {
   link?: string | null;
 }
 
-function AddSeatsButton({ control, variant = "secondary" }: { control: AddSeatsControl; variant?: "default" | "secondary" }) {
+function AddSeatsButton({ control }: { control: AddSeatsControl }) {
   return (
-    <HostedPageButton variant={variant} pending={control.pending} newTab={control.newTab} disabled={control.disabled} onClick={control.onClick}>
+    <HostedPageButton variant="secondary" pending={control.pending} newTab={control.newTab} disabled={control.disabled} onClick={control.onClick}>
       {t.actions.addSeats}
     </HostedPageButton>
+  );
+}
+
+/**
+ * What a viewer who may assign can do about the seats, whatever is assigned: "Buy subscriptions ↗" where billing lists
+ * it, and "Assign subscriptions" unless more are assigned than paid for (`blocked`). Null for anyone else.
+ */
+function SeatActions({ canAssign, blocked, addSeats, onAssign, primary }: Pick<SeatControls, "canAssign" | "blocked" | "addSeats" | "onAssign"> & { primary: boolean }) {
+  if (!canAssign || (blocked && addSeats === null)) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {addSeats ? <AddSeatsButton control={addSeats} /> : null}
+      {blocked ? null : (
+        <Button variant={primary ? "default" : "secondary"} size="sm" onClick={onAssign}>
+          <PlusIcon aria-hidden="true" />
+          {t.seats.assignSeats}
+        </Button>
+      )}
+    </div>
   );
 }
 
@@ -99,7 +117,6 @@ export function AvatarStack({ holders }: { holders: ReadonlyArray<Pick<SeatHolde
 /** What the seat controls need to know of the license and the viewer. */
 interface SeatControls {
   holders: readonly SeatHolder[];
-  counts: SeatCounts;
   /** The viewer may assign and unassign (`workspace.licenses.assign`). */
   canAssign: boolean;
   /** More seats are assigned than the license covers: no new assignments until it is back within the quantity. */
@@ -111,12 +128,11 @@ interface SeatControls {
 }
 
 /**
- * The seats, folded: who holds them at a glance, the next action ("Assign licenses" while seats are free, "Add
- * seats ↗" when none are), and "Assigned to ⌄", which opens the roster.
+ * The seats, folded: who holds them at a glance, the seat actions ({@link SeatActions}), and "Assigned to ⌄", which
+ * opens the roster.
  */
 export function SeatStrip({
   holders,
-  counts,
   canAssign,
   blocked = false,
   addSeats,
@@ -126,20 +142,11 @@ export function SeatStrip({
   /** Opens this license's roster. */
   onOpen(): void;
 }) {
-  const next =
-    !canAssign || blocked ? null : counts.free > 0 ? (
-      <Button variant="secondary" size="sm" onClick={onAssign}>
-        <PlusIcon aria-hidden="true" />
-        {t.seats.assignSeats}
-      </Button>
-    ) : addSeats ? (
-      <AddSeatsButton control={addSeats} />
-    ) : null;
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-6 py-4 max-sm:px-5">
       {holders.length > 0 ? <AvatarStack holders={holders} /> : null}
       <p className="min-w-0 flex-1 basis-48 text-sm font-semibold">{t.names.holders(holders.map((holder) => holder.label))}</p>
-      {next ? <div className="flex flex-wrap items-center gap-2">{next}</div> : null}
+      <SeatActions canAssign={canAssign} blocked={blocked} addSeats={addSeats} onAssign={onAssign} primary={false} />
       <Button variant="ghost" size="sm" className="text-muted-foreground" aria-expanded={false} onClick={onOpen}>
         {t.seats.title}
         <ChevronDownIcon aria-hidden="true" />
@@ -151,22 +158,11 @@ export function SeatStrip({
 /** More holders than this and the roster gets a search. */
 const SEARCH_FROM = 8;
 
-/** Up to this many free seats are a row each; more fold into one. */
-const FREE_ROWS_UP_TO = 3;
-
-function FreeSeatIcon() {
-  return (
-    <span className="text-muted-foreground flex size-9 shrink-0 items-center justify-center rounded-full border border-dashed">
-      <PlusIcon aria-hidden="true" className="size-4" />
-    </span>
-  );
-}
-
 /**
- * The roster: who holds each license (their name over their email, since when, and Unassign, which asks first in a
- * dialog), then the available licenses: up to three as a row each with Assign, more folded into "<n> available
- * licenses". With every license assigned it says so and offers "Add licenses ↗" where billing lists it. With more
- * people than licenses (`blocked`) nobody can be assigned, so no assigning control shows; Unassign still does.
+ * The roster: the seat actions ({@link SeatActions}) beside its title, whatever is assigned, then who holds each
+ * subscription (their name over their email, since when, and Unassign, which asks first in a dialog). Seats nobody
+ * holds have no rows: the Subscriptions fact counts them. With more people than subscriptions (`blocked`) nobody can
+ * be assigned, so no assigning control shows; Unassign still does.
  *
  * Unassign opens a modal: "Unassign <name>?" with one plain line, Cancel and a destructive Unassign. Cancel, Escape, the
  * × and the backdrop close it with no request and put focus back on the row's button; a refusal is shown inside it,
@@ -176,7 +172,6 @@ function FreeSeatIcon() {
  */
 export function SeatRoster({
   holders,
-  counts,
   locale,
   productName,
   canAssign,
@@ -227,7 +222,6 @@ export function SeatRoster({
     afterTakingBack.current = (shown[at + 1] ?? shown[at - 1])?.membershipId ?? null;
     setLeaving(holder);
   };
-  const assignable = canAssign && !blocked;
   const searching = searchable && needle !== "";
   const title = (
     <>
@@ -248,15 +242,7 @@ export function SeatRoster({
             <span className="flex items-center gap-2">{title}</span>
           )}
         </h3>
-        {assignable && counts.free > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
-            {addSeats ? <AddSeatsButton control={addSeats} /> : null}
-            <Button size="sm" onClick={onAssign}>
-              <PlusIcon aria-hidden="true" />
-              {t.seats.assignSeats}
-            </Button>
-          </div>
-        ) : null}
+        <SeatActions canAssign={canAssign} blocked={blocked} addSeats={addSeats} onAssign={onAssign} primary={true} />
       </div>
       {searchable ? (
         <div className="relative">
@@ -271,67 +257,38 @@ export function SeatRoster({
           />
         </div>
       ) : null}
-      <ul className="divide-y overflow-hidden rounded-[16px] border">
-        {shown.map((holder) => (
-          <li key={holder.membershipId} className="flex items-center gap-3 px-4 py-3">
-            <Avatar label={holder.label} />
-            <PersonLabel primary={holder.label} secondary={holder.name ? holder.email : undefined} />
-            <span className="text-muted-foreground hidden text-sm whitespace-nowrap sm:block">
-              {t.seats.since(formatDate(holder.assignedAt, locale))}
-            </span>
-            {canAssign ? (
-              <Button
-                ref={(button) => {
-                  if (button) triggers.current.set(holder.membershipId, button);
-                  else triggers.current.delete(holder.membershipId);
-                }}
-                type="button"
-                variant="destructive-secondary"
-                size="sm"
-                aria-label={t.seats.unassignAria(holder.label)}
-                onClick={() => askToUnassign(holder)}
-              >
-                {t.seats.unassign}
-              </Button>
-            ) : null}
-          </li>
-        ))}
-        {searching && shown.length === 0 ? (
-          <li className="text-muted-foreground px-4 py-3 text-sm">{t.picker.noMatches}</li>
-        ) : null}
-        {!searching && assignable && counts.free > 0 && counts.free <= FREE_ROWS_UP_TO
-          ? Array.from({ length: counts.free }, (_, index) => (
-              <li key={`free-${index}`} className="flex items-center gap-3 px-4 py-3">
-                <FreeSeatIcon />
-                <span className="text-muted-foreground flex-1 text-[15px]">{t.seats.freeSeat}</span>
-                <Button variant="secondary" size="sm" onClick={onAssign}>
-                  {t.seats.assign}
+      {/* With nobody to list there is no list: the title's count says so. */}
+      {shown.length === 0 && !searching ? null : (
+        <ul className="divide-y overflow-hidden rounded-[16px] border">
+          {shown.map((holder) => (
+            <li key={holder.membershipId} className="flex items-center gap-3 px-4 py-3">
+              <Avatar label={holder.label} />
+              <PersonLabel primary={holder.label} secondary={holder.name ? holder.email : undefined} />
+              <span className="text-muted-foreground hidden text-sm whitespace-nowrap sm:block">
+                {t.seats.since(formatDate(holder.assignedAt, locale))}
+              </span>
+              {canAssign ? (
+                <Button
+                  ref={(button) => {
+                    if (button) triggers.current.set(holder.membershipId, button);
+                    else triggers.current.delete(holder.membershipId);
+                  }}
+                  type="button"
+                  variant="destructive-secondary"
+                  size="sm"
+                  aria-label={t.seats.unassignAria(holder.label)}
+                  onClick={() => askToUnassign(holder)}
+                >
+                  {t.seats.unassign}
                 </Button>
-              </li>
-            ))
-          : null}
-        {!searching && counts.free > FREE_ROWS_UP_TO ? (
-          <li className="flex items-center gap-3 px-4 py-3">
-            <FreeSeatIcon />
-            <div className="min-w-0 flex-1">
-              <div className="text-[15px] font-semibold">{t.seats.freeSeats(counts.free)}</div>
-              {holders.length === 0 ? <div className="text-muted-foreground text-[13px] leading-5">{t.seats.nobodyYet}</div> : null}
-            </div>
-          </li>
-        ) : null}
-        {!searching && assignable && counts.free === 0 ? (
-          <li className="bg-surface/70 flex flex-wrap items-center gap-x-3 gap-y-3 px-4 py-3.5">
-            <span className="bg-background flex size-9 shrink-0 items-center justify-center rounded-full border">
-              <CheckIcon aria-hidden="true" className="size-4" />
-            </span>
-            <div className="min-w-0 flex-1 basis-56 text-sm leading-5">
-              <p className="font-semibold">{t.seats.allInUse(counts.quantity)}</p>
-              <p className="text-muted-foreground">{t.seats.allInUseHelp(addSeats !== null)}</p>
-            </div>
-            {addSeats ? <AddSeatsButton control={addSeats} variant="default" /> : null}
-          </li>
-        ) : null}
-      </ul>
+              ) : null}
+            </li>
+          ))}
+          {searching && shown.length === 0 ? (
+            <li className="text-muted-foreground px-4 py-3 text-sm">{t.picker.noMatches}</li>
+          ) : null}
+        </ul>
+      )}
       {/* Mounted only while it asks, so a roster holds no dialog of its own until then. */}
       {leaving ? (
         <ConfirmDialog

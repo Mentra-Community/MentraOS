@@ -70,11 +70,11 @@ const STATUS: BillingStatus = {
       quantity: 5,
       total: usd(14500),
       tax: "excluded",
-      actions: [{ kind: "add_seats", fallbackLabel: "Add licenses" }],
+      actions: [{ kind: "add_seats", fallbackLabel: "Buy subscriptions" }],
     },
   ],
   total: { amount: usd(14500), recurrence: { interval: "month", count: 1 }, tax: "excluded", licenseCount: 1 },
-  actions: [{ kind: "billing_and_invoices", fallbackLabel: "Billing & invoices" }],
+  actions: [{ kind: "billing_and_invoices", fallbackLabel: "Billing" }],
   testMode: null,
   purchase: null,
 };
@@ -351,7 +351,7 @@ describe("billingErrorMessage", () => {
 
   test("words the refusals the screens act on, with the product's name", () => {
     expect(billingErrorMessage(refused("already_licensed"), { product: "Mentra Call Unlimited" })).toBe(
-      "You already have Mentra Call Unlimited. Add licenses instead.",
+      "You already have Mentra Call Unlimited. Buy more subscriptions instead.",
     );
     expect(billingErrorMessage(refused("checkout_in_progress"), { product: "Mentra Call Unlimited" })).toBe(
       "A purchase of Mentra Call Unlimited is already under way. Finish it, or try again in a minute.",

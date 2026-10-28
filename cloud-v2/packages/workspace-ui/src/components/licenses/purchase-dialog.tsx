@@ -52,7 +52,7 @@ export interface PurchaseDialogProps {
  * dialog ready, whatever `timedOut` says.
  *
  * `assigned` is whether the new license's seats include the viewer's own (billing hands the buyer one): the ready
- * dialog then says so.
+ * dialog then says "You now have <product>!" and to open the Mentra App, and with more than one bought, to assign the rest.
  *
  * Mount it open and unmount it to close it, as the link's dialogs are: its content is drawn only while it is open.
  * It opens with focus on OK, so Enter closes it and the × is not what the eye lands on.
@@ -64,10 +64,11 @@ export function PurchaseDialog({ purchase, productName, entry, listed, assigned 
   const ready = purchase.status === "ready" && listed;
   const { paid, quantity } = purchase;
   const phase = ready ? "ready" : timedOut ? "timeout" : "processing";
+  const given = t.purchase.youNowHave(productName, quantity);
   const headline =
     phase === "ready"
       ? assigned
-        ? t.purchase.givenTitle({ seats: quantity, product: productName, paid })
+        ? given.title
         : t.purchase.readyTitle({ seats: quantity, product: productName })
       : phase === "timeout"
         ? t.purchase.timeout.title(paid)
@@ -75,7 +76,7 @@ export function PurchaseDialog({ purchase, productName, entry, listed, assigned 
   const body =
     phase === "ready"
       ? assigned
-        ? t.purchase.givenBody({ seats: quantity, product: productName, paid })
+        ? given.body
         : t.purchase.readyBody({ product: productName, paid })
       : phase === "timeout"
         ? t.purchase.timeout.body

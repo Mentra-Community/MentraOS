@@ -254,7 +254,7 @@ describe("a person with no workspace and no invitation gets one made", () => {
     expect(core.ensures).toBe(1);
 
     gate.release();
-    await until(() => heading() === "Licenses", "the Licenses page");
+    await until(() => heading() === "Subscriptions", "the Subscriptions page");
     expect(core.ensures).toBe(1);
     expect(page()).toContain("Name of ws_made");
     expect(address()).toBe(BUY);
@@ -267,7 +267,7 @@ describe("a person with no workspace and no invitation gets one made", () => {
     await flush();
     expect(core.ensures).toBe(1);
     gate.release();
-    await until(() => heading() === "Licenses", "the Licenses page");
+    await until(() => heading() === "Subscriptions", "the Subscriptions page");
     expect(core.ensures).toBe(1);
   });
 
@@ -296,7 +296,7 @@ describe("a person with no workspace and no invitation gets one made", () => {
     await flush();
     expect(core.ensures).toBe(1);
     await click(byText("Try again", "button"));
-    await until(() => heading() === "Licenses", "the Licenses page");
+    await until(() => heading() === "Subscriptions", "the Subscriptions page");
     expect(core.ensures).toBe(2);
     expect(address()).toBe(BUY);
   });
@@ -320,7 +320,7 @@ describe("a person with no workspace and no invitation gets one made", () => {
     expect(core.ensures).toBe(1);
     core.listHidesMade = false;
     await click(byText("Try again", "button"));
-    await until(() => heading() === "Licenses", "the Licenses page");
+    await until(() => heading() === "Subscriptions", "the Subscriptions page");
     expect(core.ensures).toBe(2);
   });
 
@@ -347,7 +347,7 @@ describe("an invitation the person can accept comes first", () => {
     expect(address()).toBe(BUY);
 
     await click(byText("Accept invitation", "button"));
-    await until(() => page().includes("Name of ws_joined") && heading() === "Licenses", "the joined workspace's Licenses page");
+    await until(() => page().includes("Name of ws_joined") && heading() === "Subscriptions", "the joined workspace's Subscriptions page");
     expect(address()).toBe(BUY);
     expect(core.ensures).toBe(0);
   });
@@ -358,7 +358,7 @@ describe("an invitation the person can accept comes first", () => {
     await flush();
     expect(core.ensures).toBe(0);
     await click(byText("Accept invitation", "button"));
-    await until(() => page().includes("Name of ws_linked") && heading() === "Licenses", "the joined workspace");
+    await until(() => page().includes("Name of ws_linked") && heading() === "Subscriptions", "the joined workspace");
     expect(address()).toBe(BUY);
     expect(core.ensures).toBe(0);
   });
@@ -380,7 +380,7 @@ describe("an invitation the person can accept comes first", () => {
     expect(core.ensures).toBe(0);
     await click(byText("Dismiss", "button"));
     await until(() => core.ensures === 1, "ensure to be called");
-    await until(() => heading() === "Licenses", "the Licenses page");
+    await until(() => heading() === "Subscriptions", "the Subscriptions page");
     expect(address()).toBe(BUY);
   });
 
@@ -395,14 +395,14 @@ describe("an invitation the person can accept comes first", () => {
   test("an invitation for another account does not stop it", async () => {
     const { core } = await open(BUY, { withLink: true, link: invitationTo("ws_other", "someone@else.test") });
     await until(() => core.ensures === 1, "ensure to be called");
-    await until(() => heading() === "Licenses", "the Licenses page");
+    await until(() => heading() === "Subscriptions", "the Subscriptions page");
     expect(address()).toBe(BUY);
   });
 
   test("a link that is no longer valid does not stop it", async () => {
     const { core } = await open(BUY, { withLink: true, link: null });
     await until(() => core.ensures === 1, "ensure to be called");
-    await until(() => heading() === "Licenses", "the Licenses page");
+    await until(() => heading() === "Subscriptions", "the Subscriptions page");
   });
 });
 
@@ -430,7 +430,7 @@ describe("invitations that could not be read hold the first run back", () => {
     await until(() => page().includes(unreadable), "the unavailable state");
     core.mineStatus = null;
     await click(byText("Try again", "button"));
-    await until(() => heading() === "Licenses", "the Licenses page");
+    await until(() => heading() === "Subscriptions", "the Subscriptions page");
     expect(core.ensures).toBe(1);
   });
 
@@ -455,14 +455,14 @@ describe("invitations that could not be read hold the first run back", () => {
   test("a 4xx is an answer: an unverified email (403) on /invitations/mine holds nothing back", async () => {
     const { core } = await open(BUY, { mineStatus: 403 });
     await until(() => core.ensures === 1, "ensure to be called");
-    await until(() => heading() === "Licenses", "the Licenses page");
+    await until(() => heading() === "Subscriptions", "the Subscriptions page");
     expect(page()).not.toContain(unreadable);
   });
 
   test("and so is a link Core refuses (400): it does not hold forever", async () => {
     const { core } = await open(BUY, { withLink: true, link: invitationTo("ws_other"), linkStatus: 400 });
     await until(() => core.ensures === 1, "ensure to be called");
-    await until(() => heading() === "Licenses", "the Licenses page");
+    await until(() => heading() === "Subscriptions", "the Subscriptions page");
   });
 
   test("where creation is not allowed, unreadable invitations change nothing: the notice shows", async () => {
@@ -512,6 +512,34 @@ describe("no workspace is made", () => {
 });
 
 describe("the sign-in gate", () => {
+  test("goes straight to sign-in for the address, with no button to press, once, even in strict mode", async () => {
+    window.history.replaceState(null, "", BUY);
+    const went: string[] = [];
+    const storage = window.sessionStorage;
+    storage.clear();
+    await render(
+      <StrictMode>
+        <LoginGate autoSignIn storage={storage} go={url => went.push(url)} />
+      </StrictMode>,
+    );
+    await flush();
+    expect(went).toHaveLength(1);
+    expect(new URL(went[0]!, "https://portal.example.test").searchParams.get("return_to")).toBe(BUY);
+    expect(page()).toContain("Signing in");
+    expect(page()).not.toContain("Sign into Mentra account");
+    storage.clear();
+  });
+
+  test("where the tab can't note that it went, it shows the button instead of going", async () => {
+    window.history.replaceState(null, "", "/");
+    const went: string[] = [];
+    spyOn(globalThis, "fetch").mockImplementation((async () => Response.json({}, { status: 404 })) as unknown as typeof fetch);
+    await render(<LoginGate autoSignIn storage={null} go={url => went.push(url)} />);
+    await flush();
+    expect(went).toEqual([]);
+    expect(page()).toContain("Sign into Mentra account");
+  });
+
   test("says to sign into the Mentra account, and comes back to the address", async () => {
     window.history.replaceState(null, "", BUY);
     spyOn(globalThis, "fetch").mockImplementation((async () => Response.json({ error: "not_found" }, { status: 404 })) as unknown as typeof fetch);
@@ -542,13 +570,13 @@ describe("the sign-in gate", () => {
     expect(asked).toEqual(["/api/portal/billing/public/products/mentra.call.unlimited"]);
     expect(page().indexOf("Sign in to buy Mentra Call Unlimited.")).toBeLessThan(page().indexOf("Sign into Mentra account"));
     expect(page()).not.toContain("Manage your workspaces");
-    expect(page()).not.toContain("a license.");
+    expect(page()).not.toContain("a subscription.");
   });
 
   test("where the name can't be read it says 'Sign in to buy a license.': an unknown product, an error, no connection", async () => {
     for (const answer of [Response.json({ error: "not_found" }, { status: 404 }), Response.json({}, { status: 500 }), new Error("offline")]) {
       await gateAnswering(answer);
-      await until(() => page().includes("Sign in to buy a license."), "the generic line");
+      await until(() => page().includes("Sign in to buy a subscription."), "the generic line");
       expect(page()).toContain("Sign into Mentra account");
       await cleanup();
     }

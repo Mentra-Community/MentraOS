@@ -1,5 +1,5 @@
 /**
- * "Assign licenses": a dialog that searches the workspace's members, chooses several, and gives them all a seat of
+ * "Assign subscriptions": a dialog that searches the workspace's members, chooses several, and gives them all a seat of
  * one license in one request, all or none. People who already hold a seat, or haven't signed in yet, are listed
  * but can't be chosen, with the reason. The choice isn't capped as it is made: when more are chosen than there are
  * seats, the dialog says how many fit ("3 of 4 fit: remove one or add licenses.") and Assign stays off, so the person
@@ -54,7 +54,7 @@ export function PeoplePickerDialog({
   license: LicenseView;
   productName: string;
   members: readonly MemberView[];
-  /** "Add licenses ↗", or null where billing lists no `add_seats`: then the dialog offers only fewer people. */
+  /** "Buy subscriptions ↗", or null where billing lists no `add_seats`: then the dialog offers only fewer people. */
   addSeats: AddSeatsControl | null;
 }) {
   return (
@@ -151,7 +151,7 @@ function PickerBody({
             }
           />
         ) : null}
-        {/* Add licenses leaves for billing: when that fails, the person is told here, where they are looking. */}
+        {/* Buy subscriptions leaves for billing: when that fails, the person is told here, where they are looking. */}
         <HostedFeedback action={{ error: addSeats?.error ?? null, link: addSeats?.link ?? null }} />
         <SeatErrorNotice error={assign.error} />
         <ul className="-mx-2 max-h-[min(46vh,400px)] space-y-0.5 overflow-y-auto">

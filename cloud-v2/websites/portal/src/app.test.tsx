@@ -126,7 +126,7 @@ interface Seed {
   list?: WorkspaceListItem[];
   details?: WorkspaceDetail[];
   members?: MemberView[];
-  /** Acme's licenses, as the viewer's listing answers them. */
+  /** Acme's subscriptions, as the viewer's listing answers them. */
   licenses?: LicenseView[];
   preview?: InvitationPreview;
 }
@@ -766,9 +766,9 @@ const adminOfAcme = (licenses: LicenseView[] | undefined): Seed => ({
 const caps = (role: WorkspaceRole) => ({ capabilities: [...capabilitiesForRole(role)] });
 
 // The sidebar's Licenses link (any, and the current page's) and the page heading, as they render.
-const LICENSES_ITEM = "</svg>Licenses</a>";
-const ACTIVE_LICENSES_ITEM = /aria-current="page"[^>]*>(?:(?!<\/a>).)*<\/svg>Licenses<\/a>/;
-const LICENSES_HEADING = /<h1[^>]*>Licenses<\/h1>/;
+const LICENSES_ITEM = "</svg>Subscriptions</a>";
+const ACTIVE_LICENSES_ITEM = /aria-current="page"[^>]*>(?:(?!<\/a>).)*<\/svg>Subscriptions<\/a>/;
+const LICENSES_HEADING = /<h1[^>]*>Subscriptions<\/h1>/;
 
 describe("Licenses in the sidebar", () => {
   test("is the first section, and is offered only where there are licenses to show", () => {
@@ -786,7 +786,7 @@ describe("Licenses in the sidebar", () => {
 
   test("is called Licenses and goes to the workspace's licenses address", () => {
     const items = workspaceNav(ACME, visibleSections(caps("owner"), { licenses: true }), ACME).flatMap(group => group.items);
-    expect(items.find(item => item.key === "licenses")).toMatchObject({ label: "Licenses", href: `/licenses` });
+    expect(items.find(item => item.key === "licenses")).toMatchObject({ label: "Subscriptions", href: `/licenses` });
   });
 
   test("shows when billing is offered or the workspace has licenses, and never when it has neither", () => {
@@ -815,7 +815,7 @@ describe("the Licenses page", () => {
     const member = renderAs(true, `/licenses`, memberOfAcme([MEMBERS_OWN_LICENSE]));
     expect(hrefs(member)).toContain(`/licenses`);
     expect(member).toMatch(ACTIVE_LICENSES_ITEM);
-    expect(member).not.toContain("Your licenses in");
+    expect(member).not.toContain("Your subscriptions in");
     expect(member).not.toContain("pays for");
     expect(member).not.toMatch(/Licenses<\/h1><p/);
   });
@@ -868,8 +868,8 @@ describe("the Licenses page", () => {
     const sidebar = renderAs(false, `/members`, withLicenses(undefined));
     expect(sidebar).not.toContain(LICENSES_ITEM);
     const page = renderAs(false, `/licenses`, withLicenses(undefined));
-    expect(page).toContain("Loading licenses");
-    expect(page).not.toContain("no licenses yet");
+    expect(page).toContain("Loading subscriptions");
+    expect(page).not.toContain("no subscriptions yet");
   });
 });
 
@@ -886,7 +886,7 @@ describe("when the workspace's licenses cannot be loaded", () => {
    */
   async function failedLicenses(): Promise<QueryClient> {
     const spy = spyOn(globalThis, "fetch").mockImplementation((async () =>
-      Response.json({ error: "server_error", error_description: "licenses are unavailable" }, { status: 500 })) as unknown as typeof fetch);
+      Response.json({ error: "server_error", error_description: "subscriptions are unavailable" }, { status: 500 })) as unknown as typeof fetch);
     restore = () => spy.mockRestore();
     // A server render would otherwise show the refetch a mounted observer starts for a failed query.
     const client = seeded(TWO_WORKSPACES, new QueryClient({ defaultOptions: { queries: { retryOnMount: false } } }));
@@ -914,10 +914,10 @@ describe("when the workspace's licenses cannot be loaded", () => {
     for (const billing of [false, true]) {
       const markup = await renderFailed(billing, `/licenses`);
       expect(markup).toMatch(LICENSES_HEADING);
-      expect(markup).toContain("Licenses are unavailable");
+      expect(markup).toContain("Subscriptions are unavailable");
       expect(markup).toMatch(/<button[^>]*>.*Retry<\/button>/);
-      expect(markup).not.toContain("Loading licenses");
-      expect(markup).not.toContain("no licenses yet");
+      expect(markup).not.toContain("Loading subscriptions");
+      expect(markup).not.toContain("no subscriptions yet");
       // No module is hosted behind it.
       expect(markup).not.toContain('<section aria-label="Billing"');
     }

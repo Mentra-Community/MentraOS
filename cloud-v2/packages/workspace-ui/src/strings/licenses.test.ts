@@ -12,18 +12,18 @@ describe("dialogs and side panels", () => {
 
 describe("the pages", () => {
   test("the Licenses page", () => {
-    expect(t.page.title).toBe("Licenses");
+    expect(t.page.title).toBe("Subscriptions");
     // The title stands alone: no subtitle for a manager or for a member.
     expect("description" in t.page).toBe(false);
     expect("memberDescription" in t.page).toBe(false);
-    expect(t.page.adminsGiveOutSeats("Acme Field Services")).toBe("Acme Field Services's Admins and Owners assign licenses.");
-    expect(t.page.noSeat.title("Acme Field Services")).toBe("You don't have a license in Acme Field Services");
+    expect(t.page.adminsGiveOutSeats("Acme Field Services")).toBe("Acme Field Services's Admins and Owners assign subscriptions.");
+    expect(t.page.noSeat.title("Acme Field Services")).toBe("You don't have a subscription in Acme Field Services");
     expect(t.page.noSeat.body).toBe(
-      "Its Admins and Owners assign licenses. Once you have one, it works the next time you open the miniapp it's for.",
+      "Its Admins and Owners assign subscriptions. Once you have one, it works the next time you open the miniapp it's for.",
     );
-    expect(t.page.billingAndInvoices).toBe("Billing & invoices");
-    // A workspace buys several licenses.
-    expect(t.page.buyLicenses).toBe("Buy licenses");
+    // The header has one button, Billing; buying more is on each card.
+    expect(t.actions.label("billing_and_invoices", "Billing & invoices")).toBe("Billing");
+    expect("buyLicenses" in t.page).toBe(false);
   });
 
   test("the sentence the spec leaves unwritten: no products where nothing is offered", () => {
@@ -32,14 +32,14 @@ describe("the pages", () => {
 
   test("its unavailable state", () => {
     expect(t.page.unavailable).toEqual({
-      title: "Licenses are unavailable",
+      title: "Subscriptions are unavailable",
       body: "They can't be shown right now. Try again in a moment.",
       retry: "Retry",
     });
   });
 
   test("the navigation has the Licenses page and nothing personal", () => {
-    expect(t.nav).toEqual({ licenses: "Licenses" });
+    expect(t.nav).toEqual({ licenses: "Subscriptions" });
     expect("personal" in t).toBe(false);
   });
 
@@ -55,21 +55,24 @@ describe("the pages", () => {
     const ws = "Acme Field Services";
     const call = "Mentra Call Unlimited";
     expect(words.held(call)).toBe("You already have Mentra Call Unlimited.");
-    expect(words.youNowHave(call)).toBe("You now have Mentra Call Unlimited.");
-    expect(words.assignTaken).toBe("That license was just taken. Nothing was assigned.");
+    expect(words.youNowHave(call)).toEqual({
+      title: "You now have Mentra Call Unlimited!",
+      body: "Open the Mentra App now to use it on your smart glasses.",
+    });
+    expect(words.assignTaken).toBe("That subscription was just taken. Nothing was assigned.");
     expect(words.openingCheckout).toBe("Opening checkout…");
     expect(words.full(ws, 3, call, t.names.short(["Ana Ruiz", "Ben Cho", "Cy Dunn"]))).toEqual({
-      body: "Acme Field Services has 3 Mentra Call Unlimited licenses, assigned to Ana Ruiz and 2 others.",
-      hint: "Unassign someone on the Mentra Call Unlimited card to free a license.",
+      body: "Acme Field Services has 3 Mentra Call Unlimited subscriptions, assigned to Ana Ruiz and 2 others.",
+      hint: "Unassign someone on the Mentra Call Unlimited card to free a subscription.",
     });
-    expect(words.full(ws, 1, call, "Ana Ruiz").body).toBe("Acme Field Services has 1 Mentra Call Unlimited license, assigned to Ana Ruiz.");
-    expect(words.full(ws, 1, call, t.names.short([])).body).toBe("Acme Field Services has 1 Mentra Call Unlimited license.");
+    expect(words.full(ws, 1, call, "Ana Ruiz").body).toBe("Acme Field Services has 1 Mentra Call Unlimited subscription, assigned to Ana Ruiz.");
+    expect(words.full(ws, 1, call, t.names.short([])).body).toBe("Acme Field Services has 1 Mentra Call Unlimited subscription.");
     expect(t.names.short([])).toBe("");
     expect(words.alreadyHas(ws, call)).toBe("Acme Field Services already has Mentra Call Unlimited.");
     expect(words.notForSale).toBe("That product isn't for sale.");
     expect(words.askAnAdmin(ws, call)).toBe("Only Admins and Owners of Acme Field Services can buy Mentra Call Unlimited. Ask one of them.");
-    expect(words.askAnAdmin(ws, words.anyProduct)).toBe("Only Admins and Owners of Acme Field Services can buy licenses. Ask one of them.");
-    expect(words.notHere).toBe("Licenses can't be bought here.");
+    expect(words.askAnAdmin(ws, words.anyProduct)).toBe("Only Admins and Owners of Acme Field Services can buy subscriptions. Ask one of them.");
+    expect(words.notHere).toBe("Subscriptions can't be bought here.");
     expect(words.done).toBe("Done");
     // The dialogs that asked first (Assign it to me, Add one for you?) are gone: the page does it.
     expect(Object.keys(words).sort()).toEqual(
@@ -80,37 +83,37 @@ describe("the pages", () => {
 
 describe("the catalog and buying", () => {
   test("the catalog's heading", () => {
-    expect(t.catalog.title).toBe("Buy licenses for your members");
+    expect(t.catalog.title).toBe("Buy subscriptions for your members");
     expect("intro" in t.catalog).toBe(false);
     expect(t.catalog.buy).toBe("Buy");
   });
 
   test("the catalog dialog and its held rows", () => {
-    expect(t.catalog.dialog.title).toBe("Buy licenses");
-    expect(t.catalog.dialog.description).toBe("Products for your workspace. For one you have, add licenses instead.");
-    expect(t.catalog.youHaveSeats(5)).toBe("You have 5 licenses");
-    expect(t.catalog.youHaveSeats(1)).toBe("You have 1 license");
+    expect(t.catalog.dialog.title).toBe("Buy subscriptions");
+    expect(t.catalog.dialog.description).toBe("Products for your workspace. For one you have, buy more subscriptions instead.");
+    expect(t.catalog.youHaveSeats(5)).toBe("You have 5 subscriptions");
+    expect(t.catalog.youHaveSeats(1)).toBe("You have 1 subscription");
   });
 
   test("the licenses step", () => {
     expect(t.buy.title("Fleet")).toBe("Buy Fleet");
     expect(t.buy.terms("$15 per user a month", "month")).toBe(
-      "$15 per user a month · Renews every month. Change the number of licenses or cancel at any time.",
+      "$15 per user a month · Renews every month. Change the number of subscriptions or cancel at any time.",
     );
     expect(t.buy.terms("$15 per user every 3 months", "3 months")).toBe(
-      "$15 per user every 3 months · Renews every 3 months. Change the number of licenses or cancel at any time.",
+      "$15 per user every 3 months · Renews every 3 months. Change the number of subscriptions or cancel at any time.",
     );
-    expect(t.buy.seats).toBe("Licenses");
-    expect([t.buy.fewer, t.buy.more]).toEqual(["One license fewer", "One license more"]);
+    expect(t.buy.seats).toBe("Subscriptions");
+    expect([t.buy.fewer, t.buy.more]).toEqual(["One subscription fewer", "One subscription more"]);
     expect(t.buy.members(14)).toBe("Your workspace has 14 members.");
     expect(t.buy.members(1)).toBe("Your workspace has 1 member.");
     expect(t.buy.summary({ seats: 10, unit: "$15", total: "$150", rate: "a month", note: "before tax" })).toBe(
-      "10 licenses × $15 · $150 a month · before tax",
+      "10 subscriptions × $15 · $150 a month · before tax",
     );
-    expect(t.buy.summary({ seats: 1, unit: "$15", total: "$15", rate: "a month", note: null })).toBe("1 license × $15 · $15 a month");
+    expect(t.buy.summary({ seats: 1, unit: "$15", total: "$15", rate: "a month", note: null })).toBe("1 subscription × $15 · $15 a month");
     // A workspace of one member buys one license with no number to choose.
-    expect(t.buy.solo({ total: "$29", rate: "a month", note: "before tax" })).toBe("1 license · $29 a month · before tax");
-    expect(t.buy.solo({ total: "$29", rate: "a month", note: null })).toBe("1 license · $29 a month");
+    expect(t.buy.solo({ total: "$29", rate: "a month", note: "before tax" })).toBe("1 subscription · $29 a month · before tax");
+    expect(t.buy.solo({ total: "$29", rate: "a month", note: null })).toBe("1 subscription · $29 a month");
     expect("yoursOnPayment" in t.buy).toBe(false);
     expect("payNote" in t.buy).toBe(false);
     expect([t.buy.cancel, t.buy.continue]).toEqual(["Cancel", "Continue to payment"]);
@@ -142,7 +145,7 @@ describe("a product's card", () => {
   });
 
   test("the licenses fact", () => {
-    expect(t.facts.seats.label).toBe("Licenses");
+    expect(t.facts.seats.label).toBe("Subscriptions");
     expect(t.facts.seats.inUse(3, 5)).toBe("3 of 5 assigned");
     // "2 available" is not said: the count and the meter already say it.
     expect("free" in t.facts.seats).toBe(false);
@@ -163,16 +166,16 @@ describe("a product's card", () => {
 
   test("the cost fact", () => {
     expect(t.facts.cost.label).toBe("Cost");
-    expect(t.facts.cost.noMoreCharges).toBe("No more charges");
     expect(t.facts.cost.value("$145", "a month")).toBe("$145 a month");
-    // The one sub-line, for a cost with tax excluded; no quantity × unit.
-    expect(t.facts.cost.beforeTax).toBe("Before tax");
+    // No sub-line: no tax note, no "No more charges", no quantity × unit.
+    expect("beforeTax" in t.facts.cost).toBe(false);
+    expect("noMoreCharges" in t.facts.cost).toBe(false);
     expect("multiple" in t.facts.cost).toBe(false);
     expect("foot" in t.facts.cost).toBe(false);
   });
 
   test("a member's own license", () => {
-    expect(t.facts.own.seat).toBe("Your license");
+    expect(t.facts.own.seat).toBe("Your subscription");
     expect(t.facts.own.since("Oct 20, 2026")).toBe("Since Oct 20, 2026");
     expect(t.facts.own.givenBy("Acme Field Services")).toBe("Given by Acme Field Services");
     expect(t.facts.own.worksIn).toBe("Works in");
@@ -181,17 +184,17 @@ describe("a product's card", () => {
 
   test("the failed-payment notice names the day the licenses stop working, then says they stopped", () => {
     expect(t.notice.pastDue({ date: "Nov 23, 2026", stopped: false })).toEqual({
-      title: "Licenses stop working on Nov 23, 2026 unless payment goes through.",
+      title: "Subscriptions stop working on Nov 23, 2026 unless payment goes through.",
       body: "Update the payment method to keep them.",
     });
     expect(t.notice.pastDue({ date: "Nov 23, 2026", stopped: true })).toEqual({
-      title: "Licenses stopped working on Nov 23, 2026. They come back once payment goes through.",
+      title: "Subscriptions stopped working on Nov 23, 2026. They come back once payment goes through.",
       body: null,
     });
     // Billing always sends the date; a subscription without one still gets a notice that claims nothing about it.
     expect(t.notice.pastDue({ date: null, stopped: false })).toEqual({
       title: "The last payment didn't go through.",
-      body: "Update the payment method to keep the licenses.",
+      body: "Update the payment method to keep the subscriptions.",
     });
   });
 
@@ -204,19 +207,19 @@ describe("a product's card", () => {
 
   test("the over-assigned notice, with and without 'add licenses'", () => {
     expect(t.notice.over({ used: 7, quantity: 5, canAddSeats: true })).toEqual({
-      title: "7 people are assigned but only 5 licenses are paid for.",
-      body: "Unassign 2 of them, or add 2 licenses. No one else can get a license until then.",
+      title: "7 people are assigned but only 5 subscriptions are paid for.",
+      body: "Unassign 2 of them, or buy 2 subscriptions. No one else can get a subscription until then.",
     });
     expect(t.notice.over({ used: 7, quantity: 5, canAddSeats: false })).toEqual({
-      title: "7 people are assigned but only 5 licenses are paid for.",
-      body: "Unassign 2 of them. No one else can get a license until then.",
+      title: "7 people are assigned but only 5 subscriptions are paid for.",
+      body: "Unassign 2 of them. No one else can get a subscription until then.",
     });
     expect(t.notice.over({ used: 6, quantity: 5, canAddSeats: true }).body).toBe(
-      "Unassign 1 of them, or add 1 license. No one else can get a license until then.",
+      "Unassign 1 of them, or buy 1 subscription. No one else can get a subscription until then.",
     );
     // One person and one license: the verbs agree.
-    expect(t.notice.over({ used: 1, quantity: 0, canAddSeats: true }).title).toBe("1 person is assigned but only 0 licenses are paid for.");
-    expect(t.notice.over({ used: 2, quantity: 1, canAddSeats: true }).title).toBe("2 people are assigned but only 1 license is paid for.");
+    expect(t.notice.over({ used: 1, quantity: 0, canAddSeats: true }).title).toBe("1 person is assigned but only 0 subscriptions are paid for.");
+    expect(t.notice.over({ used: 2, quantity: 1, canAddSeats: true }).title).toBe("2 people are assigned but only 1 subscription is paid for.");
   });
 });
 
@@ -234,13 +237,13 @@ describe("billing's actions", () => {
     for (const kind of KNOWN_ACTION_KINDS) expect(a.label(kind, "FALLBACK")).not.toBe("FALLBACK");
     // The words themselves, as the spec has them.
     expect([a.addSeats, a.changeSeats, a.cancel, a.renew, a.updatePayment, a.completePayment, a.billingAndInvoices]).toEqual([
-      "Add licenses",
-      "Change license count",
+      "Buy subscriptions",
+      "Change subscription count",
       "Cancel",
       "Renew",
       "Update payment method",
       "Complete payment",
-      "Billing & invoices",
+      "Billing",
     ]);
   });
 
@@ -250,7 +253,7 @@ describe("billing's actions", () => {
   });
 
   test("adding a number of licenses, and the link for a blocked tab", () => {
-    expect([t.actions.addSeatsCount(2), t.actions.addSeatsCount(1)]).toEqual(["Add 2 licenses", "Add 1 license"]);
+    expect([t.actions.addSeatsCount(2), t.actions.addSeatsCount(1)]).toEqual(["Buy 2 subscriptions", "Buy 1 subscription"]);
     expect(t.actions.openPaymentPage).toBe("Open the payment page");
   });
 });
@@ -258,29 +261,28 @@ describe("billing's actions", () => {
 describe("licenses held", () => {
   test("the roster", () => {
     expect(t.seats.title).toBe("Assigned to");
-    expect(t.seats.searchPlaceholder).toBe("Search people with a license");
+    expect(t.seats.searchPlaceholder).toBe("Search people with a subscription");
     expect(t.seats.since("Oct 20, 2026")).toBe("Since Oct 20, 2026");
     expect(t.seats.unassign).toBe("Unassign");
     expect(t.seats.cancel).toBe("Cancel");
     // Unassign asks in a dialog: its title, and one plain line under it.
     expect(t.seats.unassignPrompt("Hannah Kim")).toBe("Unassign Hannah Kim?");
     expect(t.seats.unassignBody("Hannah Kim", "Mentra Call Unlimited")).toBe("Hannah Kim loses Mentra Call Unlimited the next time they open it.");
-    expect(t.seats.freeSeat).toBe("Available license");
-    expect(t.seats.assign).toBe("Assign");
-    expect(t.seats.assignSeats).toBe("Assign licenses");
-    expect(t.seats.freeSeats(7)).toBe("7 available licenses");
-    expect(t.seats.nobodyYet).toBe("No one has a license yet.");
+    expect(t.seats.assignSeats).toBe("Assign subscriptions");
+    // Seats nobody holds have no rows, so nothing names them.
+    expect("freeSeat" in t.seats).toBe(false);
+    expect("freeSeats" in t.seats).toBe(false);
   });
 
-  test("a full roster, with and without 'add licenses'", () => {
-    expect(t.seats.allInUse(5)).toBe("All 5 licenses are assigned.");
-    expect(t.seats.allInUse(1)).toBe("The license is assigned.");
-    expect(t.seats.allInUseHelp(true)).toBe("Add licenses to give one to someone else, or unassign someone to free theirs.");
-    expect(t.seats.allInUseHelp(false)).toBe("Unassign someone to free their license.");
+  test("every subscription assigned, as the people picker says it", () => {
+    expect(t.seats.allInUse(5)).toBe("All 5 subscriptions are assigned.");
+    expect(t.seats.allInUse(1)).toBe("The subscription is assigned.");
+    // The roster has no row for it: Buy subscriptions and Assign subscriptions head it whatever is assigned.
+    expect("allInUseHelp" in t.seats).toBe(false);
   });
 
   test("who holds the licenses, in a strip", () => {
-    expect(t.names.holders([])).toBe("No one has a license yet");
+    expect(t.names.holders([])).toBe("No one has a subscription yet");
     expect(t.names.holders(["Dana Reyes", "Priya Natarajan", "C", "D", "E", "F", "G", "H", "I", "J"])).toBe(
       "Dana Reyes, Priya Natarajan and 8 others",
     );
@@ -290,22 +292,22 @@ describe("licenses held", () => {
 
 describe("the people picker", () => {
   test("its dialog", () => {
-    expect(t.picker.title).toBe("Assign licenses");
-    expect(t.picker.description("Mentra Call Unlimited", 3)).toBe("Mentra Call Unlimited · 3 available licenses");
-    expect(t.picker.description("Mentra Call Unlimited", 1)).toBe("Mentra Call Unlimited · 1 available license");
+    expect(t.picker.title).toBe("Assign subscriptions");
+    expect(t.picker.description("Mentra Call Unlimited", 3)).toBe("Mentra Call Unlimited · 3 available subscriptions");
+    expect(t.picker.description("Mentra Call Unlimited", 1)).toBe("Mentra Call Unlimited · 1 available subscription");
     expect(t.picker.search).toBe("Search by name or email");
-    expect(t.picker.hasASeat).toBe("Has a license");
+    expect(t.picker.hasASeat).toBe("Has a subscription");
     expect(t.picker.afterFirstSignIn).toBe("After first sign-in");
-    expect(t.picker.chosen(2, 3)).toBe("2 of 3 available licenses chosen");
-    expect(t.picker.chosen(1, 1)).toBe("1 of 1 available license chosen");
-    expect([t.picker.assign(0), t.picker.assign(1), t.picker.assign(3)]).toEqual(["Assign", "Assign 1 license", "Assign 3 licenses"]);
+    expect(t.picker.chosen(2, 3)).toBe("2 of 3 available subscriptions chosen");
+    expect(t.picker.chosen(1, 1)).toBe("1 of 1 available subscription chosen");
+    expect([t.picker.assign(0), t.picker.assign(1), t.picker.assign(3)]).toEqual(["Assign", "Assign 1 subscription", "Assign 3 subscriptions"]);
     expect(t.picker.cancel).toBe("Cancel");
     expect(t.picker.noMatches).toBe("No one matches your search.");
   });
 
   test("licenses that changed while it was open", () => {
     expect(t.conflict.seatsChanged).toBe(
-      "Licenses changed while you were choosing. Nothing was assigned. Check the counts and try again.",
+      "Subscriptions changed while you were choosing. Nothing was assigned. Check the counts and try again.",
     );
   });
 });
@@ -321,7 +323,7 @@ describe("Members", () => {
     expect([t.members.member, t.members.role, t.members.joined, t.members.you]).toEqual(["Member", "Role", "Joined", "You"]);
     expect(t.members.pendingFirstSignIn).toBe("Pending first sign-in");
     expect(t.members.importedMember).toBe("Imported member");
-    expect(t.members.licenses).toBe("Licenses");
+    expect(t.members.licenses).toBe("Subscriptions");
     expect(t.members.none).toBe("None");
     expect(t.members.afterFirstSignIn).toBe("After first sign-in");
     expect(t.members.moreChips(2)).toBe("+2");
@@ -345,7 +347,7 @@ describe("Members", () => {
 
   test("Remove asks first in a dialog: its title, one plain line, Cancel and a destructive Remove", () => {
     expect(t.members.removePrompt("Luis Ortega")).toBe("Remove Luis Ortega from this workspace?");
-    expect(t.members.removeBody).toBe("They lose access to this workspace, and any licenses assigned to them are freed.");
+    expect(t.members.removeBody).toBe("They lose access to this workspace, and any subscriptions assigned to them are freed.");
     expect(t.members.removeConfirm).toBe("Remove");
     expect(t.members.cancel).toBe("Cancel");
   });
@@ -368,28 +370,28 @@ describe("Members", () => {
   });
 
   test("what fits, when licenses are given to several people at once (the people picker's lines)", () => {
-    expect(t.assign.enough({ free: 2, quantity: 5, chosen: 2 })).toBe("2 of 5 licenses available: enough for both.");
-    expect(t.assign.enough({ free: 4, quantity: 5, chosen: 3 })).toBe("4 of 5 licenses available: enough for all 3.");
-    expect(t.assign.enough({ free: 4, quantity: 5, chosen: 1 })).toBe("4 of 5 licenses available.");
+    expect(t.assign.enough({ free: 2, quantity: 5, chosen: 2 })).toBe("2 of 5 subscriptions available: enough for both.");
+    expect(t.assign.enough({ free: 4, quantity: 5, chosen: 3 })).toBe("4 of 5 subscriptions available: enough for all 3.");
+    expect(t.assign.enough({ free: 4, quantity: 5, chosen: 1 })).toBe("4 of 5 subscriptions available.");
     expect(t.assign.someHold({ holders: ["Amara Okafor"], free: 1, quantity: 3, recipients: ["Luis Ortega"] })).toBe(
-      "Amara Okafor has one. 1 of 3 licenses available, for Luis Ortega.",
+      "Amara Okafor has one. 1 of 3 subscriptions available, for Luis Ortega.",
     );
     expect(t.assign.someHold({ holders: ["A", "B"], free: 1, quantity: 3, recipients: ["C"] })).toBe(
-      "A and B have one. 1 of 3 licenses available, for C.",
+      "A and B have one. 1 of 3 subscriptions available, for C.",
     );
     expect(t.assign.everyoneHolds).toBe("Everyone you chose has one.");
-    expect(t.assign.tooMany(500)).toBe("You can assign up to 500 licenses at a time.");
+    expect(t.assign.tooMany(500)).toBe("You can assign up to 500 subscriptions at a time.");
   });
 
   test("one license is one license wherever a count sits beside it: 1 of 1 license, never 1 of 1 licenses", () => {
-    expect(t.assign.enough({ free: 1, quantity: 1, chosen: 1 })).toBe("1 of 1 license available.");
-    expect(t.assign.enough({ free: 1, quantity: 1, chosen: 2 })).toBe("1 of 1 license available: enough for both.");
-    expect(t.assign.enough({ free: 2, quantity: 2, chosen: 1 })).toBe("2 of 2 licenses available.");
+    expect(t.assign.enough({ free: 1, quantity: 1, chosen: 1 })).toBe("1 of 1 subscription available.");
+    expect(t.assign.enough({ free: 1, quantity: 1, chosen: 2 })).toBe("1 of 1 subscription available: enough for both.");
+    expect(t.assign.enough({ free: 2, quantity: 2, chosen: 1 })).toBe("2 of 2 subscriptions available.");
     expect(t.assign.someHold({ holders: ["Amara Okafor"], free: 1, quantity: 1, recipients: ["Luis Ortega"] })).toBe(
-      "Amara Okafor has one. 1 of 1 license available, for Luis Ortega.",
+      "Amara Okafor has one. 1 of 1 subscription available, for Luis Ortega.",
     );
-    expect(t.assign.someHold({ holders: ["A"], free: 0, quantity: 1, recipients: ["B"] })).toBe("A has one. 0 of 1 license available, for B.");
-    expect(t.assign.tooMany(1)).toBe("You can assign up to 1 license at a time.");
+    expect(t.assign.someHold({ holders: ["A"], free: 0, quantity: 1, recipients: ["B"] })).toBe("A has one. 0 of 1 subscription available, for B.");
+    expect(t.assign.tooMany(1)).toBe("You can assign up to 1 subscription at a time.");
   });
 });
 
@@ -399,15 +401,15 @@ describe("banners and the dialog back from checkout", () => {
     expect(p.headline(true)).toBe("Payment received");
     expect(p.headline(false)).toBe("Purchase complete");
     expect(p.settingUpSeats({ seats: 5, product: "Call Unlimited" })).toBe(
-      "Setting up 5 Call Unlimited licenses. This takes a few seconds; you can stay on this page.",
+      "Setting up 5 Call Unlimited subscriptions. This takes a few seconds; you can stay on this page.",
     );
-    expect(p.readyTitle({ seats: 5, product: "Call Unlimited" })).toBe("Your 5 Call Unlimited licenses are ready");
-    expect(p.readyTitle({ seats: 1, product: "Call Unlimited" })).toBe("Your 1 Call Unlimited license is ready");
+    expect(p.readyTitle({ seats: 5, product: "Call Unlimited" })).toBe("Your 5 Call Unlimited subscriptions are ready");
+    expect(p.readyTitle({ seats: 1, product: "Call Unlimited" })).toBe("Your 1 Call Unlimited subscription is ready");
     expect(p.readyBody({ product: "Call Unlimited", paid: true })).toBe(
-      "Payment received, and Call Unlimited is active. Assign the licenses to members below.",
+      "Payment received, and Call Unlimited is active. Assign the subscriptions to members below.",
     );
     expect(p.readyBody({ product: "Call Unlimited", paid: false })).toBe(
-      "Call Unlimited is active. Assign the licenses to members below.",
+      "Call Unlimited is active. Assign the subscriptions to members below.",
     );
     expect(p.settingUp).toBe("Setting up…");
     // One button closes the dialog, whatever it says.
@@ -417,23 +419,25 @@ describe("banners and the dialog back from checkout", () => {
 
   test("after checkout, when the buyer was given one of the new licenses", () => {
     const p = t.purchase;
-    const one = { seats: 1, product: "Call Unlimited" };
-    const five = { seats: 5, product: "Call Unlimited" };
-    expect(p.givenTitle({ ...one, paid: true })).toBe("Your Call Unlimited license is ready");
-    expect(p.givenBody({ ...one, paid: true })).toBe("Payment received, and it's assigned to you.");
-    expect(p.givenTitle({ ...one, paid: false })).toBe("Purchase complete");
-    expect(p.givenBody({ ...one, paid: false })).toBe("Call Unlimited is active, and it's assigned to you.");
-    expect(p.givenTitle({ ...five, paid: true })).toBe("Your 5 Call Unlimited licenses are ready");
-    expect(p.givenBody({ ...five, paid: true })).toBe("Payment received, and one is assigned to you. Assign the rest to members below.");
-    expect(p.givenTitle({ ...five, paid: false })).toBe("Your 5 Call Unlimited licenses are ready");
-    expect(p.givenBody({ ...five, paid: false })).toBe("Call Unlimited is active, and one is assigned to you. Assign the rest to members below.");
+    expect(p.youNowHave("Call Unlimited")).toEqual({
+      title: "You now have Call Unlimited!",
+      body: "Open the Mentra App now to use it on your smart glasses.",
+    });
+    expect(p.youNowHave("Call Unlimited", 1)).toEqual(p.youNowHave("Call Unlimited"));
+    // More than one bought: the rest are the buyer's to assign.
+    expect(p.youNowHave("Call Unlimited", 5)).toEqual({
+      title: "You now have Call Unlimited!",
+      body: "Open the Mentra App now to use it on your smart glasses. Assign the rest to members below.",
+    });
+    // The ?buy= link that assigns a free one says the same.
+    expect(t.page.buyLink.youNowHave).toBe(p.youNowHave);
   });
 
   test("a purchase that hasn't reached Core after a minute", () => {
     expect(t.purchase.timeout.title(true)).toBe("Your payment went through");
     // A checkout that collected nothing (a trial) claims no payment.
     expect(t.purchase.timeout.title(false)).toBe("Your purchase went through");
-    expect(t.purchase.timeout.body).toBe("The licenses can take a few minutes to appear.");
+    expect(t.purchase.timeout.body).toBe("The subscriptions can take a few minutes to appear.");
     expect(t.purchase.timeout.reload).toBe("Reload");
   });
 
@@ -455,19 +459,19 @@ describe("banners and the dialog back from checkout", () => {
 
 describe("refusals", () => {
   test("the two the screens act on name the product", () => {
-    expect(refusalMessage("already_licensed", { product: "Fleet" })).toBe("You already have Fleet. Add licenses instead.");
+    expect(refusalMessage("already_licensed", { product: "Fleet" })).toBe("You already have Fleet. Buy more subscriptions instead.");
     expect(refusalMessage("checkout_in_progress", { product: "Fleet" })).toBe(
       "A purchase of Fleet is already under way. Finish it, or try again in a minute.",
     );
   });
 
   test("a request someone else has open names the product when it is known", () => {
-    expect(refusalMessage("seat_request_pending", { product: "Fleet" })).toBe("Someone else is adding a Fleet license right now. Try again in a few minutes.");
-    expect(refusalMessage("seat_request_pending")).toBe("Someone else is adding a license right now. Try again in a few minutes.");
+    expect(refusalMessage("seat_request_pending", { product: "Fleet" })).toBe("Someone else is adding a Fleet subscription right now. Try again in a few minutes.");
+    expect(refusalMessage("seat_request_pending")).toBe("Someone else is adding a subscription right now. Try again in a few minutes.");
   });
 
   test("the refusals about a number of licenses, or about a subscription that has gone", () => {
-    expect(refusalMessage("invalid_seats")).toBe("That number of licenses isn't available. Choose a different number.");
+    expect(refusalMessage("invalid_seats")).toBe("That number of subscriptions isn't available. Choose a different number.");
     expect(refusalMessage("unknown_action")).toBe("That isn't available for this subscription any more. Reload the page and try again.");
     expect(refusalMessage("license_not_found")).toBe("That subscription no longer exists. Reload the page.");
   });
@@ -511,11 +515,11 @@ describe("refusals", () => {
     // The word is assembled so that this file doesn't name it either.
     const processor = new RegExp(["str", "ipe"].join(""), "i");
     expect(outputs.filter((text) => processor.test(text) || /paid through/i.test(text))).toEqual([]);
-    // A license is one person's right to a product, and "seat" is not a word a person reads. API and code names keep it
-    // (`seats`, `add_seats`), so only the sentences are scanned.
-    expect(outputs.filter((text) => /\bseats?\b/i.test(text))).toEqual([]);
-    // A count of one never sits beside a plural noun ("1 of 1 licenses"): every sentence that counts goes through `plural`.
-    expect(outputs.filter((text) => /\b1 (licenses|products|members|users|people|persons|others)\b/.test(text))).toEqual([]);
+    // A subscription is one person's right to a product, and "seat" and "license" are not words a person reads. API and
+    // code names keep them (`licenses`, `seats`, `add_seats`), so only the sentences are scanned.
+    expect(outputs.filter((text) => /\b(seats?|licenses?)\b/i.test(text))).toEqual([]);
+    // A count of one never sits beside a plural noun ("1 of 1 subscriptions"): every sentence that counts goes through `plural`.
+    expect(outputs.filter((text) => /\b1 (subscriptions|products|members|users|people|persons|others)\b/.test(text))).toEqual([]);
     // Samples that fit their function leave no hole in a sentence.
     expect(outputs.filter((text) => /undefined|NaN|\[object/.test(text))).toEqual([]);
   });
@@ -549,7 +553,7 @@ const SAMPLES: Record<string, unknown[][]> = {
   "page.buyLink.youNowHave": [["Mentra Call Unlimited"]],
   "page.buyLink.full": [["Acme Field Services", 1, "Mentra Call Unlimited", ""], ["Acme Field Services", 3, "Mentra Call Unlimited", "Ana Ruiz and 2 others"], ["Acme Field Services", 1, "Mentra Call Unlimited", "Ana Ruiz"]],
   "page.buyLink.alreadyHas": [["Acme Field Services", "Mentra Call Unlimited"]],
-  "page.buyLink.askAnAdmin": [["Acme Field Services", "Mentra Call Unlimited"], ["Acme Field Services", "licenses"]],
+  "page.buyLink.askAnAdmin": [["Acme Field Services", "Mentra Call Unlimited"], ["Acme Field Services", "subscriptions"]],
   "page.adminsGiveOutSeats": [["Acme Field Services"]],
   "page.noSeat.title": [["Acme Field Services"]],
   "recurrence.rate": [["month", 1], ["month", 3], ["year", 2, "2"]],
@@ -612,9 +616,7 @@ const SAMPLES: Record<string, unknown[][]> = {
   "seats.unassignPrompt": [["Dana Reyes"]],
   "seats.unassignBody": [["Dana Reyes", "Mentra Call Unlimited"]],
   "seats.unassignAria": [["Dana Reyes"]],
-  "seats.freeSeats": [[7], [1]],
   "seats.allInUse": [[5], [1]],
-  "seats.allInUseHelp": [[true], [false]],
   "seats.moreAvatars": [[3]],
   "fit.note": [
     [{ fit: 3, needed: 4, canAddSeats: true }],
@@ -652,18 +654,7 @@ const SAMPLES: Record<string, unknown[][]> = {
   "purchase.settingUpSeats": [[{ seats: 1, product: "Call Unlimited" }], [{ seats: 5, product: "Call Unlimited" }]],
   "purchase.readyTitle": [[{ seats: 1, product: "Call Unlimited" }], [{ seats: 5, product: "Call Unlimited" }]],
   "purchase.readyBody": [[{ product: "Call Unlimited", paid: true }], [{ product: "Call Unlimited", paid: false }]],
-  "purchase.givenTitle": [
-    [{ seats: 1, product: "Call Unlimited", paid: true }],
-    [{ seats: 1, product: "Call Unlimited", paid: false }],
-    [{ seats: 5, product: "Call Unlimited", paid: true }],
-    [{ seats: 5, product: "Call Unlimited", paid: false }],
-  ],
-  "purchase.givenBody": [
-    [{ seats: 1, product: "Call Unlimited", paid: true }],
-    [{ seats: 1, product: "Call Unlimited", paid: false }],
-    [{ seats: 5, product: "Call Unlimited", paid: true }],
-    [{ seats: 5, product: "Call Unlimited", paid: false }],
-  ],
+  "purchase.youNowHave": [["Call Unlimited"], ["Call Unlimited", 5]],
   "purchase.timeout.title": [[true], [false]],
   "testMode.label": [["Staging"]],
 };

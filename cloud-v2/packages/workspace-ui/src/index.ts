@@ -56,7 +56,6 @@ export {
   priceLine,
   renewalCadence,
   taxNote,
-  type CostFact,
 } from "./lib/billing-format";
 export { formatDate } from "./lib/format";
 export { actsAsOrganizationAdmin, assignableRoles, can, effectiveRole, ROLE_DESCRIPTIONS, ROLE_LABELS } from "./roles";
@@ -188,7 +187,7 @@ export { AvatarStack, PersonLabel, SeatRoster, SeatStrip, seatHolders, type AddS
 export { PeoplePickerDialog } from "./components/licenses/people-picker";
 export { LicensesUnavailable, TestModeBanner } from "./components/licenses/banners";
 export { PURCHASE_POLL_MS, PURCHASE_TIMEOUT_MS, PurchaseDialog, type PurchaseDialogProps } from "./components/licenses/purchase-dialog";
-// Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy licenses" dialog, and the
+// Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy subscriptions" dialog, and the
 // seats step. Each takes billing's client and the host's `navigateOut`, and sends the browser to a hosted page.
 export {
   BuyDialog,
@@ -211,7 +210,7 @@ export type { MembersLicenses } from "./components/members-panel";
 
 // The workspace's Licenses page, composed from the pieces above. It needs a `QueryClientProvider` above it, the billing
 // client, and the host's `NavigateOut`; the portal wires it to its routes, its `me`, `?purchase=`, `?buy=` and `?added=`. It has a
-// header-actions component ("Billing & invoices ↗", "Buy licenses") for the host to put in its title bar; it reads under
+// header-actions component ("Billing ↗") for the host to put in its title bar; it reads under
 // the view's keys, so nothing is requested twice.
 export {
   WorkspaceLicensesHeaderActions,

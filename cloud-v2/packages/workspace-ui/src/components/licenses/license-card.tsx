@@ -153,12 +153,11 @@ function TermFact({ card, locale, now }: { card: JoinedLicense; locale: string; 
   return <Pending label={t.facts.term.renews} />;
 }
 
-/** What the license costs, from billing's own total; an ending license says it has no more charges. */
+/** What the license costs, from billing's own total, with no line under it. */
 function CostFactView({ card, locale }: { card: JoinedLicense; locale: string }) {
   const billing = card.billing;
   if (billing === null || billing.status === "processing") return <Pending label={t.facts.cost.label} />;
-  const cost = costFact(billing, locale);
-  return <Fact label={t.facts.cost.label} value={cost.value} foot={billing.status === "ending" ? t.facts.cost.noMoreCharges : cost.foot} />;
+  return <Fact label={t.facts.cost.label} value={costFact(billing, locale)} />;
 }
 
 /** The miniapps a license's features are for, once each, in the order billing lists them. */
@@ -309,7 +308,7 @@ export function LicenseCard({
   const badge = badgeFor(card, view, locale);
   const { columns, facts } = factsFor(card, view, locale, workspaceName, clock);
   const ring = card.problem === "past_due" ? "warn" : highlight ? "highlight" : null;
-  // Add licenses from the card draws its refusal on the card; from the picker, in the picker (the card is behind it).
+  // Buy subscriptions from the card draws its refusal on the card; from the picker, in the picker (the card is behind it).
   const fromPicker = hosted.surface === PICKER;
   const addSeatsFrom = (surface?: string): AddSeatsControl | null =>
     addSeatsAction
@@ -468,7 +467,7 @@ function SeatsLayout({
 }) {
   const [open, setOpen] = useState(false);
   const holders = seatHolders(license, members);
-  const controls = { holders, counts, canAssign, blocked: counts.over > 0, addSeats, onAssign };
+  const controls = { holders, canAssign, blocked: counts.over > 0, addSeats, onAssign };
   if (folded && !open) return <SeatStrip {...controls} onOpen={() => setOpen(true)} />;
   return (
     <div className="space-y-3 p-6 max-sm:p-5">

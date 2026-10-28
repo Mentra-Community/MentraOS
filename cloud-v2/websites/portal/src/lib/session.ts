@@ -3,7 +3,9 @@
  *
  * Sign-in starts at `/api/portal/auth/login` with a relative `return_to` (the
  * current path and query, so report and test-run deep links survive the round
- * trip).
+ * trip). A signed-out page goes there at once, with no button to press, unless
+ * it is the person coming back from it still signed out (a browser that drops
+ * the session cookie): then it shows its sign-in button, so it never loops.
  *
  * Sign-out is one step: Core ends the workspace portal session and answers the
  * URL that signs the person out of their Mentra account too, at Core's sign-in
@@ -22,6 +24,46 @@ import { INVITATION_PATH } from "./routes";
 export function loginHref(location: { pathname: string; search: string } = window.location, invitePending = false): string {
   const returnTo = invitePending && location.pathname === "/" && !location.search ? INVITATION_PATH : `${location.pathname}${location.search}`;
   return `/api/portal/auth/login?return_to=${encodeURIComponent(returnTo)}`;
+}
+
+/** This tab's note of when it last sent the person to sign in. */
+const SENT_TO_SIGN_IN_KEY = "mentra.portal.sentToSignIn";
+
+/** How soon after being sent to sign in a signed-out page counts as the person coming back from it. */
+const SIGN_IN_ROUND_TRIP_MS = 60_000;
+
+/**
+ * Whether this tab sent the person to sign in moments ago, read once as the page starts and then forgotten. Without
+ * session storage it can't tell, and says yes: the page then shows its button rather than risk a loop.
+ */
+export function returningFromSignIn(storage: Storage | null, now = Date.now()): boolean {
+  if (!storage) return true;
+  try {
+    const sentAt = Number(storage.getItem(SENT_TO_SIGN_IN_KEY));
+    storage.removeItem(SENT_TO_SIGN_IN_KEY);
+    return sentAt > 0 && now - sentAt < SIGN_IN_ROUND_TRIP_MS;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Sends the person straight to sign in at `url` (`go`, `location.replace` by default, so Back skips the empty
+ * signed-out page), noting it in this tab first. False, without going, where it can't be noted.
+ */
+export function sendToSignIn(
+  url: string,
+  storage: Storage | null,
+  { now = Date.now(), go = (to: string) => window.location.replace(to) }: { now?: number; go?: (url: string) => void } = {},
+): boolean {
+  if (!storage) return false;
+  try {
+    storage.setItem(SENT_TO_SIGN_IN_KEY, String(now));
+  } catch {
+    return false;
+  }
+  go(url);
+  return true;
 }
 
 export async function signOutOfEnterprisePortal(fetchImpl: typeof fetch = fetch): Promise<{ signOutUrl: string | null }> {
