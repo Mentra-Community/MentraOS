@@ -1254,10 +1254,14 @@ async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: M
  TestRequestModel.collection.findOne=(async(filter:any)=>{expect(filter.requestId).toBe(selection.requestId);return structuredClone(f.row)}) as any;
  TestRequestModel.collection.findOneAndUpdate=(async(filter:any,update:any)=>{const row=f.row!;expect(filter.requestId).toBe(row.requestId);if(filter.fleetBinding?.$exists===false&&row.fleetBinding)return null;
   if(filter.fleetDeadline?.$gt&&row.fleetDeadline<=filter.fleetDeadline.$gt||filter.fleetCancellation?.$exists===false&&row.fleetCancellation)return null;
-  counters.request++;f.restore({...row,...structuredClone(update.$set)});return structuredClone(f.row)}) as any;
+  if(update.$unset) {
+   if(requestInputDigest(row.fleetResourceAdmission)!==requestInputDigest(filter.fleetResourceAdmission))return null;
+   for(const [key,guard] of Object.entries(filter))if((guard as any)?.$exists===false&&(row as any)[key]!==undefined)return null;
+  }
+  counters.request++;const next={...row,...structuredClone(update.$set)};for(const key of Object.keys(update.$unset??{}))delete (next as any)[key];f.restore(next);return structuredClone(f.row)}) as any;
  TestHostStateModel.collection.findOne=(async(filter:any)=>structuredClone(hosts.get(filter.hostId))) as any;
  TestHostStateModel.collection.findOneAndUpdate=(async(filter:any,update:any)=>{const h=hosts.get(filter.hostId);expect(filter.laneControlVersion).toBe(h.laneControlVersion);
-  if(filter.sequence!==h.sequence||filter.resourceReservationVersion!==h.resourceReservationVersion)return null;
+  if(filter.incarnation!==h.incarnation||filter.incarnationGeneration!==h.incarnationGeneration||filter.sequence!==h.sequence||filter.resourceReservationVersion!==h.resourceReservationVersion)return null;
   counters.host++;Object.assign(h,structuredClone(update.$set));h.resourceReservationVersion++;return structuredClone(h)}) as any;
  resourceReservationRepository.get=async id=>structuredClone(hosts.get(id)??null);
  resourceReservationRepository.replace=async(previous,claims)=>{const h=hosts.get(previous.hostId);if(previous.sequence!==h.sequence||previous.laneControlVersion!==h.laneControlVersion||previous.resourceReservationVersion!==h.resourceReservationVersion)return false;
@@ -1267,6 +1271,7 @@ async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: M
  resourceReservationRepository.recorderClaims=async()=>[...hosts.values()].flatMap(h=>structuredClone(h.resourceReservations)).filter((claim:any)=>claim.requestId===selection.requestId);
  f.rows.reconcileRecorderHost=(...args)=>routineJobRepository.reconcileRecorderHost!.apply(routineJobRepository,args);
  f.rows.reserveResources=(...args)=>routineJobRepository.reserveResources!.apply(routineJobRepository,args);
+ (f.rows as any).reconcileObsoleteAdmission=(...args:any[])=>(routineJobRepository as any).reconcileObsoleteAdmission?.apply(routineJobRepository,args);
  f.rows.bind=(...args)=>routineJobRepository.bind.apply(routineJobRepository,args);
  const clock=spyOn(Date,'now').mockReturnValue(now);
  try {await body(f,hosts,counters,pastRows)} finally {clock.mockRestore();TestRequestModel.collection.find=originals.find;TestRequestModel.collection.findOne=originals.read;TestRequestModel.collection.findOneAndUpdate=originals.write;
@@ -1925,5 +1930,92 @@ test('current phone baseline reaches the real serialized recorder, admission and
   const bound=await f.service.bind(row.requestId,target!.hostId,{inputSha256:row.fleetInputSha256,laneId:target!.laneId,descriptorRevision:host.snapshot.lanes[0].descriptorRevision,actionsRunId:'10',actionsJobId:'20'});
   expect(bound.execute).toBe(true);expect(f.row!.fleetBinding?.hostId).toBe(target!.hostId);
   for(const key of ['fleetSelection','fleetDeadline','fleetInputSha256'] as const)expect(f.row![key]).toEqual(original[key]);
+ });
+});
+
+
+test('an obsolete empty admission with zero authority resumes ordinary matching on an available alternative',async()=>{
+ await withLocalResources(async(f,hosts)=>{
+  const first=await f.prepare(),target=(first as unknown as {resourceTarget:{hostId:string}}).resourceTarget.hostId,old=hosts.get(target),alternate=[...hosts.keys()].find(id=>id!==target)!;
+  const row=structuredClone(f.row!);row.fleetResourceAdmission!.intent.controller={incarnation:'original-controller',generation:474,sequence:308};delete row.fleetResourceReservation;delete row.fleetExclusiveReservation;f.restore(row);
+  for(const host of hosts.values())host.resourceReservations=[];
+  old.incarnation=old.snapshot.incarnation='replacement-controller';old.incarnationGeneration=old.snapshot.incarnationGeneration=478;
+  old.snapshot.lanes[0].state='out-of-service';
+  const before={selection:row.fleetSelection,digest:row.fleetInputSha256,deadline:row.fleetDeadline};
+  expect(await f.service.preparation(row.requestId)).toMatchObject({resourceTarget:{hostId:alternate,laneId:'android'}});
+  expect(f.row!.fleetResourceAdmission!.intent.hostId).toBe(alternate);expect(f.row!.fleetResourceReservation!.hostId).toBe(alternate);
+  expect({selection:f.row!.fleetSelection,digest:f.row!.fleetInputSha256,deadline:f.row!.fleetDeadline}).toEqual(before);
+  expect(f.row!.fleetBinding).toBeUndefined();expect(old.resourceReservations).toEqual([]);
+ });
+});
+
+for(const condition of ['nonempty','unknown-authority','byte','exclusive','execution-binding','input','bound','cancelled','expired','same-controller','missing-host','old-generation','foreign-owner','other-host-byte','other-host-exclusive'] as const)test(`obsolete empty admission refuses ${condition} without moving custody`,async()=>{
+ await withLocalResources(async(f,hosts,counters)=>{
+  const first=await f.prepare(),target=(first as unknown as {resourceTarget:{hostId:string}}).resourceTarget.hostId,h=hosts.get(target),row=structuredClone(f.row!),byte=row.fleetResourceReservation!;
+  delete row.fleetResourceReservation;delete row.fleetExclusiveReservation;for(const host of hosts.values())host.resourceReservations=[];
+  h.incarnation=h.snapshot.incarnation='replacement-controller';h.incarnationGeneration=h.snapshot.incarnationGeneration=478;
+  if(condition==='nonempty')row.fleetResourceAdmission!.dependencies=[{capability:'relaunch',resourceId:'foreign',authorityHostId:'other'}];
+  if(condition==='unknown-authority')delete h.resourceReservations;
+  if(condition==='byte')row.fleetResourceReservation=byte;
+  if(condition==='exclusive')row.fleetExclusiveReservation={} as any;
+  if(condition==='execution-binding')row.fleetExclusiveExecutionBinding={} as any;
+  if(condition==='input')(row as StoredRoutineJob & {input?: unknown}).input={};
+  if(condition==='bound')row.fleetBinding={} as any;
+  if(condition==='cancelled')row.fleetCancellation={reason:'original cancelled',requestedAt:h.receivedAt.toISOString()};
+  if(condition==='expired')row.fleetDeadline=new Date(Date.now());
+  if(condition==='same-controller')h.incarnation=row.fleetResourceAdmission!.intent.controller.incarnation;
+  if(condition==='missing-host')hosts.delete(target);
+  if(condition==='old-generation')h.incarnationGeneration=1;
+  if(condition==='foreign-owner')row.fleetResourceAdmission!.intent.owner.id='foreign-original';
+  if(condition==='other-host-byte')hosts.get([...hosts.keys()].find(id=>id!==target)!).resourceReservations=[byte];
+  const claimed=resourceReservationRepository.claimedHosts;if(condition==='other-host-exclusive')resourceReservationRepository.claimedHosts=async()=>[hosts.get(target)];
+  f.restore(row);const before=structuredClone(row),writes=counters.request;
+  try{expect(await routineJobRepository.reconcileObsoleteAdmission!(row,h.receivedAt)).toBeNull();expect(f.row).toEqual(before);expect(counters.request).toBe(writes)}
+  finally{resourceReservationRepository.claimedHosts=claimed}
+ });
+});
+test('an admission byte-claim winner racing obsolete-stage removal remains authoritative',async()=>{
+ await withLocalResources(async(f,hosts)=>{
+  const first=await f.prepare(),target=(first as unknown as {resourceTarget:{hostId:string}}).resourceTarget.hostId,h=hosts.get(target),row=structuredClone(f.row!),byte=row.fleetResourceReservation!;
+  delete row.fleetResourceReservation;delete row.fleetExclusiveReservation;for(const host of hosts.values())host.resourceReservations=[];
+  h.incarnation='replacement-controller';h.incarnationGeneration=478;f.restore(row);
+  const write=TestRequestModel.collection.findOneAndUpdate;
+  TestRequestModel.collection.findOneAndUpdate=mock(async(...args:any[])=>{if(args[1].$unset)f.restore({...row,fleetResourceReservation:byte});return write.apply(TestRequestModel.collection,args as never)}) as never;
+  try{expect(await routineJobRepository.reconcileObsoleteAdmission!(row,h.receivedAt)).toBeNull();expect(f.row!.fleetResourceReservation).toEqual(byte);expect(f.row!.fleetResourceAdmission).toEqual(row.fleetResourceAdmission)}
+  finally{TestRequestModel.collection.findOneAndUpdate=write}
+ });
+});
+test('a fresh replacement controller cannot create a byte claim from the old empty admission',async()=>{
+ await withLocalResources(async(f,hosts,counters)=>{
+  const first=await f.prepare(),target=(first as unknown as {resourceTarget:{hostId:string}}).resourceTarget.hostId,h=hosts.get(target),row=structuredClone(f.row!);
+  delete row.fleetResourceReservation;delete row.fleetExclusiveReservation;for(const host of hosts.values())host.resourceReservations=[];
+  h.incarnation=h.snapshot.incarnation='replacement-controller';h.incarnationGeneration=h.snapshot.incarnationGeneration=478;f.restore(row);
+  const writes=counters.host;
+  expect(await routineJobRepository.reserveResources!(row.requestId,row.fleetInputSha256!,target,'android',h.receivedAt)).toBeNull();
+  expect(h.resourceReservations).toEqual([]);expect(counters.host).toBe(writes);expect(f.row).toEqual(row);
+ });
+});
+
+for(const serialized of [false,true])test(`old captured controller cannot commit a ${serialized?'provisional':'ordinary'} byte claim after replacement`,async()=>{
+ await withLocalResources(async(f,hosts,counters)=>{
+  const first=await f.prepare(),target=(first as unknown as {resourceTarget:{hostId:string}}).resourceTarget.hostId,h=hosts.get(target),row=structuredClone(f.row!);
+  delete row.fleetResourceReservation;delete row.fleetExclusiveReservation;for(const host of hosts.values())host.resourceReservations=[];
+  if(serialized){const phone=h.snapshot.lanes[0].resources.find((r:any)=>r.kind==='phone');phone.capabilities=[...phone.capabilities??[],'backend-connectivity']};f.restore(row);
+  const write=TestHostStateModel.collection.findOneAndUpdate;let attempts=0;
+  TestHostStateModel.collection.findOneAndUpdate=mock(async(...args:any[])=>{attempts++;h.incarnation=h.snapshot.incarnation='replacement-controller';h.incarnationGeneration=h.snapshot.incarnationGeneration=478;return write.apply(TestHostStateModel.collection,args as never)}) as never;
+  try{expect(await routineJobRepository.reserveResources!(row.requestId,row.fleetInputSha256!,target,'android',h.receivedAt)).toBeNull();expect(attempts).toBeGreaterThan(0);expect(h.resourceReservations).toEqual([]);expect(f.row!.fleetResourceReservation).toBeUndefined()}
+  finally{TestHostStateModel.collection.findOneAndUpdate=write}
+ });
+});
+
+test('a replacement admission winning the final provisional read prevents another lane byte effect',async()=>{
+ await withLocalResources(async(f,hosts)=>{
+  const first=await f.prepare(),target=(first as unknown as {resourceTarget:{hostId:string}}).resourceTarget.hostId,h=hosts.get(target),row=structuredClone(f.row!),admission=structuredClone(row.fleetResourceAdmission!);
+  delete row.fleetResourceReservation;delete row.fleetExclusiveReservation;delete row.fleetResourceAdmission;for(const host of hosts.values())host.resourceReservations=[];
+  const phone=h.snapshot.lanes[0].resources.find((r:any)=>r.kind==='phone');phone.capabilities=[...phone.capabilities??[],'backend-connectivity'];f.restore(row);
+  const alternate=[...hosts.keys()].find(id=>id!==target)!,other=hosts.get(alternate);admission.intent.hostId=alternate;admission.intent.controller={incarnation:other.incarnation,generation:other.incarnationGeneration,sequence:other.sequence};
+  const get=spyOn(routineJobRepository,'get').mockImplementation(async()=>{f.restore({...row,fleetResourceAdmission:admission});return structuredClone(f.row)});
+  try{expect(await routineJobRepository.reserveResources!(row.requestId,row.fleetInputSha256!,target,'android',h.receivedAt)).toBeNull();expect(h.resourceReservations).toEqual([]);expect(f.row!.fleetResourceAdmission).toEqual(admission);expect(f.row!.fleetResourceReservation).toBeUndefined()}
+  finally{get.mockRestore()}
  });
 });

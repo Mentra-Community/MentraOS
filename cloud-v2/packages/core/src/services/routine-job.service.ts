@@ -64,6 +64,7 @@ export interface RoutineJobRepository {
   prepare(jobId: string, selectionSha256: string, prepared: RoutineJobPreparation, inputSha256: string, now: Date): Promise<StoredRoutineJob | null>;
   preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
   selectedLanes?(hostIds: string[]): Promise<SelectedRoutineLane[]>;
+  reconcileObsoleteAdmission?(row: StoredRoutineJob, now: Date): Promise<StoredRoutineJob | null>;
   recorderClaims?(jobId: string): Promise<RecorderHostReservation[]>;
   reconcileRecorderHost?(hostId: string, now: Date, onPhase?: RoutinePreparationPhase, onReturned?: () => void, acceptedHost?: ResourceReservationHost, requestId?: string): Promise<boolean>;
   checkpointBackendRecorder?(row: StoredRoutineJob, claim: RecorderHostReservation, now: Date): Promise<StoredRoutineJob | null>;
@@ -306,6 +307,35 @@ export const routineJobRepository: RoutineJobRepository = {
       return {requestId, hostId: admission.intent.hostId, laneId: admission.intent.laneId};
     });
   },
+  async reconcileObsoleteAdmission(row, now) {
+    const parsed = fleetResourceAdmissionSchema.safeParse(row.fleetResourceAdmission);
+    if (!parsed.success || !row.fleetPreparation || row.state !== 'awaiting-runner' || !row.fleetInputSha256 ||
+      row.fleetCandidatePreparation !== undefined || row.fleetResourceReservation !== undefined || row.fleetExclusiveReservation !== undefined ||
+      row.fleetExclusiveExecutionBinding !== undefined || row.fleetBinding !== undefined || row.fleetCancellation !== undefined ||
+      row.hostId !== undefined || (row as StoredRoutineJob & {input?: unknown}).input !== undefined || row.inputSha256 !== undefined || row.dispatchIntent !== undefined ||
+      row.dispatchIntentSha256 !== undefined || row.fleetDeadline <= now) return null;
+    const admission = parsed.data, intent = admission.intent;
+    if (admission.dependencies.length || intent.operationId !== `run:${row.requestId}` || intent.owner.kind !== 'run' ||
+      intent.owner.id !== row.requestId || intent.inputSha256 !== row.fleetInputSha256) return null;
+    const host = await TestHostStateModel.collection.findOne({hostId: intent.hostId}, {
+      projection: {hostId: 1, incarnation: 1, incarnationGeneration: 1, resourceReservations: 1},
+      readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 5000});
+    const claims = hostResourceReservationsSchema.safeParse(host?.resourceReservations);
+    if (!host || !claims.success || typeof host.incarnation !== 'string' || !host.incarnation || host.incarnation === intent.controller.incarnation ||
+      !Number.isSafeInteger(host.incarnationGeneration) || host.incarnationGeneration <= intent.controller.generation ||
+      claims.data.some(claim => isExclusiveHostReservation(claim) ? claim.owner.id === row.requestId : claim.requestId === row.requestId)) return null;
+    const [recorders, authorities] = await Promise.all([
+      resourceReservationRepository.recorderClaims!(row.requestId), resourceReservationRepository.claimedHosts!(row.requestId)]);
+    if (recorders.length || authorities.length) return null;
+    // The old controller cannot win the host CAS. New byte writes below must
+    // match their admission controller, so replacing this empty stage cannot move custody.
+    return await TestRequestModel.collection.findOneAndUpdate({requestId: row.requestId, fleetInputSha256: row.fleetInputSha256,
+      state: 'awaiting-runner', fleetResourceAdmission: admission, fleetCandidatePreparation: {$exists: false},
+      fleetResourceReservation: {$exists: false}, fleetExclusiveReservation: {$exists: false}, fleetExclusiveExecutionBinding: {$exists: false},
+      fleetBinding: {$exists: false}, fleetCancellation: {$exists: false}, hostId: {$exists: false}, input: {$exists: false},
+      inputSha256: {$exists: false}, dispatchIntent: {$exists: false}, dispatchIntentSha256: {$exists: false}, fleetDeadline: {$gt: now}},
+      {$unset: {fleetResourceAdmission: ''}}, {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}) as unknown as StoredRoutineJob | null;
+  },
   async reserveResources(requestId, fleetInputSha256, hostId, laneId, now, onWaiting) {
     if (!await this.reconcileRecorderHost!(hostId, now)) {onWaiting?.(RESOURCE_ADMISSION_WAIT, true); return null;}
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -414,6 +444,11 @@ export const routineJobRepository: RoutineJobRepository = {
           current.fleetCancellation || current.fleetBinding || current.hostId || current.fleetDeadline <= now ||
           requestInputDigest(current.fleetSelection) !== row.fleetSelectionSha256 || routineJobInputDigest(current) !== fleetInputSha256) return null;
         if (!own) {
+          const admission = current.fleetResourceAdmission;
+          if (admission && (admission.intent.hostId !== hostId || admission.intent.laneId !== laneId ||
+            admission.intent.controller.incarnation !== hostRow.incarnation || admission.intent.controller.generation !== hostRow.incarnationGeneration)) {
+            onWaiting?.(RESOURCE_ADMISSION_WAIT, true); return null;
+          }
           const claimedAt = Date.now();
           if (current.fleetDeadline.getTime() <= claimedAt || !routineResourcesAvailable({hostId: host.hostId, incarnation: host.incarnation,
             incarnationGeneration: host.incarnationGeneration, sequence: host.sequence, receivedAt: hostRow.receivedAt, snapshot: host,
@@ -448,6 +483,10 @@ export const routineJobRepository: RoutineJobRepository = {
       const admission = fleetResourceAdmissionSchema.safeParse(row?.fleetResourceAdmission);
       if (!row?.fleetPreparation || !admission.success || admission.data.intent.hostId !== hostId || admission.data.intent.laneId !== laneId ||
         admission.data.intent.inputSha256 !== fleetInputSha256 || Boolean(exclusive) !== Boolean(admission.data.dependencies.length)) return null;
+      if (!selected && (admission.data.intent.controller.incarnation !== hostRow.incarnation ||
+        admission.data.intent.controller.generation !== hostRow.incarnationGeneration)) {
+        onWaiting?.(RESOURCE_ADMISSION_WAIT, true); return null;
+      }
       // This existing host resource record is the sole byte-claim authority. Snapshot and claim CAS fences race both reports and other lanes.
       if (serializedPreparation) {
         const originals = await resourceReservationRepository.recorderClaims!(requestId), currentHost = await resourceReservationRepository.get(hostId),
@@ -1630,6 +1669,10 @@ export class RoutineJobService {
         if (!checkpoint) return {...routineJobRouting(requirements,hosts,this.now(),provisional,row.fleetSelection.build,true,original),waitingReason:RESOURCE_ADMISSION_WAIT};
         row=checkpoint;
       }
+    }
+    if (row.fleetResourceAdmission) {
+      onPhase?.('obsolete-admission-reconciliation');
+      row = await this.rows.reconcileObsoleteAdmission?.(row, new Date(this.now())) ?? row;
     }
     const retained = row.fleetResourceReservation, admitted = row.fleetResourceAdmission;
     const target = retained ? {hostId: retained.hostId, laneId: retained.laneId} : admitted
