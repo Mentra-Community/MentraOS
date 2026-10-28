@@ -18,7 +18,7 @@ const en = {
     autoBrightness: "Auto brightness",
     autoPowerOff: "Wear detection",
     autoPowerOffSubtitle:
-      "Plays a sound when worn, pauses media and disables Bluetooth audio when removed, and powers down after 20 minutes. Charging, updates, and gallery transfers hold shutdown.",
+      "Plays a sound when worn, pauses media and moves calls to your phone when removed, and powers down after 20 minutes. Charging, updates, and gallery transfers hold shutdown.",
     autoPowerOffSaveError: "Could not save or check this setting. Check the glasses connection and try again.",
     autoPowerOffStatusHint:
       "This is the latest glasses status, not confirmation of your change. It refreshes about every 10 seconds.",
