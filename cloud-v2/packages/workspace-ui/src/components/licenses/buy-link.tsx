@@ -40,6 +40,7 @@ import { canBuy } from "./catalog";
 import { HostedFeedback, useHostedAction, type NavigateOut } from "./hosted-action";
 import { SeatErrorNotice } from "./parts";
 import { ProductIcon } from "./product";
+import { IconTitle } from "./purchase-dialog";
 import { seatHolders } from "./seats";
 
 /** What a link was answered with, and the license it acts on and the counts and names its words need. */
@@ -187,7 +188,7 @@ export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOu
   }, []);
 
   let lines: string[] = [];
-  // Assigned: the dialog is titled "You now have <product>!" and says only what to do next, with no product header.
+  // Assigned: the dialog is titled "You now have <product>!" beside the product's icon, and says only what to do next.
   let title: string | null = null;
   let body: "lines" | "opening" | "assignment" | "hosted" = "lines";
   switch (outcome.kind) {
@@ -229,7 +230,13 @@ export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOu
 
   const opening = body === "opening";
   return (
-    <Dialog open onClose={onClose} locked={opening} title={title ?? entry?.name ?? t.page.title} className="max-w-[480px]">
+    <Dialog
+      open
+      onClose={onClose}
+      locked={opening}
+      title={title !== null ? <IconTitle entry={entry} title={title} /> : (entry?.name ?? t.page.title)}
+      className="max-w-[480px]"
+    >
       <div data-link={outcome.kind} className="space-y-5">
         <div className="flex items-start gap-3">
           {entry && title === null ? <ProductIcon product={entry} size={40} /> : null}

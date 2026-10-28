@@ -1891,10 +1891,12 @@ describe("the purchase dialog", () => {
 
   test("given the viewer's own license it says they have it and to open the Mentra App; that is only in the ready state", async () => {
     await mount(dialog({ purchase: { ...ready, quantity: 1 }, assigned: true }));
-    // Two lines: the dialog's title says what happened, the one line under it what to do. No product header, no icon.
+    // Two lines: the dialog's title, beside the product's icon, says what happened; the one line under it what to do. No
+    // product header.
     expect(find("dialog h2").textContent).toBe("You now have Mentra Call Unlimited!");
+    expect(find<HTMLImageElement>("dialog h2 img").getAttribute("src")).toBe("/api/portal/billing/ui/icons/mentra-call.png");
     expect(words()).toBe("Open the Mentra App now to use it on your smart glasses.");
-    expect(findAll("dialog img")).toHaveLength(0);
+    expect(findAll("dialog img")).toHaveLength(1);
     await cleanup();
     await mount(dialog({ purchase: { ...ready, quantity: 5, paid: false }, assigned: true }));
     expect(find("dialog h2").textContent).toBe("You now have Mentra Call Unlimited!");
