@@ -11,7 +11,16 @@ export function createNightlyRoutinesApi(service = new NightlyRoutineService()) 
   app.use("*", testRunIngestAuth);
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
   app.onError((error, c) => {
-    if (error instanceof TestRunError) return c.json({error: "nightly_occurrence_error", message: error.message}, error.status);
+    if (error instanceof TestRunError) {
+      const message = [
+        'Nightly catalog exceeds the occurrence bound; no members were selected',
+        'Routine main source is unavailable; retry the same selection',
+        'Routine main history at the occurrence boundary is unavailable; retry the same selection',
+      ].includes(error.message) ? error.message : 'Expected nightly request refused (message omitted)';
+      c.var.logger?.warn({error: 'nightly_occurrence_error', status: error.status,
+        message: message.slice(0, 512)}, 'nightly occurrence refused');
+      return c.json({error: "nightly_occurrence_error", message: error.message}, error.status);
+    }
     c.var.logger?.error({errorName: error.name}, "nightly occurrence operation failed");
     return c.json({error: "nightly_occurrence_unavailable"}, 503);
   });
