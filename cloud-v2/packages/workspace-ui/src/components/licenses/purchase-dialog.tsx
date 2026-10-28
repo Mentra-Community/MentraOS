@@ -58,13 +58,23 @@ export interface PurchaseDialogProps {
  * dialog ready, whatever `timedOut` says.
  *
  * `assigned` is whether the new license's seats include the viewer's own (billing hands the buyer one): the ready
- * dialog is then titled "You now have <product>!", with no product header or icon, and says only to open the Mentra App
+ * dialog is then titled "You now have <product>!" beside the product's icon, with no product header, and says only to open the Mentra App
  * (and, with more than one bought, to assign the rest). On a phone, with the miniapp the license is for (`app`), it also
  * offers "Open <miniapp>", which opens it in the Mentra App.
  *
  * Mount it open and unmount it to close it, as the link's dialogs are: its content is drawn only while it is open.
  * It opens with focus on OK, so Enter closes it and the × is not what the eye lands on.
  */
+/** A success dialog's title: the product's icon beside what happened ("You now have <product>!"). */
+export function IconTitle({ entry, title }: { entry: Pick<CatalogEntry, "name" | "icon"> | null; title: string }) {
+  return (
+    <span className="flex items-center gap-3">
+      {entry ? <ProductIcon product={entry} size={40} /> : null}
+      <span className="min-w-0">{title}</span>
+    </span>
+  );
+}
+
 export function PurchaseDialog({
   purchase,
   productName,
@@ -83,7 +93,8 @@ export function PurchaseDialog({
   const ready = purchase.status === "ready" && listed;
   const { paid, quantity } = purchase;
   const phase = ready ? "ready" : timedOut ? "timeout" : "processing";
-  // The viewer holds one now: the dialog is just "You now have <product>!" and what to do next, with no product header.
+  // The viewer holds one now: the dialog is just the product's icon, "You now have <product>!" and what to do next, with no
+  // product header.
   const given = phase === "ready" && assigned ? t.purchase.youNowHave(productName, quantity) : null;
   const headline =
     phase === "ready"
@@ -98,7 +109,7 @@ export function PurchaseDialog({
         ? t.purchase.timeout.body
         : t.purchase.settingUpSeats({ seats: quantity, product: productName });
   return (
-    <Dialog open onClose={onClose} title={given ? given.title : (entry?.name ?? t.page.title)} className="max-w-[480px]">
+    <Dialog open onClose={onClose} title={given ? <IconTitle entry={entry} title={given.title} /> : (entry?.name ?? t.page.title)} className="max-w-[480px]">
       {given ? (
         <p role="status" data-phase={phase} className="text-[15px] leading-6">
           {given.body}

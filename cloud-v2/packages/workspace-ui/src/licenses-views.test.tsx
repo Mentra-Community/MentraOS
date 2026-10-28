@@ -1217,9 +1217,10 @@ describe("the ?buy= link", () => {
     const handled = rigged(r);
     await mountView(r, { buyProduct: CALL, onBuyHandled: handled });
     await dialogOpen();
-    // Titled with what happened, and nothing else: no product header, no icon.
+    // Titled with what happened, beside the product's icon: no product header.
     expect(find("h2", dialog()).textContent).toBe("You now have Mentra Call Unlimited!");
-    expect(findAll("img", dialog())).toHaveLength(0);
+    expect(findAll("img", find("h2", dialog()))).toHaveLength(1);
+    expect(findAll("img", dialog())).toHaveLength(1);
     expect(text(dialog())).toContain("Open the Mentra App now to use it on your smart glasses.");
     expect(text(dialog())).not.toContain("unassigned subscriptions");
     expect(buttons(dialog())).toContain("Done");

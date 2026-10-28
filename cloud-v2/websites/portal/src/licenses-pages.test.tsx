@@ -249,8 +249,10 @@ describe("coming back from checkout", () => {
   test("?purchase=pur_1 reaches the view: billing is asked about it and a dialog says the licenses are ready", async () => {
     const { core } = await open(`/licenses?purchase=pur_1`, bought(), { ready: "You now have Fleet!" });
     expect(openDialog()!.textContent).toContain("You now have Fleet!");
-    // Dana holds one of them: the dialog is titled with that, not the product.
-    expect(openDialog()!.querySelector("h2")!.textContent).toBe("You now have Fleet!");
+    // Dana holds one of them: the dialog is titled with that, beside Fleet's tile (its letter is hidden from a screen
+    // reader), not with the product.
+    expect(openDialog()!.querySelector("h2")!.textContent).toBe("FYou now have Fleet!");
+    expect(openDialog()!.querySelector("h2 [aria-hidden='true']")!.textContent).toBe("F");
     const statuses = billingRequests(core).filter(request => request.path.endsWith("/status"));
     expect(statuses.length).toBeGreaterThan(0);
     for (const request of statuses) expect(request.query.get("purchase")).toBe("pur_1");
