@@ -1,4 +1,5 @@
 import React from "react"
+import {Platform} from "react-native"
 import {render} from "@testing-library/react-native"
 
 import {MentraLiveOtaFlow} from "../../../../modules/engine/src/react/MentraLiveOtaFlow"
@@ -86,6 +87,22 @@ test.each([
   expect(screen.getByText(title)).toBeDefined()
   expect(screen.queryByText("100%")).toBeNull()
   expect(screen.queryByText("File 1 of 1 · Glasses software")).toBeNull()
+})
+
+test("asks iOS users to check phone Wi-Fi while joining, which Android checks before the update", () => {
+  const os = Object.getOwnPropertyDescriptor(Platform, "OS")!
+  state.hotspotPhase = "joining_hotspot"
+  try {
+    Object.defineProperty(Platform, "OS", {configurable: true, get: () => "ios"})
+    const screen = render(flow())
+    expect(screen.getByText("Make sure your phone’s Wi-Fi is on.")).toBeDefined()
+
+    Object.defineProperty(Platform, "OS", {configurable: true, get: () => "android"})
+    screen.rerender(flow())
+    expect(screen.queryByText("Make sure your phone’s Wi-Fi is on.")).toBeNull()
+  } finally {
+    Object.defineProperty(Platform, "OS", os)
+  }
 })
 
 test.each([
