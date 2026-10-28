@@ -18,9 +18,11 @@ const methods = ["handleSpeak", "cancelSpeech"]
     return rest.slice(0, end + 3)
   })
   .join("\n")
-const compiled = new Bun.Transpiler({loader: "ts"}).transformSync(`class Host { ${methods} }`)
+// The cloud speech constants and failure classifier, as shipped.
+const constantsStart = source.indexOf("const CLOUD_SPEECH_FORMAT")
+const constants = source.slice(constantsStart, source.indexOf("const DIAGNOSTIC_MAX_LIST_ITEMS", constantsStart))
+const compiled = new Bun.Transpiler({loader: "ts"}).transformSync(`${constants}\nclass Host { ${methods} }`)
 
-type PlayRequest = {requestId: string; audioUrl: string; startupTimeoutMs?: number}
 type Completion = (
   id: string,
   success: boolean,
@@ -28,21 +30,23 @@ type Completion = (
   duration: number | null,
   reason: "completed" | "interrupted" | "error",
 ) => void
+type PlayRequest = {requestId: string; audioUrl: string}
+type PcmUrlRequest = {
+  requestId: string
+  appId: string
+  url: string
+  sampleRate: number
+  volume: number
+  jitterMs?: number
+  stopOtherAudio: boolean
+  suppressCloudUplink?: boolean
+}
 
-type DownloadedAudio = {audioUrl: string; cleanup: () => Promise<void>}
-
-function createHost(
-  offlineAvailable = true,
-  download: (url: string, timeoutMs: number, cleanup: () => Promise<void>) => Promise<DownloadedAudio> = async (
-    _url,
-    _timeoutMs,
-    cleanup,
-  ) => ({audioUrl: "file://cloud.mp3", cleanup}),
-) {
+function createHost(options: {offlineAvailable?: boolean; cloudSpeak?: () => Promise<{audioUrl: string}>} = {}) {
+  const {offlineAvailable = true} = options
   const plays: Array<{request: PlayRequest; complete: Completion}> = []
+  const streams: Array<{request: PcmUrlRequest; complete: Completion}> = []
   const cleanup = mock(async () => {})
-  const cloudCleanup = mock(async () => {})
-  const downloadCloudTtsAudio = mock((url: string, timeoutMs: number) => download(url, timeoutMs, cloudCleanup))
   const ttsModelManager = {
     isModelAvailable: mock(async () => offlineAvailable),
     getAvailableLanguages: () => [{code: "en"}],
@@ -52,26 +56,26 @@ function createHost(
     play: mock(async (request: PlayRequest, complete: Completion) => {
       plays.push({request, complete})
     }),
-    cancelPlayback: mock(() => {}),
+    playPcmUrl: mock(async (request: PcmUrlRequest, complete: Completion) => {
+      streams.push({request, complete})
+    }),
+    cancelPlayback: mock((_id: string) => {}),
   }
+  const ttsSpeak = mock(options.cloudSpeak ?? (async () => ({audioUrl: "https://runtime.test/api/tts/speak?x"})))
   const Host = new Function(
     "prepareTtsSentences",
     "cloudClientService",
     "ttsModelManager",
     "audioPlaybackService",
-    "downloadCloudTtsAudio",
-    "cloudTtsDownloadTimeoutMs",
     "isFeatureEnabled",
     "MiniappErrorCode",
     "LOG_TAG",
     `${compiled}; return Host`,
   )(
     prepareTtsSentences,
-    {isConnected: () => true, tts: {speak: async () => ({audioUrl: "https://example.test/tts"})}},
+    {isConnected: () => true, tts: {speak: ttsSpeak}},
     ttsModelManager,
     audioPlaybackService,
-    downloadCloudTtsAudio,
-    (text: string) => 5000 + text.length * 3,
     () => true,
     {INTERNAL: "INTERNAL", TTS_UPSTREAM_ERROR: "TTS_UPSTREAM_ERROR"},
     "TEST",
@@ -80,138 +84,141 @@ function createHost(
   host.speechRuns = new Map()
   host.setSpeakerState = mock(() => {})
   host.sendResult = mock(() => {})
-  return {host, plays, ttsModelManager, cleanup, cloudCleanup, downloadCloudTtsAudio}
+  return {host, plays, streams, ttsModelManager, ttsSpeak, audioPlaybackService}
 }
 
-const appId = "com.mentra.ai"
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-async function flushFallback() {
-  // The callback schedules model availability, synthesis, playback and state updates.
-  await new Promise((resolve) => setTimeout(resolve, 0))
-}
-
-describe("cloud speech download", () => {
-  test("plays downloaded cloud speech from a local file, never the streaming URL", async () => {
-    const {host, plays, cloudCleanup, downloadCloudTtsAudio, ttsModelManager} = createHost()
-    const answer = "A laptop and phone on a wooden desk."
-    await host.handleSpeak(appId, {text: answer}, "speech")
-
-    expect(downloadCloudTtsAudio).toHaveBeenCalledWith("https://example.test/tts", 5000 + answer.length * 3)
-    expect(plays).toHaveLength(1)
-    expect(plays[0].request).toMatchObject({audioUrl: "file://cloud.mp3", startupTimeoutMs: 5000})
-    expect(cloudCleanup).not.toHaveBeenCalled()
-
-    plays[0].complete("speech", true, null, 2500, "completed")
-    expect(cloudCleanup).toHaveBeenCalledTimes(1)
-    expect(ttsModelManager.synthesizeToFile).not.toHaveBeenCalled()
-    expect(host.sendResult).toHaveBeenCalledWith(appId, "speech", true, {completed: true, duration: 2500}, undefined)
-  })
-
-  test("a cloud download that misses its deadline speaks the same answer offline", async () => {
-    const {host, plays, ttsModelManager} = createHost(true, async () => {
-      throw new Error("Cloud TTS download did not finish within 5030ms")
+describe("cloud speech streams into the PCM player", () => {
+  for (const appId of ["com.example.speech", "com.mentra.ai"]) {
+    test(`every miniapp streams raw PCM with the shared startup buffer (${appId})`, async () => {
+      const {host, streams, plays, ttsSpeak} = createHost()
+      await host.handleSpeak(appId, {text: "A laptop and phone on a wooden desk.", volume: 0.6}, "speech")
+      expect(ttsSpeak.mock.calls[0]?.[1]).toMatchObject({reusePreflight: true, format: "pcm_24000"})
+      expect(plays).toHaveLength(0)
+      expect(streams).toHaveLength(1)
+      expect(streams[0].request).toEqual({
+        requestId: "speech",
+        appId,
+        url: "https://runtime.test/api/tts/speak?x",
+        sampleRate: 24000,
+        volume: 0.6,
+        jitterMs: 250,
+        stopOtherAudio: true,
+        suppressCloudUplink: false,
+      })
+      await settle()
+      expect(host.setSpeakerState).toHaveBeenLastCalledWith(appId, "playing")
+      streams[0].complete("speech", true, null, 2500, "completed")
+      expect(host.sendResult).toHaveBeenCalledWith(appId, "speech", true, {completed: true, duration: 2500}, undefined)
+      expect(host.setSpeakerState).toHaveBeenLastCalledWith(appId, "stopped", {durationMs: 2500})
     })
-    await host.handleSpeak(appId, {text: "An answer."}, "speech")
+  }
 
-    expect(ttsModelManager.synthesizeToFile).toHaveBeenCalledWith("An answer.", expect.any(Object))
-    expect(plays).toHaveLength(1)
-    expect(plays[0].request).toMatchObject({audioUrl: "file://offline.wav"})
-    plays[0].complete("speech", true, null, 900, "completed")
-    expect(host.sendResult).toHaveBeenCalledWith(appId, "speech", true, {completed: true, duration: 900}, undefined)
-  })
-
-  test("a run cancelled mid-download discards the file without playing it", async () => {
-    let finish!: () => void
-    const {host, plays, cloudCleanup} = createHost(
-      true,
-      (_url, _timeoutMs, cleanup) =>
-        new Promise((resolve) => {
-          finish = () => resolve({audioUrl: "file://cloud.mp3", cleanup})
-        }),
-    )
-    const speaking = host.handleSpeak(appId, {text: "Old answer."}, "old")
-    await flushFallback()
-    host.cancelSpeech(appId)
-    finish()
-    await speaking
-
-    expect(plays).toHaveLength(0)
-    expect(cloudCleanup).toHaveBeenCalledTimes(1)
-    expect(host.sendResult).toHaveBeenCalledWith(appId, "old", true, {completed: false, duration: null}, undefined)
-  })
-
-  test("a failed cloud file deletes its download before the offline retry", async () => {
-    const {host, plays, cloudCleanup} = createHost()
-    await host.handleSpeak(appId, {text: "An answer."}, "speech")
-    plays[0].complete("speech", false, "Playback did not start within 5000ms", null, "error")
-    expect(cloudCleanup).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe("cloud speech native failure recovery", () => {
-  test("a cloud startup timeout speaks the error response offline", async () => {
-    const {host, plays, ttsModelManager} = createHost()
-    const response = "I'm sorry, I couldn't process that. Please try again."
-    await host.handleSpeak(appId, {text: response}, "error-speech")
-    expect(plays[0].request.startupTimeoutMs).toBe(5000)
-    plays[0].complete("error-speech", false, "Playback did not start within 5000ms", null, "error")
-    await flushFallback()
-    expect(ttsModelManager.synthesizeToFile).toHaveBeenCalledWith(response, expect.any(Object))
-    expect(plays[1].request).toMatchObject({audioUrl: "file://offline.wav"})
-    expect(plays[1].request.startupTimeoutMs).toBeUndefined()
-    plays[1].complete("error-speech", true, null, 3000, "completed")
-    expect(host.sendResult).toHaveBeenCalledTimes(1)
+  test("stopping speech aborts its stream and settles speak()", async () => {
+    const {host, streams, audioPlaybackService} = createHost()
+    await host.handleSpeak("com.example.speech", {text: "Old answer."}, "old")
+    host.cancelSpeech("com.example.speech")
+    expect(audioPlaybackService.cancelPlayback).toHaveBeenCalledWith("old")
     expect(host.sendResult).toHaveBeenCalledWith(
-      appId,
-      "error-speech",
+      "com.example.speech",
+      "old",
       true,
-      {completed: true, duration: 3000},
+      {completed: false, duration: null},
+      undefined,
+    )
+    // The aborted stream's own completion can't send a second result.
+    streams[0].complete("old", true, null, 300, "interrupted")
+    expect(host.sendResult).toHaveBeenCalledTimes(1)
+  })
+
+  test("a connection lost mid-sentence ends speech with an error, not an offline restart", async () => {
+    const {host, streams, ttsModelManager} = createHost()
+    await host.handleSpeak("com.example.speech", {text: "A long answer."}, "speech")
+    streams[0].complete("speech", false, "The network connection was lost.", 1800, "error")
+    await settle()
+    expect(ttsModelManager.synthesizeToFile).not.toHaveBeenCalled()
+    expect(host.sendResult).toHaveBeenCalledWith(
+      "com.example.speech",
+      "speech",
+      false,
+      {completed: false, duration: 1800},
+      {code: "TTS_UPSTREAM_ERROR", message: "The network connection was lost."},
+    )
+  })
+
+  test("a refused synthesis played nothing, so offline speech says the answer", async () => {
+    const {host, streams, plays, ttsModelManager} = createHost()
+    await host.handleSpeak("com.example.speech", {text: "An answer."}, "speech")
+    streams[0].complete("speech", false, "HTTP 401", 0, "error")
+    await settle()
+    expect(ttsModelManager.synthesizeToFile).toHaveBeenCalledWith("An answer.", expect.any(Object))
+    expect(plays[0].request.audioUrl).toBe("file://offline.wav")
+    plays[0].complete("speech", true, null, 900, "completed")
+    expect(host.sendResult).toHaveBeenCalledWith(
+      "com.example.speech",
+      "speech",
+      true,
+      {completed: true, duration: 900},
       undefined,
     )
   })
 
-  test("plays the same answer offline after an explicit native playback error", async () => {
-    const {host, plays, ttsModelManager, cleanup} = createHost()
-    await host.handleSpeak(appId, {text: "An answer."}, "speech")
-    expect(plays[0].request).toMatchObject({audioUrl: "file://cloud.mp3"})
-
-    plays[0].complete("speech", false, "Playback failed (native player failed)", null, "error")
-    await flushFallback()
-    expect(ttsModelManager.synthesizeToFile).toHaveBeenCalledWith("An answer.", expect.any(Object))
-    expect(plays[1].request).toMatchObject({audioUrl: "file://offline.wav"})
-    expect(host.sendResult).not.toHaveBeenCalled()
-
-    plays[1].complete("speech", true, null, 1200, "completed")
-    expect(cleanup).toHaveBeenCalledTimes(1)
-    expect(host.sendResult).toHaveBeenCalledWith(appId, "speech", true, {completed: true, duration: 1200}, undefined)
-    expect(host.setSpeakerState).toHaveBeenLastCalledWith(appId, "stopped", {durationMs: 1200})
+  test("a failed preflight falls back to offline speech before any stream opens", async () => {
+    const {host, streams, plays} = createHost({
+      cloudSpeak: async () => {
+        throw new Error("Runtime TTS does not support format pcm_24000")
+      },
+    })
+    await host.handleSpeak("com.example.speech", {text: "An answer."}, "speech")
+    expect(streams).toHaveLength(0)
+    expect(plays[0].request.audioUrl).toBe("file://offline.wav")
   })
 
-  test("returns an explicit error when the offline model is unavailable", async () => {
-    const {host, plays} = createHost(false)
-    await host.handleSpeak(appId, {text: "An answer."}, "speech")
-    plays[0].complete("speech", false, "Playback failed (native player failed)", null, "error")
-    await flushFallback()
-    expect(plays).toHaveLength(1)
+  test("native refusal codes and an output change before the first byte also fall back", async () => {
+    for (const error of ["http_error: HTTP 429", "unsupported_format: audio/mpeg", "pcm stream speech is not open"]) {
+      const {host, streams, plays} = createHost()
+      await host.handleSpeak("com.example.speech", {text: "An answer."}, "speech")
+      streams[0].complete("speech", false, error, 0, "error")
+      await settle()
+      expect(plays[0]?.request.audioUrl).toBe("file://offline.wav")
+    }
+    const {host, streams, plays} = createHost()
+    await host.handleSpeak("com.example.speech", {text: "An answer."}, "speech")
+    streams[0].complete("speech", false, "network_error: connection reset", 900, "error")
+    await settle()
+    expect(plays).toHaveLength(0)
+  })
+
+  test("without an offline model a refused synthesis reports the error", async () => {
+    const {host, streams} = createHost({offlineAvailable: false})
+    await host.handleSpeak("com.example.speech", {text: "An answer."}, "speech")
+    streams[0].complete("speech", false, "HTTP 503", 0, "error")
+    await settle()
     expect(host.sendResult).toHaveBeenCalledWith(
-      appId,
+      "com.example.speech",
       "speech",
       false,
-      {completed: false, duration: null},
-      {code: "TTS_UPSTREAM_ERROR", message: "Playback failed (native player failed)"},
+      {completed: false, duration: 0},
+      {code: "TTS_UPSTREAM_ERROR", message: "HTTP 503"},
     )
   })
 
   test("a new wake word cancels recovery before the old answer can be synthesized", async () => {
-    const {host, plays, ttsModelManager} = createHost()
-    await host.handleSpeak(appId, {text: "Old answer."}, "old")
-    plays[0].complete("old", false, "Playback failed (native player failed)", null, "error")
-    // Cancel while the fallback is awaiting model availability.
-    host.cancelSpeech(appId)
-    await flushFallback()
+    const {host, streams, ttsModelManager} = createHost()
+    await host.handleSpeak("com.example.speech", {text: "Old answer."}, "old")
+    host.cancelSpeech("com.example.speech")
+    streams[0].complete("old", false, "HTTP 502", null, "error")
+    await settle()
     expect(ttsModelManager.synthesizeToFile).not.toHaveBeenCalled()
-    expect(plays).toHaveLength(1)
     expect(host.sendResult).toHaveBeenCalledTimes(1)
-    expect(host.sendResult).toHaveBeenCalledWith(appId, "old", true, {completed: false, duration: null}, undefined)
   })
+})
+
+test("forceLocal speech never touches the cloud", async () => {
+  const {host, streams, plays, ttsSpeak} = createHost()
+  await host.handleSpeak("com.example.speech", {text: "Offline.", forceLocal: true}, "local")
+  expect(ttsSpeak).not.toHaveBeenCalled()
+  expect(streams).toHaveLength(0)
+  expect(plays[0].request.audioUrl).toBe("file://offline.wav")
 })

@@ -100,6 +100,28 @@ export type GlassesMediaVolumeSetResult = {
   statusCode: number
 }
 
+/** On-device keyword spotter state and detections. Describes only the wake-word model. */
+export type WakeWordEvent = {
+  kind: "loading" | "ready" | "detected" | "error"
+  phrase: string
+  /** Unix epoch milliseconds. */
+  timestamp: number
+  message?: string
+}
+
+/**
+ * Phone-side speech activity from the on-device Silero detector
+ * ([setSpeechActivityDetection]). Sent on transitions only. A gap in incoming
+ * microphone audio counts as silence.
+ */
+export type SpeechActivityEvent = {
+  speaking: boolean
+  /** 0 while speaking; on a silence transition, how long the audio has been silent. */
+  silentForMs: number
+  /** Unix epoch milliseconds. */
+  timestamp: number
+}
+
 export type LocalTranscriptionEvent = {
   text: string
   isFinal?: boolean
@@ -1271,6 +1293,8 @@ export type BluetoothSdkModuleEvents = {
   voice_activity_detection_status: (event: VoiceActivityDetectionStatusEvent) => void
   speaking_status: (event: SpeakingStatusEvent) => void
   battery_status: (event: BatteryStatusEvent) => void
+  wake_word: (event: WakeWordEvent) => void
+  speech_activity: (event: SpeechActivityEvent) => void
   local_transcription: (event: LocalTranscriptionEvent) => void
   native_notification_status: (event: NativeNotificationStatus) => void
   native_notification_delivery: (event: NativeNotificationDelivery) => void
@@ -1446,6 +1470,8 @@ export type BluetoothSdkEventMap = {
   voice_activity_detection_status: VoiceActivityDetectionStatusEvent
   speaking_status: SpeakingStatusEvent
   battery_status: BatteryStatusEvent
+  wake_word: WakeWordEvent
+  speech_activity: SpeechActivityEvent
   local_transcription: LocalTranscriptionEvent
   wifi_status_change: WifiStatusChangeEvent
   wifi_scan_result: WifiScanResultEvent
@@ -1698,7 +1724,30 @@ export interface BluetoothSdkPublicModule {
   checkSttModelAvailable(): Promise<boolean>
   validateSttModel(path: string): Promise<boolean>
   extractTarBz2(sourcePath: string, destinationPath: string): Promise<boolean>
+  /**
+   * Start or stop on-device keyword spotting on microphone PCM. `modelDir` must contain
+   * `encoder.int8.onnx`, `decoder.onnx`, `joiner.int8.onnx`, `tokens.txt` and `keywords.txt`;
+   * it is required when enabling. Disabling releases the model.
+   */
+  setWakeWordDetection(enabled: boolean, modelDir?: string | null): Promise<void>
+  /**
+   * Finalize the active on-device recognizer's current utterance now. Resolves after the final
+   * `local_transcription` event for it has been emitted, with that final text (empty when nothing
+   * was pending). Resolves `null` when no streaming model is active or the loaded model can't
+   * finalize early.
+   */
+  finishTranscription(): Promise<string | null>
+  /**
+   * Reload the selected speech model when on-device transcription is in demand. Resolves after
+   * it is loaded; rejects when loading fails; resolves immediately when there is no demand.
+   */
   restartTranscriber(): Promise<void>
+  /**
+   * Start or stop the on-device Silero speech detector on microphone PCM. While enabled it emits
+   * `speech_activity` transitions; `minSilenceMs` (default 300) is the quiet gap before a silence
+   * transition. Disabling releases the model.
+   */
+  setSpeechActivityDetection(enabled: boolean, options?: {minSilenceMs?: number}): Promise<void>
 
   // TTS Commands (TODO: MOVE TO CRUST)
   setTtsModelDetails(path: string, languageCode: string): Promise<void>

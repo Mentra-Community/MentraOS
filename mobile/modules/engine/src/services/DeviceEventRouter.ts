@@ -19,6 +19,8 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {shallow} from "zustand/shallow"
 
+import audioPlaybackService from "./AudioPlaybackService"
+import {wakeWordService} from "./WakeWordService"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
@@ -221,6 +223,30 @@ export function startDeviceEventRouter(): void {
   subs.push(
     BluetoothSdk.addListener("head_up", (event) => {
       localMiniappRuntime.forwardEvent("head_up", {position: event.up ? "up" : "down", timestamp: Date.now()})
+    }),
+  )
+  // On-device "Hey Mentra" → every miniapp subscribed to the wake word. Warm
+  // up the audio player on each detection so the next sound starts quickly.
+  subs.push(
+    BluetoothSdk.addListener("wake_word", (event) => {
+      if (event.kind === "detected" && localMiniappRuntime.hasStreamSubscribers("wake_word")) {
+        void audioPlaybackService.prepareForPlayback().catch((error) => {
+          console.warn("Audio playback preparation after wake word failed", error)
+        })
+      }
+      const forwarded = wakeWordService.onNativeEvent(event)
+      if (forwarded) localMiniappRuntime.forwardEvent("wake_word", forwarded)
+    }),
+  )
+  // Phone-side voice activity (native Silero) → `vad`, one event per start or
+  // stop. Native counts a gap in microphone audio as silence.
+  subs.push(
+    BluetoothSdk.addListener("speech_activity", (event) => {
+      localMiniappRuntime.forwardEvent("vad", {
+        status: event.speaking,
+        silentForMs: event.silentForMs,
+        timestamp: event.timestamp,
+      })
     }),
   )
   // On-device STT transcripts → local miniapps only while the local engine is

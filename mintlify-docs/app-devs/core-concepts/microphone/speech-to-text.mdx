@@ -61,10 +61,64 @@ session.transcription.on(handler, {forceLocal: true});
 session.transcription.forLanguage("en-US", handler, {forceLocal: true});
 ```
 
-This requires a downloaded local STT model. Cloud transcripts are suppressed
-for the local-only subscription, even while other miniapps continue using cloud
-transcription. Routing is per listener, so a default listener on the same stream
-can continue receiving cloud transcription.
+Cloud transcripts are suppressed for the local-only subscription, even while
+other miniapps continue using cloud transcription. Routing is per listener, so
+a default listener on the same stream can continue receiving cloud
+transcription.
+
+The phone runs one on-device speech model at a time, the one the user picked
+on its Speech page, and every miniapp's on-device transcription uses it. If it
+isn't downloaded yet, the phone downloads it when your subscription arrives.
+Subscribe with `on()` to get text in whatever language that model is; a
+`forLanguage()` subscription in a different language gets no on-device text.
+The model stays loaded while any miniapp keeps an on-device subscription open.
+
+### Model status
+
+`onModelStatus` tells you what the on-device model behind your subscriptions
+is doing. You get the current state right away, then every change:
+
+```typescript
+session.transcription.onModelStatus((status) => {
+  if (status.state === "downloading") showHint(`Downloading speech model… ${status.progress ?? 0}%`);
+  if (status.state === "ready") showHint("Listening");
+  if (status.state === "unavailable") showHint(status.reason ?? "On-device speech is unavailable");
+});
+```
+
+| Field      | Type                                                      | Notes                                       |
+| ---------- | --------------------------------------------------------- | ------------------------------------------- |
+| `language` | `string`                                                  | BCP-47 language of the picked model.        |
+| `state`    | `"downloading" \| "loading" \| "ready" \| "unavailable"` | `ready` means on-device text is flowing.    |
+| `progress` | `number?`                                                 | `0`–`100` while downloading.                |
+| `reason`   | `string?`                                                 | Why the model is unavailable, when it is. |
+
+The state is `unavailable` when you have no on-device subscription, when the
+download or load failed (the phone retries on its own), or when every
+on-device subscription asks for a language other than the picked model's
+(`reason` names the picked language).
+
+### Ending an utterance early
+
+A recognizer ends a line after its own end-of-speech pause. When your own rule
+decides the user is done, for example after
+[voice activity](/app-devs/core-concepts/microphone/audio-chunks#voice-activity)
+reports enough silence, end the line now:
+
+```typescript
+const finalText = await session.transcription.finishUtterance();
+```
+
+It resolves with the line's final text after that final transcript has reached
+your handlers, `""` when nothing was pending, or `null` when no on-device
+recognizer is running or the picked model can't end a line early (models that
+transcribe in fixed chunks deliver their final text on their own).
+
+<Warning>
+  `finishUtterance()` needs an active `{forceLocal: true}` subscription and only affects on-device transcription. The
+  phone runs one recognizer for every miniapp, so it ends the current line for every on-device subscriber, Captions
+  included.
+</Warning>
 
 ## Configuring
 

@@ -1338,12 +1338,8 @@ class MantleManager {
         }),
       )
 
-      // this.subs.push(
-      //   BluetoothSdk.addListener("vad", (event) => {
-      //     localMiniappRuntime.forwardEvent("VAD", event)
-      //     localSttFallbackCoordinator.onVad(!!event?.status)
-      //   }),
-      // )
+      // vad: phone-side speech activity (native speech_activity) reaches local
+      // miniapps through the engine DeviceEventRouter.
 
       // miniapp_selected: moved to island DeviceEventRouter (started by engine.start())
 

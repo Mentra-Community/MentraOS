@@ -811,6 +811,13 @@ const en = {
     privacySettings: "Privacy",
     transcriptionSettings: "Transcription",
     speechSettings: "Speech",
+    speechToTextLanguage: "Speech-to-text language",
+    wakeWordModel: "Wake word",
+    wakeWordModelDownloadedHint: "Downloaded · Tap to delete",
+    speechModelDownloadFailed: "Download Failed",
+    wakeWordModelDownloadFailedMessage: "Failed to download the wake-word model. Please try again.",
+    wakeWordModelDeleteTitle: "Delete wake-word model?",
+    wakeWordModelDeleteMessage: "Miniapps that listen for “Hey Mentra” download it again when they need it.",
     notificationsSettings: "Notifications",
     notificationsDescription:
       "Control which apps can send notifications to Mentra. When enabled, notifications from these apps will be available to Mentra.",

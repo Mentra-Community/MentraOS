@@ -19,6 +19,8 @@ let apps: Array<{packageName: string; running: boolean}> = []
 
 mock.module("../LocalMiniappRuntime", () => ({default: {forwardEvent: () => {}}}))
 mock.module("../LocalSttFallbackCoordinator", () => ({default: {}}))
+mock.module("../AudioPlaybackService", () => ({default: {prepareForPlayback: async () => {}}}))
+mock.module("../WakeWordService", () => ({wakeWordService: {onNativeEvent: () => null}}))
 mock.module("../PhonePhotoCoordinator", () => ({phonePhotoCoordinator: {}}))
 mock.module("../PhoneStreamCoordinator", () => ({phoneStreamCoordinator: {}}))
 mock.module("../GlassesReadiness", () => ({isGlassesConnected: () => false}))

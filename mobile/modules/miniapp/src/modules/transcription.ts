@@ -7,6 +7,8 @@
  *   session.transcription.forLanguage("en-US", handler)              // single language
  *   session.transcription.forLanguage(["en-US", "es-ES"], handler)   // multi-language
  *   session.transcription.configure({languageHints, vocabulary, diarization})
+ *   session.transcription.onModelStatus(handler)                     // on-device model state
+ *   session.transcription.finishUtterance()                          // end the on-device line now
  *   session.transcription.stop()                                     // tear down all
  *
  * Hoisted to top-level (vs. nested under `session.mic`) because transcription
@@ -42,15 +44,40 @@ export interface TranscriptionConfig {
 export interface TranscriptionOptions {
   /**
    * Use only on-device STT for this listener; never deliver cloud transcripts.
-   * Other listeners on the same stream keep their own routing choice. Requires
-   * a downloaded local STT model.
+   * Other listeners on the same stream keep their own routing choice. The
+   * phone uses the speech model picked on its Speech page and downloads it if
+   * needed; follow that with `onModelStatus`.
    */
   forceLocal?: boolean
+}
+
+/**
+ * State of the on-device speech-to-text model behind this miniapp's on-device
+ * transcription. The phone runs the one model picked on its Speech page for
+ * every miniapp.
+ */
+export interface TranscriptionModelStatus {
+  /** BCP-47 language of the picked model, e.g. "en-US". */
+  language: string
+  /**
+   * - `downloading`: the model is being downloaded (`progress` is 0–100).
+   * - `loading`: the model is loading into memory.
+   * - `ready`: on-device transcripts are flowing.
+   * - `unavailable`: no on-device transcription right now; `reason` says why
+   *   (for example no on-device subscription, a failed download, or a
+   *   subscription in a language other than the picked model's).
+   */
+  state: "downloading" | "loading" | "ready" | "unavailable"
+  progress?: number
+  reason?: string
 }
 
 export class TranscriptionModule {
   private readonly unsubs = new Set<UnsubscribeFn>()
   private currentConfig: TranscriptionConfig | null = null
+  private readonly modelStatusHandlers = new Set<(status: TranscriptionModelStatus) => void>()
+  private modelStatusUnsub: UnsubscribeFn | null = null
+  private modelStatus: TranscriptionModelStatus | null = null
 
   constructor(private readonly session: MiniappSession) {}
 
@@ -139,6 +166,57 @@ export class TranscriptionModule {
         config: {...normalized},
       })
       .then(() => undefined)
+  }
+
+  /**
+   * Follow the on-device speech-to-text model's state. You get the current
+   * state right away, then every change. Use it to show "downloading 40%" or
+   * to wait for `ready` before relying on on-device transcripts.
+   */
+  onModelStatus(handler: (status: TranscriptionModelStatus) => void): UnsubscribeFn {
+    this.modelStatusHandlers.add(handler)
+    if (!this.modelStatusUnsub) {
+      // One stream subscription per module; the host sends its current state on subscribe.
+      this.modelStatusUnsub = this.session._subscribe(MiniappStreamType.TRANSCRIPTION_MODEL_STATUS, (data) => {
+        const status = data as TranscriptionModelStatus
+        this.modelStatus = status
+        for (const listener of [...this.modelStatusHandlers]) listener(status)
+      })
+    } else if (this.modelStatus) {
+      // Later handlers get the last state locally, since the host only replays on subscribe.
+      const current = this.modelStatus
+      queueMicrotask(() => {
+        if (this.modelStatusHandlers.has(handler) && this.modelStatus === current) handler(current)
+      })
+    }
+    return this.track(() => {
+      this.modelStatusHandlers.delete(handler)
+      if (this.modelStatusHandlers.size > 0) return
+      this.modelStatusUnsub?.()
+      this.modelStatusUnsub = null
+      this.modelStatus = null
+    })
+  }
+
+  /**
+   * End the current on-device utterance now, instead of waiting for the
+   * recognizer's own end-of-speech pause. Call it when your own end-of-turn
+   * rule fires (for example after `mic.onVoiceActivity` reports enough
+   * silence).
+   *
+   * Resolves with the final text once that final transcript has been
+   * delivered to your on-device handlers, or `""` when nothing was pending.
+   * Resolves `null` when no on-device recognizer is running or the picked
+   * model can't finish early (models that transcribe in fixed chunks); their
+   * final text still arrives on its own.
+   *
+   * Applies only to on-device transcription and needs an active
+   * `{forceLocal: true}` subscription. The phone runs one recognizer for every
+   * miniapp, so this ends the current line for every on-device subscriber,
+   * Captions included.
+   */
+  finishUtterance(): Promise<string | null> {
+    return this.session.sendRequest<string | null>({type: MiniappRequestType.TRANSCRIPTION_FINISH})
   }
 
   /** Tear down every transcription subscription this module owns. */

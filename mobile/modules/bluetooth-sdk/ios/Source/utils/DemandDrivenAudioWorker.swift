@@ -31,6 +31,8 @@ final class DemandDrivenAudioWorker<Processor> {
     private var processor: Processor?
     private var processorGeneration: UInt64?
     private var attemptedInitialization = false
+    /// Control operations queued behind audio; while any wait, `drain` yields after each buffer.
+    private var pendingControlOperations = 0
 
     init(capacity: Int = 100,
          queue: DispatchQueue = DispatchQueue(label: "com.mentra.speech.processor", qos: .userInitiated),
@@ -84,6 +86,76 @@ final class DemandDrivenAudioWorker<Processor> {
         lock.lock()
         defer { lock.unlock() }
         return active && generation == token
+    }
+
+    /// Outcome of the processor load for the current demand.
+    enum LoadState: Equatable {
+        /// No demand, so nothing is loaded and nothing needs to be.
+        case noDemand
+        case loaded
+        case failed
+    }
+
+    /// Serialize control operations with inference without enabling audio demand.
+    func perform<T>(_ operation: @escaping () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            pendingControlOperations += 1
+            lock.unlock()
+            queue.async {
+                self.lock.lock()
+                self.pendingControlOperations -= 1
+                self.lock.unlock()
+                continuation.resume(returning: operation())
+            }
+        }
+    }
+
+    /// Run `operation` on the worker queue, after audio already queued, with the processor of the
+    /// current demand. Returns nil without running it when there is no demand or no processor.
+    func withCurrentProcessor<T>(_ operation: @escaping (Processor, UInt64) -> T) async -> T? {
+        await perform {
+            self.lock.lock()
+            let token = self.generation
+            let current = self.active && self.processorGeneration == token
+            self.lock.unlock()
+            guard current, let processor = self.processor else { return nil }
+            return operation(processor, token)
+        }
+    }
+
+    /// Wait until the processor for the current demand has been created (or failed to be).
+    /// Returns immediately when there is no demand.
+    func awaitLoad() async -> LoadState {
+        while true {
+            guard snapshot().active else { return .noDemand }
+            // A drain is already scheduled ahead of this block whenever demand changed, so
+            // the state seen here is settled unless demand changed again in the meantime.
+            let state: LoadState? = await perform {
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                guard self.active else { return .noDemand }
+                guard self.processorGeneration == self.generation, self.attemptedInitialization else { return nil }
+                return self.processor == nil ? .failed : .loaded
+            }
+            if let state { return state }
+        }
+    }
+
+    /// Reload the processor if there is demand, and wait for the result.
+    func restartAndAwaitLoad() async -> LoadState {
+        restart()
+        return await awaitLoad()
+    }
+
+    /// Turn demand on and wait for the load. Enabling again while a failed load is cached is a
+    /// retry, so it loads once more; enabling a loaded or loading processor changes nothing.
+    func activateAndAwaitLoad() async -> LoadState {
+        let wasActive = snapshot().active
+        setActive(true)
+        let state = await awaitLoad()
+        guard state == .failed, wasActive else { return state }
+        return await restartAndAwaitLoad()
     }
 
     func snapshot() -> Snapshot {
@@ -144,6 +216,13 @@ final class DemandDrivenAudioWorker<Processor> {
             lock.lock()
             processedBuffers &+= 1
             processing = false
+            // When inference can't keep up, audio never runs out. Yield to a waiting control
+            // operation (a load wait, a flush) instead of starving it.
+            if pendingControlOperations > 0, !buffers.isEmpty {
+                lock.unlock()
+                queue.async { self.drain() }
+                return
+            }
             lock.unlock()
         }
     }

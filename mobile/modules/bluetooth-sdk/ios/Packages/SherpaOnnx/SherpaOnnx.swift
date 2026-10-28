@@ -329,6 +329,17 @@ class SherpaOnnxRecognizer {
         }
     }
 
+    /// Replace an ended stream while retaining the loaded recognizer/model.
+    @discardableResult
+    func recreateStream() -> Bool {
+        guard let replacement = SherpaOnnxCreateOnlineStream(recognizer) else { return false }
+        lock.lock()
+        SherpaOnnxDestroyOnlineStream(stream)
+        stream = replacement
+        lock.unlock()
+        return true
+    }
+
     /// Signal that no more audio samples would be available.
     /// After this call, you cannot call acceptWaveform() any more.
     func inputFinished() {
@@ -1000,9 +1011,10 @@ class SherpaOnnxVoiceActivityDetectorWrapper {
     /// A pointer to the underlying counterpart in C
     private let vad: OpaquePointer
 
-    init(config: UnsafePointer<SherpaOnnxVadModelConfig>, buffer_size_in_seconds: Float) {
+    /// Returns nil when sherpa-onnx rejects the model instead of terminating the app.
+    init?(config: UnsafePointer<SherpaOnnxVadModelConfig>, buffer_size_in_seconds: Float) {
         guard let vad = SherpaOnnxCreateVoiceActivityDetector(config, buffer_size_in_seconds) else {
-            fatalError("SherpaOnnxCreateVoiceActivityDetector returned nil")
+            return nil
         }
         self.vad = vad
     }
@@ -1626,11 +1638,17 @@ class SherpaOnnxKeywordSpotterWrapper {
     let spotter: OpaquePointer!
     var stream: OpaquePointer!
 
-    init(
+    /// Returns nil when sherpa-onnx rejects the model or keywords instead of crashing later.
+    init?(
         config: UnsafePointer<SherpaOnnxKeywordSpotterConfig>!
     ) {
-        spotter = SherpaOnnxCreateKeywordSpotter(config)
-        stream = SherpaOnnxCreateKeywordStream(spotter)
+        guard let spotter = SherpaOnnxCreateKeywordSpotter(config) else { return nil }
+        guard let stream = SherpaOnnxCreateKeywordStream(spotter) else {
+            SherpaOnnxDestroyKeywordSpotter(spotter)
+            return nil
+        }
+        self.spotter = spotter
+        self.stream = stream
     }
 
     deinit {

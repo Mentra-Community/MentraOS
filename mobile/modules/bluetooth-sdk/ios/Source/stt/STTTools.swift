@@ -3,44 +3,26 @@ import Foundation
 class STTTools {
     // MARK: - SherpaOnnxTranscriber / STT Model Management
 
-    static func didReceivePartialTranscription(_ text: String) {
-        // Send partial result to server witgetConnectedBluetoothNameh proper formatting
-        let transcriptionLanguage =
-            UserDefaults.standard.string(forKey: "STTModelLanguageCode") ?? "en-US"
-        // Bridge.log("Mentra: Sending partial transcription: \(text), \(transcriptionLanguage)")
+    /// Send a transcript the loaded model produced. `text` is already formatted for that model,
+    /// and `language` is the language it was loaded for.
+    static func sendTranscription(_ text: String, isFinal: Bool, language: String) {
+        guard !text.isEmpty else { return }
+        if isFinal {
+            Bridge.log("Mentra: Sending final transcription: \(text), \(language)")
+        }
+        let now = Int(Date().timeIntervalSince1970 * 1000)
         let transcription: [String: Any] = [
             "type": "local_transcription",
-            "text": transcriptionLanguage == "en-US" ? text.lowercased() : text,
-            "isFinal": false,
-            "startTime": Int(Date().timeIntervalSince1970 * 1000) - 1000, // 1 second ago
-            "endTime": Int(Date().timeIntervalSince1970 * 1000),
+            "text": text,
+            "isFinal": isFinal,
+            "startTime": now - (isFinal ? 2000 : 1000),
+            "endTime": now,
             "speakerId": 0,
-            "transcribeLanguage": transcriptionLanguage,
+            "transcribeLanguage": language,
             "provider": "sherpa-onnx",
         ]
 
         Bridge.sendLocalTranscription(transcription: transcription)
-    }
-
-    static func didReceiveFinalTranscription(_ text: String) {
-        // Send final result to server with proper formatting
-        let transcriptionLanguage =
-            UserDefaults.standard.string(forKey: "STTModelLanguageCode") ?? "en-US"
-        Bridge.log("Mentra: Sending final transcription: \(text), \(transcriptionLanguage)")
-        if !text.isEmpty {
-            let transcription: [String: Any] = [
-                "type": "local_transcription",
-                "text": transcriptionLanguage == "en-US" ? text.lowercased() : text,
-                "isFinal": true,
-                "startTime": Int(Date().timeIntervalSince1970 * 1000) - 2000, // 2 seconds ago
-                "endTime": Int(Date().timeIntervalSince1970 * 1000),
-                "speakerId": 0,
-                "transcribeLanguage": transcriptionLanguage,
-                "provider": "sherpa-onnx",
-            ]
-
-            Bridge.sendLocalTranscription(transcription: transcription)
-        }
     }
 
     static func setSttModelDetails(_ path: String, _ languageCode: String) {

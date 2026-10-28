@@ -189,6 +189,12 @@ export enum MiniappRequestType {
    * so future reconnect logic can re-send.
    */
   TRANSCRIPTION_CONFIG = "miniapp_transcription_config",
+  /**
+   * End the current on-device utterance now (transcription.finishUtterance).
+   * Result: the final text, "" when nothing was pending, or null when the
+   * model can't finish early.
+   */
+  TRANSCRIPTION_FINISH = "miniapp_transcription_finish",
 
   // ----- Deferred in v1 -----
 
@@ -388,6 +394,10 @@ export enum MiniappStreamType {
   // Speech / audio (cloud or local)
   TRANSCRIPTION = "transcription", // language variant: "transcription:en-US"
   TRANSLATION = "translation", // language variant: "translation:en-US"
+  /** State of the on-device speech-to-text model (session.transcription.onModelStatus). */
+  TRANSCRIPTION_MODEL_STATUS = "transcription_model_status",
+  /** On-device "Hey Mentra" keyword spotter (session.mic.onWakeWord). */
+  WAKE_WORD = "wake_word",
   AUDIO_CHUNK = "audio_chunk",
   VAD = "vad",
 

@@ -150,6 +150,10 @@ export interface NotificationDismissedData {
 export interface VadData {
   /** True while the user is speaking (voice detected), false when silent. */
   status: boolean
+  /** 0 while speaking; on a silence event, how long the audio has already been silent. */
+  silentForMs?: number
+  /** Unix epoch milliseconds of the transition, when the host reports it. */
+  timestamp?: number
 }
 
 export interface TouchData {

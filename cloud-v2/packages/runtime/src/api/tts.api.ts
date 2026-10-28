@@ -3,7 +3,12 @@
  */
 import { Hono, type Context } from "hono";
 import { createLogger } from "@mentra/cloud-shared";
-import { ttsService } from "../services/tts/tts.service";
+import {
+  DEFAULT_TTS_AUDIO_FORMAT,
+  isTtsAudioFormat,
+  ttsService,
+  type TtsAudioFormat,
+} from "../services/tts/tts.service";
 
 const logger = createLogger("tts").child({ service: "tts.api" });
 
@@ -16,6 +21,7 @@ type SpeakRequest =
       voiceId?: string;
       modelId?: string;
       voiceSettings?: Record<string, unknown>;
+      format: TtsAudioFormat;
     }
   | { ok: false; response: Response };
 
@@ -24,6 +30,7 @@ function parseSpeakRequest(c: Context): SpeakRequest {
   const voiceId = c.req.query("voice_id");
   const modelId = c.req.query("model_id");
   const voiceSettingsRaw = c.req.query("voice_settings");
+  const formatRaw = c.req.query("format") || DEFAULT_TTS_AUDIO_FORMAT;
 
   if (!text) {
     return {
@@ -32,6 +39,19 @@ function parseSpeakRequest(c: Context): SpeakRequest {
         {
           success: false,
           message: "Text parameter is required and must be a string",
+        },
+        400,
+      ),
+    };
+  }
+
+  if (!isTtsAudioFormat(formatRaw)) {
+    return {
+      ok: false,
+      response: c.json(
+        {
+          success: false,
+          message: `Unsupported format: ${formatRaw}`,
         },
         400,
       ),
@@ -63,6 +83,7 @@ function parseSpeakRequest(c: Context): SpeakRequest {
     voiceId,
     modelId,
     voiceSettings,
+    format: formatRaw,
   };
 }
 
@@ -73,15 +94,20 @@ function parseSpeakRequest(c: Context): SpeakRequest {
  * shape and preflights it before handing a source URL to the mobile player.
  * Hono dispatches HEAD through GET and strips the body, so branch here to keep
  * preflight from synthesizing audio.
+ *
+ * `format` selects the encoding: `mp3` (default) or `pcm_24000`, raw signed
+ * 16-bit little-endian mono PCM at 24 kHz that the Mentra App streams into its
+ * PCM player as it arrives.
  */
 ttsApi.get("/speak", async (c) => {
   const parsed = parseSpeakRequest(c);
   if (!parsed.ok) return parsed.response;
-  if (c.req.method === "HEAD") return ttsService.preflight();
+  if (c.req.method === "HEAD") return ttsService.preflight(parsed.format);
 
   return ttsService.speak(parsed.text, {
     voiceId: parsed.voiceId,
     modelId: parsed.modelId,
     voiceSettings: parsed.voiceSettings,
+    format: parsed.format,
   });
 });

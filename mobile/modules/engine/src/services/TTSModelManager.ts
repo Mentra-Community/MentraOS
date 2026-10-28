@@ -310,9 +310,21 @@ class TTSModelManager {
     const tempPath = `${RNFS.TemporaryDirectoryPath}/${SUPERTONIC_FILE}.tar.bz2`
     const modelDir = this.getModelDirectory()
     const finalPath = this.getModelPath()
+    // Extract next to the final folder and rename it into place only once it is
+    // complete: a partial extract must never pass the files-exist check, because
+    // loading a truncated model crashes inside native code.
+    const partialPrefix = `.partial-${MODEL_FOLDER}-`
+    const partialPath = `${modelDir}/${partialPrefix}${Date.now()}`
 
     try {
       await RNFS.mkdir(modelDir, {NSURLIsExcludedFromBackupKey: true})
+      try {
+        for (const entry of await RNFS.readDir(modelDir)) {
+          if (entry.name.startsWith(partialPrefix)) await RNFS.unlink(entry.path)
+        }
+      } catch (cleanupError) {
+        console.warn("TTSModelManager: could not clean interrupted extracts:", cleanupError)
+      }
 
       const result = RNFS.downloadFile({
         fromUrl: modelUrl,
@@ -343,7 +355,7 @@ class TTSModelManager {
 
       let extractionResult = false
       try {
-        extractionResult = await BluetoothSdk.extractTarBz2(tempPath, finalPath)
+        extractionResult = await BluetoothSdk.extractTarBz2(tempPath, partialPath)
       } finally {
         subscription.remove()
       }
@@ -351,9 +363,20 @@ class TTSModelManager {
       if (!extractionResult) {
         throw new Error("Native TTS model extraction returned failure status")
       }
-      onExtractionProgress?.({percentage: 100})
 
       await RNFS.unlink(tempPath)
+
+      for (const file of language.requiredFiles) {
+        if (!(await RNFS.exists(`${partialPath}/${file}`))) {
+          throw new Error(`Downloaded TTS model is incomplete: missing ${file}`)
+        }
+      }
+      if (!(await BluetoothSdk.validateTtsModel(partialPath))) {
+        throw new Error("Downloaded TTS model is incomplete or invalid")
+      }
+      if (await RNFS.exists(finalPath)) await RNFS.unlink(finalPath)
+      await RNFS.moveFile(partialPath, finalPath)
+      onExtractionProgress?.({percentage: 100})
 
       await this.setNativeModelPath(finalPath, language.languageCode)
       this.currentLanguage = id
@@ -364,10 +387,11 @@ class TTSModelManager {
       } catch (cleanupError) {
         console.warn("TTSModelManager: temp cleanup failed:", cleanupError)
       }
+      // The final folder is only ever replaced by a complete extract.
       try {
-        if (await RNFS.exists(finalPath)) await RNFS.unlink(finalPath)
+        if (await RNFS.exists(partialPath)) await RNFS.unlink(partialPath)
       } catch (cleanupError) {
-        console.warn("TTSModelManager: final cleanup failed:", cleanupError)
+        console.warn("TTSModelManager: partial cleanup failed:", cleanupError)
       }
       throw error
     }

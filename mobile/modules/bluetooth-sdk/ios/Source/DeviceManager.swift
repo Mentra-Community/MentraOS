@@ -222,14 +222,6 @@ struct ViewState {
         set { DeviceStore.shared.apply("bluetooth", "sensing_enabled", newValue) }
     }
 
-    /// Phone-side VAD gating switch. Default is OFF (VAD runs) so that the
-    /// coordinator can drive per-utterance offline/online STT switching from
-    /// `vad_status` events. Set to `true` only as an emergency kill-switch.
-    private var bypassVad: Bool {
-        get { DeviceStore.shared.get("bluetooth", "bypass_vad") as? Bool ?? false }
-        set { DeviceStore.shared.apply("bluetooth", "bypass_vad", newValue) }
-    }
-
     private var localSttFallbackActive: Bool {
         get { DeviceStore.shared.get("bluetooth", "local_stt_fallback_active") as? Bool ?? false }
         set { DeviceStore.shared.apply("bluetooth", "local_stt_fallback_active", newValue) }
@@ -558,6 +550,11 @@ struct ViewState {
     }
 
     func handlePcm(_ pcmData: Data) {
+        // The wake word, phone-side speech activity, and local STT all hear the same 16 kHz mono PCM.
+        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
+            WakeWordDetector.shared.accept(pcmData)
+            SpeechActivityMonitor.shared.accept(pcmData)
+        #endif
         handleSendingPcm(pcmData)
 
         // Send PCM to local transcriber.
@@ -1009,12 +1006,33 @@ struct ViewState {
         updateMicState()
     }
 
-    func restartTranscriber() {
+    /// Whether on-device transcription currently has `path` loaded. Never waits for a load.
+    func isSttModelLoaded(_ path: String) -> Bool {
         #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
-        Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
-        transcriber.restart()
+            return transcriber.isModelLoaded(path)
         #else
-        Bridge.log("MAN: Local STT is not included in this SwiftPM build")
+            return false
+        #endif
+    }
+
+    /// Reload the selected model if on-device transcription is in demand. Returns false only
+    /// when that reload failed; true once it loaded or when there is no demand.
+    func restartTranscriber() async -> Bool {
+        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
+            Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
+            return await transcriber.restart()
+        #else
+            Bridge.log("MAN: Local STT is not included in this SwiftPM build")
+            return true
+        #endif
+    }
+
+    /// End the current on-device utterance. See `SherpaOnnxTranscriber.finishUtterance`.
+    func finishTranscription() async -> String? {
+        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
+            return await transcriber.finishUtterance()
+        #else
+            return nil
         #endif
     }
 

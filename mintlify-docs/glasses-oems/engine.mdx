@@ -203,8 +203,8 @@ engine.speech.stt.currentLanguage()
 engine.speech.stt.languages()
 engine.speech.stt.languageInfo()
 await engine.speech.stt.download(/* model args */)
-engine.speech.stt.activate(code)
-engine.speech.stt.cancelDownload()
+await engine.speech.stt.activate(code)               // select it and persist its native path
+engine.speech.stt.cancelDownload(code?)              // that download, or the most recent one
 await engine.speech.stt.deleteModel(/* model args */)
 engine.speech.stt.status()                       // offline-model auto-download status
 engine.speech.stt.onStatusChanged((s) => { … })  // subscribe; returns unsubscribe

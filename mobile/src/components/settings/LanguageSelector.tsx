@@ -23,6 +23,11 @@ type LanguageSelectorProps = {
   extractionPercent?: number
   onPickLanguage: (code: string) => void
   formatBytes?: (bytes: number) => string
+  /**
+   * For a model with no "in use" choice (e.g. the wake-word model): downloaded
+   * rows show this hint instead of "In use" / "Tap to use", without a check.
+   */
+  downloadedHint?: string
 }
 
 export default function LanguageSelector({
@@ -34,13 +39,14 @@ export default function LanguageSelector({
   extractionPercent,
   onPickLanguage,
   formatBytes = STTModelManager.formatBytes,
+  downloadedHint,
 }: LanguageSelectorProps) {
   const {theme, themed} = useAppTheme()
 
   return (
     <Group title={title}>
       {languages.map((lang) => {
-        const isActive = lang.code === currentLanguage && lang.downloaded
+        const isActive = downloadedHint === undefined && lang.code === currentLanguage && lang.downloaded
         const isDownloading = lang.code === downloadingLanguage
 
         let subtitle: string
@@ -52,6 +58,8 @@ export default function LanguageSelector({
           } else {
             subtitle = "Preparing download…"
           }
+        } else if (lang.downloaded && downloadedHint !== undefined) {
+          subtitle = `${formatBytes(lang.size)} · ${downloadedHint}`
         } else if (lang.downloaded) {
           subtitle = isActive ? `${formatBytes(lang.size)} · In use` : `${formatBytes(lang.size)} · Tap to use`
         } else {

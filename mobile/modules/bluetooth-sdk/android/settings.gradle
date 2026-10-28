@@ -5,7 +5,7 @@
 // with com.mentraglass:bluetooth-sdk substituted by project(":").
 // The MentraOS app (an Expo host) ignores this file: Expo autolinking adds this
 // directory as :mentra-bluetooth-sdk, and the SDK's config plugin adds :lc3Lib
-// and :silero to the host's own settings.gradle.
+// to the host's own settings.gradle.
 
 gradle.rootProject { project ->
   // Same versions as the MentraOS app's generated Android project. AGP refuses
@@ -46,6 +46,3 @@ gradle.beforeProject { project ->
 rootProject.name = 'mentra-bluetooth-sdk'
 
 include ':lc3Lib'
-
-include ':silero'
-project(':silero').projectDir = new File(rootDir, 'silero')

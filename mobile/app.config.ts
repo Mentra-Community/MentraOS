@@ -55,7 +55,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, spaces, or underscores.`,
     )
   }
-  const appName = isValidVariant ? variantName : variant.appName
+  const appName = variantName && isValidVariant ? variantName : variant.appName
   const androidPackage = resolveAndroidPackageName()
   const iosBundleId = androidPackage
 

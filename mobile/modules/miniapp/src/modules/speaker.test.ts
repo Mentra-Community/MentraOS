@@ -288,3 +288,12 @@ describe("SpeakerModule.createStream validation", () => {
     expect(requestCalls).toHaveLength(0)
   })
 })
+
+test("short cues can request native 80ms headroom without changing other streams", async () => {
+  const {session, requestCalls} = mockSession([{streamId: "cue"}])
+  await new SpeakerModule(session).createStream({sampleRate: 48000, jitterMs: 80})
+  expect(requestCalls[0]).toMatchObject({type: MiniappRequestType.SPEAKER_STREAM_OPEN, jitterMs: 80})
+  for (const jitterMs of [NaN, -1, 79, 501, Infinity])
+    await expect(new SpeakerModule(session).createStream({jitterMs})).rejects.toThrow(RangeError)
+  expect(requestCalls).toHaveLength(1)
+})

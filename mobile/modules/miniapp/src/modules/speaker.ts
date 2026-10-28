@@ -85,6 +85,22 @@ export type SpeakerStreamSampleRate = 16000 | 24000 | 48000
 export interface SpeakerStreamOptions {
   /** PCM sample rate in Hz. Default 16000. */
   sampleRate?: SpeakerStreamSampleRate
+  /**
+   * Open the native stream now and keep it idle until the first write, so a
+   * later sound only has to write samples. The speaker reports `idle` and other
+   * audio is left alone until then. If the audio route changes before the
+   * first write (Bluetooth or glasses connect/disconnect, a call, an audio
+   * interruption), the phone closes the stream and the next write fails with
+   * "not open"; open a fresh stream then.
+   */
+  prewarm?: boolean
+  /**
+   * How much audio (80–500 ms) the phone queues before playback starts, and
+   * the cushion against gaps after that. Default 500. A sound shorter than
+   * this still plays once you close the stream. Use a small value such as 80
+   * for short cues that should start immediately.
+   */
+  jitterMs?: number
   /** Channel count. v1 is mono only. Default 1. */
   channels?: 1
   /** Playback volume 0..1. Default 1. */
@@ -123,7 +139,10 @@ export class SpeakerStreamWriter {
   private settled = false
   private writeChain: Promise<void> = Promise.resolve()
 
-  constructor(private readonly session: MiniappSession, readonly streamId: string) {}
+  constructor(
+    private readonly session: MiniappSession,
+    readonly streamId: string,
+  ) {}
 
   /**
    * Append raw PCM bytes (16-bit LE). Auto-chunked. Resolves with the host's
@@ -317,9 +336,16 @@ export class SpeakerModule {
     ) {
       throw new RangeError("speaker stream volume must be between 0 and 1")
     }
+    if (
+      options.jitterMs !== undefined &&
+      (!Number.isFinite(options.jitterMs) || options.jitterMs < 80 || options.jitterMs > 500)
+    )
+      throw new RangeError("speaker stream jitterMs must be between 80 and 500")
     const res = await this.session.sendRequest<{streamId: string}>({
       type: MiniappRequestType.SPEAKER_STREAM_OPEN,
       sampleRate: options.sampleRate ?? 16000,
+      ...(options.jitterMs === undefined ? {} : {jitterMs: options.jitterMs}),
+      ...(options.prewarm === undefined ? {} : {prewarm: options.prewarm}),
       channels: options.channels ?? 1,
       volume: options.volume,
       stopOtherAudio: options.stopOtherAudio ?? true,

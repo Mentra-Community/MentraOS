@@ -36,7 +36,11 @@ import com.mentra.bluetoothsdk.utils.MicSourcePin
 import com.mentra.bluetoothsdk.utils.MicTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import com.mentra.lc3Lib.Lc3Cpp
+import com.mentra.bluetoothsdk.stt.OnDeviceRecognizerHost
+import com.mentra.bluetoothsdk.stt.STTTools
 import com.mentra.bluetoothsdk.stt.SherpaOnnxTranscriber
+import com.mentra.bluetoothsdk.stt.SpeechActivityDetector
+import com.mentra.bluetoothsdk.stt.WakeWordDetector
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.CoroutineScope
@@ -46,6 +50,7 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -165,13 +170,6 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         get() = DeviceStore.store.get("bluetooth", "power_saving_mode") as? Boolean ?: false
         set(value) = DeviceStore.apply("bluetooth", "power_saving_mode", value)
 
-    // Phone-side VAD gating switch. Default is OFF (VAD runs) so the
-    // coordinator can drive per-utterance offline/online STT switching from
-    // `vad_status` events. Set to `true` only as an emergency kill-switch.
-    private var bypassVad: Boolean
-        get() = DeviceStore.store.get("bluetooth", "bypass_vad") as? Boolean ?: false
-        set(value) = DeviceStore.apply("bluetooth", "bypass_vad", value)
-
     private var localSttFallbackActive: Boolean
         get() = DeviceStore.store.get("bluetooth", "local_stt_fallback_active") as? Boolean ?: false
         set(value) = DeviceStore.apply("bluetooth", "local_stt_fallback_active", value)
@@ -284,13 +282,23 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     private var micReinitRunnable: Runnable? = null
     private var systemMicAvailabilityRecheckRunnable: Runnable? = null
 
-    // VAD
-    private val vadBuffer = mutableListOf<ByteArray>()
-    private var isSpeaking = false
-    private var vadPolicy: com.mentra.bluetoothsdk.stt.VadGateSpeechPolicy? = null
-
-    // STT
-    private var transcriber: SherpaOnnxTranscriber? = null
+    // STT: one recognizer, loaded only while on-device transcription is in demand. Models
+    // load on sttLoader (never on the audio thread or under a DeviceManager lock) and are
+    // swapped in afterwards; see OnDeviceRecognizerHost.
+    private val sttLoader: ExecutorService =
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "SttModelLoader").apply { isDaemon = true }
+        }
+    private val transcription =
+        OnDeviceRecognizerHost(
+            selection = ::selectedSttModel,
+            loadModel = ::loadTranscriber,
+            pathMatches = { transcriber, path -> transcriber.isModelLoaded(path) },
+            // Returns at once; the model is released on its worker after queued audio.
+            release = { transcriber -> transcriber.shutdown() },
+            loader = sttLoader,
+            log = { message -> Bridge.log(message) },
+        )
 
     // View states
     private val viewStates = mutableListOf<ViewState>()
@@ -334,30 +342,6 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             Bridge.log("Failed to initialize LC3 encoder/decoder: ${e.message}")
             lc3EncoderPtr = 0
             lc3DecoderPtr = 0
-        }
-
-        // Initialize phone-side Silero VAD. Used by handlePcm to gate audio
-        // fan-out and to drive per-utterance offline/online STT switching
-        // (see LocalSttFallbackCoordinator on the JS side). If a previous
-        // policy somehow exists (re-init on hot reload), stop it first to
-        // release the ONNX session.
-        try {
-            vadPolicy?.stop()
-            val ctx = Bridge.getContext()
-            val policy = com.mentra.bluetoothsdk.stt.VadGateSpeechPolicy(ctx)
-            policy.init(blockSizeSamples = 512)
-            policy.onSpeechStateChanged = { speaking ->
-                isSpeaking = speaking
-                Bridge.sendVoiceActivityDetectionStatus(speaking)
-            }
-            vadPolicy = policy
-            Bridge.log("VadGateSpeechPolicy initialized")
-        } catch (e: Exception) {
-            Bridge.log("Failed to initialize VadGateSpeechPolicy: ${e.message}")
-            vadPolicy = null
-        } catch (e: LinkageError) {
-            Bridge.log("Failed to initialize VadGateSpeechPolicy: ${e.message}")
-            vadPolicy = null
         }
 
         // Mic reinit check every 10 seconds
@@ -966,22 +950,15 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     // #endregion
 
     fun handlePcm(pcmData: ByteArray) {
-        // Audio always flows. The previous phone-side Silero VAD gate was a
-        // bandwidth-saver that ate transcripts when the mic delivered frames
-        // not aligned to 512 samples (the case for Android AudioRecord on the
-        // phone internal mic) and was never wired up correctly anyway —
-        // `bypass_vad_for_debugging` was dead, cloud-side `bypass_vad` was
-        // the only knob, and the policy double-VAD'd what the cloud already
-        // VADs server-side. VadGateSpeechPolicy is kept around because
-        // hardware-side VAD events from the glasses route through the same
-        // class to fire `vad_status` (a separate signal the cloud SDK
-        // surfaces as `session.audio.isSpeaking`).
+        // Audio always flows; nothing here gates it. The on-device consumers below only
+        // copy and queue on this (glasses or phone mic) audio thread: model loading and
+        // inference run on their own workers. The glasses' hardware voice detection
+        // (Mentra Live sr_vad -> speaking_status) is separate and unaffected.
+        WakeWordDetector.accept(pcmData)
+        SpeechActivityDetector.accept(pcmData)
         handleSendingPcm(pcmData)
-        if (shouldSendTranscript || localSttFallbackActive) {
-            if (ensureTranscriberInitialized()) {
-                transcriber?.acceptAudio(pcmData)
-            }
-        }
+        // Non-null only while on-device transcription is in demand.
+        transcription.current?.acceptAudio(pcmData)
     }
 
     // turns a single mic on and turns off all other mics:
@@ -1454,55 +1431,67 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         }
     }
 
+    /**
+     * Finish the active recognizer's current utterance. Returns the final text once its
+     * `local_transcription` event has been sent, `""` when nothing was pending, or null when
+     * no streaming model is active, the loaded model can't finalize early, or the 3 s wait
+     * expires. Never throws. Call from a background thread: the final event is delivered on
+     * the main thread before this returns.
+     */
+    fun finishTranscription(): String? =
+        try {
+            transcription.current?.finishUtterance()
+        } catch (e: Exception) {
+            Bridge.log("STT: finishTranscription failed: ${e.message}")
+            null
+        }
+
+    /** Whether the active recognizer has [path] loaded. Lock-free; never waits on a load. */
+    fun isSttModelLoaded(path: String): Boolean = transcription.isLoaded(path)
+
+    /**
+     * Load the selected speech model if on-device transcription is in demand, and wait until
+     * it is loaded. Returns at once when there is no demand or the model is already loaded;
+     * throws when loading fails. Call from a background thread.
+     */
     fun restartTranscriber() {
         Bridge.log("MAN: Restarting transcriber via command")
-        if (ensureTranscriberInitialized()) {
-            transcriber?.restart()
+        try {
+            transcription.restart().get()
+        } catch (e: ExecutionException) {
+            throw e.cause ?: e
         }
     }
 
-    private fun ensureTranscriberInitialized(): Boolean {
-        if (transcriber != null) return true
-
-        return try {
-            val context = Bridge.getContext()
-            val nextTranscriber = SherpaOnnxTranscriber(context)
-            nextTranscriber.setTranscriptListener(
-                object : SherpaOnnxTranscriber.TranscriptListener {
-                    override fun onPartialResult(text: String, language: String) {
-                        Bridge.log("STT: Partial result: $text")
-                        // The Sherpa model emits all-caps text; lowercase English
-                        // output to match the rest of the pipeline (parity with iOS).
-                        val formatted = if (language == "en-US") text.lowercase() else text
-                        Bridge.sendLocalTranscription(formatted, false, language)
-                    }
-
-                    override fun onFinalResult(text: String, language: String) {
-                        Bridge.log("STT: Final result: $text")
-                        // The Sherpa model emits all-caps text; lowercase English
-                        // output to match the rest of the pipeline (parity with iOS).
-                        val formatted = if (language == "en-US") text.lowercase() else text
-                        Bridge.sendLocalTranscription(formatted, true, language)
-                    }
-                }
-            )
-            nextTranscriber.initialize()
-            if (!nextTranscriber.isInitialized()) {
-                Bridge.log("SherpaOnnxTranscriber initialize() returned without becoming ready")
-                return false
+    private fun selectedSttModel(): OnDeviceRecognizerHost.Selection? {
+        val context =
+            try {
+                Bridge.getContext()
+            } catch (_: IllegalStateException) {
+                return null
             }
-            transcriber = nextTranscriber
-            Bridge.log("SherpaOnnxTranscriber fully initialized")
-            true
-        } catch (e: Exception) {
-            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
-            transcriber = null
-            false
-        } catch (e: LinkageError) {
-            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
-            transcriber = null
-            false
-        }
+        val path = STTTools.getSttModelPath(context).takeIf { it.isNotBlank() } ?: return null
+        return OnDeviceRecognizerHost.Selection(path, STTTools.getSttModelLanguage(context))
+    }
+
+    /** Runs on [sttLoader]. Throws when the model can't be loaded. */
+    private fun loadTranscriber(selection: OnDeviceRecognizerHost.Selection): SherpaOnnxTranscriber {
+        val next = SherpaOnnxTranscriber(Bridge.getContext(), selection.path, selection.language)
+        next.setTranscriptListener(
+            object : SherpaOnnxTranscriber.TranscriptListener {
+                override fun onPartialResult(text: String, language: String) {
+                    Bridge.log("STT: Partial result: $text")
+                    Bridge.sendLocalTranscription(text, false, language)
+                }
+
+                override fun onFinalResult(text: String, language: String) {
+                    Bridge.log("STT: Final result: $text")
+                    Bridge.sendLocalTranscription(text, true, language)
+                }
+            }
+        )
+        next.load()
+        return next
     }
 
     // MARK: - connection state management
@@ -2311,14 +2300,9 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         val willSendPcm = shouldSendPcm || shouldSendLc3
         val willSendTranscript = shouldSendTranscript || localSttFallbackActive
         val nextEnabled = willSendPcm || willSendTranscript
-        // Tell VAD when the mic is shutting down so it doesn't get stuck in
-        // a stale "speaking" state and keep emitting vad_status=true after
-        // audio stops flowing.
-        if (micEnabled && !nextEnabled) {
-            vadPolicy?.microphoneStateChanged(false)
-        }
+        // Load the recognizer while on-device transcription is in demand; release it when not.
+        transcription.setDemand(willSendTranscript)
         micEnabled = nextEnabled
-        vadBuffer.clear()
         updateMicState()
     }
 
@@ -2746,9 +2730,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         systemMicAvailabilityRecheckRunnable?.let { mainHandler.removeCallbacks(it) }
         systemMicAvailabilityRecheckRunnable = null
 
-        // Clean up transcriber resources
-        transcriber?.shutdown()
-        transcriber = null
+        // Release on-device voice models (each on its own worker).
+        transcription.setDemand(false)
+        WakeWordDetector.shutdown()
+        SpeechActivityDetector.shutdown()
 
         // Clean up LC3 encoder/decoder (synchronized to prevent use-after-free
         // if the recording thread is mid-encode/decode)

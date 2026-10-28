@@ -59,10 +59,13 @@ await session.speaker.play({
 ## Text-to-speech
 
 `speak` sends the text to the phone, which streams cloud TTS when connected and
-falls back to local offline TTS when the cloud is unavailable. It resolves when
-playback completes. Offline playback may segment longer text internally to
-reduce latency; callers use the same `speak()` API and receive the same
-interruption behavior in either mode.
+falls back to local offline TTS when the cloud is unavailable. Cloud speech
+starts playing while it is still being synthesized, the same way on Android
+and iOS. It resolves when playback completes. If the connection drops in the
+middle of a sentence, the part that already played stays played and `speak`
+rejects with `TTS_UPSTREAM_ERROR`. Offline playback may segment longer text
+internally to reduce latency; callers use the same `speak()` API and receive
+the same interruption behavior in either mode.
 
 By default, the Mentra App converts display-oriented markup and symbols into
 natural spoken words before either TTS path runs. For example, `68°F (20°C)`
@@ -130,12 +133,66 @@ try {
 
 `SpeakerStreamOptions`:
 
-| Field            | Type                      | Notes                                                   |
-| ---------------- | ------------------------- | ------------------------------------------------------- |
-| `sampleRate`     | `16000 \| 24000 \| 48000` | Defaults to `16000`.                                    |
-| `channels`       | `1`                       | Version 1 supports mono only.                           |
-| `volume`         | `number?`                 | `0` through `1`. Defaults to `1`.                       |
-| `stopOtherAudio` | `boolean?`                | Stop other playback before opening. Defaults to `true`. |
+| Field            | Type                      | Notes                                                                                                                  |
+| ---------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `sampleRate`     | `16000 \| 24000 \| 48000` | Defaults to `16000`.                                                                                                   |
+| `channels`       | `1`                       | Version 1 supports mono only.                                                                                          |
+| `volume`         | `number?`                 | `0` through `1`. Defaults to `1`.                                                                                      |
+| `stopOtherAudio` | `boolean?`                | Stop other playback when the stream starts. Defaults to `true`.                                                       |
+| `jitterMs`       | `number?`                 | Audio queued before playback starts, and the cushion against gaps after that. `80` through `500`. Defaults to `500`. |
+| `prewarm`        | `boolean?`                | Open the stream now and keep it idle until the first write. Defaults to `false`.                                      |
+
+### Start delay
+
+Playback starts once `jitterMs` of audio is queued, or when you call
+`close()`, so a sound shorter than `jitterMs` still plays. The same value then
+protects against gaps when chunks arrive unevenly. The default `500` suits
+one-way audio such as music or a recording. For conversational audio or a
+short cue that should start right away, pass a small value:
+
+```typescript
+const cue = await session.speaker.createStream({sampleRate: 48000, jitterMs: 80, stopOtherAudio: false})
+await cue.writeBase64(chimePcmBase64)
+await cue.close()
+```
+
+Android and iOS treat `jitterMs` the same way.
+
+### Prewarming a stream
+
+Opening an audio stream takes time. When you know a sound is coming, for
+example a "listening" chime after a wake word, open the stream early with
+`prewarm: true` so the sound only has to write samples:
+
+```typescript
+let ready = session.speaker.createStream({sampleRate: 48000, jitterMs: 80, stopOtherAudio: false, prewarm: true})
+
+async function playChime() {
+  const stream = await ready
+  try {
+    await stream.writeBase64(chimePcmBase64)
+    await stream.close()
+  } catch (error) {
+    // The audio route changed before the chime played; open a fresh stream.
+    if (!String((error as {message?: string})?.message).includes("not open")) throw error
+    const fresh = await session.speaker.createStream({sampleRate: 48000, jitterMs: 80, stopOtherAudio: false})
+    await fresh.writeBase64(chimePcmBase64)
+    await fresh.close()
+  } finally {
+    ready = session.speaker.createStream({sampleRate: 48000, jitterMs: 80, stopOtherAudio: false, prewarm: true})
+  }
+}
+```
+
+Until its first write, a prewarmed stream is silent: the speaker state stays
+`idle`, it doesn't interrupt other audio, and other sounds (including your own
+`speak()`, `play()`, and `stop()`) leave it open. Its first write starts it,
+applying `stopOtherAudio` at that moment. If the audio route changes before
+the first write (Bluetooth or glasses connect or disconnect, a phone or Teams
+call, an audio interruption), the phone closes the stream, because it would
+otherwise play on the old route. The next write then fails with "not open";
+open a fresh stream on the current route, as above. Opening another stream
+still closes the previous one, since a miniapp has one stream at a time.
 
 The returned `SpeakerStreamWriter` has:
 

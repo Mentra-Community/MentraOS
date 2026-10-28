@@ -7,7 +7,7 @@ jest.mock("../../modules/engine/src/services/STTModelManager", () => ({
     getAvailableLanguages: jest.fn(() => [{code: "en"}]),
     getAllLanguageInfo: jest.fn(() => Promise.resolve([])),
     downloadModel: jest.fn(() => Promise.resolve()),
-    setCurrentLanguage: jest.fn(),
+    activateLanguage: jest.fn(() => Promise.resolve()),
     cancelDownload: jest.fn(() => Promise.resolve()),
     deleteModel: jest.fn(() => Promise.resolve()),
   },
@@ -36,9 +36,14 @@ import {speech} from "../../modules/engine/src/facades/speech"
 describe("speech facade", () => {
   beforeEach(() => jest.clearAllMocks())
 
-  it("stt.activate delegates to setCurrentLanguage", () => {
-    speech.stt.activate("fr")
-    expect(sttModelManager.setCurrentLanguage).toHaveBeenCalledWith("fr")
+  it("stt.activate persists the native model path through activateLanguage", async () => {
+    await speech.stt.activate("fr")
+    expect(sttModelManager.activateLanguage).toHaveBeenCalledWith("fr")
+  })
+
+  it("stt.cancelDownload cancels the named download", async () => {
+    await speech.stt.cancelDownload("de")
+    expect(sttModelManager.cancelDownload).toHaveBeenCalledWith("de")
   })
 
   it("stt.download forwards its args to downloadModel", async () => {

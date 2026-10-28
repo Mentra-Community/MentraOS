@@ -2,7 +2,7 @@
 
 import {describe, expect, test} from "bun:test"
 
-import {MiniappRequestType} from "../protocol"
+import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import type {MiniappSession} from "../session"
 import {MicModule} from "./mic"
 
@@ -77,4 +77,24 @@ describe("MicModule", () => {
       {type: MiniappRequestType.MIC_RELEASE, sessionId: 3},
     ])
   })
+})
+
+test("onWakeWord subscribes natively and releases its subscription on stop", () => {
+  const subscribe = (_stream: string, _handler: (data: unknown) => void) => unsubscribe
+  let released = 0
+  const unsubscribe = () => {
+    released++
+  }
+  const calls: string[] = []
+  const session = {
+    _subscribe: (stream: string, handler: (data: unknown) => void) => {
+      calls.push(stream)
+      return subscribe(stream, handler)
+    },
+  } as unknown as MiniappSession
+  const mic = new MicModule(session)
+  mic.onWakeWord(() => {})
+  expect(calls).toEqual([MiniappStreamType.WAKE_WORD])
+  mic.stop()
+  expect(released).toBe(1)
 })

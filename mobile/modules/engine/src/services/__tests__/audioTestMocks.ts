@@ -19,6 +19,9 @@ export const pcmStreamOpen = mock(async () => {})
 export const pcmStreamWrite = mock(async () => ({bufferedMs: 120}))
 export const pcmStreamClose = mock(async () => ({durationMs: 1_500}))
 export const pcmStreamAbort = mock(async () => {})
+export const pcmStreamPlayUrl = mock(
+  async (_id: string, _url: string, _rate: number, _volume: number, _jitterMs?: number) => ({durationMs: 2_000}),
+)
 export const setGlassesMediaVolume = mock(async () => ({level: 10, statusCode: 0}))
 export const setOwnAppAudioPlaying = mock(async () => {})
 export const sendAudioFrame = mock(() => {})
@@ -49,6 +52,7 @@ function installAudioBluetoothSdk(): void {
     pcmStreamAbort,
     pcmStreamClose,
     pcmStreamOpen,
+    pcmStreamPlayUrl,
     pcmStreamWrite,
     releaseCameraFovOverride,
     restoreLegacyCameraFov,
@@ -81,6 +85,7 @@ export function resetAudioTestMocks(): void {
   pcmStreamAbort.mockClear()
   pcmStreamClose.mockClear()
   pcmStreamOpen.mockClear()
+  pcmStreamPlayUrl.mockClear()
   pcmStreamWrite.mockClear()
   setGlassesMediaVolume.mockClear()
   setOwnAppAudioPlaying.mockClear()

@@ -255,6 +255,33 @@ public class Bridge private constructor() {
             sendTypedMessage("speaking_status", body as Map<String, Any>)
         }
 
+        /**
+         * Send a phone-side speech activity transition from the on-device Silero detector.
+         * [silentForMs] is 0 while speaking; on a silence transition, how long it has been quiet.
+         */
+        @JvmStatic
+        fun sendSpeechActivity(speaking: Boolean, silentForMs: Long) {
+            val body = HashMap<String, Any>()
+            body["speaking"] = speaking
+            body["silentForMs"] = silentForMs
+            body["timestamp"] = System.currentTimeMillis()
+            sendTypedMessage("speech_activity", body as Map<String, Any>)
+        }
+
+        /**
+         * Send on-device keyword spotter state or a detection. [kind] is "loading", "ready",
+         * "detected" or "error"; it describes only the wake-word model.
+         */
+        @JvmStatic
+        fun sendWakeWord(kind: String, phrase: String, message: String? = null) {
+            val body = HashMap<String, Any>()
+            body["kind"] = kind
+            body["phrase"] = phrase
+            body["timestamp"] = System.currentTimeMillis()
+            if (message != null) body["message"] = message
+            sendTypedMessage("wake_word", body as Map<String, Any>)
+        }
+
         /** Send battery status */
         @JvmStatic
         fun sendBatteryStatus(level: Int, charging: Boolean) {

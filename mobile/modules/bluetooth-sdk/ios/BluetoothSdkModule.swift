@@ -78,6 +78,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "audio_disconnected",
             "save_setting",
             "local_transcription",
+            "wake_word",
+            "speech_activity",
             "phone_notification",
             "native_notification_status",
             "native_notification_delivery",
@@ -753,16 +755,16 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - Live PCM output stream (miniapp speaker.createStream)
 
-        // jitterMs is accepted for signature parity with Android and ignored: AVAudioEngine's
-        // scheduled-buffer playout has no equivalent fixed track buffer to size, so there is no
-        // knob here that would mean the same thing.
+        // jitterMs (default 500, 80-500 as on Android): playback starts once that much audio is
+        // queued, or on close, so a sound shorter than the cushion still plays.
         AsyncFunction("pcmStreamOpen") {
-            (streamId: String, sampleRate: Int, channels: Int, volume: Double, _: Int?) async throws in
+            (streamId: String, sampleRate: Int, channels: Int, volume: Double, jitterMs: Int?) async throws in
             try PcmStreamManager.open(
                 streamId: streamId,
                 sampleRate: sampleRate,
                 channels: channels,
-                volume: Float(volume)
+                volume: Float(volume),
+                jitterMs: jitterMs
             )
         }
 
@@ -778,6 +780,19 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("pcmStreamAbort") { (streamId: String) async in
             await PcmStreamManager.abort(streamId: streamId)
+        }
+
+        // Native HTTP GET of raw s16le mono PCM, played as it downloads. Async, so the download
+        // and playback never hold Expo's shared module queue.
+        AsyncFunction("pcmStreamPlayUrl") {
+            (streamId: String, url: String, sampleRate: Int, volume: Double, jitterMs: Int?) async throws -> [String: Int64] in
+            try ["durationMs": await PcmStreamManager.playUrl(
+                streamId: streamId,
+                url: url,
+                sampleRate: sampleRate,
+                volume: Float(volume),
+                jitterMs: jitterMs
+            )]
         }
 
         AsyncFunction("getGlassesMediaVolume") { () async throws -> [String: Any] in
@@ -838,10 +853,45 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        AsyncFunction("restartTranscriber") {
-            await MainActor.run {
-                DeviceManager.shared.restartTranscriber()
+        // Loads the keyword spotter from the Speech-page model directory; disabling releases it.
+        AsyncFunction("setWakeWordDetection") { (enabled: Bool, modelDir: String?) async throws in
+            #if !os(macOS)
+                try await WakeWordDetector.shared.configure(enabled: enabled, modelDir: modelDir)
+            #else
+                if enabled {
+                    throw NSError(domain: "WakeWordDetector", code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: "Native wake-word detection is not available on macOS"])
+                }
+            #endif
+        }
+
+        AsyncFunction("isSttModelLoaded") { (path: String) async -> Bool in
+            await DeviceManager.shared.isSttModelLoaded(path)
+        }
+
+        // Final text after its local_transcription event was sent, or null. Never throws.
+        AsyncFunction("finishTranscription") { () async -> String? in
+            await DeviceManager.shared.finishTranscription()
+        }
+
+        AsyncFunction("restartTranscriber") { () async throws in
+            guard await DeviceManager.shared.restartTranscriber() else {
+                throw NSError(domain: "SherpaOnnxTranscriber", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "Could not load the speech model"])
             }
+        }
+
+        // Phone-side Silero speech activity on microphone PCM; disabling releases the model.
+        AsyncFunction("setSpeechActivityDetection") { (enabled: Bool, options: [String: Any]?) async throws in
+            #if !os(macOS)
+                let minSilenceMs = (options?["minSilenceMs"] as? NSNumber)?.intValue
+                try await SpeechActivityMonitor.shared.setEnabled(enabled, minSilenceMs: minSilenceMs)
+            #else
+                if enabled {
+                    throw NSError(domain: "SpeechActivity", code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: "Native speech activity detection is not available on macOS"])
+                }
+            #endif
         }
 
         // MARK: - Display Commands

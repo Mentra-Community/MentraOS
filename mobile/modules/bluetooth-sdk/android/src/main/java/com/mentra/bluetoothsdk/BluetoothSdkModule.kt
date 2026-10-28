@@ -355,6 +355,8 @@ class BluetoothSdkModule : Module() {
             "speaking_status",
             "battery_status",
             "local_transcription",
+            "wake_word",
+            "speech_activity",
             "wifi_status_change",
             "wifi_scan_result",
             "wifi_forget_result",
@@ -894,11 +896,40 @@ class BluetoothSdkModule : Module() {
             sdk?.setMicSourcePin(source)
         }
 
-        // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: restart()
-        // does a synchronous JNI model reload that would otherwise block every other
-        // native call in the app until it completes.
+        // MARK: - On-device voice
+        //
+        // Everything that can wait on a model load or a worker runs on Dispatchers.IO,
+        // never on the shared Expo AsyncFunctionQueue, which every other native call
+        // (and every miniapp) waits behind.
+
+        AsyncFunction("setWakeWordDetection") Coroutine { enabled: Boolean, modelDir: String? ->
+            withContext(Dispatchers.IO) {
+                com.mentra.bluetoothsdk.stt.WakeWordDetector.configure(enabled, modelDir)
+            }
+        }
+
+        // Lock-free: never waits on a model load.
+        AsyncFunction("isSttModelLoaded") { path: String ->
+            deviceManager?.isSttModelLoaded(path) ?: false
+        }
+
+        // Resolves with the final text, "" when nothing was pending, or null when no
+        // streaming model is active, the model can't finalize early, or after 3 s.
+        AsyncFunction("finishTranscription") Coroutine { ->
+            withContext(Dispatchers.IO) { deviceManager?.finishTranscription() }
+        }
+
         AsyncFunction("restartTranscriber") Coroutine { ->
             withContext(Dispatchers.IO) { deviceManager?.restartTranscriber() }
+        }
+
+        AsyncFunction("setSpeechActivityDetection") Coroutine { enabled: Boolean, options: Map<String, Any?>? ->
+            val minSilenceMs =
+                    (options?.get("minSilenceMs") as? Number)?.toInt()
+                            ?: com.mentra.bluetoothsdk.stt.SpeechActivityEngine.DEFAULT_MIN_SILENCE_MS
+            withContext(Dispatchers.IO) {
+                com.mentra.bluetoothsdk.stt.SpeechActivityDetector.configure(enabled, minSilenceMs)
+            }
         }
 
         // MARK: - Audio Playback Monitoring
@@ -940,6 +971,33 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("pcmStreamAbort") { streamId: String ->
             PcmStreamManager.abort(streamId)
+        }
+
+        // Native HTTP GET of raw s16le mono PCM, played as it arrives. Blocks a
+        // Dispatchers.IO thread (never the shared queue) until the body has played.
+        AsyncFunction("pcmStreamPlayUrl") Coroutine {
+            streamId: String,
+            url: String,
+            sampleRate: Int,
+            volume: Double,
+            jitterMs: Int?,
+            ->
+            withContext(Dispatchers.IO) {
+                try {
+                    mapOf(
+                            "durationMs" to
+                                    PcmStreamManager.playUrl(
+                                            streamId,
+                                            url,
+                                            sampleRate,
+                                            volume.toFloat(),
+                                            jitterMs,
+                                    )
+                    )
+                } catch (error: com.mentra.bluetoothsdk.utils.audio.PcmUrlPlaybackException) {
+                    throw CodedException(error.code, error.message ?: error.code, error)
+                }
+            }
         }
 
         // *Blocking on Dispatchers.IO, not the shared AsyncFunctionQueue: these wait on

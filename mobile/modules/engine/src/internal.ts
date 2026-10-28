@@ -143,6 +143,8 @@ export {default as audioPlaybackService} from "./services/AudioPlaybackService"
 export {default as sttModelManager, STTModelManager} from "./services/STTModelManager"
 export {default as ttsModelManager, TTSModelManager} from "./services/TTSModelManager"
 export {default as offlineSpeechModelService} from "./services/OfflineSpeechModelService"
+export {default as wakeWordModelManager, WakeWordModelManager} from "./services/WakeWordModelManager"
+export type {WakeWordModelInfo} from "./services/WakeWordModelManager"
 
 export {default as navigationService} from "./services/NavigationService"
 // Phone GPS — the background location task + tier control. Importing this

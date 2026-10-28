@@ -172,7 +172,7 @@ export type {
   ScanQrOptions,
   ScanQrResult,
 } from "../modules/system"
-export type {TranscriptionConfig, TranscriptionOptions} from "../modules/transcription"
+export type {TranscriptionConfig, TranscriptionModelStatus, TranscriptionOptions} from "../modules/transcription"
 export type {PermissionErrorEvent} from "../modules/permissions"
 export type {
   AuthUpdatePayload,
@@ -215,3 +215,5 @@ export type {
   ComputedRoute,
   ComputeRouteResult,
 } from "../modules/navigation"
+
+export type {WakeWordEvent} from "../modules/mic"

@@ -171,31 +171,35 @@ object STTTools {
     }
 
     /**
-     * Extract a tar.bz2 file to a destination directory
+     * Extract a tar.bz2 file to a destination directory.
+     *
+     * The archive is extracted into a temporary sibling directory, and that directory is renamed
+     * to [destinationPath] only once extraction has finished. A partial extract (app killed,
+     * disk full, corrupt archive) therefore never passes a files-exist check, so a truncated
+     * model can't be loaded (that crashes inside sherpa-onnx's native code). An existing
+     * [destinationPath] is replaced only after a successful extract.
      *
      * @param sourcePath Path to the .tar.bz2 file
      * @param destinationPath Directory to extract to
      * @return true if extraction succeeded, false otherwise
      */
     fun extractTarBz2(sourcePath: String, destinationPath: String): Boolean {
+        val destDir = File(destinationPath)
+        val parent = destDir.absoluteFile.parentFile
+        if (parent == null) {
+            Bridge.log("EXTRACTION_ERROR: Destination has no parent directory: $destinationPath")
+            return false
+        }
+        val staging = File(parent, ".${destDir.name}.extracting-${System.nanoTime()}")
         try {
             val sourceFile = File(sourcePath)
             if (!sourceFile.exists()) {
                 Bridge.log("EXTRACTION_ERROR: Source file does not exist: $sourcePath")
                 return false
             }
-
-            val destDir = File(destinationPath)
-
-            // Create destination directory if it doesn't exist
-            if (!destDir.exists()) {
-                Bridge.log("Creating destination directory: $destinationPath")
-                if (!destDir.mkdirs()) {
-                    Bridge.log(
-                            "EXTRACTION_ERROR: Failed to create destination directory: $destinationPath"
-                    )
-                    return false
-                }
+            if (!staging.mkdirs()) {
+                Bridge.log("EXTRACTION_ERROR: Failed to create staging directory: ${staging.absolutePath}")
+                return false
             }
 
             Bridge.log("Extracting tar.bz2 from $sourcePath to $destinationPath")
@@ -204,11 +208,12 @@ object STTTools {
             val startTime = System.currentTimeMillis()
             var fileCount = 0
             var bytesExtracted = 0L
+            val stagingPath = staging.canonicalPath
+            val stagingRoot = stagingPath + File.separator
 
             val totalCompressedBytes = sourceFile.length()
             Bridge.sendExtractionProgress(0, 0, totalCompressedBytes)
 
-            // Open the tar.bz2 file with buffered streams for better performance
             FileInputStream(sourceFile).use { fis ->
                 ProgressInputStream(fis, totalCompressedBytes) { read, total ->
                     val pct =
@@ -216,140 +221,94 @@ object STTTools {
                     Bridge.sendExtractionProgress(pct, read, total)
                 }.use { progress ->
                 BufferedInputStream(progress, 65536).use { bis ->
-                    Bridge.log("Opening bz2 decompression stream...")
                     BZip2CompressorInputStream(bis).use { bzIn ->
-                        Bridge.log("Opening tar archive stream...")
                         TarArchiveInputStream(bzIn).use { tarIn ->
-                            Bridge.log("Reading first tar entry...")
                             var entry = tarIn.nextEntry
-
                             while (entry != null) {
-                                try {
-                                    val outputFile = File(destDir, entry.name)
-
-                                    if (entry.isDirectory) {
-                                        if (!outputFile.exists()) {
-                                            outputFile.mkdirs()
-                                        }
-                                    } else {
-                                        outputFile.parentFile?.let { parent ->
-                                            if (!parent.exists()) {
-                                                parent.mkdirs()
-                                            }
-                                        }
-
-                                        FileOutputStream(outputFile).use { fos ->
-                                            BufferedOutputStream(fos, 65536).use { bos ->
-                                                // 64KB buffer matches iOS path and cuts JNI/stream
-                                                // overhead ~16x vs. the prior 4KB. The per-read
-                                                // progress hook is already 200ms-throttled by
-                                                // ProgressInputStream, so we don't log per-chunk.
-                                                val buffer = ByteArray(65536)
-                                                var len: Int
-                                                var fileBytes = 0L
-                                                val fileSizeMB = entry.size / 1024 / 1024
-                                                var lastProgressMB = 0L
-
-                                                while (tarIn.read(buffer).also { len = it } != -1) {
-                                                    bos.write(buffer, 0, len)
-                                                    fileBytes += len
-                                                    bytesExtracted += len
-
-                                                    if (fileSizeMB > 10) {
-                                                        val currentMB = fileBytes / 1024 / 1024
-                                                        if (currentMB >= lastProgressMB + 10) {
-                                                            lastProgressMB = currentMB
-                                                            val percent =
-                                                                    if (entry.size > 0)
-                                                                            (fileBytes * 100 / entry.size)
-                                                                    else 0
-                                                            Bridge.log(
-                                                                    "  Extracting ${entry.name}: ${currentMB}MB / ${fileSizeMB}MB (${percent}%)"
-                                                            )
-                                                        }
-                                                    }
-                                                }
-
-                                                fileCount++
+                                val outputFile = File(staging, entry.name)
+                                val outputPath = outputFile.canonicalPath
+                                if (outputPath != stagingPath && !outputPath.startsWith(stagingRoot)) {
+                                    throw IllegalStateException("Archive entry escapes the destination: ${entry.name}")
+                                }
+                                if (entry.isDirectory) {
+                                    outputFile.mkdirs()
+                                } else {
+                                    outputFile.parentFile?.mkdirs()
+                                    FileOutputStream(outputFile).use { fos ->
+                                        BufferedOutputStream(fos, 65536).use { bos ->
+                                            // 64KB buffer matches iOS path and cuts JNI/stream
+                                            // overhead vs. a 4KB buffer. Progress is reported by
+                                            // the 200ms-throttled ProgressInputStream.
+                                            val buffer = ByteArray(65536)
+                                            var len: Int
+                                            while (tarIn.read(buffer).also { len = it } != -1) {
+                                                bos.write(buffer, 0, len)
+                                                bytesExtracted += len
                                             }
                                         }
                                     }
-
-                                    entry = tarIn.nextEntry
-                                } catch (e: Exception) {
-                                    Bridge.log(
-                                            "ERROR extracting entry ${entry?.name}: ${e.javaClass.simpleName}: ${e.message}"
-                                    )
-                                    com.mentra.bluetoothsdk.utils.NativeLog.e("STTTools", "Native exception", e)
-                                    throw e
+                                    fileCount++
                                 }
+                                entry = tarIn.nextEntry
                             }
-
-                            Bridge.log("Finished reading all tar entries")
                         }
                     }
                 }
                 }
             }
 
-            Bridge.sendExtractionProgress(100, totalCompressedBytes, totalCompressedBytes)
-
             val duration = (System.currentTimeMillis() - startTime) / 1000
-            val mbExtracted = bytesExtracted / 1024 / 1024
             Bridge.log(
-                    "Extraction completed successfully: $fileCount files, ${mbExtracted}MB in ${duration}s"
+                    "Extraction completed: $fileCount files, ${bytesExtracted / 1024 / 1024}MB in ${duration}s"
             )
 
+            // Archives usually hold one top-level directory: use it as the model directory.
+            val subdirs = staging.listFiles { file -> file.isDirectory } ?: emptyArray()
+            val actualModelDir = if (subdirs.isNotEmpty()) subdirs[0] else staging
+
             // Rename epoch-numbered files to expected names for transducer models
-            // Files are extracted to a subdirectory, find it
-            val subdirs = destDir.listFiles { file -> file.isDirectory } ?: emptyArray()
-            val actualModelDir = if (subdirs.isNotEmpty()) subdirs[0] else destDir
-            Bridge.log("Model directory: ${actualModelDir.absolutePath}")
+            renameIfPresent(actualModelDir, "encoder-epoch-99-avg-1.onnx", "encoder.onnx")
+            renameIfPresent(actualModelDir, "decoder-epoch-99-avg-1.onnx", "decoder.onnx")
+            renameIfPresent(actualModelDir, "joiner-epoch-99-avg-1.int8.onnx", "joiner.onnx")
 
-            // Rename encoder
-            val oldEncoderFile = File(actualModelDir, "encoder-epoch-99-avg-1.onnx")
-            val newEncoderFile = File(actualModelDir, "encoder.onnx")
-            if (oldEncoderFile.exists()) {
-                Bridge.log("Renaming encoder-epoch-99-avg-1.onnx to encoder.onnx")
-                oldEncoderFile.renameTo(newEncoderFile)
-            }
-
-            // Rename decoder
-            val oldDecoderFile = File(actualModelDir, "decoder-epoch-99-avg-1.onnx")
-            val newDecoderFile = File(actualModelDir, "decoder.onnx")
-            if (oldDecoderFile.exists()) {
-                Bridge.log("Renaming decoder-epoch-99-avg-1.onnx to decoder.onnx")
-                oldDecoderFile.renameTo(newDecoderFile)
-            }
-
-            // Rename joiner
-            val oldJoinerFile = File(actualModelDir, "joiner-epoch-99-avg-1.int8.onnx")
-            val newJoinerFile = File(actualModelDir, "joiner.onnx")
-            if (oldJoinerFile.exists()) {
-                Bridge.log("Renaming joiner-epoch-99-avg-1.int8.onnx to joiner.onnx")
-                oldJoinerFile.renameTo(newJoinerFile)
-            }
-
-            // If files were extracted to subdirectory, move them to parent directory
-            if (actualModelDir != destDir) {
-                Bridge.log("Moving files from subdirectory to parent directory")
+            // If files were extracted to a subdirectory, move them up to the staging root
+            if (actualModelDir != staging) {
                 actualModelDir.listFiles()?.forEach { file ->
-                    val targetFile = File(destDir, file.name)
-                    if (targetFile.exists()) {
+                    val targetFile = File(staging, file.name)
+                    if (targetFile.exists() && targetFile != file) {
                         targetFile.deleteRecursively()
                     }
-                    Bridge.log("Moving ${file.name}")
-                    file.renameTo(targetFile)
+                    if (!file.renameTo(targetFile)) {
+                        throw IllegalStateException("Failed to move ${file.name} out of ${actualModelDir.name}")
+                    }
                 }
-                // Delete the now-empty subdirectory
                 actualModelDir.delete()
             }
 
+            // Move the complete model into place.
+            if (destDir.exists() && !destDir.deleteRecursively()) {
+                throw IllegalStateException("Failed to replace existing directory $destinationPath")
+            }
+            if (!staging.renameTo(destDir)) {
+                throw IllegalStateException("Failed to move extracted model to $destinationPath")
+            }
+
+            Bridge.sendExtractionProgress(100, totalCompressedBytes, totalCompressedBytes)
             return true
         } catch (e: Exception) {
             Bridge.log("EXTRACTION_ERROR: ${e.javaClass.simpleName}: ${e.message}")
             com.mentra.bluetoothsdk.utils.NativeLog.e("STTTools", "Native exception", e)
             return false
+        } finally {
+            if (staging.exists()) staging.deleteRecursively()
+        }
+    }
+
+    private fun renameIfPresent(dir: File, from: String, to: String) {
+        val source = File(dir, from)
+        if (source.exists()) {
+            Bridge.log("Renaming $from to $to")
+            source.renameTo(File(dir, to))
         }
     }
 

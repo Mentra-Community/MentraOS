@@ -266,7 +266,16 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
    * so a caller that depends on the guarantee must gate on platform.
    */
   setMicSourcePin(source: string | null): Promise<void>
+  /** See the public `setWakeWordDetection`. `modelDir` is required when enabling. */
+  setWakeWordDetection(enabled: boolean, modelDir?: string | null): Promise<void>
+  /** Whether the active recognizer has `path` loaded. Never blocks on a model load. */
+  isSttModelLoaded(path: string): Promise<boolean>
+  /** See the public `finishTranscription`. */
+  finishTranscription(): Promise<string | null>
+  /** See the public `restartTranscriber`. */
   restartTranscriber(): Promise<void>
+  /** See the public `setSpeechActivityDetection`. */
+  setSpeechActivityDetection(enabled: boolean, options?: {minSilenceMs?: number}): Promise<void>
 
   // Audio Playback Monitoring
   // Notify native side when our app starts/stops playing audio
@@ -280,10 +289,15 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   /**
    * Open a PCM stream session. One AudioTrack per id; caller manages ids.
    *
-   * `jitterMs` sizes the playout buffer and is therefore also the stream's floor latency, since a
-   * streaming track fills to its buffer and stays there. Omit it for one-way media, where the
-   * default cushion is inaudible; pass a small value for conversational audio, where the same
-   * cushion is delay before the far end is heard. Android only — iOS accepts and ignores it.
+   * `jitterMs` (default 500) is how much audio is queued before playback starts, and the playout
+   * cushion after that. Omit it for one-way media, where the default cushion is inaudible; pass a
+   * small value for conversational audio, where the same cushion is delay before the far end is
+   * heard. Both platforms honor it: playback starts once `jitterMs` is queued or the stream is
+   * closed, so a sound shorter than `jitterMs` still plays.
+   *
+   * A stream that has not received audio yet is aborted when the audio route changes (Bluetooth
+   * or glasses connect/disconnect, a call starting or ending, an audio-session interruption), so
+   * its next write rejects with "stream not open" instead of playing on a stale route.
    */
   pcmStreamOpen(
     streamId: string,
@@ -302,6 +316,21 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   pcmStreamClose(streamId: string): Promise<{durationMs: number}>
   /** Stop immediately, dropping any backlog. Idempotent. */
   pcmStreamAbort(streamId: string): Promise<void>
+  /**
+   * Fetch `url` (HTTP GET) and play its body as raw 16-bit little-endian mono PCM at `sampleRate`
+   * while it downloads, through the same stream player as `pcmStreamOpen`. Native code reads the
+   * body; audio never crosses into JavaScript. Resolves with the played duration after the whole
+   * body has played. Rejects on a non-2xx response or a network error (whatever already played
+   * stays played), and with "aborted" after `pcmStreamAbort(streamId)`. Must not block the shared
+   * module queue while it runs.
+   */
+  pcmStreamPlayUrl(
+    streamId: string,
+    url: string,
+    sampleRate: number,
+    volume: number,
+    jitterMs?: number,
+  ): Promise<{durationMs: number}>
 
   /** Mentra Live only: K900 `cs_getvol` / `sr_getvol`. */
   getGlassesMediaVolume(): Promise<GlassesMediaVolumeGetResult>

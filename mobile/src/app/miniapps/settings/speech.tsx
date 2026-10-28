@@ -8,14 +8,14 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {engine, useStopAll} from "@mentra/engine"
+import {useStopAll, SETTINGS, useSetting} from "@mentra/engine"
 import {
   offlineSpeechModelService,
   sttModelManager as STTModelManager,
   ttsModelManager as TTSModelManager,
+  wakeWordModelManager as WakeWordModelManager,
   type OfflineModelDownloadStatus as DownloadStatus,
 } from "@mentra/engine-host-internal"
-import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 
 export default function SpeechSettingsScreen() {
@@ -34,9 +34,15 @@ export default function SpeechSettingsScreen() {
   const [ttsDownloadPercent, setTtsDownloadPercent] = useState(0)
   const [ttsExtractPercent, setTtsExtractPercent] = useState(0)
 
-  // Auto-download status from the background service. Falls back to per-screen
-  // state below when the user kicks a download manually via tap.
-  const [autoStatus, setAutoStatus] = useState<DownloadStatus | null>(offlineSpeechModelService.getStatus())
+  const [wakeWordRows, setWakeWordRows] = useState<LanguageRow[]>([])
+
+  // Download status from the Speech-page download system, per model kind: the
+  // startup download, a miniapp that needed a missing model, or a tap here.
+  // Falls back to per-screen state below when the user kicks a download manually via tap.
+  const [autoStatuses, setAutoStatuses] = useState<Partial<Record<DownloadStatus["kind"], DownloadStatus>>>(() => {
+    const status = offlineSpeechModelService.getStatus()
+    return status ? {[status.kind]: status} : {}
+  })
 
   const [isLoading, setIsLoading] = useState(true)
   const [_enforceLocalTranscription, setEnforceLocalTranscription] = useSetting(
@@ -85,10 +91,12 @@ export default function SpeechSettingsScreen() {
   }
 
   const refreshLists = useCallback(async () => {
-    const [sttInfos, ttsInfos] = await Promise.all([
+    const [sttInfos, ttsInfos, wakeWordInfo] = await Promise.all([
       STTModelManager.getAllLanguageInfo(),
       TTSModelManager.getAllLanguageInfo(),
+      WakeWordModelManager.getInfo(),
     ])
+    setWakeWordRows([wakeWordInfo])
     setSttLanguages(
       sttInfos.map((i) => ({
         code: i.code,
@@ -127,56 +135,54 @@ export default function SpeechSettingsScreen() {
   }, [initSelected])
 
   useEffect(() => {
-    return offlineSpeechModelService.subscribe(setAutoStatus)
+    return offlineSpeechModelService.subscribe((status) => {
+      if (status) setAutoStatuses((current) => ({...current, [status.kind]: status}))
+    })
   }, [])
 
-  // When the background auto-download completes, refresh the rows so the
+  // When a background download completes, refresh the rows so the
   // downloaded flag/icon updates without needing to leave + re-enter the screen.
+  const sttStatus = autoStatuses.stt
+  const ttsStatus = autoStatuses.tts
+  const wakeWordStatus = autoStatuses.wakeword
   useEffect(() => {
-    if (autoStatus?.stage === "complete") {
+    if (sttStatus?.stage === "complete" || sttStatus?.stage === "failed") {
       void refreshLists()
-      if (autoStatus.kind === "stt") {
-        setSttCurrent(STTModelManager.getCurrentLanguage())
-      } else {
-        setTtsCurrent(TTSModelManager.getCurrentLanguage())
-      }
+      setSttCurrent(STTModelManager.getCurrentLanguage())
     }
-  }, [autoStatus?.stage, autoStatus?.kind, refreshLists])
+  }, [sttStatus?.stage, sttStatus?.languageCode, refreshLists])
+  useEffect(() => {
+    if (ttsStatus?.stage === "complete" || ttsStatus?.stage === "failed") {
+      void refreshLists()
+      setTtsCurrent(TTSModelManager.getCurrentLanguage())
+    }
+  }, [ttsStatus?.stage, ttsStatus?.languageCode, refreshLists])
+  useEffect(() => {
+    if (wakeWordStatus?.stage === "complete" || wakeWordStatus?.stage === "failed") void refreshLists()
+  }, [wakeWordStatus?.stage, refreshLists])
 
-  // Merge auto-download status with the manually-driven per-screen state.
-  // Manual tap state wins when set (user is in control); otherwise surface the
-  // background service's progress on the matching row.
-  const sttAuto =
-    autoStatus?.kind === "stt" && (autoStatus.stage === "downloading" || autoStatus.stage === "extracting")
-  const ttsAuto =
-    autoStatus?.kind === "tts" && (autoStatus.stage === "downloading" || autoStatus.stage === "extracting")
-  const sttRowDownloading = sttDownloading ?? (sttAuto ? autoStatus!.languageCode : undefined)
-  const sttRowDownloadPercent = sttDownloading
-    ? sttDownloadPercent
-    : sttAuto && autoStatus!.stage === "downloading"
-      ? autoStatus!.percent
-      : 0
-  const sttRowExtractPercent = sttDownloading
-    ? sttExtractPercent
-    : sttAuto && autoStatus!.stage === "extracting"
-      ? autoStatus!.percent
-      : 0
-  const ttsRowDownloading = ttsDownloading ?? (ttsAuto ? autoStatus!.languageCode : undefined)
-  const ttsRowDownloadPercent = ttsDownloading
-    ? ttsDownloadPercent
-    : ttsAuto && autoStatus!.stage === "downloading"
-      ? autoStatus!.percent
-      : 0
-  const ttsRowExtractPercent = ttsDownloading
-    ? ttsExtractPercent
-    : ttsAuto && autoStatus!.stage === "extracting"
-      ? autoStatus!.percent
-      : 0
+  const inProgress = (status?: DownloadStatus) =>
+    status?.stage === "downloading" || status?.stage === "extracting" ? status : undefined
+  const progressFor = (status: DownloadStatus | undefined, stage: DownloadStatus["stage"]) =>
+    status?.stage === stage ? status.percent : 0
+
+  // Merge download status with the manually-driven per-screen state. Manual
+  // tap state wins when set (user is in control); otherwise surface the
+  // download system's progress on the matching row.
+  const sttAuto = inProgress(sttStatus)
+  const ttsAuto = inProgress(ttsStatus)
+  const wakeWordAuto = inProgress(wakeWordStatus)
+  const sttRowDownloading = sttDownloading ?? sttAuto?.languageCode
+  const sttRowDownloadPercent = sttDownloading ? sttDownloadPercent : progressFor(sttAuto, "downloading")
+  const sttRowExtractPercent = sttDownloading ? sttExtractPercent : progressFor(sttAuto, "extracting")
+  const ttsRowDownloading = ttsDownloading ?? ttsAuto?.languageCode
+  const ttsRowDownloadPercent = ttsDownloading ? ttsDownloadPercent : progressFor(ttsAuto, "downloading")
+  const ttsRowExtractPercent = ttsDownloading ? ttsExtractPercent : progressFor(ttsAuto, "extracting")
 
   const handleCancelDownload = async () => {
     try {
       if (sttDownloading) {
-        await STTModelManager.cancelDownload()
+        await STTModelManager.cancelDownload(sttDownloading)
         setSttDownloading(undefined)
         setSttDownloadPercent(0)
         setSttExtractPercent(0)
@@ -242,11 +248,11 @@ export default function SpeechSettingsScreen() {
     const info = await STTModelManager.getLanguageInfo(code)
 
     if (info.downloaded) {
-      // Optimistic: commit the UI selection immediately, then activate +
-      // restart the transcriber in the background. Subsequent taps queue
-      // behind the in-flight call so the last tap wins.
+      // Optimistic: commit the UI selection immediately, then activate in the
+      // background; on-device transcription that is running reloads the new
+      // model itself. Subsequent taps queue behind the in-flight call so the
+      // last tap wins.
       setSttCurrent(code)
-      STTModelManager.setCurrentLanguage(code)
       sttDesiredRef.current = code
 
       sttChainRef.current = sttChainRef.current
@@ -256,8 +262,9 @@ export default function SpeechSettingsScreen() {
           if (target == null) return
           try {
             await STTModelManager.activateLanguage(target)
-            await engine.speech.restartTranscriber()
           } catch (error: any) {
+            const actual = await STTModelManager.getCurrentLanguageFromPreferences()
+            setSttCurrent(actual || STTModelManager.getCurrentLanguage())
             console.error("STT activation failed:", error)
             showAlert("Error", error?.message ?? "Failed to switch language", [{text: "OK"}])
           }
@@ -276,9 +283,7 @@ export default function SpeechSettingsScreen() {
       )
       await refreshLists()
       await STTModelManager.activateLanguage(code)
-      await engine.speech.restartTranscriber()
       setSttCurrent(code)
-      STTModelManager.setCurrentLanguage(code)
       sttDesiredRef.current = code
       await setEnforceLocalTranscription(true)
     } catch (error: any) {
@@ -346,6 +351,39 @@ export default function SpeechSettingsScreen() {
     }
   }
 
+  const handlePickWakeWord = async () => {
+    if (wakeWordAuto) return
+    const info = await WakeWordModelManager.getInfo()
+    if (!info.downloaded) {
+      try {
+        await offlineSpeechModelService.downloadWakeWordModel()
+      } catch (error: any) {
+        showAlert(
+          translate("settings:speechModelDownloadFailed"),
+          error?.message ?? translate("settings:wakeWordModelDownloadFailedMessage"),
+          [{text: translate("common:ok")}],
+        )
+      } finally {
+        void refreshLists()
+      }
+      return
+    }
+    showAlert(translate("settings:wakeWordModelDeleteTitle"), translate("settings:wakeWordModelDeleteMessage"), [
+      {text: translate("common:cancel"), style: "cancel"},
+      {
+        text: translate("common:delete"),
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await WakeWordModelManager.deleteModel()
+          } finally {
+            void refreshLists()
+          }
+        },
+      },
+    ])
+  }
+
   return (
     <Screen preset="fixed">
       <Header
@@ -366,7 +404,7 @@ export default function SpeechSettingsScreen() {
         ) : (
           <>
             <LanguageSelector
-              title="Captions Language (Speech-to-Text)"
+              title={translate("settings:speechToTextLanguage")}
               languages={sttLanguages}
               currentLanguage={sttCurrent}
               downloadingLanguage={sttRowDownloading}
@@ -387,6 +425,20 @@ export default function SpeechSettingsScreen() {
               extractionPercent={ttsRowExtractPercent}
               onPickLanguage={handlePickTts}
               formatBytes={(b) => TTSModelManager.formatBytes(b)}
+            />
+
+            <Spacer height={theme.spacing.s6} />
+
+            <LanguageSelector
+              title={translate("settings:wakeWordModel")}
+              languages={wakeWordRows}
+              currentLanguage=""
+              downloadingLanguage={wakeWordAuto?.languageCode}
+              downloadPercent={progressFor(wakeWordAuto, "downloading")}
+              extractionPercent={progressFor(wakeWordAuto, "extracting")}
+              onPickLanguage={handlePickWakeWord}
+              formatBytes={(b) => STTModelManager.formatBytes(b)}
+              downloadedHint={translate("settings:wakeWordModelDownloadedHint")}
             />
 
             <Spacer height={theme.spacing.s10} />
