@@ -1726,7 +1726,7 @@ class OtaInstallCoordinator {
         await this.teardownHotspotTransport()
         if (!isCurrentAttempt()) return
         if (this.attached) {
-          const copyKey = phoneOtaErrorCopyKey(err)
+          const copyKey = phoneOtaErrorCopyKey(err, Platform.OS)
           this.setErrorMsg(OTA_ERROR_ENGLISH_COPY[copyKey], undefined, copyKey)
         }
         return

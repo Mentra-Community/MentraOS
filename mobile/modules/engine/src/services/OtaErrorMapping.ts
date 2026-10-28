@@ -54,8 +54,11 @@ const PHONE_ARTIFACT_COPY_KEYS: Readonly<Record<string, string>> = {
   verify: "ota:errorPhoneVerify",
 }
 
-/** A known failed stage is useful; it is not evidence of an internet outage. */
-export function phoneOtaErrorCopyKey(error: unknown): string {
+/**
+ * A known failed stage is useful; it is not evidence of an internet outage. `os` picks the iOS
+ * join copy: iOS cannot read the Wi-Fi radio, so its join failure is where we point at it.
+ */
+export function phoneOtaErrorCopyKey(error: unknown, os?: string): string {
   if (typeof error !== "object" || error === null) return OTA_ERROR_GENERIC_COPY_KEY
   const detail = error as {code?: unknown; failure?: {category?: unknown}}
   switch (detail.code) {
@@ -70,10 +73,12 @@ export function phoneOtaErrorCopyKey(error: unknown): string {
       return "ota:errorPhoneVerify"
     case "hotspot_wifi_permission_denied":
       return "ota:errorPhoneNearbyPermission"
+    case "hotspot_wifi_disabled":
+      return "ota:errorPhoneWifiOff"
     case "hotspot_start_failed":
       return "ota:errorGlassesHotspotStart"
     case "hotspot_join_failed":
-      return "ota:errorPhoneHotspotJoin"
+      return os === "ios" ? "ota:errorPhoneHotspotJoinIos" : "ota:errorPhoneHotspotJoin"
     case "hotspot_server_failed":
       return "ota:errorPhoneShareUpdate"
     default:
@@ -129,9 +134,12 @@ export const OTA_ERROR_ENGLISH_COPY: Readonly<Record<string, string>> = {
   "ota:errorPhoneDownload": "The update could not be downloaded to your phone. Please try again.",
   "ota:errorPhoneVerify": "The update file could not be verified. Please try again later.",
   "ota:errorPhoneNearbyPermission": "Allow nearby devices access so your phone can connect to your glasses.",
+  "ota:errorPhoneWifiOff": "Turn on your phone’s Wi-Fi so it can connect to your glasses, then try again.",
   "ota:errorGlassesHotspotStart":
     "Your glasses could not start the connection needed for the update. Please try again.",
   "ota:errorPhoneHotspotJoin": "Your phone could not connect to your glasses for the update. Please try again.",
+  "ota:errorPhoneHotspotJoinIos":
+    "Your phone could not connect to your glasses for the update. Make sure your phone’s Wi-Fi is on, then try again.",
   "ota:errorPhoneShareUpdate": "Your phone could not send the update to your glasses. Please try again.",
   "ota:errorBesRestartRequired": "Restart your glasses to safely exit firmware update mode before trying again",
   "ota:errorCode": "Error code: {{code}}",

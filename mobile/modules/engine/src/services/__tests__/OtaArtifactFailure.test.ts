@@ -97,4 +97,12 @@ describe("phone download failure diagnosis", () => {
       "Something went wrong. Please try again.",
     )
   })
+
+  test("names phone Wi-Fi for a disabled radio and for an iOS hotspot join failure", () => {
+    expect(phoneOtaErrorCopyKey({code: "hotspot_wifi_disabled"})).toBe("ota:errorPhoneWifiOff")
+    expect(phoneOtaErrorCopyKey({code: "hotspot_join_failed"}, "ios")).toBe("ota:errorPhoneHotspotJoinIos")
+    expect(phoneOtaErrorCopyKey({code: "hotspot_join_failed"}, "android")).toBe("ota:errorPhoneHotspotJoin")
+    expect(OTA_ERROR_ENGLISH_COPY["ota:errorPhoneWifiOff"]).toContain("Wi-Fi")
+    expect(OTA_ERROR_ENGLISH_COPY["ota:errorPhoneHotspotJoinIos"]).toContain("Wi-Fi is on")
+  })
 })
