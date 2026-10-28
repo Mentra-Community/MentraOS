@@ -938,7 +938,8 @@ export type PairingStateChangedEvent = {
  * - `not_applicable`: no user step for audio. Android attaches Classic audio from the BLE bond,
  *   and glasses without Classic audio have nothing to set up.
  * - `connecting`: the glasses are connected, audio is not, and the SDK still expects audio to
- *   come up on its own (for example iPhone audio derived from the BLE pair).
+ *   come up on its own (for example iPhone audio derived from the BLE pair). After setup, Mentra
+ *   Live firmware that reports `classic_link` reconnects audio itself and stays here.
  * - `connected`: Classic audio (A2DP or HFP) to the glasses is up.
  * - `needs_user`: audio did not come up on its own. Ask the user to connect the glasses in the
  *   system Bluetooth settings (iPhone: Settings > Bluetooth). The state moves to `connected`

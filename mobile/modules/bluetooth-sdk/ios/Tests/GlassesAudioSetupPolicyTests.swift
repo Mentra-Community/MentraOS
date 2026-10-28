@@ -138,16 +138,22 @@ final class GlassesAudioSetupPolicyTests: XCTestCase {
         )
     }
 
-    func testTheGlassesReportingAudioDownAfterConnectedStartsTheReconnectWait() {
+    func testPairingProtocolGlassesNeverAskTheUserAfterSetup() {
         var tracker = GlassesAudioSetupTracker()
         tracker.startPhase(.reconnect, nowMs: t0)
         tracker.classicLink(a2dp: true, hfp: true)
         XCTAssertEqual(tracker.evaluate(sessionReady: true, phoneAudioUp: false, nowMs: t0).state, .connected)
         tracker.classicLink(a2dp: false, hfp: false)
         XCTAssertEqual(
-            tracker.evaluate(sessionReady: true, phoneAudioUp: false, nowMs: t0 + 30000),
-            GlassesAudioSetupDecision(state: .connecting, nextDeadlineMs: t0 + 40000)
+            tracker.evaluate(sessionReady: true, phoneAudioUp: false, nowMs: t0 + 3_600_000),
+            GlassesAudioSetupDecision(state: .connecting, nextDeadlineMs: nil)
         )
+    }
+
+    func testPairingProtocolGlassesStillAskWhenAudioNeverCameUpAfterPairing() {
+        let pairing = inputs(report: (false, false), phase: .pairing(autoAudio: true))
+        XCTAssertEqual(state(pairing, at: 7999), .connecting)
+        XCTAssertEqual(state(pairing, at: 8000), .needsUserConnectInSettings)
     }
 
     func testASessionDropIsIdleAndForgetsTheGlassesReport() {

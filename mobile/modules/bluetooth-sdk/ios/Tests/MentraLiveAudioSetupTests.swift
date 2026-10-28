@@ -98,24 +98,18 @@ final class MentraLiveAudioSetupTests: XCTestCase {
             try receive(transport, ["type": "classic_link", "a2dp": true, "hfp": false])
             XCTAssertEqual(events.count, eventCount)
 
-            // Audio lost after connected: the reconnect wait starts again from now.
+            // Audio lost after connected: this firmware reconnects its owner's audio itself, so
+            // the SDK keeps waiting and never asks the user to pair in Settings.
             clock(1_060_000)
             try receive(transport, ["type": "classic_link", "a2dp": false, "hfp": false])
             XCTAssertEqual(audioSetup(store), .connecting)
-            clock(1_069_999)
-            try receive(transport, ["type": "classic_link", "a2dp": false, "hfp": false])
-            XCTAssertEqual(audioSetup(store), .connecting)
-
-            // The deadline timer gives up at the end of the wait.
-            clock(1_069_950)
-            try receive(transport, ["type": "classic_link", "a2dp": false, "hfp": false])
             clock(1_070_000)
-            let deadline = Date().addingTimeInterval(2)
-            while audioSetup(store) != .needsUserConnectInSettings, Date() < deadline {
+            let deadline = Date().addingTimeInterval(0.2)
+            while Date() < deadline {
                 RunLoop.main.run(until: Date().addingTimeInterval(0.01))
             }
-            XCTAssertEqual(audioSetup(store), .needsUserConnectInSettings)
-            XCTAssertEqual(events.last as NSDictionary?, ["state": "needs_user", "action": "connect_in_settings"])
+            XCTAssertEqual(audioSetup(store), .connecting)
+            XCTAssertEqual(events.last as NSDictionary?, ["state": "connecting"])
 
             // The phone's own signals are enough on their own.
             store.set("glasses", "bluetoothAudioRouted", true)

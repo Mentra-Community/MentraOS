@@ -112,6 +112,11 @@ enum GlassesAudioSetupPolicy {
     static func decide(_ inputs: GlassesAudioSetupInputs, nowMs: Int) -> GlassesAudioSetupDecision {
         guard inputs.sessionReady else { return GlassesAudioSetupDecision(state: .idle, nextDeadlineMs: nil) }
         if audioUp(inputs) { return GlassesAudioSetupDecision(state: .connected, nextDeadlineMs: nil) }
+        // Glasses on the pairing protocol report classic_link. After setup they page their owner's
+        // Classic link themselves, so a settings step can neither speed audio up nor fix it.
+        if inputs.phase == .reconnect && inputs.glassesReportsClassicLink {
+            return GlassesAudioSetupDecision(state: .connecting, nextDeadlineMs: nil)
+        }
         // A report of A2DP and HFP both down does not shorten the wait: iOS may still be
         // bringing the link up.
         let deadline = inputs.phaseStartedAtMs + waitMs(inputs.phase)

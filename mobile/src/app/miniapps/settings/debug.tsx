@@ -245,6 +245,16 @@ export default function DebugSettingsScreen() {
             />
           </Group>
 
+          {defaultWearable?.includes(DeviceTypes.LIVE) && (
+            <Group title="Mentra Live">
+              <RouteButton
+                label="Wear Detection"
+                subtitle="Wear sound, unworn audio and shutdown, sensor tuning"
+                onPress={() => push("/miniapps/settings/wear-tuning")}
+              />
+            </Group>
+          )}
+
           {/* Even Realities Specific Settings - Only show when connected to G1 or G2 */}
           {(defaultWearable?.includes(DeviceTypes.G1) || defaultWearable?.includes(DeviceTypes.G2)) && (
             <Group title="Even Realities Settings">
