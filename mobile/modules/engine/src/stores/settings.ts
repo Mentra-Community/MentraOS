@@ -496,7 +496,7 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   /*
-   * Mentra Live powers itself off after ~20 minutes off the wearer's face
+   * Mentra Live wear detection, audio/media policy, and ~20-minute unworn shutdown
    * (cs_swit type 11). On by default, matching the firmware. Re-pushed on
    * connect, so this default is what a new install sends to the glasses, and
    * it overwrites a value saved on the glasses. Automated test lanes turn it
@@ -1182,6 +1182,19 @@ export const useSettingsStore = create<SettingsState>()(
           // repeated attempt per launch until a write succeeds.
           if (allCleared) {
             storage.save(BUILD_ENV_KEY, buildEnv)
+          }
+        }
+
+        // Roll out all wear behavior once, including installs that previously saved false.
+        // A later explicit opt-out (including automated test lanes) remains authoritative.
+        const WEAR_ROLLOUT_KEY = "migration:wear_detection_enabled_v1"
+        const wearRolloutDone = storage.load<boolean>(WEAR_ROLLOUT_KEY)
+        if (wearRolloutDone.is_error() || !wearRolloutDone.value) {
+          const result = await get().setSetting(SETTINGS.auto_power_off_enabled.key, true, true)
+          if (result.is_error()) {
+            console.log("SETTINGS: wear detection rollout failed:", result.error)
+          } else {
+            storage.save(WEAR_ROLLOUT_KEY, true)
           }
         }
 

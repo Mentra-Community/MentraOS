@@ -46,6 +46,18 @@ describe("auto power-off setting", () => {
     expect(AUTO_POWER_OFF_KEY in useSettingsStore.getState().getBluetoothSettings()).toBe(true)
   })
 
+  test("migrates a previously saved false once, then preserves a new opt-out", async () => {
+    saved.set(AUTO_POWER_OFF_KEY, false)
+    const {useSettingsStore} = restartSettings()
+    await useSettingsStore.getState().loadAllSettings()
+    expect(useSettingsStore.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(true)
+    expect(saved.get("migration:wear_detection_enabled_v1")).toBe(true)
+    await useSettingsStore.getState().setSetting(AUTO_POWER_OFF_KEY, false)
+    const restarted = restartSettings().useSettingsStore
+    await restarted.getState().loadAllSettings()
+    expect(restarted.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(false)
+  })
+
   test("an opt-out survives a restart instead of snapping back to the default", async () => {
     const {useSettingsStore} = restartSettings()
     await useSettingsStore.getState().loadAllSettings()

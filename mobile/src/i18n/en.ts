@@ -16,9 +16,9 @@ const en = {
     advancedSettings: "Advanced settings",
     recommended: "Recommended",
     autoBrightness: "Auto brightness",
-    autoPowerOff: "Turn off automatically",
+    autoPowerOff: "Wear detection",
     autoPowerOffSubtitle:
-      "Powers down about 20 minutes after you take the glasses off. Charging or a call holds the shutdown.",
+      "Plays a sound when worn, pauses media and disables Bluetooth audio when removed, and powers down after 20 minutes. Charging, updates, and gallery transfers hold shutdown.",
     autoPowerOffSaveError: "Could not save or check this setting. Check the glasses connection and try again.",
     autoPowerOffStatusHint:
       "This is the latest glasses status, not confirmation of your change. It refreshes about every 10 seconds.",
