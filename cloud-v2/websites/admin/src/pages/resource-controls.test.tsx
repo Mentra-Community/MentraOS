@@ -30,10 +30,22 @@ test('resource controls require the exact currently observed generation and expi
   expect(resourceControlsAreFresh(data(), now, resource, now)).toBe(true)
   expect(resourceControlsAreFresh({...data(), subject: {...subject, subjectGeneration: 4}}, now, resource, now)).toBe(false)
   expect(resourceControlsAreFresh({...data(), subject: {...subject, resourceId: 'other'}}, now, resource, now)).toBe(false)
-  expect(resourceControlsAreFresh({...data(), observedAt: '2020-01-01T00:00:00Z'}, now, resource, now)).toBe(false)
+  expect(resourceControlsAreFresh({...data(), fresh: false}, now, resource, now)).toBe(false)
   expect(resourceControlsAreFresh(data(), now - 15_001, resource, now)).toBe(false)
   expect(resourceControlsAreFresh(data(), now, {...resource, current: false}, now)).toBe(false)
   expect(resourceControlsAreFresh(data(), now, {...resource, receivedAt: '2020-01-01T00:00:00Z'}, now)).toBe(false)
+})
+test('fresh reports keep unchanged physical transitions available in dashboard controls', () => {
+  const now = Date.parse(at), original = structuredClone(resource), old = new Date(now - 180_001).toISOString()
+  const unchanged = {...resource, observedAt: old}, current = {...data(), observedAt: old}
+  expect(resourceControlsAreFresh(current, now, unchanged, now)).toBe(true)
+  expect(render(current, unchanged)).toBe(render())
+  expect(resource).toEqual(original)
+  for (const observedAt of ['', new Date(now + 5001).toISOString()]) {
+    expect(resourceControlsAreFresh({...current, observedAt}, now, unchanged, now)).toBe(false)
+    expect(resourceControlsAreFresh(current, now, {...unchanged, observedAt}, now)).toBe(false)
+  }
+  expect(resourceControlsAreFresh(current, now, {...unchanged, observedAt: null}, now)).toBe(false)
 })
 test('out-of-order delivery cannot revive a returned operator reservation', () => {
   expect(resourceControlState([control('released'), control('granted'), control('waiting')], 'shared-pair', 'air3').reservation).toBeUndefined()

@@ -51,8 +51,43 @@ function fixture() {
     changeSubject(value: Partial<ResourceLifecycleSubject>) {
       subject = {...subject, ...value}; host.snapshot.resourceLifecycle = {schemaVersion: 1, subjects: [subject], history: []}
     }, overrideCanonical(value: Partial<ResourceLifecycleSubject>) {canonicalOverride = value},
-    collide() {collision = true}, advance(ms: number) {now += ms}}
+    collide() {collision = true}, advance(ms: number) {now += ms},
+    reportUnchangedSubject() {
+      host.receivedAt = new Date(now); host.observedAt = new Date(now)
+      subject = {...subject, receivedAt: at()}
+      host.snapshot.resourceLifecycle = {schemaVersion: 1, subjects: [subject], history: []}
+    }}
 }
+
+test('fresh host reports keep unchanged resource controls available after the physical transition ages', async () => {
+  const f = fixture(), original = structuredClone(f.subject())
+  f.advance(180_001); f.reportUnchangedSubject()
+  const view = await f.service.listResource('phone-exact', 'alice')
+  expect(view.fresh).toBe(true)
+  expect(f.subject().observedAt).toBe(original.observedAt)
+  expect(f.subject().idle).toEqual(original.idle)
+  expect(f.subject().owner).toBeNull()
+  const check = f.input('check')
+  expect((await f.service.submit(check, 'alice')).action).toBe('check')
+  expect(f.rows()).toHaveLength(1)
+  expect(f.subject().generation).toBe(original.generation)
+  expect(f.subject().owner).toBeNull()
+})
+
+test('unchanged resource controls still require valid timestamps and fresh current authority', async () => {
+  for (const invalidate of [
+    (f: ReturnType<typeof fixture>) => f.changeSubject({observedAt: null}),
+    (f: ReturnType<typeof fixture>) => f.changeSubject({observedAt: new Date(f.host().observedAt.getTime() + 5001).toISOString()}),
+    (f: ReturnType<typeof fixture>) => f.changeSubject({current: false}),
+    (f: ReturnType<typeof fixture>) => {f.host().receivedAt = new Date(f.host().receivedAt.getTime() - 120_001)},
+    (f: ReturnType<typeof fixture>) => {f.host().observedAt = new Date(f.host().observedAt.getTime() - 120_001)},
+    (f: ReturnType<typeof fixture>) => f.overrideCanonical({receivedAt: new Date(f.host().receivedAt.getTime() - 1).toISOString()}),
+  ]) {
+    const f = fixture(); f.advance(180_001); f.reportUnchangedSubject(); invalidate(f)
+    await expect(f.service.submit(f.input('check'), 'alice')).rejects.toThrow()
+    expect(f.rows()).toEqual([])
+  }
+})
 
 test('canonical retained raw claim overrides same-generation idle local action flags without hiding the original operation', async () => {
   for (const action of ['check', 'reserve'] as const) {

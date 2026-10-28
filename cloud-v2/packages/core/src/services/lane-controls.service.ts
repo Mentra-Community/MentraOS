@@ -113,7 +113,7 @@ export class LaneControlsService {
       ? lifecycle.data.subjects.filter(value => value.subject.id === subject.resourceId && value.subject.authorityHostId === host.hostId) : [],
       actual = values.length === 1 ? values[0] : undefined, at = Date.parse(actual?.observedAt ?? '');
     return actual?.current && actual.generation === subject.subjectGeneration && Number.isFinite(at) && at <= this.now() + 5000 &&
-      this.now() - at <= 120_000 && fresh(host, this.now()) ? actual : undefined
+      fresh(host, this.now()) ? actual : undefined
   }
   async listResource(resourceId: string, operator: string): Promise<ResourceControlsView> {
     const {subject} = await this.resources.detail(resourceId), host = await this.rows.get(subject.subject.authorityHostId)

@@ -42,9 +42,9 @@ export function resourceControlsAreFresh(data: ResourceControlsView | undefined,
   resource: ResourceLifecycleSubject, now = Date.now()) {
   const observed = Date.parse(data?.observedAt ?? '')
   return Boolean(data?.enabled && data.fresh && resource.current && data.subject.resourceId === resource.subject.id &&
-    data.subject.subjectGeneration === resource.generation && now - updatedAt < 15_000 && observed <= now + 5000 && now - observed < 120_000 &&
+    data.subject.subjectGeneration === resource.generation && now - updatedAt < 15_000 && observed <= now + 5000 &&
     [resource.observedAt, resource.receivedAt].every(at => at && Number.isFinite(Date.parse(at)) &&
-      Date.parse(at) <= now + 5000 && now - Date.parse(at) < 120_000))
+      Date.parse(at) <= now + 5000) && resource.receivedAt && now - Date.parse(resource.receivedAt) < 120_000)
 }
 const descriptions = {
   reserve: 'Hold this resource for manual use after its current owner returns it.',
