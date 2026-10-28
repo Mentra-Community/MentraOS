@@ -33,7 +33,7 @@ import {backendRecorderClaimMatches, requiresBackendConnectivity, requiresSerial
 import {resourceLaneBlocker, resourceCandidateBlocker, requiredResourceBlocker} from './resource-readiness';
 import {evaluateRoutineLaneReadiness, routineLaneRequirementBlocker, type RoutineLaneEligibilityContext} from './routine-lane-eligibility';
 import {dependencyWaitingReason, recorderWait, RESOURCE_ADMISSION_WAIT, sharedResourceWaitingReason, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait';
-import {candidateRequestCurrent, candidateSettlement, qualifiedCandidate, qualifiedGraphCandidate, candidateRenewal, candidateReturnMatches, graphCandidateHistoricalSettlement, obsoleteUnboundGraphCandidate} from './backend-candidate-preparation';
+import {candidateRequestCurrent, candidateSettlement, qualifiedGraphCandidate, candidateRenewal, candidateReturnMatches, graphCandidateHistoricalSettlement, obsoleteUnboundGraphCandidate} from './backend-candidate-preparation';
 const exclusiveResources = new ResourceReservationsService();
 const isDeepIdentity = (left: unknown, right: unknown) => requestInputDigest(left ?? null) === requestInputDigest(right ?? null);
 export type SelectedRoutineLane = {requestId: string; hostId: string; laneId: string};
@@ -1627,20 +1627,6 @@ export class RoutineJobService {
       return {...routineJobRouting(requirements, hosts, this.now(), row.fleetTarget, row.fleetSelection.build, false, original),
         waitingReason: RESOURCE_ADMISSION_WAIT};
     const provisional = originals[0];
-    if (provisional && !row.fleetResourceReservation && !row.fleetResourceAdmission && requiresBackendConnectivity(row)) {
-      // A live original can still complete the existing admission stage, whose CAS
-      // refuses cleanup-only receipts. Only expired/unqualified custody needs that
-      // receipt before the original claim is returned; reserveResources rechecks
-      // the authoritative proof before any admission effect.
-      onPhase?.('provisional-host-read');
-      const host=await this.hosts.get(provisional.hostId);
-      if (!host || !qualifiedCandidate(row,host,provisional.laneId,this.now(),host.receivedAt)) {
-        onPhase?.('backend-recorder-checkpoint');
-        const checkpoint=await this.rows.checkpointBackendRecorder?.(row,provisional,new Date(this.now()));
-        if (!checkpoint) return {...routineJobRouting(requirements,hosts,this.now(),provisional,row.fleetSelection.build,true,original),waitingReason:RESOURCE_ADMISSION_WAIT};
-        row=checkpoint;
-      }
-    }
     if (row.fleetResourceAdmission) {
       onPhase?.('obsolete-admission-reconciliation');
       row = await this.rows.reconcileObsoleteAdmission?.(row, new Date(this.now())) ?? row;

@@ -714,7 +714,8 @@ for(const expiry of [false,true])test(`a live orphan recorder claim ${expiry?'re
    expect(f.row.fleetResourceReservation).toBeUndefined();expect(f.row.fleetResourceAdmission).toBeUndefined();
    expect(host.resourceReservations).toEqual([claim]);
    const fresh=repositoryEnvelope(f);host.receivedAt=fresh.receivedAt;host.snapshot=fresh.snapshot;
-   await f.prepareLegacy('job-one');expect(checkpointWrites).toBe(1);expect(admissionWrites).toBe(0);
+   await f.prepareLegacy('job-one');expect(checkpointWrites).toBe(0);expect(admissionWrites).toBe(1);
+   expect(currentRow().fleetResourceAdmission?.intent.hostId).toBe('air1');expect(hostWrites).toBe(0);
    expect(f.row.fleetCandidatePreparation).toBeUndefined();expect(currentRow().fleetResourceReservation).toEqual(claim);
   }else{
    expect(currentRow().fleetResourceReservation).toEqual(claim);expect(currentRow().fleetResourceAdmission?.intent.hostId).toBe('air1');
@@ -724,41 +725,6 @@ for(const expiry of [false,true])test(`a live orphan recorder claim ${expiry?'re
   expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetDeadline.getTime()).toBe(initialNow+300000);
  }finally{TestRequestModel.collection.findOne=requestRead;TestRequestModel.collection.find=requestList;TestRequestModel.collection.findOneAndUpdate=requestWrite;TestHostStateModel.collection.findOne=hostRead;TestHostStateModel.collection.findOneAndUpdate=hostWrite;
   resourceReservationRepository.recorderClaims=originals;resourceReservationRepository.get=read;resourceReservationRepository.claimedHosts=claimed;resourceReservationRepository.request=request;routineJobRepository.get=get;reserveClock.mockRestore();clock.mockRestore()}
-});
-
-test('lost recorder host-CAS reply recovers the exact original claim without repeating its host write',async()=>{
- const f=await returnedFixture(),currentRow=():StoredRoutineJob=>f.row;delete f.row.fleetResourceReservation;
- const host=repositoryEnvelope(f);host.resourceReservations=[];
- const requestRead=TestRequestModel.collection.findOne,requestWrite=TestRequestModel.collection.findOneAndUpdate,
-   hostRead=TestHostStateModel.collection.findOne,hostWrite=TestHostStateModel.collection.findOneAndUpdate,
-   claims=resourceReservationRepository.recorderClaims,read=resourceReservationRepository.get,replace=resourceReservationRepository.replace,
-   get=routineJobRepository.get;
- let claimWrites=0,returnWrites=0,checkpointLoss=true;const clock=spyOn(Date,'now').mockImplementation(()=>f.now);
- const originals=()=>hostResourceReservationsSchema.parse(host.resourceReservations??[]).filter((value):value is RecorderHostReservation=>!isExclusiveHostReservation(value));
- resourceReservationRepository.recorderClaims=async()=>structuredClone(originals());resourceReservationRepository.get=async()=>structuredClone(host);
- routineJobRepository.get=async()=>structuredClone(f.row);
- TestRequestModel.collection.findOne=mock(async()=>structuredClone(f.row)) as never;
- TestHostStateModel.collection.findOne=mock(async()=>structuredClone(host)) as never;
- TestHostStateModel.collection.findOneAndUpdate=mock(async(_filter:any,update:any)=>{claimWrites++;host.resourceReservations=structuredClone(update.$set.resourceReservations);throw Error('Committed recorder reply lost')}) as never;
- TestRequestModel.collection.findOneAndUpdate=mock(async(filter:any,update:any)=>{
-   if(update.$set.fleetResourceReservation){expect(filter).toMatchObject({fleetCandidatePreparation:{$exists:false},fleetResourceAdmission:{$exists:false},fleetResourceReservation:{$exists:false},fleetCandidateSelection:f.row.fleetCandidateSelection});
-    f.row={...f.row,...update.$set};if(checkpointLoss){checkpointLoss=false;throw Error('Committed cleanup checkpoint reply lost')}return structuredClone(f.row)}
-   expect(filter.fleetCandidatePreparation).toEqual(f.row.fleetCandidatePreparation);for(const key of Object.keys(update.$unset??{}))delete (f.row as any)[key];f.row={...f.row,...update.$set};return structuredClone(f.row)
- }) as never;
- f.rows.recorderClaims=async()=>structuredClone(originals());f.rows.checkpointBackendRecorder=(row,claim,now)=>routineJobRepository.checkpointBackendRecorder!(row,claim,now);
- f.rows.releaseCandidateProvisional=(row,now)=>routineJobRepository.releaseCandidateProvisional!(row,now);
- resourceReservationRepository.replace=async(_host,values)=>{returnWrites++;host.resourceReservations=structuredClone(values);return true};
- try{
-  await expect(routineJobRepository.reserveResources!('job-one',f.row.fleetInputSha256!,'air1','android',new Date(f.now))).rejects.toThrow('Committed recorder reply lost');
-  expect(claimWrites).toBe(1);expect(originals()).toHaveLength(1);expect(f.row.fleetResourceReservation).toBeUndefined();const claim=structuredClone(originals()[0]!);
-  f.hosts[0]!.authorityReservations=[claim];f.advance(120001);host.receivedAt=new Date(f.now);host.snapshot.observedAt=new Date(f.now).toISOString();host.snapshot.lanes[0]!.resources.find(value=>value.kind==='recorder')!.storage!.observedAt=host.snapshot.observedAt;
-  await expect(f.prepareLegacy('job-one')).rejects.toThrow('Committed cleanup checkpoint reply lost');expect(currentRow().fleetResourceReservation).toEqual(claim);expect(returnWrites).toBe(0);expect(f.row.fleetBinding).toBeUndefined();
-  await f.prepareLegacy('job-one');expect(f.row.fleetCandidatePreparation).toBeUndefined();
-  expect(currentRow().fleetResourceReservation).toEqual(claim);expect(originals()).toEqual([claim]);
-  expect(returnWrites).toBe(0);expect(claimWrites).toBe(1);expect(f.row.fleetBinding).toBeUndefined();
-  expect(f.row.fleetDeadline.getTime()).toBe(initialNow+300000);
- }finally{TestRequestModel.collection.findOne=requestRead;TestRequestModel.collection.findOneAndUpdate=requestWrite;TestHostStateModel.collection.findOne=hostRead;TestHostStateModel.collection.findOneAndUpdate=hostWrite;
-  resourceReservationRepository.recorderClaims=claims;resourceReservationRepository.get=read;resourceReservationRepository.replace=replace;routineJobRepository.get=get;clock.mockRestore()}
 });
 
 for(const gap of ['foreign','multiple','owned-phone','local-consumer','stale-storage','replacement','cancelled','changed-selection'] as const)test(`orphan recorder checkpoint refuses ${gap} without adoption or a new grant`,async()=>{

@@ -1224,9 +1224,9 @@ test('offline provisional recovery refuses duplicate or changed original custody
 })
 
 /** Real selection/reservation/binding with only the Mongo collection boundary replaced. */
-async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: Map<string, any>, counters: {host: number; request: number}, pastRows: Map<string, StoredRoutineJob>) => Promise<void>, extraKinds: ('audio'|'browser'|'fixture-data')[] = []) {
+async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: Map<string, any>, counters: {host: number; request: number}, pastRows: Map<string, StoredRoutineJob>) => Promise<void>, extraKinds: ('audio'|'browser'|'fixture-data')[] = [], backendConnectivity = false) {
  const now=Date.now(),at=new Date(now).toISOString(),f=fixture({...definition,
-   resourceRequirements:[...definition.resourceRequirements,{kind:'glasses',capabilities:['connection']},...extraKinds.map(kind=>({kind,capabilities:[]}))],glasses:{models:['mentra-live']},
+   resourceRequirements:[...definition.resourceRequirements.map(resource=>backendConnectivity&&resource.kind==='phone'?{...resource,capabilities:['backend-connectivity']}:resource),{kind:'glasses',capabilities:['connection']},...extraKinds.map(kind=>({kind,capabilities:[]}))],glasses:{models:['mentra-live']},
    fixtures:extraKinds.includes('fixture-data')?[{provider:'synthetic',description:'Independent synthetic fixture'}]:[],
    execution:{resourceKinds:['phone','app','recorder','network','glasses',...extraKinds],policy:{estimatedOutputBytes:1024**3}}});
  f.advance(now-Date.parse('2026-10-08T00:00:00Z'));
@@ -1235,6 +1235,7 @@ async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: M
   const lane:ReceivedTestHostState['lanes'][number]={...structuredClone(f.lane),resources:[...structuredClone(f.lane.resources),{id:'live-local',kind:'glasses' as const,capabilities:['connection']},...extraKinds.map(kind=>({id:`local-${kind}`,kind,capabilities:[]}))],
    glasses:[{resourceId:'live-local',deviceId:`synthetic-live-${hostId}`,model:'mentra-live',capabilities:['connection']}]};
   lane.resources=lane.resources.map(resource=>({...resource,id:`${hostId}:${resource.id}`,
+   ...(backendConnectivity&&resource.kind==='phone'?{capabilities:['backend-connectivity']}:{}),
    ...(resource.storage?{storage:{...resource.storage,poolId:`${hostId}:disk:1`,observedAt:at}}:{}),
    idleContract:{version:'synthetic-baseline',maximumAgeMs:120000,qualifiedScope:{kind:'same-controller' as const,controllerId:hostId},conditions:['synthetic-condition'],repairConfigured:true}}));
   lane.glasses![0]!.resourceId=`${hostId}:live-local`;lane.descriptorRevision=routineLaneDescriptorRevision(lane);
@@ -1284,6 +1285,47 @@ function unavailableLocal(host:any,status:'unknown'|'out-of-service'|'reserved'|
  if(status==='in-repair')subject.repair.state='queued';
  return subject;
 }
+for(const interruption of ['refused','lost-reply','lost-host-reply'] as const)test(`current Android readiness resumes its original provisional recorder after ${interruption} staging without candidate history`,async()=>{
+ await withLocalResources(async(f,hosts,counters)=>{
+  for(const h of hosts.values())h.snapshot.frameworkBinding.routineApiVersion=112;
+  const stage=resourceReservationRepository.stageBackend,hostWrite=TestHostStateModel.collection.findOneAndUpdate;
+  if(interruption==='lost-host-reply')TestHostStateModel.collection.findOneAndUpdate=(async(...args:any[])=>{
+   await (hostWrite as any)(...args);throw Error('Committed recorder response lost');
+  }) as any;
+  else resourceReservationRepository.stageBackend=async()=>{if(interruption==='lost-reply')throw Error('Original staging response lost');return null};
+  try {
+   if(interruption==='lost-host-reply')await expect(f.prepare()).rejects.toThrow('Committed recorder response lost');
+   else if(interruption==='lost-reply')await expect(f.prepare()).rejects.toThrow('Original staging response lost');
+   else expect((await f.prepare()).waitingReason).toBeDefined();
+  }finally{resourceReservationRepository.stageBackend=stage;TestHostStateModel.collection.findOneAndUpdate=hostWrite}
+  const original=structuredClone(f.row!),claimed=[...hosts.values()].find(h=>h.resourceReservations.length)!,claim=structuredClone(claimed.resourceReservations[0]);
+  expect(claimed.resourceReservations).toHaveLength(1);expect(counters.host).toBe(1);
+  expect(original.fleetResourceReservation).toBeUndefined();expect(original.fleetResourceAdmission).toBeUndefined();
+  expect(original.fleetCandidatePreparation).toBeUndefined();expect(original.fleetCandidatePreparations).toBeUndefined();
+  const resumed=await f.service.preparation(selection.requestId);
+  expect(resumed.waitingReason).toBeUndefined();
+  expect((resumed as {resourceTarget?:unknown}).resourceTarget).toEqual({hostId:claimed.hostId,laneId:'android'});
+  expect(f.row!.fleetResourceReservation).toEqual(claim);expect(f.row!.fleetResourceAdmission!.intent.hostId).toBe(claimed.hostId);
+  expect(claimed.resourceReservations).toEqual([claim]);expect(counters.host).toBe(1);
+  for(const key of ['requestId','fleetSelection','fleetPreparation','fleetDeadline','fleetInputSha256'] as const)expect(f.row![key]).toEqual(original[key]);
+  expect(f.row!.fleetBinding).toBeUndefined();
+  const lane=claimed.snapshot.lanes[0],bound=await f.service.bind(selection.requestId,claimed.hostId,{inputSha256:resumed.inputSha256,
+   laneId:lane.id,descriptorRevision:lane.descriptorRevision,actionsRunId:'10',actionsJobId:'20'});
+  expect(bound.binding.hostId).toBe(claimed.hostId);expect(f.row!.state).toBe('preparing');expect(claimed.resourceReservations).toEqual([claim]);
+  expect([...hosts.values()].filter(h=>h!==claimed).every(h=>h.resourceReservations.length===0)).toBe(true);
+ },[],true);
+});
+test('a current phone repair still refuses provisional Android admission without changing its original custody',async()=>{
+ await withLocalResources(async(f,hosts,counters)=>{
+  const stage=resourceReservationRepository.stageBackend;resourceReservationRepository.stageBackend=async()=>null;
+  try {expect((await f.prepare()).waitingReason).toBeDefined()}finally{resourceReservationRepository.stageBackend=stage}
+  const original=structuredClone(f.row!),claimed=[...hosts.values()].find(h=>h.resourceReservations.length)!,claim=structuredClone(claimed.resourceReservations[0]);
+  unavailableLocal(claimed,'in-repair','phone');
+  const refused=await f.service.preparation(selection.requestId);
+  expect(refused.waitingReason).toBeDefined();expect(f.row).toEqual(original);expect(claimed.resourceReservations).toEqual([claim]);expect(counters.host).toBe(1);
+  expect([...hosts.values()].filter(h=>h!==claimed).every(h=>h.resourceReservations.length===0)).toBe(true);
+ },[],true);
+});
 for(const status of ['unknown','out-of-service','reserved','in-repair','offline'] as const)test(`local ${status} glasses are excluded before real assignment and the SAME job uses a ready alternate`,async()=>{
  await withLocalResources(async(f,hosts,counters)=>{
   unavailableLocal(hosts.get('mini'),status);const prepared=await f.prepare(),original=structuredClone(f.row!);
