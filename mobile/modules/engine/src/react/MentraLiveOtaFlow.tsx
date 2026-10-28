@@ -2,6 +2,7 @@
 import React, {useMemo} from "react"
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -76,6 +77,7 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:downloadingToPhone": "Downloading update to phone…",
   "ota:startingGlassesHotspot": "Starting glasses hotspot…",
   "ota:connectingPhoneToGlasses": "Connecting phone to glasses…",
+  "ota:connectingPhoneWifiHint": "Make sure your phone’s Wi-Fi is on.",
   "ota:startingHotspotUpdate": "Starting update…",
   "ota:transferringToGlasses": "Transferring update to glasses…",
   "ota:installingOnGlasses": "Installing update on glasses…",
@@ -503,6 +505,10 @@ function OtaFlowContent({
         {state.hotspotPhase === "downloading" ? (
           <BodyText colors={colors}>{translate("ota:phoneFileProgress")}</BodyText>
         ) : null}
+        {/* iOS cannot read the Wi-Fi radio, and a join with Wi-Fi off can wait without failing. */}
+        {state.hotspotPhase === "joining_hotspot" && Platform.OS === "ios" ? (
+          <BodyText colors={colors}>{translate("ota:connectingPhoneWifiHint")}</BodyText>
+        ) : null}
         <BodyText colors={colors}>Do not disconnect your glasses.</BodyText>
       </FlowPage>
     )
@@ -522,7 +528,7 @@ function OtaFlowContent({
       state.currentStep > 0 &&
       state.currentStep <= state.totalSteps
     return (
-      <FlowPage colors={colors} icon={state.phase === "install" ? "settings" : "download"} title={title}>
+      <FlowPage colors={colors} icon="download" title={title}>
         {hotspot && component ? (
           <BodyText colors={colors}>
             {hasStepCount

@@ -477,6 +477,7 @@ const en = {
     downloadingToPhone: "Downloading update to phone…",
     startingGlassesHotspot: "Starting glasses hotspot…",
     connectingPhoneToGlasses: "Connecting phone to glasses…",
+    connectingPhoneWifiHint: "Make sure your phone’s Wi-Fi is on.",
     transferringToGlasses: "Transferring update to glasses…",
     installingOnGlasses: "Installing update on glasses…",
     componentApk: "Glasses software",

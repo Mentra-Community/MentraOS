@@ -3,6 +3,8 @@ import {otaServer} from "@mentra/bluetooth-sdk/ota-transport"
 // One coordinator selects the native Android or iOS staging implementation at runtime.
 // eslint-disable-next-line react-native/split-platform-components
 import {PermissionsAndroid, Platform} from "react-native"
+import WifiManager from "react-native-wifi-reborn"
+import {getUiSeams} from "../runtime/bootstrap"
 import {otaDeviceSessionRevision} from "./OtaDeviceSession"
 import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
 import {
@@ -31,6 +33,7 @@ export type HotspotOtaProgress = {
 
 export type HotspotOtaErrorCode =
   | "hotspot_wifi_permission_denied"
+  | "hotspot_wifi_disabled"
   | "hotspot_start_failed"
   | "hotspot_join_failed"
   | "hotspot_server_failed"
@@ -118,6 +121,8 @@ class HotspotOtaTransport {
     try {
       await this.ensureAndroidWifiPermission()
       assertCurrent()
+      await this.ensureAndroidWifiEnabled()
+      assertCurrent()
       onProgress?.({phase: "downloading"})
       this.prepared = await prepareArtifacts(
         planArtifacts(checkResult),
@@ -185,6 +190,10 @@ class HotspotOtaTransport {
         throw new HotspotOtaTransportError("hotspot_start_failed", message)
       }
       if (phase === "joining_hotspot" && !joined) {
+        // Wi-Fi turned off after the preflight fails the same instant way; name the real cause.
+        if (Platform.OS === "android" && (await WifiManager.isEnabled().catch(() => true)) === false) {
+          throw new HotspotOtaTransportError("hotspot_wifi_disabled", "Phone Wi-Fi is off")
+        }
         throw new HotspotOtaTransportError("hotspot_join_failed", message, localNetworkErrorDetails(error))
       }
       throw new HotspotOtaTransportError("hotspot_server_failed", message)
@@ -204,6 +213,21 @@ class HotspotOtaTransport {
         "Nearby devices permission is required to connect to the glasses hotspot",
       )
     }
+  }
+
+  /**
+   * WifiNetworkSpecifier fails as Unavailable at once while the radio is off, which reads as a
+   * broken glasses hotspot. Ask before downloading, through the host's Wi-Fi prompt when it has one.
+   */
+  private async ensureAndroidWifiEnabled(): Promise<void> {
+    if (Platform.OS !== "android") return
+    // A probe that throws is unknown, not off: the join still reports its own failure.
+    if (await WifiManager.isEnabled().catch(() => true)) return
+    const result = await getUiSeams()
+      .requestPhoneWifiEnable?.()
+      .catch(() => null)
+    if (result?.enabled === true) return
+    throw new HotspotOtaTransportError("hotspot_wifi_disabled", "Phone Wi-Fi is off")
   }
 
   private downloadIosArtifact = async (

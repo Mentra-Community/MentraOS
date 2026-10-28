@@ -78,10 +78,13 @@ function hotspotPreflightErrorMessage(error: unknown): string {
       return OtaProgressMessages.hotspotArtifactVerifyFailed
     case "hotspot_wifi_permission_denied":
       return OtaProgressMessages.hotspotWifiPermissionDenied
+    case "hotspot_wifi_disabled":
+      return OtaProgressMessages.hotspotWifiDisabled
     case "hotspot_start_failed":
       return OtaProgressMessages.hotspotStartFailed
     case "hotspot_join_failed":
-      return OtaProgressMessages.hotspotJoinFailed
+      // iOS cannot read the Wi-Fi radio, so the join failure is the only place to point at it.
+      return Platform.OS === "ios" ? OtaProgressMessages.hotspotJoinFailedIos : OtaProgressMessages.hotspotJoinFailed
     case "hotspot_server_failed":
       return OtaProgressMessages.hotspotServerFailed
     default:
