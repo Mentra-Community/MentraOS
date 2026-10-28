@@ -504,6 +504,8 @@ export const licenseStrings = {
       `${paid ? `Payment received, and ${product} is active.` : `${product} is active.`} Assign the subscriptions to members below.`,
     /** The new subscriptions include one assigned to the viewer, who bought them: they can use it now. */
     youNowHave,
+    /** On a phone, the button that opens the miniapp the subscription is for in the Mentra App: "Open Mentra Call". */
+    openIn: (app: string | null) => (app ? `Open ${app}` : "Open the Mentra App"),
     /** The purchase hasn't reached Core after a minute. */
     timeout: {
       title: (paid: boolean) => (paid ? "Your payment went through" : "Your purchase went through"),

@@ -659,6 +659,7 @@ const SAMPLES: Record<string, unknown[][]> = {
   "purchase.readyTitle": [[{ seats: 1, product: "Call Unlimited" }], [{ seats: 5, product: "Call Unlimited" }]],
   "purchase.readyBody": [[{ product: "Call Unlimited", paid: true }], [{ product: "Call Unlimited", paid: false }]],
   "purchase.youNowHave": [["Call Unlimited"], ["Call Unlimited", 5]],
+  "purchase.openIn": [["Mentra Call"], [null]],
   "purchase.timeout.title": [[true], [false]],
   "testMode.label": [["Staging"]],
 };

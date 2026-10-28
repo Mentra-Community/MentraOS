@@ -7,10 +7,12 @@
 
 import { useEffect, useRef } from "react";
 import type { CatalogEntry, PurchaseStatus } from "@mentra/workspace-contract/portal-billing";
+import { onPhone } from "../../lib/miniapp-link";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { Dialog } from "../../ui/dialog";
 import { Spinner } from "../common";
+import { OpenMiniappButton, type MiniappToOpen } from "./parts";
 import { ProductIcon } from "./product";
 
 /** How often the page reads billing's status and Core's licenses while a purchase is being set up (decision 18). */
@@ -32,6 +34,10 @@ export interface PurchaseDialogProps {
   assigned?: boolean;
   /** The page has waited a minute for the license and given up reading. */
   timedOut?: boolean;
+  /** The miniapp the license is for. On a phone, the dialog that says the viewer has it offers to open it there. */
+  app?: MiniappToOpen | null;
+  /** Whether the page is on a phone; `onPhone()` unless given. */
+  phone?: boolean;
   /** OK, Escape, the × and the backdrop, in every state. */
   onClose(): void;
   /** Reloads the page; the browser's own reload unless given. */
@@ -53,12 +59,24 @@ export interface PurchaseDialogProps {
  *
  * `assigned` is whether the new license's seats include the viewer's own (billing hands the buyer one): the ready
  * dialog is then titled "You now have <product>!", with no product header or icon, and says only to open the Mentra App
- * (and, with more than one bought, to assign the rest).
+ * (and, with more than one bought, to assign the rest). On a phone, with the miniapp the license is for (`app`), it also
+ * offers "Open <miniapp>", which opens it in the Mentra App.
  *
  * Mount it open and unmount it to close it, as the link's dialogs are: its content is drawn only while it is open.
  * It opens with focus on OK, so Enter closes it and the × is not what the eye lands on.
  */
-export function PurchaseDialog({ purchase, productName, entry, listed, assigned = false, timedOut = false, onClose, onReload }: PurchaseDialogProps) {
+export function PurchaseDialog({
+  purchase,
+  productName,
+  entry,
+  listed,
+  assigned = false,
+  timedOut = false,
+  app = null,
+  phone = onPhone(),
+  onClose,
+  onReload,
+}: PurchaseDialogProps) {
   const ok = useRef<HTMLButtonElement>(null);
   // The dialog's own effect (a child's, so it runs first) has opened it and focused its first control, the ×.
   useEffect(() => ok.current?.focus(), []);
@@ -107,9 +125,10 @@ export function PurchaseDialog({ purchase, productName, entry, listed, assigned 
             {t.purchase.timeout.reload}
           </Button>
         ) : null}
-        <Button ref={ok} type="button" onClick={onClose}>
+        <Button ref={ok} type="button" variant={given && app && phone ? "secondary" : "default"} onClick={onClose}>
           {t.purchase.ok}
         </Button>
+        {given && app && phone ? <OpenMiniappButton app={app} /> : null}
       </div>
     </Dialog>
   );

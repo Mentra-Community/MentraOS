@@ -62,6 +62,7 @@ import type { WorkspaceApi } from "../../api";
 import type { BillingApi } from "../../billing-api";
 import { workspaceScope, type BillingScope } from "../../billing-scope";
 import { holdsSeat, joinLicenses, listedAction } from "../../lib/license-join";
+import { licenseMiniapp } from "../../lib/miniapp-link";
 import { billingCatalogQuery, billingStatusQuery, licensesQuery, membersQuery, statusPlaceholder, workspaceDetailQuery } from "../../queries";
 import { can } from "../../roles";
 import { licenseStrings as t } from "../../strings/licenses";
@@ -71,6 +72,7 @@ import { decideLink, LinkDialog, type LinkOutcome } from "./buy-link";
 import { BuyDialog, CatalogGrid, termsNow } from "./catalog";
 import { useHostedAction, type NavigateOut } from "./hosted-action";
 import { LicenseCard } from "./license-card";
+import type { MiniappToOpen } from "./parts";
 import { HeaderButtons, hasOffer, NoSeat, PageNote, readFailed, readRetrying, readWaiting, useFollowed, usePurchaseFlow, type PurchaseFlow } from "./page-parts";
 import { PURCHASE_POLL_MS, PURCHASE_TIMEOUT_MS, PurchaseDialog } from "./purchase-dialog";
 
@@ -437,6 +439,13 @@ function useBuyLink({
   };
 }
 
+/** The miniapp `license` is for, named as the catalog's entry names it, for a success dialog to open on a phone. */
+function miniappOf(license: LicenseView | undefined, entry: CatalogEntry | null): MiniappToOpen | null {
+  const packageName = license ? licenseMiniapp(license) : null;
+  if (packageName === null) return null;
+  return { packageName, appName: entry?.features.find((feature) => feature.appName)?.appName ?? null };
+}
+
 /** The page once everything it needs has been read. */
 function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, added, buyProduct, onBuyHandled }: LicensesBodyProps) {
   const { workspace, reads, all, shown, members, memberCount, products, status } = data;
@@ -455,7 +464,17 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, ad
   const linked = link.outcome;
   const linkDialog =
     linked !== null && linked.kind !== "choose" ? (
-      <LinkDialog key={link.serial} outcome={linked} workspace={workspace} api={api} billing={billing} scope={scope} navigateOut={navigateOut} onClose={() => link.close(linked)} />
+      <LinkDialog
+        key={link.serial}
+        outcome={linked}
+        workspace={workspace}
+        api={api}
+        billing={billing}
+        scope={scope}
+        navigateOut={navigateOut}
+        app={linked.kind === "assign" ? miniappOf(all.find((license) => license.licenseId === linked.licenseId), linked.entry) : null}
+        onClose={() => link.close(linked)}
+      />
     ) : null;
 
   // Back from checkout, or from the page that added a license: one dialog at a time, and none while a link is being
@@ -477,6 +496,7 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, ad
           listed={bought !== undefined}
           // Billing hands the buyer one of the new licenses: the dialog says so.
           assigned={bought !== undefined && workspace.membership !== null && holdsSeat(bought, workspace.membership.membershipId)}
+          app={miniappOf(bought, entry)}
           timedOut={flow.timedOut}
           onClose={flow.close}
         />
@@ -492,6 +512,7 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, ad
           entry={entry}
           listed={added.held}
           assigned={added.held}
+          app={miniappOf(all.find((license) => license.product === added.product && !license.endedAt), entry)}
           timedOut={added.timedOut}
           onClose={added.close}
         />

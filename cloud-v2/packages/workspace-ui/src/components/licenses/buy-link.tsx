@@ -29,6 +29,7 @@ import type { WorkspaceApi } from "../../api";
 import type { BillingApi } from "../../billing-api";
 import type { BillingScope } from "../../billing-scope";
 import { isLicenseChangedError } from "../../errors";
+import { onPhone } from "../../lib/miniapp-link";
 import { holdsSeat, joinLicenses, listedAction } from "../../lib/license-join";
 import { useSeatMutation } from "../../queries";
 import { can } from "../../roles";
@@ -38,7 +39,7 @@ import { Dialog } from "../../ui/dialog";
 import { AlertText, Spinner } from "../common";
 import { canBuy } from "./catalog";
 import { HostedFeedback, useHostedAction, type NavigateOut } from "./hosted-action";
-import { SeatErrorNotice } from "./parts";
+import { OpenMiniappButton, SeatErrorNotice, type MiniappToOpen } from "./parts";
 import { ProductIcon } from "./product";
 import { seatHolders } from "./seats";
 
@@ -135,6 +136,10 @@ export interface LinkDialogProps {
   billing: BillingApi;
   scope: BillingScope;
   navigateOut: NavigateOut;
+  /** The miniapp the link's license is for. On a phone, once it is assigned to the viewer, the dialog offers to open it there. */
+  app?: MiniappToOpen | null;
+  /** Whether the page is on a phone; `onPhone()` unless given. */
+  phone?: boolean;
   /** Done, Escape, the × and the backdrop. */
   onClose(): void;
 }
@@ -145,7 +150,7 @@ export interface LinkDialogProps {
  * send this tab there, saying "Opening checkout…" meanwhile; a refusal of any is a dialog with its words and Done. The
  * other outcomes are a dialog that says why.
  */
-export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOut, onClose }: LinkDialogProps) {
+export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOut, app = null, phone = onPhone(), onClose }: LinkDialogProps) {
   const words = t.page.buyLink;
   const { entry, product } = outcome;
   const name = entry?.name ?? product;
@@ -253,9 +258,10 @@ export function LinkDialog({ outcome, workspace, api, billing, scope, navigateOu
       </div>
       {opening ? null : (
         <div className="-mx-6 -mb-6 flex flex-wrap items-center justify-end gap-2 border-t px-6 py-4 sm:-mx-7 sm:-mb-7 sm:px-7">
-          <Button type="button" onClick={onClose}>
+          <Button type="button" variant={title !== null && app && phone ? "secondary" : "default"} onClick={onClose}>
             {words.done}
           </Button>
+          {title !== null && app && phone ? <OpenMiniappButton app={app} /> : null}
         </div>
       )}
     </Dialog>
