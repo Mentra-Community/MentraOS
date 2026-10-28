@@ -1,8 +1,9 @@
 /**
  * Buying from billing's catalog, as the approved design draws it (its `parts2.tsx`): the grid of products a workspace
- * with nothing yet is offered, the "Buy subscriptions" dialog, and the seats step.
+ * with nothing yet is offered, the "Buy subscriptions" dialog, and the seats step (which only a `?buy=` link for a
+ * product whose smallest purchase is more than one still opens).
  *
- * Everything is drawn from what billing sent for each product: its name, description, icon and features, and, for
+ * Everything is drawn from what billing sent for each product: its name, icon and features (not its description), and, for
  * a viewer who may manage the owner's billing, its `offer` (the price, the tax treatment and what buying allows).
  * An entry with no `offer` is display content only: it shows no price and no Buy. An offer whose `buy` is null
  * (the owner holds the product, or a purchase of it is under way) has no Buy either.
@@ -11,10 +12,9 @@
  * seats step's seats × unit. Any other price shows its `fallbackLabel` exactly, with no arithmetic, no renewal
  * claim and no tax note. "before tax" appears only where billing says tax is `excluded`.
  *
- * Every button that leaves the portal for a hosted page is a `HostedPageButton` (marked ↗): Buy subscriptions (or, on a product
- * whose first payment isn't finished, Complete payment) and Continue to payment. Buy only opens the seats step, so it
- * is a plain button; the step starts at the workspace's member count, and a workspace of one has no number to choose.
- * They all leave the way every
+ * Every button that leaves the portal for a hosted page is a `HostedPageButton`: Buy, which goes straight to checkout
+ * for billing's smallest purchase (more seats are bought from the product's card afterwards), Buy more seats (or, on a
+ * product whose first payment isn't finished, Complete payment) and Continue to payment. They all leave the way every
  * other billing button does, through `useHostedAction` and the host's `NavigateOut`: the client has already refused
  * any address the contract doesn't accept, and an Buy subscriptions billing lists with `returns: false` opens its tab in the
  * click.
@@ -24,7 +24,7 @@
 
 import { isPerSeat, type Buy, type BillingAction, type CatalogEntry, type LicenseBilling, type Offer, type Price } from "@mentra/workspace-contract/portal-billing";
 import { CircleCheckIcon } from "lucide-react";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 import type { WorkspaceApi } from "../../api";
 import type { BillingApi } from "../../billing-api";
@@ -60,8 +60,6 @@ export interface CatalogProps extends BuyingHost {
   products: readonly CatalogEntry[];
   /** `status.licenses`: which products the owner holds, with their seats and the actions billing lists. */
   licenses?: readonly LicenseBilling[];
-  /** How many members the workspace has: where the seats step starts ("Your workspace has 14 members."). */
-  memberCount?: number;
 }
 
 /** An entry billing offers to this viewer for sale now: it has an offer, and the offer's `buy` isn't null. */
@@ -113,9 +111,12 @@ function seatBounds(buy: Buy, price: Price, memberCount: number | undefined): Se
 // at a time to billing, for a purchase or for Buy subscriptions, and on to the page it answers. A refusal is drawn where its
 // container is, and goes with it.
 
-/** What pressing Buy on `entry` does: opens the seats step (`choose`), for an entry billing offers for sale. */
-const chooseToBuy = (choose: (entry: CatalogEntry) => void) => (entry: CatalogEntry) => {
-  if (canBuy(entry)) choose(entry);
+/**
+ * What pressing Buy on `entry` does: asks billing for the checkout of its smallest purchase (`minSeats`, one) and goes
+ * there, with no step between. Only an entry billing offers for sale.
+ */
+const buyNow = (hosted: HostedAction) => (entry: CatalogEntry) => {
+  if (canBuy(entry)) hosted.run({ product: entry.product, seats: entry.offer.buy.minSeats, name: entry.name });
 };
 
 /** Buy subscriptions on a held product's license, by the action billing listed for it: its page opens in a tab where billing says it doesn't return. */
@@ -161,10 +162,11 @@ function splitLead(sentence: string, lead: string): [string, string] {
   return sentence.startsWith(lead) ? [lead, sentence.slice(lead.length)] : ["", sentence];
 }
 
-/** Buy: it opens the seats step. */
+/** Buy: it goes straight to checkout (`buyNow`), and spins while billing answers. */
 function BuyButton({
   entry,
   busy,
+  pending,
   onBuy,
   describedBy,
   size,
@@ -172,6 +174,8 @@ function BuyButton({
 }: {
   entry: CatalogEntry;
   busy: boolean;
+  /** It is this product's purchase that is out. */
+  pending: boolean;
   onBuy(entry: CatalogEntry): void;
   /** The id of the product's name, which a screen reader hears after "Buy". */
   describedBy: string;
@@ -179,9 +183,18 @@ function BuyButton({
   className?: string;
 }) {
   return (
-    <Button type="button" size={size} className={className} disabled={busy} aria-describedby={describedBy} onClick={() => onBuy(entry)}>
+    <HostedPageButton
+      variant="default"
+      size={size}
+      arrow={false}
+      className={className}
+      pending={pending}
+      disabled={busy}
+      aria-describedby={describedBy}
+      onClick={() => onBuy(entry)}
+    >
       {t.catalog.buy}
-    </Button>
+    </HostedPageButton>
   );
 }
 
@@ -214,6 +227,8 @@ function HeldActionButton({
   return (
     <HostedPageButton
       variant={license.status === "incomplete" ? "default" : "secondary"}
+      // Buy more seats goes without the ↗, as it does on the card.
+      arrow={action.kind !== "add_seats"}
       size={size}
       className={className}
       newTab={action.returns === false}
@@ -257,7 +272,7 @@ export interface CatalogCardProps {
 }
 
 /**
- * One product: icon, name, description, its features as a list when it has more than one, and then its price and
+ * One product: icon, name, its features as a list when it has more than one, and then its price and
  * Buy, or, for a product the workspace holds, "You have 5 licenses" and Buy subscriptions.
  */
 export function CatalogCard({ entry, locale, held, busy, pending, onBuy, onAddSeats }: CatalogCardProps) {
@@ -269,7 +284,6 @@ export function CatalogCard({ entry, locale, held, busy, pending, onBuy, onAddSe
         <h3 id={nameId} className="mt-4 text-lg leading-tight font-semibold">
           {entry.name}
         </h3>
-        {entry.description ? <p className="text-muted-foreground mt-1.5 text-sm leading-5">{entry.description}</p> : null}
         {entry.features.length > 1 ? (
           <ul className="mt-4 space-y-2 text-sm">
             {entry.features.map((feature) => (
@@ -308,7 +322,7 @@ export function CatalogCard({ entry, locale, held, busy, pending, onBuy, onAddSe
           <div className="mt-6 flex flex-col gap-4">
             <CardPrice price={entry.offer.price} locale={locale} />
             {canBuy(entry) ? (
-              <BuyButton entry={entry} busy={busy} onBuy={onBuy} describedBy={nameId} size="default" className="w-full" />
+              <BuyButton entry={entry} busy={busy} pending={pending} onBuy={onBuy} describedBy={nameId} size="default" className="w-full" />
             ) : null}
           </div>
         ) : null}
@@ -321,16 +335,15 @@ export function CatalogCard({ entry, locale, held, busy, pending, onBuy, onAddSe
  * What this workspace can buy: "Buy licenses for your members", with one card per product. It draws nothing when
  * there is no product. The heading and its
  * "You'll pay by card…" line are drawn only when at least one of those products has an `offer` for this viewer; without
- * one the cards are display content and the grid has no buying copy. Buy opens the seats step.
+ * one the cards are display content and the grid has no buying copy. Buy goes straight to checkout.
  */
-export function CatalogGrid({ products, licenses, memberCount, ...host }: CatalogProps) {
+export function CatalogGrid({ products, licenses, ...host }: CatalogProps) {
   const entries = products;
   const hosted = useHostedAction(host);
-  const [buying, setBuying] = useState<CatalogEntry | null>(null);
   const headingId = useId();
   if (entries.length === 0) return null;
   const copy = t.catalog;
-  const onBuy = chooseToBuy(setBuying);
+  const onBuy = buyNow(hosted);
   const onAddSeats = addSeatsOf(hosted);
   // The heading is buying copy: they belong to a viewer billing offers something to
   // (an entry with an `offer`). For anyone else the entries are display content, and say nothing about buying.
@@ -361,7 +374,6 @@ export function CatalogGrid({ products, licenses, memberCount, ...host }: Catalo
           );
         })}
       </div>
-      <BuyDialog {...host} open={buying !== null} product={termsNow(buying, products)} memberCount={memberCount} onClose={() => setBuying(null)} />
     </section>
   );
 }
@@ -393,7 +405,7 @@ function CatalogRow({
       {held ? (
         <HeldActionButton entry={entry} license={held} busy={busy} pending={pending} onAddSeats={onAddSeats} describedBy={nameId} size="sm" />
       ) : canBuy(entry) ? (
-        <BuyButton entry={entry} busy={busy} onBuy={onBuy} describedBy={nameId} size="sm" />
+        <BuyButton entry={entry} busy={busy} pending={pending} onBuy={onBuy} describedBy={nameId} size="sm" />
       ) : null}
     </li>
   );
@@ -404,10 +416,9 @@ function CatalogRows({
   products,
   licenses,
   host,
-  onChoose,
-}: Pick<CatalogProps, "products" | "licenses"> & { host: BuyingHost; onChoose(entry: CatalogEntry): void }) {
+}: Pick<CatalogProps, "products" | "licenses"> & { host: BuyingHost }) {
   const hosted = useHostedAction(host);
-  const onBuy = chooseToBuy(onChoose);
+  const onBuy = buyNow(hosted);
   const onAddSeats = addSeatsOf(hosted);
   return (
     <div className="space-y-3">
@@ -435,27 +446,13 @@ function CatalogRows({
 
 /**
  * "Buy licenses": the same catalog as rows, for a workspace that already holds licenses. A product it holds offers
- * Buy subscriptions instead of Buy; any other shows its price and Buy. Buy opens the seats step over the list.
+ * Buy more seats instead of Buy; any other shows its price and Buy, which goes straight to checkout.
  */
-export function CatalogDialog({ open, onClose, products, licenses, memberCount, ...host }: CatalogProps & { open: boolean; onClose(): void }) {
-  const [buying, setBuying] = useState<CatalogEntry | null>(null);
-  useEffect(() => {
-    if (!open) setBuying(null);
-  }, [open]);
+export function CatalogDialog({ open, onClose, products, licenses, ...host }: CatalogProps & { open: boolean; onClose(): void }) {
   return (
-    <>
-      <Dialog
-        open={open}
-        onClose={onClose}
-        title={t.catalog.dialog.title}
-        description={t.catalog.dialog.description}
-        className="max-w-[560px]"
-      >
-        <CatalogRows products={products} licenses={licenses} host={host} onChoose={setBuying} />
-      </Dialog>
-      {/* Over the list. */}
-      <BuyDialog {...host} open={open && buying !== null} product={termsNow(buying, products)} memberCount={memberCount} onClose={() => setBuying(null)} />
-    </>
+    <Dialog open={open} onClose={onClose} title={t.catalog.dialog.title} description={t.catalog.dialog.description} className="max-w-[560px]">
+      <CatalogRows products={products} licenses={licenses} host={host} />
+    </Dialog>
   );
 }
 
@@ -573,7 +570,7 @@ function BuyForm({
 }
 
 /**
- * The seats step of a purchase: "Buy <product>" with its description and terms, a stepper bounded by
+ * The seats step of a purchase: "Buy <product>" with its terms, a stepper bounded by
  * billing's limits, the sum, and "Continue to payment ↗", which asks billing for the checkout of `{product, seats}` and
  * goes to the page it answers. The stepper starts at the workspace's member count; a workspace of one has none.
  */
@@ -584,7 +581,6 @@ export function BuyDialog({ open, product, memberCount, onClose, ...host }: BuyD
       open={open && entry !== null}
       onClose={onClose}
       title={entry ? t.buy.title(entry.name) : ""}
-      description={entry?.description || undefined}
       className="max-w-[480px]"
     >
       {entry ? <BuyForm product={entry} offer={entry.offer} buy={entry.offer.buy} host={host} memberCount={memberCount} onClose={onClose} /> : null}

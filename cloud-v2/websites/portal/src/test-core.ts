@@ -148,7 +148,7 @@ export function workspaceCatalog(offers = true): BillingCatalog {
 }
 
 const action = (kind: string, fallbackLabel: string, returns?: boolean): BillingAction => ({ kind, fallbackLabel, ...(returns === false ? { returns } : {}) });
-const SEAT_ACTIONS = [action("add_seats", "Buy subscriptions"), action("change_seats", "Change subscription count"), action("cancel", "Cancel")];
+const SEAT_ACTIONS = [action("add_seats", "Buy more seats"), action("change_seats", "Change subscription count"), action("cancel", "Cancel")];
 export const INVOICES = action("billing_and_invoices", "Billing");
 
 const licenseBilling = (licenseId: string, product: string, unit: number, quantity: number, renewsAt: string, extra: Partial<LicenseBilling> = {}): LicenseBilling => ({

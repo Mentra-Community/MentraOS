@@ -2,7 +2,7 @@
  * A license's seats as the Licenses page draws them (the design's `parts.tsx` and `parts2.tsx`): who holds each
  * one, as a roster, or folded into a strip on a page with several licenses. They only draw. The card (and the
  * people picker) own the data and the requests, and pass in what to run: assigning opens the picker, Unassign
- * asks first in a dialog, and "Buy subscriptions ↗" is there only where billing lists the action.
+ * asks first in a dialog, and "Buy more seats" is there only where billing lists the action.
  */
 
 import { ChevronDownIcon, ChevronUpIcon, PlusIcon, SearchIcon } from "lucide-react";
@@ -59,23 +59,23 @@ export interface AddSeatsControl {
   link?: string | null;
 }
 
-function AddSeatsButton({ control, label }: { control: AddSeatsControl; label: string }) {
+function AddSeatsButton({ control }: { control: AddSeatsControl }) {
   return (
-    <HostedPageButton variant="secondary" pending={control.pending} newTab={control.newTab} disabled={control.disabled} onClick={control.onClick}>
-      {label}
+    <HostedPageButton variant="secondary" arrow={false} pending={control.pending} newTab={control.newTab} disabled={control.disabled} onClick={control.onClick}>
+      {t.actions.addSeats}
     </HostedPageButton>
   );
 }
 
 /**
- * What a viewer who may assign can do about the seats: "Buy subscriptions ↗" (where billing lists it) and "Assign
- * subscriptions" while some are free; once none is (`full`), only "Buy more subscriptions ↗". Null for anyone else.
+ * What a viewer who may assign can do about the seats: "Buy more seats" (where billing lists it) and "Assign
+ * subscriptions" while some are free; once none is (`full`), only "Buy more seats". Null for anyone else.
  */
 function SeatActions({ canAssign, full, addSeats, onAssign, primary }: Pick<SeatControls, "canAssign" | "full" | "addSeats" | "onAssign"> & { primary: boolean }) {
   if (!canAssign || (full && addSeats === null)) return null;
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {addSeats ? <AddSeatsButton control={addSeats} label={full ? t.actions.addMoreSeats : t.actions.addSeats} /> : null}
+      {addSeats ? <AddSeatsButton control={addSeats} /> : null}
       {full ? null : (
         <Button variant={primary ? "default" : "secondary"} size="sm" onClick={onAssign}>
           <PlusIcon aria-hidden="true" />

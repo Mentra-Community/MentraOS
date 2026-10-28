@@ -50,7 +50,7 @@ export function refusalMessage(code: string, context: RefusalContext = {}): stri
     case "no_billing_account":
       return "There's no billing account yet. It's created with the first purchase.";
     case "already_licensed":
-      return `${product ? `You already have ${product}.` : "You already have that."} Buy more subscriptions instead.`;
+      return `${product ? `You already have ${product}.` : "You already have that."} Buy more seats instead.`;
     case "seat_request_pending":
       return `Someone else is adding ${product ? `a ${product} subscription` : "a subscription"} right now. Try again in a few minutes.`;
     case "checkout_in_progress":
@@ -89,9 +89,7 @@ const youNowHave = (product: string, seats = 1) => ({
 
 /** What billing's actions say. `label` returns these, so a wording changes in one place. */
 const actions = {
-  addSeats: "Buy subscriptions",
-  /** The same, on a card whose subscriptions are all assigned. */
-  addMoreSeats: "Buy more subscriptions",
+  addSeats: "Buy more seats",
   /** "Buy 2 subscriptions": the over-assigned notice's button. */
   addSeatsCount: (n: number) => `Buy ${plural(n, "subscription")}`,
   changeSeats: "Change subscription count",
@@ -240,8 +238,9 @@ export const licenseStrings = {
   },
 
   price: {
-    /** "$15 per user a month". */
-    perSeat: (unit: string, rate: string) => `${unit} per user ${rate}`,
+    /** "$15 per user per month", "$15 per user every 3 months". */
+    perSeat: (unit: string, interval: string, count: number, countText = String(count)) =>
+      count === 1 ? `${unit} per user per ${interval}` : `${unit} per user every ${countText} ${interval}s`,
   },
 
   catalog: {
@@ -256,7 +255,7 @@ export const licenseStrings = {
 
   buy: {
     title: (product: string) => `Buy ${product}`,
-    /** "$15 per user a month · Renews every month. Change the number of subscriptions or cancel at any time." */
+    /** "$15 per user per month · Renews every month. Change the number of subscriptions or cancel at any time." */
     terms: (price: string, cadence: string) => `${price} · Renews every ${cadence}. Change the number of subscriptions or cancel at any time.`,
     seats: "Subscriptions",
     fewer: "One subscription fewer",
@@ -348,7 +347,7 @@ export const licenseStrings = {
     cancel: "Cancel",
     /** Unassign's dialog: its title, and the one line under it. */
     unassignPrompt: (name: string) => `Unassign ${name}?`,
-    unassignBody: (name: string, product: string) => `${name} loses ${product} the next time they open it.`,
+    unassignBody: (name: string, product: string) => `${name} will lose access to ${product}.`,
     /** Unassign's accessible name: whose subscription. */
     unassignAria: (name: string) => `Unassign ${name}`,
     assignSeats: "Assign subscriptions",

@@ -95,8 +95,8 @@ export function Skeleton({ className = "w-24" }: { className?: string }) {
 }
 
 /**
- * A button that leaves the portal for a hosted page: its arrow (↗) says so to the eye, as it must on every such
- * button, and visually hidden text says so to a screen reader ("Opens a secure billing page", or "... in a new
+ * A button that leaves the portal for a hosted page: its arrow (↗) says so to the eye (unless `arrow` is false: the
+ * header's Billing and Buy more seats go without), and visually hidden text says so to a screen reader ("Opens a secure billing page", or "... in a new
  * tab" with `newTab`, for an action listed with `returns: false`). The text is the button's description, not
  * part of it: the button's name and `textContent` stay its label alone. `data-hosted-page` marks it.
  *
@@ -109,10 +109,11 @@ export function HostedPageButton({
   newTab = false,
   variant = "secondary",
   size = "sm",
+  arrow = true,
   disabled,
   "aria-describedby": describedBy,
   ...props
-}: ComponentProps<typeof Button> & { pending?: boolean; newTab?: boolean }) {
+}: ComponentProps<typeof Button> & { pending?: boolean; newTab?: boolean; arrow?: boolean }) {
   const hint = useId();
   return (
     <>
@@ -127,7 +128,7 @@ export function HostedPageButton({
         {...props}
       >
         {children}
-        {pending ? <Spinner className="size-4" /> : <ArrowUpRightIcon aria-hidden="true" />}
+        {pending ? <Spinner className="size-4" /> : arrow ? <ArrowUpRightIcon aria-hidden="true" /> : null}
       </Button>
       <span id={hint} className="sr-only">
         {newTab ? t.actions.opensSecureBillingPageInNewTab : t.actions.opensSecureBillingPage}

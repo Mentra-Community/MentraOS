@@ -53,8 +53,9 @@ afterEach(async () => {
 
 /** The word, whole: `seatsUsed` and `add_seats` are code, and are never on a page; "Seat holders" and "free seats" are. */
 const SEAT = /\bseats?\b/i;
-/** What a page never says: "seat", nor "license" (a person reads "subscription"). */
+/** What a page never says: "seat", nor "license" (a person reads "subscription"), but for the button Alex named "Buy more seats". */
 const UNREAD = /\b(seats?|licenses?)\b/i;
+const withoutBuyMoreSeats = (word: string) => word.replaceAll(t.actions.addSeats, "");
 
 /** Everything any screen showed, for the last test. */
 const seen = new Set<string>();
@@ -63,7 +64,7 @@ const seen = new Set<string>();
 function expectNoSeat(screen: string) {
   const words = wordsUnder();
   for (const word of words) seen.add(word.replace(/^<[^>]*> /, ""));
-  expect([screen, words.filter((word) => UNREAD.test(word))]).toEqual([screen, []]);
+  expect([screen, words.filter((word) => UNREAD.test(withoutBuyMoreSeats(word)))]).toEqual([screen, []]);
 }
 
 describe("the guard sees what it should", () => {
@@ -305,7 +306,7 @@ describe("a license's card, in each state", () => {
     const odd = entry(CALL_BILLING, {
       status: "paused",
       fallbackStatusLabel: "Paused",
-      actions: [action("add_seats", "Buy subscriptions"), action("change_seats", "Change subscription count"), action("pause_collection", "Pause billing")],
+      actions: [action("add_seats", "Buy more seats"), action("change_seats", "Change subscription count"), action("pause_collection", "Pause billing")],
     });
     await open(`/licenses`, single(CALL_LICENSE, odd), "Mentra Call Unlimited");
     await exploreCards("an unknown status");
@@ -332,21 +333,13 @@ describe("a member's own card", () => {
 // ---- the catalog and the buy dialog --------------------------------------------------------------------------------
 
 describe("the catalog grid and the buy dialog", () => {
-  test("a workspace with nothing yet: the grid, the buy step with its stepper, and the sum", async () => {
+  test("a workspace with nothing yet: the grid, whose Buy goes straight to checkout", async () => {
+    const assign = spyOn(window.location, "assign").mockImplementation(() => {});
     await open(`/licenses`, SCENARIOS.catalog(), t.catalog.title);
     expectNoSeat("the catalog grid");
     await click(one("Buy", find("[data-product='mentra.fleet']")));
-    await until(() => has(t.buy.continue), "the buy step");
-    expectNoSeat("the buy step");
-    const field = find<HTMLInputElement>("input[role=spinbutton]");
-    for (const label of [t.buy.more, t.buy.more, t.buy.fewer]) {
-      await click(one(label));
-      expectNoSeat(`the buy step, ${label}`);
-    }
-    await typeInto(field, "1");
-    expectNoSeat("the buy step with one");
-    await typeInto(field, "500");
-    expectNoSeat("the buy step with the most");
+    await until(() => assign.mock.calls.length > 0, "checkout");
+    expectNoSeat("the catalog grid, leaving for checkout");
   });
 
   test("test mode", async () => {
@@ -463,15 +456,13 @@ describe("the states were reached", () => {
   // The sentences the states above exist to show. A guard that never drew them would say nothing about them.
   const WITNESSES: Array<[string, string]> = [
     ["the roster", t.seats.title],
-    // A full card offers only Buy more subscriptions: nothing to assign, so no picker over it.
-    ["a full subscription", t.actions.addMoreSeats],
+    // A full card offers only Buy more seats: nothing to assign, so no picker over it.
+    ["a full subscription", t.actions.addSeats],
     ["the roster's search", t.seats.searchPlaceholder],
     ["Assign subscriptions on a card", t.seats.assignSeats],
     ["the people picker", t.picker.title],
     ["a person who has one", t.picker.hasASeat],
     ["a person who hasn't signed in", t.picker.afterFirstSignIn],
-    ["the buy step", t.buy.seats],
-    ["one fewer", t.buy.fewer],
     ["a failed payment's day", "Subscriptions stop working on"],
     ["a day that has passed", "Subscriptions stopped working on"],
     ["a failed payment with no day", t.notice.pastDue({ date: null, stopped: false }).body!],
@@ -483,7 +474,7 @@ describe("the states were reached", () => {
     ["the row's menu: a role", t.members.changeRoleTo("Developer")],
     ["Remove's dialog", t.members.removePrompt("Tom Becker")],
     ["Remove's dialog body", t.members.removeBody],
-    ["the unassign dialog's body", " loses "],
+    ["the unassign dialog's body", " will lose access to "],
     ["the unassign dialog's Cancel", t.seats.cancel],
     ["test mode", t.testMode.lead],
     ["the test-mode notice's ×", t.testMode.hide],
