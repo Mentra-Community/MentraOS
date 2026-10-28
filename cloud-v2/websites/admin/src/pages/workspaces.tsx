@@ -16,6 +16,7 @@ import {
 } from "@mentra/workspace-ui";
 import { useId, useRef, useState, type FormEvent } from "react";
 import { api, ApiError } from "../lib/api";
+import { WORKSPACE_PORTAL_URL } from "../lib/config";
 
 /** The shared workspace screens' card (Mentra's tokens, from @mentra/workspace-ui/mentra.css). */
 const PANEL = "rounded-card border bg-card";
@@ -83,7 +84,7 @@ export async function recoverWorkspaceOwnership(workspaceId: string, target: Own
  * Every workspace in this organization, for Organization Admins: open one to manage it with the shared
  * workspace screens, or recover its ownership. A workspace's own people manage it in the workspace portal.
  */
-export function WorkspacesPage() {
+export function WorkspacesPage({ portalUrl = WORKSPACE_PORTAL_URL }: { portalUrl?: string | null } = {}) {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("members");
   const tabsTop = useRef<HTMLDivElement>(null);
@@ -92,6 +93,7 @@ export function WorkspacesPage() {
   return (
     <div className="space-y-6">
       <AllWorkspaces
+        portalUrl={portalUrl}
         openWorkspaceId={workspaceId}
         onOpen={id => {
           setWorkspaceId(id);
@@ -160,7 +162,7 @@ function OpenWorkspaceHeading({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function AllWorkspaces({ openWorkspaceId, onOpen }: { openWorkspaceId: string | null; onOpen(workspaceId: string): void }) {
+function AllWorkspaces({ openWorkspaceId, onOpen, portalUrl }: { openWorkspaceId: string | null; onOpen(workspaceId: string): void; portalUrl: string | null }) {
   const client = useQueryClient();
   const all = useInfiniteQuery({
     queryKey: ORGANIZATION_WORKSPACES_KEY,
@@ -228,6 +230,13 @@ function AllWorkspaces({ openWorkspaceId, onOpen }: { openWorkspaceId: string | 
                   </div>
                   {active ? (
                     <div className="flex flex-wrap gap-2">
+                      {portalUrl ? (
+                        <Button asChild size="sm">
+                          <a href={`${portalUrl}/?workspace=${encodeURIComponent(workspace.workspaceId)}`} target="_blank" rel="noreferrer" aria-label={`Manage workspace ${workspace.name}`}>
+                            Manage workspace ↗
+                          </a>
+                        </Button>
+                      ) : null}
                       <Button variant="secondary" size="sm" aria-label={`Open ${workspace.name}`} onClick={() => onOpen(workspace.workspaceId)}>
                         Open
                       </Button>

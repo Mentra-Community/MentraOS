@@ -35,21 +35,25 @@ function render(ui: ReactElement, seed: { everyone?: WorkspaceSummary[]; details
 }
 
 describe("the Workspaces page", () => {
-  test("lists every workspace with Open and Recover ownership, and asks to open one", () => {
-    const markup = render(<WorkspacesPage />, { everyone });
+  test("lists every workspace with portal management and the existing support tools", () => {
+    const markup = render(<WorkspacesPage portalUrl="https://portal.staging.mentraglass.com" />, { everyone });
     expect(markup).toContain("All workspaces");
     expect(markup).toContain("Acme Robotics");
     expect(markup).toContain('aria-label="Open Acme Robotics"');
     expect(markup).toContain('aria-label="Recover ownership of Orphaned Lab"');
+    expect(markup).toContain('aria-label="Manage workspace Acme Robotics"');
+    expect(markup).toContain('href="https://portal.staging.mentraglass.com/?workspace=ws_acme"');
+    expect(render(<WorkspacesPage portalUrl={null} />, { everyone })).not.toContain("Manage workspace");
     expect(markup).toContain("Open a workspace to manage");
     expect(markup).not.toContain('role="tab"');
   });
 
   test("a deleted workspace is marked and cannot be opened or recovered", () => {
-    const markup = render(<WorkspacesPage />, { everyone });
+    const markup = render(<WorkspacesPage portalUrl="https://portal.staging.mentraglass.com" />, { everyone });
     expect(markup).toContain("Deleted");
     expect(markup).not.toContain('aria-label="Open Closed Down"');
     expect(markup).not.toContain('aria-label="Recover ownership of Closed Down"');
+    expect(markup).not.toContain('aria-label="Manage workspace Closed Down"');
   });
 
   test("a list still loading says so", () => {

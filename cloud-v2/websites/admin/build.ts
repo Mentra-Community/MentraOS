@@ -1,8 +1,10 @@
 import tailwind from "bun-plugin-tailwind";
 import { cp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { workspacePortalUrl } from "./src/lib/config";
 
 const outdir = path.join(process.cwd(), "dist");
+const portalUrl = workspacePortalUrl(process.env.PORTAL_URL);
 
 /** Red Hat Display weights in public/fonts (the sign-in page's), preloaded so the first render uses them. */
 const FONTS = ["/fonts/RedHatDisplay-Regular.ttf", "/fonts/RedHatDisplay-SemiBold.ttf"];
@@ -22,6 +24,7 @@ const result = await Bun.build({
   external: ["/fonts/*", "/api/*"],
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
+    "process.env.PORTAL_URL": JSON.stringify(portalUrl ?? ""),
   },
 });
 
