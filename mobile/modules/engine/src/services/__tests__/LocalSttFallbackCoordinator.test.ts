@@ -28,16 +28,6 @@ mock.module("../../runtime/config", () => ({
   ISLAND_SETTINGS_KEYS: {localSttFallbackActive: "local_stt_fallback_active"},
 }))
 mock.module("../../stores/settings", () => ({useSettingsStore: {getState: () => ({setSetting})}}))
-let cloudConnected = true
-const cloudListeners: ((status: {status: string}) => void)[] = []
-mock.module("../CloudClientService", () => ({
-  cloudClientService: {
-    isConnected: () => cloudConnected,
-    onStatusChanged: (listener: (status: {status: string}) => void) => {
-      cloudListeners.push(listener)
-    },
-  },
-}))
 const selectionListeners = new Set<() => void>()
 const activate = mock(async (code: string) => {
   events.push(`activate ${code}`)
@@ -95,7 +85,6 @@ beforeEach(() => {
   nativeDemand = false
   events.length = 0
   retryTimers.length = 0
-  cloudConnected = true
   download = async (code) => {
     downloaded.add(code)
   }
@@ -107,12 +96,12 @@ beforeEach(() => {
 
 afterEach(async () => {
   offStatus()
-  coordinator.onSubscriptionChange(false)
+  coordinator.setDemand(false)
   await settle()
 })
 
 test("on-device demand loads the picked model, after native sees the demand", async () => {
-  coordinator.onSubscriptionChange(true, true)
+  coordinator.setDemand(true)
   await settle()
   expect(loadedNativeModel).toBe("/models/fr")
   expect(coordinator.isActive()).toBe(true)
@@ -124,16 +113,14 @@ test("on-device demand loads the picked model, after native sees the demand", as
   expect(statuses.at(-1)).toEqual({code: "fr", language: "fr-FR", state: "ready"})
 })
 
-test("cloud subscriptions stay on the cloud until it disconnects", async () => {
-  coordinator.onSubscriptionChange(true, false)
+test("without demand nothing loads, and demand going away unloads", async () => {
+  coordinator.setDemand(false)
   await settle()
   expect(restart).not.toHaveBeenCalled()
-  cloudConnected = false
-  for (const listener of cloudListeners) listener({status: "disconnected"})
+  coordinator.setDemand(true)
   await settle()
   expect(coordinator.isActive()).toBe(true)
-  cloudConnected = true
-  for (const listener of cloudListeners) listener({status: "connected"})
+  coordinator.setDemand(false)
   await settle()
   expect(coordinator.isActive()).toBe(false)
   expect(statuses.at(-1)?.state).toBe("idle")
@@ -151,7 +138,7 @@ test("a missing picked model downloads through the Speech page with progress, th
         resolve()
       }
     })
-  coordinator.onSubscriptionChange(true, true)
+  coordinator.setDemand(true)
   await settle()
   expect(statuses.at(-1)).toEqual({code: "de", language: "de-DE", state: "downloading", progress: 40})
   expect(restart).not.toHaveBeenCalled()
@@ -168,12 +155,12 @@ test("a failed download reports unavailable and retries on the shared schedule",
   download = async () => {
     throw new Error("offline")
   }
-  coordinator.onSubscriptionChange(true, true)
+  coordinator.setDemand(true)
   await settle()
   expect(statuses.at(-1)).toMatchObject({state: "unavailable", reason: expect.stringContaining("offline")})
   expect(retryTimers).toHaveLength(1)
   // The same demand waits for its retry instead of hammering the download.
-  coordinator.onSubscriptionChange(true, true)
+  coordinator.setDemand(true)
   await settle()
   expect(retryTimers).toHaveLength(1)
   download = async (code) => {
@@ -188,7 +175,7 @@ test("a failed load is retried on the next load attempt and on schedule", async 
   restart.mockImplementationOnce(async () => {
     throw new Error("native model failed")
   })
-  coordinator.onSubscriptionChange(true, true)
+  coordinator.setDemand(true)
   await settle()
   expect(coordinator.isActive()).toBe(false)
   expect(statuses.at(-1)).toMatchObject({state: "unavailable", reason: expect.stringContaining("native model failed")})
@@ -198,22 +185,22 @@ test("a failed load is retried on the next load attempt and on schedule", async 
   expect(coordinator.isActive()).toBe(true)
 
   // A restart that resolves without loading never reports ready either.
-  coordinator.onSubscriptionChange(false)
+  coordinator.setDemand(false)
   await settle()
   loadedNativeModel = null // native releases the recognizer when demand ends
   restart.mockImplementationOnce(async () => {})
-  coordinator.onSubscriptionChange(true, true)
+  coordinator.setDemand(true)
   await settle()
   expect(statuses.at(-1)?.state).toBe("unavailable")
   // New demand is a new load attempt: it retries without waiting.
-  coordinator.onSubscriptionChange(false)
-  coordinator.onSubscriptionChange(true, true)
+  coordinator.setDemand(false)
+  coordinator.setDemand(true)
   await settle()
   expect(statuses.at(-1)?.state).toBe("ready")
 })
 
 test("changing the Speech-page model reloads the recognizer while it is in use", async () => {
-  coordinator.onSubscriptionChange(true, true)
+  coordinator.setDemand(true)
   await settle()
   expect(loadedNativeModel).toBe("/models/fr")
   picked = "de"
@@ -229,7 +216,7 @@ test("a model change during a long download starts the new model without waiting
   picked = "de"
   downloaded.delete("de")
   download = () => new Promise<void>(() => {})
-  coordinator.onSubscriptionChange(true, true)
+  coordinator.setDemand(true)
   await settle()
   expect(statuses.at(-1)?.state).toBe("downloading")
   picked = "fr"
@@ -240,9 +227,9 @@ test("a model change during a long download starts the new model without waiting
 })
 
 test("ending demand releases native demand and goes idle", async () => {
-  coordinator.onSubscriptionChange(true, true)
+  coordinator.setDemand(true)
   await settle()
-  coordinator.onSubscriptionChange(false)
+  coordinator.setDemand(false)
   expect(coordinator.isActive()).toBe(false)
   expect(coordinator.getActiveLanguage()).toBeNull()
   expect(setSetting).toHaveBeenLastCalledWith("local_stt_fallback_active", false)
@@ -250,7 +237,7 @@ test("ending demand releases native demand and goes idle", async () => {
 })
 
 test("new listeners get the current status immediately", async () => {
-  coordinator.onSubscriptionChange(true, true)
+  coordinator.setDemand(true)
   await settle()
   let latest: Status | undefined
   const off = coordinator.onModelStatusChanged((status) => {

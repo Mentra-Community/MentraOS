@@ -58,10 +58,10 @@ await session.speaker.play({
 
 ## Text-to-speech
 
-`speak` sends the text to the phone, which streams cloud TTS when connected and
-falls back to local offline TTS when the cloud is unavailable. Cloud speech
-starts playing while it is still being synthesized, the same way on Android
-and iOS. It resolves when playback completes. If the connection drops in the
+`speak` sends the text to the phone, which by default streams cloud TTS when
+connected and falls back to its on-device voice when the cloud is unavailable
+(see [Cloud or on-device](#cloud-or-on-device)). Cloud speech starts playing
+while it is still being synthesized, the same way on Android and iOS. It resolves when playback completes. If the connection drops in the
 middle of a sentence, the part that already played stays played and `speak`
 rejects with `TTS_UPSTREAM_ERROR`. Offline playback may segment longer text
 internally to reduce latency; callers use the same `speak()` API and receive
@@ -93,10 +93,31 @@ if (!result.completed) {
 | `volume`             | `number?`                  | Playback volume.                                  |
 | `stopOtherAudio`     | `boolean?`                 | Stop other audio first. Defaults to `false`.      |
 | `enableSanitization` | `boolean?`                 | Normalize markup and symbols. Defaults to `true`. |
-| `forceLocal`         | `boolean?`                 | Require on-device TTS; never call cloud TTS.      |
+| `processing`         | `SpeechProcessing?`        | Cloud or on-device. Defaults to `"preferCloud"`.  |
 
 `SpeakResult` has one field, `completed`: `true` if playback finished, `false`
 if it was interrupted.
+
+### Cloud or on-device
+
+`processing` takes the same values as for
+[transcription](/app-devs/core-concepts/microphone/speech-to-text#cloud-or-on-device):
+
+| `processing`              | Behavior                                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `"preferCloud"` (default) | Cloud TTS while the cloud is connected, otherwise the phone's on-device voice.                                      |
+| `"preferLocal"`           | The on-device voice when its model is ready and can say it, otherwise cloud TTS. A cloud `voice_id` uses cloud TTS. |
+| `"localOnly"`             | The on-device voice only. Rejects with `TTS_LOCAL_UNAVAILABLE` when its model isn't ready.                          |
+
+```typescript
+await session.speaker.speak("Battery low", {processing: "preferLocal"})
+```
+
+<Note>
+  `processing` replaces `{forceLocal: true}`, which still works as `processing: "localOnly"` until SDK 4.0. When both
+  are set, `processing` wins. Mentra App versions before 3.4.0 don't know `processing`: there, `"preferLocal"` behaves
+  like `"preferCloud"`, and `"localOnly"` keeps working.
+</Note>
 
 ## Live PCM streaming
 
@@ -229,7 +250,7 @@ try {
 | `TTS_TEXT_TOO_LONG`     | The text exceeded the provider's length limit.          |
 | `TTS_INVALID_VOICE`     | The `voice_id` isn't a known voice.                     |
 | `TTS_UPSTREAM_ERROR`    | The TTS provider returned an error.                     |
-| `TTS_LOCAL_UNAVAILABLE` | `forceLocal` was requested without a ready local model. |
+| `TTS_LOCAL_UNAVAILABLE` | `localOnly` was requested without a ready local model.  |
 | `INTERNAL`              | Any other failure.                                      |
 
 ## State

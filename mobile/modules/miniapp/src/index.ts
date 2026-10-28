@@ -108,6 +108,7 @@ export type {
   SpeakerStreamWriteResult,
 } from "./modules/speaker"
 export {SpeakerStreamWriter, SPEAKER_STREAM_MAX_BUFFERED_MS, SPEAKER_WRITE_CHUNK_BYTES} from "./modules/speaker"
+export type {SpeechProcessing} from "./modules/speechProcessing"
 export type {
   CameraFovPreset,
   CameraFovRequest,

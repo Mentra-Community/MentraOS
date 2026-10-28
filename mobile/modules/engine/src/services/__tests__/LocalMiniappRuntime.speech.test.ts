@@ -3,6 +3,7 @@
 import {describe, expect, mock, test} from "bun:test"
 import {readFileSync} from "node:fs"
 
+import {readSpeechProcessing} from "../TranscriptionRouting"
 import {prepareTtsSentences} from "../TtsTextSanitizer"
 
 // Exercise the real handlers without booting the engine's native dependencies,
@@ -64,6 +65,7 @@ function createHost(options: {offlineAvailable?: boolean; cloudSpeak?: () => Pro
   const ttsSpeak = mock(options.cloudSpeak ?? (async () => ({audioUrl: "https://runtime.test/api/tts/speak?x"})))
   const Host = new Function(
     "prepareTtsSentences",
+    "readSpeechProcessing",
     "cloudClientService",
     "ttsModelManager",
     "audioPlaybackService",
@@ -73,11 +75,12 @@ function createHost(options: {offlineAvailable?: boolean; cloudSpeak?: () => Pro
     `${compiled}; return Host`,
   )(
     prepareTtsSentences,
+    readSpeechProcessing,
     {isConnected: () => true, tts: {speak: ttsSpeak}},
     ttsModelManager,
     audioPlaybackService,
     () => true,
-    {INTERNAL: "INTERNAL", TTS_UPSTREAM_ERROR: "TTS_UPSTREAM_ERROR"},
+    {INTERNAL: "INTERNAL", TTS_UPSTREAM_ERROR: "TTS_UPSTREAM_ERROR", TTS_LOCAL_UNAVAILABLE: "TTS_LOCAL_UNAVAILABLE"},
     "TEST",
   )
   const host = new Host()
@@ -215,10 +218,55 @@ describe("cloud speech streams into the PCM player", () => {
   })
 })
 
-test("forceLocal speech never touches the cloud", async () => {
-  const {host, streams, plays, ttsSpeak} = createHost()
-  await host.handleSpeak("com.example.speech", {text: "Offline.", forceLocal: true}, "local")
-  expect(ttsSpeak).not.toHaveBeenCalled()
-  expect(streams).toHaveLength(0)
-  expect(plays[0].request.audioUrl).toBe("file://offline.wav")
+describe("processing", () => {
+  test("localOnly speech never touches the cloud, as forceLocal from older SDKs", async () => {
+    for (const payload of [{processing: "localOnly"}, {forceLocal: true}]) {
+      const {host, streams, plays, ttsSpeak} = createHost()
+      await host.handleSpeak("com.example.speech", {text: "Offline.", ...payload}, "local")
+      expect(ttsSpeak).not.toHaveBeenCalled()
+      expect(streams).toHaveLength(0)
+      expect(plays[0].request.audioUrl).toBe("file://offline.wav")
+    }
+  })
+
+  test("localOnly without the on-device model fails instead of using the cloud", async () => {
+    const {host, ttsSpeak} = createHost({offlineAvailable: false})
+    await host.handleSpeak("com.example.speech", {text: "Offline.", processing: "localOnly"}, "local")
+    expect(ttsSpeak).not.toHaveBeenCalled()
+    expect(host.sendResult).toHaveBeenCalledWith(
+      "com.example.speech",
+      "local",
+      false,
+      expect.anything(),
+      expect.objectContaining({code: "TTS_LOCAL_UNAVAILABLE"}),
+    )
+  })
+
+  test("preferLocal speaks on-device while the cloud is connected", async () => {
+    const {host, streams, plays, ttsSpeak} = createHost()
+    await host.handleSpeak("com.example.speech", {text: "Nearby.", processing: "preferLocal"}, "near")
+    expect(ttsSpeak).not.toHaveBeenCalled()
+    expect(streams).toHaveLength(0)
+    expect(plays[0].request.audioUrl).toBe("file://offline.wav")
+  })
+
+  test("preferLocal uses cloud speech when the on-device model is missing or can't say it", async () => {
+    for (const [options, payload] of [
+      [{offlineAvailable: false}, {}],
+      [{}, {voice_id: "cloud-only-voice"}],
+    ] as const) {
+      const {host, streams, plays, ttsSpeak} = createHost(options)
+      await host.handleSpeak("com.example.speech", {text: "Far.", processing: "preferLocal", ...payload}, "far")
+      expect(plays).toHaveLength(0)
+      expect(ttsSpeak).toHaveBeenCalledTimes(1)
+      expect(streams).toHaveLength(1)
+    }
+  })
+
+  test("preferCloud, the default, speaks through the cloud while it is connected", async () => {
+    const {host, streams, plays} = createHost()
+    await host.handleSpeak("com.example.speech", {text: "Cloud.", processing: "preferCloud"}, "cloud")
+    expect(streams).toHaveLength(1)
+    expect(plays).toHaveLength(0)
+  })
 })

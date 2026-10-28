@@ -428,7 +428,7 @@ export class CaptionsController {
 
     const language = this.settings.language
     const hints = this.settings.languageHints
-    const options = this.settings.useOfflineStt ? {forceLocal: true} : {}
+    const options = this.settings.useOfflineStt ? {processing: "localOnly" as const} : {}
 
     try {
       if (hints.length > 0) {

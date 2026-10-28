@@ -1,7 +1,6 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {ISLAND_SETTINGS_KEYS} from "../runtime/config"
 import {useSettingsStore} from "../stores/settings"
-import {cloudClientService} from "./CloudClientService"
 import {ModelRetry} from "./ModelRetry"
 import offlineSpeechModelService from "./OfflineSpeechModelService"
 import sttModelManager from "./STTModelManager"
@@ -23,10 +22,10 @@ export interface LocalSttModelStatus {
 }
 
 /**
- * Decides whether on-device Sherpa STT should produce transcripts for local
- * miniapps, instead of (or in addition to) cloud transcription. Local STT is
- * active when the cloud is unavailable or any subscription requires
- * `forceLocal`.
+ * Runs on-device Sherpa STT for local miniapps while LocalMiniappRuntime says
+ * a transcription listener needs it (`setDemand`): a `localOnly` listener, a
+ * `preferLocal` one the picked model can serve, any listener while the cloud
+ * is unreachable, or one still finishing an on-device utterance.
  *
  * There is one recognizer and it always runs the model picked on the Speech
  * page. When on-device transcription is needed and that model is missing, it
@@ -39,22 +38,14 @@ export interface LocalSttModelStatus {
  * `local_transcription` Bridge event; the host wires that event to
  * `localMiniappRuntime.forwardEvent`, with this coordinator providing the
  * subscription-active gate so we never publish transcripts to miniapps that
- * aren't asking for them. LocalMiniappRuntime filters mixed local/cloud
- * delivery per miniapp.
+ * aren't asking for them. LocalMiniappRuntime routes local and cloud
+ * transcripts to each listener.
  */
 class LocalSttFallbackCoordinator {
   private static instance: LocalSttFallbackCoordinator
 
-  private hasTranscriptionSubscription = false
-  private hasForceLocalSubscription = false
-  /**
-   * Default to "cloud is up" so we never accidentally activate local STT before
-   * the cloud client has had a chance to start. We attach lazily on the first
-   * subscription/reconcile pass; once attached, this field reflects the real
-   * cloud-client runtime status.
-   */
-  private cloudConnected = true
-  private cloudAdapterAttached = false
+  /** A miniapp transcription listener needs on-device transcripts. */
+  private demand = false
   private selectionAttached = false
   private hydration?: Promise<unknown>
   private hydrated = false
@@ -84,24 +75,6 @@ class LocalSttFallbackCoordinator {
       LocalSttFallbackCoordinator.instance = new LocalSttFallbackCoordinator()
     }
     return LocalSttFallbackCoordinator.instance
-  }
-
-  /**
-   * Lazy-attach the engine cloud connection listener. The coordinator is
-   * constructed at module load, before engine.start() brings up the cloud
-   * client, so we defer until the first reconcile.
-   */
-  private attachCloudAdapterIfReady(): void {
-    if (this.cloudAdapterAttached) return
-    this.cloudConnected = cloudClientService.isConnected()
-    cloudClientService.onStatusChanged((status) => {
-      const connected = status.status === "connected"
-      if (this.cloudConnected === connected) return
-      this.log(`cloud connection -> ${connected ? "up" : "down"}`)
-      this.cloudConnected = connected
-      this.reconcile()
-    })
-    this.cloudAdapterAttached = true
   }
 
   /** A model change on the Speech page reloads the recognizer while it is in use. */
@@ -134,32 +107,17 @@ class LocalSttFallbackCoordinator {
     }
   }
 
-  onSubscriptionChange(hasTranscription: boolean, hasForceLocal = false): void {
-    if (
-      this.hasTranscriptionSubscription !== hasTranscription ||
-      this.hasForceLocalSubscription !== (hasTranscription && hasForceLocal)
-    ) {
-      this.log(`onSubscriptionChange(hasTx=${hasTranscription}, forceLocal=${hasForceLocal})`)
-    }
-    this.hasTranscriptionSubscription = hasTranscription
-    this.hasForceLocalSubscription = hasTranscription && hasForceLocal
+  /** Whether a miniapp transcription listener needs on-device transcripts. */
+  setDemand(demand: boolean): void {
+    if (this.demand !== demand) this.log(`on-device demand -> ${demand}`)
+    this.demand = demand
     this.reconcile()
   }
 
-  /**
-   * Informational hook, retained for API stability. No longer called: the
-   * authoritative switching signal is the cloud-client adapter (local miniapps
-   * are powered only by V2). v1 cloud transcripts deliberately do NOT drive this
-   * coordinator anymore. Kept for future hysteresis if connection-state alone
-   * proves too coarse.
-   */
-  onCloudTranscript(): void {}
-
   private reconcile(): void {
-    this.attachCloudAdapterIfReady()
     this.attachSelectionIfReady()
-    if (!this.shouldUseLocalStt()) {
-      this.stop(this.hasTranscriptionSubscription ? "cloud reconnected" : "subscription gone")
+    if (!this.demand) {
+      this.stop("no listener needs it")
       return
     }
     if (!this.hydrated) {
@@ -191,8 +149,7 @@ class LocalSttFallbackCoordinator {
 
   private async start(code: string): Promise<void> {
     const generation = ++this.generation
-    const current = () =>
-      generation === this.generation && this.shouldUseLocalStt() && sttModelManager.getCurrentLanguage() === code
+    const current = () => generation === this.generation && this.demand && sttModelManager.getCurrentLanguage() === code
 
     if (this.localActive) {
       // Switching models: hold transcripts until the new model is loaded.
@@ -295,10 +252,6 @@ class LocalSttFallbackCoordinator {
         this.log(`model status listener threw: ${error}`)
       }
     }
-  }
-
-  private shouldUseLocalStt(): boolean {
-    return this.hasTranscriptionSubscription && (this.hasForceLocalSubscription || !this.cloudConnected)
   }
 
   private log(msg: string): void {

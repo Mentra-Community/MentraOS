@@ -57,8 +57,22 @@ import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
-import {summarizeTranscriptionRoutes, transcriptionDeliveryRoute} from "./TranscriptionRouting"
-import {TranscriptionSubscriptions, type TranscriptionListenerRegistration} from "./TranscriptionSubscriptions"
+import {
+  needsCloud,
+  needsLocal,
+  onDeviceServes,
+  readSpeechProcessing,
+  targetSource,
+  UtteranceTracker,
+  type SpeechProcessing,
+  type TranscriptionRoutingState,
+} from "./TranscriptionRouting"
+import {
+  addStreamProcessing,
+  transcriptionRegistrations,
+  TranscriptionSubscriptions,
+  type TranscriptionStreamEntry,
+} from "./TranscriptionSubscriptions"
 import {prepareTtsSentences} from "./TtsTextSanitizer"
 import {handleWifiAdbRequest} from "./WifiAdbRequest"
 import {cloudClientService} from "./CloudClientService"
@@ -90,7 +104,13 @@ import {
   resolveCaptureAudio,
 } from "../runtime/streamConfig"
 import {toLanguageHint} from "@mentra/cloud-protocol/languages"
-import type {AudioSubscription, LanguageSource, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
+import type {
+  AudioPosition,
+  AudioSubscription,
+  LanguageSource,
+  TranscriptionData,
+  TranslationData,
+} from "@mentra/cloud-protocol"
 import {buildMiniappManifestSnapshot, type MiniappRuntimeDiagnosticSnapshot} from "../utils/miniappDiagnostics"
 import sttModelManager from "./STTModelManager"
 import ttsModelManager from "./TTSModelManager"
@@ -178,12 +198,9 @@ export interface InstalledMiniappManifest {
 type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
 
 interface ConnectedMiniapp {
-  transcriptionListeners?: TranscriptionSubscriptions
+  /** Transcription listeners, each with the source (cloud or on-device) it gets text from. */
+  transcriptionListeners: TranscriptionSubscriptions
   subscriptions: Set<string>
-  /** Transcription streams this app explicitly requires to stay on-device. */
-  forceLocalTranscriptionStreams: Set<string>
-  /** Transcription streams with at least one listener using the default/cloud route. */
-  cloudTranscriptionStreams: Set<string>
   sendMessage: (raw: string) => void
   lastPongAt: number
   unansweredPingRounds: number
@@ -261,6 +278,18 @@ function locationRateRank(rate: string | null | undefined): number {
   if (!rate) return -1
   const i = LOCATION_RATE_PRIORITY.indexOf(rate as LocationRate)
   return i >= 0 ? i : LOCATION_RATE_PRIORITY.indexOf("passive")
+}
+
+/** Why this deployment refuses a transcription listener's processing, or null. */
+function speechProcessingDisabled(processing: SpeechProcessing): string | null {
+  const cloud = isFeatureEnabled("cloudSpeech")
+  const onDevice = isFeatureEnabled("onDeviceSpeech")
+  if (processing === "localOnly" && !onDevice) return "On-device speech is disabled by this deployment"
+  if (processing === "preferCloud" && !cloud) return "Cloud speech is disabled by this deployment"
+  if (processing === "preferLocal" && !cloud && !onDevice) {
+    return "Cloud and on-device speech are disabled by this deployment"
+  }
+  return null
 }
 
 const LOG_TAG = "LOCAL_MINIAPP"
@@ -1023,8 +1052,7 @@ class LocalMiniappRuntime {
     }
     this.connectedApps.set(packageName, {
       subscriptions: new Set(),
-      forceLocalTranscriptionStreams: new Set(),
-      cloudTranscriptionStreams: new Set(),
+      transcriptionListeners: new TranscriptionSubscriptions(),
       sendMessage: sendFn,
       lastPongAt: Date.now(),
       unansweredPingRounds: 0,
@@ -1678,7 +1706,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.TRANSCRIPTION_FINISH: {
         const app = this.connectedApps.get(packageName)
         if (
-          !app?.forceLocalTranscriptionStreams.size ||
+          !app?.transcriptionListeners
+            .routes()
+            .some((route) => route.processing === "localOnly" || route.source === "local") ||
           !app.installedManifest?.permissions?.some((p) => p.type === "MICROPHONE")
         ) {
           this.sendResult(packageName, requestId, false, undefined, {
@@ -2053,15 +2083,15 @@ class LocalMiniappRuntime {
     if (!app) return
 
     const rawStreams = (payload.subscriptions ?? payload.streams) as
-      | (string | {stream: string; rate?: string; forceLocal?: boolean; includeCloud?: boolean})[]
-      | undefined
+      (string | ({rate?: string} & TranscriptionStreamEntry))[] | undefined
     // Normalize: objects like {stream: "location_stream", rate: "realtime"} → extract stream name
     // "location_stream" is the rate-bearing alias for "location_update".
     // The strictest rate wins when multiple `location_stream` entries appear
     // in one SUBSCRIBE — the same rule we apply across apps.
     let requestedLocationRate: string | null = null
-    const forceLocalTranscriptionStreams = new Set<string>()
-    const cloudTranscriptionStreams = new Set<string>()
+    // What each transcription stream's entries ask for: `{stream, processing}`,
+    // or `{stream, forceLocal, includeCloud}` from SDKs before `processing`.
+    const streamProcessing = new Map<string, Set<SpeechProcessing>>()
     const streams = rawStreams?.map((s) => {
       if (typeof s === "object" && s !== null) {
         if (s.stream === "location_stream") {
@@ -2070,15 +2100,10 @@ class LocalMiniappRuntime {
           }
           return "location_update"
         }
-        if (s.forceLocal === true && s.stream.startsWith("transcription:")) {
-          forceLocalTranscriptionStreams.add(s.stream)
-        }
-        if (s.stream.startsWith("transcription:") && (s.forceLocal !== true || s.includeCloud === true)) {
-          cloudTranscriptionStreams.add(s.stream)
-        }
+        if (s.stream.startsWith("transcription:")) addStreamProcessing(streamProcessing, s)
         return s.stream
       }
-      if (s.startsWith("transcription:")) cloudTranscriptionStreams.add(s)
+      if (s.startsWith("transcription:")) addStreamProcessing(streamProcessing, {stream: s})
       return s
     }) as string[] | undefined
     if (!Array.isArray(streams)) {
@@ -2088,9 +2113,9 @@ class LocalMiniappRuntime {
       })
       return
     }
+    const transcriptionListeners = transcriptionRegistrations(payload.transcriptionListeners, streams, streamProcessing)
 
-    for (const subscription of rawStreams ?? []) {
-      const stream = typeof subscription === "string" ? subscription : subscription.stream
+    for (const stream of streams) {
       if (stream.startsWith("translation:") && !isFeatureEnabled("cloudSpeech")) {
         this.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.NOT_IMPLEMENTED,
@@ -2105,20 +2130,13 @@ class LocalMiniappRuntime {
         })
         return
       }
-      if (!stream.startsWith("transcription:")) continue
-      const forceLocal = typeof subscription === "object" && subscription.forceLocal === true
-      const includeCloud = typeof subscription === "object" && subscription.includeCloud === true
-      if (forceLocal && !isFeatureEnabled("onDeviceSpeech")) {
+    }
+    for (const {processing} of transcriptionListeners) {
+      const disabled = speechProcessingDisabled(processing)
+      if (disabled) {
         this.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.NOT_IMPLEMENTED,
-          message: "On-device speech is disabled by this deployment",
-        })
-        return
-      }
-      if ((!forceLocal || includeCloud) && !isFeatureEnabled("cloudSpeech")) {
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.NOT_IMPLEMENTED,
-          message: "Cloud speech is disabled by this deployment",
+          message: disabled,
         })
         return
       }
@@ -2162,43 +2180,8 @@ class LocalMiniappRuntime {
     // A miniapp that subscribes to the model status again gets it again.
     if (!app.subscriptions.has(MiniappStreamType.TRANSCRIPTION_MODEL_STATUS))
       app.lastTranscriptionModelStatus = undefined
-    app.forceLocalTranscriptionStreams = new Set(
-      [...forceLocalTranscriptionStreams].filter((stream) => app.subscriptions.has(stream)),
-    )
-    app.cloudTranscriptionStreams = new Set(
-      [...cloudTranscriptionStreams].filter((stream) => app.subscriptions.has(stream)),
-    )
     this.replaceStreamSubscribers(packageName, previousSubscriptions, app.subscriptions)
-
-    if (Array.isArray(payload.transcriptionListeners)) {
-      const registrations = payload.transcriptionListeners
-        .filter((value): value is TranscriptionListenerRegistration => {
-          if (typeof value !== "object" || value === null) return false
-          const r = value as Partial<TranscriptionListenerRegistration>
-          return (
-            typeof r.id === "string" &&
-            typeof r.stream === "string" &&
-            r.stream.startsWith("transcription:") &&
-            app.subscriptions.has(r.stream) &&
-            (r.forceLocal === undefined || typeof r.forceLocal === "boolean")
-          )
-        })
-        .map(({id, stream, forceLocal}) => ({id, stream, forceLocal}))
-      app.transcriptionListeners ??= new TranscriptionSubscriptions()
-      app.transcriptionListeners.replace(registrations, cloudClientService.getAudioPosition())
-    } else {
-      // Older bundles expose one registration per stream. The runtime can still
-      // trim app joins/resubscriptions without sending them new payload fields.
-      app.transcriptionListeners ??= new TranscriptionSubscriptions()
-      app.transcriptionListeners.replace(
-        [...app.cloudTranscriptionStreams].map((stream) => ({
-          id: `legacy:${stream}`,
-          stream,
-          legacy: true,
-        })),
-        cloudClientService.getAudioPosition(),
-      )
-    }
+    app.transcriptionListeners.replace(transcriptionListeners, cloudClientService.getAudioPosition())
 
     this.recomputeMicRequirements()
     this.updateCloudSubscriptions()
@@ -2841,10 +2824,11 @@ class LocalMiniappRuntime {
         !voiceExplicit || voice === "default" || ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
 
       const modelId = typeof payload.model_id === "string" ? payload.model_id : undefined
-      const forceLocal = payload.forceLocal === true
+      // `processing` wins; SDKs before it send only `forceLocal`.
+      const processing = readSpeechProcessing(payload)
       const cloudConnected = cloudClientService.isConnected()
       console.log(
-        `${LOG_TAG}: TTS decision for ${packageName}: cloudConnected=${cloudConnected}, runtimeTts=yes, offlineVoice=${offlineSupportsVoice}, forceLocal=${forceLocal}`,
+        `${LOG_TAG}: TTS decision for ${packageName}: cloudConnected=${cloudConnected}, runtimeTts=yes, offlineVoice=${offlineSupportsVoice}, processing=${processing}`,
       )
 
       const playOfflineTts = async (reason?: string): Promise<boolean> => {
@@ -3019,28 +3003,38 @@ class LocalMiniappRuntime {
         return true
       }
 
-      if (forceLocal) {
+      if (processing === "localOnly") {
         if (await playOfflineTts()) {
           return
         }
         if (run.cancelled) return
-        const message = "tts unavailable: forceLocal requested but offline TTS model is not available"
+        const message = "tts unavailable: localOnly requested but offline TTS model is not available"
         sendPlaybackResult(false, message, null, message, false, MiniappErrorCode.TTS_LOCAL_UNAVAILABLE)
         return
       }
 
-      if (cloudConnected && (await playCloudTts(true))) {
-        return
-      }
+      if (processing === "preferLocal") {
+        // On-device first; the cloud when the offline model is missing or can't say it.
+        if (await playOfflineTts()) {
+          return
+        }
+        if (await playCloudTts(false)) {
+          return
+        }
+      } else {
+        if (cloudConnected && (await playCloudTts(true))) {
+          return
+        }
 
-      // Offline is the disconnected-cloud fallback. If the model is not
-      // available, preserve the old behavior by trying cloud as a last resort.
-      if (await playOfflineTts(cloudConnected ? undefined : "cloud disconnected")) {
-        return
-      }
+        // Offline is the disconnected-cloud fallback. If the model is not
+        // available, preserve the old behavior by trying cloud as a last resort.
+        if (await playOfflineTts(cloudConnected ? undefined : "cloud disconnected")) {
+          return
+        }
 
-      if (await playCloudTts(false)) {
-        return
+        if (await playCloudTts(false)) {
+          return
+        }
       }
 
       const message = "tts unavailable: no cloud TTS URL or offline TTS model"
@@ -5973,15 +5967,8 @@ class LocalMiniappRuntime {
     // Add new subscriptions
     const previousSubscriptions = app.subscriptions
     app.subscriptions = new Set(streams)
-    app.forceLocalTranscriptionStreams.clear()
-    app.cloudTranscriptionStreams = new Set(streams.filter((stream) => stream.startsWith("transcription:")))
-    app.transcriptionListeners ??= new TranscriptionSubscriptions()
     app.transcriptionListeners.replace(
-      [...app.cloudTranscriptionStreams].map((stream) => ({
-        id: `legacy:${stream}`,
-        stream,
-        legacy: true,
-      })),
+      transcriptionRegistrations(undefined, streams, new Map()),
       cloudClientService.getAudioPosition(),
     )
     this.replaceStreamSubscribers(packageName, previousSubscriptions, app.subscriptions)
@@ -6033,9 +6020,28 @@ class LocalMiniappRuntime {
    * are NOT sent — they come from the Bluetooth SDK, not from cloud.
    */
   private updateCloudSubscriptions(): void {
+    // The on-device recognizer reports its state back synchronously from
+    // setDemand; that report asks for another pass instead of nesting one.
+    if (this.updatingCloudSubscriptions) {
+      this.cloudSubscriptionsDirty = true
+      return
+    }
+    this.updatingCloudSubscriptions = true
+    try {
+      do {
+        this.cloudSubscriptionsDirty = false
+        this.applyCloudSubscriptions()
+      } while (this.cloudSubscriptionsDirty)
+    } finally {
+      this.updatingCloudSubscriptions = false
+    }
+  }
+
+  private updatingCloudSubscriptions = false
+  private cloudSubscriptionsDirty = false
+
+  private applyCloudSubscriptions(): void {
     const cloudStreams = new Set<string>()
-    let hasTranscription = false
-    let hasForceLocalTranscription = false
     for (const [stream, subscribers] of this.streamSubscribers) {
       if (subscribers.size === 0) continue
       // Only transcription / translation need cloud delivery. Location and
@@ -6043,41 +6049,169 @@ class LocalMiniappRuntime {
       if (stream.startsWith("translation:")) {
         cloudStreams.add(stream)
       }
-      if (stream.startsWith("transcription:")) {
-        hasTranscription = true
-        const routes = summarizeTranscriptionRoutes(subscribers, (packageName) =>
-          this.appTranscriptionRoutesForSubscription(packageName, stream),
-        )
-        if (routes.hasForceLocalSubscriber) hasForceLocalTranscription = true
-        if (routes.hasCloudSubscriber) cloudStreams.add(stream)
+    }
+    // A transcription stream goes to the cloud only while a listener on it
+    // needs the cloud; on-device transcription runs only while one needs it.
+    this.refreshTranscriptionRouting()
+    let localDemand = false
+    for (const [packageName, app] of this.connectedApps) {
+      const state = this.transcriptionRoutingState(packageName)
+      for (const route of app.transcriptionListeners.routes()) {
+        if (needsCloud(route, route.source, route.target)) cloudStreams.add(route.stream)
+        if (needsLocal(route, route.source, state)) localDemand = true
       }
     }
-    // On-device transcription always runs the Speech-page model; its language,
-    // not the subscription's, decides what local transcripts are tagged with.
-    localSttFallbackCoordinator.onSubscriptionChange(hasTranscription, hasForceLocalTranscription)
-    this.broadcastTranscriptionModelStatus()
 
     // Mirror the same set as typed AudioSubscription[] and push it to the cloud
     // runtime.
     this.ensureCloudResultsWired()
     const subs = this.buildCloudAudioSubscriptions(cloudStreams)
     const nextKey = this.audioSubscriptionKey(subs)
-    if (!this.cloudAudioSubscriptionSync.begin(nextKey)) return
-    console.log(
-      `${LOG_TAG}: updateCloudSubscriptions streams=[${Array.from(cloudStreams).join(", ")}] cloudSubs=${subs.length}`,
-    )
-    cloudClientService
-      .setSubscriptions(subs)
+    if (this.cloudAudioSubscriptionSync.begin(nextKey)) {
+      console.log(
+        `${LOG_TAG}: updateCloudSubscriptions streams=[${Array.from(cloudStreams).join(", ")}] cloudSubs=${subs.length}`,
+      )
+      cloudClientService
+        .setSubscriptions(subs)
+        .then(() => {
+          this.cloudAudioSubscriptionSync.succeeded(nextKey)
+        })
+        .catch((err) => {
+          // Best-effort: the cloud may not be connected yet. Keep failed writes
+          // retryable; otherwise a reconnect that recomputes the same desired
+          // transcription set gets deduped and local captions never recover.
+          this.cloudAudioSubscriptionSync.failed(nextKey)
+          console.warn(`${LOG_TAG}: cloud setSubscriptions failed: ${(err as Error)?.message ?? err}`)
+        })
+    }
+
+    // On-device transcription always runs the Speech-page model; its language,
+    // not the subscription's, decides what local transcripts are tagged with.
+    localSttFallbackCoordinator.setDemand(localDemand)
+    this.broadcastTranscriptionModelStatus()
+  }
+
+  // ===========================================================================
+  // Transcription routing (cloud or on-device, per listener)
+  // ===========================================================================
+
+  /** When each transcript source last spoke, to switch listeners only where both have settled. */
+  private readonly utterances = new UtteranceTracker()
+  /** Which sources were up at the last routing pass, to notice one starting. */
+  private sourcesUp = {cloud: false, local: false}
+  /** Cloud audio position at the last on-device final. */
+  private localFinalWatermark: AudioPosition | null = null
+  /** Bumped whenever the on-device recognizer starts or stops: a drain holds only for the run it drained. */
+  private localGeneration = 0
+  /** A drain that just completed, for the routing pass it triggers only; and whether one is running. */
+  private localDrain: {generation: number; watermark: AudioPosition | null} | null = null
+  private localDrainRunning = false
+  /** Re-routes once a waiting switch's sources settle, since silence brings no transcript to do it. */
+  private handoffTimer: {id: number; at: number} | null = null
+
+  /** Cloud transcription is allowed by this deployment and connected. */
+  private cloudSpeechUp(): boolean {
+    return isFeatureEnabled("cloudSpeech") && cloudClientService.isConnected()
+  }
+
+  /** What one miniapp's listeners can be transcribed with right now. */
+  private transcriptionRoutingState(packageName: string): TranscriptionRoutingState {
+    return {
+      cloudConnected: this.cloudSpeechUp(),
+      onDevice: isFeatureEnabled("onDeviceSpeech"),
+      localLanguage: localSttFallbackCoordinator.getActiveLanguage(),
+      pickedLanguage: sttModelManager.getBcp47ForLanguage(),
+      hints: this.transcriptionHintsByApp.get(packageName) ?? [],
+    }
+  }
+
+  /**
+   * Moves every transcription listener toward the source it should use now
+   * (see TranscriptionRouting: a planned switch waits for a settled pause and
+   * a drain of the on-device recognizer). Returns true when any listener's
+   * source or target changed, which can change what must run.
+   */
+  private refreshTranscriptionRouting(): boolean {
+    const cloudConnected = this.cloudSpeechUp()
+    const localActive = localSttFallbackCoordinator.isActive()
+    const now = Date.now()
+    // A source that stopped reports nothing more; one that started may be
+    // working on speech it has not reported yet.
+    for (const [source, up] of [
+      ["cloud", cloudConnected],
+      ["local", localActive],
+    ] as const) {
+      if (up && !this.sourcesUp[source]) this.utterances.started(source, now)
+      if (!up) this.utterances.clear(source)
+      if (source === "local" && up !== this.sourcesUp.local) this.localGeneration++
+      this.sourcesUp[source] = up
+    }
+    const drained = this.localDrain !== null && this.localDrain.generation === this.localGeneration
+    let changed = false
+    let needsDrain = false
+    for (const [packageName, app] of this.connectedApps) {
+      const state = this.transcriptionRoutingState(packageName)
+      const routed = app.transcriptionListeners.route({
+        target: (listener) => targetSource(listener, state),
+        canDeliver: (source) => (source === "cloud" ? cloudConnected : localActive),
+        busy: (source, stream) => this.utterances.busy(source, stream, now),
+        drained,
+        plannedWatermark: this.localDrain?.watermark ?? null,
+        forcedWatermark: this.localFinalWatermark,
+      })
+      if (routed.changed) changed = true
+      if (routed.needsDrain) needsDrain = true
+    }
+    if (needsDrain) this.drainLocalRecognizer()
+    this.scheduleHandoff(now)
+    return changed
+  }
+
+  /**
+   * Has the on-device recognizer report everything it has heard and start
+   * over (finishTranscription): the boundary of a planned switch. What it
+   * reports goes to the listeners still on-device. The drain then serves the
+   * switches ready in the routing pass it triggers, and only those: the
+   * recognizer keeps hearing audio, so any later switch drains again. A model
+   * that cannot finish early reports nothing, and the quiet window is the
+   * boundary.
+   */
+  private drainLocalRecognizer(): void {
+    if (this.localDrainRunning) return
+    this.localDrainRunning = true
+    const generation = this.localGeneration
+    const watermark = cloudClientService.getAudioPosition()
+    void this.finishLocalUtterance()
+      .catch((error) => console.warn(`${LOG_TAG}: draining on-device transcription failed`, error))
       .then(() => {
-        this.cloudAudioSubscriptionSync.succeeded(nextKey)
+        this.localDrainRunning = false
+        // Everything the recognizer had is reported; its next words are new speech.
+        this.utterances.clear("local")
+        this.localDrain = {generation, watermark}
+        const changed = this.refreshTranscriptionRouting()
+        this.localDrain = null
+        if (changed) this.updateCloudSubscriptions()
       })
-      .catch((err) => {
-        // Best-effort: the cloud may not be connected yet. Keep failed writes
-        // retryable; otherwise a reconnect that recomputes the same desired
-        // transcription set gets deduped and local captions never recover.
-        this.cloudAudioSubscriptionSync.failed(nextKey)
-        console.warn(`${LOG_TAG}: cloud setSubscriptions failed: ${(err as Error)?.message ?? err}`)
-      })
+  }
+
+  /**
+   * Arms a timer for the moment the next busy source settles while any
+   * listener waits to switch, so the switch (and dropping what it no longer
+   * needs, such as a cloud stream) happens during silence too.
+   */
+  private scheduleHandoff(now: number): void {
+    const waiting = [...this.connectedApps.values()].some((app) => app.transcriptionListeners.switching())
+    const at = waiting ? this.utterances.nextSettle(now) : null
+    if (this.handoffTimer && at !== null && this.handoffTimer.at <= at) return
+    if (this.handoffTimer) BgTimer.clearTimeout(this.handoffTimer.id)
+    this.handoffTimer = null
+    if (at === null) return
+    const id = BgTimer.setTimeout(() => {
+      if (this.handoffTimer?.id !== id) return
+      this.handoffTimer = null
+      if (this.refreshTranscriptionRouting()) this.updateCloudSubscriptions()
+    }, at - now)
+    this.handoffTimer = {id, at}
   }
 
   /**
@@ -6226,7 +6360,8 @@ class LocalMiniappRuntime {
       this.broadcastCloudStatus()
     })
     sttModelManager.onSelectionChanged(() => this.updateCloudSubscriptions())
-    localSttFallbackCoordinator.onModelStatusChanged(() => this.broadcastTranscriptionModelStatus())
+    // On-device transcription starting or stopping moves preferLocal and fallback listeners.
+    localSttFallbackCoordinator.onModelStatusChanged(() => this.updateCloudSubscriptions())
 
     useSettingsStore.subscribe(
       (s) => s.getSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive),
@@ -6241,9 +6376,11 @@ class LocalMiniappRuntime {
   // ===========================================================================
 
   /**
-   * The on-device model state as one miniapp sees it. The phone runs one model,
-   * the one picked on the Speech page, so a miniapp whose on-device
-   * subscriptions all ask for another language is told it's unavailable.
+   * The on-device model state as one miniapp sees it. Its on-device listeners
+   * are the localOnly and preferLocal ones, and every listener while the cloud
+   * is down. The phone runs one model, the one picked on the Speech page, so a
+   * miniapp whose on-device listeners all ask for another language is told
+   * it's unavailable.
    */
   private transcriptionModelStatusFor(packageName: string): {
     language: string
@@ -6256,20 +6393,16 @@ class LocalMiniappRuntime {
     if (!isFeatureEnabled("onDeviceSpeech")) {
       return {language, state: "unavailable", reason: "On-device speech is disabled by this deployment"}
     }
-    const app = this.connectedApps.get(packageName)
-    const cloudConnected = cloudClientService.isConnected()
-    const onDeviceLanguages = [...(app?.subscriptions ?? [])]
-      .filter(
-        (stream) =>
-          stream.startsWith(`${MiniappStreamType.TRANSCRIPTION}:`) &&
-          (app?.forceLocalTranscriptionStreams.has(stream) === true || !cloudConnected),
-      )
-      .map((stream) => stream.slice(MiniappStreamType.TRANSCRIPTION.length + 1))
-    if (onDeviceLanguages.length === 0) {
+    const cloudConnected = this.cloudSpeechUp()
+    const onDeviceListeners = (this.connectedApps.get(packageName)?.transcriptionListeners.routes() ?? []).filter(
+      (listener) => listener.processing !== "preferCloud" || !cloudConnected,
+    )
+    if (onDeviceListeners.length === 0) {
       return {language, state: "unavailable", reason: "No on-device transcription subscription"}
     }
     // "auto" follows the picked model; any other language must be the picked one.
-    if (!onDeviceLanguages.some((lang) => lang === "auto" || lang.toLowerCase() === language.toLowerCase())) {
+    const hints = this.transcriptionHintsByApp.get(packageName) ?? []
+    if (!onDeviceListeners.some((listener) => onDeviceServes(listener, language, hints))) {
       return {
         language,
         state: "unavailable",
@@ -6441,6 +6574,11 @@ class LocalMiniappRuntime {
       }
     }
 
+    if (normalizedStream.startsWith("transcription:") && transcriptionSource) {
+      this.forwardTranscription(normalizedStream, data, transcriptionSource, tokens, matchedSubs)
+      return
+    }
+
     // Touch event per-gesture fan-out. SDK-side dispatch is keyed on the
     // exact streamType, so per-gesture subscribers (`touch_event:single_tap`,
     // etc.) need their own EVENT envelope with the gesture-tagged streamType.
@@ -6465,36 +6603,9 @@ class LocalMiniappRuntime {
       }
     }
 
-    if (normalizedStream.startsWith("transcription:")) {
-      // const known = Array.from(this.streamSubscribers.keys())
-      // console.log(
-      //   `${LOG_TAG}: forwardEvent(${streamType} → ${normalizedStream}) matched=${matchedSubs.size} known=[${known.join(", ")}]`,
-      // )
-    }
-
-    const localFinal = transcriptionSource === "local" && (data as {isFinal?: boolean} | null)?.isFinal === true
-    if (matchedSubs.size === 0 && !perGestureStream) {
-      if (localFinal) this.noteLocalFinalDelivered()
-      return
-    }
+    if (matchedSubs.size === 0 && !perGestureStream) return
 
     for (const packageName of matchedSubs) {
-      let transcriptionRoute: "default" | "forceLocal" | "all" | undefined
-      if (normalizedStream.startsWith("transcription:") && transcriptionSource) {
-        const routes = this.appTranscriptionRoutesForEvent(packageName, normalizedStream)
-        transcriptionRoute =
-          transcriptionDeliveryRoute(transcriptionSource, routes, cloudClientService.isConnected()) ?? undefined
-        if (!transcriptionRoute) continue
-      }
-      if (TRANSCRIPT_TIMING_TELEMETRY && normalizedStream.startsWith("transcription:")) {
-        const transcript = data as {text?: string; isFinal?: boolean; __hostReceivedAt?: number} | null
-        const now = Date.now()
-        console.log(
-          `${LOG_TAG}: transcript fanout t=${now} app=${packageName} final=${!!transcript?.isFinal} hostDelta=${
-            transcript?.__hostReceivedAt ? now - transcript.__hostReceivedAt : -1
-          }ms text="${(transcript?.text ?? "").slice(0, 48)}"`,
-        )
-      }
       // While a nav trip is active the Nav SDK's road-snapped fixes are
       // already being forwarded via addLocationListener (see NAV_START handler).
       // Suppress the raw background-GPS forward for that miniapp so the two
@@ -6503,34 +6614,12 @@ class LocalMiniappRuntime {
       if (normalizedStream === MiniappStreamType.LOCATION_UPDATE && this.navigationHandlers.isTripActive(packageName)) {
         continue
       }
-      const listenerRegistry = this.connectedApps.get(packageName)?.transcriptionListeners
-      const audioPosition = cloudClientService.getAudioPosition()
-      if (listenerRegistry && transcriptionSource === "cloud" && tokens !== undefined) {
-        for (const projected of listenerRegistry.project(
-          normalizedStream,
-          tokens ?? [],
-          audioPosition,
-          transcriptionRoute ?? "default",
-        )) {
-          this.sendToMiniapp(packageName, {
-            type: MiniappResponseType.EVENT,
-            streamType: normalizedStream,
-            data: {...(outboundData as object), text: projected.text},
-            transcriptionRoute,
-            ...(projected.listenerId ? {listenerId: projected.listenerId} : {}),
-          })
-        }
-        continue
-      }
       this.sendToMiniapp(packageName, {
         type: MiniappResponseType.EVENT,
         streamType: normalizedStream,
         data: outboundData,
-        ...(transcriptionRoute ? {transcriptionRoute} : {}),
       })
     }
-
-    if (localFinal) this.noteLocalFinalDelivered()
 
     // Send a separate envelope to per-gesture subscribers tagged with the
     // gesture-specific streamType so SDK-side dispatch routes correctly.
@@ -6548,36 +6637,59 @@ class LocalMiniappRuntime {
     }
   }
 
-  private appTranscriptionRoutesForSubscription(
-    packageName: string,
+  /**
+   * Sends one transcript to each listener that hears its stream and currently
+   * gets its text from its source, tagged with that source. Then records where
+   * the source is in its utterance: a final can complete a listener's switch
+   * that waited for it.
+   */
+  private forwardTranscription(
     stream: string,
-  ): {
-    cloud: boolean
-    forceLocal: boolean
-  } {
-    const app = this.connectedApps.get(packageName)
-    return {
-      cloud: app?.cloudTranscriptionStreams.has(stream) === true,
-      forceLocal: app?.forceLocalTranscriptionStreams.has(stream) === true,
+    data: unknown,
+    source: TranscriptionEventSource,
+    tokens: TranscriptionData["tokens"] | undefined,
+    packageNames: Set<string>,
+  ): void {
+    const transcript = (data ?? {}) as {text?: string; isFinal?: boolean; __hostReceivedAt?: number}
+    const isFinal = transcript.isFinal === true
+    // A switch that waited only on an utterance that went stale happens before this transcript.
+    let moved = this.refreshTranscriptionRouting()
+    const audioPosition = cloudClientService.getAudioPosition()
+    for (const packageName of packageNames) {
+      const app = this.connectedApps.get(packageName)
+      if (!app) continue
+      const deliveries = app.transcriptionListeners.deliveries(
+        stream,
+        source,
+        transcript.text ?? "",
+        tokens,
+        audioPosition,
+      )
+      if (TRANSCRIPT_TIMING_TELEMETRY && deliveries.length > 0) {
+        const now = Date.now()
+        console.log(
+          `${LOG_TAG}: transcript fanout t=${now} app=${packageName} source=${source} final=${isFinal} hostDelta=${
+            transcript.__hostReceivedAt ? now - transcript.__hostReceivedAt : -1
+          }ms text="${(transcript.text ?? "").slice(0, 48)}"`,
+        )
+      }
+      for (const delivery of deliveries) {
+        this.sendToMiniapp(packageName, {
+          type: MiniappResponseType.EVENT,
+          streamType: stream,
+          data: {...transcript, text: delivery.text, source},
+          transcriptionRoute: delivery.route,
+          ...(delivery.listenerId ? {listenerId: delivery.listenerId} : {}),
+        })
+      }
     }
-  }
-
-  private appTranscriptionRoutesForEvent(
-    packageName: string,
-    stream: string,
-  ): {
-    cloud: boolean
-    forceLocal: boolean
-  } {
-    const app = this.connectedApps.get(packageName)
-    const autoStream = `${MiniappStreamType.TRANSCRIPTION}:auto`
-    return {
-      cloud:
-        app?.cloudTranscriptionStreams.has(stream) === true || app?.cloudTranscriptionStreams.has(autoStream) === true,
-      forceLocal:
-        app?.forceLocalTranscriptionStreams.has(stream) === true ||
-        app?.forceLocalTranscriptionStreams.has(autoStream) === true,
+    if (source === "local" && isFinal) {
+      this.localFinalWatermark = audioPosition ?? this.localFinalWatermark
+      this.noteLocalFinalDelivered()
     }
+    this.utterances.note(source, stream, isFinal, Date.now())
+    if (this.refreshTranscriptionRouting()) moved = true
+    if (moved) this.updateCloudSubscriptions()
   }
 
   /**

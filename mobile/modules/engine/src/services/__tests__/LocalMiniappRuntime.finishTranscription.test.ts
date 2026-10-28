@@ -1,6 +1,8 @@
 import {expect, mock, test} from "bun:test"
 import {readFileSync} from "node:fs"
 
+import {TranscriptionSubscriptions} from "../TranscriptionSubscriptions"
+
 // Run the real TRANSCRIPTION_FINISH handler and its helpers without the
 // runtime's WebView and media imports.
 const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
@@ -46,14 +48,10 @@ function host(platform: string, finish: () => Promise<unknown>, active = true) {
     },
   )
   const runtime = new Host()
+  const transcriptionListeners = new TranscriptionSubscriptions()
+  transcriptionListeners.replace([{id: "voice", stream: "transcription:auto", processing: "localOnly"}], null)
   runtime.connectedApps = new Map([
-    [
-      "com.example.voice",
-      {
-        forceLocalTranscriptionStreams: new Set(["transcription:auto"]),
-        installedManifest: {permissions: [{type: "MICROPHONE"}]},
-      },
-    ],
+    ["com.example.voice", {transcriptionListeners, installedManifest: {permissions: [{type: "MICROPHONE"}]}}],
   ])
   runtime.sendResult = mock(() => {})
   return {runtime, fireTimers: () => [...timers.values()].forEach((callback) => callback())}
@@ -113,10 +111,38 @@ test("nothing pending, a model that can't finish early, or no local recognizer",
   }
 })
 
+test("a listener getting on-device text right now may finish the utterance", async () => {
+  const finish = mock(async () => "")
+  const {runtime} = host("android", finish)
+  const listeners: TranscriptionSubscriptions = runtime.connectedApps.get("com.example.voice").transcriptionListeners
+  listeners.replace([{id: "merge", stream: "transcription:auto", processing: "preferLocal"}], null)
+  listeners.route({
+    target: () => "local",
+    canDeliver: () => true,
+    busy: () => false,
+    drained: true,
+    plannedWatermark: null,
+    forcedWatermark: null,
+  })
+  runtime.run("com.example.voice", "flush")
+  await settle()
+  expect(finish).toHaveBeenCalled()
+})
+
 test("requires an on-device subscription and the microphone permission", async () => {
   const finish = mock(async () => "x")
   const {runtime} = host("android", finish)
-  runtime.connectedApps.get("com.example.voice").forceLocalTranscriptionStreams.clear()
+  const listeners: TranscriptionSubscriptions = runtime.connectedApps.get("com.example.voice").transcriptionListeners
+  // A preferLocal listener still on the cloud is not getting on-device text.
+  listeners.replace([{id: "merge", stream: "transcription:auto", processing: "preferLocal"}], null)
+  listeners.route({
+    target: () => "cloud",
+    canDeliver: () => true,
+    busy: () => false,
+    drained: true,
+    plannedWatermark: null,
+    forcedWatermark: null,
+  })
   runtime.run("com.example.voice", "flush")
   await settle()
   expect(finish).not.toHaveBeenCalled()

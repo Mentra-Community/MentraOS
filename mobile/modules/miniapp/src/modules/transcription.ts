@@ -6,6 +6,7 @@
  *   session.transcription.on(handler)                                // auto-detect
  *   session.transcription.forLanguage("en-US", handler)              // single language
  *   session.transcription.forLanguage(["en-US", "es-ES"], handler)   // multi-language
+ *   session.transcription.on(handler, {processing: "preferLocal"})   // on-device when it can
  *   session.transcription.configure({languageHints, vocabulary, diarization})
  *   session.transcription.onModelStatus(handler)                     // on-device model state
  *   session.transcription.finishUtterance()                          // end the on-device line now
@@ -25,6 +26,7 @@ import {MiniappSession} from "../session"
 import type {TranscriptionData, UnsubscribeFn} from "./events"
 import {requireLanguageHint, requireTranscriptionLanguage} from "./languages"
 import type {LanguageHint, TranscriptionLanguage} from "./languages"
+import {resolveSpeechProcessing, type SpeechProcessing} from "./speechProcessing"
 
 /** Configuration for cloud-side transcription behavior. */
 export interface TranscriptionConfig {
@@ -43,11 +45,26 @@ export interface TranscriptionConfig {
 
 export interface TranscriptionOptions {
   /**
-   * Use only on-device STT for this listener; never deliver cloud transcripts.
-   * Other listeners on the same stream keep their own routing choice. The
-   * phone uses the speech model picked on its Speech page and downloads it if
-   * needed; follow that with `onModelStatus`.
+   * Where this listener's speech is transcribed. Default `"preferCloud"`.
+   *
+   * - `"preferCloud"`: the cloud; the phone's on-device model only while the
+   *   cloud is unreachable.
+   * - `"preferLocal"`: the on-device model while it runs in this listener's
+   *   language, otherwise the cloud. `on()` follows the model's language,
+   *   unless `configure({languageHints})` names one the model can't
+   *   transcribe; then it stays on the cloud.
+   * - `"localOnly"`: on-device only; never the cloud.
+   *
+   * The phone runs one on-device model, the one picked on its Speech page, and
+   * downloads it when a `preferLocal` or `localOnly` listener needs it; follow
+   * it with `onModelStatus`. A listener moves between the cloud and on-device
+   * during a pause in speech, once both have finished with what was said
+   * before it, so it never misses or repeats speech; `TranscriptionData.source`
+   * says where each result came from. Each listener routes on its own: other
+   * listeners on the same stream keep their choice.
    */
+  processing?: SpeechProcessing
+  /** @deprecated Use `processing: "localOnly"`. Removed in 4.0; ignored when `processing` is set. */
   forceLocal?: boolean
 }
 
@@ -64,8 +81,8 @@ export interface TranscriptionModelStatus {
    * - `loading`: the model is loading into memory.
    * - `ready`: on-device transcripts are flowing.
    * - `unavailable`: no on-device transcription right now; `reason` says why
-   *   (for example no on-device subscription, a failed download, or a
-   *   subscription in a language other than the picked model's).
+   *   (for example no `preferLocal` or `localOnly` listener, a failed
+   *   download, or a listener in a language other than the picked model's).
    */
   state: "downloading" | "loading" | "ready" | "unavailable"
   progress?: number
@@ -90,8 +107,11 @@ export class TranscriptionModule {
    * event) preserves existing semantics.
    */
   on(handler: (data: TranscriptionData) => void, options: TranscriptionOptions = {}): UnsubscribeFn {
+    const processing = resolveSpeechProcessing(options, "transcription.on(options)")
     return this.track(
-      this.session._subscribe(`${MiniappStreamType.TRANSCRIPTION}:auto`, handler as (data: unknown) => void, options),
+      this.session._subscribe(`${MiniappStreamType.TRANSCRIPTION}:auto`, handler as (data: unknown) => void, {
+        processing,
+      }),
     )
   }
 
@@ -117,16 +137,15 @@ export class TranscriptionModule {
     const langs = (Array.isArray(language) ? language : [language]).map((lang) =>
       requireTranscriptionLanguage(lang, "transcription.forLanguage(language)"),
     )
+    const processing = resolveSpeechProcessing(options, "transcription.forLanguage(options)")
     if (langs.length === 0) return () => {}
 
     const unsubs: UnsubscribeFn[] = []
     for (const lang of langs) {
       unsubs.push(
-        this.session._subscribe(
-          `${MiniappStreamType.TRANSCRIPTION}:${lang}`,
-          handler as (data: unknown) => void,
-          options,
-        ),
+        this.session._subscribe(`${MiniappStreamType.TRANSCRIPTION}:${lang}`, handler as (data: unknown) => void, {
+          processing,
+        }),
       )
     }
     const combined: UnsubscribeFn = () => {
@@ -210,10 +229,10 @@ export class TranscriptionModule {
    * model can't finish early (models that transcribe in fixed chunks); their
    * final text still arrives on its own.
    *
-   * Applies only to on-device transcription and needs an active
-   * `{forceLocal: true}` subscription. The phone runs one recognizer for every
-   * miniapp, so this ends the current line for every on-device subscriber,
-   * Captions included.
+   * Applies only to on-device transcription and needs a `localOnly` listener
+   * or one that is getting on-device text right now. The phone runs one
+   * recognizer for every miniapp, so this ends the current line for every
+   * on-device subscriber, Captions included.
    */
   finishUtterance(): Promise<string | null> {
     return this.session.sendRequest<string | null>({type: MiniappRequestType.TRANSCRIPTION_FINISH})

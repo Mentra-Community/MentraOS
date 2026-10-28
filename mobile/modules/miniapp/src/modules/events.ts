@@ -33,10 +33,16 @@ import {EventEmitter} from "eventemitter3"
 import {makeRequestId} from "../envelope"
 import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
+import {resolveSpeechProcessing, type SpeechProcessing, type SpeechProcessingOptions} from "./speechProcessing"
 
 export type UnsubscribeFn = () => void
 
-/** @internal Host-selected delivery target for a transcription event. */
+/**
+ * @internal Delivery class the host tags a transcription event with. Hosts
+ * address each event to the listeners that should get it; SDKs from before
+ * `processing` filter on this tag instead: `"forceLocal"` reaches `localOnly`
+ * listeners, `"default"` the others, `"all"` everyone.
+ */
 export type TranscriptionEventRoute = "default" | "forceLocal" | "all"
 
 // ---------------------------------------------------------------------------
@@ -48,6 +54,8 @@ export interface TranscriptionData {
   text: string
   isFinal: boolean
   language?: string
+  /** Where the text was transcribed: `"cloud"`, or `"local"` for the phone's on-device model. */
+  source: "cloud" | "local"
 }
 
 export interface TranslationData {
@@ -177,14 +185,12 @@ export class EventManager {
   private listenerSeq = 0
   private transcriptionListeners = new Map<
     string,
-    {stream: string; forceLocal: boolean; invoke: (data: unknown, route?: TranscriptionEventRoute) => void}
+    {stream: string; processing: SpeechProcessing; invoke: (data: unknown, route?: TranscriptionEventRoute) => void}
   >()
   private retireListeners = new Set<() => void>()
   private readonly emitter = new EventEmitter()
   /** Stream -> ref count. Outbound SUBSCRIBE tracks active streams and routing changes. */
   private readonly refCounts = new Map<string, number>()
-  /** Transcription stream -> refs that require on-device-only processing. */
-  private readonly forceLocalRefCounts = new Map<string, number>()
 
   constructor(private readonly session: MiniappSession) {}
 
@@ -199,20 +205,24 @@ export class EventManager {
    * the outbound SUBSCRIBE list. Native already knows to deliver UI envelopes
    * via a separate envelope `type`; the EventManager only routes them
    * locally.
+   *
+   * `processing` applies to transcription streams only.
    */
-  subscribe(stream: string, handler: (data: unknown) => void, options: {forceLocal?: boolean} = {}): UnsubscribeFn {
+  subscribe(stream: string, handler: (data: unknown) => void, options: SpeechProcessingOptions = {}): UnsubscribeFn {
     const isInternal = stream.startsWith("_")
-    const forceLocal = options.forceLocal === true && stream.startsWith(`${MiniappStreamType.TRANSCRIPTION}:`)
     const isTranscription = stream.startsWith(`${MiniappStreamType.TRANSCRIPTION}:`)
+    const processing = isTranscription ? resolveSpeechProcessing(options, "events.subscribe(options)") : "preferCloud"
+    const localOnly = processing === "localOnly"
     const listenerId = isTranscription ? `${this.listenerScope}:${++this.listenerSeq}` : undefined
     let active = true
     const listener = (data: unknown, route?: TranscriptionEventRoute) => {
       if (!active) return
-      if (stream.startsWith(`${MiniappStreamType.TRANSCRIPTION}:`)) {
+      if (isTranscription) {
+        // The host tags every transcription event with the class it is for.
         // Hosts that predate routed transcription events omit `route`. Treat
-        // those events as the default/cloud path so a forceLocal listener can
-        // never accidentally receive cloud text.
-        if (forceLocal ? route !== "forceLocal" && route !== "all" : route === "forceLocal") return
+        // those events as the cloud path so a localOnly listener can never
+        // accidentally receive cloud text.
+        if (localOnly ? route !== "forceLocal" && route !== "all" : route === "forceLocal") return
       }
       handler(data)
     }
@@ -221,21 +231,12 @@ export class EventManager {
       active = false
     }
     this.retireListeners.add(retire)
-    if (listenerId) this.transcriptionListeners.set(listenerId, {stream, forceLocal, invoke: listener})
+    if (listenerId) this.transcriptionListeners.set(listenerId, {stream, processing, invoke: listener})
     if (!isInternal) {
       const before = this.refCounts.get(stream) ?? 0
       this.refCounts.set(stream, before + 1)
-      const forceLocalBefore = this.forceLocalRefCounts.get(stream) ?? 0
-      const defaultBefore = before - forceLocalBefore
-      if (forceLocal) this.forceLocalRefCounts.set(stream, forceLocalBefore + 1)
-      if (
-        isTranscription ||
-        before === 0 ||
-        (forceLocal && forceLocalBefore === 0) ||
-        (!forceLocal && defaultBefore === 0)
-      ) {
-        this.sendSubscriptionUpdate()
-      }
+      // Every transcription listener is registered with the host by id.
+      if (isTranscription || before === 0) this.sendSubscriptionUpdate()
     }
     return () => {
       if (!active) return
@@ -245,24 +246,12 @@ export class EventManager {
       this.emitter.off(stream, listener)
       if (isInternal) return
       const current = this.refCounts.get(stream) ?? 0
-      const forceLocalCurrent = this.forceLocalRefCounts.get(stream) ?? 0
-      let subscriptionChanged = current <= 1
       if (current <= 1) {
         this.refCounts.delete(stream)
       } else {
         this.refCounts.set(stream, current - 1)
       }
-      if (forceLocal) {
-        if (forceLocalCurrent <= 1) {
-          this.forceLocalRefCounts.delete(stream)
-          subscriptionChanged = true
-        } else {
-          this.forceLocalRefCounts.set(stream, forceLocalCurrent - 1)
-        }
-      } else if (current - forceLocalCurrent <= 1) {
-        subscriptionChanged = true
-      }
-      if (isTranscription || subscriptionChanged) this.sendSubscriptionUpdate()
+      if (isTranscription || current <= 1) this.sendSubscriptionUpdate()
     }
   }
 
@@ -273,7 +262,6 @@ export class EventManager {
     this.transcriptionListeners.clear()
     this.emitter.removeAllListeners()
     this.refCounts.clear()
-    this.forceLocalRefCounts.clear()
     this.sendSubscriptionUpdate()
   }
 
@@ -288,6 +276,7 @@ export class EventManager {
     transcriptionRoute?: TranscriptionEventRoute,
     listenerId?: string,
   ): void {
+    if (stream.startsWith(`${MiniappStreamType.TRANSCRIPTION}:`)) data = withTranscriptionSource(data)
     if (listenerId !== undefined) {
       const listener = this.transcriptionListeners.get(listenerId)
       if (listener && (listener.stream === stream || listener.stream === "transcription:auto"))
@@ -322,27 +311,48 @@ export class EventManager {
   }
 
   private sendSubscriptionUpdate(): void {
-    const subscriptions = Array.from(this.refCounts.keys()).map((stream) => {
-      if (stream === MiniappStreamType.LOCATION_UPDATE) return {stream: "location_stream", rate: "realtime"}
-
-      const forceLocalRefs = this.forceLocalRefCounts.get(stream) ?? 0
-      if (forceLocalRefs === 0) return stream
-
-      const totalRefs = this.refCounts.get(stream) ?? 0
-      return {
-        stream,
-        forceLocal: true,
-        ...(totalRefs > forceLocalRefs ? {includeCloud: true} : {}),
-      }
-    })
+    const subscriptions: Array<string | Record<string, unknown>> = []
+    for (const stream of this.refCounts.keys()) {
+      if (stream === MiniappStreamType.LOCATION_UPDATE)
+        subscriptions.push({stream: "location_stream", rate: "realtime"})
+      else if (!stream.startsWith(`${MiniappStreamType.TRANSCRIPTION}:`)) subscriptions.push(stream)
+    }
+    // One entry per transcription stream and processing its listeners ask for.
+    const transcription = new Set<string>()
+    for (const {stream, processing} of this.transcriptionListeners.values()) {
+      const key = `${processing} ${stream}`
+      if (transcription.has(key)) continue
+      transcription.add(key)
+      subscriptions.push({stream, ...processingOnWire(processing)})
+    }
     this.session.sendOneShot({
       type: MiniappRequestType.SUBSCRIBE,
       subscriptions,
-      transcriptionListeners: [...this.transcriptionListeners].map(([id, {stream, forceLocal}]) => ({
+      transcriptionListeners: [...this.transcriptionListeners].map(([id, {stream, processing}]) => ({
         id,
         stream,
-        forceLocal,
+        ...processingOnWire(processing),
       })),
     })
   }
+}
+
+/**
+ * The wire form of a transcription listener's processing. Hosts before
+ * `processing` (Mentra App 3.4.0) read only `forceLocal`, so `localOnly` keeps
+ * sending it: there a localOnly listener still never gets cloud text.
+ */
+function processingOnWire(processing: SpeechProcessing): {processing: SpeechProcessing; forceLocal?: true} {
+  return processing === "localOnly" ? {processing, forceLocal: true} : {processing}
+}
+
+/**
+ * Hosts before `source` (Mentra App 3.4.0) leave it out. Their on-device
+ * transcripts carry `type: "local_transcription"`, their cloud ones do not.
+ */
+function withTranscriptionSource(data: unknown): unknown {
+  if (typeof data !== "object" || data === null) return data
+  const event = data as {source?: unknown; type?: unknown}
+  if (event.source === "cloud" || event.source === "local") return data
+  return {...event, source: event.type === "local_transcription" ? "local" : "cloud"}
 }

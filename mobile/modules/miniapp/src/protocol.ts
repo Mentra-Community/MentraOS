@@ -26,7 +26,16 @@ export enum MiniappRequestType {
   /** Request a fresh miniapp-scoped backend auth token. */
   AUTH_REFRESH = "miniapp_auth_refresh",
 
-  /** Update the set of streams the miniapp is subscribed to. */
+  /**
+   * Update the set of streams the miniapp is subscribed to. `subscriptions`
+   * lists stream names; a transcription stream is `{stream, processing}`, one
+   * entry per processing its listeners ask for, and `transcriptionListeners`
+   * lists every transcription listener as `{id, stream, processing}`. Both
+   * also carry `forceLocal: true` for `localOnly`, the form hosts before
+   * `processing` read. Hosts accept that older form,
+   * `{stream, forceLocal?, includeCloud?}`, from SDKs that predate
+   * `processing`.
+   */
   SUBSCRIBE = "miniapp_subscribe",
 
   /**
@@ -45,7 +54,7 @@ export enum MiniappRequestType {
   /** Stop any audio playback this miniapp initiated. */
   STOP_AUDIO = "miniapp_stop_audio",
 
-  /** Speak text via cloud TTS — phone constructs the URL. */
+  /** Speak text via cloud or on-device TTS, as its `processing` says. */
   SPEAK = "miniapp_speak",
 
   /**
@@ -451,7 +460,7 @@ export enum MiniappErrorCode {
   TTS_INVALID_VOICE = "TTS_INVALID_VOICE",
   TTS_UPSTREAM_ERROR = "TTS_UPSTREAM_ERROR",
 
-  /** `speak({forceLocal: true})` but the on-device offline TTS model isn't downloaded/ready. */
+  /** `speak({processing: "localOnly"})` but the on-device TTS model isn't downloaded/ready. */
   TTS_LOCAL_UNAVAILABLE = "TTS_LOCAL_UNAVAILABLE",
 
   /** Not connected / pre-ACK and transport closed. */

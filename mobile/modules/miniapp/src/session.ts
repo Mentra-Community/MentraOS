@@ -26,6 +26,7 @@ import {ConfigurationModule} from "./modules/configuration"
 import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
 import {EventManager, type TranscriptionEventRoute, type UnsubscribeFn} from "./modules/events"
+import type {SpeechProcessingOptions} from "./modules/speechProcessing"
 import {GlassesModule} from "./modules/glasses"
 import {HeadingModule} from "./modules/heading"
 import {ImuModule} from "./modules/imu"
@@ -483,7 +484,7 @@ export class MiniappSession<TChannels extends object = any> {
   _subscribe(
     streamType: string,
     handler: (data: unknown) => void,
-    options: {forceLocal?: boolean} = {},
+    options: SpeechProcessingOptions = {},
   ): UnsubscribeFn {
     return this.events.subscribe(streamType, handler, options)
   }

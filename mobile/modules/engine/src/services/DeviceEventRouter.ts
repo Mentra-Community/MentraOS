@@ -250,8 +250,8 @@ export function startDeviceEventRouter(): void {
     }),
   )
   // On-device STT transcripts → local miniapps only while the local engine is
-  // active (cloud fallback or an explicit forceLocal subscription). The runtime
-  // filters mixed local/cloud delivery per miniapp to avoid double-delivery.
+  // active (a localOnly or preferLocal listener, or the cloud fallback). The
+  // runtime routes each listener to one source, so nothing arrives twice.
   // forwardEvent is subscriber-gated — a no-op when no miniapp listens.
   // (Was MantleManager.handle_local_transcription; its offline-captions display branch
   // went away with the pseudo captions renderer.)

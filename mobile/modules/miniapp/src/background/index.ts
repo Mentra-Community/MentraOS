@@ -173,6 +173,7 @@ export type {
   ScanQrResult,
 } from "../modules/system"
 export type {TranscriptionConfig, TranscriptionModelStatus, TranscriptionOptions} from "../modules/transcription"
+export type {SpeechProcessing} from "../modules/speechProcessing"
 export type {PermissionErrorEvent} from "../modules/permissions"
 export type {
   AuthUpdatePayload,

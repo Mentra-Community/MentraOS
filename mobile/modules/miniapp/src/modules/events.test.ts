@@ -15,7 +15,7 @@ test("registers each transcription handler and dispatches only to the addressed 
   expect(registrations.length).toBe(2)
   events._forwardEvent("transcription:en", {text: "suffix"}, "default", registrations[1].id)
   expect(early).toEqual([])
-  expect(late).toEqual([{text: "suffix"}])
+  expect(late).toEqual([{text: "suffix", source: "cloud"}])
   off()
   const count = updates.length
   off()

@@ -8,11 +8,12 @@
  *   speaker.play({audioUrl})   — play an http(s) or data: URL, or one of this
  *                                miniapp's blobs, via the phone's
  *                                AudioPlaybackService.
- *   speaker.speak(text)        — send a SPEAK request. Phone streams cloud
- *                                TTS when connected and falls back to local
- *                                offline TTS when cloud is unavailable.
+ *   speaker.speak(text)        — send a SPEAK request. By default the phone
+ *                                streams cloud TTS when connected and falls
+ *                                back to its on-device voice; the
+ *                                `processing` option picks the order.
  *                                Resolves when playback completes; rejects
- *                                with a TTS_* error code on cloud failure.
+ *                                with a TTS_* error code on failure.
  *   speaker.createStream(opts) — open a live PCM output stream (16-bit LE).
  *                                Returns a SpeakerStreamWriter: write() PCM
  *                                chunks as they arrive (e.g. from a WebSocket
@@ -39,6 +40,7 @@ import {MiniappErrorCode, MiniappRequestType} from "../protocol"
 import {MiniappSession} from "../session"
 import {bytesToBase64, toUint8Array} from "./base64"
 import type {UnsubscribeFn} from "./events"
+import {resolveSpeechProcessing, type SpeechProcessing} from "./speechProcessing"
 
 export interface PlayAudioOptions {
   /**
@@ -63,10 +65,17 @@ export interface SpeakOptions {
    */
   enableSanitization?: boolean
   /**
-   * Force this call to use on-device offline TTS, skipping cloud TTS
-   * entirely — even when cloud is connected. Rejects with `TTS_LOCAL_UNAVAILABLE`
-   * if the offline model isn't ready instead of falling back to cloud.
+   * Where the speech is synthesized. Default `"preferCloud"`.
+   *
+   * - `"preferCloud"`: cloud TTS while the cloud is connected, otherwise the
+   *   phone's on-device voice.
+   * - `"preferLocal"`: the on-device voice when its model is ready and can say
+   *   it (an explicit cloud `voice_id` cannot), otherwise cloud TTS.
+   * - `"localOnly"`: the on-device voice only; never the cloud. Rejects with
+   *   `TTS_LOCAL_UNAVAILABLE` when the on-device model isn't ready.
    */
+  processing?: SpeechProcessing
+  /** @deprecated Use `processing: "localOnly"`. Removed in 4.0; ignored when `processing` is set. */
   forceLocal?: boolean
 }
 
@@ -279,8 +288,9 @@ export class SpeakerModule {
   }
 
   /**
-   * Speak text through the phone. The host streams cloud TTS when connected,
-   * then falls back to local offline TTS.
+   * Speak text through the phone, in the cloud or on-device as
+   * `options.processing` says (default: cloud TTS when connected, then the
+   * on-device voice).
    *
    * Rejects with a MiniappRequestError containing a `code` field on cloud-side
    * TTS failures: `TTS_TEXT_TOO_LONG`, `TTS_INVALID_VOICE`, `TTS_UPSTREAM_ERROR`.
@@ -292,6 +302,7 @@ export class SpeakerModule {
     if ((Array.isArray(normalized) && normalized.length === 0) || normalized === "") {
       throw {code: MiniappErrorCode.INTERNAL, message: "speak requires at least one non-empty sentence"}
     }
+    const processing = resolveSpeechProcessing(options, "speaker.speak(options)")
     try {
       // Like play(): resolves only when TTS playback completes, so opt out of the
       // default request timeout (long text can outlast it). Settled by the host
@@ -305,7 +316,9 @@ export class SpeakerModule {
           volume: options.volume,
           stopOtherAudio: options.stopOtherAudio ?? false,
           enableSanitization: options.enableSanitization ?? true,
-          forceLocal: options.forceLocal ?? false,
+          processing,
+          // Hosts before `processing` (Mentra App 3.4.0) read only this flag.
+          forceLocal: processing === "localOnly",
         },
         {timeoutMs: 0},
       )

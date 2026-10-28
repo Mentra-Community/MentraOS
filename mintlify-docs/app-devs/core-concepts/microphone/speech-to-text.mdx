@@ -27,11 +27,12 @@ rejects the subscription with `PERMISSION_NOT_DECLARED` and no events arrive.
 
 Each event is a `TranscriptionData`:
 
-| Field | Type | Notes |
-|---|---|---|
-| `text` | `string` | The transcribed text so far. |
-| `isFinal` | `boolean` | `false` for interim results that keep updating, `true` once the utterance is settled. |
-| `language` | `string?` | The detected language (when auto-detecting). |
+| Field      | Type                 | Notes                                                                                 |
+| ---------- | -------------------- | ------------------------------------------------------------------------------------- |
+| `text`     | `string`             | The transcribed text so far.                                                          |
+| `isFinal`  | `boolean`            | `false` for interim results that keep updating, `true` once the utterance is settled. |
+| `language` | `string?`            | The detected language (when auto-detecting).                                          |
+| `source`   | `"cloud" \| "local"` | Where the text was transcribed: in the cloud, or on the phone (`"local"`).            |
 
 Interim results stream as the user speaks and get replaced; wait for `isFinal` if
 you only want settled text.
@@ -51,27 +52,60 @@ session.transcription.forLanguage(["en-US", "es-ES"], (data) => { /* … */ });
 
 Each call is independent, and you can have several active at the same time.
 
-## Requiring on-device transcription
+## Cloud or on-device
 
-Pass `{forceLocal: true}` as the final argument to route that subscription
-through on-device STT and suppress cloud transcript delivery:
+Each listener chooses where its speech is transcribed with the `processing`
+option, the final argument of `on()` and `forLanguage()`:
 
 ```typescript
-session.transcription.on(handler, {forceLocal: true});
-session.transcription.forLanguage("en-US", handler, {forceLocal: true});
+session.transcription.on(handler, {processing: "preferLocal"});
+session.transcription.forLanguage("en-US", handler, {processing: "localOnly"});
 ```
 
-Cloud transcripts are suppressed for the local-only subscription, even while
-other miniapps continue using cloud transcription. Routing is per listener, so
-a default listener on the same stream can continue receiving cloud
-transcription.
+| `processing`              | Behavior                                                                                 |
+| ------------------------- | ---------------------------------------------------------------------------------------- |
+| `"preferCloud"` (default) | Cloud transcription. On-device only while the cloud is unreachable.                      |
+| `"preferLocal"`           | On-device while the phone's model runs in this listener's language, otherwise the cloud. |
+| `"localOnly"`             | On-device only. Your audio is never transcribed in the cloud for this listener.          |
+
+`preferLocal` is the choice for a miniapp that listens all day: it keeps the
+quality of the cloud as a fallback and costs nothing while the phone can do the
+work. When no listener on a stream needs the cloud, the phone doesn't send that
+audio to the cloud at all.
 
 The phone runs one on-device speech model at a time, the one the user picked
 on its Speech page, and every miniapp's on-device transcription uses it. If it
-isn't downloaded yet, the phone downloads it when your subscription arrives.
-Subscribe with `on()` to get text in whatever language that model is; a
-`forLanguage()` subscription in a different language gets no on-device text.
-The model stays loaded while any miniapp keeps an on-device subscription open.
+isn't downloaded yet, the phone downloads it when a `preferLocal` or
+`localOnly` listener in its language arrives, and loads it while any of them
+stays subscribed.
+
+- **`forLanguage()`** gets on-device text only when the model is in that
+  language. A `preferLocal` listener in another language stays on the cloud; a
+  `localOnly` one gets no text.
+- **`on()`** (auto-detect) follows the model's language, so it gets on-device
+  text in whatever language the user picked. A `preferLocal` listener whose
+  miniapp set `configure({languageHints})` to a language the model can't
+  transcribe stays on the cloud, which can tell those languages apart.
+
+A listener moves between the cloud and on-device by itself: when the model
+finishes downloading or loading, when it fails, when the user picks another
+model, or when the cloud connection drops or returns. It moves during a pause
+in speech, once both the cloud and the phone have finished with what was said
+before it, so it never misses speech or hears the same speech twice. In
+continuous speech the move waits for the next pause of a few seconds. If its
+current source stops working, it moves right away. Check `data.source` to see
+where each result came from.
+
+Routing is per listener. Other listeners on the same stream, and other
+miniapps, keep their own choice.
+
+<Note>
+  `processing` replaces `{forceLocal: true}`, which still works as
+  `processing: "localOnly"` until SDK 4.0. When both are set, `processing`
+  wins. Mentra App versions before 3.4.0 don't know `processing`: there,
+  `"preferLocal"` behaves like `"preferCloud"`, and `"localOnly"` keeps
+  working.
+</Note>
 
 ### Model status
 
@@ -93,9 +127,10 @@ session.transcription.onModelStatus((status) => {
 | `progress` | `number?`                                                 | `0`–`100` while downloading.                |
 | `reason`   | `string?`                                                 | Why the model is unavailable, when it is. |
 
-The state is `unavailable` when you have no on-device subscription, when the
-download or load failed (the phone retries on its own), or when every
-on-device subscription asks for a language other than the picked model's
+Your on-device listeners are the `preferLocal` and `localOnly` ones, and every
+listener while the cloud is unreachable. The state is `unavailable` when you
+have none, when the download or load failed (the phone retries on its own), or
+when every one of them asks for a language other than the picked model's
 (`reason` names the picked language).
 
 ### Ending an utterance early
@@ -115,9 +150,9 @@ recognizer is running or the picked model can't end a line early (models that
 transcribe in fixed chunks deliver their final text on their own).
 
 <Warning>
-  `finishUtterance()` needs an active `{forceLocal: true}` subscription and only affects on-device transcription. The
-  phone runs one recognizer for every miniapp, so it ends the current line for every on-device subscriber, Captions
-  included.
+  `finishUtterance()` needs a `localOnly` listener, or one getting on-device text right now, and only affects on-device
+  transcription. The phone runs one recognizer for every miniapp, so it ends the current line for every on-device
+  subscriber, Captions included.
 </Warning>
 
 ## Configuring
