@@ -1,4 +1,4 @@
-import {describe,test,expect} from 'bun:test';
+import {describe,test,expect,spyOn} from 'bun:test';
 import {validateResourceLifecycleAdvance,ResourceLifecycleService,projectResourceLifecycle} from './resource-lifecycle.service';
 import {resourceLifecycleSchema,type ResourceLifecycleSubject} from '../types/resource-lifecycle.types';
 const at='2026-10-16T20:00:00.000Z',now=Date.parse(at);
@@ -6,6 +6,12 @@ const subject:ResourceLifecycleSubject={subject:{kind:'resource',id:'google-acco
  idle:{contractVersion:'account-v1',outcome:'passed',checkedAt:at,acceptedCheck:{operationId:'check-2',subjectGeneration:2,resultSha256:'a'.repeat(64),acceptedAt:at},qualifiedScope:{kind:'fleet'},evidenceRefs:[]},
  repair:{configured:true,state:'none'},supportedActions:['check'],resource:{kind:'account',capabilities:[],memberships:[],dependencies:[],placement:'fleet'}};
 const row=(value=subject)=>({hostId:'host-a',receivedAt:new Date(at),snapshot:{hostId:'host-a',observedAt:at,resourceLifecycle:{schemaVersion:1,subjects:[value],history:[{id:'journal-2',resourceId:value.subject.id,subjectGeneration:2,at,event:'released'}]}}});
+
+async function readHistory(rows:Parameters<typeof projectResourceLifecycle>[0],resourceId:string,cursor?:string) {
+ const {TestHostStateModel}=await import('../models/test-host-state.model');
+ const read=spyOn(TestHostStateModel,'find').mockImplementation((()=>{const query={select(){return query},sort(){return query},limit(){return query},maxTimeMS(){return query},read(){return query},readConcern(){return query},lean:async()=>rows};return query}) as never);
+ try {return await new ResourceLifecycleService().history(resourceId,cursor)}finally {read.mockRestore()}
+}
 test('fresh authority preserves an unchanged returned physical state beyond its transition age',()=>{
  const elapsed=now+180001,reportedAt=new Date(elapsed).toISOString(),value={...row(),receivedAt:new Date(elapsed),snapshot:{...row().snapshot,observedAt:reportedAt}};
  const original=structuredClone(value),current=projectResourceLifecycle([value],elapsed).subjects[0]!;
@@ -44,7 +50,7 @@ test('current resource API reads fresh host timestamps and preserves stable phys
  } finally {clock.mockRestore();read.mockRestore()}
 })
 describe('resource lifecycle projection',()=>{
- test('fleet account has no invented machine placement and server receipt time',()=>{const result=projectResourceLifecycle([row()],now);expect(result.subjects[0]?.resource.memberships).toEqual([]);expect(result.subjects[0]?.receivedAt).toBe(at);expect(result.subjects[0]?.status).toBe('idle');expect(result.history).toHaveLength(1)});
+ test('fleet account has no invented machine placement and server receipt time',()=>{const result=projectResourceLifecycle([row()],now);expect(result.subjects[0]?.resource.memberships).toEqual([]);expect(result.subjects[0]?.receivedAt).toBe(at);expect(result.subjects[0]?.status).toBe('idle');expect(result).not.toHaveProperty('history')});
  test('stale authority makes idle unknown while preserving custody and check context',()=>{const result=projectResourceLifecycle([row()],now+180001);expect(result.subjects[0]?.status).toBe('unknown');expect(result.subjects[0]?.idle.outcome).toBe('passed');expect(result.subjects[0]?.supportedActions).toEqual([])});
  test('legacy snapshot remains valid without fabricated resource idle',()=>expect(projectResourceLifecycle([{hostId:'host-a',receivedAt:new Date(at),snapshot:{hostId:'host-a'}}],now).subjects).toEqual([]));
  test('duplicate canonical resource or wrong authority fails closed',()=>{expect(()=>projectResourceLifecycle([row(),row()],now)).toThrow();const bad=row();bad.hostId='host-b';expect(()=>projectResourceLifecycle([bad],now)).toThrow()});
@@ -60,13 +66,11 @@ test('accepted subject generation cannot regress and original journal IDs cannot
  expect(()=>validateResourceLifecycleAdvance(before,structuredClone(before))).not.toThrow();
 });
 test('retained history pages are bounded with explicit coverage and strict cursors',async()=>{
- const service=new ResourceLifecycleService();const result=projectResourceLifecycle([row()],now);
- result.history=Array.from({length:60},(_,i)=>({...result.history[0]!,id:`event-${i}`}));
- service.list=async()=>result;
- const first=await service.history(subject.subject.id);expect(first.events).toHaveLength(50);expect(first.nextCursor).toBe('event-49');
- expect((await service.history(subject.subject.id,'event-49')).events).toHaveLength(10);
+ const value=row();value.snapshot.resourceLifecycle.history=Array.from({length:60},(_,i)=>({...value.snapshot.resourceLifecycle.history[0]!,id:`event-${String(i).padStart(2,'0')}`}));
+ const first=await readHistory([value],subject.subject.id);expect(first.events).toHaveLength(50);expect(first.nextCursor).toBe('event-49');
+ expect((await readHistory([value],subject.subject.id,'event-49')).events).toHaveLength(10);
  expect(first.coverage).toContain('200 events');
- await expect(service.history(subject.subject.id,'/bad')).rejects.toThrow('cursor');
+ await expect(readHistory([value],subject.subject.id,'/bad')).rejects.toThrow('cursor');
 });
 
 test('history cannot attribute another canonical resource or future subject generation',()=>{
@@ -99,9 +103,9 @@ test('ordinary fleet claim preserves the accepted historical checklist without p
 test('fleet claim appears once across aliases without fabricated owner generation',()=>{
  const result=projectResourceLifecycle(fleetRows(),now);expect(result.subjects).toHaveLength(1);
  const value=result.subjects[0]!;expect(value.subject.id).toBe(canonical);expect(value.status).toBe('reserved');expect(value.generation).toBe(9);expect(value.owner?.generation).toBeNull();expect(value.owner?.hostId).toBe('host-b');expect(value.resource.memberships).toEqual([]);expect(value.idle.outcome).toBe('not-checked');expect(value.supportedActions).toEqual([]);
- expect(result.history[0]?.subjectGeneration).toBeNull();
+ expect(result).not.toHaveProperty('history');
  const advanced=fleetRows();advanced[0]!.resourceReservationVersion=10;
- expect(projectResourceLifecycle(advanced,now).history).toEqual(result.history);
+ expect(projectResourceLifecycle(advanced,now)).not.toHaveProperty('history');
  expect(value.observedAt).toBe(claim.reservedAt);expect(value.receivedAt).toBe('2020-01-01T00:00:00.000Z');
  const later=projectResourceLifecycle(fleetRows(),now+3600000).subjects[0]!;
  expect(later.observedAt).toBe(value.observedAt);expect(later.receivedAt).toBe(value.receivedAt);expect(later.status).toBe('reserved');expect(later.supportedActions).toEqual([]);
@@ -124,12 +128,12 @@ test('unknown retained owner generation cannot authorize mutations',()=>{
  expect(resourceLifecycleSchema.safeParse({schemaVersion:1,subjects:[{...value,supportedActions:[]}],history:[]}).success).toBe(true);
 });
 
-test('fleet history preserves original borrower release lineage without inventing authority acceptance',()=>{
+test('fleet history preserves original borrower release lineage without inventing authority acceptance',async()=>{
  const rows=fleetRows(false),borrower=rows[1]!;
  const release={eventId:'release-original-1',owner:{id:'cleanup-1',kind:'boundary-cleanup',generation:5},releasedAt:at,lineage:[{id:'run-1',kind:'run',generation:4},{id:'cleanup-1',kind:'boundary-cleanup',generation:5}]};
  Object.assign(borrower.snapshot,{resourceReservations:{claims:[],returns:[{claimId:claim.id,authorityHostId:'host-a',resourceId:canonical,intentSha256:claim.intentSha256,inputSha256:claim.inputSha256,originalOwner:claim.owner,release,laneId:'android'}]}});
  const result=projectResourceLifecycle(rows,now);
- expect(result.history[0]?.event).toBe('return-reported');expect(result.history[0]?.ownerId).toBe('run-1');expect(result.history[0]?.ownerGeneration).toBe(4);expect(result.history[0]?.subjectGeneration).toBeNull();expect(result.subjects[0]?.status).toBe('unknown');
+ const history=await readHistory(rows,canonical);expect(history.events[0]?.event).toBe('return-reported');expect(history.events[0]?.ownerId).toBe('run-1');expect(history.events[0]?.ownerGeneration).toBe(4);expect(history.events[0]?.subjectGeneration).toBeNull();expect(result.subjects[0]?.status).toBe('unknown');expect(result).not.toHaveProperty('history');
 });
 
 test('comparison cursor keeps subject high-water marks within a fixed bound and bounds retained history', async()=>{
@@ -154,7 +158,7 @@ test('offset timestamps sort and retain by instant rather than lexical spelling'
   {...value.snapshot.resourceLifecycle.history[0]!,id:'earlier-offset',at:'2026-01-01T01:00:00+02:00'},
   {...value.snapshot.resourceLifecycle.history[0]!,id:'later-utc',at:'2026-01-01T00:30:00Z'},
  ];
- expect(projectResourceLifecycle([value],now).history.map(event=>event.id)).toEqual(['later-utc','earlier-offset']);
+ expect((await readHistory([value],subject.subject.id)).events.map(event=>event.id)).toEqual(['later-utc','earlier-offset']);
  const history=Array.from({length:199},(_,i)=>({...value.snapshot.resourceLifecycle.history[0]!,id:`old-${i}`,at:'2025-01-01T00:00:00Z'}));
  const cursor=advanceResourceLifecycleCursor({...value.snapshot.resourceLifecycle,history},{...value.snapshot.resourceLifecycle})!;
  expect(cursor.history).toHaveLength(200);expect(cursor.history[0]?.id).toBe('later-utc');expect(cursor.history[1]?.id).toBe('earlier-offset');
@@ -173,7 +177,7 @@ test('resource history queries its own bounded host scope instead of the global 
  const rows=[target,...Array.from({length:12},(_,i)=>{const host=`other-${i}`,resourceId=`resource-${i}`;
   return {hostId:host,receivedAt:new Date(at),snapshot:{hostId:host,resourceLifecycle:{schemaVersion:1,subjects:[{...subject,subject:{...subject.subject,id:resourceId,authorityHostId:host}}],history:Array.from({length:200},(_,j)=>({id:`${host}-${j}`,resourceId,subjectGeneration:2,at,event:'checking'}))}}};
  })];
- expect(projectResourceLifecycle(rows,now).history.some(event=>event.resourceId===subject.subject.id)).toBe(false);
+ expect(projectResourceLifecycle(rows,now)).not.toHaveProperty('history');
  const queries:unknown[]=[];let limit=0;
  const mock=spyOn(TestHostStateModel,'find').mockImplementation(((filter:unknown)=>{queries.push(filter);const query={select(){return query},sort(){return query},limit(value:number){limit=value;return query},maxTimeMS(){return query},read(){return query},readConcern(){return query},lean:async()=>rows};return query}) as never);
  try {

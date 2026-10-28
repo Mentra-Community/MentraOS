@@ -50,3 +50,6 @@ export const resourceLifecycleSchema=z.object({schemaVersion:z.literal(1),subjec
 export type ResourceLifecycleSubject=z.infer<typeof resourceLifecycleSubjectSchema>;
 export type ResourceLifecycleHistory=z.infer<typeof resourceLifecycleHistorySchema>;
 export interface ResourceLifecycleList {generatedAt:string;subjects:ResourceLifecycleSubject[];history:ResourceLifecycleHistory[];truncated:boolean}
+
+/** Recurring production state excludes the explicit diagnostic event stream. */
+export type ResourceLifecycleCurrentList=Omit<ResourceLifecycleList,'history'>;

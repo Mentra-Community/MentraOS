@@ -1,15 +1,15 @@
 import {ReservableStatusBadge} from '../components/reservable-status';
-import {useQuery} from '@tanstack/react-query';
+import {useInfiniteQuery, useQuery} from '@tanstack/react-query';
 import {useClock} from '../lib/use-clock';
 import {api} from '../lib/api';
-import type {ResourceLifecycleList} from '../../../../packages/core/src/types/resource-lifecycle.types';
+import type {ResourceLifecycleCurrentList, ResourceLifecycleHistory} from '../../../../packages/core/src/types/resource-lifecycle.types';
 import {ResourceControls} from './resource-controls';
 import {useEffect, useRef, useState} from 'react';
 import {ResourceChecklist, resourceReportHref} from './resource-checklist';
 
 export const resourceOverviewQuery = {
   queryKey: ['resource-lifecycle'],
-  queryFn: () => api<ResourceLifecycleList>('/api/admin/test-runs/resources/overview'),
+  queryFn: () => api<ResourceLifecycleCurrentList>('/api/admin/test-runs/resources/overview'),
   refetchInterval: 30_000,
 };
 
@@ -32,7 +32,6 @@ export function ResourceHealthSection() {
     <div className="mt-4 grid gap-3 md:grid-cols-2">{query.data?.subjects.map(value=>{
       const current=!query.isError && value.current && value.receivedAt!==null &&
         Date.parse(value.receivedAt)<=now+5000 && now-Date.parse(value.receivedAt)<=180_000;
-      const events=query.data.history.filter(event=>event.resourceId===value.subject.id);
       return <article key={value.subject.id} id={`resource-${value.subject.id}`} className="scroll-mt-4 rounded-xl border border-[#e0e4de] p-4">
         <h3 className="font-semibold">{value.subject.id}</h3><ReservableStatusBadge status={value.status} current={current} />
         <p className="text-sm">{value.resource.kind} · {value.resource.placement==='fleet'?'Fleet resource':`Installed: ${value.resource.memberships.map(v=>`${v.hostId}/${v.laneId}`).join(', ') || 'placement not reported'}`}</p>
@@ -44,18 +43,34 @@ export function ResourceHealthSection() {
         <a href={resourceReportHref(value.subject.id)} className="mt-2 inline-block text-sm text-blue-700 hover:underline">Link to resource report</a>
         <ResourceChecklist report={value.idle.report}/>
         <ResourceControlDisclosure resource={value} fresh={current}/>
-        <details className="mt-3"><summary>Use history ({events.length})</summary>
-          {!events.length?<p className="text-sm">No use history reported.</p>:<ol className="mt-2 space-y-2 text-sm">{events.map(event=><li key={event.id}>{new Date(event.at).toLocaleString()} · {event.event.replaceAll('-',' ')}{event.ownerId?` · ${event.ownerId}${event.ownerGeneration!==undefined?` (owner generation ${event.ownerGeneration})`:''}`:''}{event.hostId?` · ${event.hostId}${event.laneId?`/${event.laneId}`:''}`:''} · generation {event.subjectGeneration??'unknown'}</li>)}</ol>}
-          <p className="mt-2 text-xs">Recent journal events reported by the authority; this is a bounded history.</p>
-        </details>
+        <ResourceHistoryDisclosure resourceId={value.subject.id}/>
       </article>;
     })}</div>{query.data?.truncated?<p>Resource observations were truncated.</p>:null}
   </section>;
 }
 
-function ResourceControlDisclosure({resource,fresh}:{resource:ResourceLifecycleList['subjects'][number];fresh:boolean}) {
+function ResourceControlDisclosure({resource,fresh}:{resource:ResourceLifecycleCurrentList['subjects'][number];fresh:boolean}) {
   const [opened,setOpened]=useState(false);
   return <details className="mt-3" onToggle={event=>setOpened(event.currentTarget.open)}><summary>Manage resource</summary>
     {opened?<ResourceControls resource={resource} fresh={fresh}/>:null}
+  </details>;
+}
+
+function ResourceHistoryDisclosure({resourceId}:{resourceId:string}) {
+  const [opened,setOpened]=useState(false);
+  const query=useInfiniteQuery({queryKey:['resource-lifecycle-history',resourceId],initialPageParam:undefined as string|undefined,
+    queryFn:({pageParam})=>api<{events:ResourceLifecycleHistory[];nextCursor:string|null;coverage:string}>(
+      `/api/admin/test-runs/resources/${encodeURIComponent(resourceId)}/history${pageParam?`?cursor=${encodeURIComponent(pageParam)}`:''}`),
+    getNextPageParam:page=>page.nextCursor??undefined,enabled:opened});
+  const events=query.data?.pages.flatMap(page=>page.events)??[];
+  return <details className="mt-3" onToggle={event=>setOpened(event.currentTarget.open)}><summary>Use history</summary>
+    {opened?<>{query.isPending?<p>Loading use history…</p>:query.isError&&!query.data?<p role="alert">Use history is unavailable.</p>:
+      !events.length?<p className="text-sm">No use history retained.</p>:
+      <ol className="mt-2 space-y-2 text-sm">{events.map(event=><li key={event.id}>{new Date(event.at).toLocaleString()} · {event.event.replaceAll('-',' ')}{event.ownerId?` · ${event.ownerId}${event.ownerGeneration!==undefined?` (owner generation ${event.ownerGeneration})`:''}`:''}{event.hostId?` · ${event.hostId}${event.laneId?`/${event.laneId}`:''}`:''} · generation {event.subjectGeneration??'unknown'}</li>)}</ol>}
+      {query.isFetchNextPageError?<><p role="alert">More history is unavailable. Refresh history or try again.</p>
+        <button type="button" className="mt-2 text-sm text-blue-700 disabled:opacity-50" disabled={query.isFetching} onClick={()=>void query.refetch()}>Refresh history</button></>:null}
+      {query.hasNextPage?<button type="button" className="mt-2 text-sm text-blue-700 disabled:opacity-50" disabled={query.isFetchingNextPage} onClick={()=>void query.fetchNextPage()}>{query.isFetchingNextPage?'Loading…':'More history'}</button>:null}
+      {query.data?<p className="mt-2 text-xs">{query.data.pages[0]?.coverage}</p>:null}
+    </>:null}
   </details>;
 }
