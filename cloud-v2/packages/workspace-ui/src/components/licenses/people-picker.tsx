@@ -54,7 +54,7 @@ export function PeoplePickerDialog({
   license: LicenseView;
   productName: string;
   members: readonly MemberView[];
-  /** "Buy subscriptions ↗", or null where billing lists no `add_seats`: then the dialog offers only fewer people. */
+  /** "Buy more seats", or null where billing lists no `add_seats`: then the dialog offers only fewer people. */
   addSeats: AddSeatsControl | null;
 }) {
   return (
@@ -144,7 +144,7 @@ function PickerBody({
             title={t.fit.line(fit, { nameOf: memberLabel, canAddSeats: addSeats !== null })}
             action={
               addSeats ? (
-                <HostedPageButton pending={addSeats.pending} newTab={addSeats.newTab} disabled={addSeats.disabled} onClick={addSeats.onClick}>
+                <HostedPageButton arrow={false} pending={addSeats.pending} newTab={addSeats.newTab} disabled={addSeats.disabled} onClick={addSeats.onClick}>
                   {t.actions.addSeats}
                 </HostedPageButton>
               ) : undefined

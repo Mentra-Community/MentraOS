@@ -117,7 +117,7 @@ describe("taxNote", () => {
 
 describe("priceLine", () => {
   test("a workspace pays per user", () => {
-    expect(priceLine(perSeat(1500), "en-US")).toBe("$15 per user a month");
+    expect(priceLine(perSeat(1500), "en-US")).toBe("$15 per user per month");
   });
 
   test("a longer recurrence reads as 'every 3 months'", () => {
@@ -126,8 +126,8 @@ describe("priceLine", () => {
   });
 
   test("an unknown scheme shows billing's own label", () => {
-    const tiered: Price = { scheme: "tiered", fallbackLabel: "From $10 per user a month" };
-    expect(priceLine(tiered, "en-US")).toBe("From $10 per user a month");
+    const tiered: Price = { scheme: "tiered", fallbackLabel: "From $10 per user per month" };
+    expect(priceLine(tiered, "en-US")).toBe("From $10 per user per month");
   });
 });
 
@@ -158,13 +158,13 @@ describe("costFact", () => {
   });
 
   test("an unknown scheme is billing's label, whatever its total", () => {
-    const tiered: Price = { scheme: "tiered", fallbackLabel: "From $10 per user a month" };
-    expect(costFact(license({ price: tiered, total: null }), "en-US")).toBe("From $10 per user a month");
-    expect(costFact(license({ price: tiered, total: usd(100) }), "en-US")).toBe("From $10 per user a month");
+    const tiered: Price = { scheme: "tiered", fallbackLabel: "From $10 per user per month" };
+    expect(costFact(license({ price: tiered, total: null }), "en-US")).toBe("From $10 per user per month");
+    expect(costFact(license({ price: tiered, total: usd(100) }), "en-US")).toBe("From $10 per user per month");
   });
 
   test("a per-user price with no total from billing shows the unit price, and adds nothing up", () => {
-    expect(costFact(license({ total: null }), "en-US")).toBe("$29 per user a month");
+    expect(costFact(license({ total: null }), "en-US")).toBe("$29 per user per month");
   });
 });
 

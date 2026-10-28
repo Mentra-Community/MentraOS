@@ -37,7 +37,7 @@ export const readWaiting = (result: ReadResult): boolean => result.data === unde
 export const readRetrying = (result: ReadResult): boolean => result.isFetching && readFailed(result);
 
 /**
- * The page's header action: "Billing ↗", only where billing lists `billing_and_invoices` for the account. Billing's
+ * The page's header action: "Billing", only where billing lists `billing_and_invoices` for the account. Billing's
  * refusal of it, or the link for a tab the browser blocked, shows under it.
  *
  * It is drawn by the page's header component (`WorkspaceLicensesHeaderActions`)
@@ -58,6 +58,7 @@ export function HeaderButtons({
       <div className="flex flex-wrap items-center justify-end gap-2">
         <HostedPageButton
           variant="secondary"
+          arrow={false}
           newTab={invoices.returns === false}
           pending={hosted.pending === invoices.kind}
           disabled={hosted.pending !== null}
