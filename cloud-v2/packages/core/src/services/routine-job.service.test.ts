@@ -1878,6 +1878,24 @@ test('accepted current recorder snapshot returns only the completed original and
   });
 });
 
+for (const unrelated of ['out-of-service', 'activity'] as const) test(`completed recorder return does not depend on unrelated lane ${unrelated}`, async () => {
+  await withLocalResources(async (_f, hosts, counters, pastRows) => {
+    const h = hosts.get('mini'), at = h.receivedAt.toISOString(), lane = h.snapshot.lanes[0], claim = {id: 'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',
+      requestId: 'original', fleetInputSha256: 'c'.repeat(64), hostId: 'mini', laneId: 'android', poolId: 'mini:disk:1', minimumAvailableBytes: 3 * 1024 ** 3, reservedAt: at},
+      foreign = {...claim, id: '8b224b98-f1f6-4e91-8fc8-2d6fb2f3638b', requestId: 'foreign'};
+    h.resourceReservations = [claim, foreign];
+    pastRows.set(claim.requestId, {requestId: claim.requestId, fleetInputSha256: claim.fleetInputSha256, inputSha256: 'd'.repeat(64),
+      dispatchCompletion: {inputSha256: 'd'.repeat(64), disposition: 'clean', completedAt: at}} as StoredRoutineJob);
+    unavailableLocal(h, 'out-of-service', 'glasses');
+    if (unrelated === 'out-of-service') lane.state = 'out-of-service';
+    else lane.activity = {requestId: 'unrelated-phone-repair'};
+    const originalLane = structuredClone(lane); let returned = 0;
+    expect(await routineJobRepository.reconcileRecorderHost!('mini', h.receivedAt, undefined, () => {returned++}, structuredClone(h), claim.requestId)).toBe(true);
+    expect(returned).toBe(1); expect(h.resourceReservations).toEqual([foreign]);
+    expect(h.snapshot.lanes[0]).toEqual(originalLane); expect(counters).toEqual({host: 0, request: 0});
+  });
+});
+
 test('recorder return reconciliation reads the narrow recorder-return host view', async () => {
   const get = spyOn(resourceReservationRepository, 'get').mockImplementation(async () => null);
   try {

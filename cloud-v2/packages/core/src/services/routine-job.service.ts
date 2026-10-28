@@ -120,7 +120,7 @@ export const routineJobRepository: RoutineJobRepository = {
         if (request?.fleetCandidatePreparation || request?.dispatchCompletion && !completion.success ||
           completion.success && (completion.data.inputSha256 !== request?.inputSha256 || Date.parse(completion.data.completedAt) < Date.parse(claim.reservedAt) || Date.parse(completion.data.completedAt) > observed) ||
           cancellationAt !== undefined && (!Number.isFinite(cancellationAt) || cancellationAt < Date.parse(claim.reservedAt) || cancellationAt > observed)) return false;
-        return claim.hostId === hostId && lane?.state === 'idle' && !lane.activity && offer?.poolId === claim.poolId &&
+        return claim.hostId === hostId && offer?.poolId === claim.poolId &&
           Number.isFinite(observed) && observed >= Date.parse(claim.reservedAt) && observed <= Date.parse(host.snapshot.observedAt) &&
           freshRoutineHost(offer.observedAt, Date.now()) &&
           reconcileRecorderHostReservations([claim], requests, offer).length === 0;
