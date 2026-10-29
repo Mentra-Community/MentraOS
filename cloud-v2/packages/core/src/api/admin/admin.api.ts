@@ -44,6 +44,7 @@ import {createPortalAuthApi} from "../signin/portal-auth.api"
 import {createWorkspacesApi} from "../workspaces/workspaces.api"
 import auditLog from "./audit-log.api"
 import licenses from "./licenses.api"
+import workspaceLicenseResets from "./workspace-license-resets.api"
 import reports from "./reports.api"
 import {createRoutineCatalogApi} from "./routine-catalog.api"
 import {createRoutinePreferencesApi} from "./routine-preferences.api"
@@ -129,6 +130,7 @@ app.get("/me", async c => {
 })
 
 app.route("/workspaces", createWorkspacesApi())
+app.route("/workspace-license-resets", workspaceLicenseResets)
 app.route("/organization", createOrganizationApi())
 app.route("/fleet", adminFleetApi)
 

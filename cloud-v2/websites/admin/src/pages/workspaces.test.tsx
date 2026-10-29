@@ -56,6 +56,13 @@ describe("the Workspaces page", () => {
     expect(markup).not.toContain('aria-label="Manage workspace Closed Down"');
   });
 
+  test("reset controls are explicitly enabled for staging and never offered for deleted workspaces", () => {
+    expect(render(<WorkspacesPage />, {everyone})).not.toContain("Reset licenses &amp; billing");
+    const markup = render(<WorkspacesPage resetEnabled />, {everyone});
+    expect(markup).toContain('aria-label="Reset licenses and billing for Acme Robotics"');
+    expect(markup).not.toContain('aria-label="Reset licenses and billing for Closed Down"');
+  });
+
   test("a list still loading says so", () => {
     expect(render(<WorkspacesPage />)).toContain("Loading workspaces");
   });

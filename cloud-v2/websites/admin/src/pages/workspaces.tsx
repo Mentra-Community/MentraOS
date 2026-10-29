@@ -17,6 +17,7 @@ import {
 import { useId, useRef, useState, type FormEvent } from "react";
 import { api, ApiError } from "../lib/api";
 import { WORKSPACE_PORTAL_URL } from "../lib/config";
+import { WorkspaceLicenseReset } from "./workspace-license-reset";
 
 /** The shared workspace screens' card (Mentra's tokens, from @mentra/workspace-ui/mentra.css). */
 const PANEL = "rounded-card border bg-card";
@@ -84,7 +85,7 @@ export async function recoverWorkspaceOwnership(workspaceId: string, target: Own
  * Every workspace in this organization, for Organization Admins: open one to manage it with the shared
  * workspace screens, or recover its ownership. A workspace's own people manage it in the workspace portal.
  */
-export function WorkspacesPage({ portalUrl = WORKSPACE_PORTAL_URL }: { portalUrl?: string | null } = {}) {
+export function WorkspacesPage({ portalUrl = WORKSPACE_PORTAL_URL, resetEnabled = false }: { portalUrl?: string | null; resetEnabled?: boolean } = {}) {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("members");
   const tabsTop = useRef<HTMLDivElement>(null);
@@ -93,6 +94,7 @@ export function WorkspacesPage({ portalUrl = WORKSPACE_PORTAL_URL }: { portalUrl
   return (
     <div className="space-y-6">
       <AllWorkspaces
+        resetEnabled={resetEnabled}
         portalUrl={portalUrl}
         openWorkspaceId={workspaceId}
         onOpen={id => {
@@ -162,7 +164,7 @@ function OpenWorkspaceHeading({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function AllWorkspaces({ openWorkspaceId, onOpen, portalUrl }: { openWorkspaceId: string | null; onOpen(workspaceId: string): void; portalUrl: string | null }) {
+function AllWorkspaces({ openWorkspaceId, onOpen, portalUrl, resetEnabled }: { openWorkspaceId: string | null; onOpen(workspaceId: string): void; portalUrl: string | null; resetEnabled: boolean }) {
   const client = useQueryClient();
   const all = useInfiniteQuery({
     queryKey: ORGANIZATION_WORKSPACES_KEY,
@@ -175,6 +177,8 @@ function AllWorkspaces({ openWorkspaceId, onOpen, portalUrl }: { openWorkspaceId
   });
   const [recovering, setRecovering] = useState<string | null>(null);
   const [recovered, setRecovered] = useState<string | null>(null);
+  const [resetWorkspaceId, setResetWorkspaceId] = useState<string | null>(null);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
 
   const recover = useMutation({
     mutationFn: (request: { workspace: WorkspaceSummary; target: OwnerTarget; label: string }) =>
@@ -195,6 +199,13 @@ function AllWorkspaces({ openWorkspaceId, onOpen, portalUrl }: { openWorkspaceId
 
   return (
     <section className={PANEL}>
+      {resetWorkspaceId ? <WorkspaceLicenseReset key={resetWorkspaceId} workspaceId={resetWorkspaceId} onClose={() => setResetWorkspaceId(null)} onReset={result => {
+        setResetWorkspaceId(null);
+        setResetMessage(`Reset complete: ${result.canceledSubscriptions} subscriptions canceled, ${result.endedProducts} products ended, ${result.releasedAssignments} assignments removed, and ${result.expiredCheckouts} checkouts expired.`);
+        void client.invalidateQueries({queryKey: ["admin-licenses"]});
+        void client.invalidateQueries({queryKey: workspaceKeys.list(adminWorkspaceApi)});
+      }} /> : null}
+      {resetMessage ? <p role="status" className="m-6 text-sm">{resetMessage}</p> : null}
       <div className="border-b p-6">
         <h2 className="text-xl font-semibold">All workspaces</h2>
         <p className="text-muted-foreground mt-1 text-sm">Every workspace in this organization, newest first. You act as the owner of any of them.</p>
@@ -237,6 +248,7 @@ function AllWorkspaces({ openWorkspaceId, onOpen, portalUrl }: { openWorkspaceId
                           </a>
                         </Button>
                       ) : null}
+                      {resetEnabled ? <Button variant="destructive-secondary" size="sm" aria-label={`Reset licenses and billing for ${workspace.name}`} onClick={() => {setResetMessage(null); setResetWorkspaceId(workspace.workspaceId);}}>Reset licenses & billing</Button> : null}
                       <Button variant="secondary" size="sm" aria-label={`Open ${workspace.name}`} onClick={() => onOpen(workspace.workspaceId)}>
                         Open
                       </Button>
