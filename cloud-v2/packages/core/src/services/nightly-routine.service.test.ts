@@ -68,7 +68,7 @@ class NightlyRoutineService extends ActualNightlyRoutineService {
       return requests!.cancelPreparationSubmission(id, 'mini', member && {...member.selection, laneId: member.platform},
         new Date((now ?? Date.now)()).toISOString(), value.reason);
     }};
-    super(catalog, builds, requests, repository, results, now, log, sources ?? {async resolve() {return mainRevision;}}, jobs as unknown as ConstructorParameters<typeof ActualNightlyRoutineService>[8]);
+    super(catalog, builds, requests, repository, results, now, log, sources ?? {async resolveNightly() {return mainRevision;}}, jobs as unknown as ConstructorParameters<typeof ActualNightlyRoutineService>[8]);
   }
 }
 function preparedRequest(hostId: string, intent: any) {
@@ -145,7 +145,7 @@ function fixture(
     {async summary(id) {completionEvents.push("evidence:" + id); const result = resultRows.get(id); if (typeof result === "function") return result(); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, "missing"); return result;}},
     () => clock,
     undefined,
-    {async resolve(revision, boundary) {expect(revision).toBeUndefined(); expect(boundary).toBe(startedAt); sourceReads++; return selectedMain;}},
+    {async resolveNightly(original) {expect(original.startedAt).toBe(startedAt); sourceReads++; return selectedMain;}},
   )
   return {service, admitted, get sourceReads() {return sourceReads;}, set main(value: string) {selectedMain = value;}, set autoPrepare(value: boolean) {autoPrepare = value;}, cancelled, completionEvents, buildReads, resultRows, requestRows, requestErrors, get plan() {return plan!;}, get reads() {return reads;}, set clock(value: number) {clock = value;}, set catalog(next: typeof initial) {catalog = next;}, set failId(value: string | undefined) {failId = value;}, set cancelFailId(value: string | undefined) {cancelFailId = value;}};
 }
@@ -197,32 +197,37 @@ test("nightly pins fresh main for every enabled routine and freezes exact app ar
   expect(state.admitted).toHaveLength(2);
   await expect(state.service.start({...occurrence, startedAt: "2026-10-03T12:00:00Z"})).rejects.toThrow("changed");
 });
-test('delayed first delivery selects boundary main and frozen retry never consults later source', async () => {
-  const oldMain = '1'.repeat(40), laterMain = '2'.repeat(40), calls: string[] = [];
-  let available = true, plan: NightlyPlan | null = null;
+test('delayed delivery freezes the exact original workflow source and retries never consult later source', async () => {
+  const originalHead = '1'.repeat(40), calls: string[] = []; let available = true, plan: NightlyPlan | null = null;
   const sources = new GithubRoutineSourceGateway({async token() {return 'private';}}, async url => {
-    calls.push(url); if (!available) throw new Error('History unavailable');
-    if (url.endsWith('/commits/main')) return Response.json({sha: laterMain});
-    if (url.includes('/activity?')) return Response.json([
-      {id: 2, ref: 'refs/heads/main', before: oldMain, after: laterMain, timestamp: '2026-10-03T11:02:00Z', activity_type: 'pr_merge'},
-      {id: 1, ref: 'refs/heads/main', before: '3'.repeat(40), after: oldMain, timestamp: '2026-10-03T10:58:00Z', activity_type: 'pr_merge'},
-    ]);
-    if (url.includes('/compare/')) return Response.json({status: 'ahead', base_commit: {sha: oldMain}, merge_base_commit: {sha: oldMain}});
-    throw new Error('Unexpected source read');
+    calls.push(url); if (!available) throw new Error('Run unavailable');
+    if (url.endsWith('/actions/runs/100')) return Response.json({id: 100, head_sha: originalHead,
+      path: '.github/workflows/nightly-device-routines.yml', head_branch: 'dev', event: 'workflow_dispatch',
+      created_at: startedAt, repository: {full_name: 'Mentra-Community/Mentra'}, head_repository: {full_name: 'Mentra-Community/Mentra'}});
+    throw new Error('No branch/history read is allowed');
   });
   const jobs = {async submitFrozen() {return {} as any;}, async cancelFrozen() {return {} as any;}, async cancel() {return {} as any;}};
   const service = new ActualNightlyRoutineService({async selection() {return [row('delayed', 'android')];}} as any,
     {async latestDev(platform, before) {expect(before).toBe(startedAt); return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
     {async get() {return null;}}, {...cancellationRepository(), async get() {return plan;}, async freeze(next) {plan ??= next; return plan;},
-      async completed() {return null;}, async finish(_id, result) {return result;}}, undefined, () => now + 5 * 60_000, undefined, sources, jobs);
-  const first = await service.start(occurrence);
-  expect(first.plan.members[0]!.routineRevision).toBe(oldMain);
-  expect(first.plan.members[0]!.selection!.routineRevision).toBe(oldMain);
+      async completed() {return null;}, async finish(_id, result) {return result;}}, undefined, () => now + 5 * 60_000, undefined,
+    {resolveNightly: original => sources.resolveNightly(original, 'Mentra-Community/Mentra')}, jobs);
+  const manual = {occurrenceId: 'manual-dev-100', startedAt, trigger: 'manual' as const};
+  const first = await service.start(manual);
+  expect(first.plan.members[0]!.routineRevision).toBe(originalHead);
+  expect(first.plan.members[0]!.selection!.routineRevision).toBe(originalHead);
   expect(first.plan.startedAt).toBe(startedAt);
   expect(first.plan.publication!.source).toEqual({channel: 'dev', buildRunId: 21, publicationAttempt: 2});
-  const readCount = calls.length; available = false;
-  expect((await service.start(occurrence)).plan).toEqual(first.plan);
-  expect(calls).toHaveLength(readCount);
+  expect(calls).toHaveLength(1); available = false;
+  expect((await service.start(manual)).plan).toEqual(first.plan); expect(calls).toHaveLength(1);
+});
+test('workflow run identity is retained with frozen source and conflicting retries are refused', async () => {
+  const state = fixture();
+  const selected = {...occurrence, workflowRunId: 123};
+  const first = await state.service.start(selected);
+  expect(first.plan.workflowRunId).toBe(123);
+  expect((await state.service.start(selected)).plan).toEqual(first.plan);
+  await expect(state.service.start({...selected, workflowRunId: 456})).rejects.toThrow('changed');
 });
 test("one failed admission does not suppress neighboring members and retries the same request", async () => {
   const state = fixture();
@@ -654,7 +659,7 @@ test("unavailable main source cannot fall back to an old enrolled definition", a
     {async get() {return host;}}, {async get() {return null;}, async prepare() {preparations++; return {} as any;}, async cancelPreparationSubmission() {return {} as any;}},
     {...cancellationRepository(), async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
     () => ({android: {hostId: "mini", laneId: "android"}}), undefined, () => now, undefined,
-    {async resolve() {sourceReads++; if (!available) throw new TestRunError(503, "Routine main source unavailable"); return mainRevision;}});
+    {async resolveNightly() {sourceReads++; if (!available) throw new TestRunError(503, "Routine main source unavailable"); return mainRevision;}});
   await expect(service.start(occurrence)).rejects.toThrow("main source unavailable");
   expect(plan).toBeNull(); expect(preparations).toBe(0);
   available = true;
@@ -721,7 +726,7 @@ test('fleet nightly stores every portable member without a host and cancels abse
   const service = new ActualNightlyRoutineService({async selection() {return [row('portable-one', 'android'), row('portable-two', 'ios-on-mac')];}} as any,
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
     {async get(id) {return requestRows.get(id) ?? null;}}, repository, undefined, () => clock, undefined,
-    {async resolve() {return mainRevision;}}, jobs);
+    {async resolveNightly() {return mainRevision;}}, jobs);
   const first = await service.start(occurrence);
   expect(first.plan.members.every(member => !!member.selection && !member.hostId && !member.dispatchIntent)).toBe(true);
   expect(first.plan.suite?.members).toHaveLength(2);
@@ -757,7 +762,7 @@ test('early suite cancellation retains absent member fences without launching an
   const create = () => new ActualNightlyRoutineService({async selection() {return [row('cancel-one', 'android'), row('cancel-two', 'ios-on-mac')];}} as any,
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
     {async get(id) {return requestRows.get(id) ?? null;}}, repository, undefined, () => now, undefined,
-    {async resolve() {return mainRevision;}}, jobs);
+    {async resolveNightly() {return mainRevision;}}, jobs);
   const first = await create().start(occurrence);
   expect(launches).toBe(2);
   expect(first.admissions.every(admission => !admission.admitted)).toBe(true);
@@ -882,7 +887,7 @@ test('actual fleet service preserves every nightly member through preparation, b
   const catalog = [row('lifecycle-one', 'android'), row('lifecycle-two', 'ios-on-mac')];
   const create = () => new ActualNightlyRoutineService({async selection() {return catalog;}} as any,
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
-    requests, repository, summary, () => clock, undefined, {async resolve() {return mainRevision;}}, jobs);
+    requests, repository, summary, () => clock, undefined, {async resolveNightly() {return mainRevision;}}, jobs);
   const service = create(), first = await service.start(occurrence), frozenPlan = copy(first.plan);
   const {nightlySuiteProjection} = await import('./test-suite.service');
   const project = async () => nightlySuiteProjection(first.plan.suite!, first.plan, await service.detail(occurrence.occurrenceId));

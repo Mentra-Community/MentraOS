@@ -7,9 +7,7 @@ import {createLogger} from '@mentra/cloud-shared/logger';
 import {configuredTestingTarget, testingRepositorySchema, testingTarget, type TestingRepository} from '../types/testing-source.types';
 
 const logger = createLogger('core').child({service: 'routine-source-selection.service'});
-const activitySchema = (ref: string) => z.array(z.object({id: z.number().int().positive().safe(), ref: z.literal(ref),
-  before: routineRevisionSchema, after: routineRevisionSchema, timestamp: z.string().datetime({offset: true}),
-  activity_type: z.enum(['push', 'pr_merge', 'merge_queue_merge', 'force_push', 'branch_creation', 'branch_deletion'])})).max(100);
+export type NightlySourceOccurrence = {occurrenceId: string; startedAt: string; trigger: 'nightly' | 'manual'; workflowRunId?: number};
 type SourceDiagnostic = {phase: 'authentication' | 'request' | 'response' | 'body' | 'integrity';
   blobSha: string; expectedBytes: number; elapsedMs: number; status?: number; receivedBytes?: number;
   failure: 'unavailable' | 'deadline' | 'identity-mismatch'; upstream?: SourceDenial};
@@ -99,9 +97,9 @@ export class GithubRoutineSourceGateway {
       return {...metadata, bodyState: 'json', ...(known ? {kind: known[1], message: known[2]} : {})};
     } catch {return {...metadata, bodyState: 'invalid'};}
   }
-  private async page(path: string, maxBytes: number, deadline: AbortSignal, repository: TestingRepository) {
+  private async page(path: string, maxBytes: number, deadline: AbortSignal, repository: TestingRepository, scope: 'harness' | 'private' = 'harness') {
     try {
-      const token = await this.withinDeadline(this.app.token('harness', repository), deadline);
+      const token = await this.withinDeadline(this.app.token(scope, repository), deadline);
       const response = await this.withinDeadline(this.transport(`https://api.github.com/repos/${repository}/${path}`, {
         redirect: 'error', signal: deadline, headers: {
           Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json',
@@ -117,64 +115,33 @@ export class GithubRoutineSourceGateway {
   async resolve(revision?: string, before?: string, repository: TestingRepository = configuredTestingTarget().repository): Promise<string> {
     const target = testingTarget(repository), branch = target.ref.slice('refs/heads/'.length);
     if (revision && !routineRevisionSchema.safeParse(revision).success) throw new TestRunError(400, 'Invalid routine revision');
-    if (before !== undefined) {
-      if (revision || !z.string().datetime({offset: true}).safeParse(before).success)
-        throw new TestRunError(400, 'Invalid routine source boundary');
-      return this.resolveMainBefore(before, repository);
-    }
+    if (before !== undefined) throw new TestRunError(400, 'Select the exact nightly workflow source instead of a historical boundary');
     const exact = z.object({sha: routineRevisionSchema}).parse(await this.get(revision ? `git/commits/${revision}` : `commits/${branch}`, repository)).sha;
     if (revision && exact !== revision) throw new TestRunError(503, 'GitHub commit differs from the exact requested routine revision');
     return exact;
   }
-  /** Repository activity records when main changed; commit dates do not prove branch membership. */
-  private async resolveMainBefore(before: string, repository: TestingRepository): Promise<string> {
-    const mainRef = testingTarget(repository).ref, branch = mainRef.slice('refs/heads/'.length);
-    const deadline = AbortSignal.timeout(20_000), boundarySecond = Math.floor(Date.parse(before) / 1000);
-    try {
-      const exact = z.object({sha: routineRevisionSchema});
-      const tip = exact.parse(await this.get(`commits/${branch}`, repository, 256 * 1024, deadline)).sha;
-      let head = tip, previousTime = Infinity, previousId = Infinity, cursor: string | undefined;
-      const seen = new Set<number>(), heads = new Set([tip]), cursors = new Set<string>();
-      for (let page = 0; page < 3; page++) {
-        const path = `activity?ref=${encodeURIComponent(mainRef)}&direction=desc&per_page=100${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`;
-        const response = await this.page(path, 512 * 1024, deadline, repository), rows = activitySchema(mainRef).parse(response.body);
-        if (!rows.length) throw new Error('Main history is incomplete');
-        for (const row of rows) {
-          const time = Date.parse(row.timestamp), second = Math.floor(time / 1000);
-          if (seen.has(row.id) || time > previousTime || row.id >= previousId
-            || row.after !== head || !['push', 'pr_merge', 'merge_queue_merge'].includes(row.activity_type))
-            throw new Error('Main history is changed or incomplete');
-          seen.add(row.id); previousTime = time; previousId = row.id;
-          // GitHub activity is second-resolution; a transition in the boundary second is ambiguous.
-          if (second === boundarySecond) throw new Error('Main boundary is ambiguous');
-          if (second < boundarySecond) {
-            if (head !== tip) {
-              const comparison = z.object({status: z.literal('ahead'), base_commit: z.object({sha: routineRevisionSchema}),
-                merge_base_commit: z.object({sha: routineRevisionSchema})})
-                .parse(await this.get(`compare/${head}...${tip}?per_page=1`, repository, 4 * 1024 ** 2, deadline));
-              if (comparison.base_commit.sha !== head || comparison.merge_base_commit.sha !== head)
-                throw new Error('Selected main source is not an ancestor');
-            }
-            if (exact.parse(await this.get(`commits/${branch}`, repository, 256 * 1024, deadline)).sha !== tip)
-              throw new Error('Main changed during selection');
-            return head;
-          }
-          if (heads.has(row.before)) throw new Error('Main history is cyclic');
-          head = row.before; heads.add(head);
-        }
-        const next = response.link?.split(',').find(value => /;\s*rel="next"/.test(value));
-        const match = next?.match(/^\s*<([^>]+)>;\s*rel="next"\s*$/);
-        if (!match) throw new Error('Main history is incomplete');
-        const url = new URL(match[1]!);
-        cursor = url.searchParams.get('after') ?? undefined;
-        if (url.origin !== 'https://api.github.com' || (url.pathname !== `/repos/${repository}/activity`
-          && !/^\/repositories\/\d+\/activity$/.test(url.pathname))
-          || url.searchParams.get('ref') !== mainRef || !cursor || cursor.length > 4096 || cursors.has(cursor))
-          throw new Error('Main history cursor is invalid');
-        cursors.add(cursor);
-      }
-      throw new Error('Main history exceeds its bound');
-    } catch {throw new TestRunError(503, 'Routine main history at the occurrence boundary is unavailable; retry the same selection');}
+  /** The original scheduler run already records its immutable source; branch history is irrelevant. */
+  async resolveNightly(occurrence: NightlySourceOccurrence, repository: TestingRepository = configuredTestingTarget().repository): Promise<string> {
+    const originalRunId = /^manual-dev-([1-9]\d*)$/.exec(occurrence.occurrenceId)?.[1];
+    const runId = occurrence.workflowRunId ?? (originalRunId ? Number(originalRunId) : undefined);
+    if (repository !== 'Mentra-Community/Mentra' || !Number.isSafeInteger(runId) || !runId || runId < 1
+      || originalRunId !== undefined && Number(originalRunId) !== runId
+      || !z.string().datetime({offset: true}).safeParse(occurrence.startedAt).success)
+      throw new TestRunError(400, 'Nightly source requires its original workflow run');
+    const deadline = AbortSignal.timeout(20_000);
+    const run = z.object({id: z.number().int().positive().safe(), head_sha: routineRevisionSchema,
+      path: z.literal('.github/workflows/nightly-device-routines.yml'), head_branch: z.literal('dev'),
+      event: z.enum(['schedule', 'workflow_dispatch']), created_at: z.string().datetime({offset: true}),
+      repository: z.object({full_name: z.literal('Mentra-Community/Mentra')}),
+      head_repository: z.object({full_name: z.literal('Mentra-Community/Mentra')})})
+      .safeParse((await this.page(`actions/runs/${runId}`, 256 * 1024, deadline, repository, 'private')).body);
+    const started = Date.parse(occurrence.startedAt), created = run.success ? Date.parse(run.data.created_at) : NaN;
+    const date = new Intl.DateTimeFormat('en-CA', {timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date(started));
+    if (!run.success || run.data.id !== runId || (occurrence.trigger === 'manual'
+      ? occurrence.occurrenceId !== `manual-dev-${runId}` || run.data.event !== 'workflow_dispatch' || created !== started
+      : occurrence.occurrenceId !== `nightly-dev-${date}` || run.data.event !== 'schedule' || created < started))
+      throw new TestRunError(409, 'Nightly workflow source differs from its original occurrence');
+    return run.data.head_sha;
   }
   async inventory(commit: string, repository: TestingRepository = testingTarget().repository) {
     testingRepositorySchema.parse(repository);

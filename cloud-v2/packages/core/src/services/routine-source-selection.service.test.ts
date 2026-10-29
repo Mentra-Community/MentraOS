@@ -215,115 +215,64 @@ test('in-flight byte admission preserves one64MiB blob and releases failed capac
   expect(await next).toEqual(bytes); expect(reads).toBe(2);
 });
 
-const boundary = '2026-10-17T11:00:00Z', oldMain = '1'.repeat(40), nextMain = '2'.repeat(40), side = '3'.repeat(40);
-const activity = (id: number, before: string, after: string, timestamp: string, changes = {}) => ({
-  id, before, after, timestamp, ref: 'refs/heads/main', activity_type: 'pr_merge', ...changes});
-function historyGateway(pages: unknown[][], changes: {tip?: string; finalTip?: string; comparison?: unknown; link?: string | null; fail?: string} = {}) {
-  const calls: string[] = [], signals: AbortSignal[] = []; let mainReads = 0, page = 0;
-  const service = new GithubRoutineSourceGateway({async token() {return 'private';}}, async (url, init) => {
-    calls.push(url); signals.push(init.signal as AbortSignal);
-    if (changes.fail && url.includes(changes.fail)) return new Response('PRIVATE_BODY', {status: 403});
-    if (url.endsWith('/commits/main')) return Response.json({sha: ++mainReads === 1 ? changes.tip ?? nextMain : changes.finalTip ?? changes.tip ?? nextMain});
-    if (url.includes('/activity?')) {
-      const rows = pages[page++] ?? [];
-      const link = changes.link !== undefined ? changes.link : page < pages.length
-        ? `<https://api.github.com/repositories/123/activity?ref=refs%2Fheads%2Fmain&per_page=100&after=cursor-${page}>; rel="next"` : null;
-      return Response.json(rows, {headers: link ? {link} : {}});
-    }
-    if (url.includes('/compare/')) return Response.json(changes.comparison ?? {status: 'ahead',
-      base_commit: {sha: oldMain}, merge_base_commit: {sha: oldMain}});
-    throw new Error(`Unexpected source URL ${url}`);
-  });
-  return {service, calls, signals};
+
+const workflowSource = 'f25da1aa5b15aca095c7b93a75f6a3e218c597f0';
+const originalOccurrence = {occurrenceId: 'manual-dev-40924073359', startedAt: '2026-10-29T17:43:42Z', trigger: 'manual' as const};
+const originalRun = {id: 40924073359, head_sha: workflowSource, path: '.github/workflows/nightly-device-routines.yml',
+  head_branch: 'dev', event: 'workflow_dispatch', created_at: originalOccurrence.startedAt,
+  repository: {full_name: 'Mentra-Community/Mentra'}, head_repository: {full_name: 'Mentra-Community/Mentra'}};
+function nightlySource(changes: Record<string, unknown> = {}) {
+  const calls: string[] = [];
+  const service = new GithubRoutineSourceGateway({async token(scope, repository) {
+    expect(scope).toBe('private'); expect(repository).toBe('Mentra-Community/Mentra'); return 'private';
+  }}, async url => {calls.push(url); expect(url).toBe('https://api.github.com/repos/Mentra-Community/Mentra/actions/runs/40924073359');
+    return Response.json({...originalRun, ...changes});});
+  return {service, calls};
 }
-const delayed = () => [activity(2, oldMain, nextMain, '2026-10-17T11:02:00Z'),
-  activity(1, side, oldMain, '2026-10-17T10:58:00Z')];
-test('delayed first delivery uses main branch transition time, not author or committer dates', async () => {
-  const f = historyGateway([delayed().map(row => ({...row, commit: {committer: {date: '2026-01-01T00:00:00Z'}}}))]);
-  expect(await f.service.resolve(undefined, boundary)).toBe(oldMain);
-  expect(f.calls.filter(url => url.endsWith('/commits/main'))).toHaveLength(2);
-  expect(f.calls.find(url => url.includes('/compare/'))).toContain(`${oldMain}...${nextMain}`);
-  expect(new Set(f.signals).size).toBe(1); // auth, history, comparison and final ref share one budget.
+test('same-second merge and later pushes cannot block or replace the exact original workflow source', async () => {
+  const {service, calls} = nightlySource();
+  expect(await service.resolveNightly(originalOccurrence, 'Mentra-Community/Mentra')).toBe(workflowSource);
+  expect(calls).toHaveLength(1); // No activity, branch tip, comparison or commit-history request.
 });
-test('already current main is selected from exact matching historical branch activity', async () => {
-  const f = historyGateway([[activity(1, side, oldMain, '2026-10-17T10:58:00Z')]], {tip: oldMain});
-  expect(await f.service.resolve(undefined, boundary)).toBe(oldMain);
-  expect(f.calls.some(url => url.includes('/compare/'))).toBe(false);
+test('explicit scheduler run ID preserves the same manual source', async () => {
+  expect(await nightlySource().service.resolveNightly({...originalOccurrence, workflowRunId: 40924073359}, 'Mentra-Community/Mentra')).toBe(workflowSource);
 });
-test('cursor pages retain exact contiguous main ancestry and reject moving main', async () => {
-  const f = historyGateway([[delayed()[0]!], [delayed()[1]!]]);
-  expect(await f.service.resolve(undefined, boundary)).toBe(oldMain);
-  expect(f.calls.filter(url => url.includes('/activity?'))[1]).toContain('after=cursor-1');
-  await expect(historyGateway([delayed()], {finalTip: side}).service.resolve(undefined, boundary)).rejects.toMatchObject({status: 503});
+test('nightly source rejects foreign repository, branch, workflow, event, time and run identity', async () => {
+  for (const changes of [{id: 1}, {head_sha: 'not-a-sha'}, {head_branch: 'other'}, {event: 'pull_request'},
+    {path: '.github/workflows/release.yml'}, {created_at: '2026-10-29T17:43:43Z'},
+    {repository: {full_name: 'other/repo'}}, {head_repository: {full_name: 'other/repo'}}])
+    await expect(nightlySource(changes).service.resolveNightly(originalOccurrence, 'Mentra-Community/Mentra')).rejects.toMatchObject({status: 409});
 });
-test('missing, reordered, cyclic or wrong-ref branch history cannot fall back to current main', async () => {
-  for (const rows of [[], [delayed()[1]!], delayed().reverse(),
-    [delayed()[0]!, {...delayed()[1]!, after: side}],
-    [{...delayed()[0]!, before: nextMain}],
-    [{...delayed()[0]!, ref: 'refs/heads/other'}],
-    [{...delayed()[0]!, id: 1}, delayed()[1]!]]) {
-    await expect(historyGateway([rows]).service.resolve(undefined, boundary)).rejects.toMatchObject({status: 503});
+test('missing or conflicting original identity and unsupported repository are rejected without branch history', async () => {
+  const f = nightlySource();
+  for (const occurrence of [{...originalOccurrence, workflowRunId: 1}, {...originalOccurrence, startedAt: 'invalid'},
+    {...originalOccurrence, occurrenceId: 'not-a-run'}, {...originalOccurrence, workflowRunId: Number.MAX_SAFE_INTEGER + 1}])
+    await expect(f.service.resolveNightly(occurrence, 'Mentra-Community/Mentra')).rejects.toMatchObject({status: expect.any(Number)});
+  await expect(f.service.resolveNightly(originalOccurrence, 'Mentra-Community/Mentra-Automated-Testing')).rejects.toMatchObject({status: 400});
+});
+test('scheduled source uses the original workflow even when delivery is delayed', async () => {
+  const f = nightlySource({event: 'schedule', created_at: '2026-10-29T13:14:00Z'});
+  expect(await f.service.resolveNightly({occurrenceId: 'nightly-dev-2026-10-29', startedAt: '2026-10-29T13:00:00Z',
+    trigger: 'nightly', workflowRunId: 40924073359}, 'Mentra-Community/Mentra')).toBe(workflowSource);
+  for (const created_at of ['2026-10-29T12:59:59Z'])
+    await expect(nightlySource({event: 'schedule', created_at}).service.resolveNightly({occurrenceId: 'nightly-dev-2026-10-29',
+      startedAt: '2026-10-29T13:00:00Z', trigger: 'nightly', workflowRunId: 40924073359}, 'Mentra-Community/Mentra')).rejects.toMatchObject({status: 409});
+});
+test('late scheduled source remains resolvable; the original occurrence deadline decides not-run', async () => {
+  expect(await nightlySource({event: 'schedule', created_at: '2026-10-29T19:00:00Z'}).service.resolveNightly({
+    occurrenceId: 'nightly-dev-2026-10-29', startedAt: '2026-10-29T13:00:00Z', trigger: 'nightly',
+    workflowRunId: 40924073359}, 'Mentra-Community/Mentra')).toBe(workflowSource);
+});
+test('nightly source token and response waits remain bounded', async () => {
+  for (const phase of ['authentication', 'response']) {
+    const controller = new AbortController(), timeout = spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+    let entered!: () => void; const started = new Promise<void>(resolve => {entered = resolve;});
+    try {
+      const service = new GithubRoutineSourceGateway({async token(scope) {
+        expect(scope).toBe('private'); if (phase === 'authentication') {entered(); return new Promise<string>(() => {});} return 'private';
+      }}, async () => {entered(); return new Promise<Response>(() => {});});
+      const result = service.resolveNightly(originalOccurrence, 'Mentra-Community/Mentra'); await started; controller.abort();
+      await expect(result).rejects.toMatchObject({status: 503});
+    } finally {timeout.mockRestore();}
   }
-});
-test('rewrites, deletion, creation and unknown activity cannot establish canonical historical main', async () => {
-  for (const activity_type of ['force_push', 'branch_deletion', 'branch_creation', 'unknown']) {
-    await expect(historyGateway([[{...delayed()[0]!, activity_type}, delayed()[1]!]])
-      .service.resolve(undefined, boundary)).rejects.toMatchObject({status: 503});
-  }
-  for (const comparison of [{status: 'diverged', base_commit: {sha: oldMain}, merge_base_commit: {sha: side}},
-    {status: 'ahead', base_commit: {sha: side}, merge_base_commit: {sha: oldMain}},
-    {status: 'ahead', base_commit: {sha: oldMain}, merge_base_commit: {sha: side}}, {}]) {
-    await expect(historyGateway([delayed()], {comparison}).service.resolve(undefined, boundary)).rejects.toMatchObject({status: 503});
-  }
-});
-test('second-resolution boundary transitions fail closed, including later millisecond boundaries', async () => {
-  for (const at of [boundary, '2026-10-17T11:00:00.900Z']) {
-    await expect(historyGateway([[{...delayed()[0]!, timestamp: boundary}]]).service.resolve(undefined, at))
-      .rejects.toMatchObject({status: 503});
-  }
-});
-test('unavailable authority and unsafe or repeated cursor stop within bounded history', async () => {
-  for (const fail of ['/commits/main', '/activity?', '/compare/'])
-    await expect(historyGateway([delayed()], {fail}).service.resolve(undefined, boundary)).rejects.toMatchObject({status: 503});
-  for (const link of [null, '<https://other.example/activity?after=cursor>; rel="next"',
-    '<https://api.github.com/repos/Mentra-Community/Mentra-Automated-Testing/activity?ref=refs%2Fheads%2Fother&after=cursor>; rel="next"',
-    '<https://api.github.com/repositories/123/activity?ref=refs%2Fheads%2Fmain>; rel="next"'])
-    await expect(historyGateway([[delayed()[0]!]], {link}).service.resolve(undefined, boundary)).rejects.toMatchObject({status: 503});
-  const rows = Array.from({length: 4}, (_, index) => activity(10 - index, String(index + 4).repeat(40),
-    index ? String(index + 3).repeat(40) : nextMain, `2026-10-17T11:0${5-index}:00Z`));
-  const f = historyGateway(rows.map(row => [row]));
-  await expect(f.service.resolve(undefined, boundary)).rejects.toMatchObject({status: 503});
-  expect(f.calls.filter(url => url.includes('/activity?'))).toHaveLength(3);
-  const repeated = historyGateway([[rows[0]!], [rows[1]!]], {
-    link: '<https://api.github.com/repositories/123/activity?ref=refs%2Fheads%2Fmain&after=same>; rel="next"'});
-  await expect(repeated.service.resolve(undefined, boundary)).rejects.toMatchObject({status: 503});
-});
-test('invalid historical boundary or mixed exact source input is refused before GitHub reads', async () => {
-  const f = historyGateway([delayed()]);
-  await expect(f.service.resolve(undefined, 'invalid')).rejects.toMatchObject({status: 400});
-  await expect(f.service.resolve(oldMain, boundary)).rejects.toMatchObject({status: 400});
-  expect(f.calls).toHaveLength(0);
-});
-test('the shared source deadline bounds authentication and non-cooperative history responses', async () => {
-  const controller = new AbortController(), timeout = spyOn(AbortSignal, 'timeout').mockImplementation(ms => {
-    expect(ms).toBe(20_000); return controller.signal;
-  });
-  let entered!: () => void;
-  const started = new Promise<void>(resolve => {entered = resolve;});
-  try {
-    const service = new GithubRoutineSourceGateway({async token() {entered(); return new Promise<string>(() => {});}},
-      async () => {throw new Error('No request is allowed after expired authentication');});
-    const work = service.resolve(undefined, boundary); await started; controller.abort();
-    await expect(work).rejects.toMatchObject({status: 503});
-  } finally {timeout.mockRestore();}
-  const remote = new AbortController(), second = spyOn(AbortSignal, 'timeout').mockReturnValue(remote.signal);
-  let requested!: () => void;
-  const request = new Promise<void>(resolve => {requested = resolve;});
-  try {
-    const service = new GithubRoutineSourceGateway({async token() {return 'private';}}, async (_url, init) => {
-      expect(init.signal).toBe(remote.signal); requested(); return new Promise<Response>(() => {});
-    });
-    const work = service.resolve(undefined, boundary); await request; remote.abort();
-    await expect(work).rejects.toMatchObject({status: 503});
-  } finally {second.mockRestore();}
 });

@@ -103,17 +103,17 @@ test('canonical inventory descends testing and keeps verified archive paths and 
   await expect(source.inventory('e'.repeat(40), canonical.repository)).rejects.toThrow('testing directory');
 });
 
-test('historical canonical selection uses dev activity and refuses another branch', async () => {
-  const calls: string[] = []; let ref = canonical.ref;
-  const source = new GithubRoutineSourceGateway({async token() {return 'token';}}, async url => {
-    calls.push(url);
-    if (url.endsWith('/commits/dev')) return Response.json({sha: revision});
-    return Response.json([{id: 2, ref, before: 'e'.repeat(40), after: revision, timestamp: '2026-10-24T00:00:00Z', activity_type: 'push'}]);
+test('canonical nightly source uses the exact dev workflow without branch history', async () => {
+  const calls: string[] = []; let branch = 'dev';
+  const source = new GithubRoutineSourceGateway({async token(scope) {expect(scope).toBe('private'); return 'token';}}, async url => {
+    calls.push(url); return Response.json({id: 123, head_sha: revision, head_branch: branch, event: 'workflow_dispatch',
+      path: '.github/workflows/nightly-device-routines.yml', created_at: '2026-10-24T00:01:00Z',
+      repository: {full_name: canonical.repository}, head_repository: {full_name: canonical.repository}});
   });
-  expect(await source.resolve(undefined, '2026-10-24T00:01:00Z', canonical.repository)).toBe(revision);
-  expect(calls.some(url => url.includes('activity?ref=refs%2Fheads%2Fdev'))).toBe(true);
-  ref = 'refs/heads/main' as typeof ref;
-  await expect(source.resolve(undefined, '2026-10-24T00:01:00Z', canonical.repository)).rejects.toThrow('history');
+  const occurrence = {occurrenceId: 'manual-dev-123', startedAt: '2026-10-24T00:01:00Z', trigger: 'manual' as const};
+  expect(await source.resolveNightly(occurrence, canonical.repository)).toBe(revision);
+  expect(calls).toEqual(['https://api.github.com/repos/Mentra-Community/Mentra/actions/runs/123']);
+  branch = 'main'; await expect(source.resolveNightly(occurrence, canonical.repository)).rejects.toMatchObject({status: 409});
 });
 
 test('explicit canonical bundle and collection provenance survives legacy default without relabeling omitted metadata', async () => {

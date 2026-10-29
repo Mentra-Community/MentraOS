@@ -33,7 +33,7 @@ test("a pre-selection 403 retains all 27 original members in suite detail, index
     const forbidden = async () => {admissionCalls++; throw new Error("Unexpected admission or native evidence read");};
     const nightly = new NightlyRoutineService({async selection() {return Array.from({length: 27}, (_, i) => ({routineId: `original-${i}`, platform: i % 2 ? "ios-on-mac" : "android"}));}} as any,
       gateway, {get: forbidden}, nightlyPlanRepository, {summary: forbidden}, () => Date.parse(finishedAt), () => {},
-      {async resolve(_source, boundary) {expect(boundary).toBe(occurrence.startedAt); return revision;}},
+      {async resolveNightly(original) {expect(original.startedAt).toBe(occurrence.startedAt); return revision;}},
       {submitFrozen: forbidden, cancelFrozen: forbidden, cancel: forbidden} as any);
     const {plan} = await nightly.start(occurrence), result = await nightly.complete(occurrence.occurrenceId);
     expect(plan.suite).toBeUndefined(); expect(plan.publication).toBeUndefined(); expect(stored.payload).toBeUndefined();

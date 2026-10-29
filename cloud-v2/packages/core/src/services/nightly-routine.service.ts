@@ -20,7 +20,7 @@ import {RoutineJobService, routineJobInputDigest} from "./routine-job.service";
 import {NIGHTLY_COMPLETION_BOUNDARY_REASON, nightlyUnassignedReason} from "./nightly-deadline-reason";
 
 export const nightlyOccurrenceSchema = z.object({occurrenceId: frameworkIdentitySchema,
-  startedAt: z.string().datetime({offset: true}), trigger: z.enum(["nightly", "manual"])}).strict();
+  startedAt: z.string().datetime({offset: true}), trigger: z.enum(["nightly", "manual"]), workflowRunId: z.number().int().positive().safe().optional()}).strict();
 type Occurrence = z.infer<typeof nightlyOccurrenceSchema>;
 const nightlyCancellationSchema = z.object({requestedAt: z.string().datetime({offset: true}), reason: z.string().min(1).max(2000)}).strict();
 export type NightlyCancellation = z.infer<typeof nightlyCancellationSchema>;
@@ -129,7 +129,7 @@ export class NightlyRoutineService {
     private readonly now: () => number = Date.now,
     private readonly logSelectionError: (error: unknown, context: {occurrenceId: string; platform: TestBuildPlatform; stage: NightlySelectionError["stage"]}) => void
       = (error, context) => logger.error({err: error, ...context}, "Nightly selection failed"),
-    private readonly sources: Pick<GithubRoutineSourceGateway, "resolve"> = new GithubRoutineSourceGateway(),
+    private readonly sources: Pick<GithubRoutineSourceGateway, "resolveNightly"> = new GithubRoutineSourceGateway(),
     private readonly jobs: Pick<RoutineJobService, "submitFrozen" | "cancelFrozen" | "cancel"> = new RoutineJobService()) {}
 
   private selectionError(error: unknown, stage: NightlySelectionError["stage"], occurrenceId: string, platform: TestBuildPlatform): NightlySelectionError {
@@ -145,7 +145,9 @@ export class NightlyRoutineService {
     const occurrence = parsed.data, suiteId = nightlySuiteId(occurrence.occurrenceId);
     let plan = await this.repository.get(suiteId);
     if (!plan) plan = await this.repository.freeze(await this.select(occurrence, suiteId));
-    if (requestInputDigest({occurrenceId: plan.occurrenceId, startedAt: plan.startedAt, trigger: plan.trigger}) !== requestInputDigest(occurrence))
+    if (requestInputDigest({occurrenceId: plan.occurrenceId, startedAt: plan.startedAt, trigger: plan.trigger}) !== requestInputDigest({occurrenceId: occurrence.occurrenceId, startedAt: occurrence.startedAt, trigger: occurrence.trigger})
+      || occurrence.workflowRunId !== undefined && occurrence.workflowRunId !== (plan.workflowRunId
+        ?? Number(/^manual-dev-([1-9]\d*)$/.exec(plan.occurrenceId)?.[1])))
       throw new TestRunError(409, "Occurrence retry changed its original trigger or boundary");
     if (await this.repository.completed(suiteId)) return {plan, admissions: []};
     // Each member is independent. A failed queue write is retried with its original immutable request ID/intent.
@@ -176,7 +178,7 @@ export class NightlyRoutineService {
       .map(row => ({routineId: row.routineId, platform: row.platform}));
     if (catalog.length > 100) throw new TestRunError(503, "Nightly catalog exceeds the occurrence bound; no members were selected");
     const routineRepository = configuredTestingTarget().repository;
-    const routineRevision = catalog.length ? await this.sources.resolve(undefined, occurrence.startedAt, routineRepository) : undefined;
+    const routineRevision = catalog.length ? await this.sources.resolveNightly(occurrence, routineRepository) : undefined;
     const platforms = [...new Set(catalog.map(row => row.platform))].sort();
     const selected = new Map<TestBuildPlatform, PlatformSelection>();
     const builds = this.builds.forSelection?.(occurrence.startedAt) ?? this.builds;
