@@ -131,13 +131,28 @@ jobs:
           --output promotion-input/finalizing.json
           --github-output "$GITHUB_OUTPUT"
 
+      # GITHUB_TOKEN can never hold the workflows permission, so GitHub checks
+      # each new release's workflow files against the default branch (dev).
+      # Main follows staging, which has diverged far from dev, and that check
+      # times out as HTTP 403. The release coordinator App's token holds the
+      # permission and skips it, as in coordinated-release.yml.
+      - name: Mint release token
+        id: release-token
+        if: inputs.action == 'complete'
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Stage canonical production plan and manifest in the stable draft
         if: inputs.action == 'complete'
         id: stable
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
           ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
         run: |
           set -euo pipefail
           record=promotion-input/finalizing.json

@@ -1389,6 +1389,10 @@ test("release tags are created with the release coordinator App token", () => {
     ["reusable-coordinated-runtime-image.yml", "Publish persistent installer downloads"],
     ["coordinated-release.yml", "Tag and verify the completed release set"],
     ["coordinated-release.yml", "Publish direct app downloads from the completed release"],
+    ["production-release-prepare.yml", "Allocate append-only promotion container"],
+    ["production-release-rollout.yml", "Stage canonical production plan and manifest in the stable draft"],
+    ["production-release-packages.yml", "Allocate or reuse the stable release container"],
+    ["production-release-example.yml", "Allocate or reuse the stable release container"],
   ]
   for (const [file, name] of steps) {
     const source = workflow(file)
