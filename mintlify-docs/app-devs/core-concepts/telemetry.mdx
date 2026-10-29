@@ -1,0 +1,175 @@
+---
+title: "Report telemetry from your miniapp"
+description: "Capture your miniapp's own events and see them in your organization's Fleet Management."
+icon: "chart-line"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+`session.telemetry` lets your miniapp report its own events, such as a call
+starting or a task finishing, with a few flat properties. Your organization sees
+them in Fleet Management in Mentra Portal, with no dashboard to build: you only
+capture events.
+
+```typescript src/background/index.ts
+session.telemetry.capture("call_ended", {
+  platform: "teams",
+  mode: "joined",
+  duration_s: 312,
+  outcome: "completed",
+});
+```
+
+## Capture an event
+
+`capture(event, properties?)` takes an event name and, optionally, an object of
+properties. It sends a one-shot message to the Mentra App and returns nothing:
+it never throws and never waits for the Mentra App, so you can call it anywhere
+without `await` or `try`.
+
+```typescript
+session.telemetry.capture(event: string, properties?: Record<string, string | number | boolean>): void
+```
+
+- Capture from your miniapp's background code, through `session`. Only the
+  phone-side Mentra Miniapp SDK captures events; your miniapp's own backend
+  can't send them.
+- No [permission](/app-devs/core-concepts/permissions) or
+  [manifest](/app-devs/core-concepts/miniapp-manifest) entry is needed.
+- The Mentra App attributes each event to the miniapp that sent it, with its
+  installed version.
+- Delivery is best effort. Events captured while the phone is offline wait on
+  the phone and go later, but the phone keeps only a limited number of them, for
+  up to seven days: when that space runs out the oldest give way, and events
+  that wait too long expire. Events are only delivered when the organization's
+  Fleet Management is on. What the phone loses is counted, and Fleet Management
+  shows those counts beside your events.
+
+### Older Mentra Apps
+
+On a Mentra App that doesn't support telemetry, `capture` does nothing. Call it
+the same way everywhere; you don't need to check first.
+
+If you do need to know, for example to hide a setting that only makes sense with
+telemetry, read `session.hostFeatures?.telemetry`. It is `true` when the Mentra
+App supports it. This is optional, and it says the app takes events, not that
+each one will be delivered.
+
+```typescript
+if (session.hostFeatures?.telemetry) {
+  // this Mentra App takes telemetry
+}
+```
+
+## Limits
+
+The Mentra App checks each event before it queues it. What breaks a limit is
+dropped or cut, never sent as is, and your miniapp isn't told.
+
+| Limit | Over the limit |
+|---|---|
+| Event name: 1–64 lowercase letters, digits and underscores, starting with a letter | The event is dropped. |
+| Property name: the same rule | The property is dropped. |
+| Value: a finite number, a boolean or a string, with no nesting | Any other value drops its property. |
+| String value: at most 64 characters | It is cut to 64 characters. |
+| At most 25 properties | The first 25, in the order given, are kept. |
+| Rate: 60 events a minute and 2,000 a day, per miniapp per phone | The event is dropped. |
+
+What Fleet Management shows is capped too:
+
+- your miniapp's first 100 event names;
+- for each event, its 50 most frequent properties;
+- for each property, its 50 most frequent values, with the rest shown as
+  "Other".
+
+Everything dropped, cut or rolled up is counted, and Fleet Management shows
+those counts beside your events. Design events with few names and properties,
+and values from a short, fixed list: `"failed"` rather than an error message.
+
+## No personal data
+
+Telemetry must not contain personal data:
+
+- no names, emails or phone numbers;
+- no free text a person typed;
+- no content: nothing of what was said, seen or written.
+
+Report what happened and how, never who or what about. Nothing checks the
+shape of your events, so this is a rule, not a technical guarantee. Mentra's own
+miniapps are reviewed against it.
+
+<Note>
+The Mentra App's own analytics setting doesn't apply to these events. They go to
+the organization's Fleet Management, not to Mentra's product analytics.
+</Note>
+
+## Where events show up
+
+Events appear in the workspace's Fleet Management in Mentra Portal, on your
+miniapp's page under **Usage → Events**, for the workspace's admins and owners.
+A private miniapp from another organization appears there only as a numbered
+"Private miniapp", with no events.
+
+Fleet Management works out how to show each property from its values:
+
+- an event shows its count over time;
+- a number shows its average, with approximate percentiles;
+- a string or a boolean shows a breakdown by value.
+
+Names are made readable: `call_started` shows as "Call started", and a `_s`
+suffix is read as seconds, so `duration_s` shows as a duration.
+
+## Example: a calling miniapp
+
+A miniapp that joins video calls reports one `call_started` and one
+`call_ended` per call:
+
+| Event | Property | Values |
+|---|---|---|
+| `call_started` | `platform` | `"teams"`, `"meet"` or `"zoom"` |
+| | `mode` | `"joined"` or `"created"` |
+| `call_ended` | `platform` | as above |
+| | `mode` | as above |
+| | `duration_s` | Connected call time, in whole seconds |
+| | `outcome` | `"completed"`, `"dropped"` (lost after connecting) or `"failed"` (never connected) |
+| | `reason` | For a failed call only: `"network"`, `"permission"`, `"meeting_unavailable"`, `"audio_device"` or `"unknown"` |
+
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
+
+type Platform = "teams" | "meet" | "zoom";
+type Mode = "joined" | "created";
+type FailureReason = "network" | "permission" | "meeting_unavailable" | "audio_device" | "unknown";
+
+registerMiniapp((session) => {
+  // Call these from your own call handling.
+  function callStarted(platform: Platform, mode: Mode) {
+    session.telemetry.capture("call_started", { platform, mode });
+  }
+
+  function callEnded(
+    platform: Platform,
+    mode: Mode,
+    connectedMs: number,
+    outcome: "completed" | "dropped" | "failed",
+    reason?: FailureReason,
+  ) {
+    session.telemetry.capture("call_ended", {
+      platform,
+      mode,
+      duration_s: Math.round(connectedMs / 1000),
+      outcome,
+      ...(outcome === "failed" ? { reason: reason ?? "unknown" } : {}),
+    });
+  }
+
+  // ...
+});
+```
+
+The meeting's title, link and participants stay out: they are content and
+personal data. A `call_started` with no `call_ended` can mean a call the phone
+lost, for example to a crash, but also an event that was dropped on the way:
+read it alongside the loss counts.
