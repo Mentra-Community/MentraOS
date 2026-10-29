@@ -287,6 +287,23 @@ const store = () => clientFor("store", "store-s1")
 const fleet = () => clientFor("fleet", "fleet-f1")
 
 describe("staging administrative license resets", () => {
+  test("a failed first delivery stays retired after reset while a genuinely new purchase still works", async () => {
+    const previous = process.env.CLOUD_CORE_ENVIRONMENT
+    process.env.CLOUD_CORE_ENVIRONMENT = "staging"
+    try {
+      const target = await newWorkspace("First delivery still pending")
+      const delayed = licenseWrite({type: "workspace", workspaceId: target.workspaceId}, {assignTo: {mentraUserId: target.owner.mentraUserId}})
+      expect(await licenseRow(delayed.licenseId)).toBeNull()
+      await finishLicenseReset(actorOf(target.owner, true), target.workspaceId, "Restart pending checkout test", {licenseIds: [delayed.licenseId], canceledSubscriptions: 1, expiredCheckouts: 0})
+      await expectClientError(store().putLicense(delayed), "owner_not_found", 404)
+      expect(await licenseRow(delayed.licenseId)).toBeNull()
+      expect(await seatsOf(delayed.licenseId)).toHaveLength(0)
+      const fresh = await workspaceLicense(target.workspaceId, {assignTo: {mentraUserId: target.owner.mentraUserId}})
+      expect(await seatsOf(fresh.licenseId)).toHaveLength(1)
+    } finally {
+      if (previous === undefined) delete process.env.CLOUD_CORE_ENVIRONMENT; else process.env.CLOUD_CORE_ENVIRONMENT = previous
+    }
+  })
   test("ends only the target's licenses, releases seats, preserves members and rejects delayed writes", async () => {
     const previous = process.env.CLOUD_CORE_ENVIRONMENT
     process.env.CLOUD_CORE_ENVIRONMENT = "staging"

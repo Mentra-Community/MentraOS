@@ -441,7 +441,9 @@ and `CLOUD_CORE_ENVIRONMENT=staging`; other deployments refuse them.
 Core asks the staging Store to cancel test subscriptions and expire unfinished checkouts before ending any licenses.
 The Store independently requires its staging environment and test payment mode. Core then ends licenses and releases
 their assignments transactionally, recording `workspace.licenses.reset`, the actor, and the reason. License records
-remain as `admin_reset` tombstones so delayed billing writes cannot restore them. Members, ownership, credentials,
+remain as `admin_reset` tombstones, and every returned billing ID is retired on the workspace, including IDs whose
+first delivery has not arrived. License writes check that retirement in their workspace transaction so delayed billing
+writes cannot restore access. Members, ownership, credentials,
 and the workspace remain intact, and new purchases are allowed. The admin action log also records reset requests,
 including attempts that fail partway through billing. A failed attempt may already have canceled some subscriptions;
 retrying safely finishes the action. If a new license arrives outside the canceled snapshot, cleanup refuses and asks

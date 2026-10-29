@@ -2,6 +2,7 @@
 import {withTransaction} from "../../connections/mongo.connection"
 import {LicenseModel} from "../../models/license.model"
 import {LicenseSeatModel} from "../../models/license-seat.model"
+import {WorkspaceModel} from "../../models/workspace.model"
 import {recordWorkspaceEvent} from "../workspaces/audit.service"
 import {fail} from "../workspaces/workspace-error"
 import {auditActor, getWorkspace, touchWorkspace, type Actor} from "../workspaces/workspace.service"
@@ -38,6 +39,9 @@ export async function finishLicenseReset(actor: Actor, workspaceId: string, reas
     const live = await LicenseModel.find({"owner.workspaceId": workspaceId, endedAt: null}).session(session).lean()
     const known = new Set(billing.licenseIds)
     if (live.some(row => !known.has(row._id))) fail("membership_changed", "workspace billing changed during the reset; retry safely")
+    // Retire every billing ID, including failed or in-flight first deliveries. Crossing license writes
+    // touch this same workspace document, so their transaction retries and observes the retirement.
+    await WorkspaceModel.updateOne({workspaceId, status: "active"}, {$addToSet: {retiredLicenseIds: {$each: billing.licenseIds}}}, {session})
     const assignments = await LicenseSeatModel.countDocuments({workspaceId}).session(session)
     const ended = await endLicensesForOwner(session, {type: "workspace", workspaceId}, "admin_reset", actor)
     await recordWorkspaceEvent(session, {

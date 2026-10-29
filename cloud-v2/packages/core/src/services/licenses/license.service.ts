@@ -270,6 +270,7 @@ async function applyWorkspaceLicenseWrite(
     if (answer) return answer
     const workspace = await WorkspaceModel.findOne({workspaceId}).session(session).lean()
     if (workspace?.status !== "active") fail("owner_not_found", "the workspace is deleted or does not exist")
+    if (workspace.retiredLicenseIds?.includes(write.licenseId)) fail("owner_not_found", "the license was retired by a staging reset")
     // Writing the workspace conflicts with its deletion, so a license never lands after the workspace is gone.
     await touchWorkspace(session, workspaceId)
     if (!(await saveLicense(session, existing, write)))
