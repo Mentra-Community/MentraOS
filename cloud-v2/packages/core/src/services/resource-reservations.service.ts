@@ -856,7 +856,6 @@ export class ResourceReservationsService {
     if (controls.some(row => 'subject' in row.command && visited.has(row.command.subject.resourceId) &&
       (!row.receipt || row.receipt.result.status === 'accepted' &&
         (row.receipt.result.reservation && ['waiting', 'granted', 'returning'].includes(row.receipt.result.reservation.state) ||
-          'check' in row.receipt.result && row.receipt.result.check?.state !== undefined && row.receipt.result.check.state !== 'settled' ||
           manualWithdrawalNeedsRestoration(row as ResourceControlRecord,
             lifecycle.subjects.find(value => value.subject.id === (row.command as ResourceControlRecord['command']).subject.resourceId), host.hostId, true, now)))))
       return undefined
@@ -903,8 +902,6 @@ export class ResourceReservationsService {
       if ((passivePhone || ref.kind === 'recorder') && controls.some(row => 'subject' in row.command && row.command.subject.resourceId === claim.resourceId &&
         (!row.receipt || row.receipt.result.status === 'accepted' &&
           (row.receipt.result.reservation && ['waiting', 'granted', 'returning'].includes(row.receipt.result.reservation.state) ||
-            'check' in row.receipt.result && row.receipt.result.check && row.receipt.result.check.state !== 'settled' &&
-              row.receipt.result.check.operationId !== claim.operationId ||
             manualWithdrawalNeedsRestoration(row as ResourceControlRecord, subject, host.hostId, true, now))))) return undefined
       admitted.add(claim.id)
     }
@@ -1010,7 +1007,6 @@ export class ResourceReservationsService {
     if (records.some(row => ('subject' in row.command ? row.command.subject.resourceId === check.resourceId :
       row.command.laneId === intent.laneId) && (!row.receipt || row.receipt.result.status === 'accepted' &&
         (row.receipt.result.reservation && ['waiting','granted','returning'].includes(row.receipt.result.reservation.state) ||
-          'check' in row.receipt.result && row.receipt.result.check?.state !== undefined && row.receipt.result.check.state !== 'settled' ||
           'subject' in row.command && manualWithdrawalNeedsRestoration(row as ResourceControlRecord, subject, host.hostId, true, now))))) return false
     if (!intent.prerequisite) return ref.idleContract?.version === check.contractVersion &&
       ref.idleContract.qualifiedScope.kind !== 'unqualified'
@@ -1118,7 +1114,6 @@ export class ResourceReservationsService {
     if (controls.some(row => 'subject' in row.command && occupied.has(row.command.subject.resourceId) &&
       (!row.receipt || row.receipt.result.status === 'accepted' &&
         (row.receipt.result.reservation && ['waiting', 'granted', 'returning'].includes(row.receipt.result.reservation.state) ||
-          'check' in row.receipt.result && row.receipt.result.check?.state !== undefined && row.receipt.result.check.state !== 'settled' ||
           manualWithdrawalNeedsRestoration(row as ResourceControlRecord,
             lifecycle.subjects.find(subject => subject.subject.id === (row.command as ResourceControlRecord['command']).subject.resourceId), host.hostId, true, now))))) return undefined
     return permitted.size ? permitted : undefined

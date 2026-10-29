@@ -51,8 +51,6 @@ const supportsRepairReopen = (host: LaneControlHost) =>
 const operatorIdentity = (operator: string) => createHash('sha256').update(`admin-lane:${operator}`).digest('hex')
 const activeReservation = (row: ControlRecord) => row.receipt?.result.status === 'accepted' &&
   row.receipt.result.reservation && ['waiting', 'granted', 'returning'].includes(row.receipt.result.reservation.state)
-const activeCheck = (row: ControlRecord) => 'subject' in row.command && row.receipt?.result.status === 'accepted' &&
-  'check' in row.receipt.result && row.receipt.result.check && row.receipt.result.check.state !== 'settled'
 const delivered = (row: ControlRecord) => row.receipt !== undefined
 const isLane = (row: ControlRecord): row is LaneControlRecord => 'laneId' in row.command
 const isResource = (row: ControlRecord): row is ResourceControlRecord => 'subject' in row.command
@@ -69,7 +67,7 @@ function pendingRestorationSlot(records:ControlRecord[],host:LaneControlHost,now
     (!delivered(row)||retainedRestriction(row,host,now)));
   if(!restrictions.length)return 0;
   const lifecycle=resourceLifecycleCurrentSchema.safeParse(host.snapshot.resourceLifecycle);
-  return records.some(row=>isResource(row)&&row.command.action==='check'&&(!delivered(row)||activeCheck(row))&&
+  return records.some(row=>isResource(row)&&row.command.action==='check'&&!delivered(row)&&
     restrictions.some(marker=>{
       const markedGeneration=marker.receipt?.result.status==='accepted'?marker.receipt.result.resource?.generation:undefined;
       const currentGeneration=lifecycle.success?lifecycle.data.subjects.find(value=>value.subject.id===marker.command.subject.resourceId)?.generation:undefined;
@@ -164,7 +162,7 @@ export class LaneControlsService {
         reservation.id !== input.reservation!.id || reservation.generation !== input.reservation!.generation))
         throw new TestRunError(409, 'Release requires your current waiting or granted resource reservation')
       const row = resourceControlRecordSchema.parse({command: {...input, operatorId}, ...(operatorLabel && input.action === 'reserve' ? {operatorLabel} : {})}),
-        unresolved = records.filter(row => !delivered(row) || activeReservation(row) || activeCheck(row) || retainedRestriction(row,host,this.now())),
+        unresolved = records.filter(row => !delivered(row) || activeReservation(row) || retainedRestriction(row,host,this.now())),
         returnSlots = pendingReturnSlots([...records, row])+pendingRestorationSlot([...records,row],host,this.now()), space = Math.max(0, 99 - unresolved.length - returnSlots),
         recent = space ? records.filter(row => !unresolved.includes(row)).slice(-space) : [],
         retained = records.filter(row => unresolved.includes(row) || recent.includes(row));
@@ -209,7 +207,7 @@ export class LaneControlsService {
       const row = laneControlRecordSchema.parse({command: {...input, operatorId},
         ...(input.action === 'reserve' && operatorLabel ? {operatorLabel} : {})})
       const returnSlots = pendingReturnSlots([...records, row])+pendingRestorationSlot([...records,row],host,this.now())
-      const unresolved = records.filter(row => !delivered(row) || activeReservation(row) || activeCheck(row) || retainedRestriction(row,host,this.now()))
+      const unresolved = records.filter(row => !delivered(row) || activeReservation(row) || retainedRestriction(row,host,this.now()))
       const remaining = Math.max(0, 99 - unresolved.length - returnSlots)
       const recent = remaining ? records.filter(row => !unresolved.includes(row)).slice(-remaining) : []
       const retained = records.filter(row => unresolved.includes(row) || recent.includes(row))
@@ -258,7 +256,7 @@ export class LaneControlsService {
         return {...row, restoredBy}
       })
       return {records: reconciled, resourceAuthority: acceptedRestoration, result: {schemaVersion: 1 as const,
-        commands: reconciled.filter(row => !delivered(row) || activeReservation(row) || activeCheck(row)).map(row => row.command)}}
+        commands: reconciled.filter(row => !delivered(row) || activeReservation(row)).map(row => row.command)}}
     })
   }
 }

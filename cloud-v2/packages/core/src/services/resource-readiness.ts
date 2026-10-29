@@ -55,9 +55,7 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
   const records = reconcileControls(z.array(z.union([laneControlRecordSchema, resourceControlRecordSchema])).max(100).parse(host.resourceControlRecords ?? []))
   const relevant = records.filter((row): row is ResourceControlRecord => 'subject' in row.command && row.command.subject.resourceId === resourceId)
   if (relevant.some(row => !row.receipt || row.receipt.result.status === 'accepted' &&
-    (row.receipt.result.reservation && ['waiting', 'granted', 'returning'].includes(row.receipt.result.reservation.state) ||
-      row.receipt.result.check && !['settled', 'unknown'].includes(row.receipt.result.check.state)))) return {code: 'resource-operator-restriction' as const, resourceId}
-  const unknownChecks = relevant.filter(row => row.receipt?.result.status === 'accepted' && row.receipt.result.check?.state === 'unknown')
+    row.receipt.result.reservation && ['waiting', 'granted', 'returning'].includes(row.receipt.result.reservation.state))) return {code: 'resource-operator-restriction' as const, resourceId}
   const raw = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === resourceId)
   const parsed = resourceLifecycleSubjectSchema.safeParse(raw), subject = parsed.success ? parsed.data : undefined
   const previous = host.resourceLifecycleCursor === undefined ? undefined : resourceLifecycleCurrentSchema.parse(host.resourceLifecycleCursor)
@@ -80,7 +78,7 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
   // phone check and its exact returned positive can tolerate an unknown phone.
   // Ordinary callers must supply that original candidate proof for the phone.
   if (allowUnchecked && subject.status === 'unknown' && ['unknown', 'not-checked'].includes(subject.idle.outcome))
-    return unknownChecks.length ? {code: 'resource-operator-restriction' as const, resourceId} : undefined
+    return undefined
   const checked = Date.parse(subject.idle.checkedAt ?? ''), accepted = Date.parse(subject.idle.acceptedCheck?.acceptedAt ?? '')
   // Passed physical facts remain tied to the current generation, installed
   // contract and unowned custody. The authenticated host report stays fresh.
@@ -89,16 +87,6 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
     Number.isFinite(accepted) && accepted >= checked && accepted <= observed &&
     subject.idle.contractVersion === contract.version && isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope)))
     return {code: 'resource-idle-proof-unavailable' as const, resourceId}
-  // UNKNOWN is the original Check outcome, not permanent custody after a later
-  // authenticated return. Automatic checks use this same accepted baseline.
-  if (unknownChecks.some(row => {
-    const receipt = row.receipt!, prior = receipt.result.status === 'accepted' ? receipt.result.check! : undefined
-    return !(prior && row.command.action === 'check' && row.command.hostId === host.hostId && receipt.hostId === host.hostId &&
-      receipt.operationId === row.command.operationId && prior.operationId === row.command.operationId && prior.resourceId === resourceId &&
-      receipt.subject.resourceId === resourceId && receipt.subject.subjectGeneration === row.command.subject.subjectGeneration &&
-      prior.generation >= row.command.subject.subjectGeneration && subject.generation > prior.generation &&
-      subject.idle.acceptedCheck!.operationId !== prior.operationId)
-  })) return {code: 'resource-operator-restriction' as const, resourceId}
   return undefined
 }
 

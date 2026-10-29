@@ -97,28 +97,19 @@ test('a newer accepted return supersedes an old delayed receipt without ordering
   expect(resourceCandidateBlocker(f.host, id, now)).toBeUndefined()
 })
 
-test.each(['missing-receipt', 'intended', 'active', 'same-generation', 'newer-generation', 'command-host', 'receipt-host',
-  'receipt-operation', 'check-operation', 'receipt-resource', 'check-resource', 'receipt-subject-generation',
-  'check-before-command-generation', 'same-accepted-operation'] as const)(
-  'UNKNOWN supersession refuses %s original authority', changed => {
-    const f = fixture()
-    if (changed === 'missing-receipt') delete f.control.receipt
-    if (changed === 'intended' || changed === 'active') check(f.control).state = changed
-    if (changed === 'same-generation') check(f.control).generation = 1250
-    if (changed === 'newer-generation') check(f.control).generation = 1251
-    if (changed === 'command-host') f.control.command.hostId = 'foreign'
-    if (changed === 'receipt-host') f.control.receipt!.hostId = 'foreign'
-    if (changed === 'receipt-operation') f.control.receipt!.operationId = currentOperation
-    if (changed === 'check-operation') check(f.control).operationId = currentOperation
-    if (changed === 'receipt-resource') f.control.receipt!.subject.resourceId = 'foreign:app'
-    if (changed === 'check-resource') check(f.control).resourceId = 'foreign:app'
-    if (changed === 'receipt-subject-generation') f.control.receipt!.subject.subjectGeneration++
-    if (changed === 'check-before-command-generation') check(f.control).generation = 1237
-    if (changed === 'same-accepted-operation') f.subject.idle.acceptedCheck!.operationId = oldOperation
-    const before = structuredClone(f.host)
-    expect(resourceCandidateBlocker(f.host, id, now)?.code).toBe('resource-operator-restriction')
-    expect(f.host).toEqual(before)
-  })
+test('an undelivered manual check still blocks a conflicting new request', () => {
+  const f = fixture(); delete f.control.receipt
+  expect(resourceCandidateBlocker(f.host, id, now)?.code).toBe('resource-operator-restriction')
+  expect(resourceBlocker(f.host, id, now)?.code).toBe('resource-operator-restriction')
+})
+
+test.each(['intended', 'active', 'unknown', 'settled'] as const)('a completed %s Check receipt never replaces current resource state', state => {
+  const f = fixture(); check(f.control).state = state; check(f.control).generation = f.subject.generation + 1
+  const before = structuredClone(f.host)
+  expect(resourceCandidateBlocker(f.host, id, now)).toBeUndefined()
+  expect(resourceBlocker(f.host, id, now)).toBeUndefined()
+  expect(f.host).toEqual(before)
+})
 
 test.each(['failed', 'unknown', 'not-checked', 'unqualified', 'contract', 'scope', 'accepted-generation', 'missing-accepted',
   'foreign-authority', 'not-current', 'owner', 'repair', 'stale-host', 'future-host', 'observed-after-received',
@@ -147,8 +138,8 @@ test.each(['failed', 'unknown', 'not-checked', 'unqualified', 'contract', 'scope
       else previous.subject.authorityHostId = 'foreign'
       f.host.resourceLifecycleCursor = {schemaVersion: 1, subjects: [previous], history: []}
     }
-    expect(resourceCandidateBlocker(f.host, id, now)).toBeDefined()
-    expect(resourceBlocker(f.host, id, now, true)).toBeDefined()
+    expect(resourceCandidateBlocker(f.host, id, now) === undefined).toBe(changed === 'unknown' || changed === 'not-checked')
+    expect(resourceBlocker(f.host, id, now)).toBeDefined()
   })
 
 test.each(['waiting', 'granted', 'returning'] as const)('an actual %s operator reservation remains restrictive', state => {

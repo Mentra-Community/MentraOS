@@ -54,7 +54,7 @@ test('exact existing dependency claim remains recoverable after new grants are w
  expect(await f.service.acquire(intent,'air')).toEqual(first);expect(f.writes()).toBe(1);
 });
 
-for(const state of ['unacknowledged','waiting','granted','returning','intended','active','unknown'] as const)test(`capability rollback retains original ${state} resource control and refuses a conflicting claim`,async()=>{
+for(const state of ['unacknowledged','waiting','granted','returning'] as const)test(`capability rollback retains original ${state} resource control and refuses a conflicting claim`,async()=>{
  const f=fixture(),host=f.rows.get(authority)!,operationId=randomUUID(),reservation=['waiting','granted','returning'].includes(state);
  host.snapshot.laneControls={schemaVersion:1,receipts:[]};
  const command={operationId,hostId:authority,subject:{resourceId:id,subjectGeneration:7},operatorId:'c'.repeat(64),expiresAt:now-1,
@@ -66,13 +66,13 @@ for(const state of ['unacknowledged','waiting','granted','returning','intended',
  expect(host.resourceReservations).toEqual([]);expect((host.laneControls as ResourceControlRecord[])[0]!.command.operationId).toBe(operationId);
 });
 
-for(const state of ['released','cancelled','settled','refused'] as const)test(`capability rollback preserves ${state} history without blocking unrelated new custody`,async()=>{
+for(const state of ['released','cancelled','settled','refused','intended','active','unknown'] as const)test(`capability rollback preserves ${state} history without blocking unrelated new custody`,async()=>{
  const f=fixture(),host=f.rows.get(authority)!,operationId=randomUUID(),reservation=state==='released'||state==='cancelled';host.snapshot.laneControls={schemaVersion:1,receipts:[]};
  const command={operationId,hostId:authority,subject:{resourceId:id,subjectGeneration:7},operatorId:'c'.repeat(64),expiresAt:now-1,
   action:reservation?'reserve' as const:'check' as const,...(reservation?{purpose:'Original operator reservation'}:{})};
  const result=state==='refused'?{status:'refused' as const,code:'not-supported',reason:'The installed controller refused the original'}:reservation?
   {status:'accepted' as const,reservation:{id:'original',resourceId:id,generation:8,state:state as 'released'|'cancelled',purpose:'Original operator reservation',requestedAt:at}}:
-  {status:'accepted' as const,check:{operationId,resourceId:id,generation:7,state:'settled' as const}};
+  {status:'accepted' as const,check:{operationId,resourceId:id,generation:7,state:state as 'settled'|'intended'|'active'|'unknown'}};
  host.laneControls=[{command,receipt:{operationId,hostId:authority,subject:command.subject,inputSha256:requestInputDigest(command),completedAt:at,result}}];
  expect((await f.service.acquire(intent,'air')).status).toBe('reserved');expect(f.writes()).toBe(1);expect(host.laneControls).toHaveLength(1);
 });

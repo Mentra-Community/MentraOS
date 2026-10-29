@@ -191,12 +191,12 @@ test('pending action fences conflicting resource delivery and forged controller 
   expect(f.rows()[0]?.receipt?.result).toMatchObject({check: {state: 'active'}})
 })
 
-test('unknown check observation stays retained until actual settlement and older active observations cannot revive it', async () => {
+test('acknowledged check diagnostics are retained without redelivering the completed command', async () => {
   const f = fixture(), check = f.input('check'); await f.service.submit(check, 'alice')
   const result = (state: 'active' | 'unknown' | 'settled') => f.receipt(check, {status: 'accepted', check: {
     operationId: check.operationId, resourceId: 'phone-exact', generation: 7, state}})
   await f.service.exchange('air', {schemaVersion: 1, receipts: [result('unknown')]})
-  expect((await f.service.exchange('air', {schemaVersion: 1, receipts: []})).commands).toHaveLength(1)
+  expect((await f.service.exchange('air', {schemaVersion: 1, receipts: []})).commands).toEqual([])
   await f.service.exchange('air', {schemaVersion: 1, receipts: [result('active')]})
   expect(f.rows()[0]?.receipt?.result).toMatchObject({check: {state: 'unknown'}})
   await f.service.exchange('air', {schemaVersion: 1, receipts: [result('settled')]})

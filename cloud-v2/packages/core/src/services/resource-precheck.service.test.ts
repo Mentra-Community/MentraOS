@@ -11,6 +11,49 @@ import {exclusiveResourceIntentSchema, hostResourceReservationsSchema, type Excl
 import {resourceLifecycleSubjectSchema, type ResourceLifecycleHistory} from '../types/resource-lifecycle.types'
 
 const start = Date.parse('2026-10-18T23:00:00Z'), hash = 'a'.repeat(64)
+function completedUnknownControls(f: ReturnType<typeof fixture>) {
+  const now = Date.parse('2026-10-29T13:00:00Z')
+  f.advance(now - start)
+  const subject = f.subject(), check = f.intent.resourceCheck!
+  subject.generation = check.subjectGeneration = 1390
+  subject.status = 'unknown'; subject.idle.outcome = 'not-checked'; subject.idle.acceptedCheck = null
+  check.deadlineAt = now + 60_000
+  const journal = f.host.snapshot.resourceReservations!.resourceChecks![0]!
+  journal.intent = structuredClone(f.intent); journal.resourceCheck = structuredClone(check)
+  journal.observedAt = f.host.snapshot.observedAt
+  journal.intentSha256 = requestInputDigest({...f.intent, controller: {incarnation: f.intent.controller.incarnation, generation: f.intent.controller.generation},
+    dependencies: [{resourceId: check.resourceId, authorityHostId: 'mini', capability: 'resource-idle'}]})
+  f.host.laneControls = [1240, 1253].map((generation, i) => {
+    const operationId = ['d920b80e-1394-421b-9690-96144217a8fd', '5f2d96c8-7ea8-42df-9e87-3835cf2e1e66'][i]!
+    const command = {operationId, hostId: 'mini', subject: {resourceId: check.resourceId, subjectGeneration: generation - 2},
+      operatorId: 'c'.repeat(64), expiresAt: Date.parse('2026-10-25T20:05:00Z'), action: 'check' as const}
+    return {command, receipt: {operationId, hostId: 'mini', subject: command.subject, inputSha256: requestInputDigest(command),
+      completedAt: '2026-10-25T20:01:14.214Z', result: {status: 'accepted' as const,
+        check: {operationId, resourceId: check.resourceId, generation, state: 'unknown' as const}}}}
+  })
+  return f
+}
+
+test('two completed October25 UNKNOWN receipts cannot block current generation1390 unowned precheck', async () => {
+  const f = completedUnknownControls(fixture()), history = structuredClone(f.host.laneControls)
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('reserved')
+  expect(f.writes).toHaveLength(1); expect(f.host.laneControls).toEqual(history)
+})
+
+for (const condition of ['owned', 'checking', 'repair', 'unknown-writer'] as const) test(`completed Check receipts do not bypass current ${condition} custody`, async () => {
+  const f = completedUnknownControls(fixture()), subject = f.subject()
+  if (condition === 'owned') subject.owner = {id: 'current-owner', kind: 'run', generation: 1390, hostId: 'mini', laneId: 'android'}
+  if (condition === 'checking') subject.status = 'checking'
+  if (condition === 'repair') {subject.status = 'in-repair'; subject.repair.state = 'queued'}
+  if (condition === 'unknown-writer') f.host.resourceReservations = [{kind: 'exclusive', id: randomUUID(),
+    resourceId: f.intent.resourceCheck!.resourceId, authorityHostId: 'mini', borrowerHostId: 'mini', laneId: 'android',
+    operationId: 'unknown-writer', intentSha256: hash, inputSha256: hash, owner: {id: 'unknown-writer', kind: 'run'},
+    controllerIncarnation: 'controller', controllerGeneration: 1, borrowerSequence: f.host.sequence, reservedAt: f.host.snapshot.observedAt}]
+  const retained = structuredClone(f.host.resourceReservations)
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+  expect(f.writes).toHaveLength(0); expect(f.host.resourceReservations).toEqual(retained)
+})
+
 function fixture(standalone = false) {
   let debugHistory: ResourceLifecycleHistory[] = []
   let now = start, lost = false, beforeWrite: (() => Promise<void>) | undefined, afterWrite: (() => Promise<void>) | undefined
@@ -758,7 +801,7 @@ test('queued app phone dependency refuses incomplete settlement, running work, f
     f => {f.host.snapshot.frameworkBinding = {...f.intent.resourceCheck!.binding, revision: 'different-source'}},
     f => {f.host.laneControls = [{command: {...f.control('mark-out-of-service'), operatorId: hash, subject: {resourceId: f.app.subject.id, subjectGeneration: f.app.generation}}}]},
     f => {f.host.laneControls = [{command: {...f.control('reserve'), operatorId: hash}}]},
-    f => {const command = {operationId: randomUUID(), hostId: 'mini', expiresAt: Date.parse(f.host.snapshot.observedAt) + 30000, action: 'check' as const,
+    f => {f.app.status = 'checking'; f.app.owner = {id: 'current-manual-check', kind: 'boundary-cleanup', generation: f.app.generation, hostId: 'mini', laneId: 'android'}; const command = {operationId: randomUUID(), hostId: 'mini', expiresAt: Date.parse(f.host.snapshot.observedAt) + 30000, action: 'check' as const,
       subject: {resourceId: f.app.subject.id, subjectGeneration: f.app.generation}, operatorId: hash}
       f.host.laneControls = [{command, receipt: {operationId: command.operationId, inputSha256: hash, hostId: 'mini', subject: command.subject,
         completedAt: f.host.snapshot.observedAt, result: {status: 'accepted', check: {operationId: 'foreign-parent-check', resourceId: f.app.subject.id, generation: f.app.generation, state: 'active'}}}}]},
@@ -865,7 +908,7 @@ test('Android app baseline checks its current phone scope while the stopped fixt
   expect((await f.service.acquire(f.intent, 'mini')).status).toBe('reserved')
   expect(f.host.resourceReservations).toContainEqual(f.claim); expect(f.phone.owner).toBeNull()
 })
-test('phone control withdrawal wins before app baseline even before the raw dependency projection advances', async () => {
+test('pending phone commands and current manual checking prevent conflicting app baseline', async () => {
   for (const action of ['reserve', 'mark-out-of-service', 'check'] as const) for (const accepted of [false, true]) {
     const f = await queuedAndroidFixtureRepair(), operationId = randomUUID(), subject = {resourceId: f.phoneRef.id, subjectGeneration: f.phone.generation},
       command = {operationId, hostId: 'mini', subject, operatorId: hash, expiresAt: start + 60000, action,
@@ -876,6 +919,7 @@ test('phone control withdrawal wins before app baseline even before the raw depe
           {status: 'accepted', check: {operationId, resourceId: f.phoneRef.id, generation: 1, state: 'active'}}
     f.host.laneControls = [{command, ...(accepted ? {receipt: {operationId, hostId: 'mini', subject,
       inputSha256: hash, completedAt: f.host.snapshot.observedAt, result}} : {})}]
+    if (action === 'check' && accepted) {f.phone.status = 'checking'; f.phone.owner = {id: 'current-manual-check', kind: 'boundary-cleanup', generation: f.phone.generation, hostId: 'mini', laneId: 'android'}}
     expect(f.phone.supportedActions).toContain('mark-out-of-service')
     expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
     expect(f.writes).toHaveLength(1); expect(f.host.resourceReservations).toEqual([f.claim])
