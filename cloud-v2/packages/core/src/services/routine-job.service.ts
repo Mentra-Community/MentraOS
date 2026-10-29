@@ -409,8 +409,7 @@ export const routineJobRepository: RoutineJobRepository = {
           owner: {id: requestId, kind: 'run'}, controller: intent.controller,
           resources: requirements.resources.map(required => ({id: lane.resources.find(resource => resource.kind === required.kind)!.id,
             capabilities: [...required.capabilities]}))};
-        if (!isDeepIdentity(intent, expected) || intent.controller.incarnation !== host.incarnation ||
-          intent.controller.generation !== host.incarnationGeneration || !isDeepIdentity(own, selected)) return null;
+        if (!isDeepIdentity(intent, expected) || !isDeepIdentity(own, selected)) return null;
         const authorities = await resourceReservationRepository.claimedHosts!(requestId), checkedAt = Date.now();
         if (!authorities || authorities.length || row.fleetDeadline.getTime() <= checkedAt || !routineResourcesAvailable({hostId: host.hostId,
           incarnation: host.incarnation, incarnationGeneration: host.incarnationGeneration, sequence: host.sequence, receivedAt: hostRow.receivedAt,

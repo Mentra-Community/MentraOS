@@ -1533,8 +1533,9 @@ async function withSelectedMacReservation(body: (f: ReturnType<typeof fixture>, 
   expect(f.row!.fleetResourceAdmission!.dependencies).toEqual([]);await body(f,h,counters);
  });
 }
-test('selected Mac byte claim bypasses re-planning and a redundant host CAS but still atomically binds',async()=>{
+for(const replacement of [false,true])test(`selected Mac byte claim ${replacement?'after controller replacement ':''}bypasses re-planning and a redundant host CAS but still atomically binds`,async()=>{
  await withSelectedMacReservation(async(f,h,counters)=>{
+  if(replacement){h.incarnation=h.snapshot.incarnation='replacement-controller';h.incarnationGeneration=h.snapshot.incarnationGeneration=2;h.sequence=h.snapshot.sequence=2;}
   const row=structuredClone(f.row!),before={...counters},claims=structuredClone(h.resourceReservations);
   const replan=spyOn(ResourceReservationsService.prototype,'reserveFleet'),extraCas=spyOn(TestHostStateModel.collection,'findOneAndUpdate').mockResolvedValue(null as never),bindCas=spyOn(resourceReservationRepository,'replace');
   try {
@@ -1544,11 +1545,13 @@ test('selected Mac byte claim bypasses re-planning and a redundant host CAS but 
    const binding={jobId:row.requestId,requestId:row.requestId,hostId:h.hostId,laneId:'android',descriptorRevision:h.snapshot.lanes[0].descriptorRevision,actionsRunId:'10',actionsJobId:'20',boundAt:h.receivedAt.toISOString()};
    expect((await routineJobRepository.bind(row.requestId,row.fleetInputSha256!,binding,{},h.receivedAt))?.fleetBinding).toEqual(binding);
    expect(bindCas).toHaveBeenCalledTimes(1);expect(h.resourceReservations).toEqual(claims);
+   expect(bindCas.mock.calls[0]![0].incarnation).toBe(h.incarnation);expect(bindCas.mock.calls[0]![0].incarnationGeneration).toBe(h.incarnationGeneration);
+   expect(f.row!.fleetResourceAdmission).toEqual(row.fleetResourceAdmission);
    expect(f.row!.fleetResourceReservation).toEqual(row.fleetResourceReservation);expect(f.row!.fleetDeadline).toEqual(row.fleetDeadline);
   } finally {replan.mockRestore();extraCas.mockRestore();bindCas.mockRestore()}
  });
 });
-for(const changed of ['stale-host','claim-id','claim-input','claim-pool','claim-bytes','missing-claim','foreign-lane-owner','unknown-pool','physical-failure','disk-shortage','staging-shortage','controller','admission-owner','admission-resources','exclusive-custody'] as const)test(`selected Mac claim ${changed} refuses without reallocation`,async()=>{
+for(const changed of ['stale-host','claim-id','claim-input','claim-pool','claim-bytes','missing-claim','foreign-lane-owner','unknown-pool','physical-failure','disk-shortage','staging-shortage','active-writer','admission-owner','admission-resources','exclusive-custody'] as const)test(`selected Mac claim ${changed} refuses without reallocation`,async()=>{
  await withSelectedMacReservation(async(f,h,counters)=>{
   const original=structuredClone(f.row!),at=h.receivedAt.getTime(),claim=h.resourceReservations[0],storage=h.snapshot.lanes[0].resources.find((resource:any)=>resource.kind==='recorder').storage;
   if(changed==='stale-host')h.receivedAt=new Date(at-120001);
@@ -1561,7 +1564,7 @@ for(const changed of ['stale-host','claim-id','claim-input','claim-pool','claim-
   if(changed==='physical-failure')unavailableLocal(h,'out-of-service','app');
   if(changed==='disk-shortage')storage.availableBytes=claim.minimumAvailableBytes-1;
   if(changed==='staging-shortage')storage.stagingBudgetBytes=1024**3-1;
-  if(changed==='controller'){h.incarnation='changed-controller';h.snapshot.incarnation=h.incarnation}
+  if(changed==='active-writer'){h.snapshot.lanes[0].state='running';h.snapshot.lanes[0].activity={generation:7,owner:{id:'active-original',kind:'run',requestId:'active-original'}};}
   if(changed==='admission-owner'){const row=structuredClone(f.row!);row.fleetResourceAdmission!.intent.owner.id='foreign-original';f.restore(row)}
   if(changed==='admission-resources'){const row=structuredClone(f.row!);row.fleetResourceAdmission!.intent.resources.pop();f.restore(row)}
   const before={...counters},claims=structuredClone(h.resourceReservations),claimed=resourceReservationRepository.claimedHosts;
