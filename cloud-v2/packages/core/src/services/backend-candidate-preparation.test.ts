@@ -15,6 +15,8 @@ import {createTestRequestsApi} from '../api/internal/test-requests.api'
 import {TestHostStateModel} from '../models/test-host-state.model'
 import {hostResourceReservationsSchema,isExclusiveHostReservation} from '../types/resource-reservations.types'
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
+import {isDeepStrictEqual} from 'node:util'
+import {resourceIntentDependencies, type ResourceReservationRepository} from './resource-reservations.service'
 
 const initialNow = Date.parse('2026-10-20T12:00:00Z'), hash = (c: string) => c.repeat(64)
 
@@ -309,17 +311,6 @@ for(const phase of ['recorder-read','request-read','host-cas'] as const)for(cons
  }finally{TestRequestModel.collection.findOne=find;TestRequestModel.collection.findOneAndUpdate=write;resourceReservationRepository.get=read;
   resourceReservationRepository.recorderClaims=claims;resourceReservationRepository.replace=replace;clock.mockRestore()}
 });
-for(const elapsed of [1,2])test(`ordinary backend staging after recorder read ignores historical backend age ${119999+elapsed} with a current physical baseline`,async()=>{
- const f=await returnedFixture();f.advance(119999);
- const host=repositoryEnvelope(f),claim=structuredClone(f.row.fleetResourceReservation!),original=structuredClone(f.row);let stages=0;
- const service=new ResourceReservationsService({async request(){return structuredClone(f.row)},async get(){return structuredClone(host)},
-  async recorderClaims(){f.advance(elapsed);return [claim]},async stageBackend(_id,_digest,value){stages++;f.row.fleetResourceAdmission=structuredClone(value);return structuredClone(f.row)},
-  async claimedHosts(){return []},async replace(){throw Error('Unexpected dependency claim')}},()=>f.now);
- const admitted=await service.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,'air1','android');
- expect(qualifiedCandidate(original,host.snapshot,'android',f.now,host.receivedAt)!==undefined).toBe(elapsed===1);
- expect(stages).toBe(1);expect(host.resourceReservations).toEqual([claim]);
- expect(admitted).toBeUndefined();
-});
 for(const phase of ['stage-request','stage-recorder','stage-host','final-stage-request','final-stage-host'] as const)for(const elapsed of [1,2])test(`ordinary backend repository staging ${phase} ignores historical backend age ${119999+elapsed} with a current physical baseline`,async()=>{
  const f=await returnedFixture();f.advance(119999);
  const host=repositoryEnvelope(f),claim=structuredClone(f.row.fleetResourceReservation!),original=structuredClone(f.row),stageNow=f.now;
@@ -340,24 +331,6 @@ for(const phase of ['stage-request','stage-recorder','stage-host','final-stage-r
   expect(host.resourceReservations).toEqual([claim]);expect(f.row.fleetResourceReservation).toEqual(claim);expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);
  }finally{resourceReservationRepository.request=request;resourceReservationRepository.recorderClaims=recorder;resourceReservationRepository.get=get;
   TestRequestModel.collection.findOneAndUpdate=write;clock.mockRestore()}
-});
-for(const phase of ['stage-return','retained-read','claim-request','claim-host','post-cas'] as const)for(const elapsed of [1,2])test(`ordinary backend exclusive admission ${phase} ignores historical backend age ${119999+elapsed} while preserving exact custody`,async()=>{
- const f=await returnedFixture(true);f.advance(119999);
- const host=repositoryEnvelope(f),claim=structuredClone(f.row.fleetResourceReservation!),{receivedAt,authorityReservations,...snapshot}=structuredClone(f.hosts[1]!);
- snapshot.frameworkAcceptedAt=snapshot.observedAt;snapshot.frameworkProcess={pid:124,startedAt:snapshot.observedAt};
- const authority={...structuredClone(host),hostId:'air2',incarnation:'air2-one',resourceReservations:[] as unknown[],receivedAt:new Date(receivedAt),
-  snapshot:hostStateSchema.parse(snapshot)},original=structuredClone(f.row);let requestReads=0,writes=0;
- const service=new ResourceReservationsService({async request(){if(++requestReads===2&&phase==='claim-request')f.advance(elapsed);return structuredClone(f.row)},
-  async get(id){if(id==='air2'&&phase==='claim-host')f.advance(elapsed);return structuredClone(id==='air1'?host:authority)},async recorderClaims(){return [claim]},
-  async stageBackend(_id,_digest,value){f.row.fleetResourceAdmission=structuredClone(value);if(phase==='stage-return')f.advance(elapsed);return structuredClone(f.row)},
-  async claimedHosts(){if(phase==='retained-read')f.advance(elapsed);return []},
-  async replace(_host,next){writes++;authority.resourceReservations=structuredClone(next);if(phase==='post-cas')f.advance(elapsed);return true}},()=>f.now);
- const admitted=await service.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,'air1','android');
- expect(qualifiedCandidate(original,host.snapshot,'android',f.now,host.receivedAt)!==undefined).toBe(elapsed===1);
- expect(writes).toBe(1);expect(authority.resourceReservations).toHaveLength(writes);
- expect(admitted?.claims).toEqual(hostResourceReservationsSchema.parse(authority.resourceReservations).filter(isExclusiveHostReservation));expect(admitted?.intent.owner).toEqual({id:original.requestId,kind:'run'});
- expect(host.resourceReservations).toEqual([claim]);expect(f.row.fleetResourceReservation).toEqual(claim);expect(f.row.fleetResourceAdmission?.intent.hostId).toBe('air1');
- expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations);expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);
 });
 test('current physical baseline permits the same admission without historical APK-backend evidence',async()=>{
  const f=await returnedFixture(),claim=structuredClone(f.row.fleetResourceReservation!);let host=repositoryEnvelope(f);
@@ -446,6 +419,28 @@ function historicalPendingReturn(f: ReturnType<typeof fixture>) {
  f.row.fleetCandidatePreparation=pending;f.row.fleetCandidateSelection=undefined
  return pending
 }
+/** The returned graph's byte receipt was committed together with its admission. */
+function claimedGraphAdmission(f: {row: StoredRoutineJob}, host: ResourceReservationHost) {
+ const receipt=f.row.fleetResourceReservation!;
+ expect(hostResourceReservationsSchema.parse(host.resourceReservations).some(claim=>isDeepStrictEqual(claim,receipt))).toBe(true);
+ const lane=host.snapshot.lanes.find(lane=>lane.id===receipt.laneId)!,intent={operationId:`run:${f.row.requestId}`,hostId:host.hostId,
+  laneId:lane.id,inputSha256:f.row.fleetInputSha256!,owner:{id:f.row.requestId,kind:'run' as const},
+  resources:f.row.fleetPreparation!.requirements.resources.map(required=>({id:lane.resources.find(resource=>resource.kind===required.kind)!.id,capabilities:[...required.capabilities]})),
+  controller:{incarnation:host.incarnation,generation:host.incarnationGeneration,sequence:host.sequence}};
+ f.row.fleetResourceAdmission={intent,dependencies:resourceIntentDependencies(host,intent)};
+}
+/** Isolated repositories commit the request winner and its current claims together. */
+function graphClaimFleet(f: {row: StoredRoutineJob; readonly now: number}, hosts: ResourceReservationHost[], committed?:()=>void): NonNullable<ResourceReservationRepository['claimFleet']> {
+ return async(expected,observed,claims,admission,receipts,_at,borrower)=>{
+  const authority=hosts.find(host=>host.hostId===observed.hostId)!,currentBorrower=borrower&&hosts.find(host=>host.hostId===borrower.hostId);
+  const current=(value:ResourceReservationHost,prior:ResourceReservationHost)=>['incarnation','incarnationGeneration','sequence','laneControlVersion','resourceReservationVersion'].every(key=>isDeepStrictEqual(value[key as keyof ResourceReservationHost],prior[key as keyof ResourceReservationHost]));
+  if(!isDeepStrictEqual(f.row,expected)||f.row.fleetDeadline.getTime()<=f.now||!current(authority,observed)||borrower&&(!currentBorrower||!current(currentBorrower,borrower)))return null;
+  f.row={...f.row,fleetResourceAdmission:structuredClone(admission),...structuredClone(receipts)};
+  authority.resourceReservations=structuredClone(claims);authority.resourceReservationVersion=(authority.resourceReservationVersion??0)+1;
+  if(currentBorrower&&currentBorrower!==authority)currentBorrower.resourceReservationVersion=(currentBorrower.resourceReservationVersion??0)+1;
+  committed?.();return structuredClone(f.row);
+ };
+}
 async function returnedSecondaryGraphFixture(platform: 'android'|'ios-on-mac', exclusive: boolean, logicalWorkspace = false) {
  const f=routingGraphFixture(platform);
  for(const host of f.hosts){
@@ -479,7 +474,7 @@ async function returnedSecondaryGraphFixture(platform: 'android'|'ios-on-mac', e
   kind:'browser',authorityHostId:'air1',subjectGeneration:1,contractVersion:'browser-baseline',capabilities:['relaunch']});
  f.settleGraph('qualified');await f.prepareLegacy('job-one');
  f.row.fleetResourceReservation!.minimumAvailableBytes=recorderCapacityRequirements(f.row.fleetPreparation!).resources.find(ref=>ref.kind==='recorder')!.storage!.minimumAvailableBytes;
- f.hosts[0]!.authorityReservations=[structuredClone(f.row.fleetResourceReservation!)];return f;
+ f.hosts[0]!.authorityReservations=[structuredClone(f.row.fleetResourceReservation!)];claimedGraphAdmission(f,graphRepositoryEnvelope(f));return f;
 }
 const logicalConditions = ['bare', 'metadata', 'contract-only', 'lifecycle-only', 'owner', 'cursor', 'control', 'claim'] as const;
 function logicalCondition(host: ResourceReservationHost, kind: 'network'|'workspace', condition: typeof logicalConditions[number], now: number) {
@@ -538,7 +533,7 @@ for(const platform of ['android','ios-on-mac'] as const)for(const kind of ['netw
     async claimedHosts(){return []},async replace(){claims++;return true}},()=>f.now),beforeAdmission=structuredClone(f.row),
    reserved=await admission.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,host.hostId,laneId);
   if(timing==='admission'&&!positive){expect(reserved).toBeNull();expect(stages).toBe(0);expect(claims).toBe(0);expect(f.row).toEqual(beforeAdmission);return}
-  expect(reserved).toBeUndefined();expect(stages).toBe(1);
+  expect(reserved).toBeUndefined();expect(stages).toBe(0);expect(f.row).toEqual(beforeAdmission);
   if(timing==='binding')logicalCondition(host,kind,condition,f.now);
   const before=structuredClone(f.row),snapshot=structuredClone(host.snapshot),retained=structuredClone(host.resourceReservations),
    read=resourceReservationRepository.get,readClaims=resourceReservationRepository.recorderClaims,replace=resourceReservationRepository.replace,
@@ -586,10 +581,11 @@ for(const platform of ['android','ios-on-mac'] as const)for(const condition of [
       async stage(_id,_digest,value){stageWrites++;f.row.fleetResourceAdmission=structuredClone(value);return structuredClone(f.row)},
       async stageBackend(_id,_digest,value){stageWrites++;f.row.fleetResourceAdmission=structuredClone(value);return structuredClone(f.row)},
       async claimedHosts(){return hostResourceReservationsSchema.parse(host.resourceReservations).some(claim=>isExclusiveHostReservation(claim)&&claim.owner.id===f.row.requestId)?[structuredClone(host)]:[]},
-      async replace(_host,claims){claimWrites++;host.resourceReservations=structuredClone(claims);return true}},()=>f.now);
+      async replace(){throw Error('Atomic graph admission must not split its authority write')},
+      claimFleet:graphClaimFleet(f,[host],()=>{stageWrites++;claimWrites++})},()=>f.now);
   const reserved=await admission.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,host.hostId,laneId);
   if(admissionBlocked){expect(reserved).toBeNull();expect(stageWrites).toBe(0);expect(claimWrites).toBe(0);expect(f.row).toEqual(beforeAdmission);return}
-  if(exclusive){expect(reserved?.claims).toHaveLength(1);f.row.fleetExclusiveReservation=reserved!}else expect(reserved).toBeUndefined();
+  if(exclusive){expect(reserved?.claims).toHaveLength(1);expect(f.row.fleetExclusiveReservation).toEqual(reserved!)}else expect(reserved).toBeUndefined();
   if(!positive)restrict();
   const before=structuredClone(f.row),claimsBefore=structuredClone(host.resourceReservations),
     snapshot=structuredClone(host.snapshot),
@@ -679,8 +675,8 @@ for(const expiry of [false,true])test(`a live orphan recorder claim ${expiry?'re
  const requestRead=TestRequestModel.collection.findOne,requestList=TestRequestModel.collection.find,requestWrite=TestRequestModel.collection.findOneAndUpdate,
    hostRead=TestHostStateModel.collection.findOne,hostWrite=TestHostStateModel.collection.findOneAndUpdate,
    originals=resourceReservationRepository.recorderClaims,read=resourceReservationRepository.get,
-   claimed=resourceReservationRepository.claimedHosts,request=resourceReservationRepository.request,get=routineJobRepository.get;
- let hostWrites=0,checkpointWrites=0,admissionWrites=0;const clock=spyOn(Date,'now').mockImplementation(()=>f.now);
+   claimed=resourceReservationRepository.claimedHosts,request=resourceReservationRepository.request,get=routineJobRepository.get,atomic=resourceReservationRepository.claimFleet;
+ const frozen=structuredClone({selection:f.row.fleetSelection,preparation:f.row.fleetPreparation,inputSha256:f.row.fleetInputSha256,deadline:f.row.fleetDeadline}),clock=spyOn(Date,'now').mockImplementation(()=>f.now);
  const reserveFleet=ResourceReservationsService.prototype.reserveFleet,
    reserveClock=spyOn(ResourceReservationsService.prototype,'reserveFleet').mockImplementation(async function(...args){
     return reserveFleet.apply(new ResourceReservationsService(resourceReservationRepository,()=>f.now),args);
@@ -696,35 +692,34 @@ for(const expiry of [false,true])test(`a live orphan recorder claim ${expiry?'re
  TestRequestModel.collection.findOne=mock(async()=>structuredClone(f.row)) as never;
  TestRequestModel.collection.find=mock(()=>({limit:()=>({toArray:async()=>[structuredClone(f.row)]})})) as never;
  TestHostStateModel.collection.findOne=mock(async()=>{if(expiry&&f.now===initialNow)f.advance(120001);return structuredClone(host)}) as never;
- TestHostStateModel.collection.findOneAndUpdate=mock(async()=>{hostWrites++;throw Error('The original host claim must not be repeated')}) as never;
+ TestHostStateModel.collection.findOneAndUpdate=mock(async()=>{throw Error('The original byte claim must not be repeated through a split write')}) as never;
+ resourceReservationRepository.claimFleet=async(...args)=>{expect(args[2]).toEqual([claim]);expect(args[4].fleetResourceReservation).toEqual(claim);return graphClaimFleet(f,[host])(...args)};
  TestRequestModel.collection.findOneAndUpdate=mock(async(filter:any,update:any)=>{
   if(!matches(filter))return null;
-  if(update.$set.fleetResourceAdmission)admissionWrites++;
-  if(update.$set.fleetResourceReservation&&!f.row.fleetResourceAdmission)checkpointWrites++;
   f.row={...f.row,...update.$set};return structuredClone(f.row);
  }) as never;
- f.rows.recorderClaims=async()=>[structuredClone(claim)];f.rows.checkpointBackendRecorder=(row,original,now)=>routineJobRepository.checkpointBackendRecorder!(row,original,now);
+ f.rows.recorderClaims=async()=>[structuredClone(claim)];
  f.rows.reserveResources=(...args)=>routineJobRepository.reserveResources!(...args);
  const currentRow=():StoredRoutineJob=>f.row;
  try{
   expect(qualifiedCandidate(f.row,f.hosts[0]!,'android',f.now,f.hosts[0]!.receivedAt)).toBeDefined();
   await f.prepareLegacy('job-one');
-  expect(admissionWrites).toBe(expiry?0:1);expect(checkpointWrites).toBe(0);expect(hostWrites).toBe(0);
   if(expiry){
    expect(f.row.fleetResourceReservation).toBeUndefined();expect(f.row.fleetResourceAdmission).toBeUndefined();
    expect(host.resourceReservations).toEqual([claim]);
    const fresh=repositoryEnvelope(f);host.receivedAt=fresh.receivedAt;host.snapshot=fresh.snapshot;
-   await f.prepareLegacy('job-one');expect(checkpointWrites).toBe(0);expect(admissionWrites).toBe(1);
-   expect(currentRow().fleetResourceAdmission?.intent.hostId).toBe('air1');expect(hostWrites).toBe(0);
+   await f.prepareLegacy('job-one');
+   expect(currentRow().fleetResourceAdmission?.intent.hostId).toBe('air1');
    expect(f.row.fleetCandidatePreparation).toBeUndefined();expect(currentRow().fleetResourceReservation).toEqual(claim);
   }else{
    expect(currentRow().fleetResourceReservation).toEqual(claim);expect(currentRow().fleetResourceAdmission?.intent.hostId).toBe('air1');
    expect(f.row.fleetCandidatePreparation).toBeUndefined();
   }
   expect(f.row.fleetCandidatePreparations).toHaveLength(1);
-  expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetDeadline.getTime()).toBe(initialNow+300000);
+  expect(f.row.fleetBinding).toBeUndefined();expect(host.resourceReservations).toEqual([claim]);
+  expect({selection:f.row.fleetSelection,preparation:f.row.fleetPreparation,inputSha256:f.row.fleetInputSha256,deadline:f.row.fleetDeadline}).toEqual(frozen);
  }finally{TestRequestModel.collection.findOne=requestRead;TestRequestModel.collection.find=requestList;TestRequestModel.collection.findOneAndUpdate=requestWrite;TestHostStateModel.collection.findOne=hostRead;TestHostStateModel.collection.findOneAndUpdate=hostWrite;
-  resourceReservationRepository.recorderClaims=originals;resourceReservationRepository.get=read;resourceReservationRepository.claimedHosts=claimed;resourceReservationRepository.request=request;routineJobRepository.get=get;reserveClock.mockRestore();clock.mockRestore()}
+  resourceReservationRepository.recorderClaims=originals;resourceReservationRepository.get=read;resourceReservationRepository.claimedHosts=claimed;resourceReservationRepository.request=request;routineJobRepository.get=get;resourceReservationRepository.claimFleet=atomic;reserveClock.mockRestore();clock.mockRestore()}
 });
 
 for(const gap of ['foreign','multiple','owned-phone','local-consumer','stale-storage','replacement','cancelled','changed-selection'] as const)test(`orphan recorder checkpoint refuses ${gap} without adoption or a new grant`,async()=>{
@@ -758,24 +753,6 @@ for(const status of ['out-of-service','in-repair','reserved'] as const)test(`fre
 });
 
 
-for(const phase of ['stage-return','retained-read','claim-request','claim-host','post-cas'] as const)for(const boundary of ['baseline-exact','physical-check-aged','deadline'] as const)test(`ordinary offline exclusive admission ${phase} ${boundary} retains committed custody without a false receipt`,async()=>{
- const f=await returnedFixture(true),host=repositoryEnvelope(f),claim=structuredClone(f.row.fleetResourceReservation!);
- f.row.fleetPreparation!.requirements.resources.find(required=>required.kind==='phone')!.capabilities=[];
- host.snapshot.lanes[0]!.resources[0]!.idleContract!.maximumAgeMs=1;
- const {receivedAt,authorityReservations,...snapshot}=structuredClone(f.hosts[1]!);snapshot.frameworkAcceptedAt=snapshot.observedAt;snapshot.frameworkProcess={pid:124,startedAt:snapshot.observedAt};
- const authority={...structuredClone(host),hostId:'air2',incarnation:'air2-one',resourceReservations:[] as unknown[],receivedAt:new Date(receivedAt),snapshot:hostStateSchema.parse(snapshot)},original=structuredClone(f.row);
- let requestReads=0,writes=0,delayed=false;
- const delay=()=>{if(delayed)return;delayed=true;f.advance(boundary==='deadline'?original.fleetDeadline.getTime()-f.now:boundary==='baseline-exact'?1:2)};
- const service=new ResourceReservationsService({async request(){if(++requestReads===2&&phase==='claim-request')delay();return structuredClone(f.row)},
-  async get(id){if(id==='air2'&&phase==='claim-host')delay();return structuredClone(id==='air1'?host:authority)},async recorderClaims(){return [claim]},
-  async stageBackend(_id,_digest,value){f.row.fleetResourceAdmission=structuredClone(value);if(phase==='stage-return')delay();return structuredClone(f.row)},
-  async claimedHosts(){if(phase==='retained-read')delay();return []},async replace(_host,next){writes++;authority.resourceReservations=structuredClone(next);if(phase==='post-cas')delay();return true}},()=>f.now);
- const admitted=await service.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,'air1','android');
- expect(writes).toBe(boundary!=='deadline'||phase==='post-cas'?1:0);expect(authority.resourceReservations).toHaveLength(writes);
- if(boundary!=='deadline')expect(admitted?.claims).toEqual(hostResourceReservationsSchema.parse(authority.resourceReservations).filter(isExclusiveHostReservation));else expect(admitted).toBeNull();
- expect(host.resourceReservations).toEqual([claim]);expect(f.row.fleetResourceReservation).toEqual(claim);expect(f.row.fleetResourceAdmission?.intent.hostId).toBe('air1');
- expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetSelection).toEqual(original.fleetSelection);expect(f.row.fleetPreparation).toEqual(original.fleetPreparation);expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);
-});
 for(const state of ['running','in-repair','out-of-service'] as const)test(`ordinary fleet staging refuses a current ${state} lane even when each resource baseline is passed`,async()=>{
  const f=await returnedFixture(),host=repositoryEnvelope(f),row=structuredClone(f.row),claim=structuredClone(row.fleetResourceReservation!),get=resourceReservationRepository.get,request=resourceReservationRepository.request,write=TestRequestModel.collection.findOneAndUpdate;
  f.row.fleetPreparation!.requirements.resources.find(required=>required.kind==='phone')!.capabilities=[];host.snapshot.lanes[0]!.state=state;

@@ -1,4 +1,5 @@
 import {expect, test} from 'bun:test'
+import {isDeepStrictEqual} from 'node:util'
 import {ResourceReservationsService, type ResourceReservationHost, type ResourceReservationRepository} from './resource-reservations.service'
 import {createTestHostStateApi} from '../api/internal/test-host-state.api'
 import {TestHostStateService} from './test-host-state.service'
@@ -6,6 +7,7 @@ import {LaneControlsService} from './lane-controls.service'
 import {exclusiveHostReservationSchema, hostResourceReservationsSchema, type ExclusiveResourceIntent,
   resourceReservationObservationSchema, type ExclusiveResourceReturn, type HostResourceReservation} from '../types/resource-reservations.types'
 import type {StoredRoutineJob} from '../types/routine-job.types'
+import type {RecorderHostReservation} from '../types/recorder-storage.types'
 import {fleetResourceExecutionBinding} from './fleet-resource-binding'
 import {requestInputDigest} from './test-request.service'
 import {frameworkRequestInputSchema} from '../types/framework-request.types'
@@ -15,7 +17,9 @@ const at = Date.parse('2026-10-15T21:10:00Z'), dependency = {resourceId: 'confer
 const intent = (hostId: string, owner = hostId): ExclusiveResourceIntent => ({operationId: `request-${owner}`, hostId, laneId: 'mac',
   controller: {incarnation: `${hostId}-process`, generation: 1, sequence: 1}, owner: {id: owner, kind: 'run'},
   inputSha256: 'a'.repeat(64), resources: [{id: 'fixtures', capabilities: ['google-authentication']}]})
-function fixture(options: {race?: boolean; afterCommit?: (requests: Map<string, StoredRoutineJob & {input?: unknown}>) => void} = {}) {
+function fixture(options: {race?: boolean; afterCommit?: (requests: Map<string, StoredRoutineJob & {input?: unknown}>) => void;
+  beforeFleetClaim?: (admission: NonNullable<StoredRoutineJob['fleetResourceAdmission']>) => Promise<void>;
+  refuseFleetClaim?: (admission: NonNullable<StoredRoutineJob['fleetResourceAdmission']>) => boolean} = {}) {
   let now = at, raced = false
   const rows = new Map<string, ResourceReservationHost>(['mini', 'air1', 'air2'].map(hostId => [hostId, {hostId,
     incarnation: `${hostId}-process`, incarnationGeneration: 1, sequence: 1, receivedAt: new Date(at), resourceReservationVersion: 0,
@@ -38,6 +42,33 @@ function fixture(options: {race?: boolean; afterCommit?: (requests: Map<string, 
       if (!row || row.fleetInputSha256 !== digest || row.state !== 'awaiting-runner' || row.fleetResourceAdmission || row.fleetBinding || row.fleetCancellation) return null
       row.fleetResourceAdmission = structuredClone(admission); return structuredClone(row)
     },
+    async claimFleet(expected, previous, claims, admission, receipts, claimedAt, borrower) {
+      await options.beforeFleetClaim?.(admission)
+      const request = requests.get(expected.requestId), current = rows.get(previous.hostId), currentBorrower = borrower && rows.get(borrower.hostId)
+      if (!request || !current || options.refuseFleetClaim?.(admission) ||
+        request.state !== 'awaiting-runner' || request.fleetInputSha256 !== expected.fleetInputSha256 ||
+        request.fleetDeadline <= claimedAt || request.fleetBinding || request.fleetCancellation || request.fleetCandidatePreparation ||
+        request.hostId || request.input || request.inputSha256 ||
+        !isDeepStrictEqual(request.fleetResourceAdmission, expected.fleetResourceAdmission) ||
+        !isDeepStrictEqual(request.fleetResourceReservation, expected.fleetResourceReservation) ||
+        !isDeepStrictEqual(request.fleetExclusiveReservation, expected.fleetExclusiveReservation) ||
+        request.fleetExclusiveExecutionBinding ||
+        previous.incarnation !== current.incarnation || previous.incarnationGeneration !== current.incarnationGeneration ||
+        previous.sequence !== current.sequence || previous.laneControlVersion !== current.laneControlVersion ||
+        previous.resourceReservationVersion !== current.resourceReservationVersion ||
+        borrower && borrower.hostId !== previous.hostId && (!currentBorrower ||
+          borrower.incarnation !== currentBorrower.incarnation || borrower.incarnationGeneration !== currentBorrower.incarnationGeneration ||
+          borrower.sequence !== currentBorrower.sequence || borrower.laneControlVersion !== currentBorrower.laneControlVersion ||
+          borrower.resourceReservationVersion !== currentBorrower.resourceReservationVersion)) return null
+      current.resourceReservations = structuredClone(claims)
+      current.resourceReservationVersion = (current.resourceReservationVersion ?? 0) + 1
+      if (borrower && borrower.hostId !== previous.hostId) currentBorrower!.resourceReservationVersion = (currentBorrower!.resourceReservationVersion ?? 0) + 1
+      Object.assign(request, structuredClone({fleetResourceAdmission: admission, ...receipts}))
+      writes.push(structuredClone(claims)); options.afterCommit?.(requests)
+      return structuredClone(request)
+    },
+    async recorderClaims(requestId) {return [...rows.values()].flatMap(row => hostResourceReservationsSchema.parse(row.resourceReservations ?? [])
+      .filter((claim): claim is RecorderHostReservation => !('kind' in claim) && claim.requestId === requestId))},
     async claimedHosts(requestId) {return [...rows.values()].filter(row => hostResourceReservationsSchema.parse(row.resourceReservations ?? [])
       .some(claim => 'kind' in claim && claim.owner.id === requestId && claim.origin?.kind === 'fleet')).map(row => structuredClone(row))},
   }
@@ -86,8 +117,53 @@ test('portable contention reports its existing canonical blocker without changin
   expect(blocked).toEqual([{value: {resourceId: dependency.resourceId, hostId: 'air1', laneId: 'mac', owner: {id: 'first', kind: 'run'}}, dependencies: [dependency]}]);
   expect(f.rows.get('mini')!.resourceReservations).toEqual(before); expect(f.writes).toHaveLength(1);
   expect(f.requests.get('second')).not.toHaveProperty('fleetExclusiveReservation');
+  expect(f.requests.get('second')).not.toHaveProperty('fleetResourceAdmission');
   expect(winner!.intent.hostId).toBe('air1');
 });
+test('a dependency-bearing candidate without an acquired claim can use another matching host in the same controller incarnation', async () => {
+  const f = fixture({refuseFleetClaim: admission => admission.intent.hostId === 'air1'}), row = fleetRequest('fallback'), original = structuredClone(row)
+  f.requests.set(row.requestId, row)
+  expect(await f.service.reserveFleet(row.requestId, row.fleetInputSha256!, 'air1', 'mac')).toBeNull()
+  expect(row).toEqual(original); expect(f.writes).toEqual([])
+  const selected = await f.service.reserveFleet(row.requestId, row.fleetInputSha256!, 'air2', 'mac')
+  expect(selected).toBeTruthy()
+  expect(row.fleetResourceAdmission!.intent.hostId).toBe('air2')
+  expect(selected!.claims).toHaveLength(1); expect(f.writes).toHaveLength(1)
+  expect(f.rows.get('air1')!.incarnation).toBe('air1-process')
+  expect(f.rows.get('air2')!.incarnation).toBe('air2-process')
+  expect({selection: row.fleetSelection, preparation: row.fleetPreparation, selectionSha256: row.fleetSelectionSha256,
+    inputSha256: row.fleetInputSha256, deadline: row.fleetDeadline}).toEqual({selection: original.fleetSelection,
+    preparation: original.fleetPreparation, selectionSha256: original.fleetSelectionSha256,
+    inputSha256: original.fleetInputSha256, deadline: original.fleetDeadline})
+})
+test('concurrent matching candidates save only the original request claim winner without a persistent preclaim target', async () => {
+  const gates = new Map<string, {promise: Promise<void>; release(): void}>(), entered = new Set<string>()
+  for (const hostId of ['air1', 'air2']) {let release!: () => void; const promise = new Promise<void>(resolve => {release = resolve}); gates.set(hostId, {promise, release})}
+  let arrived!: () => void; const both = new Promise<void>(resolve => {arrived = resolve})
+  const f = fixture({async beforeFleetClaim(admission) {
+    entered.add(admission.intent.hostId); if (entered.size === 2) arrived(); await gates.get(admission.intent.hostId)!.promise
+  }}), row = fleetRequest('one-original')
+  f.requests.set(row.requestId, row)
+  const first = f.service.reserveFleet(row.requestId, row.fleetInputSha256!, 'air1', 'mac'),
+    second = f.service.reserveFleet(row.requestId, row.fleetInputSha256!, 'air2', 'mac')
+  try {
+    await both
+    expect(row).not.toHaveProperty('fleetResourceAdmission'); expect(f.writes).toEqual([])
+    gates.get('air2')!.release(); const winner = await second
+    expect(winner).toBeTruthy(); expect(winner!.intent.hostId).toBe('air2')
+    gates.get('air1')!.release(); expect(await first).toBeNull()
+    expect(row.fleetResourceAdmission).toEqual({intent: winner!.intent, dependencies: [dependency]})
+    expect(row.fleetExclusiveReservation).toEqual(winner!)
+    expect(f.rows.get('mini')!.resourceReservations).toEqual(winner!.claims)
+    expect(f.writes).toHaveLength(1); expect(row).not.toHaveProperty('fleetBinding'); expect(row).not.toHaveProperty('input')
+  } finally {for (const gate of gates.values()) gate.release()}
+})
+test('a failed host claim CAS leaves neither an admission nor a request receipt', async () => {
+  const f = fixture({refuseFleetClaim: () => true}), row = fleetRequest('lost-host-cas'), original = structuredClone(row)
+  f.requests.set(row.requestId, row)
+  expect(await f.service.reserveFleet(row.requestId, row.fleetInputSha256!, 'air1', 'mac')).toBeNull()
+  expect(row).toEqual(original); expect(f.rows.get('mini')!.resourceReservations).toEqual([]); expect(f.writes).toEqual([])
+})
 test('an unanswered portable authority claim survives until an exact terminal pre-execution cancellation, then only its original claims return', async () => {
   const f = fixture(), row = fleetRequest('cancelled'); f.requests.set(row.requestId, row)
   const receipt = await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')
@@ -219,13 +295,16 @@ test('executable input retains the portable account when Core acceptance is miss
   await f.service.reconcileFleetCancellation(row.requestId)
   expect(f.rows.get('mini')!.resourceReservations).toEqual(receipt!.claims)
 })
-test('held authoring and portable execution use the same authority, and source or authority drift cannot borrow a retained winner', async () => {
+test('held authoring blocks its requested dependency while unrelated unclaimed capabilities retain no candidate target', async () => {
   const f = fixture(), row = fleetRequest('portable'); f.requests.set(row.requestId, row)
   const held = await f.service.acquire(intent('air2', 'held-authoring'), 'air2')
   expect(await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')).toBeNull()
   expect(f.rows.get('mini')!.resourceReservations).toEqual(held.claims)
+  expect(row).not.toHaveProperty('fleetResourceAdmission')
   row.fleetPreparation!.requirements.resources[0]!.capabilities = ['clipboard']
-  expect(await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')).toBeNull()
+  expect(await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')).toBeUndefined()
+  expect(row).not.toHaveProperty('fleetResourceAdmission'); expect(row).not.toHaveProperty('fleetExclusiveReservation')
+  expect(f.rows.get('mini')!.resourceReservations).toEqual(held.claims)
   expect(f.writes).toHaveLength(1)
 })
 test('same intent retry adopts its original claim after report advancement; identity changes cannot borrow it', async () => {

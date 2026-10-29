@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto'
 import {isDeepStrictEqual} from 'node:util'
 import {TestHostStateModel} from '../models/test-host-state.model'
+import {withTransaction} from '../connections/mongo.connection'
 import {testWriteConcern} from '../models/test-write-concern'
 import {exclusiveResourceIntentSchema, exclusiveResourceObservationInputSchema, exclusiveResourceReturnSchema, hostResourceReservationsSchema,
   fleetExclusiveObservationSchema, fleetExclusiveReservationSchema, fleetExclusiveExecutionBindingSchema, fleetResourceAdmissionSchema,
@@ -111,6 +112,9 @@ export interface ResourceReservationRepository {
   /** `recorderReturn` reads only what recorder-claim return reconciliation and its CAS need. */
   get(hostId: string, options?: {recorderReturn?: boolean}): Promise<ResourceReservationHost | null>
   replace(host: ResourceReservationHost, claims: HostResourceReservation[]): Promise<boolean>
+  claimFleet?(row: StoredRoutineJob, host: ResourceReservationHost, claims: HostResourceReservation[], admission: FleetResourceAdmission,
+    receipts: {fleetResourceReservation?: RecorderHostReservation; fleetExclusiveReservation?: FleetExclusiveReservation}, now: Date,
+    borrower?: ResourceReservationHost): Promise<StoredRoutineJob | null>
   candidateRequest?(hostId: string, targetInputSha256: string): Promise<StoredRoutineJob | null>
   completedCandidateRequest?(hostId: string, targetInputSha256: string): Promise<StoredRoutineJob | null>
   request?(requestId: string): Promise<(StoredRoutineJob & {input?: unknown}) | null>
@@ -199,6 +203,42 @@ export const resourceReservationRepository: ResourceReservationRepository = {
       {$set: {resourceReservations: claims}, $inc: {resourceReservationVersion: 1}},
       {new: true, writeConcern: testWriteConcern}).select({hostId: 1}).setOptions({timeoutMS: 5000}).lean()
     return Boolean(row)
+  },
+  async claimFleet(row, host, claims, admission, receipts, now, borrower) {
+    // The host claim and the request winner are one commit. A stale candidate
+    // cannot leave a claim after another candidate won this original request.
+    const lost = new Error('Fleet resource claim lost its current request or host CAS')
+    try {
+      return await withTransaction(async session => {
+        const selected = await TestRequestModel.collection.findOneAndUpdate({requestId: row.requestId,
+          fleetInputSha256: row.fleetInputSha256, state: 'awaiting-runner',
+          fleetResourceAdmission: row.fleetResourceAdmission ?? {$exists: false},
+          fleetResourceReservation: row.fleetResourceReservation ?? {$exists: false},
+          fleetExclusiveReservation: row.fleetExclusiveReservation ?? {$exists: false},
+          fleetCandidatePreparation: {$exists: false}, fleetExclusiveExecutionBinding: {$exists: false},
+          fleetBinding: {$exists: false}, fleetCancellation: {$exists: false}, hostId: {$exists: false},
+          input: {$exists: false}, inputSha256: {$exists: false}, dispatchIntent: {$exists: false},
+          dispatchIntentSha256: {$exists: false}, hostReceipt: {$exists: false}, fleetDeadline: {$gt: now}},
+          {$set: {fleetResourceAdmission: admission, ...receipts}}, {session, returnDocument: 'after', timeoutMS: 5000})
+        if (!selected) throw lost
+        const claimed = await TestHostStateModel.collection.findOneAndUpdate({hostId: host.hostId,
+          incarnation: host.incarnation, incarnationGeneration: host.incarnationGeneration, sequence: host.sequence,
+          laneControlVersion: host.laneControlVersion ?? {$exists: false},
+          resourceReservationVersion: host.resourceReservationVersion ?? {$exists: false}},
+          {$set: {resourceReservations: claims}, $inc: {resourceReservationVersion: 1}},
+          {session, returnDocument: 'after', timeoutMS: 5000})
+        if (!claimed) throw lost
+        if (borrower && borrower.hostId !== host.hostId) {
+          const currentBorrower = await TestHostStateModel.collection.findOneAndUpdate({hostId: borrower.hostId,
+            incarnation: borrower.incarnation, incarnationGeneration: borrower.incarnationGeneration, sequence: borrower.sequence,
+            laneControlVersion: borrower.laneControlVersion ?? {$exists: false},
+            resourceReservationVersion: borrower.resourceReservationVersion ?? {$exists: false}},
+            {$inc: {resourceReservationVersion: 1}}, {session, returnDocument: 'after', timeoutMS: 5000})
+          if (!currentBorrower) throw lost
+        }
+        return selected as unknown as StoredRoutineJob
+      })
+    } catch (error) {if (error === lost) return null; throw error}
   },
   async candidateRequest(hostId, targetInputSha256) {
     const rows = await TestRequestModel.find({'fleetCandidatePreparation.hostId': hostId,
@@ -351,7 +391,7 @@ function closedNormalResourceReturn(host: ResourceReservationHost, claim: Exclus
   // authority. A duplicate event log cannot veto the same returned resource.
   return true
 }
-const dependencies = (host: ResourceReservationHost, intent: ExclusiveResourceIntent, observation = false): ExclusiveResourceDependency[] => {
+export const resourceIntentDependencies = (host: ResourceReservationHost, intent: ExclusiveResourceIntent, observation = false): ExclusiveResourceDependency[] => {
   const lane = host.snapshot.lanes.find(value => value.id === intent.laneId), dispatch = intent.localDispatch,
     localDispatch = dispatch && intent.owner.kind === 'run' && intent.owner.id === dispatch.requestId &&
       intent.operationId === `run:${dispatch.requestId}` && intent.inputSha256 === dispatch.inputSha256 &&
@@ -387,16 +427,21 @@ export class ResourceReservationsService {
     if (!host || host.hostId !== hostId) throw new TestRunError(404, 'Resource authority host was not found')
     return {...host, snapshot: hostStateSchema.parse(host.snapshot)}
   }
-  /** One request CAS selects the original candidate before exclusive authority or Actions device binding.
-   * Backend-required work first retains its byte claim on the borrower's existing host CAS.
-   */
+  /** The request winner and its real claims commit before Actions device binding. */
   async reserveFleet(requestId: string, digest: string, hostId: string, laneId: string,
     onBlocked?: (blocked: ExclusiveResourceBlocker, dependencies: ExclusiveResourceDependency[]) => void): Promise<FleetExclusiveReservation | null | undefined> {
     let row = await this.rows.request?.(requestId)
     if (row?.fleetCandidatePreparation) return null
     if (!row?.fleetPreparation || row.fleetInputSha256 !== digest || row.state !== 'awaiting-runner' || row.fleetBinding || row.fleetCancellation ||
       row.hostId || row.inputSha256 || row.input || row.fleetDeadline.getTime() <= this.now()) return null
-    if (row.fleetResourceAdmission && (row.fleetResourceAdmission.intent.hostId !== hostId || row.fleetResourceAdmission.intent.laneId !== laneId)) return null
+    if (row.fleetResourceAdmission && (row.fleetResourceAdmission.intent.operationId !== `run:${requestId}` ||
+      row.fleetResourceAdmission.intent.owner.kind !== 'run' || row.fleetResourceAdmission.intent.owner.id !== requestId ||
+      row.fleetResourceAdmission.intent.inputSha256 !== digest)) return null
+    const [retainedHosts, originalRecorders] = await Promise.all([this.rows.claimedHosts?.(requestId), this.rows.recorderClaims?.(requestId)])
+    if (!retainedHosts || !originalRecorders || retainedHosts.length > 1 || originalRecorders.length > 1) return null
+    const acquired = Boolean(row.fleetResourceReservation || row.fleetExclusiveReservation || retainedHosts.length || originalRecorders.length)
+    if (acquired && row.fleetResourceAdmission && (row.fleetResourceAdmission.intent.hostId !== hostId || row.fleetResourceAdmission.intent.laneId !== laneId)) return null
+    if (originalRecorders.some(claim => claim.fleetInputSha256 !== digest || claim.hostId !== hostId || claim.laneId !== laneId)) return null
     const borrower = await this.host(hostId), lane = borrower.snapshot.lanes.find(value => value.id === laneId)
     if (!fresh(borrower, this.now()) ||
       !lane || lane.activity || lane.dispatchMode !== 'automatic') return null
@@ -411,10 +456,10 @@ export class ResourceReservationsService {
     const candidateIntent: ExclusiveResourceIntent = {operationId: `run:${requestId}`, hostId, laneId, inputSha256: digest,
       owner: {id: requestId, kind: 'run'}, resources: resources as ExclusiveResourceIntent['resources'],
       controller: {incarnation: borrower.incarnation, generation: borrower.incarnationGeneration, sequence: borrower.sequence}},
-      selected = dependencies(borrower, candidateIntent), origin = {kind: 'fleet' as const, fleetInputSha256: digest}
+      selected = resourceIntentDependencies(borrower, candidateIntent), origin = {kind: 'fleet' as const, fleetInputSha256: digest}
     if (new Set(selected.map(value => value.authorityHostId)).size > 1) return null
-    // Freeze even an empty dependency set before any authority side effect. A global absence read
-    // cannot serialize two different candidates for the same request; this existing request CAS can.
+    // Selection becomes durable only together with an acquired claim. The same
+    // request CAS also serializes candidates whose authority hosts differ.
     const candidate = fleetResourceAdmissionSchema.parse({intent: candidateIntent, dependencies: selected})
     const serializedPreparation = requiresSerializedAndroidPreparation(lane)
     if (serializedPreparation) {
@@ -422,19 +467,14 @@ export class ResourceReservationsService {
       if (!originals || !backendRecorderClaimMatches(originals, requestId, digest, hostId, laneId) ||
         !hostResourceReservationsSchema.parse(borrower.resourceReservations ?? []).some(value => isDeepStrictEqual(value, originals[0]))) return null
     }
-    if (!row.fleetResourceAdmission) {
-      const stagedAt = this.now()
-      if (row.fleetDeadline.getTime() <= stagedAt || !routineResourcesAvailable(borrower, row, laneId, stagedAt)) return null
-      row = await (serializedPreparation
-        ? this.rows.stageBackend?.(requestId, digest, candidate, borrower, new Date(stagedAt))
-        : this.rows.stage?.(requestId, digest, candidate, new Date(stagedAt))) ?? await this.rows.request?.(requestId)
+    if (serializedPreparation && !row.fleetResourceAdmission) {
+      row = await this.rows.stageBackend?.(requestId, digest, candidate, borrower, new Date(this.now())) ?? await this.rows.request?.(requestId)
     }
-    if (!row?.fleetResourceAdmission || row.state !== 'awaiting-runner' || row.fleetInputSha256 !== digest || row.fleetBinding ||
+    if (!row || row.state !== 'awaiting-runner' || row.fleetInputSha256 !== digest || row.fleetBinding ||
       row.fleetCancellation || row.hostId || row.input || row.inputSha256 || row.fleetDeadline.getTime() <= this.now()) return null
-    const admission = fleetResourceAdmissionSchema.parse(row.fleetResourceAdmission), intent = admission.intent
+    const admission = acquired && row.fleetResourceAdmission ? fleetResourceAdmissionSchema.parse(row.fleetResourceAdmission) : candidate,
+      intent = admission.intent
     if (!isDeepStrictEqual(admission, {...candidate, intent: {...candidate.intent, controller: intent.controller}})) return null
-    const retainedHosts = await this.rows.claimedHosts?.(requestId)
-    if (!retainedHosts || retainedHosts.length > 1) return null
     const retainedHost = retainedHosts[0], retained = retainedHost ? hostResourceReservationsSchema.parse(retainedHost.resourceReservations ?? [])
       .filter(isExclusiveHostReservation).filter(claim => claim.owner.id === requestId && claim.owner.kind === 'run' && claim.origin?.kind === 'fleet') : []
     if (retainedHost && (!retained.length || retained.some(claim => claim.authorityHostId !== retainedHost.hostId ||
@@ -448,7 +488,7 @@ export class ResourceReservationsService {
       const current = await this.rows.request?.(requestId)
       if (!current || current.fleetInputSha256 !== digest || current.fleetBinding || current.fleetCancellation || current.hostId || current.input ||
         current.inputSha256 || current.state !== 'awaiting-runner' || current.fleetDeadline.getTime() <= this.now() ||
-        !isDeepStrictEqual(current.fleetResourceAdmission, admission)) return null
+        !isDeepStrictEqual(current.fleetResourceAdmission, row.fleetResourceAdmission)) return null
       const authority = await this.host(selected[0]!.authorityHostId)
       if (!fresh(authority, this.now()) || selected.some(dependency => !dependencyEnrolled(authority,dependency))) return null
       const claims = hostResourceReservationsSchema.parse(authority.resourceReservations ?? []),
@@ -473,7 +513,12 @@ export class ResourceReservationsService {
         if (existing.some(claim => claim.intentSha256 !== intentSha256)) return null
         const receipt = fleetExclusiveReservationSchema.parse({origin, intent: originalIntent, intentSha256, claims: existing})
         if (current.fleetDeadline.getTime() <= this.now() || !routineResourcesAvailable(borrower, current, laneId, this.now())) return null
-        return row.fleetExclusiveReservation && !isDeepStrictEqual(row.fleetExclusiveReservation, receipt) ? null : receipt
+        if (current.fleetExclusiveReservation) return isDeepStrictEqual(current.fleetExclusiveReservation, receipt) ? receipt : null
+        // Earlier deployments could lose the reply between the real authority
+        // claim and its receipt. Recover that exact winner before byte admission.
+        if (!await this.rows.claimFleet?.(current, authority, claims, admission,
+          {fleetExclusiveReservation: receipt}, new Date(this.now()), borrower)) continue
+        return receipt
       }
       if (selected.some(dependency => !dependencyAvailable(authority, dependency, this.now()))) return null
       if (claims.length + selected.length > 1000) return null
@@ -486,14 +531,16 @@ export class ResourceReservationsService {
       const claimingAt = this.now()
       if (current.fleetDeadline.getTime() <= claimingAt ||
         !routineResourcesAvailable(borrower, current, laneId, claimingAt)) return null
-      if (await this.rows.replace(authority, [...claims, ...next])) {
+      const receipt = fleetExclusiveReservationSchema.parse({origin, intent, intentSha256, claims: next})
+      if (await this.rows.claimFleet?.(current, authority, [...claims, ...next], admission,
+        {fleetExclusiveReservation: receipt}, new Date(claimingAt), borrower)) {
         const after = await this.rows.request?.(requestId)
         if (after?.fleetCancellation) await this.reconcileFleetCancellation(requestId)
         if (!after || after.fleetCancellation || after.fleetBinding || after.hostId || after.input || after.inputSha256 ||
           after.state !== 'awaiting-runner' || after.fleetInputSha256 !== digest || !isDeepStrictEqual(after.fleetResourceAdmission, admission) ||
           after.fleetDeadline.getTime() <= this.now() ||
           !routineResourcesAvailable(borrower, after, laneId, this.now())) return null
-        return fleetExclusiveReservationSchema.parse({origin, intent, intentSha256, claims: next})
+        return receipt
       }
     }
     return null
@@ -546,7 +593,7 @@ export class ResourceReservationsService {
     if (!fresh(borrower, this.now()) || borrower.incarnation !== intent.controller.incarnation ||
       borrower.incarnationGeneration !== intent.controller.generation || borrower.sequence !== intent.controller.sequence)
       throw new TestRunError(409, 'Resource reservation requires the current reporting controller observation')
-    const selected = dependencies(borrower, intent),
+    const selected = resourceIntentDependencies(borrower, intent),
       intentSha256 = requestInputDigest({...intent, controller: {incarnation: intent.controller.incarnation,
         generation: intent.controller.generation}, dependencies: selected})
     // A single operation uses one authority transaction. Cross-authority atomic intent is intentionally not advertised.
@@ -625,7 +672,7 @@ export class ResourceReservationsService {
       return {status: 'not-acquired' as const, intentSha256, claims: [], fence: {hostId, resourceId: intent.prerequisite.resourceId,
         controller: input.controller, resourceReservationVersion: version, subjectGeneration: subject.generation}}
     }
-    const selected = dependencies(borrower, intent, true), intentSha256 = requestInputDigest({...intent,
+    const selected = resourceIntentDependencies(borrower, intent, true), intentSha256 = requestInputDigest({...intent,
       controller: {incarnation: intent.controller.incarnation, generation: intent.controller.generation}, dependencies: selected})
     if (!selected.length || new Set(selected.map(dependency => dependency.authorityHostId)).size !== 1)
       throw new TestRunError(409, 'Original exclusive claim observation requires its unchanged canonical authority')
@@ -657,7 +704,7 @@ export class ResourceReservationsService {
     assertFleetResourceAdmission(row.fleetResourceAdmission, row.requestId, hostId, executable, reservation)
     if (requestInputDigest(executable) !== row.inputSha256 || !isDeepStrictEqual(fleetResourceExecutionBinding(reservation,
       row.requestId, hostId, row.dispatchIntentSha256!, executable, row.inputSha256), input.fleetExclusive.binding)) return unknown
-    const selected = dependencies(borrower, intent, true)
+    const selected = resourceIntentDependencies(borrower, intent, true)
     if (!selected.length || new Set(selected.map(value => value.authorityHostId)).size !== 1 ||
       selected.length !== reservation.claims.length || selected.some(dependency => !reservation.claims.some(claim =>
         claim.resourceId === dependency.resourceId && claim.authorityHostId === dependency.authorityHostId))) return unknown

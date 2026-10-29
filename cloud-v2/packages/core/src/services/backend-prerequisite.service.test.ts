@@ -432,7 +432,7 @@ function acceptCurrentIdle(observed: Pick<ReceivedTestHostState, 'hostId' | 'lan
   }
 }
 
-/** Exercise the production host/request CAS paths without database transaction support. */
+/** Exercise the production helper with transaction snapshots, conflicts and rollback at the Mongo boundary. */
 async function portableFixture() {
   const f = await claimFixture(); f.original = job()
   f.row.snapshot.resourceLifecycle!.subjects[0]!.owner = null
@@ -468,35 +468,66 @@ async function portableFixture() {
   }) as never)
   const requestList = spyOn(TestRequestModel.collection, 'find').mockImplementation((() => ({limit() {return this}, async toArray() {return [...requests.values()].map(value => structuredClone(value))}})) as never)
   const hostRead = spyOn(TestHostStateModel.collection, 'findOne').mockImplementation((async () => structuredClone(current.host)) as never)
-  const hostCas = async (filter: Record<string, unknown>, update: {$inc: {resourceReservationVersion: number}; $set: {resourceReservations: HostResourceReservation[]}}) => {
-    const kind = update.$set.resourceReservations.some(claim => 'kind' in claim) ? 'probe' : 'run'
+  const matches = (row: any, filter: Record<string, unknown>) => Boolean(row) && Object.entries(filter).every(([key, guard]) => {
+    const value = key.split('.').reduce((value: any, key) => value?.[key], row)
+    if (guard && typeof guard === 'object' && '$exists' in guard) return (value !== undefined) === (guard as {$exists: boolean}).$exists
+    if (guard && typeof guard === 'object' && '$gt' in guard) return value > (guard as {$gt: Date}).$gt
+    return isDeepStrictEqual(value, guard)
+  })
+  type Session = {host: ResourceReservationHost; baseHost: ResourceReservationHost; requests: Map<string, StoredRoutineJob>;
+    baseRequests: Map<string, StoredRoutineJob>; writtenRequests: Set<string>; wroteHost: boolean; events: string[];
+    withTransaction(callback: () => Promise<void>): Promise<void>; endSession(): Promise<void>}
+  const sessions = spyOn(TestHostStateModel.db, 'startSession').mockImplementation((async () => {
+    const session: Session = {host: structuredClone(current.host), baseHost: structuredClone(current.host), requests: new Map(), baseRequests: new Map(),
+      writtenRequests: new Set(), wroteHost: false, events: [], async endSession() {},
+      async withTransaction(callback) {
+        for (let attempt = 0; attempt < 10; attempt++) {
+          session.host = structuredClone(current.host); session.baseHost = structuredClone(current.host)
+          session.requests = new Map([...requests].map(([id, row]) => [id, structuredClone(row)]))
+          session.baseRequests = new Map([...requests].map(([id, row]) => [id, structuredClone(row)]))
+          session.writtenRequests = new Set(); session.wroteHost = false; session.events = []
+          await callback()
+          if (session.wroteHost && !isDeepStrictEqual(current.host, session.baseHost) ||
+            [...session.writtenRequests].some(id => !isDeepStrictEqual(requests.get(id), session.baseRequests.get(id)))) continue
+          for (const id of session.writtenRequests) Object.assign(requests.get(id)!, structuredClone(session.requests.get(id)))
+          if (session.wroteHost) Object.assign(current.host, structuredClone(session.host))
+          events.push(...session.events)
+          if (cancelOnHost && session.wroteHost) current.request.fleetCancellation = {requestedAt: timestamp, reason: 'Cancelled after the original atomic admission'}
+          if (loseHost && session.wroteHost) {loseHost = false; throw Error('Host CAS answer lost after transaction commit')}
+          if (loseStage && session.writtenRequests.size) {loseStage = false; throw Error('Stage answer lost after transaction commit')}
+          return
+        }
+        throw Error('Test transaction exceeded current write-conflict retries')
+      }}
+    return session
+  }) as any)
+  const hostCas = async (filter: Record<string, unknown>, update: {$inc: {resourceReservationVersion: number}; $set?: {resourceReservations?: HostResourceReservation[]}}, options: {session?: Session} = {}) => {
+    const session = options.session, row = session?.host ?? current.host,
+      nextClaims = update.$set?.resourceReservations ?? hostResourceReservationsSchema.parse(row.resourceReservations),
+      kind = nextClaims.some(claim => 'kind' in claim) ? 'probe' : 'run'
     if (pausedKind === kind) {pausedKind = undefined; pauseEntered(); await pausePromise}
     if (unavailable) throw Error('Host CAS unavailable')
-    const row = current.host
-    if (filter.sequence !== row.sequence || filter.resourceReservationVersion !== row.resourceReservationVersion) return null
+    if (!matches(row, filter)) return null
     row.resourceReservationVersion! += update.$inc.resourceReservationVersion
-    row.resourceReservations = structuredClone(update.$set.resourceReservations)
-    events.push('host-claim')
-    if (cancelOnHost) current.request.fleetCancellation = {requestedAt: timestamp, reason: 'Cancelled during retained admission'}
-    if (loseHost) {loseHost = false; throw Error('Host CAS answer lost')}
+    if (update.$set?.resourceReservations) row.resourceReservations = structuredClone(update.$set.resourceReservations)
+    if (session) {session.wroteHost = true; session.events.push('host-claim')}
+    else {
+      events.push('host-claim')
+      if (cancelOnHost) current.request.fleetCancellation = {requestedAt: timestamp, reason: 'Cancelled during retained admission'}
+      if (loseHost) {loseHost = false; throw Error('Host CAS answer lost')}
+    }
     return structuredClone(row)
   }
   const hostWrite = spyOn(TestHostStateModel.collection, 'findOneAndUpdate').mockImplementation(hostCas as never)
   const replace = spyOn(resourceReservationRepository, 'replace').mockImplementation(async (host, claims) => Boolean(await hostCas({sequence: host.sequence,
     resourceReservationVersion: host.resourceReservationVersion}, {$inc: {resourceReservationVersion: 1}, $set: {resourceReservations: claims}})))
-  const requestWrite = spyOn(TestRequestModel.collection, 'findOneAndUpdate').mockImplementation((async (filter: Record<string, unknown>, update: {$set: Partial<StoredRoutineJob>}) => {
-    const row = requests.get(String(filter.requestId))
-    if (!row) return null
-    if (row.fleetCancellation || row.fleetBinding || row.state !== 'awaiting-runner' || row.fleetDeadline <= new Date(now)) return null
-    if (update.$set.fleetResourceAdmission) {
-      if (row.fleetResourceAdmission) return null
-      row.fleetResourceAdmission = structuredClone(update.$set.fleetResourceAdmission)
-      events.push('request-stage')
-      if (loseStage) {loseStage = false; throw Error('Stage answer lost')}
-    } else if (update.$set.fleetResourceReservation) {
-      if (row.fleetResourceReservation) return null
-      Object.assign(row, structuredClone(update.$set)); events.push('request-receipt')
-    } else {Object.assign(row, structuredClone(update.$set)); events.push('request-bind')}
+  const requestWrite = spyOn(TestRequestModel.collection, 'findOneAndUpdate').mockImplementation((async (filter: Record<string, unknown>, update: {$set: Partial<StoredRoutineJob>}, options: {session?: Session} = {}) => {
+    const session = options.session, row = (session?.requests ?? requests).get(String(filter.requestId))
+    if (!matches(row, filter)) return null
+    Object.assign(row!, structuredClone(update.$set))
+    const event = update.$set.fleetResourceReservation || update.$set.fleetExclusiveReservation ? 'request-claim' : update.$set.fleetResourceAdmission ? 'request-stage' : 'request-bind'
+    if (session) {session.writtenRequests.add(String(filter.requestId)); session.events.push(event)}
+    else {events.push(event); if (loseStage && update.$set.fleetResourceAdmission) {loseStage = false; throw Error('Stage answer lost')}}
     return structuredClone(row)
   }) as never)
   const admission = {intent: {operationId: 'run:original', hostId: 'mini', laneId: 'android', owner: {id: 'original', kind: 'run' as const},
@@ -519,7 +550,7 @@ async function portableFixture() {
     async prepareCandidate(id = 'original', laneId = 'android') {const observed:ReceivedTestHostState = {...structuredClone(current.host.snapshot), receivedAt: timestamp};
       await returnedCandidateFixture(requests.get(id)!, observed, laneId);const {receivedAt: _, authorityReservations: _claims, ...snapshot} = observed;current.host.snapshot = hostStateSchema.parse(snapshot)},
     async reserve(hostId = 'mini', laneId = 'android', id = 'original', at = now, onWaiting?: (reason: string) => void) {return routineJobRepository.reserveResources!(id, requests.get(id)!.fleetInputSha256!, hostId, laneId, new Date(at), onWaiting)},
-    restore() {for (const mock of [reserveClock, clock, requestGet, hostGet, originalGet, claimedHosts, recorderClaims, requestRead, requestList, hostRead, hostWrite, replace, requestWrite]) mock.mockRestore()}}
+    restore() {for (const mock of [reserveClock, clock, requestGet, hostGet, originalGet, claimedHosts, recorderClaims, requestRead, requestList, hostRead, hostWrite, replace, requestWrite, sessions]) mock.mockRestore()}}
 }
 test.each(['unqualified', 'unknown', 'qualified'] as const)('old selected-app %s evidence does not replace the current physical baseline', async outcome => {
   const f = await portableFixture();
@@ -542,11 +573,11 @@ test.each(['failed', 'unknown', 'owner', 'generation', 'not-current'] as const)(
   } finally {f.restore()}
 })
 
-test('portable backend admission retains the byte claim before staging and refuses a stale probe CAS', async () => {
+test('portable backend admission commits the byte claim and original request receipt together and refuses a stale probe CAS', async () => {
   const f = await portableFixture()
   try {
     expect(await f.reserve()).not.toBeNull()
-    expect(f.events).toEqual(['host-claim', 'request-stage', 'request-receipt'])
+    expect(f.events).toEqual(['request-claim', 'host-claim'])
     expect(await resourceReservationRepository.replaceBackend!(f.row, [f.probe], f.intent, new Date(now))).toBe(false)
     expect(f.current.host.resourceReservations).toHaveLength(1)
     expect('kind' in (f.current.host.resourceReservations as HostResourceReservation[])[0]!).toBe(false)
@@ -592,7 +623,7 @@ test('portable admission refuses unavailable host CAS without a stage or fallbac
     expect(f.current.request.fleetResourceAdmission).toBeUndefined()
   } finally {f.restore()}
 })
-test('an ambiguous late provisional claimant cannot overwrite the immutable staged winner', async () => {
+test('an ambiguous late provisional claimant cannot overwrite the immutable acquired winner', async () => {
   const f = await portableFixture()
   try {
     f.loseStage(); await expect(f.reserve()).rejects.toThrow('Stage answer lost')
@@ -601,7 +632,7 @@ test('an ambiguous late provisional claimant cannot overwrite the immutable stag
     expect(await resourceReservationRepository.stageBackend!('original', f.original.fleetInputSha256!,
       {...f.admission, intent: {...f.admission.intent, hostId: 'other'}}, {...f.current.host, hostId: 'other'}, new Date(now))).toBeNull()
     expect(f.current.request.fleetResourceAdmission).toEqual(winner)
-    expect(await f.reserve()).toBeNull(); expect(f.current.request.fleetResourceReservation).toBeUndefined()
+    expect(await f.reserve()).toBeNull(); expect(f.current.request.fleetResourceReservation).toEqual((f.current.host.resourceReservations as RecorderHostReservation[])[0])
     expect(f.current.host.resourceReservations).toHaveLength(1)
   } finally {f.restore()}
 })
@@ -611,11 +642,11 @@ test('lost byte claim reply retains original custody and restart selects only th
     f.loseHost()
     await expect(f.reserve()).rejects.toThrow('Host CAS answer lost')
     const originalClaim = structuredClone((f.current.host.resourceReservations as RecorderHostReservation[])[0]!)
-    expect(f.current.request.fleetResourceAdmission).toBeUndefined()
+    expect(f.current.request.fleetResourceAdmission).toEqual(f.admission); expect(f.current.request.fleetResourceReservation).toEqual(originalClaim)
     expect(await f.reserve('other', 'android')).toBeNull()
     expect((await f.reserve())?.fleetResourceReservation).toEqual(originalClaim)
     expect(f.current.host.resourceReservations).toEqual([originalClaim])
-    expect(f.events).toEqual(['host-claim', 'request-stage', 'request-receipt'])
+    expect(f.events).toEqual(['request-claim', 'host-claim'])
   } finally {f.restore()}
 })
 test('lost stage reply retains the same original claim and restart adopts its existing request stage', async () => {
@@ -626,7 +657,7 @@ test('lost stage reply retains the same original claim and restart adopts its ex
     const claim = structuredClone((f.current.host.resourceReservations as RecorderHostReservation[])[0]!)
     expect(f.current.request.fleetResourceAdmission).toEqual(f.admission)
     expect((await f.reserve())?.fleetResourceReservation).toEqual(claim)
-    expect(f.events).toEqual(['host-claim', 'request-stage', 'request-receipt'])
+    expect(f.events).toEqual(['request-claim', 'host-claim'])
   } finally {f.restore()}
 })
 test('cross-host duplicate original custody refuses staging, receipt and binding', async () => {
@@ -639,21 +670,21 @@ test('cross-host duplicate original custody refuses staging, receipt and binding
     f.current.request.fleetResourceReservation = (f.current.host.resourceReservations as import('../types/recorder-storage.types').RecorderHostReservation[])[0]
     expect(await routineJobRepository.bind('original', f.original.fleetInputSha256!, {jobId: 'original', requestId: 'original',
       hostId: 'mini', laneId: 'android', descriptorRevision: hash, actionsRunId: '1', actionsJobId: '2', boundAt: timestamp}, {}, new Date(now))).toBeNull()
-    expect(f.current.request.fleetBinding).toBeUndefined(); expect(f.events).toEqual(['host-claim'])
+    expect(f.current.request.fleetBinding).toBeUndefined(); expect(f.events).toEqual(['request-claim', 'host-claim'])
   } finally {f.restore()}
 })
-test('cancellation after byte CAS never stages or binds; uncertain or absent requests retain original custody', async () => {
+test('cancellation after atomic admission never binds; uncertain or absent requests retain original custody', async () => {
   const f = await portableFixture()
   try {
     f.cancelOnHost(); expect(await f.reserve()).toBeNull()
     const claims = f.current.host.resourceReservations as import('../types/recorder-storage.types').RecorderHostReservation[]
-    expect(claims).toHaveLength(1); expect(f.current.request.fleetResourceAdmission).toBeUndefined()
+    expect(claims).toHaveLength(1); expect(f.current.request.fleetResourceAdmission).toEqual(f.admission); expect(f.current.request.fleetResourceReservation).toEqual(claims[0])
     const offer = f.current.host.snapshot.lanes[0]!.resources[2]!.storage!
     expect(reconcileRecorderHostReservations(claims, [], offer)).toEqual(claims)
     const waiting = structuredClone(f.original)
     expect(reconcileRecorderHostReservations(claims, [waiting], offer)).toEqual(claims)
     expect(reconcileRecorderHostReservations(claims, [f.current.request], offer)).toEqual([])
-    expect(f.current.host.resourceReservations).toEqual(claims); expect(f.events).toEqual(['host-claim'])
+    expect(f.current.host.resourceReservations).toEqual(claims); expect(f.events).toEqual(['request-claim', 'host-claim'])
   } finally {f.restore()}
 })
 test('exact terminal cancellation reconciles a provisional byte claim with current empty offer and preserves another owner', async () => {
@@ -674,7 +705,7 @@ test('exact terminal cancellation reconciles a provisional byte claim with curre
     offer.observedAt = timestamp
     await routineJobRepository.reconcileBackendRecorderCancellation!('original', new Date(now))
     expect((f.current.host.resourceReservations as RecorderHostReservation[]).map(value => value.requestId)).toEqual(['other-original'])
-    expect(f.current.request.fleetResourceAdmission).toBeUndefined(); expect(f.current.request.fleetBinding).toBeUndefined()
+    expect(f.current.request.fleetResourceAdmission).toEqual(f.admission); expect(f.current.request.fleetBinding).toBeUndefined()
   } finally {f.restore()}
 })
 
@@ -847,7 +878,7 @@ test('same-phone queued preparation progresses one original at a time even with 
     } finally {f.restore()}
   }
 })
-test('concurrent same-phone provisional claims choose one host-CAS winner before either request stage', async () => {
+test('concurrent same-phone provisional claims commit one host and request winner atomically', async () => {
   const f = await portableFixture()
   try {
     f.addRequest('second'); const paused = f.pause('run'), original = f.reserve(); await paused.entered
@@ -855,7 +886,7 @@ test('concurrent same-phone provisional claims choose one host-CAS winner before
     expect(await original).toBeNull()
     expect(f.current.request.fleetResourceAdmission).toBeUndefined()
     expect((f.current.host.resourceReservations as RecorderHostReservation[]).map(value => value.requestId)).toEqual(['second'])
-    expect(f.events).toEqual(['host-claim', 'request-stage', 'request-receipt'])
+    expect(f.events).toEqual(['request-claim', 'host-claim'])
   } finally {f.restore()}
 })
 
