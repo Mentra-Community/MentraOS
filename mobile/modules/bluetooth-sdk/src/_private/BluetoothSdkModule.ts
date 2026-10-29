@@ -93,9 +93,6 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Connection Commands
   requestStatus(): Promise<void>
-  /** Mac-only explicit fixture launch. Strict nimo-macos-resource-v1 Codable
-   * request/receipt JSON; ordinary launches refuse. No packet/path commands. */
-  nimoResourceSession?(requestJSON: string): Promise<string>
   connectDefault(options?: ConnectOptions): Promise<void>
   connectDefaultWithOptions(options: Required<ConnectOptions>): Promise<void>
   setDefaultDevice(device: Device | null): Promise<void>

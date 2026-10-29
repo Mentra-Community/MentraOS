@@ -8,7 +8,7 @@ import {z} from 'zod';
 import {TestRequestModel} from '../models/test-request.model';
 import {TestRunModel} from '../models/test-run.model';
 import {testWriteConcern} from '../models/test-write-concern';
-import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInputSchema} from '../types/framework-request.types';
+import {frameworkIdentitySchema, frameworkRequestInputSchema} from '../types/framework-request.types';
 import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types';
 import {preparationRejectionSchema, routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {routinePreparationStatusSchema, type RoutinePreparationStatus, completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
@@ -1220,7 +1220,7 @@ export class RoutineJobService {
       requestInputDigest(definition.routineSource) !== requestInputDigest(input.routineSource) ||
       requestInputDigest(definition.definition.execution?.policy ?? null) !== requestInputDigest(input.policy ?? null) ||
       requestInputDigest(routinePortableRequirements(definition)) !== requestInputDigest(target.requirements) ||
-      requestInputDigest(frameworkExecutableBuild(target.selection.build, input.glassesModel)) !== requestInputDigest(input.build) ||
+      requestInputDigest((target.selection.build)) !== requestInputDigest(input.build) ||
       input.minimumFrameworkVersion !== target.selection.minimumFrameworkVersion) return undefined;
     // Enrollment/work may change during definition and host reads. Recheck before exposing any reader authority.
     await this.localEnrollment(input);
@@ -1364,7 +1364,7 @@ export class RoutineJobService {
       let proposedInput;
       try {proposedInput = routineAdmissionInput(enrollment, recordedRoutineBuild(row.fleetSelection.build, row.fleetSelection.source, 'android'),
         {hostId: host.hostId, laneId: lane.id}, selectedHost, now, {minimumFrameworkVersion: row.fleetSelection.minimumFrameworkVersion});
-        proposedInput.build = frameworkExecutableBuild(row.fleetSelection.build, proposedInput.glassesModel);
+        proposedInput.build = (row.fleetSelection.build);
       } catch (error) {if (error instanceof TestRunError && error.status === 409) continue; throw error;}
       const target = {jobId: row.requestId, hostId: host.hostId, laneId: lane.id, deadline: row.fleetDeadline.toISOString(),
         selection: {...row.fleetSelection, routineSource: row.fleetPreparation.routineSource}, requirements, preparing, proposedInput, purpose: {kind: 'backend-connectivity' as const, resourceId: phone.id}, acceptedBinding: binding,
@@ -1413,7 +1413,7 @@ export class RoutineJobService {
       try {
         const input = routineAdmissionInput(enrollment, recordedRoutineBuild(row.fleetSelection.build, row.fleetSelection.source, 'android'),
           {hostId: host.hostId, laneId: lane.id}, currentHost, this.now(), {minimumFrameworkVersion: row.fleetSelection.minimumFrameworkVersion});
-        input.build = frameworkExecutableBuild(row.fleetSelection.build, input.glassesModel);
+        input.build = (row.fleetSelection.build);
         if (!isDeepIdentity(input, proposedInput)) return undefined;
       } catch (error) {if (error instanceof TestRunError && error.status === 409) return undefined; throw error;}
       return projected;

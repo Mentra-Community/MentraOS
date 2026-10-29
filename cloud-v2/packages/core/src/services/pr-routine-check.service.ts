@@ -14,7 +14,7 @@ import {TestSuiteService} from './test-suite.service'
 import {TestRerunService} from './test-rerun.service'
 import {TestHostStateService} from './test-host-state.service'
 import {TestRunError} from './test-result-error'
-import {frameworkRequestInputSchema} from '../types/framework-request.types'
+import {recordedFrameworkRequestInputSchema} from '../types/framework-request.types'
 import type {StoredRoutineJob} from '../types/routine-job.types'
 import {routinePreparedBuildSchema} from '../types/routine-dispatch.types'
 import {GithubRoutineSourceGateway} from './routine-source-selection.service'
@@ -300,8 +300,8 @@ export class PrRoutineCheckService {
       !!request.hostRejection && !request.hostReceipt || !!job.preparationRejection || !!job.preparationCancellation
     if (job.publicationFailure) {member.status = 'incomplete'; member.publicationComplete = false}
     delete member.progress
-    const input = frameworkRequestInputSchema.safeParse(request.input)
-    if (request.hostId && request.inputSha256 && input.success) {
+    const input = recordedFrameworkRequestInputSchema.safeParse(request.input)
+    if (request.hostId && request.inputSha256 && input.success && requestInputDigest(input.data) === request.inputSha256) {
       const host = await this.hosts.get(request.hostId), lane = host?.lanes.find(lane => lane.id === input.data.laneId)
       const waiting = lane?.waiting?.find(value => value.requestId === request.requestId && value.requestDigest === request.inputSha256 && value.acceptedAt === request.hostReceipt?.acceptedAt);
       if (waiting && !lane?.progress && ['queued', 'accepted'].includes(request.state)) member.waitReason = `${waiting.reason} · observed ${waiting.observedAt}`;

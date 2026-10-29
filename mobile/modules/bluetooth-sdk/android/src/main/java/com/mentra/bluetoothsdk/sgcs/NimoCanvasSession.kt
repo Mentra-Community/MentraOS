@@ -11,7 +11,6 @@ internal class NimoCanvasSession {
   private var ready = false
   private var transportReady = false
   private var active = false
-  private var held = false
   private var locked = false
   private var launchBlocked = false
   private var waitingReadiness = false
@@ -54,14 +53,7 @@ internal class NimoCanvasSession {
     return pump()
   }
 
-  /** Debug capture seam; production behavior is unchanged unless explicitly held. */
-  fun hold(value: Boolean, resume: Boolean = true): List<Action> {
-    held = value
-    return if (!value && resume) pump() else emptyList()
-  }
-
   fun active(): Boolean = active
-  fun currentScope(): String? = scope
 
   fun readiness(value: Boolean): List<Action> = updateReadiness(value, confirmed = false)
 
@@ -88,7 +80,7 @@ internal class NimoCanvasSession {
 
   /** A new transport generation has no accepted frame. Retain only the latest desired scene. */
   fun disconnected() {
-    ready = false; transportReady = false; active = false; held = false; locked = false; launchBlocked = false
+    ready = false; transportReady = false; active = false; locked = false; launchBlocked = false
     waitingReadiness = false; observedNotReady = false
     readinessRetries = 0; probeRetries = 0
     accepted = null; rejected = null; flight = null; ticket++; forceRevision++
@@ -161,7 +153,7 @@ internal class NimoCanvasSession {
   }
 
   private fun pump(): List<Action> {
-    if (!ready || held || locked || launchBlocked || waitingReadiness || flight != null) return emptyList()
+    if (!ready || locked || launchBlocked || waitingReadiness || flight != null) return emptyList()
     val next = desired
     val key = when {
       exitRequested && active -> 3

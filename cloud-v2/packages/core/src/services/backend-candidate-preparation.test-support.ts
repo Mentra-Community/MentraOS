@@ -8,7 +8,7 @@ import type {StoredRoutineJob, FleetCandidatePreparation} from '../types/routine
 import type {ReceivedTestHostState} from './test-host-state.service'
 import {fleetCandidatePreparationSchema} from '../types/routine-job.types'
 import {routineEnrollmentSchema} from '../types/routine-definition.types'
-import {frameworkExecutableBuild} from '../types/framework-request.types'
+
 import {routineAdmissionInput} from './routine-admission.service'
 import {recordedRoutineBuild} from './routine-dispatch.service'
 
@@ -20,7 +20,7 @@ export function legacyCandidate(row: StoredRoutineJob, host: ReceivedTestHostSta
       definitionSha256: prepared.definitionSha256, routineSource: prepared.routineSource}),
     proposedInput = routineAdmissionInput(enrollment, recordedRoutineBuild(selection.build, selection.source, selection.platform),
       {hostId: host.hostId, laneId: lane.id}, host, now, {minimumFrameworkVersion: selection.minimumFrameworkVersion})
-  proposedInput.build = frameworkExecutableBuild(selection.build, proposedInput.glassesModel)
+  proposedInput.build = (selection.build)
   const purpose = host.resourceReservations?.resourceReadiness ? routineResourceReadinessPurpose(host, lane, prepared.requirements,
     now, {requestId: row.requestId, inputSha256: row.fleetInputSha256!}) : {kind: 'backend-connectivity' as const,
       resourceId: lane.resources.find(value => value.kind === 'phone')!.id}

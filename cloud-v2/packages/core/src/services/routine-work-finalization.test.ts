@@ -10,14 +10,15 @@ import {RoutineWorkModel} from '../models/routine-work.model'
 import {testWriteConcern} from '../models/test-write-concern'
 import {CandidateVerificationService} from './candidate-verification.service'
 
-async function finalizationFixture(originalSequence = 4) {
+async function finalizationFixture(originalSequence = 4, recordedAppOnly = false) {
   let now = Date.parse('2026-10-05T11:01:01.000Z'), reads = 0
   let candidate: {request: Record<string, unknown>; run: Record<string, unknown>} | null = null
   let afterCandidate = () => {}, beforeWrite = (_row: RoutineWorkDelivery) => {}
   const readCandidate = async () => {
     reads++; afterCandidate(); return structuredClone(candidate)
   }
-  const f = fixture({now: () => now, passedCandidate: readCandidate, beforeVerificationWrite: row => beforeWrite(row)})
+  const f = fixture({now: () => now, passedCandidate: readCandidate, beforeVerificationWrite: row => beforeWrite(row),
+    ...(recordedAppOnly ? {buildMetadata: {manifest: {url: 'https://artifactscdn.mentraglass.com/original-manifest.json', sha256: '7'.repeat(64), size: 200}, manifestSha256: '7'.repeat(64)}} : {})})
   const row = await f.service.submit(input)
   const accepted = {workId: row.workId, inputSha256: row.inputSha256, hostId: row.hostId, acceptedAt: '2026-10-05T10:00:00.000Z'}
   await f.service.accept(accepted, row.hostId)
@@ -30,8 +31,10 @@ async function finalizationFixture(originalSequence = 4) {
     details: {...accepted, work: row.work, attemptId: 2, state: 'failed', sequence: originalSequence, details,
       events: [{eventId: 'original-finalize-failed', sequence: originalSequence, state: 'failed', at: '2026-10-05T11:00:00.000Z', details}]}})
   await f.service.status(original, row.hostId)
+  const {manifest: _manifest, manifestSha256: _manifestSha256, ...appBuild} = row.work.build
   const runInput = {routineId: row.work.routineId, definitionRevision: details.sourceRevision, routineSource: testRoutineSource(details.sourceRevision),
-    platform: 'android', laneId: row.work.target.laneId, build: row.work.build, resources: [],
+    platform: 'android', laneId: row.work.target.laneId, build: recordedAppOnly ? appBuild : row.work.build,
+    resources: recordedAppOnly ? [{id: 'original-glasses', kind: 'glasses'}] : [],
     verification: {workId: row.workId, attemptId: 2, sourceRevision: details.sourceRevision}}
   const runInputSha256 = requestInputDigest(runInput)
   candidate = {request: {requestId: details.requestId, hostId: row.hostId, state: 'terminal', terminalStatus: 'pass',
@@ -62,6 +65,24 @@ async function finalizationFixture(originalSequence = 4) {
     readCandidate, writeHook(row: RoutineWorkDelivery) {beforeWrite(row)},
     afterCandidate(value: () => void) {afterCandidate = value}, beforeWrite(value: (row: RoutineWorkDelivery) => void) {beforeWrite = value}}
 }
+
+test('finalization reads its original published app-only projection without new software admission', async () => {
+  const f = await finalizationFixture(4, true), original = structuredClone(f.original), recorded = structuredClone(f.candidate.request.input);
+  expect(await f.service.verifyRecording({identity: f.identity, event: f.event}, f.row.hostId)).toEqual(f.event);
+  expect(f.rows.get(f.row.workId)!.status).toEqual(original);
+  expect(f.candidate.request.input).toEqual(recorded);
+  expect(await f.service.verifyRecording({identity: f.identity, event: f.terminal('passed')}, f.row.hostId)).toEqual(f.terminal('passed'));
+});
+
+test('finalization refuses changed optional recorded firmware metadata', async () => {
+  const f = await finalizationFixture(4, true), candidateInput = f.candidate.request.input as Record<string, any>;
+  candidateInput.build.manifest = {url: 'https://artifactscdn.mentraglass.com/changed-manifest.json', sha256: '8'.repeat(64), size: 200};
+  f.candidate.run.build = candidateInput.build;
+  f.identity.finalization.runInputSha256 = requestInputDigest(candidateInput);
+  f.candidate.request.inputSha256 = f.identity.finalization.runInputSha256;
+  await expect(f.service.verifyRecording({identity: f.identity, event: f.event}, f.row.hostId)).rejects.toThrow('independent');
+  expect(f.rows.get(f.row.workId)!.verification).toBeUndefined();
+});
 
 test('finalization acknowledges its independent original candidate in a separate ledger and preserves terminal status', async () => {
   const f = await finalizationFixture()
@@ -219,7 +240,7 @@ async function reconciliationFixture(reason = 'Accumulated job details exceed th
       if(value.identity.reconciliation)row.verification!.reconciliation=record;else row.verification=record
       return structuredClone(row)
     }}
-  const service = new RoutineWorkService(rows, {resolve: unexpected, resolveNimoDiagnostic: unexpected}, {get: unexpected},
+  const service = new RoutineWorkService(rows, {resolve: unexpected}, {get: unexpected},
     {publish: unexpected}, {resolve: unexpected}, () => now, null, unexpected, f.readCandidate)
   return {...f, service, parent, failed, identity, event, terminal, get candidate() {return f.candidate}, get reads() {return f.reads},
     setNow(value: number) {now=value; f.setNow(value)}}

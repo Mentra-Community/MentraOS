@@ -1,4 +1,4 @@
-import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
+import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
 import {TestRunError} from "./test-result-error";
 import {testWriteConcern} from "../models/test-write-concern";
 import {createHash} from "node:crypto";
@@ -390,7 +390,7 @@ export class TestRequestService {
       binding: fleetResourceExecutionBinding(row.fleetExclusiveReservation, requestId, hostId, intentSha256, frozen, digest)} : undefined;
     if (frozen.routineId !== intent.routineId || frozen.platform !== intent.platform || frozen.definitionRevision !== intent.routineRevision ||
       frozen.laneId !== intent.laneId || frozen.minimumFrameworkVersion !== intent.minimumFrameworkVersion ||
-      requestInputDigest(frozen.build) !== requestInputDigest(frameworkExecutableBuild(intent.build, frozen.glassesModel)) || intent.routineSource && requestInputDigest(frozen.routineSource) !== requestInputDigest(intent.routineSource))
+      requestInputDigest(frozen.build) !== requestInputDigest((intent.build)) || intent.routineSource && requestInputDigest(frozen.routineSource) !== requestInputDigest(intent.routineSource))
       throw new TestRequestConflict('Prepared executable input contradicts its original dispatch intent');
     if (isExecutableRequest(row)) {
       if (row.inputSha256 !== digest) throw new TestRequestConflict('Prepared executable input changed after its first commit');

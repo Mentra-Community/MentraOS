@@ -19,7 +19,7 @@ import {routineLaneRequirementBlocker} from './routine-lane-eligibility'
 import {routineAdmissionInput} from './routine-admission.service'
 import {routineEnrollmentSchema} from '../types/routine-definition.types'
 import {recordedRoutineBuild} from './routine-dispatch.service'
-import {frameworkExecutableBuild} from '../types/framework-request.types'
+
 import {BACKEND_CANDIDATE_ROUTINE_API_VERSION, backendConnectivityObservationRefusesPreparation} from '../types/backend-connectivity.types'
 
 const now = Date.parse('2026-10-18T23:00:00Z'), timestamp = new Date(now).toISOString(), hash = 'a'.repeat(64), sha = 'b'.repeat(40)
@@ -103,7 +103,7 @@ function legacyTarget(value: StoredRoutineJob, observed: ReceivedTestHostState, 
       definitionSha256: preparation.definitionSha256, routineSource: preparation.routineSource}),
     proposedInput = routineAdmissionInput(enrollment, recordedRoutineBuild(value.fleetSelection.build, value.fleetSelection.source, 'android'),
       {hostId: observed.hostId, laneId}, observed, now);
-  proposedInput.build = frameworkExecutableBuild(value.fleetSelection.build, proposedInput.glassesModel);
+  proposedInput.build = (value.fleetSelection.build);
   const body = {jobId: value.requestId, hostId: observed.hostId, laneId, deadline: value.fleetDeadline.toISOString(),
     selection: {...value.fleetSelection, routineSource: preparation.routineSource}, requirements: recorderCapacityRequirements(preparation),
     ...(candidate ? {candidate: {attemptId: `candidate:${value.requestId}:${(value.fleetCandidatePreparations?.length ?? 0) + 1}`,

@@ -7,49 +7,40 @@ final class NimoCanvasCoordinator {
     private final class Flight {
         let key: Int
         var finalStarted = false
-        var finalStartedElapsedMs: UInt64?
         var complete = false
-        var earlyAck: (Data, UInt64?)?
+        var earlyAck: Data?
         init(key: Int) {
             self.key = key
         }
     }
 
-    private let continuousNow: (() -> UInt64)?
     private let schedule: NimoScheduler
     private let writeCapacity: () -> Int
     private let enqueue: ([Data], @escaping () -> Void, @escaping () -> Void) -> Bool
     private let reconnect: (String) -> Void
     private let rejected: (Int) -> Void
-    private let result: (Int, Int) -> Void
-    private let observedResult: (Int, Int, UInt64?) -> Void
     private let session = NimoCanvasSession()
     private var flight: Flight?
-    private var releaseDraining = false
     private var cancelRetry: (() -> Void)?
     private var cancelDeadline: (() -> Void)?
 
     init(schedule: @escaping NimoScheduler, writeCapacity: @escaping () -> Int,
          enqueue: @escaping ([Data], @escaping () -> Void, @escaping () -> Void) -> Bool,
-         reconnect: @escaping (String) -> Void, rejected: @escaping (Int) -> Void, result: @escaping (Int, Int) -> Void = { _, _ in }, observedResult: @escaping (Int, Int, UInt64?) -> Void = { _, _, _ in }, continuousNow: (() -> UInt64)? = nil)
+         reconnect: @escaping (String) -> Void, rejected: @escaping (Int) -> Void)
     {
-        self.continuousNow = continuousNow
         self.schedule = schedule; self.writeCapacity = writeCapacity; self.enqueue = enqueue
-        self.reconnect = reconnect; self.rejected = rejected; self.result = result; self.observedResult = observedResult
+        self.reconnect = reconnect; self.rejected = rejected
     }
 
     func offer(_ bytes: Data, scope: String, force: Bool = false) {
-        guard !releaseDraining else { return }
         run(session.offer(bytes, scope: scope, force: force))
     }
 
     func activate() {
-        guard !releaseDraining else { return }
         run(session.activate())
     }
 
     func readiness(_ value: Bool, confirmed: Bool = false) {
-        guard !releaseDraining else { return }
         if !value { cancelRetry?(); cancelRetry = nil }
         run(session.readiness(value, confirmed: confirmed))
     }
@@ -59,20 +50,7 @@ final class NimoCanvasCoordinator {
         run(session.exit())
     }
 
-    /// Fence new scenes/retries while retaining only the already-issued command
-    /// and its exact ACK, followed by the final Exit through the same queue.
-    func drainForRelease() {
-        releaseDraining = true
-        cancelRetry?(); cancelRetry = nil
-        run(session.exit())
-    }
-
-    func acceptsReleaseResponse(key: Int, payload: Data) -> Bool {
-        releaseDraining && flight?.key == key && session.acceptsResponse(key: key, payload: payload)
-    }
-
     func nativeApp(_ appId: Int, entered: Bool) {
-        guard !releaseDraining else { return }
         run(session.nativeApp(appId, entered: entered))
     }
 
@@ -83,23 +61,16 @@ final class NimoCanvasCoordinator {
         session.disconnected()
     }
 
-    func response(key: Int, payload: Data, receivedElapsedMs: UInt64? = nil) {
+    func response(key: Int, payload: Data) {
         guard let current = flight, session.acceptsResponse(key: key, payload: payload) else { return }
-        if let receivedElapsedMs, let started = current.finalStartedElapsedMs, receivedElapsedMs < started { return }
         if !current.complete {
-            if current.finalStarted, current.earlyAck == nil { current.earlyAck = (payload, receivedElapsedMs) }
+            if current.finalStarted, current.earlyAck == nil { current.earlyAck = payload }
             return
         }
         cancelDeadline?(); cancelDeadline = nil
         flight = nil
-        let actions = session.response(key: key, payload: payload)
-        result(key, Int(payload.first ?? 255))
-        observedResult(key, Int(payload.first ?? 255), receivedElapsedMs)
-        run(actions)
+        run(session.response(key: key, payload: payload))
     }
-
-    var pendingCount: Int { (flight == nil ? 0 : 1) + (cancelRetry == nil ? 0 : 1) }
-    var mayHaveEntered: Bool { session.mayHaveEntered }
 
     private func run(_ actions: [NimoCanvasSession.Action]) {
         for action in actions {
@@ -116,11 +87,11 @@ final class NimoCanvasCoordinator {
                 do {
                     let frames = try NimoCanvasCodec.frames(key: key, content: frame, writeCapacity: writeCapacity())
                     let queued = enqueue(frames, { [weak self] in
-                        if let self, self.flight === current { current.finalStarted = true; current.finalStartedElapsedMs = self.continuousNow?() }
+                        if self?.flight === current { current.finalStarted = true }
                     }, { [weak self] in
                         guard let self, self.flight === current else { return }
                         current.complete = true
-                        if let ack = current.earlyAck { self.response(key: key, payload: ack.0, receivedElapsedMs: ack.1) }
+                        if let ack = current.earlyAck { self.response(key: key, payload: ack) }
                     })
                     if !queued, flight === current { disconnected(); reconnect("Canvas transport unavailable") }
                 } catch {
@@ -129,7 +100,7 @@ final class NimoCanvasCoordinator {
             case let .reconnect(reason): disconnected(); reconnect(reason)
             case let .rejected(status):
                 rejected(status)
-                if status == 7 && !releaseDraining {
+                if status == 7 {
                     cancelRetry?()
                     cancelRetry = schedule(1) { [weak self] in
                         guard let self else { return }

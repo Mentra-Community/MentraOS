@@ -1,6 +1,6 @@
 import {expect, spyOn, test} from 'bun:test'
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures'
-import {frameworkExecutableBuild, frameworkRequestInputSchema} from '../types/framework-request.types'
+import {frameworkRequestInputSchema} from '../types/framework-request.types'
 import {routineQualificationTargetSchema} from '../types/routine-job.types'
 import {resourceLifecycleSubjectSchema} from '../types/resource-lifecycle.types'
 import {exclusiveResourceIntentSchema, resourceReservationObservationSchema, type HostResourceReservation, type ExclusiveResourceReturn} from '../types/resource-reservations.types'
@@ -29,7 +29,7 @@ function fixture(candidate = false, withIdleContracts = false) {
     receipt: {url: 'https://artifactscdn.mentraglass.com/app.json', sha256: hash, size: 100}}
   const verification = {workId: 'work:edit', attemptId: 3, sourceRevision: sha}
   const input = frameworkRequestInputSchema.parse({routineId: 'battery', platform: 'android', laneId: 'android', definitionRevision: sha,
-    routineSource: enrolled.routineSource, build: frameworkExecutableBuild(build as never), policy: definition.execution.policy,
+    routineSource: enrolled.routineSource, build: (build as never), policy: definition.execution.policy,
     resources: [{kind: 'phone', id: 'phone'}, {kind: 'app', id: 'app'}, {kind: 'recorder', id: 'recorder'}].map(resource => ({
       ...resource, ...(withIdleContracts ? {idleContract: {version: `installed-${resource.kind}-baseline-v1`, maximumAgeMs: 120000,
         qualifiedScope: {kind: 'same-controller', controllerId: 'mini'}, conditions: ['original-work-returned'], repairConfigured: true,

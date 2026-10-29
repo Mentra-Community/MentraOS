@@ -30,7 +30,6 @@ import java.nio.ByteOrder
 import java.util.Calendar
 import java.util.TimeZone
 import java.util.UUID
-import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -935,219 +934,14 @@ class Nimo : SGCManager() {
         hasMic = true
     }
 
-    internal val resourceInstanceId: String = UUID.randomUUID().toString()
-    private var resourceSessionGeneration = 0L
-    private var resourcePairAddress: String? = null
-    private var resourcePairName: String? = null
-    private var resourceTwsAt: Long? = null
-    private var resourceFirmwareAt: Long? = null
-    private var resourceFirmwareVersion: String? = null
-    private var resourceHandshakeTwsAt: Long? = null
-    private var resourceTimeAckAt: Long? = null
-    private var resourceTimeCommandId: String? = null
-    private var resourceTimeWriteStartedAt: Long? = null
-    @Volatile private var resourceReleasePending = false
-    @Volatile private var resourceReceiptPending = false
-    @Volatile private var resourceReleased = false
-    private val resourcePostedWrites = AtomicInteger(0)
-    private var resourceExitStatus: Int? = null
-    private var resourceExitAt: Long? = null
-    private var resourceMicStopWrittenAt: Long? = null
-    private var resourceMicStopStartedAt: Long? = null
-    private var resourceMicStopMarkerAt: Long? = null
-    private var resourceTransportFailure = false
-    private var resourceMicStopRequired = false
-    private var resourceExitRequired = false
-    private var resourceInitialLaunchPendingAtRelease = false
-    private var resourceBondMutationRequested = false
-    private var resourceFactoryResetRequested = false
-    private var resourceCloseCalled = false
-    private var resourceCloseObserved = false
-    private var resourceDisconnectCallbackStatus: Int? = null
-    private var resourceCloseError: String? = null
-    private var resourceClosedWithPending = false
-    private var resourceClosingGatt: BluetoothGatt? = null
-    private var resourceReleaseResult = "not-requested"
-
-    private var resourceCaptureNonce: String? = null
-    private var resourceArmedElapsedMs: Long? = null
-    private var resourceAdmittedElapsedMs: Long? = null
-    private var resourceSessionStartedElapsedMs: Long? = null
-    private var resourceReleaseNonce: String? = null
-    private var resourceReleaseStartedElapsedMs: Long? = null
-    private var firmwareElapsedMs: Long? = null
-    private var twsElapsedMs: Long? = null
-    private var handshakeTwsElapsedMs: Long? = null
-    private var timeWriteStartedElapsedMs: Long? = null
-    private var timeAckElapsedMs: Long? = null
-    private var micStopStartedElapsedMs: Long? = null
-    private var micStopMarkerElapsedMs: Long? = null
-    private var micStopWrittenElapsedMs: Long? = null
-    private var displayExitElapsedMs: Long? = null
-
-    // Keep paired clock sampling in this class even when the triggering callback
-    // is an escaping Kotlin lambda. This preserves event timing and permits APK
-    // bytecode inspection without treating an unrelated elapsed clock call as proof.
-    private fun recordResourceFirmwareClock() { resourceFirmwareAt = System.currentTimeMillis(); firmwareElapsedMs = android.os.SystemClock.elapsedRealtime() }
-    private fun recordResourceTwsClock() { resourceTwsAt = System.currentTimeMillis(); twsElapsedMs = android.os.SystemClock.elapsedRealtime() }
-    private fun recordResourceTimeWriteClock() { resourceTimeWriteStartedAt = System.currentTimeMillis(); timeWriteStartedElapsedMs = android.os.SystemClock.elapsedRealtime() }
-    private fun recordResourceTimeAckClock() { resourceTimeAckAt = System.currentTimeMillis(); timeAckElapsedMs = android.os.SystemClock.elapsedRealtime() }
-    private fun recordResourceMicStopStartedClock() { resourceMicStopStartedAt = System.currentTimeMillis(); micStopStartedElapsedMs = android.os.SystemClock.elapsedRealtime() }
-    private fun recordResourceMicStopMarkerClock() { resourceMicStopMarkerAt = System.currentTimeMillis(); micStopMarkerElapsedMs = android.os.SystemClock.elapsedRealtime() }
-    private fun recordResourceMicStopWrittenClock() { resourceMicStopWrittenAt = System.currentTimeMillis(); micStopWrittenElapsedMs = android.os.SystemClock.elapsedRealtime() }
-    private fun recordResourceExitClock() { resourceExitAt = System.currentTimeMillis(); displayExitElapsedMs = android.os.SystemClock.elapsedRealtime() }
-
-    internal fun resourceCaptureAdmission(nonce: String, armed: Long, admitted: Long) {
-        check(Looper.myLooper() == mainHandler.looper)
-        check(resourceCaptureNonce == null && admitted >= armed)
-        resourceCaptureNonce = nonce; resourceArmedElapsedMs = armed; resourceAdmittedElapsedMs = admitted
-    }
-
-    internal fun resourceCaptureEligible(): Boolean {
-        val snapshot = resourceSnapshot()
-        return resourceSessionGeneration == 0L && discoveryReceiver == null &&
-            !snapshot.getBoolean("managedSessionPresent") && !snapshot.getBoolean("initializationPending") &&
-            !snapshot.getBoolean("reconnectPending") && snapshot.getBoolean("localEffectsSettled") &&
-            !resourceReleasePending && !resourceReceiptPending
-    }
-
-    /** Passive local inspection only: no discovery, queries, radio or bond operations. */
-    internal fun resourceSnapshot(): JSONObject {
-        check(Looper.myLooper() == mainHandler.looper)
-        val pending = writes.pendingCount() + canvasEncoder.pendingCount() + audioClient.lifecyclePending() + resourcePostedWrites.get() + pendingAcks.size + canvas.pendingCount()
-        return JSONObject().put("observedAtEpochMs", System.currentTimeMillis()).put("sessionObservationCurrent", true).put("instanceId", resourceInstanceId).put("sessionGeneration", resourceSessionGeneration)
-            .put("clock", JSONObject().put("kind", "android-elapsed-realtime-v1").put("observedElapsedMs", android.os.SystemClock.elapsedRealtime())
-                .put("captureNonce", resourceCaptureNonce ?: JSONObject.NULL).put("armedElapsedMs", resourceArmedElapsedMs ?: JSONObject.NULL)
-                .put("admittedElapsedMs", resourceAdmittedElapsedMs ?: JSONObject.NULL).put("sessionStartedElapsedMs", resourceSessionStartedElapsedMs ?: JSONObject.NULL)
-                .put("releaseNonce", resourceReleaseNonce ?: JSONObject.NULL).put("releaseStartedElapsedMs", resourceReleaseStartedElapsedMs ?: JSONObject.NULL)
-                .put("firmwareElapsedMs", firmwareElapsedMs ?: JSONObject.NULL)
-                .put("twsElapsedMs", twsElapsedMs ?: JSONObject.NULL)
-                .put("handshakeTwsElapsedMs", handshakeTwsElapsedMs ?: JSONObject.NULL)
-                .put("timeWriteStartedElapsedMs", timeWriteStartedElapsedMs ?: JSONObject.NULL)
-                .put("timeAckElapsedMs", timeAckElapsedMs ?: JSONObject.NULL)
-                .put("micStopStartedElapsedMs", micStopStartedElapsedMs ?: JSONObject.NULL)
-                .put("micStopMarkerElapsedMs", micStopMarkerElapsedMs ?: JSONObject.NULL)
-                .put("micStopWrittenElapsedMs", micStopWrittenElapsedMs ?: JSONObject.NULL)
-                .put("displayExitElapsedMs", displayExitElapsedMs ?: JSONObject.NULL)
-            )
-            .put("pair", JSONObject().put("name", resourcePairName ?: lastDeviceName ?: JSONObject.NULL)
-                .put("bluetoothAddress", resourcePairAddress ?: lastDeviceAddress ?: JSONObject.NULL))
-            .put("handshake", handshakeState.name).put("managedSessionPresent", gatt != null)
-            .put("reconnectPending", reconnectionManager.pending()).put("initializationPending", handshakeState in listOf(HandshakeState.AWAITING_TWS, HandshakeState.AWAITING_TIME_ACK) || setTimeRetryRunnable != null || pairingTimeoutRunnable != null || bondReceiver != null)
-            .put("pending", JSONObject().put("gattWritesAndDescriptors", writes.pendingCount()).put("postedWrites", resourcePostedWrites.get())
-                .put("canvasCommands", canvas.pendingCount()).put("canvasEncodes", canvasEncoder.pendingCount())
-                .put("audioWorkersAndPackets", audioClient.lifecyclePending()).put("acks", pendingAcks.size))
-            .put("localEffectsSettled", pending == 0 && !resourceClosedWithPending)
-            .put("firmware", JSONObject().put("version", resourceFirmwareVersion ?: JSONObject.NULL).put("atEpochMs", resourceFirmwareAt ?: JSONObject.NULL).put("sessionGeneration", resourceSessionGeneration))
-            .put("tws", JSONObject().put("handshakeAtEpochMs", resourceHandshakeTwsAt ?: JSONObject.NULL).put("connected", twsConnected).put("atEpochMs", resourceTwsAt ?: JSONObject.NULL).put("sessionGeneration", resourceSessionGeneration))
-            .put("timeAck", JSONObject().put("statusCode", if (resourceTimeAckAt != null) 0 else JSONObject.NULL)
-                .put("writeStartedAtEpochMs", resourceTimeWriteStartedAt ?: JSONObject.NULL).put("atEpochMs", resourceTimeAckAt ?: JSONObject.NULL).put("commandId", resourceTimeCommandId ?: JSONObject.NULL).put("sessionGeneration", resourceSessionGeneration))
-            .put("release", JSONObject().put("result", resourceReleaseResult).put("pending", resourceReleasePending)
-                .put("micStopRequired", resourceMicStopRequired).put("displayExitRequired", resourceExitRequired).put("micStopStartedAtEpochMs", resourceMicStopStartedAt ?: JSONObject.NULL).put("micStopMarkerAtEpochMs", resourceMicStopMarkerAt ?: JSONObject.NULL).put("micStopWrittenAtEpochMs", resourceMicStopWrittenAt ?: JSONObject.NULL).put("micSilence", "unknown")
-                .put("displayExitStatus", resourceExitStatus ?: JSONObject.NULL).put("displayExitAtEpochMs", resourceExitAt ?: JSONObject.NULL)
-                .put("displayVisibleState", "unknown").put("transportFailure", resourceTransportFailure).put("gattCloseCalled", resourceCloseCalled).put("gattDisconnectCallbackObserved", resourceCloseObserved).put("gattDisconnectCallbackStatus", resourceDisconnectCallbackStatus ?: JSONObject.NULL)
-                .put("gattCloseError", resourceCloseError ?: JSONObject.NULL).put("classicAclState", "unknown").put("bondMutationRequested", resourceBondMutationRequested).put("factoryResetRequested", resourceFactoryResetRequested).put("bondState", "unknown"))
-    }
-
-    /** Exact original instance only. Never delegates to the manager's current device. */
-    internal fun releaseResource(expectedGeneration: Long, isCurrent: () -> Boolean, completed: (JSONObject) -> Unit) =
-        releaseOriginalResource(expectedGeneration, false, isCurrent, completed, null, null)
-
-    internal fun releaseResource(expectedGeneration: Long, isCurrent: () -> Boolean, completed: (JSONObject) -> Unit, requestNonce: String, requestReceivedElapsedMs: Long) =
-        releaseOriginalResource(expectedGeneration, false, isCurrent, completed, requestNonce, requestReceivedElapsedMs)
-
-    /** Only the private admitted capture may cancel an original pre-GATT generation-zero attempt. */
-    internal fun releaseCapturedResource(isCurrent: () -> Boolean, completed: (JSONObject) -> Unit) =
-        releaseOriginalResource(resourceSessionGeneration, true, isCurrent, completed, null, null)
-
-    internal fun releaseCapturedResource(isCurrent: () -> Boolean, completed: (JSONObject) -> Unit, requestNonce: String, requestReceivedElapsedMs: Long) =
-        releaseOriginalResource(resourceSessionGeneration, true, isCurrent, completed, requestNonce, requestReceivedElapsedMs)
-
-    private fun releaseOriginalResource(expectedGeneration: Long, captured: Boolean, isCurrent: () -> Boolean, completed: (JSONObject) -> Unit, requestNonce: String?, requestReceivedElapsedMs: Long?) {
-        check(Looper.myLooper() == mainHandler.looper)
-        if (!isCurrent() || expectedGeneration != resourceSessionGeneration || (!captured && expectedGeneration < 1) || resourceReleasePending || resourceReceiptPending) {
-            completed(JSONObject().put("error", "target-mismatch-or-release-pending")); return
-        }
-        if (resourceReleased) { completed(resourceSnapshot()); return }
-        if (requestReceivedElapsedMs != null && android.os.SystemClock.elapsedRealtime() < requestReceivedElapsedMs) {
-            completed(JSONObject().put("error", "invalid-request-clock")); return
-        }
-        resourceReleaseNonce = requestNonce
-        resourceReleaseStartedElapsedMs = android.os.SystemClock.elapsedRealtime()
-        resourceReleasePending = true
-        resourceReleaseResult = "draining"
-        resourceExitStatus = null; resourceExitAt = null; displayExitElapsedMs = null; resourceMicStopStartedAt = null; micStopStartedElapsedMs = null; resourceMicStopMarkerAt = null; micStopMarkerElapsedMs = null; resourceMicStopWrittenAt = null; micStopWrittenElapsedMs = null
-        resourceExitRequired = canvas.active() || canvas.pendingCount() > 0
-        resourceInitialLaunchPendingAtRelease = !canvas.active() && canvas.launchPending()
-        isDisconnecting = true
-        handshakeState = HandshakeState.IDLE
-        cancelPairingTimeout(); cancelTwsTimeout(); cancelSetTimeRetry(); stopTimers(); reconnectionManager.stop()
-        unregisterBondReceiver()
-        // Unregister our discovery listener without stopping the shared adapter scanner.
-        discoveryReceiver?.let { try { context.unregisterReceiver(it) } catch (_: IllegalArgumentException) {} }
-        discoveryReceiver = null
-        diagnostics?.disconnected()
-        canvasEncoder.invalidate()
-        failAllPendingAcks()
-        audioClient.stop()
-        val original = gatt
-        val mic = micChar
-        resourceMicStopRequired = original != null && mic != null
-        if (original != null && mic != null) {
-            writes.enqueue(original, mic, listOf(byteArrayOf(0x52, 0, 0, 0)), finalStarted = { recordResourceMicStopStartedClock() }, completed = { recordResourceMicStopWrittenClock() })
-        }
-        canvas.exit()
-        val deadline = android.os.SystemClock.elapsedRealtime() + 15_000
-        fun finish(result: String) {
-            resourceReleaseResult = result
-            if (result == "drain-timeout-native-effects-unknown") resourceClosedWithPending = true
-            closeResourceGatt()
-            gatt = null; txChar = null; rxChar = null; micChar = null
-            resetSessionState()
-            resourceReleasePending = false; resourceReleased = true
-            resourceReceiptPending = true
-            // Shared state belongs to this instance only while the manager still owns it.
-            if (isCurrent()) {
-                DeviceStore.apply("glasses", "connected", false)
-                DeviceStore.apply("glasses", "fullyBooted", false)
-                DeviceStore.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
-            }
-            NimoResourceDiagnostics.track(this)
-            mainHandler.postDelayed({
-                // Keep the original bearer/generation fenced through receipt delivery. The
-                // short callback-observation window must not capture a later connection.
-                val originalReceipt = resourceSnapshot()
-                try { completed(originalReceipt) } finally { resourceReceiptPending = false }
-            }, 100)
-        }
-        fun poll() {
-            if (!isCurrent()) {
-                resourceReleasePending = false; resourceReleaseResult = "target-replaced"
-                NimoResourceDiagnostics.track(this); completed(resourceSnapshot()); return
-            }
-            val unsettled = writes.pendingCount() + canvasEncoder.pendingCount() + audioClient.lifecyclePending() + resourcePostedWrites.get() + canvas.pendingCount() +
-                (if (resourceMicStopRequired && resourceMicStopMarkerAt == null) 1 else 0) +
-                (if (resourceExitRequired && resourceExitStatus != 0) 1 else 0)
-            if (unsettled == 0) { finish("local-drained-native-readback-required"); return }
-            if (android.os.SystemClock.elapsedRealtime() >= deadline) { finish("drain-timeout-native-effects-unknown"); return }
-            mainHandler.postDelayed({ poll() }, 25)
-        }
-        mainHandler.post { poll() }
-    }
-
-    private fun closeResourceGatt() {
+    private fun closeGatt() {
         val original = gatt ?: return
-        resourceClosingGatt = original
-        resourceClosedWithPending = resourceClosedWithPending || writes.pendingCount() > 0 || resourcePostedWrites.get() > 0 || canvas.pendingCount() > 0
-        resourceCloseCalled = true
-        try { original.disconnect() } catch (error: Exception) { resourceCloseError = "disconnect-${error.javaClass.simpleName}" }
-        try { original.close() } catch (error: Exception) { resourceCloseError = "close-${error.javaClass.simpleName}" }
+        try { original.disconnect() } catch (error: Exception) { Bridge.log("NIMO: disconnect failed: ${error.javaClass.simpleName}") }
+        try { original.close() } catch (error: Exception) { Bridge.log("NIMO: close failed: ${error.javaClass.simpleName}") }
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val mainScheduler = handlerScheduler(mainHandler)
-    // Variant-specific: release has no receiver or framebuffer protocol implementation.
-    private var diagnostics: NimoDiagnostics? = null
     private val canvasEncoderThread = HandlerThread("NimoCanvasEncoder").apply { start() }
     private val canvasEncoder = NimoCanvasEncoder(mainScheduler,
         handlerScheduler(Handler(canvasEncoderThread.looper)),
@@ -1155,17 +949,7 @@ class Nimo : SGCManager() {
         { Bridge.log("NIMO: canvas validation/encoding failed; retaining last valid scene: ${it.message}") })
     private val canvas = NimoCanvasCoordinator(mainScheduler,
         { (negotiatedMtu - 3).coerceIn(20, 512) }, ::enqueueFrames, ::abortTransport,
-        { Bridge.log("NIMO: canvas rejected status=$it; not a render ACK") },
-        { diagnostics?.cancelHeldCapture("Canvas scope takeover preempted held capture", resumeCanvas = false) },
-        { key, status ->
-            if (key == 3) { resourceExitStatus = status; recordResourceExitClock() }
-            if (resourceReleasePending && resourceInitialLaunchPendingAtRelease && key == 1) {
-                // An explicit rejected initial Launch never acquired canvas ownership.
-                // Status 2 is transport-ambiguous and must retain the unknown fence.
-                if (status != 0 && status != 2) resourceExitRequired = false
-                resourceInitialLaunchPendingAtRelease = false
-            }
-        })
+        { Bridge.log("NIMO: canvas rejected status=$it; not a render ACK") })
 
     private fun handlerScheduler(handler: Handler) = NimoScheduler { delay, task ->
         val runnable = Runnable(task)
@@ -1258,8 +1042,6 @@ class Nimo : SGCManager() {
     // ---------- SGCManager: Connection Management ----------
 
     override fun findCompatibleDevices() {
-        if (NimoResourceDiagnostics.dispatchCapturedEntry { findCompatibleDevices() }) return
-        if (!NimoResourceDiagnostics.admit(this, null, false)) return
         Bridge.log("NIMO: findCompatibleDevices()")
         DEVICE_SEARCH_ID = "NOT_SET"
         DeviceStore.apply("glasses", "connectionState", ConnTypes.SCANNING)
@@ -1267,11 +1049,6 @@ class Nimo : SGCManager() {
     }
 
     override fun connectById(id: String) {
-        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectById(id) }) return
-        if (!NimoResourceDiagnostics.admit(this, id, true)) return
-        if (resourceReleasePending || resourceReceiptPending) return
-        resourceReleased = false
-        resourceBondMutationRequested = false; resourceFactoryResetRequested = false
         Bridge.log("NIMO: connectById($id)")
         DEVICE_SEARCH_ID = id
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTING)
@@ -1331,7 +1108,7 @@ class Nimo : SGCManager() {
         reconnectionManager.stop()
         failAllPendingAcks()
 
-        closeResourceGatt()
+        closeGatt()
         gatt = null
         txChar = null
         rxChar = null
@@ -1341,7 +1118,6 @@ class Nimo : SGCManager() {
         DeviceStore.apply("glasses", "connected", false)
         DeviceStore.apply("glasses", "fullyBooted", false)
         DeviceStore.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
-        NimoResourceDiagnostics.track(this)
     }
 
     /** Explicit Unpair only. Ordinary forget/cleanup must never reset the glasses. */
@@ -1357,7 +1133,6 @@ class Nimo : SGCManager() {
         reconnectionManager.stop()
         canvasEncoder.invalidate()
         canvas.disconnected()
-        resourceFactoryResetRequested = true
         Bridge.log("NIMO: sending factory reset for explicit Unpair")
         sendAwaitingAck(NimoProtocol.CMD_CONTROL_FACTORY, NimoProtocol.FACTORY_RECOVER, byteArrayOf()) {
             Bridge.log("NIMO: factory reset acknowledged=$it")
@@ -1367,7 +1142,6 @@ class Nimo : SGCManager() {
 
     internal fun removeBluetoothBond() {
         val address = gatt?.device?.address ?: lastDeviceAddress ?: return
-        resourceBondMutationRequested = true
         removeBluetoothBond(address)
     }
 
@@ -1390,8 +1164,6 @@ class Nimo : SGCManager() {
         }
         canvasEncoder.close()
         disconnect()
-        diagnostics?.close()
-        diagnostics = null
         audioClient.stop()
     }
 
@@ -1415,7 +1187,7 @@ class Nimo : SGCManager() {
             return
         }
         DeviceStore.apply("glasses", "micEnabled", enabled)
-        if (enabled && !resourceReleasePending && !resourceReleased) {
+        if (enabled) {
             audioClient.start()
         } else {
             audioClient.stop()
@@ -1546,8 +1318,7 @@ class Nimo : SGCManager() {
 
     private fun encodeCanvas(scope: String, force: Boolean = false, release: () -> Unit = {},
                              encode: () -> ByteArray): Boolean =
-        if (resourceReleasePending || resourceReleased) { release(); false }
-        else canvasEncoder.submit(encode, release) { bytes -> canvas.offer(bytes, scope, force) }
+        canvasEncoder.submit(encode, release) { bytes -> canvas.offer(bytes, scope, force) }
 
     private fun decodeCanvasSource(data: String): Bitmap {
         val bytes = NimoCanvasCodec.imageBytes(data)
@@ -1625,7 +1396,6 @@ class Nimo : SGCManager() {
     override fun exit() {
         canvasEncoder.invalidate()
         mainHandler.post {
-            diagnostics?.cancelHeldCapture("Explicit host exit preempted held capture", resumeCanvas = false)
             canvas.exit()
         }
     }
@@ -1845,22 +1615,14 @@ class Nimo : SGCManager() {
      * for Companion service 7033. The separate <name>_BLE ANCS peripheral is not the
      * canvas data channel. This matches the vendor transport=BREDR connection path.
      */
-    private data class ResourcePeer(val address: String, val bondState: Int)
-    private fun resourcePeer(device: android.bluetooth.BluetoothDevice): ResourcePeer = ResourcePeer(
-        try { device.address } catch (_: SecurityException) { "" },
-        try { device.bondState } catch (_: SecurityException) { android.bluetooth.BluetoothDevice.BOND_NONE },
-    )
-
     private fun connectCompanionGatt(device: android.bluetooth.BluetoothDevice) {
-        val peer = resourcePeer(device)
-        if (!NimoResourceDiagnostics.allowPeer(this, peer.address, peer.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED)) return
         if (isDisconnecting || gatt != null) return
         // Classic discovery degrades/aborts connections — always cancel first.
         try {
             bluetoothAdapter?.cancelDiscovery()
         } catch (_: Exception) {}
 
-        val bondState = peer.bondState
+        val bondState = try { device.bondState } catch (_: SecurityException) { android.bluetooth.BluetoothDevice.BOND_NONE }
         if (bondState != android.bluetooth.BluetoothDevice.BOND_BONDED) {
             // Bond over classic first, then open the Companion bearer on completion.
             startBond(device)
@@ -1875,9 +1637,7 @@ class Nimo : SGCManager() {
      * called both on the initial attempt and from the BOND_NONE handler.
      */
     private fun startBond(device: android.bluetooth.BluetoothDevice) {
-        val peer = resourcePeer(device)
-        if (!NimoResourceDiagnostics.allowPeer(this, peer.address, peer.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED)) return
-        val bondState = peer.bondState
+        val bondState = try { device.bondState } catch (_: SecurityException) { android.bluetooth.BluetoothDevice.BOND_NONE }
         // A previous (apparently failed) attempt may have bonded in the background.
         if (bondState == android.bluetooth.BluetoothDevice.BOND_BONDED) {
             Bridge.log("NIMO: already bonded with ${device.address} — connecting")
@@ -1918,8 +1678,6 @@ class Nimo : SGCManager() {
 
     private fun connectBredrTransport(device: android.bluetooth.BluetoothDevice) {
         if (isDisconnecting || gatt != null) return
-        val peer = resourcePeer(device)
-        if (!NimoResourceDiagnostics.beginTransport(this, peer.address, peer.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED)) return
         // GATT over BR/EDR: the glasses pair with a legacy (non-SC) link key, so no LE
         // keys exist (le_linkkey_known:F) and the controller records the device as
         // BR_EDR-only — the 7033 UART service is served over the classic link. This is
@@ -1927,25 +1685,10 @@ class Nimo : SGCManager() {
         // why iOS needs Settings pairing (CoreBluetooth bridges GATT over BR/EDR only
         // for system-paired dual-mode accessories).
         Bridge.log("NIMO: connecting GATT over BR/EDR to ${device.address}")
-        resourceSessionGeneration++
-        resourceSessionStartedElapsedMs = android.os.SystemClock.elapsedRealtime()
-        resourceReleaseNonce = null; resourceReleaseStartedElapsedMs = null
-        resourceExitStatus = null; resourceExitAt = null; displayExitElapsedMs = null; resourceMicStopWrittenAt = null; micStopWrittenElapsedMs = null
-        resourceMicStopStartedAt = null; micStopStartedElapsedMs = null; resourceMicStopMarkerAt = null; micStopMarkerElapsedMs = null; resourceTransportFailure = false; resourceClosingGatt = null
-        resourceClosedWithPending = false; resourceReleaseResult = "not-requested"
-        resourceMicStopRequired = false; resourceExitRequired = false; resourceInitialLaunchPendingAtRelease = false
-        resourceReleased = false
-        resourcePairAddress = peer.address
-        resourcePairName = try { device.name ?: "" } catch (_: SecurityException) { "" }
-        resourceFirmwareAt = null; firmwareElapsedMs = null; resourceFirmwareVersion = null
-        resourceTwsAt = null; twsElapsedMs = null; resourceHandshakeTwsAt = null; handshakeTwsElapsedMs = null; resourceTimeAckAt = null; timeAckElapsedMs = null; resourceTimeCommandId = null; resourceTimeWriteStartedAt = null; timeWriteStartedElapsedMs = null
-        resourceCloseCalled = false; resourceCloseObserved = false; resourceDisconnectCallbackStatus = null; resourceCloseError = null
-        NimoResourceDiagnostics.track(this)
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTING)
         gatt = try {
             device.connectGatt(context, false, gattCallback, android.bluetooth.BluetoothDevice.TRANSPORT_BREDR)
         } catch (error: SecurityException) {
-            resourceTransportFailure = true
             Bridge.log("NIMO: connectGatt SecurityException: ${error.message}")
             null
         }
@@ -2078,10 +1821,6 @@ class Nimo : SGCManager() {
                 override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                     mainHandler.post {
                         if (g !== gatt) {
-                            if (g === resourceClosingGatt && newState == BluetoothProfile.STATE_DISCONNECTED) {
-                                resourceCloseObserved = true
-                                resourceDisconnectCallbackStatus = status
-                            }
                             return@post
                         }
                         Bridge.log("NIMO: onConnectionStateChange status=$status newState=$newState")
@@ -2182,9 +1921,6 @@ class Nimo : SGCManager() {
                                 handleRxPacket(data)
                             }
                             NimoBLE.CHAR_MIC -> {
-                                if (resourceReleasePending && resourceMicStopStartedAt != null && data.contentEquals(byteArrayOf(0x52, 0, 0, 0))) {
-                                    recordResourceMicStopMarkerClock()
-                                }
                                 audioClient.enqueue(data)
                             }
                         }
@@ -2235,15 +1971,9 @@ class Nimo : SGCManager() {
 
     private fun enqueueWrite(char: BluetoothGattCharacteristic, bytes: ByteArray) {
         val expectedGatt = gatt ?: return
-        val timeCommand = if (bytes.size >= 10 && (bytes[8].toInt() and 255) == NimoProtocol.CMD_SET_PARAMETER &&
-            (bytes[9].toInt() and 255) == NimoProtocol.SET_TIME) resourceTimeCommandId else null
-        resourcePostedWrites.incrementAndGet()
         mainHandler.post {
-            resourcePostedWrites.decrementAndGet()
-            if (gatt !== expectedGatt || resourceReleasePending || resourceReleased) return@post
-            writes.enqueue(expectedGatt, char, listOf(bytes), finalStarted = {
-                if (timeCommand != null && timeCommand == resourceTimeCommandId) { recordResourceTimeWriteClock() }
-            })
+            if (gatt !== expectedGatt) return@post
+            writes.enqueue(expectedGatt, char, listOf(bytes))
         }
     }
 
@@ -2262,9 +1992,7 @@ class Nimo : SGCManager() {
 
     private fun abortTransport(reason: String) {
         Bridge.log("NIMO: resetting transport: $reason")
-        resourceTransportFailure = true
-        resourceClosedWithPending = true
-        closeResourceGatt()
+        closeGatt()
         gatt = null
         txChar = null; rxChar = null; micChar = null
         resetSessionState()
@@ -2321,7 +2049,7 @@ class Nimo : SGCManager() {
     // ---------- Handshake ----------
 
     private fun startHandshake() {
-        if (isDisconnecting || resourceReleasePending || resourceReleased) return
+        if (isDisconnecting) return
         Bridge.log("NIMO: starting handshake (awaiting TWS service-connection state)")
         handshakeState = HandshakeState.AWAITING_TWS
         if (twsConnected) {
@@ -2356,7 +2084,6 @@ class Nimo : SGCManager() {
     private fun proceedToTimeSync() {
         if (handshakeState != HandshakeState.AWAITING_TWS) return
         cancelTwsTimeout()
-        resourceHandshakeTwsAt = resourceTwsAt; handshakeTwsElapsedMs = twsElapsedMs
         handshakeState = HandshakeState.AWAITING_TIME_ACK
         Bridge.log("NIMO: TWS OK — sending setTime (awaiting ACK)")
         setTimeAttempts = 0
@@ -2367,21 +2094,13 @@ class Nimo : SGCManager() {
         if (handshakeState != HandshakeState.AWAITING_TIME_ACK || gatt == null) return
         val expectedGatt = gatt
         setTimeAttempts++
-        resourceTimeCommandId = UUID.randomUUID().toString()
-        resourceTimeWriteStartedAt = null; timeWriteStartedElapsedMs = null
         sendAwaitingAck(
                 NimoProtocol.CMD_SET_PARAMETER,
                 NimoProtocol.SET_TIME,
                 NimoFrameCodec.encodeDeviceTime()
         ) { ok ->
             if (gatt !== expectedGatt || handshakeState != HandshakeState.AWAITING_TIME_ACK) return@sendAwaitingAck
-            if (ok && resourceTimeWriteStartedAt == null) {
-                resourceTransportFailure = true
-                handshakeFailed()
-                return@sendAwaitingAck
-            }
             if (ok) {
-                recordResourceTimeAckClock()
                 finishHandshake()
             } else if (setTimeAttempts < SET_TIME_MAX_ATTEMPTS &&
                             handshakeState == HandshakeState.AWAITING_TIME_ACK &&
@@ -2426,16 +2145,6 @@ class Nimo : SGCManager() {
         DeviceStore.apply("glasses", "fullyBooted", true)
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)
         startTimers()
-        if (diagnostics == null) {
-            diagnostics = NimoDiagnostics(
-                context,
-                mainHandler,
-                { frame, completed -> enqueueFrames(listOf(frame), {}, completed) },
-                { ready -> canvas.hold(ready) },
-                { resume -> canvas.releaseHold(resume) },
-            )
-        }
-        diagnostics?.connected((negotiatedMtu - 3).coerceIn(20, 512))
         // Launch checks peer readiness in firmware; do not wait up to a minute for
         // the first unsolicited heartbeat just because peer status is still unknown.
         canvas.activate()
@@ -2449,7 +2158,6 @@ class Nimo : SGCManager() {
     }
 
     private fun resetSessionState() {
-        diagnostics?.disconnected()
         handshakeState = HandshakeState.IDLE
         cancelTwsTimeout()
         cancelSetTimeRetry()
@@ -2474,7 +2182,6 @@ class Nimo : SGCManager() {
             if (fullyBooted) {
                 return@start true
             }
-            if (!NimoResourceDiagnostics.admit(this, DEVICE_SEARCH_ID, true)) return@start true
             Bridge.log("NIMO: Attempting reconnection...")
             isDisconnecting = false
             // Each reconnection cycle is a fresh bond budget — the glasses drop their
@@ -2514,7 +2221,6 @@ class Nimo : SGCManager() {
 
     private fun handleRxPacket(packet: ByteArray) {
         // Diagnostic packets must retain their original wire CRC and framing.
-        if (diagnostics?.onPacket(packet) == true) return
         if (packet.size >= 10 && packet[8].toInt() == 7 && (packet[9].toInt() and 255) in listOf(1, 3, 4)) {
             val response = NimoCanvasCodec.response(packet) ?: return
             if (response.first == 1) Bridge.log("NIMO: canvas Launch response status=${response.second.firstOrNull()?.toInt()}")
@@ -2546,15 +2252,9 @@ class Nimo : SGCManager() {
                     Bridge.log("NIMO: app state report appId=$appId phase=$phase")
                     when (phase) {
                         NimoProtocol.STATE_ENTER -> {
-                            if (appId != NimoCanvasCodec.APP_ID) {
-                                diagnostics?.cancelHeldCapture("Native app takeover preempted held capture", resumeCanvas = false)
-                            }
                             canvas.nativeApp(appId, true)
                         }
                         NimoProtocol.STATE_EXIT -> {
-                            if (appId == NimoCanvasCodec.APP_ID) {
-                                diagnostics?.cancelHeldCapture("Canvas exit preempted held capture", resumeCanvas = false)
-                            }
                             canvas.nativeApp(appId, false)
                         }
                     }
@@ -2606,7 +2306,6 @@ class Nimo : SGCManager() {
     }
 
     private fun onTwsState(connected: Boolean) {
-        recordResourceTwsClock()
         twsConnected = connected
         if (connected && handshakeState == HandshakeState.AWAITING_TWS) {
             proceedToTimeSync()
@@ -2679,7 +2378,6 @@ class Nimo : SGCManager() {
                     val micro = (v ushr 12) and 0x1FF
                     val build = v and 0xFFF
                     firmwareVersionPacked = "$major.$minor.$micro.$build"
-                    resourceFirmwareVersion = firmwareVersionPacked; recordResourceFirmwareClock()
                     emitVersionInfo()
                 }
             }
@@ -2688,7 +2386,6 @@ class Nimo : SGCManager() {
                 while (end > 0 && data[end - 1].toInt() == 0) end--
                 firmwareVersionDetail = String(data, 0, end, Charsets.UTF_8).trim()
                 if (firmwareVersionDetail.isNotEmpty() && firmwareVersionDetail.length <= 240) {
-                    resourceFirmwareVersion = firmwareVersionDetail; recordResourceFirmwareClock()
                 }
                 emitVersionInfo()
             }

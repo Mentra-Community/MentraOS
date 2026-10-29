@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).parent / 'pr-ios'))
-from artifacts import optional_nimo_capability, BUNDLE_ID, configure, digest, package_mac_app, read_profile, run, unsigned_executable_bytes, validate_profile
+from artifacts import BUNDLE_ID, configure, digest, package_mac_app, read_profile, run, unsigned_executable_bytes, validate_profile
 from repackage import unpack
 
 
@@ -107,9 +107,6 @@ def package(plan_path, ipa, output):
             'executableSha256': digest(app / info['CFBundleExecutable']),
             'javascriptSha256': digest(app / 'main.jsbundle'), 'profileUUID': profile['UUID'],
             'profileExpires': profile['ExpirationDate'].isoformat(), 'teamId': team}
-        capability = optional_nimo_capability(app / info['CFBundleExecutable'], Path(__file__).resolve().parents[2], plan['sourceCommit'])
-        if capability is not None:
-            manifest['nativeCapabilities'] = {'nimoMacSession': capability}
         files = {'iphone': f'{prefix}-iphone.ipa', 'mac': f'{prefix}-mac.zip'}
         shutil.copy2(exported[0], output / files['iphone'])
         package_mac_app(app, output / files['mac'], manifest, folder_name='Mentra Release', readme=f'''# Mentra {plan['releaseIdentity']}

@@ -121,8 +121,6 @@ internal class NimoCanvasCoordinator(
     private val enqueue: (List<ByteArray>, () -> Unit, () -> Unit) -> Boolean,
     private val reconnect: (String) -> Unit,
     private val rejected: (Int) -> Unit = {},
-    private val holdPreempted: () -> Unit = {},
-    private val businessResponse: (Int, Int) -> Unit = { _, _ -> },
 ) {
     private class Flight(val action: NimoCanvasSession.Action.Send) {
         var finalStarted = false
@@ -131,21 +129,13 @@ internal class NimoCanvasCoordinator(
     }
     private val session = NimoCanvasSession()
     private var flight: Flight? = null
-    private var holdReady: (() -> Unit)? = null
-    private var holding = false
-    private var heldScope: String? = null
     private var cancelDeadline: (() -> Unit)? = null
     private var cancelRetry: (() -> Unit)? = null
 
     fun pendingCount(): Int = if (flight != null) 1 else 0
     fun active(): Boolean = session.active()
-    fun launchPending(): Boolean = flight?.action?.key == 1
 
     fun offer(bytes: ByteArray, scope: String, force: Boolean = false) {
-        if (holding && scope != heldScope) {
-            releaseHold(resume = false)
-            holdPreempted()
-        }
         run(session.offer(bytes, scope, force))
     }
     fun activate() = run(session.activate())
@@ -157,19 +147,6 @@ internal class NimoCanvasCoordinator(
         if (!ready) { cancelRetry?.invoke(); cancelRetry = null }
         run(session.confirmedReadiness(ready))
     }
-    fun hold(onReady: () -> Unit) {
-        session.hold(true)
-        holding = true
-        heldScope = session.currentScope()
-        holdReady = onReady
-        notifyHoldReadyIfIdle()
-    }
-    fun releaseHold(resume: Boolean = true) {
-        holdReady = null
-        holding = false
-        heldScope = null
-        run(session.hold(false, resume))
-    }
     fun exit() {
         cancelRetry?.invoke(); cancelRetry = null
         run(session.exit())
@@ -180,9 +157,6 @@ internal class NimoCanvasCoordinator(
         cancelRetry?.invoke(); cancelRetry = null
         cancelDeadline?.invoke(); cancelDeadline = null
         flight = null
-        holdReady = null
-        holding = false
-        heldScope = null
         session.disconnected()
     }
 
@@ -195,16 +169,7 @@ internal class NimoCanvasCoordinator(
         }
         cancelDeadline?.invoke(); cancelDeadline = null
         flight = null
-        businessResponse(key, payload[0].toInt() and 255)
         run(session.response(key, payload))
-        notifyHoldReadyIfIdle()
-    }
-
-    private fun notifyHoldReadyIfIdle() {
-        if (flight != null) return
-        val ready = holdReady ?: return
-        holdReady = null
-        ready()
     }
 
     private fun run(actions: List<NimoCanvasSession.Action>) {

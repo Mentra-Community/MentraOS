@@ -744,7 +744,6 @@ struct ViewState {
     // MARK: - Auxiliary Commands
 
     func initSGC(_ wearable: String) {
-        guard NimoResourceFixture.shared.allowsManager(wearable) else { return }
         Bridge.log("Initializing manager for wearable: \(wearable)")
         if sgc != nil && sgc?.type != wearable {
             Bridge.log("MAN: Manager already initialized, cleaning up previous sgc")
@@ -1929,7 +1928,6 @@ struct ViewState {
     }
 
     func connectDefault(requiresAncs: Bool = true) {
-        guard NimoResourceFixture.shared.allowsManager(defaultWearable, name: deviceName) else { return }
         if defaultWearable.isEmpty {
             Bridge.log("MAN: No default wearable, returning")
             return
@@ -1992,13 +1990,11 @@ struct ViewState {
             return
         }
 
-        guard NimoResourceFixture.shared.allowsManager(pendingWearable.isEmpty ? defaultWearable : pendingWearable, name: name) else { return }
         if pendingWearable.isEmpty, !defaultWearable.isEmpty {
             Bridge.log("PAIRFLOW: connect_by_name pending=\(defaultWearable)")
             pendingWearable = defaultWearable
         }
 
-        guard NimoResourceFixture.shared.allowsManager(pendingWearable, name: name) else { return }
         // if the pending wearable is a controller, don't disconnect, use the controller manager to connect
         if ControllerTypes.ALL.contains(pendingWearable) {
             controller?.disconnect()
@@ -2021,13 +2017,9 @@ struct ViewState {
         }
 
         Bridge.log("PAIRFLOW: connect_by_name decision=new_manager name=\(name)")
-        let managerEntry = NimoResourceFixture.shared.beginManagerEntry(pendingWearable)
         Task {
-            defer { NimoResourceFixture.shared.endManagerEntry(managerEntry) }
-            guard NimoResourceFixture.shared.allowsManager(self.pendingWearable, name: name) else { return }
-            if !NimoResourceFixture.shared.preserveScan(name) { disconnect(clearPendingConnection: false) }
+            disconnect(clearPendingConnection: false)
             try? await Task.sleep(nanoseconds: 100 * 1_000_000) // 100ms
-            guard NimoResourceFixture.shared.allowsManager(self.pendingWearable, name: name) else { return }
             self.searching = true
             self.pendingDeviceName = name
 
@@ -2038,7 +2030,6 @@ struct ViewState {
     }
 
     func connectDevice(_ deviceModel: String, _ deviceName: String) {
-        guard NimoResourceFixture.shared.allowsManager(deviceModel, name: deviceName) else { return }
         Bridge.log("MAN: Connecting to device: \(deviceModel) \(deviceName)")
         if DeviceTypes.ALL.contains(deviceModel) {
             pendingWearable = deviceModel

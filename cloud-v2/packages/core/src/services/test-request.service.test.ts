@@ -87,6 +87,19 @@ test("duplicate delivery and lost acknowledgement preserve one host acceptance",
   expect(await service.submit("request-1", "mini", input)).toEqual(accepted);
 });
 
+test('current request admission requires Live software and rejects retired selection metadata', async () => {
+  const manifest = {url: 'https://artifactscdn.mentraglass.com/exact/manifest.json', sha256: 'e'.repeat(64), size: 100};
+  const software = {model: 'mentra-live', manifest};
+  const input = {...inputFor(), resources: [{id: 'android-glasses', kind: 'glasses'}],
+    build: {...build, manifest, manifestSha256: manifest.sha256}, glassesStart: software, glassesReturn: software};
+  const service = new TestRequestService(store());
+  expect(await service.submit('current-live', 'mini', input)).toMatchObject({input, inputSha256: requestInputDigest(input)});
+  const {glassesStart: _start, glassesReturn: _return, ...withoutSoftware} = input;
+  await expect(service.submit('missing-live-software', 'mini', withoutSoftware)).rejects.toMatchObject({status: 400});
+  await expect(service.submit('retired-with-live-software', 'mini', {...input, glassesModel: 'nimo'}))
+    .rejects.toMatchObject({status: 400});
+});
+
 test("different input or host cannot borrow an existing request", async () => {
   const service = new TestRequestService(store());
   const row = await service.submit("request-1", "mini", inputFor());

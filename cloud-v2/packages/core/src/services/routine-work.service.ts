@@ -16,7 +16,8 @@ import {
   type RoutineWorkRequest,
   type RoutineWorkStatus,
 } from '../types/routine-work.types'
-import {frameworkIdentitySchema, frameworkExecutableBuild, frameworkRequestInputSchema} from '../types/framework-request.types'
+import {frameworkIdentitySchema, recordedFrameworkRequestInputSchema} from '../types/framework-request.types'
+import {recordedBuildMatchesIntent} from './routine-request-input'
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service'
 import {selectedBuildInput} from '../types/test-build.types'
 import {TestHostStateService} from './test-host-state.service'
@@ -204,7 +205,7 @@ function terminalOutcome(event: RoutineWorkStatus) {
 export class RoutineWorkService {
   constructor(
     private readonly rows: RoutineWorkRepository = repository,
-    private readonly builds: Pick<TestBuildGateway, 'resolve' | 'resolveNimoDiagnostic'> = new GithubTestBuildGateway(),
+    private readonly builds: Pick<TestBuildGateway, 'resolve'> = new GithubTestBuildGateway(),
     private readonly hosts: Pick<TestHostStateService, 'get'> & Partial<Pick<TestHostStateService, 'list'>> = new TestHostStateService(),
     private readonly notifications: Pick<RoutineWorkNotification, 'publish'> = new RoutineWorkNotification(),
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve'> = new GithubRoutineSourceGateway(),
@@ -257,7 +258,7 @@ export class RoutineWorkService {
     try {
       const platform = input.requirements.platform === 'mac' ? 'ios-on-mac' : 'android'
       const [build, revision] = await Promise.all([
-        input.diagnostic ? (this.builds.resolveNimoDiagnostic ? this.builds.resolveNimoDiagnostic(input.buildSource) : Promise.reject(new TestRunError(409, 'NIMO diagnostic build admission is unavailable'))) : this.builds.resolve(input.buildSource, platform),
+        this.builds.resolve(input.buildSource, platform),
         this.sources.resolve(input.source.revision, undefined, input.source.repository),
       ])
       if (
@@ -265,14 +266,14 @@ export class RoutineWorkService {
         build.availability !== 'available' ||
         !build.archive ||
         !build.receipt ||
-        build.headSha !== input.origin.headSha || (build.source.repository ?? 'Mentra-Community/MentraOS') !== input.origin.repository || build.diagnostic !== input.diagnostic
+        build.headSha !== input.origin.headSha || (build.source.repository ?? 'Mentra-Community/MentraOS') !== input.origin.repository
       )
         throw new TestRunError(409, 'The exact originating PR build is not published')
-      const {buildSource: _, deadline: _deadline, diagnostic: _diagnostic, ...fields} = input
+      const {buildSource: _, deadline: _deadline, ...fields} = input
       const work = portableAuthoringWorkSchema.parse({
         ...fields, source: {...fields.source, revision},
         build: {
-          ...selectedBuildInput(build, platform, Boolean(input.diagnostic)),
+          ...selectedBuildInput(build, platform),
           ...(build.manifest ? {manifest: build.manifest, manifestSha256: build.manifestSha256} : {}),
         },
       })
@@ -593,14 +594,14 @@ export class RoutineWorkService {
       const request=candidate?.request as {requestId?:string;runId?:string;hostId?:string;state?:string;terminalStatus?:string;inputSha256?:string;input?:unknown}|undefined
       const run=candidate?.run as {runId?:string;requestId?:string;hostId?:string;routineId?:string;definitionRevision?:string;outcome?:string;
         uploadsComplete?:boolean;recordedPassingExample?:boolean;recordingAssetId?:string;build?:unknown;verification?:unknown}|undefined
-      const selected=frameworkRequestInputSchema.safeParse(request?.input),input=selected.success?selected.data:undefined
+      const selected=recordedFrameworkRequestInputSchema.safeParse(request?.input),input=selected.success?selected.data:undefined
       if(!request||!run||!input||request.requestId!==finalization.requestId||request.hostId!==hostId||request.state!=='terminal'||
         request.terminalStatus!=='pass'||request.inputSha256!==finalization.runInputSha256||
         requestInputDigest(input)!==finalization.runInputSha256||request.runId!==run.runId||
         input.routineId!==row.work.routineId||input.definitionRevision!==finalization.sourceRevision||
         input.laneId!==row.work.target?.laneId||input.verification?.workId!==row.workId||input.verification.attemptId!==original.details.attemptId||
         input.verification.sourceRevision!==finalization.sourceRevision||
-        requestInputDigest(input.build)!==requestInputDigest(frameworkExecutableBuild(row.work.build,input.glassesModel))||
+        !recordedBuildMatchesIntent(input.build,row.work.build)||
         requestInputDigest(run.build)!==requestInputDigest(input.build)||requestInputDigest(run.verification)!==requestInputDigest(input.verification)||
         run.requestId!==finalization.requestId||run.hostId!==hostId||run.routineId!==row.work.routineId||
         run.definitionRevision!==finalization.sourceRevision||run.outcome!=='pass'||!run.uploadsComplete||!run.recordedPassingExample||!run.recordingAssetId)

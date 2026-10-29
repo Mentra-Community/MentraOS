@@ -10,7 +10,6 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.mentra.bluetoothsdk.sgcs.MentraLive
-import com.mentra.bluetoothsdk.sgcs.NimoResourceDiagnostics
 import com.mentra.bluetoothsdk.streaming.StreamSessionState
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
@@ -368,8 +367,6 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun startScan(model: DeviceModel) {
-        if (NimoResourceDiagnostics.dispatchCapturedEntry { startScan(model) }) return
-        if (!NimoResourceDiagnostics.allowManagerConnect(model.deviceType)) return
         if (model != DeviceModel.SIMULATED) {
             requireBluetoothReady("scan for glasses")
         }
@@ -476,13 +473,11 @@ class MentraBluetoothSdk private constructor(
 
     @JvmOverloads
     fun connect(device: Device, options: ConnectOptions = ConnectOptions()) {
-        if (NimoResourceDiagnostics.dispatchCapturedEntry { connect(device, options) }) return
-        if (!NimoResourceDiagnostics.allowManagerConnect(device.model.deviceType, device.name)) return
         if (device.model != DeviceModel.SIMULATED) {
             requireBluetoothReady("connect to glasses")
         }
         val isController = ControllerTypes.ALL.contains(device.model.deviceType)
-        if (options.cancelExistingConnectionAttempt && !NimoResourceDiagnostics.preserveCapturedScan(device.model.deviceType, device.name)) {
+        if (options.cancelExistingConnectionAttempt) {
             if (isController) {
                 deviceManager.disconnectController()
             } else {
@@ -519,18 +514,16 @@ class MentraBluetoothSdk private constructor(
 
     @JvmOverloads
     fun connectDefault(options: ConnectOptions = ConnectOptions()) {
-        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectDefault(options) }) return
         val defaultDevice =
             currentDefaultDevice()
                 ?: throw BluetoothSdkException(
                     "default_device_missing",
                     "Set a default glasses device before calling connectDefault.",
                 )
-        if (!NimoResourceDiagnostics.allowManagerConnect(defaultDevice.model.deviceType, defaultDevice.name)) return
         if (defaultDevice.model != DeviceModel.SIMULATED) {
             requireBluetoothReady("connect to glasses")
         }
-        if (options.cancelExistingConnectionAttempt && !NimoResourceDiagnostics.preserveCapturedScan(defaultDevice.model.deviceType, defaultDevice.name)) {
+        if (options.cancelExistingConnectionAttempt) {
             cancelConnectionAttempt()
         }
         deviceManager.connectDefault()

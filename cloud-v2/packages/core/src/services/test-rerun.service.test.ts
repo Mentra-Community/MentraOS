@@ -63,6 +63,18 @@ test('new preparation records still require routine bundle provenance when read'
  const request=f.requests.get(p.plan.members[0]!.requestId);delete request.input.routineSource;request.inputSha256=requestInputDigest(request.input);
  await expect(f.service.detail('new')).rejects.toThrow('frozen input');
 });
+test('intent-bound historical originals remain readable in rerun history with their recorded app-only build',async()=>{
+ const f=fixture(),input={...structuredClone(nativeInput),glassesModel:'nimo',resources:[{id:'old-glasses',kind:'glasses'}]},
+  manifest={url:'https://artifactscdn.mentraglass.com/live/manifest.json',sha256:'f'.repeat(64),size:100};
+ const intent={requestId:'original-20',routineId:input.routineId,platform:input.platform,routineRevision:input.definitionRevision,
+  routineSource:input.routineSource,laneId:input.laneId,source,build:{...input.build,manifest,manifestSha256:manifest.sha256}};
+ const row={requestId:intent.requestId,hostId:'mini',state:'terminal',terminalStatus:'failed',input,inputSha256:requestInputDigest(input),
+  dispatchIntent:intent,dispatchIntentSha256:requestInputDigest(intent)};
+ f.requests.set(row.requestId,row);const before=JSON.stringify(row);
+ const history=await f.service.history({requestId:row.requestId},row.requestId);
+ expect(history.original).toMatchObject({requestId:row.requestId,status:'failed',build:input.build});
+ expect(JSON.stringify(row)).toBe(before);expect(f.executions).toBe(0);
+});
 function fixture(memberCount = 28){
  const rows=new Map<string,RerunRecord>(),claims=new Set<string>(),requests=new Map<string,any>(),results=new Map<string,any>();
  let time=Date.parse('2026-10-06T12:00:00Z'),prepared=0,failId='',executions=0;

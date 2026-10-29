@@ -12,7 +12,7 @@ import {createPrRoutineCheckApi} from '../api/internal/pr-routine-check.api'
 
 function fixture() {
   let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, contextCalls = 0, loseIntakeWake = false, resolveCount = 0, deliveries = 0, lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false, canWrite = true
-  const stored = new Map<string, PrRoutineCheckRow>(), events = new Map<string, string>(), requests = new Map<string, any>(), results = new Map<string, any>()
+  const stored = new Map<string, PrRoutineCheckRow>(), events = new Map<string, string>(), requests = new Map<string, any>(), results = new Map<string, any>(), hosts = new Map<string, any>()
   const controls = new Map<string,{deliveryId:string;digest:string;control:unknown;nextAt:Date}>(), processed = new Set<string>()
   const nativeIds = new Map<string, number>()
   let routineRepository = 'Mentra-Community/Mentra-Automated-Testing'
@@ -59,10 +59,10 @@ function fixture() {
   {async get(id) {return requests.get(id) ?? null}}, {async summary(id) {if (!results.has(id)) throw new TestRunError(404, 'missing'); return results.get(id)}},
   {async create() {return {} as any}, async bind() {return {} as any}, async complete(id) {suiteCompletions.push(id); if (failSuiteCompletion) throw Error('suite finalization unavailable'); return {} as any}},
   {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async cancelRequest() {return false}, async cancelPlan() {return false}, async detail() {return {state: 'accepted'} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
-  {async get() {return null}}, () => now, {async resolve(_revision, _before, repository) {resolveCount++; routineRepository = repository ?? 'Mentra-Community/Mentra-Automated-Testing'; routineSourceCalls.push({operation: 'resolve', repository}); return 'a'.repeat(40)}})
+  {async get(id) {return hosts.get(id) ?? null}}, () => now, {async resolve(_revision, _before, repository) {resolveCount++; routineRepository = repository ?? 'Mentra-Community/Mentra-Automated-Testing'; routineSourceCalls.push({operation: 'resolve', repository}); return 'a'.repeat(40)}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
-  return {get service() {return service}, canWrite(value: boolean) {canWrite=value}, loseIntakeWake() {loseIntakeWake=true}, restart() {service = createService()}, stored, context, requests, results, submissions, cancellations, checkPayloads, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
+  return {get service() {return service}, canWrite(value: boolean) {canWrite=value}, loseIntakeWake() {loseIntakeWake=true}, restart() {service = createService()}, stored, context, requests, results, hosts, submissions, cancellations, checkPayloads, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
     failSubmit(value = true) {failSubmit = value}, failHistory(value = true) {failHistory = value}, failCancellation(value?: string) {failCancellation = value}, holdCancellation(value?: Promise<void>) {holdCancellation = value}, history(value: any[]) {history = value},
     gate: () => stored.get(gateId)!.payload, advance(ms = 30000) {now += ms}, get now() {return now},
     get contextCalls() {return contextCalls}, get resolves() {return resolveCount}, get deliveries() {return deliveries}, get findCalls() {return findCalls}, outage(value = true) {unavailableDelivery = value}, crashAtCreation() {crashCreation = true}, crashAtProducer() {crashProducer = true}, receipt(value: typeof producerReceipt) {producerReceipt = value}, loseDelivery() {lostDelivery = true},
@@ -506,6 +506,26 @@ test('public progress renders observed completed test counts across named lifecy
    phase, completedSteps: 1, totalSteps: 2, startedAt: new Date(f.now - 30000).toISOString(), lastProgressAt: new Date(f.now).toISOString(), observedAt: new Date(f.now).toISOString()};
   expect(routineCheckPayload(f.gate(), f.now).output.summary).toContain('1/2 test steps');
  }
+});
+
+test('recorded PR progress preserves app-only inputs and refuses changed recorded digests', async () => {
+ const f = fixture(); await f.intake(); f.build(); await f.drain();
+ const member = f.gate().attempt.members[0]!, request = f.requests.get(member.requestId!);
+ request.hostId = 'testing-air-1';
+ request.input = {routineId: 'login', platform: 'android', definitionRevision: 'a'.repeat(40), routineSource: testRoutineSource(),
+  laneId: 'android', build: {...request.fleetSelection.build, prNumber: 12}, resources: [{id: 'original-glasses', kind: 'glasses'}]};
+ request.inputSha256 = requestInputDigest(request.input);
+ const progress = {requestId: request.requestId, requestDigest: request.inputSha256, ownerGeneration: 2,
+  controllerIncarnation: 'original-controller', sequence: 3, phase: 'test' as const, completedSteps: 1, totalSteps: 2,
+  startedAt: new Date(f.now - 30000).toISOString(), lastProgressAt: new Date(f.now).toISOString(), observedAt: new Date(f.now).toISOString()};
+ f.hosts.set(request.hostId, {incarnation: 'original-controller', sequence: 3, lanes: [{id: 'android',
+  activity: {owner: {kind: 'run', id: request.requestId}, generation: 2}, progress}]});
+ await f.service.reconcile(f.gate().gateId);
+ expect(f.gate().attempt.members[0]!.progress).toEqual(progress);
+ request.inputSha256 = 'f'.repeat(64);
+ f.hosts.get(request.hostId).lanes[0].progress.requestDigest = request.inputSha256;
+ await f.service.reconcile(f.gate().gateId);
+ expect(f.gate().attempt.members[0]!.progress).toBeUndefined();
 });
 
 test('closing or advancing a PR preserves its already delivered settled verdict and timestamp', async () => {

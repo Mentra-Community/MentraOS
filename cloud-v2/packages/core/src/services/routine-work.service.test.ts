@@ -227,7 +227,7 @@ test('author routing uses an accepting alternate model and refreshes labels with
   expect((await service.inspect(row.workId)).fleetSelection).toEqual(frozen)
   expect((await service.inspect(row.workId)).fleetInputSha256).toBe(first.inputSha256)
 })
-export function fixture(options: {buildHead?: string; noHost?: boolean; notificationFailure?: boolean; now?:()=>number; passedCandidate?:(id:string)=>Promise<{request:unknown;run:unknown}|null>; beforeVerificationWrite?:(row:RoutineWorkDelivery)=>void} = {}) {
+export function fixture(options: {buildHead?: string; buildMetadata?: {manifest: {url: string; sha256: string; size: number}; manifestSha256: string}; noHost?: boolean; notificationFailure?: boolean; now?:()=>number; passedCandidate?:(id:string)=>Promise<{request:unknown;run:unknown}|null>; beforeVerificationWrite?:(row:RoutineWorkDelivery)=>void} = {}) {
   const rows = new Map<string, RoutineWorkDelivery>()
   let resolves = 0,
     notifications = 0
@@ -237,7 +237,7 @@ export function fixture(options: {buildHead?: string; noHost?: boolean; notifica
     },
     async insert(row) {
       if (rows.has(row.workId)) throw new Error('duplicate')
-      const work=authoringWorkSchema.parse({...row.work,target:input.target});
+      const work=authoringWorkSchema.parse({...row.work,build:{...row.work.build,...options.buildMetadata},target:input.target});
       rows.set(row.workId, {...structuredClone(row),work,inputSha256:requestInputDigest(work),hostId:'mini', createdAt: new Date('2026-10-05T10:00:00Z')})
     },
     async queued(hostId, after, limit) {
@@ -288,10 +288,6 @@ export function fixture(options: {buildHead?: string; noHost?: boolean; notifica
   const service = new RoutineWorkService(
     repository,
     {
-      async resolveNimoDiagnostic(source) {
-        const result = await this.resolve(source, 'android')
-        return {...result, diagnostic: 'nimo-resource-v1' as const}
-      },
       async resolve(source, platform) {
         resolves++
         return {
@@ -766,24 +762,10 @@ test('pre-admission verification retains the failed status and admits only its o
  await expect(service.verifyRecording({identity,event},row.hostId)).rejects.toThrow('uncancelled')
 })
 
-test('diagnostic authoring intake rejects phone-only, G2, alternate-model, and Mac requirements before resolution', async () => {
- const f = fixture();
- for (const requirements of [input.requirements, {...input.requirements,glasses:['g2'],resources:[...input.requirements.resources,{kind:'glasses',capabilities:[]}]},
-   {...input.requirements,platform:'mac',glasses:['nimo']}, {...input.requirements,glasses:['nimo','g2'],resources:[...input.requirements.resources,{kind:'glasses',capabilities:[]}]}]) {
-   await expect(f.service.submit({...input,diagnostic:'nimo-resource-v1',requirements})).rejects.toMatchObject({status:400});
- }
- expect(f.rows.size).toBe(0);
-});
 
 
-test('explicit NIMO authoring freezes diagnostic selection and rejects changed ordinary retry', async () => {
- const f = fixture();
- const request = {...input,diagnostic:'nimo-resource-v1',requirements:{...input.requirements,glasses:['nimo'],resources:[...input.requirements.resources,{kind:'glasses',capabilities:[]}]}};
- const row = await f.service.submit(request);
- expect(row.work.build).toMatchObject({kind:'android-apk',diagnostic:'nimo-resource-v1'});
- const {diagnostic: _diagnostic, ...ordinary} = request;
- await expect(f.service.submit(ordinary)).rejects.toThrow('retry changed');
-});
+
+
 
 
 test('authoring delivery retains its existing twenty-attempt policy after the run retry limit is removed', async () => {

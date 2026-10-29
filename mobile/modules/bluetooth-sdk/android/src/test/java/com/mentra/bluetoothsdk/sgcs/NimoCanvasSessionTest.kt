@@ -314,26 +314,4 @@ class NimoCanvasSessionTest {
     assertThrows(IllegalArgumentException::class.java) { session.offer(ByteArray(12281), "one:1") }
   }
 
-  @Test fun diagnosticHoldRetainsOnlyLatestSceneUntilReleased() {
-    val session = NimoCanvasSession()
-    launched(session); success(session, 4)
-
-    assertTrue(session.hold(true).isEmpty())
-    assertTrue(session.offer(frameB, "two:1").isEmpty())
-    assertTrue(session.offer(frameC, "two:2", force = true).isEmpty())
-
-    val update = send(session.hold(false))
-    assertEquals(4, update.key)
-    assertArrayEquals(frameC, update.frame)
-  }
-
-  @Test fun preemptedHoldDoesNotFlushStaleSceneBeforeExit() {
-    val session = NimoCanvasSession()
-    launched(session); success(session, 4)
-    session.hold(true)
-    session.offer(frameB, "two:1")
-
-    assertTrue(session.hold(false, resume = false).isEmpty())
-    assertEquals(3, send(session.exit()).key)
-  }
 }

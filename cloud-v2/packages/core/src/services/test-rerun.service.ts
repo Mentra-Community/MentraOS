@@ -276,7 +276,7 @@ export class TestRerunService {
           originalBuild = original.dispatchIntent.build;
           minimumFrameworkVersion = intent.data.minimumFrameworkVersion;
         } else if (original) {
-          const parsedInput = (original.dispatchIntent ? frameworkRequestInputSchema : recordedFrameworkRequestInputSchema).safeParse(original.input);
+          const parsedInput = recordedFrameworkRequestInputSchema.safeParse(original.input);
           if (!parsedInput.success || requestInputDigest(parsedInput.data) !== original.inputSha256)
             throw new TestRunError(503, 'Original routine provenance is unavailable');
           routineSource = parsedInput.data.routineSource;
@@ -289,7 +289,7 @@ export class TestRerunService {
         if (member.requestId) {
           const original = await this.requests.get(member.requestId);
           if (original && isExecutableRequest(original)) {
-            const parsedInput = (original.dispatchIntent ? frameworkRequestInputSchema : recordedFrameworkRequestInputSchema).safeParse(original.input);
+            const parsedInput = recordedFrameworkRequestInputSchema.safeParse(original.input);
             if (!parsedInput.success || requestInputDigest(parsedInput.data) !== original.inputSha256)
               throw new TestRunError(503, "Original app provenance is unavailable");
             originalBuild = parsedInput.data.build;

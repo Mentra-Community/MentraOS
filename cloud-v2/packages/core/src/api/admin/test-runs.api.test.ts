@@ -15,6 +15,8 @@ import {TestRequestProgressService} from '../../services/test-request-progress.s
 import {TestHostStateService} from '../../services/test-host-state.service';
 import {sharedResourceWait} from '../../services/routine-resource-wait';
 import {TestRequestMatchService} from '../../services/test-request-match.service';
+import {readAcceptedRoutineRequest} from '../../services/routine-request-input';
+import {recordedFrameworkRequestInputSchema} from '../../types/framework-request.types';
 
 test('exact original matching route returns identical no-store JSON outside generic result lookup', async () => {
   const report = {requestId: 'exact-original', stage: 'Candidate check and return', lanes: []}
@@ -296,6 +298,38 @@ test('historical request detail preserves an absent routine source and original 
   expect(JSON.stringify(input)).toBe(before);
   expect(requestInputDigest(input)).toBe(inputSha256);
   await expect(new Requests().submit('new-request', 'mini', input)).rejects.toMatchObject({status: 400});
+});
+
+test('historical retired glasses input projects its original identity and digest without enabling new admission', async () => {
+  const input = {routineId: 'retired-connection', definitionRevision: 'a'.repeat(40), platform: 'android' as const, laneId: 'old-android',
+    routineSource: {...testRoutineSource(), minimumRoutineApiVersion: 43}, glassesModel: 'nimo',
+    resources: [{id: 'old-glasses', kind: 'glasses' as const}],
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev' as const, headSha: 'b'.repeat(40)}};
+  const before = JSON.stringify(input), inputSha256 = requestInputDigest(input);
+  const row: StoredTestRequest = {requestId: 'retired-request', hostId: 'old-host', input, inputSha256,
+    state: 'terminal', terminalStatus: 'not-run'};
+  class Results extends FrameworkResultService {
+    override async detailByRun(): Promise<never> {throw new TestRunError(404, 'missing result');}
+    override async detail(): Promise<never> {throw new TestRunError(404, 'missing result');}
+  }
+  class Requests extends TestRequestService {override async get() {return row;}}
+  const app = createTestRunAdminApi(undefined, undefined, new Results(), new Requests());
+  const response = await app.request('/retired-request');
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({kind: 'request', request: {requestId: row.requestId, inputSha256,
+    routineId: input.routineId, definitionRevision: input.definitionRevision, routineSource: input.routineSource, build: input.build}});
+  expect(readAcceptedRoutineRequest(row)).toEqual({ready: true, input});
+  expect(JSON.stringify(input)).toBe(before);
+  expect(requestInputDigest(recordedFrameworkRequestInputSchema.parse(input))).toBe(inputSha256);
+  await expect(new Requests().submit('new-request', 'old-host', input)).rejects.toMatchObject({status: 400});
+  row.inputSha256 = 'c'.repeat(64);
+  expect((await app.request('/retired-request')).status).toBe(503);
+  expect(() => readAcceptedRoutineRequest(row)).toThrow('frozen input');
+  for (const invalid of [{...input, platform: 'unknown'}, {...input, resources: [{id: 'old-glasses', kind: 'unknown'}]},
+    {...input, routineSource: {...input.routineSource, minimumRoutineApiVersion: 0}},
+    {...input, routineSource: {...input.routineSource, commit: 'c'.repeat(40)}},
+    {...input, build: {...input.build, headSha: 'invalid'}}, {...input, glassesStart: {model: 'other'}}])
+    expect(recordedFrameworkRequestInputSchema.safeParse(invalid).success).toBe(false);
 });
 
 

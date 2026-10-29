@@ -32,7 +32,6 @@ final class NimoCanvasSession {
     private var sentRevision: UInt64 = 0
     private var ticket: UInt64 = 0
     private var flight: Flight?
-    var mayHaveEntered: Bool { active || flight != nil }
 
     func offer(_ frame: Data, scope: String, force: Bool = false) -> [Action] {
         if self.scope != scope || force { forceRevision &+= 1 }

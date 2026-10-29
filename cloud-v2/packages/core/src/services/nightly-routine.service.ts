@@ -3,7 +3,7 @@ import {z} from "zod";
 import {createLogger} from "@mentra/cloud-shared";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {testWriteConcern} from "../models/test-write-concern";
-import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
+import {frameworkIdentitySchema, recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
 import {routineResourceKindSchema, type RoutineEnrollment} from "../types/routine-definition.types";
 import {routineDispatchIntentSchema, type RoutineDispatchIntent} from "../types/routine-dispatch.types";
 import {GithubRoutineSourceGateway} from "./routine-source-selection.service";
@@ -18,13 +18,14 @@ import {TestRunError} from "./test-result-error";
 import {portableRoutineSelectionSchema, routineJobBindingSchema, routineJobPreparationSchema, routinePublicationFailureSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
 import {RoutineJobService, routineJobInputDigest} from "./routine-job.service";
 import {NIGHTLY_COMPLETION_BOUNDARY_REASON, nightlyUnassignedReason} from "./nightly-deadline-reason";
+import {recordedBuildMatchesIntent} from './routine-request-input';
 
 export const nightlyOccurrenceSchema = z.object({occurrenceId: frameworkIdentitySchema,
   startedAt: z.string().datetime({offset: true}), trigger: z.enum(["nightly", "manual"]), workflowRunId: z.number().int().positive().safe().optional()}).strict();
 type Occurrence = z.infer<typeof nightlyOccurrenceSchema>;
 const nightlyCancellationSchema = z.object({requestedAt: z.string().datetime({offset: true}), reason: z.string().min(1).max(2000)}).strict();
 export type NightlyCancellation = z.infer<typeof nightlyCancellationSchema>;
-type RequestInput = z.infer<typeof frameworkRequestInputSchema>;
+type RequestInput = z.infer<typeof recordedFrameworkRequestInputSchema>;
 type RoutineResourceKind = z.infer<typeof routineResourceKindSchema>;
 export interface NightlySelectionError {stage: "build" | "host" | "admission"; status?: number; message: string}
 type PlatformSelection = {build?: TestBuild; errors: NightlySelectionError[]};
@@ -89,12 +90,12 @@ const finite = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
 /** A prepared request may add source/resources, but cannot change the frozen source or app selection. */
 export function nightlyPreparedInput(member: NightlyMember, value: unknown, digest: string | undefined): RequestInput {
-  const input = frameworkRequestInputSchema.safeParse(value), intent = member.dispatchIntent ?? member.selection;
+  const input = recordedFrameworkRequestInputSchema.safeParse(value), intent = member.dispatchIntent ?? member.selection;
   if (!input.success || !intent || digest !== requestInputDigest(input.data) || input.data.routineId !== intent.routineId
     || input.data.platform !== intent.platform || input.data.definitionRevision !== intent.routineRevision
     || member.dispatchIntent && input.data.laneId !== member.dispatchIntent.laneId
     || member.binding && input.data.laneId !== member.binding.laneId || input.data.minimumFrameworkVersion !== intent.minimumFrameworkVersion
-    || requestInputDigest(input.data.build) !== requestInputDigest(frameworkExecutableBuild(intent.build, input.data.glassesModel))
+    || !recordedBuildMatchesIntent(input.data.build, intent.build)
     || intent.routineSource && requestInputDigest(input.data.routineSource) !== requestInputDigest(intent.routineSource))
     throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
   return input.data;
