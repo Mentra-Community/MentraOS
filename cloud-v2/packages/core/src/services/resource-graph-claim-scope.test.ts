@@ -69,6 +69,17 @@ function begin(x: ReturnType<typeof fixture>) {
  subject.generation++;subject.status='checking';subject.owner={...x.claim.owner,hostId:x.h.hostId,laneId:x.lane.id,generation:1}
  x.journal.state='began' as 'prepared';Object.assign(x.journal,{eventId:`resource-check-began:${x.claim.operationId}`})
 }
+for (const disjoint of [false, true]) test(`graph read retains quantitative recorder budget beside disjoint Check=${disjoint}`, async () => {
+ const x=await authorityFixture();if(disjoint)occupy(x)
+ const retained={id:'55555555-5555-4555-8555-555555555555',requestId:'uploading-original',fleetInputSha256:'e'.repeat(64),
+   hostId:x.h.hostId,laneId:x.lane.id,poolId:x.lane.resources.find(ref=>ref.kind==='recorder')!.storage!.poolId,
+   minimumAvailableBytes:1,reservedAt:new Date(x.f.now).toISOString()}
+ x.h.authorityReservations=[...x.h.authorityReservations??[],retained]
+ const original=structuredClone(x.intent),answer=await x.service.acquire(x.intent,x.h.hostId)
+ expect(answer.status).toBe('reserved');expect(answer.claims.map(claim=>claim.resourceId).sort()).toEqual(['air1:app','air1:phone','air1:recorder'])
+ expect(x.writes).toBe(1);expect(x.h.authorityReservations).toContainEqual(retained);expect(x.intent).toEqual(original)
+ if(disjoint)expect(x.h.authorityReservations).toContainEqual(x.claim)
+})
 for(const state of ['prepared','began'] as const){
  test(`real producer admits complete graph beside an authentic ${state} disjoint Check without changing its claim`,async()=>{
    const x=fixture();if(state==='began')begin(x);occupy(x)

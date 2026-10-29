@@ -341,15 +341,15 @@ test('owned lookup needs the actual check-owner snapshot after an older in-fligh
   f.original.fleetCancellation = {requestedAt: timestamp, reason: 'Original cancelled'}
   expect(await service.qualificationTargets('mini', claim.owned())).toEqual([])
 })
-test('one phone check contends with retained run claims before any target stage or native authority', async () => {
+test('one phone check retains recorder budget and one exact concurrent reader claim', async () => {
   const f = await claimFixture()
   f.row.resourceReservations = [{id: 'd7f3b61c-083b-44d6-8b4e-29b088424e97', requestId: 'retained-run',
     fleetInputSha256: hash, hostId: 'mini', laneId: 'android', poolId: 'mini:disk', minimumAvailableBytes: 100, reservedAt: timestamp}]
-  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('waiting'); expect(f.writes).toHaveLength(0)
-  f.row.resourceReservations = []
+  const retained = structuredClone(f.row.resourceReservations) as HostResourceReservation[]
   const outcomes = await Promise.all([f.service.acquire(f.intent, 'mini'), f.service.acquire(f.intent, 'mini')])
   expect(outcomes.every(value => value.status === 'reserved')).toBe(true)
-  expect(f.writes).toHaveLength(1); expect(f.row.resourceReservations).toHaveLength(1)
+  expect(f.writes).toHaveLength(1); expect(f.row.resourceReservations).toHaveLength(2)
+  expect(f.row.resourceReservations).toContainEqual(retained[0]!)
 })
 test('cancellation during phone CAS retains uncertain claim; observation never renews or creates custody', async () => {
   const f = await claimFixture({cancelAfterWrite: true})
@@ -591,7 +591,9 @@ test('selected prerequisite claim shares the host CAS with a concurrent unrelate
   const entered = new Promise<void>(resolve => {enter = resolve}), held = new Promise<void>(resolve => {resume = resolve})
   f.repository.replace = async (previous, claims) => {enter(); await held; return originalReplace.call(f.repository, previous, claims)}
   const probe = f.service.acquire(f.intent, 'mini'); await entered
-  const other = {...own, id: 'e7cd9d0b-b18d-44e2-bd7a-f7d7f795a4a6', requestId: 'other-run'}
+  const other = {kind: 'exclusive' as const, id: 'e7cd9d0b-b18d-44e2-bd7a-f7d7f795a4a6', resourceId: 'phone',
+    authorityHostId: 'mini', borrowerHostId: 'mini', laneId: 'android', operationId: 'run:other-run', intentSha256: hash, inputSha256: hash,
+    owner: {kind: 'run' as const, id: 'other-run'}, controllerIncarnation: 'controller', controllerGeneration: 1, borrowerSequence: 1, reservedAt: timestamp}
   expect(await originalReplace.call(f.repository, structuredClone(f.row), [own, other])).toBe(true)
   resume()
   expect((await probe).status).toBe('waiting'); expect(f.writes).toHaveLength(1)
@@ -605,10 +607,11 @@ test('an unbound original cannot create phone prerequisite custody', async () =>
     expect(f.current.request.fleetBinding).toBeUndefined()
   } finally {f.restore()}
 })
-test('another original retained on the same phone blocks prerequisite custody before any run receipt', async () => {
+test('another original exclusive phone owner blocks prerequisite custody before any run receipt', async () => {
   const f = await claimFixture()
-  f.row.resourceReservations = [{id: '2734af72-1351-4f1a-a940-9f7f1d843557', requestId: 'other-original', fleetInputSha256: hash,
-    hostId: 'mini', laneId: 'android', poolId: 'mini:disk', minimumAvailableBytes: 100, reservedAt: timestamp}]
+  f.row.resourceReservations = [{kind: 'exclusive', id: '2734af72-1351-4f1a-a940-9f7f1d843557', resourceId: 'phone',
+    authorityHostId: 'mini', borrowerHostId: 'mini', laneId: 'android', operationId: 'run:other-original', intentSha256: hash, inputSha256: hash,
+    owner: {kind: 'run', id: 'other-original'}, controllerIncarnation: 'controller', controllerGeneration: 1, borrowerSequence: 1, reservedAt: timestamp}]
   const answer = await f.service.acquire(f.intent, 'mini')
   expect(answer.status).toBe('waiting')
   if ('blocked' in answer && answer.blocked) {expect(answer.blocked.resourceId).toBe('phone'); expect(answer.blocked.owner).toEqual({kind: 'run', id: 'other-original'})}

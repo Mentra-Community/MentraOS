@@ -160,14 +160,14 @@ async function claimFixture(options: {lose?: boolean; cancel?: boolean} = {}) {
   })
   return {...f, row, writes, repository, intent, service}
 }
-test('local phone CAS contends with every same-lane recorder and retains one exact concurrent claim', async () => {
+test('local phone CAS preserves retained recorder bytes and commits one exact concurrent reader', async () => {
   const f = await claimFixture()
   f.row.resourceReservations = [{id: 'd7f3b61c-083b-44d6-8b4e-29b088424e97', requestId: f.target.jobId,
     fleetInputSha256: hash, hostId: 'mini', laneId: 'android', poolId: 'mini:disk', minimumAvailableBytes: 100, reservedAt: timestamp}]
-  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('waiting'); expect(f.writes).toHaveLength(0)
-  f.row.resourceReservations = []
+  const retained = structuredClone(f.row.resourceReservations) as HostResourceReservation[]
   expect((await Promise.all([f.service.acquire(f.intent, 'mini'), f.service.acquire(f.intent, 'mini')])).map(v => v.status)).toEqual(['reserved', 'reserved'])
-  expect(f.writes).toHaveLength(1)
+  expect(f.writes).toHaveLength(1); expect(f.row.resourceReservations).toHaveLength(2)
+  expect(f.row.resourceReservations).toContainEqual(retained[0]!)
 })
 test('cancelled or expired local intent recovers original committed custody after lost answer, never reacquires', async () => {
   for (const lose of [false, true]) {

@@ -40,6 +40,17 @@ test('two completed October25 UNKNOWN receipts cannot block current generation13
   expect(f.writes).toHaveLength(1); expect(f.host.laneControls).toEqual(history)
 })
 
+test('retained recorder bytes do not reserve an unowned phone Check or change the original budget', async () => {
+  const f = fixture(), retained = {id: randomUUID(), requestId: 'uploading-original', fleetInputSha256: hash,
+    hostId: 'mini', laneId: 'android', poolId: 'mini-disk', minimumAvailableBytes: 1, reservedAt: f.host.snapshot.observedAt}
+  f.host.resourceReservations = [retained]
+  const original = structuredClone(f.intent)
+  const answer = await f.service.acquire(f.intent, 'mini')
+  expect(answer.status).toBe('reserved'); expect(answer.claims).toHaveLength(1)
+  expect(f.writes).toHaveLength(1); expect(f.host.resourceReservations).toContainEqual(retained)
+  expect(f.host.resourceReservations).toHaveLength(2); expect(f.intent).toEqual(original)
+})
+
 for (const condition of ['owned', 'checking', 'repair', 'unknown-writer'] as const) test(`completed Check receipts do not bypass current ${condition} custody`, async () => {
   const f = completedUnknownControls(fixture()), subject = f.subject()
   if (condition === 'owned') subject.owner = {id: 'current-owner', kind: 'run', generation: 1390, hostId: 'mini', laneId: 'android'}
@@ -834,14 +845,14 @@ test('queued dependency revalidates parent and target after CAS while retaining 
   expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
   expect(f.host.resourceReservations).toHaveLength(1); expect(f.writes).toHaveLength(1)
 })
-test('recorder capacity appearing after the dependency CAS retains every claim and refuses a new phone grant', async () => {
+test('recorder capacity appearing after the dependency CAS retains every claim and permits the independent phone reader', async () => {
   const f = await queuedAppPhoneRepair(), parent = structuredClone(f.claim), recorder = {id: randomUUID(), requestId: 'concurrent-recorder',
     fleetInputSha256: hash, hostId: 'mini', laneId: 'android', poolId: 'mini-disk', minimumAvailableBytes: 1, reservedAt: f.host.snapshot.observedAt}
   f.afterWrite(async () => {
     f.host.resourceReservations = [...hostResourceReservationsSchema.parse(f.host.resourceReservations), recorder]
     f.host.resourceReservationVersion!++
   })
-  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+  expect((await f.service.acquire(f.intent, 'mini')).status).toBe('reserved')
   expect(f.host.resourceReservations).toHaveLength(3); expect(f.host.resourceReservations).toContainEqual(parent)
   expect(f.host.resourceReservations).toContainEqual(recorder); expect(f.writes).toHaveLength(2)
 })
@@ -951,7 +962,7 @@ test('new accepted controller may check app beside an exact historical stopped f
   expect(f.host.resourceReservations).toContainEqual(original); expect(f.claim.controllerGeneration).toBe(1)
   expect(f.fixtureSubject.repair.state).toBe('queued')
 })
-test('queued fixture does not exempt recorder, run or target claims from the full capacity roster', async () => {
+test('queued fixture retains recorder budget while real run and target claims still refuse the reader', async () => {
   for (const kind of ['recorder', 'run', 'target']) {
     const f = await queuedFixtureRepair(), blocker: HostResourceReservation = kind === 'recorder' ?
       {id: randomUUID(), requestId: 'waiting-original', fleetInputSha256: hash, hostId: 'mini', laneId: 'android',
@@ -960,8 +971,8 @@ test('queued fixture does not exempt recorder, run or target claims from the ful
         ...(kind === 'run' ? {owner: {kind: 'run', id: 'original-run'}, operationId: 'run:original-run'} : {}),
         ...(kind === 'target' ? {laneId: 'other-lane'} : {})} as ExclusiveHostReservation
     f.host.resourceReservations = [...hostResourceReservationsSchema.parse(f.host.resourceReservations), blocker]
-    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
-    expect(f.writes).toHaveLength(1); expect(f.host.resourceReservations).toContainEqual(blocker)
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe(kind === 'recorder' ? 'reserved' : 'unknown')
+    expect(f.writes).toHaveLength(kind === 'recorder' ? 2 : 1); expect(f.host.resourceReservations).toContainEqual(blocker)
   }
 })
 test('queued fixture baseline cancellation or controller change before CAS preserves both original authorities', async () => {
@@ -1110,14 +1121,14 @@ test('unscoped account and run claims cannot use a different scarce resource ID 
     expect(f.host.resourceReservations).toContainEqual(unrelated)
   }
 })
-test('same-target authority on another lane and same-lane byte claims still fence disjoint repair baseline', async () => {
+test('same-target authority still fences repair baseline while retained byte budget permits the disjoint reader', async () => {
   for (const kind of ['target', 'byte']) {
     const f = await originalGlassesRepair(), blocker: HostResourceReservation = kind === 'target' ? {...structuredClone(f.claim),
       id: randomUUID(), resourceId: 'phone-exact', laneId: 'other-lane', resourceCheck: undefined} :
       {id: randomUUID(), requestId: 'other-request', fleetInputSha256: hash, hostId: 'mini', laneId: 'android',
         poolId: 'mini-disk', minimumAvailableBytes: 1, reservedAt: f.host.snapshot.observedAt}
     f.host.resourceReservations = [...hostResourceReservationsSchema.parse(f.host.resourceReservations), blocker]
-    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(f.writes).toHaveLength(1)
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe(kind === 'byte' ? 'reserved' : 'unknown'); expect(f.writes).toHaveLength(kind === 'byte' ? 2 : 1)
     expect(f.host.resourceReservations).toContainEqual(blocker)
   }
 })

@@ -1079,10 +1079,7 @@ export class ResourceReservationsService {
     })) return undefined
     const occupied = new Set(target), permitted = new Set<string>()
     for (const claim of all) {
-      if (!isExclusiveHostReservation(claim)) {
-        if (claim.hostId === host.hostId && claim.laneId === laneId) return undefined
-        continue
-      }
+      if (!isExclusiveHostReservation(claim)) continue
       if (claim.borrowerHostId !== host.hostId || claim.laneId !== laneId) {
         if (occupied.has(claim.resourceId)) return undefined
         continue
@@ -1174,9 +1171,8 @@ export class ResourceReservationsService {
       if (pending.noAcquisitionReceipt || reportedGraphCandidateSettlement(pending, host.snapshot) ||
         !candidatePrerequisiteRequestMatches(row ?? null, intent, this.now()) || !this.graphSubjectsCurrent(host, intent)) return unknown
       const disjointChecks = this.disjointPassiveCheckClaims(host, intent.laneId!, purpose.resources.map(member => member.id), this.now(), undefined, purpose.resources)
-      if (all.some(claim => isExclusiveHostReservation(claim)
-        ? !disjointChecks?.has(claim.id) && claim.borrowerHostId === hostId && claim.laneId === intent.laneId
-        : claim.hostId === hostId && claim.laneId === intent.laneId)) return unknown
+      if (all.some(claim => isExclusiveHostReservation(claim) &&
+        !disjointChecks?.has(claim.id) && claim.borrowerHostId === hostId && claim.laneId === intent.laneId)) return unknown
       if (all.length + purpose.resources.length > 1000) throw new TestRunError(409, 'Resource authority is full; unresolved claims retain custody')
       // The immutable target records delivery provenance. Capture current
       // generations from the host snapshot protected by this acquisition CAS.
@@ -1322,11 +1318,9 @@ export class ResourceReservationsService {
       const queuedDependency = !intent.prerequisite ? this.queuedDependencyClaims(host, intent) : undefined,
         disjointRepair = !intent.prerequisite ? this.disjointResourceCheckRepairClaims(host, intent) ?? queuedDependency : undefined,
         disjointChecks = !intent.prerequisite ? this.disjointResourceCheckClaims(host, intent) : undefined
-      const capacityBlocked = (claims: HostResourceReservation[], permitted?: Set<string>) => claims.some(claim => isExclusiveHostReservation(claim) ? Boolean(!permitted?.has(claim.id) && intent.laneId && claim.borrowerHostId === hostId && claim.laneId === intent.laneId &&
-          (!intent.prerequisite || intent.prerequisite.local || !selected?.fleetExclusiveReservation?.claims.some(value => isDeepStrictEqual(value, claim)))) :
-        claim.hostId === hostId && claim.laneId === intent.laneId &&
-          (!intent.prerequisite || intent.prerequisite.local || !isDeepStrictEqual(claim, selected?.fleetResourceReservation)))
-      if (capacityBlocked(all, disjointRepair ?? disjointChecks)) return unknown
+      const claimsBlocked = (claims: HostResourceReservation[], permitted?: Set<string>) => claims.some(claim => isExclusiveHostReservation(claim) && Boolean(!permitted?.has(claim.id) && intent.laneId && claim.borrowerHostId === hostId && claim.laneId === intent.laneId &&
+        (!intent.prerequisite || intent.prerequisite.local || !selected?.fleetExclusiveReservation?.claims.some(value => isDeepStrictEqual(value, claim)))))
+      if (claimsBlocked(all, disjointRepair ?? disjointChecks)) return unknown
       if (all.length >= 1000) throw new TestRunError(409, 'Resource authority is full; unresolved claims retain custody')
       const claim: ExclusiveHostReservation = {kind: 'exclusive', id: randomUUID(), resourceId: intent.resourceCheck!.resourceId,
         authorityHostId: hostId, borrowerHostId: hostId, ...(intent.laneId ? {laneId: intent.laneId} : {}), operationId: intent.operationId, intentSha256,
@@ -1345,10 +1339,10 @@ export class ResourceReservationsService {
       if (!fresh(after, this.now()) || after.incarnation !== host.incarnation || after.incarnationGeneration !== host.incarnationGeneration ||
         !hostResourceReservationsSchema.parse(after.resourceReservations ?? []).some(value => isDeepStrictEqual(value, claim))) return unknown
       if (queuedDependency && (!await this.resourceCheckTargetCurrent(after, intent) ||
-        capacityBlocked(hostResourceReservationsSchema.parse(after.resourceReservations ?? []).filter(value => !isDeepStrictEqual(value, claim)), queuedDependency) ||
+        claimsBlocked(hostResourceReservationsSchema.parse(after.resourceReservations ?? []).filter(value => !isDeepStrictEqual(value, claim)), queuedDependency) ||
         !isDeepStrictEqual(this.queuedDependencyClaims(after, intent, claim), queuedDependency))) return unknown
       if (disjointChecks && (!await this.resourceCheckTargetCurrent(after, intent) ||
-        capacityBlocked(hostResourceReservationsSchema.parse(after.resourceReservations ?? []).filter(value => !isDeepStrictEqual(value, claim)), disjointChecks) ||
+        claimsBlocked(hostResourceReservationsSchema.parse(after.resourceReservations ?? []).filter(value => !isDeepStrictEqual(value, claim)), disjointChecks) ||
         !isDeepStrictEqual(this.disjointResourceCheckClaims(after, intent, claim), disjointChecks))) return unknown
       return {status: 'reserved' as const, intentSha256, claims: [claim]}
     }
@@ -1505,15 +1499,14 @@ export class ResourceReservationsService {
         !backendPrerequisiteRequestMatches(selected ?? null, intent, this.now())) return unknown
       const claims = hostResourceReservationsSchema.parse(host.resourceReservations ?? []),
         current = claims.filter(isExclusiveHostReservation).find(claim => claim.resourceId === intent.prerequisite!.resourceId),
-        blocked = claims.find(claim => isExclusiveHostReservation(claim) ?
+        blocked = claims.filter(isExclusiveHostReservation).find(claim =>
           claim.borrowerHostId === hostId && claim.laneId === intent.laneId && claim !== current &&
-            (Boolean(intent.prerequisite!.local) || !selected!.fleetExclusiveReservation?.claims.some(original => isDeepStrictEqual(original, claim))) :
-          claim.hostId === hostId && claim.laneId === intent.laneId && (Boolean(intent.prerequisite!.local) || !isDeepStrictEqual(claim, selected!.fleetResourceReservation)))
+            (Boolean(intent.prerequisite!.local) || !selected!.fleetExclusiveReservation?.claims.some(original => isDeepStrictEqual(original, claim))))
       if (blocked || current && !this.backendClaimMatches(current, intent, intentSha256)) {
         const blocker = blocked ?? current!
         return {status: 'waiting' as const, intentSha256, claims: [], blocked: {
           resourceId: intent.prerequisite!.resourceId, hostId, laneId: intent.laneId,
-          owner: isExclusiveHostReservation(blocker) ? blocker.owner : {kind: 'run' as const, id: blocker.requestId}}}
+          owner: blocker.owner}}
       }
       if (!current && host.snapshot.resourceReservations?.resourceChecks !== undefined)
         return unknown
