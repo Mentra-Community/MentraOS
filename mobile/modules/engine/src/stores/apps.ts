@@ -14,6 +14,7 @@ import {useMemo} from "react"
 import {AppState} from "react-native"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 import {create} from "zustand"
+import type {FleetLaunchFailureReason} from "@mentra/cloud-protocol"
 
 import type {ClientApp} from "../types/applet"
 import {DeviceTypes} from "../types/enums"
@@ -364,7 +365,7 @@ function reportingLaunches(
   return async (clientApp, opts) => {
     let attempted = false
     let started = false
-    const claim: {release?: () => void} = {}
+    const claim: {release?: () => FleetLaunchFailureReason | undefined} = {}
     try {
       started = await launch(clientApp, opts, {
         begin: () => {
@@ -374,6 +375,8 @@ function reportingLaunches(
       })
       return started
     } finally {
+      // The launcher classified any spawn failure it held back for this start; this report carries it.
+      const failureReason = claim.release?.()
       if (attempted) {
         fleetEvents.launch({
           packageName: clientApp.packageName,
@@ -381,9 +384,9 @@ function reportingLaunches(
           versionName: clientApp.version,
           start: opts?.trigger ?? "automatic",
           outcome: started ? "started" : "failed",
+          ...(!started && failureReason ? {failureReason} : {}),
         })
       }
-      claim.release?.()
     }
   }
 }
@@ -699,7 +702,21 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       if (uninstallingPackages.has(packageName)) throw new Error(`${packageName} is already being uninstalled`)
       uninstallingPackages.add(packageName)
       try {
+        // Only for Fleet's record: a lookup that fails (or throws) never stops the removal.
+        const removed =
+          version ??
+          (await Promise.resolve()
+            .then(() => appRegistry.getActiveVersion(packageName))
+            .catch(() => undefined))
         const res = await appRegistry.uninstall(packageName, version, options)
+        // Fleet (Phase 12): every removal attempt, and how it went. The reason of a failed one is not known here.
+        fleetEvents.install({
+          packageName,
+          operation: "remove",
+          source: options?.fleetSource ?? "url",
+          ...(removed ? {fromVersion: removed} : {}),
+          ...(res.is_error() ? {outcome: "failed" as const, reason: "unknown" as const} : {outcome: "succeeded" as const}),
+        })
         if (res.is_error()) throw res.error
         set((s) => ({apps: s.apps.filter((a) => a.packageName !== packageName)}))
       } finally {

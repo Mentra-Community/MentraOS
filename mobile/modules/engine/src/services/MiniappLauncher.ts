@@ -36,6 +36,7 @@
  * declared already.
  */
 
+import type {FleetLaunchFailureReason} from "@mentra/cloud-protocol"
 import {File} from "expo-file-system"
 import {AppState, Platform} from "react-native"
 
@@ -178,6 +179,19 @@ function originPlatform(): MiniappOriginPlatform {
 function serverOrigin(url: string): string | null {
   const match = /^(https?:\/\/[^/?#]+)/i.exec(url)
   return match ? match[1].toLowerCase() : null
+}
+
+/**
+ * Why a launch failed, as the code Fleet takes (Phase 12): never the error's text. A bundle that cannot be found is
+ * `bundle_missing`; a deployment, age or access block `policy_blocked`; a context that did not start `spawn_failed`.
+ */
+export function launchFailureReason(error: unknown): FleetLaunchFailureReason {
+  if (error instanceof MiniappAgeRestrictedError || error instanceof MiniappAccessRevokedError) return "policy_blocked"
+  const message = error instanceof Error ? error.message : ""
+  if (message.includes("cannot resolve bundle")) return "bundle_missing"
+  if (message.includes("by deployment policy")) return "policy_blocked"
+  if (message.includes("spawn failed")) return "spawn_failed"
+  return "unknown"
 }
 
 class MiniappLauncher {
@@ -525,7 +539,7 @@ class MiniappLauncher {
         result = await pending
       } catch (error) {
         // A visible launch reports its own failure; one joined to a hidden wake fails with it.
-        if (projectRunning && joinedHidden) this.reportLaunch(packageName, "failed", runtimeOptions)
+        if (projectRunning && joinedHidden) this.reportLaunch(packageName, "failed", runtimeOptions, undefined, launchFailureReason(error))
         throw error
       }
       if (projectRunning && this.promote(packageName)) this.reportLaunch(packageName, "started", runtimeOptions)
@@ -538,7 +552,7 @@ class MiniappLauncher {
     try {
       return await launch
     } catch (error) {
-      if (projectRunning) this.reportLaunch(packageName, "failed", runtimeOptions)
+      if (projectRunning) this.reportLaunch(packageName, "failed", runtimeOptions, undefined, launchFailureReason(error))
       throw error
     } finally {
       this.inFlight.delete(packageName)
@@ -560,6 +574,7 @@ class MiniappLauncher {
     outcome: "started" | "failed",
     runtimeOptions?: RuntimeLaunchOptions,
     manifest?: InstalledMiniappManifest,
+    failureReason?: FleetLaunchFailureReason,
   ): void {
     fleetEvents.launchUnlessClaimed({
       packageName,
@@ -567,6 +582,7 @@ class MiniappLauncher {
       ...(manifest?.version ? {versionName: manifest.version} : {}),
       start: runtimeOptions?.trigger ?? "automatic",
       outcome,
+      ...(outcome === "failed" ? {failureReason: failureReason ?? "unknown"} : {}),
     })
   }
 

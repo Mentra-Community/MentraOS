@@ -248,6 +248,24 @@ describe("launch reports", () => {
     expect(apps.getState().apps[0].running).toBe(false)
   })
 
+  test("a failed start carries the reason the launcher classified for the spawn it held back", async () => {
+    ensureRunning.mockImplementationOnce(async () => {
+      fleetEvents.launchUnlessClaimed({packageName: "com.test.notes", start: "user", outcome: "failed", failureReason: "spawn_failed"})
+      throw new Error("spawn failed")
+    })
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
+    expect(launches).toEqual([
+      {
+        packageName: "com.test.notes",
+        miniappName: "Notes",
+        versionName: "1.0.30",
+        start: "user",
+        outcome: "failed",
+        failureReason: "spawn_failed",
+      },
+    ])
+  })
+
   test("a start that throws once it began is reported as failed, and still throws", async () => {
     saveSetting.mockImplementation(() => {
       throw new Error("storage failed")

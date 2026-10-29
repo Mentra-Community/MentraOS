@@ -14,6 +14,7 @@ import {BgTimer, engine, SETTINGS, useSetting} from "@mentra/engine"
 import {
   buildMentraUiShim,
   buildMiniappGlobalsScript,
+  fleetEvents,
   localMiniappRuntime,
   miniappLauncher,
   useAppStatusStore,
@@ -716,6 +717,16 @@ function LocalMiniappView({
   const handleTerminate = useCallback(() => {
     if (!packageName) return
     getStreamPreviewCoordinator().documentEnded(packageName, "content_process_terminated")
+    // Fleet (Phase 12): the miniapp's screen crashed and closes; nothing restarts it until the person opens it again.
+    const versionName = localMiniappRuntime.installedVersionOf(packageName)
+    fleetEvents.crash({
+      packageName,
+      ...(versionName ? {versionName} : {}),
+      surface: "webview",
+      category: "content_process_terminated",
+      outcome: "closed",
+      crashesInWindow: 1,
+    })
     useStressTestStore.getState().recordEvent({
       packageName,
       at: Date.now(),

@@ -167,6 +167,7 @@ export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/action
 export type {DisplayManager} from "./modules/display"
 export type {MiniappsModule} from "./modules/miniapps"
 export type {ActionsModule} from "./modules/actions"
+export type {TelemetryModule, TelemetryProperties, TelemetryValue} from "./modules/telemetry"
 export type {GlassesModule} from "./modules/glasses"
 export type {HeadingModule} from "./modules/heading"
 export type {ImuModule} from "./modules/imu"

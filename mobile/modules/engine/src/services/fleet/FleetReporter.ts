@@ -217,6 +217,8 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     clearPartition: (partition) => queue.clearPartition(partition),
     size: (partition) => queue.size(partition),
     nextSequence: (partition, collectorSessionId) => queue.nextSequence(partition, collectorSessionId),
+    noteTelemetryLoss: (partition, packageName, kind, count, at) => queue.noteTelemetryLoss(partition, packageName, kind, count, at),
+    takeTelemetryLosses: (partition, at) => queue.takeTelemetryLosses(partition, at),
   }
   const collector = (deps.createCollector ?? ((q: FleetQueue) => createFleetCollector({queue: q})))(collectorQueue)
 
@@ -429,6 +431,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     const at = now()
     // takeLosses clears the counts it returns, so their gap is queued before anything else can happen.
     recordLosses(r, queue.takeLosses(r.partition, at), at)
+    recordTelemetryLosses(r, at)
     const records = queue.nextBatch(r.partition, r.batchLimit, MAX_BATCH_BYTES)
     if (records.length === 0) return ASLEEP
     let outcome: FleetSendOutcome
@@ -685,9 +688,46 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     }
   }
 
+  /**
+   * The miniapp telemetry lost since the last upload, per package, as one `telemetry_loss` record. Telemetry losses
+   * never become coverage gaps. Counts that cannot be queued are lost with the events they counted.
+   */
+  function recordTelemetryLosses(r: Run, at: number): void {
+    const losses = queue.takeTelemetryLosses(r.partition, at)
+    if (losses === null) return
+    const entries = Object.entries(losses.packages)
+      .map(([packageName, counts]) => ({packageName, ...counts}))
+      .filter((loss) => loss.overLimit + loss.evicted + loss.expired + loss.rejected > 0)
+      .slice(0, FLEET_LIMITS.maxTelemetryLossPackages)
+    if (entries.length === 0) return
+    const end = iso(at)
+    const from = losses.from !== null && timeOf(losses.from) !== null && timeOf(losses.from)! <= at ? losses.from : end
+    try {
+      queue.enqueue(r.partition, {
+        schemaVersion: FLEET_SCHEMA_VERSION,
+        recordId: newId(),
+        phoneDeviceId: phoneDeviceId(),
+        collectorSessionId: r.collectorSessionId,
+        sequence: queue.nextSequence(r.partition, r.collectorSessionId),
+        observedAt: end,
+        capabilities: ["miniapp_telemetry"],
+        kind: "telemetry_loss",
+        payload: {from, to: end, losses: entries},
+      })
+    } catch (error) {
+      warn("recording telemetry losses", error)
+    }
+  }
+
   function recordRejected(r: Run, record: FleetRecord, at: number): void {
     // A refused gap gets no gap of its own, so a rejection can never feed itself.
     if (record.kind === "coverage_gap") return
+    // Rejected telemetry is counted for its miniapp, never as a gap; a refused loss report is not counted again.
+    if (record.kind === "telemetry_event") {
+      queue.noteTelemetryLoss(r.partition, record.payload.packageName, "rejected", 1, at)
+      return
+    }
+    if (record.kind === "telemetry_loss") return
     const time = iso(timeOf(record.observedAt) ?? at)
     enqueueGap(r, {reason: "record_rejected", from: time, to: time, droppedRecordCount: 1}, at)
   }

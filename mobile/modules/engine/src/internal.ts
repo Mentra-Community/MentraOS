@@ -208,6 +208,7 @@ export {cloudClientService} from "./services/CloudClientService"
 export {createCloudUdpSocket} from "./utils/cloudClient/RnUdpAdapter"
 // Fleet: the workspace screens ask the assignment reconciler to read desired state now.
 export {notifyFleetWorkspaceLeft, triggerAssignmentReconcile} from "./services/fleet/assignmentReconcilerHost"
+export {fleetEvents} from "./services/fleet/fleetEvents"
 export {
   getFleetManagementState,
   onFleetManagementStateChanged,

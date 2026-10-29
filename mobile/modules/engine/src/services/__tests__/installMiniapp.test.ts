@@ -28,7 +28,8 @@ mock.module("../localBuildInstall", () => ({
   restoreInstalledRelease: async () => {},
 }))
 
-const {createMiniappInstaller, InstallMiniappError} = await import("../installMiniapp")
+const {createMiniappInstaller, InstallMiniappError, withFleetReport} = await import("../installMiniapp")
+const {fleetEvents} = await import("../fleet/fleetEvents")
 const {fetchMiniappBundle, fetchMiniappJson} = await import("../miniappFetch")
 type InstallMiniappDependencies = import("../installMiniapp").InstallMiniappDependencies
 type InstallMiniappOptions = import("../installMiniapp").InstallMiniappOptions
@@ -342,6 +343,57 @@ describe("installing from a miniapp URL", () => {
     )
     expect(await failure(install())).toBe("not_a_miniapp")
     expect(installs).toEqual([])
+  })
+})
+
+describe("what Fleet hears of an attempt", () => {
+  test("the installer names the package and the release it replaces before anything is downloaded or asked", async () => {
+    const resolved: Array<[string, string | null, string]> = []
+    await install(url, {onResolved: (packageName, previous, version) => resolved.push([packageName, previous, version])})
+    expect(resolved).toEqual([[pkg, null, "1.2.0"]])
+  })
+
+  test("a declined install still names its package, so the attempt is reported", async () => {
+    const resolved: string[] = []
+    await expect(install(url, {confirm: async () => false, onResolved: (packageName) => resolved.push(packageName)})).rejects.toMatchObject({code: "cancelled"})
+    expect(resolved).toEqual([pkg])
+  })
+})
+
+describe("the report Fleet gets", () => {
+  const heard = () => {
+    const events: unknown[] = []
+    const off = fleetEvents.subscribe({install: (event) => events.push(event)})
+    return {events, off}
+  }
+
+  test("a deferred update names the version it was installing, not the one that stays", async () => {
+    const {events, off} = heard()
+    const deferring = withFleetReport(async (_url, options) => {
+      options.onResolved?.(pkg, "1.0.0", "2.0.0")
+      return {status: "deferred", packageName: pkg, version: "1.0.0"}
+    })
+    await deferring(url, {source: "link"})
+    off()
+    expect(events).toEqual([
+      {packageName: pkg, operation: "update", source: "url", fromVersion: "1.0.0", toVersion: "2.0.0", outcome: "deferred", reason: "unknown"},
+    ])
+  })
+
+  test("a failure after the package is known is reported with its reason; a declined one is deferred", async () => {
+    const {events, off} = heard()
+    const failing = (code: "network" | "cancelled") =>
+      withFleetReport(async (_url, options) => {
+        options.onResolved?.(pkg, null, "1.2.0")
+        throw new InstallMiniappError(code, "stopped")
+      })
+    await expect(failing("network")(url, {source: "assignment"} as never)).rejects.toBeInstanceOf(InstallMiniappError)
+    await expect(failing("cancelled")(url, {source: "paste"})).rejects.toBeInstanceOf(InstallMiniappError)
+    off()
+    expect(events).toEqual([
+      {packageName: pkg, operation: "install", source: "assignment", toVersion: "1.2.0", outcome: "failed", reason: "network"},
+      {packageName: pkg, operation: "install", source: "url", toVersion: "1.2.0", outcome: "deferred", reason: "user_cancelled"},
+    ])
   })
 })
 

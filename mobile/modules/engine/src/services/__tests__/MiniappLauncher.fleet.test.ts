@@ -288,7 +288,8 @@ describe("a start through the apps store", () => {
     router.failingSpawns.add(NOTES)
     const release = fleetEvents.claimLaunch(NOTES)
     await expect(miniappLauncher.ensureRunning(NOTES)).rejects.toThrow()
-    release()
+    // The start reports the failure itself, with the reason the launcher classified.
+    expect(release()).toBe("spawn_failed")
     expect(launches).toEqual([])
   })
 })

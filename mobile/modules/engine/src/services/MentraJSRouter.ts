@@ -33,9 +33,11 @@
  * visible without bringing up a separate sink.
  */
 
+import type {FleetCrashCategory} from "@mentra/cloud-protocol"
 import type {EventSubscription} from "expo-modules-core"
 
 import devServerBridge from "./DevServerBridge"
+import {fleetEvents} from "./fleet/fleetEvents"
 import type localMiniappRuntime from "./LocalMiniappRuntime"
 import type {InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSCrashController} from "./MentraJSCrashController"
@@ -201,7 +203,7 @@ export class MentraJSRouter {
     // respawn machinery as a crash so it comes back automatically, with
     // the crash controller's backoff + crash-loop protection.
     this.runtime.onLivenessTimeout = (packageName) => {
-      this.handleCrash(packageName, "liveness: missed pings")
+      this.handleCrash(packageName, "liveness: missed pings", "unresponsive")
     }
   }
 
@@ -337,7 +339,7 @@ export class MentraJSRouter {
    * handler. The controller returns an outcome that tells us whether
    * to respawn (with delay) or leave the context dead.
    */
-  private handleCrash(packageName: string, reason: string): void {
+  private handleCrash(packageName: string, reason: string, category: FleetCrashCategory = "unknown"): void {
     const cached = this.spawnCache.get(packageName)
     // A transient action cannot resume after a crash. Remove the worker (which
     // fails its pending invocations); only a new invocation may spawn another.
@@ -371,6 +373,16 @@ export class MentraJSRouter {
       return
     }
     const outcome = controller.onCrash(packageName, reason)
+    // Fleet hears the crash by its category, never its reason text (Phase 12).
+    const versionName = this.runtime.installedVersionOf?.(packageName)
+    fleetEvents.crash({
+      packageName,
+      ...(versionName ? {versionName} : {}),
+      surface: "context",
+      category,
+      outcome: outcome.surfaceCrashloopBanner || outcome.scheduleRespawnAfterMs == null ? "crash_loop_stopped" : "respawn_scheduled",
+      crashesInWindow: Math.max(1, controller.crashCount(packageName)),
+    })
     if (outcome.surfaceCrashloopBanner) {
       this.uiRouter?.backgroundStopped(packageName)
       this.onCrashloop?.(packageName, reason)
@@ -621,7 +633,7 @@ export class MentraJSRouter {
         // log path — those don't end the JSContext.
         const isCrash = method === "exception" || method === "unhandledRejection" || method === "uncaught"
         if (isCrash) {
-          this.handleCrash(packageName, this.summarizeReason(payload, method))
+          this.handleCrash(packageName, this.summarizeReason(payload, method), "uncaught_exception")
         }
       }
       return

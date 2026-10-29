@@ -989,6 +989,11 @@ class LocalMiniappRuntime {
   // App registration
   // ===========================================================================
 
+  /** The installed version of a connected miniapp, for Fleet's records; undefined when it is not known. */
+  public installedVersionOf(packageName: string): string | undefined {
+    return this.connectedApps.get(packageName)?.installedManifest?.version || undefined
+  }
+
   public registerApp(
     packageName: string,
     sendFn: (raw: string) => void,
@@ -1736,6 +1741,19 @@ class LocalMiniappRuntime {
         // MentraJSRouter observes READY to open the UI; nothing to do here.
         break
 
+      case MiniappRequestType.TELEMETRY_CAPTURE:
+        // A miniapp's own event (`session.telemetry.capture`). It is this package's because it came over this
+        // package's bridge, whatever the payload says; the Fleet collector applies the limits. One-shot: no reply.
+        fleetEvents.telemetry({
+          packageName,
+          ...(this.connectedApps.get(packageName)?.installedManifest?.version
+            ? {versionName: this.connectedApps.get(packageName)!.installedManifest!.version}
+            : {}),
+          event: payload.event,
+          properties: payload.properties,
+        })
+        break
+
       default:
         // NACK instead of silent drop (issue 021 S3): an SDK that sends a
         // request this runtime doesn't implement must get a rejected promise,
@@ -1811,7 +1829,8 @@ class LocalMiniappRuntime {
         configuration: getMiniappConfiguration(packageName),
         // The SDK's HostFeatures. miniappInstall: system-list miniapps may call session.miniapps.install({url});
         // the Mentra Apps before it answer NOT_PERMITTED.
-        hostFeatures: {captureAudio: true, initReady: true, transcriptionListeners: true, miniappInstall: true},
+        // telemetry: `session.telemetry.capture` reaches the workspace's Fleet Management (Phase 12).
+        hostFeatures: {captureAudio: true, initReady: true, transcriptionListeners: true, miniappInstall: true, telemetry: true},
       },
       requestId,
     )

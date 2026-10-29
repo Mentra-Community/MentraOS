@@ -643,6 +643,36 @@ describe("uploading", () => {
     })
   })
 
+  test("rejected telemetry is counted for its miniapp and reported as a telemetry_loss, never as a gap", async () => {
+    reporter.start()
+    const active = collector.active!
+    const telemetry: FleetRecord = {
+      ...launchRecord(),
+      recordId: "tel.one",
+      kind: "telemetry_event",
+      capabilities: ["miniapp_telemetry"],
+      payload: {packageName: "com.mentra.call", event: "call_ended", properties: {}, droppedProperties: 0, cutValues: 0},
+    } as FleetRecord
+    origin.set(telemetry.recordId, active.partition)
+    collector.queue.enqueue(active.partition, telemetry)
+    core.respond = (rs) => answer(rs, [{status: "rejected", reasonCode: "schema_invalid"}])
+    await advance(MINUTE)
+    expect(queued(CORE_X, A).filter((record) => record.kind === "coverage_gap")).toEqual([])
+    // The next upload starts with the loss.
+    core.respond = (rs) => answer(rs, rs.map(() => ({status: "accepted"})))
+    collector.queue.noteTelemetryLoss(active.partition, "com.mentra.notes", "overLimit", 2, clock.wall)
+    observe(1)
+    await advance(MINUTE)
+    const sent = core.calls.flatMap((call) => call.records).filter((record) => record.kind === "telemetry_loss")
+    expect(sent).toHaveLength(1)
+    expect(FleetRecordSchema.parse(sent[0]).payload).toMatchObject({
+      losses: expect.arrayContaining([
+        {packageName: "com.mentra.call", overLimit: 0, evicted: 0, expired: 0, rejected: 1},
+        {packageName: "com.mentra.notes", overLimit: 2, evicted: 0, expired: 0, rejected: 0},
+      ]),
+    })
+  })
+
   test("a rejection for a reason this app does not know still removes the record with a gap", async () => {
     const warn = spyOn(console, "warn").mockImplementation(() => {})
     try {

@@ -106,6 +106,11 @@ export class MentraJSCrashController {
     }
   }
 
+  /** The crashes of `packageName` inside the current crash window, the latest included (Fleet's `crashesInWindow`). */
+  crashCount(packageName: string): number {
+    return this.packages.get(packageName)?.crashesInWindow.length ?? 0
+  }
+
   /** Called when MentraJSRouter explicitly tears down (user-initiated). */
   onKill(packageName: string): void {
     this.packages.delete(packageName)

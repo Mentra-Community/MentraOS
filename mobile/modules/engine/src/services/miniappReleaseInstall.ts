@@ -333,7 +333,7 @@ export function classifyManagedInstallError(error: unknown): {kind: ManagedInsta
 
 /** Uninstall a withdrawn miniapp. Its data stays in its partition for a later reinstall. */
 export async function uninstallManagedMiniapp(packageName: string): Promise<void> {
-  const result = await useAppStatusStore.getState().uninstall(packageName)
+  const result = await useAppStatusStore.getState().uninstall(packageName, undefined, {fleetSource: "assignment"})
   if (result.is_error()) throw result.error
 }
 

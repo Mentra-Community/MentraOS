@@ -479,10 +479,10 @@ describe("what a system miniapp sees", () => {
 })
 
 describe("what every miniapp is told", () => {
-  test("each CONNECT_ACK advertises miniappInstall, so a system miniapp knows install({url}) is there", () => {
+  test("each CONNECT_ACK advertises miniappInstall and telemetry, so a miniapp knows install({url}) and capture are there", () => {
     const declared = [...source.matchAll(/^\s*hostFeatures: (\{[^}\n]*\}),$/gm)]
     expect(declared).toHaveLength(1)
     const features = new Function(`return (${declared[0]![1]})`)() as Record<string, unknown>
-    expect(features).toEqual({captureAudio: true, initReady: true, transcriptionListeners: true, miniappInstall: true})
+    expect(features).toEqual({captureAudio: true, initReady: true, transcriptionListeners: true, miniappInstall: true, telemetry: true})
   })
 })

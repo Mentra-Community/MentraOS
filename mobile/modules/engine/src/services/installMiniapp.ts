@@ -17,7 +17,7 @@
  * development build of the name it serves, over HTTP or HTTPS: never registered, never updated from its URL, with
  * its own data, tokens marked as a local build's, and no system privileges ({@link installLocalBuild}).
  */
-import type {RegistryRegisterRequest, RegistryRegisterResponse} from "@mentra/cloud-protocol"
+import type {FleetInstallFailureReason, RegistryRegisterRequest, RegistryRegisterResponse} from "@mentra/cloud-protocol"
 import {
   isLocalNetworkHost,
   normalizeMiniappUrl,
@@ -31,6 +31,7 @@ import {MiniappRunningError} from "../utils/storeInstallRuntime"
 import appRegistry, {type InstallableReleaseIdentity, type MiniappReleaseIdentity} from "./AppRegistry"
 import {cloudClientService} from "./CloudClientService"
 import type {ManagedAssignment} from "./fleet/assignmentReconciler"
+import {fleetEvents, type FleetInstallEvent} from "./fleet/fleetEvents"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 import {checkMiniappAge, type AgeGateVerdict, type AgeRatedMiniapp} from "./miniappAgeGate"
 import {isPackageNameAllowedForUrl} from "./miniappDomainRule"
@@ -89,6 +90,12 @@ export interface InstallMiniappOptions {
   expectedPackageName?: string
   /** True once the install should stop. Nothing commits after that. */
   isCancelled?: () => boolean
+  /**
+   * Called once the installer knows the package, the release it would replace (null for none) and the version it would
+   * install, before anything is downloaded or asked: how Fleet reports the attempt whatever comes after
+   * (`installMiniapp`).
+   */
+  onResolved?: (packageName: string, previousVersion: string | null, version: string) => void
   /**
    * Headless only: called when the update of a running miniapp is staged and waits for the person's answer to its
    * update prompt. The call resolves once they answer: `installed`, or `deferred` for Not now.
@@ -223,6 +230,7 @@ export function createMiniappInstaller(
     // A miniapp installed from this URL opens, unless a development build of its name runs in its place: installing
     // it again replaces that build. Fleet's reconciler decides for itself what an assignment installs.
     const active = deps.activeRelease(packageName)
+    options.onResolved?.(packageName, active?.version ?? null, manifest.version)
     if (options.source !== "assignment" && active && !deps.hasDevelopmentSelection(packageName)) {
       const installedFrom = deps.updateUrl(packageName, active.identity)
       if (installedFrom && normalizeMiniappUrl(installedFrom)?.url === target.url) {
@@ -370,6 +378,7 @@ async function installFromLocalNetwork(
   assertCurrent()
   const {manifest} = served
   const packageName = manifest.packageName
+  options.onResolved?.(packageName, deps.activeRelease(packageName)?.version ?? null, manifest.version)
   if (!deps.developmentAllowed(packageName)) {
     throw new InstallMiniappError(
       "access_denied",
@@ -730,10 +739,77 @@ const engineDependencies: InstallMiniappDependencies = {
 
 let engineInstaller: ((url: string, options: InstallMiniappOptions) => Promise<InstallMiniappResult>) | null = null
 
+/** Fleet's install reason for an install that stopped (Phase 12): `assignment_outcome`'s reasons where they apply. */
+const FLEET_INSTALL_REASON: Record<InstallMiniappErrorCode, FleetInstallFailureReason> = {
+  not_a_miniapp: "not_a_miniapp",
+  domain_mismatch: "not_a_miniapp",
+  archived: "archived",
+  needs_newer_app: "incompatible_host",
+  access_denied: "access_denied",
+  age_restricted: "access_denied",
+  network: "network",
+  cancelled: "user_cancelled",
+  integrity: "download_failed",
+  signature_invalid: "signature_invalid",
+}
+
 /**
  * Install the miniapp at a miniapp URL (see the module comment). Throws {@link InstallMiniappError}.
+ *
+ * Every attempt whose package the installer resolved is reported to Fleet (`miniapp_install`): an update when it
+ * replaces an installed release, an install otherwise; installed, deferred, or failed with its reason. One the person
+ * declined is deferred, not failed. An attempt that stopped before its package was known (an unreachable URL) cannot be
+ * attributed, and is not reported.
  */
 export function installMiniapp(url: string, options: InstallMiniappOptions): Promise<InstallMiniappResult> {
-  engineInstaller ??= createMiniappInstaller(engineDependencies)
+  engineInstaller ??= withFleetReport(createMiniappInstaller(engineDependencies))
   return engineInstaller(url, options)
+}
+
+/** `installer`, reporting each attempt to Fleet as `installMiniapp` describes. Exported for tests. */
+export function withFleetReport(
+  installer: (url: string, options: InstallMiniappOptions) => Promise<InstallMiniappResult>,
+): (url: string, options: InstallMiniappOptions) => Promise<InstallMiniappResult> {
+  return (url, options) => reportAttempt(installer, url, options)
+}
+
+async function reportAttempt(
+  installer: (url: string, options: InstallMiniappOptions) => Promise<InstallMiniappResult>,
+  url: string,
+  options: InstallMiniappOptions,
+): Promise<InstallMiniappResult> {
+  const source = options.source === "assignment" ? "assignment" : options.source === "local" ? "local" : "url"
+  // What the installer resolved: the package and the release it replaces, for an update and for a failure.
+  type Attempt = {packageName: string; previousVersion: string | null; version: string}
+  let attempt: Attempt | null = null
+  const resolved: InstallMiniappOptions = {
+    ...options,
+    onResolved: (packageName, previousVersion, version) => {
+      attempt = {packageName, previousVersion, version}
+      options.onResolved?.(packageName, previousVersion, version)
+    },
+  }
+  // Every report names the version the attempt was installing, whatever is installed when it is made.
+  const report = (fields: Pick<FleetInstallEvent, "outcome" | "reason">) => {
+    const known = attempt as Attempt | null
+    if (known === null) return
+    fleetEvents.install({
+      packageName: known.packageName,
+      operation: known.previousVersion ? "update" : "install",
+      source,
+      ...(known.previousVersion ? {fromVersion: known.previousVersion} : {}),
+      toVersion: known.version,
+      ...fields,
+    } as FleetInstallEvent)
+  }
+  try {
+    const result = await installer(url, resolved)
+    if (result.status === "installed") report({outcome: "succeeded"})
+    else if (result.status === "deferred") report({outcome: "deferred", reason: "unknown"})
+    return result
+  } catch (error) {
+    const reason = error instanceof InstallMiniappError ? FLEET_INSTALL_REASON[error.code] : "unknown"
+    report({outcome: reason === "user_cancelled" ? "deferred" : "failed", reason})
+    throw error
+  }
 }

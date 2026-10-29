@@ -55,6 +55,7 @@ export type {LanguageHint, TranscriptionLanguage} from "../modules/languages"
 // (the registering side lives in the background JSContext). `InvokeOptions` is
 // for system miniapps that call other apps' actions via `session.actions.invoke`.
 export type {ActionContext, ActionHandler, InvokeOptions} from "../modules/actions"
+export type {TelemetryModule, TelemetryProperties, TelemetryValue} from "../modules/telemetry"
 export type {
   InstallMiniappCompatibility,
   InstallMiniappCompatibilityRequest,

@@ -72,9 +72,18 @@ import {useGlassesStore} from "../../stores/glasses"
 import {BgTimer} from "../../utils/timers"
 import {miniappRunningRegistry} from "../MiniappRunningRegistry"
 import {nativeMiniappExecution} from "../NativeMiniappExecution"
-import {fleetEvents, type FleetLaunchEvent, type FleetPhotoEvent} from "./fleetEvents"
+import {
+  fleetEvents,
+  type FleetConnectionEvent,
+  type FleetCrashEvent,
+  type FleetInstallEvent,
+  type FleetLaunchEvent,
+  type FleetPhotoEvent,
+  type FleetTelemetryEvent,
+} from "./fleetEvents"
 import {newId, phoneDeviceId} from "./fleetIds"
-import type {FleetQueue} from "./fleetQueue"
+import {TELEMETRY_RECORD_PREFIX, type FleetQueue} from "./fleetQueue"
+import {limitEvent, TelemetryRate} from "./telemetryLimits"
 import {appPhoneBattery} from "./phoneBatterySource"
 import {
   glassesProduct,
@@ -208,6 +217,9 @@ const MODELS_WITHOUT_BATTERY: ReadonlySet<string> = new Set<string>()
  * What the phone measures without glasses. With glasses connected it measures all of them, less the battery of glasses
  * that cannot report one. A phone that cannot report its own battery does not claim `phone_battery`.
  */
+/** A disconnect this soon after the person asked for one is theirs. */
+const USER_DISCONNECT_WINDOW_MS = 10_000
+
 const PHONE_CAPABILITIES: Capability[] = [
   "glasses_connection",
   "miniapp_execution",
@@ -215,6 +227,10 @@ const PHONE_CAPABILITIES: Capability[] = [
   "engine_active",
   "photo_operations",
   "phone_battery",
+  // Phase 12: what this Mentra App measures whatever is connected.
+  "miniapp_failures",
+  "glasses_connectivity",
+  "miniapp_telemetry",
 ]
 
 function warn(what: string, error: unknown): void {
@@ -592,6 +608,12 @@ class CollectorRun {
   private lastSnapshotKey: string | null = null
 
   private known: KnownGlasses | null = null
+  /** The store's last connection state, and when the glasses last dropped (for a reconnect's time). */
+  private rawConnection: string | null = null
+  private disconnectedAt: number | null = null
+  private connectFailed = false
+  /** Each miniapp's telemetry rate on this phone, for this run. */
+  private readonly telemetryRate = new TelemetryRate()
   private heldPhotos: HeldPhoto[] = []
   private battery: BatteryReading | null = null
   private phoneBattery: PhoneBatteryHeld | null = null
@@ -624,6 +646,10 @@ class CollectorRun {
       fleetEvents.subscribe({
         launch: (event) => this.guard("launch", () => this.onLaunch(event)),
         photo: (event) => this.guard("photo", () => this.onPhoto(event)),
+        telemetry: (event) => this.guard("telemetry", () => this.onTelemetry(event)),
+        crash: (event) => this.guard("crash", () => this.onCrash(event)),
+        install: (event) => this.guard("install", () => this.onInstall(event)),
+        connection: (event) => this.guard("connection", () => this.onConnection(event)),
       }),
     )
     const appState = AppState.addEventListener("change", (state) =>
@@ -712,10 +738,42 @@ class CollectorRun {
     this.evaluateSnapshotTriggers()
   }
 
+  /**
+   * Phase 12's connection events, from the store's own states: connected to disconnected is a disconnect (the
+   * person's own within 10 s of their asking, otherwise a lost link); connecting or bonding to disconnected without
+   * connecting is a failed connection, once until the glasses connect again and never while a lost link waits to come
+   * back; connected again after a disconnect is a reconnect, with the time it took.
+   * Simulated glasses have none.
+   */
+  private noteConnectionChange(raw: string, simulated: boolean, wall: number): void {
+    const previous = this.rawConnection
+    this.rawConnection = raw
+    if (previous === null || previous === raw || simulated) return
+    if (raw === "disconnected" && previous === "connected") {
+      const theirs = wall - fleetEvents.lastUserDisconnect() < USER_DISCONNECT_WINDOW_MS
+      this.onConnection({event: "disconnected", category: theirs ? "user_action" : "link_lost"})
+      this.disconnectedAt = theirs ? null : wall
+    } else if (raw === "disconnected" && (previous === "connecting" || previous === "bonding")) {
+      // Glasses away retry all the time: a lost link waiting to come back is its disconnect, and only the first failed
+      // connection between two connected spells is one, so an hour of retries is not an hour of records.
+      if (this.disconnectedAt === null && !this.connectFailed) {
+        this.connectFailed = true
+        this.onConnection({event: "connect_failed", category: "unknown"})
+      }
+    } else if (raw === "connected") {
+      this.connectFailed = false
+      if (this.disconnectedAt !== null) {
+        this.onConnection({event: "reconnected", category: "unknown", reconnectMs: wall - this.disconnectedAt})
+        this.disconnectedAt = null
+      }
+    }
+  }
+
   /** Notes what the glasses store says now: the connection, the glasses' identity and versions, and the battery. */
   private trackGlasses(wall: number): void {
     const s = useGlassesStore.getState()
     const state = mapConnection(s.connection.state)
+    this.noteConnectionChange(s.connection.state, isSimulatedGlasses(s.deviceModel), wall)
     if (state !== this.connection.state) {
       // Glasses that start connecting are not assumed to be the pair that was last here: a new connection is
       // identified afresh, from what the glasses say, before anything is attributed to a device. Only a new
@@ -1402,6 +1460,102 @@ class CollectorRun {
         ...(versionName ? {versionName} : {}),
         start: event.start,
         outcome: event.outcome,
+        ...(event.outcome === "failed" && event.failureReason ? {failureReason: event.failureReason} : {}),
+      },
+    }))
+  }
+
+  // --- Phase 12: a miniapp's own events, crashes, installs and connection changes -------------------------------
+
+  /** The open execution session of `packageName`, which a telemetry event or crash is attributed to. */
+  private executionOf(packageName: string): string | undefined {
+    return this.sessions.get(`miniapp_execution:${packageName}`)?.id
+  }
+
+  private onTelemetry(event: FleetTelemetryEvent): void {
+    const packageName = text(event.packageName)
+    if (!packageName) return
+    const at = this.env.now()
+    const limited = limitEvent(event.event, event.properties)
+    if (limited === null || !this.telemetryRate.admit(packageName, at)) {
+      this.env.queue.noteTelemetryLoss(this.partition, packageName, "overLimit", 1, at)
+      return
+    }
+    const versionName = text(event.versionName)
+    const executionSessionId = this.executionOf(packageName)
+    this.emit(
+      at,
+      (base) => ({
+        ...base,
+        kind: "telemetry_event",
+        payload: {
+          packageName,
+          ...(versionName ? {versionName} : {}),
+          ...(executionSessionId ? {executionSessionId} : {}),
+          event: limited.event,
+          properties: limited.properties,
+          droppedProperties: limited.droppedProperties,
+          cutValues: limited.cutValues,
+        },
+      }),
+      TELEMETRY_RECORD_PREFIX,
+    )
+  }
+
+  private onCrash(event: FleetCrashEvent): void {
+    const packageName = text(event.packageName)
+    if (!packageName) return
+    const versionName = text(event.versionName)
+    const executionSessionId = this.executionOf(packageName)
+    this.emit(this.env.now(), (base) => ({
+      ...base,
+      kind: "miniapp_crash",
+      payload: {
+        packageName,
+        ...(versionName ? {versionName} : {}),
+        ...(executionSessionId ? {executionSessionId} : {}),
+        surface: event.surface,
+        category: event.category,
+        outcome: event.outcome,
+        crashesInWindow: Math.min(FLEET_LIMITS.maxCrashesInWindow, Math.max(1, Math.round(event.crashesInWindow))),
+      },
+    }))
+  }
+
+  private onInstall(event: FleetInstallEvent): void {
+    const packageName = text(event.packageName)
+    if (!packageName) return
+    const fromVersion = text(event.fromVersion)
+    const toVersion = text(event.toVersion)
+    this.emit(this.env.now(), (base) => ({
+      ...base,
+      kind: "miniapp_install",
+      payload: {
+        packageName,
+        operation: event.operation,
+        source: event.source,
+        ...(fromVersion ? {fromVersion} : {}),
+        ...(toVersion ? {toVersion} : {}),
+        outcome: event.outcome,
+        ...(event.outcome === "succeeded" ? {} : {reason: event.reason ?? "unknown"}),
+      },
+    }))
+  }
+
+  private onConnection(event: FleetConnectionEvent): void {
+    const binding = this.currentBinding() ?? this.known?.binding ?? null
+    const glassesModel = this.known?.model
+    const appVersion = phoneInfo()?.appVersion ?? "unknown"
+    this.emit(this.env.now(), (base) => ({
+      ...base,
+      kind: "connection_event",
+      ...(binding ? {deviceBinding: binding} : {}),
+      payload: {
+        event: event.event,
+        category: event.category,
+        ...(glassesModel ? {glassesModel} : {}),
+        appVersion,
+        ...(event.event === "reconnected" ? {reconnectMs: Math.max(0, Math.round(event.reconnectMs ?? 0))} : {}),
       },
     }))
   }
@@ -1451,10 +1605,10 @@ class CollectorRun {
     return [...measured]
   }
 
-  private base(observedAt: number): RecordBase {
+  private base(observedAt: number, idPrefix = ""): RecordBase {
     return {
       schemaVersion: FLEET_SCHEMA_VERSION,
-      recordId: newId(),
+      recordId: `${idPrefix}${newId()}`,
       phoneDeviceId: this.phoneId,
       collectorSessionId: this.collectorSessionId,
       sequence: this.env.queue.nextSequence(this.partition, this.collectorSessionId),
@@ -1464,9 +1618,9 @@ class CollectorRun {
   }
 
   /** Builds a record and queues it in this run's partition. A record that cannot be built or stored is skipped. */
-  private emit(observedAt: number, make: (base: RecordBase) => FleetRecord): void {
+  private emit(observedAt: number, make: (base: RecordBase) => FleetRecord, idPrefix = ""): void {
     try {
-      this.env.queue.enqueue(this.partition, make(this.base(observedAt)))
+      this.env.queue.enqueue(this.partition, make(this.base(observedAt, idPrefix)))
     } catch (error) {
       warn("recording", error)
     }

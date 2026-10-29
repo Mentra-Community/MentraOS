@@ -46,6 +46,7 @@ import {StreamModule} from "./modules/stream"
 import {SystemModule} from "./modules/system"
 import {MiniappsModule} from "./modules/miniapps"
 import {ActionsModule} from "./modules/actions"
+import {TelemetryModule} from "./modules/telemetry"
 import {BlobModule} from "./modules/blob"
 import {
   MeetingModule,
@@ -136,6 +137,8 @@ export interface HostFeatures {
    * Mentra App's system list may call it; older Mentra Apps answer NOT_PERMITTED.
    */
   miniappInstall?: boolean
+  /** Host takes the miniapp's own events from `session.telemetry.capture` (Fleet Management's miniapp telemetry). */
+  telemetry?: boolean
 }
 
 export interface MiniappAuthState {
@@ -304,6 +307,8 @@ export class MiniappSession<TChannels extends object = any> {
    * declared action; `handle` (open to all) exposes one of your own.
    */
   public readonly actions: ActionsModule
+  /** The miniapp's own analytics, shown in its organization's Fleet Management (see {@link TelemetryModule}). */
+  public readonly telemetry: TelemetryModule
 
   /** Phone-declared glasses capabilities. Null until CONNECT_ACK arrives. */
   public capabilities: GlassesCapabilities | null = null
@@ -411,6 +416,12 @@ export class MiniappSession<TChannels extends object = any> {
     this.ui = new UIModuleImpl<TChannels>(this)
     this.miniapps = new MiniappsModule(this)
     this.actions = new ActionsModule(this)
+    this.telemetry = new TelemetryModule(this)
+  }
+
+  /** @internal Whether CONNECT_ACK arrived, so `hostFeatures` is the host's answer and not just unknown. */
+  get handshakeDone(): boolean {
+    return this.handshakeComplete
   }
 
   /**

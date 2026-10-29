@@ -293,6 +293,8 @@ export interface UninstallOptions {
    * that checked what it may remove checks again here, where no install can change it.
    */
   beforeRemove?: () => void
+  /** What Fleet records the removal as started by (Phase 12, `miniapp_install`); the person's own removal by default. */
+  fleetSource?: "url" | "assignment" | "manifest" | "local" | "bundled"
 }
 
 /** Local ZIP installs may additionally adopt an identical, already installed bundle. */

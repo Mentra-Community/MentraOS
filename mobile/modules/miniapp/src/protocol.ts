@@ -205,6 +205,11 @@ export enum MiniappRequestType {
    */
   TRANSCRIPTION_FINISH = "miniapp_transcription_finish",
 
+  // ----- Telemetry -----
+
+  /** A miniapp's own analytics event (`session.telemetry.capture`). One-shot; hosts with `hostFeatures.telemetry`. */
+  TELEMETRY_CAPTURE = "miniapp_telemetry_capture",
+
   // ----- Deferred in v1 -----
 
   /** Dashboard content update. Noop in v1. */

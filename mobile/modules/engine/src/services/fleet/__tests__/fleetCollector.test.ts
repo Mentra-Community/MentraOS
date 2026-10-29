@@ -1444,8 +1444,10 @@ describe("glasses that are away", () => {
     disconnectLive()
     retry(60)
     const sinceLeaving = all().filter((record) => Date.parse(record.observedAt) >= leftAt)
-    // The disconnect's snapshot, the checkpoint that ends the connection, and a checkpoint every 15 minutes.
+    // The disconnect itself (Phase 12: one event, however many attempts follow), the disconnect's snapshot, the
+    // checkpoint that ends the connection, and a checkpoint every 15 minutes.
     expect(sinceLeaving.map((record) => record.kind)).toEqual([
+      "connection_event",
       "usage_checkpoint",
       "snapshot",
       "usage_checkpoint",
@@ -2763,4 +2765,87 @@ describe("what Fleet reads", () => {
       }
     },
   )
+})
+
+describe("Phase 12: telemetry, crashes, installs and connection", () => {
+  const CALL = "com.mentra.call"
+
+  test("a miniapp's event is queued with its execution session and version, within the limits", () => {
+    miniappRunningRegistry.add(CALL)
+    start()
+    fleetEvents.telemetry({
+      packageName: CALL,
+      versionName: "2.1.73",
+      event: "call_ended",
+      properties: {platform: "teams", duration_s: 312, Bad: 1, long: "x".repeat(70), nested: {a: 1}},
+    })
+    const [event] = ofKind("telemetry_event")
+    expect(event!.recordId.startsWith("tel.")).toBe(true)
+    expect(event!.payload).toEqual({
+      packageName: CALL,
+      versionName: "2.1.73",
+      executionSessionId: expect.any(String),
+      event: "call_ended",
+      properties: {platform: "teams", duration_s: 312, long: "x".repeat(64)},
+      droppedProperties: 2,
+      cutValues: 1,
+    })
+    collector.flushCheckpoint()
+    const execution = checkpoints().flatMap((record) => record.payload.sessions).find((s) => s.activity === "miniapp_execution")
+    expect(event!.payload.executionSessionId).toBe(execution?.activitySessionId)
+    expect(event!.capabilities).toContain("miniapp_telemetry")
+  })
+
+  test("an event over a limit or the rate is dropped and counted as the miniapp's loss", () => {
+    start()
+    fleetEvents.telemetry({packageName: CALL, event: "Not Valid", properties: {}})
+    for (let i = 0; i < 61; i += 1) fleetEvents.telemetry({packageName: CALL, event: "tick", properties: {}})
+    expect(ofKind("telemetry_event")).toHaveLength(60)
+    expect(queue.takeTelemetryLosses(PARTITION, clock.wall)?.packages[CALL]).toEqual({overLimit: 2, evicted: 0, expired: 0, rejected: 0})
+    advance(61_000)
+    fleetEvents.telemetry({packageName: CALL, event: "tick", properties: {}})
+    expect(ofKind("telemetry_event")).toHaveLength(61)
+  })
+
+  test("a failed launch keeps its reason", () => {
+    start()
+    fleetEvents.launch({packageName: CALL, start: "user", outcome: "failed", failureReason: "spawn_failed"})
+    expect(ofKind("miniapp_launch")[0]!.payload).toMatchObject({outcome: "failed", failureReason: "spawn_failed"})
+  })
+
+  test("a crash and an install attempt are queued as they happened, with no text", () => {
+    miniappRunningRegistry.add(CALL)
+    start()
+    fleetEvents.crash({packageName: CALL, versionName: "2.1.73", surface: "context", category: "unresponsive", outcome: "crash_loop_stopped", crashesInWindow: 4})
+    fleetEvents.install({packageName: CALL, operation: "update", source: "assignment", fromVersion: "2.1.70", toVersion: "2.1.73", outcome: "failed", reason: "storage_full"})
+    expect(ofKind("miniapp_crash")[0]!.payload).toMatchObject({packageName: CALL, category: "unresponsive", outcome: "crash_loop_stopped", crashesInWindow: 4, executionSessionId: expect.any(String)})
+    expect(ofKind("miniapp_install")[0]!.payload).toEqual({packageName: CALL, operation: "update", source: "assignment", fromVersion: "2.1.70", toVersion: "2.1.73", outcome: "failed", reason: "storage_full"})
+  })
+
+  test("a lost link, its reconnect with the time it took, and a disconnect the person asked for", () => {
+    connectLive()
+    start()
+    advance(60_000)
+    disconnectLive()
+    advance(9_000)
+    connectLive()
+    advance(60_000)
+    fleetEvents.userDisconnect()
+    disconnectLive()
+    const events = ofKind("connection_event").map((record) => [record.payload.event, record.payload.category, record.payload.reconnectMs, record.deviceBinding?.kind])
+    expect(events).toEqual([
+      ["disconnected", "link_lost", undefined, "serial"],
+      ["reconnected", "unknown", 9_000, "serial"],
+      ["disconnected", "user_action", undefined, "serial"],
+    ])
+  })
+
+  test("one failed connection between connected spells, however many attempts", () => {
+    start()
+    for (let i = 0; i < 3; i += 1) {
+      glassesStore.setState({connection: {state: "connecting"}})
+      glassesStore.setState({connection: {state: "disconnected"}})
+    }
+    expect(ofKind("connection_event").map((record) => record.payload.event)).toEqual(["connect_failed"])
+  })
 })

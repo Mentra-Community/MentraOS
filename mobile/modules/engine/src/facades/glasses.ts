@@ -12,6 +12,7 @@
 // standalone build); jest moduleNameMapper + tsconfig both resolve it.
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {ButtonPressEvent, ConnectOptions, Device, TouchEvent} from "@mentra/bluetooth-sdk"
+import {fleetEvents} from "../services/fleet/fleetEvents"
 import {useGlassesStore} from "../stores/glasses"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {hasDefaultDevice} from "../services/DeviceStoreHydration"
@@ -94,10 +95,11 @@ export const glasses = {
       throw error
     }
   },
-  disconnect: (): Promise<void> => BluetoothSdk.disconnect(),
-  forget: (): Promise<void> => BluetoothSdk.forget(),
+  // Fleet counts a disconnect the person asked for as theirs, not as a connection problem (Phase 12).
+  disconnect: (): Promise<void> => (fleetEvents.userDisconnect(), BluetoothSdk.disconnect()),
+  forget: (): Promise<void> => (fleetEvents.userDisconnect(), BluetoothSdk.forget()),
   /** Explicit user Unpair; NIMO is reset before its local pairing is cleared. */
-  unpair: (): Promise<void> => BluetoothSdk.unpair(),
+  unpair: (): Promise<void> => (fleetEvents.userDisconnect(), BluetoothSdk.unpair()),
   /** Connect to a specific (discovered) device. */
   connect: async (device: Device, options?: ConnectOptions): Promise<void> => {
     try {
