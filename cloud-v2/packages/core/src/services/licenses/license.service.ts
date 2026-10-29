@@ -280,6 +280,7 @@ async function applyWorkspaceLicenseWrite(
     if (answer) return answer
     const workspace = await WorkspaceModel.findOne({workspaceId}).session(session).lean()
     if (workspace?.status !== "active") fail("owner_not_found", "the workspace is deleted or does not exist")
+    if (workspace.retiredLicenseIds?.includes(write.licenseId)) fail("owner_not_found", "the license was retired by an administrative reset")
     // Writing the workspace conflicts with its deletion, so a license never lands after the workspace is gone.
     await touchWorkspace(session, workspaceId)
     // A write that carries the ending frees the seats the license has, before it is saved ended.
@@ -977,7 +978,7 @@ function seatTarget(
 export async function endLicensesForOwner(
   session: ClientSession,
   owner: LicenseOwner,
-  reason: Extract<LicenseEndedReason, "workspace_deleted">,
+  reason: Extract<LicenseEndedReason, "workspace_deleted" | "admin_reset">,
   actor: Actor,
 ): Promise<string[]> {
   const filter = ownerFilter(owner)

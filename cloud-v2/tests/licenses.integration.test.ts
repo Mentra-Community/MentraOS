@@ -42,6 +42,7 @@ import {
   releaseSeat,
 } from "../packages/core/src/services/licenses/license.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
+import {finishLicenseReset} from "../packages/core/src/services/licenses/workspace-license-reset.service"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {removeDeletedUserFromWorkspaces} from "../packages/core/src/services/workspaces/account-deletion.service"
 import {
@@ -284,6 +285,61 @@ function clientFor(service: string, secret: string): CoreWorkspaceClient {
 
 const store = () => clientFor("store", "store-s1")
 const fleet = () => clientFor("fleet", "fleet-f1")
+
+describe("staging administrative license resets", () => {
+  test("a failed first delivery stays retired after reset while a genuinely new purchase still works", async () => {
+    const previous = process.env.CLOUD_CORE_ENVIRONMENT
+    process.env.CLOUD_CORE_ENVIRONMENT = "staging"
+    try {
+      const target = await newWorkspace("First delivery still pending")
+      const delayed = licenseWrite({type: "workspace", workspaceId: target.workspaceId}, {assignTo: {mentraUserId: target.owner.mentraUserId}})
+      expect(await licenseRow(delayed.licenseId)).toBeNull()
+      await finishLicenseReset(actorOf(target.owner, true), target.workspaceId, "Restart pending checkout test", {licenseIds: [delayed.licenseId], canceledSubscriptions: 1, expiredCheckouts: 0})
+      await expectClientError(store().putLicense(delayed), "owner_not_found", 404)
+      expect(await licenseRow(delayed.licenseId)).toBeNull()
+      expect(await seatsOf(delayed.licenseId)).toHaveLength(0)
+      const fresh = await workspaceLicense(target.workspaceId, {assignTo: {mentraUserId: target.owner.mentraUserId}})
+      expect(await seatsOf(fresh.licenseId)).toHaveLength(1)
+    } finally {
+      if (previous === undefined) delete process.env.CLOUD_CORE_ENVIRONMENT; else process.env.CLOUD_CORE_ENVIRONMENT = previous
+    }
+  })
+  test("ends only the target's licenses, releases seats, preserves members and rejects delayed writes", async () => {
+    const previous = process.env.CLOUD_CORE_ENVIRONMENT
+    process.env.CLOUD_CORE_ENVIRONMENT = "staging"
+    try {
+      const target = await newWorkspace("Reset target")
+      const other = await newWorkspace("Keep this workspace")
+      const license = await workspaceLicense(target.workspaceId)
+      const kept = await workspaceLicense(other.workspaceId)
+      await assignSeat(actorOf(target.owner), target.workspaceId, license.licenseId, target.ownerMembershipId)
+      const result = await finishLicenseReset(actorOf(target.owner, true), target.workspaceId, "Restart subscription testing", {licenseIds: [license.licenseId], canceledSubscriptions: 1, expiredCheckouts: 1})
+      expect(result).toMatchObject({endedProducts: 1, releasedAssignments: 1})
+      expect(await licenseRow(license.licenseId)).toMatchObject({endedAt: expect.any(Date), endedReason: "admin_reset", seatsUsed: 0})
+      expect(await seatsOf(license.licenseId)).toHaveLength(0)
+      expect((await getActiveMembership(target.workspaceId, target.owner.mentraUserId))?.membershipId).toBe(target.ownerMembershipId)
+      expect((await getWorkspace(target.workspaceId))?.status).toBe("active")
+      expect((await licenseRow(kept.licenseId))?.endedAt).toBeNull()
+      await expectClientError(store().putLicense({...license, revision: license.revision + 1}), "owner_not_found", 404)
+      expect((await workspaceLicense(target.workspaceId)).licenseId).not.toBe(license.licenseId)
+      expect((await audit("workspace.licenses.reset"))[0]?.after).toMatchObject({reason: "Restart subscription testing"})
+    } finally {
+      if (previous === undefined) delete process.env.CLOUD_CORE_ENVIRONMENT; else process.env.CLOUD_CORE_ENVIRONMENT = previous
+    }
+  })
+  test("a newly arrived license outside the canceled snapshot aborts cleanup without ending it", async () => {
+    const previous = process.env.CLOUD_CORE_ENVIRONMENT
+    process.env.CLOUD_CORE_ENVIRONMENT = "staging"
+    try {
+      const target = await newWorkspace()
+      const license = await workspaceLicense(target.workspaceId)
+      expect((await refusal(finishLicenseReset(actorOf(target.owner, true), target.workspaceId, "Restart subscription testing", {licenseIds: [], canceledSubscriptions: 0, expiredCheckouts: 0}))).code).toBe("membership_changed")
+      expect((await licenseRow(license.licenseId))?.endedAt).toBeNull()
+    } finally {
+      if (previous === undefined) delete process.env.CLOUD_CORE_ENVIRONMENT; else process.env.CLOUD_CORE_ENVIRONMENT = previous
+    }
+  })
+})
 
 async function expectClientError(promise: Promise<unknown>, code: CoreWorkspaceClientError["code"], status: number) {
   const error = await promise.then(

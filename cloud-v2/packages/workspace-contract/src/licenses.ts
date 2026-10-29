@@ -149,6 +149,7 @@ export const SEAT_RELEASE_REASONS = [
   "account_deleted",
   "workspace_deleted",
   "license_ended",
+  "admin_reset",
 ] as const
 export type SeatReleaseReason = (typeof SEAT_RELEASE_REASONS)[number]
 
@@ -157,7 +158,7 @@ export type SeatReleaseReason = (typeof SEAT_RELEASE_REASONS)[number]
  * subscription was cancelled and its paid term has run out (`lapsed`, which billing writes: see
  * {@link LicenseWrite.endedReason}).
  */
-export const LICENSE_ENDED_REASONS = ["workspace_deleted", "lapsed"] as const
+export const LICENSE_ENDED_REASONS = ["workspace_deleted", "lapsed", "admin_reset"] as const
 export type LicenseEndedReason = (typeof LICENSE_ENDED_REASONS)[number]
 
 /** The reasons billing can end a license with, in a write: Core ends the rest itself. */

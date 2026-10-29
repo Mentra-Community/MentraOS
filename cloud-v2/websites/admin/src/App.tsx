@@ -318,7 +318,7 @@ function AdminPage() {
       signingOut={signingOut}
     >
       {active === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
-      {active === "workspaces" ? <WorkspacesPage fleetInstalled={principal.fleet?.installed === true} /> : null}
+      {active === "workspaces" ? <WorkspacesPage fleetInstalled={principal.fleet?.installed === true} resetEnabled={ENVIRONMENT === "staging" || ENVIRONMENT === "dev"} /> : null}
       {active === "licenses" ? <LicensesPage /> : null}
       {active === "registry" ? <RegistryPage /> : null}
       {active === "operator-keys" ? <OperatorKeysPage /> : null}

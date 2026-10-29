@@ -24,6 +24,7 @@ export function licensesPath(query: string, cursor?: string): string {
 const ENDED_REASONS: Record<LicenseEndedReason, string> = {
   workspace_deleted: "workspace deleted",
   lapsed: "subscription ended",
+  admin_reset: "admin reset",
 };
 
 export interface LicenseState {
