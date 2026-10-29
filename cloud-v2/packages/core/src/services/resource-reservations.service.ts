@@ -54,7 +54,7 @@ export function routineResourceBlocker(host: ResourceReservationHost, row: Store
   const lane = host.snapshot.lanes.find(value => value.id === laneId)
   if (!lane) return {code: 'routine-lane-unavailable', laneId}
   if (!row.fleetPreparation) return {code: 'routine-preparation-unavailable', laneId}
-  if (!candidateCheck && (lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic')) return {code: 'routine-lane-not-idle', laneId}
+  if (!candidateCheck && (lane.activity || lane.dispatchMode !== 'automatic')) return {code: 'routine-lane-not-idle', laneId}
   const readinessHost = {...host, resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations},
     original = {requestId: row.requestId, inputSha256: row.fleetInputSha256!, executionInputSha256: row.inputSha256},
     laneBlocker = resourceLaneBlocker(readinessHost, laneId, {...original, hostId: host.hostId})
@@ -356,7 +356,7 @@ const dependencies = (host: ResourceReservationHost, intent: ExclusiveResourceIn
     localDispatch = dispatch && intent.owner.kind === 'run' && intent.owner.id === dispatch.requestId &&
       intent.operationId === `run:${dispatch.requestId}` && intent.inputSha256 === dispatch.inputSha256 &&
       host.snapshot.resourceReservations?.dispatches?.some(value => isDeepStrictEqual(value, dispatch))
-  if (!lane || !observation && (!['idle', 'running', 'reserved'].includes(lane.state) ||
+  if (!lane || !observation && (!['idle', 'running', 'reserved', 'in-repair', 'out-of-service'].includes(lane.state) ||
     lane.dispatchMode === 'paused' && !localDispatch ||
     lane.activity && !isDeepStrictEqual({id: lane.activity.owner.id, kind: lane.activity.owner.kind}, intent.owner)))
     throw new TestRunError(409, 'Reservation requires the selected idle lane or its unchanged current owner')
@@ -399,7 +399,7 @@ export class ResourceReservationsService {
     if (row.fleetResourceAdmission && (row.fleetResourceAdmission.intent.hostId !== hostId || row.fleetResourceAdmission.intent.laneId !== laneId)) return null
     const borrower = await this.host(hostId), lane = borrower.snapshot.lanes.find(value => value.id === laneId)
     if (!fresh(borrower, this.now()) ||
-      !lane || lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic') return null
+      !lane || lane.activity || lane.dispatchMode !== 'automatic') return null
     if (!routineResourcesAvailable(borrower, row, laneId, this.now())) return null
     if (hostResourceReservationsSchema.parse(borrower.resourceReservations ?? []).some(claim => isExclusiveHostReservation(claim) &&
       claim.prerequisite && claim.borrowerHostId === hostId && claim.laneId === laneId)) return null

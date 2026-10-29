@@ -344,10 +344,10 @@ export const routineJobRepository: RoutineJobRepository = {
       const executionDigest = row.inputSha256;
       const offered = sourceOffer && {...sourceOffer, reservations: sourceOffer.reservations.filter(value =>
         value.requestId !== requestId || value.inputSha256 !== executionDigest)};
-      if (host.hostId !== hostId || !lane || !required || !offered || lane.state !== 'idle' || lane.dispatchMode !== 'automatic' ||
+      if (host.hostId !== hostId || !lane || !required || !offered || lane.activity || lane.dispatchMode !== 'automatic' ||
         now.getTime() - hostRow.receivedAt.getTime() > 120_000 || hostRow.receivedAt > now ||
         !compatibleStructuralRoutineLane(requirements, {...lane, resources: lane.resources.map(value => value.kind === 'recorder' ? {...value, storage: offered} : value)}, routineLaneContext(host, row.fleetSelection.build, now.getTime()), now.getTime())) {
-        if (lane && required && lane.state === 'idle' && lane.dispatchMode === 'automatic' && hostRow.receivedAt <= now &&
+        if (lane && required && !lane.activity && lane.dispatchMode === 'automatic' && hostRow.receivedAt <= now &&
             now.getTime() - hostRow.receivedAt.getTime() <= 120_000 && compatibleStructuralRoutineLane({...requirements,
               resources: requirements.resources.map(({storage: _, ...resource}) => resource)}, lane,
               routineLaneContext(host, row.fleetSelection.build, now.getTime()), now.getTime()))
@@ -531,7 +531,7 @@ export const routineJobRepository: RoutineJobRepository = {
       Boolean(row.fleetExclusiveReservation) !== Boolean(admission.data.dependencies.length)) return null;
     const host = await resourceReservationRepository.get(fleetBinding.hostId),
       lane = host?.snapshot.lanes.find(value => value.id === fleetBinding.laneId);
-    if (!host || !lane || !freshRoutineHost(host.receivedAt, now.getTime()) || lane.state !== 'idle' || lane.dispatchMode !== 'automatic' ||
+    if (!host || !lane || !freshRoutineHost(host.receivedAt, now.getTime()) || lane.activity || lane.dispatchMode !== 'automatic' ||
       !routineResourcesAvailable(host, row, fleetBinding.laneId, now.getTime())) return null;
     if (requiresBackendConnectivity(row) || lane && requiresSerializedAndroidPreparation(lane)) {
       const originals = await resourceReservationRepository.recorderClaims!(requestId);
@@ -914,9 +914,9 @@ export function routineJobRouting(requirements: PortableRequirements, hosts: Rou
   const matches = structuralPreparation ? compatibleStructuralRoutineLane : compatibleRoutineLane;
   const compatible = hosts.filter(host => Number.isFinite(Date.parse(host.receivedAt)) && Date.parse(host.receivedAt) <= now && now - Date.parse(host.receivedAt) <= 120_000 &&
     (!target?.hostId || target.hostId === host.hostId)).flatMap(host => host.lanes.filter(lane =>
-      (!target?.laneId || target.laneId === lane.id) && lane.dispatchMode === 'automatic' && lane.state !== 'offline' && lane.state !== 'out-of-service' &&
+      (!target?.laneId || target.laneId === lane.id) && lane.dispatchMode === 'automatic' && lane.state !== 'offline' &&
       selectableRoutineResources(host, requirements, lane, now, structuralPreparation, original) && matches(requirements, lane, build ? routineLaneContext(host, build, now) : undefined, now)));
-  const accepting = compatible.filter(lane => lane.state === 'idle');
+  const accepting = compatible.filter(lane => original ? !['running', 'reserved'].includes(lane.state) && !('activity' in lane && lane.activity) : lane.state === 'idle');
   const chosenModel = requirements.glasses ? [...new Set(accepting.flatMap(lane => (lane.glasses ?? []).filter(glasses =>
     requirements.glasses!.models.includes(glasses.model) && requirements.glasses!.capabilities.every(value => glasses.capabilities.includes(value))).map(glasses => glasses.model)))].sort()[0]
     ?? [...requirements.glasses.models].sort()[0] : undefined;
@@ -1657,7 +1657,7 @@ export class RoutineJobService {
       const reasons = hosts.flatMap(host => host.lanes.filter(lane =>
         Number.isFinite(Date.parse(host.receivedAt)) && Date.parse(host.receivedAt) <= this.now() && this.now() - Date.parse(host.receivedAt) <= 120_000 &&
         (!target?.hostId || target.hostId === host.hostId) && (!target?.laneId || target.laneId === lane.id) &&
-        lane.state === 'idle' && lane.dispatchMode === 'automatic' && compatibleStructuralRoutineLane(inventoryRequirements, lane,
+        !('activity' in lane && lane.activity) && lane.dispatchMode === 'automatic' && compatibleStructuralRoutineLane(inventoryRequirements, lane,
           routineLaneContext(host, row.fleetSelection.build, this.now()), this.now())).map(lane => {
         const resource = lane.resources.find(resource => resource.kind === 'recorder');
         return recorderWait(resource?.storage, requirements.resources.find(resource => resource.kind === 'recorder')!.storage!.minimumAvailableBytes, this.now());
@@ -1680,7 +1680,7 @@ export class RoutineJobService {
       // Continue that exact candidate; a preference change cannot move its custody.
       if (target?.hostId && target.hostId !== host.hostId || target?.laneId && target.laneId !== lane.id) continue;
       if (row.fleetTarget?.hostId && row.fleetTarget.hostId !== host.hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== lane.id ||
-        lane.state !== 'idle' || lane.dispatchMode !== 'automatic') continue;
+        lane.dispatchMode !== 'automatic') continue;
       const context = routineLaneContext(host, row.fleetSelection.build, this.now());
       const current = evaluateRoutineLaneReadiness(requirements, host, lane, context, this.now(), original, {
         minimumRoutineApiVersion: row.fleetPreparation!.routineSource.minimumRoutineApiVersion,
@@ -1789,7 +1789,7 @@ export class RoutineJobService {
         ['report-not-future', 'The accepted report is not from the future.'],
         ['report-fresh', 'The accepted report is at most 120 seconds old.'],
         ['lane-automatic', 'The selected lane advertises automatic dispatch.'],
-        ['lane-idle', 'The selected lane advertises idle state.'],
+        ['lane-idle', 'The selected lane has no active operation.'],
         ['selected-host', 'The original target permits this host.'],
         ['selected-lane', 'The original target permits this lane.'],
         ['reported-descriptor', `Runner descriptor: ${input.descriptorRevision}`],
@@ -1822,7 +1822,7 @@ export class RoutineJobService {
         check(Number.isFinite(Date.parse(host!.receivedAt)), host!.receivedAt) &&
         check(Date.parse(host!.receivedAt) <= this.now(), host!.receivedAt) &&
         check(this.now() - Date.parse(host!.receivedAt) <= 120_000, host!.receivedAt) &&
-        check(lane?.dispatchMode === 'automatic', lane?.dispatchMode ?? null) && check(lane!.state === 'idle', lane!.state) &&
+        check(lane?.dispatchMode === 'automatic', lane?.dispatchMode ?? null) && check(!lane!.activity, lane!.state) &&
         check(!row.fleetTarget?.hostId || row.fleetTarget.hostId === hostId, row.fleetTarget?.hostId ?? null) &&
         check(!row.fleetTarget?.laneId || row.fleetTarget.laneId === input.laneId, row.fleetTarget?.laneId ?? null) &&
         check(lane!.descriptorRevision === input.descriptorRevision, lane!.descriptorRevision ?? null) &&

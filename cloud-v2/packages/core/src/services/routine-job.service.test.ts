@@ -1967,12 +1967,13 @@ test('recorder-only recovery selects current authority without check journals or
   } finally {find.mockRestore()}
 });
 
-test('current phone baseline reaches the real serialized recorder, admission and bind CAS without a candidate graph', async () => {
+test.each(['idle', 'out-of-service', 'in-repair'] as const)('current phone baseline reaches the real serialized recorder, admission and bind CAS with %s lane', async laneState => {
  await withLocalResources(async(f,hosts,counters)=>{
   const snapshots = new Map([...hosts].map(([id,h])=>[id,structuredClone(h.snapshot)]));
   for(const h of hosts.values())unavailableLocal(h,'out-of-service','phone');
   await f.prepare();
   for(const [id,h] of hosts){h.snapshot=structuredClone(snapshots.get(id));
+   h.snapshot.lanes[0].state=laneState;
    h.snapshot.frameworkBinding={version:1535,revision:'a'.repeat(40),installationId:'current',configurationSha256:'b'.repeat(64),runtimeSha256:'c'.repeat(64),routineApiVersion:111,publicApiSha256:'d'.repeat(64)};
    h.snapshot.frameworkAcceptedAt=h.snapshot.observedAt;h.snapshot.frameworkProcess={pid:100,startedAt:'original-current-worker'};
    h.snapshot.resourceReservations={claims:[],returns:[],resourceReadiness:true};
@@ -2000,7 +2001,7 @@ test('an obsolete empty admission with zero authority resumes ordinary matching 
   const row=structuredClone(f.row!);row.fleetResourceAdmission!.intent.controller={incarnation:'original-controller',generation:474,sequence:308};delete row.fleetResourceReservation;delete row.fleetExclusiveReservation;f.restore(row);
   for(const host of hosts.values())host.resourceReservations=[];
   old.incarnation=old.snapshot.incarnation='replacement-controller';old.incarnationGeneration=old.snapshot.incarnationGeneration=478;
-  old.snapshot.lanes[0].state='out-of-service';
+  unavailableLocal(old,'out-of-service');
   const before={selection:row.fleetSelection,digest:row.fleetInputSha256,deadline:row.fleetDeadline};
   expect(await f.service.preparation(row.requestId)).toMatchObject({resourceTarget:{hostId:alternate,laneId:'android'}});
   expect(f.row!.fleetResourceAdmission!.intent.hostId).toBe(alternate);expect(f.row!.fleetResourceReservation!.hostId).toBe(alternate);

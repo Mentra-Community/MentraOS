@@ -118,7 +118,7 @@ export function evaluateRoutineLaneReadiness(requirements: PortableRequirements,
     {...check('fresh-report', 'Current accepted host report', 'lifecycle', !hostBlocker, 'Fresh authenticated current host report',
       hostBlocker?.code ?? 'Current accepted report', Boolean(hostBlocker), hostBlocker ? 'Restore the host reporter; read its named connection error.' : undefined), observedAt: host.receivedAt},
     check('automatic', 'Dispatch mode', 'placement', lane.dispatchMode === 'automatic', 'automatic', lane.dispatchMode),
-    check('idle', 'Lane availability', 'ownership', lane.state === 'idle' && !('activity' in lane && lane.activity), 'idle with no active operation', lane.state),
+    check('idle', 'Lane availability', 'ownership', !['offline', 'running', 'reserved'].includes(lane.state) && !('activity' in lane && lane.activity), 'Online lane with no active operation', lane.state),
     check('lane-authority', 'Current lane claims and controls', 'ownership', !laneBlocker,
       'No foreign retained claim or restrictive operator action', laneBlocker?.code ?? 'No blocking lane claim/control'),
     check('target', 'Frozen placement', 'placement', (!constraints.target?.hostId || constraints.target.hostId === host.hostId) &&
