@@ -3,10 +3,12 @@ import {useCallback} from "react"
 import {Platform} from "react-native"
 import {CommonActions} from "@react-navigation/native"
 
-
 import {useNavigationStore} from "@/stores/navigation"
 
 // screens that call this function will prevent the back button from being pressed:
+// Only the iOS beforeRemove listener passes an event, while the screen is already being
+// removed. A handler that gets one must not goBack() again: expo-router runs that call
+// after the removal, so it would pop the screen underneath too.
 export type PreventBackEvent = {actionType: string}
 
 export const focusEffectPreventBack = (backFn?: (event?: PreventBackEvent) => void, iosDontPreventBack?: boolean) => {

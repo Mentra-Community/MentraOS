@@ -49,58 +49,6 @@ jest.mock("@/components/ui/GlassView", () => {
 jest.mock("@/components/mirror/GlassesDisplayMirror", () => () => null)
 jest.mock("assets/icons/component/MicIcon", () => () => null)
 
-describe("unfinished pairing on Home", () => {
-  const clearHistoryAndGoHome = jest.fn()
-  const push = jest.fn()
-
-  beforeEach(async () => {
-    jest.clearAllMocks()
-    engine.pairing.onScanning = jest.fn(() => () => {})
-    ;(engine.glasses.status as jest.Mock).mockReturnValue({
-      state: "disconnected",
-      fullyBooted: false,
-      battery: 0,
-      charging: false,
-      case: {removed: false, battery: 0, open: false},
-    })
-    ;(engine.pairing.abandonAttempt as jest.Mock).mockReset().mockResolvedValue(undefined)
-    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({clearHistoryAndGoHome, push})
-    await useSettingsStore.getState().resetAllSettingsLocally()
-    await engine.pairing.markPendingSelection("Mentra Live")
-  })
-
-  it("offers explicit cancellation alongside finish and pair-different actions", async () => {
-    const screen = render(<GlassesStatus />)
-    expect(screen.getByLabelText("home:finishPairingGlasses")).toBeTruthy()
-    expect(screen.getByLabelText("home:pairDifferentGlasses")).toBeTruthy()
-
-    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
-    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalledTimes(1))
-    expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith({clearPendingSelection: true})
-    expect(push).not.toHaveBeenCalled()
-  })
-
-  it("keeps the pending card available for retry when cleanup fails", async () => {
-    ;(engine.pairing.abandonAttempt as jest.Mock).mockRejectedValueOnce(new Error("cleanup failed"))
-    const screen = render(<GlassesStatus />)
-    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
-
-    await waitFor(() => expect(showAlert).toHaveBeenCalledWith("pairing:errorTitle", "pairing:cancelFailed"))
-    expect(clearHistoryAndGoHome).not.toHaveBeenCalled()
-    expect(screen.getByLabelText("home:finishPairingGlasses")).toBeTruthy()
-    expect(engine.pairing.identity()).toEqual({kind: "pending", model: "Mentra Live"})
-  })
-
-  it("does not offer cancellation after the selection becomes a completed pairing", async () => {
-    const screen = render(<GlassesStatus />)
-    await act(async () => {
-      await useSettingsStore.getState().setSetting(SETTINGS.default_wearable.key, "Mentra Live", false)
-      await useSettingsStore.getState().setSetting(SETTINGS.device_name.key, "Mentra_Live_ABCD", false)
-    })
-    expect(screen.queryByLabelText("pairing:cancelPairing")).toBeNull()
-  })
-})
-
 describe("Mentra Live pairing state on Home", () => {
   const push = jest.fn()
   const clearHistoryAndGoHome = jest.fn()

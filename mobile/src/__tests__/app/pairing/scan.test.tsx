@@ -330,6 +330,7 @@ describe("pairing scan screen", () => {
       expect(engine.pairing.scan).toHaveBeenCalledWith("Mentra Live")
     })
     expect(screen.getByText("pairing:livePairingScanTitle")).toBeTruthy()
+    expect(screen.getByText("pairing:livePairingScanPowerOn")).toBeTruthy()
     expect(screen.getByText("pairing:livePairingScanBody")).toBeTruthy()
     expect(screen.getByText("pairing:livePairingScanSearching")).toBeTruthy()
     expect(screen.getByTestId("live-scan-searching-spinner").props.size).toBe("small")
@@ -341,6 +342,11 @@ describe("pairing scan screen", () => {
 
   it("uses the exact English copy for the secure scan screen (S2)", () => {
     expect(en.pairing.livePairingScanTitle).toBe("Put your glasses in pairing mode")
+    expect(en.pairing.livePairingScanPowerOn).toBe("Turn your glasses on: hold the power button for 5 seconds.")
+    expect(en.pairing.liveChooseGlassesHintTitle).toBe("Not on the list?")
+    expect(en.pairing.liveChooseGlassesHint).toBe(
+      "Turn your glasses on, then press the power button 3 times quickly to enter pairing mode.",
+    )
     expect(en.pairing.livePairingScanBody).toBe(
       "Press the power button 3 times quickly. Your glasses will say a 4-character code.",
     )
@@ -380,7 +386,7 @@ describe("pairing scan screen", () => {
     })
   })
 
-  it("back-out delegates cleanup to the live abandonAttempt and keeps the pending marker", async () => {
+  it("back-out delegates cleanup to the live abandonAttempt and retires the pending selection", async () => {
     // No entry snapshot: the abandon decision must come from the LIVE
     // default-device read, because a pairing can promote while the flow is
     // open - an entry snapshot would forget that brand-new pairing.
@@ -389,10 +395,65 @@ describe("pairing scan screen", () => {
     fireEvent.press(screen.getByLabelText("common:back"))
 
     await waitFor(() => {
-      expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith()
+      expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith({clearPendingSelection: true})
     })
-    expect(goBack).toHaveBeenCalled()
-    expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("Mentra Live")
+    expect(engine.pairing.abandonAttempt).toHaveBeenCalledTimes(1)
+    expect(goBack).toHaveBeenCalledTimes(1)
+  })
+
+  it("falls back to the plain back-out cleanup when the selection cannot be cancelled", async () => {
+    ;(engine.pairing.abandonAttempt as jest.Mock)
+      .mockRejectedValueOnce(new Error("native read failed"))
+      .mockResolvedValueOnce(undefined)
+    const screen = render(<SelectGlassesBluetoothScreen />)
+    fireEvent.press(screen.getByLabelText("common:back"))
+
+    await waitFor(() => {
+      expect(engine.pairing.abandonAttempt).toHaveBeenCalledTimes(2)
+    })
+    expect(engine.pairing.abandonAttempt).toHaveBeenNthCalledWith(1, {clearPendingSelection: true})
+    expect(engine.pairing.abandonAttempt).toHaveBeenNthCalledWith(2)
+  })
+
+  it("an iOS back swipe cleans up once without popping model selection too", async () => {
+    render(<SelectGlassesBluetoothScreen />)
+
+    // The beforeRemove listener: the swipe is already removing the screen.
+    const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
+    backHandler({actionType: "POP"})
+    backHandler({actionType: "POP"})
+
+    await waitFor(() => {
+      expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith({clearPendingSelection: true})
+    })
+    expect(engine.pairing.abandonAttempt).toHaveBeenCalledTimes(1)
+    expect(goBack).not.toHaveBeenCalled()
+  })
+
+  it("the back chevron pops once even though its goBack() reaches beforeRemove", async () => {
+    const screen = render(<SelectGlassesBluetoothScreen />)
+    fireEvent.press(screen.getByLabelText("common:back"))
+    const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
+    backHandler({actionType: "GO_BACK"})
+
+    await waitFor(() => {
+      expect(engine.pairing.abandonAttempt).toHaveBeenCalledTimes(1)
+    })
+    expect(goBack).toHaveBeenCalledTimes(1)
+  })
+
+  it("Android back runs the cleanup and pops the scan screen", async () => {
+    setPlatformOS("android")
+    render(<SelectGlassesBluetoothScreen />)
+
+    // The registered Android back handler is called without an event.
+    const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
+    backHandler()
+
+    await waitFor(() => {
+      expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith({clearPendingSelection: true})
+    })
+    expect(goBack).toHaveBeenCalledTimes(1)
   })
 
   it("forward navigation (replace to btclassic) skips the back-out cleanup", async () => {
@@ -675,6 +736,9 @@ describe("pairing scan screen", () => {
       expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
       expect(getByText("PAIR_A")).toBeTruthy()
     })
+    // The idle unit is off the list, so the chooser still says how to enter pairing mode.
+    expect(getByText("pairing:liveChooseGlassesHintTitle")).toBeTruthy()
+    expect(getByText("pairing:liveChooseGlassesHint")).toBeTruthy()
     expect(queryByText(/IDLE/)).toBeNull()
     expect(push).not.toHaveBeenCalled()
 

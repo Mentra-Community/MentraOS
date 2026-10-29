@@ -5,6 +5,7 @@ import type {ReactNode} from "react"
 import {AppState} from "react-native"
 
 import ForgetIosPairingScreen from "@/app/pairing/forget-ios-pairing"
+import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 
@@ -147,6 +148,18 @@ describe("forget the old iOS pairing screen (S8)", () => {
     expect(goBack).toHaveBeenCalledTimes(1)
     expect(replace).not.toHaveBeenCalled()
     expect(push).not.toHaveBeenCalled()
+    expect(engine.pairing.pair).not.toHaveBeenCalled()
+  })
+
+  it("lets an iOS back swipe land on the scan list without popping it too", () => {
+    render(<ForgetIosPairingScreen />)
+
+    // The beforeRemove listener: the swipe is already removing this screen.
+    const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
+    backHandler({actionType: "POP"})
+
+    expect(goBack).not.toHaveBeenCalled()
+    expect(replace).not.toHaveBeenCalled()
     expect(engine.pairing.pair).not.toHaveBeenCalled()
   })
 

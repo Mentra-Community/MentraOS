@@ -26,14 +26,16 @@ export default function ForgetIosPairingScreen() {
   const {deviceModel, deviceName} = (route.params ?? {}) as {deviceModel?: string; deviceName?: string}
   const returnedRef = useRef(false)
 
-  const returnToScanList = () => {
+  const returnToScanList = (alreadyLeaving = false) => {
     if (returnedRef.current) return
     returnedRef.current = true
     const {history, goBack, replace} = useNavigationStore.getState()
     // Loading replaced itself with this screen, so the scan list is the entry underneath. Pop to it
     // rather than stack a second scan screen.
     if (history?.[history.length - 2] === SCAN_ROUTE) {
-      goBack()
+      // An iOS back swipe is already popping this screen onto the scan list. A goBack() would run
+      // after it and pop the scan list too.
+      if (!alreadyLeaving) goBack()
       return
     }
     replace(SCAN_ROUTE, {deviceModel: deviceModel ?? DeviceTypes.LIVE})
@@ -41,7 +43,7 @@ export default function ForgetIosPairingScreen() {
 
   focusEffectPreventBack((event) => {
     if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") return
-    returnToScanList()
+    returnToScanList(!!event)
   }, true)
 
   // Coming back from Settings (or the app switcher) means the user is done forgetting the device.
@@ -84,7 +86,11 @@ export default function ForgetIosPairingScreen() {
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
-      <Header leftIcon="chevron-left" onLeftPress={returnToScanList} RightActionComponent={<MentraLogoStandalone />} />
+      <Header
+        leftIcon="chevron-left"
+        onLeftPress={() => returnToScanList()}
+        RightActionComponent={<MentraLogoStandalone />}
+      />
       <OnboardingGuide
         steps={steps}
         autoStart={true}

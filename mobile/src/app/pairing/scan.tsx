@@ -103,10 +103,16 @@ function GlassesScanScreen() {
     // default-device read — a re-pair's existing pairing survives, and so does
     // a pairing that PROMOTED while this flow was open (glasses can finish
     // pairing even when the user backs out of the UI). Only a genuinely
-    // unpaired attempt forgets. The pending marker survives either way.
-    void engine.pairing.abandonAttempt().catch((error) => {
-      console.warn("Pairing scan back-out cleanup failed:", error)
-    })
+    // unpaired attempt forgets. Backing out is the user choosing not to pair
+    // this model now, so the pending marker goes too: Home must not greet
+    // them with a finish-pairing card. If the cancel cannot run (the native
+    // ownership read failed), fall back to the plain back-out cleanup.
+    void engine.pairing
+      .abandonAttempt({clearPendingSelection: true})
+      .catch(() => engine.pairing.abandonAttempt())
+      .catch((error) => {
+        console.warn("Pairing scan back-out cleanup failed:", error)
+      })
     return true
   }
 
@@ -114,7 +120,10 @@ function GlassesScanScreen() {
     if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
       return
     }
-    if (runBackOutCleanup()) {
+    // An event means iOS is already removing this screen (the swipe back, or
+    // handleBackOut's goBack()). expo-router queues goBack() until that removal
+    // lands, so calling it here would pop model selection too.
+    if (runBackOutCleanup() && !event) {
       goBack()
     }
   }, true)
@@ -364,7 +373,7 @@ function GlassesScanScreen() {
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header leftIcon="chevron-left" onLeftPress={handleBackOut} RightActionComponent={<MentraLogoStandalone />} />
-      <View className={`flex-1 ${shouldShowDeviceList ? "justify-start" : "justify-center"}`}>
+      <View className="flex-1 justify-center">
         <GlassView className="gap-6 rounded-3xl p-6 bg-primary-foreground" transparent={false}>
           <Image source={selectedImage} className="h-[90px] w-[156px] mx-auto" resizeMode="contain" />
           <Text className="text-center text-xl font-semibold text-text-dim" text={scanTitle} />
@@ -431,6 +440,10 @@ function GlassesScanScreen() {
               <View className="justify-center items-center gap-4 py-2">
                 <Text
                   className="text-center text-base font-medium text-foreground"
+                  text={translate("pairing:livePairingScanPowerOn")}
+                />
+                <Text
+                  className="text-center text-base font-medium text-foreground"
                   text={translate("pairing:livePairingScanBody")}
                 />
                 <View className="flex-row items-center justify-center gap-2">
@@ -451,28 +464,41 @@ function GlassesScanScreen() {
               </View>
             )
           ) : (
-            <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
-              <Group>
-                {listedResults.map((res: Device) => {
-                  const deviceTitle =
-                    deviceModel === DeviceTypes.AR99 ? getAr99ResultDisplayName(res) : selectedDisplayName
-                  const deviceSubtitle =
-                    deviceModel === DeviceTypes.AR99
-                      ? formatAr99Subtitle(res)
-                      : isMentraLivePairingScan
-                        ? formatLiveSubtitle(res)
-                        : filterDeviceName(res.name)
-                  return (
-                    <DiscoveredGlassesRow
-                      key={res.id}
-                      title={deviceTitle}
-                      subtitle={deviceSubtitle}
-                      onPress={() => triggerGlassesPairingGuide(res)}
-                    />
-                  )
-                })}
-              </Group>
-            </ScrollView>
+            <>
+              <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
+                <Group>
+                  {listedResults.map((res: Device) => {
+                    const deviceTitle =
+                      deviceModel === DeviceTypes.AR99 ? getAr99ResultDisplayName(res) : selectedDisplayName
+                    const deviceSubtitle =
+                      deviceModel === DeviceTypes.AR99
+                        ? formatAr99Subtitle(res)
+                        : isMentraLivePairingScan
+                          ? formatLiveSubtitle(res)
+                          : filterDeviceName(res.name)
+                    return (
+                      <DiscoveredGlassesRow
+                        key={res.id}
+                        title={deviceTitle}
+                        subtitle={deviceSubtitle}
+                        onPress={() => triggerGlassesPairingGuide(res)}
+                      />
+                    )
+                  })}
+                </Group>
+              </ScrollView>
+              {/* Other people's glasses can fill the list before yours appear, so the pairing-mode
+                  steps stay on screen while the user is choosing. */}
+              {isMentraLivePairingScan ? (
+                <View className="gap-1 rounded-2xl bg-background px-4 py-3">
+                  <Text
+                    className="text-sm font-semibold text-foreground"
+                    text={translate("pairing:liveChooseGlassesHintTitle")}
+                  />
+                  <Text className="text-sm text-foreground" text={translate("pairing:liveChooseGlassesHint")} />
+                </View>
+              ) : null}
+            </>
           )}
         </GlassView>
       </View>

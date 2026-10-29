@@ -1,6 +1,6 @@
 import {DeviceTypes, getModelCapabilities} from "@mentra/engine"
 import type {GlassesNotReadyEvent} from "@mentra/engine"
-import {useState, useEffect, useRef, type ReactNode} from "react"
+import {useState, useEffect, type ReactNode} from "react"
 import {ActivityIndicator, Image, TouchableOpacity, View, type ImageSourcePropType, type ViewStyle} from "react-native"
 import GlassView from "@/components/ui/GlassView"
 import {Button, Icon, Text} from "@/components/ignite"
@@ -14,7 +14,6 @@ import {useSearchingState} from "@/hooks/useSearchingState"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
-import {cancelPendingPairing} from "@/utils/PairingUtils"
 import {
   getAr99DisplayName,
   getAr99ImageSource,
@@ -69,8 +68,6 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const identity = useEngineSnapshot(engine.pairing.identity, (onChange) => engine.pairing.onIdentity(onChange))
   const pairedModel = identity.kind === "paired" ? identity.model : ""
   const [isCheckingConnectivity, setIsCheckingConnectivity] = useState(false)
-  const [isCancellingPairing, setIsCancellingPairing] = useState(false)
-  const cancellingPairing = useRef(false)
   const glassesStatus = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
   const glassesInfo = useEngineSnapshot(engine.glasses.info, (onChange) => engine.glasses.onInfo(onChange))
   const pairingReadiness = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
@@ -110,8 +107,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   const {wasSearching, nativeLinkBusy, resetSearching} = useSearchingState(searching, pairingReadiness.nativeLinkBusy)
   const pairingState = glassesStatus.pairingState
-  const inPairingMode =
-    pairedModel === DeviceTypes.LIVE && !glassesConnected && pairingState?.state === "pairing_mode"
+  const inPairingMode = pairedModel === DeviceTypes.LIVE && !glassesConnected && pairingState?.state === "pairing_mode"
   const pairingRejected =
     pairedModel === DeviceTypes.LIVE && !glassesConnected && pairingState?.state === "pairing_rejected"
   // The SDK publishes "normal" before CONNECTING when the pairing window ends.
@@ -128,15 +124,6 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   useEffect(() => {
     setReconnectDismissed(false)
   }, [pairingWindowId])
-
-  const handleCancelPairing = async () => {
-    if (cancellingPairing.current) return
-    cancellingPairing.current = true
-    setIsCancellingPairing(true)
-    await cancelPendingPairing()
-    cancellingPairing.current = false
-    setIsCancellingPairing(false)
-  }
 
   if (pairedModel.includes(DeviceTypes.SIMULATED)) {
     return (
@@ -221,69 +208,10 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     }
   }
 
-  // Pending selection: a model was chosen but pairing never completed (abandoned
-  // mid-flow, or an orphaned identity demoted at boot). Offer to finish pairing
-  // that model — or start over with a different one — instead of a Connect
-  // button that has no device to connect to.
-  //
-  // NOT when the glasses are already connected: right after a promotion, the
-  // BLE link is up while the save_setting echoes are still landing, so the JS
-  // identity is momentarily still `pending` — render the normal connected card
-  // (with the pending model as its display name) instead of finish-pairing
-  // actions for a device that is already paired and connected.
-  if (identity.kind === "pending" && !glassesConnected) {
-    return (
-      <View style={style}>
-        <DeviceStatus
-          onPress={() =>
-            !cancellingPairing.current &&
-            (identity.model === DeviceTypes.AR99
-              ? push("/pairing/select-glasses-model", {transition: "simple_push"})
-              : push("/pairing/scan", {deviceModel: identity.model}))
-          }
-          image={getGlassesImage(identity.model)}
-          className={glassesStatus.g2MissingArm ? "min-h-40" : "h-28"}>
-          <View className="flex-row items-center gap-3">
-            <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
-            <Text className="font-semibold text-secondary-foreground text-end self-end" text={identity.model} />
-          </View>
-          <G2ConnectionProgress missingArm={glassesStatus.g2MissingArm} />
-          <Button
-            flex
-            compact
-            className="max-h-10"
-            tx="home:finishPairingGlasses"
-            preset="primary"
-            disabled={isCancellingPairing}
-            onPress={() =>
-              identity.model === DeviceTypes.AR99
-                ? push("/pairing/select-glasses-model", {transition: "simple_push"})
-                : push("/pairing/scan", {deviceModel: identity.model})
-            }
-          />
-        </DeviceStatus>
-        <Button
-          className="mt-2"
-          compact
-          preset="secondary"
-          tx="home:pairDifferentGlasses"
-          disabled={isCancellingPairing}
-          onPress={() => push("/pairing/select-glasses-model", {transition: "simple_push"})}
-        />
-        <Button
-          className="mt-2"
-          compact
-          preset="secondary"
-          tx="pairing:cancelPairing"
-          disabled={isCancellingPairing}
-          onPress={handleCancelPairing}
-        />
-      </View>
-    )
-  }
-
-  // The card body's model name/image: the paired model, or — in the mid-relay
-  // window above (connected while the promotion echoes land) — the pending one.
+  // The card body's model name/image: the paired model, or the pending one in
+  // the mid-relay window right after a promotion, when the BLE link is up but
+  // the save_setting echoes are still landing. Home renders this card for a
+  // pending selection only while the glasses are connected.
   const displayModel = pairedModel || (identity.kind === "pending" ? identity.model : "")
   const displayName = displayModel === DeviceTypes.AR99 ? getAr99DisplayName(projectName) : displayModel
 

@@ -93,14 +93,7 @@ export const ConnectDeviceButton = () => {
   }
 
   if (identity.kind !== "paired") {
-    // A pending selection (chosen model, pairing never completed) resumes the
-    // scan for that model instead of restarting from model selection.
-    if (identity.kind === "pending") {
-      if (identity.model === DeviceTypes.AR99) {
-        return <Button onPress={() => push("/pairing/select-glasses-model")} tx="home:finishPairingGlasses" />
-      }
-      return <Button onPress={() => push("/pairing/scan", {deviceModel: identity.model})} tx="home:finishPairingGlasses" />
-    }
+    // A selection that never finished pairing is not resumed: Home cancels it.
     return <Button onPress={() => push("/pairing/select-glasses-model")} tx="home:pairGlasses" />
   }
 
@@ -217,5 +210,3 @@ export const ConnectControllerButton = () => {
 
   return null
 }
-
-

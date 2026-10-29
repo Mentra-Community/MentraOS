@@ -18,6 +18,7 @@ import AppSwitcher from "@/components/home/AppSwitcher"
 import {GlassesStatus, ControllerStatus} from "@/components/home/DeviceStatus"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
+import {cancelLeftoverPairing} from "@/utils/PairingUtils"
 import AllAppsGridSheet from "@/components/home/AllAppsGridSheet"
 import BottomSheet from "@gorhom/bottom-sheet"
 import {BlurTargetView, BlurView} from "expo-blur"
@@ -27,9 +28,16 @@ export default function Homepage() {
   // Pairing-identity read-model: none | pending (chosen, never paired) | paired.
   const identity = useEngineSnapshot(engine.pairing.identity, (onChange) => engine.pairing.onIdentity(onChange))
   const pairedModel = identity.kind === "paired" ? identity.model : ""
-  const glassesConnected =
-    useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).state === "connected"
+  const glassesState = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).state
+  const glassesConnected = glassesState === "connected"
   const isSearching = useEngineSnapshot(engine.pairing.scanning, (onChange) => engine.pairing.onScanning(onChange))
+  // A pending selection is a pairing in progress. While the link is connecting or bonding it may
+  // still finish (Android keeps the service running when the app is swiped away), and connected
+  // means it just promoted with the identity echo still landing. Only an idle link means the user
+  // left the flow without finishing it.
+  const leftoverPairingModel = identity.kind === "pending" && glassesState === "disconnected" ? identity.model : ""
+  // One cancel per model per visit: a failed save restores the marker, which must not retry in a loop.
+  const cancelledLeftoverRef = useRef("")
   const hasAttemptedInitialConnect = useRef(false)
   const swipeProgress = appSwitcherProgress
   const insets = useSaferAreaInsets()
@@ -54,6 +62,22 @@ export default function Homepage() {
     }, [refreshApps]),
   )
 
+  useFocusEffect(
+    useCallback(() => {
+      if (!leftoverPairingModel || cancelledLeftoverRef.current === leftoverPairingModel) return
+      cancelledLeftoverRef.current = leftoverPairingModel
+      void cancelLeftoverPairing()
+    }, [leftoverPairingModel]),
+  )
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        cancelledLeftoverRef.current = ""
+      },
+      [],
+    ),
+  )
+
   useEffect(() => {
     const attemptInitialConnect = async () => {
       if (hasAttemptedInitialConnect.current) {
@@ -69,9 +93,8 @@ export default function Homepage() {
   }, [glassesConnected, isSearching, pairedModel])
 
   const renderContent = () => {
-    // A pending selection (model chosen, pairing never completed) renders the
-    // glasses card in its finish-pairing state rather than the first-run card.
-    if (identity.kind === "none") {
+    // A selection left unfinished gets the first-run card while it is cancelled.
+    if (identity.kind === "none" || leftoverPairingModel) {
       return (
         <>
           <Group>
