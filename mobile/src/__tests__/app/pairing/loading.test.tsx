@@ -258,6 +258,37 @@ describe("pairing loading screen", () => {
     })
   })
 
+  it.each(["ios", "android"] as const)(
+    "keeps a native authentication refusal for an idle secure unit on %s",
+    async (platform) => {
+      jest.replaceProperty(Platform, "OS", platform)
+      const device = {
+        ...makeDevice("Mentra Live", "MENTRA_LIVE_BLE_001"),
+        pairingMode: false,
+        securePairingCapable: true,
+      }
+      ;(useRoute as jest.Mock).mockReturnValue({
+        params: makeRouteParams(device.model, device.name, {device: JSON.stringify(device)}),
+      })
+      render(<GlassesPairingLoadingScreen />)
+      await startPairingKickoff()
+
+      expect(engine.pairing.pair).toHaveBeenCalledWith(device)
+      act(() => {
+        emitBluetoothSdkEvent("pair_failure", {error: "errors:pairingCouldNotStart"})
+      })
+
+      await waitFor(() => {
+        expect(engine.pairing.abandonAttempt).toHaveBeenCalled()
+        expect(replace).toHaveBeenCalledWith("/pairing/failure", {
+          error: "errors:pairingCouldNotStart",
+          deviceModel: "Mentra Live",
+        })
+      })
+      expect(replace).not.toHaveBeenCalledWith("/pairing/success", expect.anything())
+    },
+  )
+
   it("navigates to success after boot and files a timeout report after 35 seconds", async () => {
     const first = render(<GlassesPairingLoadingScreen />)
     await startPairingKickoff()

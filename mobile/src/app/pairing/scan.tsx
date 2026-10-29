@@ -173,11 +173,6 @@ function GlassesScanScreen() {
     [],
   )
 
-  // Secure Mentra Live ads with pairingMode=false are nearby but not pairable yet.
-  // Existing customer firmware (no secure flag) stays pairable when pairingMode is unset/false.
-  const isLivePairable = (device: Device) =>
-    !isMentraLivePairingScan || device.pairingMode !== false || device.securePairingCapable === false
-
   useEffect(() => {
     void startScanAttempt()
   }, [startScanAttempt])
@@ -192,29 +187,14 @@ function GlassesScanScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allowedByDeployment, searchResults])
 
-  // The choose list is only glasses the user can pair now. A secure Mentra Live that is
-  // nearby but not in pairing mode stays off it: the 3-press screen remains and the
-  // scan keeps running until that unit advertises pairing mode.
-  const pairableResults = useMemo(
-    () =>
-      visibleResults.filter(
-        (device) => !isMentraLivePairingScan || device.pairingMode !== false || device.securePairingCapable === false,
-      ),
-    [visibleResults, isMentraLivePairingScan],
-  )
-  const hasNearbyNotInPairingMode = useMemo(
-    () =>
-      isMentraLivePairingScan &&
-      visibleResults.some((device) => device.pairingMode === false && device.securePairingCapable !== false),
-    [isMentraLivePairingScan, visibleResults],
-  )
-  const listedResults = pairableResults
+  // An existing owner can reconnect with pairing mode off. Advertisements do not
+  // identify the phone's bond, so let native authentication decide after selection.
+  const listedResults = visibleResults
   const shouldShowDeviceList = listedResults.length > 0
 
   useEffect(() => {
-    // Keep scanning after an idle secure unit appears. Advertisements arrive one
-    // at a time, and that unit may enter pairing mode while this screen is open.
-    if (scanTimedOut || pairableResults.length > 0 || hasNearbyNotInPairingMode) {
+    // Keep scanning while the user chooses so newly discovered units still appear.
+    if (scanTimedOut || visibleResults.length > 0) {
       return
     }
 
@@ -241,17 +221,10 @@ function GlassesScanScreen() {
     return () => {
       clearTimeout(timer)
     }
-  }, [deviceModel, hasNearbyNotInPairingMode, pairableResults.length, scanGeneration, scanTimedOut])
+  }, [deviceModel, visibleResults.length, scanGeneration, scanTimedOut])
 
   const triggerGlassesPairingGuide = async (device: Device) => {
     if (!allowedByDeployment) return
-    if (isMentraLivePairingScan && !isLivePairable(device)) {
-      showAlert(translate("pairing:notInPairingModeAlertTitle"), translate("pairing:notInPairingModeAlertMessage"), [
-        {text: "OK"},
-      ])
-      return
-    }
-
     if (connectingRef.current) {
       return
     }
@@ -404,9 +377,7 @@ function GlassesScanScreen() {
                     ? translate("pairing:connectedOnPhoneHint")
                     : !isMentraLivePairingScan
                       ? translate("pairing:liveScanHelpInfo")
-                      : hasNearbyNotInPairingMode
-                        ? translate("pairing:nearbyNotInPairingModeHint")
-                        : translate("pairing:noGlassesFoundHint")
+                      : translate("pairing:noGlassesFoundHint")
                 }
               />
               {shouldShowDeviceList ? (
