@@ -448,14 +448,16 @@ export const routineJobRepository: RoutineJobRepository = {
         onWaiting?.(RESOURCE_ADMISSION_WAIT, Boolean(own || serializedPreparation)); return null;
       }
       const exclusive = await exclusiveResources.reserveFleet(requestId, fleetInputSha256, hostId, laneId,
-        (blocked, dependencies) => onWaiting?.(dependencyWaitingReason(dependencies, blocked.resourceId), Boolean(own || serializedPreparation)));
+        (blocked, dependencies) => onWaiting?.(dependencyWaitingReason(dependencies, blocked.resourceId), Boolean(own || serializedPreparation)),
+        !serializedPreparation ? {host: borrower, claim,
+          claims: [...exclusiveClaims, ...(own ? retained : [...retained, claim])]} : undefined);
       if (exclusive === null) return null;
       row = await TestRequestModel.collection.findOne({requestId, fleetInputSha256, state: 'awaiting-runner',
         fleetBinding: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
         {readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000}) as unknown as StoredRoutineJob | null;
       // A replacement decision belongs to the validated request snapshot. A concurrent
       // acquisition must not become the CAS expectation for this older candidate.
-      if (replacingQuota && (!isDeepIdentity(row?.fleetResourceReservation, quota) ||
+      if (replacingQuota && (!isDeepIdentity(row?.fleetResourceReservation, exclusive ? claim : quota) ||
         !isDeepIdentity(row?.fleetExclusiveReservation, exclusive || undefined) ||
         !exclusive && !isDeepIdentity(row?.fleetResourceAdmission, quotaAdmission))) return null;
       const admission = fleetResourceAdmissionSchema.safeParse(exclusive || serializedPreparation || row?.fleetResourceReservation && !replacingQuota
@@ -478,7 +480,7 @@ export const routineJobRepository: RoutineJobRepository = {
           !routineResourcesAvailable(currentHost, row, laneId, checkedAt) ||
           !compatibleStructuralRoutineLane({...requirements, resources: requirements.resources.map(({storage: _, ...resource}) => resource)},
             currentLane, routineLaneContext(currentHost.snapshot, row.fleetSelection.build, checkedAt), checkedAt)) return null;
-      } else {
+      } else if (!exclusive) {
         const claimedAt = Date.now();
         if (row.fleetDeadline.getTime() <= claimedAt || !routineResourcesAvailable({hostId: host.hostId, incarnation: host.incarnation,
           incarnationGeneration: host.incarnationGeneration, sequence: host.sequence, receivedAt: hostRow.receivedAt, snapshot: host,

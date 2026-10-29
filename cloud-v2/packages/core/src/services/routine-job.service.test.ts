@@ -16,7 +16,7 @@ import {requestInputDigest, TestRequestService, type TestRequestRepository, type
 import {RoutineJobService, isAutomaticPrRoutineJob, routineJobRepository, routineJobInputDigest, orderedRoutineCandidates, routineLaneDescriptorRevision, routineRequirementLabels, compatibleRoutineLane, type RoutineJobRepository} from './routine-job.service';
 import type {StoredRoutineJob} from '../types/routine-job.types';
 import type {ReceivedTestHostState, RoutingTestHostState} from './test-host-state.service';
-import type {ExclusiveHostReservation} from '../types/resource-reservations.types';
+import {isExclusiveHostReservation, type ExclusiveHostReservation} from '../types/resource-reservations.types';
 import {RESOURCE_ADMISSION_WAIT, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT, sharedResourceWait} from './routine-resource-wait';
 import {testingTarget, type TestingTarget} from '../types/testing-source.types';
 import type {RoutineJobActions} from './routine-job-actions.service';
@@ -2220,5 +2220,88 @@ test('exclusive acquisition between quota validation and the reread cannot be ov
   try {await f.service.preparation(original.requestId);expect(raced).toBe(true);expect(f.row).toEqual(acquired);
    expect(mini.resourceReservations).toEqual([original.fleetResourceReservation,claim]);expect(alternate.resourceReservations).toEqual([]);expect(counters).toEqual(before);
   }finally{injection.mockRestore()}
+ });
+});
+
+for(const authority of ['borrower','other-host'] as const)test(`unused Mac quota replacement atomically acquires recorder bytes and ${authority} dependency`,async()=>{
+ await withSelectedMacReservation(async(f,mini,counters,hosts)=>{
+  const original=structuredClone(f.row!),oldQuota=structuredClone(mini.resourceReservations[0]),alternate=readyMacAlternate(hosts),lane=alternate.snapshot.lanes[0],
+   authorityHost=authority==='borrower'?alternate:JSON.parse(JSON.stringify(alternate).replaceAll('air1','quota-authority')),
+   glasses=authorityHost.snapshot.lanes[0].resources.find((r:any)=>r.kind==='glasses');
+  if(authority==='other-host'){
+   authorityHost.receivedAt=new Date(alternate.receivedAt);hosts.set(authorityHost.hostId,authorityHost);
+   authorityHost.snapshot.lanes[0].platform='android';
+   glasses.exclusiveDependencies=[{resourceId:glasses.id,authorityHostId:authorityHost.hostId,capability:'connection'}];
+   authorityHost.snapshot.lanes[0].descriptorRevision=routineLaneDescriptorRevision(authorityHost.snapshot.lanes[0]);
+  }
+  lane.resources.find((r:any)=>r.kind==='glasses').exclusiveDependencies=[{resourceId:glasses.id,authorityHostId:authorityHost.hostId,capability:'connection'}];
+  lane.descriptorRevision=routineLaneDescriptorRevision(lane);
+  mini.snapshot.lanes[0].state='running';mini.snapshot.lanes[0].activity={generation:8,owner:{id:'other',kind:'run',requestId:'other'}};
+  const before={...counters},routed=await f.service.preparation(original.requestId),winner=f.row!.fleetResourceReservation!;
+  expect((routed as unknown as {resourceTarget?:unknown}).resourceTarget).toEqual({hostId:alternate.hostId,laneId:lane.id});
+  expect(winner.hostId).toBe(alternate.hostId);expect(f.row!.fleetExclusiveReservation!.claims).toHaveLength(1);
+  expect(f.row!.fleetExclusiveReservation!.intent.hostId).toBe(alternate.hostId);
+  expect(alternate.resourceReservations.filter((c:any)=>!isExclusiveHostReservation(c))).toEqual([winner]);
+  expect(authorityHost.resourceReservations.filter(isExclusiveHostReservation)).toEqual(f.row!.fleetExclusiveReservation!.claims);
+  expect(mini.resourceReservations).toContainEqual(oldQuota);
+  // A single existing transaction commits both authorities and the request winner.
+  expect(counters.request-before.request).toBe(1);expect(counters.host-before.host).toBe(authority==='borrower'?1:2);
+  for(const key of ['requestId','fleetSelection','fleetInputSha256','fleetPreparation','fleetDeadline'] as const)expect(f.row![key]).toEqual(original[key]);
+  await f.service.preparation(original.requestId);
+  expect(mini.resourceReservations).not.toContainEqual(oldQuota);expect(f.row!.fleetResourceReservation).toEqual(winner);
+  expect(f.row!.fleetBinding).toBeUndefined();expect((f.row as any).input).toBeUndefined();
+ });
+});
+test('failed alternate byte CAS leaves neither a dependency-only winner nor a fabricated old quota return',async()=>{
+ await withSelectedMacReservation(async(f,mini,counters,hosts)=>{
+  const original=structuredClone(f.row!),oldClaims=structuredClone(mini.resourceReservations),alternate=readyMacAlternate(hosts),lane=alternate.snapshot.lanes[0],
+   glasses=lane.resources.find((r:any)=>r.kind==='glasses'),before={...counters};
+  glasses.exclusiveDependencies=[{resourceId:glasses.id,authorityHostId:alternate.hostId,capability:'connection'}];lane.descriptorRevision=routineLaneDescriptorRevision(lane);
+  mini.snapshot.lanes[0].state='running';mini.snapshot.lanes[0].activity={generation:8,owner:{id:'other',kind:'run',requestId:'other'}};
+  const write=TestHostStateModel.collection.findOneAndUpdate;let refused=0;
+  TestHostStateModel.collection.findOneAndUpdate=(async(filter:any,...args:any[])=>{
+   if(filter.hostId===alternate.hostId){refused++;return null;}return (write as any)(filter,...args);
+  }) as never;
+  try {await f.service.preparation(original.requestId);expect(refused).toBeGreaterThan(0);expect(f.row).toEqual(original);
+   expect(mini.resourceReservations).toEqual(oldClaims);expect(alternate.resourceReservations).toEqual([]);expect(counters).toEqual(before);
+  }finally{TestHostStateModel.collection.findOneAndUpdate=write}
+ });
+});
+
+for(const authority of ['borrower','other-host'] as const)for(const count of [998,999])test(`unused Mac quota replacement respects the combined ${authority} claim limit at ${count}`,async()=>{
+ await withSelectedMacReservation(async(f,mini,counters,hosts)=>{
+  const original=structuredClone(f.row!),alternate=readyMacAlternate(hosts),lane=alternate.snapshot.lanes[0],
+   authorityHost=authority==='borrower'?alternate:JSON.parse(JSON.stringify(alternate).replaceAll('air1','quota-authority')),
+   glasses=authorityHost.snapshot.lanes[0].resources.find((r:any)=>r.kind==='glasses');
+  if(authority==='other-host'){
+   authorityHost.receivedAt=new Date(alternate.receivedAt);hosts.set(authorityHost.hostId,authorityHost);
+   authorityHost.snapshot.lanes[0].platform='android';
+   glasses.exclusiveDependencies=[{resourceId:glasses.id,authorityHostId:authorityHost.hostId,capability:'connection'}];
+   authorityHost.snapshot.lanes[0].descriptorRevision=routineLaneDescriptorRevision(authorityHost.snapshot.lanes[0]);
+  }
+  lane.resources.find((r:any)=>r.kind==='glasses').exclusiveDependencies=[{resourceId:glasses.id,authorityHostId:authorityHost.hostId,capability:'connection'}];
+  lane.descriptorRevision=routineLaneDescriptorRevision(lane);
+  authorityHost.resourceReservations=Array.from({length:count},(_,index)=>({kind:'exclusive',id:`00000000-0000-4000-8000-${String(index).padStart(12,'0')}`,
+   resourceId:`unrelated-resource:${index}`,authorityHostId:authorityHost.hostId,borrowerHostId:authorityHost.hostId,laneId:'unrelated-lane',
+   operationId:`run:foreign-${index}`,intentSha256:'c'.repeat(64),inputSha256:'d'.repeat(64),owner:{id:`foreign-${index}`,kind:'run'},
+   controllerIncarnation:authorityHost.incarnation,controllerGeneration:authorityHost.incarnationGeneration,borrowerSequence:authorityHost.sequence,
+   reservedAt:authorityHost.receivedAt.toISOString()}));
+  mini.snapshot.lanes[0].state='running';mini.snapshot.lanes[0].activity={generation:8,owner:{id:'other',kind:'run',requestId:'other'}};
+  const before={...counters},oldClaims=structuredClone(mini.resourceReservations),authorityClaims=structuredClone(authorityHost.resourceReservations),
+   routed=await f.service.preparation(original.requestId);
+  if(authority==='borrower'&&count===999){
+   expect(f.row).toEqual(original);expect(mini.resourceReservations).toEqual(oldClaims);
+   expect(authorityHost.resourceReservations).toEqual(authorityClaims);expect(counters).toEqual(before);
+   expect((routed as {resourceTarget?:unknown}).resourceTarget).toBeUndefined();
+  }else{
+   expect((routed as unknown as {resourceTarget?:unknown}).resourceTarget).toEqual({hostId:alternate.hostId,laneId:lane.id});
+   expect(authorityHost.resourceReservations).toHaveLength(count+(authority==='borrower'?2:1));
+   expect(authorityHost.resourceReservations.length).toBeLessThanOrEqual(1000);
+   expect(f.row!.fleetResourceReservation!.hostId).toBe(alternate.hostId);
+   expect(f.row!.fleetExclusiveReservation!.claims).toHaveLength(1);
+   if(authority==='other-host')expect(alternate.resourceReservations).toHaveLength(1);
+  }
+  for(const key of ['requestId','fleetSelection','fleetInputSha256','fleetPreparation','fleetDeadline'] as const)expect(f.row![key]).toEqual(original[key]);
+  expect(f.row!.fleetBinding).toBeUndefined();expect((f.row as any).input).toBeUndefined();
  });
 });
