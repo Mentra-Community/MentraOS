@@ -251,10 +251,24 @@ jobs:
               --release-id "$FAMILY_RELEASE_ID" --repository "$GITHUB_REPOSITORY"
           done
 
+      # GITHUB_TOKEN can never hold the workflows permission, so GitHub checks
+      # each new release's workflow files against the default branch (dev).
+      # Main follows staging, which has diverged far from dev, and that check
+      # times out as HTTP 403. The release coordinator App's token holds the
+      # permission and skips it, as in coordinated-release.yml.
+      - name: Mint release token
+        id: release-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Allocate or reuse the stable release container
         id: container
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
         run: >-
           node .github/scripts/production-packages.mjs ensure-container
           --repository "$GITHUB_REPOSITORY"
