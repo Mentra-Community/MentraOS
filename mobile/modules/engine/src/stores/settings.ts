@@ -497,14 +497,13 @@ export const SETTINGS: Record<string, Setting> = {
   },
   /*
    * Mentra Live wear detection, audio/media policy, and ~20-minute unworn shutdown
-   * (cs_swit type 11). On by default, matching the firmware. Re-pushed on
+   * (cs_swit type 11). Off by default, matching the firmware. Re-pushed on
    * connect, so this default is what a new install sends to the glasses, and
-   * it overwrites a value saved on the glasses. Automated test lanes turn it
-   * off after pairing.
+   * it overwrites a value saved on the glasses.
    */
   auto_power_off_enabled: {
     key: "auto_power_off_enabled",
-    defaultValue: () => true,
+    defaultValue: () => false,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -1185,16 +1184,16 @@ export const useSettingsStore = create<SettingsState>()(
           }
         }
 
-        // Turn wear behavior on once for every install, including those that saved false while
-        // it defaulted off. A later explicit opt-out (including automated test lanes) remains.
-        const WEAR_DEFAULT_ON_KEY = "migration:wear_detection_enabled_v2"
-        const wearDefaultOnDone = storage.load<boolean>(WEAR_DEFAULT_ON_KEY)
-        if (wearDefaultOnDone.is_error() || !wearDefaultOnDone.value) {
-          const result = await get().setSetting(SETTINGS.auto_power_off_enabled.key, true, true)
+        // Turn wear behavior off once for every install, including those an earlier migration
+        // turned on. A later explicit opt-in remains.
+        const WEAR_DEFAULT_OFF_KEY = "migration:wear_detection_disabled_v3"
+        const wearDefaultOffDone = storage.load<boolean>(WEAR_DEFAULT_OFF_KEY)
+        if (wearDefaultOffDone.is_error() || !wearDefaultOffDone.value) {
+          const result = await get().setSetting(SETTINGS.auto_power_off_enabled.key, false, true)
           if (result.is_error()) {
-            console.log("SETTINGS: wear detection default-on migration failed:", result.error)
+            console.log("SETTINGS: wear detection default-off migration failed:", result.error)
           } else {
-            storage.save(WEAR_DEFAULT_ON_KEY, true)
+            storage.save(WEAR_DEFAULT_OFF_KEY, true)
           }
         }
 
