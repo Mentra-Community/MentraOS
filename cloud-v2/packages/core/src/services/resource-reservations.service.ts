@@ -518,7 +518,9 @@ export class ResourceReservationsService {
       const current = await this.rows.request?.(requestId)
       if (!current || current.fleetInputSha256 !== digest || current.fleetBinding || current.fleetCancellation || current.hostId || current.input ||
         current.inputSha256 || current.state !== 'awaiting-runner' || current.fleetDeadline.getTime() <= this.now() ||
-        !isDeepStrictEqual(current.fleetResourceAdmission, row.fleetResourceAdmission)) return null
+        !isDeepStrictEqual(current.fleetResourceAdmission, row.fleetResourceAdmission) ||
+        replacingQuota && (!isDeepStrictEqual(current.fleetResourceReservation, row.fleetResourceReservation) ||
+          !isDeepStrictEqual(current.fleetExclusiveReservation, row.fleetExclusiveReservation))) return null
       const authority = await this.host(selected[0]!.authorityHostId)
       if (!fresh(authority, this.now()) || selected.some(dependency => !dependencyEnrolled(authority,dependency))) return null
       const claims = hostResourceReservationsSchema.parse(authority.resourceReservations ?? []),

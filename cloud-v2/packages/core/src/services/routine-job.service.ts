@@ -303,6 +303,7 @@ export const routineJobRepository: RoutineJobRepository = {
         row.fleetResourceAdmission.intent.owner.kind !== 'run' || row.fleetResourceAdmission.intent.owner.id !== requestId ||
         row.fleetResourceAdmission.intent.inputSha256 !== fleetInputSha256)) return null;
       const originals = await resourceReservationRepository.recorderClaims!(requestId), quota = row.fleetResourceReservation,
+        quotaAdmission = row.fleetResourceAdmission,
         replacingQuota = Boolean(quota && (quota.hostId !== hostId || quota.laneId !== laneId) &&
           replaceableMacRecorderQuota(row, await resourceReservationRepository.get(quota.hostId), originals, now.getTime()));
       const selected = replacingQuota ? undefined : quota;
@@ -452,6 +453,11 @@ export const routineJobRepository: RoutineJobRepository = {
       row = await TestRequestModel.collection.findOne({requestId, fleetInputSha256, state: 'awaiting-runner',
         fleetBinding: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
         {readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000}) as unknown as StoredRoutineJob | null;
+      // A replacement decision belongs to the validated request snapshot. A concurrent
+      // acquisition must not become the CAS expectation for this older candidate.
+      if (replacingQuota && (!isDeepIdentity(row?.fleetResourceReservation, quota) ||
+        !isDeepIdentity(row?.fleetExclusiveReservation, exclusive || undefined) ||
+        !exclusive && !isDeepIdentity(row?.fleetResourceAdmission, quotaAdmission))) return null;
       const admission = fleetResourceAdmissionSchema.safeParse(exclusive || serializedPreparation || row?.fleetResourceReservation && !replacingQuota
         ? row?.fleetResourceAdmission : candidateAdmission);
       if (!row?.fleetPreparation || !admission.success || admission.data.intent.hostId !== hostId || admission.data.intent.laneId !== laneId ||

@@ -2197,3 +2197,28 @@ test('Mini binding winning the request CAS prevents alternate quota acquisition'
   }finally{TestRequestModel.collection.findOneAndUpdate=write}
  });
 });
+
+test('exclusive acquisition between quota validation and the reread cannot be overwritten by the older candidate',async()=>{
+ await withSelectedMacReservation(async(f,mini,counters,hosts)=>{
+  const original=structuredClone(f.row!),alternate=readyMacAlternate(hosts),before={...counters};
+  mini.snapshot.lanes[0].state='running';mini.snapshot.lanes[0].activity={generation:8,owner:{id:'other',kind:'run',requestId:'other'}};
+  const admission=structuredClone(original.fleetResourceAdmission!),resourceId=mini.snapshot.lanes[0].resources.find((r:any)=>r.kind==='recorder').id;
+  admission.dependencies=[{resourceId,authorityHostId:mini.hostId,capability:'recording'}];
+  const origin={kind:'fleet' as const,fleetInputSha256:original.fleetInputSha256!},intent=admission.intent,
+   intentSha256=requestInputDigest({...intent,controller:{incarnation:intent.controller.incarnation,generation:intent.controller.generation},origin,dependencies:admission.dependencies});
+  const claim:ExclusiveHostReservation={kind:'exclusive',id:'1f3c2122-d572-40e3-81b6-028e3b186f94',resourceId,
+   authorityHostId:mini.hostId,borrowerHostId:mini.hostId,laneId:'android',operationId:intent.operationId,intentSha256,
+   inputSha256:original.fleetInputSha256!,owner:intent.owner,origin,controllerIncarnation:intent.controller.incarnation,
+   controllerGeneration:intent.controller.generation,borrowerSequence:intent.controller.sequence,reservedAt:mini.receivedAt.toISOString()};
+  const acquired={...original,fleetResourceAdmission:admission,fleetExclusiveReservation:{origin,intent,intentSha256,claims:[claim]}};
+  const reserve=ResourceReservationsService.prototype.reserveFleet;let raced=false;
+  const injection=spyOn(ResourceReservationsService.prototype,'reserveFleet').mockImplementation(async function(this:ResourceReservationsService,...args){
+   const result=await reserve.apply(this,args);
+   if(!raced&&args[2]===alternate.hostId&&result===undefined){raced=true;mini.resourceReservations.push(claim);mini.resourceReservationVersion++;f.restore(acquired);}
+   return result;
+  });
+  try {await f.service.preparation(original.requestId);expect(raced).toBe(true);expect(f.row).toEqual(acquired);
+   expect(mini.resourceReservations).toEqual([original.fleetResourceReservation,claim]);expect(alternate.resourceReservations).toEqual([]);expect(counters).toEqual(before);
+  }finally{injection.mockRestore()}
+ });
+});
