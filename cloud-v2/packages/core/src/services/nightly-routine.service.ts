@@ -100,11 +100,11 @@ export function nightlyPreparedInput(member: NightlyMember, value: unknown, dige
   return input.data;
 }
 
-/** Never-bound context comes only from the original digest-checked preparation. */
+/** Requested kinds come only from the original digest-checked preparation, independently of binding. */
 export function nightlyRequiredResourceKinds(member: NightlyMember, job: StoredRoutineJob): RoutineResourceKind[] | undefined {
   try {
     const prepared = routineJobPreparationSchema.safeParse(job.fleetPreparation);
-    if (!prepared.success || !member.selection || job.requestId !== member.requestId || job.fleetBinding ||
+    if (!prepared.success || !member.selection || job.requestId !== member.requestId ||
       requestInputDigest(job.fleetSelection) !== requestInputDigest(member.selection) ||
       job.fleetSelectionSha256 !== requestInputDigest(member.selection) || routineJobInputDigest(job) !== job.fleetInputSha256 ||
       requestInputDigest(prepared.data.definition) !== prepared.data.definitionSha256 ||
@@ -298,11 +298,11 @@ export class NightlyRoutineService {
         if (request.requestId !== member.requestId || !portableRoutineSelectionSchema.safeParse(job.fleetSelection).success || requestInputDigest(job.fleetSelection) !== job.fleetSelectionSha256
           || requestInputDigest(job.fleetSelection) !== requestInputDigest(member.selection))
           return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Request identity differs from the frozen selection."};
+        const requiredResourceKinds = nightlyRequiredResourceKinds(member, job);
+        boundMember = {...member, ...(requiredResourceKinds ? {requiredResourceKinds} : {})};
         if (!job.fleetBinding) {
           const recordedWaitingReason = job.preparation?.reason ?? job.fleetDispatch?.error;
-          const requiredResourceKinds = nightlyRequiredResourceKinds(member, job);
-          return {...member, status: job.fleetCancellation ? "incomplete" : "waiting", publicationComplete: false,
-            ...(requiredResourceKinds ? {requiredResourceKinds} : {}),
+          return {...boundMember, status: job.fleetCancellation ? "incomplete" : "waiting", publicationComplete: false,
             unavailableReason: nightlyUnassignedReason({reason: job.fleetCancellation?.reason ?? recordedWaitingReason
               ?? (job.state === "awaiting-source" ? "Awaiting exact routine source preparation." : "Awaiting compatible runner."),
               startedAt: plan.startedAt, observedAt: job.fleetCancellation?.requestedAt, unassigned: true, recordedWaitingReason})};
@@ -310,12 +310,12 @@ export class NightlyRoutineService {
         const binding = routineJobBindingSchema.safeParse(job.fleetBinding), intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
         if (!binding.success || !intent.success || binding.data.jobId !== member.requestId || binding.data.requestId !== member.requestId || request.hostId !== binding.data.hostId || intent.data.laneId !== binding.data.laneId
           || request.dispatchIntentSha256 !== requestInputDigest(intent.data) || job.fleetPreparation && requestInputDigest(intent.data.routineSource) !== requestInputDigest(job.fleetPreparation.routineSource))
-          return {...member, assignmentEvidence: 'invalid', status: "incomplete", publicationComplete: false, unavailableReason: "Bound request identity differs from its assignment."};
+          return {...boundMember, assignmentEvidence: 'invalid', status: "incomplete", publicationComplete: false, unavailableReason: "Bound request identity differs from its assignment."};
         const {laneId: _lane, routineSource: _source, ...boundSelection} = intent.data;
         const {routineSource: selectedSource, ...expectedSelection} = member.selection;
         if (requestInputDigest(boundSelection) !== requestInputDigest(expectedSelection) || selectedSource && requestInputDigest(_source) !== requestInputDigest(selectedSource))
-          return {...member, assignmentEvidence: 'invalid', status: "incomplete", publicationComplete: false, unavailableReason: "Bound request source differs from the frozen selection."};
-        boundMember = {...member, hostId: binding.data.hostId, binding: binding.data, dispatchIntent: intent.data};
+          return {...boundMember, assignmentEvidence: 'invalid', status: "incomplete", publicationComplete: false, unavailableReason: "Bound request source differs from the frozen selection."};
+        boundMember = {...boundMember, hostId: binding.data.hostId, binding: binding.data, dispatchIntent: intent.data};
       } else if (request.requestId !== member.requestId || request.hostId !== member.hostId || request.dispatchIntentSha256 !== requestInputDigest(member.dispatchIntent)
         || !request.dispatchIntent || requestInputDigest(request.dispatchIntent) !== request.dispatchIntentSha256)
         return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Request identity differs from the frozen intent."};

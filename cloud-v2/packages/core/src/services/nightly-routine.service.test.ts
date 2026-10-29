@@ -18,7 +18,7 @@ import {GithubRoutineSourceGateway} from './routine-source-selection.service';
 
 const mainRevision = "7".repeat(40);
 
-test("never-bound Slack requirements require the exact original preparation digest and source", async () => {
+test("bound and unbound Slack requirements require the exact original preparation digest and source", async () => {
   const state = fixture([row("original-requirements", "android")]), {plan} = await state.service.start(occurrence);
   const member = plan.members[0]!, definition = {...row(member.routineId, member.platform).definition,
     source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: mainRevision, path: `routines/${member.routineId}/routine.ts`}};
@@ -28,9 +28,10 @@ test("never-bound Slack requirements require the exact original preparation dige
       requirements: {platform: 'android', resources: definition.resourceRequirements}}} as StoredRoutineJob;
   job.fleetInputSha256 = routineJobInputDigest(job);
   expect(nightlyRequiredResourceKinds(member, job)).toEqual(['phone', 'app', 'recorder']);
+  expect(nightlyRequiredResourceKinds(member, {...job, fleetBinding: {jobId: member.requestId},
+    input: {resources: [{id: 'assigned-other-resource', kind: 'browser'}]}} as unknown as StoredRoutineJob)).toEqual(['phone', 'app', 'recorder']);
   for (const change of [{fleetPreparation: undefined}, {fleetInputSha256: 'f'.repeat(64)}, {requestId: 'different-request'},
     {fleetDeadline: new Date(job.fleetDeadline.getTime() + 1)}, {fleetSelectionSha256: 'f'.repeat(64)},
-    {fleetBinding: {hostId: 'later-host'}},
     {fleetPreparation: {...job.fleetPreparation!, definitionSha256: 'f'.repeat(64)}},
     {fleetPreparation: {...job.fleetPreparation!, requirements: {platform: 'android', resources: [{kind: 'unknown', capabilities: []}]}}}])
     expect(nightlyRequiredResourceKinds(member, {...job, ...change} as StoredRoutineJob)).toBeUndefined();
@@ -902,6 +903,8 @@ test('actual fleet service preserves every nightly member through preparation, b
       descriptorRevision: lane.descriptorRevision, actionsRunId: member.platform === 'android' ? '10' : '11', actionsJobId: '20'})).execute).toBe(true);
   }
   expect(await project()).toMatchObject({members: [{hostId: 'real-host', laneId: 'android', status: 'waiting'}, {hostId: 'real-host', laneId: 'ios-on-mac', status: 'waiting'}]});
+  expect((await service.detail(occurrence.occurrenceId)).members.map(member => member.requiredResourceKinds))
+    .toEqual([['phone', 'app', 'recorder'], ['app', 'recorder']]);
   for (const member of first.plan.members) {
     const value = requestRows.get(member.requestId)!, intent = value.dispatchIntent as any;
     const input = {...preparedRequest(value.hostId!, intent).input, routineSource: testRoutineSource(mainRevision)};
