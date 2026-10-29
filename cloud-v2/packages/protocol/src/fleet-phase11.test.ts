@@ -327,12 +327,25 @@ describe("the spec's lists, exactly", () => {
     )
   })
 
-  test("the record kinds are Phase 10's five and Phase 11's two, and nothing else parses", () => {
+  test("the record kinds are Phase 10's five, Phase 11's two and Phase 12's five, and nothing else parses", () => {
     const kinds = [...FleetRecordSchema.innerType().optionsMap.keys()].map(String).sort()
     expect(kinds).toEqual(
-      ["assignment_outcome", "coverage_gap", "miniapp_inventory", "miniapp_launch", "photo_operation", "snapshot", "usage_checkpoint"].sort(),
+      [
+        "assignment_outcome",
+        "coverage_gap",
+        "miniapp_inventory",
+        "miniapp_launch",
+        "photo_operation",
+        "snapshot",
+        "usage_checkpoint",
+        "telemetry_event",
+        "telemetry_loss",
+        "miniapp_crash",
+        "miniapp_install",
+        "connection_event",
+      ].sort(),
     )
-    expect(FleetRecordSchema.safeParse({...inventory(), kind: "telemetry_event"}).success).toBe(false)
+    expect(FleetRecordSchema.safeParse({...inventory(), kind: "miniapp_restart"}).success).toBe(false)
   })
 
   test("a record carries no management association: membership is management, with no enrollment", () => {

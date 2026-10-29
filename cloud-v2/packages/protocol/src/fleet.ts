@@ -23,7 +23,25 @@ export const FLEET_LIMITS = {
   phoneQueueMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
   replayWindowMs: 14 * 24 * 60 * 60 * 1000,
   maxFutureSkewMs: 5 * 60 * 1000,
+  maxTelemetryLossPackages: 500,
+  maxCrashesInWindow: 1_000,
+  maxReconnectMs: 7 * 24 * 60 * 60 * 1000,
 } as const
+
+/**
+ * Phase 12: a miniapp's own events. The Mentra App applies these before it queues an event (dropping the event, a
+ * property, or cutting a string) and MFM checks them again, rejecting a record that still breaks one.
+ */
+export const FLEET_TELEMETRY_LIMITS = {
+  maxProperties: 25,
+  maxStringValueLength: 64,
+  eventsPerMinute: 60,
+  eventsPerDay: 2_000,
+  /** Places of the phone's queue telemetry may hold; when full, the oldest telemetry record gives way. */
+  queueShare: 2_000,
+} as const
+/** An event or property name: 1-64 lowercase letters, digits and underscores, starting with a letter. */
+export const FLEET_TELEMETRY_NAME = /^[a-z][a-z0-9_]{0,63}$/
 
 const FleetId = z
   .string()
@@ -63,6 +81,10 @@ export const FLEET_CAPABILITIES = [
   "engine_active",
   "photo_operations",
   "phone_battery",
+  // Phase 12. A record kind the phone can produce is declared, so a view tells a measured 0 from an unknown.
+  "miniapp_failures",
+  "glasses_connectivity",
+  "miniapp_telemetry",
 ] as const
 
 const Battery = z.discriminatedUnion("state", [
@@ -115,6 +137,18 @@ export const FleetSnapshotPayloadSchema = z
   })
   .strict()
 
+/** Phase 12: why a launch failed. Codes only, never error text. */
+export const FLEET_LAUNCH_FAILURE_REASONS = [
+  "bundle_missing",
+  "incompatible_host",
+  "policy_blocked",
+  "spawn_failed",
+  "connect_timeout",
+  "permission_denied",
+  "unknown",
+] as const
+export type FleetLaunchFailureReason = (typeof FLEET_LAUNCH_FAILURE_REASONS)[number]
+
 export const FleetLaunchPayloadSchema = z
   .object({
     packageName: FleetText,
@@ -122,8 +156,14 @@ export const FleetLaunchPayloadSchema = z
     versionName: FleetText.optional(),
     start: z.enum(["user", "automatic"]),
     outcome: z.enum(["started", "failed"]),
+    /** Phase 12. Only a failed launch carries it; a Mentra App from before Phase 12 sends none. */
+    failureReason: z.enum(FLEET_LAUNCH_FAILURE_REASONS).optional(),
   })
   .strict()
+  .refine((v) => v.failureReason === undefined || v.outcome === "failed", {
+    path: ["failureReason"],
+    message: "only a failed launch carries a failureReason",
+  })
 
 export const FLEET_ACTIVITIES = ["glasses_connection", "miniapp_execution", "app_foreground", "engine_active"] as const
 export const FleetActivityCheckpointSchema = z
@@ -258,6 +298,146 @@ export const FleetCoverageGapPayloadSchema = z
   })
   .strict()
 
+const TelemetryName = z.string().regex(FLEET_TELEMETRY_NAME)
+const TelemetryValue = z.union([
+  z.string().max(FLEET_TELEMETRY_LIMITS.maxStringValueLength),
+  z.number().finite(),
+  z.boolean(),
+])
+
+/** Phase 12: one event a miniapp captured, attributed by the Mentra App to the miniapp whose bridge sent it. */
+export const FleetTelemetryEventPayloadSchema = z
+  .object({
+    packageName: FleetText,
+    versionName: FleetText.optional(),
+    /** The miniapp's execution session at capture (its `miniapp_execution` activitySessionId), when one was open. */
+    executionSessionId: FleetId.optional(),
+    event: TelemetryName,
+    properties: z
+      .record(TelemetryName, TelemetryValue)
+      .refine((p) => Object.keys(p).length <= FLEET_TELEMETRY_LIMITS.maxProperties, "too many properties"),
+    /** Properties the Mentra App dropped from this event (bad name or value, or past the 25th). */
+    droppedProperties: z.number().int().min(0).max(1_000_000),
+    /** String values the Mentra App cut to 64 characters. */
+    cutValues: z.number().int().min(0).max(FLEET_TELEMETRY_LIMITS.maxProperties),
+  })
+  .strict()
+
+/** What the Mentra App lost of one miniapp's telemetry. */
+export const FleetTelemetryLossSchema = z
+  .object({
+    packageName: FleetText,
+    /** Over the name, rate or daily limit. */
+    overLimit: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    /** Given way in the queue to newer telemetry. */
+    evicted: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    /** Too old in the queue to send. */
+    expired: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    /** Sent, and rejected by MFM. */
+    rejected: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict()
+  .refine((v) => v.overLimit + v.evicted + v.expired + v.rejected > 0, "a loss counts something")
+
+/** Phase 12: telemetry the Mentra App lost over a period, per miniapp. Never a coverage gap. */
+export const FleetTelemetryLossPayloadSchema = z
+  .object({
+    from: FleetUtcTime,
+    to: FleetUtcTime,
+    losses: z.array(FleetTelemetryLossSchema).min(1).max(FLEET_LIMITS.maxTelemetryLossPackages),
+  })
+  .strict()
+  .refine((v) => Date.parse(v.from) <= Date.parse(v.to), {path: ["to"], message: "to is not before from"})
+
+export const FLEET_CRASH_SURFACES = ["context", "webview"] as const
+export const FLEET_CRASH_CATEGORIES = [
+  "uncaught_exception",
+  "bridge_error",
+  "unresponsive",
+  "watchdog_kill",
+  "content_process_terminated",
+  "unknown",
+] as const
+export type FleetCrashCategory = (typeof FLEET_CRASH_CATEGORIES)[number]
+/**
+ * What followed a crash: the engine restarts the miniapp, or stops restarting it after repeated crashes, or (a screen
+ * whose content process died) the screen closes and nothing restarts it until the person opens it again.
+ */
+export const FLEET_CRASH_OUTCOMES = ["respawn_scheduled", "crash_loop_stopped", "closed"] as const
+
+/** Phase 12: one miniapp crash. The engine maps its reason to a category; the reason text never leaves the phone. */
+export const FleetMiniappCrashPayloadSchema = z
+  .object({
+    packageName: FleetText,
+    versionName: FleetText.optional(),
+    executionSessionId: FleetId.optional(),
+    surface: z.enum(FLEET_CRASH_SURFACES),
+    category: z.enum(FLEET_CRASH_CATEGORIES),
+    outcome: z.enum(FLEET_CRASH_OUTCOMES),
+    /** Crashes of this miniapp in the crash window, this one included. */
+    crashesInWindow: z.number().int().min(1).max(FLEET_LIMITS.maxCrashesInWindow),
+  })
+  .strict()
+
+export const FLEET_INSTALL_OPERATIONS = ["install", "update", "remove"] as const
+/** What started an install: `url` covers a link, the QR scanner, the paste box, the system list and the update check. */
+export const FLEET_INSTALL_SOURCES = ["bundled", "url", "manifest", "local", "assignment"] as const
+export const FLEET_INSTALL_OUTCOMES = ["succeeded", "failed", "deferred"] as const
+/** `assignment_outcome`'s reasons where they apply, and three of its own. */
+export const FLEET_INSTALL_FAILURE_REASONS = [...FLEET_ASSIGNMENT_REASONS, "network", "user_cancelled", "unknown"] as const
+export type FleetInstallFailureReason = (typeof FLEET_INSTALL_FAILURE_REASONS)[number]
+
+/** Phase 12: one install, update or removal attempt, managed or not. */
+export const FleetMiniappInstallPayloadSchema = z
+  .object({
+    packageName: FleetText,
+    operation: z.enum(FLEET_INSTALL_OPERATIONS),
+    source: z.enum(FLEET_INSTALL_SOURCES),
+    fromVersion: FleetText.optional(),
+    toVersion: FleetText.optional(),
+    outcome: z.enum(FLEET_INSTALL_OUTCOMES),
+    reason: z.enum(FLEET_INSTALL_FAILURE_REASONS).optional(),
+  })
+  .strict()
+  .refine((v) => (v.outcome === "succeeded") === (v.reason === undefined), {
+    path: ["reason"],
+    message: "a failed or deferred attempt carries its reason, and only it",
+  })
+
+export const FLEET_CONNECTION_EVENTS = ["pair_failed", "connect_failed", "disconnected", "reconnected"] as const
+export type FleetConnectionEventKind = (typeof FLEET_CONNECTION_EVENTS)[number]
+export const FLEET_CONNECTION_CATEGORIES = [
+  "bluetooth_off",
+  "permission_denied",
+  "bond_failed",
+  "not_found",
+  "timeout",
+  "firmware_incompatible",
+  "link_lost",
+  "user_action",
+  "unknown",
+] as const
+export type FleetConnectionCategory = (typeof FLEET_CONNECTION_CATEGORIES)[number]
+
+/**
+ * Phase 12: a pairing or connection change. A disconnect the person asked for is `user_action`, and is not shown as a
+ * problem. The glasses are the record's `deviceBinding` when the phone knows them.
+ */
+export const FleetConnectionEventPayloadSchema = z
+  .object({
+    event: z.enum(FLEET_CONNECTION_EVENTS),
+    category: z.enum(FLEET_CONNECTION_CATEGORIES),
+    glassesModel: FleetText.optional(),
+    appVersion: FleetText,
+    /** How long the reconnect took, for `reconnected` only. */
+    reconnectMs: z.number().int().min(0).max(FLEET_LIMITS.maxReconnectMs).optional(),
+  })
+  .strict()
+  .refine((v) => (v.event === "reconnected") === (v.reconnectMs !== undefined), {
+    path: ["reconnectMs"],
+    message: "a reconnect carries the time it took, and only it",
+  })
+
 const base = {
   schemaVersion: z.literal(FLEET_SCHEMA_VERSION),
   recordId: FleetId,
@@ -290,6 +470,18 @@ export const FleetRecordSchema = z.discriminatedUnion("kind", [
   z.object({...base, kind: z.literal("coverage_gap"), payload: FleetCoverageGapPayloadSchema}).strict(),
   z.object({...base, kind: z.literal("miniapp_inventory"), payload: FleetMiniappInventoryPayloadSchema}).strict(),
   z.object({...base, kind: z.literal("assignment_outcome"), payload: FleetAssignmentOutcomePayloadSchema}).strict(),
+  z.object({...base, kind: z.literal("telemetry_event"), payload: FleetTelemetryEventPayloadSchema}).strict(),
+  z.object({...base, kind: z.literal("telemetry_loss"), payload: FleetTelemetryLossPayloadSchema}).strict(),
+  z.object({...base, kind: z.literal("miniapp_crash"), payload: FleetMiniappCrashPayloadSchema}).strict(),
+  z.object({...base, kind: z.literal("miniapp_install"), payload: FleetMiniappInstallPayloadSchema}).strict(),
+  z
+    .object({
+      ...base,
+      kind: z.literal("connection_event"),
+      deviceBinding: FleetDeviceBindingSchema.optional(),
+      payload: FleetConnectionEventPayloadSchema,
+    })
+    .strict(),
 ]).superRefine((value, ctx) => {
   // A snapshot's glasses belong to the pair its binding names, so the two come together.
   if (value.kind === "snapshot" && (value.payload.glasses !== undefined) !== (value.deviceBinding !== undefined))
@@ -386,6 +578,12 @@ export type FleetDesiredStateEntry = z.infer<typeof FleetDesiredStateEntrySchema
 export type FleetDesiredState = z.infer<typeof FleetDesiredStateSchema>
 export type FleetMiniappInventoryPayload = z.infer<typeof FleetMiniappInventoryPayloadSchema>
 export type FleetAssignmentOutcomePayload = z.infer<typeof FleetAssignmentOutcomePayloadSchema>
+export type FleetLaunchPayload = z.infer<typeof FleetLaunchPayloadSchema>
+export type FleetTelemetryEventPayload = z.infer<typeof FleetTelemetryEventPayloadSchema>
+export type FleetTelemetryLossPayload = z.infer<typeof FleetTelemetryLossPayloadSchema>
+export type FleetMiniappCrashPayload = z.infer<typeof FleetMiniappCrashPayloadSchema>
+export type FleetMiniappInstallPayload = z.infer<typeof FleetMiniappInstallPayloadSchema>
+export type FleetConnectionEventPayload = z.infer<typeof FleetConnectionEventPayloadSchema>
 
 /** Whole-response error codes Core and MFM answer with. */
 export const FLEET_NOT_INSTALLED = "fleet_not_installed"
