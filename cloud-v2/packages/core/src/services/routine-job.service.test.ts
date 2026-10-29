@@ -6,7 +6,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {expect, test, mock, spyOn} from 'bun:test';
 import {TestRequestModel} from '../models/test-request.model';
 import {TestHostStateModel} from '../models/test-host-state.model';
-import {resourceReservationRepository, ResourceReservationsService} from './resource-reservations.service';
+import {resourceReservationRepository, ResourceReservationsService, replaceableMacRecorderQuota} from './resource-reservations.service';
 import {hostStateSchema} from './test-host-state.service';
 import {resourceLifecycleSubjectSchema} from '../types/resource-lifecycle.types';
 import {resourceAvailable, requiredResourceBlocker} from './resource-readiness';
@@ -1527,7 +1527,7 @@ test('an ordinary claim on another Mac lane sharing the disk does not prevent th
   expect(h.resourceReservations).toEqual(claims);
  });
 });
-async function withSelectedMacReservation(body: (f: ReturnType<typeof fixture>, host: any, counters: {host: number; request: number}) => Promise<void>) {
+async function withSelectedMacReservation(body: (f: ReturnType<typeof fixture>, host: any, counters: {host: number; request: number}, hosts: Map<string, any>) => Promise<void>) {
  await withLocalResources(async(f,hosts,counters)=>{
   const snapshots=new Map([...hosts].map(([id,h])=>[id,structuredClone(h.snapshot)]));
   for(const h of hosts.values())unavailableLocal(h,'out-of-service');await f.prepare();
@@ -1538,7 +1538,7 @@ async function withSelectedMacReservation(body: (f: ReturnType<typeof fixture>, 
   row.fleetSelectionSha256=requestInputDigest(row.fleetSelection);row.fleetInputSha256=routineJobInputDigest(row);f.restore(row);
   const selected=await routineJobRepository.reserveResources!(row.requestId,row.fleetInputSha256!,h.hostId,'android',h.receivedAt);
   expect(selected?.fleetResourceReservation).toEqual(h.resourceReservations[0]);expect(counters.host).toBe(1);
-  expect(f.row!.fleetResourceAdmission!.dependencies).toEqual([]);await body(f,h,counters);
+   expect(f.row!.fleetResourceAdmission!.dependencies).toEqual([]);await body(f,h,counters,hosts);
  });
 }
 for(const condition of ['one-byte','insufficient-pool','exclusive-recorder','active-recorder'] as const)test(`Mac admission treats ${condition} as current capacity or actual custody`,async()=>{
@@ -2151,4 +2151,49 @@ for (const stateName of ['terminal', 'accepted', 'running']) test(`bound cancell
   f.restore({...current, inputSha256: boundInputSha256, state: stateName as StoredRoutineJob['state'], terminalStatus: 'cancelled',
     cancellationAcknowledged: true, hostCancellation: cancellation});
   expect(await f.service.observation(selection.requestId)).toMatchObject({terminal: stateName === 'terminal'});
+});
+
+function readyMacAlternate(hosts: Map<string, any>) {
+ const alternate=hosts.get('air1'),lane=alternate.snapshot.lanes[0];
+ lane.platform='ios-on-mac';lane.descriptorRevision=routineLaneDescriptorRevision(lane);return alternate;
+}
+test('unused Mac quota does not pin an unbound job to busy Mini; the ready alternate wins the existing request CAS',async()=>{
+ await withSelectedMacReservation(async(f,mini,_counters,hosts)=>{
+  const original=structuredClone(f.row!),oldQuota=structuredClone(mini.resourceReservations[0]),alternate=readyMacAlternate(hosts);
+  mini.snapshot.lanes[0].state='running';mini.snapshot.lanes[0].activity={generation:8,owner:{id:'another-original',kind:'run',requestId:'another-original'}};
+  const routed=await f.service.preparation(original.requestId);
+  expect((routed as unknown as {resourceTarget?: {hostId: string; laneId: string}}).resourceTarget).toEqual({hostId:alternate.hostId,laneId:'android'});
+  expect(f.row!.fleetResourceReservation!.hostId).toBe(alternate.hostId);expect(f.row!.fleetResourceReservation!.id).not.toBe(oldQuota.id);
+  for(const key of ['requestId','fleetSelection','fleetInputSha256','fleetPreparation','fleetDeadline'] as const)expect(f.row![key]).toEqual(original[key]);
+  expect(mini.resourceReservations).toEqual([oldQuota]);
+  await f.service.preparation(original.requestId);
+  expect(mini.resourceReservations).toEqual([]);expect(alternate.resourceReservations).toHaveLength(1);expect(f.row!.fleetBinding).toBeUndefined();
+ });
+});
+for(const custody of ['bound','input','exclusive','local-bytes','current-owner','changed-claim','stale-offer'] as const)test(`unused Mac quota replacement refuses ${custody} custody`,async()=>{
+ await withSelectedMacReservation(async(f,mini,_counters,hosts)=>{
+  readyMacAlternate(hosts);const row=structuredClone(f.row!),quota=row.fleetResourceReservation!,storage=mini.snapshot.lanes[0].resources.find((r:any)=>r.kind==='recorder').storage;
+  if(custody==='bound')row.fleetBinding={hostId:mini.hostId,laneId:quota.laneId} as never;
+  if(custody==='input')(row as StoredRoutineJob & {input?:unknown}).input={requestId:row.requestId};
+  if(custody==='exclusive')row.fleetExclusiveReservation={} as never;
+  if(custody==='local-bytes')storage.reservations=[{requestId:row.requestId,inputSha256:'b'.repeat(64)}];
+  if(custody==='current-owner')mini.snapshot.resourceLifecycle.subjects[0].owner={id:row.requestId,kind:'run',generation:7};
+  if(custody==='changed-claim')mini.resourceReservations[0].minimumAvailableBytes++;
+  if(custody==='stale-offer')storage.observedAt=new Date(mini.receivedAt.getTime()-120001).toISOString();
+  expect(replaceableMacRecorderQuota(row,mini,mini.resourceReservations,mini.receivedAt.getTime())).toBe(false);
+ });
+});
+test('Mini binding winning the request CAS prevents alternate quota acquisition',async()=>{
+ await withSelectedMacReservation(async(f,mini,counters,hosts)=>{
+  const original=structuredClone(f.row!),claims=structuredClone(mini.resourceReservations),before={...counters},alternate=readyMacAlternate(hosts);
+  mini.snapshot.lanes[0].state='running';mini.snapshot.lanes[0].activity={generation:8,owner:{id:'other',kind:'run',requestId:'other'}};
+  const write=TestRequestModel.collection.findOneAndUpdate;let raced=false;
+  TestRequestModel.collection.findOneAndUpdate=(async(...args:any[])=>{
+   if(!raced&&args[1]?.$set?.fleetResourceReservation?.hostId===alternate.hostId){raced=true;f.restore({...original,state:'preparing',fleetBinding:{hostId:mini.hostId,laneId:'android'} as never});}
+   return (write as any)(...args);
+  }) as never;
+  try {await f.service.preparation(original.requestId);expect(raced).toBe(true);expect(f.row!.fleetBinding!.hostId).toBe(mini.hostId);
+   expect(mini.resourceReservations).toEqual(claims);expect(alternate.resourceReservations).toEqual([]);expect(counters).toEqual(before);
+  }finally{TestRequestModel.collection.findOneAndUpdate=write}
+ });
 });

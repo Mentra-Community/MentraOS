@@ -37,6 +37,33 @@ export type ResourceReservationHost = {hostId: string; incarnation: string; inca
   laneControlVersion?: number; laneControls?: unknown; resourceLifecycleCursor?: unknown;
   frameworkHistory?: unknown; frameworkStopReceipts?: unknown}
 
+/** Pre-bind local Mac disk quota has no device or worker custody. The request CAS
+ * can choose a new quota winner; ordinary recorder reconciliation returns the old one. */
+export function replaceableMacRecorderQuota(row: StoredRoutineJob, host: {hostId: string; receivedAt: Date;
+  snapshot: Pick<TestHostState, 'lanes' | 'resourceLifecycle'>; resourceReservations?: unknown} | null | undefined,
+  claims: RecorderHostReservation[], now: number) {
+  const quota = row.fleetResourceReservation, admission = row.fleetResourceAdmission
+  if (!quota || !admission || !host || !Number.isFinite(host.receivedAt.getTime()) || host.receivedAt.getTime() > now || now - host.receivedAt.getTime() > 120_000 ||
+    host.hostId !== quota.hostId ||
+    row.state !== 'awaiting-runner' || row.fleetBinding || row.fleetCancellation || row.fleetCandidatePreparation ||
+    row.fleetExclusiveReservation || row.fleetExclusiveExecutionBinding || row.hostId ||
+    (row as StoredRoutineJob & {input?: unknown}).input !== undefined || row.inputSha256 ||
+    row.dispatchIntent || row.dispatchIntentSha256 || row.hostReceipt || row.fleetDeadline.getTime() <= now ||
+    claims.length !== 1 || !isDeepStrictEqual(claims[0], quota) || quota.requestId !== row.requestId ||
+    quota.fleetInputSha256 !== row.fleetInputSha256 || admission.dependencies.length ||
+    admission.intent.hostId !== quota.hostId || admission.intent.laneId !== quota.laneId ||
+    admission.intent.owner.kind !== 'run' || admission.intent.owner.id !== row.requestId ||
+    admission.intent.operationId !== `run:${row.requestId}` || admission.intent.inputSha256 !== row.fleetInputSha256) return false
+  const lane = host.snapshot.lanes.find(value => value.id === quota.laneId),
+    storage = lane?.resources.find(value => value.kind === 'recorder')?.storage
+  return lane?.platform === 'ios-on-mac' && Boolean(storage && storage.poolId === quota.poolId &&
+    Date.parse(storage.observedAt) <= now && now - Date.parse(storage.observedAt) <= 120_000 &&
+    !storage.reservations.some(value => value.requestId === row.requestId)) &&
+    !hostResourceReservationsSchema.parse(host.resourceReservations ?? []).some(value => isExclusiveHostReservation(value) &&
+      value.owner.kind === 'run' && value.owner.id === row.requestId) &&
+    !host.snapshot.resourceLifecycle?.subjects.some(value => value.owner?.kind === 'run' && value.owner.id === row.requestId)
+}
+
 function graphReturnCandidate(pending: FleetCandidatePreparation, returned: ExclusiveResourceReturn,
   host: ResourceReservationHost | null, now: number) {
   if (returned.controller.incarnation === pending.candidate.controller.incarnation &&
@@ -439,9 +466,12 @@ export class ResourceReservationsService {
       row.fleetResourceAdmission.intent.inputSha256 !== digest)) return null
     const [retainedHosts, originalRecorders] = await Promise.all([this.rows.claimedHosts?.(requestId), this.rows.recorderClaims?.(requestId)])
     if (!retainedHosts || !originalRecorders || retainedHosts.length > 1 || originalRecorders.length > 1) return null
-    const acquired = Boolean(row.fleetResourceReservation || row.fleetExclusiveReservation || retainedHosts.length || originalRecorders.length)
+    const replacingQuota = Boolean(row.fleetResourceReservation &&
+      (row.fleetResourceReservation.hostId !== hostId || row.fleetResourceReservation.laneId !== laneId) &&
+      replaceableMacRecorderQuota(row, await this.host(row.fleetResourceReservation.hostId), originalRecorders, this.now()))
+    const acquired = Boolean(!replacingQuota && (row.fleetResourceReservation || originalRecorders.length) || row.fleetExclusiveReservation || retainedHosts.length)
     if (acquired && row.fleetResourceAdmission && (row.fleetResourceAdmission.intent.hostId !== hostId || row.fleetResourceAdmission.intent.laneId !== laneId)) return null
-    if (originalRecorders.some(claim => claim.fleetInputSha256 !== digest || claim.hostId !== hostId || claim.laneId !== laneId)) return null
+    if (!replacingQuota && originalRecorders.some(claim => claim.fleetInputSha256 !== digest || claim.hostId !== hostId || claim.laneId !== laneId)) return null
     const borrower = await this.host(hostId), lane = borrower.snapshot.lanes.find(value => value.id === laneId)
     if (!fresh(borrower, this.now()) ||
       !lane || lane.activity || lane.dispatchMode !== 'automatic') return null

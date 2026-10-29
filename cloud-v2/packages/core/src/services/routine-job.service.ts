@@ -29,7 +29,7 @@ import {FrameworkResultService} from './framework-result.service';
 import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type RoutineActionsCancellation, type RoutineJobActions} from './routine-job-actions.service';
 import {TestRunError} from './test-result-error';
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
-import {backendRecorderClaimMatches, resourceIntentDependencies, requiresBackendConnectivity, requiresSerializedAndroidPreparation, resourceReservationRepository, routineResourceBlocker, routineResourcesAvailable, ResourceReservationsService, type ResourceReservationHost} from './resource-reservations.service';
+import {backendRecorderClaimMatches, resourceIntentDependencies, requiresBackendConnectivity, requiresSerializedAndroidPreparation, resourceReservationRepository, routineResourceBlocker, routineResourcesAvailable, replaceableMacRecorderQuota, ResourceReservationsService, type ResourceReservationHost} from './resource-reservations.service';
 import {resourceLaneBlocker, resourceCandidateBlocker, requiredResourceBlocker} from './resource-readiness';
 import {evaluateRoutineLaneReadiness, routineLaneRequirementBlocker, type RoutineLaneEligibilityContext} from './routine-lane-eligibility';
 import {dependencyWaitingReason, recorderWait, RESOURCE_ADMISSION_WAIT, sharedResourceWaitingReason, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait';
@@ -302,7 +302,10 @@ export const routineJobRepository: RoutineJobRepository = {
       if (row.fleetResourceAdmission && (row.fleetResourceAdmission.intent.operationId !== `run:${requestId}` ||
         row.fleetResourceAdmission.intent.owner.kind !== 'run' || row.fleetResourceAdmission.intent.owner.id !== requestId ||
         row.fleetResourceAdmission.intent.inputSha256 !== fleetInputSha256)) return null;
-      const selected = row.fleetResourceReservation;
+      const originals = await resourceReservationRepository.recorderClaims!(requestId), quota = row.fleetResourceReservation,
+        replacingQuota = Boolean(quota && (quota.hostId !== hostId || quota.laneId !== laneId) &&
+          replaceableMacRecorderQuota(row, await resourceReservationRepository.get(quota.hostId), originals, now.getTime()));
+      const selected = replacingQuota ? undefined : quota;
       if (selected && (selected.hostId !== hostId || selected.laneId !== laneId)) return null;
       if (row.fleetExclusiveReservation && (row.fleetExclusiveReservation.intent.hostId !== hostId ||
         row.fleetExclusiveReservation.intent.laneId !== laneId)) return null;
@@ -328,8 +331,7 @@ export const routineJobRepository: RoutineJobRepository = {
         return null;
       }
       const serializedPreparation = requiresSerializedAndroidPreparation(lane);
-      const originals = await resourceReservationRepository.recorderClaims!(requestId);
-      if (originals.some(claim => claim.fleetInputSha256 !== fleetInputSha256 || claim.hostId !== hostId || claim.laneId !== laneId) || originals.length > 1) {
+      if (!replacingQuota && originals.some(claim => claim.fleetInputSha256 !== fleetInputSha256 || claim.hostId !== hostId || claim.laneId !== laneId) || originals.length > 1) {
         onWaiting?.(RESOURCE_ADMISSION_WAIT, true); return null;
       }
       // Keep the current owned phone diagnosis when refusing a new selection.
@@ -450,7 +452,7 @@ export const routineJobRepository: RoutineJobRepository = {
       row = await TestRequestModel.collection.findOne({requestId, fleetInputSha256, state: 'awaiting-runner',
         fleetBinding: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
         {readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000}) as unknown as StoredRoutineJob | null;
-      const admission = fleetResourceAdmissionSchema.safeParse(exclusive || serializedPreparation || row?.fleetResourceReservation
+      const admission = fleetResourceAdmissionSchema.safeParse(exclusive || serializedPreparation || row?.fleetResourceReservation && !replacingQuota
         ? row?.fleetResourceAdmission : candidateAdmission);
       if (!row?.fleetPreparation || !admission.success || admission.data.intent.hostId !== hostId || admission.data.intent.laneId !== laneId ||
         admission.data.intent.inputSha256 !== fleetInputSha256 || Boolean(exclusive) !== Boolean(admission.data.dependencies.length) ||
@@ -1604,7 +1606,10 @@ export class RoutineJobService {
       (row.fleetResourceAdmission.intent.hostId !== claim.hostId || row.fleetResourceAdmission.intent.laneId !== claim.laneId)))
       return {...routineJobRouting(requirements, hosts, this.now(), row.fleetTarget, row.fleetSelection.build, false, original),
         waitingReason: RESOURCE_ADMISSION_WAIT};
-    const provisional = originals[0];
+    const quotaHost = row.fleetResourceReservation && hosts.find(host => host.hostId === row.fleetResourceReservation!.hostId),
+      replacingQuota = Boolean(quotaHost && replaceableMacRecorderQuota(row,
+        {...quotaHost, snapshot: quotaHost, receivedAt: new Date(quotaHost.receivedAt), resourceReservations: quotaHost.authorityReservations}, originals, this.now()));
+    const provisional = replacingQuota ? undefined : originals[0];
     if (row.fleetResourceAdmission && (row.fleetResourceAdmission.intent.operationId !== `run:${row.requestId}` ||
       row.fleetResourceAdmission.intent.owner.kind !== 'run' || row.fleetResourceAdmission.intent.owner.id !== row.requestId ||
       row.fleetResourceAdmission.intent.inputSha256 !== row.fleetInputSha256))
@@ -1612,7 +1617,7 @@ export class RoutineJobService {
         waitingReason: RESOURCE_ADMISSION_WAIT};
     const originalExclusive = hosts.flatMap(host => (host.authorityReservations ?? []).filter(isExclusiveHostReservation))
       .filter(claim => claim.owner.kind === 'run' && claim.owner.id === row.requestId && claim.origin?.kind === 'fleet');
-    const retained = row.fleetResourceReservation,
+    const retained = replacingQuota ? undefined : row.fleetResourceReservation,
       acquired = Boolean(retained || row.fleetExclusiveReservation || provisional || originalExclusive.length),
       admitted = acquired ? row.fleetResourceAdmission : undefined;
     if (originalExclusive.some(claim => claim.inputSha256 !== row.fleetInputSha256 || claim.origin?.fleetInputSha256 !== row.fleetInputSha256 ||
