@@ -430,17 +430,17 @@ deletion from the change feed (`workspace.deleted`) and stops charging.
 
 ## Listing every license
 
-### Staging support reset
+### Dev and staging support reset
 
-On staging, an Organization Admin can use **Admin → Workspaces → Reset licenses & billing**.
-The dialog first describes the impact, then requires the exact workspace ID, a reason, and explicit acknowledgment.
+On dev or staging, an Organization Admin can use **Admin → Workspaces → Reset licenses & billing**.
+A short confirmation dialog names the workspace and offers Cancel or Reset; no reason or typed confirmation is required.
 `GET /api/admin/workspace-license-resets/:workspaceId` previews the workspace's license and assignment counts.
-`POST` to the same address takes `{confirmWorkspaceId, reason}`. Both routes require an Organization Admin person
-and `CLOUD_CORE_ENVIRONMENT=staging`; other deployments refuse them.
+`POST` to the same address takes `{confirmWorkspaceId}`. Both routes require an Organization Admin person
+and `CLOUD_CORE_ENVIRONMENT=dev` or `staging`; other deployments refuse them.
 
-Core asks the staging Store to cancel test subscriptions and expire unfinished checkouts before ending any licenses.
-The Store independently requires its staging environment and test payment mode. Core then ends licenses and releases
-their assignments transactionally, recording `workspace.licenses.reset`, the actor, and the reason. License records
+Core asks the matching Store to cancel test subscriptions and expire unfinished checkouts before ending any licenses.
+The Store independently requires dev or staging and test payment mode. Core then ends licenses and releases
+their assignments transactionally, recording `workspace.licenses.reset`, the actor, and an administrative reset description. License records
 remain as `admin_reset` tombstones, and every returned billing ID is retired on the workspace, including IDs whose
 first delivery has not arrived. License writes check that retirement in their workspace transaction so delayed billing
 writes cannot restore access. Members, ownership, credentials,

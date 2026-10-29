@@ -1,4 +1,4 @@
-/** Staging support action: retain license tombstones so delayed billing writes cannot restore access. */
+/** Non-production support action: retain license tombstones so delayed billing writes cannot restore access. */
 import {withTransaction} from "../../connections/mongo.connection"
 import {LicenseModel} from "../../models/license.model"
 import {LicenseSeatModel} from "../../models/license-seat.model"
@@ -8,19 +8,18 @@ import {fail} from "../workspaces/workspace-error"
 import {auditActor, getWorkspace, touchWorkspace, type Actor} from "../workspaces/workspace.service"
 import {endLicensesForOwner} from "./license.service"
 
-export function requireStagingLicenseReset(): void {
-  if (process.env.CLOUD_CORE_ENVIRONMENT !== "staging") fail("forbidden", "license resets are available on staging only")
+export function requireNonProductionLicenseReset(): void {
+  if (!["staging", "dev"].includes(process.env.CLOUD_CORE_ENVIRONMENT ?? "")) fail("forbidden", "license resets are available on staging and dev only")
 }
 
 export function validateLicenseReset(workspaceId: string, body: Record<string, unknown>): string {
-  requireStagingLicenseReset()
+  requireNonProductionLicenseReset()
   if (body.confirmWorkspaceId !== workspaceId) fail("invalid_request", "type the exact workspace ID to confirm")
-  if (typeof body.reason !== "string" || body.reason.trim().length < 5 || body.reason.length > 500) fail("invalid_request", "a reason of 5 to 500 characters is required")
-  return body.reason.trim()
+  return "Administrative license reset"
 }
 
 export async function licenseResetPreview(workspaceId: string) {
-  requireStagingLicenseReset()
+  requireNonProductionLicenseReset()
   const workspace = await getWorkspace(workspaceId)
   if (!workspace || workspace.status !== "active") fail("not_found", "active workspace not found")
   const licenses = await LicenseModel.find({"owner.workspaceId": workspaceId, endedAt: null}, {quantity: 1}).lean()
@@ -32,7 +31,7 @@ export interface ResetBillingResult {licenseIds: string[]; canceledSubscriptions
 
 /** Billing must have canceled successfully before this transaction can remove any license access. */
 export async function finishLicenseReset(actor: Actor, workspaceId: string, reason: string, billing: ResetBillingResult) {
-  requireStagingLicenseReset()
+  requireNonProductionLicenseReset()
   if (actor.kind !== "user" || !actor.isOrganizationAdmin) fail("forbidden", "an Organization Admin is required")
   return withTransaction(async session => {
     await touchWorkspace(session, workspaceId)

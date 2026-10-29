@@ -25,12 +25,12 @@ function app(principal: CorePrincipal) {
 }
 const path = "/api/admin/workspace-license-resets/ws_target"
 const request = (body: unknown) => ({method: "POST", headers: {authorization: "Bearer test", "content-type": "application/json"}, body: JSON.stringify(body)})
-const body = {confirmWorkspaceId: "ws_target", reason: "Restart billing tests"}
+const body = {confirmWorkspaceId: "ws_target"}
 
-describe("staging workspace license reset API", () => {
+describe("non-production workspace license reset API", () => {
   test("production and other environments refuse both reads and writes before touching data", async () => {
     const preview = spyOn(resets, "licenseResetPreview"); spies.push(preview)
-    for (const environment of ["prod", "production", "dev", ""]) {
+    for (const environment of ["prod", "production", "test", ""]) {
       process.env.CLOUD_CORE_ENVIRONMENT = environment
       expect((await app(person(true)).request(path, {headers: {authorization: "Bearer test"}})).status).toBe(403)
       expect((await app(person(true)).request(path, request(body))).status).toBe(403)
@@ -41,10 +41,10 @@ describe("staging workspace license reset API", () => {
     process.env.CLOUD_CORE_ENVIRONMENT = "staging"
     expect((await app(person(false)).request(path, request(body))).status).toBe(403)
   })
-  test("confirmation must match this workspace and have a reason before billing is contacted", async () => {
+  test("confirmation must match this workspace before billing is contacted", async () => {
     process.env.CLOUD_CORE_ENVIRONMENT = "staging"
     const preview = spyOn(resets, "licenseResetPreview"); spies.push(preview)
-    for (const invalid of [{...body, confirmWorkspaceId: "ws_other"}, {...body, reason: ""}, {...body, reason: "x".repeat(501)}]) {
+    for (const invalid of [{confirmWorkspaceId: "ws_other"}, {}]) {
       expect((await app(person(true)).request(path, request(invalid))).status).toBe(400)
     }
     expect(preview).not.toHaveBeenCalled()
@@ -69,7 +69,10 @@ describe("staging workspace license reset API", () => {
     expect((await app(person(true)).request(path, request(body))).status).toBe(503)
     expect(finish).not.toHaveBeenCalled()
     fails = false
-    expect((await app(person(true)).request(path, request(body))).status).toBe(200)
-    expect(finish).toHaveBeenCalledTimes(1)
+    for (const environment of ["dev", "staging"]) {
+      process.env.CLOUD_CORE_ENVIRONMENT = environment
+      expect((await app(person(true)).request(path, request(body))).status).toBe(200)
+    }
+    expect(finish).toHaveBeenCalledTimes(2)
   })
 })
