@@ -166,6 +166,7 @@ export interface StoredRoutineJob {
   preparationCancellation?: {requestedAt: string; reason: string};
   preparationRejection?: {code: string; reason: string};
   hostCancellation?: {requestedAt: string; reason: string};
+  cancellationAcknowledged?: boolean;
   hostRejection?: {code: string; reason: string};
   terminalStatus?: string;
   runId?: string;
