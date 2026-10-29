@@ -12,7 +12,7 @@ import {selectedBuildInput, type TestBuild, type TestBuildPlatform} from "../typ
 import {testSuiteSchema, type TestSuite} from "../types/test-suite.types";
 import {RoutineCatalogService} from "./routine-catalog.service";
 import {GithubTestBuildGateway, TestDispatchError} from "./test-builds.service";
-import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest} from "./test-request.service";
+import {TestRequestService, requestInputDigest, acknowledgedTerminalCancellation, isExecutableRequest, type StoredRequest} from "./test-request.service";
 import {FrameworkResultService} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
 import {portableRoutineSelectionSchema, routineJobBindingSchema, routineJobPreparationSchema, routinePublicationFailureSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
@@ -338,6 +338,8 @@ export class NightlyRoutineService {
           runId: run.runId, runStartedAt: run.startedAt, runFinishedAt: run.finishedAt};
       } catch (error) {
         if (!(error instanceof TestRunError) || error.status !== 404) return {...this.unavailableEvidence(boundMember, error, "Result"), input, inputSha256: request.inputSha256};
+        if (acknowledgedTerminalCancellation(request)) return {...prepared, status: "incomplete", publicationComplete: false,
+          unavailableReason: request.hostCancellation!.reason};
         if (request.publicationFailure) {
           const failure = routinePublicationFailureSchema.safeParse(request.publicationFailure);
           if (!failure.success || failure.data.entityId !== member.requestId || request.hostReceipt?.requestId !== member.requestId

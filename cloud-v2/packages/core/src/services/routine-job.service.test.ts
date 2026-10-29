@@ -2117,3 +2117,16 @@ test('a current acquired winner observed in the final serialized read prevents a
   finally{get.mockRestore()}
  });
 });
+
+for (const stateName of ['terminal', 'accepted', 'running']) test(`bound cancellation acknowledgement preserves ${stateName} observer state`, async () => {
+  const f = fixture(), prepared = await f.prepare();
+  await f.service.bind(selection.requestId, 'mini', {inputSha256: prepared.inputSha256, laneId: f.lane.id,
+    descriptorRevision: f.lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'});
+  (f.service as any).results = {async detail() {throw new TestRunError(404, 'missing')}};
+  const current = f.row!, boundInputSha256 = current.inputSha256 ?? 'c'.repeat(64);
+  const cancellation = {requestId: current.requestId, hostId: current.hostId!, inputSha256: boundInputSha256,
+    requestedAt: '2026-10-08T00:01:00.000Z', reason: 'Cancelled before routine execution'};
+  f.restore({...current, inputSha256: boundInputSha256, state: stateName as StoredRoutineJob['state'], terminalStatus: 'cancelled',
+    cancellationAcknowledged: true, hostCancellation: cancellation});
+  expect(await f.service.observation(selection.requestId)).toMatchObject({terminal: stateName === 'terminal'});
+});

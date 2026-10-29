@@ -112,7 +112,7 @@ async function boundSuiteRequests(requestIds: string[]): Promise<BoundRequest[]>
   if (!requestIds.length) return [];
   const requests = await TestRequestModel.find({requestId: {$in: requestIds}})
     .select({requestId: 1, hostId: 1, inputSha256: 1, input: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
-      state: 1, terminalStatus: 1, hostRejection: 1, hostReceipt: 1, publicationFailure: 1}).limit(101).read("primary").readConcern("majority").lean();
+      state: 1, terminalStatus: 1, hostRejection: 1, hostReceipt: 1, hostCancellation: 1, cancellationAcknowledged: 1, publicationFailure: 1}).limit(101).read("primary").readConcern("majority").lean();
   if (requests.length > 100) throw new TestRunError(503, "suite request history exceeds the query bound; no verdict available");
   return requests as BoundRequest[];
 }
@@ -385,7 +385,7 @@ export class TestSuiteService {
     const [requests, results] = await Promise.all([
       requestIds.length ? TestRequestModel.find({requestId: {$in: requestIds}})
         .select({requestId: 1, hostId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
-          state: 1, terminalStatus: 1, hostRejection: 1, hostReceipt: 1, publicationFailure: 1, preparation: 1, preparationCancellation: 1, preparationRejection: 1,
+          state: 1, terminalStatus: 1, hostRejection: 1, hostReceipt: 1, hostCancellation: 1, cancellationAcknowledged: 1, publicationFailure: 1, preparation: 1, preparationCancellation: 1, preparationRejection: 1,
           fleetSelection: 1, fleetSelectionSha256: 1, fleetBinding: 1, fleetCancellation: 1, fleetDispatch: 1})
         .limit(requestIds.length + 1).read("primary").readConcern("majority").setOptions(remaining()).lean() : [],
       liveRequestIds.length ? TestRunModel.find({...nativeRunFilter, requestId: {$in: liveRequestIds}})

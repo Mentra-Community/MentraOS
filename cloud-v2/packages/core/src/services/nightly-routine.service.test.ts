@@ -1026,3 +1026,14 @@ test("nightly scopes build reads to one selection and never reopens them for a f
   .select({...occurrence, occurrenceId: "another-occurrence"}, "another-suite");
  expect(scopes).toEqual([startedAt, startedAt]);
 });
+
+for (const stateName of ['terminal', 'accepted', 'running']) test(`acknowledged bound cancellation with no result remains ${stateName}`, async () => {
+  const state = fixture([row('cancelled-bound', 'android')]), {plan} = await state.service.start(occurrence);
+  const member = plan.members[0]!, request = state.requestRows.get(member.requestId)!;
+  Object.assign(request, {state: stateName, terminalStatus: 'cancelled', cancellationAcknowledged: true,
+    hostCancellation: {requestId: request.requestId, hostId: request.hostId, inputSha256: request.inputSha256,
+      requestedAt: startedAt, reason: 'Cancelled before routine execution'}});
+  const result = await state.service.snapshot(plan);
+  expect(result.members[0]).toMatchObject({status: stateName === 'terminal' ? 'incomplete' : 'waiting', publicationComplete: false});
+  if (stateName === 'terminal') expect(result.members[0]!.unavailableReason).toBe('Cancelled before routine execution');
+});

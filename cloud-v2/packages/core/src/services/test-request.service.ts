@@ -68,6 +68,14 @@ export interface StoredPreparingRequest extends FleetClaimReceipts {
   preparationRejection?: z.infer<typeof preparationRejectionSchema>;
 }
 export type StoredRequest = StoredTestRequest | StoredPreparingRequest;
+/** A cancelled, never-result request has an outcome even while native return is reported separately. */
+export function acknowledgedTerminalCancellation(row: {requestId: string; hostId?: string; inputSha256?: string;
+  state: string; terminalStatus?: string; hostCancellation?: unknown; cancellationAcknowledged?: boolean}): boolean {
+  const receipt = hostCancellationSchema.safeParse(row.hostCancellation);
+  return row.state === 'terminal' && row.terminalStatus === 'cancelled' && row.cancellationAcknowledged === true && receipt.success &&
+    receipt.data.requestId === row.requestId && receipt.data.hostId === row.hostId && receipt.data.inputSha256 === row.inputSha256;
+}
+
 export const isExecutableRequest = (row: StoredRequest): row is StoredTestRequest => typeof row.inputSha256 === 'string' && row.input !== undefined;
 export interface TestRequestRepository {
   insert(request: StoredTestRequest): Promise<void>;

@@ -14,7 +14,7 @@ import {preparationRejectionSchema, routineDispatchIntentSchema} from '../types/
 import {routinePreparationStatusSchema, type RoutinePreparationStatus, completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
   routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionReportSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
   routineQualificationTargetSchema, routineJobCompletionSchema, fleetCandidatePreparationSchema, MAX_FLEET_CANDIDATE_PREPARATIONS, type FleetCandidatePreparation, routineJobBindingSchema, type RoutineQualificationTarget, ownedRoutineQualificationSchema, type OwnedRoutineQualification, type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
-import {assertEnrolledRequest, requestInputDigest, TestRequestConflict, TestRequestService} from './test-request.service';
+import {acknowledgedTerminalCancellation, assertEnrolledRequest, requestInputDigest, TestRequestConflict, TestRequestService} from './test-request.service';
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service';
 import {routineAdmissionInput} from './routine-admission.service';
 import {selectedBuildInput} from '../types/test-build.types';
@@ -1943,7 +1943,7 @@ export class RoutineJobService {
       ...(row.fleetBinding ? {binding: row.fleetBinding, ...(row.inputSha256 ? {boundInputSha256: row.inputSha256} : {})} : {}),
       actionsRuns: row.fleetActions ?? [], ...(row.fleetActionsCancellation ? {actionsCancellation:row.fleetActionsCancellation} : {}), ...(reason ? {waitingReason: reason} : {}),
       terminal: !row.fleetBinding ? row.state === 'terminal' || !!row.fleetCancellation
-        : !!row.hostRejection || !!row.preparationCancellation || !!row.preparationRejection || !!row.dispatchCompletion && row.state === 'terminal',
+        : acknowledgedTerminalCancellation(row) || !!row.hostRejection || !!row.preparationCancellation || !!row.preparationRejection || !!row.dispatchCompletion && row.state === 'terminal',
       ...(row.dispatchCompletion ? {cleanupDisposition: row.dispatchCompletion.disposition, dispatchCompletion: row.dispatchCompletion} : {}),
       ...(row.terminalStatus ? {terminalStatus: row.terminalStatus} : row.fleetCancellation && !row.fleetBinding ? {terminalStatus: 'not-run'} : {}),
       ...(result ? {result} : {})};

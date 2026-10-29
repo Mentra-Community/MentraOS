@@ -475,7 +475,7 @@ test('history summaries read portable members through the real nightly snapshot 
  const queried:string[][]=[];
  mocks.push(spyOn(TestRequestModel,'find').mockImplementation(((filter:{requestId:{$in:string[]}})=>{
   queried.push(filter.requestId.$in);let fields: Record<string, number> = {};
-  return {select(value: Record<string, number>){fields=value;expect(fields).toMatchObject({publicationFailure:1,hostReceipt:1});return this},
+  return {select(value: Record<string, number>){fields=value;expect(fields).toMatchObject({publicationFailure:1,hostReceipt:1,hostCancellation:1,cancellationAcknowledged:1});return this},
    limit(){return this},read(){return this},readConcern(){return this},setOptions(){return this},
    async lean(){return requests.map(request=>Object.fromEntries(Object.entries(request).filter(([key])=>fields[key])))}};
  }) as any));
@@ -489,6 +489,18 @@ test('history summaries read portable members through the real nightly snapshot 
  const input={routineId:intent.routineId,platform:intent.platform,definitionRevision:intent.routineRevision,
   routineSource:intent.routineSource,laneId:intent.laneId,resources:[],build};
  Object.assign(requests[1]!,{state:'accepted',input,inputSha256:requestInputDigest(input)});
+ for (const stateName of ['accepted','running','terminal']) {
+  Object.assign(requests[1]!,{state:stateName,terminalStatus:'cancelled',cancellationAcknowledged:true,
+   hostCancellation:{requestId:'two',hostId:binding.hostId,inputSha256:requestInputDigest(input),
+    requestedAt:'2026-10-08T00:01:00.000Z',reason:'Cancelled before execution'}});
+  const cancelled=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
+  expect(cancelled).not.toBeInstanceOf(Error);
+  expect(cancelled).toMatchObject({members:[{requestId:'one',status:'waiting'},
+   {requestId:'two',status:stateName==='terminal'?'not-run':'waiting'}]});
+ }
+ Object.assign(requests[1]!,{state:'accepted'});
+ delete (requests[1] as any).terminalStatus;delete (requests[1] as any).hostCancellation;delete (requests[1] as any).cancellationAcknowledged;
+
  const executable=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
  expect(executable).not.toBeInstanceOf(Error);
  expect(executable).toMatchObject({outcome:'running',passed:0,members:[{status:'waiting'},
