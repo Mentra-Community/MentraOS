@@ -435,6 +435,31 @@ test('existing host-authenticated routes reject impersonation and never expose t
   expect(body).toContain('conference-account'); expect(body).not.toContain('conference@'); expect(body).not.toContain('password')
 })
 
+test('checked fixer return preserves generation while freeing only its original account claim', async () => {
+  const f = fixture(), claim = (await f.service.acquire(intent('air1'), 'air1')).claims[0]!, host = f.observe('air1')
+  const original = {...claim.owner, generation: 1225}, fixer = {id: 'original-fixer', kind: 'fixer' as const, generation: 1226},
+    boundary = {id: 'checked-return', kind: 'boundary-cleanup' as const, generation: 1226}
+  const proof = returned(claim, host, {release: {eventId: `lane-release:${boundary.id}:${boundary.generation}`,
+    owner: boundary, releasedAt: host.snapshot.observedAt, lineage: [original, fixer, boundary]}})
+  const {controller: _, ...localReturn} = proof
+  host.snapshot.resourceReservations = {claims: [], returns: [localReturn]}
+  expect(await f.service.giveBack(proof, 'air1')).toEqual({status: 'returned', claimId: claim.id})
+  expect(f.rows.get('mini')!.resourceReservations).toEqual([])
+  expect(await f.service.giveBack(proof, 'air1')).toEqual({status: 'returned', claimId: claim.id})
+})
+
+test('a recorded return cannot move current custody to an earlier generation', async () => {
+  const f = fixture(), claim = (await f.service.acquire(intent('air1'), 'air1')).claims[0]!, host = f.observe('air1')
+  const boundary = {id: 'decreased-return', kind: 'boundary-cleanup' as const, generation: 1225}
+  const proof = returned(claim, host, {release: {eventId: `lane-release:${boundary.id}:${boundary.generation}`,
+    owner: boundary, releasedAt: host.snapshot.observedAt, lineage: [{...claim.owner, generation: 1225},
+      {id: 'original-fixer', kind: 'fixer', generation: 1226}, boundary]}})
+  const {controller: _, ...localReturn} = proof
+  host.snapshot.resourceReservations = {claims: [], returns: [localReturn]}
+  await expect(f.service.giveBack(proof, 'air1')).rejects.toThrow('recorded normal local release lineage')
+  expect(f.rows.get('mini')!.resourceReservations).toEqual([claim])
+})
+
 test('a claimed idle lane without its recorded release or exact repair lineage cannot return an account', async () => {
   const f = fixture(), claim = (await f.service.acquire(intent('air1'), 'air1')).claims[0]!, host = f.observe('air1')
   await expect(f.service.giveBack(returned(claim, host), 'air1')).rejects.toThrow('recorded normal local release lineage')

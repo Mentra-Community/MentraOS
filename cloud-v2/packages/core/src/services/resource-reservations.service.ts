@@ -778,7 +778,7 @@ export class ResourceReservationsService {
         isDeepStrictEqual(receipt, (({controller: _, ...proof}) => proof)(returned))) ||
       !returned.release.lineage.some(owner => isDeepStrictEqual({id: owner.id, kind: owner.kind}, returned.originalOwner)) ||
       !isDeepStrictEqual(returned.release.lineage.at(-1), returned.release.owner) ||
-      returned.release.lineage.some((owner, index, lineage) => index > 0 && owner.generation <= lineage[index - 1]!.generation) ||
+      returned.release.lineage.some((owner, index, lineage) => index > 0 && owner.generation < lineage[index - 1]!.generation) ||
       returned.release.neverStarted && (returned.originalOwner.kind !== 'run' ||
         returned.release.neverStarted.requestId !== returned.originalOwner.id || returned.release.lineage.length !== 1 ||
         !isDeepStrictEqual({...returned.originalOwner, generation: returned.release.owner.generation}, returned.release.owner)))
