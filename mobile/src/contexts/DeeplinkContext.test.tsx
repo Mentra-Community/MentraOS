@@ -596,6 +596,60 @@ it("explicit attended route requests without auth, an extra page, or splash and 
   expect(mockSetSplashEnabled).not.toHaveBeenCalled()
 })
 
+describe("the Settings link", () => {
+  const settings = {packageName: "com.mentra.settings", name: "Settings"}
+
+  beforeEach(() => {
+    mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+    mockMiniappsList.mockReturnValue([settings])
+  })
+
+  it.each(["com.mentra://settings", "com.mentra:///settings", "/settings"])("starts Settings from %s before opening its existing overlay", async (url) => {
+    let completeStart!: (started: boolean) => void
+    mockMiniappsStart.mockReturnValueOnce(new Promise<boolean>((resolve) => {completeStart = resolve}))
+    render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+    await act(async () => {
+      const opening = processUrl(url)
+      await Promise.resolve()
+      expect(mockSetForeground).not.toHaveBeenCalled()
+      completeStart(true)
+      await opening
+    })
+    expect(mockMiniappsStart).toHaveBeenCalledWith(settings, {trigger: "user", skipNavigation: true})
+    expect(mockSetForeground).toHaveBeenCalledWith(settings.packageName)
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(mockReplaceAll).not.toHaveBeenCalled()
+  })
+
+  it("preserves the current page when the normal miniapp start is refused", async () => {
+    mockMiniappsStart.mockResolvedValueOnce(false)
+    render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+    await act(async () => {await processUrl("com.mentra://settings")})
+    expect(mockMiniappsStart).toHaveBeenCalledTimes(1)
+    expect(mockSetForeground).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  it("preserves the current page when Settings is not registered", async () => {
+    mockMiniappsList.mockReturnValueOnce([])
+    render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+    await act(async () => {await processUrl("com.mentra://settings")})
+    expect(mockMiniappsStart).not.toHaveBeenCalled()
+    expect(mockSetForeground).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  it("keeps authentication required instead of opening Settings while signed out", async () => {
+    mockGetSession.mockResolvedValueOnce({is_error: () => false, value: {token: undefined}})
+    render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+    await act(async () => {await processUrl("com.mentra://settings")})
+    expect(mockMiniappsStart).not.toHaveBeenCalled()
+    expect(mockSetForeground).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(mockSetPendingRoute).toHaveBeenCalledWith("com.mentra://settings")
+  })
+})
+
 describe("the Gallery link", () => {
   const gallery = {packageName: "com.mentra.camera", name: "Gallery"}
   const galleryUrl = "com.mentra://asg/gallery"

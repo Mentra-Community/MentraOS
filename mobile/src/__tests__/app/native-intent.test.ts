@@ -10,11 +10,21 @@ it("lets a cold app complete its normal boot instead of opening an uninitialized
   expect(redirectSystemPath({path, initial: true})).toBe("/")
 })
 
+it.each(["com.mentra://settings", "com.mentra:///settings", "/settings"])(
+  "leaves Settings link %s with its miniapp handler instead of the root router",
+  (link) => {
+    expect(redirectSystemPath({path: link, initial: false})).toBeNull()
+    expect(redirectSystemPath({path: link, initial: true})).toBe("/")
+  },
+)
+
 it.each([
   "/home",
   "com.mentra://home",
   "com.mentra://auth/callback?code=example",
   "https://example.com/test/submit-incident-report",
+  "https://example.com/settings",
+  "com.mentra://settings/profile",
 ])("preserves unrelated URL %s", (other) => {
   expect(redirectSystemPath({path: other, initial: false})).toBe(other)
 })

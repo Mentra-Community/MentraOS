@@ -4,7 +4,7 @@ import Toast from "react-native-toast-message"
 import {FC, ReactNode, createContext, useContext, useEffect, useRef, useState} from "react"
 import {AppState, Platform} from "react-native"
 
-import {cameraPackageName} from "@/constants/miniapps"
+import {cameraPackageName, settingsPackageName} from "@/constants/miniapps"
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import mentraAuth from "@/utils/auth/authClient"
 import {confirmLinkSignIn} from "@/utils/auth/confirmLinkSignIn"
@@ -114,9 +114,11 @@ const deepLinkRoutes: DeepLinkRoute[] = [
   // Settings routes
   {
     pattern: "/settings",
-    handler: (url: string, params: Record<string, string>) => {
-      const nav = useNavigationStore.getState()
-      nav.push("/miniapps/settings")
+    handler: async () => {
+      const settings = engine.miniapps.list().find((app) => app.packageName === settingsPackageName)
+      if (settings && await engine.miniapps.start(settings, {trigger: "user", skipNavigation: true})) {
+        await engine.miniapps.setForeground(settingsPackageName)
+      }
     },
     requiresAuth: true,
   },
