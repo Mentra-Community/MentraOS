@@ -98,9 +98,10 @@ test(`current baseline allocation preserves ${gap} refusal after a closed origin
   if (gap === 'incompatible-binding') host.frameworkBinding!.routineApiVersion = 0
   if (gap === 'resource-owner') host.resourceLifecycle!.subjects[0]!.owner = {id: 'actual-owner', kind: 'boundary-cleanup', hostId: host.hostId, generation: 2}
   if (gap === 'resource-repair') host.resourceLifecycle!.subjects[0]!.repair.state = 'queued'
-  if (gap === 'current-claim') host.authorityReservations = [{id: '10000000-0000-4000-8000-000000000001', requestId: 'foreign-original',
-    fleetInputSha256: 'f'.repeat(64), hostId: host.hostId, laneId: previous.laneId, poolId: `${host.hostId}:disk`,
-    minimumAvailableBytes: 1024, reservedAt: new Date(f.now).toISOString()}]
+  if (gap === 'current-claim') host.authorityReservations = [{kind: 'exclusive', id: '10000000-0000-4000-8000-000000000001',
+    resourceId: host.resourceLifecycle!.subjects[0]!.subject.id, authorityHostId: host.hostId, borrowerHostId: host.hostId, laneId: previous.laneId,
+    operationId: 'run:foreign-original', intentSha256: 'e'.repeat(64), inputSha256: 'f'.repeat(64), owner: {kind: 'run', id: 'foreign-original'},
+    controllerIncarnation: host.incarnation!, controllerGeneration: host.incarnationGeneration!, borrowerSequence: host.sequence!, reservedAt: new Date(f.now).toISOString()}]
   if (gap === 'pending-original') {
     f.row.fleetCandidatePreparation = {...structuredClone(previous), settlement: undefined, noAcquisitionReceipt: {status: 'unknown'}}
     host.resourceReservations!.candidatePrerequisites = []
