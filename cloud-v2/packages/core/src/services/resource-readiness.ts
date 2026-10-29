@@ -14,7 +14,7 @@ export type ResourceReadinessHost = ResourceReadinessAuthority & {hostId: string
 
 export type ResourceReadinessBlocker = {code: 'lane-resource-owned' | 'lane-operator-restriction' | 'resource-owned' |
   'resource-operator-restriction' | 'resource-restoration-required' | 'resource-baseline-unavailable' |
-  'resource-idle-proof-unavailable' | 'resource-not-enrolled' | 'host-report-unavailable'; laneId?: string; resourceId?: string; resourceKind?: string}
+  'resource-idle-proof-unavailable' | 'resource-commissioning-required' | 'resource-not-enrolled' | 'host-report-unavailable'; laneId?: string; resourceId?: string; resourceKind?: string}
 
 /** Authenticated envelope freshness does not depend on resource commissioning. */
 export function resourceHostBlocker(host: ResourceReadinessHost, now: number): ResourceReadinessBlocker | undefined {
@@ -73,7 +73,8 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
   // Host-only source preparation can tolerate an unknown app; an unassigned
   // phone check and its exact returned positive can tolerate an unknown phone.
   // Ordinary callers must supply that original candidate proof for the phone.
-  if (allowUnchecked && subject.status === 'unknown' && ['unknown', 'not-checked'].includes(subject.idle.outcome))
+  if (allowUnchecked && !(resource?.kind === 'glasses' && contract?.conditions.includes('glasses-identity')) &&
+      subject.status === 'unknown' && ['unknown', 'not-checked'].includes(subject.idle.outcome))
     return undefined
   const checked = Date.parse(subject.idle.checkedAt ?? ''), accepted = Date.parse(subject.idle.acceptedCheck?.acceptedAt ?? '')
   // Passed physical facts remain tied to the current generation, installed
@@ -83,6 +84,9 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
     Number.isFinite(accepted) && accepted >= checked && accepted <= observed &&
     subject.idle.contractVersion === contract.version && isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope)))
     return {code: 'resource-idle-proof-unavailable' as const, resourceId}
+  if (resource?.kind === 'glasses' && contract.conditions.includes('glasses-identity') &&
+      subject.idle.report?.conditions.find(condition => condition.id === 'glasses-assigned-phone-ble-owner')?.status !== 'passed')
+    return {code: 'resource-commissioning-required' as const, resourceId}
   return undefined
 }
 

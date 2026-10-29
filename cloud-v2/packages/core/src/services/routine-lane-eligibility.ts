@@ -144,12 +144,14 @@ export function evaluateRoutineLaneReadiness(requirements: PortableRequirements,
   for (const resource of evaluation.resources) {
     const blocker = resource.resourceId ? resourceBlocker(authority, resource.resourceId, now, false, original && {...original, laneId: lane.id}) : undefined,
       subject = host.resourceLifecycle?.subjects.find(value => value.subject.id === resource.resourceId),
-      physicalFailure = subject?.idle.outcome === 'failed' || subject?.idle.report?.outcome === 'failed', unavailable = Boolean(blocker && !physicalFailure &&
+      commissioning = blocker?.code === 'resource-commissioning-required',
+      physicalFailure = subject?.idle.outcome === 'failed', unavailable = Boolean(blocker && !physicalFailure && !commissioning &&
         !['resource-owned', 'resource-operator-restriction', 'resource-restoration-required'].includes(blocker.code))
     if (blocker && !physicalBlocker) physicalBlocker = blocker
-    resource.conditions.push(check('current-baseline', 'Current physical checklist and returned custody', 'physical', Boolean(resource.resourceId && !blocker),
+    resource.conditions.push(check(commissioning ? 'assigned-phone-owner' : 'current-baseline', commissioning ? 'Assigned phone BLE owner' : 'Current physical checklist and returned custody', 'physical', Boolean(resource.resourceId && !blocker),
       'Current installed contract passed, resource unowned and no unresolved effect', blocker?.code ?? (resource.resourceId ? 'Current baseline and custody pass' : 'No provider'),
-      unavailable, blocker ? `Check ${resource.resourceId}: ${subject?.reason?.message ?? blocker.code}. Repair the named failed condition, then run its existing Check.` : undefined))
+      unavailable, commissioning ? 'Commission the assigned phone bond once and enroll its confirmed BES owner address and type, then run the existing ADB Check. Healthy physical return does not require AI repair.' :
+        blocker ? `Check ${resource.resourceId}: ${subject?.reason?.message ?? blocker.code}. Repair the named failed condition, then run its existing Check.` : undefined))
     // Current installed dependencies are part of the same checklist. A returned
     // old graph cannot exempt an actual secondary provider from current controls.
     const visited = new Set<string>(), offered = [...host.lanes.flatMap(value => value.resources), ...host.resources ?? []],

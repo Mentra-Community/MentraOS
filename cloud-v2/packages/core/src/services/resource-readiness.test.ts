@@ -218,3 +218,33 @@ test('the current host query and ordinary matcher ignore legacy debug arrays but
     if (previous === undefined) delete process.env.TEST_HOST_TOKENS; else process.env.TEST_HOST_TOKENS = previous
   }
 })
+
+
+test.each([
+  ['missing configuration/owner observation', undefined, false],
+  ['no owner', 'failed', false],
+  ['wrong owner', 'failed', false],
+  ['unavailable owner', 'unknown', false],
+  ['correct owner', 'passed', true],
+] as const)('returned Live glasses dispatch requires assigned owner: %s', (_label, ownerOutcome, ready) => {
+  const f = fixture(), resource = f.host.snapshot.lanes[0]!.resources[0]!
+  resource.kind = 'glasses'; f.subject.resource!.kind = 'glasses'
+  f.contract.conditions = ['glasses-identity', 'glasses-same-boot', 'glasses-maintenance-transport', 'glasses-hotspot-inactive',
+    'glasses-station-disconnected', 'glasses-writers-settled', 'glasses-unworn-auto-off-disabled', 'glasses-assigned-phone-ble-owner']
+  f.subject.idle.report = {resourceId: id, authorityHostId: 'host', contractVersion: f.contract.version, operationId: currentOperation,
+    checkedAt: f.subject.idle.checkedAt, resultSha256: 'b'.repeat(64), outcome: ownerOutcome === 'failed' ? 'failed' : ownerOutcome === 'passed' ? 'passed' : 'unknown',
+    evidenceRefs: ['original-reader'], conditions: f.contract.conditions.flatMap(condition => condition === 'glasses-assigned-phone-ble-owner' && !ownerOutcome ? [] : [{
+      id: condition, label: condition, status: condition === 'glasses-assigned-phone-ble-owner' ? ownerOutcome! : 'passed',
+      reportedStatus: condition === 'glasses-assigned-phone-ble-owner' ? ownerOutcome! : 'passed', expected: null, observed: null,
+      explanation: null, repairAction: null, evidenceRefs: ['original-reader'], source: null}])}
+  const before = structuredClone(f.host)
+  for (const check of [resourceCandidateBlocker, resourceBlocker]) {
+    expect(check(f.host, id, now)).toEqual(ready ? undefined : {code: 'resource-commissioning-required', resourceId: id})
+  }
+  expect(f.subject.status).toBe('idle')
+  expect(f.subject.owner).toBeNull()
+  expect(f.subject.repair.state).toBe('none')
+  expect(f.host).toEqual(before)
+  f.subject.status = 'in-repair'; f.subject.idle.outcome = 'failed'; f.subject.repair.state = 'queued'
+  expect(resourceBlocker(f.host, id, now)).toEqual({code: 'resource-baseline-unavailable', resourceId: id})
+})
