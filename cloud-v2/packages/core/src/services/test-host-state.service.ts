@@ -65,6 +65,7 @@ const routingLaneSchema = z.object({
   platform: routinePlatformSchema,
   dispatchMode: z.enum(['automatic', 'authoring', 'paused']),
   state: z.enum(['idle', 'running', 'reserved', 'in-repair', 'out-of-service', 'offline']),
+  activity: laneActivitySchema.optional(),
   resources: z.array(resource),
   glasses: z.array(glassesInventorySchema).max(1).optional(),
 }).strict().superRefine(validateLaneResources)
@@ -148,7 +149,7 @@ const routingStateProjection = {hostId: 1, receivedAt: 1, resourceReservations: 
   'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1,
   'snapshot.resourceLifecycle.schemaVersion': 1, 'snapshot.resourceLifecycle.subjects': 1, 'snapshot.resources': 1,
   'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
-  'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
+  'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.activity': 1, 'snapshot.lanes.resources': 1,
   'snapshot.lanes.glasses': 1, _id: 0} as const
 const routineAvailability = z
   .object({

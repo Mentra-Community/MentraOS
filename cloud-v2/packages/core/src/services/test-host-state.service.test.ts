@@ -13,6 +13,9 @@ import {isDeepStrictEqual} from 'node:util'
 import {randomUUID} from 'node:crypto'
 import {LaneControlsService} from './lane-controls.service'
 import {LaneRestorationService} from './lane-restoration.service'
+import {testFrameworkBinding} from '../testing/framework-fixtures'
+import {evaluateRoutineLaneReadiness} from './routine-lane-eligibility'
+import type {RoutingTestHostState} from './test-host-state.service'
 
 test('run progress lookup selects only one lane snapshot and uses a bounded consistent read', async () => {
   const selections: unknown[] = [], settings: unknown[] = [], filters: unknown[] = [];
@@ -80,7 +83,7 @@ test('routing reads only fresh current offers and preserves permission and physi
       'snapshot.resourceReservations.resourceReadiness': 1, 'snapshot.observedAt': 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
       'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle.schemaVersion': 1, 'snapshot.resourceLifecycle.subjects': 1, 'snapshot.resources': 1,
       'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
-      'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
+      'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.activity': 1, 'snapshot.lanes.resources': 1,
       'snapshot.lanes.glasses': 1, _id: 0}]);
     expect(settings).toEqual([100, 'primary', 'majority']);
     expect(filters).toEqual([{hostId: {$in: ['mini']}}]);
@@ -101,6 +104,58 @@ test('routing reads only fresh current offers and preserves permission and physi
     observation.recipient.selectedBuild.headSha = build.headSha;
     current.hostId = 'different';
     await expect(service.list()).rejects.toThrow('Routing snapshot differs from enrolled host');
+  } finally {
+    find.mockRestore();
+    if (previous === undefined) delete process.env.TEST_HOST_TOKENS; else process.env.TEST_HOST_TOKENS = previous;
+  }
+})
+
+test('projected routing and the full snapshot use the same current lane custody checklist', async () => {
+  const now = Date.parse('2026-10-29T11:22:15Z'), at = new Date(now).toISOString();
+  const current: RoutingTestHostState = {hostId: 'air2', receivedAt: at, observedAt: at, frameworkBinding: testFrameworkBinding(),
+    lanes: [{id: 'android', platform: 'android', dispatchMode: 'automatic', state: 'out-of-service',
+      resources: [{id: 'phone', kind: 'phone', capabilities: []}]}]};
+  const requirements = {platform: 'android' as const, resources: [{kind: 'phone' as const, capabilities: []}]};
+  const include = (target: any, source: any, keys: string[]): any => {
+    if (source === undefined) return target;
+    if (!keys.length) return structuredClone(source);
+    if (Array.isArray(source)) return source.map((item, index) => include(target?.[index], item, keys));
+    const [key, ...rest] = keys, selected = include(target?.[key!], source?.[key!], rest);
+    return selected === undefined ? target : {...target, [key!]: selected};
+  };
+  const find = spyOn(TestHostStateModel, 'find').mockImplementation((() => {
+    let projection: Record<string, number> = {};
+    const query = {select(value: Record<string, number>) {projection = value; return query}, limit() {return query},
+      read() {return query}, readConcern() {return query}, async lean() {
+        const {receivedAt: _receivedAt, ...snapshot} = current;
+        const document = {hostId: current.hostId, receivedAt: new Date(now), snapshot};
+        let projected = {};
+        for (const [path, selected] of Object.entries(projection)) if (selected === 1)
+          projected = include(projected, document, path.split('.'));
+        return [projected];
+      }};
+    return query;
+  }) as never);
+  const previous = process.env.TEST_HOST_TOKENS;
+  process.env.TEST_HOST_TOKENS = JSON.stringify({air2: 't'.repeat(32)});
+  try {
+    const service = new TestHostStateService();
+    for (const owner of [undefined, {id: 'stopped-fixer', kind: 'fixer' as const},
+      {id: 'original-run', kind: 'run' as const, requestId: 'original-run'}, {id: 'authoring-owner', kind: 'authoring' as const}]) {
+      if (owner) current.lanes[0]!.activity = {generation: 1294, owner};
+      else delete current.lanes[0]!.activity;
+      const [offered] = await service.list();
+      expect(offered!.lanes[0]!.activity).toEqual(current.lanes[0]!.activity);
+      const context = {now, binding: current.frameworkBinding!};
+      const full = evaluateRoutineLaneReadiness(requirements, current, current.lanes[0]!, context, now);
+      const routing = evaluateRoutineLaneReadiness(requirements, offered!, offered!.lanes[0]!, context, now);
+      expect(routing).toEqual(full);
+      expect(routing.conditions.find(condition => condition.id === 'idle')?.status).toBe(owner ? 'blocked' : 'match');
+      expect(Boolean(routineJobRouting(requirements, [offered!], now, undefined, undefined, true,
+        {requestId: 'queued-original', inputSha256: 'a'.repeat(64)}).waitingReason)).toBe(Boolean(owner));
+    }
+    current.lanes[0]!.activity = {generation: 1294, owner: {id: 'other-owner', kind: 'run', requestId: 'wrong-run'}};
+    await expect(service.list()).rejects.toThrow('Lane run reference must identify its actual run owner');
   } finally {
     find.mockRestore();
     if (previous === undefined) delete process.env.TEST_HOST_TOKENS; else process.env.TEST_HOST_TOKENS = previous;
