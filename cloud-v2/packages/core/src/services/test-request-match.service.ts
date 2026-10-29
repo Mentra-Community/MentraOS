@@ -44,19 +44,15 @@ export function testRequestMatchReport(row: StoredRoutineJob, hosts: RoutingTest
     })
     const resources = current.resources.map(value => {
       const subject = host.resourceLifecycle?.subjects.find(subject => subject.subject.id === value.resourceId),
-        ref = lane.resources.find(ref => ref.id === value.resourceId),
-        claims = (host.authorityReservations ?? []).filter(claim => isExclusiveHostReservation(claim) ? claim.resourceId === value.resourceId :
-          ref?.kind === 'recorder' && claim.hostId === host.hostId && claim.laneId === lane.id)
+        claims = (host.authorityReservations ?? []).filter(isExclusiveHostReservation).filter(claim => claim.resourceId === value.resourceId)
       return {...value, ...(subject ? {authorityHostId: subject.subject.authorityHostId,
         ...(subject.owner ? {owner: subject.owner} : {}), ...(subject.idle.report ? {physicalReport: subject.idle.report} : {})} : {}),
         conditions: [...value.conditions, ...claims.map(claim => condition(`claim:${claim.id}`, 'ownership', 'Current authority claim',
-          isExclusiveHostReservation(claim) ? claim.owner.kind === 'run' && claim.owner.id === original.requestId &&
+          claim.owner.kind === 'run' && claim.owner.id === original.requestId &&
             claim.origin?.kind === 'fleet' && claim.origin.fleetInputSha256 === original.inputSha256 && claim.inputSha256 === original.inputSha256 &&
-            claim.borrowerHostId === host.hostId && claim.laneId === lane.id && claim.operationId === `run:${original.requestId}` ? 'match' : 'blocked' :
-            claim.requestId === original.requestId && claim.fleetInputSha256 === original.inputSha256 ? 'match' : 'blocked',
-          'Exact original claim only; atomic custody validation remains authoritative', isExclusiveHostReservation(claim) ?
-            `${claim.id}; ${claim.owner.kind}:${claim.owner.id}; authority ${claim.authorityHostId}; borrower ${claim.borrowerHostId}/${claim.laneId}` :
-            `${claim.id}; run:${claim.requestId}; ${claim.hostId}/${claim.laneId}; pool ${claim.poolId}`))]}
+            claim.borrowerHostId === host.hostId && claim.laneId === lane.id && claim.operationId === `run:${original.requestId}` ? 'match' : 'blocked',
+          'Exact original claim only; atomic custody validation remains authoritative',
+            `${claim.id}; ${claim.owner.kind}:${claim.owner.id}; authority ${claim.authorityHostId}; borrower ${claim.borrowerHostId}/${claim.laneId}`))]}
     })
     const all = [...current.conditions, ...current.resources.flatMap(resource => resource.conditions)],
       status: MatchStatus = current.ready ? 'match' : all.some(condition => condition.status === 'blocked') ? 'blocked' : 'unknown'

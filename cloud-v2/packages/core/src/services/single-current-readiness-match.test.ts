@@ -143,11 +143,21 @@ test('failed current physical condition skips that lane and reserves an availabl
     expect(f.probes).not.toHaveBeenCalled()
   } finally {f.close()}
 })
-for (const refusal of ['foreign-byte-claim', 'unknown-check', 'missing-observation', 'cancelled', 'expired', 'routine-api', 'explicit-framework', 'changed-target'] as const) {
+test('an idle lane with a one-byte quantitative claim remains selectable without releasing that claim', async () => {
+  const f = serviceFixture()
+  f.host.authorityReservations = [{id: 'a316f981-e1bc-4144-a7d5-d3cb048d30e2', requestId: 'foreign',
+    fleetInputSha256: 'f'.repeat(64), hostId: f.host.hostId, laneId: f.host.lanes[0]!.id, poolId: 'disk', minimumAvailableBytes: 1, reservedAt: new Date(now).toISOString()}]
+  const claims = structuredClone(f.host.authorityReservations)
+  try {
+    expect(routineResourcesAvailable(authority(f.host), f.row, f.host.lanes[0]!.id, now)).toBe(true)
+    expect(testRequestMatchReport(f.row, f.hosts, now).lanes[0]?.candidateMatch).toBe('match')
+    expect((await f.service.preparation(f.row.requestId)).waitingReason).toBeUndefined()
+    expect(f.reservations).toBe(1); expect(f.host.authorityReservations).toEqual(claims); expect(f.probes).not.toHaveBeenCalled()
+  } finally {f.close()}
+})
+for (const refusal of ['unknown-check', 'missing-observation', 'cancelled', 'expired', 'routine-api', 'explicit-framework', 'changed-target'] as const) {
   test(`single current match preserves ${refusal} refusal without qualification or allocation`, async () => {
     const f = serviceFixture()
-    if (refusal === 'foreign-byte-claim') f.host.authorityReservations = [{id: 'a316f981-e1bc-4144-a7d5-d3cb048d30e2', requestId: 'foreign',
-      fleetInputSha256: 'f'.repeat(64), hostId: f.host.hostId, laneId: f.host.lanes[0]!.id, poolId: 'disk', minimumAvailableBytes: 1, reservedAt: new Date(now).toISOString()}]
     if (refusal === 'unknown-check') {f.host.resourceLifecycle!.subjects[0]!.idle.outcome = 'unknown'; f.host.resourceLifecycle!.subjects[0]!.status = 'unknown'}
     if (refusal === 'missing-observation') f.host.resourceLifecycle!.subjects = []
     if (refusal === 'routine-api') f.host.frameworkBinding!.routineApiVersion = 14

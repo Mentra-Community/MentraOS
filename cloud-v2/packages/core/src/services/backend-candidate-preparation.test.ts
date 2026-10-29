@@ -41,7 +41,7 @@ test(`${platform} complete original ${outcome} graph settles after later control
  const selected={...f.row,fleetCandidatePreparation:undefined,fleetCandidatePreparations:[{...pending,settlement:receipt}],
    fleetCandidateSelection:{hostId:host.hostId,laneId:pending.laneId,targetInputSha256:pending.targetInputSha256}};
  expect(qualifiedGraphCandidate(selected,host,pending.laneId,f.now,host.receivedAt,false)).toBeUndefined();
- expect(resourceLaneBlocker(host,pending.laneId,{requestId:f.row.requestId,inputSha256:f.row.fleetInputSha256!,hostId:host.hostId})?.code).toBe('lane-resource-owned');
+ expect(resourceLaneBlocker(host,pending.laneId,{requestId:f.row.requestId,inputSha256:f.row.fleetInputSha256!,hostId:host.hostId})).toBeUndefined();
  expect(host.authorityReservations).toEqual([foreign]);expect(f.row.fleetBinding).toBeUndefined();expect(f.bindWrites).toBe(0);
 });
 for(const change of ['missing-return','duplicate-return','foreign-return','wrong-check-operation','future-return','check-before-original',

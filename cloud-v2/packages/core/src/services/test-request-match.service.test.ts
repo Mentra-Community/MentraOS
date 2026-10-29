@@ -76,17 +76,17 @@ test('per-lane routing keeps required same-host dependency offers from other lan
   expect(report.lanes[0]?.candidateMatch).toBe('match'); expect(report.lanes[1]?.candidateMatch).toBe('blocked')
   expect(report.summary.candidateLanes).toBe(1)
 })
-test('current foreign byte ownership is named while exact original ownership is preserved', () => {
+test('quantitative byte claims do not masquerade as exclusive ownership', () => {
   const {row, host} = fixture()
   host.authorityReservations = [{id: 'ec0501bc-105e-4e54-9f25-3f3cec0c0001', requestId: 'foreign-original', hostId: host.hostId, laneId: host.lanes[0]!.id,
     poolId: 'disk', fleetInputSha256: 'f'.repeat(64), reservedAt: new Date(now).toISOString(), minimumAvailableBytes: 1}]
   const before = structuredClone(host)
   const report = testRequestMatchReport(row, [host], now)
-  expect(report.lanes[0]?.candidateMatch).toBe('blocked')
-  expect(report.lanes[0]?.resources[2]?.conditions.find(value => value.id.startsWith('claim:'))).toMatchObject({status: 'blocked', observed: expect.stringContaining('run:foreign-original')})
+  expect(report.lanes[0]?.candidateMatch).toBe('match')
+  expect(report.lanes[0]?.resources[2]?.conditions.some(value => value.id.startsWith('claim:'))).toBe(false)
   expect(host).toEqual(before)
   host.authorityReservations[0] = {...host.authorityReservations[0]!, requestId: row.requestId, fleetInputSha256: row.fleetInputSha256!} as never
-  expect(testRequestMatchReport(row, [host], now).lanes[0]?.resources[2]?.conditions.find(value => value.id.startsWith('claim:'))?.status).toBe('match')
+  expect(testRequestMatchReport(row, [host], now).lanes[0]?.candidateMatch).toBe('match')
 })
 test('source, stale physical observation and explicit target are separate refusals', () => {
   const {row, host} = fixture()

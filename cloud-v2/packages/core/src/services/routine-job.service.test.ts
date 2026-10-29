@@ -497,14 +497,14 @@ test('bind checklist separates a changed post-reservation lane while retaining o
 test('bind checklist reuses the exact resource blocker rather than treating own claims as unavailable', async () => {
   for (const foreign of [false, true]) {
     const f = fixture(), prepared = await f.prepare(), host = await (f.service as any).hosts.get('mini');
-    host.authorityReservations = [{...f.row!.fleetResourceReservation!, ...(foreign ? {requestId: 'foreign-original', fleetInputSha256: 'f'.repeat(64)} : {})}];
+    host.authorityReservations = foreign ? [{kind:'exclusive',id:'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',resourceId:f.lane.resources[0]!.id,authorityHostId:'mini',borrowerHostId:'mini',laneId:'android',operationId:'run:foreign-original',intentSha256:'a'.repeat(64),inputSha256:'f'.repeat(64),owner:{kind:'run',id:'foreign-original'},controllerIncarnation:'mini-process',controllerGeneration:1,borrowerSequence:1,reservedAt:new Date().toISOString()}] : [{...f.row!.fleetResourceReservation!}];
     f.offer([host]);
     const result = await f.service.bind(selection.requestId, 'mini', {inputSha256: prepared.inputSha256, laneId: f.lane.id,
       descriptorRevision: f.lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'}).catch(error => error);
     if (foreign) {
       expect(result.diagnostics.conditions.find((condition: {status: string}) => condition.status === 'failed'))
-        .toMatchObject({id: 'resource-state', observed: {code: 'lane-resource-owned', laneId: 'android'}});
-      expect(f.row!.fleetBinding).toBeUndefined(); expect(host.authorityReservations[0].requestId).toBe('foreign-original');
+        .toMatchObject({id: 'resource-state', observed: {code: 'resource-owned', resourceId: f.lane.resources[0]!.id}});
+      expect(f.row!.fleetBinding).toBeUndefined(); expect(host.authorityReservations[0].owner.id).toBe('foreign-original');
     } else {expect(result.execute).toBe(true); expect(f.row!.fleetBinding?.hostId).toBe('mini');}
   }
 });
@@ -1508,14 +1508,14 @@ test('an aged unchanged baseline during the final CAS response preserves custody
   }finally{resourceReservationRepository.replace=replace;mock.restore()}
  });
 });
-test('ordinary Mac assignment refuses a foreign same-lane recorder claim before local idle status advances',async()=>{
+test('ordinary Mac assignment preserves a foreign same-lane byte claim without making it a lane mutex',async()=>{
  await withLocalResources(async(f,hosts)=>{
   const prepared=await f.prepare(),target=(prepared as unknown as {resourceTarget:{hostId:string;laneId:string}}).resourceTarget,h=hosts.get(target.hostId),row=structuredClone(f.row!),own=structuredClone(h.resourceReservations[0]);
   row.fleetSelection.platform='ios-on-mac';row.fleetPreparation!.requirements.platform='ios-on-mac';f.restore(row);h.snapshot.lanes[0].platform='ios-on-mac';
   h.resourceReservations.push({...own,id:'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',requestId:'foreign-mac-original',fleetInputSha256:'c'.repeat(64)});const claims=structuredClone(h.resourceReservations);
   expect(h.snapshot.lanes[0].state).toBe('idle');expect(h.snapshot.resourceLifecycle.subjects.every((subject:any)=>subject.status==='idle')).toBe(true);
-  expect(await routineJobRepository.bind(row.requestId,row.fleetInputSha256!,{jobId:row.requestId,requestId:row.requestId,hostId:h.hostId,laneId:own.laneId,descriptorRevision:h.snapshot.lanes[0].descriptorRevision,actionsRunId:'10',actionsJobId:'20',boundAt:h.receivedAt.toISOString()}, {},h.receivedAt)).toBeNull();
-  expect(f.row!.fleetBinding).toBeUndefined();expect(h.resourceReservations).toEqual(claims);
+  expect(await routineJobRepository.bind(row.requestId,row.fleetInputSha256!,{jobId:row.requestId,requestId:row.requestId,hostId:h.hostId,laneId:own.laneId,descriptorRevision:h.snapshot.lanes[0].descriptorRevision,actionsRunId:'10',actionsJobId:'20',boundAt:h.receivedAt.toISOString()}, {},h.receivedAt)).toBeDefined();
+  expect(f.row!.fleetBinding).toBeDefined();expect(h.resourceReservations).toEqual(claims);
  });
 });
 test('an ordinary claim on another Mac lane sharing the disk does not prevent this lane assignment',async()=>{
@@ -1541,6 +1541,28 @@ async function withSelectedMacReservation(body: (f: ReturnType<typeof fixture>, 
   expect(f.row!.fleetResourceAdmission!.dependencies).toEqual([]);await body(f,h,counters);
  });
 }
+for(const condition of ['one-byte','insufficient-pool','exclusive-recorder','active-recorder'] as const)test(`Mac admission treats ${condition} as current capacity or actual custody`,async()=>{
+ await withSelectedMacReservation(async(f,h)=>{
+  const row=structuredClone(f.row!),own=structuredClone(h.resourceReservations[0]),recorder=h.snapshot.lanes[0].resources.find((r:any)=>r.kind==='recorder');
+  if(condition==='exclusive-recorder')h.resourceReservations.push({kind:'exclusive',id:'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',resourceId:recorder.id,
+   authorityHostId:h.hostId,borrowerHostId:h.hostId,laneId:own.laneId,operationId:'run:foreign',intentSha256:'c'.repeat(64),inputSha256:'d'.repeat(64),
+   owner:{id:'foreign',kind:'run'},controllerIncarnation:h.incarnation,controllerGeneration:h.incarnationGeneration,borrowerSequence:h.sequence,reservedAt:h.receivedAt.toISOString()});
+  else h.resourceReservations.push({...own,id:'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',requestId:'foreign',fleetInputSha256:'c'.repeat(64),
+   minimumAvailableBytes:condition==='insufficient-pool'?64*1024**3:1});
+  if(condition==='active-recorder'){
+   const subject=h.snapshot.resourceLifecycle.subjects.find((s:any)=>s.subject.id===recorder.id);
+   subject.status='active';subject.owner={id:'foreign-writer',kind:'run',generation:subject.generation,hostId:h.hostId,laneId:own.laneId};
+  }
+  const claims=structuredClone(h.resourceReservations),selected=await routineJobRepository.reserveResources!(row.requestId,row.fleetInputSha256!,h.hostId,own.laneId,h.receivedAt);
+  expect(Boolean(selected)).toBe(condition==='one-byte');expect(h.resourceReservations).toEqual(claims);
+  if(selected){
+   const binding={jobId:row.requestId,requestId:row.requestId,hostId:h.hostId,laneId:own.laneId,descriptorRevision:h.snapshot.lanes[0].descriptorRevision,actionsRunId:'10',actionsJobId:'20',boundAt:h.receivedAt.toISOString()};
+   expect((await routineJobRepository.bind(row.requestId,row.fleetInputSha256!,binding,{},h.receivedAt))?.fleetBinding).toEqual(binding);
+   expect(f.row!.fleetResourceReservation).toEqual(row.fleetResourceReservation);expect(f.row!.fleetResourceAdmission).toEqual(row.fleetResourceAdmission);
+   expect(h.resourceReservations).toEqual(claims);
+  }else expect(f.row!.fleetBinding).toBeUndefined();
+ });
+});
 for(const replacement of [false,true])test(`selected Mac byte claim ${replacement?'after controller replacement ':''}bypasses re-planning and a redundant host CAS but still atomically binds`,async()=>{
  await withSelectedMacReservation(async(f,h,counters)=>{
   if(replacement){h.incarnation=h.snapshot.incarnation='replacement-controller';h.incarnationGeneration=h.snapshot.incarnationGeneration=2;h.sequence=h.snapshot.sequence=2;}
@@ -1559,7 +1581,7 @@ for(const replacement of [false,true])test(`selected Mac byte claim ${replacemen
   } finally {replan.mockRestore();extraCas.mockRestore();bindCas.mockRestore()}
  });
 });
-for(const changed of ['stale-host','claim-id','claim-input','claim-pool','claim-bytes','missing-claim','foreign-lane-owner','unknown-pool','physical-failure','disk-shortage','staging-shortage','active-writer','admission-owner','admission-resources','exclusive-custody'] as const)test(`selected Mac claim ${changed} refuses without reallocation`,async()=>{
+for(const changed of ['stale-host','claim-id','claim-input','claim-pool','claim-bytes','missing-claim','unknown-pool','physical-failure','disk-shortage','staging-shortage','active-writer','admission-owner','admission-resources','exclusive-custody'] as const)test(`selected Mac claim ${changed} refuses without reallocation`,async()=>{
  await withSelectedMacReservation(async(f,h,counters)=>{
   const original=structuredClone(f.row!),at=h.receivedAt.getTime(),claim=h.resourceReservations[0],storage=h.snapshot.lanes[0].resources.find((resource:any)=>resource.kind==='recorder').storage;
   if(changed==='stale-host')h.receivedAt=new Date(at-120001);
@@ -1568,7 +1590,7 @@ for(const changed of ['stale-host','claim-id','claim-input','claim-pool','claim-
   if(changed==='claim-pool')claim.poolId='changed:disk:2';
   if(changed==='claim-bytes')claim.minimumAvailableBytes++;
   if(changed==='missing-claim')h.resourceReservations=[];
-  if(changed==='foreign-lane-owner'||changed==='unknown-pool')h.resourceReservations.push({...structuredClone(claim),id:'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',requestId:'unknown-foreign-original',fleetInputSha256:'f'.repeat(64),...(changed==='unknown-pool'?{laneId:'other-lane',poolId:'unknown:disk:2'}:{})});
+  if(changed==='unknown-pool')h.resourceReservations.push({...structuredClone(claim),id:'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',requestId:'unknown-foreign-original',fleetInputSha256:'f'.repeat(64),laneId:'other-lane',poolId:'unknown:disk:2'});
   if(changed==='physical-failure')unavailableLocal(h,'out-of-service','app');
   if(changed==='disk-shortage')storage.availableBytes=claim.minimumAvailableBytes-1;
   if(changed==='staging-shortage')storage.stagingBudgetBytes=1024**3-1;
@@ -1640,11 +1662,11 @@ test('routing skips known-empty recorder returns and reuses its unchanged host r
  });
 });
 
-test('an unchanged live recorder claim keeps custody without a second full host read',async()=>{
+test('actual current recorder work keeps custody without a second full host read',async()=>{
  await withLocalResources(async(f,hosts,_counters,pastRows)=>{
   for(const h of hosts.values()) {
    const at=h.receivedAt.toISOString(),claim={id:'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',requestId:`active-${h.hostId}`,fleetInputSha256:'c'.repeat(64),hostId:h.hostId,laneId:'android',poolId:`${h.hostId}:disk:1`,minimumAvailableBytes:3*1024**3,reservedAt:at};
-   h.resourceReservations=[claim];pastRows.set(claim.requestId,{requestId:claim.requestId,fleetInputSha256:claim.fleetInputSha256,state:'running'} as StoredRoutineJob);
+   h.resourceReservations=[claim];h.snapshot.lanes[0].state='running';h.snapshot.lanes[0].activity={generation:7,owner:{id:claim.requestId,kind:'run',requestId:claim.requestId}};pastRows.set(claim.requestId,{requestId:claim.requestId,fleetInputSha256:claim.fleetInputSha256,state:'running'} as StoredRoutineJob);
   }
   const originalClaims=[...hosts.values()].map(h=>structuredClone(h.resourceReservations));
   const serviceHosts=(f.service as unknown as {hosts:{list:()=>Promise<ReceivedTestHostState[]>}}).hosts;

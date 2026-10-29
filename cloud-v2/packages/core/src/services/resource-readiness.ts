@@ -27,10 +27,6 @@ export function resourceHostBlocker(host: ResourceReadinessHost, now: number): R
 
 export function resourceLaneBlocker(host: ResourceReadinessAuthority, laneId: string,
   original?: {requestId: string; inputSha256: string; hostId: string}) {
-  // Byte claims can precede the worker's local status update. Only this original
-  // may continue its same-lane claim; other lanes sharing the disk remain independent.
-  if (hostResourceReservationsSchema.parse(host.authorityReservations ?? []).some(claim => !isExclusiveHostReservation(claim) && claim.laneId === laneId &&
-    !(original && claim.requestId === original.requestId && claim.fleetInputSha256 === original.inputSha256 && claim.hostId === original.hostId))) return {code: 'lane-resource-owned' as const, laneId}
   const records = reconcileControls(z.array(z.union([laneControlRecordSchema, resourceControlRecordSchema])).max(100).parse(host.resourceControlRecords ?? []))
     .filter((row): row is LaneControlRecord => 'laneId' in row.command && row.command.laneId === laneId)
   const mode = records.flatMap(row => row.receipt?.result.status === 'accepted' && row.receipt.result.mode ? [row.receipt.result.mode] : []).at(-1)
