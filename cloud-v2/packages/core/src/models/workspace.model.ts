@@ -48,6 +48,8 @@ const WorkspaceSchema = new Schema(
     name: {type: String, required: true},
     status: {type: String, enum: WORKSPACE_STATUSES, default: "active", index: true},
     authorizationRevision: {type: Number, default: 0},
+    /** Staging reset IDs, including licenses whose first billing delivery has not arrived yet. */
+    retiredLicenseIds: {type: [String], default: undefined},
     createdByMentraUserId: {type: String, default: null},
     deletedAt: {type: Date, default: null},
     /**

@@ -23,6 +23,7 @@ export function licensesPath(query: string, cursor?: string): string {
 
 const ENDED_REASONS: Record<LicenseEndedReason, string> = {
   workspace_deleted: "workspace deleted",
+  admin_reset: "staging admin reset",
 };
 
 export interface LicenseState {

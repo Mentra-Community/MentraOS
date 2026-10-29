@@ -430,6 +430,28 @@ deletion from the change feed (`workspace.deleted`) and stops charging.
 
 ## Listing every license
 
+### Dev and staging support reset
+
+On dev or staging, an Organization Admin can use **Admin → Workspaces → Reset licenses & billing**.
+A short confirmation dialog names the workspace and offers Cancel or Reset; no reason or typed confirmation is required.
+`GET /api/admin/workspace-license-resets/:workspaceId` previews the workspace's license and assignment counts.
+`POST` to the same address takes `{confirmWorkspaceId}`. Both routes require an Organization Admin person
+and `CLOUD_CORE_ENVIRONMENT=dev` or `staging`; other deployments refuse them.
+
+Core asks the matching Store to cancel test subscriptions and expire unfinished checkouts before ending any licenses.
+The Store independently requires dev or staging and test payment mode. Core then ends licenses and releases
+their assignments transactionally, recording `workspace.licenses.reset`, the actor, and an administrative reset description. License records
+remain as `admin_reset` tombstones, and every returned billing ID is retired on the workspace, including IDs whose
+first delivery has not arrived. License writes check that retirement in their workspace transaction so delayed billing
+writes cannot restore access. Members, ownership, credentials,
+and the workspace remain intact, and new purchases are allowed. The admin action log also records reset requests,
+including attempts that fail partway through billing. A failed attempt may already have canceled some subscriptions;
+retrying safely finishes the action. If a new license arrives outside the canceled snapshot, cleanup refuses and asks
+for a retry rather than ending a subscription billing did not cancel.
+
+Deploy the Store's reset endpoint before enabling this Core/UI change. Missing or failed billing support never
+produces a successful local reset. No additional secrets or environment settings are required.
+
 An Organization Admin lists every license, with the workspace that holds it, in
 the admin portal's Licenses page, which reads `GET /api/admin/licenses?query=&cursor=`. It
 needs `organization.licenses.read`, which only an Organization Admin holds: an

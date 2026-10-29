@@ -134,11 +134,12 @@ export const SEAT_RELEASE_REASONS = [
   "account_deleted",
   "workspace_deleted",
   "license_ended",
+  "admin_reset",
 ] as const
 export type SeatReleaseReason = (typeof SEAT_RELEASE_REASONS)[number]
 
 /** Why a license ended, in `license.ended`'s `after.reason`: its workspace was deleted. */
-export const LICENSE_ENDED_REASONS = ["workspace_deleted"] as const
+export const LICENSE_ENDED_REASONS = ["workspace_deleted", "admin_reset"] as const
 export type LicenseEndedReason = (typeof LICENSE_ENDED_REASONS)[number]
 
 /** `error` of the 409 a license write older than the one Core has gets. The body's `revision` is Core's. */
