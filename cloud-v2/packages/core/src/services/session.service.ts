@@ -31,6 +31,7 @@ import {
   type FederatedIdentity,
 } from "@mentra/cloud-shared"
 import {RefreshTokenModel} from "../models/refresh-token.model"
+import {UserModel} from "../models/user.model"
 import {RevokedJtiModel} from "../models/revoked-jti.model"
 import {OemModel} from "../models/oem.model"
 import {EnterpriseOrgModel} from "../models/enterprise-org.model"
@@ -41,8 +42,14 @@ import {
   UnauthorizedClient,
   type TokenResponse,
 } from "../types/oauth.types"
-import {findOrCreateUser} from "./user.service"
+import {findOrCreateUser, isDeletedAccount, isDeletedAccountId} from "./user.service"
 import {isConfiguredOidcTenant, recordSeenJti, verifyTenantJwt} from "./oem.service"
+import {SUPABASE_ASYMMETRIC_ALGORITHMS, supabaseIssuer, supabaseJwksUrl} from "./signin/config"
+import {KeySetUnavailableError, verifyWithKeySet} from "./signin/key-sets"
+import {revokePortalSessionsForUser} from "./signin/browser-session.service"
+import {endIdentityProviderSessions} from "./signin/idp-revocation"
+import {oidcIssuer} from "./oidc/config"
+import {revokeProviderSessionsAndGrants} from "./oidc/mongo-adapter"
 import {
   MENTRA_ALG,
   ACCESS_TOKEN_KID,
@@ -106,7 +113,9 @@ const ACCOUNT_SUBJECT_TOKEN_TTL_SEC = 60
  *
  * Step-by-step matches design.md "Lifecycles / Issue session":
  *   1–5. Delegated to `resolveSubjectIdentity`.
- *   6.   findOrCreateUser by (tenantId, tenantUserId).
+ *   6.   findOrCreateUser by (tenantId, tenantUserId); a deleted account is
+ *        refused (`isDeletedAccount`). Core's account login and OAuth go
+ *        through here too.
  *   7–8. Mint access + refresh, persist refresh-token hash, return.
  */
 export async function createSession(args: {subjectToken: string}): Promise<TokenResponse> {
@@ -116,6 +125,7 @@ export async function createSession(args: {subjectToken: string}): Promise<Token
     tenantId: identity.tenantId,
     tenantUserId: identity.tenantUserId,
   })
+  if (isDeletedAccount(user)) throw new InvalidGrant("account is deleted")
 
   // Burn the subject token's jti BEFORE minting anything. The unique-index
   // insert makes exactly one concurrent presentation win; doing it first means
@@ -194,6 +204,8 @@ export async function refreshSession(args: {refreshToken: string}): Promise<Toke
   if (!oldDoc.sessionId || !oldDoc.mentraUserId || !oldDoc.tenantId) {
     throw new InvalidGrant("refresh_token session identity is incomplete")
   }
+  // Deletion revokes the account's refresh tokens; one that slipped past that is refused here.
+  if (await isDeletedAccountId(oldDoc.mentraUserId)) throw new InvalidGrant("account is deleted")
 
   // Mid-session revocation check. If the tenant's authority was terminated
   // after this session was issued, refuse to re-up. The tenant may be an OEM
@@ -357,19 +369,37 @@ export async function revokeAllForOem(tenantId: string): Promise<{deletedSession
 }
 
 /**
- * Revoke every refresh token for one user (logout-everywhere, and the
- * "password change/reset revokes other sessions" requirement). `exceptSessionId`
- * keeps the current session alive (e.g. logout-everywhere from the active app
- * without kicking itself). Deleting the refresh token means the session cannot
- * re-up; the access token dies at its natural expiry.
+ * Account-wide revocation (logout-everywhere, password change or reset,
+ * account deletion):
+ *  1. sets the person's `webSignInsRevokedAt`, so Core refuses their Core
+ *     access tokens and sign-ins from before it, and the sign-in page's
+ *     hand-off refuses Supabase sessions that started before it (the Store's
+ *     next request for them fails);
+ *  2. revokes every phone refresh token. `exceptSessionId` keeps the current
+ *     phone session alive (e.g. logout-everywhere from the active app without
+ *     kicking itself). The access token dies at its natural expiry;
+ *  3. ends their portal sessions;
+ *  4. ends their sessions and grants at Core's sign-in server: the sign-in
+ *     site asks for credentials again and every client's next refresh fails;
+ *  5. on hosted Core, ends every Supabase session of the person (best effort,
+ *     never blocking: see endIdentityProviderSessions).
+ * Step 1 comes first so the web side is closed before anything else runs.
  */
 export async function revokeAllSessionsForUser(args: {
   mentraUserId: string
   exceptSessionId?: string
 }): Promise<{deletedSessions: number}> {
+  const user = await UserModel.findOneAndUpdate(
+    {mentraUserId: args.mentraUserId},
+    {$set: {webSignInsRevokedAt: new Date()}},
+    {new: true},
+  ).lean()
   const filter: Record<string, unknown> = {mentraUserId: args.mentraUserId}
   if (args.exceptSessionId) filter.sessionId = {$ne: args.exceptSessionId}
   const result = await RefreshTokenModel.deleteMany(filter)
+  await revokePortalSessionsForUser(args.mentraUserId, "account_revocation")
+  await revokeProviderSessionsAndGrants(args.mentraUserId)
+  if (user) await endIdentityProviderSessions(user)
   return {deletedSessions: result.deletedCount ?? 0}
 }
 
@@ -421,6 +451,15 @@ export async function verifyAccessToken(token: string): Promise<VerifiedAccessTo
  * access token plus the requested packageName is sufficient, and the on-device
  * Runtime enforces that a bundle can only request its own packageName.
  *
+ * `email` is the caller-resolved verified account email. When present it is
+ * stamped as `email` + `email_verified: true` for every miniapp audience; when
+ * absent (OEM users, unverified or unavailable) both claims are omitted.
+ *
+ * `features` are the licensed feature keys the person holds for this package
+ * (`services/licenses/features.service.ts`). They are stamped as the
+ * `features` claim only when there is at least one; a miniapp backend reads it
+ * with `hasFeature` from `@mentra/auth`.
+ *
  * TTL defaults to 1h and is env-overridable via MENTRA_MINIAPP_TOKEN_TTL_SEC
  * so tests can shorten it. Returns the token and its absolute expiry as Unix
  * seconds (what the client caches against).
@@ -429,12 +468,18 @@ export async function issueMiniappToken(args: {
   mentraUserId: string
   tenantId: string
   packageName: string
+  email?: string | null
+  features?: string[]
 }): Promise<{token: string; expiresAt: number}> {
   const {privateKey} = await getMiniappKeys()
   const ttlSec = miniappTokenTtlSec()
   const expiresAt = Math.floor(Date.now() / 1000) + ttlSec
 
-  const token = await new jose.SignJWT({tenantId: args.tenantId})
+  const token = await new jose.SignJWT({
+    tenantId: args.tenantId,
+    ...(args.email ? {email: args.email, email_verified: true} : {}),
+    ...(args.features?.length ? {features: args.features} : {}),
+  })
     // The `kid` points the developer backend at the miniapp-token public key.
     .setProtectedHeader({alg: MENTRA_ALG, kid: MINIAPP_TOKEN_KID})
     .setIssuer(coreIssuer())
@@ -495,10 +540,12 @@ function miniappTokenTtlSec(): number {
  * Resolve a subject token to an (tenantId, tenantUserId) identity. All three accepted
  * subject tokens arrive as a JWT under the one RFC 8693 JWT token-type URN, so
  * we dispatch on the token itself:
- *   - HS* (symmetric) tokens are Mentra-internal. A Supabase session (its `iss`
- *     points at Supabase) verifies with SUPABASE_JWT_SECRET; anything else
- *     symmetric is treated as a legacy mentra-core token (MENTRA_CORE_JWT_SECRET).
- *     Both resolve to tenantId "mentra".
+ *   - A Supabase session (its `iss` points at Supabase) resolves to tenantId
+ *     "mentra". It is verified by its header `alg`: HS256 with
+ *     SUPABASE_JWT_SECRET, or RS256 / ES256 with the project's key set, so the
+ *     project can switch to asymmetric signing keys with no Core change.
+ *   - Any other HS* (symmetric) token is a legacy mentra-core token
+ *     (MENTRA_CORE_JWT_SECRET), also tenantId "mentra".
  *   - Everything else is an OEM-signed JWT, verified against that OEM's JWKS.
  */
 async function resolveSubjectIdentity(subjectToken: string): Promise<{
@@ -518,9 +565,15 @@ async function resolveSubjectIdentity(subjectToken: string): Promise<{
     throw new InvalidRequest("subject_token is not a parseable JWT")
   }
 
+  // Core's sign-in server issues tokens for websites and the CLI; they never become phone tokens.
+  if (iss && iss.replace(/\/+$/, "") === oidcIssuer()) {
+    throw new InvalidGrant("tokens from Core's sign-in server cannot be exchanged for a phone session")
+  }
+  if (looksLikeSupabase(iss)) {
+    return {tenantId: MENTRA_OEM_ID, tenantUserId: await verifySupabaseSubject(subjectToken, alg)}
+  }
   if (alg.startsWith("HS")) {
-    const secretEnv = looksLikeSupabase(iss) ? "SUPABASE_JWT_SECRET" : "MENTRA_CORE_JWT_SECRET"
-    const tenantUserId = await verifyHs256Subject(subjectToken, secretEnv)
+    const tenantUserId = await verifyHs256Subject(subjectToken, "MENTRA_CORE_JWT_SECRET")
     return {tenantId: MENTRA_OEM_ID, tenantUserId}
   }
 
@@ -543,8 +596,54 @@ async function resolveSubjectIdentity(subjectToken: string): Promise<{
 function looksLikeSupabase(iss: string | undefined): boolean {
   if (!iss) return false
   if (iss.includes("supabase.")) return true
+  const configured = supabaseIssuer()
+  if (configured && iss.replace(/\/+$/, "") === configured) return true
   const supabaseUrl = process.env.SUPABASE_URL
   return !!supabaseUrl && iss.startsWith(supabaseUrl)
+}
+
+/**
+ * Verify a Supabase session token by its header `alg` and return its `sub`:
+ *   - HS256: the project's JWT secret (SUPABASE_JWT_SECRET), as Supabase signs today;
+ *   - RS256 / ES256: the project's key set (CLOUD_CORE_SUPABASE_JWKS_URL, by
+ *     default `${SUPABASE_URL}/auth/v1/.well-known/jwks.json`), with `aud`
+ *     "authenticated". An unknown `kid` refreshes the set once. Keys come only
+ *     from that set, never from URLs in the token header;
+ *   - any other `alg`: refused.
+ *
+ * Tokens Supabase issued to a web client (they carry `client_id`) are refused:
+ * a website's or the CLI's sign-in never becomes a phone session.
+ */
+async function verifySupabaseSubject(token: string, alg: string): Promise<string> {
+  let payload: jose.JWTPayload
+  if (alg === "HS256") {
+    const key = new TextEncoder().encode(requireEnv("SUPABASE_JWT_SECRET"))
+    try {
+      ;({payload} = await jose.jwtVerify(token, key, {algorithms: ["HS256"]}))
+    } catch (err) {
+      throw new InvalidGrant(`subject token verification failed: ${(err as Error).message}`)
+    }
+  } else if ((SUPABASE_ASYMMETRIC_ALGORITHMS as readonly string[]).includes(alg)) {
+    const jwksUrl = supabaseJwksUrl()
+    if (!jwksUrl) throw new InvalidGrant("asymmetric Supabase tokens are not configured")
+    try {
+      ;({payload} = await verifyWithKeySet(token, jwksUrl, {
+        algorithms: [...SUPABASE_ASYMMETRIC_ALGORITHMS],
+        audience: "authenticated",
+      }))
+    } catch (err) {
+      if (err instanceof KeySetUnavailableError) throw new OauthServerError("Supabase key set unavailable")
+      throw new InvalidGrant(`subject token verification failed: ${(err as Error).message}`)
+    }
+  } else {
+    throw new InvalidGrant(`subject token alg ${alg || "none"} is not accepted`)
+  }
+  if (payload.client_id !== undefined) {
+    throw new InvalidGrant("web sign-in tokens cannot be exchanged for a phone session")
+  }
+  const sub = typeof payload.sub === "string" ? payload.sub : ""
+  if (!sub) throw new InvalidGrant("subject token missing 'sub' claim")
+  return sub
 }
 
 /**

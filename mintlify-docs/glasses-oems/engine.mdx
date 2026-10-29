@@ -162,7 +162,7 @@ The current keys, their types, and defaults:
 | `preferred_mic` | enum | `"auto"` | `auto` \| `glasses` \| `phone` |
 | `lc3_frame_size` | enum (bytes) | `60` | `20` \| `40` \| `60` |
 | `sensing_enabled` | boolean | `true` | onboard sensors |
-| `voice_activity_detection_enabled` | boolean | `true` | voice-activity detection |
+| `voice_activity_detection_enabled` | boolean | `false` | voice-activity detection; when `false`, glasses mic audio streams continuously |
 | `power_saving_mode` | boolean | `false` | low-power mode |
 | `offline_mode` | boolean | `false` | offline operation |
 | `gallery_mode` | boolean | `true` | capture-to-gallery enabled — when `true`, a camera-button press takes a photo to the on-device gallery. The Mentra App auto-manages this (enabled when the camera app is running or no other app is claiming button events); set it directly only if your host has no equivalent button-routing logic |
@@ -349,7 +349,20 @@ engine.miniapps.clearForeground()
 await engine.miniapps.stopAll()
 await engine.miniapps.install(url, opts?)
 await engine.miniapps.uninstall(packageName, version?)
+await engine.miniapps.invokeAction(packageName, actionId, params?, timeoutMs?) // host-only actions included
+const offPrompt = engine.miniapps.onUpdatePrompt((prompt) => {
+  // Show "Update {prompt.displayName}?" and answer it.
+  prompt.answer(userChoseUpdate ? "update" : "not_now")
+})
+const offFailure = engine.miniapps.onUpdateFailed(({displayName, installedVersion}) => { … })
+const offDeferred = engine.miniapps.onDeferredUpdateReady((packageName) => { … }) // run Store maintenance again
 ```
+
+`onUpdatePrompt` is how the host renders the question before a bundled Store's
+update closes a running miniapp. The engine decides when a prompt may appear:
+only while the app is in the foreground, one at a time, and at most once a day
+per miniapp. If the update fails after the user accepts, the engine starts the
+installed version again and calls `onUpdateFailed`.
 
 ## `engine.stores.*` — escape hatch (not the OEM contract)
 

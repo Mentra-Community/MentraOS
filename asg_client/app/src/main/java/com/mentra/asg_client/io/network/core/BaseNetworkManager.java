@@ -17,6 +17,7 @@ import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.NetworkUtils;
+import com.mentra.asg_client.io.network.interfaces.HotspotState;
 import com.mentra.asg_client.io.network.interfaces.INetworkController;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
@@ -183,10 +184,16 @@ public abstract class BaseNetworkManager implements INetworkController {
     protected void notifyHotspotStateChanged(boolean isEnabled) {
         Log.d(TAG, "Hotspot state changed: " + (isEnabled ? "enabled" : "disabled"));
         this.isHotspotEnabled = isEnabled;
-        HotspotNetworkUtils.notifyHotspotStateChanged(isEnabled);
+        publishHotspotStateChanged(new HotspotState(
+                isEnabled, currentHotspotSsid, currentHotspotPassword, currentHotspotGatewayIp));
+    }
+
+    /** Publish a committed state without changing it; subclasses may serialize listener delivery. */
+    protected void publishHotspotStateChanged(HotspotState state) {
+        HotspotNetworkUtils.notifyHotspotStateChanged(state.enabled());
         for (NetworkStateListener listener : listeners) {
             try {
-                listener.onHotspotStateChanged(isEnabled);
+                listener.onHotspotStateChanged(state);
             } catch (Exception e) {
                 Log.e(TAG, "Error notifying listener", e);
             }
@@ -834,6 +841,7 @@ public abstract class BaseNetworkManager implements INetworkController {
     protected final void onHotspotStarted(String ssid, String password, String gatewayIp) {
         boolean wasEnabled = isHotspotEnabled;
         updateHotspotState(true, ssid, password, gatewayIp);
+        onHotspotActiveChanged(true);
         startInactivityMonitoring();
         if (!wasEnabled) {
             notifyHotspotStateChanged(true);
@@ -845,10 +853,38 @@ public abstract class BaseNetworkManager implements INetworkController {
         boolean wasEnabled = isHotspotEnabled;
         stopInactivityMonitoring();
         clearHotspotState();
+        onHotspotActiveChanged(false);
         if (wasEnabled) {
             notifyHotspotStateChanged(false);
         }
     }
+
+    /**
+     * Called on every hotspot start and stop, including repeats. Implementations must be
+     * idempotent.
+     */
+    protected void onHotspotActiveChanged(boolean active) {}
+
+    @Override
+    public void stopHotspotAndAwaitDisabled() throws Exception {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            throw new IllegalStateException("Hotspot cleanup must run on the OTA worker");
+        }
+        stopHotspot();
+        long deadline = SystemClock.elapsedRealtime() + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS;
+        while (isWifiTetheringActive()) {
+            if (SystemClock.elapsedRealtime() >= deadline) {
+                throw new java.io.IOException("Hotspot did not stop before APK replacement");
+            }
+            Thread.sleep(AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
+        }
+    }
+
+    @Override
+    public void abandonHotspotReplacement() {}
+
+    @Override
+    public void retainHotspotReplacement() {}
 
     /** Register broadcast receiver for tethering state changes */
     private void registerTetheringStateReceiver() {

@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@craftzdog/react-native-buffer": "^6.1.2",
-    "@dr.pogodin/react-native-fs": "^2.37.0",
+    "@dr.pogodin/react-native-fs": ">=2.37.0 <2.41.0",
     "@mentra/acs-meeting": "workspace:*",
     "@mentra/bluetooth-sdk": "workspace:*",
     "@mentra/cloud-client": "workspace:*",
@@ -24,6 +24,7 @@
     "axios": "^1.13.6",
     "expo": "~55.0.24",
     "expo-application": "~55.0.15",
+    "expo-asset": "~55.0.17",
     "expo-audio": "~55.0.14",
     "expo-battery": "^55.0.13",
     "expo-build-properties": "~55.0.14",

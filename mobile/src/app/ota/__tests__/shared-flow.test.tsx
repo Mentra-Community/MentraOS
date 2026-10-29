@@ -127,7 +127,7 @@ describe("MentraLiveOtaFlow", () => {
                   apps: {"com.mentra.asg_client": {versionCode: 301010001, versionName: "3.1.1"}},
                   bes_firmware: {version: "26.9.4.1", url: "https://ota.example/bes.bin"},
                 },
-        }) as Response,
+        } as Response),
     )
     beginOtaAutoChain("legacy-mtk", false, {fromVersion: "37.0", toVersion: "37.0", releaseVersion: null})
     const onFinished = jest.fn()
@@ -316,6 +316,62 @@ describe("MentraLiveOtaFlow", () => {
     unmount()
     expect(onFirmwareRestartingChange).toHaveBeenLastCalledWith(false, false)
   })
+
+  it.each([null, "wifi", "hotspot"] as const)(
+    "omits the transport header for %s when adopting device progress",
+    async (transport) => {
+      await ota.installSession.finish()
+      useGlassesStore.getState().setGlassesInfo({
+        connection: {state: "connected", fullyBooted: true},
+        buildNumber: "39",
+        hotspotOtaVersion: transport === "hotspot" ? 1 : 0,
+        wifi: transport === "wifi" ? {state: "connected", ssid: "test"} : {state: "disconnected"},
+      })
+      if (transport) {
+        ota.installSession.prepare({
+          hasCheckCompleted: true,
+          updateAvailable: true,
+          latestVersionInfo: null,
+          updates: ["apk"],
+          mtkPatch: null,
+          besVersion: null,
+          isApkDowngrade: false,
+          manifestBody: "{}",
+          releaseVersion: null,
+          updateInfo: null,
+          isRequired: true,
+        })
+      }
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "adopted-session",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "download",
+        stepPercent: 20,
+        overallPercent: 20,
+        status: "in_progress",
+      })
+      // The live connection can change after selection; it is not transport proof.
+      useGlassesStore.getState().setGlassesInfo({
+        wifi: transport === "wifi" ? {state: "disconnected"} : {state: "connected", ssid: "test"},
+      })
+      const screen = render(
+        <MentraLiveOtaFlow
+          initialPage="progress"
+          initializeRuntime={false}
+          onFinished={jest.fn()}
+          onOpenWifiSetup={jest.fn()}
+        />,
+      )
+      expect(
+        screen.getByText(transport === "hotspot" ? "Transferring update to glasses…" : "Downloading…"),
+      ).toBeDefined()
+      expect(screen.queryByTestId("ota.transport.wifi")).toBeNull()
+      expect(screen.queryByTestId("ota.transport.hotspot")).toBeNull()
+      screen.unmount()
+    },
+  )
 
   it("presents a firmware reboot as active work with no completion action", () => {
     useGlassesStore.getState().setGlassesInfo({

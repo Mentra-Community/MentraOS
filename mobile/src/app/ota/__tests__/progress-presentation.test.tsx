@@ -1,4 +1,5 @@
 import React from "react"
+import {Platform} from "react-native"
 import {render} from "@testing-library/react-native"
 
 import {MentraLiveOtaFlow} from "../../../../modules/engine/src/react/MentraLiveOtaFlow"
@@ -88,6 +89,22 @@ test.each([
   expect(screen.queryByText("File 1 of 1 · Glasses software")).toBeNull()
 })
 
+test("asks iOS users to check phone Wi-Fi while joining, which Android checks before the update", () => {
+  const os = Object.getOwnPropertyDescriptor(Platform, "OS")!
+  state.hotspotPhase = "joining_hotspot"
+  try {
+    Object.defineProperty(Platform, "OS", {configurable: true, get: () => "ios"})
+    const screen = render(flow())
+    expect(screen.getByText("Make sure your phone’s Wi-Fi is on.")).toBeDefined()
+
+    Object.defineProperty(Platform, "OS", {configurable: true, get: () => "android"})
+    screen.rerender(flow())
+    expect(screen.queryByText("Make sure your phone’s Wi-Fi is on.")).toBeNull()
+  } finally {
+    Object.defineProperty(Platform, "OS", os)
+  }
+})
+
 test.each([
   ["apk", "Glasses software"],
   ["mtk", "System firmware"],
@@ -124,4 +141,30 @@ test("keeps APK-only installation indeterminate", () => {
 test("keeps the direct Wi-Fi download label", () => {
   state = {...state, screen: "updating", transport: "wifi", phase: "download", step: "apk", progress: 50}
   expect(render(flow()).getByText("Downloading…")).toBeDefined()
+})
+
+test.each(["starting", "preparing_hotspot", "updating", "restarting", "verifying", "complete", "failed"] as const)(
+  "omits the transport header during %s for either transport",
+  (screenName) => {
+    state = {...state, screen: screenName, transport: "hotspot", wifiConnected: true}
+    const screen = render(flow())
+    expect(screen.queryByText("Using glasses hotspot")).toBeNull()
+    expect(screen.queryByTestId("ota.transport.wifi")).toBeNull()
+
+    state = {...state, transport: "wifi", wifiConnected: false}
+    screen.rerender(flow())
+    expect(screen.queryByText("Using Wi-Fi")).toBeNull()
+    expect(screen.queryByTestId("ota.transport.hotspot")).toBeNull()
+  },
+)
+
+test("does not present a predicted or unknown transport as an active installation", () => {
+  state = {...state, screen: "update_available", transport: "wifi"}
+  const screen = render(flow())
+  expect(screen.queryByTestId("ota.transport.wifi")).toBeNull()
+
+  state = {...state, screen: "updating", transport: null}
+  screen.rerender(flow())
+  expect(screen.queryByText("Using Wi-Fi")).toBeNull()
+  expect(screen.queryByText("Using glasses hotspot")).toBeNull()
 })

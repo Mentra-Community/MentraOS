@@ -263,3 +263,43 @@ The component handles various error scenarios:
 - **Photo Editing**: Basic photo editing capabilities
 - **Sharing**: Share photos directly from the gallery
 - **Filters**: Filter photos by date, type, or other criteria
+
+## Video Seeking
+
+`AwesomeGalleryViewer` shares playback controls between Android and iOS.
+Slider seeks use `getVideoSeekTime` to stay at least 100 ms before the asset's
+reported duration (or zero for clips shorter than that). The native
+react-native-video bridges use floating-point seconds and millisecond seek
+positions, so seeking to the exact duration can round beyond the file's end.
+This inset applies only to explicit seeks; normal playback still reaches the end.
+
+Scrubbing temporarily pauses playback without changing the user's play/pause
+choice. Releasing the slider ends the scrub even if native `onSeek` never fires:
+iOS skips that callback when the requested position already matches the player.
+Only activation changes start playback automatically. An explicit end state
+controls replay, rather than treating a paused position near the end as finished.
+Both native players send a final progress update before the end event. Completion
+also checks the latest position, allowing up to 50 ms for frame/clock timing.
+Android forwards its playhead rather than forcing it to the duration. The tolerance
+is smaller than the seek inset and capped at half the duration for very short
+clips. Explicit seeks also retain their target until a matching native `onSeek`,
+progress update, or position read confirms it. Until then, queued progress and
+end events cannot restore the finished state after a backward seek or replay.
+The native player stays paused until the seek settles, preserving play/pause
+intent while keeping the position stable for unchanged-position seeks that emit
+no `onSeek`. The slider and gallery swipe lock still release immediately. A
+failed optional position read releases the native pause rather than stranding it. Responses for superseded seeks
+are ignored. Refs preserve ordering even when React batches events.
+Native decoding errors remain visible; these controls do not repair damaged media.
+
+Run the focused regression suites from `mobile/`:
+
+```sh
+bun run test --runInBand --runTestsByPath src/components/glasses/Gallery/AwesomeGalleryViewer.test.tsx src/components/glasses/Gallery/videoSeek.test.ts
+```
+
+On both platforms, also test dragging to the right edge while playing and paused,
+repeated seeks, an unchanged-position seek, natural completion, replay, seeking
+backward after completion, and leaving/reopening the video. Include a long clip
+with a fractional duration and a short clip. Decoder behavior requires real-device
+validation; component tests mock the native player.

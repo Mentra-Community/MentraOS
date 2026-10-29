@@ -9,7 +9,14 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
 import {decideDevOpenRoute, engine} from "@mentra/engine"
-import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
+import {
+  assertDevBuildAllowed,
+  installMiniappFromJsonUrl,
+  normalizeManifestPermissions,
+  registerDevApp,
+  type DevAppRecord,
+} from "@mentra/engine-host-internal"
+import {showDevBuildError} from "@/utils/devMiniappAlerts"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@mentra/engine"
@@ -26,6 +33,77 @@ export default function MiniappDeveloperScannerScreen() {
     }
   }, [permission, requestPermission])
 
+  // Every scan path opens a miniapp only once each required permission its
+  // miniapp.json declares is granted, the gate a home-tile tap applies. Asks for
+  // the missing ones; after a denial, names them and offers Settings. Every way
+  // out without opening runs onDecline, so the scanner never stays frozen.
+  const grantRequiredPermissions = async (app: AppletInterface, onDecline: () => void): Promise<boolean> => {
+    const result = await askPermissionsUI(app, theme)
+    if (result === 1) return true
+    if (result === 0) {
+      const stillNeeded = await checkPermissionsUI(app)
+      showAlert(
+        translate("debugSettings:miniappScanPermissionsRequiredTitle"),
+        translate("debugSettings:miniappScanPermissionsRequiredBody", {
+          name: app.name,
+          permissions: stillNeeded.map((p) => PERMISSION_CONFIG[p]?.name ?? p).join(", "),
+        }),
+        [
+          {
+            text: translate("debugSettings:miniappScanOpenSettings"),
+            onPress: () => {
+              onDecline()
+              void Linking.openSettings()
+            },
+          },
+          {text: translate("common:cancel"), onPress: onDecline, style: "cancel"},
+        ],
+      )
+    } else {
+      onDecline()
+    }
+    return false
+  }
+
+  // Open a freshly installed release the way a home-tile tap does, so the
+  // developer lands in the miniapp instead of backing out of Settings to find it.
+  const openInstalledRelease = async ({
+    packageName,
+    name,
+    version,
+  }: {
+    packageName: string
+    name: string
+    version: string
+  }) => {
+    const showOnHomeScreen = () =>
+      showAlert(
+        translate("debugSettings:miniappScanInstalledTitle"),
+        translate("debugSettings:miniappScanInstalledBody", {name, version}),
+        [{text: "OK", onPress: () => goBack()}],
+      )
+    let leftScanner = false
+    try {
+      await engine.miniapps.refresh()
+      const app = engine.miniapps.list().find((candidate) => candidate.packageName === packageName)
+      if (!app) return showOnHomeScreen()
+      // Normally a silent pass: the scan already granted what the release
+      // server's manifest declared. Only an installed manifest that differs asks again.
+      if (!(await grantRequiredPermissions(app, showOnHomeScreen))) {
+        if (app.running) await engine.miniapps.stop(packageName)
+        return
+      }
+      clearHistoryAndGoHome()
+      leftScanner = true
+      // Opening what they just scanned is the person's own choice.
+      if (await engine.miniapps.start(app, {skipNavigation: true, trigger: "user"}))
+        await engine.miniapps.setForeground(packageName)
+    } catch (error) {
+      console.warn(`Failed to open ${packageName} after installing it:`, error)
+      if (!leftScanner) showOnHomeScreen()
+    }
+  }
+
   const handleBarcodeScanned = async ({data}: {data: string}) => {
     if (scanned) return
     setScanned(true)
@@ -41,16 +119,31 @@ export default function MiniappDeveloperScannerScreen() {
         const baseUrl = decodeURIComponent(url.searchParams.get("url") || "")
         if (!baseUrl) throw new Error("release QR missing url param")
 
-        const res = await appRegistry.installFromJsonUrl(baseUrl)
+        // Check the release's own miniapp.json before installing. Installing over
+        // a running copy restarts it, so a check after the install would let the
+        // new release run without its permissions; stopping it first would lose
+        // the installer's restore-on-failure.
+        const manifestRes = await fetch(`${baseUrl.replace(/\/$/, "")}/miniapp.json`)
+        if (!manifestRes.ok) throw new Error(`Failed to fetch miniapp.json: ${manifestRes.status}`)
+        const manifest = (await manifestRes.json()) as Record<string, unknown>
+        const releasePackage = typeof manifest.packageName === "string" ? manifest.packageName : ""
+        const release = {
+          packageName: releasePackage,
+          name: typeof manifest.name === "string" ? manifest.name : releasePackage,
+          permissions: normalizeManifestPermissions(
+            manifest.permissions as Parameters<typeof normalizeManifestPermissions>[0],
+          ),
+        } as unknown as AppletInterface
+        if (!(await grantRequiredPermissions(release, () => setScanned(false)))) return
+
+        const res = await installMiniappFromJsonUrl(baseUrl)
         if (res.is_error()) {
           showAlert("Install failed", res.error.message ?? String(res.error), [
             {text: "OK", onPress: () => setScanned(false)},
           ])
           return
         }
-        showAlert("Installed", `${res.value.name} v${res.value.version} is on your home screen.`, [
-          {text: "OK", onPress: () => goBack()},
-        ])
+        await openInstalledRelease(res.value)
       } catch (err) {
         showAlert("Install failed", String(err), [{text: "OK", onPress: () => setScanned(false)}])
       }
@@ -63,7 +156,6 @@ export default function MiniappDeveloperScannerScreen() {
       let name: string | undefined
       let devPort: string | undefined
       let mdnsHost: string | undefined
-      let devAttestation: string | undefined
 
       if (data.startsWith("miniapp://dev")) {
         const url = new URL(data)
@@ -72,7 +164,6 @@ export default function MiniappDeveloperScannerScreen() {
         packageName = url.searchParams.get("package") || undefined
         devPort = url.searchParams.get("dev") || undefined
         mdnsHost = url.searchParams.get("mdns") || undefined
-        devAttestation = url.searchParams.get("attestation") || undefined
       } else if (data.startsWith("http://") || data.startsWith("https://")) {
         devUrl = data
       } else {
@@ -92,6 +183,10 @@ export default function MiniappDeveloperScannerScreen() {
         )
         return
       }
+
+      // A dev build is unsigned code under its package name: refuse it before
+      // probing when that package is installed with a publisher signature.
+      if (packageName) assertDevBuildAllowed(packageName)
 
       // Pass mDNS up front — storage hasn't been written yet on first scan, so
       // decideDevOpenRoute can't read `_dev_mdns` until we persist below.
@@ -115,12 +210,12 @@ export default function MiniappDeveloperScannerScreen() {
       ).replace(/\/$/, "")
       let iconUrl: string | undefined
       if (iconPath) {
-        iconUrl = /^https?:\/\//.test(iconPath)
-          ? iconPath
-          : `${resolvedBase}/${iconPath.replace(/^\//, "")}`
+        iconUrl = /^https?:\/\//.test(iconPath) ? iconPath : `${resolvedBase}/${iconPath.replace(/^\//, "")}`
       }
 
       const portNum = devPort ? parseInt(devPort, 10) : NaN
+      // The manifest may name a different package than the QR did.
+      if (knownPackageName) assertDevBuildAllowed(knownPackageName)
 
       // Persist a package-keyed home tile and routing record so this dev
       // miniapp remains independently launchable without rescanning. Its icon
@@ -137,7 +232,6 @@ export default function MiniappDeveloperScannerScreen() {
           // Explicit empty clears a prior QR's sidecar port / mDNS for this package.
           devPort: Number.isFinite(portNum) ? portNum : undefined,
           mdnsHost: mdnsHost ?? "",
-          devAttestation,
           type: manifest.type as DevAppRecord["type"],
           permissions: manifest.permissions as DevAppRecord["permissions"],
           hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
@@ -158,13 +252,6 @@ export default function MiniappDeveloperScannerScreen() {
         } else {
           storage.remove(`${knownPackageName}_dev_port`)
         }
-        // Keep the QR attestation so offline "Try again" can register with the
-        // same auto-auth proof the live scanner path would have used.
-        if (devAttestation) {
-          storage.save(`${knownPackageName}_dev_attestation`, devAttestation)
-        } else {
-          storage.remove(`${knownPackageName}_dev_attestation`)
-        }
       }
 
       if (launchResult.decision === "offline") {
@@ -174,8 +261,10 @@ export default function MiniappDeveloperScannerScreen() {
       }
 
       if (launchResult.decision === "cached") {
-        clearHistoryAndGoHome()
         await engine.miniapps.refresh()
+        const snapshot = engine.miniapps.list().find((app) => app.packageName === packageName)
+        if (snapshot && !(await grantRequiredPermissions(snapshot, () => setScanned(false)))) return
+        clearHistoryAndGoHome()
         await engine.miniapps.setForeground(packageName)
         return
       }
@@ -185,30 +274,13 @@ export default function MiniappDeveloperScannerScreen() {
         name: name ?? "",
         permissions: manifestPermissions,
       } as unknown as AppletInterface
-      const permResult = await askPermissionsUI(fakeApplet, theme)
-      if (permResult === -1) {
-        setScanned(false)
-        return
-      }
-      if (permResult === 0) {
-        const stillNeeded = await checkPermissionsUI(fakeApplet)
-        const friendlyNames = stillNeeded.map((p) => PERMISSION_CONFIG[p]?.name ?? p).join(", ")
-        showAlert(
-          "Required permissions denied",
-          `${name} can't run without these permissions: ${friendlyNames}. Open Settings to enable them, then try again.`,
-          [
-            {text: "Open Settings", onPress: () => Linking.openSettings()},
-            {text: "Cancel", onPress: () => setScanned(false), style: "cancel"},
-          ],
-        )
-        return
-      }
+      if (!(await grantRequiredPermissions(fakeApplet, () => setScanned(false)))) return
 
       clearHistoryAndGoHome()
       await engine.miniapps.refresh()
       await engine.miniapps.setForeground(packageName)
     } catch (error) {
-      showAlert("Error", String(error), [{text: "OK", onPress: () => setScanned(false)}])
+      showDevBuildError(error, () => setScanned(false))
     }
   }
 

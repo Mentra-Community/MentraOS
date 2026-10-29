@@ -55,6 +55,19 @@ export type {LanguageHint, TranscriptionLanguage} from "../modules/languages"
 // (the registering side lives in the background JSContext). `InvokeOptions` is
 // for system miniapps that call other apps' actions via `session.actions.invoke`.
 export type {ActionContext, ActionHandler, InvokeOptions} from "../modules/actions"
+export type {
+  InstallMiniappCompatibility,
+  InstallMiniappCompatibilityRequest,
+  InstallMiniappRequest,
+  InstallMiniappResult,
+  InstallMiniappPhase,
+  InstallMiniappProgress,
+  ListMiniappsOptions,
+  MiniappActionInfo,
+  MiniappCompatibility,
+  MiniappHardwareRequirement,
+  MiniappInfo,
+} from "../modules/miniapps"
 
 // Session module types — useful for typing controller classes or
 // utility helpers that take a session-like dependency.
@@ -104,6 +117,10 @@ export type {
   MeetingParticipant,
   MeetingParticipantState,
   MeetingMediaSource,
+  MeetingStillError,
+  MeetingStillFailure,
+  MeetingStillPhase,
+  MeetingStillResult,
 } from "../modules/meeting"
 export {
   MEETING_HOST_UPDATE_MESSAGE,

@@ -1,0 +1,451 @@
+{
+  "runId": "recovery-8d966499afe217907a26dd98f4051b08-2",
+  "requestId": "notes-phone-navigation-94a94236-dfdf-4cc5-8a84-3f43aeb4a69f",
+  "routineId": "notes-phone",
+  "routineVersion": "local-existing-note-navigation-baf94895",
+  "platform": "ios-mac",
+  "channel": "local",
+  "release": "3.3.0-dev.468 (303000084); Notes 1.0.22",
+  "startedAt": "2026-09-29T12:36:31.783Z",
+  "finishedAt": "2026-09-29T14:01:49.018Z",
+  "outcome": "failed",
+  "outcomes": {
+    "test": "failed",
+    "teardown": "passed",
+    "fixture": "ready",
+    "evidence": "incomplete"
+  },
+  "provenance": {
+    "repository": "Mentra-Community/Mentra-Automated-Testing",
+    "headSha": "baf94895a444b2bf0cefb505255bb102c054c0b0",
+    "branch": "main",
+    "executionOrigin": "local-existing-note-navigation",
+    "executionMode": "development",
+    "deterministicReplay": "false",
+    "ciQualification": "false",
+    "harnessSha": "baf94895a444b2bf0cefb505255bb102c054c0b0",
+    "harnessHash": "82433e66509b609398ef6bf6032702e73af57171ae69589a54c7c32e528849a3",
+    "sourceSnapshotSha256": "5fb95bf81e75f4fdc2ff1e299096a94e6b5723106429ab257cd888fa310a1dae",
+    "sourceReportSha256": "611077c53c1387c4b533513e03460045fcdadfdbac10e5d13268d77a84065c30",
+    "lifecycleTerminalSha256": "4c422eea7cd36927a9478fa200eb44e543821883871b1178c07b775704129485",
+    "localOperatorFilename": "navigation-section.ts",
+    "localOperatorSourceSha256": "a4b7cd231cf2b58289c85422c689aa562c1a5b82f210e615dbf889ab4ded376c",
+    "localOperatorCommitted": "false",
+    "driverSha256": "1762bed63be22a8d62a085369ca6cfec32369eec135405bd41eb6cfd19537025",
+    "appRepository": "Mentra-Community/MentraOS",
+    "appSourceCommit": "d6c74c857015fac95fbc6195dbf009acfab65eeb",
+    "appVersion": "3.3.0",
+    "appBuild": "303000084",
+    "appExecutableSha256": "3cd22e5a9ec9b62c55d0cf79df0aec71c721c3110e712127b3c131a46b4f1842",
+    "appJavascriptSha256": "f3bd02020c7b5d4d44d7768888be90e549ebdf15526e14c65532dcc990a8c423",
+    "verificationScope": "Original-owner return verified on reviewed059af41; original Notes test/evidence remain failed. No full-routine, CI or physical-glasses qualification.",
+    "originalRunId": "notes-phone-navigation-94a94236-dfdf-4cc5-8a84-3f43aeb4a69f",
+    "previousResultRunId": "notes-phone-navigation-94a94236-dfdf-4cc5-8a84-3f43aeb4a69f",
+    "resultGeneration": "2",
+    "terminalSnapshotSha256": "7763012a8c8b2a9982e2d54dc8f9d6ff8844e6e81b94ff2d66dbfed39906db58",
+    "originalTerminalSnapshotSha256": "4c422eea7cd36927a9478fa200eb44e543821883871b1178c07b775704129485",
+    "journalSha256": "a8b1c84b561b3581c3d7fdb425ad5d5db7e861fee63a2f8ba18881e68662685f",
+    "recoverySourceRevision": "059af41cf415ada3387783231b6b56e0c7b491ff",
+    "recoveryRevisionSha256": "7a3ac91fb721c5290e04606483bdf5c1387d42e0266df1c51f461b25af301277",
+    "recoverySourceSnapshotSha256": "b10c281f2aabed85b19ac3b3dcc4165f3d2943f554def7d14709d3cdf341b5d9",
+    "recoveryReceiptSha256": "0c0bee7c96e029a821c615ab2c34396336f7468dbff826a6020ff12efaac7d86",
+    "recoveryCanonicalReviewUrl": "https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/219#pullrequestreview-5353589882",
+    "recoveryPullRequestUrl": "https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/219",
+    "recoveryExecutionMode": "development",
+    "recoveryCiQualification": "false",
+    "returnVerification": "passed",
+    "lifecycleFinishedAt": "2026-09-29T13:55:49.315Z",
+    "normalAccountReturnFinishedAt": "2026-09-29T14:01:49.018Z",
+    "issuerAccountReturnAcceptedAt": "2026-09-29T14:04:01.576538+00:00",
+    "accountReturnReceiptSha256": "facdecea4f33e5c6b0eb458bb24c06f1795fe13e28b8cf25e55f7bed7f21a896",
+    "currentAccountHold": "false",
+    "recordingScope": "original-video-excluded; recovery-and-logout-screenshots-only"
+  },
+  "source": {
+    "schemaVersion": 1,
+    "trigger": "local",
+    "repository": "Mentra-Community/Mentra-Automated-Testing",
+    "channel": "local",
+    "headSha": "baf94895a444b2bf0cefb505255bb102c054c0b0",
+    "branch": "main"
+  },
+  "failures": [
+    {
+      "phase": "test",
+      "step": {
+        "id": "NAV-FOCUS-BODY",
+        "label": "Recorded step NAV-FOCUS-BODY within lifecycle step phone-walkthrough"
+      },
+      "code": "native-axpress-cannot-complete",
+      "message": "Native AXPress on the saved note body returned macOS accessibility error -25204. The report left the action unconfirmed, so teardown and account/audio return were deferred.",
+      "assetIds": [
+        "lifecycle-summary",
+        "step-diagnostics",
+        "accessibility-diagnostics",
+        "navigation-diagnostic",
+        "navigation-failure-screenshot"
+      ],
+      "incidentIds": [],
+      "redactionPolicy": "reviewed-local-navigation-axpress-v1",
+      "missingEvidence": [
+        {
+          "kind": "recording",
+          "reason": "The recording failed integrity verification and is excluded; no video or video timestamps are published."
+        },
+        {
+          "kind": "screenshot",
+          "reason": "Executed steps without an exported screenshot: NOTES-S-01 (not-selected-for-publication), NOTES-S-01.1 (not-selected-for-publication), NOTES-S-01.2 (not-selected-for-publication), NOTES-S-01.3 (not-selected-for-publication), NAV-OPEN (not-selected-for-publication), NAV-LIST (not-selected-for-publication), NAV-REOPEN (not-selected-for-publication), NAV-SCROLL-DOWN (not-selected-for-publication). See step-diagnostics."
+        },
+        {
+          "kind": "other",
+          "reason": "Executed steps without a projected accessibility snapshot: NOTES-S-01 (not-selected-for-publication), NOTES-S-01.1 (not-selected-for-publication), NOTES-S-01.2 (not-selected-for-publication), NOTES-S-01.3 (not-selected-for-publication), NAV-OPEN (not-selected-for-publication), NAV-LIST (not-selected-for-publication), NAV-REOPEN (not-selected-for-publication), NAV-SCROLL-DOWN (not-selected-for-publication)."
+        },
+        {
+          "kind": "other",
+          "reason": "No raw native reply or native action child PID was retained. Source-inferred child completion does not reconcile the original unknown operation."
+        },
+        {
+          "kind": "other",
+          "reason": "Native action remains unreconciled. No normal return, audio restoration, account logout, credential deletion or guard release is established."
+        },
+        {
+          "kind": "source",
+          "reason": "The local navigation-section.ts caller is pinned separately and is not committed in the declared baf94895 harness source."
+        },
+        {
+          "kind": "phone-logs",
+          "reason": "No reviewed phone-log representation is included; incident attachment availability is not proven by its ID."
+        },
+        {
+          "kind": "glasses-logs",
+          "reason": "No reviewed glasses-log representation is included; incident attachment availability is not proven by its ID."
+        },
+        {
+          "kind": "backend-logs",
+          "reason": "No reviewed backend-log representation is included."
+        },
+        {
+          "kind": "symbols",
+          "reason": "No symbol or source-map artifact is included."
+        },
+        {
+          "kind": "incident",
+          "reason": "No correlated filed incident ID was recorded."
+        }
+      ]
+    },
+    {
+      "phase": "evidence",
+      "step": {
+        "id": "phone-recording-integrity",
+        "label": "Lifecycle step phone-recording-integrity"
+      },
+      "code": "assertion-failed",
+      "message": "The recorded lifecycle assertion failed.",
+      "assetIds": [
+        "lifecycle-summary",
+        "step-diagnostics",
+        "accessibility-diagnostics",
+        "navigation-diagnostic",
+        "navigation-failure-screenshot"
+      ],
+      "incidentIds": [],
+      "redactionPolicy": "lifecycle-allowlist-v1",
+      "missingEvidence": [
+        {
+          "kind": "failure-details",
+          "reason": "This lifecycle row keeps a generic message; step-diagnostics lists recorded steps, but no failed step has a reviewed error."
+        },
+        {
+          "kind": "recording",
+          "reason": "The recording failed integrity verification and is excluded; no video or video timestamps are published."
+        },
+        {
+          "kind": "screenshot",
+          "reason": "Executed steps without an exported screenshot: NOTES-S-01 (not-selected-for-publication), NOTES-S-01.1 (not-selected-for-publication), NOTES-S-01.2 (not-selected-for-publication), NOTES-S-01.3 (not-selected-for-publication), NAV-OPEN (not-selected-for-publication), NAV-LIST (not-selected-for-publication), NAV-REOPEN (not-selected-for-publication), NAV-SCROLL-DOWN (not-selected-for-publication). See step-diagnostics."
+        },
+        {
+          "kind": "other",
+          "reason": "Executed steps without a projected accessibility snapshot: NOTES-S-01 (not-selected-for-publication), NOTES-S-01.1 (not-selected-for-publication), NOTES-S-01.2 (not-selected-for-publication), NOTES-S-01.3 (not-selected-for-publication), NAV-OPEN (not-selected-for-publication), NAV-LIST (not-selected-for-publication), NAV-REOPEN (not-selected-for-publication), NAV-SCROLL-DOWN (not-selected-for-publication)."
+        },
+        {
+          "kind": "other",
+          "reason": "No raw native reply or native action child PID was retained. Source-inferred child completion does not reconcile the original unknown operation."
+        },
+        {
+          "kind": "other",
+          "reason": "Native action remains unreconciled. No normal return, audio restoration, account logout, credential deletion or guard release is established."
+        },
+        {
+          "kind": "source",
+          "reason": "The local navigation-section.ts caller is pinned separately and is not committed in the declared baf94895 harness source."
+        },
+        {
+          "kind": "phone-logs",
+          "reason": "No reviewed phone-log representation is included; incident attachment availability is not proven by its ID."
+        },
+        {
+          "kind": "glasses-logs",
+          "reason": "No reviewed glasses-log representation is included; incident attachment availability is not proven by its ID."
+        },
+        {
+          "kind": "backend-logs",
+          "reason": "No reviewed backend-log representation is included."
+        },
+        {
+          "kind": "symbols",
+          "reason": "No symbol or source-map artifact is included."
+        },
+        {
+          "kind": "incident",
+          "reason": "No correlated filed incident ID was recorded."
+        }
+      ]
+    }
+  ],
+  "fixture": {
+    "alias": "macbook-captions-notes-local"
+  },
+  "firmwareAssertions": [],
+  "chapters": [
+    {
+      "id": "NOTES-S-01",
+      "instruction": "Verify Phone mode home with no running miniapps.",
+      "expected": "Connect glasses and the Captions tile are present, with no miniapp or sheet open.",
+      "status": "passed",
+      "phase": "setup"
+    },
+    {
+      "id": "NOTES-S-01.1",
+      "instruction": "Open Settings to verify the exclusively allocated account.",
+      "expected": "The Profile entry is visible.",
+      "status": "passed",
+      "phase": "setup"
+    },
+    {
+      "id": "NOTES-S-01.2",
+      "instruction": "Open Profile and compare its email with the exclusive account grant.",
+      "expected": "Profile shows the allocated account email.",
+      "status": "passed",
+      "phase": "setup"
+    },
+    {
+      "id": "NOTES-S-01.3",
+      "instruction": "Close Profile and return to Phone mode home.",
+      "expected": "Home is idle after account verification.",
+      "status": "passed",
+      "phase": "setup"
+    },
+    {
+      "id": "NAV-OPEN",
+      "instruction": "Open the preserved Notes miniapp from idle Home.",
+      "expected": "Today and Resume are visible with transcription paused.",
+      "status": "passed",
+      "phase": "test"
+    },
+    {
+      "id": "NAV-LIST",
+      "instruction": "Open the saved list without changing any notes.",
+      "expected": "The preserved edited note is listed exactly once.",
+      "status": "passed",
+      "phase": "test"
+    },
+    {
+      "id": "NAV-REOPEN",
+      "instruction": "Reopen the preserved edited note without changing it.",
+      "expected": "The edited title and appended review sentence are readable.",
+      "status": "passed",
+      "phase": "test"
+    },
+    {
+      "id": "NAV-SCROLL-DOWN",
+      "instruction": "Scroll the existing note toward its lower body without editing.",
+      "expected": "The saved note remains open with its review sentence intact.",
+      "status": "passed",
+      "phase": "test"
+    },
+    {
+      "id": "NAV-FOCUS-BODY",
+      "instruction": "Focus the saved note body without entering or changing text.",
+      "expected": "The existing review sentence remains intact.",
+      "status": "failed",
+      "phase": "test",
+      "screenshotAssetId": "navigation-failure-screenshot"
+    },
+    {
+      "id": "NOTES-RETURN-running",
+      "instruction": "Inspect the single running miniapp owned by this Notes run.",
+      "expected": "The running-miniapps switcher contains only Notes.",
+      "status": "passed",
+      "phase": "teardown"
+    },
+    {
+      "id": "NOTES-RETURN-restore",
+      "instruction": "Restore only this run's existing Notes card.",
+      "expected": "Notes is open and the running-miniapps switcher is dismissed.",
+      "status": "passed",
+      "phase": "teardown"
+    },
+    {
+      "id": "NOTES-RETURN-close",
+      "instruction": "Close this run's miniapp.",
+      "expected": "Phone mode Home is idle.",
+      "status": "passed",
+      "phase": "teardown",
+      "screenshotAssetId": "notes-owner-return-home"
+    },
+    {
+      "id": "NOTES-RETURN-unmodified",
+      "instruction": "Verify idle Home without changing an unowned preference.",
+      "expected": "Home is idle.",
+      "status": "passed",
+      "phase": "teardown"
+    },
+    {
+      "id": "PHONE-OWNER-01",
+      "instruction": "Verify Phone mode home with no running miniapps.",
+      "expected": "Connect glasses and the Captions tile are present, with no miniapp or sheet open.",
+      "status": "passed",
+      "phase": "teardown"
+    },
+    {
+      "id": "PHONE-OWNER-01.1",
+      "instruction": "Open Settings to verify the exclusively allocated account.",
+      "expected": "The Profile entry is visible.",
+      "status": "passed",
+      "phase": "teardown"
+    },
+    {
+      "id": "PHONE-OWNER-01.2",
+      "instruction": "Open Profile and compare its email with the exclusive account grant.",
+      "expected": "Profile shows the allocated account email.",
+      "status": "passed",
+      "phase": "teardown"
+    },
+    {
+      "id": "PHONE-OWNER-01.3",
+      "instruction": "Close Profile and return to Phone mode home.",
+      "expected": "Home is idle after account verification.",
+      "status": "passed",
+      "phase": "teardown"
+    },
+    {
+      "id": "OWNER-LOGOUT-SETTINGS",
+      "instruction": "Open Settings for the normal account return.",
+      "expected": "The recorded semantic action returns an answer.",
+      "status": "passed",
+      "phase": "teardown"
+    },
+    {
+      "id": "OWNER-LOGOUT-PROFILE",
+      "instruction": "Verify the original Profile account before logout.",
+      "expected": "The recorded semantic action returns an answer.",
+      "status": "passed",
+      "phase": "teardown"
+    },
+    {
+      "id": "OWNER-LOGOUT-REVEAL-LOGOUT",
+      "instruction": "Reveal Log Out using its observed AXScrollToVisible action.",
+      "expected": "The recorded semantic action returns an answer.",
+      "status": "passed",
+      "phase": "teardown"
+    },
+    {
+      "id": "OWNER-LOGOUT-LOGOUT",
+      "instruction": "Request normal account logout.",
+      "expected": "The recorded semantic action returns an answer.",
+      "status": "passed",
+      "phase": "teardown"
+    },
+    {
+      "id": "OWNER-LOGOUT-CONFIRM-LOGOUT",
+      "instruction": "Confirm normal account logout.",
+      "expected": "The recorded semantic action returns an answer.",
+      "status": "passed",
+      "phase": "teardown"
+    },
+    {
+      "id": "OWNER-LOGOUT-VERIFY",
+      "instruction": "Verify the logged-out landing screen, restored audio and normal account return.",
+      "expected": "No running miniapp, all inputs answered, original audio restored and issuer accepts account return.",
+      "status": "passed",
+      "phase": "teardown",
+      "screenshotAssetId": "notes-owner-return-welcome"
+    }
+  ],
+  "assets": [
+    {
+      "assetId": "lifecycle-summary",
+      "kind": "metadata",
+      "contentType": "application/json",
+      "filename": "lifecycle-summary.json",
+      "sizeBytes": 2358,
+      "sha256": "fc8abeb3e95f4b1685868ff6819342389092ea5b8a9dcbd9147e0c524e0ebb17"
+    },
+    {
+      "assetId": "navigation-diagnostic",
+      "kind": "metadata",
+      "contentType": "application/json",
+      "filename": "navigation-diagnostic.json",
+      "sizeBytes": 1812,
+      "sha256": "e8ebdff8170596004a7f5bb9b59606c6790139a0f3f9b5434e84b91421ec0318"
+    },
+    {
+      "assetId": "step-diagnostics",
+      "kind": "metadata",
+      "contentType": "application/json",
+      "filename": "step-diagnostics.json",
+      "sizeBytes": 3359,
+      "sha256": "bf81c47024aae89cb1430d7cf5f77f69439c48babf7cc0c7cad44affbaecdace"
+    },
+    {
+      "assetId": "accessibility-diagnostics",
+      "kind": "metadata",
+      "contentType": "application/json",
+      "filename": "accessibility-diagnostics.json",
+      "sizeBytes": 24945,
+      "sha256": "c79a15420a78ad64f6c3de9062ae0f30e6d4635857d922599f858e3f0f53e656"
+    },
+    {
+      "assetId": "navigation-failure-screenshot",
+      "kind": "screenshot",
+      "contentType": "image/png",
+      "filename": "navigation-failure-screenshot.png",
+      "sizeBytes": 187916,
+      "sha256": "e7bc42c5bf5fdec2574824b5ad9afaef9daab57a366fb09432a88adea9e372e8"
+    },
+    {
+      "assetId": "notes-owner-return-proof",
+      "kind": "metadata",
+      "contentType": "application/json",
+      "filename": "notes-owner-return-proof.json",
+      "sizeBytes": 3030,
+      "sha256": "ad9f27dc6b7674841ae94191c5fbc6b3dfbb3d3a56f4abe2cdde1b328b740d4c"
+    },
+    {
+      "assetId": "notes-owner-return-steps",
+      "kind": "metadata",
+      "contentType": "application/json",
+      "filename": "notes-owner-return-steps.json",
+      "sizeBytes": 3975,
+      "sha256": "b0b14f82014f68ee937b0aa2b55e4f9255e9d74dfa499bea18c912ca5cf7c99a"
+    },
+    {
+      "assetId": "notes-owner-return-home",
+      "kind": "screenshot",
+      "contentType": "image/png",
+      "filename": "notes-owner-return-home.png",
+      "sizeBytes": 270342,
+      "sha256": "e47697184d38c4bb5b803e6e93648bbb009174710b35214b4f0011573c70df67"
+    },
+    {
+      "assetId": "notes-owner-return-welcome",
+      "kind": "screenshot",
+      "contentType": "image/png",
+      "filename": "notes-owner-return-welcome.png",
+      "sizeBytes": 109718,
+      "sha256": "70826e989aca3aa150c8ef2c439f98640f7c55cfde3a452b0f78a37455779c3d"
+    }
+  ],
+  "notes": "Linked second result generation of the original Notes navigation run. Original source, failure metadata and failed chapters are inherited unchanged. Reviewed development recovery059af41 reconciled the exact completed AXPress failure, restored only the sole owned Notes card, closed it, restored audio and verified the same account at idle Home. The normal account-return segment then used five answered semantic actions, reached the signup/login landing, verified audio again, released the guard and deleted the temporary borrower credential; the issuer accepted return. Fixture ready describes the signed-in Home at lifecycle terminal73; the subsequent normal account return leaves the app logged out. No original failure is converted to a pass, no raw native reply/PID is fabricated, no complete original video is claimed, and no new full Notes or CI qualification was run."
+}

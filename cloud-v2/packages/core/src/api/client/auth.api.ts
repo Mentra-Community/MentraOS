@@ -11,7 +11,10 @@
  *   POST /runtime-token — Core access token (Bearer) in, short-lived Runtime
  *                         token out (`aud=cloud-runtime`).
  *   POST /miniapp-token — Access token (Bearer) + packageName in, a short-lived
- *                         miniapp-scoped Ed25519 JWT out.
+ *                         miniapp-scoped Ed25519 JWT out. The phone decides
+ *                         which package is running (installed or a dev build
+ *                         of that package) and Core mints the same token for
+ *                         either.
  *
  * These are the paths the mobile client / device hits. Per auth/spec.md's
  * caller convention, device-called routes live under /api/client/*, while
@@ -26,8 +29,8 @@
  * Spec: docs/issues/001-cloud-core/auth/spec.md ("Endpoints")
  */
 
+import {createLogger} from "@mentra/cloud-shared"
 import {Hono} from "hono"
-import type {ContentfulStatusCode} from "hono/utils/http-status"
 import {InvalidRequest, UnsupportedGrantType, type TokenResponse} from "../../types/oauth.types"
 import {
   createSession,
@@ -36,19 +39,19 @@ import {
   issueRuntimeToken,
   revokeSession,
 } from "../../services/session.service"
-import {
-  DeveloperSigningService,
-  DeveloperSigningServiceError,
-  type DevMiniappAttestation,
-} from "../../services/miniapps/developer-signing.service"
+import {trustedAccountEmail} from "../../services/account/trusted-email.service"
+import {featuresFor} from "../../services/licenses/features.service"
 import {userAuth} from "../middleware/user-auth.middleware"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 
 const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
 const JWT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"
+/** How long each lookup a miniapp token waits for (the account email, the licensed features) may take. */
+const MINIAPP_LOOKUP_DEADLINE_MS = 1_500
+
+const logger = createLogger("core").child({service: "client-auth.api"})
 
 const app = new Hono<AppEnv>()
-const developerSigning = new DeveloperSigningService()
 
 // === Routes ===
 
@@ -116,22 +119,31 @@ async function postMiniappToken(c: AppContext) {
     throw new InvalidRequest("packageName is required")
   }
 
-  const devAttestation = typeof body.devAttestation === "string" ? parseDevAttestation(body.devAttestation) : null
-  if (devAttestation) {
-    try {
-      await developerSigning.verifyDevAttestation(packageName, devAttestation)
-    } catch (error) {
-      if (error instanceof DeveloperSigningServiceError) {
-        return c.json({error: error.code, error_description: error.message}, error.status as ContentfulStatusCode)
-      }
-      throw error
-    }
+  // The email lookup runs beside the features lookup. It never rejects, so abandoning it on a 503 is safe.
+  const emailLookup = miniappTokenEmail(user.mentraUserId)
+
+  // The licensed features are not best-effort like the email: a token that lacks features the person
+  // paid for would lock them out of what they bought, so a failed lookup, or one that outlasts its
+  // deadline, mints nothing and the phone asks again.
+  let features: string[]
+  try {
+    features = await withinDeadline("licensed features lookup", () =>
+      featuresFor({mentraUserId: user.mentraUserId, packageName, now: new Date()}),
+    )
+  } catch (error) {
+    logger.error(
+      {mentraUserId: user.mentraUserId, packageName, error: (error as Error)?.message},
+      "miniapp token refused: licensed features unavailable",
+    )
+    return c.json({error: "features_unavailable"}, 503)
   }
 
   const {token, expiresAt} = await issueMiniappToken({
     mentraUserId: user.mentraUserId,
     tenantId: user.tenantId,
     packageName,
+    email: await emailLookup,
+    features,
   })
 
   return c.json({token, expiresAt})
@@ -169,6 +181,46 @@ async function postRevoke(c: AppContext) {
 
 // === Helpers ===
 
+/**
+ * Verified account email for the miniapp token's optional `email` claim. The
+ * claim is best-effort: a slow or failing account lookup (user row or account
+ * directory) must never block a miniapp from authenticating, so the whole
+ * lookup races a deadline and degrades to a token without email.
+ */
+async function miniappTokenEmail(mentraUserId: string): Promise<string | null> {
+  try {
+    return await withinDeadline("account email lookup", (signal) => trustedAccountEmail(mentraUserId, {signal}))
+  } catch (error) {
+    logger.warn({mentraUserId, error: (error as Error)?.message}, "miniapp token issued without email claim")
+    return null
+  }
+}
+
+/**
+ * Run `start` and give it `MINIAPP_LOOKUP_DEADLINE_MS`. The signal it receives is aborted at the deadline,
+ * for lookups that can stop. Rejects with the lookup's own error, or at the deadline with a timeout error;
+ * the timer is always cleared. A lookup that outlasts its deadline is abandoned, and a later rejection of it
+ * is swallowed rather than left unhandled.
+ */
+async function withinDeadline<T>(what: string, start: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      reject(new Error(`${what} exceeded ${MINIAPP_LOOKUP_DEADLINE_MS}ms`))
+    }, MINIAPP_LOOKUP_DEADLINE_MS)
+  })
+  try {
+    const lookup = start(controller.signal)
+    // Abandoned on purpose when the deadline wins: whatever it later settles with is not an error to report.
+    lookup.catch(() => {})
+    return await Promise.race([lookup, deadline])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 function stringField(form: Record<string, string | File | (string | File)[]>, name: string): string | null {
   const v = form[name]
   return typeof v === "string" ? v : null
@@ -188,25 +240,6 @@ async function readJsonBody(c: AppContext): Promise<Record<string, unknown>> {
     // fall through to the InvalidRequest below
   }
   throw new InvalidRequest("request body must be a JSON object")
-}
-
-function parseDevAttestation(value: string): DevMiniappAttestation {
-  try {
-    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>
-    if (
-      typeof parsed.packageName === "string" &&
-      typeof parsed.devServerUrl === "string" &&
-      typeof parsed.nonce === "string" &&
-      typeof parsed.expiresAt === "string" &&
-      typeof parsed.signingKeyId === "string" &&
-      typeof parsed.signature === "string"
-    ) {
-      return parsed as unknown as DevMiniappAttestation
-    }
-  } catch {
-    // fall through to InvalidRequest below
-  }
-  throw new InvalidRequest("devAttestation must be a signed mentra dev attestation")
 }
 
 export default app

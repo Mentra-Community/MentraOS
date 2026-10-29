@@ -1,5 +1,5 @@
 import {afterAll, describe, expect, test} from "bun:test"
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync} from "fs"
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, readlinkSync, unlinkSync, writeFileSync} from "fs"
 import {tmpdir} from "os"
 import {dirname, join} from "path"
 import {spawn, spawnSync} from "child_process"
@@ -10,6 +10,7 @@ import {spawn, spawnSync} from "child_process"
 
 const here = dirname(new URL(import.meta.url).pathname)
 const wrapper = join(here, "codex-pr-review.sh")
+const runner = join(here, "codex-review.sh")
 const receipt = join(here, "review-receipt.sh")
 const roots = []
 
@@ -30,7 +31,15 @@ case "$1 $2" in
   "pr view")
     if [[ "$*" == *headRefOid* ]]; then git -C "$FAKE_ORIGIN" rev-parse refs/pull/1/head
     else echo "alice main feature OPEN Fixture title"; fi ;;
-  "api user") echo "bob" ;;
+  "api user")
+    if [[ "\${FAKE_GH_INSTALLATION:-}" == "1" ]]; then echo "Resource not accessible by integration" >&2; exit 1; fi
+    echo "bob" ;;
+  "api repos/Mentra-Community/fixture/pulls/1")
+    count=$(( $(cat "$FAKE_STATE/head-reads" 2>/dev/null || echo 0) + 1 ))
+    echo "$count" > "$FAKE_STATE/head-reads"
+    if [[ "\${FAKE_GH_HEAD_CHANGES:-}" == "1" && "$count" -gt 1 ]]; then
+      git -C "$FAKE_ORIGIN" rev-parse refs/heads/main
+    else git -C "$FAKE_ORIGIN" rev-parse refs/heads/feature; fi ;;
   "api repos/Mentra-Community/fixture/pulls/1/reviews")
     case "\${FAKE_GH_REVIEWS:-ok}" in
       fail) echo "gh: HTTP 502 from GitHub" >&2; exit 1 ;;
@@ -43,6 +52,8 @@ esac
 
 const FAKE_CODEX = `#!/usr/bin/env bash
 # Fake codex exec: honours -o <file>, streams JSON events, and behaves per FAKE_CODEX_MODE.
+printf '%s\\0' "$@" > "$FAKE_STATE/codex-args"
+if [[ "$1" == "app-server" ]]; then exec node "$FAKE_APP_SERVER"; fi
 out=""
 while [[ $# -gt 0 ]]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done
 echo $(( $(cat "$FAKE_STATE/codex-calls" 2>/dev/null || echo 0) + 1 )) > "$FAKE_STATE/codex-calls"
@@ -122,6 +133,7 @@ function env(f, extraEnv = {}) {
     CODEX_BIN: join(f.bin, "codex"),
     FAKE_ORIGIN: f.origin,
     FAKE_STATE: f.state,
+    FAKE_APP_SERVER: join(here, "fixtures/fake-app-server.mjs"),
     CODEX_REVIEW_HOME: f.reviews,
     STALL_SECONDS: "2",
     POLL_SECONDS: "1",
@@ -150,6 +162,240 @@ const codexCalls = (f) =>
   existsSync(join(f.state, "codex-calls")) ? Number(readFileSync(join(f.state, "codex-calls"), "utf8").trim()) : 0
 
 describe("codex-pr-review.sh lifecycle", () => {
+  test("a missing pull ref fetches and reviews the exact API head", () => {
+    const f = makeFixture()
+    const expected = sh(f.origin, "git rev-parse refs/heads/feature")
+    sh(f.origin, "git update-ref -d refs/pull/1/head")
+    const result = run(f, [f.repo, "1"])
+    expect(result.code, result.out).toBe(0)
+    expect(sh(f.worktree, "git rev-parse HEAD")).toBe(expected)
+    expect(codexCalls(f)).toBe(1)
+    expect(result.out).toContain("codex-pr-review: done")
+  }, 30_000)
+
+  test("a missing pull ref refuses a head change before starting a reviewer", () => {
+    const f = makeFixture()
+    sh(f.origin, "git update-ref -d refs/pull/1/head")
+    const result = run(f, [f.repo, "1"], {FAKE_GH_HEAD_CHANGES: "1"})
+    expect(result.code).not.toBe(0)
+    expect(result.out).toContain("PR head changed while fetching")
+    expect(codexCalls(f)).toBe(0)
+    expect(existsSync(`${f.worktree}.lock`)).toBe(false)
+    expect(existsSync(f.worktree)).toBe(false)
+  })
+
+  test("fresh owned reviews share the two existing external dependency targets and reuse their exact links", () => {
+    const f = makeFixture()
+    const shared = join(f.root, "shared packages"), runnerShared = join(shared, "runner")
+    mkdirSync(runnerShared, {recursive: true}); writeFileSync(join(shared, "retained"), "original shared bytes")
+    mkdirSync(join(f.repo, "tools/mentra-e2e"), {recursive: true})
+    writeFileSync(join(f.repo, ".gitignore"), "node_modules\n")
+    sh(f.repo, "git add .gitignore && git commit -qm ignore && git push -q origin main")
+    sh(f.repo, "git checkout -q feature && git merge -q main && mkdir -p tools/mentra-e2e && touch tools/mentra-e2e/source && git add . && git commit -qm runner && git push -q origin feature && git checkout -q main")
+    writeFileSync(join(shared, "package.json"), '{}')
+    sh(f.repo, "git checkout -q feature")
+    writeFileSync(join(f.repo, "tools/mentra-e2e/package.json"), '{}')
+    sh(f.repo, "git add . && git commit -qm package && git push -q origin feature && git checkout -q main")
+    sh(f.origin, 'git update-ref refs/pull/1/head "$(git rev-parse refs/heads/feature)"')
+    mkdirSync(join(f.repo, "tools/mentra-e2e"), {recursive: true})
+    symlinkSync(realpathSync(shared), join(f.repo, "node_modules"))
+    symlinkSync(realpathSync(runnerShared), join(f.repo, "tools/mentra-e2e/node_modules"))
+    const first = run(f, [f.repo, "1"])
+    expect(first.code, first.out).toBe(0)
+    expect(readlinkSync(join(f.worktree, "node_modules"))).toBe(realpathSync(shared))
+    expect(readlinkSync(join(f.worktree, "tools/mentra-e2e/node_modules"))).toBe(realpathSync(runnerShared))
+    const second = run(f, [f.repo, "1"])
+    expect(second.code, second.out).toBe(0)
+    expect(readFileSync(join(shared, "retained"), "utf8")).toBe("original shared bytes")
+    expect(readlinkSync(join(f.worktree, "node_modules"))).toBe(realpathSync(shared))
+    expect(sh(f.worktree, "git status --porcelain")).toBe("")
+  }, 90_000)
+
+  test("a foreign dependency occupant is refused before reset/clean and the shared target is unchanged", () => {
+    const f = makeFixture(), shared = join(f.root, "shared")
+    mkdirSync(shared);writeFileSync(join(shared, "retained"), "shared bytes")
+    symlinkSync(realpathSync(shared), join(f.repo, "node_modules"))
+    sh(f.repo, `git worktree add -q --detach "${f.worktree}" feature`)
+    writeFileSync(`${f.worktree}.codex-review-owned`, "created by codex-pr-review.sh on test")
+    mkdirSync(join(f.worktree, "node_modules"));writeFileSync(join(f.worktree, "node_modules/precious"), "foreign bytes")
+    const result = run(f, [f.repo, "1"])
+    expect(result.code).toBe(1);expect(result.out).toContain("changed or foreign occupant")
+    expect(readFileSync(join(f.worktree, "node_modules/precious"), "utf8")).toBe("foreign bytes")
+    expect(readFileSync(join(shared, "retained"), "utf8")).toBe("shared bytes")
+    expect(codexCalls(f)).toBe(0)
+  })
+
+  test("changed dependency link and missing anchor target never authorize removal or replacement", () => {
+    const f = makeFixture(), shared = join(f.root, "shared"), foreign = join(f.root, "foreign")
+    mkdirSync(shared);mkdirSync(foreign);symlinkSync(realpathSync(shared), join(f.repo, "node_modules"))
+    sh(f.repo, `git worktree add -q --detach "${f.worktree}" feature`)
+    writeFileSync(`${f.worktree}.codex-review-owned`, "created by codex-pr-review.sh on test")
+    symlinkSync(realpathSync(foreign), join(f.worktree, "node_modules"))
+    expect(run(f, [f.repo, "1"]).out).toContain("changed or foreign occupant")
+    expect(readlinkSync(join(f.worktree, "node_modules"))).toBe(realpathSync(foreign))
+    unlinkSync(join(f.repo, "node_modules"))
+    expect(run(f, [f.repo, "1"]).out).toContain("no existing anchor source")
+    expect(readlinkSync(join(f.worktree, "node_modules"))).toBe(realpathSync(foreign))
+    expect(codexCalls(f)).toBe(0)
+  })
+
+  test("a shared target inside the disposable review tree is refused before cleaning it", () => {
+    const f = makeFixture()
+    sh(f.repo, `git worktree add -q --detach "${f.worktree}" feature`)
+    writeFileSync(`${f.worktree}.codex-review-owned`, "created by codex-pr-review.sh on test")
+    const inside = join(f.worktree, "retained")
+    mkdirSync(inside);writeFileSync(join(inside, "precious"), "original bytes")
+    symlinkSync(realpathSync(inside), join(f.repo, "node_modules"))
+    const result = run(f, [f.repo, "1"])
+    expect(result.code).toBe(1);expect(result.out).toContain("inside its disposable review tree")
+    expect(readFileSync(join(inside, "precious"), "utf8")).toBe("original bytes")
+    expect(codexCalls(f)).toBe(0)
+  })
+
+  test("workspace links cannot load anchor source during an exact-head review", () => {
+    const f = makeFixture(), shared = join(f.root, "storage/node_modules")
+    mkdirSync(shared, {recursive: true});mkdirSync(join(f.repo, "workspace"))
+    writeFileSync(join(f.repo, "workspace/index.cjs"), 'module.exports = "ANCHOR SOURCE"')
+    sh(f.repo, "git add workspace && git commit -qm anchor && git push -q origin main && git checkout -q feature && git merge -q main")
+    writeFileSync(join(f.repo, "workspace/index.cjs"), 'module.exports = "REVIEW SOURCE"')
+    sh(f.repo, "git add workspace && git commit -qm head && git push -q origin feature && git checkout -q main")
+    sh(f.origin, 'git update-ref refs/pull/1/head "$(git rev-parse refs/heads/feature)"')
+    symlinkSync(realpathSync(join(f.repo, "workspace")), join(shared, "workspace"))
+    symlinkSync(realpathSync(shared), join(f.repo, "node_modules"))
+    const unsafe = spawnSync("node", ["-e", 'process.stdout.write(require(process.argv[1]))', join(f.repo, "node_modules/workspace/index.cjs")], {encoding: "utf8"})
+    expect(unsafe.stdout).toBe("ANCHOR SOURCE")
+    const result = run(f, [f.repo, "1"])
+    expect(result.code).toBe(1);expect(result.out).toContain("escapes external package storage")
+    expect(readFileSync(join(f.worktree, "workspace/index.cjs"), "utf8")).toContain("REVIEW SOURCE")
+    expect(existsSync(join(f.worktree, "node_modules"))).toBe(false)
+    expect(codexCalls(f)).toBe(0)
+  })
+
+  test("a head without the optional harness parent remains reviewable with retained anchor dependencies", () => {
+    const f = makeFixture(), shared = join(f.root, "storage/tools/mentra-e2e/node_modules")
+    mkdirSync(shared, {recursive: true});mkdirSync(join(f.repo, "tools/mentra-e2e"), {recursive: true})
+    writeFileSync(join(f.root, "storage/tools/mentra-e2e/package.json"), '{"dependencies":{"external":"1.0.0"}}')
+    symlinkSync(realpathSync(shared), join(f.repo, "tools/mentra-e2e/node_modules"))
+    const result = run(f, [f.repo, "1"])
+    expect(result.code, result.out).toBe(0)
+    expect(existsSync(join(f.worktree, "tools/mentra-e2e"))).toBe(false)
+    expect(codexCalls(f)).toBe(1)
+    expect(run(f, [f.repo, "1"]).code).toBe(0)
+    sh(f.repo, "git checkout -q feature && mkdir -p tools/mentra-e2e && touch tools/mentra-e2e/README.md && git add tools/mentra-e2e/README.md && git commit -qm migration && git push -q origin feature && git checkout -q main")
+    sh(f.origin, 'git update-ref refs/pull/1/head "$(git rev-parse refs/heads/feature)"')
+    const migrated = run(f, [f.repo, "1"])
+    expect(migrated.code, migrated.out).toBe(0)
+    expect(existsSync(join(f.worktree, "tools/mentra-e2e/node_modules"))).toBe(false)
+  }, 90_000)
+
+  test("the standalone project runner resolves a relative checkout against its caller", () => {
+    const f = makeFixture()
+    const project = join(f.root, "Review project with spaces")
+    mkdirSync(project)
+    mkdirSync(f.reviews)
+    writeFileSync(join(f.reviews, "project-directory"), `${project}\n`)
+    const prompt = join(f.state, "prompt.txt")
+    writeFileSync(prompt, "Review this checkout")
+    const result = spawnSync("bash", [runner, ".", "fixture", join(f.state, "last-message.txt"), prompt], {
+      cwd: f.repo, encoding: "utf8", timeout: 30_000,
+      env: env(f, {GH_ACCOUNT: "own", ATTEMPTS: "1"}),
+    })
+    expect(result.status).toBe(0)
+    const messages = readFileSync(join(f.state, "requests.jsonl"), "utf8").trim().split("\n").map(JSON.parse)
+    const start = messages.find((message) => message.method === "thread/start").params
+    const checkout = realpathSync(f.repo)
+    expect(start.cwd).toBe(sh(project, "pwd -P"))
+    expect(start.runtimeWorkspaceRoots).toEqual([sh(project, "pwd -P"), checkout])
+    const reviewPrompt = messages.find((message) => message.method === "turn/start").params.input[0].text
+    expect(reviewPrompt).toContain(`Review checkout: ${checkout}\n`)
+    expect(reviewPrompt).toContain(`(cd ${checkout})`)
+    expect(codexCalls(f)).toBe(1)
+  }, 30_000)
+
+  test("the standalone runner rejects a missing checkout before starting a reviewer", () => {
+    const f = makeFixture()
+    const result = spawnSync("bash", [runner, "missing", "fixture", join(f.state, "out"), join(f.state, "prompt")], {
+      cwd: f.repo, encoding: "utf8", timeout: 30_000,
+      env: env(f, {GH_ACCOUNT: "own", CODEX_REVIEW_PROJECT_DIR: f.root}),
+    })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain("invalid repository directory")
+    expect(codexCalls(f)).toBe(0)
+  })
+
+  test("starts an interactive project session while reviewing the isolated PR checkout", () => {
+    const f = makeFixture()
+    const project = join(f.root, "Review project with spaces")
+    mkdirSync(project)
+    mkdirSync(f.reviews)
+    writeFileSync(join(f.reviews, "project-directory"), `${project}\n`)
+    writeFileSync(join(f.reviews, "project-id"), "project-1\n")
+    const r = run(f, [f.repo, "1"])
+    expect(r.code).toBe(0)
+    const args = readFileSync(join(f.state, "codex-args"), "utf8").split("\0")
+    expect(args.slice(0, -1)).toEqual(["app-server", "--stdio"])
+    expect(args).not.toContain("--ephemeral")
+    const messages = readFileSync(join(f.state, "requests.jsonl"), "utf8").trim().split("\n").map(JSON.parse)
+    const start = messages.find((message) => message.method === "thread/start").params
+    expect(start.cwd).toBe(sh(project, "pwd -P"))
+    expect(start.projectId).toBe("project-1")
+    expect(start.runtimeWorkspaceRoots).toEqual([sh(project, "pwd -P"), f.worktree])
+    expect(messages.find((message) => message.method === "turn/start").params.input[0].text).toContain(`Review checkout: ${f.worktree}`)
+    expect(sh(f.worktree, "git rev-parse HEAD")).toBe(sh(f.origin, "git rev-parse refs/pull/1/head"))
+    expect(existsSync(join(project, ".git"))).toBe(false)
+    expect(codexCalls(f)).toBe(1)
+  }, 90_000)
+
+  test("an empty project override keeps the normal PR working directory", () => {
+    const f = makeFixture()
+    mkdirSync(f.reviews)
+    writeFileSync(join(f.reviews, "project-directory"), "/missing/saved/project\n")
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_PROJECT_DIR: ""})
+    expect(r.code).toBe(0)
+    const args = readFileSync(join(f.state, "codex-args"), "utf8").split("\0")
+    expect(args[args.indexOf("-C") + 1]).toBe(f.worktree)
+    expect(args).not.toContain("--add-dir")
+  }, 90_000)
+
+  test("a project directory override does not inherit another folder's saved project ID", () => {
+    const f = makeFixture()
+    mkdirSync(f.reviews)
+    writeFileSync(join(f.reviews, "project-id"), "another-project\n")
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_PROJECT_DIR: f.root})
+    expect(r.code).toBe(0)
+    const sent = readFileSync(join(f.state, "requests.jsonl"), "utf8").trim().split("\n").map(JSON.parse)
+    expect(sent.find((message) => message.method === "thread/start").params).not.toHaveProperty("projectId")
+  }, 90_000)
+
+  test("a missing configured project fails before launching a reviewer and releases the lock", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_PROJECT_DIR: join(f.root, "missing")})
+    expect(r.code).not.toBe(0)
+    expect(r.out).toContain("invalid project directory")
+    expect(codexCalls(f)).toBe(0)
+    expect(existsSync(`${f.worktree}.lock`)).toBe(false)
+  }, 90_000)
+
+  test("explicit credentials support installation auth without the user endpoint", () => {
+    const f = makeFixture()
+    const automatic = run(f, [f.repo, "1"], {FAKE_GH_INSTALLATION: "1"})
+    expect(automatic.code).not.toBe(0)
+    expect(automatic.out).toContain("select GH_ACCOUNT=own")
+    expect(codexCalls(f)).toBe(0)
+    const explicit = run(f, [f.repo, "1"], {FAKE_GH_INSTALLATION: "1", GH_ACCOUNT: "own"})
+    expect(explicit.code).toBe(0)
+    expect(explicit.out).toContain("codex-pr-review: done")
+    expect(codexCalls(f)).toBe(1)
+  }, 90_000)
+
+  test("reports supported credential mode without repository or account access", () => {
+    const f = makeFixture()
+    const result = run(f, ["--capabilities"], {FAKE_GH_INSTALLATION: "1"})
+    expect(result.code).toBe(0)
+    expect(JSON.parse(result.out)).toEqual({schemaVersion: 1, explicitPostingAccount: true, installationCredentials: true})
+    expect(codexCalls(f)).toBe(0)
+  })
+
   test("posts, verifies the receipt, prints the done marker and releases the lock", () => {
     const f = makeFixture()
     const r = run(f, [f.repo, "1"])
@@ -340,6 +586,37 @@ describe("codex-pr-review.sh lifecycle", () => {
     expect(runner).toContain("posted its review before exiting")
   }, 90_000)
 
+  test("a project transport crash after posting uses the same receipt fence", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_PROJECT_DIR: f.root, FAKE_CODEX_MODE: "post-then-crash"})
+    expect(r.code).toBe(0)
+    expect(r.out).toContain("codex-pr-review: done")
+    expect(codexCalls(f)).toBe(1)
+  }, 90_000)
+
+  test("project transport stalls are retried once after detached descendants are drained", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_PROJECT_DIR: f.root, FAKE_CODEX_MODE: "hang"})
+    expect(r.code).not.toBe(0)
+    expect(r.out).toContain("codex-pr-review: FAILED")
+    expect(codexCalls(f)).toBe(2)
+    const pids = readFileSync(join(f.state, "grandchildren"), "utf8").trim().split("\n").map(Number)
+    expect(pids).toHaveLength(2)
+    for (const pid of pids) expect(isAlive(pid)).toBe(false)
+  }, 90_000)
+
+  test("a completed project review drains detached tools that keep server pipes open", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_PROJECT_DIR: f.root, FAKE_CODEX_MODE: "success-with-child"})
+    expect(r.code).toBe(0)
+    expect(codexCalls(f)).toBe(1)
+    const runner = readFileSync(join(f.reviews, sh(f.reviews, "ls"), "runner.log"), "utf8")
+    expect(runner).toContain("attempt 1 finished")
+    expect(runner).not.toContain("stalled")
+    const pids = readFileSync(join(f.state, "grandchildren"), "utf8").trim().split("\n").map(Number)
+    for (const pid of pids) expect(isAlive(pid)).toBe(false)
+  }, 90_000)
+
   test("a stalled attempt is killed, retried once, then reported as FAILED", () => {
     const f = makeFixture()
     const started = Date.now()
@@ -425,9 +702,9 @@ function isAlive(pid) {
   }
 }
 
-function startHung(f) {
+function startHung(f, extraEnv = {}) {
   const child = spawn("bash", [wrapper, f.repo, "1"], {
-    env: env(f, {FAKE_CODEX_MODE: "hang", ATTEMPTS: "1", STALL_SECONDS: "60"}),
+    env: env(f, {FAKE_CODEX_MODE: "hang", ATTEMPTS: "1", STALL_SECONDS: "60", ...extraEnv}),
   })
   let out = ""
   child.stdout.on("data", (d) => (out += d))
@@ -437,6 +714,19 @@ function startHung(f) {
 }
 
 describe("cancellation", () => {
+  test("cancelling a project review drains the adapter, server and detached tools before unlocking", async () => {
+    const f = makeFixture()
+    const h = startHung(f, {CODEX_REVIEW_PROJECT_DIR: f.root})
+    await until(() => existsSync(`${f.worktree}.lock/runner-pid`) && existsSync(join(f.state, "grandchildren")))
+    const runnerPid = Number(readFileSync(`${f.worktree}.lock/runner-pid`, "utf8").trim())
+    const kids = readFileSync(join(f.state, "grandchildren"), "utf8").trim().split("\n").map(Number)
+    h.child.kill("SIGTERM")
+    await h.closed
+    expect(h.out()).toContain("codex-pr-review: FAILED")
+    expect(existsSync(`${f.worktree}.lock`)).toBe(false)
+    await until(() => !isAlive(runnerPid) && kids.every((k) => !isAlive(k)), 10_000)
+  }, 90_000)
+
   test("cancelling the wrapper stops the runner and its processes before the lock is released", async () => {
     const f = makeFixture()
     const h = startHung(f)

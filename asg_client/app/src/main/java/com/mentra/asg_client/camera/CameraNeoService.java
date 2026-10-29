@@ -584,6 +584,41 @@ public class CameraNeoService extends LifecycleService {
         return false;
     }
 
+    /**
+     * Close a finished photo session so a paused stream can reopen the camera.
+     *
+     * <p>A stream photo borrows the device from a running WHIP capturer, and the normal post-shot
+     * keep-alive would otherwise hold it for several seconds while the stream shows substitute
+     * frames. Refuses while a shot, queued request, recording, or warm-up lease still needs it.
+     *
+     * @return true once no photo session holds the camera
+     */
+    public static boolean releaseIdleCameraForStream() {
+        synchronized (SERVICE_LOCK) {
+            CameraNeoService service = sInstance;
+            if (service == null) {
+                return true;
+            }
+            if (service.videoSession != null && service.videoSession.isRecording()) {
+                return false;
+            }
+            if (service.photoSession.shotState() != AeStateMachine.ShotState.IDLE
+                    || !QueuedPhotoRequestQueue.getInstance().isEmpty()
+                    || !service.warmLeases.isEmpty()) {
+                return false;
+            }
+            if (service.cameraCoordinator.device() == null
+                    && !service.cameraCoordinator.hasConfiguredCamera()) {
+                return true;
+            }
+            Log.i(TAG, "Closing idle photo camera so the stream can reopen it");
+            service.cancelKeepAliveTimer();
+            service.closeCamera();
+            service.stopSelf();
+            return true;
+        }
+    }
+
     /** Cancel an active still capture and synchronously tear down its camera session. */
     public static boolean cancelActivePhotoCapture(String errorMessage) {
         synchronized (SERVICE_LOCK) {

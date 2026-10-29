@@ -201,23 +201,26 @@ jobs:
             const tag = 'oem-app-builds';
             const apkName = '${{ steps.apk.outputs.name }}';
 
-            let release;
-            try {
-              release = (await github.rest.repos.getReleaseByTag({owner, repo, tag})).data;
-            } catch (e) {
-              if (e.status !== 404) throw e;
-              release = (await github.rest.repos.createRelease({
-                owner, repo, tag_name: tag, name: 'Example OEM app builds (rolling)',
+            const ghEnv = {...process.env, GH_TOKEN: process.env.GITHUB_TOKEN};
+            // Reuses the rolling release; creating it goes through the shared
+            // retry for GitHub's workflow-file check timeouts on new tags.
+            const release = JSON.parse(require('child_process').execFileSync('node', [
+              '.github/scripts/github-release-create.mjs', 'release',
+              '--repository', `${owner}/${repo}`, '--input', '-',
+            ], {
+              input: JSON.stringify({
+                tag_name: tag, name: 'Example OEM app builds (rolling)',
                 body: 'Rolling dev builds of sdk/example-oem-app — the reference second host built against the public @mentra/engine entry. Debug-keystore-signed release APKs, one per dev commit that touches the OEM stack. Assets older than 14 days are swept automatically.',
-                prerelease: true,
-              })).data;
-            }
+                draft: false, prerelease: true,
+              }),
+              encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['pipe', 'pipe', 'inherit'], env: ghEnv,
+            }));
 
             require('child_process').execFileSync('node', [
               '.github/scripts/publish-immutable-release-asset.mjs',
               '--file', apkName, '--name', apkName, '--release-id', String(release.id),
               '--repository', `${owner}/${repo}`, '--replace', 'true',
-            ], {stdio: 'inherit', env: {...process.env, GH_TOKEN: process.env.GITHUB_TOKEN}});
+            ], {stdio: 'inherit', env: ghEnv});
 
       - name: Sweep old release assets
         if: github.event_name != 'pull_request'

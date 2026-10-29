@@ -1,0 +1,186 @@
+import {expect, mock, test} from 'bun:test';
+import {TestRequestModel} from '../models/test-request.model';
+import {createTestRequestsApi} from '../api/internal/test-requests.api';
+import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures';
+import {portableRequirementsSchema, portableRoutineSelectionSchema, routineQualificationTargetSchema, type StoredRoutineJob} from '../types/routine-job.types';
+import type {PermissionObservation} from '../types/resource-permissions.types';
+import {RoutineJobService, routineJobInputDigest, routineJobRepository, type RoutineJobRepository} from './routine-job.service';
+import {requestInputDigest, TestRequestService} from './test-request.service';
+import type {ReceivedTestHostState} from './test-host-state.service';
+
+const now = Date.parse('2026-10-14T02:00:00Z'), revision = 'a'.repeat(40), hash = 'b'.repeat(64);
+const binding = {...testFrameworkBinding(), version: 1000, routineApiVersion: 38};
+const requirements = portableRequirementsSchema.parse({platform: 'ios-on-mac', resources: [
+  {kind: 'app', capabilities: ['relaunch'], permissions: [{permission: 'location', recipient: 'app'}]},
+  {kind: 'recorder', capabilities: []}]});
+function row(jobId = 'pending-ota'): StoredRoutineJob {
+  const source = {channel: 'dev', buildRunId: 100, publicationAttempt: 1};
+  const selection = portableRoutineSelectionSchema.parse({requestId: jobId, routineId: 'ota-test', platform: 'ios-on-mac',
+    routineRevision: revision, source, build: {repository: 'Mentra-Community/MentraOS', headSha: revision, channel: 'dev',
+      kind: 'mac-ci-package', source, archive: {name: 'Mentra.zip', url: 'https://artifactscdn.mentraglass.com/selected.zip', sha256: hash, size: 100},
+      receipt: {url: 'https://artifactscdn.mentraglass.com/selected.json', sha256: hash, size: 100}}});
+  const definition = {id: 'ota-test', minimumRoutineApiVersion: 38, title: 'OTA', purpose: 'Check the selected app',
+    platforms: ['ios-on-mac'], entry: 'home', account: 'lane', requirements: [], fixtures: [],
+    steps: [{id: 'check', instruction: 'Check updates', expected: 'Updates checked'}],
+    execution: {resourceKinds: ['app', 'recorder']}, resourceRequirements: requirements.resources,
+    source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision, path: 'routines/ota-test/routine.ts'}};
+  const value = {requestId: jobId, state: 'awaiting-runner' as const, fleetSelection: selection,
+    fleetSelectionSha256: requestInputDigest(selection), fleetDeadline: new Date(now + 60_000),
+    fleetPreparation: {routineSource: {...testRoutineSource(revision), minimumRoutineApiVersion: 38},
+      definitionSha256: requestInputDigest(definition), definition, requirements: structuredClone(requirements)}} as StoredRoutineJob;
+  value.fleetInputSha256 = routineJobInputDigest(value);
+  return value;
+}
+function host(): ReceivedTestHostState {
+  return {hostId: 'pro1', incarnation: 'boot', incarnationGeneration: 1, sequence: 1,
+    observedAt: new Date(now).toISOString(), receivedAt: new Date(now).toISOString(), frameworkBinding: binding,
+    lanes: [{id: 'pro1-mac', platform: 'ios-on-mac', state: 'idle', dispatchMode: 'automatic', resources: [
+      {id: 'app', kind: 'app', capabilities: ['relaunch']}, {id: 'recorder', kind: 'recorder'}]}]};
+}
+function granted(): PermissionObservation {
+  return {permission: 'location', status: 'granted', rawStatus: 'authorizedAlways', observedAt: new Date(now).toISOString(), binding,
+    recipient: {kind: 'app', uid: 501, pid: 123, processStartedAt: 'observed-process', launchedAt: now - 1000,
+      bundleId: 'com.mentra.mentra', bundlePath: '/Applications/Mentra.app', executablePath: '/Applications/Mentra.app/Mentra',
+      version: '3.3.0', build: '100', teamId: 'TEAM', codeRequirement: 'verified requirement',
+      selectedBuild: {headSha: revision, archiveSha256: hash, receiptSha256: hash}}, evidence: {sha256: hash}};
+}
+function fixture(rows = [row()], observed = host()) {
+  const reads: unknown[] = [];
+  const forbidden = async (): Promise<never> => {throw new Error('Qualification must not mutate or resolve source/builds');};
+  const repository: RoutineJobRepository = {get: forbidden, insert: forbidden, prepare: forbidden, bind: forbidden, cancel: forbidden,
+    async *qualificationCandidates(hostId, laneId, limit, at, timeoutMS) {reads.push({hostId, laneId, limit, at, timeoutMS}); yield* structuredClone(rows);}};
+  const service = new RoutineJobService(repository, {resolve: forbidden, isPrSuperseded: forbidden},
+    {resolve: forbidden, inventory: forbidden, blob: forbidden}, {getExact: forbidden},
+    {async get(id) {expect(id).toBe('pro1'); return structuredClone(observed);}}, {cancel: forbidden}, {detail: forbidden}, () => now);
+  return {service, reads, rows, observed};
+}
+
+test('an unseen selected build becomes a bounded read-only target while its original job remains unbound', async () => {
+  const f = fixture(), before = structuredClone(f.rows), targets = await f.service.qualificationTargets('pro1');
+  expect(targets).toHaveLength(1);
+  const {inputSha256, ...target} = targets[0]!;
+  expect(target).toEqual({jobId: 'pending-ota', hostId: 'pro1', laneId: 'pro1-mac', deadline: new Date(now + 60_000).toISOString(),
+    selection: f.rows[0]!.fleetSelection, requirements});
+  expect(inputSha256).toBe(requestInputDigest(target));
+  expect(inputSha256).not.toBe(f.rows[0]!.fleetInputSha256);
+  expect(f.reads).toEqual([{hostId: 'pro1', laneId: 'pro1-mac', limit: 100, at: new Date(now), timeoutMS: 5000}]);
+  expect(f.rows).toEqual(before);
+  expect(f.rows[0]).not.toHaveProperty('fleetBinding');
+  expect(f.rows[0]).not.toHaveProperty('hostReceipt');
+  expect(f.rows[0]).not.toHaveProperty('dispatchIntent');
+  expect(requestInputDigest({...target, selection: {...target.selection, build: {...target.selection.build, headSha: 'c'.repeat(40)}}})).not.toBe(inputSha256);
+});
+
+test('target constraints, cancellation, expiry, bound state and structural mismatches cannot produce a candidate', async () => {
+  const invalid = [
+    {...row('other-host'), fleetTarget: {hostId: 'other'}},
+    {...row('other-lane'), fleetTarget: {hostId: 'pro1', laneId: 'other'}},
+    {...row('cancelled'), fleetCancellation: {requestedAt: new Date(now).toISOString(), reason: 'Cancelled'}},
+    {...row('expired'), fleetDeadline: new Date(now)},
+    {...row('accepted'), state: 'accepted' as const, hostId: 'pro1'},
+    {...row('unprepared'), state: 'awaiting-source' as const, fleetPreparation: undefined},
+  ];
+  expect(await fixture(invalid).service.qualificationTargets('pro1')).toEqual([]);
+  const selected = row(); selected.fleetTarget = {hostId: 'pro1', laneId: 'pro1-mac'};
+  selected.fleetInputSha256 = routineJobInputDigest(selected);
+  expect((await fixture([selected]).service.qualificationTargets('pro1'))[0]?.target).toEqual(selected.fleetTarget);
+  const wrongResources = host(); wrongResources.lanes[0]!.resources[0]!.capabilities = [];
+  expect(await fixture([row()], wrongResources).service.qualificationTargets('pro1')).toEqual([]);
+});
+
+test('active custody, paused/offline lanes, stale reports and older worker API never start target discovery', async () => {
+  for (const state of ['running', 'reserved', 'in-repair', 'out-of-service', 'offline'] as const) {
+    const observed = host(); observed.lanes[0]!.state = state;
+    const f = fixture([row()], observed);
+    expect(await f.service.qualificationTargets('pro1')).toEqual([]); expect(f.reads).toEqual([]);
+  }
+  for (const change of [
+    (observed: ReceivedTestHostState) => {observed.lanes[0]!.dispatchMode = 'paused';},
+    (observed: ReceivedTestHostState) => {observed.receivedAt = new Date(now - 120_001).toISOString();},
+    (observed: ReceivedTestHostState) => {observed.receivedAt = new Date(now + 1).toISOString();},
+    (observed: ReceivedTestHostState) => {observed.frameworkBinding = {...binding, routineApiVersion: 37};},
+  ]) {const observed = host(); change(observed); const f = fixture([row()], observed);
+    expect(await f.service.qualificationTargets('pro1')).toEqual([]); expect(f.reads).toEqual([]);}
+});
+
+test('an exact fresh app grant skips preparation; stale or different selected-build evidence still needs qualification', async () => {
+  for (const qualificationNeeded of [false, true]) {
+    const observed = host(), observation = granted();
+    if (qualificationNeeded) observation.recipient = {...observation.recipient, selectedBuild: {headSha: 'c'.repeat(40), archiveSha256: hash, receiptSha256: hash}} as PermissionObservation['recipient'];
+    observed.lanes[0]!.resources[0]!.permissionObservations = [observation];
+    expect(await fixture([row()], observed).service.qualificationTargets('pro1')).toHaveLength(qualificationNeeded ? 1 : 0);
+  }
+  const observed = host(); observed.lanes[0]!.resources[0]!.permissionObservations = [{...granted(), observedAt: new Date(now - 120_001).toISOString()}];
+  expect(await fixture([row()], observed).service.qualificationTargets('pro1')).toHaveLength(1);
+});
+
+test('one candidate per lane does not replace permissionless jobs or expose inconsistent exact inputs', async () => {
+  const observed = host(); observed.lanes.push({...structuredClone(observed.lanes[0]!), id: 'second-mac'});
+  const f = fixture([row(), row('later')], observed), targets = await f.service.qualificationTargets('pro1');
+  expect(targets.map(value => [value.jobId, value.laneId])).toEqual([['pending-ota', 'pro1-mac'], ['pending-ota', 'second-mac']]);
+  expect(targets[0]!.inputSha256).not.toBe(targets[1]!.inputSha256);
+  const plain = row(); delete plain.fleetPreparation!.requirements.resources[0]!.permissions;
+  plain.fleetInputSha256 = routineJobInputDigest(plain);
+  expect(await fixture([plain]).service.qualificationTargets('pro1')).toEqual([]);
+  const corrupted = row(); corrupted.fleetSelection.build.headSha = 'c'.repeat(40);
+  await expect(fixture([corrupted]).service.qualificationTargets('pro1')).rejects.toThrow('Stored routine job exact inputs are unavailable');
+  expect(routineQualificationTargetSchema.safeParse({...targets[0], jobId: 'other'}).success).toBe(false);
+});
+
+test('ordered streaming skips incompatible and already qualified rows without a separate query-language matcher', async () => {
+  const first = row('already-qualified'), later = row('unseen-build');
+  later.fleetSelection.build.headSha = 'c'.repeat(40);
+  later.fleetSelectionSha256 = requestInputDigest(later.fleetSelection);
+  later.fleetInputSha256 = routineJobInputDigest(later);
+  const observed = host(); observed.lanes[0]!.resources[0]!.permissionObservations = [granted()];
+  expect((await fixture([...Array.from({length: 26}, () => structuredClone(first)), later], observed)
+    .service.qualificationTargets('pro1'))[0]?.jobId).toBe('unseen-build');
+  expect(await fixture([...Array.from({length: 100}, () => structuredClone(first)), later], observed)
+    .service.qualificationTargets('pro1')).toEqual([]);
+});
+
+test('all candidate streams share the query deadline and stop before a target is returned after it expires', async () => {
+  const f = fixture(), service = f.service as unknown as {now: () => number};
+  const times = [now, now + 1, now + 2, now + 5_000];
+  service.now = () => times.shift() ?? now + 5_000;
+  expect(await f.service.qualificationTargets('pro1')).toEqual([]);
+  expect(f.reads).toEqual([{hostId: 'pro1', laneId: 'pro1-mac', limit: 100, at: new Date(now), timeoutMS: 4998}]);
+});
+
+test('the authenticated poll only includes explicitly requested targets and does not bind or acknowledge a product', async () => {
+  const f = fixture();
+  class Requests extends TestRequestService {override async queued() {return {requests: [], preparations: [], dispatchCompletions: [], nextCursor: null};}}
+  const token = 'controller-qualification-test-' + 'x'.repeat(32), headers = {authorization: `Bearer ${token}`};
+  const api = createTestRequestsApi(new Requests(), () => JSON.stringify({pro1: token}), undefined, undefined, f.service);
+  expect(await (await api.request('/?hostId=other', {headers})).json()).toEqual({requests: [], preparations: [], dispatchCompletions: [], nextCursor: null});
+  expect(f.reads).toEqual([]);
+  const response = await api.request('/?qualificationTargets=1&hostId=other', {headers});
+  expect(response.status).toBe(200);
+  const page = await response.json() as {qualificationTargets: unknown[]};
+  expect(routineQualificationTargetSchema.parse(page.qualificationTargets[0])).toMatchObject({hostId: 'pro1', laneId: 'pro1-mac'});
+  expect((await api.request('/?qualificationTargets=0', {headers})).status).toBe(400);
+  expect((await api.request('/?qualificationTargets=1')).status).toBe(401);
+  expect(f.rows[0]!.state).toBe('awaiting-runner');
+});
+
+test('candidate database stream is bounded, closed and excludes cancelled, expired or assigned jobs without writes', async () => {
+  let filter: unknown, limit: number | undefined, closed = false;
+  const cursor = {async *[Symbol.asyncIterator]() {yield row();}, async close() {closed = true;}};
+  const query = {sort(value: unknown) {expect(value).toEqual({createdAt: 1, requestId: 1}); return this;},
+    limit(value: number) {limit = value; return this;}, read(value: string) {expect(value).toBe('primary'); return this;},
+    readConcern(value: string) {expect(value).toBe('majority'); return this;},
+    setOptions(value: unknown) {expect(value).toEqual({timeoutMS: 123, maxTimeMS: 123}); return this;},
+    lean() {return this;}, cursor(value: unknown) {expect(value).toEqual({batchSize: 20}); return cursor;}};
+  const original = TestRequestModel.find;
+  try {
+    TestRequestModel.find = mock((value: unknown) => {filter = value; return query;}) as unknown as typeof TestRequestModel.find;
+    for await (const candidate of routineJobRepository.qualificationCandidates!('pro1', 'pro1-mac', 100, new Date(now), 123)) {
+      expect(candidate.requestId).toBe('pending-ota'); break;
+    }
+    expect(limit).toBe(100); expect(closed).toBe(true);
+    expect(filter).toMatchObject({state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false},
+      fleetCancellation: {$exists: false}, fleetDeadline: {$gt: new Date(now)}, 'fleetSelection.platform': 'ios-on-mac', fleetPreparation: {$exists: true},
+      $and: [{$or: [{'fleetTarget.hostId': {$exists: false}}, {'fleetTarget.hostId': 'pro1'}]},
+        {$or: [{'fleetTarget.laneId': {$exists: false}}, {'fleetTarget.laneId': 'pro1-mac'}]}]});
+  } finally {TestRequestModel.find = original;}
+});

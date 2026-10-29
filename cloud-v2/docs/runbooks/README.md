@@ -23,6 +23,7 @@ configuration choices, conventions, and what's set up where.
 | [`porter/deploys.md`](./porter/deploys.md) | Porter's app/services model, env-group flow, what `porter apply` actually does. |
 | [`doppler/porter-integration.md`](./doppler/porter-integration.md) | Doppler ↔ Porter sync, multi-env model, token rotation. |
 | [`cloudflare/dns-for-nlb.md`](./cloudflare/dns-for-nlb.md) | DNS, DNS-only mode for UDP, how to wire a hostname to an NLB. |
+| [`mentra-account.md`](./mentra-account.md) | The Mentra account (Supabase) behind Core's sign-in server: Site URL, redirect allowlist, API keys, signing keys, and the sign-in sites. |
 | `betterstack.md` | Log aggregation, querying, alerts. *(TODO — port from v1)* |
 
 ## Doing a thing
@@ -60,7 +61,7 @@ Decisions that aren't enforced by code but matter for working as a team.
 
 When you find yourself explaining the same thing twice — "wait, why does
 the dev MONGO_URL point at localhost when prod is Atlas?", "what does
-`additionalPorts:` in porter.yaml actually do?" — write it down here.
+`additionalPorts:` in the shared Porter source actually do?" — write it down here.
 
 The format is unstructured but the contract is "an engineer joining the team
 in 6 months should be able to read this and understand the operational

@@ -1,0 +1,224 @@
+/**
+ * The screens before a workspace, each one centered column:
+ *
+ *  - the first run (`/` with no workspace) where the portal makes none: the person's valid invitations, from a
+ *    link or addressed to their verified email; with none they can accept, why they have no workspace and the way
+ *    into one. Where the portal can make a workspace it does (App.tsx), so this is never the screen for that.
+ *  - an invitation link (`/invitation`): that invitation alone, with Accept and Dismiss, or Switch account
+ *    when it is for someone else. A link Core says is no longer valid says so once, with the way on.
+ *
+ * Accepting opens the workspace joined, at the address the person came to.
+ */
+
+import { useQuery } from "@tanstack/react-query";
+import {
+  buttonVariants,
+  Count,
+  InvitationAcceptCard,
+  isInvitationForOtherAccount,
+  Spinner,
+  workspaceListQuery,
+} from "@mentra/workspace-ui";
+import { ArrowLeft } from "lucide-react";
+import type { ReactNode } from "react";
+import { PendingInvitationCard } from "@/components/pending-invitation";
+import { PortalCenteredLayout, useBareWorkspaceId } from "@/components/portal-shell";
+import type { PendingInvitation, UnavailableInvitations } from "@/lib/invitations";
+import { Link, navigate } from "@/lib/navigation";
+import { creationNotice, portalWorkspaceApi, usePortal } from "@/lib/portal";
+
+export const GONE_EXPLANATION =
+  "It may have expired, been revoked, been replaced by a newer one or already been used. Ask the person who invited you to send a new one.";
+
+/** The workspace `/` would open, if the person has any. */
+function useHomeWorkspace() {
+  const list = useQuery(workspaceListQuery(portalWorkspaceApi));
+  const homeId = useBareWorkspaceId();
+  return { list, home: list.data?.find(item => item.workspaceId === homeId) ?? null };
+}
+
+function Heading({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div className="text-center">
+      <h1 className="text-2xl leading-tight font-semibold">{title}</h1>
+      {children ? <p className="text-muted-foreground mx-auto mt-2 max-w-[420px]">{children}</p> : null}
+    </div>
+  );
+}
+
+/** The invitations as cards under "Pending invitations N". */
+function InvitationList({ invitations }: { invitations: readonly PendingInvitation[] }) {
+  return (
+    <section aria-label="Pending invitations" className="mt-8">
+      <h2 className="text-muted-foreground mb-3 flex items-center gap-2 px-1 text-sm font-semibold">
+        {invitations.length === 1 ? "Pending invitation" : "Pending invitations"}
+        <Count>{invitations.length}</Count>
+      </h2>
+      <div className="space-y-4">
+        {invitations.map(invitation => (
+          <PendingInvitationCard key={invitation.preview.invitationId} invitation={invitation} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** Back to the workspace the bare address opens. */
+function BackHome({ name }: { name: string }) {
+  return (
+    <Link
+      href="/"
+      className="text-muted-foreground hover:text-foreground mt-7 inline-flex items-center gap-1.5 self-center text-[15px] font-semibold"
+    >
+      <ArrowLeft className="size-4" />
+      Back to {name}
+    </Link>
+  );
+}
+
+/**
+ * `/` with no workspace to open, where the portal does not make one: the person's invitations, or with none they
+ * can accept, why they have no workspace and the way into one.
+ */
+export function WelcomeScreen({ creationRefused = false }: { /** Core just refused to make the person a workspace: say so as the deployment's rule does. */ creationRefused?: boolean }) {
+  const portal = usePortal();
+  const list = useQuery(workspaceListQuery(portalWorkspaceApi));
+  const invitations = portal.invitations ?? [];
+  // One for another account is shown (with Switch account) but does not count as something to accept.
+  const acceptable = invitations.filter(invitation => !invitation.forOtherAccount);
+
+  if (list.data === undefined) {
+    return (
+      <PortalCenteredLayout>
+        <Heading title="Welcome to Mentra" />
+        {list.isError ? (
+          <p role="alert" className="rounded-notice bg-error text-error-foreground mt-8 px-4 py-3 text-center text-sm">
+            Could not load your workspaces.{" "}
+            <button type="button" className="font-semibold underline underline-offset-[3px]" onClick={() => void list.refetch()}>
+              Try again
+            </button>
+          </p>
+        ) : (
+          <div role="status" className="text-muted-foreground mt-8 flex items-center justify-center gap-2.5 text-sm">
+            <Spinner /> Loading your workspaces
+          </div>
+        )}
+      </PortalCenteredLayout>
+    );
+  }
+
+  return (
+    <PortalCenteredLayout>
+      {acceptable.length > 0 ? (
+        <Heading title="Welcome to Mentra">
+          {acceptable.length === 1
+            ? "You've been invited to join a workspace. Accept to get started."
+            : `You've been invited to join ${acceptable.length} workspaces. Accept one to get started.`}
+        </Heading>
+      ) : (
+        <Heading title="You're not in a workspace yet.">
+          {[creationNotice(portal.creation) ?? (creationRefused ? creationNotice({ allowed: false, reason: null }) : null), "Open an invitation link someone sent you to join their workspace."].filter(Boolean).join(" ")}
+        </Heading>
+      )}
+      {invitations.length > 0 ? <InvitationList invitations={invitations} /> : null}
+    </PortalCenteredLayout>
+  );
+}
+
+/**
+ * `/` for a person with no workspace whose invitations could not be read: the same unavailable state as a link that
+ * could not be looked up, with Try again. The portal makes no workspace until it knows whether one is waiting. A link
+ * that cannot be looked up may be dismissed, which lets the first run go on without it.
+ */
+export function InvitationsUnavailable({ unavailable }: { unavailable: UnavailableInvitations }) {
+  const portal = usePortal();
+  const { token } = unavailable;
+  return (
+    <PortalCenteredLayout>
+      <Heading title="Welcome to Mentra" />
+      <div className="mt-8">
+        <InvitationAcceptCard
+          load={{ status: "error", error: unavailable.error }}
+          onRetry={unavailable.retry}
+          onAccept={() => {}}
+          onDismiss={token === null ? undefined : () => portal.forgetInvitation({ invitationId: null, token }, "dismissed")}
+          accepting={false}
+          acceptError={null}
+        />
+      </div>
+    </PortalCenteredLayout>
+  );
+}
+
+/** `/invitation`: the invitation link this tab holds, or once, that it is no longer valid. */
+export function InvitationScreen() {
+  const portal = usePortal();
+  const { link } = portal;
+  const { list, home } = useHomeWorkspace();
+  const firstRun = list.data !== undefined && list.data.length === 0;
+
+  if (link.status === "gone") {
+    return (
+      <PortalCenteredLayout>
+        <section aria-label="Invitation no longer valid" className="bg-card rounded-card border p-6 text-center sm:p-8">
+          <h1 className="text-2xl leading-tight font-semibold">Invitation no longer valid</h1>
+          <p className="text-muted-foreground mx-auto mt-2 max-w-[420px]">{GONE_EXPLANATION}</p>
+          <div className="mt-7 grid">
+            {home ? (
+              <Link href="/" className={buttonVariants({ size: "lg" })}>
+                Go to {home.name}
+              </Link>
+            ) : (
+              // The first run: create a workspace, or open another invitation.
+              <Link href="/" className={buttonVariants({ size: "lg" })}>
+                Continue
+              </Link>
+            )}
+          </div>
+        </section>
+      </PortalCenteredLayout>
+    );
+  }
+
+  if (link.status === "unavailable") {
+    return (
+      <PortalCenteredLayout>
+        <Heading title="You're invited" />
+        <div className="mt-8">
+          <InvitationAcceptCard
+            load={{ status: "error", error: link.error }}
+            onRetry={link.retry}
+            onAccept={() => {}}
+            onDismiss={() => {
+              portal.forgetInvitation({ invitationId: null, token: link.token }, "dismissed");
+              navigate("/", { replace: true });
+            }}
+            accepting={false}
+            acceptError={null}
+          />
+        </div>
+        {home ? <BackHome name={home.name} /> : null}
+      </PortalCenteredLayout>
+    );
+  }
+
+  if (link.status !== "valid") return null;
+  const invitation: PendingInvitation = {
+    preview: link.preview,
+    token: link.token,
+    forOtherAccount: isInvitationForOtherAccount(link.preview, portal.accountEmail),
+  };
+  return (
+    <PortalCenteredLayout>
+      {invitation.forOtherAccount ? (
+        <Heading title="Switch accounts to accept">This invitation was sent to a different email address.</Heading>
+      ) : firstRun ? (
+        <Heading title="Welcome to Mentra">Join the workspace you were invited to.</Heading>
+      ) : (
+        <Heading title="You're invited">Accept to join the workspace with the account you're signed in with.</Heading>
+      )}
+      <InvitationList invitations={[invitation]} />
+      {home ? <BackHome name={home.name} /> : null}
+    </PortalCenteredLayout>
+  );
+}

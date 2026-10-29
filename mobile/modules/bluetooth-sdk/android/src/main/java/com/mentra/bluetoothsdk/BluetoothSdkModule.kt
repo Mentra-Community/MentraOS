@@ -334,6 +334,7 @@ class BluetoothSdkModule : Module() {
             "glasses_status",
             "bluetooth_status",
             "log",
+            "sdk_update_notice",
             "device_discovered",
             "default_device_changed",
             // Individual event handlers
@@ -404,7 +405,6 @@ class BluetoothSdkModule : Module() {
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
-            "captions_tester_incident",
             "extraction_progress",
         )
 
@@ -618,7 +618,7 @@ class BluetoothSdkModule : Module() {
         // MARK: - Incident Reporting
 
         SdkAsyncFunction("sendIncidentId") { incidentId: String, apiBaseUrl: String? ->
-            sdk?.sendIncidentId(incidentId, apiBaseUrl)
+            requireSdk().sendIncidentId(incidentId, apiBaseUrl)
         }
 
         // MARK: - Native Notification Centre
@@ -664,6 +664,10 @@ class BluetoothSdkModule : Module() {
 
         SdkCoroutineFunction("setGalleryServerEnabled") { enabled: Boolean ->
             requireSdk().setGalleryServerEnabled(enabled).values
+        }
+
+        SdkCoroutineFunction("setTouchGestureDefaultBehaviorEnabled") { gesture: String, enabled: Boolean ->
+            requireSdk().setTouchGestureDefaultBehaviorEnabled(TouchGesture.fromWireName(gesture), enabled).values
         }
 
         SdkCoroutineFunction("setGalleryModeEnabled") { enabled: Boolean ->

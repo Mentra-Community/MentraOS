@@ -13,6 +13,7 @@ import android.content.Intent;
 import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.utils.ServiceConstants;
 import java.nio.charset.StandardCharsets;
@@ -24,11 +25,75 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowBuild;
+import org.robolectric.shadows.ShadowLog;
 
 /** Verifies set_system_time routing through ISystemController on Mentra Live. */
 @RunWith(RobolectricTestRunner.class)
 @Config(application = Application.class, sdk = 33)
 public class PowerCommandHandlerTest {
+
+    @Test
+    public void disableUnwornPowerOff_rejectsInvalidIdsWithoutAccessingTransport()
+            throws Exception {
+        Application app = ApplicationProvider.getApplicationContext();
+        AsgClientServiceManager manager = mock(AsgClientServiceManager.class);
+        PowerCommandHandler handler = new PowerCommandHandler(app, manager);
+        for (Object id : List.of("short", "has space-1234", "quote'1234", 12345678)) {
+            assertThat(
+                            handler.handleCommand(
+                                    AsgConstants.COMMAND_DISABLE_UNWORN_AUTO_POWER_OFF,
+                                    new JSONObject().put("request_id", id)))
+                    .isFalse();
+        }
+        verify(manager, org.mockito.Mockito.never()).getBluetoothManager();
+    }
+
+    @Test
+    public void disableUnwornPowerOff_nonK900TransportReportsCorrelatedFailure() throws Exception {
+        Application app = ApplicationProvider.getApplicationContext();
+        AsgClientServiceManager manager = mock(AsgClientServiceManager.class);
+        when(manager.getBluetoothManager()).thenReturn(mock(ICompanionTransport.class));
+        PowerCommandHandler handler = new PowerCommandHandler(app, manager);
+        ShadowLog.clear();
+        assertThat(
+                        handler.handleCommand(
+                                AsgConstants.COMMAND_DISABLE_UNWORN_AUTO_POWER_OFF,
+                                new JSONObject().put("request_id", "setup-power-1234")))
+                .isTrue();
+        String message =
+                ShadowLog.getLogsForTag("PowerCommandHandler").stream()
+                        .map(row -> row.msg)
+                        .filter(row -> row.startsWith("UNWORN_AUTO_POWER_OFF_RESULT "))
+                        .findFirst()
+                        .orElseThrow();
+        JSONObject result =
+                new JSONObject(message.substring("UNWORN_AUTO_POWER_OFF_RESULT ".length()));
+        assertThat(result.getString("request_id")).isEqualTo("setup-power-1234");
+        assertThat(result.getString("type")).isEqualTo("unworn_auto_power_off_result");
+        assertThat(result.getBoolean("success")).isFalse();
+        assertThat(result.getString("status")).isEqualTo("transport_unavailable");
+        assertThat(result.getInt("result_code")).isEqualTo(-1);
+        assertThat(result.getString("process_sid")).isNotEmpty();
+        assertThat(result.getLong("elapsed_realtime_ms")).isNotNegative();
+    }
+
+    @Test
+    public void disableUnwornPowerOff_routesOnlyTheFixedCommand() throws Exception {
+        Application app = ApplicationProvider.getApplicationContext();
+        AsgClientServiceManager manager = mock(AsgClientServiceManager.class);
+        K900BluetoothManager transport = mock(K900BluetoothManager.class);
+        when(manager.getBluetoothManager()).thenReturn(transport);
+        PowerCommandHandler handler = new PowerCommandHandler(app, manager);
+        ShadowLog.clear();
+        assertThat(
+                        handler.handleCommand(
+                                AsgConstants.COMMAND_DISABLE_UNWORN_AUTO_POWER_OFF,
+                                new JSONObject().put("request_id", "setup-power-1234")))
+                .isTrue();
+        verify(transport).disableUnwornAutoPowerOff(any());
+        assertThat(ShadowLog.getLogsForTag("PowerCommandHandler"))
+                .noneMatch(row -> row.msg.startsWith("UNWORN_AUTO_POWER_OFF_RESULT "));
+    }
 
     @Test
     public void besRebootForMtkFlash_queuesExactUartCommand() throws Exception {

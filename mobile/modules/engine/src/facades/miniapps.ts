@@ -8,11 +8,44 @@
  * MentraJS router) are exported from `@mentra/engine` directly; the host mounts a
  * `<WebView>` wired to them. This facade is the lifecycle half.
  */
-import {useAppStatusStore} from "../stores/apps"
+import {getConfigValues} from "../runtime/bootstrap"
+import appRegistry from "../services/AppRegistry"
+import {onDeferredMiniappUpdateReady} from "../services/deferredMiniappUpdates"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
+import {installMiniappRelease} from "../services/miniappReleaseInstall"
+import {fetchHostedManifest, MiniappUrlUpdater} from "../services/miniappUrlUpdates"
+import {
+  onRunningUpdateFailed,
+  onRunningUpdatePrompt,
+  type PendingRunningUpdatePrompt,
+  type RunningUpdateFailure,
+} from "../services/runningUpdatePrompt"
+import {isSystemMiniappPackage} from "../services/SystemMiniappPolicy"
+import {firstPartyMiniappUrl} from "../services/systemMiniappTrust"
+import {onMiniappOpenedByUser, useAppStatusStore} from "../stores/apps"
 import type {ClientApp} from "../types"
+import {MiniappRunningError} from "../utils/storeInstallRuntime"
 
 type AppsState = ReturnType<typeof useAppStatusStore.getState>
+
+const urlUpdater = new MiniappUrlUpdater({
+  installedPackages: async () =>
+    (await appRegistry.getInstalledMiniapps({includeBackgroundOnly: true})).map((app) => app.packageName),
+  activeVersion: (packageName) => appRegistry.getActiveVersion(packageName),
+  releaseIdentity: (packageName, version) => appRegistry.getReleaseIdentity(packageName, version),
+  isSystemPackage: isSystemMiniappPackage,
+  firstPartyUrl: (packageName) => firstPartyMiniappUrl(getConfigValues(), packageName),
+  hasDevelopmentSelection: (packageName) => localMiniappRuntime.hasDevelopmentSelection(packageName),
+  compatibilityPolicy: () => localMiniappRuntime.currentInstallCompatibilityPolicy(),
+  fetchManifest: fetchHostedManifest,
+  install: installMiniappRelease,
+  keepVersions: (packageName, versions) => appRegistry.gcReleaseVersions(packageName, versions),
+  isRunningError: (error) => error instanceof MiniappRunningError,
+  installSession: () => localMiniappRuntime.installSession(),
+  now: () => Date.now(),
+  log: (message) => console.log(`MiniappUpdates: ${message}`),
+  warn: (message, error) => console.warn(`MiniappUpdates: ${message}`, error ?? ""),
+})
 
 export const miniapps = {
   /** All installed miniapps (snapshot). */
@@ -47,6 +80,43 @@ export const miniapps = {
     useAppStatusStore.getState().setForeground(...args),
   /** Clear the current foreground miniapp. */
   clearForeground: () => useAppStatusStore.getState().clearForeground(),
+  /**
+   * Invoke a manifest-declared action as the trusted host. Host-audience
+   * actions are unavailable through `session.actions.invoke`.
+   */
+  invokeAction: (
+    packageName: string,
+    actionId: string,
+    params?: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown> => localMiniappRuntime.invokeActionFromHost(packageName, actionId, params, timeoutMs),
+  /**
+   * Check every installed miniapp's own URL and install newer releases,
+   * silently. A running miniapp's update waits until it stops.
+   */
+  checkForUpdates: (): Promise<void> => urlUpdater.checkAll(),
+  /**
+   * Check a miniapp a person just opened, unless it was checked within the
+   * last minute. Its update is staged and asked about.
+   */
+  checkOpenedForUpdate: (packageName: string): Promise<void> => urlUpdater.checkOpened(packageName),
+  /**
+   * A person started a miniapp and it now runs. Automatic starts (restoring
+   * what ran before, an update's restart) are not announced. Returns an unsubscribe.
+   */
+  onOpened: (listener: (packageName: string) => void): (() => void) => onMiniappOpenedByUser(listener),
+  /**
+   * Render "update now?" prompts for running miniapps and answer each one. The
+   * engine decides when one may appear (foreground, one at a time, once per
+   * run of a miniapp). Returns an unsubscribe.
+   */
+  onUpdatePrompt: (listener: (prompt: PendingRunningUpdatePrompt) => void): (() => void) =>
+    onRunningUpdatePrompt(listener),
+  /** An accepted update failed; the installed version was started again. Returns an unsubscribe. */
+  onUpdateFailed: (listener: (failure: RunningUpdateFailure) => void): (() => void) => onRunningUpdateFailed(listener),
+  /** A miniapp whose automatic update waited for it has stopped. Returns an unsubscribe. */
+  onDeferredUpdateReady: (listener: (packageName: string) => void): (() => void) =>
+    onDeferredMiniappUpdateReady(listener),
   /** Stop all running miniapps. */
   stopAll: () => useAppStatusStore.getState().stopAll(),
   /** Install a miniapp from a bundle URL. */

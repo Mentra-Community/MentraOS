@@ -18,6 +18,7 @@
  */
 import type {
   AudioSubscription,
+  AudioPosition,
   TranscriptionData,
   TranslationData,
   ProtocolError,
@@ -29,10 +30,25 @@ import type { Connection } from "./connection";
 import { HandshakeRejectedError } from "./connection";
 import type { RuntimeEmitter, RuntimeEvents } from "./emitter";
 import type { Subscriptions } from "./subscriptions";
-import type { Camera, StreamOptions, ManagedStream, StreamStatusResult } from "./camera";
+import type {
+  Camera,
+  StreamOptions,
+  ManagedStream,
+  StreamStatusResult,
+} from "./camera";
 import type { Meetings } from "./meetings";
-import type { Maps, DirectionsRequest, DirectionsResult, LatLng, ReverseGeocodeResult } from "./maps";
-import type { Tts, RuntimeTtsSpeakOptions, RuntimeTtsSpeechSource } from "./tts";
+import type {
+  Maps,
+  DirectionsRequest,
+  DirectionsResult,
+  LatLng,
+  ReverseGeocodeResult,
+} from "./maps";
+import type {
+  Tts,
+  RuntimeTtsSpeakOptions,
+  RuntimeTtsSpeechSource,
+} from "./tts";
 import type { UdpAudio } from "./audio-udp";
 import type { RuntimeSnapshot } from "./status";
 import { systemTimers, type CloudClientTimers } from "../../timers";
@@ -82,6 +98,8 @@ export interface RuntimeModule {
    * sent before the session is configured is dropped, not thrown on.
    */
   sendAudioFrame(frame: Uint8Array): void;
+  /** @internal Audio cursor for the phone runtime; not a miniapp API. */
+  getAudioPosition(): AudioPosition | null;
 
   getStatus(): RuntimeSnapshot;
 
@@ -452,6 +470,10 @@ export class Runtime implements RuntimeModule {
 
   getStatus(): RuntimeSnapshot {
     return { ...this.status };
+  }
+
+  getAudioPosition(): AudioPosition | null {
+    return this.audio.audioPosition;
   }
 
   // --- Camera: managed photo/stream (delegated) -----------------------------

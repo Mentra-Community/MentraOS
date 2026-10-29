@@ -768,28 +768,39 @@ class AudioPlaybackService {
    * If appId is not provided, stops all playback.
    */
   public async stopForApp(appId?: string): Promise<void> {
+    // Settle URL playback before awaiting the native stream aborts below. A
+    // request still configuring audio has not reached the player yet, so the
+    // stop must cancel it here; and a play() issued while those aborts run is
+    // newer than this stop, so it must not be interrupted when they return.
+    this.cancelPendingPlaybacks(appId)
+    if (this.currentPlayback && !this.currentPlayback.completed && (!appId || this.currentPlayback.appId === appId)) {
+      console.log(`AUDIO: Stopping playback for app ${appId || "(all)"}`)
+      this.interruptCurrentPlayback()
+    }
+
     // Abort this app's live PCM streams too (miniapp stop/disconnect path).
     const streamIds = [...this.streams.values()]
       .filter((stream) => !appId || stream.appId === appId)
       .map((stream) => stream.streamId)
     await Promise.all(streamIds.map((streamId) => this.abortStream(streamId)))
-
-    if (!this.currentPlayback || this.currentPlayback.completed) return
-
-    if (!appId || this.currentPlayback.appId === appId) {
-      console.log(`AUDIO: Stopping playback for app ${appId || "(all)"}`)
-      this.interruptCurrentPlayback()
-    }
   }
 
   /**
    * Stop all audio playback
    */
   public async stopAll(): Promise<void> {
-    await this.abortAllStreams()
+    this.cancelPendingPlaybacks()
     if (this.currentPlayback && !this.currentPlayback.completed) {
       console.log("AUDIO: Stopping all playback")
       this.interruptCurrentPlayback()
+    }
+    await this.abortAllStreams()
+  }
+
+  /** Keep requests that have not reached the native player from starting later. */
+  private cancelPendingPlaybacks(appId?: string): void {
+    for (const pending of this.pendingPlaybacks.values()) {
+      if (!appId || pending.appId === appId) pending.cancelled = true
     }
   }
 

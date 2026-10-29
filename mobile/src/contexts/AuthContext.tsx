@@ -154,7 +154,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
   }, [activeDeployment, selectionResolved, setAuthEmail, store, workspaceAuth])
 
   const signInWorkspace = async () => {
-    if (!workspaceAuth) throw new Error("No organization workspace is active")
+    if (!workspaceAuth) throw new Error("No organization is active")
     setLoading(true)
     try {
       await pendingProviderCleanup

@@ -34,7 +34,6 @@ const JS_PACKAGE_DIRS = [
   "cloud-v2/test/test-client",
   "cloud-v2/test/test-oem",
   "cloud-v2/websites/admin",
-  "cloud-v2/websites/console",
   "cloud-v2/websites/portal",
   "sdk/miniapp-cli",
 ];

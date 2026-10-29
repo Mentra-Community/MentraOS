@@ -2,6 +2,7 @@ import os from 'os';
 import { readFileSync, existsSync, statSync, unlinkSync } from 'fs';
 import { join, resolve } from 'path';
 import { printQR, writeQRPng } from './qr.js';
+import { warnIfPlaceholderIcon } from './icon.js';
 import { validateManifest } from './manifest.js';
 import { buildProjectZip, startDevSidecar } from './dev-server.js';
 import { getLanIp, getMdnsHostname } from './lan.js';
@@ -20,11 +21,6 @@ const USB_TUNNEL_POLL_MS = 5_000;
 /** Where `adb reverse` publishes the laptop from the phone's point of view. */
 const USB_LOOPBACK_HOST = '127.0.0.1';
 
-export interface DevAttestationInput {
-  packageName: string;
-  devServerUrl: string;
-}
-
 export interface DevOptions {
   cwd?: string;
   qrOutput?: string;
@@ -42,9 +38,6 @@ export interface DevOptions {
    * this to false; the sidecar still forwards console logs.
    */
   hotReload?: boolean;
-  signDevAttestation?: (
-    input: DevAttestationInput,
-  ) => string | Promise<string | null | undefined> | null | undefined;
 }
 
 function contentTypeFor(path: string): string {
@@ -153,6 +146,8 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     );
     process.exit(1);
   }
+
+  warnIfPlaceholderIcon(cwd);
 
   const name: string = (manifest.name as string) ?? 'unnamed';
   const packageName: string = (manifest.packageName as string) ?? 'unknown';
@@ -294,23 +289,15 @@ export async function dev(options: DevOptions = {}): Promise<void> {
 
   const mdnsHost = getMdnsHostname();
 
-  const buildDevUrl = async (ip: string): Promise<string> => {
+  // The phone runs the dev build under `package` (the manifest package name)
+  // and applies its installed-signer rule to it; the QR carries no credential.
+  const buildDevUrl = (ip: string): string => {
     const devServerUrl = `http://${ip}:${port}`;
     const base = `miniapp://dev?url=${encodeURIComponent(devServerUrl)}&name=${encodeURIComponent(name)}&package=${encodeURIComponent(packageName)}`;
     const withDevPort = sidecarPort ? `${base}&dev=${sidecarPort}` : base;
     // mDNS hint lets the phone retry via ComputerName.local when the raw IP
     // goes stale after a Wi-Fi/DHCP change — same QR, new address under the hood.
-    const withMdns = mdnsHost ? `${withDevPort}&mdns=${encodeURIComponent(mdnsHost)}` : withDevPort;
-    if (!options.signDevAttestation) return withMdns;
-
-    try {
-      const attestation = await options.signDevAttestation({ packageName, devServerUrl });
-      if (!attestation) return withMdns;
-      return `${withMdns}&attestation=${encodeURIComponent(attestation)}`;
-    } catch (error) {
-      console.warn(`Warning: could not sign dev URL (${(error as Error).message}). Miniapp auto-auth will be unavailable.`);
-      return withMdns;
-    }
+    return mdnsHost ? `${withDevPort}&mdns=${encodeURIComponent(mdnsHost)}` : withDevPort;
   };
 
   const printBanner = (): void => {
@@ -318,9 +305,8 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     console.log('║  To test your miniapp on glasses:                            ║');
     console.log('║                                                              ║');
     console.log('║    1. Open the Mentra App on your phone                      ║');
-    console.log('║    2. Settings → Developer settings                          ║');
-    console.log('║    3. Under "Mini App Development", tap                      ║');
-    console.log('║       "Scan Mini App QR Code" and scan the QR below          ║');
+    console.log('║    2. Settings → Miniapp Developer Settings                  ║');
+    console.log('║    3. Tap "Scan Miniapp QR Code" and scan the QR below       ║');
     console.log('║                                                              ║');
     if (usbActive) {
       console.log('║  Your phone is reached over USB (adb reverse), not Wi-Fi.    ║');
@@ -329,13 +315,15 @@ export async function dev(options: DevOptions = {}): Promise<void> {
       console.log('║  Your phone must be on the same Wi-Fi as this computer.      ║');
     }
     console.log('║                                                              ║');
-    console.log('║  Dev mode is live and temporary:                             ║');
-    console.log('║    • Keep this process and computer running.                 ║');
-    console.log('║    • Each package gets its own dev entry, so you can scan    ║');
-    console.log('║      and test multiple dev miniapps side by side.            ║');
-    console.log('║    • The Mentra App caches each miniapp name and icon.       ║');
+    console.log('║  Scan once. Every saved change rebuilds and reloads on the   ║');
+    console.log('║  phone, with no rescan. Keep this process running.           ║');
     console.log('║                                                              ║');
-    console.log('║  For a persistent install, run: bun run release              ║');
+    console.log('║  Each package gets its own dev entry, so several dev         ║');
+    console.log('║  miniapps can run side by side. The home screen caches the   ║');
+    console.log('║  name and icon; rescan to update them.                       ║');
+    console.log('║                                                              ║');
+    console.log('║  For an install that runs without this computer:             ║');
+    console.log('║    bun run release                                           ║');
     console.log('╚══════════════════════════════════════════════════════════════╝\n');
   };
 
@@ -363,7 +351,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
   // non-null here: the only path that leaves it null exits above unless the
   // tunnel came up.
   const devHost = usbActive ? USB_LOOPBACK_HOST : lanIp!;
-  const devUrl = await buildDevUrl(devHost);
+  const devUrl = buildDevUrl(devHost);
   await emitQR(devUrl, devHost);
 
   // Confirm the reverse mappings survive. They are dropped on unplug, on
@@ -419,7 +407,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
         if (mdnsHost) {
           console.log(`mDNS: ${mdnsHost}\n`);
         }
-        const newDevUrl = await buildDevUrl(newIp);
+        const newDevUrl = buildDevUrl(newIp);
         await emitQR(newDevUrl, newIp);
       } finally {
         ipCheckInFlight = false;

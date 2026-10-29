@@ -1,0 +1,238 @@
+diff --git a/ios/RNWifi.m b/ios/RNWifi.m
+--- a/ios/RNWifi.m
++++ b/ios/RNWifi.m
+@@ -5,11 +5,15 @@
+ #import <UIKit/UIKit.h>
+
+ #import "ConnectError.h"
++#import "RNWifiErrorFacts.h"
++#import "RNWifiApplyDiagnostics.h"
++#import <os/log.h>
+
+ 
+ @interface WifiManager () <CLLocationManagerDelegate>
+ @property (nonatomic,strong) CLLocationManager *locationManager;
+ @property (nonatomic) BOOL solved;
++- (void)observeApply:(RNWifiApplyDiagnostics *)diagnostics ssid:(NSString *)ssid phase:(NSString *)phase requestedAt:(NSTimeInterval)requested;
+ @end
+ @implementation WifiManager
+
+@@ -32,6 +36,43 @@
+      postNotificationName:@"RNWIFI:authorizationStatus" object:nil userInfo:nil];
+ }
+
++// Only safe enum/timing facts are logged. Reads run independently of apply/result.
++- (void)logApply:(RNWifiApplyDiagnostics *)diagnostics kind:(NSString *)kind phase:(NSString *)phase
++    requestedAt:(NSTimeInterval)requested state:(NSString *)state {
++    NSDictionary *facts = [diagnostics factsForKind:kind phase:phase requestedAt:requested state:state];
++    if (!facts) return;
++    NSData *data = [NSJSONSerialization dataWithJSONObject:facts options:0 error:nil];
++    if (data) os_log(OS_LOG_DEFAULT, "RNWIFI HOTSPOT_JOIN apply_observation %{public}@",
++        [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]);
++}
++- (void)observeApply:(RNWifiApplyDiagnostics *)diagnostics ssid:(NSString *)ssid phase:(NSString *)phase requestedAt:(NSTimeInterval)requested {
++    if (![diagnostics factsForKind:@"target_configuration" phase:phase requestedAt:requested state:@"unavailable"]) return;
++    // Record when the read is actually issued, not when its work was scheduled.
++    requested = diagnostics.now;
++    // This request phase is not a snapshot guarantee: each reply includes its
++    // observed time and whether the original apply callback has already happened.
++    [self logApply:diagnostics kind:@"target_configuration" phase:phase requestedAt:requested state:@"unavailable"];
++    __weak WifiManager *weakSelf = self;
++    __weak RNWifiApplyDiagnostics *weakDiagnostics = diagnostics;
++    // Keep diagnostic state only for its read window; OS callbacks may arrive later.
++    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
++        (void)diagnostics.now;
++    });
++    [[NEHotspotConfigurationManager sharedManager] getConfiguredSSIDsWithCompletionHandler:^(NSArray<NSString *> *configured) {
++        RNWifiApplyDiagnostics *current = weakDiagnostics;
++        if (current) [weakSelf logApply:current kind:@"target_configuration" phase:phase requestedAt:requested
++            state:RNWifiTargetConfigurationState(ssid, configured)];
++    }];
++    if ([phase isEqualToString:@"after_callback"]) {
++        [self logApply:diagnostics kind:@"association" phase:phase requestedAt:requested state:@"unavailable"];
++        [self getWifiSSID:^(NSString *observed) {
++            RNWifiApplyDiagnostics *current = weakDiagnostics;
++            if (current) [weakSelf logApply:current kind:@"association" phase:phase requestedAt:requested
++                state:RNWifiAssociationState(ssid, observed)];
++        }];
++    }
++}
++
+ - (void)getWifiSSID:(void (^)(NSString *))completionHandler {
+     if (@available(iOS 14.0, *)) {
+         [NEHotspotNetwork fetchCurrentWithCompletionHandler:^(NEHotspotNetwork * _Nullable currentNetwork) {
+@@ -152,8 +193,12 @@
+                   joinOnce:(BOOL)joinOnce
+                   resolver:(RCTPromiseResolveBlock)resolve
+                   rejecter:(RCTPromiseRejectBlock)reject) {
++    RNWifiApplyDiagnostics *diagnostics = [RNWifiApplyDiagnostics new];
++    NSTimeInterval ssidRequested = diagnostics.now;
+     // Prevent NEHotspotConfigurationManager error when connecting to an already connected network
+     [self getWifiSSID:^(NSString* resultSSID) {
++        [self logApply:diagnostics kind:@"association" phase:@"before_apply" requestedAt:ssidRequested
++            state:RNWifiAssociationState(ssid, resultSSID)];
+         if ([ssid isEqualToString:resultSSID]) {
+             resolve(nil);
+             return;
+@@ -169,8 +214,40 @@
+             }
+             configuration.joinOnce = joinOnce;
+
++            // Schedule observations without gating the native apply or its result.
++            NSTimeInterval configurationRequested = diagnostics.now;
++            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
++                [self observeApply:diagnostics ssid:ssid phase:@"apply_admission" requestedAt:configurationRequested];
++            });
++            [diagnostics applyStarted];
+             [[NEHotspotConfigurationManager sharedManager] applyConfiguration:configuration completionHandler:^(NSError * _Nullable error) {
++                [diagnostics applyCompleted];
++                NSTimeInterval callbackRequested = diagnostics.now;
++                BOOL answeredError = error != nil;
++                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
++                    [self logApply:diagnostics kind:@"apply_result" phase:@"after_callback" requestedAt:callbackRequested
++                        state:answeredError ? @"answered_error" : @"answered_success"];
++                    [self observeApply:diagnostics ssid:ssid phase:@"after_callback" requestedAt:callbackRequested];
++                });
+                 if (error != nil) {
++                    // Capture the original NSError before parseError replaces its numeric code.
++                    NSString *facts = RNWifiErrorFacts(error);
++                    BOOL callbackOnMain = NSThread.isMainThread;
++                    NSUInteger attempt = diagnostics.attempt;
++                    void (^logFailure)(void) = ^{
++                        BOOL onMac = NO;
++                        if (@available(iOS 14.0, *)) onMac = NSProcessInfo.processInfo.isiOSAppOnMac;
++                        UIApplicationState state = UIApplication.sharedApplication.applicationState;
++                        NSString *appState = state == UIApplicationStateActive ? @"active"
++                            : state == UIApplicationStateBackground ? @"background" : @"inactive";
++                        os_log_error(OS_LOG_DEFAULT,
++                            "RNWIFI HOTSPOT_JOIN apply_failed %{public}@ attempt=%{public}lu ios_on_mac=%{public}d app_state_at_log=%{public}@ callback_on_main=%{public}d",
++                            facts, (unsigned long)attempt, onMac, appState, callbackOnMain);
++                    };
++                    // UIKit state is read on main; diagnostics never delay or alter rejection.
++                    if (callbackOnMain) logFailure();
++                    else dispatch_async(dispatch_get_main_queue(), logFailure);
++                    error = RNWifiErrorWithNativeFacts(error);
+                     reject([self parseError:error], [error localizedDescription], error);
+                 } else {
+                     // It's not guaranteed that the connection is established before completionHandler is called, so
+diff --git a/ios/RNWifiErrorFacts.h b/ios/RNWifiErrorFacts.h
+new file mode 100644
+--- /dev/null
++++ b/ios/RNWifiErrorFacts.h
+@@ -0,0 +1,37 @@
++#import <Foundation/Foundation.h>
++
++// Diagnostic identifiers only: never include localized text, credentials or userInfo.
++static inline NSString *RNWifiErrorDomain(NSString *domain) {
++    if (![domain isKindOfClass:[NSString class]] || domain.length == 0 || domain.length > 128) {
++        return @"unavailable";
++    }
++    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
++        @"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"];
++    return [domain rangeOfCharacterFromSet:allowed.invertedSet].location == NSNotFound
++        ? domain : @"unavailable";
++}
++
++static inline NSString *RNWifiErrorFacts(NSError *error) {
++    id value = error.userInfo[NSUnderlyingErrorKey];
++    NSError *underlying = [value isKindOfClass:[NSError class]] ? value : nil;
++    return [NSString stringWithFormat:@"domain=%@ code=%ld underlying_domain=%@ underlying_code=%@",
++        RNWifiErrorDomain(error.domain), (long)error.code,
++        underlying ? RNWifiErrorDomain(underlying.domain) : @"none",
++        underlying ? [NSString stringWithFormat:@"%ld", (long)underlying.code] : @"none"];
++}
++
++// React Native replaces NSError.code with the library string code. Preserve
++// only bounded original facts, and certify that applyConfiguration answered.
++static inline NSError *RNWifiErrorWithNativeFacts(NSError *error) {
++    id value = error.userInfo[NSUnderlyingErrorKey];
++    NSError *underlying = [value isKindOfClass:[NSError class]] ? value : nil;
++    NSMutableDictionary *facts = [@{@"domain": RNWifiErrorDomain(error.domain),
++        @"code": @(error.code), @"completed": @YES} mutableCopy];
++    if (underlying) {
++        facts[@"underlying"] = @{@"domain": RNWifiErrorDomain(underlying.domain),
++            @"code": @(underlying.code)};
++    }
++    NSMutableDictionary *userInfo = [error.userInfo mutableCopy] ?: [NSMutableDictionary new];
++    userInfo[@"RNWifiNativeError"] = facts;
++    return [NSError errorWithDomain:error.domain code:error.code userInfo:userInfo];
++}
+diff --git a/ios/RNWifiApplyDiagnostics.h b/ios/RNWifiApplyDiagnostics.h
+new file mode 100644
+--- /dev/null
++++ b/ios/RNWifiApplyDiagnostics.h
+@@ -0,0 +1,74 @@
++#import <Foundation/Foundation.h>
++
++// One invocation's observational facts. No network identities or native userInfo.
++@interface RNWifiApplyDiagnostics : NSObject
++- (instancetype)initWithClock:(NSTimeInterval (^)(void))clock;
++- (void)applyStarted;
++- (void)applyCompleted;
++- (NSTimeInterval)now;
++- (NSUInteger)attempt;
++- (NSDictionary *)factsForKind:(NSString *)kind phase:(NSString *)phase
++    requestedAt:(NSTimeInterval)requestedAt state:(NSString *)state;
++@end
++
++@implementation RNWifiApplyDiagnostics {
++    NSTimeInterval (^_clock)(void);
++    NSTimeInterval _started, _apply, _callback;
++    NSUInteger _attempt;
++}
++static NSUInteger RNWifiLatestDiagnosticAttempt = 0;
++
++- (instancetype)init {
++    return [self initWithClock:^{ return NSProcessInfo.processInfo.systemUptime; }];
++}
++- (instancetype)initWithClock:(NSTimeInterval (^)(void))clock {
++    if ((self = [super init])) {
++        _clock = [clock copy]; _started = _clock(); _apply = -1; _callback = -1;
++        @synchronized (RNWifiApplyDiagnostics.class) { _attempt = ++RNWifiLatestDiagnosticAttempt; }
++    }
++    return self;
++}
++- (NSTimeInterval)now { return _clock(); }
++- (NSUInteger)attempt { return _attempt; }
++- (void)applyStarted { @synchronized (self) { _apply = _clock(); } }
++- (void)applyCompleted { @synchronized (self) { _callback = _clock(); } }
++- (NSDictionary *)factsForKind:(NSString *)kind phase:(NSString *)phase
++    requestedAt:(NSTimeInterval)requestedAt state:(NSString *)state {
++    NSTimeInterval observed = _clock();
++    @synchronized (RNWifiApplyDiagnostics.class) {
++        // An OS read is not cancellable. Drop late or superseded replies; never
++        // wait for a diagnostic read before applying or settling the native result.
++        if (_attempt != RNWifiLatestDiagnosticAttempt || observed - requestedAt > 2 ||
++            requestedAt < _started || observed < requestedAt) return nil;
++    }
++    BOOL association = [kind isEqualToString:@"association"];
++    BOOL configuration = [kind isEqualToString:@"target_configuration"];
++    BOOL result = [kind isEqualToString:@"apply_result"];
++    if ((!association && !configuration && !result) ||
++        ![@[@"before_apply", @"apply_admission", @"after_callback"] containsObject:phase]) return nil;
++    NSArray *states = association ? @[@"matched", @"different", @"unavailable"]
++        : configuration ? @[@"present", @"absent", @"unavailable"] : @[@"answered_error", @"answered_success"];
++    if (![states containsObject:state]) return nil;
++    @synchronized (self) {
++        NSMutableDictionary *facts = [@{@"attempt": @(_attempt), @"kind": kind, @"request_phase": phase,
++            @"requested_elapsed_ms": @((requestedAt - _started) * 1000),
++            @"observed_elapsed_ms": @((observed - _started) * 1000), @"state": state,
++            @"callback_observed": @(_callback >= 0)} mutableCopy];
++        if (_apply >= 0) facts[@"apply_elapsed_ms"] = @((_apply - _started) * 1000);
++        if (_callback >= 0) facts[@"callback_elapsed_ms"] = @((_callback - _started) * 1000);
++        return facts;
++    }
++}
++@end
++
++static inline NSString *RNWifiAssociationState(NSString *target, NSString *observed) {
++    if (![observed isKindOfClass:NSString.class] || !observed.length) return @"unavailable";
++    return [target isEqualToString:observed] ? @"matched" : @"different";
++}
++static inline NSString *RNWifiTargetConfigurationState(NSString *target, NSArray *configured) {
++    // Apple documents nil as no configurations owned by this application.
++    if (!configured) return @"absent";
++    if (![configured isKindOfClass:NSArray.class]) return @"unavailable";
++    for (id value in configured) if (![value isKindOfClass:NSString.class]) return @"unavailable";
++    return [configured containsObject:target] ? @"present" : @"absent";
++}

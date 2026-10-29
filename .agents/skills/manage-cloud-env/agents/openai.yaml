@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Cloud Environment Variables"
+  short_description: "Manage shared deployment keys through Doppler"
+  default_prompt: "Use $manage-cloud-env to configure the backend environment variables this feature needs through Doppler and verify the Porter deployment."

@@ -1,5 +1,5 @@
 import {DeviceTypes, SETTINGS, useSetting} from "@mentra/engine"
-import {Image, TouchableOpacity, useWindowDimensions, View} from "react-native"
+import {Image, Pressable, useWindowDimensions, View} from "react-native"
 import type {ImageSourcePropType, ImageStyle, ViewStyle} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -28,11 +28,12 @@ const CardButton = ({
   const horizontalPadding = screenWidth < 390 ? 16 : 32
 
   return (
-    <TouchableOpacity
+    <Pressable
       accessibilityRole="button"
-      activeOpacity={0.6}
       className="w-full"
+      onAccessibilityTap={onPress}
       onPress={onPress}
+      style={({pressed}) => ({opacity: pressed ? 0.6 : 1})}
       testID={testID}>
       <GlassView
         className="h-[190px] flex-row items-center justify-between gap-2 overflow-hidden rounded-2xl bg-primary-foreground py-6"
@@ -44,12 +45,12 @@ const CardButton = ({
           style={[$shrinkableImage, {height: imageHeight, width: imageWidth}]}
         />
       </GlassView>
-    </TouchableOpacity>
+    </Pressable>
   )
 }
 
 export default function OnboardingWelcome() {
-  const {push} = useNavigationStore.getState()
+  const {goHomeAndPush, push} = useNavigationStore.getState()
   const [_onboarding, setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
   const simulatedGlassesAllowed = isGlassesModelAllowedByDeployment(DeviceTypes.SIMULATED)
 
@@ -58,7 +59,7 @@ export default function OnboardingWelcome() {
     // TODO: Track analytics event - user has glasses
     // analytics.track('onboarding_has_glasses_selected')
     setOnboardingCompleted(true)
-    push("/pairing/select-glasses-model", {onboarding: true})
+    goHomeAndPush("/pairing/select-glasses-model", {onboarding: true})
   }
 
   // User doesn't have glasses yet - go directly to simulated glasses

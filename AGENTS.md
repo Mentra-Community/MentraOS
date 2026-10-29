@@ -10,9 +10,9 @@ MentraOS is an open source operating system, app store, and development framewor
 - Mobile app: `mobile` (React Native with native modules)
 - Android logic: `android_core`
 - iOS native module: `mobile/ios`
-- Backend & web portals: `cloud-v2` (Core, Runtime, Cloud Client, CLI, admin, console, and portal)
+- Backend & web portals: `cloud-v2` (Core, Runtime, Cloud Client, CLI, admin, and portal)
 - Android-based smart glasses client: `asg_client` (uses `android_core` as a library)
-- Mentra Miniapp Store and Developer Console: `cloud-v2/websites/`
+- Websites: `cloud-v2/websites/` (admin portal, workspace portal, sign-in site). The Mentra Miniapp Store and Developer Console live in the separate Mentra Miniapp Store service.
 
 ### Established iOS behavior
 
@@ -40,9 +40,8 @@ Consult module-specific AGENTS.md when working within that module.
 Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
 
 First-party miniapps and their backends also live in `miniapps/`. All of those
-miniapps are part of this repository's source scope. For example,
-`com.mentra.merge` is owned by this monorepo: its client is in
-`miniapps/merge/miniapp/` and its backend is in `miniapps/merge/backend/`.
+miniapps are part of this repository's source scope, for example
+`com.mentra.captions` in `miniapps/captions/`.
 Package identifiers can be found in `miniapps/**/miniapp.json`; the surrounding
 component directories contain backend and deployment files. A separate backend
 hostname does not imply a separate repository or third-party ownership.
@@ -81,7 +80,7 @@ validates the public Maven artifact dependency shape.
 - Dev: `bun run dev`
 - Type check: `bun run typecheck`
 - Test: `bun run test`
-- Web portals: `bun run dev:console`, `bun run dev:admin`, or `bun run dev:portal`
+- Web portals: `bun run dev:admin` or `bun run dev:portal`
 
 ## Prerequisites
 
@@ -155,20 +154,45 @@ validates the public Maven artifact dependency shape.
 
 Cloud V2 services use Bun tests via `cd cloud-v2 && bun run test`; add suites in `cloud-v2/tests/` or beside the relevant package code and mock external providers. Mobile UI logic uses Jest (`bun test`, `bun test:watch`) with files colocated in `mobile/test/` and snapshots beside components. Device flows rely on Maestro (`bun test:maestro`), so update scripts whenever navigation or pairing shifts. Features touching pairing, BLE, or transcription need unit coverage plus an end-to-end path.
 
+For a failing nightly device suite, use
+[`fix-nightly-failures`](.agents/skills/fix-nightly-failures/SKILL.md). Keep independent
+members running, diagnose failures as they arrive, and choose targeted manual runs
+or held authoring for verification after the suite finishes.
+
+## GitHub Actions runners
+
+When adding or editing GitHub Actions workflows, use the
+[`configure-workflow-runners` skill](.agents/skills/configure-workflow-runners/SKILL.md).
+Use Blacksmith for Linux jobs and the existing office Mac mini self-hosted runner
+for macOS jobs. Do not add GitHub-hosted Linux runners unless the user explicitly
+requests an exception. Apply this to reusable workflows and runner matrices too.
+
 ## Commit & Pull Request Guidelines
 
 Write imperative, present-tense commit subjects (e.g., "Add BLE retry delay") and keep scope focused. Reference issue IDs or Slack threads in the body when applicable. Before opening a PR, run relevant `bun run test` suites and platform builds, attach log excerpts for hardware-dependent steps, and call out configuration updates. PR descriptions should outline scope, test evidence, and screenshots or screen recordings for UI-impacting changes.
 
 When opening or updating a PR, use the
 [`select-pr-routines` skill](.agents/skills/select-pr-routines/SKILL.md) to search
-existing device-test coverage and add relevant `routine:<id>` labels. Report
-uncovered behavior; a routine request is not a passing test result.
+device-test coverage. Add relevant `routine:<id>` labels for existing coverage;
+when the behavior needs changed or new coverage, submit the skill's authoring
+brief with `routine-work:edit` or `routine-work:create`. Explain the coverage and
+any missing prerequisite in the PR; a request is not a passing test result.
 
 ### AI agent attribution
 
 Do not add `Co-Authored-By:` trailers that name AI assistants (Claude, Codex, Copilot, etc.) to commit messages. Do not include "Generated with" or similar attribution lines (e.g., `🤖 Generated with [Claude Code]`) in commit messages or PR descriptions. Commits and PRs should reflect the human author responsible for the change; the tools used to produce it are not part of the durable record.
 
 ## Environment & Security Notes
+
+When a feature or deployment needs a new or changed backend environment variable,
+use [manage-cloud-env](.agents/skills/manage-cloud-env/SKILL.md), including for
+first-party miniapps and their external repositories. Doppler is the source of
+truth. Put environment-independent settings in a shared inheritable config;
+keep environment-specific values in child configs. Check or establish the native
+Doppler-to-Porter connection before writing settings. Porter application overrides
+are a last resort, never the default workaround for a missing key or broken sync.
+Create a Doppler project and a shared parent when onboarding a deployment that
+has neither, even if it initially has only one deployment environment.
 
 Cloud V2 services require local environment configuration; use `cloud-v2/scripts/setup.ts` and keep secrets out of the repository. Mobile secrets belong in `mobile/app.config.ts` or the secure config service—avoid committing device-specific tokens. Rebuild native projects after modifying BLE or camera modules to keep generated code in sync, and install Java 17, Android Studio, Xcode, Docker, and Bun/Node before the first build.
 
@@ -196,6 +220,7 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 - [Livestreamer Miniapp](https://github.com/Mentra-Community/Livestreamer-Miniapp)
 - [Mentra AI Miniapp](https://github.com/Mentra-Community/Mentra-AI-Miniapp)
 - [Mentra Enterprise Miniapp](https://github.com/Mentra-Community/Mentra-Enterprise-Miniapp)
+- [Merge Miniapp](https://github.com/Mentra-Community/Merge-Miniapp) (`com.mentra.merge`)
 
 If a MentraOS PR also requires changes to one of the external miniapps above, or
 you are otherwise asked to change one of those miniapps:
@@ -219,7 +244,7 @@ Bug reports and feedback filed from the Mentra App land in the Cloud V2 reports 
 
 1. Get the report id (from Slack, the admin console, or the user)
 2. Fetch it: `./scripts/fetch-incident-logs.sh {reportId}` — downloads `report.json` plus every artifact into `./incident-logs/{reportId}/`
-3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an org API key (`msk_...`) whose synthetic email is allowlisted via `CLOUD_CORE_ADMIN_EMAILS`, or a WorkOS access token of an admin user
+3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an operator key with the incident read scope (`mak_...`, created in the admin portal under Operator keys). An older admin key (`msk_...`) whose `api-key@<keyId>.local` address is on `CLOUD_CORE_ADMIN_EMAILS` works as an operator key too
 4. Without an environment override, the script tries prod, dev, then staging and reports which backend succeeded. Use `--env prod|dev|staging` or `MENTRA_CORE_URL` to target one backend explicitly.
 
 What you get:
@@ -233,7 +258,7 @@ Other modes: `--json` prints the raw report JSON to stdout (no downloads); `--li
 Example:
 
 ```bash
-export MENTRA_ADMIN_TOKEN=msk_your-admin-key
+export MENTRA_ADMIN_TOKEN=mak_your-operator-key
 ./scripts/fetch-incident-logs.sh rep_01JZWY3V8N0F2E9GQ4T6KXH5RD
 ```
 

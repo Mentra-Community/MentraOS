@@ -19,6 +19,8 @@ import withMapboxNavIos from "./withMapboxNavIos"
  *   both fails the release build with duplicate classes)
  * - core-library desugaring (crust's AAR metadata requires it of embedding
  *   apps — the Nav SDK uses newer core libs)
+ * - Kotlin 2.3.0 or newer, with the root Kotlin Gradle plugin pinned to it
+ *   (crust's QuickJS library, quickjs-kt 1.0.15, is compiled with Kotlin 2.4)
  * - a generated MainApplication process guard so the notification-listener
  *   process never initializes React Native
  * - iOS Mapbox Swift Package products and the Crust build-order dependency

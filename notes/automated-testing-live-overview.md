@@ -1,0 +1,58 @@
+# Live test activity
+
+The Admin **Test runs** page shows GitHub's active private worker jobs above the recorded results. It includes PR labels, automatic dev/staging builds, nightly sequences and Admin dispatches. Host maintenance is identified separately; its outcome is never a routine verdict.
+
+| Display | Source | Meaning |
+| --- | --- | --- |
+| Queued / waiting / running | GitHub Actions, or a fresh worker checkpoint (below) | Job activity, not proof of a test step |
+| Build and routine | Published request ZIP from its exact Actions run/attempt | The selected build; unavailable metadata does not hide the job |
+| Worker / fixture | Assigned GitHub runner and existing Core claim | Unassigned or unreported values remain explicit |
+| Phase, step, action and counts | Last committed lifecycle journal checkpoint | Phase step counts and action counts stay separate; dynamic totals may be unknown |
+| Recovery required | Original Core settlement | Resolved in one of two ways. A valid recovery result correlated with the same claim, with verified return, passed teardown and a ready fixture, clears it and links the original and recovery results. An original-owner closure (for example, a released Android install refusal) resolves the request without a test: the failed result is unchanged and the fixture stays uncommissioned and unverified. A GitHub job that is still active stays in the live view; closure only removes its recovery blocker. An inactive closed claim moves to fixture history |
+
+GitHub can keep listing a dispatched run as queued or waiting after its worker has
+claimed the request and started reporting. Such a job is shown as **running**,
+labeled "Reported by the worker" with the GitHub status beside it, when all of
+these hold: the claim is still active (not closed, cancelled, terminal or
+recovery-required), no result is published for the request, and its latest
+checkpoint is unfinished and was received within two minutes (Core time, the same
+bound as below). Elapsed time then counts from the worker's claim, and the
+"GitHub has not started this job" guidance is not shown. Once that checkpoint is
+older than two minutes the job is **unknown** with its activity unconfirmed, both
+in Core's refreshed response and in the Admin view, which keeps aging the
+checkpoint between refreshes. It still shows the GitHub status and the worker
+claim time, and it never falls back to the "GitHub has not started" guidance.
+A queued job whose claim never reported keeps that guidance. Blockers, closures,
+cancellations, published results and terminal claims still take precedence.
+This is a display projection only. It never extends, grants or
+proves a lease, and it does not change any claim, result or GitHub state.
+
+Queued rows are displayed oldest first. This is waiting order, **not a guarantee of execution order**. Compatible workers and resource ownership still determine when GitHub can execute a job. There is no second scheduler, queue mutation, rank, ETA or calculated completion percentage.
+
+The page refreshes every 15 seconds. Queued jobs do not fetch runner/step details; active GitHub details are cached for one minute and completed maintenance details for a day. A checkpoint older than two minutes is marked as having no recent update; this does not declare a failure. Provider errors retain explicit warnings and the last browser view. GitHub job details remain separate from routine checkpoints. The view caps each GitHub status listing at 100 runs and historical unsettled claims at 500, and warns when either limit is exceeded. Claims for visible active requests are fetched separately, so old recovery history cannot hide their progress.
+
+## Worker checkpoint contract
+
+`PUT /api/internal/test-run-claims/:requestId/progress` uses the existing fleet claim bearer capability and the original execution owner's token. The body is strict and limited to 4 KiB:
+
+```json
+{
+  "executionToken": "<original owner token>",
+  "sequence": 22,
+  "mode": "running",
+  "phase": "test",
+  "step": {"id": "walkthrough", "label": "Walk through the Mentra App"},
+  "completedSteps": 0,
+  "totalSteps": 1,
+  "action": {"id": "open-settings", "label": "Open Settings", "completedActions": 7, "totalActions": null}
+}
+```
+
+- Sequence comes from the durable lifecycle journal. Newer replaces older; identical retries do not refresh the server timestamp. A conflicting projection at the same sequence is rejected.
+- Phase is one of `preflight`, `setup`, `test`, `final-assertions`, `teardown`, `return-verification`, `evidence`. Mode is `running`, `recovering` or `complete`.
+- `step` can be null. `action` is optional and nullable. IDs are at most 160 characters; labels at most 240. Counts are 0–10,000, and cannot exceed a known total.
+- Core stores `receivedAt`; client/device clocks do not decide freshness. The response contains only `accepted`, `sequence`, `receivedAt`.
+- Recovery may update a `recovery-required` claim through the same owner. A terminal claim rejects newer checkpoints. Progress never changes a settlement or grants execution.
+- No logs, errors, filesystem paths or credentials belong in the projection. The worker publisher must remain best effort and must not block lifecycle cleanup.
+
+The old claim/get/settle response shapes are unchanged. Checkpoints are a separate field in `test_run_claims`; recorded result payloads remain immutable in `test_runs`. Existing history also displays `provenance.releaseIdentity` when the export has no top-level release.

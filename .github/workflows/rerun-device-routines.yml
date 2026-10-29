@@ -1,0 +1,64 @@
+name: Rerun device routines
+on:
+  workflow_dispatch:
+    inputs:
+      parent_suite_id:
+        description: Original suite ID
+        required: true
+      member_ids:
+        description: Comma separated member IDs (choose this OR statuses)
+      statuses:
+        description: Comma separated original statuses (failed,setup-failed,teardown-failed)
+      exclude_member_ids:
+        description: Comma separated members to exclude from status filter
+      channel:
+        type: choice
+        options: [dev, staging, pr]
+        default: dev
+        required: true
+      build_run_id:
+        description: Optional replacement build workflow ID; blank reuses original artifacts
+      publication_attempt:
+        description: Exact artifact publication attempt
+        default: '1'
+        required: true
+      pr_number:
+        description: Required for PR artifacts
+      reason:
+        description: Fix or verification reason
+        required: true
+permissions:
+  contents: read
+jobs:
+  dispatch:
+    environment: routine-nightly-dev
+    if: github.repository == 'Mentra-Community/MentraOS'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+    concurrency:
+      group: linked-rerun-${{ github.run_id }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/github-script@v7
+        env:
+          TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
+        with:
+          retries: 0
+          script: |
+            const {dispatchRerun} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/rerun-device-routines.mjs`);
+            const receipt = await dispatchRerun({inputs: context.payload.inputs, runId: context.runId, token: process.env.TEST_RUN_INGEST_TOKEN});
+            const {writeFile} = await import('node:fs/promises');
+            await writeFile('rerun-receipt.json', JSON.stringify(receipt, null, 2));
+            await core.summary.addHeading('Linked rerun accepted').addLink('Follow selected tests and history', receipt.url).write();
+            if (receipt.acceptance.admissions.some(a => !a.admitted)) core.setFailed('Some admissions are pending; rerun this workflow job to reconcile the same ID.');
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rerun-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: rerun-receipt.json
+          if-no-files-found: ignore
+          retention-days: 30

@@ -18,7 +18,7 @@ import {homedir} from "node:os"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {parseArgs} from "node:util"
-import {acquireAppOwnership} from "./app-ownership.mjs"
+import {acquireAppOwnership, glassesLeaseRoot, heldGlassesLeases} from "./app-ownership.mjs"
 
 const scripts = path.dirname(fileURLToPath(import.meta.url))
 const owner = "mentra-ios-mac-v1"
@@ -185,6 +185,8 @@ export async function claimInstallation(root, bundleId) {
 }
 
 export class InstallationRollbackError extends AggregateError {}
+/** Mentra was opened, but its ownership could not be handed to its own process: the installer's lease is retained. */
+export class LaunchedAppHandoffError extends Error {}
 
 /** Commit an already verified wrapper and its staged manifest as one recoverable replacement. */
 export async function commitStagedInstallation({root, staging, lock}, move = rename) {
@@ -228,16 +230,37 @@ export async function installBuild(manifestPath, {launch = true, launcherPath, l
   const releaseApp = await acquireAppOwnership(undefined, {installer: true})
   let preserveRecovery = false
   try {
-    return await installOwnedBuild(manifestPath, {
-      manifest,
-      portablePackage,
-      preinstalledLauncher,
-      launch,
-      launcherPath,
-      launcherSha256,
-    })
+    // Launching starts the Mac app, which may connect to whichever glasses it is paired with. This installer proves
+    // none, so after taking the app lock it does not start while any physical glasses lease is held; a glasses owner
+    // reading the lock refuses this installer in turn. A file-only install (--no-launch) starts nothing.
+    if (launch) {
+      const held = await heldGlassesLeases(glassesLeaseRoot())
+      if (held.length > 0)
+        throw new Error(
+          `Physical glasses are held under ${path.join(glassesLeaseRoot(), held[0])}; installing without --no-launch ` +
+            "would start Mentra, which cannot establish its glasses. Finish or recover that owner, or use --no-launch",
+        )
+    }
+    // The launcher returns after opening Mentra, which keeps running. Hand the app lock to that process, identified
+    // by the NSRunningApplication PID the launcher reports, so it stays held until the app itself exits.
+    const handOff = async (output) => {
+      const pid = Number(/\bpid=(\d+)\b/.exec(output)?.[1])
+      try {
+        await releaseApp.handOff(pid)
+      } catch (error) {
+        throw new LaunchedAppHandoffError(
+          `Mentra was launched, but the launched Mentra process could not take over the app lease (${error.message}); ` +
+            "the installer's lease is retained until recovered",
+        )
+      }
+    }
+    return await installOwnedBuild(
+      manifestPath,
+      {manifest, portablePackage, preinstalledLauncher, launch, launcherPath, launcherSha256},
+      handOff,
+    )
   } catch (error) {
-    preserveRecovery = error instanceof InstallationRollbackError
+    preserveRecovery = error instanceof InstallationRollbackError || error instanceof LaunchedAppHandoffError
     throw error
   } finally {
     if (!preserveRecovery) await releaseApp()
@@ -247,6 +270,7 @@ export async function installBuild(manifestPath, {launch = true, launcherPath, l
 async function installOwnedBuild(
   manifestPath,
   {manifest, portablePackage, preinstalledLauncher, launch, launcherPath, launcherSha256},
+  afterLaunch = async () => {},
 ) {
   const root = installationRoot()
   const destination = path.join(root, "Mentra.app")
@@ -256,6 +280,8 @@ async function installOwnedBuild(
   let staging
   let installedNew = false
   let preserveRecovery = false
+  let installed
+  let launchOutput
   const previous = path.join(lock, "previous.app")
   try {
     staging = await mkdtemp(path.join(root, ".staging-"))
@@ -315,7 +341,7 @@ async function installOwnedBuild(
       path: launcher,
       sha256: await hash(launcher),
     }
-    const installed = {
+    installed = {
       ...manifest,
       ...identity,
       installationLauncher,
@@ -329,10 +355,22 @@ async function installOwnedBuild(
     installedNew = true
     if (launch) {
       await verifyLauncherOverride(launcherPath, launcherSha256)
-      console.log(command(launcher, [destination]))
+      let output
+      try {
+        output = command(launcher, [destination])
+      } catch (error) {
+        // The launcher may fail after asking macOS to open Mentra (for example its timeout on a pending permission
+        // prompt), so the app may still open. Its outcome and PID are unknown: keep the lease for explicit recovery.
+        throw new LaunchedAppHandoffError(
+          `Mentra's launcher failed after the launch was attempted (${error.message}); whether Mentra opened is ` +
+            "unknown, so the installer's app lease is retained until recovered",
+          {cause: error},
+        )
+      }
+      console.log(output)
+      launchOutput = output
     }
     console.log(`Installed app: ${destination}\nInstalled evidence: ${path.join(root, "installed-build.json")}`)
-    return installed
   } catch (error) {
     // Roll back a failed filesystem replacement. If launching the verified new
     // app times out on a permission prompt, leave it installed for the user.
@@ -352,6 +390,10 @@ async function installOwnedBuild(
       }
     }
   }
+  // Hand the lease to the launched app only after cleanup succeeded; until then the installer keeps its retained
+  // lease, so a cleanup failure leaves recoverable custody. The launcher's single output is reused, never relaunched.
+  if (launchOutput !== undefined) await afterLaunch(launchOutput)
+  return installed
 }
 
 if (import.meta.main) {

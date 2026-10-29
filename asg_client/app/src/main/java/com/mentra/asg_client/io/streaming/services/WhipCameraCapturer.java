@@ -90,9 +90,51 @@ public class WhipCameraCapturer implements VideoCapturer {
     private long mNextForwardFrameTimestampNs;
     private long mOutputFrameIntervalNs;
     private int mDroppedFrameCount;
+    private volatile long mLastFrameTimestampNs;
+    private volatile long mLastFrameClockNs;
+    private volatile int mLastFrameRotation;
+    private volatile Runnable mFirstFrameListener;
 
     public interface CameraFpsListener {
         void onCameraFpsChanged(double fps);
+    }
+
+    /** Output width the track is fed at, as requested by the last {@link #startCapture}. */
+    public int getOutputWidth() {
+        return mWidth;
+    }
+
+    /** Output height the track is fed at, as requested by the last {@link #startCapture}. */
+    public int getOutputHeight() {
+        return mHeight;
+    }
+
+    /** Output frame rate the track is paced at. */
+    public int getOutputFps() {
+        return mOutputFps;
+    }
+
+    /** Timestamp of the last frame forwarded to the observer, or 0 before the first one. */
+    public long getLastFrameTimestampNs() {
+        return mLastFrameTimestampNs;
+    }
+
+    /** {@link System#nanoTime()} when the last frame was forwarded. */
+    public long getLastFrameClockNs() {
+        return mLastFrameClockNs;
+    }
+
+    /** Rotation metadata of the last forwarded frame, so substitute frames keep the same shape. */
+    public int getLastFrameRotation() {
+        return mLastFrameRotation;
+    }
+
+    /**
+     * Runs once, on the capture thread, right after the next frame reaches the observer. Replaces
+     * any listener not yet fired; {@code null} clears it.
+     */
+    public void setFirstFrameListener(Runnable listener) {
+        mFirstFrameListener = listener;
     }
 
     @Override
@@ -490,6 +532,14 @@ public class WhipCameraCapturer implements VideoCapturer {
                                             frameBuffer, frameRotation, frame.getTimestampNs());
                             outputBuffer = null;
                             mObserver.onFrameCaptured(modifiedFrame);
+                            mLastFrameTimestampNs = frame.getTimestampNs();
+                            mLastFrameClockNs = System.nanoTime();
+                            mLastFrameRotation = frameRotation;
+                            Runnable firstFrame = mFirstFrameListener;
+                            if (firstFrame != null) {
+                                mFirstFrameListener = null;
+                                firstFrame.run();
+                            }
                         } finally {
                             if (modifiedFrame != null) {
                                 modifiedFrame.release();

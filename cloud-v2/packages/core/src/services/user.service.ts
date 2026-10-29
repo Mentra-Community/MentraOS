@@ -10,6 +10,7 @@
  */
 
 import { ulid } from "ulid";
+import type { ClientSession } from "mongoose";
 import { createLogger } from "@mentra/cloud-shared";
 import { UserModel, type User } from "../models/user.model";
 
@@ -43,6 +44,33 @@ export async function findOrCreateUser(args: {
     }
     throw err;
   }
+}
+
+/**
+ * Whether this users row is a deleted account. Account deletion sets the
+ * tombstone (`supportTelemetryDeletedAt`) before anything else and keeps the
+ * row. A deleted account is no principal: it cannot exchange or refresh a token,
+ * sign in to a portal, use a portal session, an identity-provider token or a key
+ * it created, or join a workspace.
+ */
+export function isDeletedAccount(user: { supportTelemetryDeletedAt?: Date | null } | null): boolean {
+  return Boolean(user?.supportTelemetryDeletedAt);
+}
+
+/**
+ * Whether `mentraUserId` names a deleted account (see `isDeletedAccount`). An unknown id does not, and
+ * neither does a missing one (an imported membership still waiting for its person has none).
+ */
+export async function isDeletedAccountId(
+  mentraUserId: string | null | undefined,
+  session?: ClientSession | null,
+): Promise<boolean> {
+  // A `null` filter would match documents without the field.
+  if (typeof mentraUserId !== "string" || !mentraUserId) return false;
+  const tombstone = await UserModel.exists({ mentraUserId, supportTelemetryDeletedAt: { $ne: null } }).session(
+    session ?? null,
+  );
+  return tombstone !== null;
 }
 
 /** Look up a user by `mentraUserId`. Returns null if unknown. */

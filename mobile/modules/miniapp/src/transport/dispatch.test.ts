@@ -77,6 +77,18 @@ describe("DispatchTransport", () => {
     expect((globalThis as unknown as BridgeGlobal).__mentraDeliverBridgeRaw).toBeUndefined()
   })
 
+  test("close() leaves a hook another transport installed since", async () => {
+    const replaced = new DispatchTransport()
+    await replaced.open()
+    const current = new DispatchTransport()
+    await current.open()
+    const hook = (globalThis as unknown as BridgeGlobal).__mentraDeliverBridgeRaw
+    replaced.close()
+    expect((globalThis as unknown as BridgeGlobal).__mentraDeliverBridgeRaw).toBe(hook)
+    current.close()
+    expect((globalThis as unknown as BridgeGlobal).__mentraDeliverBridgeRaw).toBeUndefined()
+  })
+
   test("send() after native __dispatch disappears triggers disconnect handler", async () => {
     const t = new DispatchTransport()
     await t.open()

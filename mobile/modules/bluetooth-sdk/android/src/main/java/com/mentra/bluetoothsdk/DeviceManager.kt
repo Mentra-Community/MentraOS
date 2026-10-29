@@ -1989,8 +1989,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         sgc?.requestSavedWifiNetworks(requestId, sid) ?: false
 
     fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
+        val driver = sgc ?: throw BluetoothSdkException(
+            "glasses_not_connected", "Cannot request incident logs because glasses are not connected.",
+        )
         Bridge.log("MAN: Sending incidentId to glasses for log upload: $incidentId")
-        sgc?.sendIncidentId(incidentId, apiBaseUrl)
+        driver.sendIncidentId(incidentId, apiBaseUrl)
     }
 
     /** Push a notification into the glasses' own notification centre; rejects unsupported or disconnected devices. */
@@ -2060,6 +2063,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     fun sendGalleryServerEnabled(requestId: String, enabled: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendGalleryServerEnabled(requestId, enabled)
+    }
+
+    fun sendTouchGestureDefaultBehaviorEnabled(requestId: String, gesture: TouchGesture, enabled: Boolean) {
+        val live = sgc as? MentraLive ?: throw BluetoothSdkException("unsupported_device", "This command requires Mentra Live glasses.")
+        live.sendTouchGestureDefaultBehaviorEnabled(requestId, gesture, enabled)
     }
 
     fun sendGalleryMode(requestId: String, enabled: Boolean) {

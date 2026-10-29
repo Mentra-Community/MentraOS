@@ -1,0 +1,109 @@
+import {expect, test} from 'bun:test';
+import {createHash} from 'node:crypto';
+import {GithubRoutineSourceGateway} from './routine-source-selection.service';
+const commit = 'a'.repeat(40), tree = 'b'.repeat(40), routines = 'c'.repeat(40);
+const bytes = new TextEncoder().encode('export const routine = true\n');
+const blob = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+function gateway(changes: {mode?: string; truncated?: boolean; wrongBytes?: boolean; status?: string; size?: number; missing?: boolean} = {}) {
+  const calls: string[] = [];
+  return {calls, service: new GithubRoutineSourceGateway({async token(scope) {expect(scope).toBe('harness'); return 'private';}}, async (url, init) => {
+    calls.push(url); expect(init.redirect).toBe('error'); expect(init.headers).toMatchObject({Authorization: 'Bearer private'});
+    if (url.endsWith('/commits/main')) return Response.json({sha: commit});
+    if (url.endsWith(`/git/commits/${'d'.repeat(40)}`)) return Response.json({sha: changes.status === 'diverged' ? 'e'.repeat(40) : 'd'.repeat(40)});
+    if (url.endsWith(`/git/commits/${commit}`)) return Response.json({sha: commit, tree: {sha: tree}});
+    if (url.endsWith(`/git/trees/${tree}`)) return Response.json({truncated: false, tree: changes.missing ? [] : [{path: 'routines', mode: '040000', type: 'tree', sha: routines}]});
+    if (url.endsWith(`/git/trees/${routines}?recursive=1`)) return Response.json({truncated: changes.truncated ?? false, tree: [
+      {path: 'sample/routine.ts', type: 'blob', mode: changes.mode ?? '100644', sha: blob, size: changes.size ?? bytes.length}]});
+    if (url.endsWith(`/git/blobs/${blob}`)) return new Response(changes.wrongBytes ? 'wrong' : bytes);
+    throw Error('unexpected URL');
+  })};
+}
+test('resolve main once or verify an explicit commit without consulting moving main', async () => {
+  const f = gateway(); expect(await f.service.resolve()).toBe(commit); expect(await f.service.resolve('d'.repeat(40))).toBe('d'.repeat(40));
+  const exact=gateway();expect(await exact.service.resolve('d'.repeat(40))).toBe('d'.repeat(40));expect(exact.calls).toHaveLength(1);expect(exact.calls[0]).not.toContain('/commits/main');
+  await expect(gateway({status: 'diverged'}).service.resolve('d'.repeat(40))).rejects.toThrow('differs');
+});
+test('source inventory confines routines tree and raw blobs prove Git object identity', async () => {
+  const f = gateway(), inventory = await f.service.inventory(commit);
+  expect(inventory).toEqual({commit, files: [{path: 'routines/sample/routine.ts', gitBlobSha1: blob, size: bytes.length}]});
+  expect(await f.service.blob(inventory.files[0]!)).toEqual(bytes);
+  expect(await f.service.inventory(commit)).toEqual(inventory); expect(f.calls.filter(url => url.includes('/git/trees/'))).toHaveLength(2);
+  await expect(gateway({wrongBytes: true}).service.blob(inventory.files[0]!)).rejects.toThrow('differs');
+});
+test('source inventory refuses symlinks and incomplete GitHub trees', async () => {
+  await expect(gateway({mode: '120000'}).service.inventory(commit)).rejects.toThrow('unsupported');
+  await expect(gateway({truncated: true}).service.inventory(commit)).rejects.toThrow();
+});
+
+
+test('source inventory reports invalid bounded source separately from a cancelled request', async () => {
+  for (const changes of [{mode:'120000'},{truncated:true},{size:64*1024**2+1},{missing:true}])
+    await expect(gateway(changes).service.inventory(commit)).rejects.toMatchObject({status:422});
+  const f=gateway();await f.service.resolve();await f.service.inventory(commit);
+  expect(f.calls.every(url=>url.startsWith('https://api.github.com/repos/Mentra-Community/Mentra-Automated-Testing/'))).toBe(true);
+});
+
+test('blob failures retain sanitized upstream phase and status without exposing provider material', async () => {
+  const observations: unknown[] = [];
+  const upstream = async () => new Response('PRIVATE_PROVIDER_BODY', {status: 403});
+  const service = new GithubRoutineSourceGateway({async token() {return 'PRIVATE_TOKEN';}}, upstream, value => observations.push(value));
+  await expect(service.blob({gitBlobSha1: blob, size: bytes.length})).rejects.toMatchObject({status: 503});
+  expect(observations).toEqual([{phase: 'response', blobSha: blob, expectedBytes: bytes.length,
+    elapsedMs: expect.any(Number), status: 403, failure: 'unavailable'}]);
+  expect(JSON.stringify(observations)).not.toContain('PRIVATE');
+
+  observations.length = 0;
+  const unauthenticated = new GithubRoutineSourceGateway({async token() {throw new Error('PRIVATE_KEY');}}, upstream, value => observations.push(value));
+  await expect(unauthenticated.blob({gitBlobSha1: blob, size: bytes.length})).rejects.toMatchObject({status: 503});
+  expect(observations).toEqual([{phase: 'authentication', blobSha: blob, expectedBytes: bytes.length,
+    elapsedMs: expect.any(Number), failure: 'unavailable'}]);
+  expect(JSON.stringify(observations)).not.toContain('PRIVATE');
+
+  observations.length = 0;
+  const corrupt = new GithubRoutineSourceGateway({async token() {return 'PRIVATE_TOKEN';}}, async () => new Response('wrong'), value => observations.push(value));
+  await expect(corrupt.blob({gitBlobSha1: blob, size: bytes.length})).rejects.toThrow('differs');
+  expect(observations).toEqual([{phase: 'integrity', blobSha: blob, expectedBytes: bytes.length,
+    receivedBytes: 5, elapsedMs: expect.any(Number), status: 200, failure: 'identity-mismatch'}]);
+});
+
+test('26 concurrent members share verified immutable blobs and returned copies cannot poison the cache', async () => {
+  let reads = 0;
+  const service = new GithubRoutineSourceGateway({async token() {return 'private';}}, async () => {
+    reads++; await Promise.resolve(); return new Response(bytes);
+  });
+  const file = {gitBlobSha1: blob, size: bytes.length};
+  const results = await Promise.all(Array.from({length: 26}, () => service.blob(file)));
+  expect(reads).toBe(1);
+  for (const value of results) expect(value).toEqual(bytes);
+  results[0]![0] = 0;
+  expect(results[1]).toEqual(bytes); expect(await service.blob(file)).toEqual(bytes); expect(reads).toBe(1);
+  await expect(service.blob({...file, size: file.size + 1})).rejects.toThrow('differs');
+});
+
+test('failed or corrupt downloads never populate the verified blob cache', async () => {
+  let reads = 0;
+  const service = new GithubRoutineSourceGateway({async token() {return 'private';}}, async () => {
+    reads++; return new Response(reads === 1 ? 'wrong' : bytes);
+  }, () => {});
+  const file = {gitBlobSha1: blob, size: bytes.length};
+  await expect(service.blob(file)).rejects.toThrow('differs');
+  expect(await service.blob(file)).toEqual(bytes); expect(reads).toBe(2);
+});
+
+test('in-flight byte admission preserves one64MiB blob and releases failed capacity without evicting a shared download', async () => {
+  let finish!: (value: Response) => void, reads = 0;
+  const service = new GithubRoutineSourceGateway({async token() {return 'private';}}, async () => {
+    reads++; return new Promise<Response>(resolve => {finish = resolve;});
+  }, () => {});
+  const large = {gitBlobSha1: 'a'.repeat(40), size: 64 * 1024 ** 2};
+  const first = service.blob(large), shared = service.blob(large);
+  const failed = Promise.allSettled([first, shared]);
+  await expect(service.blob({gitBlobSha1: blob, size: bytes.length})).rejects.toThrow('concurrent bound');
+  await Promise.resolve(); finish(new Response('unavailable', {status: 503}));
+  expect(await failed).toEqual([{status: 'rejected', reason: expect.objectContaining({status: 503})},
+    {status: 'rejected', reason: expect.objectContaining({status: 503})}]);
+  expect(reads).toBe(1);
+  const next = service.blob({gitBlobSha1: blob, size: bytes.length});
+  await Promise.resolve(); finish(new Response(bytes));
+  expect(await next).toEqual(bytes); expect(reads).toBe(2);
+});

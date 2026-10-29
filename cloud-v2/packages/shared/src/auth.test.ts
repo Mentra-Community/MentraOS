@@ -2,9 +2,17 @@ import crypto from "node:crypto"
 import {afterEach, describe, expect, test} from "bun:test"
 import * as jose from "jose"
 
-import {resetRuntimeAuthCache, signRuntimeToken, verifyRuntimeToken} from "./auth"
+import {
+  resetMentraKeyCache,
+  resetRuntimeAuthCache,
+  signRuntimeToken,
+  verifyAccessTokenSignature,
+  verifyRuntimeToken,
+} from "./auth"
 
 const savedEnv = {
+  MENTRA_JWT_PUBLIC_KEY: process.env.MENTRA_JWT_PUBLIC_KEY,
+  CLOUD_CORE_ISSUER: process.env.CLOUD_CORE_ISSUER,
   CLOUD_RUNTIME_AUTH_AUDIENCE: process.env.CLOUD_RUNTIME_AUTH_AUDIENCE,
   CLOUD_RUNTIME_AUTH_ISSUERS: process.env.CLOUD_RUNTIME_AUTH_ISSUERS,
   TEST_RUNTIME_PUBLIC_KEY: process.env.TEST_RUNTIME_PUBLIC_KEY,
@@ -14,7 +22,111 @@ afterEach(() => {
   restoreEnv("CLOUD_RUNTIME_AUTH_AUDIENCE", savedEnv.CLOUD_RUNTIME_AUTH_AUDIENCE)
   restoreEnv("CLOUD_RUNTIME_AUTH_ISSUERS", savedEnv.CLOUD_RUNTIME_AUTH_ISSUERS)
   restoreEnv("TEST_RUNTIME_PUBLIC_KEY", savedEnv.TEST_RUNTIME_PUBLIC_KEY)
+  restoreEnv("MENTRA_JWT_PUBLIC_KEY", savedEnv.MENTRA_JWT_PUBLIC_KEY)
+  restoreEnv("CLOUD_CORE_ISSUER", savedEnv.CLOUD_CORE_ISSUER)
   resetRuntimeAuthCache()
+  resetMentraKeyCache()
+})
+
+// Core's signing key signs phone access tokens (kid mentra-access-1), runtime
+// tokens and the sign-in server's tokens (kid mentra-oidc-1, typ at+jwt). Each
+// verifier pins the key ID and type, not only the signature and claims.
+describe("phone access token verification pins the key and type", () => {
+  async function signWithCoreKey(privateKey: string, header: jose.JWTHeaderParameters, claims: jose.JWTPayload = {}) {
+    const key = await jose.importPKCS8(`-----BEGIN PRIVATE KEY-----\n${privateKey}\n-----END PRIVATE KEY-----`, "EdDSA")
+    return new jose.SignJWT({tenant_id: "mentra", session_id: "sess_1", ...claims})
+      .setProtectedHeader(header)
+      .setIssuer("cloud-core")
+      .setAudience("cloud-core")
+      .setSubject("mu_1")
+      .setJti("jti_1")
+      .setIssuedAt()
+      .setExpirationTime("60s")
+      .sign(key)
+  }
+
+  function useCoreKey() {
+    const keypair = createEd25519Keypair()
+    process.env.MENTRA_JWT_PUBLIC_KEY = keypair.publicKey
+    delete process.env.CLOUD_CORE_ISSUER
+    resetMentraKeyCache()
+    return keypair
+  }
+
+  test("a phone access token (kid mentra-access-1, no typ) verifies", async () => {
+    const keypair = useCoreKey()
+    const token = await signWithCoreKey(keypair.privateKey, {alg: "EdDSA", kid: "mentra-access-1"})
+    await expect(verifyAccessTokenSignature(token)).resolves.toMatchObject({mentraUserId: "mu_1"})
+  })
+
+  test.each([
+    ["the sign-in server's kid", {alg: "EdDSA", kid: "mentra-oidc-1"}],
+    ["an at+jwt access token", {alg: "EdDSA", kid: "mentra-access-1", typ: "at+jwt"}],
+    ["the runtime kid", {alg: "EdDSA", kid: "cloud-core-runtime-1"}],
+    ["no kid", {alg: "EdDSA"}],
+    // The header is caller-controlled JSON: a non-string typ is refused, never a TypeError.
+    ["a numeric typ", {alg: "EdDSA", kid: "mentra-access-1", typ: 1}],
+    ["an object typ", {alg: "EdDSA", kid: "mentra-access-1", typ: {}}],
+  ])("a token with matching claims but %s is refused", async (_label, header) => {
+    const keypair = useCoreKey()
+    const token = await signWithCoreKey(keypair.privateKey, header as jose.JWTHeaderParameters)
+    await expect(verifyAccessTokenSignature(token)).rejects.toThrow("not a Mentra access token")
+  })
+})
+
+describe("runtime token verification pins the key and type", () => {
+  function configure(extra: Record<string, unknown> = {}) {
+    const keypair = createEd25519Keypair()
+    process.env.TEST_RUNTIME_PUBLIC_KEY = keypair.publicKey
+    process.env.CLOUD_RUNTIME_AUTH_ISSUERS = JSON.stringify([
+      {issuer: "test-runtime", publicKeyEnv: "TEST_RUNTIME_PUBLIC_KEY", userIdClaim: "sub", tenantIdClaim: "tenant_id", ...extra},
+    ])
+    return keypair
+  }
+
+  test.each(["mentra-oidc-1", "mentra-access-1", "mentra-miniapp-1", "mentra-account-1"])(
+    "a token under Core's %s key ID is never a runtime token",
+    async (kid) => {
+      const keypair = configure()
+      const token = await signRuntimeToken({privateKey: keypair.privateKey, issuer: "test-runtime", subject: "u", tenantId: "t", expiresInSeconds: 60, kid})
+      await expect(verifyRuntimeToken(token)).rejects.toThrow("not a runtime token")
+    },
+  )
+
+  test("a typed at+jwt token is refused", async () => {
+    const keypair = configure()
+    const key = await jose.importPKCS8(`-----BEGIN PRIVATE KEY-----\n${keypair.privateKey}\n-----END PRIVATE KEY-----`, "EdDSA")
+    const token = await new jose.SignJWT({tenant_id: "t"})
+      .setProtectedHeader({alg: "EdDSA", kid: "cloud-core-runtime-1", typ: "at+jwt"})
+      .setIssuer("test-runtime")
+      .setAudience("cloud-runtime")
+      .setSubject("u")
+      .setIssuedAt()
+      .setExpirationTime("60s")
+      .sign(key)
+    await expect(verifyRuntimeToken(token)).rejects.toThrow("not a runtime token")
+  })
+
+  test.each([1, {}])("a non-string typ (%p) is refused, never a TypeError", async (typ) => {
+    const keypair = configure()
+    const key = await jose.importPKCS8(`-----BEGIN PRIVATE KEY-----\n${keypair.privateKey}\n-----END PRIVATE KEY-----`, "EdDSA")
+    const token = await new jose.SignJWT({tenant_id: "t"})
+      .setProtectedHeader({alg: "EdDSA", kid: "cloud-core-runtime-1", typ} as unknown as jose.JWTHeaderParameters)
+      .setIssuer("test-runtime")
+      .setAudience("cloud-runtime")
+      .setSubject("u")
+      .setIssuedAt()
+      .setExpirationTime("60s")
+      .sign(key)
+    await expect(verifyRuntimeToken(token)).rejects.toThrow("not a runtime token")
+  })
+
+  test("an issuer's keyIds pin the key ID", async () => {
+    const keypair = configure({keyIds: ["cloud-core-runtime-1"]})
+    const sign = (kid: string) => signRuntimeToken({privateKey: keypair.privateKey, issuer: "test-runtime", subject: "u", tenantId: "t", expiresInSeconds: 60, kid})
+    await expect(verifyRuntimeToken(await sign("cloud-core-runtime-1"))).resolves.toMatchObject({mentraUserId: "u"})
+    await expect(verifyRuntimeToken(await sign("other-1"))).rejects.toThrow("unexpected key ID")
+  })
 })
 
 describe("runtime token verification", () => {

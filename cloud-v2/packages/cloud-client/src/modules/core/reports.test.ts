@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { HttpClient } from "../../http";
 import { Reports, type SubmitReportInput } from "./reports";
+import { Core } from "./core";
 
 const bugReportInput: SubmitReportInput = {
   kind: "bug",
@@ -45,6 +46,57 @@ function fakeHttp(calls: Array<{ method: string; path: string; body?: unknown }>
 }
 
 describe("Core reports client", () => {
+  test("types allow incident keys only on bug and automatic reports", () => {
+    const keyedBug: SubmitReportInput = {...bugReportInput, incidentKey: "manual-bug-1"};
+    const keyedAutomatic: SubmitReportInput = {
+      kind: "automatic",
+      incidentKey: "automatic-1",
+      trigger: {type: "automatic", source: "watchdog", reason: "runtime_failure"},
+      report: {actualBehavior: "Runtime stopped"},
+      context: {},
+    };
+    const keylessFeedback: SubmitReportInput = {kind: "feedback", feedback: "More controls", context: {}};
+    const keyedFeedbackCandidate = {...keylessFeedback, incidentKey: "feedback-1"};
+    // @ts-expect-error Feedback is complete at creation and cannot carry an incident key.
+    const keyedFeedback: SubmitReportInput = keyedFeedbackCandidate;
+
+    expect([keyedBug.kind, keyedAutomatic.kind, keylessFeedback.kind, keyedFeedback.kind]).toEqual([
+      "bug",
+      "automatic",
+      "feedback",
+      "feedback",
+    ]);
+  });
+
+  test("passes the exact typed automation correlation through the existing submission route", async () => {
+    const calls: Array<{method: string; path: string; body?: unknown}> = [];
+    const input: SubmitReportInput = {kind: "automatic", trigger: {type: "automatic", source: "mentra_automated_testing",
+      reason: "incident_report_requested"}, report: {actualBehavior: "Original failure"}, context: {},
+      automationCorrelation: {alertId: "exact-alert", testRunId: "exact-run"}};
+    await new Reports({http: fakeHttp(calls)}).submit(input);
+    expect(calls).toEqual([{method: "POST", path: "/api/client/reports", body: input}]);
+  });
+  test("reads source receipts through the bound Core API with caller cancellation", async () => {
+    const signal = new AbortController().signal;
+    const calls: unknown[] = [];
+    const receipt = {state: "received" as const, requestedAt: "2026-10-09T00:00:00Z", deadlineAt: "2026-10-09T00:04:00Z", artifactId: "art_phone", entryCount: 0};
+    const http = {...fakeHttp([]), get: async <T>(path: string, opts?: unknown): Promise<T> => {
+      calls.push({path, opts});
+      return {reportId: "rep_/123", logCollection: {phone: {...receipt, context: "private"}, unrelated: {token: "private"}}, context: "private"} as T;
+    }};
+    const core = new Core({http});
+    await expect(core.reports.getLogCollection("rep_/123", signal)).resolves.toEqual({reportId: "rep_/123", logCollection: {phone: receipt}});
+    expect(calls).toEqual([{path: "/api/client/reports/rep_%2F123/log-collection", opts: {signal}}]);
+  });
+
+  test("rejects malformed source receipts and another report's response", async () => {
+    for (const snapshot of [null, {reportId: "other", logCollection: {}}, {reportId: "rep_test", logCollection: []},
+      {reportId: "rep_test", logCollection: {phone: {state: "ready"}}}]) {
+      const http = {...fakeHttp([]), get: async <T>(): Promise<T> => snapshot as T};
+      await expect(new Reports({http}).getLogCollection("rep_test")).rejects.toThrow("Invalid report collection");
+    }
+  });
+
   test("submits bug reports through the Cloud V2 reports route", async () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const reports = new Reports({ http: fakeHttp(calls) });
@@ -103,6 +155,52 @@ describe("Core reports client", () => {
     ]);
   });
 
+  test("sends bug and automatic incident keys plus a retry key through the bound Core API", async () => {
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const core = new Core({ http: fakeHttp(calls) });
+    const bugInput: SubmitReportInput = {...bugReportInput, incidentKey: "manual-bug-1"};
+    const automaticInput: SubmitReportInput = {
+      kind: "automatic",
+      incidentKey: "ML395018B-dump-0000002a-1f2e3d4c",
+      trigger: { type: "automatic", source: "glasses_firmware_crash", reason: "bes_crash" },
+      report: { actualBehavior: "BES crashed", systemPriority: "critical" },
+      context: {},
+    };
+    const entries = [{ timestamp: 1, level: "error", message: "[CRASH-CONTEXT] v=2", source: "BES_CRASH" }];
+
+    await core.reports.submit(bugInput);
+    await core.reports.submit(automaticInput);
+    await core.reports.addLogs("rep_123", "glasses_firmware", entries, { retryKey: "glasses_firmware:full" });
+
+    expect(calls).toEqual([
+      { method: "POST", path: "/api/client/reports", body: bugInput },
+      { method: "POST", path: "/api/client/reports", body: automaticInput },
+      {
+        method: "POST",
+        path: "/api/client/reports/rep_123/artifacts",
+        body: { type: "logs", source: "glasses_firmware", entries, retryKey: "glasses_firmware:full" },
+      },
+    ]);
+  });
+
+  test("records a source collection attempt without claiming artifact receipt", async () => {
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const reports = new Reports({ http: fakeHttp(calls) });
+
+    await reports.updateLogCollection("rep_/123", "glasses_firmware", {
+      state: "unavailable",
+      reason: "glasses_disconnected",
+    });
+
+    expect(calls).toEqual([
+      {
+        method: "POST",
+        path: "/api/client/reports/rep_%2F123/log-collection/glasses_firmware",
+        body: { state: "unavailable", reason: "glasses_disconnected" },
+      },
+    ]);
+  });
+
   test("adds screenshots as multipart artifacts", async () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const reports = new Reports({ http: fakeHttp(calls) });
@@ -116,6 +214,41 @@ describe("Core reports client", () => {
     expect(calls[0].method).toBe("POST_FORM");
     expect(calls[0].path).toBe("/api/client/reports/rep_123/artifacts");
     expect(calls[0].body).toBeInstanceOf(FormData);
+  });
+
+  test("adds MP4 videos with their declared capture source through the existing artifact route", async () => {
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const reports = new Reports({ http: fakeHttp(calls) });
+    const bytes = new Uint8Array([0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70]);
+
+    const result = await reports.addVideos("rep_123", "host", [
+      { blob: new Blob([bytes]), fileName: "recording.mp4" },
+      { blob: new Blob([bytes], { type: "video/mp4" }) },
+    ]);
+
+    expect(result).toEqual({ stored: 1 });
+    // One artifact call on the existing report; no submit or complete.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("POST_FORM");
+    expect(calls[0].path).toBe("/api/client/reports/rep_123/artifacts");
+    const form = calls[0].body as FormData;
+    expect(form.get("type")).toBe("video");
+    expect(form.get("source")).toBe("host");
+    const files = form.getAll("files") as File[];
+    expect(files.map((file) => file.type)).toEqual(["video/mp4", "video/mp4"]);
+    expect(files[0].name).toBe("recording.mp4");
+    expect(files[1].name).toMatch(/^video-\d+\.mp4$/);
+    expect(new Uint8Array(await files[0].arrayBuffer())).toEqual(bytes);
+  });
+
+  test("rejects a video without a blob or uri before sending anything", () => {
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const reports = new Reports({ http: fakeHttp(calls) });
+
+    expect(() => reports.addVideos("rep_123", "host", [{ fileName: "missing.mp4" }])).toThrow(
+      "report video requires either blob or uri",
+    );
+    expect(calls).toHaveLength(0);
   });
 
   test("marks reports ready after artifact collection", async () => {
@@ -132,4 +265,32 @@ describe("Core reports client", () => {
       },
     ]);
   });
+});
+
+test("threads one caller signal through report creation, artifacts, state and completion", async () => {
+  const signal = new AbortController().signal;
+  const calls: Array<{path: string; signal?: AbortSignal}> = [];
+  const http: HttpClient = {...fakeHttp([]),
+    post: async <T>(path: string, _body?: unknown, options?: {signal?: AbortSignal}): Promise<T> => {
+      calls.push({path, signal: options?.signal});
+      return (path === "/api/client/reports" ? {reportId: "rep_test", status: "collecting"} : {stored: 1}) as T;
+    },
+    postForm: async <T>(path: string, _body: FormData, options?: {signal?: AbortSignal}): Promise<T> => {
+      calls.push({path, signal: options?.signal});
+      return {stored: 1} as T;
+    },
+  };
+  const reports = new Reports({http});
+  await reports.submit(bugReportInput, signal);
+  await reports.addLogs("rep_test", "phone", [], {signal});
+  await reports.updateLogCollection("rep_test", "glasses", {state: "requested"}, signal);
+  await reports.addScreenshots("rep_test", [{blob: new Blob(["image"]), fileName: "failure.jpg"}], signal);
+  await reports.complete("rep_test", signal);
+  expect(calls).toEqual([
+    {path: "/api/client/reports", signal},
+    {path: "/api/client/reports/rep_test/artifacts", signal},
+    {path: "/api/client/reports/rep_test/log-collection/glasses", signal},
+    {path: "/api/client/reports/rep_test/artifacts", signal},
+    {path: "/api/client/reports/rep_test/complete", signal},
+  ]);
 });

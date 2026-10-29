@@ -12,7 +12,7 @@ import {usePathname} from "expo-router"
 import {ClientApp, engine} from "@mentra/engine"
 import {Directory, File, Paths} from "expo-file-system"
 import * as ImageManipulator from "expo-image-manipulator"
-import {captureRef} from "react-native-view-shot"
+import {captureMiniappPreview} from "@/utils/captureMiniappPreview"
 import {Image as RNImage} from "react-native"
 import {BottomSheetBackdrop, BottomSheetModal} from "@gorhom/bottom-sheet"
 import AppIcon from "@/components/home/AppIcon"
@@ -94,7 +94,7 @@ function CapsuleButton({onRightPress, onLeftPress}: CapsuleButtonProps) {
           <Icon name={"minus"} size={16} color={theme.colors.foreground} className="z-0 absolute top-[1px] left-[1px]" />
         </View> */}
         {/* <View className="border-1 border-red-500"> */}
-          <Icon name="minimize" size={13} color={theme.colors.foreground} className="mr-0.5" />
+        <Icon name="minimize" size={13} color={theme.colors.foreground} className="mr-0.5" />
         {/* </View> */}
       </Pressable>
       <View className="h-4 w-px bg-primary-foreground absolute left-1/2 -translate-x-1/2" />
@@ -234,11 +234,7 @@ export async function captureScreenshotForLater(
 
   let screenshotUri: string
   try {
-    screenshotUri = await captureRef(viewShotRef, {
-      format: "jpg",
-      quality: Platform.OS === "ios" ? 0.1 : 0.5,
-      result: "tmpfile",
-    })
+    screenshotUri = await captureMiniappPreview(viewShotRef)
   } catch (error) {
     console.warn("screenshot capture failed:", error)
     return
@@ -297,6 +293,14 @@ export async function captureScreenshotForLater(
       })
     } catch (error) {
       console.warn("screenshot failed:", error)
+    } finally {
+      if (Platform.OS === "android") {
+        try {
+          new File(screenshotUri).delete()
+        } catch {
+          // Cache cleanup must not affect the saved preview or dismissal.
+        }
+      }
     }
   }
 }

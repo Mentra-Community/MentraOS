@@ -73,13 +73,23 @@ Keep one SDK instance per active app session. The SDK owns Bluetooth connection 
 ## Mentra SDK Usage Analytics
 
 The SDK reports anonymous usage events to Mentra's PostHog project by default
-so Mentra can understand SDK adoption and successful glasses connections:
+so Mentra can understand SDK adoption, glasses connections, and how Mentra Live
+features are used:
 
 | Event | Fires When |
 | --- | --- |
 | `bluetooth_sdk_started` | Once per app runtime after the native SDK starts. |
 | `bluetooth_sdk_glasses_connected` | When SDK status transitions from not connected to connected. Failed scans and failed connection attempts are not counted. |
 | `bluetooth_sdk_glasses_identified` | Once per connection after the glasses report a valid manufacturing serial, and once per new reporting day (`America/Los_Angeles`) while that connection stays up (`event_kind=glasses_heartbeat`). Carries `glasses_device_id` (the hardware serial, not a user or phone id) and the glasses-side firmware versions of identified glasses. |
+| `bluetooth_sdk_glasses_disconnected` | When a connection that was reported as connected ends. Carries `session_duration_ms`, `disconnect_reason` (`user_disconnect`, `forget`, `cancel`, `bluetooth_off`, `link_lost`, or `unknown`), and the battery levels seen during the connection. |
+| `bluetooth_sdk_photo_taken` | When a `requestPhoto` call settles, or a photo taken with the glasses button fails. Carries `trigger`, `success`, `error_code`, `latency_ms`, the requested size, mode, compression, gallery save and transfer method, and `file_size_bytes` when known. |
+| `bluetooth_sdk_video_recorded` | When a recording (app- or button-started) stops or fails. Carries `trigger`, `success`, `error_code`, `duration_ms`, requested resolution and frame rate, gallery save, maximum duration, and `stopped_by_app`. |
+| `bluetooth_sdk_stream_started` | When a `startStream` call settles. Carries `success`, `error_code`, `protocol` (`rtmp`, `srt`, `whip`, or `unknown`, from the URL scheme only), requested video settings, `capture_audio`, `glasses_network`, and `latency_ms`. |
+| `bluetooth_sdk_stream_ended` | When that stream ends. Carries `protocol`, `duration_ms`, `end_state`, `stopped_by_app`, `reconnect_attempts`, `error_code`, and the last reported bitrate, frame rate, dropped frames, and temperature when the stream reported statistics. |
+| `bluetooth_sdk_mic_session` | When the active microphone turns off or changes. Carries `duration_ms`, `mic_source`, and `local_transcription`. |
+| `bluetooth_sdk_wifi_setup`, `bluetooth_sdk_hotspot_started` | When `sendWifiCredentials` or `setHotspotState(true)` settles. Carry `success`, `error_code`, and `latency_ms`. |
+| `bluetooth_sdk_ota_finished` | When a glasses software update completes or fails. Carries `success`, the failed step and error, `total_steps`, `duration_ms`, and the glasses versions the update started from. |
+| `bluetooth_sdk_request_failed` | When a glasses command times out (`error_code=request_timeout`), with the command as `operation`. At most 100 per SDK start. |
 
 Every event carries the host app's `app_version`, `app_build`, `app_build_type`
 (`debug` / `release`), and `app_install_source` (`play_store`, `app_store`,
@@ -166,6 +176,21 @@ iOS apps can also set `MentraBluetoothSdkAnalyticsDisabled` to `true` in
 Apps do not configure the analytics destination; these SDK usage events are
 always sent to Mentra's PostHog project unless analytics are disabled.
 
+### Update check
+
+Separately from analytics, the SDK checks for a newer SDK release every time it
+starts, whether or not analytics are disabled. The check is one HTTPS request
+to `core.mentraglass.com` carrying the SDK install id, the app identifier, the
+app version and build facts listed above, the SDK version, platform and
+surface, and the OS version. Mentra records each check.
+
+When a newer release exists, the SDK prints a warning with the update command
+to the developer console: Logcat on Android, the Xcode console on iOS, and a
+`console.warn` in React Native (a LogBox warning in debug builds). It repeats
+every 15 minutes while the SDK runs. Nothing is shown in your app's UI. A
+network that blocks `core.mentraglass.com` loses only the warning; SDK behavior
+is unchanged.
+
 Captured properties are intentionally narrow:
 
 | Property | Meaning |
@@ -176,17 +201,21 @@ Captured properties are intentionally narrow:
 | `sdk_version` | Bluetooth SDK version. |
 | `app_package` / `app_bundle_identifier` | Consuming app identifier. |
 | `os_platform`, `os_version` | Phone OS metadata. |
-| `event_kind` | `sdk_started`, `glasses_connected`, or `glasses_identified`. |
+| `event_kind` | `sdk_started`, `glasses_connected`, `glasses_identified`, or `glasses_disconnected`. |
+| `phone_manufacturer`, `phone_model`, `locale`, `timezone` | Phone hardware model, language and time zone. |
 | `app_version`, `app_build`, `app_build_type`, `app_install_source`, `app_environment` | Host build facts described above (`app_installer_package` on Android carries the raw installer package). |
 | `fully_booted` | Connection and identification events; whether the connected status already reports fully booted. |
 | `glasses_model`, `glasses_is_simulated` | Connection and identification events; the model is included only when the SDK has a non-empty value. |
 | `glasses_device_id`, `glasses_device_id_type` | Identification event only; the glasses manufacturing serial (`manufacturing_serial`). |
 | `glasses_firmware_version`, `glasses_bes_firmware_version`, `glasses_mtk_firmware_version`, `glasses_android_version`, `glasses_app_version`, `glasses_build_number` | Identification event only; included when known. |
+| `glasses_model`, `glasses_device_id`, `glasses_build_number` on usage events | Photo, video, stream, mic, setup, OTA and timeout events carry the connected glasses' model, serial and build when known. |
 
-Apart from the glasses manufacturing serial on the identification event, the
-SDK does not upload BLE MAC addresses, CoreBluetooth identifiers, Bluetooth
-device names, user ids, tokens, Wi-Fi credentials,
-microphone data, photos, or transcripts. It stores a locally generated
+Apart from the glasses manufacturing serial, the SDK does not upload BLE MAC
+addresses, CoreBluetooth identifiers, Bluetooth device names, user ids, tokens,
+Wi-Fi names or credentials, stream, webhook or upload URLs, microphone data,
+photos, videos, or transcripts, and it never reads device location. Error
+details have URLs removed before they are sent. PostHog derives an approximate
+location (country, region, city) from the IP address each event is sent from. It stores a locally generated
 anonymous SDK install id and sends it as PostHog `distinct_id`; events include
 `$process_person_profile: false` so PostHog does not create person profiles for
 these SDK usage pings.
@@ -471,7 +500,7 @@ Important defaults:
 - `scan(model, options)` reports progressive results through `options.onResults`, resolves with the final matching `Device[]`, and times out after 15 seconds unless `options.timeoutMs` is set.
 - `connect` and `connectDefault` default `saveAsDefault`, `cancelExistingConnectionAttempt`, and `requiresAncs` to `true`. `requiresAncs` only changes Mentra Live connections on iOS; Android accepts it as a no-op.
 - `setDashboardContent(content)` keeps the standard time, date, and battery header. It stores content for the current SDK session and renders it immediately only when the contextual dashboard is visible; otherwise it appears on the next head-up. Pass the exact empty string to restore the status-only dashboard.
-- `setMicState(enabled)` defaults to glasses microphone on, transcript events off, and LC3 events off. Microphone audio events are continuous while capture is enabled. Use `setVoiceActivityDetectionEnabled(...)` for glasses-side Voice Activity Detection and `setLoudnessGateEnabled(...)` for Mentra Live's center-microphone loudness gate ("Barrier"). With VAD disabled and Barrier enabled, quiet input is represented as silence while audio frames continue. The standalone public Bluetooth SDK defaults are VAD disabled and Barrier enabled, and both settings are reapplied after reconnect. The Mentra App manages separate persisted OS-level microphone preferences. `voice_activity_detection_status` reports whether VAD is enabled, and `speaking_status` reports speaking/not-speaking when supported. Microphone audio events include the latest `voiceActivityDetectionEnabled` value.
+- `setMicState(enabled)` defaults to glasses microphone on, transcript events off, and LC3 events off. Microphone audio events are continuous while capture is enabled. Use `setVoiceActivityDetectionEnabled(...)` for glasses-side Voice Activity Detection and `setLoudnessGateEnabled(...)` for Mentra Live's center-microphone loudness gate ("Barrier"). With Barrier enabled, quiet input is replaced with silence while the glasses speaker plays, and audio frames continue. The standalone public Bluetooth SDK defaults are VAD disabled and Barrier enabled, and both settings are reapplied after reconnect. The Mentra App manages separate persisted OS-level microphone preferences. `voice_activity_detection_status` reports whether VAD is enabled, and `speaking_status` reports speaking/not-speaking when supported. Microphone audio events include the latest `voiceActivityDetectionEnabled` value.
 - `requestPhoto({authToken, ...})` omits the `Authorization` header when `authToken` is `null` or empty.
 - `requestPhoto(...)` and `warmUpCamera(...)` generate unique request IDs when `requestId` is omitted or blank. Pass an explicit `requestId` only when your app needs to know it before the response, for example to poll a predictable upload-status URL.
 - `requestPhoto({exposureTimeNs, ...})` uses auto exposure when `exposureTimeNs` is omitted or `null`; pass a positive nanosecond value for one-shot manual exposure.

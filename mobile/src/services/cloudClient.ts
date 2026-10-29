@@ -63,6 +63,7 @@ export function cloudConfigValues(): {
   cloudAuthStorageKey?: string
   otaManifestUrl?: string | null
   allowLegacyOtaFallback?: boolean
+  firstPartyMiniappsUrl?: string | null
   features?: {
     managedStreams: boolean
     nativeMeetings: boolean
@@ -111,6 +112,7 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
     // Preserve official legacy-glasses/embedded-engine OTA fallback semantics.
     otaManifestUrl: manifest.artifacts.mentraLiveOtaManifestUrl,
     allowLegacyOtaFallback: deployment.kind === "consumer",
+    firstPartyMiniappsUrl: manifest.artifacts.firstPartyMiniappsUrl ?? null,
     cloudDebugScope: deploymentDebugScope(deployment),
     resolveCloudEndpoints: resolvedEndpoints,
     features: {
@@ -140,8 +142,7 @@ export const cloudClient = {
     // an explicit engine reconnect pin.
     cloudClientService.reconnect(null)
   },
-  getPreinstalledMiniappRegistry: () => cloudClientService.getPreinstalledMiniappRegistry(),
-  getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) =>
+  getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number; fresh?: boolean}) =>
     cloudClientService.getMiniappAuthToken(packageName, opts),
   startManagedPhoto: () => cloudClientService.startManagedPhoto(),
   awaitManagedPhotoReady: (requestId: string) => cloudClientService.awaitManagedPhotoReady(requestId),

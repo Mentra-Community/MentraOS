@@ -1,6 +1,6 @@
 {
   "name": "@mentra/engine",
-  "version": "3.2.1",
+  "version": "3.3.0",
   "description": "Mentra Engine — miniapp registry, WebView bridge, and miniapp store",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -97,17 +97,19 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@mentra/acs-meeting": "3.2.1",
-    "@mentra/glasses-media": "3.2.1",
-    "@mentra/bluetooth-sdk": "3.2.1",
-    "@mentra/cloud-client": "3.2.1",
-    "@mentra/cloud-protocol": "3.2.1",
-    "@mentra/crust": "3.2.1",
-    "@mentra/miniapp": "3.2.1",
+    "@mentra/acs-meeting": "3.3.0",
+    "@mentra/glasses-media": "3.3.0",
+    "@mentra/bluetooth-sdk": "3.3.0",
+    "@mentra/cloud-client": "3.3.0",
+    "@mentra/cloud-protocol": "3.3.0",
+    "@mentra/crust": "3.3.0",
+    "@mentra/miniapp": "3.3.0",
     "buffer": "^6.0.3",
     "events": "^3.3.0",
+    "jszip": "^3.10.1",
     "react-native-marked": "8.1.1",
     "semver": "^7.7.4",
+    "tweetnacl": "^1.0.3",
     "typesafe-ts": "^1.7.1"
   },
   "devDependencies": {
@@ -138,6 +140,8 @@
     "expo-audio": "~55.0.14",
     "expo-clipboard": "~55.0.13",
     "expo-calendar": "~55.0.14",
+    "expo-application": "~55.0.15",
+    "expo-asset": "~55.0.17",
     "expo-constants": "~55.0.16",
     "expo-device": "~55.0.17",
     "expo-location": "~55.1.10",
@@ -149,7 +153,7 @@
     "react-native-permissions": "*",
     "react-native-wifi-reborn": "*",
     "@react-native-community/netinfo": "*",
-    "@dr.pogodin/react-native-fs": "*",
+    "@dr.pogodin/react-native-fs": ">=2.37.0 <2.41.0",
     "@craftzdog/react-native-buffer": "*",
     "axios": "*"
   }

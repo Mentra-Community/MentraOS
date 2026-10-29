@@ -1,12 +1,18 @@
 import * as Linking from "expo-linking"
 import * as WebBrowser from "expo-web-browser"
-import {FC, ReactNode, createContext, useContext, useEffect, useRef} from "react"
+import {FC, ReactNode, createContext, useContext, useEffect, useRef, useState} from "react"
 import {AppState, Platform} from "react-native"
 
+import {cameraPackageName} from "@/constants/miniapps"
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import mentraAuth from "@/utils/auth/authClient"
-import {BgTimer, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
+import {confirmLinkSignIn} from "@/utils/auth/confirmLinkSignIn"
+import {BgTimer, engine, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
+import IncidentReportRequest from "@/components/diagnostics/IncidentReportRequest"
+import {loadAuthoringMiniapp} from "@/services/miniapps/loadAuthoringMiniapp"
+import {publishPermissionStatusRequest} from "@/services/permissionStatusRequest"
+import {requestAttendedPermissions} from "@/services/attendedPermissionRequest"
 
 /**
  * adb / zsh often backslash-escapes `&` in a custom-scheme URL. That turns
@@ -15,6 +21,14 @@ import {useNavigationStore} from "@/stores/navigation"
  */
 function sanitizeDeeplinkUrl(url: string): string {
   return url.replace(/\\&/g, "&").replace(/\\(?=$|[?#])/g, "")
+}
+
+/**
+ * A link for logs: its path only. Auth links carry one-time codes and provider tokens in the query or fragment, and
+ * phone logs leave the device in bug reports.
+ */
+function loggableUrl(url: string): string {
+  return url.split(/[?#]/)[0]
 }
 
 /** Returns immediately if the app is already active, otherwise waits for it. */
@@ -30,10 +44,17 @@ const waitForActive = (): Promise<void> => {
   })
 }
 
+export interface DeepLinkRouteUi {
+  /** Lifts the splash, so a sheet the handler presents is visible. */
+  hideSplash: () => void
+}
+
 export interface DeepLinkRoute {
   pattern: string
-  handler: (url: string, params: Record<string, string>) => void | Promise<void>
+  handler: (url: string, params: Record<string, string>, ui: DeepLinkRouteUi) => void | Promise<void>
   requiresAuth?: boolean
+  /** Diagnostic observations must not cover the currently selected app screen. */
+  presentation?: "passive"
 }
 
 /**
@@ -115,9 +136,18 @@ const deepLinkRoutes: DeepLinkRoute[] = [
   },
   {
     pattern: "/asg/gallery",
-    handler: (url: string, params: Record<string, string>) => {
-      const nav = useNavigationStore.getState()
-      nav.push("/asg/gallery")
+    // Opened the way a tap on Home opens it: the apps store starts it (or refuses, with its alert) and shows it in
+    // the overlay, so it runs and is counted like any other open. Before the built-in miniapps are registered, the
+    // screen is pushed on its own.
+    handler: async () => {
+      const gallery = engine.miniapps.list().find((app) => app.packageName === cameraPackageName)
+      if (!gallery) {
+        useNavigationStore.getState().push("/asg/gallery")
+        return
+      }
+      if (await engine.miniapps.start(gallery, {trigger: "user", skipNavigation: true})) {
+        await engine.miniapps.setForeground(cameraPackageName)
+      }
     },
     requiresAuth: true,
   },
@@ -181,7 +211,7 @@ const deepLinkRoutes: DeepLinkRoute[] = [
   },
   {
     pattern: "/auth/callback",
-    handler: async (url: string, params: Record<string, string>) => {
+    handler: async (url: string, params: Record<string, string>, ui: DeepLinkRouteUi) => {
       const nav = useNavigationStore.getState()
       // console.log("[LOGIN DEBUG] params:", params)
       // console.log("[LOGIN DEBUG] url:", url)
@@ -240,7 +270,11 @@ const deepLinkRoutes: DeepLinkRoute[] = [
       }
 
       if (authParams?.type === "signup" && authParams.access_token) {
-        const res = await mentraAuth.completeSignupVerification(authParams.access_token)
+        // A link that would sign in to an account this phone didn't sign up for, or switch accounts, asks first.
+        const res = await mentraAuth.completeSignupVerification(authParams.access_token, (account) => {
+          ui.hideSplash()
+          return confirmLinkSignIn(account)
+        })
         try {
           WebBrowser.dismissBrowser()
         } catch {
@@ -251,6 +285,8 @@ const deepLinkRoutes: DeepLinkRoute[] = [
           nav.replace("/auth/start?authError=invalid_grant")
           return
         }
+        // Expo Router already opened the callback's splash. Signed in or declined, "/" routes to the account the app
+        // uses now, or to sign-in.
         nav.setAnimation("none")
         nav.replaceAll("/")
         return
@@ -305,62 +341,16 @@ const deepLinkRoutes: DeepLinkRoute[] = [
       }
     },
   },
-  {
-    pattern: "/auth/reset-password",
-    handler: async (url: string, params: Record<string, string>) => {
-      const nav = useNavigationStore.getState()
-      console.log("[RESET PASSWORD DEBUG] Handling reset password deep link")
-      console.log("[RESET PASSWORD DEBUG] URL:", url)
-      console.log("[RESET PASSWORD DEBUG] Params:", params)
-
-      // Parse the auth parameters from the URL fragment
-      const parseAuthParams = (url: string) => {
-        const parts = url.split("#")
-        if (parts.length < 2) return null
-        const paramsString = parts[1]
-        const urlParams = new URLSearchParams(paramsString)
-        return {
-          access_token: urlParams.get("access_token"),
-          refresh_token: urlParams.get("refresh_token"),
-          type: urlParams.get("type"),
-          // Error params (when link is expired/invalid)
-          error: urlParams.get("error"),
-          error_code: urlParams.get("error_code"),
-          error_description: urlParams.get("error_description"),
-        }
-      }
-
-      const authParams = parseAuthParams(url)
-
-      // Check if there's an error in the URL (e.g., expired link)
-      if (authParams?.error || authParams?.error_code) {
-        console.log("[RESET PASSWORD DEBUG] Error in reset link:", authParams.error_code, authParams.error_description)
-        // Navigate to login with the error code so login screen can show the message
-        nav.replace(`/auth/start?authError=${authParams.error_code || authParams.error}`)
-        return
-      }
-
-      if (authParams && authParams.access_token && authParams.refresh_token && authParams.type === "recovery") {
-        // Set the recovery session
-        const res = await mentraAuth.updateSessionWithTokens({
-          access_token: authParams.access_token,
-          refresh_token: authParams.refresh_token,
-        })
-        if (res.is_error()) {
-          console.error("[RESET PASSWORD DEBUG] Error setting recovery session:", res.error)
-          nav.replace("/auth/start?authError=invalid_reset_link")
-          return
-        }
-
-        console.log("[RESET PASSWORD DEBUG] Recovery session set successfully")
-        // Navigate to the reset password screen
-        nav.replace("/auth/reset-password")
-      } else {
-        console.log("[RESET PASSWORD DEBUG] Missing required auth parameters for password reset")
-        nav.replace("/auth/start?authError=invalid_reset_link")
-      }
+  // Password reset is the code "Forgot password" emails (account spec). A reset link carries no session: any tokens in
+  // it are ignored, so a link can never sign the phone in or replace the account signed in now. A signed-in person
+  // stays where they are; a signed-out one sees sign-in with the invalid-link message, next to Forgot password.
+  ...["/auth/reset-password", "/auth/reset-password/"].map((pattern) => ({
+    pattern,
+    handler: (_url: string, params: Record<string, string>) => {
+      if (params.authed === "true") return
+      useNavigationStore.getState().replace("/auth/start?authError=invalid_reset_link")
     },
-  },
+  })),
 
   // Mirror/Gallery routes
   {
@@ -452,7 +442,7 @@ const deepLinkRoutes: DeepLinkRoute[] = [
 ]
 
 interface DeeplinkContextType {
-  processUrl: (url: string) => Promise<void>
+  processUrl: (url: string, initial?: boolean, replayPending?: boolean) => Promise<void>
 }
 
 const DeeplinkContext = createContext<DeeplinkContextType>({} as DeeplinkContextType)
@@ -460,13 +450,71 @@ const DeeplinkContext = createContext<DeeplinkContextType>({} as DeeplinkContext
 export const useDeeplink = () => useContext(DeeplinkContext)
 
 export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
+  const [incidentParams, setIncidentParams] = useState<Record<string, unknown> | null>(null)
   const {setSplashEnabled} = useSplashLoader()
   const lastProcessed = useRef({url: null as string | null, time: 0})
   const nav = useNavigationStore.getState()
   const config = {
     scheme: "com.mentra",
     host: "apps.mentra.glass",
-    routes: deepLinkRoutes,
+    routes: [
+      {
+        pattern: "/test/request-permissions",
+        requiresAuth: false,
+        presentation: "passive" as const,
+        handler: async (url: string) => {
+          try {
+            const result = await requestAttendedPermissions(url)
+            console.info("ATTENDED_PERMISSION_REQUEST", JSON.stringify(result))
+          } catch (error) {
+            console.error("ATTENDED_PERMISSION_REQUEST_INCOMPLETE", error instanceof Error ? error.message : "request failed")
+          }
+        },
+      },
+      {
+        pattern: "/test/permissions",
+        requiresAuth: false,
+        presentation: "passive" as const,
+        handler: async (url: string) => {
+          try {
+            await publishPermissionStatusRequest(url)
+          } catch (error) {
+            // Supporting diagnostics only. The fixed app-owned file is the
+            // authoritative receipt; absence must remain unknown to the host.
+            console.error("PERMISSION_STATUS_UNAVAILABLE", error instanceof Error ? error.message : String(error))
+          }
+        },
+      },
+      {
+        pattern: "/test/submit-incident-report",
+        handler: (url: string) => {
+          const query = new URL(url).searchParams
+          const params: Record<string, unknown> = {}
+          query.forEach((_value, key) => {
+            const values = query.getAll(key)
+            params[key] = values.length === 1 ? values[0] : values
+          })
+          setIncidentParams(params)
+        },
+        // Diagnostics must preserve the failed screen even when auth is unavailable.
+        // The modal and uploader report that failure without sending the user to login.
+        requiresAuth: false,
+      },
+      {
+        pattern: "/test/load-miniapp",
+        requiresAuth: true,
+        handler: async (url: string) => {
+          try {
+            const result = await loadAuthoringMiniapp(url)
+            console.info("MINIAPP_LOAD_RESULT", JSON.stringify({status: "opened", ...result}))
+          } catch (error) {
+            console.error("MINIAPP_LOAD_RESULT", JSON.stringify({status: "failed", error: String(error)}))
+            throw error
+          }
+        },
+      },
+      ...deepLinkRoutes,
+    ],
     authCheckHandler: async () => {
       // TODO: this is a hack when we should really be using the auth context:
       const res = await mentraAuth.getSession()
@@ -480,7 +528,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       return true
     },
     fallbackHandler: (url: string) => {
-      console.warn("Fallback handler called for URL:", url)
+      console.warn("Fallback handler called for URL:", loggableUrl(url))
       setTimeout(() => {
         nav.replaceAll("/auth/start")
       }, 100)
@@ -494,7 +542,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
   useEffect(() => {
     const subscription = Linking.addEventListener("url", handleUrlRaw)
     Linking.getInitialURL().then((url) => {
-      console.log("@@@@@@@@@@@@@ INITIAL URL @@@@@@@@@@@@@@@", url)
+      console.log("@@@@@@@@@@@@@ INITIAL URL @@@@@@@@@@@@@@@", url && loggableUrl(url))
       if (url) {
         processUrl(url, true)
       }
@@ -559,7 +607,11 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     return params
   }
 
-  const processUrl = async (url: string, initial: boolean = false) => {
+  const deferredUrl = useRef<string | null>(null)
+  const processingUrls = useRef(new Set<string>())
+
+  const processUrl = async (url: string, initial: boolean = false, replayPending = false) => {
+    let claimed = false
     try {
       url = sanitizeDeeplinkUrl(url)
       // ignore expo-dev-deeplinks: (this was causing android to restart the app after hot-reloads twice)
@@ -571,11 +623,12 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       // Deduplicate — iOS can fire the same universal link event multiple times,
       // and on cold start both getInitialURL and addEventListener fire for the
       // same URL. Initial calls skip the check but claim the URL so that the
-      // duplicate addEventListener call is blocked. The index.tsx re-processing
-      // call happens >2s later (1s initial delay + init time + 1s DEEPLINK_DELAY)
-      // so it naturally falls outside the dedup window.
+      // duplicate addEventListener call is blocked. A route deferred to startup
+      // or sign-in can be consumed immediately, regardless of the dedup window.
       const now = Date.now()
-      if (!initial && url === lastProcessed.current.url && now - lastProcessed.current.time < 3000) {
+      const authReplay = replayPending && deferredUrl.current === url
+      if (processingUrls.current.has(url)) return
+      if (!initial && !authReplay && url === lastProcessed.current.url && now - lastProcessed.current.time < 3000) {
         console.log("DEEPLINK: Ignoring duplicate URL")
         return
       }
@@ -586,6 +639,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       // delay and calls navigateToDestination() before the pending route is set,
       // causing it to navigate to /home instead of the deep link target.
       if (initial) {
+        deferredUrl.current = url
         nav.setPendingRoute(url)
         await new Promise((resolve) => setTimeout(resolve, 1000))
         // If index.tsx already consumed and re-processed the pending route
@@ -596,6 +650,14 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
         }
       }
 
+      // Only startup's explicit pending-route consumer may bypass deduplication.
+      // Claim before the asynchronous auth check so concurrent events cannot run it.
+      if (processingUrls.current.has(url)) return
+      processingUrls.current.add(url)
+      claimed = true
+      if (deferredUrl.current === url) deferredUrl.current = null
+      if (nav.getPendingRoute() === url) nav.setPendingRoute(null)
+
       // small hack since some sources strip the host and we want to put the url into URL object here
       if (url.startsWith("/")) {
         url = "https://apps.mentra.glass" + url
@@ -605,17 +667,18 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       const matchedRoute = findMatchingRoute(parsedUrl)
 
       if (!matchedRoute) {
-        console.warn("No matching route found for URL:", url)
+        console.warn("No matching route found for URL:", loggableUrl(url))
         config.fallbackHandler?.(url)
         return
       }
 
-      const authed = await config.authCheckHandler()
+      const authed = matchedRoute.requiresAuth === false ? false : await config.authCheckHandler()
 
       // Check authentication if required
       if (matchedRoute.requiresAuth && !authed) {
         console.warn("Authentication required for route:", matchedRoute.pattern)
         // Store the URL for after authentication
+        deferredUrl.current = url
         nav.setPendingRoute(url)
         setTimeout(() => {
           try {
@@ -624,6 +687,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
             console.warn("Navigation failed, router may not be ready:", error)
           }
         }, 100)
+        return
       }
 
       // Extract parameters from URL
@@ -636,21 +700,23 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       }
 
       try {
-        console.log("@@@@@@@@@@@@@ MATCHED ROUTE @@@@@@@@@@@@@@@", matchedRoute)
-        console.log("@@@@@@@@@@@@@ PARAMS @@@@@@@@@@@@@@@", params)
-        console.log("@@@@@@@@@@@@@ URL @@@@@@@@@@@@@@@", url)
-        setSplashEnabled(true)
+        console.log("@@@@@@@@@@@@@ MATCHED ROUTE @@@@@@@@@@@@@@@", matchedRoute.pattern)
+        console.log("@@@@@@@@@@@@@ PARAMS @@@@@@@@@@@@@@@", Object.keys(params))
+        console.log("@@@@@@@@@@@@@ URL @@@@@@@@@@@@@@@", loggableUrl(url))
+        if (matchedRoute.presentation !== "passive") setSplashEnabled(true)
         // OAuth must start its one-time exchange while the browser is still
         // presented. A JS timer can be suspended during that transition.
-        await matchedRoute.handler(url, params)
+        await matchedRoute.handler(url, params, {hideSplash: () => setSplashEnabled(false)})
       } catch (error) {
         console.warn("Route handler failed, router may not be ready:", error)
       } finally {
-        setSplashEnabled(false)
+        if (matchedRoute.presentation !== "passive") setSplashEnabled(false)
       }
     } catch (error) {
       console.error("Error handling deep link:", error)
       config.fallbackHandler?.(url)
+    } finally {
+      if (claimed) processingUrls.current.delete(url)
     }
   }
 
@@ -658,5 +724,10 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     processUrl,
   }
 
-  return <DeeplinkContext.Provider value={contextValue}>{children}</DeeplinkContext.Provider>
+  return (
+    <DeeplinkContext.Provider value={contextValue}>
+      {children}
+      {incidentParams && <IncidentReportRequest params={incidentParams} onDismiss={() => setIncidentParams(null)} />}
+    </DeeplinkContext.Provider>
+  )
 }

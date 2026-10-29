@@ -5,15 +5,17 @@ import {createRequire} from "node:module"
 import TestRenderer, {act} from "react-test-renderer"
 import {beforeEach, describe, expect, mock, test} from "bun:test"
 
+import type {OtaInstallSnapshot} from "../../services/OtaInstallCoordinator"
+import type {OtaCheckCurrentGlassesResult} from "../../services/OtaUpdateCheckService"
+
 // Engine is a workspace member of both mobile/ and sdk/, so a bare `react`
 // import here is the sdk copy while react-test-renderer binds the mobile copy.
 // Load the hook against the renderer's React or every hook throws.
 const rendererRequire = createRequire(require.resolve("react-test-renderer"))
 mock.module("react", () => rendererRequire("react"))
 
-import type {OtaInstallSnapshot} from "../../services/OtaInstallCoordinator"
-import type {OtaCheckCurrentGlassesResult} from "../../services/OtaUpdateCheckService"
-;(globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true
+const reactActEnvironment = globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}
+reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true
 
 const checkResult: OtaCheckCurrentGlassesResult = {
   hasCheckCompleted: true,
@@ -164,7 +166,8 @@ mock.module("../../services/OtaErrorMapping", () => ({
   getOtaErrorMessage: (error?: string | null) => (error ? `mapped:${error}` : "Install failed"),
   otaErrorCopyKey: (error?: string | null) => (error ? `ota:key:${error}` : "ota:errorGeneric"),
   shouldRequireGlassesRebootForBesFailure: () => false,
-  shouldShowChangeWifiForOtaDownloadFailure: () => false,
+  shouldShowChangeWifiForOtaDownloadFailure: (status: {status?: string; phase?: string} | null) =>
+    status?.status === "failed" && status.phase === "download",
 }))
 
 const {useMentraLiveOta} = require("../useMentraLiveOta") as typeof import("../useMentraLiveOta")
@@ -623,6 +626,62 @@ describe("useMentraLiveOta", () => {
     await act(async () => renderer.unmount())
   })
 
+  test("offers Wi-Fi setup after download failure only for glasses without hotspot OTA", async () => {
+    otaSnapshot = {...otaSnapshot, hotspotOtaVersion: 1}
+    installSnapshot = {
+      ...installSnapshot,
+      displayState: "failed",
+      errorMsg: "",
+      otaStatus: {
+        sessionId: "s1",
+        status: "failed",
+        phase: "download",
+        stepType: "apk",
+        stepPercent: 0,
+        overallPercent: 0,
+        currentStep: 1,
+        totalSteps: 1,
+        error: "NO_INTERNET",
+      },
+    }
+    const renderer = await renderProbe()
+    expect(latestController.state.canOpenWifiSetup).toBe(false)
+    otaSnapshot = {...otaSnapshot, hotspotOtaVersion: 0}
+    installSnapshot = {...installSnapshot, transport: "wifi"}
+    await act(async () => {
+      otaListeners.forEach((listener) => listener())
+    })
+    expect(latestController.state.canOpenWifiSetup).toBe(true)
+    await act(async () => renderer.unmount())
+  })
+
+  test("allows hotspot install before Wi-Fi status arrives", async () => {
+    otaSnapshot = {...otaSnapshot, hotspotOtaVersion: 1, wifiConnected: true, wifiStatusKnown: false}
+    const renderer = await renderProbe("check")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+    expect(latestController.state.canInstall).toBe(true)
+    expect(latestController.state.transport).toBe("hotspot")
+    await act(async () => latestController.install())
+    expect(prepare).toHaveBeenCalledWith(currentCheckResult)
+    await act(async () => renderer.unmount())
+  })
+
+  test("clears approved continuation when explicitly leaving the check page", async () => {
+    autoChainActive = true
+    otaSnapshot = {...otaSnapshot, hotspotOtaVersion: 0, wifiConnected: false, wifiStatusKnown: true}
+    const renderer = await renderProbe("check")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+    expect(latestController.state.screen).toBe("wifi_required")
+    await act(async () => latestController.finish())
+    expect(stopAutoChain).toHaveBeenCalledTimes(1)
+    expect(autoChainActive).toBe(false)
+    await act(async () => renderer.unmount())
+  })
+
   test("keeps finishing visible until Wi-Fi status can resume an approved session", async () => {
     autoChainActive = true
     autoChainRange = {
@@ -685,6 +744,38 @@ describe("useMentraLiveOta", () => {
     })
 
     expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
+    await act(async () => renderer.unmount())
+  })
+
+  test("does not check a converged APK before its new wire session becomes ready", async () => {
+    autoChainActive = true
+    const renderer = await renderProbe()
+
+    // Native reports the replacement build while retaining the BLE connection,
+    // with readiness pending until the returning glasses_ready resets the wire.
+    otaSnapshot = {...otaSnapshot, buildNumber: "302010070", connected: true, ready: false}
+    installSnapshot = {...installSnapshot, displayState: "complete", connected: true}
+    await act(async () => {
+      otaListeners.forEach((listener) => listener())
+      installListeners.forEach((listener) => listener())
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 800))
+    })
+
+    expect(finish).toHaveBeenCalledTimes(1)
+    expect(fakeOta.checkForUpdates).not.toHaveBeenCalled()
+    expect(latestController.state.connected).toBe(true)
+    expect(latestController.state.screen).toBe("finishing")
+
+    otaSnapshot = {...otaSnapshot, ready: true}
+    await act(async () => {
+      otaListeners.forEach((listener) => listener())
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+
+    expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(finish).toHaveBeenCalledTimes(1)
     await act(async () => renderer.unmount())
   })
 

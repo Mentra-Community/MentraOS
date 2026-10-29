@@ -6,16 +6,28 @@ import {fileURLToPath} from "node:url"
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
 const CANONICAL_IMAGE = "ghcr.io/mentra-community/mentra-cloud"
-const TARGET = Object.freeze({
-  environment: "enterprise-dev",
-  resourceGroup: "rg-mentra-enterprise-reference",
-  registry: "mentraenterpriseref",
-  containerApp: "ca-mentra-enterprise-reference",
-  coreContainerApp: "ca-mentra-ent-ref-core",
-  imageRepository: "mentra-cloud-enterprise",
-  workspaceOrigin: "https://mentra.acmeworkspace.com",
-  services: Object.freeze(["meetings"]),
-  meetingProvider: "acs-teams",
+const IMAGE_REPOSITORY = "mentra-cloud-enterprise"
+const SERVICES = Object.freeze(["realtime-audio", "camera", "tts", "meetings"])
+const MEETING_PROVIDER = "acs-teams"
+// Each prerelease channel deploys its own Acme demo stack. Keep these in step
+// with the stack table in .github/workflows/private-deployment.yml.
+export const TARGETS = Object.freeze({
+  dev: Object.freeze({
+    environment: "enterprise-demo-dev",
+    resourceGroup: "rg-mentra-enterprise-demo-dev",
+    registry: "mentraenterprisedemodev",
+    containerApp: "ca-mentra-ent-demo-dev",
+    coreContainerApp: "ca-mentra-ent-demo-dev-core",
+    workspaceOrigin: "https://demo-dev.acmeworkspace.com",
+  }),
+  beta: Object.freeze({
+    environment: "enterprise-demo",
+    resourceGroup: "rg-mentra-enterprise-reference",
+    registry: "mentraenterpriseref",
+    containerApp: "ca-mentra-enterprise-reference",
+    coreContainerApp: "ca-mentra-ent-ref-core",
+    workspaceOrigin: "https://demo.acmeworkspace.com",
+  }),
 })
 
 function requireHttps(value, label) {
@@ -33,14 +45,16 @@ function requireHttps(value, label) {
 
 // Container Apps generate `<app>.<environment-label>.<region>.azurecontainerapps.io`,
 // for example ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io.
-const CORE_HOSTNAME_PATTERN = new RegExp(
-  `^${TARGET.coreContainerApp.replaceAll("-", "\\-")}\\.[a-z0-9]+-[0-9a-f]{8}\\.[a-z0-9]+\\.azurecontainerapps\\.io$`,
-)
+function coreHostnamePattern(target) {
+  return new RegExp(
+    `^${target.coreContainerApp.replaceAll("-", "\\-")}\\.[a-z0-9]+-[0-9a-f]{8}\\.[a-z0-9]+\\.azurecontainerapps\\.io$`,
+  )
+}
 
-function requireCoreContainerAppOrigin(value, coreHostname) {
+function requireCoreContainerAppOrigin(value, coreHostname, target) {
   const origin = requireHttps(value, "coreOrigin")
   const parsed = new URL(origin)
-  if (typeof coreHostname !== "string" || !CORE_HOSTNAME_PATTERN.test(coreHostname)) {
+  if (typeof coreHostname !== "string" || !coreHostnamePattern(target).test(coreHostname)) {
     throw new Error("coreHostname must be the deployment's generated Azure Core Container App hostname")
   }
   if (parsed.pathname !== "/" || parsed.search || parsed.port !== "" || parsed.hostname !== coreHostname) {
@@ -64,15 +78,17 @@ function requireIsoUtc(value, label) {
   return value
 }
 
+// Returns the demo stack the plan's channel deploys.
 function validatePlan(plan, sourceCommit) {
   if (
     plan?.schemaVersion !== 1 ||
-    plan.channel !== "dev" ||
+    !Object.hasOwn(TARGETS, plan.channel) ||
     plan.releaseSetId !== `mentra-${plan.releaseIdentity}` ||
     plan.sourceCommit !== sourceCommit
   ) {
-    throw new Error("Private Deployment inputs do not match a dev release plan")
+    throw new Error("Private Deployment inputs do not match a dev or beta release plan")
   }
+  return TARGETS[plan.channel]
 }
 
 function validateChecks(checks, workspaceOrigin, coreOrigin) {
@@ -118,7 +134,7 @@ export function createPrivateDeploymentRecord({
   completedAt,
   provenanceUrl,
 }) {
-  validatePlan(plan, sourceCommit)
+  const target = validatePlan(plan, sourceCommit)
   if (!COMMIT_PATTERN.test(requestedTag || "") || requestedTag !== sourceCommit) {
     throw new Error("requestedTag must equal the full sourceCommit")
   }
@@ -132,16 +148,16 @@ export function createPrivateDeploymentRecord({
     releaseIdentity: plan.releaseIdentity,
     sourceCommit,
     channel: plan.channel,
-    environment: TARGET.environment,
+    environment: target.environment,
     status,
-    services: [...TARGET.services],
-    meetingProvider: TARGET.meetingProvider,
+    services: [...SERVICES],
+    meetingProvider: MEETING_PROVIDER,
     azure: {
-      resourceGroup: TARGET.resourceGroup,
-      registry: TARGET.registry,
-      containerApp: TARGET.containerApp,
-      coreContainerApp: TARGET.coreContainerApp,
-      imageRepository: TARGET.imageRepository,
+      resourceGroup: target.resourceGroup,
+      registry: target.registry,
+      containerApp: target.containerApp,
+      coreContainerApp: target.coreContainerApp,
+      imageRepository: IMAGE_REPOSITORY,
       requestedTag,
     },
     completedAt: requireIsoUtc(completedAt, "completedAt"),
@@ -155,7 +171,7 @@ export function createPrivateDeploymentRecord({
     ) {
       throw new Error("Private Deployment is missing its canonical GHCR source")
     }
-    const expectedImage = `${TARGET.registry}.azurecr.io/${TARGET.imageRepository}@${imageDigest}`
+    const expectedImage = `${target.registry}.azurecr.io/${IMAGE_REPOSITORY}@${imageDigest}`
     if (
       image !== expectedImage ||
       !DIGEST_PATTERN.test(imageDigest || "") ||
@@ -167,7 +183,7 @@ export function createPrivateDeploymentRecord({
       throw new Error("Private Deployment is missing immutable Azure image evidence")
     }
     const origin = requireHttps(workspaceOrigin, "workspaceOrigin")
-    if (origin !== TARGET.workspaceOrigin) {
+    if (origin !== target.workspaceOrigin) {
       throw new Error("Private Deployment uses the wrong workspace origin")
     }
     record.source = {
@@ -181,7 +197,7 @@ export function createPrivateDeploymentRecord({
     record.azure.coreRevision = coreRevision
     record.azure.coreHostname = requireNonEmptyString(coreHostname, "coreHostname")
     record.workspaceOrigin = origin
-    record.coreOrigin = requireCoreContainerAppOrigin(coreOrigin, coreHostname)
+    record.coreOrigin = requireCoreContainerAppOrigin(coreOrigin, coreHostname, target)
     record.checks = validateChecks(checks, origin, record.coreOrigin)
   }
   return record
@@ -201,21 +217,21 @@ function assertCanonicalRuntimeImage(record, runtimeImage) {
 }
 
 export function validatePrivateDeploymentRecord({plan, record, allowValidated = false, runtimeImage}) {
-  validatePlan(plan, record?.sourceCommit)
+  const target = validatePlan(plan, record?.sourceCommit)
   if (
     record.schemaVersion !== 1 ||
     record.component !== "private-deployment" ||
     record.releaseSetId !== plan.releaseSetId ||
     record.releaseIdentity !== plan.releaseIdentity ||
     record.channel !== plan.channel ||
-    record.environment !== TARGET.environment ||
-    JSON.stringify(record.services) !== JSON.stringify(TARGET.services) ||
-    record.meetingProvider !== TARGET.meetingProvider ||
-    record.azure?.resourceGroup !== TARGET.resourceGroup ||
-    record.azure?.registry !== TARGET.registry ||
-    record.azure?.containerApp !== TARGET.containerApp ||
-    record.azure?.coreContainerApp !== TARGET.coreContainerApp ||
-    record.azure?.imageRepository !== TARGET.imageRepository ||
+    record.environment !== target.environment ||
+    JSON.stringify(record.services) !== JSON.stringify(SERVICES) ||
+    record.meetingProvider !== MEETING_PROVIDER ||
+    record.azure?.resourceGroup !== target.resourceGroup ||
+    record.azure?.registry !== target.registry ||
+    record.azure?.containerApp !== target.containerApp ||
+    record.azure?.coreContainerApp !== target.coreContainerApp ||
+    record.azure?.imageRepository !== IMAGE_REPOSITORY ||
     record.azure?.requestedTag !== plan.sourceCommit
   ) {
     throw new Error("Private Deployment record does not match the release plan and target")

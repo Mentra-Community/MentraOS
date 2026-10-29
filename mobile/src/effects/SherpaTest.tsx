@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
-  Alert,
   Share,
   Platform,
   Pressable,
@@ -64,6 +63,8 @@ import {createPcmLiveStream, type PcmLiveStreamHandle} from "react-native-sherpa
  */
 
 import {assetModelPath, fileModelPath, getDefaultModelPath, type ModelPathConfig} from "react-native-sherpa-onnx"
+
+import showAlert from "@/utils/AlertUtils"
 
 // --- STT cache ---
 
@@ -818,7 +819,7 @@ export default function SherpaTest() {
       if (msg.includes("cache_last_time")) {
         const friendly =
           'This model appears to be a NeMo streaming transducer (e.g. "streaming fast conformer"). File transcription currently requires a non-streaming NeMo transducer model. Please use a model exported for offline/non-streaming use, or choose another STT model.'
-        Alert.alert("Transcription not supported", friendly)
+        showAlert("Transcription not supported", friendly)
         setErrorSource("transcribe")
         setError(friendly)
         return
@@ -931,13 +932,13 @@ export default function SherpaTest() {
       const player = new Sound(customAudioPath, "", (soundErr: any) => {
         if (soundErr) {
           console.error("Failed to load sound", soundErr)
-          Alert.alert("Error", "Failed to load audio file")
+          showAlert("Error", "Failed to load audio file")
           return
         }
         // Play the audio
         player.play((success: boolean) => {
           if (!success) {
-            Alert.alert("Error", "Playback failed")
+            showAlert("Error", "Playback failed")
           }
           player.release()
         })
@@ -945,7 +946,7 @@ export default function SherpaTest() {
 
       setSoundPlayer(player)
     } catch {
-      Alert.alert(
+      showAlert(
         "Audio Playback Not Available",
         "Please install react-native-sound to play audio files:\n\ncd example\nnpm install react-native-sound",
       )
@@ -1086,7 +1087,7 @@ export default function SherpaTest() {
     if (Platform.OS === "android") {
       ToastAndroid.show(message, ToastAndroid.LONG)
     } else {
-      Alert.alert("Live not supported", message)
+      showAlert("Live not supported", message)
     }
   }
 

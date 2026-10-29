@@ -12,12 +12,17 @@ import { userAuth } from "../middleware/user-auth.middleware";
 import { InvalidRequest } from "../../types/oauth.types";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import {
+  addAttachmentArtifacts,
   addLogArtifact,
-  addScreenshotArtifacts,
+  getReportLogCollection,
   markReportReady,
+  ReportArtifactError,
   submitReport,
+  updateReportLogCollection,
   type ReportAttachmentInput,
 } from "../../services/report.service";
+import {REPORT_LOG_SOURCES} from '../../services/report-log-collection';
+import {reportAutomationCorrelation, type ReportAutomationCorrelation} from '@mentra/cloud-protocol/report-automation';
 
 const reportsApp = new Hono<AppEnv>();
 
@@ -61,21 +66,29 @@ const reportDetailsSchema = z.object({
   systemPriority: z.enum(["low", "medium", "high", "critical"]).optional(),
   contactEmail: z.string().email().optional(),
 }).passthrough();
+// Client-chosen idempotency keys: an incident identity on submit, an artifact identity on upload.
+const idempotencyKeySchema = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
 const submitReportSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("bug"),
+    incidentKey: idempotencyKeySchema.optional(),
     trigger: reportTriggerSchema,
     report: reportDetailsSchema,
     context: recordSchema,
   }),
   z.object({
     kind: z.literal("automatic"),
+    incidentKey: idempotencyKeySchema.optional(),
+    automationCorrelation: z.custom<ReportAutomationCorrelation>(value => reportAutomationCorrelation(value) !== null).optional(),
     trigger: automaticReportTriggerSchema,
     report: reportDetailsSchema,
     context: recordSchema,
   }),
   z.object({
     kind: z.literal("feedback"),
+    // Feedback is complete as submitted and notifies at creation, so a retry cannot be told apart
+    // from a first submission whose notification never went out: it is not idempotent by key.
+    incidentKey: z.never().optional(),
     feedback: z.union([z.string(), recordSchema]),
     context: recordSchema,
   }),
@@ -84,14 +97,20 @@ const logsArtifactSchema = z.object({
   type: z.literal("logs"),
   source: nonEmptyStringSchema,
   entries: z.array(logEntrySchema),
+  retryKey: idempotencyKeySchema.optional(),
 });
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+// An explicit `type=video` upload may be larger than a screenshot. 20 MiB
+// admits a short screen recording, while the unchanged router ceiling below
+// still bounds each request.
+const MAX_VIDEO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 // The feedback UI attaches at most 5 screenshots, and the cloud-client sends
 // them in a single multipart call.
 const MAX_ATTACHMENT_FILES = 5;
 // Router-wide request-body ceiling: the full attachment budget plus slack for
-// multipart framing. Also bounds the JSON routes (submit, logs).
+// multipart framing. Also bounds the JSON routes (submit, logs). Video uploads
+// share this ceiling; it is not raised for them.
 const MAX_REQUEST_BODY_BYTES =
   MAX_ATTACHMENT_BYTES * MAX_ATTACHMENT_FILES + 1024 * 1024;
 
@@ -114,9 +133,23 @@ reportsApp.use(
   }),
 );
 
+reportsApp.get('/:reportId/log-collection', userAuth, async c => {
+  const user = requireUser(c);
+  const snapshot = await getReportLogCollection({mentraUserId: user.mentraUserId, reportId: readReportId(c, 'reportId')});
+  return snapshot ? c.json(snapshot) : c.json({error: 'report not found'}, 404);
+});
 reportsApp.post("/", userAuth, postSubmitReport);
 reportsApp.post("/:reportId/artifacts", userAuth, postReportArtifacts);
 reportsApp.post("/:reportId/complete", userAuth, postReportComplete);
+reportsApp.post('/:reportId/log-collection/:source', userAuth, async c => {
+  const user = requireUser(c), reportId = readReportId(c, 'reportId');
+  const source = z.enum(REPORT_LOG_SOURCES).safeParse(c.req.param('source'));
+  const update = z.object({state: z.enum(['requested', 'unavailable', 'failed']), reason: z.string().trim().min(1).max(500).optional()}).strict().safeParse(await readJsonObject(c));
+  if (!source.success || !['phone', 'glasses', 'glasses_firmware'].includes(source.data) || !update.success)
+    throw new InvalidRequest('invalid device log collection outcome');
+  const found = await updateReportLogCollection({mentraUserId: user.mentraUserId, reportId, source: source.data, ...update.data});
+  return found ? c.json({ok: true}) : c.json({error: 'report not found'}, 404);
+});
 
 async function postSubmitReport(c: AppContext) {
   const user = requireUser(c);
@@ -126,10 +159,22 @@ async function postSubmitReport(c: AppContext) {
     throw new InvalidRequest("invalid report body");
   }
 
-  const result = await submitReport({
-    mentraUserId: user.mentraUserId,
-    ...parsed.data,
-  });
+  const correlation = body.automationCorrelation;
+  if (correlation !== undefined && (!reportAutomationCorrelation(correlation) || parsed.data.kind !== 'automatic'
+    || parsed.data.trigger.source !== 'mentra_automated_testing'
+    || parsed.data.trigger.reason !== 'incident_report_requested')) throw new InvalidRequest('invalid automated incident correlation');
+
+  let result: Awaited<ReturnType<typeof submitReport>>;
+  try {
+    result = await submitReport({
+      mentraUserId: user.mentraUserId,
+      ...parsed.data,
+      ...(correlation !== undefined ? {automationCorrelation: reportAutomationCorrelation(correlation)!} : {}),
+    });
+  } catch (error) {
+    if (error instanceof ReportArtifactError) return reportArtifactErrorResponse(c, error);
+    throw error;
+  }
   return c.json(result, 200);
 }
 
@@ -139,14 +184,14 @@ async function postReportArtifacts(c: AppContext) {
   const contentType = c.req.header("content-type") ?? "";
 
   if (contentType.includes("multipart/form-data")) {
-    const files = await readAttachmentFiles(c);
-    if (files.length === 0) {
+    const upload = await readAttachmentUpload(c);
+    if (upload.files.length === 0) {
       throw new InvalidRequest("at least one artifact file is required");
     }
-    const result = await addScreenshotArtifacts({
+    const result = await addAttachmentArtifacts({
       mentraUserId: user.mentraUserId,
       reportId,
-      files,
+      ...upload,
     });
     if (!result) return c.json({ error: "report not found" }, 404);
     return c.json(result, 200);
@@ -157,14 +202,28 @@ async function postReportArtifacts(c: AppContext) {
   if (!parsed.success) {
     throw new InvalidRequest("invalid report artifact body");
   }
-  const result = await addLogArtifact({
-    mentraUserId: user.mentraUserId,
-    reportId,
-    source: parsed.data.source,
-    entries: parsed.data.entries,
-  });
+  if (parsed.data.source === 'cloud' || parsed.data.source === 'miniapp_server') {
+    throw new InvalidRequest('server log sources cannot be uploaded by a device');
+  }
+  const { retryKey } = parsed.data;
+  let result: Awaited<ReturnType<typeof addLogArtifact>>;
+  try {
+    result = await addLogArtifact({
+      mentraUserId: user.mentraUserId,
+      reportId,
+      source: parsed.data.source,
+      entries: parsed.data.entries,
+    }, retryKey !== undefined ? { key: retryKey } : undefined);
+  } catch (error) {
+    if (error instanceof ReportArtifactError) return reportArtifactErrorResponse(c, error);
+    throw error;
+  }
   if (!result) return c.json({ error: "report not found" }, 404);
   return c.json(result, 200);
+}
+
+function reportArtifactErrorResponse(c: AppContext, error: ReportArtifactError) {
+  return c.json({ error: error.status === 409 ? "conflict" : "temporarily_unavailable", error_description: error.message }, error.status);
 }
 
 async function postReportComplete(c: AppContext) {
@@ -201,9 +260,34 @@ const SCREENSHOT_CONTENT_TYPES = new Set([
   "image/heif",
 ]);
 
+const MP4_CONTENT_TYPE = "video/mp4";
+// Caller-declared capture source such as `phone` or `host`. It is stored as
+// a label only; the server cannot verify where a recording was captured.
+const SOURCE_LABEL = /^[A-Za-z0-9._:-]{1,64}$/;
+
+function mediaType(raw: string | undefined): string {
+  return (raw ?? "").split(";")[0].trim().toLowerCase();
+}
+
 function screenshotContentType(raw: string | undefined): string {
-  const cleaned = (raw ?? "").split(";")[0].trim().toLowerCase();
+  const cleaned = mediaType(raw);
   return SCREENSHOT_CONTENT_TYPES.has(cleaned) ? cleaned : "application/octet-stream";
+}
+
+// Structural check only: an ISO base media file starts with an `ftyp` box
+// (4-byte size, then the box type). It does not prove the stream is H264 or
+// that a browser can decode it.
+function hasIsoMediaHeader(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 8) return false;
+  const boxSize = new DataView(bytes.buffer, bytes.byteOffset, 8).getUint32(0);
+  return boxSize >= 8 && new TextDecoder().decode(bytes.subarray(4, 8)) === "ftyp";
+}
+
+function textField(body: Record<string, unknown>, name: string): string | undefined {
+  const value = body[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new InvalidRequest(`${name} must be a single text field`);
+  return value.trim();
 }
 
 async function readJsonObject(c: AppContext): Promise<Record<string, unknown>> {
@@ -220,8 +304,35 @@ async function readJsonObject(c: AppContext): Promise<Record<string, unknown>> {
   throw new InvalidRequest("request body must be a JSON object");
 }
 
-async function readAttachmentFiles(c: AppContext): Promise<ReportAttachmentInput[]> {
+interface AttachmentUpload {
+  type: "screenshot" | "video";
+  source: string;
+  files: ReportAttachmentInput[];
+}
+
+/**
+ * The multipart `type` field selects the contract. Absent or `screenshot`
+ * keeps the original screenshot behavior (phone source, image allowlist,
+ * 10 MiB). `video` requires a caller-declared `source` and video/mp4 files up
+ * to 20 MiB. Every file is validated before anything is stored, so one
+ * rejected file leaves the report and its existing artifacts untouched.
+ */
+async function readAttachmentUpload(c: AppContext): Promise<AttachmentUpload> {
   const body = await c.req.parseBody({ all: true });
+  const declaredType = textField(body, "type") || "screenshot";
+  if (declaredType !== "screenshot" && declaredType !== "video") {
+    throw new InvalidRequest("unsupported multipart artifact type");
+  }
+  const video = declaredType === "video";
+  let source = "phone";
+  if (video) {
+    const declaredSource = textField(body, "source");
+    if (!declaredSource || !SOURCE_LABEL.test(declaredSource)) {
+      throw new InvalidRequest("video uploads require a source label");
+    }
+    source = declaredSource;
+  }
+
   const values = Object.entries(body)
     .filter(([key]) => key === "files" || key.startsWith("files["))
     .flatMap(([, value]) => (Array.isArray(value) ? value : [value]));
@@ -232,19 +343,36 @@ async function readAttachmentFiles(c: AppContext): Promise<ReportAttachmentInput
     if (files.length >= MAX_ATTACHMENT_FILES) {
       throw new InvalidRequest(`too many artifact files (max ${MAX_ATTACHMENT_FILES})`);
     }
+    const name = value.name || "file";
+    const declaredMime = mediaType(value.type);
+    // A video upload accepts only MP4, and a video file never silently
+    // becomes a screenshot.
+    if (video && declaredMime !== MP4_CONTENT_TYPE) {
+      throw new InvalidRequest(`artifact ${name} must be declared ${MP4_CONTENT_TYPE}`);
+    }
+    if (!video && declaredMime.startsWith("video/")) {
+      throw new InvalidRequest(`artifact ${name} is a video; upload it with type=video`);
+    }
     // Enforce the per-file limit on the parsed size BEFORE buffering the file
     // into its own array, so an oversized upload is rejected without copies.
-    if (value.size > MAX_ATTACHMENT_BYTES) {
-      throw new InvalidRequest(`artifact ${value.name || "file"} exceeds ${MAX_ATTACHMENT_BYTES} bytes`);
+    const maxBytes = video ? MAX_VIDEO_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;
+    if (value.size > maxBytes) {
+      throw new InvalidRequest(`artifact ${name} exceeds ${maxBytes} bytes`);
+    }
+    // Buffered once, within the limit above; the header check reads these
+    // same bytes, which are then stored.
+    const bytes = new Uint8Array(await value.arrayBuffer());
+    if (video && !hasIsoMediaHeader(bytes)) {
+      throw new InvalidRequest(`artifact ${name} has no MP4 file header`);
     }
     files.push({
       filename: value.name || `artifact-${Date.now()}`,
-      contentType: screenshotContentType(value.type),
-      bytes: new Uint8Array(await value.arrayBuffer()),
+      contentType: video ? MP4_CONTENT_TYPE : screenshotContentType(value.type),
+      bytes,
     });
   }
 
-  return files;
+  return { type: video ? "video" : "screenshot", source, files };
 }
 
 export default reportsApp;

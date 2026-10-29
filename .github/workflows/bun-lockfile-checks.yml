@@ -16,6 +16,7 @@ on:
       - "sdk/**/package.json"
       - ".github/workflows/bun-lockfile-checks.yml"
       - ".github/workflows/ci-gate.yml"
+      - ".github/scripts/no-workos.test.mjs"
   push:
     branches: [dev]
     paths:
@@ -31,6 +32,7 @@ on:
       - "sdk/**/package.json"
       - ".github/workflows/bun-lockfile-checks.yml"
       - ".github/workflows/ci-gate.yml"
+      - ".github/scripts/no-workos.test.mjs"
   workflow_dispatch:
 
 concurrency:
@@ -39,9 +41,12 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - name: Checkout source
         uses: actions/checkout@v4
 
@@ -88,3 +93,6 @@ jobs:
         # linking local source once our packages exist on the registry — see
         # the script header for the prerelease-tuple trap.
         run: node .github/scripts/check-workspace-range-sync.mjs
+
+      - name: Keep WorkOS out of Cloud V2 and the lockfiles
+        run: node --test .github/scripts/no-workos.test.mjs

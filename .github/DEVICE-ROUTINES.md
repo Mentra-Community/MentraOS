@@ -1,87 +1,26 @@
-# Device routine integration
+# Device routine requests
 
-The private [Mentra-Automated-Testing repository](https://github.com/Mentra-Community/Mentra-Automated-Testing)
-owns English routines, deterministic replay, device drivers, recording,
-fixture setup/recovery and the device worker queue. Its
-[initial PR](https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/1)
-preserves the imported source and license. MentraOS contains no executable copy
-of that harness; `tools/mentra-e2e/README.md` is a migration pointer.
+Routine identities, names, supported platforms, resource requirements and execution policies come from Core's enrolled definitions. GitHub workflows maintain no routine registry.
 
-MentraOS retains:
+Explicit requests use **Request device routine** on `dev`. Enter an enrolled routine ID and platform, the source channel, exact published build run ID and original publication attempt. PR sources also require the PR number. Core resolves the immutable app archive, freezes the definition and lane inputs, and queues the host request. Repeating the same source/routine/platform or rerunning that request workflow reconciles the same request. The completed **Routine tests** check's **Re-run routines** button is a separate linked-verification action.
 
-- App compilation, signing and published artifacts, including the company Mac installer.
-- The public build receipt and Core result/claim contracts.
-- Request generation, the callback to the private queue, and build links in Slack.
-- Authenticated Core result/claim APIs, private evidence storage and the admin viewer.
+Add the relevant `routine:<id>` labels to your PR. Each ID selects its declared supported platforms. The App-owned **Routine tests** check is queued against the PR's exact head while app builds or compatible lanes are pending. It freezes one routine revision for the coverage and each platform's exact PR artifact; build callbacks reconcile the same work rather than starting another original.
 
-## Request and dispatch
+The GitHub check shows live phase, current test step, observed completed/total test steps and elapsed time. Open **Details** for each routine's lane, current activity, latest result link and authenticated Admin controls. A pending build, unavailable lane or stale observation is not a pass. **No routine tests requested** discloses that no coverage was selected; it does not mean a device test ran.
 
-1. Add `routine:no-glasses`, `routine:day1-ota` or `routine:mentra-call` to a
-   same-repository PR targeting `dev`. Multiple labels request separate routines.
-2. The [request workflow](workflows/request-e2e-routine.yml) records the current
-   PR revisions, exact successful iOS build/publication attempt, receipt, Mac
-   archive and OTA manifest in an immutable `request.json` artifact. If these
-   are unavailable it records `no-artifact`; no device test has run.
-3. Once app publication succeeds, the trusted default-branch
-   [dispatch callback](workflows/dispatch-device-routine.yml) validates the
-   current PR/label and asks the request workflow on `dev` to select that exact
-   source build and publication attempt. The callback for a completed ready
-   request revalidates its identity and dispatches its request run/attempt to
-   the private workflow on `main`. Bootstrap PR-event requests are excluded
-   from automatic dispatch.
-4. The private worker independently validates that request, its enrollment,
-   selected artifacts and fixture, then reserves execution through the Core
-   shared claim API before entering the routine. Duplicate/ambiguous ownership
-   does not start another hardware execution.
+After a check finishes, its **Re-run routines** button verifies the latest unsuccessful selected members, or all members after a complete pass, preserving previous results and exact app/routine selections. To stop active work, open **Details** and use **Cancel routine tests**. Cancellation requests ordinary cleanup and cannot turn the check green; custody must settle before a rerun. A timeout remains visible even while containment continues.
 
-The callback passes repository, immutable run/attempt identifiers and the
-authenticated routine ID. It does
-not send shell commands, executable paths or fixture overrides from public PRs.
-The trusted callback mints a short-lived GitHub App token with Actions write
-access only to the private repository, without checking out PR code. Both
-repositories configure `TEST_RUN_GITHUB_APP_ID` and
-`TEST_RUN_GITHUB_APP_PRIVATE_KEY`. The private worker mints a separate
-source-read token and retains independent claim and evidence-upload capabilities.
+## Check an active request
 
-The callbacks must reach the repository's default branch and have their scoped
-credentials configured before they run. Private workflow activation, host/app
-permissions, artifact preparation and fixture qualification are separate gates.
-A registered runner or an accepted dispatch is not a completed test. Successful
-coordinated dev/staging builds request the no-glasses walkthrough automatically.
-The optional [nightly scheduler](workflows/nightly-device-routines.yml) requests
-day-one OTA and Mentra Call; see its [activation runbook](NIGHTLY-DEVICE-ROUTINES.md).
+1. Open the **Routine tests** check on the PR's current head. Confirm the selected routines and follow their phase, current step and completed/total test steps. **No routine tests requested** means there are no selected routines.
+2. Open **Details** to inspect each member and its latest observation. A waiting or stale row needs its stated prerequisite; it does not establish that a routine is currently running.
+3. To stop active work, use authenticated Admin **Cancel routine tests** once. Follow the original attempt through cancellation and ordinary cleanup; an accepted cancellation is not a completed release.
+4. After the original attempt finishes and custody settles, open that completed check and use **Re-run routines**. Follow the linked attempt and retain the original results. Rerunning an Actions job or submitting another manual request does not perform this check action.
 
-## Results and Slack
+Select coverage and wait for its pending check before enabling auto-merge. Disable auto-merge before changing routine labels on an already-green head; label changes cannot atomically invalidate GitHub's existing commit check. [PR routine check configuration](../cloud-v2/packages/core/docs/pr-routine-checks.md) describes App setup and required-check activation. Require the App-owned **Routine tests** context only after installed-App event and UI verification.
 
-The existing `#pr-builds` post is published when app/ASG producers finish; it
-does not wait for a hardware test. Each requested routine adds requested
-coverage, a request-pipeline link and, for a verified Mac archive, **View results**.
-If no matching request can be found, the pipeline link opens the workflow page
-without claiming a request exists. A label expresses requested coverage, not a pass.
+Coordinated publication displays generic available-test and exact-build result links. Publication callbacks reconcile selected PR coverage; publication alone starts no routine. Explicit requests and the independently enabled dev nightly select coverage.
 
-The results link opens dev admin filtered to repository, PR number, full head
-SHA, exact Mac archive SHA256, routine and platform. It shows **No results for
-this build yet** until a matching export is uploaded. It never substitutes an
-older candidate. Later test completion does not edit or republish the Slack post;
-the results page is the current source of uploaded outcomes.
+The internal catalog, dispatch and result endpoints require `TEST_RUN_INGEST_TOKEN_DEV`. Execution additionally requires Core's configured host/lane binding and a compatible enrolled definition. A queue acknowledgement is not a passing result.
 
-The private worker uploads an immutable export with the original result and
-recovery verdicts. Upload retries do not repeat device actions. See the public
-[claim API](../cloud-v2/packages/core/TEST-RUN-CLAIMS.md) and
-[results API](../cloud-v2/packages/core/TEST-RUNS.md). Core stores result metadata
-in its configured database and evidence in its configured private artifact
-storage; the admin viewer reads that same selected Core deployment. Localhost
-records do not move to dev when code is merged.
-
-## Source removal and existing runs
-
-The private import includes the former public harness and its operational
-specs/plans. Removing their public working-tree copies does not alter older Git
-history, local recordings, firmware, or the frozen checkout used by an active
-attempt. Existing attempts and recovery retain their original claims, journals,
-source pins and ownership. A new private execution needs a separately qualified
-configuration; a repository move does not clear a claim or mark a fixture ready.
-
-The public [setup checks](workflows/e2e-setup-checks.yml) exercise the request,
-dispatch, Slack links and shared installer. Harness, native recorder and firmware
-adapter tests run in the private repository's hosted offline verification workflow.
+**Publish routine results** reads Core's frozen framework report. It can run automatically after request/dispatch workflows or manually with the accepted request ID. PR comments bind to the original candidate head and retain one comment per request. Release Slack updates require a retained bot-owned post whose platform archive hash matches the tested build; full desired state is retained before `chat.update`. Missing results, incomplete uploads and evidence failures remain explicit.

@@ -12,6 +12,7 @@ import CapsuleMenu from "@/effects/CapsuleMenu"
 import Compositor from "@/effects/Compositor"
 import {QrScanOverlay} from "@/effects/QrScanOverlay"
 import {PhoneWifiOverlay} from "@/effects/PhoneWifiOverlay"
+import {RunningUpdatePrompt} from "@/effects/RunningUpdatePrompt"
 import {useDeployment} from "@/services/deployment"
 // import TranscriptionsListener from "@/effects/TranscriptionsListener"
 // import SherpaTest from "@/effects/SherpaTest"
@@ -41,6 +42,7 @@ export const AllEffects = () => {
           <Compositor />
           <QrScanOverlay />
           <PhoneWifiOverlay />
+          <RunningUpdatePrompt />
           <MemoryWarningMonitor />
         </>
       )}

@@ -100,6 +100,13 @@ export interface DeclaredAction {
   parameters?: Record<string, unknown>
   /** JSON-Schema descriptor for the action's structured result. */
   outputSchema?: Record<string, unknown>
+  /**
+   * `persistent` (default): invoking starts the miniapp as normal, user-visible
+   * activity. `transient`: an invisible, invocation-scoped wake.
+   */
+  lifecycle: "persistent" | "transient"
+  /** `host` actions are invoked only by the Mentra App and never listed to miniapps. */
+  audience: "system" | "host"
 }
 
 export interface ClientApp extends AppletInterface {
@@ -107,8 +114,18 @@ export interface ClientApp extends AppletInterface {
   offlineRoute: string
   compatibility?: CompatibilityResult
   loading: boolean
+  /** An update is downloading or activating; user opens are refused until it settles. */
+  updating?: boolean
   local: boolean
   hidden: boolean
+  /**
+   * When a native built-in (an offline app with no JS context) is executing, for usage reporting. `"open"`: while it
+   * is running and on screen (foregrounded, with the Mentra App in the foreground), the way a screen such as Gallery
+   * works. `"running"`: whenever it is running, the way a helper such as Notify works without a screen. A native
+   * built-in without it is part of the Mentra App's own interface (Settings, Feedback), not a miniapp, and none of
+   * its launches or run time is reported. Local miniapps ignore it: they execute while their JS context runs.
+   */
+  nativeExecution?: "open" | "running"
   onStart?: () => void
   onStop?: () => void
   screenshot?: string

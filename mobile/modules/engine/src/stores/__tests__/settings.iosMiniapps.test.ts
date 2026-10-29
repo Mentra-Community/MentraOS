@@ -27,7 +27,7 @@ beforeEach(() => {
 })
 afterEach(() => logSpy.mockRestore())
 describe("iOS miniapp local setting hydration", () => {
-  test.each(["show_mentra_call_ios", "show_notify_ios"])(
+  test.each(["show_notify_ios"])(
     "%s defaults off in development and survives restarts",
     async (key) => {
       let state = restartSettings().useSettingsStore
@@ -44,4 +44,32 @@ describe("iOS miniapp local setting hydration", () => {
       expect(state.getState().getSetting(key)).toBe(false)
     },
   )
+})
+
+test("authoring build defaults Super Mode on only with the explicit flag, preserving a saved choice", async () => {
+  const previous = process.env.EXPO_PUBLIC_SUPER_MODE
+  try {
+    delete process.env.EXPO_PUBLIC_SUPER_MODE
+    expect(restartSettings().SETTINGS.super_mode.defaultValue()).toBe(false)
+    process.env.EXPO_PUBLIC_SUPER_MODE = "true"
+    let state = restartSettings().useSettingsStore
+    await state.getState().loadAllSettings()
+    expect(state.getState().getSetting("super_mode")).toBe(true)
+    await state.getState().setSetting("super_mode", false)
+    state = restartSettings().useSettingsStore
+    await state.getState().loadAllSettings()
+    expect(state.getState().getSetting("super_mode")).toBe(false)
+  } finally {
+    if (previous === undefined) delete process.env.EXPO_PUBLIC_SUPER_MODE
+    else process.env.EXPO_PUBLIC_SUPER_MODE = previous
+  }
+})
+
+
+test("retires the old Call preference even when stored on the device", async () => {
+  saved.set("show_mentra_call_ios", false)
+  const settings = restartSettings()
+  await settings.useSettingsStore.getState().loadAllSettings()
+  expect(settings.SETTINGS.show_mentra_call_ios).toBeUndefined()
+  expect(settings.useSettingsStore.getState().getSetting("show_mentra_call_ios")).toBeUndefined()
 })

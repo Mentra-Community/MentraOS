@@ -23,7 +23,12 @@ concurrency:
 
 jobs:
   test:
-    runs-on: self-hosted
+    # Blacksmith Linux, not the shared self-hosted Macs. Everything here is
+    # TypeScript, Jest and bun tests (no Maestro, simulators or Xcode). On
+    # the Mac this job competed with the iOS compile check for CPU and uplink
+    # and spent 75–300 s per run uploading a 1.8 GB Bun cache into the repo's
+    # 10 GB Actions cache quota.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
       - name: Checkout code
@@ -76,6 +81,19 @@ jobs:
 
       - name: Run miniapp SDK tests (bun)
         working-directory: ./mobile/modules/miniapp
+        run: bun test
+        env:
+          CI: true
+
+      # Android ships the committed assets/startup.js, which postinstall has just
+      # rebuilt from src/startup.ts; any difference means the bundle is stale.
+      - name: Check MentraJS polyfill bundle is current
+        working-directory: ./mobile/modules/jspolyfill
+        run: git diff --exit-code -- assets/startup.js
+
+      # jest.config.js ignores modules/jspolyfill as well; its suite is bun:test.
+      - name: Run MentraJS polyfill tests (bun)
+        working-directory: ./mobile/modules/jspolyfill
         run: bun test
         env:
           CI: true

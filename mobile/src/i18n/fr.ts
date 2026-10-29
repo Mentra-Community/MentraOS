@@ -161,7 +161,7 @@ const fr = {
   profileSettings: {
     ...en.profileSettings,
     workspaceName: "Nom",
-    workspaceUrl: "URL de l'espace de travail",
+    workspaceUrl: "URL de l'organisation",
     mentraWorkspace: "Mentra",
   },
   versionCheck: {
@@ -179,30 +179,40 @@ const fr = {
     urlLabel: "Adresse de l'organisation",
     urlPlaceholder: "entreprise.exemple.com",
     urlHelper: "Exemple : entreprise.exemple.com",
-    unknownResolutionError: "Impossible de charger cet espace de travail. Réessayez.",
+    unknownResolutionError: "Impossible de charger cette organisation. Réessayez.",
     notFoundError:
-      "Aucun espace de travail Mentra n'a été trouvé à cette adresse. Vérifiez l'adresse ou demandez à votre administrateur informatique.",
+      "Aucune organisation Mentra n'a été trouvée à cette adresse. Vérifiez l'adresse ou demandez à votre administrateur informatique.",
     configurationError:
-      "Cet espace de travail n'a pas pu être vérifié. Demandez à votre administrateur informatique de vérifier sa configuration.",
+      "Cette organisation n'a pas pu être vérifiée. Demandez à votre administrateur informatique de vérifier sa configuration.",
     confirmTitle: "Confirmer l'organisation",
     candidateExpired: "Cette confirmation a expiré. Saisissez à nouveau l'adresse de votre organisation.",
     enterAnotherUrl: "Saisir l'adresse de l'organisation",
     connectTo: "Se connecter à {{name}}",
     continueTo: "Continuer vers {{name}}",
-    workspaceLabel: "Espace de travail",
+    workspaceLabel: "Organisation",
     signInLabel: "Connexion",
     microsoftOrganizationAccount: "Compte d'organisation Microsoft",
     mentraAccount: "Compte Mentra",
     confirmDescription:
       "En continuant, cette organisation devient votre déploiement Mentra actif. Ses services et règles s'appliquent avant la connexion.",
-    signInDescription: "Continuez avec le compte d'organisation configuré pour cet espace de travail.",
+    signInDescription: "Continuez avec le compte configuré pour cette organisation.",
     continueWithMicrosoft: "Continuer avec Microsoft",
     returnToMentra: "Revenir à Mentra",
     change: "Modifier",
-    noActiveWorkspace: "Aucun espace de travail d'organisation n'est actif.",
+    noActiveWorkspace: "Aucune organisation n'est active.",
     signInFailedTitle: "Échec de la connexion",
     signInFailedDescription:
-      "Microsoft n'a pas pu vous connecter à cet espace de travail. Réessayez ou contactez votre équipe informatique.",
+      "Microsoft n'a pas pu vous connecter à cette organisation. Réessayez ou contactez votre équipe informatique.",
+  },
+  login: {
+    ...en.login,
+    linkSignInTitle: "Se connecter avec ce lien ?",
+    linkSignInMessage: "Ce lien vous connecte en tant que {{email}}. Continuez uniquement s'il s'agit de votre compte.",
+    linkSignInSwitchMessage:
+      "Vous êtes connecté en tant que {{current}}. Ce lien vous connecte plutôt en tant que {{email}}. Continuez uniquement s'il s'agit de votre compte.",
+    linkSignInSwitchUnknownMessage:
+      "Vous êtes connecté à un autre compte. Ce lien vous connecte plutôt en tant que {{email}}. Continuez uniquement s'il s'agit de votre compte.",
+    linkSignInContinue: "Se connecter",
   },
 } satisfies TranslationResource
 

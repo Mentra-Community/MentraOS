@@ -16,7 +16,6 @@ export type CrustModuleEvents = {
   onHeading: (params: HeadingPayload) => void
   phone_notification: (event: PhoneNotificationEvent) => void
   phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
-  captions_tester_incident: (event: CaptionsTesterIncidentEvent) => void
 }
 
 export type NavOffRoutePayload = {
@@ -114,6 +113,8 @@ export type NavManeuverPayload = {
 
 export type NavErrorPayload = {
   message: string
+  /** True only when native navigation has ended; absent for recoverable reroute errors. */
+  terminal?: boolean
 }
 
 export type InstalledApp = {
@@ -144,19 +145,32 @@ export type PhoneNotificationDismissedEvent = {
   notificationId: string
 }
 
-export type CaptionsTesterIncidentEvent = {
-  action?: string
-  timestamp?: number
-  failure_code?: string
-  failure_message?: string
-  test_run_id?: string
-  scenario_name?: string
-  source?: string
-  [key: string]: unknown
-}
-
 export type CrustViewProps = {
   url: string
   onLoad: (event: {nativeEvent: OnLoadEventPayload}) => void
   style?: StyleProp<ViewStyle>
 }
+
+/** Passive OS observations for the currently executing Mentra App. */
+export type AppPermissionStatus = {
+  rawStatus: string | null
+  status: "granted" | "denied" | "blocked" | "unavailable" | "unknown"
+}
+
+export type AppPermissionSnapshot = {
+  schemaVersion: 1
+  observedAt: string
+  identity: {
+    pid: number
+    uid: number
+    bundleId: string
+    bundlePath: string
+    executablePath: string
+    version: string
+    build: string
+  }
+  locationServicesEnabled: boolean
+  permissions: Record<"location" | "camera" | "microphone" | "bluetooth" | "localNetwork", AppPermissionStatus>
+}
+
+export type AppPermissionReceipt = AppPermissionSnapshot & {requestId: string}

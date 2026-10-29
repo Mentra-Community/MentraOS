@@ -219,3 +219,14 @@ version name after the fact.
 | `BesOtaUartListener` | UART response parser                                 |
 | `OtaHelper`          | Version-check, download, sha256                      |
 | `ComManager`         | UART driver (especially `mbOtaUpdating` transitions) |
+
+### Owned ADB staging file
+
+The privileged `com.mentra.DEBUG_BES_OTA` receiver accepts optional `file_path`
+for the shared provider's staged release container:
+`/data/local/tmp/mentra-live-<32 lowercase hex>/<sha256>.bin`. The directory must
+be traversable and the payload readable by ASG. An explicit path must be a regular
+canonical file with no symlink traversal and its basename must match the supplied
+SHA-256. The existing artifact validator and OTA admission remain authoritative.
+Omitting `file_path` preserves `scripts/test-bes-ota.sh`'s hash-addressed external
+storage path. This hook does not create an installer or clean arbitrary directories.

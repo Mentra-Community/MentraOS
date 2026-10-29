@@ -2,6 +2,8 @@ package com.mentra.crust.jsc
 
 import android.util.Log
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -12,6 +14,7 @@ import okhttp3.Callback
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import okio.ByteString.Companion.decodeBase64
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import org.json.JSONArray
@@ -37,7 +40,7 @@ import android.util.Base64
 object JSCPolyfillBridge {
     private const val TAG = "MentraJS.PolyfillBridge"
 
-    private val httpClient: OkHttpClient by lazy {
+    internal val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
@@ -45,45 +48,72 @@ object JSCPolyfillBridge {
             .build()
     }
 
-    data class HttpResult(
-        val status: Int,
-        val statusText: String,
-        val headers: Map<String, String>,
-        val body: String,
-    )
-
-    /** Shared OkHttp execution path for host cloud-client requests. */
-    fun executeHttp(method: String, url: String, headers: Map<String, String>, bodyString: String?): HttpResult {
-        val request = buildHttpRequest(method, url, headers, bodyString)
-        httpClient.newCall(request).execute().use { response ->
-            val responseHeaders = mutableMapOf<String, String>()
-            for (name in response.headers.names()) {
-                responseHeaders[name.lowercase()] = response.headers.values(name).joinToString(", ")
-            }
-            return HttpResult(
-                status = response.code,
-                statusText = response.message,
-                headers = responseHeaders,
-                body = response.body?.string() ?: "",
-            )
-        }
-    }
-
     /** Keep host HTTP and miniapp fetch body semantics identical, including empty POSTs. */
-    internal fun buildHttpRequest(method: String, url: String, headers: Map<String, String>, bodyString: String?): Request {
+    internal fun buildHttpRequest(
+        method: String,
+        url: String,
+        headers: Map<String, String>,
+        bodyString: String?,
+        bodyBytes: ByteString? = null,
+    ): Request {
         val builder = Request.Builder().url(url)
         for ((name, value) in headers) builder.header(name, value)
         val contentType = headers.entries
             .firstOrNull { (name, _) -> name.equals("content-type", ignoreCase = true) }
             ?.value
+        val mediaType = (contentType ?: "application/octet-stream").toMediaTypeOrNull()
         val upperMethod = method.uppercase()
         val requestBody = when {
-            bodyString != null -> bodyString.toRequestBody((contentType ?: "application/octet-stream").toMediaTypeOrNull())
+            bodyBytes != null -> bodyBytes.toRequestBody(mediaType)
+            bodyString != null -> bodyString.toRequestBody(mediaType)
             upperMethod == "POST" || upperMethod == "PUT" || upperMethod == "PATCH" -> "".toRequestBody(null)
             else -> null
         }
         builder.method(upperMethod, requestBody)
         return builder.build()
+    }
+
+    /**
+     * The `result` of a `fetch.request` response envelope. The body is sent
+     * as the string `body` only when its bytes are exactly that string's
+     * UTF-8 encoding, and as `bodyBase64` otherwise, so binary bodies keep
+     * every byte. The JS polyfill decodes base64 bodies and applies UTF-8 rules.
+     */
+    internal fun fetchResult(response: Response): JSONObject {
+        val headerMap = mutableMapOf<String, String>()
+        for (name in response.headers.names()) {
+            headerMap[name.lowercase()] = response.headers.values(name).joinToString(", ")
+        }
+        val body = try {
+            response.body?.bytes() ?: ByteArray(0)
+        } catch (e: Throwable) {
+            Log.w(TAG, "fetch read body threw: ${e.message}")
+            ByteArray(0)
+        }
+        val text = exactUtf8(body)
+        return JSONObject().apply {
+            put("status", response.code)
+            put("statusText", response.message)
+            put("headers", JSONObject(headerMap as Map<*, *>))
+            if (text != null) {
+                put("body", text)
+            } else {
+                put("bodyBase64", body.toByteString().base64())
+            }
+            put("ok", response.code in 200..299)
+        }
+    }
+
+    /** [bytes] as a String when they are exactly its UTF-8 encoding, else null. */
+    private fun exactUtf8(bytes: ByteArray): String? {
+        // A new decoder reports malformed input, so binary fails at its first invalid byte.
+        val text = try {
+            Charsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString()
+        } catch (_: CharacterCodingException) {
+            return null
+        }
+        // Re-encoding proves the round trip even if a decoder lets an unpaired surrogate through.
+        return text.takeIf { it.toByteArray(Charsets.UTF_8).contentEquals(bytes) }
     }
 
     /** Idempotent. Call once on host boot, after the dispatcher is created. */
@@ -225,8 +255,12 @@ object JSCPolyfillBridge {
                 ks to vs
             }?.toMap() ?: emptyMap()
             val bodyString = req["body"] as? String
+            val bodyBytes = (req["bodyBase64"] as? String)?.let { encoded ->
+                encoded.decodeBase64()
+                    ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "fetch.request: bodyBase64 is not base64")
+            }
 
-            val request = buildHttpRequest(method, url, headers, bodyString)
+            val request = buildHttpRequest(method, url, headers, bodyString, bodyBytes)
 
             httpClient.newCall(request).enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
@@ -234,33 +268,14 @@ object JSCPolyfillBridge {
                 }
 
                 override fun onResponse(call: Call, response: Response) {
-                    response.use { r ->
-                        val status = r.code
-                        val statusText = r.message
-                        val headerMap = mutableMapOf<String, String>()
-                        for (name in r.headers.names()) {
-                            headerMap[name.lowercase()] = r.headers.values(name).joinToString(", ")
-                        }
-                        val bodyStr = try {
-                            r.body?.string() ?: ""
-                        } catch (e: Throwable) {
-                            Log.w(TAG, "fetch read body threw: ${e.message}")
-                            ""
-                        }
-                        val envelope = JSONObject().apply {
-                            put("kind", "response")
-                            put("reqId", reqId)
-                            put("ok", true)
-                            put("result", JSONObject().apply {
-                                put("status", status)
-                                put("statusText", statusText)
-                                put("headers", JSONObject(headerMap as Map<*, *>))
-                                put("body", bodyStr)
-                                put("ok", status in 200..299)
-                            })
-                        }
-                        runtime.dispatchToJs(packageName, envelope.toString())
+                    val result = response.use { fetchResult(it) }
+                    val envelope = JSONObject().apply {
+                        put("kind", "response")
+                        put("reqId", reqId)
+                        put("ok", true)
+                        put("result", result)
                     }
+                    runtime.dispatchToJs(packageName, envelope.toString())
                 }
             })
             JSCDispatchOutcome.Async

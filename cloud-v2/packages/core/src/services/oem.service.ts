@@ -47,7 +47,22 @@ export interface VerifiedTenantJwt {
   federatedIdentity?: FederatedIdentity
 }
 
-interface ConfiguredOidcProvider {
+/**
+ * Browser sign-in settings of a deployment OIDC provider: the confidential
+ * client Core's admin portal signs in with. Validated at startup by
+ * `assertSigninConfiguration` (services/signin/config.ts), which names any
+ * missing or invalid field.
+ */
+export interface ConfiguredBrowserSettings {
+  clientId: string
+  /** Name of the env var that holds the client secret. */
+  clientSecretEnv: string
+  scopes: string[]
+  emailClaim: string
+  displayName: string
+}
+
+export interface ConfiguredOidcProvider {
   id: string
   protocol: "oidc"
   providerKind: string
@@ -61,6 +76,9 @@ interface ConfiguredOidcProvider {
   algorithms?: string[]
   requiredScopes?: string[]
   allowedClientIds?: string[]
+  /** Email domains this provider vouches for, matched exactly. Any other email it asserts is display data. */
+  verifiedEmailDomains: string[]
+  browser: ConfiguredBrowserSettings | null
 }
 
 /** Look up an OEM by external `tenantId`. Returns null if unknown. */
@@ -201,9 +219,23 @@ async function verifyConfiguredOidcJwt(jwt: string, provider: ConfiguredOidcProv
   }
 }
 
-function configuredOidcProviders(): ConfiguredOidcProvider[] {
-  const raw = process.env.CLOUD_CORE_OIDC_PROVIDERS
-  if (!raw?.trim()) return []
+let providerCache: {raw: string; providers: ConfiguredOidcProvider[]} | null = null
+
+/**
+ * The deployment OIDC providers from `CLOUD_CORE_OIDC_PROVIDERS`. The parsed
+ * list is cached until the raw env string changes, so tests and a reloaded
+ * environment see the new value on the next call.
+ */
+export function configuredOidcProviders(): ConfiguredOidcProvider[] {
+  const raw = process.env.CLOUD_CORE_OIDC_PROVIDERS ?? ""
+  if (providerCache?.raw === raw) return providerCache.providers
+  const providers = parseConfiguredOidcProviders(raw)
+  providerCache = {raw, providers}
+  return providers
+}
+
+function parseConfiguredOidcProviders(raw: string): ConfiguredOidcProvider[] {
+  if (!raw.trim()) return []
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -274,6 +306,29 @@ function parseConfiguredOidcProvider(value: unknown, index: number): ConfiguredO
     algorithms: stringArray(obj.algorithms, index, "algorithms"),
     requiredScopes: stringArray(obj.requiredScopes, index, "requiredScopes"),
     allowedClientIds: stringArray(obj.allowedClientIds, index, "allowedClientIds"),
+    verifiedEmailDomains: stringArray(obj.verifiedEmailDomains, index, "verifiedEmailDomains") ?? [],
+    browser: parseBrowserSettings(obj.browser, index),
+  }
+}
+
+function parseBrowserSettings(value: unknown, index: number): ConfiguredBrowserSettings | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new OauthServerError(`OIDC provider ${index} browser must be an object`)
+  }
+  const obj = value as Record<string, unknown>
+  const text = (name: string): string => {
+    const field = obj[name]
+    if (field === undefined || field === null) return ""
+    if (typeof field !== "string") throw new OauthServerError(`OIDC provider ${index} browser.${name} must be a string`)
+    return field.trim()
+  }
+  return {
+    clientId: text("clientId"),
+    clientSecretEnv: text("clientSecretEnv"),
+    scopes: stringArray(obj.scopes, index, "browser.scopes") ?? ["openid", "email", "profile"],
+    emailClaim: text("emailClaim") || "email",
+    displayName: text("displayName"),
   }
 }
 

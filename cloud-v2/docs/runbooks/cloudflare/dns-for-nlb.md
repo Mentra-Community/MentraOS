@@ -57,7 +57,7 @@ HTTP proxy does not carry UDP traffic.
 
 5. **Redeploy** so the env propagates to audio pods:
    ```bash
-   porter apply -f porter.yaml
+   gh workflow run coordinated-release.yml --repo Mentra-Community/MentraOS --ref dev -f dry_run=false
    ```
 
 6. **Verify** clients can resolve and reach it:

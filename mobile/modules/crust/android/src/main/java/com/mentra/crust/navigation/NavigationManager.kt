@@ -461,6 +461,7 @@ object NavigationManager {
         override fun onRoutesReady(routes: List<NavigationRoute>, routerOrigin: String) {
           if (!sessionGuard.acceptsCallback(session)) return
           if (routes.isEmpty()) {
+            stop()
             callbacks.onError("no route found")
             return
           }
@@ -477,12 +478,15 @@ object NavigationManager {
           if (!sessionGuard.acceptsCallback(session)) return
           val msg = reasons.firstOrNull()?.message ?: "route request failed"
           Log.e(TAG, "requestRoutes failed: $msg")
+          stop()
           callbacks.onError(msg)
         }
 
         override fun onCanceled(routeOptions: RouteOptions, routerOrigin: String) {
           if (!sessionGuard.acceptsCallback(session)) return
           Log.w(TAG, "route request canceled")
+          stop()
+          callbacks.onError("route request canceled")
         }
       },
     )

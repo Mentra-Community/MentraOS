@@ -1,13 +1,18 @@
 package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
+import android.os.SystemClock;
 import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.UnwornAutoPowerOffRequest;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
+import com.mentra.asg_client.receiver.IntentResponseBroadcaster;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import com.mentra.asg_client.service.utils.ProcessSessionId;
 import com.mentra.asg_client.service.utils.ServiceConstants;
 import com.mentra.asg_client.settings.AsgSettings;
 import java.nio.charset.StandardCharsets;
@@ -42,6 +47,7 @@ public class PowerCommandHandler implements ICommandHandler {
                 CMD_REBOOT,
                 CMD_SET_SYSTEM_TIME,
                 AsgConstants.COMMAND_SET_WIFI_ADB_STATE,
+                AsgConstants.COMMAND_DISABLE_UNWORN_AUTO_POWER_OFF,
                 AsgConstants.COMMAND_REBOOT_BES_FOR_MTK_FLASH);
     }
 
@@ -57,6 +63,8 @@ public class PowerCommandHandler implements ICommandHandler {
                     return handleSetSystemTime(data);
                 case AsgConstants.COMMAND_SET_WIFI_ADB_STATE:
                     return handleSetWifiAdbState(data);
+                case AsgConstants.COMMAND_DISABLE_UNWORN_AUTO_POWER_OFF:
+                    return handleDisableUnwornAutoPowerOff(data);
                 case AsgConstants.COMMAND_REBOOT_BES_FOR_MTK_FLASH:
                     return handleBesRebootForMtkFlash(data);
                 default:
@@ -145,6 +153,47 @@ public class PowerCommandHandler implements ICommandHandler {
         } catch (Exception e) {
             Log.e(TAG, "MTK_FLASH_BES_RESET request_id=" + requestId + " failed", e);
             return false;
+        }
+    }
+
+    private boolean handleDisableUnwornAutoPowerOff(JSONObject data) {
+        Object supplied = data == null ? null : data.opt("request_id");
+        if (!(supplied instanceof String) || !((String) supplied).matches("[A-Za-z0-9_-]{8,64}")) {
+            Log.w(TAG, "disable_unworn_auto_power_off rejected invalid request_id");
+            return false;
+        }
+        String requestId = (String) supplied;
+        IBluetoothManager transport =
+                serviceManager == null ? null : serviceManager.getBluetoothManager();
+        if (!(transport instanceof K900BluetoothManager)) {
+            reportUnwornAutoPowerOffResult(requestId, UnwornAutoPowerOffRequest.unavailable());
+            return true;
+        }
+        ((K900BluetoothManager) transport)
+                .disableUnwornAutoPowerOff(
+                        result -> reportUnwornAutoPowerOffResult(requestId, result));
+        return true;
+    }
+
+    private void reportUnwornAutoPowerOffResult(
+            String requestId, UnwornAutoPowerOffRequest.Result result) {
+        try {
+            JSONObject response = new JSONObject();
+            response.put("type", AsgConstants.UNWORN_AUTO_POWER_OFF_RESULT);
+            response.put("schema", 1);
+            response.put("request_id", requestId);
+            response.put("process_sid", ProcessSessionId.SID);
+            response.put("elapsed_realtime_ms", SystemClock.elapsedRealtime());
+            response.put("success", "disabled".equals(result.status));
+            response.put("status", result.status);
+            response.put("result_code", result.resultCode);
+            response.put("switch_type", AsgConstants.UNWORN_AUTO_POWER_OFF_SWITCH_TYPE);
+            response.put("switch_value", 0);
+            // This is the terminal device result, not the command receipt or UART queue result.
+            Log.i(TAG, "UNWORN_AUTO_POWER_OFF_RESULT " + response);
+            IntentResponseBroadcaster.getInstance().broadcastResponse(context, response);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to report unworn auto power-off result", e);
         }
     }
 

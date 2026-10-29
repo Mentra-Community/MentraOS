@@ -43,6 +43,8 @@ export class TextWrapper {
    * @returns Wrap result with lines and metadata
    */
   wrap(text: string, options?: WrapOptions): WrapResult {
+    const originalText = text;
+    text = this.measurer.getProfile().normalizeText?.(text) ?? text;
     const opts = this.mergeOptions(options);
     const { maxWidthPx, maxLines, maxBytes, breakMode, preserveNewlines } = opts;
 
@@ -112,7 +114,7 @@ export class TextWrapper {
       maxLineWidthPx,
       totalBytes,
       lineMetrics: allMetrics,
-      originalText: text,
+      originalText,
       breakMode,
     };
   }

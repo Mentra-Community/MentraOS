@@ -19,9 +19,9 @@ on:
         default: all
         options:
           - all
-          - console
           - admin
           - portal
+          - account
   push:
     branches:
       - dev
@@ -95,4 +95,10 @@ jobs:
 
       - name: Deploy Pages
         working-directory: cloud-v2
+        env:
+          # Public build-time values for each environment's sign-in site (the
+          # account site): the one Supabase project behind every environment.
+          # Unset: the site is skipped.
+          ACCOUNT_SUPABASE_URL: ${{ vars.ACCOUNT_SUPABASE_URL }}
+          ACCOUNT_SUPABASE_PUBLISHABLE_KEY: ${{ vars.ACCOUNT_SUPABASE_PUBLISHABLE_KEY }}
         run: bun scripts/deploy-pages.ts "${{ steps.target.outputs.environment }}" "${{ steps.target.outputs.site }}"

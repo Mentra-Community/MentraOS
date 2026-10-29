@@ -828,6 +828,70 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.leave("com.mentra.call")
   })
 
+  test("captureStill runs card, local upload, still and live without touching the publisher", async () => {
+    const holds: string[] = []
+    const native = {
+      ...fakeNative(),
+      holdOutgoingVideo: mock(async (kind: string) => {
+        holds.push(kind)
+      }),
+      prepareGlassesStill: mock(async (requestId: string) => ({
+        uploadUrl: `http://192.168.43.20:8790/photo/${requestId}`,
+      })),
+      awaitGlassesStill: mock(async () => ({bytes: 1_186_932, shownAt: 11})),
+      cancelGlassesStill: mock(async () => {}),
+    }
+    const requestPhoto = mock(async () => ({state: "success"}))
+    const previousAddListener = bluetoothSdk.addListener
+    bluetoothSdk.requestPhoto = requestPhoto
+    bluetoothSdk.addListener = () => ({remove: () => {}})
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "softap"},
+    })
+    // A join clears any overlay a previous call left, which is itself a `live` hold.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    holds.length = 0
+
+    const result = await acsMeetingService.captureStill("com.mentra.call", {durationMs: 0})
+
+    expect(result).toMatchObject({ok: true, bytes: 1_186_932})
+    expect(holds).toEqual(["card", "live"])
+    const [request] = requestPhoto.mock.calls[0] as unknown as [Record<string, unknown>]
+    expect(request).toMatchObject({
+      requestId: result.requestId,
+      size: "max",
+      transferMethod: "direct",
+      compress: "none",
+      webhookUrl: `http://192.168.43.20:8790/photo/${result.requestId}`,
+    })
+    expect(native.updateVideoSource).not.toHaveBeenCalled()
+    expect(native.restartVideoSource).not.toHaveBeenCalled()
+    await acsMeetingService.leave("com.mentra.call")
+    bluetoothSdk.addListener = previousAddListener
+  })
+
+  test("captureStill is unsupported on a native without the local still endpoint", async () => {
+    const native = {...fakeNative(), holdOutgoingVideo: mock(async () => {})}
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "softap"},
+    })
+
+    native.holdOutgoingVideo.mockClear()
+
+    expect(acsMeetingService.stillCaptureSupported()).toBe(false)
+    await expect(acsMeetingService.captureStill("com.mentra.call", {durationMs: 0})).rejects.toMatchObject({
+      reason: "unsupported",
+    })
+    expect(native.holdOutgoingVideo).not.toHaveBeenCalled()
+    await acsMeetingService.leave("com.mentra.call")
+  })
+
   test("updateVideoSource is refused during a SoftAP call instead of silently doing nothing", async () => {
     const native = fakeNative()
     setAcsMeetingNativeForTests(native)

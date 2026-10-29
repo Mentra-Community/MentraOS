@@ -316,6 +316,22 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
   function recv(envelope) {
     if (!envelope || typeof envelope !== 'object') return;
     var type = envelope.type;
+    if (type === 'background_restart') {
+      // The host lists only dispatched background calls. Host-owned RPCs and
+      // pre-ready queued input survive; arbitrary mutations are never replayed.
+      var ids = Array.isArray(envelope.requestIds) ? envelope.requestIds : [];
+      var rejected = 0;
+      for (var r = 0; r < ids.length; r++) {
+        if (!rpcInflight[ids[r]]) continue;
+        rpcInflight[ids[r]]({ok: false, error: {
+          code: 'BACKGROUND_RESTARTED',
+          message: 'Miniapp background restarted; request outcome is unknown and was not replayed'
+        }});
+        rejected++;
+      }
+      console.warn('[mentra-ui] background restarted; interrupted requests=' + rejected);
+      return;
+    }
     if (type === 'msg' && typeof envelope.channel === 'string') {
       // RPC frames carry a requestId; broadcast frames don't. Treat them
       // as disjoint — never fall through from RPC to broadcast. An orphan

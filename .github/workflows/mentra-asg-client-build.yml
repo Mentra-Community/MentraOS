@@ -1,4 +1,5 @@
 name: MentraOS ASG Client Build
+run-name: "${{ inputs.routine_pr && format('Routine PR #{0} {1} {2}{3}', inputs.routine_pr, inputs.routine_head_sha, inputs.routine_base, inputs.routine_operation && format(' {0}', inputs.routine_operation) || '') || '' }}"
 
 # Pull requests: publish the ASG client a PR mobile build pins for glasses OTA.
 #
@@ -18,15 +19,23 @@ on:
   pull_request:
     paths:
       - "mobile/**"
-      - "cloud-v2/**"
       - "android_core/**"
-      - "asg_client/**"
+      - "cloud-v2/packages/cloud-client/src/**"
+      - "cloud-v2/packages/cloud-client/react-native/**"
+      - "cloud-v2/packages/cloud-client/package.json"
+      - "cloud-v2/packages/protocol/src/**"
+      - "cloud-v2/packages/protocol/package.json"
+      - "cloud-v2/packages/runtime/src/protocol/**"
+      - "cloud-v2/bun.lock"
       - "package.json"
       - "bun.lock"
+      - "asg_client/**"
       - ".github/workflows/mentra-app-android-build.yml"
       - ".github/workflows/mentra-asg-client-build.yml"
       - ".github/actions/inject-signing/**"
       - ".github/scripts/pr-mobile-build*"
+      - ".github/scripts/mobile-build-inputs*"
+      - ".github/scripts/ensure-android-ndk*"
       - ".github/scripts/install-android-sdk*"
       - ".github/scripts/pr_mobile_config.py"
       - ".github/scripts/prepare-pr-mobile.mjs"
@@ -36,6 +45,8 @@ on:
       - ".github/workflows/mentra-app-ios-build.yml"
       - ".github/workflows/reusable-pr-build-notification.yml"
       - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/ios-*"
+      - ".github/actions/disk-guard/**"
       - ".github/scripts/pr-android-artifacts*"
       - ".github/scripts/select-pr-asg.mjs"
       - ".github/scripts/compute-asg-build-identity.mjs"
@@ -45,14 +56,65 @@ on:
     branches:
       - main
       - dev
+    paths:
+      - "mobile/**"
+      - "android_core/**"
+      - "cloud-v2/packages/cloud-client/src/**"
+      - "cloud-v2/packages/cloud-client/react-native/**"
+      - "cloud-v2/packages/cloud-client/package.json"
+      - "cloud-v2/packages/protocol/src/**"
+      - "cloud-v2/packages/protocol/package.json"
+      - "cloud-v2/packages/runtime/src/protocol/**"
+      - "cloud-v2/bun.lock"
+      - "package.json"
+      - "bun.lock"
+      - "asg_client/**"
+      - ".github/workflows/mentra-app-android-build.yml"
+      - ".github/workflows/mentra-asg-client-build.yml"
+      - ".github/actions/inject-signing/**"
+      - ".github/scripts/pr-mobile-build*"
+      - ".github/scripts/mobile-build-inputs*"
+      - ".github/scripts/ensure-android-ndk*"
+      - ".github/scripts/install-android-sdk*"
+      - ".github/scripts/pr_mobile_config.py"
+      - ".github/scripts/prepare-pr-mobile.mjs"
+      - ".github/scripts/repackage-pr-apk*"
+      - ".github/scripts/test_repackage_pr_apk.py"
+      - ".github/scripts/notify-pr-builds*"
+      - ".github/workflows/mentra-app-ios-build.yml"
+      - ".github/workflows/reusable-pr-build-notification.yml"
+      - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/ios-*"
+      - ".github/actions/disk-guard/**"
+      - ".github/scripts/pr-android-artifacts*"
+      - ".github/scripts/select-pr-asg.mjs"
+      - ".github/scripts/compute-asg-build-identity.mjs"
+      - ".github/scripts/allocate-asg-version.mjs"
+      - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
   workflow_dispatch:
+    inputs:
+      routine_pr:
+        description: Trusted routine coverage PR number
+        type: string
+        required: false
+      routine_operation:
+        description: Retained Core producer correlation ID
+        required: false
+        type: string
+      routine_head_sha:
+        description: Exact selected PR head
+        type: string
+        required: false
+      routine_base:
+        description: Exact selected PR base
+        type: string
+        required: false
 
-# Cancel a branch's in-flight build when a newer commit is pushed to it.
-# Scoped per-ref so branches never cancel each other; frees the shared Mac
-# runners from superseded builds.
+# A PR event and routine intake share one immutable publication for the exact head.
+# Serialize redelivery rather than cancelling a publisher after it committed bytes.
 concurrency:
-  group: asg-client-build-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: asg-client-build-${{ github.event.pull_request.number || inputs.routine_pr || github.ref }}-${{ github.event.pull_request.head.sha || inputs.routine_head_sha || github.sha }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -67,16 +129,48 @@ env:
   PR_BUILDS_TAG: pr-builds
 
 jobs:
+  routine-pr:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      merge_sha: ${{ steps.resolve.outputs.merge_sha }}
+      head_ref: ${{ steps.resolve.outputs.head_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          persist-credentials: false
+      - name: Validate explicit routine PR metadata
+        id: resolve
+        if: inputs.routine_pr != ''
+        uses: actions/github-script@v7
+        env:
+          ROUTINE_PR: ${{ inputs.routine_pr }}
+          ROUTINE_HEAD_SHA: ${{ inputs.routine_head_sha }}
+          ROUTINE_BASE: ${{ inputs.routine_base }}
+        with:
+          script: |
+            if (context.eventName !== 'workflow_dispatch' || context.ref !== 'refs/heads/dev') throw new Error('Explicit PR builds require trusted dev dispatch');
+            const {prepareExplicitRoutinePr} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/prepare-explicit-routine-pr.mjs`);
+            await prepareExplicitRoutinePr({github, context, core});
+
   select:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    needs: routine-pr
+    if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
+    # Blacksmith like the build itself: a GitHub-hosted gate stalls every ASG
+    # PR build whenever GitHub-hosted runners are unavailable.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     outputs:
       mode: ${{ steps.select.outputs.mode }}
+      fingerprint: ${{ steps.select.outputs.fingerprint }}
+    env:
+      MENTRA_PR_BUILD_SHA: ${{ needs.routine-pr.outputs.merge_sha || github.sha }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.routine-pr.outputs.merge_sha || github.sha }}
           # The fingerprint script needs the commit history for its
           # path-limited `git log`; trees are enough, blobs stay remote.
           fetch-depth: 0
@@ -93,13 +187,18 @@ jobs:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
           ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.routine_pr }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.routine_head_sha }}
         run: |
           set -euo pipefail
           mkdir -p pr-asg-work
           release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${ASG_RELEASE_TAG}" --jq .id)
           node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "${release_id}" > pr-asg-work/coordinated-asg-assets.json
+          pr_release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${PR_BUILDS_TAG}" --jq .id)
+          node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "${pr_release_id}" > pr-asg-work/pr-assets.json
           node .github/scripts/select-pr-asg.mjs \
-            --source-commit "$GITHUB_SHA" \
+            --pr "$PR_NUMBER" --head "$HEAD_SHA" --pr-assets pr-asg-work/pr-assets.json \
+            --source-commit "${MENTRA_PR_BUILD_SHA:-$GITHUB_SHA}" \
             --assets pr-asg-work/coordinated-asg-assets.json \
             --output pr-asg-work/selection.json
 
@@ -110,8 +209,9 @@ jobs:
           ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           PROVENANCE_ASSET: ${{ steps.select.outputs.provenance_asset }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ASG_SOURCE_FINGERPRINT: ${{ steps.select.outputs.fingerprint }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.routine_pr }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.routine_head_sha }}
         run: |
           set -euo pipefail
           node .github/scripts/release-assets.mjs download --tag "$ASG_RELEASE_TAG" --pattern "$PROVENANCE_ASSET" --dir pr-asg-work
@@ -127,11 +227,11 @@ jobs:
           export ASG_APK_URL ASG_APK_SHA256 ASG_APK_SIZE ASG_VERSION_CODE ASG_VERSION_NAME
           export RELEASE_VERSION FIRMWARE_MANIFEST OUTPUT_PATH
           node .github/scripts/build-bluetooth-sdk-ota-manifest.mjs
-          node .github/scripts/publish-immutable-release-asset.mjs --file "$OUTPUT_PATH" --name "${OUTPUT_PATH##*/}" --release-id "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$PR_BUILDS_TAG" --jq .id)" --repository "$GITHUB_REPOSITORY" --replace true
+          node .github/scripts/publish-immutable-release-asset.mjs --file "$OUTPUT_PATH" --name "${OUTPUT_PATH##*/}" --release-id "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$PR_BUILDS_TAG" --jq .id)" --repository "$GITHUB_REPOSITORY"
           echo "Published ${OUTPUT_PATH##*/} pinning coordinated ASG ${ASG_VERSION_CODE} (${ASG_VERSION_NAME})."
 
       - name: Update PR comment - Reused coordinated build
-        if: steps.select.outputs.mode == 'reuse'
+        if: github.event_name == 'pull_request' && steps.select.outputs.mode == 'reuse'
         uses: actions/github-script@v7
         env:
           ASG_VERSION_CODE: ${{ steps.select.outputs.version_code }}
@@ -168,10 +268,12 @@ jobs:
             });
 
   build:
-    needs: select
+    env:
+      MENTRA_PR_BUILD_SHA: ${{ needs.routine-pr.outputs.merge_sha || github.sha }}
+    needs: [select, routine-pr]
     # Pushes and dispatches always build; a pull request builds only when no
     # coordinated ASG artifact matches its sources (select decided "build").
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.select.outputs.mode == 'build') }}
+    if: ${{ !cancelled() && ((github.event_name != 'pull_request' && inputs.routine_pr == '') || needs.select.outputs.mode == 'build') }}
     # Blacksmith 4 vCPU Ubuntu. Signing creds come from secrets via inject-signing
     # (no longer needs the mac runners' ~/.mentra/credentials), keeping mac
     # capacity free for iOS + staging/release builds. Faster than the free
@@ -230,6 +332,8 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.routine-pr.outputs.merge_sha || github.sha }}
 
       - name: Init StreamPackLite submodule
         # Path-scoped on purpose: .gitmodules also carries a dangling
@@ -284,7 +388,7 @@ jobs:
         # versionName is <family base>-pr.<number> (e.g. 3.3.0-pr.4145) so the
         # app's OTA screen names the PR instead of repeating the bare code.
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.routine_pr }}
         run: |
           set -euo pipefail
           code=$(node --input-type=module -e "import('./mobile/scripts/build-number.mjs').then(m => console.log(m.getBuildNumber()))")
@@ -403,31 +507,34 @@ jobs:
           path: asg_client/app/build/outputs/apk/release/app-release.apk
 
       - name: Upload APK to the public artifact CDN
-        if: github.event_name == 'pull_request'
+        if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
           ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.routine_pr }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.routine_head_sha }}
         run: |
           set -euo pipefail
           release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/pr-builds" --jq .id)
-          name="asg-pr-${PR_NUMBER}-${HEAD_SHA:0:7}.apk"
+          digest=$(sha256sum asg_client/app/build/outputs/apk/release/app-release.apk | cut -d' ' -f1)
+          name="asg-pr-${PR_NUMBER}-${HEAD_SHA}-${digest}.apk"
+          echo "ASG_APK_NAME=$name" >> "$GITHUB_ENV"
           node .github/scripts/publish-immutable-release-asset.mjs \
             --file asg_client/app/build/outputs/apk/release/app-release.apk --name "$name" --release-id "$release_id" \
-            --repository "$GITHUB_REPOSITORY" --replace true
+            --repository "$GITHUB_REPOSITORY"
 
       - name: Publish the OTA manifest for this build
         # Runs after the APK it points at is on the release; push and dispatch
         # runs have no PR manifest to publish.
-        if: github.event_name == 'pull_request'
+        if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
           ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.routine_pr }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.routine_head_sha }}
+          ASG_SOURCE_FINGERPRINT: ${{ needs.select.outputs.fingerprint }}
         run: |
           set -euo pipefail
           apk=asg_client/app/build/outputs/apk/release/app-release.apk
@@ -441,7 +548,7 @@ jobs:
             exit 1
           fi
           mkdir -p pr-asg-work
-          ASG_APK_URL="https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/${PR_BUILDS_TAG}/asg-pr-${PR_NUMBER}-${HEAD_SHA:0:7}.apk"
+          ASG_APK_URL="https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/${PR_BUILDS_TAG}/${ASG_APK_NAME}"
           ASG_APK_SHA256=$(sha256sum "$apk" | cut -d' ' -f1)
           ASG_APK_SIZE=$(stat -c %s "$apk")
           ASG_VERSION_NAME="$version_name"
@@ -451,7 +558,7 @@ jobs:
           export ASG_APK_URL ASG_APK_SHA256 ASG_APK_SIZE ASG_VERSION_CODE ASG_VERSION_NAME
           export RELEASE_VERSION FIRMWARE_MANIFEST OUTPUT_PATH
           node .github/scripts/build-bluetooth-sdk-ota-manifest.mjs
-          node .github/scripts/publish-immutable-release-asset.mjs --file "$OUTPUT_PATH" --name "${OUTPUT_PATH##*/}" --release-id "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$PR_BUILDS_TAG" --jq .id)" --repository "$GITHUB_REPOSITORY" --replace true
+          node .github/scripts/publish-immutable-release-asset.mjs --file "$OUTPUT_PATH" --name "${OUTPUT_PATH##*/}" --release-id "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$PR_BUILDS_TAG" --jq .id)" --repository "$GITHUB_REPOSITORY"
           echo "Published ${OUTPUT_PATH##*/} pinning ASG ${ASG_VERSION_CODE} (${ASG_VERSION_NAME})."
 
       - name: Mark build published
@@ -461,7 +568,7 @@ jobs:
         run: echo "ok=true" >> "$GITHUB_OUTPUT"
 
       - name: Cleanup old release assets
-        if: github.event_name == 'pull_request'
+        if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
         continue-on-error: true
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
@@ -470,6 +577,8 @@ jobs:
         run: node .github/scripts/release-assets.mjs sweep --tag pr-builds --days 7
 
       - name: Update PR comment - Build succeeded
+        env:
+          ASG_APK_NAME: ${{ env.ASG_APK_NAME }}
         if: steps.build-ok.outputs.ok == 'true' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
@@ -487,7 +596,8 @@ jobs:
             const prNumber = context.payload.pull_request.number;
             const headSha = context.payload.pull_request.head.sha;
             const sha = headSha.substring(0, 7);
-            const apkName = `asg-pr-${prNumber}-${sha}.apk`;
+            const apkName = process.env.ASG_APK_NAME;
+            if (!apkName) throw new Error('Missing exact published ASG APK name');
             const releaseBase = `https://artifactscdn.mentraglass.com/${context.repo.owner}/${context.repo.repo}/releases/pr-builds`;
             const downloadUrl = `${releaseBase}/${apkName}`;
             const manifestName = `ota-pr-${prNumber}-${headSha}.json`;
@@ -557,3 +667,4 @@ jobs:
       pull-requests: write
     secrets:
       SLACK_WEBHOOK_PR_BUILDS: ${{ secrets.SLACK_WEBHOOK_PR_BUILDS }}
+      TEST_RUN_INGEST_TOKEN_DEV: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}

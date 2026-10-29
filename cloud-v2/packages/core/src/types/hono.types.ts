@@ -10,6 +10,8 @@
 
 import type {Context} from "hono"
 import type {FederatedIdentity, Logger} from "@mentra/cloud-shared"
+import type {AuthorizeResponse} from "@mentra/workspace-contract"
+import type {CorePrincipal} from "../services/signin/principal.service"
 
 export interface AppVariables {
   /** Request ID for log correlation. Set by request-id middleware on every request. */
@@ -23,13 +25,6 @@ export interface AppVariables {
     tenantId: string
   }
 
-  /** OEM portal user (browser session, WorkOS-issued). */
-  oemAdmin?: {
-    workosUserId: string
-    tenantId: string
-    role: "owner" | "admin" | "viewer"
-  }
-
   /** End user (mobile client), identified via Mentra-issued access token. */
   user?: {
     mentraUserId: string
@@ -40,14 +35,28 @@ export interface AppVariables {
     federatedIdentity?: FederatedIdentity
   }
 
-  /** Developer console session. */
+  /**
+   * The caller of a portal or workspace API (`/api/admin`, `/api/portal`,
+   * `/api/workspaces`, `/api/organization`): a person (a portal session or an
+   * identity-provider access token) or a Core credential. Set by `principalAuth`
+   * and the gates built on it.
+   */
+  principal?: CorePrincipal
+
+  /** The decision `requireWorkspaceCapability` allowed the request on. */
+  workspaceAuthorization?: AuthorizeResponse
+
+  /** The service that signed an internal service API request (`serviceAuth`). */
+  service?: "store" | "fleet"
+
+  /** The raw body the service signature covered, read once by `serviceAuth`. */
+  serviceBody?: string
+
+  /** The admin portal's caller, as its label for audit fields. */
   developer?: {
     developerId: string
     email: string
   }
-
-  /** Admin scope flag, set when the caller's credential carries admin perms. */
-  isAdmin?: boolean
 }
 
 export interface AppEnv {

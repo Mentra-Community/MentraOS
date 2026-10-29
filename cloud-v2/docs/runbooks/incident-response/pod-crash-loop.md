@@ -98,9 +98,10 @@ K8s killed the pod. Usually OOM (Out Of Memory) or failed liveness probe.
 porter kubectl -- describe pod <pod-name> | grep -i "OOMKilled\|reason"
 ```
 
-If yes: bump `ramMegabytes` in `porter.yaml` (core defaults to 1024, audio
-2048 — try doubling). Re-deploy. Watch for steady-state memory growth in
-metrics; a sustained climb means a leak.
+If OOM is confirmed, fix the demonstrated memory cause and review any resource
+change in `cloud-v2/deploy/porter.shared.yaml` (Core1024MiB, Runtime2048MiB).
+Use the normal coordinated release. Watch for steady-state memory growth; a
+sustained climb means a leak rather than an automatic reason to double capacity.
 
 Possible v2 leaks (none confirmed yet but worth checking):
 - ioredis client per worker × user — if workers don't clean up on
@@ -141,11 +142,27 @@ hiccup, AWS event). Check status pages.
 
 If it's an emergency and you need to stop the bleeding:
 
-1. **Roll back**: `porter app rollback cloud-v2`
-2. **Scale down**: in `porter.yaml`, set `instances: 0` for the bad
-   service and apply. (Trade availability for no crash spam.)
-3. **Disable the affected feature**: if it's e.g. Soniox burning out the
-   pod, confirm `SONIOX_API_KEY` is present in Doppler and redeploy.
+1. **Roll back the selected app** through Porter's existing rollback operation.
+   Confirm the environment and last successful revision first. For dev:
+
+   ```bash
+   porter app rollback cloud-dev --cluster 5692 --project 15081 --target aws-us-west-2-default
+   ```
+
+   Staging uses `cloud-staging`; production uses `cloud-prod`. Verify actual image
+   identity, health/readiness and Runtime disruption policy after rollback. A
+   revision predating the policy may restore the old unprotected values; use a
+   reviewed coordinated correction to restore protection. Record the emergency
+   revision separately from ordinary release evidence.
+2. **Fix the failing dependency or feature** using its existing source or Doppler
+   ownership, then run the matching coordinated release. An absent key is not a
+   feature-disable operation; inspect the actual failure first.
+
+Do not edit generated `porter.<env>.yaml` outputs or set shared replicas to zero
+as a crash-loop workaround. The shared renderer requires serving replicas and
+health probes. Stopping the sole service trades crash messages for a complete
+outage and is not an availability recovery. See the
+[deployment runbook](../porter/deploys.md) for rendering and normal release paths.
 
 ## Lessons we've already learned (from v1)
 

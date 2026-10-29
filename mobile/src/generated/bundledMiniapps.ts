@@ -6,14 +6,33 @@
 // inside the app binary.
 
 export const BUNDLED_MINIAPPS: number[] = [
-  require("@assets/miniapps/com.mentra.ai-1.5.11.zip"),
-  require("@assets/miniapps/com.mentra.call-2.1.40.zip"),
-  require("@assets/miniapps/com.mentra.captions-1.0.22.zip"),
-  require("@assets/miniapps/com.mentra.livestreamer-1.0.34.zip"),
+  require("@assets/miniapps/com.mentra.ai-1.5.14.zip"),
+  require("@assets/miniapps/com.mentra.call-2.1.73.zip"),
+  require("@assets/miniapps/com.mentra.captions-1.0.24.zip"),
+  require("@assets/miniapps/com.mentra.enterprise-0.1.11.zip"),
+  require("@assets/miniapps/com.mentra.link-1.0.21.zip"),
+  require("@assets/miniapps/com.mentra.livestreamer-1.0.37.zip"),
   require("@assets/miniapps/com.mentra.merge-0.1.34.zip"),
   require("@assets/miniapps/com.mentra.navigation-1.1.36.zip"),
-  require("@assets/miniapps/com.mentra.notes-1.0.27.zip"),
+  require("@assets/miniapps/com.mentra.notes-1.0.30.zip"),
   require("@assets/miniapps/com.mentra.recorder-1.0.19.zip"),
   require("@assets/miniapps/com.mentra.teleprompter-1.0.12.zip"),
   require("@assets/miniapps/com.mentra.translation-1.0.25.zip"),
 ]
+
+// Build-owned package identities: the packages this build ships a ZIP for.
+// miniapp.json cannot claim this; it changes only with the assets.
+export const BUNDLED_SYSTEM_MINIAPP_PACKAGES = [
+  "com.mentra.ai",
+  "com.mentra.call",
+  "com.mentra.captions",
+  "com.mentra.enterprise",
+  "com.mentra.link",
+  "com.mentra.livestreamer",
+  "com.mentra.merge",
+  "com.mentra.navigation",
+  "com.mentra.notes",
+  "com.mentra.recorder",
+  "com.mentra.teleprompter",
+  "com.mentra.translation",
+] as const

@@ -12,6 +12,7 @@ import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import java.util.Set;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
@@ -25,6 +26,9 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
     private final IStateManager stateManager;
     private final IResponseBuilder responseBuilder;
     private final AsgClientServiceManager serviceManager;
+
+    /** {@code readyId} of the last phone_ready this process reset the transport for. */
+    private String transportResetReadyId;
 
     public PhoneReadyCommandHandler(
             ICommunicationManager communicationManager,
@@ -66,6 +70,18 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
         Log.d(TAG, "📱 Received phone_ready data: " + (data != null ? data.toString() : "null"));
 
         try {
+            // A phone repeats one readiness exchange's readyId until it gets an answer, and the
+            // BES delivers the copies it buffered while MTK booted in a burst. Only the first
+            // copy resets the transport; later ones are answered without a reset, so the link
+            // the phone negotiates after that first answer stays valid.
+            String readyId = data != null ? data.optString("readyId", "") : "";
+            if (!readyId.isEmpty() && readyId.equals(transportResetReadyId)) {
+                Log.d(TAG, "📱 Repeated phone_ready for readiness exchange " + readyId
+                        + " - answering without a transport reset");
+                return communicationManager.sendBluetoothResponse(glassesReadyResponse(readyId));
+            }
+            transportResetReadyId = readyId.isEmpty() ? null : readyId;
+
             // Reset transport packet sizing to default on new connection.
             // Phone will send set_ble_mtu command after glasses_ready to set the correct size.
             ICompanionTransport transport =
@@ -77,10 +93,9 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
             Log.d(TAG, "📱 📱 Received phone_ready message - sending glasses_ready response");
 
             Log.d(TAG, "📱 🔨 Building glasses_ready response...");
-            JSONObject response = responseBuilder.buildGlassesReadyResponse();
+            JSONObject response = glassesReadyResponse(readyId);
             K900BluetoothManager k900Manager = getK900BluetoothManager();
             if (k900Manager != null) {
-                k900Manager.addPhoneWireCapsIfSupported(response);
                 // A phone handshake can follow a BLE edge lost while MTK was asleep. Ask BES
                 // for the authoritative state; the command itself is not a presence report.
                 k900Manager.requestSystemVersionRefresh();
@@ -142,6 +157,19 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
             Log.e(TAG, "📱 💥 Error handling phone ready command", e);
             return false;
         }
+    }
+
+    /** glasses_ready with the phone's wire caps, echoing the exchange's readyId when present. */
+    private JSONObject glassesReadyResponse(String readyId) throws JSONException {
+        JSONObject response = responseBuilder.buildGlassesReadyResponse();
+        if (!readyId.isEmpty()) {
+            response.put("readyId", readyId);
+        }
+        K900BluetoothManager k900Manager = getK900BluetoothManager();
+        if (k900Manager != null) {
+            k900Manager.addPhoneWireCapsIfSupported(response);
+        }
+        return response;
     }
 
     private K900BluetoothManager getK900BluetoothManager() {

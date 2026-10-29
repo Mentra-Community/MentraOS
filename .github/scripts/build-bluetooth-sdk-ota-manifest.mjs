@@ -50,6 +50,7 @@ if (!firmware.bes_firmware || typeof firmware.bes_firmware !== "object" || Array
 
 const manifest = {
   releaseVersion,
+  ...(process.env.ASG_SOURCE_FINGERPRINT ? {asgSource: {fingerprint: process.env.ASG_SOURCE_FINGERPRINT}} : {}),
   apps: {
     "com.mentra.asg_client": {
       versionCode,
@@ -63,6 +64,9 @@ const manifest = {
   ...(firmware.mtk_full_ota ? {mtk_full_ota: firmware.mtk_full_ota} : {}),
   bes_firmware: firmware.bes_firmware,
 }
+
+if (process.env.ASG_SOURCE_FINGERPRINT && !/^[a-f0-9]{64}$/.test(process.env.ASG_SOURCE_FINGERPRINT))
+  throw new Error("Invalid ASG source fingerprint")
 
 mkdirSync(dirname(process.env.OUTPUT_PATH), {recursive: true})
 writeFileSync(process.env.OUTPUT_PATH, `${JSON.stringify(manifest, null, 2)}\n`)

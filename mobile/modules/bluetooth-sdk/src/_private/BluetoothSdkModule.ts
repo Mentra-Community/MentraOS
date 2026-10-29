@@ -2,7 +2,7 @@ import {createScanSession} from "./scanSession"
 import {NativeModule, requireNativeModule} from "expo"
 import {Platform} from "react-native"
 
-import {installNativeLogConsole} from "./nativeLogConsole"
+import {installNativeLogConsole, installSdkUpdateNotice} from "./nativeLogConsole"
 
 import {
   BluetoothSettingsUpdate,
@@ -49,6 +49,7 @@ import {
   SettingsAckSuccessEvent,
   StreamStartRequest,
   StreamStatusEvent,
+  TouchGesture,
   VideoRecordingStartedStatusEvent,
   VideoRecordingSettings,
   VideoRecordingStoppedStatusEvent,
@@ -143,6 +144,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Gallery Commands
   setGalleryServerEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
+  setTouchGestureDefaultBehaviorEnabled(gesture: TouchGesture, enabled: boolean): Promise<SettingsAckSuccessEvent>
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   /** Mentra Live center-mic loudness / Barrier gate (cs_swit type 10). */
@@ -350,6 +352,7 @@ export type BluetoothSdkInternalModule = BluetoothSdkNativeModule
 // NativeModule<BluetoothSdkModuleEvents> already extends EventEmitter<BluetoothSdkModuleEvents>
 const NativeBluetoothSdkModule = requireNativeModule<BluetoothSdkNativeModule>("BluetoothSdk")
 installNativeLogConsole(NativeBluetoothSdkModule, Platform.OS)
+installSdkUpdateNotice(NativeBluetoothSdkModule)
 
 const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
   saveAsDefault: true,

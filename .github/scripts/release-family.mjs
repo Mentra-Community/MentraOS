@@ -2,8 +2,8 @@ import {existsSync, readFileSync} from "node:fs"
 import {createHash} from "node:crypto"
 import path from "node:path"
 
-import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
 import {validatePrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
+import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
 import {validateRuntimeImageRecord} from "./coordinated-runtime-image-records.mjs"
 import {validateMentraosTestflightDistribution} from "./mentraos-testflight-distribution.mjs"
 
@@ -474,6 +474,9 @@ export function expectedPlayTracks(plan) {
   return LEGACY_PLAY_TRACKS[plan.channel] ?? []
 }
 
+// Google Play's largest accepted version code.
+export const ANDROID_MAX_VERSION_CODE = 2_100_000_000
+
 // The Android build may carry a testing track's floor plus one instead of the
 // family number (see resolve-android-version-code.mjs); the results say so.
 export function androidBuildNumberOf(plan, results) {
@@ -481,6 +484,9 @@ export function androidBuildNumberOf(plan, results) {
   if (declared === undefined) return plan.native.buildNumber
   if (!Number.isSafeInteger(declared) || declared < plan.native.buildNumber) {
     throw new Error(`native.androidBuildNumber ${JSON.stringify(declared)} is below the family build number`)
+  }
+  if (declared > ANDROID_MAX_VERSION_CODE) {
+    throw new Error(`native.androidBuildNumber ${declared} exceeds ${ANDROID_MAX_VERSION_CODE}`)
   }
   return declared
 }
@@ -592,14 +598,10 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
   const cloud = validateCloudV2DeploymentRecord({plan, record: results.cloud})
   const runtimeImage =
     plan.channel === "production" ? undefined : validateRuntimeImageRecord({plan, record: results.runtimeImage})
-  const privateDeployment =
-    plan.channel === "dev"
-      ? validatePrivateDeploymentRecord({
-          plan,
-          record: results.privateDeployment,
-          runtimeImage,
-        })
-      : undefined
+
+  // Preserve a recorded deployment when reading an immutable manifest; new releases do not require one.
+  const privateDeployment = results.privateDeployment === undefined ? undefined
+    : validatePrivateDeploymentRecord({plan, record: results.privateDeployment, runtimeImage})
 
   let promotion
   if (plan.channel === "production") {

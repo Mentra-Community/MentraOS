@@ -63,6 +63,7 @@ export interface LocalSessionLookup {
    * are not secretbox-encrypted (they ride the TLS WebSocket).
    */
   encryptionKeyB64?: string;
+  frameTimelineVersion?: 1;
 }
 
 export interface IngestResult {
@@ -147,12 +148,14 @@ export async function ingestAudioPacket(
   let audioSessionId: string;
   let encryptionKeyB64: string | undefined;
   let origin: "local" | "redis";
+  let frameTimelineVersion: 1 | undefined;
 
   const local = localLookup(packet.sessionTag);
   if (local) {
     mentraUserId = local.mentraUserId;
     audioSessionId = local.audioSessionId;
     encryptionKeyB64 = local.encryptionKeyB64;
+    frameTimelineVersion = local.frameTimelineVersion;
     origin = "local";
   } else {
     const remote = await lookupSessionTagInRedis(packet.sessionTag);
@@ -160,6 +163,7 @@ export async function ingestAudioPacket(
     mentraUserId = remote.mentraUserId;
     audioSessionId = remote.audioSessionId;
     encryptionKeyB64 = remote.encryptionKeyB64;
+    frameTimelineVersion = remote.frameTimelineVersion;
     origin = "redis";
   }
 
@@ -186,11 +190,24 @@ export async function ingestAudioPacket(
     };
   }
 
+  let offsetMs: number | undefined;
+  if (frameTimelineVersion === 1) {
+    if (payload.byteLength < 8) return { ok: false, origin, mentraUserId };
+    offsetMs = new DataView(
+      payload.buffer,
+      payload.byteOffset,
+      payload.byteLength,
+    ).getFloat64(0, false);
+    if (!Number.isFinite(offsetMs) || offsetMs < 0)
+      return { ok: false, origin, mentraUserId };
+    payload = payload.subarray(8);
+  }
   await appendAudioPacket(mentraUserId, {
     seq: packet.sequence,
     payload,
     sessionTag: packet.sessionTag,
     audioSessionId,
+    offsetMs,
   });
 
   return {
@@ -223,6 +240,7 @@ export interface AudioPacket {
   sessionTag: number;
   /** Useful for tracing — which audio-session this entry belongs to. */
   audioSessionId: string;
+  offsetMs?: number;
 }
 
 /**
@@ -254,6 +272,8 @@ export async function appendAudioPacket(
     String(packet.sessionTag),
     "audioSessionId",
     packet.audioSessionId,
+    "offsetMs",
+    packet.offsetMs === undefined ? "" : String(packet.offsetMs),
     "payload",
     Buffer.from(packet.payload).toString("base64"),
   );
@@ -287,6 +307,29 @@ export interface SessionTagRecord {
    * decrypt the frame.
    */
   encryptionKeyB64: string;
+  frameTimelineVersion?: 1;
+}
+
+/** Set before ACK; remote UDP ingress must decode the same format as local ingress. */
+export async function enableSessionFrameTimeline(
+  tag: number,
+  audioSessionId: string,
+): Promise<void> {
+  const redis = getRedis();
+  const raw = await redis.get(sessionTagKey(tag));
+  if (!raw) throw new Error("audio session tag expired before init");
+  const record = JSON.parse(raw) as SessionTagRecord;
+  if (record.audioSessionId !== audioSessionId)
+    throw new Error("audio session tag replaced before init");
+  record.frameTimelineVersion = 1;
+  const result = await redis.set(
+    sessionTagKey(tag),
+    JSON.stringify(record),
+    "EX",
+    SESSION_TAG_TTL_SEC,
+    "XX",
+  );
+  if (result !== "OK") throw new Error("audio session tag expired during init");
 }
 
 function sessionTagKey(tag: number): string {

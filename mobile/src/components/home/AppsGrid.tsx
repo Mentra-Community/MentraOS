@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {Dimensions, FlatList, LayoutChangeEvent, Platform, Pressable, StyleSheet, View} from "react-native"
+import {FlatList, LayoutChangeEvent, Platform, Pressable, StyleSheet, View, useWindowDimensions} from "react-native"
 import Animated, {
   cancelAnimation,
   Easing,
@@ -33,6 +33,7 @@ import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {SYSTEM_APPS} from "@/constants/miniapps"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
 import {uninstallAppUI} from "@/utils/uninstallAppUI"
+import {blockUpdatingMiniapp} from "@/utils/miniappUpdatingAlert"
 import {askPermissionsUI, checkPermissionsUI} from "@/utils/PermissionsUtils"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {storage} from "@/utils/storage"
@@ -110,7 +111,7 @@ const AppPopover: React.FC<{
   onClose: () => void
 }> = ({visible, position, actions, onClose}) => {
   const {theme} = useAppTheme()
-  const {width: screenWidth, height: screenHeight} = Dimensions.get("window")
+  const {width: screenWidth, height: screenHeight} = useWindowDimensions()
 
   if (!visible) return null
 
@@ -617,6 +618,8 @@ export function AppsGrid({
 
   const openApp = useCallback(
     async (app: ClientApp) => {
+      // An updating miniapp explains itself instead of opening or queueing a launch.
+      if (blockUpdatingMiniapp(app.packageName)) return
       if (app.compatibility?.isCompatible === false) {
         await showCompatibilityAlert(app)
         return
@@ -681,19 +684,31 @@ export function AppsGrid({
       const packageName = app.packageName
       engine.miniapps.setHiddenStatus(packageName, false)
 
+      // Never fall back to this grid's own orderMap: All Apps lays out its
+      // items in drawer-only coordinates (100+), and saving those as the Home
+      // layout pushed every Home app past the visible slots. Without a saved
+      // layout, Home renders its apps contiguously in homePackageNames order.
       const latestOrder = getAppsOrder()
-      const currentOrder = latestOrder.is_ok() ? latestOrder.value : orderMap
+      const currentOrder: OrderMap = latestOrder.is_ok()
+        ? latestOrder.value
+        : Object.fromEntries(homePackageNames.map((pkg, index) => [pkg, index]))
       const nextOrder: OrderMap = {...currentOrder}
       delete nextOrder[packageName]
 
       const emptySlot = Object.entries(nextOrder)
         .filter(([pkg, index]) => pkg.startsWith("@empty") && index < PRIMARY_HOME_SLOT_COUNT)
         .sort(([, a], [, b]) => a - b)[0]
+      const usedIndices = new Set(Object.values(nextOrder))
+      const freeIndex = Array.from({length: PRIMARY_HOME_SLOT_COUNT}, (_, index) => index).find(
+        (index) => !usedIndices.has(index),
+      )
 
       if (emptySlot) {
         const [emptyPackageName, emptyIndex] = emptySlot
         delete nextOrder[emptyPackageName]
         nextOrder[packageName] = emptyIndex
+      } else if (freeIndex !== undefined) {
+        nextOrder[packageName] = freeIndex
       } else {
         for (const [pkg, index] of Object.entries(nextOrder)) {
           nextOrder[pkg] = index + 1
@@ -705,7 +720,7 @@ export function AppsGrid({
       saveAppsOrder(nextOrder)
       onAddToHome?.(app)
     },
-    [onAddToHome, orderMap],
+    [onAddToHome, homePackageNames],
   )
 
   const popoverActions: PopoverAction[] = useMemo(
@@ -778,6 +793,7 @@ export function AppsGrid({
   const handlePress = useCallback(
     async (app: ClientApp) => {
       if (app.packageName.includes("@empty")) return // ignore dummy apps
+      if (blockUpdatingMiniapp(app.packageName)) return
       if (await showCompatibilityAlert(app)) return
 
       // Check permissions before foregrounding the overlay.
@@ -889,7 +905,8 @@ export function AppsGrid({
             itemRefs.current[item.packageName] = ref
           }}
           accessibilityRole="button"
-          accessibilityLabel={item.name}
+          accessibilityLabel={item.updating ? translate("home:miniappUpdatingLabel", {app: item.name}) : item.name}
+          accessibilityState={{busy: Boolean(item.updating)}}
           testID={`${showAllApps ? "allApps" : "home"}.miniapp.${item.packageName}`}
           onAccessibilityTap={() => {
             void handlePress(item)
@@ -924,10 +941,11 @@ export function AppsGrid({
                 textShadowOffset: {width: 0, height: 0},
                 textShadowRadius: 30,
               }}
-              numberOfLines={2}
+              numberOfLines={item.updating ? 1 : 2}
               ellipsizeMode="tail"
               text={item.name}
             />
+            {item.updating && <Text className="text-muted-foreground text-[10px]" tx="home:miniappUpdating" />}
           </View>
         </Pressable>
       )

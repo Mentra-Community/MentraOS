@@ -1,5 +1,5 @@
 import {RefObject, useCallback, useEffect, useRef, useState} from "react"
-import {View, Dimensions, Pressable, Platform, BackHandler} from "react-native"
+import {View, Pressable, Platform, BackHandler, useWindowDimensions} from "react-native"
 import {Image, useImage} from "expo-image"
 import {Text} from "@/components/ignite/"
 import Animated, {
@@ -38,10 +38,7 @@ import {hapticBuzz} from "@/utils/utils"
 import {storage} from "@/utils/storage"
 import {translate} from "@/i18n"
 
-const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get("window")
 const CARD_SCALE = 0.67
-const CARD_WIDTH = SCREEN_WIDTH * CARD_SCALE
-const CARD_HEIGHT = SCREEN_HEIGHT * CARD_SCALE
 const CARD_SPACING = 0
 const DISMISS_THRESHOLD = -180
 const VELOCITY_THRESHOLD = -800
@@ -63,7 +60,14 @@ interface AppCardItemProps {
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable)
 
+/** Card geometry follows the window, so rotating a tablet resizes the tray. */
+function useSwitcherMetrics() {
+  const {width, height} = useWindowDimensions()
+  return {SCREEN_WIDTH: width, SCREEN_HEIGHT: height, CARD_WIDTH: width * CARD_SCALE, CARD_HEIGHT: height * CARD_SCALE}
+}
+
 function AppCardItem({app, translateX, cardOrder, onDismiss, onSelect}: AppCardItemProps) {
+  const {SCREEN_WIDTH, SCREEN_HEIGHT, CARD_WIDTH, CARD_HEIGHT} = useSwitcherMetrics()
   const translateY = useSharedValue(0)
   const cardOpacity = useSharedValue(1)
   const loadedImage = useImage(
@@ -280,6 +284,7 @@ interface AppSwitcherProps {
 const AnimatedBlurView = Animated.createAnimatedComponent(BlurView)
 
 export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRef}: AppSwitcherProps) {
+  const {SCREEN_WIDTH, CARD_WIDTH, CARD_HEIGHT} = useSwitcherMetrics()
   const translateX = useSharedValue(0)
   const offsetX = useSharedValue(0)
   const targetIndex = useSharedValue(0)
@@ -375,6 +380,16 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   const activeIndex = useDerivedValue(() => {
     return -translateX.value / (CARD_WIDTH + CARD_SPACING) + 2
   })
+
+  // Rotation changes the card width; keep the same card centered.
+  const cardStep = CARD_WIDTH + CARD_SPACING
+  const previousCardStep = useRef(cardStep)
+  useEffect(() => {
+    if (previousCardStep.current === cardStep) return
+    previousCardStep.current = cardStep
+    translateX.value = -targetIndex.value * cardStep
+    offsetX.value = translateX.value
+  }, [cardStep, translateX, offsetX, targetIndex])
 
   // The Compositor's bottom swipe-up can commit while home isn't mounted
   // (clearHistoryAndGoHome remounts this screen with the shared progress

@@ -17,7 +17,7 @@ permissions:
 jobs:
   plan:
     if: github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["qualify-coordinated-downloads","qualify-coordinated-downloads-staging"]'), github.event.label.name)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       source: ${{ steps.plan.outputs.source }}
       artifact: ${{ steps.plan.outputs.artifact }}

@@ -27,6 +27,10 @@ k900_android_sdk/*
 K900ServerPlus/*
 K900_server/*
 .claude/*
+!.claude/skills
+!.claude/agents/
+.claude/agents/*
+!.claude/agents/routine-fixer.md
 aar_extract/*
 aar-extract/*
 temp_extract/*
@@ -42,6 +46,7 @@ node_modules/
 web-build/
 .DS_Store
 *.tgz
+# Pinned publishing tools for the first-party miniapp Store action.
 my-app*
 template/src/__tests__/__snapshots__/
 lerna-debug.log
@@ -393,6 +398,14 @@ MEMORY.md
 # Cursor IDE local config (MCP, etc.)
 .cursor/*
 !.cursor/BUGBOT.md
+# Shared with cloud agents. Other .cursor files stay local.
+!.cursor/agents/
+.cursor/agents/*
+!.cursor/agents/plan-reviewer.md
+!.cursor/skills/
+.cursor/skills/*
+!.cursor/skills/plan-review-replan/
+!.cursor/skills/plan-review-replan/**
 
 # PR agent orchestrator local outputs
 .pr-agent/
@@ -423,3 +436,12 @@ asg_client/StreamPackLite.zip
 # Local temp artifacts and generated decks
 tmp/
 output/
+
+# Concrete deployment inputs are rendered from the frozen shared Cloud V2 source.
+/cloud-v2/porter.dev.yaml
+/cloud-v2/porter.staging.yaml
+/cloud-v2/porter.prod.yaml
+/cloud-v2/porter.dev.overrides.yaml
+/cloud-v2/porter.staging.overrides.yaml
+/cloud-v2/porter.prod.overrides.yaml
+/cloud-v2-rendered-config.json

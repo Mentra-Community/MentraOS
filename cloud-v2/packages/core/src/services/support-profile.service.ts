@@ -2,12 +2,52 @@ import {createHash, createHmac} from "node:crypto"
 import {createLogger} from "@mentra/cloud-shared"
 import {SupportProfileModel} from "../models/support-profile.model"
 import {UserModel} from "../models/user.model"
-import {getUserById} from "./account/gotrue.client"
+import {trustedAccountEmail} from "./account/trusted-email.service"
 
 export const SUPPORT_DEVICE_HISTORY_LIMIT = 12
 export const SUPPORT_IDENTICAL_UPDATE_MIN_MS = 60_000
 const CAPTURE_TIMEOUT_MS = 10_000
+const INDEX_RETRY_MS = 10_000
 const logger = createLogger("core").child({service: "support-profile"})
+
+/**
+ * Runs `attempt` until it succeeds once, sharing one attempt between concurrent
+ * callers. After a failure, callers get that error until `retryAfterMs` has
+ * passed, and the next caller then tries again.
+ */
+export function retryUntilSucceeded(
+  attempt: () => Promise<unknown>,
+  retryAfterMs: number,
+  now: () => number = Date.now,
+): () => Promise<void> {
+  let pending: Promise<void> | undefined
+  let failure: {error: unknown; at: number} | undefined
+  return () => {
+    if (pending) return pending
+    if (failure && now() - failure.at < retryAfterMs) return Promise.reject(failure.error)
+    const current = attempt().then(
+      () => {
+        failure = undefined
+      },
+      (error: unknown) => {
+        pending = undefined
+        failure = {error, at: now()}
+        throw error
+      },
+    )
+    pending = current
+    return current
+  }
+}
+
+// Core waits for each model's automatic build (Model.init()) at startup, so a
+// successful one is reused as is. Model.init() keeps a rejected promise for the
+// life of the process, though: when the startup build failed, for example on a
+// throttled Azure Cosmos DB metadata request, the index is built again here.
+const ensureSupportProfileIndexes = retryUntilSucceeded(
+  () => SupportProfileModel.init().catch(() => SupportProfileModel.createIndexes()),
+  INDEX_RETRY_MS,
+)
 
 export interface SupportStateInput {
   observedAt: string
@@ -71,7 +111,7 @@ export async function updateSupportProfile(
   input: SupportStateInput,
 ): Promise<SupportProfileUpdateResult> {
   // The unique mentraUserId index must exist before upserts can race safely.
-  await SupportProfileModel.init()
+  await ensureSupportProfileIndexes()
   await assertActiveOrCleanup(identity.mentraUserId)
   const observedAt = new Date(input.observedAt)
   const receivedAt = new Date()
@@ -308,7 +348,7 @@ async function captureMeaningfulTransitions(
   if (!posthogApiKey()) return
   const events = meaningfulTransitions(previous, next)
   if (events.length === 0) return
-  const email = await trustedEmail(mentraUserId).catch(() => null)
+  const email = await trustedAccountEmail(mentraUserId).catch(() => null)
   const properties = posthogPropertiesFor(next)
   for (const event of events) {
     try {
@@ -324,13 +364,6 @@ async function captureMeaningfulTransitions(
       logger.warn({mentraUserId, event, error: (error as Error)?.message}, "support PostHog capture dropped")
     }
   }
-}
-
-async function trustedEmail(mentraUserId: string): Promise<string | null> {
-  const user = await UserModel.findOne({mentraUserId}).lean()
-  if (!user || user.tenantId !== "mentra") return null
-  const identity = await getUserById(user.tenantUserId).catch(() => null)
-  return identity?.emailVerified ? identity.email : null
 }
 
 async function sendCapture(input: {

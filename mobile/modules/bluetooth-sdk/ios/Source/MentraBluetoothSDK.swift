@@ -134,9 +134,12 @@ private final class PendingVideoRecordingRequest {
 private final class PendingVersionInfoRequest {
     let pending: PendingResponse<VersionInfoResult>
     let accumulator: VersionInfoResponseAccumulator
+    let requestId: String
+    let startedAt = ProcessInfo.processInfo.systemUptime
 
     init(pending: PendingResponse<VersionInfoResult>, requestId: String) {
         self.pending = pending
+        self.requestId = requestId
         accumulator = VersionInfoResponseAccumulator(expectedRequestId: requestId)
     }
 }
@@ -163,13 +166,18 @@ private final class PendingStreamStart {
 @MainActor
 final class PendingResponse<T> {
     private let operation: String
+    /// The operation without per-request ids, so timeouts group in analytics.
+    private let telemetryOperation: String
+    private let onTimeout: ((String) -> Void)?
     private var continuation: CheckedContinuation<T, Error>?
     private var timeoutTask: Task<Void, Never>?
     private var result: Result<T, Error>?
     private var completed = false
 
-    init(operation: String) {
+    init(operation: String, telemetryOperation: String? = nil, onTimeout: ((String) -> Void)? = nil) {
         self.operation = operation
+        self.telemetryOperation = telemetryOperation ?? operation
+        self.onTimeout = onTimeout
     }
 
     func resolve(_ value: T) {
@@ -207,10 +215,12 @@ final class PendingResponse<T> {
                         } catch {
                             return
                         }
-                        self?.reject(
+                        guard let self, !self.completed else { return }
+                        self.onTimeout?(self.telemetryOperation)
+                        self.reject(
                             BluetoothSdkError(
                                 code: "request_timeout",
-                                message: "\(self?.operation ?? "Request") timed out waiting for glasses response."
+                                message: "\(self.operation) timed out waiting for glasses response."
                             )
                         )
                     }
@@ -254,6 +264,7 @@ public final class MentraBluetoothSDK {
     private static let otaBesVersionWaitMs = 5000
     private static let otaMtkVersionWaitMs = 2000
     private static let otaVersionPollMs = 100
+    private static let micStateKeys: Set<String> = ["currentMic", "should_send_transcript", "local_stt_fallback_active"]
 
     public weak var delegate: MentraBluetoothSDKDelegate?
 
@@ -272,6 +283,7 @@ public final class MentraBluetoothSDK {
     private var activeScanSessions: [UUID: ActiveScanSession] = [:]
     private let streamSession = StreamSessionState()
     private let analytics: BluetoothSdkAnalytics
+    private var updateCheck: BluetoothSdkUpdateCheck?
     private var pendingPhotoRequests: [String: PendingResponse<PhotoResponseEvent>] = [:]
     private var pendingCameraStatusRequests: [String: PendingResponse<CameraStatusEvent>] = [:]
     private var pendingVideoRecordingRequests: [String: PendingVideoRecordingRequest] = [:]
@@ -350,6 +362,31 @@ public final class MentraBluetoothSDK {
         }
         analytics.initializeGlassesStatus(glassesStatus)
         analytics.captureStarted()
+        let updateCheck = BluetoothSdkUpdateCheck(
+            surface: BluetoothSdkUpdateCheck.surface(forAnalyticsSurface: configuration.analytics.surface)
+        ) { [weak self] banner, result in
+            NSLog("%@", banner)
+            var values: [String: Any] = [
+                "message": banner,
+                "status": result.status,
+                "installedVersion": BluetoothSdkDefaults.sdkVersion ?? "unknown",
+            ]
+            if let latestVersion = result.latestVersion { values["latestVersion"] = latestVersion }
+            let notice = values
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "sdk_update_notice", values: notice))
+            }
+        }
+        self.updateCheck = updateCheck
+        updateCheck.start()
+    }
+
+    /// Reports a glasses command that timed out, without its per-request id.
+    private var requestTimeoutReporter: (String) -> Void {
+        { [weak self] operation in
+            self?.analytics.recordUsage { $0.requestTimedOut(operation: operation) }
+        }
     }
 
     public var state: MentraBluetoothState {
@@ -545,6 +582,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func cancelConnectionAttempt() {
+        analytics.noteDisconnectRequested(BluetoothSdkAnalyticsTracker.disconnectCancel)
         clearBluetoothRestoreIntent()
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
@@ -558,6 +596,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func disconnect() {
+        analytics.noteDisconnectRequested(BluetoothSdkAnalyticsTracker.disconnectUser)
         clearBluetoothRestoreIntent()
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
@@ -566,6 +605,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func forget() {
+        analytics.noteDisconnectRequested(BluetoothSdkAnalyticsTracker.disconnectForget)
         clearBluetoothRestoreIntent()
         DeviceManager.shared.forget()
     }
@@ -664,6 +704,17 @@ public final class MentraBluetoothSDK {
         )
     }
 
+    /// Disable a stock action while retaining touch events. Reset by BES on BLE disconnect.
+    public func setTouchGestureDefaultBehaviorEnabled(_ gesture: TouchGesture, enabled: Bool) async throws -> SettingsAckEvent {
+        try await performSettingsCommand(
+            setting: "touch_gesture_default",
+            updateStore: { _ in },
+            send: { requestId in
+                try DeviceManager.shared.sendTouchGestureDefaultBehaviorEnabled(requestId: requestId, gesture: gesture, enabled: enabled)
+            }
+        )
+    }
+
     public func setGalleryModeEnabled(_ enabled: Bool) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "gallery_mode",
@@ -678,7 +729,7 @@ public final class MentraBluetoothSDK {
         send: (String) throws -> Void
     ) async throws -> SettingsAckEvent {
         let requestId = "settings-\(setting)-\(UUID().uuidString)"
-        let pending = PendingResponse<SettingsAckEvent>(operation: "set \(setting)")
+        let pending = PendingResponse<SettingsAckEvent>(operation: "set \(setting)", onTimeout: requestTimeoutReporter)
         pendingSettingsRequests[requestId] = pending
         do {
             try send(requestId)
@@ -951,7 +1002,7 @@ public final class MentraBluetoothSDK {
             // the scan screen auto-starts a scan on mount and can be pushed twice.
             return try await existing.value
         }
-        let pending = PendingResponse<[WifiScanResult]>(operation: "WiFi scan request")
+        let pending = PendingResponse<[WifiScanResult]>(operation: "WiFi scan request", onTimeout: requestTimeoutReporter)
         let request = PendingWifiScan(pending: pending, scanId: "scan-\(UUID().uuidString)")
         pendingWifiScan = request
         // Claim the scan-results store for this scan before the command goes out,
@@ -991,11 +1042,15 @@ public final class MentraBluetoothSDK {
                 message: "A WiFi status command is already waiting for a glasses response."
             )
         }
-        let pending = PendingResponse<WifiStatusEvent>(operation: "WiFi connect request")
+        let pending = PendingResponse<WifiStatusEvent>(operation: "WiFi connect request", onTimeout: requestTimeoutReporter)
         pendingWifiStatus = PendingWifiStatusRequest(ssid: ssid, pending: pending)
-        DeviceManager.shared.sendWifiCredentials(ssid, password)
         do {
-            let event = try await pending.wait()
+            let event = try await withUsageOutcome(record: { latencyMs, errorCode, _ in
+                analytics.recordUsage { $0.wifiSetupSettled(latencyMs: latencyMs, errorCode: errorCode) }
+            }) {
+                DeviceManager.shared.sendWifiCredentials(ssid, password)
+                return try await pending.wait()
+            }
             if pendingWifiStatus?.pending === pending {
                 pendingWifiStatus = nil
             }
@@ -1018,7 +1073,7 @@ public final class MentraBluetoothSDK {
                 message: "A WiFi status command is already waiting for a glasses response."
             )
         }
-        let pending = PendingResponse<WifiForgetResult>(operation: "WiFi forget request")
+        let pending = PendingResponse<WifiForgetResult>(operation: "WiFi forget request", onTimeout: requestTimeoutReporter)
         let requestId = "forget-\(UUID().uuidString)"
         let request = PendingWifiForgetRequest(
             ssid: ssid,
@@ -1063,7 +1118,7 @@ public final class MentraBluetoothSDK {
                 error: "saved_wifi_networks_unsupported"
             )
         }
-        let pending = PendingResponse<SavedWifiNetworksResult>(operation: "Saved WiFi networks request")
+        let pending = PendingResponse<SavedWifiNetworksResult>(operation: "Saved WiFi networks request", onTimeout: requestTimeoutReporter)
         let request = PendingSavedWifiNetworks(
             requestId: requestId,
             sid: wifiSessionCapabilities.sessionId,
@@ -1100,12 +1155,18 @@ public final class MentraBluetoothSDK {
                 _ = try? await previous.value
             }
             let pending = PendingResponse<HotspotStatusEvent>(
-                operation: "hotspot \(enabled ? "enable" : "disable") request"
+                operation: "hotspot \(enabled ? "enable" : "disable") request",
+                onTimeout: self.requestTimeoutReporter
             )
             self.pendingHotspotStatus = PendingHotspotStatusRequest(enabled: enabled, pending: pending)
-            DeviceManager.shared.setHotspotState(enabled)
             do {
-                let event = try await pending.wait()
+                let event = try await self.withUsageOutcome(record: { latencyMs, errorCode, _ in
+                    guard enabled else { return }
+                    self.analytics.recordUsage { $0.hotspotStartSettled(latencyMs: latencyMs, errorCode: errorCode) }
+                }) {
+                    DeviceManager.shared.setHotspotState(enabled)
+                    return try await pending.wait()
+                }
                 if self.pendingHotspotStatus?.pending === pending {
                     self.pendingHotspotStatus = nil
                 }
@@ -1138,13 +1199,30 @@ public final class MentraBluetoothSDK {
         Bridge.log(
             "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=\(routedRequest.requestId)"
         )
-        let pending = PendingResponse<PhotoResponseEvent>(operation: "photo request \(routedRequest.requestId)")
+        let pending = PendingResponse<PhotoResponseEvent>(operation: "photo request \(routedRequest.requestId)", telemetryOperation: "photo request", onTimeout: requestTimeoutReporter)
         pendingPhotoRequests[routedRequest.requestId] = pending
-        DeviceManager.shared.requestPhoto(routedRequest)
         do {
-            let event = try await pending.wait(timeoutMs: routedRequest.presendThumbnail
-                ? MentraBluetoothSDK.photoThumbnailRequestTimeoutMs
-                : MentraBluetoothSDK.photoRequestTimeoutMs)
+            let event = try await withUsageOutcome(record: { (latencyMs, errorCode, event: PhotoResponseEvent?) in
+                var fileSizeBytes: Int64?
+                if case let .success(_, _, _, _, _, size?, _) = event?.response { fileSizeBytes = Int64(size) }
+                analytics.recordUsage {
+                    $0.photoSettled(
+                        size: routedRequest.size.rawValue,
+                        mode: routedRequest.mode.rawValue,
+                        compress: routedRequest.compress.rawValue,
+                        save: routedRequest.save,
+                        transferMethod: routedRequest.transferMethod,
+                        latencyMs: latencyMs,
+                        fileSizeBytes: fileSizeBytes,
+                        errorCode: errorCode
+                    )
+                }
+            }) {
+                DeviceManager.shared.requestPhoto(routedRequest)
+                return try await pending.wait(timeoutMs: routedRequest.presendThumbnail
+                    ? MentraBluetoothSDK.photoThumbnailRequestTimeoutMs
+                    : MentraBluetoothSDK.photoRequestTimeoutMs)
+            }
             pendingPhotoRequests.removeValue(forKey: routedRequest.requestId)
             return event
         } catch {
@@ -1163,7 +1241,7 @@ public final class MentraBluetoothSDK {
         mfnr: Bool? = nil
     ) async throws -> CameraStatusEvent {
         let effectiveRequestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("warm")
-        let pending = PendingResponse<CameraStatusEvent>(operation: "camera warm up \(effectiveRequestId)")
+        let pending = PendingResponse<CameraStatusEvent>(operation: "camera warm up \(effectiveRequestId)", telemetryOperation: "camera warm up", onTimeout: requestTimeoutReporter)
         pendingCameraStatusRequests[effectiveRequestId] = pending
         do {
             // Inside the catch so an unsupported-device throw also clears the pending entry.
@@ -1201,7 +1279,7 @@ public final class MentraBluetoothSDK {
                 message: "A gallery status query is already waiting for a glasses response."
             )
         }
-        let pending = PendingResponse<GalleryStatusEvent>(operation: "gallery status query")
+        let pending = PendingResponse<GalleryStatusEvent>(operation: "gallery status query", onTimeout: requestTimeoutReporter)
         pendingGalleryStatus = pending
         DeviceManager.shared.queryGalleryStatus()
         do {
@@ -1219,33 +1297,53 @@ public final class MentraBluetoothSDK {
     }
 
     public func startStream(_ request: StreamRequest) async throws -> StreamStatusEvent {
-        try requireGlassesConnected(operation: "start stream")
-        guard streamSession.supported else {
-            throw BluetoothSdkError(code: "stream_control_unsupported", message: "Update the glasses software before starting a stream.")
-        }
         var values = request.values
         let streamId = stringValue(values, "streamId").flatMap { $0.isEmpty ? nil : $0 } ?? "sdk-\(UUID().uuidString)"
         values["streamId"] = streamId
-        let pending = PendingResponse<StreamStatusEvent>(operation: "start stream \(streamId)")
-        // seq assignment through the BLE hand-off must stay await-free so this
-        // MainActor turn is one critical section: rejectPreemptedStreamStarts
-        // only works if seq order equals the order the commands reach the
-        // glasses' FIFO.
-        streamStartSeq += 1
-        pendingStreamStarts[streamId] = PendingStreamStart(seq: streamStartSeq, pending: pending)
-        DeviceManager.shared.startStream(values)
-        do {
-            let event = try await pending.wait(timeoutMs: 30000)
-            pendingStreamStarts.removeValue(forKey: streamId)
-            return event
-        } catch {
-            pendingStreamStarts.removeValue(forKey: streamId)
-            throw error
+        let message = values
+        return try await withUsageOutcome(record: { latencyMs, errorCode, _ in
+            let glassesNetwork = glassesNetwork()
+            analytics.recordUsage {
+                $0.streamStartSettled(
+                    streamUrl: request.streamUrl,
+                    width: request.video?.width,
+                    height: request.video?.height,
+                    fps: request.video?.fps,
+                    bitrate: request.video?.bitrate,
+                    captureAudio: request.captureAudio,
+                    glassesNetwork: glassesNetwork,
+                    latencyMs: latencyMs,
+                    errorCode: errorCode
+                )
+            }
+        }) {
+            try requireGlassesConnected(operation: "start stream")
+            guard streamSession.supported else {
+                throw BluetoothSdkError(code: "stream_control_unsupported", message: "Update the glasses software before starting a stream.")
+            }
+            let pending = PendingResponse<StreamStatusEvent>(operation: "start stream \(streamId)", telemetryOperation: "start stream", onTimeout: requestTimeoutReporter)
+            let requestedAt = BluetoothSdkAnalytics.epochMillis()
+            analytics.recordUsage { $0.streamRequested(streamId: streamId, streamUrl: request.streamUrl, nowMs: requestedAt) }
+            // seq assignment through the BLE hand-off must stay await-free so this
+            // MainActor turn is one critical section: rejectPreemptedStreamStarts
+            // only works if seq order equals the order the commands reach the
+            // glasses' FIFO.
+            streamStartSeq += 1
+            pendingStreamStarts[streamId] = PendingStreamStart(seq: streamStartSeq, pending: pending)
+            DeviceManager.shared.startStream(message)
+            do {
+                let event = try await pending.wait(timeoutMs: 30000)
+                pendingStreamStarts.removeValue(forKey: streamId)
+                return event
+            } catch {
+                pendingStreamStarts.removeValue(forKey: streamId)
+                throw error
+            }
         }
     }
 
     public func rgbLedControl(_ request: RgbLedRequest) async throws -> RgbLedControlResponseEvent {
-        let pending = PendingResponse<RgbLedControlResponseEvent>(operation: "RGB LED command \(request.requestId)")
+        let pending = PendingResponse<RgbLedControlResponseEvent>(operation: "RGB LED command \(request.requestId)", telemetryOperation: "RGB LED command", onTimeout: requestTimeoutReporter)
         pendingRgbLedRequests[request.requestId] = pending
         DeviceManager.shared.rgbLedControl(
             requestId: request.requestId,
@@ -1267,13 +1365,14 @@ public final class MentraBluetoothSDK {
     }
 
     public func stopStream() async throws -> StreamStatusEvent {
+        analytics.updateUsage { $0.streamStopRequested() }
         guard pendingStreamStop == nil else {
             throw BluetoothSdkError(
                 code: "request_in_flight",
                 message: "A stream stop command is already waiting for a glasses response."
             )
         }
-        let pending = PendingResponse<StreamStatusEvent>(operation: "stop stream")
+        let pending = PendingResponse<StreamStatusEvent>(operation: "stop stream", onTimeout: requestTimeoutReporter)
         // The seq draw and the BLE hand-off stay in this single await-free
         // MainActor turn, sharing startStream's ordering critical section:
         // the stop takes its own slot in the send order, so its ack can
@@ -1302,7 +1401,9 @@ public final class MentraBluetoothSDK {
         }
         try requireGlassesConnected(operation: "start video recording")
         let pending = PendingResponse<VideoRecordingStatusEvent>(
-            operation: "start video recording \(request.requestId)"
+            operation: "start video recording \(request.requestId)",
+            telemetryOperation: "start video recording",
+            onTimeout: requestTimeoutReporter
         )
         guard pendingVideoRecordingRequests[request.requestId] == nil else {
             throw BluetoothSdkError(
@@ -1314,6 +1415,16 @@ public final class MentraBluetoothSDK {
             expectedStatus: "recording_started",
             pending: pending
         )
+        analytics.updateUsage {
+            $0.videoRequested(
+                requestId: request.requestId,
+                width: request.width,
+                height: request.height,
+                fps: request.fps,
+                save: request.save,
+                maxDurationMinutes: request.maxRecordingTimeMinutes
+            )
+        }
         DeviceManager.shared.startVideoRecording(
             request.requestId,
             request.save,
@@ -1340,7 +1451,7 @@ public final class MentraBluetoothSDK {
             throw BluetoothSdkError(code: "missing_request_id", message: "requestId is required to stop video recording.")
         }
         try requireGlassesConnected(operation: "stop video recording")
-        let pending = PendingResponse<VideoRecordingStatusEvent>(operation: "stop video recording \(requestId)")
+        let pending = PendingResponse<VideoRecordingStatusEvent>(operation: "stop video recording \(requestId)", telemetryOperation: "stop video recording", onTimeout: requestTimeoutReporter)
         guard pendingVideoRecordingRequests[requestId] == nil else {
             throw BluetoothSdkError(
                 code: "request_in_flight",
@@ -1353,6 +1464,7 @@ public final class MentraBluetoothSDK {
             pending: pending,
             waitForUpload: waitForUpload
         )
+        analytics.updateUsage { $0.videoStopRequested(requestId: requestId) }
         DeviceManager.shared.stopVideoRecording(requestId, webhookUrl, authToken)
         do {
             let timeoutMs = waitForUpload ? videoUploadStopTimeoutMs : 15000
@@ -1373,7 +1485,7 @@ public final class MentraBluetoothSDK {
             )
         }
         try requireGlassesConnected(operation: "query video recording status")
-        let pending = PendingResponse<VideoRecordingStatusEvent>(operation: "query video recording status \(requestId)")
+        let pending = PendingResponse<VideoRecordingStatusEvent>(operation: "query video recording status \(requestId)", telemetryOperation: "query video recording status", onTimeout: requestTimeoutReporter)
         guard pendingVideoRecordingRequests[requestId] == nil else {
             throw BluetoothSdkError(
                 code: "request_in_flight",
@@ -1396,27 +1508,35 @@ public final class MentraBluetoothSDK {
     }
 
     public func requestVersionInfo() async throws -> VersionInfoResult {
-        guard pendingVersionInfo == nil else {
+        if let request = pendingVersionInfo {
+            logVersionInfoRequest(request, stage: "refused", extra: ["code": "request_in_flight"])
             throw BluetoothSdkError(
                 code: "request_in_flight",
                 message: "A version info request is already waiting for a glasses response."
             )
         }
         let requestId = UUID().uuidString
-        let pending = PendingResponse<VersionInfoResult>(operation: "version info request")
+        let pending = PendingResponse<VersionInfoResult>(operation: "version info request", onTimeout: requestTimeoutReporter)
         let request = PendingVersionInfoRequest(pending: pending, requestId: requestId)
         pendingVersionInfo = request
+        logVersionInfoRequest(request, stage: "registered")
         DeviceManager.shared.requestVersionInfo(requestId: requestId)
         do {
             let status = try await pending.wait()
             if pendingVersionInfo === request {
                 pendingVersionInfo = nil
             }
+            logVersionInfoRequest(request, stage: "resolved")
             return status
         } catch {
             if pendingVersionInfo === request {
                 pendingVersionInfo = nil
             }
+            let sdkError = error as? BluetoothSdkError
+            logVersionInfoRequest(request, stage: "rejected", extra: [
+                "code": sdkError?.code ?? String((error as NSError).code),
+                "message": String((sdkError?.message ?? error.localizedDescription).prefix(256)),
+            ])
             throw error
         }
     }
@@ -1494,7 +1614,7 @@ public final class MentraBluetoothSDK {
                 message: "An OTA status query is already waiting for a glasses response."
             )
         }
-        let pending = PendingResponse<OtaQueryResult>(operation: operation)
+        let pending = PendingResponse<OtaQueryResult>(operation: operation, onTimeout: requestTimeoutReporter)
         pendingOtaQuery = pending
         sendRequest()
         do {
@@ -1525,7 +1645,7 @@ public final class MentraBluetoothSDK {
                 message: "An OTA start command is already waiting for a glasses response."
             )
         }
-        let pending = PendingResponse<OtaStartAckEvent>(operation: "OTA start command")
+        let pending = PendingResponse<OtaStartAckEvent>(operation: "OTA start command", onTimeout: requestTimeoutReporter)
         pendingOtaStart = pending
         DeviceManager.shared.sendOtaStart(otaVersionUrl: otaVersionUrl)
         do {
@@ -1656,8 +1776,8 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.sendReboot()
     }
 
-    func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
-        DeviceManager.shared.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
+    func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) throws {
+        try DeviceManager.shared.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
     }
 
     public func invalidate() {
@@ -1674,6 +1794,7 @@ public final class MentraBluetoothSDK {
             DeviceStore.shared.store.removeListener(storeListenerId)
             self.storeListenerId = nil
         }
+        updateCheck?.stop()
         delegate = nil
     }
 
@@ -2267,17 +2388,90 @@ public final class MentraBluetoothSDK {
         )
     }
 
+    private func recordStreamStatus(_ event: StreamStatusEvent) {
+        guard analytics.isEnabled else { return }
+        let attempt: Int?
+        var statusErrorDetails: String?
+        switch event.status {
+        case let .reconnecting(_, reconnectAttempt, _, _, _, _), let .reconnected(_, reconnectAttempt, _, _):
+            attempt = reconnectAttempt
+        case let .error(_, errorDetails, _, _):
+            attempt = nil
+            statusErrorDetails = errorDetails
+        default:
+            attempt = nil
+        }
+        let errorDetails = event.errorDetails ?? statusErrorDetails
+        let stats = event.stats
+        let now = BluetoothSdkAnalytics.epochMillis()
+        analytics.recordUsage {
+            $0.streamStatus(
+                streamId: event.streamId,
+                state: event.state.rawValue,
+                terminal: event.terminal,
+                reconnectAttempt: attempt,
+                bitrate: stats?.bitrate,
+                fps: stats?.fps,
+                droppedFrames: stats?.droppedFrames,
+                temperatureC: stats?.temperatureC,
+                errorDetails: errorDetails,
+                nowMs: now
+            )
+        }
+    }
+
+    private func glassesNetwork() -> String {
+        let glasses = glassesStatus
+        if case .enabled = glasses.hotspot { return "hotspot" }
+        if case .connected = glasses.wifi { return "wifi" }
+        return "none"
+    }
+
+    /// Runs a glasses command and reports its latency and outcome to usage
+    /// analytics. Cancellation is the caller giving up, not a command outcome, so
+    /// it is not reported.
+    private func withUsageOutcome<T>(
+        record: (_ latencyMs: Int64, _ errorCode: String?, _ result: T?) -> Void,
+        _ block: () async throws -> T
+    ) async throws -> T {
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        func elapsedMs() -> Int64 {
+            Int64(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded(.down))
+        }
+        let result: T
+        do {
+            result = try await block()
+        } catch {
+            let sdkError = error as? BluetoothSdkError
+            let cancelled = error is CancellationError || sdkError?.code == "request_cancelled"
+            if analytics.isEnabled, !cancelled {
+                record(elapsedMs(), sdkError?.code ?? String(describing: type(of: error)), nil)
+            }
+            throw error
+        }
+        if analytics.isEnabled { record(elapsedMs(), nil, result) }
+        return result
+    }
+
     private func dispatchStoreUpdate(_ category: String, _ changes: [String: Any]) {
         switch ObservableStore.normalizeCategory(category) {
         case "glasses":
             if changes["connected"] as? Bool == false {
                 resetWifiProtocolSession(sessionId: "", code: "wifi_session_disconnected")
             }
-            analytics.observeGlassesStatus(glassesStatus)
+            // CBCentralManager state is read here on the main actor, not on the analytics queue.
+            let phoneBluetoothOff = BluetoothAvailability.shared.isPoweredOff
+            analytics.observeGlassesStatus(glassesStatus) { phoneBluetoothOff }
             let nextState = state
             delegate?.mentraBluetoothSDK(self, didUpdate: nextState)
             delegate?.mentraBluetoothSDK(self, didUpdateGlasses: nextState.glasses)
         case ObservableStore.bluetoothCategory:
+            if analytics.isEnabled, changes.keys.contains(where: { Self.micStateKeys.contains($0) }) {
+                let bluetooth = bluetoothStatus
+                let transcribing = bluetooth.shouldSendTranscript || bluetooth.localSttFallbackActive
+                let now = BluetoothSdkAnalytics.epochMillis()
+                analytics.recordUsage { $0.observeMic(currentMic: bluetooth.currentMic, transcribing: transcribing, nowMs: now) }
+            }
             let nextState = state
             delegate?.mentraBluetoothSDK(self, didUpdate: nextState)
             delegate?.mentraBluetoothSDK(self, didUpdateSdkState: nextState.sdk)
@@ -2379,15 +2573,46 @@ public final class MentraBluetoothSDK {
 
     private func handleVersionInfoForRequest(_ data: [String: Any]) {
         guard let request = pendingVersionInfo else { return }
-        switch request.accumulator.accept(data) {
+        let outcome = request.accumulator.accept(data)
+        var response: [String: Any] = [
+            "responseRequestId": String((data[VersionInfoResponseAccumulator.responseRequestIdKey] as? String ?? "").prefix(128)),
+            "responseChunk": String((data[VersionInfoResponseAccumulator.responseChunkKey] as? String ?? "").prefix(64)),
+        ]
+        for key in [VersionInfoResponseAccumulator.responseIndexKey,
+                    VersionInfoResponseAccumulator.responseCountKey,
+                    VersionInfoResponseAccumulator.responseFinalKey]
+        {
+            // Typed strings survive the logger's Bool/NSNumber sanitization and
+            // preserve malformed metadata rather than making it look valid.
+            if let value = data[key] as? NSNumber {
+                response[key] = CFGetTypeID(value) == CFBooleanGetTypeID()
+                    ? "boolean:\(value.boolValue)" : "number:\(value.stringValue)"
+            } else if let value = data[key] as? String {
+                response[key] = "string:\(value.prefix(64))"
+            } else if let value = data[key] {
+                response[key] = "unsupported:\(type(of: value))"
+            }
+        }
+        switch outcome {
         case .ignored:
-            break
+            logVersionInfoRequest(request, stage: "response-ignored", extra: response)
         case .waiting:
-            break
+            logVersionInfoRequest(request, stage: "response-waiting", extra: response)
         case let .complete(result):
+            logVersionInfoRequest(request, stage: "response-complete", extra: response)
             pendingVersionInfo = nil
             request.pending.resolve(result)
         }
+    }
+
+    private func logVersionInfoRequest(_ request: PendingVersionInfoRequest, stage: String, extra: [String: Any] = [:]) {
+        var payload: [String: Any] = [
+            "requestId": request.requestId,
+            "stage": stage,
+            "elapsedMs": Int((ProcessInfo.processInfo.systemUptime - request.startedAt) * 1000),
+        ]
+        payload.merge(extra) { _, value in value }
+        BleTraceLogger.logMap(direction: "phone_app", layer: "sdk_version_request", type: "version_info", payload: payload)
     }
 
     private func dispatchBridgeEvent(_ eventName: String, _ data: [String: Any]) {
@@ -2487,6 +2712,11 @@ public final class MentraBluetoothSDK {
         case "photo_response":
             let event = PhotoResponseEvent(values: data)
             handlePhotoResponseForRequests(event)
+            if case let .error(requestId, errorCode, _, _) = event.response,
+               requestId == BluetoothSdkUsageTracker.localPhotoRequestId
+            {
+                analytics.recordUsage { $0.buttonPhotoFailed(errorCode: errorCode) }
+            }
             delegate?.mentraBluetoothSDK(self, didReceive: .photoResponse(event))
         case "photo_status":
             delegate?.mentraBluetoothSDK(self, didReceive: .photoStatus(PhotoStatusEvent(values: data)))
@@ -2497,6 +2727,10 @@ public final class MentraBluetoothSDK {
         case "video_recording_status":
             let event = VideoRecordingStatusEvent(values: data)
             handleVideoRecordingStatusForRequests(event)
+            let now = BluetoothSdkAnalytics.epochMillis()
+            analytics.recordUsage {
+                $0.videoStatus(requestId: event.requestId, status: event.status, success: event.success, nowMs: now)
+            }
             delegate?.mentraBluetoothSDK(self, didReceive: .videoRecordingStatus(event))
         case "media_success", "media_error":
             let event = MediaUploadEvent(values: data)
@@ -2512,6 +2746,7 @@ public final class MentraBluetoothSDK {
             if data["revision"] != nil && !streamSession.accept(data) { return }
             let event = StreamStatusEvent(values: data)
             handleStreamStatusForRequests(event)
+            recordStreamStatus(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(event))
         case "keep_alive_ack":
             let event = KeepAliveAckEvent(values: data)
@@ -2531,6 +2766,23 @@ public final class MentraBluetoothSDK {
                 pendingOtaStart?.reject(
                     BluetoothSdkError(code: errorCode, message: "Glasses rejected OTA start: \(errorCode)")
                 )
+            }
+            if analytics.isEnabled {
+                let glasses = glassesStatus
+                let now = BluetoothSdkAnalytics.epochMillis()
+                analytics.recordUsage {
+                    $0.otaStatus(
+                        sessionId: event.sessionId,
+                        status: event.status,
+                        stepType: event.stepType,
+                        totalSteps: event.totalSteps,
+                        errorMessage: event.errorMessage,
+                        fromBuildNumber: glasses.buildNumber,
+                        fromBesFirmwareVersion: glasses.besFirmwareVersion,
+                        fromMtkFirmwareVersion: glasses.mtkFirmwareVersion,
+                        nowMs: now
+                    )
+                }
             }
             delegate?.mentraBluetoothSDK(self, didReceive: .otaStatus(event))
         case "settings_ack":

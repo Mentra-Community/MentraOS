@@ -7,6 +7,7 @@ import com.mentra.crust.services.NotificationProcessBridge
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.functions.Queues
+import expo.modules.kotlin.functions.Coroutine
 import java.net.URL
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CoroutineName
@@ -17,9 +18,12 @@ import kotlinx.coroutines.cancel
 
 import com.mentra.crust.navigation.NavigationManager
 import com.mentra.crust.heading.HeadingManager
+import com.mentra.crust.preview.PixelCopyPreview
 import com.mentra.crust.jsc.JSCRuntime
 import com.mentra.crust.jsc.InstalledMiniappManifest
 import com.mentra.crust.jsc.JSCPolyfillBridge
+import com.mentra.crust.http.NativeHttpRequests
+import com.mentra.crust.http.nativeHttpFailureCode
 
 class CrustModule : Module() {
   companion object {
@@ -55,10 +59,6 @@ class CrustModule : Module() {
       packageName: String,
     ) {
       NotificationProcessBridge.emitDismissed(context, notificationKey, packageName)
-    }
-
-    fun emitCaptionsTesterIncident(data: Map<String, Any>) {
-      emitEvent("captions_tester_incident", data)
     }
 
     private fun emitEvent(eventName: String, data: Map<String, Any>) {
@@ -101,6 +101,7 @@ class CrustModule : Module() {
           )
   private var notificationEventReceiver: BroadcastReceiver? = null
   private var notificationBridgeContext: android.content.Context? = null
+  private val nativeHttpRequests = NativeHttpRequests(JSCPolyfillBridge.httpClient)
 
   private fun registerNotificationBridgeIfPossible(): Boolean {
     if (notificationEventReceiver != null) return true
@@ -143,7 +144,6 @@ class CrustModule : Module() {
       "onChange",
       "phone_notification",
       "phone_notification_dismissed",
-      "captions_tester_incident",
       "onNavManeuver",
       "onNavRerouting",
       "onNavArrived",
@@ -172,6 +172,7 @@ class CrustModule : Module() {
       notificationEventReceiver = null
       notificationBridgeContext = null
       eventEmitter = null
+      nativeHttpRequests.cancelAll()
       mentraJsQueue.cancel()
       mentraJsExecutor.shutdown()
     }
@@ -184,15 +185,39 @@ class CrustModule : Module() {
       sendEvent("onChange", mapOf("value" to value))
     }
 
+    AsyncFunction("captureMiniappPreview") Coroutine { viewTag: Int ->
+      val activity = appContext.currentActivity ?: error("No activity available for screenshot")
+      PixelCopyPreview.capture(activity, viewTag)
+    }
+
     AsyncFunction("nativeHttpRequest") {
-      method: String, url: String, headers: Map<String, String>, body: String? ->
-      val result = JSCPolyfillBridge.executeHttp(method, url, headers, body)
-      mapOf(
-        "status" to result.status,
-        "statusText" to result.statusText,
-        "headers" to result.headers,
-        "body" to result.body,
+      requestId: String, method: String, url: String, headers: Map<String, String>, body: String?, promise: expo.modules.kotlin.Promise ->
+      val request = try {
+        JSCPolyfillBridge.buildHttpRequest(method, url, headers, body)
+      } catch (error: Throwable) {
+        promise.reject("E_NATIVE_HTTP", error.message ?: "Native HTTP request failed", error)
+        return@AsyncFunction
+      }
+      nativeHttpRequests.enqueue(
+        requestId,
+        request,
+        onResult = { result ->
+          promise.resolve(
+            mapOf(
+              "status" to result.status,
+              "statusText" to result.statusText,
+              "headers" to result.headers,
+              "body" to result.body,
+            )
+          )
+        },
+        onError = { error -> promise.reject(nativeHttpFailureCode(error), error.message ?: "Native HTTP request failed", error) },
       )
+    }
+
+    // Same serial Expo queue as nativeHttpRequest: cancellation cannot precede registration.
+    AsyncFunction("cancelNativeHttpRequest") { requestId: String ->
+      nativeHttpRequests.cancel(requestId)
     }
 
     Function("showAVRoutePicker") { _: String? ->
@@ -303,7 +328,8 @@ class CrustModule : Module() {
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("MentraJS: no context")
       val json = org.json.JSONObject(envelope as Map<*, *>).toString()
-      JSCRuntime.shared(ctx).dispatchToJs(packageName, json)
+      val deliveryId = (envelope["deliveryId"] as? Number)?.toLong()?.takeIf { it > 0 }
+      JSCRuntime.shared(ctx).dispatchToJs(packageName, json, deliveryId)
     }.runOnQueue(mentraJsQueue)
 
     AsyncFunction("mentraJsSetManifest") { packageName: String, permissions: List<String> ->
@@ -816,7 +842,7 @@ class CrustModule : Module() {
           sendEvent("onNavArrived", emptyMap<String, Any?>())
         }
         override fun onError(message: String) {
-          sendEvent("onNavError", mapOf("message" to message))
+          sendEvent("onNavError", mapOf("message" to message, "terminal" to true))
         }
         override fun onLocation(payload: NavigationManager.LocationPayload) {
           sendEvent(
@@ -876,7 +902,10 @@ class CrustModule : Module() {
           )
           sendEvent(
             "onNavError",
-            mapOf("message" to "ACCESS_FINE_LOCATION not granted — accept the prompt and tap Start again"),
+            mapOf(
+              "message" to "ACCESS_FINE_LOCATION not granted — accept the prompt and tap Start again",
+              "terminal" to true,
+            ),
           )
           return@runOnUiThread
         }

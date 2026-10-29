@@ -13,7 +13,7 @@ The MentraOS cloud rewrite for the local JS miniapp SDK.
 ```
 cloud-v2/
 ├── packages/
-│   ├── core/      Mentra Services (OEM auth, portal backend, REST, miniapp store)
+│   ├── core/      Mentra Services (OEM auth, portal backend, REST)
 │   ├── audio/     Audio Stack (UDP ingress, workers, transcription/translation)
 │   ├── proxy/     Forwarder / reverse proxy (OEM-deployable)
 │   └── shared/    Types, config, observability primitives
@@ -63,9 +63,26 @@ Iteration: save a file, Bun restarts the affected package in well under a second
 
 - [Mentra Private Deployment contract](./deploy/private-deployment.md) —
   portable OCI image, configuration, manifest, health, and verification contract
+- [Mentra sign-in for Core's portals](./docs/signin.md) — the admin and workspace portals' sign-in
+- [Workspaces and keys](./docs/workspaces.md) — workspaces, roles, invitations, workspace and operator keys
+- [Store integration](./docs/store-integration.md) — the signed service API the Mentra Miniapp Store calls
 - [`docs/issues/`](./docs/issues/) — spec + design per work item
   - [001-oem-auth](./docs/issues/001-oem-auth/) — runtime OEM auth (JWT exchange)
   - [002-oem-portal](./docs/issues/002-oem-portal/) — OEM admin portal (planning)
   - [003-audio](./docs/issues/003-audio/) — audio path architecture
 - Linear project: [Cloud V2](https://linear.app/mentralabs/project/cloud-v2-3bd87f2acfdc)
 - Tracking PR: [#2766](https://github.com/Mentra-Community/MentraOS/pull/2766)
+
+### Testing read projections
+
+Admin suite pages read `GET /api/admin/test-runs/suites/:suiteId/summary`. This uses
+the same bounded existing-store summary reader as Test runs history, preserving
+original membership, statuses, publication state, failure reasons, lane/run links
+and timings without transferring full frozen artifact inputs. Rerun progress and
+member history use that summary too.
+
+`GET /api/admin/test-runs/suites/:suiteId` and the internal detail endpoint retain
+the complete verified frozen provenance. Rerun preview/submission continues to
+read full detail before selecting artifacts or source; display summaries cannot
+admit a job. These are views of the same receipts, with no cache or parallel
+result collection.

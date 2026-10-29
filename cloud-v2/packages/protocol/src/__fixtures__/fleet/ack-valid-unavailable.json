@@ -1,0 +1,4 @@
+{
+  "error": "fleet_unavailable",
+  "retryAfterSeconds": 60
+}

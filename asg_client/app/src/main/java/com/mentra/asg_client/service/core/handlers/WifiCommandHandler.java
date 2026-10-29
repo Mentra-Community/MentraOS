@@ -446,25 +446,18 @@ public class WifiCommandHandler implements ICommandHandler {
             }
 
             boolean currentState = networkManager.isHotspotEnabled();
-
-            // Check if already in requested state
-            if (currentState == requestedState) {
-                Log.d(TAG, "🔥 Hotspot already in requested state (" +
-                        (requestedState ? "ENABLED" : "DISABLED") +
-                        "), sending current status");
-
-                // Send current status immediately since there won't be a state change broadcast
-                sendHotspotStatusToPhone(networkManager);
-            } else {
-                // State needs to change
-                if (requestedState) {
-                    networkManager.startHotspot();
-                    Log.d(TAG, "🔥 Hotspot start requested - status will be sent via broadcast receiver");
-                } else {
-                    networkManager.stopHotspot();
-                    Log.d(TAG, "🔥 Hotspot stop requested - status will be sent via broadcast receiver");
+            if (requestedState) {
+                networkManager.startHotspot();
+                if (currentState && networkManager.isHotspotEnabled()) {
+                    sendHotspotStatusToPhone(networkManager);
                 }
-                // Broadcast receiver will handle sending the status when state actually changes
+            } else {
+                // The vendor AP can outlive the ASG process, and a pending start may still
+                // report false. The manager owns cancellation and native stop reconciliation.
+                networkManager.stopHotspot();
+                if (!currentState) {
+                    sendHotspotStatusToPhone(networkManager);
+                }
             }
 
             return true;

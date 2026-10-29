@@ -1,5 +1,6 @@
 import {DeploymentResolutionError, normalizeWorkspaceOrigin, resolveDeploymentCandidate} from "./resolver"
 import {DeploymentStore, type DeploymentStorage} from "./store"
+import {refreshWorkspaceManifest} from "./refresh"
 import type {ActiveDeployment, DeploymentManifest, WorkspaceDeployment} from "./types"
 import {MicrosoftEntraDeploymentAuthProvider} from "./auth/MicrosoftEntraDeploymentAuthProvider"
 
@@ -377,7 +378,7 @@ describe("resolveDeploymentCandidate", () => {
     })
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: async () => malformed})).rejects.toMatchObject({
       code: "invalid-manifest",
-      message: "Workspace manifest body is not valid UTF-8.",
+      message: "Organization manifest body is not valid UTF-8.",
     })
   })
 
@@ -581,5 +582,236 @@ describe("MicrosoftEntraDeploymentAuthProvider", () => {
       "Native meetings are disabled by this deployment",
     )
     expect(acquireToken).not.toHaveBeenCalled()
+  })
+})
+
+describe("workspace manifest refresh", () => {
+  const enterprise = {
+    packageName: "com.mentra.enterprise",
+    version: "0.1.11",
+    bundleUrl: `${WORKSPACE}/miniapps/com.mentra.enterprise-0.1.11.zip`,
+    sha256: "a".repeat(64),
+  }
+  const withEnterprise = (overrides: Partial<DeploymentManifest> = {}) =>
+    manifest({miniapps: {managed: [enterprise], configuration: {}}, ...overrides})
+  const navigationOn = {...manifest().features, navigation: true}
+
+  class CountingStorage extends MemoryDeploymentStorage {
+    saves = 0
+    failSaves = false
+    override save(value: ActiveDeployment): void {
+      if (this.failSaves) throw new Error("storage unavailable")
+      this.saves += 1
+      super.save(value)
+    }
+  }
+
+  async function signedIn({running = false} = {}) {
+    const persistence = new CountingStorage()
+    const store = new DeploymentStore(persistence)
+    const deployment = await store.activate({
+      workspaceOrigin: WORKSPACE,
+      manifestUrl: `${WORKSPACE}/.well-known/mentra-deployment.json`,
+      manifest: manifest(),
+    })
+    persistence.saves = 0
+    return {persistence, store, deployment, reconcile: jest.fn(), isRunning: () => running}
+  }
+
+  const candidate = (next: DeploymentManifest) => ({
+    workspaceOrigin: WORKSPACE,
+    manifestUrl: `${WORKSPACE}/.well-known/mentra-deployment.json`,
+    manifest: next,
+  })
+  const nextStart = (persistence: DeploymentStorage) => new DeploymentStore(persistence).getActive().manifest
+
+  it("applies the whole manifest at launch, before Engine starts, without a new sign-in", async () => {
+    const {persistence, store, deployment, reconcile, isRunning} = await signedIn()
+    const seen: ActiveDeployment[] = []
+    store.subscribe((next) => seen.push(next))
+    const resolve = jest.fn(async () => candidate(withEnterprise({features: navigationOn})))
+
+    await expect(refreshWorkspaceManifest({isRunning, reconcile, store, resolve})).resolves.toBe("updated")
+
+    expect(resolve).toHaveBeenCalledWith(WORKSPACE)
+    expect(store.getActive()).toMatchObject({kind: "workspace", activatedAt: deployment.activatedAt})
+    expect(store.getActive().manifest.miniapps.managed).toEqual([enterprise])
+    expect(store.getActive().manifest.features.navigation).toBe(true)
+    expect(seen).toHaveLength(1)
+    expect(reconcile).toHaveBeenCalledTimes(1)
+    expect(nextStart(persistence).miniapps.managed).toEqual([enterprise])
+  })
+
+  it("gives a running session the new miniapps now and its other changes at the next start", async () => {
+    const {persistence, store, reconcile, isRunning} = await signedIn({running: true})
+    const resolve = async () => candidate(withEnterprise({displayName: "Acme Field", features: navigationOn}))
+
+    await expect(refreshWorkspaceManifest({isRunning, reconcile, store, resolve})).resolves.toBe("updated")
+
+    // Feature switches were set up when Engine started, so they wait for the next start.
+    expect(store.getActive().manifest).toMatchObject({
+      displayName: "Acme Field",
+      miniapps: {managed: [enterprise]},
+      features: {navigation: false},
+    })
+    expect(reconcile).toHaveBeenCalledTimes(1)
+    expect(nextStart(persistence)).toMatchObject({displayName: "Acme Field", features: {navigation: true}})
+  })
+
+  it("saves a change a running session can't apply for the next start, and only once", async () => {
+    const {persistence, store, deployment, reconcile, isRunning} = await signedIn({running: true})
+    const resolve = async () => candidate(manifest({features: navigationOn}))
+
+    await expect(refreshWorkspaceManifest({isRunning, reconcile, store, resolve})).resolves.toBe("saved-for-next-start")
+    expect(store.getActive()).toBe(deployment)
+    expect(nextStart(persistence).features.navigation).toBe(true)
+
+    await expect(refreshWorkspaceManifest({isRunning, reconcile, store, resolve})).resolves.toBe("unchanged")
+    expect(persistence.saves).toBe(1)
+    // Each launch still reconciles the running session's miniapps.
+    expect(reconcile).toHaveBeenCalledTimes(2)
+  })
+
+  it("retries a running session's reconciliation for an unchanged manifest, whatever its key order", async () => {
+    const {persistence, store, deployment, reconcile, isRunning} = await signedIn()
+    const copy = JSON.parse(JSON.stringify(deployment.manifest)) as Record<string, unknown>
+    const same = Object.fromEntries(Object.entries(copy).reverse()) as unknown as DeploymentManifest
+    await expect(
+      refreshWorkspaceManifest({isRunning, reconcile, store, resolve: async () => candidate(same)}),
+    ).resolves.toBe("unchanged")
+    expect(store.getActive()).toBe(deployment)
+    expect(persistence.saves).toBe(0)
+    // An earlier reconciliation may have failed (a download, say) after the manifest was saved.
+    expect(reconcile).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps the session when an administrator only reorders the sign-in scopes", async () => {
+    const {store, reconcile, isRunning} = await signedIn()
+    const auth = manifest().auth as Extract<DeploymentManifest["auth"], {mode: "microsoft-entra"}>
+    const reordered = withEnterprise({auth: {...auth, teamsScopes: [...auth.teamsScopes].reverse()}})
+    await expect(
+      refreshWorkspaceManifest({isRunning, reconcile, store, resolve: async () => candidate(reordered)}),
+    ).resolves.toBe("updated")
+    expect(store.getActive().manifest.miniapps.managed).toEqual([enterprise])
+  })
+
+  it.each([
+    ["deployment", {deploymentId: "another-deployment"}],
+    ["Core", {services: {coreUrl: "https://core.enterprise.example", runtimeUrl: WORKSPACE}}],
+    ["Runtime", {services: {coreUrl: WORKSPACE, runtimeUrl: "https://runtime.enterprise.example"}}],
+    [
+      "sign-in app",
+      {
+        auth: {
+          ...(manifest().auth as Extract<DeploymentManifest["auth"], {mode: "microsoft-entra"}>),
+          clientId: "00000000-0000-4000-8000-000000000000",
+        },
+      },
+    ],
+  ])("keeps the saved manifest when the %s changes, since the session belongs to it", async (_, change) => {
+    const {persistence, store, deployment, reconcile, isRunning} = await signedIn()
+    const outcome = await refreshWorkspaceManifest({
+      isRunning,
+      reconcile,
+      store,
+      resolve: async () => candidate(withEnterprise(change)),
+    })
+    expect(outcome).toBe("sign-in-changed")
+    expect(store.getActive()).toBe(deployment)
+    expect(persistence.saves).toBe(0)
+    expect(reconcile).not.toHaveBeenCalled()
+  })
+
+  it("starts with the saved manifest when the workspace can't be reached or storage fails", async () => {
+    const {persistence, store, deployment, reconcile, isRunning} = await signedIn()
+    const unreachable = async () => {
+      throw new DeploymentResolutionError("Workspace manifest request failed.", "network")
+    }
+    await expect(refreshWorkspaceManifest({isRunning, reconcile, store, resolve: unreachable})).resolves.toBe(
+      "unavailable",
+    )
+    persistence.failSaves = true
+    await expect(
+      refreshWorkspaceManifest({isRunning, reconcile, store, resolve: async () => candidate(withEnterprise())}),
+    ).resolves.toBe("unavailable")
+    expect(store.getActive()).toBe(deployment)
+    expect(reconcile).not.toHaveBeenCalled()
+  })
+
+  it("keeps the adopted manifest when the running session can't apply it", async () => {
+    const {persistence, store, isRunning} = await signedIn({running: true})
+    const reconcile = jest.fn(async () => {
+      throw new Error("MANTLE: initialization cancelled by cleanup")
+    })
+    await expect(
+      refreshWorkspaceManifest({isRunning, reconcile, store, resolve: async () => candidate(withEnterprise())}),
+    ).resolves.toBe("updated")
+    expect(nextStart(persistence).miniapps.managed).toEqual([enterprise])
+  })
+
+  it("applies a slow manifest when it arrives instead of holding up launch", async () => {
+    let running = false
+    const {store, reconcile} = await signedIn()
+    let respond: (value: ReturnType<typeof candidate>) => void = () => {}
+    const slow = new Promise<ReturnType<typeof candidate>>((done) => (respond = done))
+    const outcome = await refreshWorkspaceManifest({
+      isRunning: () => running,
+      reconcile,
+      store,
+      resolve: () => slow,
+      waitMs: 1,
+    })
+    expect(outcome).toBe("finishing-in-background")
+    // Launch went ahead and started Engine from the saved manifest.
+    running = true
+    respond(candidate(withEnterprise({features: navigationOn})))
+    await slow
+    await new Promise((done) => setTimeout(done, 0))
+    expect(store.getActive().manifest.miniapps.managed).toEqual([enterprise])
+    expect(store.getActive().manifest.features.navigation).toBe(false)
+    expect(reconcile).toHaveBeenCalledTimes(1)
+  })
+
+  it("ignores a refresh for a selection the user has since left", async () => {
+    const {store, deployment} = await signedIn()
+    const revision = store.currentRevision()
+    await store.returnToMentra()
+    expect(store.adoptRefreshedManifest(deployment, withEnterprise(), {running: false, revision})).toBe("superseded")
+    expect(store.getActive().kind).toBe("consumer")
+  })
+
+  it("never lets a slower, older refresh overwrite a newer saved manifest", async () => {
+    const {persistence, store, reconcile, isRunning} = await signedIn({running: true})
+    let respondOld: (value: ReturnType<typeof candidate>) => void = () => {}
+    const older = refreshWorkspaceManifest({
+      isRunning,
+      reconcile,
+      store,
+      resolve: () => new Promise((done) => (respondOld = done)),
+      waitMs: 1,
+    })
+    await expect(older).resolves.toBe("finishing-in-background")
+    // A foreground check saves a change that waits for the next start.
+    await expect(
+      refreshWorkspaceManifest({
+        isRunning,
+        reconcile,
+        store,
+        resolve: async () => candidate(manifest({features: navigationOn})),
+      }),
+    ).resolves.toBe("saved-for-next-start")
+
+    respondOld(candidate(manifest()))
+    await new Promise((done) => setTimeout(done, 0))
+    expect(nextStart(persistence).features.navigation).toBe(true)
+  })
+
+  it("does nothing for Mentra's own deployment", async () => {
+    const store = new DeploymentStore(new MemoryDeploymentStorage())
+    const resolve = jest.fn()
+    await expect(
+      refreshWorkspaceManifest({isRunning: () => false, reconcile: jest.fn(), store, resolve}),
+    ).resolves.toBe("not-workspace")
+    expect(resolve).not.toHaveBeenCalled()
   })
 })

@@ -2,12 +2,16 @@
 export const GENERATED_RELEASE_CHANGELOGS = Object.freeze(
 [
   {
+    "version": "3.3.0",
+    "markdown": "- **Mentra Call:** Now available on iPhone, with a redesigned call screen and photo sharing during calls.\n- **Microphone:** Improved glasses microphone reliability, including after phone calls.\n- **Photos and gallery:** More reliable photo capture and gallery syncing.\n- **Glasses updates:** More reliable glasses updates, with clearer progress.\n- **Miniapps:** Miniapps now update automatically. Fixed miniapps getting stuck on loading screens.\n- **Mentra AI:** Reliability improvements and bug fixes.\n- **Notes:** Take photos with the glasses camera button, and add meeting and location details to your notes.\n- **Pairing and connections:** Improved glasses audio reconnection on Android.\n- **G1 and NIMO:** Improved text display, including accented letters.\n- **Android tablets:** The Mentra App now rotates to landscape."
+  },
+  {
     "version": "3.2.1",
     "markdown": "- **Livestreamer:** \"Stream Here\" now works without a Wi-Fi network. Improved stream startup and connection reliability.\n- **Photos and gallery:** More reliable photo capture and gallery syncing.\n- **Mentra AI:** Reliability improvements and bug fixes.\n- **Miniapps:** Smoother transitions, with back buttons and gestures that take you to the previous screen inside a miniapp.\n- **Pairing and connections:** Improved G1 pairing and G2 background reconnection.\n- **Glasses updates:** Fixed repeated update checks and improved recovery after interrupted updates.\n- **Mentra Maps:** Bug fixes.\n- **NIMO:** Improved text and map layouts.\n- **Self-hosting:** Connect the Mentra App to your own self-hosted Mentra backend."
   },
   {
     "version": "3.2.0",
-    "markdown": "- Improved glasses connectivity and Wi-Fi setup."
+    "markdown": "- Improved glasses connectivity and Wi-Fi setup.\n\n- Breaking Bluetooth SDK change: `forgetWifiNetwork(ssid)` now returns `WifiForgetResult` instead of `WifiStatusChangeEvent`. Migrate status-only consumers to the semantic `outcome`; the requested network remains `ssid`, while optional post-command connectivity is reported by `connected`, `currentSsid`, and `localIp`."
   },
   {
     "version": "3.1.1",

@@ -56,6 +56,8 @@ export class NavigationHandlers {
   private navListeners = new Map<string, () => void>()
   /** Set of packageNames that have called navigation.start() and not yet stop(). */
   private activeNavApps = new Set<string>()
+  /** Identify individual starts, including replacements within one miniapp session. */
+  private navStarts = new Map<string, symbol>()
 
   constructor(
     private readonly sendToMiniapp: SendToMiniapp,
@@ -67,17 +69,10 @@ export class NavigationHandlers {
     return this.activeNavApps.has(packageName)
   }
 
-  /**
-   * Detach the per-app nav event forwarder. Called when the mini-app
-   * disconnects. The native nav session is left running so the user can
-   * reopen the app and reattach without losing their trip; `activeNavApps`
-   * is kept intact for the same reason.
-   */
+  /** Stop the departing miniapp's trip, including a pending route startup. */
   onDisconnect(packageName: string): void {
-    const unsub = this.navListeners.get(packageName)
-    if (unsub) {
-      unsub()
-      this.navListeners.delete(packageName)
+    if (this.navListeners.has(packageName) || this.activeNavApps.has(packageName)) {
+      void this.handleStop(packageName)
     }
   }
 
@@ -139,8 +134,7 @@ export class NavigationHandlers {
       return
     }
 
-    // Reattach the per-app event forwarder (it may have been detached when the
-    // mini-app closed its UI without stopping the trip).
+    // Attach event forwarding for this miniapp session.
     if (!this.navListeners.has(packageName)) {
       const unsubNav = navigation.addListener((update: NavUpdate) => {
         this.sendToMiniapp(packageName, {
@@ -151,8 +145,9 @@ export class NavigationHandlers {
         // Trip ended naturally — keep the forwarder alive (miniapp may
         // restart nav) but remove from active set so stop() accounting
         // stays accurate.
-        if (update.kind === "arrived" || update.kind === "error") {
+        if (update.kind === "arrived" || (update.kind === "error" && update.terminal === true)) {
           this.activeNavApps.delete(packageName)
+          this.navStarts.delete(packageName)
         }
       })
       // Forward the nav-SDK's road-snapped GPS fixes as a location_update
@@ -184,9 +179,7 @@ export class NavigationHandlers {
       })
     }
 
-    // If a trip is already active for this app (user closed the UI and came
-    // back), reuse the running session — replay current snapshot and return
-    // ok without restarting the native navigator.
+    // Repeated starts from the same running miniapp reuse its active trip.
     if (this.activeNavApps.has(packageName) && navigation.getState() !== "idle") {
       console.log(`${LOG_TAG}: resuming existing nav session for ${packageName}`)
       const snapshot = navigation.getSnapshot()
@@ -194,16 +187,38 @@ export class NavigationHandlers {
       return
     }
 
+    // Claim ownership before awaiting native startup so stopping the miniapp
+    // also cancels a trip that is still waiting for its first fix or route.
+    const startToken = Symbol(packageName)
+    this.navStarts.set(packageName, startToken)
+    this.activeNavApps.add(packageName)
     try {
       const result = await navigation.start(
         {lat, lng},
         {simulate, speedMultiplier, stops, mode, avoid, missedTurnRerouteMeters},
       )
-      if (result.ok) {
-        this.activeNavApps.add(packageName)
+      if (this.navStarts.get(packageName) !== startToken) {
+        this.sendStartCanceled(packageName, requestId)
+        return
+      }
+      if (!result.ok) {
+        this.activeNavApps.delete(packageName)
+        if (this.activeNavApps.size === 0) await navigation.stop()
       }
       this.sendResult(packageName, requestId, result.ok, result, undefined)
     } catch (err) {
+      if (this.navStarts.get(packageName) !== startToken) {
+        this.sendStartCanceled(packageName, requestId)
+        return
+      }
+      this.activeNavApps.delete(packageName)
+      if (this.activeNavApps.size === 0) {
+        try {
+          await navigation.stop()
+        } catch (stopError) {
+          console.error(`${LOG_TAG}: failed to clean up navigation startup:`, stopError)
+        }
+      }
       console.error(`${LOG_TAG}: navigation start error:`, err)
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
@@ -212,7 +227,15 @@ export class NavigationHandlers {
     }
   }
 
+  private sendStartCanceled(packageName: string, requestId?: string): void {
+    this.sendResult(packageName, requestId, false, undefined, {
+      code: MiniappErrorCode.INTERNAL,
+      message: "navigation startup canceled or replaced",
+    })
+  }
+
   async handleStop(packageName: string, requestId?: string): Promise<void> {
+    this.navStarts.delete(packageName)
     try {
       const unsub = this.navListeners.get(packageName)
       if (unsub) {

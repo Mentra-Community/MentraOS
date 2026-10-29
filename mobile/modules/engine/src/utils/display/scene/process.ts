@@ -1,7 +1,7 @@
 /**
  * Scene processing — validate → clamp → budget → wrap. Everything here is
  * generic; device variation enters only through the capabilities block and the
- * display profile (data, not code). Spec §5.
+ * display profile, including its text normalization. Spec §5.
  *
  * Never rejects a frame: offending elements are dropped per-element and
  * reported via `dropped` / `degraded` (design doc §3.4.6; spec §4 refines the

@@ -33,9 +33,14 @@ import {ackMessage, createPreviewTransport, type PreviewTransport, type PreviewT
 /** The only control protocol this SDK speaks. Anything else is reported as `unsupported`. */
 export const PREVIEW_PROTOCOL_VERSION = 1
 
-/** Automatic re-handshakes after a transport failure, per window, before giving up until remount. */
+/**
+ * Immediate re-handshakes after a transport failure, per window. A burst past this waits
+ * {@link RECONNECT_COOLDOWN_MS} and tries again, so a stuck ack cannot hide the preview for the
+ * rest of the call.
+ */
 const RECONNECT_BUDGET = 3
 const RECONNECT_WINDOW_MS = 60_000
+const RECONNECT_COOLDOWN_MS = 3_000
 /** Immediate re-handshakes after the host answers a handshake as stale. */
 const STALE_HANDSHAKE_RETRIES = 2
 
@@ -97,6 +102,8 @@ export interface PreviewConnectionDeps {
   /** Document event hookup; defaults to the real `document`/`window`. */
   listen?: (target: "document" | "window", type: string, handler: () => void) => () => void
   isDocumentVisible?: () => boolean
+  /** Delay helper. Returns a cancel function. Defaults to `setTimeout`. */
+  after?: (ms: number, fn: () => void) => () => void
 }
 
 function defaultListen(target: "document" | "window", type: string, handler: () => void): () => void {
@@ -115,6 +122,11 @@ function defaultListen(target: "document" | "window", type: string, handler: () 
 
 function defaultIsVisible(): boolean {
   return typeof document === "undefined" || document.visibilityState !== "hidden"
+}
+
+function defaultAfter(ms: number, fn: () => void): () => void {
+  const id = setTimeout(fn, ms)
+  return () => clearTimeout(id)
 }
 
 interface Applied {
@@ -143,11 +155,13 @@ export class PreviewConnection {
   private handshaking: Promise<boolean> | null = null
   private opChain: Promise<void> = Promise.resolve()
   private reconnectTimes: number[] = []
+  private reconnectCooldown: (() => void) | null = null
   private paused = false
   private readonly creditLoop: CreditLoop
   private readonly createTransport: NonNullable<PreviewConnectionDeps["createTransport"]>
   private readonly now: () => number
   private readonly isVisible: () => boolean
+  private readonly after: (ms: number, fn: () => void) => () => void
   private readonly unsubscribers: Array<() => void> = []
   private counters = {handshakes: 0, reconnects: 0, staleReplies: 0, staleLocalOps: 0, tierChanges: 0}
 
@@ -155,6 +169,7 @@ export class PreviewConnection {
     this.createTransport = deps.createTransport ?? createPreviewTransport
     this.now = deps.now ?? (() => (typeof performance !== "undefined" ? performance.now() : Date.now()))
     this.isVisible = deps.isDocumentVisible ?? defaultIsVisible
+    this.after = deps.after ?? defaultAfter
     this.state = deps.channel ? "idle" : "unavailable"
     this.creditLoop = new CreditLoop({
       sendAck: (gen, seq) => this.transport?.sendText(ackMessage(gen, seq)),
@@ -237,6 +252,7 @@ export class PreviewConnection {
   close(reason: string): void {
     if (this.state === "closed") return
     previewTrace("connection_closed", {reason, docGen: this.docGen})
+    this.clearReconnectCooldown()
     this.dropTransport()
     this.setState("closed", {reason})
   }
@@ -244,6 +260,7 @@ export class PreviewConnection {
   /** Test seam: detach from the channel and document. */
   dispose(): void {
     for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe()
+    this.clearReconnectCooldown()
     this.dropTransport()
   }
 
@@ -510,12 +527,30 @@ export class PreviewConnection {
     this.reconnectTimes = this.reconnectTimes.filter((t) => at - t < RECONNECT_WINDOW_MS)
     if (this.reconnectTimes.length >= RECONNECT_BUDGET) {
       previewTraceWarn("reconnect_budget_exhausted", {reason, docGen: this.docGen})
+      this.armReconnectCooldown(reason)
       return
     }
+    this.clearReconnectCooldown()
     this.reconnectTimes.push(at)
     this.counters.reconnects += 1
     previewTrace("reconnect", {reason, docGen: this.docGen, reconnects: this.counters.reconnects})
     this.sync()
+  }
+
+  /** After a burst of failures, try once more instead of leaving the preview on the uplink card. */
+  private armReconnectCooldown(reason: string): void {
+    if (this.reconnectCooldown) return
+    this.reconnectCooldown = this.after(RECONNECT_COOLDOWN_MS, () => {
+      this.reconnectCooldown = null
+      if (this.state !== "error" || !this.isVisible() || !this.wantsFrames()) return
+      this.reconnectTimes = []
+      this.scheduleReconnect(reason)
+    })
+  }
+
+  private clearReconnectCooldown(): void {
+    this.reconnectCooldown?.()
+    this.reconnectCooldown = null
   }
 
   private dropTransport(): void {

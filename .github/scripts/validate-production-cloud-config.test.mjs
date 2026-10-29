@@ -1,8 +1,13 @@
 import assert from "node:assert/strict"
 import {generateKeyPairSync} from "node:crypto"
+import {mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs"
+import {tmpdir} from "node:os"
+import path from "node:path"
 import test from "node:test"
+import {fileURLToPath} from "node:url"
 
 import {
+  directEnvironmentKeys,
   parseEnvironmentFile,
   validateContractCoverage,
   validateProductionCloudConfig,
@@ -98,6 +103,33 @@ test("fails for missing, forbidden, local, and unclassified config", () => {
     () => validateContractCoverage(contract, ["NODE_ENV", "NEW_REQUIRED_FEATURE_KEY"]),
     /NEW_REQUIRED_FEATURE_KEY/,
   )
+})
+
+// The release preflight stops on any key the Cloud V2 source reads that the
+// contract doesn't classify. Fail here, on the change that adds the key, rather
+// than on release day.
+test("the production contract classifies every key the Cloud V2 source reads", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+  const production = JSON.parse(
+    readFileSync(path.join(root, ".github/production-release/cloud-config-contract.json"), "utf8"),
+  )
+  assert.equal(validateContractCoverage(production, directEnvironmentKeys(root)), true)
+})
+
+test("the source scan reads package code, not tests or installed dependencies", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "cloud-config-scan-"))
+  try {
+    const write = (file, source) => {
+      mkdirSync(path.dirname(path.join(root, file)), {recursive: true})
+      writeFileSync(path.join(root, file), source)
+    }
+    write("cloud-v2/packages/core/src/config.ts", "process.env.SOURCE_KEY")
+    write("cloud-v2/packages/core/src/config.test.ts", "process.env.TEST_ONLY_KEY")
+    write("cloud-v2/packages/core/node_modules/dependency/index.ts", "process.env.DEPENDENCY_KEY")
+    assert.deepEqual(directEnvironmentKeys(root), ["SOURCE_KEY"])
+  } finally {
+    rmSync(root, {recursive: true, force: true})
+  }
 })
 
 test("accepts the bare base64 key bodies Cloud V2 stores, and rejects mismatched or garbage keys", () => {

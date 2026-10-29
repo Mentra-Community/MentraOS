@@ -8,9 +8,12 @@ import android.net.NetworkCapabilities;
 import android.os.SystemClock;
 import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.UUID;
@@ -27,6 +30,23 @@ public final class OtaHttpRequest implements AutoCloseable {
     private long mBytes;
     private String mPhase = "connect";
     private InputStream mStream;
+    private long mReadCount;
+    private long mLastReadStarted = -1;
+    private long mLastReadFinished = -1;
+    private long mReadDuration;
+    private long mMaxReadDuration;
+    private long mLastReadDuration;
+    private long mInterReadGap;
+    private long mMaxInterReadGap;
+    private long mBytesWritten;
+    private long mWriteCount;
+    private long mWriteDuration;
+    private long mMaxWriteDuration;
+    private long mLastWriteFinished = -1;
+    private boolean mOutputTracked;
+    private boolean mEof;
+    private boolean mFailed;
+    private boolean mTransferSnapshotTaken;
 
     public OtaHttpRequest(Context context, String url, String artifact) throws IOException {
         this(context, (HttpURLConnection) new URL(url).openConnection(), artifact);
@@ -58,18 +78,33 @@ public final class OtaHttpRequest implements AutoCloseable {
             mPhase = "body";
             mStream = new FilterInputStream(mConnection.getInputStream()) {
                 @Override public int read() throws IOException {
+                    long started = beginRead();
                     try {
                         int value = in.read();
-                        received(value < 0 ? 0 : 1);
+                        finishedRead(started, value < 0 ? -1 : 1);
                         return value;
-                    } catch (IOException e) { throw failure(e); }
+                    } catch (IOException e) {
+                        finishedRead(started, 0);
+                        recordFailure(e, "read");
+                        throw failure(e);
+                    }
                 }
                 @Override public int read(byte[] bytes, int offset, int count) throws IOException {
+                    long started = beginRead();
                     try {
                         int value = in.read(bytes, offset, count);
-                        received(Math.max(value, 0));
+                        finishedRead(started, value);
                         return value;
-                    } catch (IOException e) { throw failure(e); }
+                    } catch (IOException e) {
+                        finishedRead(started, 0);
+                        recordFailure(e, "read");
+                        throw failure(e);
+                    }
+                }
+                @Override public void close() throws IOException {
+                    snapshotTransfer(SystemClock.elapsedRealtime());
+                    try { in.close(); }
+                    catch (IOException e) { recordFailure(e, "input_close"); throw e; }
                 }
             };
             return mStream;
@@ -78,12 +113,121 @@ public final class OtaHttpRequest implements AutoCloseable {
 
     public long contentLength() { return mConnection.getContentLengthLong(); }
 
-    private void received(int count) {
-        mBytes += count;
-        if (count > 0) mLastByte = SystemClock.elapsedRealtime();
+    private long beginRead() {
+        long now = SystemClock.elapsedRealtime();
+        if (mLastReadFinished >= 0) {
+            long gap = now - mLastReadFinished;
+            mInterReadGap += gap;
+            mMaxInterReadGap = Math.max(mMaxInterReadGap, gap);
+        }
+        mLastReadStarted = now;
+        mReadCount++;
+        return now;
+    }
+
+    private void finishedRead(long started, int count) {
+        long now = SystemClock.elapsedRealtime();
+        mLastReadFinished = now;
+        mLastReadDuration = now - started;
+        mReadDuration += mLastReadDuration;
+        mMaxReadDuration = Math.max(mMaxReadDuration, mLastReadDuration);
+        if (count > 0) {
+            mBytes += count;
+            mLastByte = now;
+        } else if (count < 0) {
+            mEof = true;
+            snapshotTransfer(now);
+        }
+    }
+
+    /** Internal APK output diagnostics; the original file operations and exceptions are preserved. */
+    public OutputStream openOutput(File destination) throws IOException {
+        try { return trackOutput(new FileOutputStream(destination)); }
+        catch (IOException e) { recordFailure(e, "output_open"); throw e; }
+    }
+
+    // Injection seam for output timing/failures without filesystem or network operations.
+    OutputStream trackOutput(OutputStream output) {
+        mOutputTracked = true;
+        return new OutputStream() {
+            @Override public void write(int value) throws IOException {
+                long started = SystemClock.elapsedRealtime();
+                try {
+                    output.write(value);
+                    finishedWrite(started, 1);
+                } catch (IOException e) {
+                    finishedWrite(started, 0);
+                    recordFailure(e, "output_write");
+                    throw e;
+                }
+            }
+            @Override public void write(byte[] bytes, int offset, int count) throws IOException {
+                long started = SystemClock.elapsedRealtime();
+                try {
+                    output.write(bytes, offset, count);
+                    finishedWrite(started, count);
+                } catch (IOException e) {
+                    finishedWrite(started, 0);
+                    recordFailure(e, "output_write");
+                    throw e;
+                }
+            }
+            @Override public void flush() throws IOException { output.flush(); }
+            @Override public void close() throws IOException {
+                snapshotTransfer(SystemClock.elapsedRealtime());
+                try { output.close(); }
+                catch (IOException e) { recordFailure(e, "output_close"); throw e; }
+            }
+        };
+    }
+
+    private void finishedWrite(long started, int count) {
+        long now = SystemClock.elapsedRealtime();
+        long duration = now - started;
+        mWriteCount++;
+        mWriteDuration += duration;
+        mMaxWriteDuration = Math.max(mMaxWriteDuration, duration);
+        // A throwing write may have written a prefix; only normally returned writes are known.
+        mBytesWritten += count;
+        mLastWriteFinished = now;
+    }
+
+    private void recordFailure(IOException error, String operation) {
+        if (!mFailed) {
+            long now = SystemClock.elapsedRealtime();
+            put("failureAtMs", now - mStarted);
+            put("failureOperation", operation);
+            put("failureClass", error.getClass().getSimpleName());
+            snapshotTransfer(now);
+            mFailed = true;
+        }
+    }
+
+    private void snapshotTransfer(long now) {
+        if (mTransferSnapshotTaken) return;
+        mTransferSnapshotTaken = true;
+        put("bytes", mBytes);
+        put("elapsedMs", now - mStarted);
+        put("lastByteAgeMs", now - mLastByte);
+        put("eofReached", mEof);
+        put("readCount", mReadCount);
+        put("lastReadStartedMs", mLastReadStarted < 0 ? -1 : mLastReadStarted - mStarted);
+        put("lastReadFinishedMs", mLastReadFinished < 0 ? -1 : mLastReadFinished - mStarted);
+        put("lastReadDurationMs", mLastReadDuration);
+        put("readDurationMs", mReadDuration);
+        put("maxReadDurationMs", mMaxReadDuration);
+        put("interReadGapMs", mInterReadGap);
+        put("maxInterReadGapMs", mMaxInterReadGap);
+        put("outputTracked", mOutputTracked);
+        put("bytesWritten", mBytesWritten);
+        put("writeCount", mWriteCount);
+        put("writeDurationMs", mWriteDuration);
+        put("maxWriteDurationMs", mMaxWriteDuration);
+        put("lastWriteFinishedMs", mLastWriteFinished < 0 ? -1 : mLastWriteFinished - mStarted);
     }
 
     private IOException failure(IOException error) {
+        recordFailure(error, mPhase);
         put("error", classify(error, mPhase, mTrace.optInt("httpStatus", 0)));
         // Exception messages may include signed URLs; retain only the causal class chain.
         JSONArray causes = new JSONArray();
@@ -143,12 +287,11 @@ public final class OtaHttpRequest implements AutoCloseable {
     }
 
     @Override public void close() {
+        snapshotTransfer(SystemClock.elapsedRealtime());
         try { if (mStream != null) mStream.close(); } catch (IOException ignored) { }
         finally { mConnection.disconnect(); }
         put("phase", mPhase);
-        put("bytes", mBytes);
-        put("elapsedMs", SystemClock.elapsedRealtime() - mStarted);
-        put("lastByteAgeMs", SystemClock.elapsedRealtime() - mLastByte);
+        put("bodyOutcome", mFailed ? "failed" : mEof ? "eof" : "incomplete");
         put("networkEnd", networkSnapshot());
         retain(mContext, mTrace);
     }
@@ -161,7 +304,7 @@ public final class OtaHttpRequest implements AutoCloseable {
                 bounded.put(entries.get(i));
             }
             JSONObject entry = new JSONObject().put("timestamp", System.currentTimeMillis())
-                    .put("level", trace.has("error") ? "warn" : "info")
+                    .put("level", trace.has("error") || "failed".equals(trace.optString("bodyOutcome")) ? "warn" : "info")
                     .put("source", "OtaHttpRequest").put("message", trace.toString());
             bounded.put(entry);
             context.getSharedPreferences(AsgConstants.OTA_NETWORK_HISTORY_PREFS, Context.MODE_PRIVATE)

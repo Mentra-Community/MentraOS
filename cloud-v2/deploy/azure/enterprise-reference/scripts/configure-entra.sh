@@ -5,11 +5,17 @@ CORE_NAME="${CORE_NAME:-Mentra Core}"
 MOBILE_NAME="${MOBILE_NAME:-Mentra Mobile}"
 CORE_CLIENT_ID="${CORE_CLIENT_ID:-}"
 MOBILE_CLIENT_ID="${MOBILE_CLIENT_ID:-}"
+INSTALLER_OWNER="${INSTALLER_OWNER:-}"
+CORE_OWNER="${CORE_OWNER:-}"
+ADMIN_PORTAL_URL="${ADMIN_PORTAL_URL:-}"
 GRANT_ADMIN_CONSENT=false
+CONSENT_ONLY=false
+PORTAL_ONLY=false
 IOS_REDIRECT="msauth.com.mentra.mentra://auth"
 APK_REDIRECT="msauth://com.mentra.mentra/q%2FZbvbReOLgD1T6V3o1PK%2Fzjwz0%3D"
 PLAY_REDIRECT="msauth://com.mentra.mentra/Pwi%2FLvF9HHWTAMonaqwan%2BeIX6A%3D"
 ACS_APP_ID="1fd5118e-2576-4263-8130-9503064c837a"
+GRAPH_APP_ID="00000003-0000-0000-c000-000000000000"
 INTEGRATED_TAG="WindowsAzureActiveDirectoryIntegratedApp"
 
 usage() {
@@ -22,7 +28,17 @@ usage() {
     "  --mobile-name NAME           Display name when creating/finding Mobile (default: $MOBILE_NAME)" \
     "  --core-client-id UUID     Reconcile this existing Core registration" \
     "  --mobile-client-id UUID      Reconcile this existing Mobile registration" \
+    "  --installer-owner UUID       Tag new registrations with this installer; a same-named app is" \
+    "                               reused only if it carries the tag" \
+    "  --core-owner UUID            Make this user or service principal an owner of Core, so it can" \
+    "                               manage Core's admin portal client secret and redirect URI" \
+    "  --admin-portal-url URL       Core's https:// origin; registers URL/interaction/callback/workforce," \
+    "                               where Entra returns people to Core's sign-in server, on Core" \
     "  --grant-admin-consent        Grant tenant-wide consent after configuring permissions" \
+    "  --consent-only               Only grant consent for --mobile-client-id (and --core-client-id," \
+    "                               if given); change nothing else" \
+    "  --admin-portal-only          Only configure admin portal sign-in on --core-client-id (the" \
+    "                               email claim, sign-in permissions and --admin-portal-url)" \
     "  --help                       Show this help" \
     "" \
     "Run while signed into the customer's tenant as an Application/Cloud Application or Global Administrator."
@@ -34,18 +50,228 @@ while [[ $# -gt 0 ]]; do
     --mobile-name) MOBILE_NAME="$2"; shift 2 ;;
     --core-client-id) CORE_CLIENT_ID="$2"; shift 2 ;;
     --mobile-client-id) MOBILE_CLIENT_ID="$2"; shift 2 ;;
+    --installer-owner) INSTALLER_OWNER="$2"; shift 2 ;;
+    --core-owner) CORE_OWNER="$2"; shift 2 ;;
+    --admin-portal-url) ADMIN_PORTAL_URL="$2"; shift 2 ;;
     --grant-admin-consent) GRANT_ADMIN_CONSENT=true; shift ;;
+    --consent-only) CONSENT_ONLY=true; shift ;;
+    --admin-portal-only) PORTAL_ONLY=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
-for command in az jq uuidgen; do
+# Core's sign-in server sends exactly <origin>/interaction/callback/workforce, so register exactly that.
+ADMIN_PORTAL_URL="${ADMIN_PORTAL_URL%/}"
+ORIGIN_PATTERN='^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$'
+if [[ -n "$ADMIN_PORTAL_URL" && ! "$ADMIN_PORTAL_URL" =~ $ORIGIN_PATTERN ]]; then
+  printf -- '--admin-portal-url must be the https:// origin of Core, such as https://core.example.com\n' >&2
+  exit 2
+fi
+PORTAL_REDIRECT="${ADMIN_PORTAL_URL:+$ADMIN_PORTAL_URL/interaction/callback/workforce}"
+UUID_PATTERN='^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$'
+if [[ -n "$CORE_OWNER" && ! "$CORE_OWNER" =~ $UUID_PATTERN ]]; then
+  printf -- '--core-owner must be an object ID (a UUID)\n' >&2
+  exit 2
+fi
+if [[ "$PORTAL_ONLY" == true && ! "$CORE_CLIENT_ID" =~ $UUID_PATTERN ]]; then
+  printf -- '--admin-portal-only requires --core-client-id\n' >&2
+  exit 2
+fi
+
+for command in az jq python3; do
   command -v "$command" >/dev/null || { printf '%s is required\n' "$command" >&2; exit 1; }
 done
 
+# Explicit binding for the resumable installer; preserve the standalone helper.
+if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}" ]]; then
+  # Entra commands are tenant-scoped and do not accept --subscription. Select
+  # the requested subscription in a private copy of the existing CLI profile,
+  # leaving the caller's default and concurrent agents' logins untouched.
+  ORIGINAL_AZURE_CONFIG_DIR="${AZURE_CONFIG_DIR:-$HOME/.azure}"
+  ENTRA_AZURE_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mentra-entra-azure.XXXXXX")"
+  trap 'rm -rf "$ENTRA_AZURE_CONFIG_DIR"' EXIT
+  python3 - "$ORIGINAL_AZURE_CONFIG_DIR" "$ENTRA_AZURE_CONFIG_DIR" <<'PYPROFILE'
+import os
+from pathlib import Path
+import shutil
+import sys
+
+source, target = map(Path, sys.argv[1:])
+for name in ('azureProfile.json', 'msal_token_cache.json', 'msal_token_cache.bin',
+             'msal_http_cache.bin', 'service_principal_entries.json', 'service_principal_entries.bin', 'config'):
+    path = source / name
+    if path.is_file():
+        shutil.copyfile(path, target / name)
+        os.chmod(target / name, 0o600)
+PYPROFILE
+  export AZURE_CONFIG_DIR="$ENTRA_AZURE_CONFIG_DIR"
+  export AZURE_EXTENSION_DIR="${AZURE_EXTENSION_DIR:-$ORIGINAL_AZURE_CONFIG_DIR/cliextensions}"
+  az account set --subscription "$MENTRA_SUBSCRIPTION_ID"
+fi
 TENANT_ID="$(az account show --query tenantId -o tsv)"
+if [[ -n "${MENTRA_EXPECTED_TENANT_ID:-}" && "$(tr '[:upper:]' '[:lower:]' <<<"$TENANT_ID")" != "$(tr '[:upper:]' '[:lower:]' <<<"$MENTRA_EXPECTED_TENANT_ID")" ]]; then
+  printf 'Azure login does not match the configured Entra tenant. No registrations changed.\n' >&2
+  exit 1
+fi
 [[ -n "$TENANT_ID" ]] || { printf 'Azure CLI is not signed in\n' >&2; exit 1; }
+
+if [[ -n "${INSTALLER_OWNER:-}" && ! "$INSTALLER_OWNER" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+  printf -- '--installer-owner must be a UUID\n' >&2
+  exit 2
+fi
+OWNER_TAG="${INSTALLER_OWNER:+mentraInstallerOwner:$INSTALLER_OWNER}"
+
+# A directory object created moments ago can take a while to be readable
+# everywhere; retry reads and updates of new objects instead of failing.
+# Entra takes a while to show objects it just created. Earlier attempts stay
+# quiet so expected "does not exist" replies don't read as failures.
+retry() {
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11; do
+    "$@" 2>/dev/null && return 0
+    sleep "${MENTRA_ENTRA_RETRY_SECONDS:-5}"
+  done
+  "$@"
+}
+
+# jq --argjson puts each document on argv. Linux rejects any single argument
+# over 128KiB ("Argument list too long", exit 126), and `az ad sp show` of
+# Microsoft Graph is larger than that. Bind each document from a file.
+# --slurpfile wraps it in a one-element array: use $name[0] for the object.
+# Pass -n; these documents are not on stdin.
+jq_json() {
+  local dir name status=0
+  local bindings=()
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/mentra-jq.XXXXXX")"
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    name="$1"
+    case "$name" in
+      [A-Za-z_][A-Za-z0-9_]*) ;;
+      *)
+        rm -rf "$dir"
+        printf 'jq_json: invalid binding name %s\n' "$name" >&2
+        return 2
+        ;;
+    esac
+    if [[ $# -lt 2 || "$2" == "--" ]]; then
+      rm -rf "$dir"
+      printf 'jq_json: missing JSON for %s\n' "$name" >&2
+      return 2
+    fi
+    printf '%s' "$2" >"$dir/$name"
+    bindings+=(--slurpfile "$name" "$dir/$name")
+    shift 2
+  done
+  [[ "${1:-}" == "--" ]] && shift
+  jq "${bindings[@]}" "$@" || status=$?
+  rm -rf "$dir"
+  return "$status"
+}
+
+# Tenant-wide admin consent through Microsoft Graph: one AllPrincipals grant
+# per API the app requests. (az ad app permission admin-consent calls an
+# unsupported portal endpoint that fails in Cloud Shell and can report success
+# without granting anything.)
+grant_admin_consent() {
+  local app client_sp resource resource_sp resource_id scopes grant filter
+  app="$(retry az ad app show --id "$1" -o json)"
+  client_sp="$(retry az ad sp show --id "$1" --query id -o tsv)"
+  for resource in $(jq -r '.requiredResourceAccess[]?.resourceAppId' <<<"$app"); do
+    resource_sp="$(retry az ad sp show --id "$resource" -o json)"
+    resource_id="$(jq -r .id <<<"$resource_sp")"
+    scopes="$(jq_json app "$app" resource_sp "$resource_sp" -- -nr --arg resource "$resource" '
+      $app[0] as $app | $resource_sp[0] as $resource_sp |
+      [$app.requiredResourceAccess[] | select(.resourceAppId == $resource) | .resourceAccess[] | select(.type == "Scope") | .id] as $ids
+      | [$resource_sp.oauth2PermissionScopes[]? | select(.id as $id | $ids | index($id)) | .value] | join(" ")')"
+    [[ -n "$scopes" ]] || continue
+    filter="clientId%20eq%20'$client_sp'%20and%20consentType%20eq%20'AllPrincipals'%20and%20resourceId%20eq%20'$resource_id'"
+    grant="$(az rest --method GET --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGrants?\$filter=$filter" \
+      --query 'value[0].id' -o tsv)"
+    if [[ -n "$grant" ]]; then
+      az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGrants/$grant" \
+        --headers 'Content-Type=application/json' --body "$(jq -cn --arg scope "$scopes" '{scope: $scope}')" --output none
+    else
+      post_grant "$(jq -cn --arg client "$client_sp" --arg resource "$resource_id" --arg scope "$scopes" \
+        '{clientId: $client, consentType: "AllPrincipals", resourceId: $resource, scope: $scope}')"
+    fi
+  done
+}
+
+# A new app's service principal can take a while to be usable in a grant, so
+# retry like retry() does. Entra's refusal of an operator without an approving
+# role is final: report it at once instead of retrying it for a minute.
+post_grant() {
+  local attempt output
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    output="$(az rest --method POST --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGrants" \
+      --headers 'Content-Type=application/json' --output none --body "$1" 2>&1)" && return 0
+    if [[ "$attempt" == 12 ]] || grep -q -E 'Authorization_RequestDenied|Forbidden' <<<"$output"; then
+      printf '%s\n' "$output" >&2
+      return 1
+    fi
+    sleep "${MENTRA_ENTRA_RETRY_SECONDS:-5}"
+  done
+}
+
+# Admin portal sign-in: Core is also a confidential web client of this
+# directory. Its ID tokens need the email claim (Entra sends members' email only
+# as an optional claim), the OpenID sign-in scopes, and, once Core's address is
+# known, the portal's redirect URI. Everything else on the app is kept.
+configure_admin_portal() {
+  local app graph_sp body
+  app="$(retry az ad app show --id "$1" -o json)"
+  graph_sp="$(retry az ad sp show --id "$GRAPH_APP_ID" -o json)"
+  body="$(jq_json existing "$app" graph "$graph_sp" -- -cn --arg graph_app "$GRAPH_APP_ID" \
+    --arg redirect "$PORTAL_REDIRECT" '
+    $existing[0] as $existing | $graph[0] as $graph |
+    [$graph.oauth2PermissionScopes[]? | select(.value == ("openid", "email", "profile")) | {id, type: "Scope"}] as $sign_in |
+    if ($sign_in | length) != 3 then error("Microsoft Graph sign-in scopes were not found") else . end |
+    ($existing.optionalClaims.idToken // []) as $claims |
+    ($existing.requiredResourceAccess // []) as $access |
+    {optionalClaims: (($existing.optionalClaims // {}) + {idToken: (if any($claims[]; .name == "email") then $claims
+       else $claims + [{name: "email", source: null, essential: false, additionalProperties: []}] end)}),
+     requiredResourceAccess: (($access | map(select(.resourceAppId != $graph_app)))
+       + [{resourceAppId: $graph_app, resourceAccess: (([$access[] | select(.resourceAppId == $graph_app)
+           | (.resourceAccess // [])[]] + $sign_in) | unique_by(.id))}])}
+    + (if $redirect == "" then {} else {web: (($existing.web // {}) | del(.redirectUriSettings)
+       | .redirectUris = ((.redirectUris // []) + [$redirect] | unique))} end)')"
+  retry az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$1" \
+    --headers 'Content-Type=application/json' --body "$body" --output none
+}
+
+# An owner can manage the app's client secrets and redirect URIs without an
+# Entra administrator role.
+add_owner() {
+  local owners
+  owners="$(az rest --method GET --uri "https://graph.microsoft.com/v1.0/applications/$1/owners?\$select=id" \
+    --query 'value[].id' -o json)" || return
+  jq -e --arg id "$2" 'index($id) != null' <<<"$owners" >/dev/null && return 0
+  az rest --method POST --uri "https://graph.microsoft.com/v1.0/applications/$1/owners/\$ref" \
+    --headers 'Content-Type=application/json' --output none \
+    --body "$(jq -cn --arg id "$2" '{"@odata.id": ("https://graph.microsoft.com/v1.0/directoryObjects/" + $id)}')"
+}
+
+if [[ "${CONSENT_ONLY:-false}" == true ]]; then
+  [[ "$MOBILE_CLIENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { printf -- '--consent-only requires --mobile-client-id\n' >&2; exit 2; }
+  grant_admin_consent "$MOBILE_CLIENT_ID"
+  [[ -z "$CORE_CLIENT_ID" ]] || grant_admin_consent "$CORE_CLIENT_ID"
+  jq -n --arg tenantId "$TENANT_ID" --arg mobileClientId "$MOBILE_CLIENT_ID" --arg coreApiClientId "$CORE_CLIENT_ID" \
+    '{tenantId:$tenantId,mobileClientId:$mobileClientId,consent:"granted"}
+     + (if $coreApiClientId == "" then {} else {coreApiClientId:$coreApiClientId} end)'
+  exit 0
+fi
+
+if [[ "${PORTAL_ONLY:-false}" == true ]]; then
+  portal_object_id="$(retry az ad app show --id "$CORE_CLIENT_ID" --query id -o tsv)"
+  configure_admin_portal "$portal_object_id"
+  [[ -z "$CORE_OWNER" ]] || retry add_owner "$portal_object_id" "$CORE_OWNER"
+  [[ "$GRANT_ADMIN_CONSENT" != true ]] || grant_admin_consent "$CORE_CLIENT_ID"
+  jq -n --arg tenantId "$TENANT_ID" --arg coreApiClientId "$CORE_CLIENT_ID" --arg redirect "$PORTAL_REDIRECT" \
+    '{tenantId:$tenantId,coreApiClientId:$coreApiClientId}
+     + (if $redirect == "" then {} else {adminPortalRedirectUri:$redirect} end)'
+  exit 0
+fi
 
 find_or_create_app() {
   local client_id="$1"
@@ -54,7 +280,7 @@ find_or_create_app() {
   if [[ -n "$client_id" ]]; then
     object_id="$(az ad app show --id "$client_id" --query id -o tsv)" || return
   else
-    local apps matches escaped_display_name
+    local apps owned escaped_display_name
     # --display-name is a prefix search. Escape OData string literals and use
     # one exact-name snapshot for both the count and selected object id.
     # Leave this assignment unquoted for Bash 3.2's replacement escaping.
@@ -63,19 +289,31 @@ find_or_create_app() {
     # Graph comparisons can be case-insensitive; require the literal name.
     apps="$(jq -ce --arg name "$display_name" \
       'if type != "array" then error("Expected an app registration array") else map(select(.displayName == $name)) end' <<<"$apps")" || return
-    matches="$(jq -r 'length' <<<"$apps")" || return
-    if [[ "$matches" == "0" ]]; then
-      object_id="$(az ad app create --display-name "$display_name" --sign-in-audience AzureADMyOrg --query id -o tsv)" || return
-    elif [[ "$matches" == "1" ]]; then
-      object_id="$(jq -er '.[0].id | select(type == "string" and length > 0)' <<<"$apps")" || return
+    # Only an app this installer created (tagged at creation) is reused by name;
+    # adopting someone else's same-named registration would reconfigure it.
+    owned="$(jq -c --arg tag "$OWNER_TAG" 'map(select($tag != "" and ((.tags // []) | index($tag))))' <<<"$apps")" || return
+    if [[ "$(jq -r 'length' <<<"$owned")" -gt 1 ]]; then
+      printf 'More than one app registration named %s was created by this setup. Delete the extra one in Entra, then run setup again.\n' "$display_name" >&2
+      exit 1
+    elif [[ "$(jq -r 'length' <<<"$owned")" == "1" ]]; then
+      object_id="$(jq -er '.[0].id | select(type == "string" and length > 0)' <<<"$owned")" || return
+    elif [[ "$(jq -r 'length' <<<"$apps")" == "0" ]]; then
+      # Created single-tenant and tagged in one call, so the result needs no further check.
+      object_id="$(az rest --method POST --uri "https://graph.microsoft.com/v1.0/applications" \
+        --headers 'Content-Type=application/json' \
+        --body "$(jq -cn --arg name "$display_name" --arg tag "$OWNER_TAG" \
+          '{displayName: $name, signInAudience: "AzureADMyOrg"} + (if $tag == "" then {} else {tags: [$tag]} end)')" \
+        --query id -o tsv)" || return
+      printf '%s' "$object_id"
+      return
     else
-      printf 'More than one app registration is named %s; pass its client id explicitly.\n' "$display_name" >&2
+      printf 'Entra already has an app registration named %s that this setup did not create. Rename or delete that app (or pass its client id to the standalone helper), then run setup again.\n' "$display_name" >&2
       exit 1
     fi
   fi
   # Newly created apps request AzureADMyOrg above; an existing app must already
   # be single-tenant so this helper never reconciles a multi-tenant registration.
-  [[ "$(az ad app show --id "$object_id" --query signInAudience -o tsv)" == "AzureADMyOrg" ]] || {
+  [[ "$(retry az ad app show --id "$object_id" --query signInAudience -o tsv)" == "AzureADMyOrg" ]] || {
     printf 'App %s must be single-tenant (AzureADMyOrg).\n' "$display_name" >&2
     exit 1
   }
@@ -87,7 +325,8 @@ ensure_service_principal() {
   local sp_id
   sp_id="$(az ad sp list --filter "appId eq '$client_id'" --query '[0].id' -o tsv)"
   if [[ -z "$sp_id" ]]; then
-    sp_id="$(az ad sp create --id "$client_id" --query id -o tsv)"
+    # Fails with "does not exist" until a new app has replicated.
+    sp_id="$(retry az ad sp create --id "$client_id" --query id -o tsv)"
   fi
   printf '%s' "$sp_id"
 }
@@ -96,31 +335,34 @@ tag_service_principal() {
   local sp_id="$1"
   local require_assignment="$2"
   local tags body
-  tags="$(az rest --method GET --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$sp_id" --query tags -o json)"
+  tags="$(retry az rest --method GET --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$sp_id" --query tags -o json)"
   body="$(jq -cn --arg tag "$INTEGRATED_TAG" --argjson tags "${tags:-[]}" --argjson required "$require_assignment" \
     '{tags: (($tags + [$tag]) | unique), appRoleAssignmentRequired: $required}')"
-  az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$sp_id" \
+  retry az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$sp_id" \
     --headers 'Content-Type=application/json' --body "$body" --output none
 }
 
+printf 'Setting up the Microsoft Entra sign-in apps. This can take a few minutes while Entra catches up.\n' >&2
 CORE_OBJECT_ID="$(find_or_create_app "$CORE_CLIENT_ID" "$CORE_NAME")"
-CORE_CLIENT_ID="$(az ad app show --id "$CORE_OBJECT_ID" --query appId -o tsv)"
-CORE_SCOPE_ID="$(az ad app show --id "$CORE_OBJECT_ID" --query "api.oauth2PermissionScopes[?value=='mentra.session'].id | [0]" -o tsv)"
+CORE_CLIENT_ID="$(retry az ad app show --id "$CORE_OBJECT_ID" --query appId -o tsv)"
+CORE_SCOPE_ID="$(retry az ad app show --id "$CORE_OBJECT_ID" --query "api.oauth2PermissionScopes[?value=='mentra.session'].id | [0]" -o tsv)"
 if [[ -z "$CORE_SCOPE_ID" ]]; then
-  CORE_SCOPE_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+  CORE_SCOPE_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 fi
 
-core_app="$(az ad app show --id "$CORE_OBJECT_ID" -o json)"
-core_body="$(jq -cn \
+core_app="$(retry az ad app show --id "$CORE_OBJECT_ID" -o json)"
+core_body="$(jq_json existing "$core_app" -- -cn \
   --arg uri "api://$CORE_CLIENT_ID" \
   --arg scope_id "$CORE_SCOPE_ID" \
-  --argjson existing "$core_app" \
-  '{identifierUris: (($existing.identifierUris // []) + [$uri] | unique), api:(($existing.api // {}) + {requestedAccessTokenVersion:2, oauth2PermissionScopes: ((($existing.api.oauth2PermissionScopes // []) | map(select(.value != "mentra.session"))) + [{adminConsentDescription:"Allow the Mentra App to access this organization Core on behalf of the signed-in user.",adminConsentDisplayName:"Access Mentra Core",id:$scope_id,isEnabled:true,type:"User",userConsentDescription:"Allow the Mentra App to access your organization Core.",userConsentDisplayName:"Access Mentra Core",value:"mentra.session"}])})}')"
-az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$CORE_OBJECT_ID" \
+  '$existing[0] as $existing |
+  {identifierUris: (($existing.identifierUris // []) + [$uri] | unique), api:(($existing.api // {}) + {requestedAccessTokenVersion:2, oauth2PermissionScopes: ((($existing.api.oauth2PermissionScopes // []) | map(select(.value != "mentra.session"))) + [{adminConsentDescription:"Allow the Mentra App to access this organization Core on behalf of the signed-in user.",adminConsentDisplayName:"Access Mentra Core",id:$scope_id,isEnabled:true,type:"User",userConsentDescription:"Allow the Mentra App to access your organization Core.",userConsentDisplayName:"Access Mentra Core",value:"mentra.session"}])})}')"
+retry az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$CORE_OBJECT_ID" \
   --headers 'Content-Type=application/json' --body "$core_body" --output none
+configure_admin_portal "$CORE_OBJECT_ID"
+[[ -z "$CORE_OWNER" ]] || retry add_owner "$CORE_OBJECT_ID" "$CORE_OWNER"
 
 MOBILE_OBJECT_ID="$(find_or_create_app "$MOBILE_CLIENT_ID" "$MOBILE_NAME")"
-MOBILE_CLIENT_ID="$(az ad app show --id "$MOBILE_OBJECT_ID" --query appId -o tsv)"
+MOBILE_CLIENT_ID="$(retry az ad app show --id "$MOBILE_OBJECT_ID" --query appId -o tsv)"
 
 ACS_SP_ID="$(ensure_service_principal "$ACS_APP_ID")"
 ACS_SP="$(az ad sp show --id "$ACS_SP_ID" -o json)"
@@ -128,31 +370,30 @@ ACS_CALLS_SCOPE_ID="$(jq -r '.oauth2PermissionScopes[] | select(.value == "Teams
 ACS_CHATS_SCOPE_ID="$(jq -r '.oauth2PermissionScopes[] | select(.value == "Teams.ManageChats") | .id' <<<"$ACS_SP")"
 [[ -n "$ACS_CALLS_SCOPE_ID" && -n "$ACS_CHATS_SCOPE_ID" ]] || { printf 'Required ACS delegated scopes were not found.\n' >&2; exit 1; }
 
-mobile_app="$(az ad app show --id "$MOBILE_OBJECT_ID" -o json)"
+mobile_app="$(retry az ad app show --id "$MOBILE_OBJECT_ID" -o json)"
 # This helper owns the required baseline, not every future delegated permission
 # an administrator may add. Preserve valid extra scopes on these two resources,
 # while dropping disabled/deleted scope ids that make admin consent fail.
 CORE_VALID_SCOPE_IDS="$(jq -c '[.api.oauth2PermissionScopes[]? | select(.isEnabled == true and .value != "mentra.runtime") | .id]' <<<"$core_app")"
 ACS_VALID_SCOPE_IDS="$(jq -c '[.oauth2PermissionScopes[]? | select(.isEnabled != false) | .id]' <<<"$ACS_SP")"
-mobile_body="$(jq -cn \
+mobile_body="$(jq_json existing "$mobile_app" -- -cn \
   --arg ios "$IOS_REDIRECT" --arg apk "$APK_REDIRECT" --arg play "$PLAY_REDIRECT" \
   --arg core_app "$CORE_CLIENT_ID" --arg session_scope "$CORE_SCOPE_ID" \
   --arg acs_app "$ACS_APP_ID" --arg calls "$ACS_CALLS_SCOPE_ID" --arg chats "$ACS_CHATS_SCOPE_ID" \
   --argjson core_valid_scopes "$CORE_VALID_SCOPE_IDS" --argjson acs_valid_scopes "$ACS_VALID_SCOPE_IDS" \
-  --argjson existing "$mobile_app" \
   'def preserved_scopes($resource; $valid):
-     [($existing.requiredResourceAccess // [])[]
+     [($existing[0].requiredResourceAccess // [])[]
       | select(.resourceAppId == $resource)
       | (.resourceAccess // [])[]
       | select(.type == "Scope")
       | select(.id as $id | $valid | index($id))];
    {isFallbackPublicClient:true,
-    publicClient:{redirectUris: (($existing.publicClient.redirectUris // []) + [$ios,$apk,$play] | unique)},
+    publicClient:{redirectUris: (($existing[0].publicClient.redirectUris // []) + [$ios,$apk,$play] | unique)},
     requiredResourceAccess:
-      (((($existing.requiredResourceAccess // []) | map(select(.resourceAppId != $core_app and .resourceAppId != $acs_app))))
+      (((($existing[0].requiredResourceAccess // []) | map(select(.resourceAppId != $core_app and .resourceAppId != $acs_app))))
        + [{resourceAppId:$core_app,resourceAccess:((preserved_scopes($core_app; $core_valid_scopes) + [{id:$session_scope,type:"Scope"}]) | unique_by(.id))},
           {resourceAppId:$acs_app,resourceAccess:((preserved_scopes($acs_app; $acs_valid_scopes) + [{id:$calls,type:"Scope"},{id:$chats,type:"Scope"}]) | unique_by(.id))}])}')"
-az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$MOBILE_OBJECT_ID" \
+retry az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$MOBILE_OBJECT_ID" \
   --headers 'Content-Type=application/json' --body "$mobile_body" --output none
 
 # Graph will not delete a delegated scope while any client still references it.
@@ -160,8 +401,9 @@ az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$MOB
 # this helper remains safe when another administrator-owned client still uses it.
 core_app="$(az ad app show --id "$CORE_OBJECT_ID" -o json)"
 if jq -e '.api.oauth2PermissionScopes // [] | any(.value == "mentra.runtime" and .isEnabled == true)' <<<"$core_app" >/dev/null; then
-  disable_legacy_body="$(jq -cn --argjson existing "$core_app" \
-    '{api:(($existing.api // {}) + {oauth2PermissionScopes:(($existing.api.oauth2PermissionScopes // []) | map(if .value == "mentra.runtime" then . + {isEnabled:false} else . end))})}')"
+  disable_legacy_body="$(jq_json existing "$core_app" -- -cn \
+    '$existing[0] as $existing |
+    {api:(($existing.api // {}) + {oauth2PermissionScopes:(($existing.api.oauth2PermissionScopes // []) | map(if .value == "mentra.runtime" then . + {isEnabled:false} else . end))})}')"
   az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$CORE_OBJECT_ID" \
     --headers 'Content-Type=application/json' --body "$disable_legacy_body" --output none
 fi
@@ -172,7 +414,8 @@ tag_service_principal "$CORE_SP_ID" false
 tag_service_principal "$MOBILE_SP_ID" true
 
 if [[ "$GRANT_ADMIN_CONSENT" == "true" ]]; then
-  az ad app permission admin-consent --id "$MOBILE_CLIENT_ID"
+  grant_admin_consent "$MOBILE_CLIENT_ID"
+  grant_admin_consent "$CORE_CLIENT_ID"
 fi
 
 jq -n \
@@ -181,9 +424,11 @@ jq -n \
   --arg mobileClientId "$MOBILE_CLIENT_ID" \
   --arg sessionScope "api://$CORE_CLIENT_ID/mentra.session" \
   --arg mobileServicePrincipalId "$MOBILE_SP_ID" \
-  '{tenantId:$tenantId,coreApiClientId:$coreApiClientId,mobileClientId:$mobileClientId,sessionScope:$sessionScope,mobileServicePrincipalId:$mobileServicePrincipalId}'
+  --arg redirect "$PORTAL_REDIRECT" \
+  '{tenantId:$tenantId,coreApiClientId:$coreApiClientId,mobileClientId:$mobileClientId,sessionScope:$sessionScope,mobileServicePrincipalId:$mobileServicePrincipalId}
+   + (if $redirect == "" then {} else {adminPortalRedirectUri:$redirect} end)'
 
 if [[ "$GRANT_ADMIN_CONSENT" != "true" ]]; then
   printf '%s\n' 'Admin consent was not granted. Review the permissions, then rerun with --grant-admin-consent.' >&2
 fi
-printf '%s\n' 'Assign approved pilot users/groups to the Mobile Enterprise Application before testing.' >&2
+printf '%s\n' 'Assign approved employees/groups to the Mobile Enterprise Application before testing.' >&2

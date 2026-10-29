@@ -5,7 +5,7 @@ import {parseEnvelope, serializeEnvelope} from "./envelope"
 import {CLOUD_STATUS_STREAM} from "./modules/cloud"
 import type {MeetingState} from "./modules/meeting"
 import {MiniappRequestType, MiniappResponseType} from "./protocol"
-import {MiniappSession} from "./session"
+import {ConnectAckTimeoutError, MiniappSession, NotConnectedError} from "./session"
 import {Transport, TransportDisconnectHandler, TransportMessageHandler} from "./transport/types"
 
 /**
@@ -18,8 +18,15 @@ class FakeTransport implements Transport {
   private messageHandler: TransportMessageHandler | null = null
   private disconnectHandler: TransportDisconnectHandler | null = null
   private open_ = false
+  /** Makes the next open() reject with this error. */
+  failNextOpen: Error | null = null
+  opens = 0
 
   async open(): Promise<void> {
+    this.opens += 1
+    const error = this.failNextOpen
+    this.failNextOpen = null
+    if (error) throw error
     this.open_ = true
   }
 
@@ -115,6 +122,74 @@ describe("MiniappSession meeting termination details", () => {
 
     transport.deliverFromPhone({type: MiniappResponseType.MEETING_STATE, state: "connected", muted: false})
     expect(session.meeting.state.videoEnabled).toBeUndefined()
+    session.disconnect()
+  })
+
+  test("a publisher ceiling expiry is delivered, and a resume the caller sent is not an event", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.meeting"})
+    const connected = session.connect()
+    await Promise.resolve()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.meeting",
+    })
+    await connected
+    const events: Array<{pauseId: string; status: "expired"}> = []
+    session.meeting.onVideoPublisher((event) => events.push(event))
+
+    transport.deliverFromPhone({
+      type: MiniappResponseType.MEETING_VIDEO_PUBLISHER,
+      pauseId: "pause-1",
+      status: "expired",
+    })
+    transport.deliverFromPhone({
+      type: MiniappResponseType.MEETING_VIDEO_PUBLISHER,
+      pauseId: "pause-2",
+      status: "resumed",
+    })
+
+    expect(events).toEqual([{pauseId: "pause-1", status: "expired"}])
+    session.disconnect()
+  })
+
+  test("a later meeting event can change identity, and one that omits it keeps the last answer", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.meeting"})
+    const connected = session.connect()
+    await Promise.resolve()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.meeting",
+    })
+    await connected
+    const events: MeetingState[] = []
+    session.meeting.onState((state) => events.push(state))
+
+    transport.deliverFromPhone({
+      type: MiniappResponseType.MEETING_STATE,
+      state: "connected",
+      muted: false,
+      identityMode: "guest",
+      guestReason: "legacy-credential",
+    })
+    expect(events.at(-1)?.identityMode).toBe("guest")
+
+    transport.deliverFromPhone({
+      type: MiniappResponseType.MEETING_STATE,
+      state: "connected",
+      muted: false,
+      identityMode: "teams-user",
+      capabilities: {hangUpForEveryone: {allowed: true}},
+    })
+    expect(events.at(-1)?.identityMode).toBe("teams-user")
+    expect(session.meeting.state.identityMode).toBe("teams-user")
+
+    transport.deliverFromPhone({type: MiniappResponseType.MEETING_STATE, state: "connected", muted: true})
+    expect(events.at(-1)?.identityMode).toBeUndefined()
+    expect(session.meeting.state.identityMode).toBe("teams-user")
     session.disconnect()
   })
 })
@@ -536,6 +611,38 @@ describe("MiniappSession visibility", () => {
   })
 })
 
+describe("MiniappSession install progress", () => {
+  test("delivers well-formed host progress pushes and drops malformed ones", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.mentra.store",
+      capabilities: null,
+    })
+    await connectPromise
+
+    const received: unknown[] = []
+    session.miniapps.onInstallProgress((progress) => received.push(progress))
+    const push = (phase: unknown) =>
+      transport.deliverFromPhone({
+        type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
+        packageName: "com.example.notes",
+        version: "1.1.0",
+        phase,
+      })
+    push("downloading")
+    push("unknown-phase")
+    push("complete")
+    expect(received).toEqual([
+      {packageName: "com.example.notes", version: "1.1.0", phase: "downloading"},
+      {packageName: "com.example.notes", version: "1.1.0", phase: "complete"},
+    ])
+  })
+})
+
 describe("MiniappSession transport disconnect", () => {
   test("disconnect rejects pending requests and flips ready to false", async () => {
     const transport = new FakeTransport()
@@ -618,5 +725,327 @@ describe("MiniappSession transport disconnect", () => {
     })
     await connectPromise
     expect(session.hostFeatures).toBeNull()
+  })
+})
+
+describe("MiniappSession connect retry", () => {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  const sentTypes = (transport: FakeTransport) =>
+    transport.sent.map((raw) => (parseEnvelope(raw)?.payload as {type?: string} | undefined)?.type)
+  const connectCount = (transport: FakeTransport) =>
+    sentTypes(transport).filter((type) => type === MiniappRequestType.CONNECT).length
+  const ack = (transport: FakeTransport, packageName: string) =>
+    transport.deliverFromPhone({type: MiniappResponseType.CONNECT_ACK, userId: "u", packageName})
+
+  test("a timed-out handshake can send CONNECT again", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.retry", connectTimeoutMs: 20})
+    const first = session.connect()
+    await Promise.resolve()
+    expect(connectCount(transport)).toBe(1)
+    await expect(first).rejects.toBeInstanceOf(ConnectAckTimeoutError)
+
+    const second = session.connect()
+    await Promise.resolve()
+    expect(connectCount(transport)).toBe(2)
+    // The transport is still open, so the retry only sends CONNECT again.
+    expect(transport.opens).toBe(1)
+    ack(transport, "com.test.retry")
+    await second
+    expect(session.ready).toBe(true)
+    session.disconnect()
+  })
+
+  test("a CONNECT_ACK after the timeout completes the handshake without another CONNECT", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.late", connectTimeoutMs: 20})
+    await expect(session.connect()).rejects.toBeInstanceOf(ConnectAckTimeoutError)
+
+    ack(transport, "com.test.late")
+    expect(session.ready).toBe(true)
+    await session.connect()
+    expect(connectCount(transport)).toBe(1)
+    session.disconnect()
+  })
+
+  test("a CONNECT_ACK for an earlier CONNECT, after a later one completed the handshake, is ignored", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.dup", connectTimeoutMs: 20})
+    let readies = 0
+    let auths = 0
+    session.on("ready", () => readies++)
+    session.on("auth", () => auths++)
+    await expect(session.connect()).rejects.toBeInstanceOf(ConnectAckTimeoutError)
+    const second = session.connect()
+    await Promise.resolve()
+    const [firstId, secondId] = transport.sent
+      .map((raw) => parseEnvelope(raw))
+      .filter((envelope) => (envelope?.payload as {type?: string}).type === MiniappRequestType.CONNECT)
+      .map((envelope) => envelope?.requestId)
+    expect(firstId).not.toBe(secondId)
+
+    const capabilities = {display: null}
+    const auth = {mentraUserId: "u", token: "second", expiresAt: Date.now() + 60_000}
+    transport.deliverFromPhone(
+      {type: MiniappResponseType.CONNECT_ACK, userId: "u", packageName: "com.test.dup", capabilities, auth},
+      secondId,
+    )
+    await second
+    transport.deliverFromPhone(
+      {
+        type: MiniappResponseType.CONNECT_ACK,
+        userId: "stale",
+        packageName: "com.test.dup",
+        capabilities: null,
+        configuration: {mode: "stale"},
+        auth: {...auth, token: "first"},
+      },
+      firstId,
+    )
+    expect(readies).toBe(1)
+    expect(auths).toBe(1)
+    // The handshake's state is the one it completed with.
+    expect(session.userId).toBe("u")
+    expect(session.capabilities).toEqual(capabilities)
+    expect(session._getConfiguration()).toEqual({})
+    expect(session._getAuth()?.token).toBe("second")
+    session.disconnect()
+  })
+
+  test("a handshake completed by a late CONNECT_ACK is not sent again after the transport drops", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.late-drop", connectTimeoutMs: 20})
+    await expect(session.connect()).rejects.toBeInstanceOf(ConnectAckTimeoutError)
+    ack(transport, "com.test.late-drop")
+    transport.fireDisconnect("bridge threw")
+    expect(session.ready).toBe(false)
+    // Like a session whose own attempt was answered: connected once, it does not handshake again.
+    await session.connect()
+    expect(connectCount(transport)).toBe(1)
+    session.disconnect()
+  })
+
+  test("disconnect during the handshake rejects connect() and cancels its timer", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.abort", connectTimeoutMs: 20})
+    const errors: Error[] = []
+    session.on("error", (error) => errors.push(error))
+    const pending = session.connect()
+    await Promise.resolve()
+    session.disconnect()
+
+    await expect(pending).rejects.toBeInstanceOf(NotConnectedError)
+    await sleep(40)
+    // A teardown is not an error, and the abandoned handshake reports no timeout.
+    expect(errors).toEqual([])
+    expect(connectCount(transport)).toBe(1)
+  })
+
+  test("a transport that failed to open can connect again", async () => {
+    const transport = new FakeTransport()
+    transport.failNextOpen = new Error("bridge missing")
+    const session = new MiniappSession({transport, packageName: "com.test.open", connectTimeoutMs: 20})
+    const errors: Error[] = []
+    session.on("error", (error) => errors.push(error))
+    await expect(session.connect()).rejects.toThrow("bridge missing")
+    expect(connectCount(transport)).toBe(0)
+
+    // The rejection is the report. The failed attempt's CONNECT_ACK timer is
+    // gone too, so no timeout lands later.
+    await sleep(40)
+    expect(errors).toEqual([])
+
+    const second = session.connect()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(transport.opens).toBe(2)
+    expect(connectCount(transport)).toBe(1)
+    ack(transport, "com.test.open")
+    await second
+    expect(session.ready).toBe(true)
+    session.disconnect()
+  })
+
+  test("a registerMiniapp session's waitForReady() spans a timed-out handshake", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.spans", connectTimeoutMs: 20})
+    session.retryHandshakeOnTimeout()
+    const errors: Error[] = []
+    session.on("error", (error) => errors.push(error))
+    let settled = false
+    const ready = session.waitForReady().then(() => (settled = true))
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      await sleep(1_400)
+    } finally {
+      console.warn = warn
+    }
+    expect(settled).toBe(false)
+    expect(connectCount(transport)).toBe(2)
+    // A stalled host is not a session error.
+    expect(errors).toEqual([])
+    ack(transport, "com.test.spans")
+    await ready
+    expect(session.ready).toBe(true)
+    session.disconnect()
+  })
+
+  test("a CONNECT_ACK during the retry pause completes the handshake without another CONNECT", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.pause", connectTimeoutMs: 20})
+    session.retryHandshakeOnTimeout()
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      const ready = session.connect()
+      await sleep(40)
+      ack(transport, "com.test.pause")
+      await ready
+    } finally {
+      console.warn = warn
+    }
+    await sleep(1_000)
+    expect(connectCount(transport)).toBe(1)
+    session.disconnect()
+  })
+
+  test("disconnect during the retry pause ends the handshake", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.pause-abort", connectTimeoutMs: 20})
+    session.retryHandshakeOnTimeout()
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      const pending = session.connect()
+      await sleep(40)
+      session.disconnect()
+      await expect(pending).rejects.toBeInstanceOf(NotConnectedError)
+    } finally {
+      console.warn = warn
+    }
+    await sleep(1_000)
+    expect(connectCount(transport)).toBe(1)
+  })
+
+  test("a transport that drops during the handshake fails connect() at once", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.drop", connectTimeoutMs: 20})
+    const errors: Error[] = []
+    session.on("error", (error) => errors.push(error))
+    const pending = session.connect()
+    await Promise.resolve()
+    transport.fireDisconnect("bridge threw")
+    await expect(pending).rejects.toThrow("transport disconnected: bridge threw")
+    await sleep(40)
+    // No CONNECT_ACK timeout follows the failure.
+    expect(errors).toEqual([])
+    session.disconnect()
+  })
+
+  test("a registerMiniapp session reports a transport drop during the retry pause instead of retrying", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.pause-drop", connectTimeoutMs: 20})
+    session.retryHandshakeOnTimeout()
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      const pending = session.connect()
+      await sleep(40)
+      transport.fireDisconnect("bridge threw")
+      await expect(pending).rejects.toThrow("transport disconnected: bridge threw")
+    } finally {
+      console.warn = warn
+    }
+    await sleep(1_000)
+    expect(connectCount(transport)).toBe(1)
+    session.disconnect()
+  })
+
+  test("a registerMiniapp session reports a transport that never opens, without retrying", async () => {
+    const transport = new FakeTransport()
+    transport.open = () => new Promise<void>(() => {})
+    const session = new MiniappSession({transport, packageName: "com.test.hung", connectTimeoutMs: 20})
+    session.retryHandshakeOnTimeout()
+    await expect(session.connect()).rejects.toThrow("transport did not open")
+    expect(connectCount(transport)).toBe(0)
+    session.disconnect()
+  })
+
+  test("disconnect while the transport is opening settles connect() and closes the late transport", async () => {
+    const transport = new FakeTransport()
+    let finishOpen: () => void = () => {}
+    let closes = 0
+    transport.open = () => new Promise<void>((resolve) => (finishOpen = resolve))
+    transport.close = () => {
+      closes += 1
+    }
+    const session = new MiniappSession({transport, packageName: "com.test.opening", connectTimeoutMs: 20})
+    const pending = session.connect()
+    session.disconnect()
+    await expect(pending).rejects.toBeInstanceOf(NotConnectedError)
+    const closedByDisconnect = closes
+    finishOpen()
+    await sleep(0)
+    expect(closes).toBe(closedByDisconnect + 1)
+    expect(connectCount(transport)).toBe(0)
+  })
+
+  for (const outcome of ["rejects", "resolves"] as const) {
+    test(`an open() that ${outcome} after its attempt timed out leaves the next attempt alone`, async () => {
+      const transport = new FakeTransport()
+      let finishFirstOpen: (error?: Error) => void = () => {}
+      const open = transport.open.bind(transport)
+      transport.open = () => {
+        if (transport.opens++ > 0) return open()
+        return new Promise<void>((resolve, reject) => {
+          finishFirstOpen = (error) => (error ? reject(error) : resolve())
+        })
+      }
+      const session = new MiniappSession({transport, packageName: "com.test.stale", connectTimeoutMs: 20})
+      await expect(session.connect()).rejects.toThrow("transport did not open")
+
+      let settled = false
+      const second = session.connect().finally(() => (settled = true))
+      await sleep(0)
+      expect(connectCount(transport)).toBe(1)
+      finishFirstOpen(outcome === "rejects" ? new Error("late open failure") : undefined)
+      await sleep(0)
+      // The stale attempt neither fails the live one nor sends its own CONNECT.
+      expect(settled).toBe(false)
+      expect(connectCount(transport)).toBe(1)
+      ack(transport, "com.test.stale")
+      await second
+      expect(session.ready).toBe(true)
+      session.disconnect()
+    })
+  }
+
+  test("a request rejected by a CONNECT_ACK timeout is not sent after a later handshake", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.queue", connectTimeoutMs: 20})
+    const first = session.connect()
+    const request = session.sendRequest({type: MiniappRequestType.STORAGE_GET, key: "k"})
+    session.sendOneShot({type: MiniappRequestType.DISPLAY, items: []})
+    let caught: unknown
+    try {
+      await request
+    } catch (error) {
+      caught = error
+    }
+    expect((caught as {code: string}).code).toBe("NOT_CONNECTED")
+    await expect(first).rejects.toBeInstanceOf(ConnectAckTimeoutError)
+
+    const second = session.connect()
+    await Promise.resolve()
+    ack(transport, "com.test.queue")
+    await second
+    // The one-shot still goes out; the request its caller saw fail does not.
+    expect(sentTypes(transport)).toEqual([
+      MiniappRequestType.CONNECT,
+      MiniappRequestType.CONNECT,
+      MiniappRequestType.DISPLAY,
+    ])
+    session.disconnect()
   })
 })

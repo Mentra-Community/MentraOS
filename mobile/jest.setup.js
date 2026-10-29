@@ -52,6 +52,7 @@ jest.mock("@mentra/bluetooth-sdk/ota-transport", () => {
   return {
     otaLocalNetwork: {
       isAvailable: () => true,
+      getNetworkDiagnostics: mentraLocalNetworkMock.getNetworkDiagnostics,
       connect: mentraLocalNetworkMock.connect,
       request: mentraLocalNetworkMock.request,
       download: mentraLocalNetworkMock.download,
@@ -243,6 +244,12 @@ jest.mock("expo-audio", () => ({
     stop: jest.fn(),
     remove: jest.fn(),
   })),
+}))
+
+// AppRegistry uses Expo's native stream-capable fetch in production. Jest has
+// no ExpoFetchModule native base class, so delegate test calls to Node's fetch.
+jest.mock("expo/fetch", () => ({
+  fetch: jest.fn((input, init) => globalThis.fetch(input, init)),
 }))
 
 // Mock react-native-nitro-bg-timer for non-native Jest runs
@@ -629,6 +636,13 @@ const mockIslandEntries = () => {
         uninstall: jest.fn(() => Promise.resolve({is_ok: () => true})),
         saveScreenshot: jest.fn((...a) => appStatusState.saveScreenshot(...a) ?? Promise.resolve()),
         setHiddenStatus: jest.fn((...a) => appStatusState.setHiddenStatus(...a)),
+        invokeAction: jest.fn(() => Promise.resolve(null)),
+        onUpdatePrompt: jest.fn(() => () => {}),
+        onUpdateFailed: jest.fn(() => () => {}),
+        onDeferredUpdateReady: jest.fn(() => () => {}),
+        checkForUpdates: jest.fn(() => Promise.resolve()),
+        checkOpenedForUpdate: jest.fn(() => Promise.resolve()),
+        onOpened: jest.fn(() => () => {}),
       },
       session: {
         status: jest.fn(() => ({status: "disconnected", audioTransport: "none"})),
@@ -811,6 +825,11 @@ const mockIslandEntries = () => {
 
   // --- "@mentra/engine-host-internal": raw stores + service singletons ---
   const internal = {
+    // The phone's dev-build signer gate; tests that exercise it use the real AppRegistry.
+    assertDevBuildAllowed: jest.fn(),
+    SignedMiniappDevBuildError: jest.requireActual("./modules/engine/src/services/publisherIdentityPolicy")
+      .SignedMiniappDevBuildError,
+    installMiniappFromJsonUrl: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
     __esModule: true,
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
     // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates)
@@ -897,7 +916,6 @@ const mockIslandEntries = () => {
       stopManagedStream: jest.fn(() => Promise.resolve()),
       isConnected: jest.fn(() => false),
       onConnectionChange: jest.fn(() => () => {}),
-      getPreinstalledMiniappRegistry: jest.fn(() => Promise.resolve({entries: []})),
     },
     // Bluetooth SDK passthrough — the same mock singleton @mentra/bluetooth-sdk
     // is mocked with, so emitBluetoothSdkEvent/resetBluetoothSdkMock still drive
@@ -907,6 +925,7 @@ const mockIslandEntries = () => {
     installAppStoreHooks: jest.fn(),
     buildMiniappGlobalsScript: jest.fn(() => ""),
     appRegistry: {
+      assertCanInstallVersion: jest.fn(),
       subscribe: jest.fn(() => () => {}),
       getApps: jest.fn(() => []),
       getInstalledMiniapps: jest.fn(() => Promise.resolve([])),
@@ -973,7 +992,11 @@ const mockIslandEntries = () => {
     },
     configureRuntime: jest.fn(),
     configureLauncher: jest.fn(),
+    getDevAppRecords: jest.fn(() => []),
+    sha256Hex: jest.fn(() => Promise.resolve("0".repeat(64))),
     miniappLauncher: {
+      isRunning: jest.fn(() => false),
+      isProjectedRunning: jest.fn(() => false),
       ensureConnected: jest.fn(() => Promise.resolve(true)),
       ensureRunning: jest.fn(() => Promise.resolve(true)),
       resolveBundle: jest.fn(() => Promise.resolve(null)),

@@ -1,0 +1,149 @@
+import {act, fireEvent, render, within} from "@testing-library/react-native"
+import type {ReactNode} from "react"
+import {ScrollView} from "react-native"
+
+import {useAuth} from "@/contexts/AuthContext"
+import {submitIncidentReportOnce} from "@/services/bugReport/incidentReportAutomation"
+
+import IncidentReportRequest from "../IncidentReportRequest"
+
+const mockDismiss = jest.fn()
+jest.mock("@mentra/engine", () => ({submitIncidentReport: jest.fn()}))
+jest.mock("@/contexts/AuthContext", () => ({useAuth: jest.fn()}))
+jest.mock("@/services/deployment", () => ({
+  useDeployment: () => ({
+    activeDeployment: {manifest: {deploymentId: "dev", services: {coreUrl: "https://core.example"}}},
+  }),
+}))
+jest.mock("@/services/bugReport/incidentReportAutomation", () => ({
+  ...jest.requireActual("@/services/bugReport/incidentReportAutomation"),
+  submitIncidentReportOnce: jest.fn(),
+}))
+jest.mock("@/components/ignite", () => {
+  const {Text, View, Pressable} = require("react-native")
+  return {
+    Screen: ({children}: {children: ReactNode}) => <View>{children}</View>,
+    Header: () => null,
+    Text: ({text, tx, ...props}: {text?: string; tx?: string}) => <Text {...props}>{text ?? tx}</Text>,
+    Button: ({onPress, testID}: {onPress: () => void; testID: string}) => (
+      <Pressable testID={testID} onPress={onPress} />
+    ),
+  }
+})
+
+const request = {alert_id: "screen-1", test_run_id: "run-1", failure_code: "call_failed", failure_message: "Call ended"}
+const receipt = {
+  alert_id: "screen-1",
+  failure_code: "call_failed",
+  status: "filed" as const,
+  incident_id: "rep_screen",
+  report_id: "rep_screen",
+}
+const auth = (signedIn: boolean) =>
+  ({user: signedIn ? {id: "user-1"} : null, session: signedIn ? {token: "test-token"} : null}) as ReturnType<
+    typeof useAuth
+  >
+
+beforeEach(() => {
+  jest.clearAllMocks()
+  jest.mocked(useAuth).mockReturnValue(auth(true))
+  jest.mocked(submitIncidentReportOnce).mockResolvedValue(receipt)
+})
+
+it.each(["signed out", "expired"])("returns an immediate correlated failure when %s without uploading", (state) => {
+  jest.mocked(useAuth).mockReturnValue(state === "signed out" ? auth(false) : {...auth(true), session: null})
+  const tree = render(<IncidentReportRequest params={request} onDismiss={mockDismiss} />)
+  expect(JSON.parse(tree.getByTestId("incident-report-state").props.children)).toMatchObject({
+    status: "finished",
+  })
+  expect(JSON.parse(tree.getByTestId("incident-report-result").props.children)).toEqual({
+    alert_id: request.alert_id,
+    test_run_id: request.test_run_id,
+    failure_code: request.failure_code,
+    status: "failed",
+    error: "Authentication is unavailable; the incident report was not submitted",
+  })
+  expect(submitIncidentReportOnce).not.toHaveBeenCalled()
+  fireEvent.press(tree.getByTestId("incident-report-done"))
+  expect(mockDismiss).toHaveBeenCalledTimes(1)
+})
+
+it("shows the correlated incident ID and returns to the previous screen with Done", async () => {
+  const tree = render(<IncidentReportRequest params={request} onDismiss={mockDismiss} />)
+  await act(async () => {})
+  expect(JSON.parse(tree.getByTestId("incident-report-result").props.children)).toEqual(receipt)
+  expect(submitIncidentReportOnce).toHaveBeenCalledWith(expect.stringContaining("user-1"), request)
+  fireEvent.press(tree.getByTestId("incident-report-done"))
+  expect(mockDismiss).toHaveBeenCalledTimes(1)
+})
+
+it("keeps Done outside the scrolling receipt when collection details grow", async () => {
+  const collectionClock = {requestedAt: "2026-10-11T08:14:05.102Z", deadlineAt: "2026-10-11T08:18:05.102Z"}
+  const detailedReceipt = {
+    ...receipt,
+    collection: {
+      reportId: receipt.report_id,
+      state: "complete" as const,
+      logCollection: {
+        phone: {...collectionClock, state: "received" as const, entryCount: 424},
+        glasses: {...collectionClock, state: "unavailable" as const, reason: "no_paired_mentra_live"},
+        glasses_firmware: {...collectionClock, state: "unavailable" as const, reason: "no_paired_mentra_live"},
+        cloud: {...collectionClock, state: "requested" as const},
+        miniapp_server: {...collectionClock, state: "requested" as const},
+      },
+    },
+  }
+  jest.mocked(submitIncidentReportOnce).mockResolvedValue(detailedReceipt)
+  const tree = render(<IncidentReportRequest params={request} onDismiss={mockDismiss} />)
+  await act(async () => {})
+
+  const scrollingDetails = tree.UNSAFE_getByType(ScrollView)
+  expect(JSON.parse(within(scrollingDetails).getByTestId("incident-report-result").props.children)).toEqual(
+    detailedReceipt,
+  )
+  expect(within(scrollingDetails).queryByTestId("incident-report-done")).toBeNull()
+  expect(mockDismiss).not.toHaveBeenCalled()
+  fireEvent.press(tree.getByTestId("incident-report-done"))
+  expect(mockDismiss).toHaveBeenCalledTimes(1)
+  expect(submitIncidentReportOnce).toHaveBeenCalledTimes(1)
+})
+
+it("shows the partial failed incident and allows teardown to dismiss it", async () => {
+  const failed = {
+    ...receipt,
+    status: "failed" as const,
+    error: "Required incident log collection did not complete",
+    collection: {reportId: receipt.report_id, state: "timed-out" as const, logCollection: {}},
+  }
+  jest.mocked(submitIncidentReportOnce).mockResolvedValueOnce(failed)
+  const tree = render(<IncidentReportRequest params={request} onDismiss={mockDismiss} />)
+  await act(async () => {})
+  expect(JSON.parse(tree.getByTestId("incident-report-result").props.children)).toEqual(failed)
+  fireEvent.press(tree.getByTestId("incident-report-done"))
+  expect(mockDismiss).toHaveBeenCalledTimes(1)
+})
+
+it("preserves the correlation IDs when invalid details prevent submission", () => {
+  const tree = render(<IncidentReportRequest params={{...request, failure_message: ""}} onDismiss={mockDismiss} />)
+  expect(JSON.parse(tree.getByTestId("incident-report-result").props.children)).toEqual({
+    alert_id: request.alert_id,
+    test_run_id: request.test_run_id,
+    failure_code: "invalid_request",
+    status: "failed",
+    error: "Invalid failure_message",
+  })
+  expect(submitIncidentReportOnce).not.toHaveBeenCalled()
+})
+
+it("lets cleanup return immediately while the report remains pending", () => {
+  jest.mocked(submitIncidentReportOnce).mockReturnValue(new Promise(() => {}))
+  const tree = render(<IncidentReportRequest params={request} onDismiss={mockDismiss} />)
+  expect(tree.queryByTestId("incident-report-result")).toBeNull()
+  expect(JSON.parse(tree.getByTestId("incident-report-state").props.children)).toEqual({
+    alert_id: request.alert_id,
+    test_run_id: request.test_run_id,
+    status: "submitting",
+  })
+  fireEvent.press(tree.getByTestId("incident-report-done"))
+  expect(mockDismiss).toHaveBeenCalledTimes(1)
+})

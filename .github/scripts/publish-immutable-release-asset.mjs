@@ -69,6 +69,7 @@ export function githubError(error, output = "", stderr = "") {
   return Object.assign(new Error(stderr.trim().slice(0, 500) || error.message, {cause: error}), {
     status,
     code,
+    acceptedPermissions: headers["x-accepted-github-permissions"],
     ...details,
   })
 }
