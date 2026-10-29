@@ -770,9 +770,12 @@ export class ResourceReservationsService {
       return this.giveBackResourceCheck(returned, borrower, hostId)
     if ('kind' in returned.release) return this.giveBackBackendPrerequisite(returned, borrower, hostId)
     const lane = borrower.snapshot.lanes.find(value => value.id === returned.laneId), releasedAt = Date.parse(returned.release.releasedAt)
+    // The recorded normal release closes this claim's original scope. Later lane
+    // work cannot revive it; a still-current original owner remains protected.
     if (!fresh(borrower, this.now()) || borrower.incarnation !== returned.controller.incarnation ||
       borrower.incarnationGeneration !== returned.controller.generation || borrower.sequence !== returned.controller.sequence ||
-      !lane || lane.state !== 'idle' || lane.activity || Date.parse(borrower.snapshot.observedAt) < releasedAt ||
+      !lane || lane.activity && returned.release.lineage.some(owner => owner.id === lane.activity!.owner.id) ||
+      Date.parse(borrower.snapshot.observedAt) < releasedAt ||
       returned.release.eventId !== `lane-release:${returned.release.owner.id}:${returned.release.owner.generation}` ||
       !borrower.snapshot.resourceReservations?.returns.some(receipt =>
         isDeepStrictEqual(receipt, (({controller: _, ...proof}) => proof)(returned))) ||
@@ -782,7 +785,7 @@ export class ResourceReservationsService {
       returned.release.neverStarted && (returned.originalOwner.kind !== 'run' ||
         returned.release.neverStarted.requestId !== returned.originalOwner.id || returned.release.lineage.length !== 1 ||
         !isDeepStrictEqual({...returned.originalOwner, generation: returned.release.owner.generation}, returned.release.owner)))
-      throw new TestRunError(409, 'Return requires fresh idle custody and its exact recorded normal local release lineage')
+      throw new TestRunError(409, 'Return requires its current authenticated controller and exact recorded normal local release lineage')
     for (let attempt = 0; attempt < 3; attempt++) {
       const authority = await this.host(returned.authorityHostId), claims = hostResourceReservationsSchema.parse(authority.resourceReservations ?? [])
       if (authority.hostId === hostId && (authority.incarnation !== returned.controller.incarnation ||

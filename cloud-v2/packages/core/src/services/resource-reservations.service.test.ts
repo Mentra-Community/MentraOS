@@ -393,7 +393,7 @@ test('claims persist beyond reporting expiry and halted repair; only later clean
   expect((await f.service.acquire({...intent('air2'), controller: {...intent('air2').controller, sequence: 2}}, 'air2')).status).toBe('waiting')
   const host = f.observe('air1'), lane = host.snapshot.lanes[0]!
   lane.state = 'out-of-service'; lane.activity = {generation: 3, owner: {id: 'repair-owner', kind: 'fixer'}}
-  await expect(f.service.giveBack(returned(claim, host), 'air1')).rejects.toThrow('fresh idle custody')
+  await expect(f.service.giveBack(returned(claim, host), 'air1')).rejects.toThrow('recorded normal local release lineage')
   lane.state = 'idle'; delete lane.activity
   const proof = returned(claim, host); const {controller: _, ...normalReturn} = proof
   host.snapshot.resourceReservations = {claims: [], returns: [normalReturn]}
@@ -446,6 +446,31 @@ test('checked fixer return preserves generation while freeing only its original 
   expect(await f.service.giveBack(proof, 'air1')).toEqual({status: 'returned', claimId: claim.id})
   expect(f.rows.get('mini')!.resourceReservations).toEqual([])
   expect(await f.service.giveBack(proof, 'air1')).toEqual({status: 'returned', claimId: claim.id})
+})
+
+test('a later unrelated lane repair cannot retain an already returned account', async () => {
+  const f = fixture(), claim = (await f.service.acquire(intent('air1'), 'air1')).claims[0]!, host = f.observe('air1')
+  const original = {...claim.owner, generation: 1225}, fixer = {id: 'original-fixer', kind: 'fixer' as const, generation: 1226},
+    boundary = {id: 'checked-return', kind: 'boundary-cleanup' as const, generation: 1226}
+  const proof = returned(claim, host, {release: {eventId: `lane-release:${boundary.id}:${boundary.generation}`,
+    owner: boundary, releasedAt: host.snapshot.observedAt, lineage: [original, fixer, boundary]}})
+  const {controller: _, ...localReturn} = proof
+  host.snapshot.resourceReservations = {claims: [], returns: [localReturn]}
+  host.snapshot.lanes[0]!.state = 'out-of-service'
+  host.snapshot.lanes[0]!.activity = {generation: 1239, owner: {id: 'later-gallery-fixer', kind: 'fixer'}}
+  expect(await f.service.giveBack(proof, 'air1')).toEqual({status: 'returned', claimId: claim.id})
+  expect(f.rows.get('mini')!.resourceReservations).toEqual([])
+  expect(host.snapshot.lanes[0]!.activity.owner.id).toBe('later-gallery-fixer')
+})
+
+test('a recorded return still refuses a currently active original owner', async () => {
+  const f = fixture(), claim = (await f.service.acquire(intent('air1'), 'air1')).claims[0]!, host = f.observe('air1')
+  const proof = returned(claim, host), {controller: _, ...localReturn} = proof
+  host.snapshot.resourceReservations = {claims: [], returns: [localReturn]}
+  host.snapshot.lanes[0]!.state = 'running'
+  host.snapshot.lanes[0]!.activity = {generation: 2, owner: {...claim.owner, requestId: claim.owner.id}}
+  await expect(f.service.giveBack(proof, 'air1')).rejects.toThrow('recorded normal local release lineage')
+  expect(f.rows.get('mini')!.resourceReservations).toEqual([claim])
 })
 
 test('a recorded return cannot move current custody to an earlier generation', async () => {
