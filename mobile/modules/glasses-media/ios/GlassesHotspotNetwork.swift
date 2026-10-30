@@ -17,6 +17,8 @@ public final class GlassesHotspotNetwork {
     private var generation = 0
     private var applying = false
     private var ownsConfiguration = false
+    private var applies = 0
+    private let reapplyPolicy = HotspotReapplyPolicy()
     private var cancelled = false
     private var joinReply: ((Result<String, Error>) -> Void)?
     private var leaveCompletion: HotspotLeaveCompletion?
@@ -63,6 +65,7 @@ public final class GlassesHotspotNetwork {
             self.cancelled = false
             self.applying = false
             self.ownsConfiguration = false
+            self.applies = 0
             self.joinReply = completion
             self.startInterfaceMonitors(generation: gen)
             if ProcessInfo.processInfo.isiOSAppOnMac {
@@ -324,12 +327,13 @@ public final class GlassesHotspotNetwork {
         }
     }
 
-    private func applyConfiguration(ssid: String, passphrase: String, generation gen: Int) {
+    private func applyConfiguration(ssid: String, passphrase: String, generation gen: Int, remaining: Int = 60) {
         let config = NEHotspotConfiguration(ssid: ssid, passphrase: passphrase, isWEP: false)
         config.joinOnce = false
         applying = true
         ownsConfiguration = true
-        logger.info("HOTSPOT_JOIN apply_start ios_on_mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
+        applies += 1
+        logger.info("HOTSPOT_JOIN apply_start attempt=\(self.applies) ios_on_mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
         NEHotspotConfigurationManager.shared.apply(config) { error in
             self.queue.async {
                 guard gen == self.generation else { return }
@@ -347,12 +351,12 @@ public final class GlassesHotspotNetwork {
                     }
                 }
                 self.logger.info("HOTSPOT_JOIN apply_accepted")
-                self.waitForAddress(ssid: ssid, generation: gen, remaining: 60)
+                self.waitForAddress(ssid: ssid, passphrase: passphrase, generation: gen, remaining: remaining, pollsSinceApply: 0)
             }
         }
     }
 
-    private func waitForAddress(ssid: String, generation gen: Int, remaining: Int) {
+    private func waitForAddress(ssid: String, passphrase: String, generation gen: Int, remaining: Int, pollsSinceApply: Int) {
         guard gen == generation, !cancelled else { return }
         NEHotspotNetwork.fetchCurrent { [weak self] network in
             self?.queue.async {
@@ -361,8 +365,15 @@ public final class GlassesHotspotNetwork {
                 if network?.ssid == ssid, let selected = self.selectBinding() {
                     self.bind(selected)
                     self.finishAssociation(address: selected.address, generation: gen)
+                } else if remaining > 0, network?.ssid != ssid,
+                          self.reapplyPolicy.shouldReapply(applies: self.applies, pollsSinceApply: pollsSinceApply) {
+                    // iOS reports the request applied even when its one scan missed the hotspot.
+                    self.logger.info("HOTSPOT_JOIN reapply after_polls=\(pollsSinceApply)")
+                    self.applyConfiguration(ssid: ssid, passphrase: passphrase, generation: gen, remaining: remaining)
                 } else if remaining > 0 {
-                    self.queue.asyncAfter(deadline: .now() + 0.5) { self.waitForAddress(ssid: ssid, generation: gen, remaining: remaining - 1) }
+                    self.queue.asyncAfter(deadline: .now() + 0.5) {
+                        self.waitForAddress(ssid: ssid, passphrase: passphrase, generation: gen, remaining: remaining - 1, pollsSinceApply: pollsSinceApply + 1)
+                    }
                 } else {
                     let association = network == nil ? "unavailable" : (network?.ssid == ssid ? "matched" : "different")
                     self.finishJoin(.failure(LocalMediaError("Glasses hotspot has no verified Wi-Fi address (SSID=\(association), \(self.wifiDiagnostic()))")))
