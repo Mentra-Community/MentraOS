@@ -284,6 +284,36 @@ test("cleaned recorder diagnostics preserve evidence failure independently of ha
     teardown: {...good.result.teardown, outcomes: [{...cleaned, errors: [{...error, phase: "arbitrary"}]}]}}}).success).toBe(false);
 });
 
+test("routine fixture cleanup retains classified diagnostics independently of physical readiness", () => {
+  const good = run();
+  const action = {id: 'cleanup:fixture', instruction: 'Return the stream receiver', expected: 'The receiver is stopped',
+    scope: 'routine' as const, fixtureProvider: 'stream-receivers', stage: 'resource-cleanup', status: 'failed' as const, durationMs: 10};
+  for (const phase of ['evidence', 'teardown'] as const) {
+    const error = {phase, actionId: 'external-recording-incomplete', message: 'Original recording is incomplete'};
+    const result = {...good.result, failures: [error], teardown: {...good.result.teardown, actions: [action], errors: [error],
+      outcomes: [{state: 'cleaned' as const, resourceId: 'fixture', evidence: [], errors: [error]}]}};
+    const retained = frameworkRunSchema.parse({...good, result});
+    expect(retained.result as unknown).toEqual(result);
+    expect(retained.result.teardown.ready).toBe(true);
+    expect(frameworkRunOutcome(retained)).toBe(phase === 'evidence' ? 'pass' : 'teardown-failed');
+    expect(frameworkEvidenceComplete(retained)).toBe(phase !== 'evidence');
+    if (phase === 'evidence') {
+      const original = {...result, test: 'failed', failures: [...result.failures,
+        {phase: 'test', actionId: good.result.steps[0]!.id, message: 'Original selector failed'}],
+        steps: good.result.steps.map(step => ({...step, status: 'failed'}))};
+      const failed = frameworkRunSchema.parse({...good, result: original});
+      expect(failed.result as unknown).toEqual(original);
+      expect(frameworkRunOutcome(failed)).toBe('failed');
+    }
+    expect(frameworkRunSchema.safeParse({...good, result: {...result, failures: [],
+      teardown: {...result.teardown, errors: [], outcomes: [{state: 'cleaned', resourceId: 'fixture', evidence: []}]}}}).success).toBe(false);
+    expect(frameworkRunSchema.safeParse({...good, result: {...result,
+      teardown: {...result.teardown, outcomes: [{state: 'failed', resourceId: 'fixture', failure: error}]}}}).success).toBe(false);
+    expect(frameworkRunSchema.safeParse({...good, result: {...result,
+      teardown: {...result.teardown, actions: [{...action, status: 'not-run', durationMs: 0}]}}}).success).toBe(false);
+  }
+});
+
 test("teardown evidence errors remain effective without a flattened run failure copy", () => {
   const good = run();
   const error = {phase: "evidence" as const, actionId: "finalize-recording", message: "Recording finalization failed"};

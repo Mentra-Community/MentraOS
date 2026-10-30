@@ -713,6 +713,14 @@ test("result ingestion binds every routine lifecycle action to the complete orde
   await service.ingest(fixtureRun, "mini");
   expect(stored?.result.setup.actions?.[1]).toEqual(fixture);
   expect(stored?.result.teardown.actions?.[1]?.fixtureProvider).toBe("notes-data");
+  const evidenceError = {phase: 'evidence' as const, actionId: 'external-recording-incomplete', message: 'Original recording is incomplete'};
+  const diagnosedFixture = {...fixtureRun, result: {...fixtureRun.result, failures: [evidenceError],
+    teardown: {...fixtureRun.result.teardown, errors: [evidenceError],
+      actions: fixtureRun.result.teardown.actions.map(action => 'fixtureProvider' in action ? {...action, status: 'failed' as const} : action),
+      outcomes: [{state: 'cleaned' as const, resourceId: 'notes-data', evidence: [], errors: [evidenceError]}]}}};
+  await service.ingest(diagnosedFixture, 'mini');
+  expect(stored?.result as unknown).toEqual(diagnosedFixture.result);
+  expect(stored?.result.teardown.ready).toBe(true);
   for (const phase of ["setup", "teardown"] as const) {
     const actions = fixtureRun.result[phase].actions!;
     for (const invalid of [

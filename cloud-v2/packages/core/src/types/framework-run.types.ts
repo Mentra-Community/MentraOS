@@ -139,14 +139,14 @@ function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof 
     problem('Diagnostic actions and timing must be recorded together');
   if (run.result.diagnostics && Math.abs(run.result.diagnostics.reduce((total, action) => total + action.durationMs, 0)
     - run.result.timing.diagnosticsMs!) > 0.001) problem('Diagnostic timing contradicts its named actions');
-  for (const action of run.result.teardown.actions ?? []) if (run.result.teardown.ready && action.scope === 'routine'
+  for (const action of run.result.teardown.actions ?? []) if (run.result.teardown.ready && action.scope === 'routine' && action.fixtureProvider === undefined
     && action.status !== 'passed' && !(action.status === 'not-run' && run.result.setup.status !== 'passed')
     && !failures.some(error => error.phase === 'teardown' && error.actionId === action.id))
     problem('Routine teardown failure must remain classified independently of physical readiness');
   if (run.result.test === "passed" && (run.result.setup.status !== "passed" || run.result.steps.length === 0 || failures.some(failure => failure.phase === "setup" || failure.phase === "test") || run.result.steps.some(step => step.status !== "passed")))
     problem("Passing test contradicts setup or steps");
   const cleanupFailure = (error: z.infer<typeof failure>) => error.phase === "teardown" || error.phase === "evidence";
-  for (const action of run.result.teardown.actions ?? []) if (action.scope === "shared" && action.status !== "passed") {
+  for (const action of run.result.teardown.actions ?? []) if ((action.scope === "shared" || action.fixtureProvider !== undefined) && action.status !== "passed") {
     if (action.status === "not-run") {
       if (run.result.teardown.ready) problem("Ready teardown contradicts unexecuted shared cleanup");
       continue;
