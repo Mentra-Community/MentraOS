@@ -12,7 +12,7 @@ import {resourceLifecycleSubjectSchema} from '../types/resource-lifecycle.types'
 import {resourceAvailable, requiredResourceBlocker} from './resource-readiness';
 import {createRoutineJobsApi, createRoutineJobBindingApi} from '../api/internal/routine-jobs.api';
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures';
-import {requestInputDigest, TestRequestService, type TestRequestRepository, type HostAcceptance} from './test-request.service';
+import {requestInputDigest, TestRequestConflict, TestRequestService, type TestRequestRepository, type HostAcceptance} from './test-request.service';
 import {RoutineJobService, isAutomaticPrRoutineJob, routineJobRepository, routineJobInputDigest, orderedRoutineCandidates, routineJobRouting, routineLaneDescriptorRevision, routineRequirementLabels, compatibleRoutineLane, type RoutineJobRepository} from './routine-job.service';
 import type {StoredRoutineJob} from '../types/routine-job.types';
 import type {ReceivedTestHostState, RoutingTestHostState} from './test-host-state.service';
@@ -2508,4 +2508,48 @@ for(const authority of ['borrower','other-host'] as const)for(const count of [99
   for(const key of ['requestId','fleetSelection','fleetInputSha256','fleetPreparation','fleetDeadline'] as const)expect(f.row![key]).toEqual(original[key]);
   expect(f.row!.fleetBinding).toBeUndefined();expect((f.row as any).input).toBeUndefined();
  });
+});
+
+for (const phase of ['admission', 'binding'] as const) for (const reportKind of ['current', 'future'] as const)
+  test(`a ${reportKind} host report received during ${phase} ${reportKind === 'current' ? 'binds the same original' : 'cannot bind'}`, async () => {
+  await withLocalResources(async (f, hosts) => {
+    const prepared = await f.prepare(), original = structuredClone(f.row!), host = hosts.get('mini');
+    let current = Date.now(), entered = false, reported = false;
+    const clock = spyOn(Date, 'now').mockImplementation(() => current);
+    const serviceClock = spyOn(f.service as any, 'now').mockImplementation(() => Date.now());
+    const read = TestHostStateModel.collection.findOne, get = resourceReservationRepository.get;
+    const reserve = f.rows.reserveResources!, bind = f.rows.bind;
+    const report = async () => {
+      if (!entered || reported) return;
+      reported = true; await Bun.sleep(25); current = new Date().getTime();
+      host.receivedAt = new Date(current + (reportKind === 'current' ? -10 : 1000));
+      host.snapshot.observedAt = host.receivedAt.toISOString();
+      host.sequence++; host.snapshot.sequence++;
+    };
+    f.rows.reserveResources = async (...args) => {if (phase === 'admission') entered = true; return reserve(...args);};
+    f.rows.bind = async (...args) => {if (phase === 'binding') entered = true; return bind(...args);};
+    TestHostStateModel.collection.findOne = (async (...args: any[]) => {if (phase === 'admission') await report(); return read.apply(TestHostStateModel.collection, args as never);}) as any;
+    resourceReservationRepository.get = async id => {if (phase === 'binding') await report(); return get(id);};
+    try {
+      const binding = f.service.bind(original.requestId, 'mini', {inputSha256: prepared.inputSha256, laneId: 'android',
+        descriptorRevision: host.snapshot.lanes[0].descriptorRevision, actionsRunId: '10', actionsJobId: '20'});
+      if (reportKind === 'current') {
+        const bound = await binding;
+        expect(bound.execute).toBe(true); expect(bound.binding.hostId).toBe('mini');
+        expect(host.resourceReservations).toHaveLength(1);
+      } else {
+        await expect(binding).rejects.toBeInstanceOf(TestRequestConflict);
+        await expect(binding).rejects.toThrow('Routine resource admission');
+        expect(f.row!.fleetBinding).toBeUndefined();
+        expect(host.resourceReservations).toHaveLength(phase === 'admission' ? 0 : 1);
+      }
+      expect(reported).toBe(true); expect(hosts.get('air1').resourceReservations).toEqual([]);
+      for (const key of ['requestId', 'fleetSelection', 'fleetPreparation', 'fleetInputSha256', 'fleetDeadline'] as const)
+        expect(f.row![key]).toEqual(original[key]);
+    } finally {
+      f.rows.reserveResources = reserve; f.rows.bind = bind;
+      TestHostStateModel.collection.findOne = read; resourceReservationRepository.get = get;
+      serviceClock.mockRestore(); clock.mockRestore();
+    }
+  });
 });

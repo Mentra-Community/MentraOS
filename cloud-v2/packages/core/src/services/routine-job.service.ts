@@ -315,6 +315,9 @@ export const routineJobRepository: RoutineJobRepository = {
       const hostRow = await TestHostStateModel.collection.findOne({hostId},
         {readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000});
       if (!hostRow) return null;
+      // A current report can arrive during these reads. Freshness belongs to the
+      // observed report, not the timestamp captured before database work.
+      now = new Date(Date.now());
       const host = {...hostStateSchema.parse(hostRow.snapshot), receivedAt: hostRow.receivedAt.toISOString(),
         resourceControlRecords: hostRow.laneControls, resourceLifecycleCursor: hostRow.resourceLifecycleCursor};
       const requirements = recorderCapacityRequirements(row.fleetPreparation), lane = host.lanes.find(value => value.id === laneId),
@@ -521,6 +524,8 @@ export const routineJobRepository: RoutineJobRepository = {
       Boolean(row.fleetExclusiveReservation) !== Boolean(admission.data.dependencies.length)) return null;
     const host = await resourceReservationRepository.get(fleetBinding.hostId),
       lane = host?.snapshot.lanes.find(value => value.id === fleetBinding.laneId);
+    // Do not reject a legitimate report received after bind began.
+    now = new Date(Date.now());
     if (!host || !lane || !freshRoutineHost(host.receivedAt, now.getTime()) || lane.activity || lane.dispatchMode !== 'automatic' ||
       !routineResourcesAvailable(host, row, fleetBinding.laneId, now.getTime())) return null;
     if (requiresBackendConnectivity(row) || lane && requiresSerializedAndroidPreparation(lane)) {
@@ -1860,9 +1865,11 @@ export class RoutineJobService {
     };
     await reconcileUnusedQuotas();
     accepting(await this.hosts.get(hostId), 'before-reservation');
-    const reserved = await this.rows.reserveResources?.(jobId, input.inputSha256, hostId, input.laneId, new Date(this.now()));
+    let waitingReason: string | undefined;
+    const reserved = await this.rows.reserveResources?.(jobId, input.inputSha256, hostId, input.laneId, new Date(this.now()),
+      reason => {waitingReason = reason;});
     if (!reserved)
-      throw new TestRequestConflict('Reserved recorder disk capacity is no longer available');
+      throw new TestRequestConflict(waitingReason ?? 'Routine resource admission could not reserve its required resources');
     row = reserved;
     await reconcileUnusedQuotas();
     accepting(await this.hosts.get(hostId), 'after-reservation');
@@ -1871,7 +1878,8 @@ export class RoutineJobService {
     const intent = routineDispatchIntentSchema.parse({...row.fleetSelection, routineSource: row.fleetPreparation!.routineSource, laneId: input.laneId});
     const saved = await this.rows.bind(jobId, input.inputSha256, binding, intent, new Date(this.now()));
     const winner = saved ?? await this.job(jobId);
-    if (!winner.fleetBinding) throw new TestRequestConflict('Routine job was cancelled or expired before binding');
+    if (!winner.fleetBinding) throw new TestRequestConflict(winner.fleetCancellation || this.now() >= winner.fleetDeadline.getTime()
+      ? 'Routine job was cancelled or expired before binding' : 'Routine resource admission did not commit worker binding');
     return this.bindingProjection(winner, hostId, input);
   }
   private async bindingProjection(row: StoredRoutineJob, hostId: string, input: z.infer<typeof routineJobBindInputSchema>) {
