@@ -27,7 +27,7 @@ let missingBundles = new Set<string>()
 /** Packages the deployment does not make available. */
 let unavailable = new Set<string>()
 
-const MANIFESTS: Record<string, {name: string; version: string}> = {
+const MANIFESTS: Record<string, {name: string; version: string; minHostVersion?: string}> = {
   "com.mentra.notes": {name: "Notes", version: "1.0.30"},
   "com.mentra.maps": {name: "Maps", version: "2.1.0"},
 }
@@ -119,7 +119,14 @@ function launchesOf(packageName: string) {
 }
 
 beforeAll(async () => {
-  configure({auth: {}, config: {isMiniappAvailable: (packageName) => !unavailable.has(packageName)}})
+  configure({
+    auth: {},
+    config: {
+      isMiniappAvailable: (packageName) => !unavailable.has(packageName),
+      hostVersion: "3.3.0",
+      supportedMiniappSdkRange: "^0.3.0",
+    },
+  })
   miniappLauncher = (await import("../MiniappLauncher")).miniappLauncher
 })
 
@@ -131,6 +138,7 @@ beforeEach(() => {
   savedRunningState.length = 0
   missingBundles = new Set()
   unavailable = new Set()
+  delete MANIFESTS[NOTES].minHostVersion
   launches.length = 0
   fleetEvents.discardUndeliveredLaunches()
   stopListening = fleetEvents.subscribe({launch: (event) => launches.push(event)})
@@ -160,6 +168,17 @@ describe("a restore after a process death", () => {
       [NOTES, "automatic", "failed"],
       [MAPS, "automatic", "started"],
     ])
+    expect(savedRunningState).toEqual([[NOTES, false]])
+  })
+
+  test("of a release that needs a newer Mentra App is one failed launch for that reason, and stays stopped", async () => {
+    MANIFESTS[NOTES].minHostVersion = "3.4.0"
+    await miniappLauncher.autostartLocalMiniapps()
+    expect(launches.map((launch) => [launch.packageName, launch.outcome, launch.failureReason])).toEqual([
+      [NOTES, "failed", "incompatible_host"],
+      [MAPS, "started", undefined],
+    ])
+    expect(miniappLauncher.isRunning(NOTES)).toBe(false)
     expect(savedRunningState).toEqual([[NOTES, false]])
   })
 

@@ -45,6 +45,8 @@ function wireDevServerRespawnBackground(router: MentraJSRouter, uiRouter: Mentra
         console.warn(`MentraJS: respawn-bg could not resolve bundle for ${packageName}`)
         return
       }
+      // The rebuilt bundle meets a launch's Mentra App version rule; refused, the running context stays.
+      miniappLauncher.assertRunsOnPhone(packageName, resolved)
       // Force a respawn (kill + spawn) rather than launcher.ensureRunning,
       // which is idempotent and would no-op an already-registered context.
       const projectRunning = router.isProjectedRunning(packageName)

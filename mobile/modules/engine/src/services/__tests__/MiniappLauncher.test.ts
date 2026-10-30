@@ -35,6 +35,9 @@ let snapshotVersions: string[] = []
 let uiPath = "ui/index.html"
 /** The installed bundle's own `ageRating`; undefined declares none. */
 let manifestAgeRating: string | undefined
+/** The installed bundle's own `minHostVersion` and `sdkVersion`; undefined declares none. */
+let manifestMinHostVersion: string | undefined
+let manifestSdkVersion: string | undefined
 const revoked = new Set<string>()
 
 mock.module("../AppRegistry", () => ({
@@ -58,6 +61,8 @@ mock.module("../AppRegistry", () => ({
       permissions: [{type: "MICROPHONE"}],
       hardwareRequirements: [],
       ...(manifestAgeRating === undefined ? {} : {ageRating: manifestAgeRating}),
+      ...(manifestMinHostVersion === undefined ? {} : {minHostVersion: manifestMinHostVersion}),
+      ...(manifestSdkVersion === undefined ? {} : {sdkVersion: manifestSdkVersion}),
     }),
     getReleaseIdentity: () => ({source: releaseSource, storePackageName: releaseStorePackageName}),
     // AppRegistry asks the deployment's policy, knowing whether the current workspace assigned the package.
@@ -118,16 +123,20 @@ mock.module("../../stores/settings", () => ({
 }))
 
 let miniappLauncher: typeof import("../MiniappLauncher").miniappLauncher
+let launchFailureReason: typeof import("../MiniappLauncher").launchFailureReason
 
 const launcherConfig: IslandConfigValues = {
   isMiniappAvailable: (_packageName, mode) => available || (mode === "background" && backgroundAvailable),
   bundledSystemMiniappPackages: ["com.mentra.notes"],
+  hostVersion: "3.3.0",
+  supportedMiniappSdkRange: "^0.3.0",
 }
 
 beforeAll(async () => {
   configure({auth: {}, config: launcherConfig})
   const mod = await import("../MiniappLauncher")
   miniappLauncher = mod.miniappLauncher
+  launchFailureReason = mod.launchFailureReason
 })
 
 afterAll(resetForTests)
@@ -196,6 +205,8 @@ describe("MiniappLauncher", () => {
     snapshotVersions = []
     uiPath = "ui/index.html"
     manifestAgeRating = undefined
+    manifestMinHostVersion = undefined
+    manifestSdkVersion = undefined
     reactNativeAppState.currentState = "active"
     ;(reactNative.Platform as {OS: string}).OS = "android"
     waitForConnectCalls = []
@@ -606,6 +617,50 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls.length).toBe(0)
   })
 
+  describe("the Mentra App version a release needs", () => {
+    test("a release that needs a newer Mentra App is refused with the reason, spawning nothing", async () => {
+      manifestMinHostVersion = "3.4.0"
+      const launch = miniappLauncher.ensureRunning("com.mentra.ai")
+      await expect(launch).rejects.toThrow(
+        "Night Club can't run on this phone: Requires Mentra App 3.4.0+; this host is 3.3.0.",
+      )
+      const refusal = await launch.catch((error: unknown) => error)
+      // A screen explains it in the person's language from these, not from the message.
+      expect(refusal).toMatchObject({
+        name: "MiniappIncompatibleHostError",
+        packageName: "com.mentra.ai",
+        miniappName: "Night Club",
+        reason: "Requires Mentra App 3.4.0+; this host is 3.3.0.",
+      })
+      expect(launchFailureReason(refusal)).toBe("incompatible_host")
+      expect(mockRouter.spawnCalls).toEqual([])
+    })
+
+    test("a background wake of it is refused too", async () => {
+      manifestMinHostVersion = "3.4.0"
+      await expect(
+        miniappLauncher.ensureConnected("com.mentra.ai", 5000, undefined, {projectRunning: false}),
+      ).rejects.toThrow(/can't run on this phone/)
+      expect(mockRouter.spawnCalls).toEqual([])
+      expect(waitForConnectCalls).toEqual([])
+    })
+
+    test("a release built for a Mentra Miniapp SDK this app doesn't run is refused", async () => {
+      manifestSdkVersion = "1.0.0"
+      await expect(miniappLauncher.ensureRunning("com.x")).rejects.toThrow(
+        "Night Club can't run on this phone: Built for SDK 1.0.0; host supports ^0.3.0.",
+      )
+      expect(mockRouter.spawnCalls).toEqual([])
+    })
+
+    test("a release that needs this Mentra App or older launches", async () => {
+      manifestMinHostVersion = "3.3.0"
+      manifestSdkVersion = "0.3.0"
+      await miniappLauncher.ensureRunning("com.x")
+      expect(mockRouter.spawnCalls.map((call) => call.packageName)).toEqual(["com.x"])
+    })
+  })
+
   test("ensureRunning returns null UI for an already-registered package whose resolve fails", async () => {
     // First launch succeeds and registers the package. Later the bundle becomes
     // unresolvable (e.g. the mentra-miniapp dev server dropped). Headless
@@ -686,6 +741,14 @@ describe("MiniappLauncher", () => {
       declared = {declaredAge: 21, declaredAgeAt: new Date().toISOString()}
       await miniappLauncher.ensureRunning("com.club")
       expect(mockRouter.spawnCalls.map((call) => call.packageName)).toEqual(["com.club"])
+    })
+
+    test("a miniapp this Mentra App can't run is refused before anyone is asked their age", async () => {
+      manifestAgeRating = "18+"
+      manifestMinHostVersion = "3.4.0"
+      await expect(miniappLauncher.ensureRunning("com.club")).rejects.toThrow(/can't run on this phone/)
+      expect(gateCalls).toEqual([])
+      expect(mockRouter.spawnCalls).toHaveLength(0)
     })
 
     test("a person too young is told why, and nothing spawns", async () => {

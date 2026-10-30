@@ -40,7 +40,12 @@ import type {FleetLaunchFailureReason} from "@mentra/cloud-protocol"
 import {File} from "expo-file-system"
 import {AppState, Platform} from "react-native"
 
-import {isDevMiniappAllowed, isMiniappAvailable, type MiniappAvailabilityMode} from "../runtime/bootstrap"
+import {
+  getConfigValues,
+  isDevMiniappAllowed,
+  isMiniappAvailable,
+  type MiniappAvailabilityMode,
+} from "../runtime/bootstrap"
 import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
 import {storage} from "../utils/storage/storage"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
@@ -48,6 +53,7 @@ import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./
 import devServerBridge from "./DevServerBridge"
 import {fleetEvents} from "./fleet/fleetEvents"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
+import {checkManifestVersions} from "./manifestVersionGate"
 import type {MentraJSRouter} from "./MentraJSRouter"
 import {checkMiniappAge, type AgeGateVerdict, type AgeRatedMiniapp} from "./miniappAgeGate"
 import {developmentOriginName, miniappOrigin, miniappOriginUrl, type MiniappOriginPlatform} from "./miniappOrigin"
@@ -72,6 +78,23 @@ export class MiniappAgeRestrictedError extends Error {
   ) {
     super(`MiniappLauncher: ${packageName} is age-rated and did not open (${verdict})`)
     this.name = "MiniappAgeRestrictedError"
+  }
+}
+
+/**
+ * The bundle needs a newer Mentra App, or a Mentra Miniapp SDK this one doesn't run: the rule installs refuse by,
+ * checked again as it launches. A release a newer Mentra App installed stays on disk when an older one replaces it (a
+ * development build replaced from TestFlight), and would otherwise start against features this one lacks. The message
+ * is for logs; a screen explains it in the person's language, as an install refused by the same rule does.
+ */
+export class MiniappIncompatibleHostError extends Error {
+  constructor(
+    readonly packageName: string,
+    readonly miniappName: string,
+    readonly reason: string,
+  ) {
+    super(`${miniappName} can't run on this phone: ${reason}`)
+    this.name = "MiniappIncompatibleHostError"
   }
 }
 
@@ -183,9 +206,11 @@ function serverOrigin(url: string): string | null {
 
 /**
  * Why a launch failed, as the code Fleet takes (Phase 12): never the error's text. A bundle that cannot be found is
- * `bundle_missing`; a deployment, age or access block `policy_blocked`; a context that did not start `spawn_failed`.
+ * `bundle_missing`; one that needs a newer Mentra App `incompatible_host`; a deployment, age or access block
+ * `policy_blocked`; a context that did not start `spawn_failed`.
  */
 export function launchFailureReason(error: unknown): FleetLaunchFailureReason {
+  if (error instanceof MiniappIncompatibleHostError) return "incompatible_host"
   if (error instanceof MiniappAgeRestrictedError || error instanceof MiniappAccessRevokedError) return "policy_blocked"
   const message = error instanceof Error ? error.message : ""
   if (message.includes("cannot resolve bundle")) return "bundle_missing"
@@ -489,6 +514,15 @@ class MiniappLauncher {
     }
   }
 
+  /** Throws {@link MiniappIncompatibleHostError} when this Mentra App can't run the resolved bundle. */
+  assertRunsOnPhone(packageName: string, resolved: ResolvedBundle): void {
+    const manifest = resolved.installedManifest
+    const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
+    if (!manifest || !hostVersion || !supportedMiniappSdkRange) return
+    const versions = checkManifestVersions(manifest, {hostVersion, supportedSdkRange: supportedMiniappSdkRange})
+    if (!versions.ok) throw new MiniappIncompatibleHostError(packageName, manifest.name || packageName, versions.reason)
+  }
+
   /**
    * Ensure a miniapp's background JS context is spawned. Idempotent — if the
    * context is already alive this is a no-op spawn-wise (it still resolves the
@@ -597,6 +631,8 @@ class MiniappLauncher {
     if (!resolved) {
       throw new Error(`MiniappLauncher: cannot resolve bundle for ${packageName}`)
     }
+    // Before the age gate, so a miniapp this app can't run never asks the person's age.
+    this.assertRunsOnPhone(packageName, resolved)
     const version = resolved.installedManifest?.version
     const projectRunning = runtimeOptions?.projectRunning ?? true
     // The age gate, before the deployment checks below, which then see the state after any question the person
@@ -670,9 +706,10 @@ class MiniappLauncher {
    * persisted running flag if ensureRunning fails (for example, bundle resolution,
    * deployment policy, or context spawning) so it does not retry every boot.
    * Each restore is an automatic launch to Fleet, reported by ensureRunning.
-   * Not compatibility-gated: a previously-running background app shouldn't be
+   * Not gated on the glasses' hardware: a previously-running background app shouldn't be
    * dropped just because glasses are momentarily disconnected at boot — it
-   * resumes when they reconnect, same as mid-session.
+   * resumes when they reconnect, same as mid-session. A release this Mentra App
+   * can't run is refused like any launch (see {@link assertRunsOnPhone}).
    */
   async autostartLocalMiniapps(): Promise<void> {
     const apps = await appRegistry.getInstalledMiniapps()

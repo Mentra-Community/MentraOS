@@ -7,6 +7,8 @@ import {fleetEvents, type FleetLaunchEvent} from "../fleet/fleetEvents"
 
 let respawn: ((packageName: string) => Promise<void>) | null = null
 let spawnSucceeds = true
+/** Why this Mentra App can't run the rebuilt bundle; null when it can. */
+let incompatibleReason: string | null = null
 
 class FakeRouter {
   readonly projected = new Set<string>()
@@ -53,6 +55,9 @@ mock.module("../MiniappLauncher", () => ({
       devUrl: "http://192.0.2.1:8081",
       devPort: 8081,
     }),
+    assertRunsOnPhone: () => {
+      if (incompatibleReason) throw new Error(incompatibleReason)
+    },
   },
 }))
 mock.module("../MentraJSCrashController", () => ({MentraJSCrashController: class {}}))
@@ -76,6 +81,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   spawnSucceeds = true
+  incompatibleReason = null
   router.projected.clear()
   launches.length = 0
   fleetEvents.discardUndeliveredLaunches()
@@ -108,6 +114,14 @@ describe("a dev server's background hot reload", () => {
     spawnSucceeds = false
     await respawn?.("com.mentra.notes")
     expect(launches.map((launch) => [launch.packageName, launch.outcome])).toEqual([["com.mentra.notes", "failed"]])
+  })
+
+  test("to a bundle this Mentra App can't run keeps the running context, and is no launch", async () => {
+    router.projected.add("com.mentra.notes")
+    incompatibleReason = "Notes can't run on this phone: Requires Mentra App 3.4.0+; this host is 3.3.0."
+    await respawn?.("com.mentra.notes")
+    expect(router.isProjectedRunning("com.mentra.notes")).toBe(true)
+    expect(launches).toEqual([])
   })
 
   test("of a context a hidden action wake keeps out of the running tray is no launch", async () => {

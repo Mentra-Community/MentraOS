@@ -450,6 +450,14 @@ function LocalMiniappView({
         }
         return
       }
+      // A build this Mentra App can't run says why on its screen, as its install would have; a development build too,
+      // which is not offline.
+      if (e.name === "MiniappIncompatibleHostError") {
+        console.warn(`LocalMiniappView: ${e.message}`)
+        const {miniappName} = e as Error & {miniappName?: string}
+        fail(translate("miniappInstall:needsNewerApp", {name: miniappName || appNameRef.current || packageName}))
+        return
+      }
       if (devUrl) {
         // Dev bundle couldn't be resolved (dev server unreachable, or the
         // manifest/background bundle fetch failed) — route to the dedicated
