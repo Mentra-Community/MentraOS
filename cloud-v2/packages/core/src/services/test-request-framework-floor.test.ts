@@ -93,6 +93,31 @@ test('exact eligible response completes once and an older response cannot commit
   expect(queued.dispatchIntent).toEqual(intent); expect(queued.dispatchIntentSha256).toBe(digest);
   expect(await f.service.completePreparation(intent.requestId, 'pro', digest, input, current)).toEqual(queued); expect(f.completions).toBe(1);
 });
+test('startup waiting status reoffers the same original and completion still commits exactly once',async()=>{
+ const f=fixture(),original=await f.service.prepare('pro',intent),digest=original.dispatchIntentSha256!;
+ const status={dispatchIntentSha256:digest,code:'source-unavailable',reason:'Provider did not acknowledge started before startup deadline',observedAt:new Date(now).toISOString(),frameworkBinding:current};
+ for(let attempt=0;attempt<2;attempt++){
+  const waiting=await f.service.preparationStatus(intent.requestId,'pro',status);
+  expect(waiting).toMatchObject({requestId:intent.requestId,state:'preparing',dispatchIntentSha256:digest,dispatchIntent:intent});
+  expect(waiting).not.toHaveProperty('preparationRejection');expect(waiting).not.toHaveProperty('input');
+  expect((await f.service.queued('pro',undefined,1)).preparations.map(row=>row.requestId)).toEqual([intent.requestId]);
+ }
+ expect(f.rejections).toBe(0);
+ const queued=await f.service.completePreparation(intent.requestId,'pro',digest,input,current);
+ expect(queued.inputSha256).toBe(requestInputDigest(input));expect(f.completions).toBe(1);
+ expect(await f.service.completePreparation(intent.requestId,'pro',digest,input,current)).toEqual(queued);
+ expect(f.completions).toBe(1);
+});
+test('startup waiting cannot revive the cancelled original or deliver its executable input',async()=>{
+ const f=fixture(),original=await f.service.prepare('pro',intent),digest=original.dispatchIntentSha256!;
+ const status={dispatchIntentSha256:digest,code:'source-unavailable',reason:'Provider did not acknowledge started before startup deadline',observedAt:new Date(now).toISOString(),frameworkBinding:current};
+ await f.service.preparationStatus(intent.requestId,'pro',status);
+ const cancelled=(await f.service.cancel(intent.requestId,new Date(now).toISOString(),'Cancel the same original'))!;
+ expect(await f.service.preparationStatus(intent.requestId,'pro',status)).toEqual(cancelled);
+ expect(await f.service.completePreparation(intent.requestId,'pro',digest,input,current)).toEqual(cancelled);
+ expect((await f.service.queued('pro',undefined,1)).preparations).toEqual([]);
+ expect(f.completions).toBe(0);expect(f.rejections).toBe(0);
+});
 test('framework replacement during preparation validation is rechecked before the final input CAS', async () => {
   const f = fixture(), original = await f.service.prepare('pro', intent);
   await f.service.assertPreparationFramework(original, current, true);
