@@ -37,9 +37,8 @@ export type ResourceReservationHost = {hostId: string; incarnation: string; inca
   laneControlVersion?: number; laneControls?: unknown; resourceLifecycleCursor?: unknown;
   frameworkHistory?: unknown; frameworkStopReceipts?: unknown}
 
-/** Pre-bind local Mac disk quota has no device or worker custody. The request CAS
- * can choose a new quota winner; ordinary recorder reconciliation returns the old one. */
-export function replaceableMacRecorderQuota(row: StoredRoutineJob, host: {hostId: string; receivedAt: Date;
+/** A pure pre-bind byte preparation has no device or worker custody. */
+export function unusedRecorderQuota(row: StoredRoutineJob, host: {hostId: string; receivedAt: Date;
   snapshot: Pick<TestHostState, 'lanes' | 'resourceLifecycle'>; resourceReservations?: unknown} | null | undefined,
   claims: RecorderHostReservation[], now: number) {
   const quota = row.fleetResourceReservation, admission = row.fleetResourceAdmission
@@ -49,6 +48,7 @@ export function replaceableMacRecorderQuota(row: StoredRoutineJob, host: {hostId
     row.fleetExclusiveReservation || row.fleetExclusiveExecutionBinding || row.hostId ||
     (row as StoredRoutineJob & {input?: unknown}).input !== undefined || row.inputSha256 ||
     row.dispatchIntent || row.dispatchIntentSha256 || row.hostReceipt || row.fleetDeadline.getTime() <= now ||
+    row.runId || row.dispatchCompletion ||
     claims.length !== 1 || !isDeepStrictEqual(claims[0], quota) || quota.requestId !== row.requestId ||
     quota.fleetInputSha256 !== row.fleetInputSha256 || admission.dependencies.length ||
     admission.intent.hostId !== quota.hostId || admission.intent.laneId !== quota.laneId ||
@@ -56,12 +56,19 @@ export function replaceableMacRecorderQuota(row: StoredRoutineJob, host: {hostId
     admission.intent.operationId !== `run:${row.requestId}` || admission.intent.inputSha256 !== row.fleetInputSha256) return false
   const lane = host.snapshot.lanes.find(value => value.id === quota.laneId),
     storage = lane?.resources.find(value => value.kind === 'recorder')?.storage
-  return lane?.platform === 'ios-on-mac' && Boolean(storage && storage.poolId === quota.poolId &&
+  return Boolean(storage && storage.poolId === quota.poolId &&
     Date.parse(storage.observedAt) <= now && now - Date.parse(storage.observedAt) <= 120_000 &&
     !storage.reservations.some(value => value.requestId === row.requestId)) &&
     !hostResourceReservationsSchema.parse(host.resourceReservations ?? []).some(value => isExclusiveHostReservation(value) &&
       value.owner.kind === 'run' && value.owner.id === row.requestId) &&
-    !host.snapshot.resourceLifecycle?.subjects.some(value => value.owner?.kind === 'run' && value.owner.id === row.requestId)
+    !host.snapshot.resourceLifecycle?.subjects.some(value => value.owner?.kind === 'run' && value.owner.id === row.requestId) &&
+    !(lane?.activity?.owner.kind === 'run' && lane.activity.owner.id === row.requestId)
+}
+
+/** Only unused local Mac quota may relocate before a new worker binds. */
+export function replaceableMacRecorderQuota(...args: Parameters<typeof unusedRecorderQuota>) {
+  const [row, host] = args
+  return unusedRecorderQuota(...args) && host?.snapshot.lanes.find(value => value.id === row.fleetResourceReservation!.laneId)?.platform === 'ios-on-mac'
 }
 
 function graphReturnCandidate(pending: FleetCandidatePreparation, returned: ExclusiveResourceReturn,

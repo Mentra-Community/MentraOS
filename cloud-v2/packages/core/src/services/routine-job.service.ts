@@ -1,5 +1,6 @@
 import {createLogger} from '@mentra/cloud-shared/logger';
 import {TestHostStateModel} from '../models/test-host-state.model';
+import {withTransaction} from '../connections/mongo.connection';
 import {unclaimedRoutineQualificationSchema, type UnclaimedRoutineQualification} from '../types/routine-job.types';
 import {hostResourceReservationsSchema, isExclusiveHostReservation, fleetResourceAdmissionSchema} from '../types/resource-reservations.types';
 import {recorderCapacityRequirement, recorderStorageAvailable, recorderHostReservationSchema, STORAGE_MARGIN_BYTES, type RecorderHostReservation, type RecorderStorageObservation} from '../types/recorder-storage.types';
@@ -29,7 +30,7 @@ import {FrameworkResultService} from './framework-result.service';
 import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type RoutineActionsCancellation, type RoutineJobActions} from './routine-job-actions.service';
 import {TestRunError} from './test-result-error';
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
-import {backendRecorderClaimMatches, resourceIntentDependencies, requiresBackendConnectivity, requiresSerializedAndroidPreparation, resourceReservationRepository, routineResourceBlocker, routineResourcesAvailable, replaceableMacRecorderQuota, ResourceReservationsService, type ResourceReservationHost} from './resource-reservations.service';
+import {backendRecorderClaimMatches, resourceIntentDependencies, requiresBackendConnectivity, requiresSerializedAndroidPreparation, resourceReservationRepository, routineResourceBlocker, routineResourcesAvailable, replaceableMacRecorderQuota, unusedRecorderQuota, ResourceReservationsService, type ResourceReservationHost} from './resource-reservations.service';
 import {resourceLaneBlocker, resourceCandidateBlocker, requiredResourceBlocker} from './resource-readiness';
 import {evaluateRoutineLaneReadiness, routineLaneRequirementBlocker, type RoutineLaneEligibilityContext} from './routine-lane-eligibility';
 import {dependencyWaitingReason, recorderWait, RESOURCE_ADMISSION_WAIT, sharedResourceWaitingReason, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait';
@@ -66,6 +67,7 @@ export interface RoutineJobRepository {
   recorderClaims?(jobId: string): Promise<RecorderHostReservation[]>;
   claimedHosts?(jobId: string): Promise<ResourceReservationHost[]>;
   reconcileRecorderHost?(hostId: string, now: Date, onPhase?: RoutinePreparationPhase, onReturned?: () => void, acceptedHost?: ResourceReservationHost, requestId?: string): Promise<boolean>;
+  releaseUnusedPreparation?(row: StoredRoutineJob): Promise<boolean>;
   checkpointBackendRecorder?(row: StoredRoutineJob, claim: RecorderHostReservation, now: Date): Promise<StoredRoutineJob | null>;
   reconcileBackendRecorderCancellation?(jobId: string, now: Date): Promise<void>;
   reserveResources?(jobId: string, inputSha256: string, hostId: string, laneId: string, now: Date,
@@ -94,6 +96,39 @@ export const routineJobRepository: RoutineJobRepository = {
     .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob | null;},
   async recorderClaims(requestId) {return resourceReservationRepository.recorderClaims!(requestId);},
   async claimedHosts(requestId) {return resourceReservationRepository.claimedHosts!(requestId);},
+  async releaseUnusedPreparation(row) {
+    const quota = row.fleetResourceReservation;
+    if (!quota) return false;
+    const host = await resourceReservationRepository.get(quota.hostId), claims = await this.recorderClaims!(row.requestId),
+      authorities = await this.claimedHosts!(row.requestId), now = new Date(Date.now());
+    if (!unusedRecorderQuota(row, host, claims, now.getTime()) || authorities.length ||
+      host?.snapshot.resourceReservations?.claims.some(claim => claim.owner.kind === 'run' && claim.owner.id === row.requestId)) return false;
+    const all = hostResourceReservationsSchema.parse(host!.resourceReservations ?? []),
+      lost = new Error('Unused preparation changed before its return');
+    try {
+      return await withTransaction(async session => {
+        // A concurrent binding or delivered input keeps its original authority.
+        const returned = await TestRequestModel.collection.findOneAndUpdate({requestId: row.requestId,
+          fleetInputSha256: row.fleetInputSha256, state: 'awaiting-runner',
+          fleetResourceReservation: quota, fleetResourceAdmission: row.fleetResourceAdmission,
+          fleetCandidatePreparation: {$exists: false}, fleetExclusiveReservation: {$exists: false},
+          fleetExclusiveExecutionBinding: {$exists: false}, fleetBinding: {$exists: false}, fleetCancellation: {$exists: false},
+          hostId: {$exists: false}, input: {$exists: false}, inputSha256: {$exists: false},
+          dispatchIntent: {$exists: false}, dispatchIntentSha256: {$exists: false}, hostReceipt: {$exists: false},
+          runId: {$exists: false}, dispatchCompletion: {$exists: false}, fleetDeadline: {$gt: now}},
+          {$unset: {fleetResourceReservation: '', fleetResourceAdmission: ''}}, {session, returnDocument: 'after', timeoutMS: 5000});
+        if (!returned) throw lost;
+        const released = await TestHostStateModel.collection.findOneAndUpdate({hostId: host!.hostId, incarnation: host!.incarnation,
+          incarnationGeneration: host!.incarnationGeneration, sequence: host!.sequence,
+          laneControlVersion: host!.laneControlVersion ?? {$exists: false},
+          resourceReservationVersion: host!.resourceReservationVersion ?? {$exists: false}},
+          {$set: {resourceReservations: all.filter(claim => isExclusiveHostReservation(claim) || claim.id !== quota.id)},
+            $inc: {resourceReservationVersion: 1}}, {session, returnDocument: 'after', timeoutMS: 5000});
+        if (!released) throw lost;
+        return true;
+      });
+    } catch (error) {if (error === lost) return false; throw error;}
+  },
   async reconcileRecorderHost(hostId, now, onPhase, onReturned, acceptedHost, requestId) {
     // Return reconciliation precedes readiness routing. Raw claims remain custody
     // until the original request and a later fresh same-pool offer prove return.
@@ -1878,8 +1913,13 @@ export class RoutineJobService {
     const intent = routineDispatchIntentSchema.parse({...row.fleetSelection, routineSource: row.fleetPreparation!.routineSource, laneId: input.laneId});
     const saved = await this.rows.bind(jobId, input.inputSha256, binding, intent, new Date(this.now()));
     const winner = saved ?? await this.job(jobId);
-    if (!winner.fleetBinding) throw new TestRequestConflict(winner.fleetCancellation || this.now() >= winner.fleetDeadline.getTime()
-      ? 'Routine job was cancelled or expired before binding' : 'Routine resource admission did not commit worker binding');
+    if (!winner.fleetBinding) {
+      // A confirmed rejection never delivered execution authority. Return only
+      // its unused byte preparation; throwing/lost binding replies retain it.
+      await this.rows.releaseUnusedPreparation?.(winner);
+      throw new TestRequestConflict(winner.fleetCancellation || this.now() >= winner.fleetDeadline.getTime()
+        ? 'Routine job was cancelled or expired before binding' : 'Routine resource admission did not commit worker binding');
+    }
     return this.bindingProjection(winner, hostId, input);
   }
   private async bindingProjection(row: StoredRoutineJob, hostId: string, input: z.infer<typeof routineJobBindInputSchema>) {

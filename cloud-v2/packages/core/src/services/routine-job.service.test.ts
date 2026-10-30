@@ -26,7 +26,7 @@ const definition = {id:'new-routine',minimumRoutineApiVersion:1,title:'A check',
   requirements:[],fixtures:[],steps:[{id:'check',instruction:'Check',expected:'Checked'}],
   execution:{resourceKinds:['phone','app','recorder','network'],policy:{estimatedOutputBytes:1024 ** 3}},resourceRequirements:[{kind:'phone',capabilities:[]},{kind:'app',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'network',capabilities:['independent-uplink']}],
   source:{repository:'Mentra-Community/Mentra-Automated-Testing',revision:selection.routineRevision,path:'routines/new-routine/routine.ts'}};
-function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequirements' | 'fixtures'> & {resourceRequirements: {kind: string; capabilities: string[]}[]; fixtures: {provider: string; description: string}[]; glasses?: {models: string[]}} = definition, actions: RoutineJobActions | null = null) {
+function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequirements' | 'fixtures'> & {resourceRequirements: {kind: string; capabilities: string[]}[]; fixtures: {provider: string; description: string}[]; glasses?: {models: string[]}} = definition, actions: RoutineJobActions | null = null, jobSelection: typeof selection = selection) {
   let time = Date.parse('2026-10-08T00:00:00Z'), row:StoredRoutineJob|null=null, resolves=0, sources=0;
   let offeredHosts: (ReceivedTestHostState & Pick<RoutingTestHostState, 'authorityReservations'>)[] | undefined, resultFound = false;
   const copy = <T>(value:T):T => structuredClone(value);
@@ -55,12 +55,12 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
   const host=(hostId:string):ReceivedTestHostState=>({hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:new Date(time).toISOString(),receivedAt:new Date(time).toISOString(),frameworkBinding:testFrameworkBinding(),lanes:[{...copy(lane),resources:lane.resources.map(resource=>resource.storage?{...resource,storage:{...resource.storage,observedAt:new Date(time).toISOString()}}:resource)}]});
   const service=new RoutineJobService(rows,{async resolve(value,platform){resolves++;return {source:value,platform,availability:'available',title:'App',headSha:'c'.repeat(40),createdAt:new Date(time).toISOString(),buildUrl:'https://github.com/Mentra-Community/MentraOS/actions/runs/55',
     archive:{name:'app.apk',size:100,sha256:'d'.repeat(64),url:'https://artifactscdn.mentraglass.com/app.apk'},receipt:{size:10,sha256:'e'.repeat(64),url:'https://artifactscdn.mentraglass.com/receipt.json'}}}},
-    {async resolve(revision){sources++;return revision??selection.routineRevision},async inventory(commit){return {commit,files:[]}},async blob(){return new Uint8Array()}},
+    {async resolve(revision){sources++;return revision??jobSelection.routineRevision},async inventory(commit){return {commit,files:[]}},async blob(){return new Uint8Array()}},
     {async getExact(){return null}}, {async get(hostId){return offeredHosts?.find(host => host.hostId === hostId) ?? host(hostId)}, async list(){return offeredHosts ?? [host('mini')]}}, {async cancel(){if(row && row.state!=='terminal')row={...row,state:'terminal',terminalStatus:'cancelled'};return null}},
     {async detail(){throw new TestRunError(404,'missing')}},()=>time,actions);
   // Result lookup intentionally uses the same 404 class as existing Core result APIs.
-  const prepare=async()=>{const first=await service.submit(selection);await service.prepared(selection.requestId,{inputSha256:first.fleetSelectionSha256,
-    routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});return service.preparation(selection.requestId)};
+  const prepare=async()=>{const first=await service.submit(jobSelection);await service.prepared(jobSelection.requestId,{inputSha256:first.fleetSelectionSha256,
+    routineSource:testRoutineSource(jobSelection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});return service.preparation(jobSelection.requestId)};
   // Existing custody tests start from an already-created reserved request. New
   // portable preparation tests use prepare() and reach acquisition through bind.
   const reservePrepared = async (hostId?: string) => {
@@ -88,7 +88,7 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
       routingLabels: routineRequirementLabels(row!.fleetPreparation!.requirements, quota.chosenModel, quota)} : prepared;
   };
   const prepareReserved = async () => {await prepare(); return reservePrepared();};
-  return {service,rows,lane,prepare,prepareReserved,reservePrepared,offer(hosts: (ReceivedTestHostState & Pick<RoutingTestHostState, 'authorityReservations'>)[]){offeredHosts=copy(hosts).map(host=>({...host,frameworkBinding:host.frameworkBinding??testFrameworkBinding()}))}, restore(value:StoredRoutineJob){row=copy(value)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},queued(inputSha256:string){if(row)row={...row,state:'queued',inputSha256,hostReceipt:undefined} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256,hostReceipt:{requestId:row.requestId,hostId:row.hostId!,inputSha256,acceptedAt:new Date(time).toISOString()}} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:selection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
+  return {service,rows,lane,prepare,prepareReserved,reservePrepared,offer(hosts: (ReceivedTestHostState & Pick<RoutingTestHostState, 'authorityReservations'>)[]){offeredHosts=copy(hosts).map(host=>({...host,frameworkBinding:host.frameworkBinding??testFrameworkBinding()}))}, restore(value:StoredRoutineJob){row=copy(value)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},queued(inputSha256:string){if(row)row={...row,state:'queued',inputSha256,hostReceipt:undefined} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256,hostReceipt:{requestId:row.requestId,hostId:row.hostId!,inputSha256,acceptedAt:new Date(time).toISOString()}} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:jobSelection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
 }
 test('preparation POST freezes exact source and its GET leaves default work portable', async () => {
   const previousToken = process.env.TEST_RUN_INGEST_TOKEN;
@@ -1255,11 +1255,11 @@ test('offline provisional recovery refuses duplicate or changed original custody
 })
 
 /** Real selection/reservation/binding with only the Mongo collection boundary replaced. */
-async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: Map<string, any>, counters: {host: number; request: number}, pastRows: Map<string, StoredRoutineJob>) => Promise<void>, extraKinds: ('audio'|'browser'|'fixture-data')[] = [], backendConnectivity = false, models = ['mentra-live']) {
+async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: Map<string, any>, counters: {host: number; request: number}, pastRows: Map<string, StoredRoutineJob>) => Promise<void>, extraKinds: ('audio'|'browser'|'fixture-data')[] = [], backendConnectivity = false, models = ['mentra-live'], jobSelection: typeof selection = selection) {
  const now=Date.now(),at=new Date(now).toISOString(),f=fixture({...definition,
    resourceRequirements:[...definition.resourceRequirements.map(resource=>backendConnectivity&&resource.kind==='phone'?{...resource,capabilities:['backend-connectivity']}:resource),{kind:'glasses',capabilities:['connection']},...extraKinds.map(kind=>({kind,capabilities:[]}))],glasses:{models},
    fixtures:extraKinds.includes('fixture-data')?[{provider:'synthetic',description:'Independent synthetic fixture'}]:[],
-   execution:{resourceKinds:['phone','app','recorder','network','glasses',...extraKinds],policy:{estimatedOutputBytes:1024**3}}});
+   execution:{resourceKinds:['phone','app','recorder','network','glasses',...extraKinds],policy:{estimatedOutputBytes:1024**3}}}, null, jobSelection);
  f.advance(now-Date.parse('2026-10-08T00:00:00Z'));
  const hosts=new Map<string,any>();
  for(const hostId of ['mini','air1']) {
@@ -1306,8 +1306,8 @@ async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: M
    },async endSession(){}};
   return session;
  }) as any);
- TestRequestModel.collection.find=((filter:any)=>({limit(n:number){expect(n).toBe(1001);expect(filter.requestId.$in.length).toBeLessThanOrEqual(1000);return {async toArray(){return filter.requestId.$in.flatMap((id:string)=>{const row=id===selection.requestId?f.row:pastRows.get(id);return row?[structuredClone(row)]:[]})}}}})) as any;
- TestRequestModel.collection.findOne=(async(filter:any)=>{expect(filter.requestId).toBe(selection.requestId);return structuredClone(f.row)}) as any;
+ TestRequestModel.collection.find=((filter:any)=>({limit(n:number){expect(n).toBe(1001);expect(filter.requestId.$in.length).toBeLessThanOrEqual(1000);return {async toArray(){return filter.requestId.$in.flatMap((id:string)=>{const row=id===jobSelection.requestId?f.row:pastRows.get(id);return row?[structuredClone(row)]:[]})}}}})) as any;
+ TestRequestModel.collection.findOne=(async(filter:any)=>{expect(filter.requestId).toBe(jobSelection.requestId);return structuredClone(f.row)}) as any;
  TestRequestModel.collection.findOneAndUpdate=(async(filter:any,update:any,options:any={})=>{const session=options.session as Session|undefined,row=session?session.row:f.row;
   if(!matches(row,filter))return null;
   const next={...row,...structuredClone(update.$set)};for(const key of Object.keys(update.$unset??{}))delete (next as any)[key];
@@ -1322,9 +1322,10 @@ async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: M
  resourceReservationRepository.replace=async(previous,claims)=>{const h=hosts.get(previous.hostId);if(previous.sequence!==h.sequence||previous.laneControlVersion!==h.laneControlVersion||previous.resourceReservationVersion!==h.resourceReservationVersion)return false;
   expect(claims.every(claim=>h.resourceReservations.some((original:any)=>requestInputDigest(original)===requestInputDigest(claim)))).toBe(true);h.resourceReservations=structuredClone(claims);h.resourceReservationVersion++;return true;};
  resourceReservationRepository.request=async()=>structuredClone(f.row);
- resourceReservationRepository.claimedHosts=async()=>[...hosts.values()].filter(h=>h.resourceReservations?.some((claim:any)=>claim.kind==='exclusive'&&claim.owner.kind==='run'&&claim.owner.id===selection.requestId&&claim.origin?.kind==='fleet')).map(h=>structuredClone(h));
- resourceReservationRepository.recorderClaims=async()=>[...hosts.values()].flatMap(h=>structuredClone(h.resourceReservations)).filter((claim:any)=>claim.requestId===selection.requestId);
+ resourceReservationRepository.claimedHosts=async()=>[...hosts.values()].filter(h=>h.resourceReservations?.some((claim:any)=>claim.kind==='exclusive'&&claim.owner.kind==='run'&&claim.owner.id===jobSelection.requestId&&claim.origin?.kind==='fleet')).map(h=>structuredClone(h));
+ resourceReservationRepository.recorderClaims=async()=>[...hosts.values()].flatMap(h=>structuredClone(h.resourceReservations)).filter((claim:any)=>claim.requestId===jobSelection.requestId);
  f.rows.reconcileRecorderHost=(...args)=>routineJobRepository.reconcileRecorderHost!.apply(routineJobRepository,args);
+ f.rows.releaseUnusedPreparation=(...args)=>routineJobRepository.releaseUnusedPreparation!.apply(routineJobRepository,args);
  f.rows.reserveResources=(...args)=>routineJobRepository.reserveResources!.apply(routineJobRepository,args);
  f.rows.bind=(...args)=>routineJobRepository.bind.apply(routineJobRepository,args);
  f.rows.recorderClaims=(...args)=>resourceReservationRepository.recorderClaims!.apply(resourceReservationRepository,args);
@@ -2551,5 +2552,175 @@ for (const phase of ['admission', 'binding'] as const) for (const reportKind of 
       TestHostStateModel.collection.findOne = read; resourceReservationRepository.get = get;
       serviceClock.mockRestore(); clock.mockRestore();
     }
+  });
+});
+
+
+test('a deterministic failed Android bind returns its unused preparation so the next original can acquire the idle lane', async () => {
+  const firstSelection = {...selection, requestId: 'battery-original'};
+  let first: StoredRoutineJob, retained: unknown[];
+  await withLocalResources(async (f, hosts) => {
+    const host = hosts.get('mini');
+    host.snapshot.lanes[0].resources.find((resource: any) => resource.kind === 'phone').capabilities = ['backend-connectivity'];
+    host.snapshot.lanes[0].descriptorRevision = routineLaneDescriptorRevision(host.snapshot.lanes[0]);
+    const prepared = await f.prepare(), original = structuredClone(f.row!), replace = resourceReservationRepository.replace;
+    resourceReservationRepository.replace = async (captured, claims) => {host.sequence++; host.snapshot.sequence++; return replace(captured, claims);};
+    try {
+      await expect(f.service.bind(firstSelection.requestId, host.hostId, {inputSha256: prepared.inputSha256,
+        laneId: 'android', descriptorRevision: host.snapshot.lanes[0].descriptorRevision, actionsRunId: '10', actionsJobId: '20'}))
+        .rejects.toThrow('Routine resource admission did not commit worker binding');
+      expect(f.row!.fleetBinding).toBeUndefined();
+      expect(f.row!.hostId).toBeUndefined();
+      expect(f.row!.dispatchIntent).toBeUndefined();
+      for (const key of ['requestId', 'fleetSelection', 'fleetInputSha256', 'fleetPreparation', 'fleetDeadline'] as const)
+        expect(f.row![key]).toEqual(original[key]);
+      first = structuredClone(f.row!);
+      retained = structuredClone(host.resourceReservations);
+    } finally {resourceReservationRepository.replace = replace;}
+  }, [], false, ['mentra-live'], firstSelection);
+  await withLocalResources(async (f, hosts, _counters, pastRows) => {
+    const host = hosts.get('mini');
+    host.snapshot.lanes[0].resources.find((resource: any) => resource.kind === 'phone').capabilities = ['backend-connectivity'];
+    host.snapshot.lanes[0].descriptorRevision = routineLaneDescriptorRevision(host.snapshot.lanes[0]);
+    host.resourceReservations = retained!;
+    pastRows.set(first!.requestId, first!);
+    const prepared = await f.prepare();
+    const result = await f.service.bind(selection.requestId, host.hostId, {inputSha256: prepared.inputSha256,
+      laneId: 'android', descriptorRevision: host.snapshot.lanes[0].descriptorRevision, actionsRunId: '11', actionsJobId: '21'});
+    expect(result.binding.requestId).toBe(selection.requestId);
+    expect(result.binding.hostId).toBe(host.hostId);
+    expect(host.resourceReservations.map((claim: any) => claim.requestId)).toEqual([selection.requestId]);
+    expect(first!.fleetResourceReservation).toBeUndefined();
+    expect(first!.fleetResourceAdmission).toBeUndefined();
+  });
+});
+
+
+for (const custody of ['bound', 'input', 'dispatch', 'receipt', 'candidate', 'exclusive', 'local-bytes', 'current-owner', 'changed-claim', 'stale-offer', 'unknown-authority'] as const)
+test(`unused preparation return retains ${custody} authority`, async () => {
+  await withLocalResources(async (f, hosts) => {
+    await f.prepareReserved();
+    const row = structuredClone(f.row!), host = hosts.get(row.fleetResourceReservation!.hostId),
+      storage = host.snapshot.lanes[0].resources.find((resource: any) => resource.kind === 'recorder').storage;
+    if (custody === 'bound') row.fleetBinding = {hostId: host.hostId, laneId: 'android'} as never;
+    if (custody === 'input') (row as StoredRoutineJob & {input?: unknown}).input = {requestId: row.requestId};
+    if (custody === 'dispatch') row.dispatchIntent = {requestId: row.requestId} as never;
+    if (custody === 'receipt') row.hostReceipt = {requestId: row.requestId} as never;
+    if (custody === 'candidate') row.fleetCandidatePreparation = {} as never;
+    if (custody === 'exclusive') row.fleetExclusiveReservation = {} as never;
+    if (custody === 'local-bytes') storage.reservations = [{requestId: row.requestId, inputSha256: 'b'.repeat(64)}];
+    if (custody === 'current-owner') host.snapshot.resourceLifecycle.subjects[0].owner = {id: row.requestId, kind: 'run', generation: 7};
+    if (custody === 'changed-claim') host.resourceReservations[0].minimumAvailableBytes++;
+    if (custody === 'stale-offer') storage.observedAt = new Date(host.receivedAt.getTime() - 120001).toISOString();
+    f.restore(row);
+    const before = structuredClone(host.resourceReservations), authorities = routineJobRepository.claimedHosts;
+    if (custody === 'unknown-authority') routineJobRepository.claimedHosts = async () => [host];
+    try {
+      expect(await routineJobRepository.releaseUnusedPreparation!(row)).toBe(false);
+      expect(f.row).toEqual(row);
+      expect(host.resourceReservations).toEqual(before);
+    } finally {routineJobRepository.claimedHosts = authorities;}
+  });
+});
+
+for (const race of ['binding', 'cancellation', 'report', 'controls', 'claims'] as const)
+test(`unused preparation return loses ${race} CAS without returning current authority`, async () => {
+  await withLocalResources(async (f, hosts, counters) => {
+    await f.prepareReserved();
+    const original = structuredClone(f.row!), host = hosts.get(original.fleetResourceReservation!.hostId), before = {...counters},
+      write = TestRequestModel.collection.findOneAndUpdate, hostWrite = TestHostStateModel.collection.findOneAndUpdate;
+    let raced = false;
+    TestRequestModel.collection.findOneAndUpdate = (async (...args: any[]) => {
+      if (!raced && args[1]?.$unset?.fleetResourceReservation !== undefined && (race === 'binding' || race === 'cancellation')) {
+        raced = true;
+        f.restore(race === 'binding' ? {...original, state: 'preparing', hostId: host.hostId,
+          fleetBinding: {hostId: host.hostId, laneId: 'android'} as never} :
+          {...original, fleetCancellation: {requestedAt: host.receivedAt.toISOString(), reason: 'Original cancellation won'}});
+      }
+      return (write as any)(...args);
+    }) as never;
+    TestHostStateModel.collection.findOneAndUpdate = (async (...args: any[]) => {
+      if (!raced && args[2]?.session && args[1]?.$set?.resourceReservations && !['binding', 'cancellation'].includes(race)) {
+        raced = true;
+        if (race === 'report') {host.sequence++; host.snapshot.sequence++;}
+        if (race === 'controls') host.laneControlVersion++;
+        if (race === 'claims') {host.resourceReservationVersion++; host.resourceReservations.push({...original.fleetResourceReservation!, id: 'foreign-byte-claim', requestId: 'another-original'});}
+      }
+      return (hostWrite as any)(...args);
+    }) as never;
+    try {
+      expect(await routineJobRepository.releaseUnusedPreparation!(original)).toBe(false);
+      expect(raced).toBe(true);
+      expect(f.row!.fleetResourceReservation).toEqual(original.fleetResourceReservation);
+      expect(f.row!.fleetResourceAdmission).toEqual(original.fleetResourceAdmission);
+      expect(host.resourceReservations).toContainEqual(original.fleetResourceReservation);
+      if (race === 'binding') expect(f.row!.fleetBinding).toBeDefined();
+      if (race === 'cancellation') expect(f.row!.fleetCancellation).toBeDefined();
+      if (race === 'claims') expect(host.resourceReservations).toHaveLength(2);
+      expect(counters).toEqual(before);
+    } finally {TestRequestModel.collection.findOneAndUpdate = write; TestHostStateModel.collection.findOneAndUpdate = hostWrite;}
+  });
+});
+
+for (const committed of [false, true])
+test(`a lost Android binding reply retains its exact preparation (binding committed: ${committed})`, async () => {
+  await withLocalResources(async (f, hosts) => {
+    const host = hosts.get('mini');
+    host.snapshot.lanes[0].resources.find((resource: any) => resource.kind === 'phone').capabilities = ['backend-connectivity'];
+    host.snapshot.lanes[0].descriptorRevision = routineLaneDescriptorRevision(host.snapshot.lanes[0]);
+    const prepared = await f.prepare(), bind = f.rows.bind;
+    f.rows.bind = async (...args) => {if (committed) await bind(...args); throw Error('Binding reply lost');};
+    const release = spyOn(routineJobRepository, 'releaseUnusedPreparation');
+    try {
+      await expect(f.service.bind(selection.requestId, host.hostId, {inputSha256: prepared.inputSha256,
+        laneId: 'android', descriptorRevision: host.snapshot.lanes[0].descriptorRevision, actionsRunId: '10', actionsJobId: '20'}))
+        .rejects.toThrow('Binding reply lost');
+      expect(release).not.toHaveBeenCalled();
+      expect(Boolean(f.row!.fleetBinding)).toBe(committed);
+      expect(f.row!.fleetResourceReservation).toBeDefined();
+      expect(f.row!.fleetResourceAdmission).toBeDefined();
+      expect(host.resourceReservations).toEqual([f.row!.fleetResourceReservation]);
+    } finally {f.rows.bind = bind; release.mockRestore();}
+  });
+});
+
+
+test('DispatchCore receives the original 409, then the same original reoffer and duplicate bind preserve one winner', async () => {
+  await withLocalResources(async (f, hosts) => {
+    const host = hosts.get('mini');
+    host.snapshot.lanes[0].resources.find((resource: any) => resource.kind === 'phone').capabilities = ['backend-connectivity'];
+    host.snapshot.lanes[0].descriptorRevision = routineLaneDescriptorRevision(host.snapshot.lanes[0]);
+    const prepared = await f.prepare(), original = structuredClone(f.row!), credential = 'software-mini-host-token-at-least-thirty-two';
+    const app = new Hono().route('/api/internal/test-requests', createRoutineJobBindingApi(f.service, () => JSON.stringify({mini: credential})));
+    const {DispatchCore, dispatchCoreFailureDiagnostic} = await import(new URL('../../../../../../../testing/host/dispatch/core.ts', import.meta.url).pathname);
+    const statuses: number[] = [], core = new DispatchCore({url: 'https://core.example', credential,
+      fetch: async (url: URL, init: RequestInit) => {const response = await app.request(url.pathname, init); statuses.push(response.status); return response;}});
+    const input = {inputSha256: prepared.inputSha256, laneId: 'android',
+      descriptorRevision: host.snapshot.lanes[0].descriptorRevision, actionsRunId: '10', actionsJobId: '20'}, replace = resourceReservationRepository.replace;
+    let raced = false;
+    resourceReservationRepository.replace = async (captured, claims) => {
+      if (!raced) {raced = true; host.sequence++; host.snapshot.sequence++;}
+      return replace(captured, claims);
+    };
+    try {
+      let error: unknown;
+      try {await core.bind(original.requestId, input);} catch (failure) {error = failure;}
+      expect(dispatchCoreFailureDiagnostic(error)?.status).toBe(409);
+      expect(dispatchCoreFailureDiagnostic(error)?.coreError?.message).toBe('Routine resource admission did not commit worker binding');
+      expect(f.row!.fleetBinding).toBeUndefined();
+      expect(f.row!.fleetResourceReservation).toBeUndefined();
+      expect(host.resourceReservations).toEqual([]);
+      const reoffered = await f.service.preparation(original.requestId);
+      expect(reoffered.routingLabels?.some(label => label.startsWith('mentra-host-') || label.startsWith('mentra-lane-'))).toBe(false);
+      const winner = (await core.bind(original.requestId, {...input, actionsRunId: '11', actionsJobId: '21'})).binding,
+        claims = structuredClone(host.resourceReservations);
+      expect((await core.bind(original.requestId, {...input, actionsRunId: '11', actionsJobId: '21'})).binding).toEqual(winner);
+      expect(f.row!.fleetBinding).toEqual(winner);
+      expect(host.resourceReservations).toEqual(claims);
+      expect(host.resourceReservations).toHaveLength(1);
+      expect(statuses).toEqual([409, 200, 200]);
+      for (const key of ['requestId', 'fleetSelection', 'fleetInputSha256', 'fleetPreparation', 'fleetDeadline'] as const)
+        expect(f.row![key]).toEqual(original[key]);
+    } finally {resourceReservationRepository.replace = replace;}
   });
 });
