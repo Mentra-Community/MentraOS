@@ -2706,7 +2706,9 @@ test('DispatchCore receives the original 409, then the same original reoffer and
       let error: unknown;
       try {await core.bind(original.requestId, input);} catch (failure) {error = failure;}
       expect(dispatchCoreFailureDiagnostic(error)?.status).toBe(409);
-      expect(dispatchCoreFailureDiagnostic(error)?.coreError?.message).toBe('Routine resource admission did not commit worker binding');
+      expect(dispatchCoreFailureDiagnostic(error)?.coreError?.message).toContain('Routine resource admission did not commit worker binding. host-cas: unchanged-host-selector');
+      expect(dispatchCoreFailureDiagnostic(error)?.coreError?.message).toContain('expected {');
+      expect(dispatchCoreFailureDiagnostic(error)?.coreError?.message).toContain('\"sequence\":');
       expect(f.row!.fleetBinding).toBeUndefined();
       expect(f.row!.fleetResourceReservation).toBeUndefined();
       expect(host.resourceReservations).toEqual([]);
@@ -2722,5 +2724,85 @@ test('DispatchCore receives the original 409, then the same original reoffer and
       for (const key of ['requestId', 'fleetSelection', 'fleetInputSha256', 'fleetPreparation', 'fleetDeadline'] as const)
         expect(f.row![key]).toEqual(original[key]);
     } finally {resourceReservationRepository.replace = replace;}
+  });
+});
+
+
+for (const refusal of ['prepared-admission', 'current-host', 'serialized-claim', 'current-request', 'post-host-cas', 'request-cas'] as const)
+test(`binding reports the actual ${refusal} refusal without relaxing its existing fence`, async () => {
+  await withLocalResources(async (f, hosts, counters) => {
+    const host = hosts.get('mini');
+    if (refusal === 'serialized-claim') host.snapshot.lanes[0].resources.find((resource: any) => resource.kind === 'phone').capabilities = ['backend-connectivity'];
+    const prepared = await f.prepare();
+    expect(await f.rows.reserveResources!(selection.requestId, prepared.inputSha256, 'mini', 'android', host.receivedAt)).not.toBeNull();
+    const original = structuredClone(f.row!), claims = structuredClone(host.resourceReservations), before = {...counters},
+      read = TestRequestModel.collection.findOne, write = TestRequestModel.collection.findOneAndUpdate,
+      recorder = resourceReservationRepository.recorderClaims, replace = resourceReservationRepository.replace;
+    const diagnostics: unknown[] = [];
+    if (refusal === 'prepared-admission') TestRequestModel.collection.findOne = (async () => null) as any;
+    if (refusal === 'current-host') host.snapshot.lanes[0].activity = {requestId: 'foreign-current-writer'};
+    if (refusal === 'serialized-claim') resourceReservationRepository.recorderClaims = async () => [];
+    if (refusal === 'current-request') {
+      let reads = 0;
+      TestRequestModel.collection.findOne = (async (...args: any[]) => {
+        const value = await read.apply(TestRequestModel.collection, args as never) as StoredRoutineJob | null;
+        return ++reads === 2 && value ? {...value, fleetCancellation: {reason: 'Actual current cancellation'}} : value;
+      }) as any;
+    }
+    if (refusal === 'post-host-cas') resourceReservationRepository.replace = async (captured, values) => {
+      const saved = await replace(captured, values); unavailableLocal(captured, 'unknown', 'phone'); return saved;
+    };
+    if (refusal === 'request-cas') TestRequestModel.collection.findOneAndUpdate = (async () => null) as any;
+    try {
+      expect(await routineJobRepository.bind(selection.requestId, prepared.inputSha256, {jobId: selection.requestId,
+        requestId: selection.requestId, hostId: 'mini', laneId: 'android', descriptorRevision: host.snapshot.lanes[0].descriptorRevision,
+        actionsRunId: '10', actionsJobId: '20', boundAt: host.receivedAt.toISOString()}, {}, host.receivedAt,
+        diagnostic => {diagnostics.push(diagnostic);})).toBeNull();
+      const predicate = {'prepared-admission': 'request-present', 'current-host': 'lane-activity-absent',
+        'serialized-claim': 'original-recorder-claim-matches', 'current-request': 'cancellation-absent',
+        'post-host-cas': 'required-resources-available', 'request-cas': 'immutable-current-request-selector'}[refusal];
+      expect(diagnostics).toHaveLength(1); expect(diagnostics[0]).toMatchObject({stage: refusal, predicate});
+      expect(f.row).toEqual(original); expect(host.resourceReservations).toEqual(claims);
+      expect(counters.request).toBe(before.request);
+      expect(counters.host).toBe(before.host);
+    } finally {TestRequestModel.collection.findOne = read; TestRequestModel.collection.findOneAndUpdate = write;
+      resourceReservationRepository.recorderClaims = recorder; resourceReservationRepository.replace = replace;}
+  });
+});
+
+test('failed binding host CAS logs only its expected selector and performs no additional database read', async () => {
+  await withLocalResources(async (f, hosts) => {
+    const host = hosts.get('mini'), prepared = await f.prepare();
+    expect(await f.rows.reserveResources!(selection.requestId, prepared.inputSha256, 'mini', 'android', host.receivedAt)).not.toBeNull();
+    delete host.laneControlVersion;
+    const original = structuredClone(f.row!), claims = structuredClone(host.resourceReservations), captured = structuredClone(host),
+      read = spyOn(TestHostStateModel.collection, 'findOne'), replace = resourceReservationRepository.replace, diagnostics: any[] = [];
+    resourceReservationRepository.replace = async () => {host.sequence++; return false;};
+    try {
+      expect(await routineJobRepository.bind(selection.requestId, prepared.inputSha256, {jobId: selection.requestId,
+        requestId: selection.requestId, hostId: 'mini', laneId: 'android', descriptorRevision: host.snapshot.lanes[0].descriptorRevision,
+        actionsRunId: '10', actionsJobId: '20', boundAt: host.receivedAt.toISOString()}, {}, host.receivedAt,
+        diagnostic => {diagnostics.push(diagnostic);})).toBeNull();
+      expect(diagnostics).toEqual([{stage: 'host-cas', predicate: 'unchanged-host-selector', expected: {
+        hostId: 'mini', incarnation: captured.incarnation, incarnationGeneration: captured.incarnationGeneration, sequence: captured.sequence,
+        laneControlVersion: null, laneControlVersionAbsent: true, resourceReservationVersion: captured.resourceReservationVersion,
+        resourceReservationVersionAbsent: false}}]);
+      expect(read).not.toHaveBeenCalled(); expect(f.row).toEqual(original); expect(host.resourceReservations).toEqual(claims);
+    } finally {read.mockRestore(); resourceReservationRepository.replace = replace;}
+  });
+});
+
+test('successful binding with diagnostics enabled adds no host diagnostic read or refusal callback', async () => {
+  await withLocalResources(async (f, hosts) => {
+    const host = hosts.get('mini'), prepared = await f.prepare();
+    expect(await f.rows.reserveResources!(selection.requestId, prepared.inputSha256, 'mini', 'android', host.receivedAt)).not.toBeNull();
+    const read = spyOn(TestHostStateModel.collection, 'findOne'), diagnostics: unknown[] = [];
+    try {
+      expect(await routineJobRepository.bind(selection.requestId, prepared.inputSha256, {jobId: selection.requestId,
+        requestId: selection.requestId, hostId: 'mini', laneId: 'android', descriptorRevision: host.snapshot.lanes[0].descriptorRevision,
+        actionsRunId: '10', actionsJobId: '20', boundAt: host.receivedAt.toISOString()}, {}, host.receivedAt,
+        diagnostic => {diagnostics.push(diagnostic);})).not.toBeNull();
+      expect(read).not.toHaveBeenCalled(); expect(diagnostics).toEqual([]);
+    } finally {read.mockRestore();}
   });
 });

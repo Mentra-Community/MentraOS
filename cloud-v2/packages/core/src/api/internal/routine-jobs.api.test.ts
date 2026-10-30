@@ -1,7 +1,7 @@
 import {afterEach, expect, test, spyOn} from 'bun:test';
 import {Hono} from 'hono';
 import {createRoutineJobBindingApi, createRoutineJobsApi} from './routine-jobs.api';
-import {RoutineJobService, RoutineLaneAcceptanceConflict} from '../../services/routine-job.service';
+import {RoutineJobService, RoutineLaneAcceptanceConflict, RoutineBindingConflict} from '../../services/routine-job.service';
 import {RoutineWorkService} from '../../services/routine-work.service';
 import {TestRunError} from '../../services/test-result-error';
 import {TestRequestConflict} from '../../services/test-request.service';
@@ -270,4 +270,30 @@ test('author fleet intake dispatches, binds exact local work and finishes observ
   expect((await app.request('/test-requests/author-fleet/dispatch-completion',{method:'POST',headers:hostHeaders,body:JSON.stringify({...completion,inputSha256:prepared.inputSha256})})).status).toBe(409);
   expect((await app.request('/test-requests/author-fleet/dispatch-completion',{method:'POST',headers:hostHeaders,body:JSON.stringify(completion)})).status).toBe(200);
   expect(await (await app.request('/routine-jobs/author-fleet/observation',{headers})).json()).toMatchObject({terminal:true,state:'awaiting-review',inputSha256:prepared.inputSha256,cleanupDisposition:'clean'});
+});
+
+
+test('binding commit refusal keeps the HTTP409 envelope and logs its exact stage under the authenticated request', async () => {
+  const reqId = randomUUID(), records: unknown[] = [], restores: (() => void)[] = [];
+  const diagnostics = {stage: 'host-cas' as const, predicate: 'unchanged-host-selector', hostId: 'mini', laneId: 'android',
+    expected: {sequence: 10, laneControlVersion: null, laneControlVersionAbsent: true}};
+  const jobs = {async bind() {throw new RoutineBindingConflict('Routine resource admission did not commit worker binding', diagnostics);}} as unknown as RoutineJobService;
+  const app = new Hono<AppEnv>(); app.use('*', requestContext);
+  app.use('*', async (c, next) => {
+    const warn = spyOn(c.var.logger, 'warn').mockImplementation(((fields: unknown, message: string) => records.push({fields, message})) as any);
+    restores.push(() => warn.mockRestore()); await next();
+  });
+  app.route('/test-requests', createRoutineJobBindingApi(jobs, () => JSON.stringify({mini: hostToken})));
+  try {
+    const response = await app.request('/test-requests/original/bind', {method: 'POST', headers: {
+      authorization: `Bearer ${hostToken}`, 'content-type': 'application/json', 'x-request-id': reqId}, body: JSON.stringify({secret: 'private-body-sentinel'})});
+    const body = await response.json() as {error: string; message: string};
+    expect(response.status).toBe(409); expect(Object.keys(body).sort()).toEqual(['error', 'message']);
+    expect(body.error).toBe('routine_job_conflict'); expect(body.message).toContain('host-cas: unchanged-host-selector');
+    expect(body.message).toContain('expected {\"sequence\":10,\"laneControlVersion\":null,\"laneControlVersionAbsent\":true}');
+    expect(body.message.length).toBeLessThan(2000); expect(response.headers.get('x-request-id')).toBe(reqId);
+    expect(records).toEqual([{fields: {jobId: 'original', reqId, ...diagnostics}, message: 'routine job binding commit refused'}]);
+    expect(JSON.stringify({body, records})).not.toContain(hostToken);
+    expect(JSON.stringify({body, records})).not.toContain('private-body-sentinel');
+  } finally {restores.forEach(restore => restore());}
 });

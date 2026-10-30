@@ -1,6 +1,6 @@
 import {Hono, type Context} from 'hono';
 import {z, ZodError} from 'zod';
-import {RoutineJobService, RoutineLaneAcceptanceConflict, type RoutinePreparationPhase} from '../../services/routine-job.service';
+import {RoutineJobService, RoutineLaneAcceptanceConflict, RoutineBindingConflict, type RoutinePreparationPhase} from '../../services/routine-job.service';
 import {RoutineWorkService} from '../../services/routine-work.service';
 import {TestRunError} from '../../services/test-result-error';
 import {TestDispatchError} from '../../services/test-builds.service';
@@ -18,6 +18,10 @@ const failureDiagnostic = (error: unknown) => {
 };
 const failure = (error: Error, c: Context) => {
   if (error instanceof ZodError) return c.json({error: 'invalid_routine_job'}, 400);
+  if (error instanceof RoutineBindingConflict) {
+    c.var.logger?.warn({jobId: c.req.param('jobId'), reqId: c.var.reqId, ...error.diagnostics}, 'routine job binding commit refused');
+    return c.json({error: 'routine_job_conflict', message: error.message}, 409);
+  }
   if (error instanceof RoutineLaneAcceptanceConflict) {
     c.var.logger?.warn({jobId: c.req.param('jobId'), reqId: c.var.reqId, ...error.diagnostics}, 'routine job lane acceptance refused');
     return c.json({error: 'routine_job_conflict', message: error.message}, 409);
