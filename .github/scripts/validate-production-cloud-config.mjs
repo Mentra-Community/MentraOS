@@ -83,6 +83,11 @@ export function validateContractCoverage(contract, sourceKeys) {
     ...(contract.requiredAnyOf || []).map((rule) => ({id: rule.id, rule})),
   ]
   for (const {id, rule} of rules) {
+    for (const [kind, client] of Object.entries(rule.clients || {})) {
+      if (client.siteKey !== undefined && !contract.required?.[client.siteKey]) {
+        throw new Error(`${id} checks the ${kind} client against ${client.siteKey}, which is not a required key`)
+      }
+    }
     const condition = rule.requiredWhen
     if (condition === undefined) continue
     const selector = contract.required?.[condition.key]
@@ -136,18 +141,30 @@ function validateConnectionUrl(value, protocols, label) {
 function validateValue(value, rule, label, environment) {
   if (typeof value !== "string" || value.trim() === "") throw new Error(`${label} is missing or empty`)
   // Key material is validated structurally below; its base64 body can contain
-  // any letter sequence, so the placeholder scan does not apply to it.
-  const keyMaterialRule = rule.kind === "private-key" || rule.kind === "public-key"
-  if (!keyMaterialRule && /TBD|CHANGEME|localhost|127\.0\.0\.1/i.test(value))
+  // any letter sequence, so the placeholder scan does not apply to it. Nor does
+  // it apply to the sign-in clients: the CLI client registers loopback
+  // callbacks, and the portal clients' callbacks are checked against their sites.
+  const structuredRule = rule.kind === "private-key" || rule.kind === "public-key" || rule.kind === "oidc-clients"
+  if (!structuredRule && /TBD|CHANGEME|localhost|127\.0\.0\.1/i.test(value))
     throw new Error(`${label} contains a placeholder or local value`)
   const values = rule.valuesByEnvironment?.[environment] || rule.values
   if (values && !values.includes(value)) throw new Error(`${label} is not an allowed ${environment} value`)
+  if (rule.minLength !== undefined) {
+    const entries = (rule.separator ? value.split(rule.separator) : [value]).map((entry) => entry.trim()).filter(Boolean)
+    if (entries.length === 0 || entries.some((entry) => entry.length < rule.minLength)) {
+      throw new Error(`${label} has an entry shorter than ${rule.minLength} characters`)
+    }
+  }
   if (rule.kind === "https-url") validatePublicUrl(value, ["https:"], label)
+  if (rule.kind === "https-origin") {
+    const url = validatePublicUrl(value.replace(/\/+$/, ""), ["https:"], label)
+    if (url.search || url.pathname !== "/") throw new Error(`${label} must be an origin, with no path or query`)
+  }
   if (rule.kind === "mongo-url") validateConnectionUrl(value, ["mongodb:", "mongodb+srv:"], label)
   if (rule.kind === "redis-url") validateConnectionUrl(value, ["redis:", "rediss:"], label)
   if (rule.kind === "integer" && (!/^\d+$/.test(value) || Number(value) < 1))
     throw new Error(`${label} is not positive integer text`)
-  if (rule.kind === "json") {
+  if (rule.kind === "json" || rule.kind === "oidc-clients") {
     try {
       JSON.parse(value)
     } catch {
@@ -169,6 +186,38 @@ function validateValue(value, rule, label, environment) {
       createPublicKey(keyMaterial(value, "PUBLIC KEY"))
     } catch {
       throw new Error(`${label} is not a public key (PEM or SPKI base64 body)`)
+    }
+  }
+}
+
+// Core turns a portal's sign-in off, rather than failing to start, when its
+// client is missing, has no secret, or does not register the portal's callback
+// (portal-signin.service.ts portalClient). Check the same conditions here so
+// such a configuration stops the release instead of reaching production.
+function validateOidcClients(value, rule, values, label) {
+  const clients = JSON.parse(value)
+  if (!Array.isArray(clients)) throw new Error(`${label} is not a JSON array of clients`)
+  for (const [kind, expected] of Object.entries(rule.clients || {})) {
+    const client = clients.find((entry) => entry?.kind === kind)
+    if (!client) throw new Error(`${label} has no ${kind} client`)
+    // Every listed kind is a confidential client, which Core refuses without a secretEnv.
+    if (typeof client.secretEnv !== "string" || client.secretEnv.trim() === "") {
+      throw new Error(`${label}: the ${kind} client names no secretEnv`)
+    }
+    const secret = values[client.secretEnv]
+    if (typeof secret !== "string" || secret.trim() === "") {
+      throw new Error(`${label}: the ${kind} client's ${client.secretEnv} is missing or empty`)
+    }
+    if (secret.trim().length < (rule.secretMinLength ?? 1)) {
+      throw new Error(`${label}: the ${kind} client's ${client.secretEnv} is shorter than ${rule.secretMinLength} characters`)
+    }
+    if (expected.siteKey !== undefined) {
+      const site = values[expected.siteKey]
+      if (typeof site !== "string" || site.trim() === "") throw new Error(`${expected.siteKey} is missing or empty`)
+      const callback = `${validatePublicUrl(site, ["https:"], expected.siteKey).origin}${expected.callbackPath}`
+      if (!Array.isArray(client.redirectUris) || !client.redirectUris.includes(callback)) {
+        throw new Error(`${label}: the ${kind} client does not register the ${expected.siteKey} callback`)
+      }
     }
   }
 }
@@ -203,6 +252,7 @@ export function validateProductionCloudConfig({contract, environment, values}) {
       continue
     }
     validateValue(values[key], rule, key, environment)
+    if (rule.kind === "oidc-clients") validateOidcClients(values[key], rule, values, key)
     checks.push({id: key, keys: [key], status: "pass", acceptanceTest: rule.acceptanceTest})
   }
   for (const requirement of contract.requiredAnyOf || []) {

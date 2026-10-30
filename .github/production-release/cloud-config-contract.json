@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "contractVersion": "2026-10-24.2",
+  "contractVersion": "2026-10-29.1",
   "required": {
     "AUDIO_PROVIDER": {"kind": "enum", "values": ["soniox"], "acceptanceTest": "runtime-transcription"},
     "AUDIO_UDP_ADVERTISED_HOST": {"kind": "host", "acceptanceTest": "runtime-audio-transport"},
@@ -13,10 +13,47 @@
       "acceptanceTest": "camera-upload"
     },
     "CLOUD_ADMIN_CONSOLE_URL": {"kind": "https-url", "acceptanceTest": "incident-admin-link"},
+    "CLOUD_CORE_ADMIN_PORTAL_URL": {"kind": "https-url", "acceptanceTest": "admin-portal-login"},
+    "CLOUD_CORE_ENTERPRISE_PORTAL_URL": {"kind": "https-url", "acceptanceTest": "portal-login"},
     "CLOUD_CORE_ENVIRONMENT": {
       "kind": "enum",
       "valuesByEnvironment": {"staging": ["staging"], "prod": ["prod"]},
       "acceptanceTest": "core-environment"
+    },
+    "CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET": {
+      "kind": "secret",
+      "minLength": 32,
+      "acceptanceTest": "admin-portal-login"
+    },
+    "CLOUD_CORE_OIDC_CLIENTS": {
+      "kind": "oidc-clients",
+      "secretMinLength": 32,
+      "clients": {
+        "admin_portal": {"siteKey": "CLOUD_CORE_ADMIN_PORTAL_URL", "callbackPath": "/api/admin/auth/callback"},
+        "workspace_portal": {
+          "siteKey": "CLOUD_CORE_ENTERPRISE_PORTAL_URL",
+          "callbackPath": "/api/portal/auth/callback"
+        },
+        "console": {}
+      },
+      "acceptanceTest": "portal-login"
+    },
+    "CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET": {
+      "kind": "secret",
+      "minLength": 32,
+      "acceptanceTest": "developer-console-login"
+    },
+    "CLOUD_CORE_OIDC_COOKIE_KEYS": {
+      "kind": "secret",
+      "minLength": 32,
+      "separator": ",",
+      "acceptanceTest": "portal-login"
+    },
+    "CLOUD_CORE_OIDC_ISSUER": {"kind": "https-origin", "acceptanceTest": "portal-login"},
+    "CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET": {
+      "kind": "secret",
+      "minLength": 32,
+      "acceptanceTest": "portal-login"
     },
     "CLOUD_RUNTIME_AUTH_AUDIENCE": {"kind": "string", "acceptanceTest": "runtime-session-auth"},
     "CLOUD_RUNTIME_AUTH_ISSUERS": {"kind": "json", "acceptanceTest": "runtime-session-auth"},
@@ -181,13 +218,11 @@
     "CLOUD_CORE_ACCOUNT_EMAIL_REDIRECT_URL",
     "CLOUD_CORE_ADMIN_EMAILS",
     "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
-    "CLOUD_CORE_ADMIN_PORTAL_URL",
     "CLOUD_CORE_ADMIN_STATIC_DIR",
     "CLOUD_CORE_BILLING_SECRET",
     "CLOUD_CORE_BILLING_URL",
     "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
     "CLOUD_CORE_ENABLED_FEATURES",
-    "CLOUD_CORE_ENTERPRISE_PORTAL_URL",
     "CLOUD_CORE_FLEET_HISTORY_MAX_DAYS",
     "CLOUD_CORE_FLEET_MAX_ASSET_BYTES",
     "CLOUD_CORE_FLEET_MAX_BODY_BYTES",
@@ -196,13 +231,7 @@
     "CLOUD_CORE_FLEET_TIMEOUT_MS",
     "CLOUD_CORE_FLEET_URL",
     "CLOUD_CORE_ISSUER",
-    "CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET",
-    "CLOUD_CORE_OIDC_CLIENTS",
-    "CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET",
-    "CLOUD_CORE_OIDC_COOKIE_KEYS",
-    "CLOUD_CORE_OIDC_ISSUER",
     "CLOUD_CORE_OIDC_PROVIDERS",
-    "CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET",
     "CLOUD_CORE_REGISTRY_STATUS_TTL_SEC",
     "CLOUD_CORE_RUNTIME_TOKEN_ISSUER",
     "CLOUD_CORE_SERVICE_SECRETS",
