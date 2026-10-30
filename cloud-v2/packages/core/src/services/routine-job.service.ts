@@ -64,6 +64,7 @@ export interface RoutineJobRepository {
   preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
   selectedLanes?(hostIds: string[]): Promise<SelectedRoutineLane[]>;
   recorderClaims?(jobId: string): Promise<RecorderHostReservation[]>;
+  claimedHosts?(jobId: string): Promise<ResourceReservationHost[]>;
   reconcileRecorderHost?(hostId: string, now: Date, onPhase?: RoutinePreparationPhase, onReturned?: () => void, acceptedHost?: ResourceReservationHost, requestId?: string): Promise<boolean>;
   checkpointBackendRecorder?(row: StoredRoutineJob, claim: RecorderHostReservation, now: Date): Promise<StoredRoutineJob | null>;
   reconcileBackendRecorderCancellation?(jobId: string, now: Date): Promise<void>;
@@ -92,6 +93,7 @@ export const routineJobRepository: RoutineJobRepository = {
   async completionRequest(requestId) {return await TestRequestModel.findOne({requestId})
     .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob | null;},
   async recorderClaims(requestId) {return resourceReservationRepository.recorderClaims!(requestId);},
+  async claimedHosts(requestId) {return resourceReservationRepository.claimedHosts!(requestId);},
   async reconcileRecorderHost(hostId, now, onPhase, onReturned, acceptedHost, requestId) {
     // Return reconciliation precedes readiness routing. Raw claims remain custody
     // until the original request and a later fresh same-pool offer prove return.
@@ -1623,7 +1625,12 @@ export class RoutineJobService {
       row.fleetResourceAdmission.intent.inputSha256 !== row.fleetInputSha256))
       return {...routineJobRouting(requirements, hosts, this.now(), row.fleetTarget, row.fleetSelection.build, false, original),
         waitingReason: RESOURCE_ADMISSION_WAIT};
-    const originalExclusive = hosts.flatMap(host => (host.authorityReservations ?? []).filter(isExclusiveHostReservation))
+    onPhase?.('original-exclusive-claims-read');
+    // Routing inventory excludes withdrawn hosts; their retained authority claims
+    // still own this original and cannot become a portable queue offer.
+    const claimed = await this.rows.claimedHosts?.(row.requestId);
+    const originalExclusive = (claimed ? claimed.flatMap(host => hostResourceReservationsSchema.parse(host.resourceReservations ?? [])) :
+      hosts.flatMap(host => host.authorityReservations ?? [])).filter(isExclusiveHostReservation)
       .filter(claim => claim.owner.kind === 'run' && claim.owner.id === row.requestId && claim.origin?.kind === 'fleet');
     const retained = replacingQuota ? undefined : row.fleetResourceReservation,
       acquired = Boolean(retained || row.fleetExclusiveReservation || provisional || originalExclusive.length),
@@ -1636,6 +1643,18 @@ export class RoutineJobService {
       ? {hostId: admitted.intent.hostId, laneId: admitted.intent.laneId} : provisional
         ? {hostId: provisional.hostId, laneId: provisional.laneId} : row.fleetTarget;
     const routed = routineJobRouting(requirements, hosts, this.now(), target, row.fleetSelection.build, true, original);
+    // Portable preparation is not execution custody. Leave default work available
+    // to any matching listener; its authenticated bind acquires the real resources.
+    // Existing admissions and unknown/acquired effects still reconcile in place.
+    if (!row.fleetTarget && !acquired && (!row.fleetResourceAdmission || replacingQuota) &&
+      !row.hostId && !row.inputSha256 && (row as StoredRoutineJob & {input?: unknown}).input === undefined &&
+      !row.dispatchIntent && !row.dispatchIntentSha256 && !row.hostReceipt && !row.fleetExclusiveExecutionBinding) {
+      // A fallback among alternative models must keep refreshing before GitHub
+      // freezes one model label; no host has accepted that choice yet.
+      if ((requirements.glasses?.models.length ?? 0) > 1 && routed.waitingReason) return routed;
+      const {waitingReason: _, ...portable} = routed;
+      return portable;
+    }
     const inventoryRequirements = {...requirements, resources: requirements.resources.map(({storage: _, ...resource}) => resource)};
     const inventory = routineJobRouting(inventoryRequirements, hosts, this.now(), target, row.fleetSelection.build, true, original);
     let waitingReason: string | undefined;
@@ -1778,8 +1797,8 @@ export class RoutineJobService {
     if (row.fleetBinding) return this.bindingProjection(row, hostId, input);
     if (row.fleetCancellation || this.now() >= row.fleetDeadline.getTime())
       throw new TestRequestConflict('Cancelled or expired routine job cannot bind');
-    if (row.fleetResourceReservation && (row.fleetResourceReservation.hostId !== hostId || row.fleetResourceReservation.laneId !== input.laneId))
-      throw new TestRequestConflict('Device runner differs from its reserved recorder capacity');
+    // reserveResources is the authority for an existing quota. It permits only
+    // the proved unused Mac replacement and preserves all other original custody.
     const requirements = recorderCapacityRequirements(row.fleetPreparation);
     const accepting = (host: Awaited<ReturnType<TestHostStateService['get']>>, stage: 'before-reservation' | 'after-reservation') => {
       const lane = host?.lanes.find(lane => lane.id === input.laneId);
@@ -1830,11 +1849,22 @@ export class RoutineJobService {
         check(resources(), blocker ?? null) && check(compatible(), blocker ?? null)))
         throw new RoutineLaneAcceptanceConflict({stage, hostId, laneId: input.laneId, conditions});
     };
+    // A quota replacement commits its new winner before returning the old byte
+    // claim. Use existing guarded reconciliation on both a lost-reply retry and
+    // this acquisition; unknown/current claims remain charged and refuse bind.
+    const reconcileUnusedQuotas = async () => {
+      if (!row.fleetResourceReservation) return;
+      for (const claim of await this.rows.recorderClaims?.(jobId) ?? [])
+        if (claim.hostId !== row.fleetResourceReservation.hostId)
+          await this.rows.reconcileRecorderHost?.(claim.hostId, new Date(this.now()), undefined, undefined, undefined, jobId);
+    };
+    await reconcileUnusedQuotas();
     accepting(await this.hosts.get(hostId), 'before-reservation');
     const reserved = await this.rows.reserveResources?.(jobId, input.inputSha256, hostId, input.laneId, new Date(this.now()));
     if (!reserved)
       throw new TestRequestConflict('Reserved recorder disk capacity is no longer available');
     row = reserved;
+    await reconcileUnusedQuotas();
     accepting(await this.hosts.get(hostId), 'after-reservation');
     const binding: RoutineJobBinding = {jobId, requestId: jobId, hostId, laneId: input.laneId,
       descriptorRevision: input.descriptorRevision, actionsJobId: input.actionsJobId, actionsRunId: input.actionsRunId, boundAt: new Date(this.now()).toISOString()};

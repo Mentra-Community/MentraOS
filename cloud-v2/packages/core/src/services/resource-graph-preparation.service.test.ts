@@ -177,7 +177,8 @@ test('a returned offline-phone graph selects a ready alternate with the same ori
   f.settleGraph('unqualified'); f.passCurrentBaseline('air2'); f.rows.selectedLanes = async () => []
   await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparations?.[0]?.settlement?.outcome).toBe('unqualified')
-  expect(f.row.fleetCandidatePreparation).toBeUndefined(); expect(f.bindWrites).toBe(1)
+  expect(f.row.fleetCandidatePreparation).toBeUndefined(); expect(f.bindWrites).toBe(0)
+  await f.bindReady('air2'); expect(f.bindWrites).toBe(1)
   expect(f.row.fleetCandidatePreparations).toHaveLength(1)
   expect(f.row.fleetResourceReservation?.hostId).toBe('air2')
   expect({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline, input: f.row.fleetInputSha256}).toEqual(original)
@@ -199,7 +200,8 @@ test.each(['unqualified', 'unknown'] as const)('a current passed physical baseli
   expect(phone.status).toBe('idle'); expect(phone.idle.outcome).toBe('passed')
   await f.prepareLegacy('job-one')
   expect(f.row.fleetCandidatePreparations?.[0]?.settlement?.outcome).toBe(outcome)
-  expect(f.row.fleetCandidatePreparation).toBeUndefined(); expect(f.bindWrites).toBe(1)
+  expect(f.row.fleetCandidatePreparation).toBeUndefined(); expect(f.bindWrites).toBe(0)
+  await f.bindReady('air1'); expect(f.bindWrites).toBe(1)
   expect(f.row.fleetResourceReservation?.hostId).toBe('air1')
   expect(phone.status).toBe('idle'); expect(phone.idle.outcome).toBe('passed')
   expect({selection: f.row.fleetSelection, deadline: f.row.fleetDeadline, input: f.row.fleetInputSha256}).toEqual(original)
@@ -320,6 +322,7 @@ test('logical workspace stays on its admission path instead of inventing a physi
   expect(pending.target.proposedInput!.resources.some(resource => resource.kind === 'workspace')).toBe(true)
   expect(pending.target.requirements.resources).toContainEqual(required)
   f.settleGraph('qualified'); await f.prepareLegacy('job-one')
+  expect(f.bindWrites).toBe(0); await f.bindReady('air1')
   expect(f.row.fleetResourceReservation?.hostId).toBe('air1')
 })
 

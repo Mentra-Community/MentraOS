@@ -40,6 +40,8 @@ test('a stopped unrelated glasses repair does not exclude ready no-glasses Mac r
   expect(routineJobRouting(row.fleetPreparation!.requirements, [host], f.now, undefined, row.fleetSelection.build, true, original).waitingReason).toBeUndefined()
   expect(routineResourceBlocker(authority(), row, lane.id, f.now)).toBeUndefined()
   await f.service.preparation(row.requestId)
+  expect(f.bindWrites).toBe(0)
+  await f.bindReady(host.hostId)
   expect(f.bindWrites).toBe(1)
   expect(f.row.fleetResourceReservation?.hostId).toBe(host.hostId)
   expect(glasses).toEqual(before)

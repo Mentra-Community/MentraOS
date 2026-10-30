@@ -73,7 +73,7 @@ function serviceFixture() {
   const service = new RoutineJobService(rows, undefined, undefined, undefined,
     {list: async () => hosts, get: async id => hosts.find(value => value.hostId === id)!}, undefined, undefined, () => now)
   const observation = spyOn(service, 'observation').mockImplementation(async () => ({state: row.state} as never))
-  return {...f, service, hosts, probes, get row() {return row}, get reservations() {return reservations}, get bindings() {return bindings},
+  return {...f, service, hosts, probes, bindCurrent: (host = f.host) => service.bind(row.requestId, host.hostId, {inputSha256: row.fleetInputSha256, laneId: host.lanes[0]!.id, descriptorRevision: host.lanes[0]!.descriptorRevision, actionsRunId: '11', actionsJobId: '22'}), get row() {return row}, get reservations() {return reservations}, get bindings() {return bindings},
     restore(value: StoredRoutineJob) {row = value}, close() {observation.mockRestore()}}
 }
 
@@ -85,11 +85,11 @@ test('one current green checklist reserves and binds without a per-request quali
     expect(report.lanes[0]!.candidateMatch).toBe('match')
     expect(report.lanes[0]!.executionCompatibility).toBe('match')
     const prepared = await f.service.preparation(f.row.requestId)
-    expect(prepared.waitingReason).toBeUndefined(); expect(('resourceTarget' in prepared ? prepared.resourceTarget : undefined)).toEqual({hostId: f.host.hostId, laneId: f.host.lanes[0]!.id})
-    expect(f.reservations).toBe(1); expect(f.probes).not.toHaveBeenCalled()
+    expect(prepared.waitingReason).toBeUndefined(); expect(('resourceTarget' in prepared ? prepared.resourceTarget : undefined)).toBeUndefined()
+    expect(f.reservations).toBe(0); expect(f.probes).not.toHaveBeenCalled()
     const bound = await f.service.bind(f.row.requestId, f.host.hostId, {inputSha256: f.row.fleetInputSha256,
       laneId: f.host.lanes[0]!.id, descriptorRevision: f.host.lanes[0]!.descriptorRevision, actionsRunId: '11', actionsJobId: '22'})
-    expect(bound.execute).toBe(true); expect(f.bindings).toBe(1); expect(f.row.fleetCandidatePreparation).toBeUndefined()
+    expect(bound.execute).toBe(true); expect(f.reservations).toBe(1); expect(f.bindings).toBe(1); expect(f.row.fleetCandidatePreparation).toBeUndefined()
   } finally {f.close()}
 })
 
@@ -119,11 +119,11 @@ test('mixed current API110 and API111 lanes distinguish source upgrade from pass
     expect(routineResourcesAvailable(authority(f.host), f.row, f.host.lanes[0]!.id, now)).toBe(false)
     expect(routineResourcesAvailable(authority(compatible), f.row, compatible.lanes[0]!.id, now)).toBe(true)
     const prepared = await f.service.preparation(f.row.requestId)
-    expect('resourceTarget' in prepared ? prepared.resourceTarget : undefined).toEqual({hostId: compatible.hostId, laneId: compatible.lanes[0]!.id})
-    expect(f.reservations).toBe(1); expect(f.probes).not.toHaveBeenCalled()
+    expect('resourceTarget' in prepared ? prepared.resourceTarget : undefined).toBeUndefined()
+    expect(f.reservations).toBe(0); expect(f.probes).not.toHaveBeenCalled()
     const bound = await f.service.bind(f.row.requestId, compatible.hostId, {inputSha256: f.row.fleetInputSha256,
       laneId: compatible.lanes[0]!.id, descriptorRevision: compatible.lanes[0]!.descriptorRevision, actionsRunId: '11', actionsJobId: '22'})
-    expect(bound.execute).toBe(true); expect(f.bindings).toBe(1); expect(f.row.fleetCandidatePreparation).toBeUndefined()
+    expect(bound.execute).toBe(true); expect(f.reservations).toBe(1); expect(f.bindings).toBe(1); expect(f.row.fleetCandidatePreparation).toBeUndefined()
     expect(f.row.fleetSelection).toEqual(original.fleetSelection); expect(f.row.fleetInputSha256).toBe(original.fleetInputSha256)
     expect(f.row.fleetDeadline).toEqual(original.fleetDeadline)
   } finally {f.close()}
@@ -139,7 +139,8 @@ test('failed current physical condition skips that lane and reserves an availabl
     expect(report.lanes[0]!.resources[0]!.conditions.find(condition => condition.id === 'current-baseline')?.status).toBe('blocked')
     expect(report.lanes[0]!.resources[0]!.conditions.find(condition => condition.id === 'current-baseline')?.nextAction).toContain('Assigned phone is disconnected')
     const result = await f.service.preparation(f.row.requestId)
-    expect(('resourceTarget' in result ? result.resourceTarget as {hostId: string} : undefined)?.hostId).toBe(good.hostId); expect(f.reservations).toBe(1)
+    expect(('resourceTarget' in result ? result.resourceTarget : undefined)).toBeUndefined(); expect(f.reservations).toBe(0)
+    expect((await f.bindCurrent(good)).binding.hostId).toBe(good.hostId); expect(f.reservations).toBe(1)
     expect(f.probes).not.toHaveBeenCalled()
   } finally {f.close()}
 })
@@ -152,7 +153,7 @@ test('an idle lane with a one-byte quantitative claim remains selectable without
     expect(routineResourcesAvailable(authority(f.host), f.row, f.host.lanes[0]!.id, now)).toBe(true)
     expect(testRequestMatchReport(f.row, f.hosts, now).lanes[0]?.candidateMatch).toBe('match')
     expect((await f.service.preparation(f.row.requestId)).waitingReason).toBeUndefined()
-    expect(f.reservations).toBe(1); expect(f.host.authorityReservations).toEqual(claims); expect(f.probes).not.toHaveBeenCalled()
+    expect(f.reservations).toBe(0); await f.bindCurrent(); expect(f.reservations).toBe(1); expect(f.host.authorityReservations).toEqual(claims); expect(f.probes).not.toHaveBeenCalled()
   } finally {f.close()}
 })
 for (const refusal of ['unknown-check', 'missing-observation', 'cancelled', 'expired', 'routine-api', 'explicit-framework', 'changed-target'] as const) {
@@ -174,7 +175,8 @@ for (const refusal of ['unknown-check', 'missing-observation', 'cancelled', 'exp
       expect(report.lanes[0]?.candidateMatch).not.toBe('match')
       const result = await f.service.preparation(f.row.requestId)
       expect('resourceTarget' in result ? result.resourceTarget : undefined).toBeUndefined(); expect(f.reservations).toBe(0); expect(f.bindings).toBe(0)
-      expect(f.probes).not.toHaveBeenCalled()
+      await expect(f.bindCurrent()).rejects.toThrow()
+      expect(f.reservations).toBe(0); expect(f.bindings).toBe(0); expect(f.probes).not.toHaveBeenCalled()
     } finally {f.close()}
   })
 }

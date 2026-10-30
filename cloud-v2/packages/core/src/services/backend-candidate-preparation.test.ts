@@ -94,8 +94,9 @@ test('an existing negative phone original settles and reserves a separately curr
  const f=fixture();await f.prepareLegacy('job-one');expect(f.row.fleetCandidatePreparation?.hostId).toBe('air1');expect(f.bindWrites).toBe(0);expect(f.row.fleetBinding).toBeUndefined()
  const originalInput=f.row.fleetInputSha256;f.settle('unqualified');f.passCurrentBaseline('air2');f.rows.selectedLanes=async()=>[];
  await f.prepareLegacy('job-one');expect(f.row.fleetCandidatePreparations).toHaveLength(1);
+ expect(f.bindWrites).toBe(0);await f.bindReady('air2');
  expect(f.row.fleetCandidatePreparation).toBeUndefined();expect(f.row.fleetResourceReservation?.hostId).toBe('air2');expect(f.bindWrites).toBe(1);
- expect(f.row.fleetInputSha256).toBe(originalInput);expect(f.row.fleetBinding).toBeUndefined()
+ expect(f.row.fleetInputSha256).toBe(originalInput);expect(f.row.fleetBinding?.hostId).toBe('air2')
 
 })
 for(const gap of ['raw-work','return-ack','claim','replacement'] as const)test(`candidate ${gap} never moves original custody to another phone`,async()=>{
@@ -109,12 +110,13 @@ test('a delayed fully returned negative settles historically and selects a fresh
  const f=fixture();await f.prepareLegacy('job-one');f.settle('unqualified');
  const original=structuredClone(f.row),negative=structuredClone(f.row.fleetCandidatePreparation!),health=structuredClone(f.hosts[0]!.lanes[0]!.resources[0]!.backendConnectivity);
  f.advance(120001);f.passCurrentBaseline('air2');f.rows.selectedLanes=async()=>[];await f.prepareLegacy('job-one');
+ expect(f.bindWrites).toBe(0);await f.bindReady('air2');
  expect(f.row.fleetCandidatePreparations).toEqual([{...negative,settlement:{targetInputSha256:negative.targetInputSha256,candidate:negative.candidate,outcome:'unqualified',hostWorkSettled:true,checkOperationId:`backend-prerequisite:${negative.targetInputSha256}`}}]);
  expect(f.hosts[0]!.lanes[0]!.resources[0]!.backendConnectivity).toEqual(health);
  expect(f.row.fleetCandidatePreparation).toBeUndefined();expect(f.row.fleetResourceReservation?.hostId).toBe('air2');
- expect(f.row.fleetBinding).toBeUndefined();expect(f.bindWrites).toBe(1);
+ expect(f.row.fleetBinding?.hostId).toBe('air2');expect(f.bindWrites).toBe(1);
  for(const field of ['requestId','fleetSelection','fleetSelectionSha256','fleetPreparation','fleetInputSha256','fleetDeadline','createdAt'] as const)expect(f.row[field]).toEqual(original[field]);
- expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetCandidatePreparations![0]).toEqual({...negative,settlement:{targetInputSha256:negative.targetInputSha256,candidate:negative.candidate,outcome:'unqualified',hostWorkSettled:true,checkOperationId:`backend-prerequisite:${negative.targetInputSha256}`}});
+ expect(f.row.fleetCandidatePreparations![0]).toEqual({...negative,settlement:{targetInputSha256:negative.targetInputSha256,candidate:negative.candidate,outcome:'unqualified',hostWorkSettled:true,checkOperationId:`backend-prerequisite:${negative.targetInputSha256}`}});
 })
 for(const gap of ['raw-work','return-ack','claim','replacement','subject-generation','binding','app','future-observation','observation-after-deadline','close-before-observation','return-before-close','stale-report'] as const)test(`delayed negative retains original custody with ${gap}`,async()=>{
  const f=fixture();await f.prepareLegacy('job-one');f.settle('unqualified',gap!=='raw-work',gap!=='return-ack');
@@ -276,6 +278,7 @@ function repositoryEnvelope(f: ReturnType<typeof fixture>): ResourceReservationH
 }
 async function returnedFixture(exclusive = false) {
  const f=fixture(exclusive);await f.prepareLegacy('job-one');f.settle('qualified');f.passCurrentBaseline('air1');await f.prepareLegacy('job-one');
+ await f.seedUnusedRecorderQuota();
  f.row.fleetResourceReservation!.minimumAvailableBytes=recorderCapacityRequirements(f.row.fleetPreparation!).resources.find(r=>r.kind==='recorder')!.storage!.minimumAvailableBytes;
  return f;
 }
@@ -401,6 +404,7 @@ function graphRepositoryEnvelope(f: ReturnType<typeof routingGraphFixture>): Res
 }
 async function returnedGraphFixture(platform: 'android'|'ios-on-mac') {
  const f=routingGraphFixture(platform);await f.prepareLegacy('job-one');f.settleGraph('qualified');await f.prepareLegacy('job-one');
+ await f.seedUnusedRecorderQuota();
  f.row.fleetResourceReservation!.minimumAvailableBytes=recorderCapacityRequirements(f.row.fleetPreparation!).resources.find(ref=>ref.kind==='recorder')!.storage!.minimumAvailableBytes;
  f.hosts[0]!.authorityReservations=[structuredClone(f.row.fleetResourceReservation!)];return f;
 }
@@ -473,6 +477,7 @@ async function returnedSecondaryGraphFixture(platform: 'android'|'ios-on-mac', e
  expect(purpose.resources.find(member=>member.id==='air1:secondary-browser')).toEqual({id:'air1:secondary-browser',
   kind:'browser',authorityHostId:'air1',subjectGeneration:1,contractVersion:'browser-baseline',capabilities:['relaunch']});
  f.settleGraph('qualified');await f.prepareLegacy('job-one');
+ await f.seedUnusedRecorderQuota();
  f.row.fleetResourceReservation!.minimumAvailableBytes=recorderCapacityRequirements(f.row.fleetPreparation!).resources.find(ref=>ref.kind==='recorder')!.storage!.minimumAvailableBytes;
  f.hosts[0]!.authorityReservations=[structuredClone(f.row.fleetResourceReservation!)];claimedGraphAdmission(f,graphRepositoryEnvelope(f));return f;
 }
@@ -515,10 +520,13 @@ for(const platform of ['android','ios-on-mac'] as const)for(const kind of ['netw
   }
   await f.prepareLegacy('job-one');
   expect(f.row.fleetCandidatePreparation).toBeUndefined()
+  expect(f.bindWrites).toBe(0)
   if(condition==='bare'||condition==='metadata') {
+   await f.bindReady('air1')
    expect(f.row.fleetResourceReservation?.hostId).toBe('air1');expect(f.bindWrites).toBe(1)
-  } else {expect(f.row.fleetResourceReservation).toBeUndefined();expect(f.bindWrites).toBe(0)}
-  expect(f.writes).toBe(1);expect(f.row.fleetBinding).toBeUndefined()
+   expect(f.row.fleetBinding?.hostId).toBe('air1')
+  } else {await expect(f.bindReady('air1')).rejects.toThrow();expect(f.row.fleetResourceReservation).toBeUndefined();expect(f.bindWrites).toBe(0)}
+  expect(f.writes).toBe(1)
  });
 for(const platform of ['android','ios-on-mac'] as const)for(const kind of ['network','workspace'] as const)for(const condition of logicalConditions)
  for(const timing of ['admission','binding'] as const)test(`${platform} returned physical graph honors logical ${kind} ${condition} at ${timing}`,async()=>{
@@ -749,6 +757,7 @@ for(const status of ['out-of-service','in-repair','reserved'] as const)test(`fre
  const f=fixture(),subject=f.hosts[0]!.resourceLifecycle!.subjects[0]!;subject.status=status;
  if(status==='in-repair')subject.repair.state='queued';if(status==='reserved')subject.owner={id:'manual',kind:'authoring',generation:1,hostId:'air1'};
  f.passCurrentBaseline('air2');f.rows.selectedLanes=async()=>[];await f.service.preparation('job-one');
+ expect(f.bindWrites).toBe(0);await f.bindReady('air2');
  expect(f.row.fleetCandidatePreparation).toBeUndefined();expect(f.bindWrites).toBe(1);expect(f.row.fleetResourceReservation?.hostId).toBe('air2');
 });
 
@@ -907,11 +916,11 @@ test(`settled ${kind} candidate still reconciles recorder custody before allocat
  expect(queries).toBe(2);
  expect(f.row.fleetCandidatePreparation).toBeUndefined();
  expect(f.row.fleetCandidatePreparations).toHaveLength(1);
- expect(f.bindWrites).toBe(1);
+ expect(f.bindWrites).toBe(0);await f.bindReady('air1');expect(f.bindWrites).toBe(1);
  expect(f.row.fleetSelection).toEqual(original.fleetSelection);
  expect(f.row.fleetInputSha256).toBe(original.fleetInputSha256);
  expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);
- expect(f.row.fleetBinding).toBeUndefined();
+ expect(f.row.fleetBinding?.hostId).toBe('air1');
 });
 
 for (const kind of ['phone', 'graph'] as const)

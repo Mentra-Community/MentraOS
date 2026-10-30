@@ -8,6 +8,7 @@ async function returnedGraph(platform: 'android' | 'ios-on-mac' = 'android') {
   await f.prepareLegacy('job-one')
   f.settleGraph('qualified')
   await f.prepareLegacy('job-one')
+  await f.seedUnusedRecorderQuota()
   const original = structuredClone(f.row)
   f.advance(120_001)
   const host = f.hosts[0]!, pending = f.row.fleetCandidatePreparations!.at(-1)!, lane = host.lanes[0]!

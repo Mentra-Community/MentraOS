@@ -57,11 +57,12 @@ for (const kind of ['never-requested', 'not-acquired'] as const) {
         installationId: 'accepted-new-installation', runtimeSha256: 'e'.repeat(64)}
     }
     await f.prepareLegacy(f.row.requestId)
+    expect(f.bindWrites).toBe(0); await f.bindReady(host.hostId)
     expect(f.row.fleetCandidatePreparation).toBeUndefined()
     expect(f.row.fleetResourceReservation?.hostId).toBe(host.hostId)
     expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations)
     expect(f.row.fleetCandidatePreparations![0]!.settlement!.outcome).toBe('unknown')
-    expect(f.row.fleetBinding).toBeUndefined(); expect(f.bindWrites).toBe(1); expect(f.writes).toBe(1)
+    expect(f.row.fleetBinding?.hostId).toBe(host.hostId); expect(f.bindWrites).toBe(1); expect(f.writes).toBe(1)
     for (const key of ['requestId', 'fleetSelection', 'fleetSelectionSha256', 'fleetPreparation', 'fleetInputSha256', 'fleetDeadline'] as const)
       expect(f.row[key]).toEqual(original[key])
     expect(previous.target.deadline).toBe(original.fleetDeadline.toISOString())

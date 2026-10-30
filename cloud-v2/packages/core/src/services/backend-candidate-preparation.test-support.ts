@@ -1,4 +1,4 @@
-import {RoutineJobService, recorderCapacityRequirements, routineResourceReadinessPurpose, routineJobInputDigest, type RoutineJobRepository} from './routine-job.service'
+import {RoutineJobService, recorderCapacityRequirements, routineResourceReadinessPurpose, routineJobInputDigest, routineLaneDescriptorRevision, type RoutineJobRepository} from './routine-job.service'
 import {candidateRenewal, graphCheckOperationId, graphFinalCheckOperationId} from './backend-candidate-preparation'
 import {expect} from 'bun:test'
 import type {ResourceReadinessCheck} from '../types/backend-connectivity.types'
@@ -11,6 +11,7 @@ import {routineEnrollmentSchema} from '../types/routine-definition.types'
 
 import {routineAdmissionInput} from './routine-admission.service'
 import {recordedRoutineBuild} from './routine-dispatch.service'
+import {TestRunError} from './test-result-error'
 
 /** An explicit historical original, not a new qualification producer or physical PASS. */
 export function legacyCandidate(row: StoredRoutineJob, host: ReceivedTestHostState, now: number) {
@@ -76,8 +77,12 @@ export function backendCandidateFixture(exclusive = false) {
       if(row.fleetResourceReservation)return row.fleetResourceReservation.hostId===hostId&&row.fleetResourceReservation.laneId===laneId?copy(row):null
       bindWrites++;row={...row,fleetResourceReservation:{id:'d0af6e63-513c-43d5-9392-ff2e672bab86',requestId:row.requestId,fleetInputSha256:row.fleetInputSha256!,hostId,laneId,poolId:`${hostId}:disk`,minimumAvailableBytes:1024,reservedAt:new Date(now).toISOString(),...(row.fleetPreparation?.requirements.glasses?{chosenModel:hosts.find(host=>host.hostId===hostId)?.lanes.find(lane=>lane.id===laneId)?.glasses?.[0]?.model}:{})}};return copy(row)
     },
+    async bind(_id:string,_sha:string,binding:StoredRoutineJob['fleetBinding'],intent:unknown){
+      if(_id!==row.requestId||_sha!==row.fleetInputSha256||row.fleetBinding||row.fleetCancellation||row.fleetDeadline.getTime()<=now)return null;
+      row={...row,hostId:binding!.hostId,fleetBinding:copy(binding),dispatchIntent:copy(intent),dispatchIntentSha256:requestInputDigest(intent),state:'preparing'};return copy(row)
+    },
   } as unknown as RoutineJobRepository
-  const service = new RoutineJobService(rows,undefined,undefined,undefined,{async get(id){return copy(hosts.find(h=>h.hostId===id)??null)},async list(){return copy(hosts)}},undefined,undefined,()=>now)
+  const service = new RoutineJobService(rows,undefined,undefined,undefined,{async get(id){return copy(hosts.find(h=>h.hostId===id)??null)},async list(){return copy(hosts)}},undefined,{async detail(){throw new TestRunError(404,'Software fixture has no result')}},()=>now)
   let legacySeeded = false
   async function prepareLegacy(requestId = row.requestId, onPhase?: Parameters<RoutineJobService['preparation']>[1]) {
     if (!legacySeeded) {
@@ -86,6 +91,18 @@ export function backendCandidateFixture(exclusive = false) {
       await rows.candidatePreparation!(copy(row), legacyCandidate(row, hosts[0]!, now), new Date(now))
     }
     return service.preparation(requestId, onPhase)
+  }
+  /** Lifetime tests explicitly construct an already-created byte receipt. New
+   * requests acquire through bindReady instead of source preparation. */
+  async function seedUnusedRecorderQuota(hostId = hosts[0]!.hostId) {
+    const lane = hosts.find(host => host.hostId === hostId)!.lanes[0]!
+    return rows.reserveResources!(row.requestId, row.fleetInputSha256!, hostId, lane.id, new Date(now))
+  }
+  async function bindReady(hostId: string) {
+    const lane = hosts.find(host => host.hostId === hostId)!.lanes[0]!
+    lane.descriptorRevision = routineLaneDescriptorRevision(lane)
+    return service.bind(row.requestId, hostId, {inputSha256: row.fleetInputSha256!, laneId: lane.id,
+      descriptorRevision: lane.descriptorRevision, actionsRunId: '1', actionsJobId: '2'})
   }
   /** Independent current checker fixtures; never infer a PASS from historical UNKNOWN. */
   function passCurrentBaseline(hostId: string) {
@@ -116,7 +133,7 @@ export function backendCandidateFixture(exclusive = false) {
       originalOwner:{id:'original-check-owner',kind:'boundary-cleanup'},laneId:'android',controller:{incarnation:host.incarnation,generation:1,sequence:2},release:{kind:'resource-check',operationId:op,subjectGeneration:3,releasedAt:new Date(now).toISOString(),eventId:'released'}}
     if(rawClosed)host.resourceReservations!.candidatePrerequisites=[{targetInputSha256:p.targetInputSha256,candidate:p.candidate,outcome,hostWorkSettled:true,checkOperationId:op}]
   }
-  return {service,rows,hosts,settle,prepareLegacy,passCurrentBaseline,get row(){return row},set row(v){row=v},get writes(){return writes},get bindWrites(){return bindWrites},advance(ms:number){now+=ms;for(const h of hosts){h.observedAt=h.receivedAt=new Date(now).toISOString();for(const subject of h.resourceLifecycle?.subjects??[])subject.observedAt=h.observedAt;h.lanes[0]!.resources.find(r=>r.kind==='recorder')!.storage!.observedAt=new Date(now).toISOString()}},get now(){return now}}
+  return {service,rows,hosts,settle,prepareLegacy,seedUnusedRecorderQuota,bindReady,passCurrentBaseline,get row(){return row},set row(v){row=v},get writes(){return writes},get bindWrites(){return bindWrites},advance(ms:number){now+=ms;for(const h of hosts){h.observedAt=h.receivedAt=new Date(now).toISOString();for(const subject of h.resourceLifecycle?.subjects??[])subject.observedAt=h.observedAt;h.lanes[0]!.resources.find(r=>r.kind==='recorder')!.storage!.observedAt=new Date(now).toISOString()}},get now(){return now}}
 }
 
 export function routingGraphFixture(platform: 'android' | 'ios-on-mac' = 'android') {

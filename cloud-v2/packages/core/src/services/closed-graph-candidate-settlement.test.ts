@@ -54,9 +54,10 @@ test.each([false, true])('fully returned original UNKNOWN settles and reserves a
     expect(write).toHaveBeenCalledTimes(1)
     expect(f.row.fleetCandidatePreparations?.[0]).toEqual({...original, settlement: originalReceipt})
     expect(f.row.fleetCandidatePreparation).toBeUndefined()
+    expect(f.bindWrites).toBe(0); await f.bindReady('air2')
     expect(f.row.fleetResourceReservation?.hostId).toBe('air2')
     expect(host.resourceReservations!.candidatePrerequisites).toEqual([originalReceipt])
-    expect(f.bindWrites).toBe(1); expect(f.row.fleetBinding).toBeUndefined()
+    expect(f.bindWrites).toBe(1); expect(f.row.fleetBinding?.hostId).toBe('air2')
     for (const key of ['requestId', 'fleetSelection', 'fleetSelectionSha256', 'fleetPreparation', 'fleetInputSha256', 'fleetDeadline'] as const)
       expect(f.row[key]).toEqual(saved[key])
   } finally {write.mockRestore()}
