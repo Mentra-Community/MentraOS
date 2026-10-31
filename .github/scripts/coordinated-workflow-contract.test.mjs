@@ -281,28 +281,43 @@ test("stable packages publish from the frozen beta source independently of the m
     /stores-approved|store-review-approved|production-store-release|production-cloud|reusable-coordinated-cloud-v2|reusable-coordinated-mobile/,
   )
   assert.match(packages, /group: production-release-packages\n/)
-  // Every target is checked before the first irreversible mutation.
-  const releaseJob = jobBlock(packages, "release")
-  const firstMutation = releaseJob.indexOf("Move npm latest to the staged plain versions")
+  // Every target is checked before the first irreversible mutation: the
+  // approved preflight job changes nothing, and the jobs that publish follow it.
+  const preflightJob = jobBlock(packages, "release-preflight")
   for (const preflight of [
-    "Preflight npm without moving any dist-tag",
+    "Preflight npm latest without publishing",
     "Preflight the validated Sonatype deployment",
     "Preflight the staged SwiftPM commit against its archived export",
   ]) {
-    const index = releaseJob.indexOf(preflight)
-    assert.notEqual(index, -1, preflight)
-    assert.ok(index < firstMutation, `${preflight} must precede the npm latest flip`)
+    assert.ok(preflightJob.includes(preflight), preflight)
   }
-  assert.match(releaseJob, /--dry-run true/)
-  assert.match(releaseJob, /git get-tar-commit-id/)
-  assert.doesNotMatch(releaseJob, /cmp /)
+  assert.match(preflightJob, /npm-latest\.mjs preflight/)
+  assert.match(preflightJob, /git get-tar-commit-id/)
+  assert.doesNotMatch(preflightJob, /cmp /)
+  assert.doesNotMatch(preflightJob, /sonatype-central-deployment\.mjs publish|git push|uses: \.\/\.github\/workflows/)
+  const npmRelease = jobBlock(packages, "npm-release")
+  assert.match(npmRelease, /needs: \[load, release-preflight\]/)
+  assert.match(npmRelease, /uses: \.\/\.github\/workflows\/reusable-coordinated-npm\.yml/)
+  assert.match(npmRelease, /npm_tag: latest\n/)
+  // Trusted publishing authenticates production npm: no token is passed and no
+  // dist-tag is moved, so no release step depends on a 2FA-bypassing token.
+  assert.doesNotMatch(npmRelease, /secrets:/)
+  assert.doesNotMatch(packages, /NPM_TOKEN|dist-tag add|promote-npm-latest/)
+  const releaseJob = jobBlock(packages, "release")
+  assert.match(releaseJob, /needs: \[load, release-preflight, npm-release\]/)
+  const verify = releaseJob.indexOf("npm-latest.mjs verify")
+  assert.notEqual(verify, -1)
+  assert.ok(verify < releaseJob.indexOf("sonatype-central-deployment.mjs publish"), "npm latest must be verified first")
+  assert.match(releaseJob, /git push origin "refs\/tags\/\$VERSION"/)
+  // A rerun keeps the preflight's SwiftPM status, so an existing tag at the
+  // staged commit is reused rather than recreated.
+  assert.match(releaseJob, /git rev-parse -q --verify "refs\/tags\/\$VERSION\^\{commit\}"[\s\S]*\$tagged" != "\$MIRROR_SHA"[\s\S]*git tag "\$VERSION" "\$MIRROR_SHA"/)
+  // The staging phase builds and verifies npm without spending the identity,
+  // naming the tag for frozen sources whose publisher has no production default.
+  assert.match(jobBlock(packages, "npm"), /npm_tag: latest\n\s+dry_run: true\n/)
   // Staging and public release are separate protected approvals.
-  assert.match(packages, /name: production-packages\n/)
-  assert.match(packages, /name: production-packages-release\n/)
-  assert.match(packages, /npm_tag: \$\{\{ needs\.load\.outputs\.npm_tag \}\}/)
-  assert.match(packages, /promote-npm-latest\.mjs/)
-  assert.match(packages, /sonatype-central-deployment\.mjs publish/)
-  assert.match(packages, /git push origin "refs\/tags\/\$VERSION"/)
+  assert.match(jobBlock(packages, "approve"), /name: production-packages\n/)
+  assert.match(preflightJob, /name: production-packages-release\n/)
   assert.match(packages, /release_id: \$\{\{ needs\.load\.outputs\.stable_release_id \}\}/)
   // Both workflows must recognize the same stable draft container.
   assert.match(

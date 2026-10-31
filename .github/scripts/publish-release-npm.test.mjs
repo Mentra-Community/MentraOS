@@ -30,7 +30,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 test("maps coordinated channels to npm tags", () => {
   assert.equal(npmReleaseTag("dev"), "dev")
   assert.equal(npmReleaseTag("beta"), "beta")
-  assert.throws(() => npmReleaseTag("production"), /explicit candidate dist-tag/)
+  assert.equal(npmReleaseTag("production"), "latest")
   assert.throws(() => npmReleaseTag("nightly"), /Unsupported/)
   assert.equal(resolveNpmReleaseTag("production", "candidate-3-1-0"), "candidate-3-1-0")
   assert.throws(() => resolveNpmReleaseTag("production", "3.1.0"), /Invalid npm dist-tag/)

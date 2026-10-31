@@ -740,8 +740,8 @@ export function validatePackagesOptions(options) {
 
 export function packagesConfirmationMessage(request) {
   return request.phase === "publish"
-    ? `This publishes the plain ${request.beta_identity.replace(/-beta\.\d+$/, "")} package versions under a candidate npm dist-tag and stages Maven Central and SwiftPM. GitHub will still require production-packages approval.`
-    : `This moves npm latest, publishes Maven Central, and pushes the public SwiftPM tag for ${request.beta_identity.replace(/-beta\.\d+$/, "")}. GitHub will still require production-packages-release approval.`
+    ? `This builds and verifies the plain ${request.beta_identity.replace(/-beta\.\d+$/, "")} npm packages without publishing them and stages Maven Central and SwiftPM. GitHub will still require production-packages approval.`
+    : `This publishes the plain ${request.beta_identity.replace(/-beta\.\d+$/, "")} npm packages to latest, publishes Maven Central, and pushes the public SwiftPM tag. GitHub will still require production-packages-release approval.`
 }
 
 // The production Bluetooth example is keyed on the promoted beta like the

@@ -10,7 +10,9 @@ import {loadReleaseFamily, serializeReleaseRecord} from "./release-family.mjs"
 export function npmReleaseTag(channel) {
   if (channel === "dev") return "dev"
   if (channel === "beta") return "beta"
-  if (channel === "production") throw new Error("Production npm publication requires an explicit candidate dist-tag")
+  // Production publishes only in the protected release phase of
+  // production-release-packages.yml, after npm-latest.mjs preflight.
+  if (channel === "production") return "latest"
   throw new Error(`Unsupported npm release channel ${JSON.stringify(channel)}`)
 }
 

@@ -218,11 +218,11 @@ test("dispatches stable package phases from the promoted beta without a promotio
   )
   assert.match(
     packagesConfirmationMessage({beta_identity: "3.1.0-beta.192", phase: "publish"}),
-    /candidate npm dist-tag/,
+    /npm packages without publishing them/,
   )
   assert.match(
     packagesConfirmationMessage({beta_identity: "3.1.0-beta.192", phase: "release"}),
-    /moves npm latest.*3\.1\.0/,
+    /publishes the plain 3\.1\.0 npm packages to latest/,
   )
 })
 

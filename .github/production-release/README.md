@@ -100,6 +100,18 @@ Required secrets are the existing Porter, App Store Connect, Google Play,
 Android upload-signing, Apple Match, Doppler, Mapbox, and Sentry credentials
 used by the reusable release workflows. Operators do not download them locally.
 
+npm needs no secret: every npm release member trusts two GitHub Actions
+workflows of `Mentra-Community/MentraOS` as trusted publishers,
+`coordinated-release.yml` (dev and beta) and `production-release-packages.yml`
+(production), each with publish and stage-publish permission and no
+environment. Add both for a new family member before its first release. A
+maintainer adds one with 2FA:
+
+```bash
+npx npm@11 trust github @mentra/<package> --file production-release-packages.yml \
+  --repository Mentra-Community/MentraOS --allow-publish --allow-stage-publish
+```
+
 Before launch week, verify the Mentra App record in App Store Connect and Play
 Console:
 
@@ -491,7 +503,7 @@ beta's `release-plan.json`, verified to be contained in `main`, and reuse the
 beta's frozen OTA manifest pin. The release identity is the beta's base
 version (`3.1.0-beta.192` publishes `3.1.0`).
 
-Phase 1 stages everything without moving any default pointer:
+Phase 1 stages everything without making anything public:
 
 ```bash
 ./scripts/production-release.mjs packages --beta X.Y.Z-beta.N --phase publish
@@ -500,10 +512,9 @@ Phase 1 stages everything without moving any default pointer:
 After `production-packages` approval it runs the same reusable npm and native
 SDK jobs as the coordinated beta on the production channel:
 
-- npm publishes every family member at `X.Y.Z` under the dist-tag
-  `candidate-X.Y.Z`; `latest` is untouched. Publication uses provenance, so if
-  npm trusted publishing is scoped per workflow file, register
-  `production-release-packages.yml` for each package or keep `NPM_TOKEN` set.
+- npm builds, packs, and verifies every family member at `X.Y.Z` from the
+  frozen source without publishing it; a registry copy with different bytes
+  stops the run.
 - Maven Central receives a `USER_MANAGED` Sonatype deployment. The phase only
   succeeds once Sonatype reports it validated; nothing is public until phase 2.
 - The SwiftPM export is committed and pushed to the mirror branch
@@ -515,15 +526,20 @@ Phase 2 makes them public after `production-packages-release` approval:
 ./scripts/production-release.mjs packages --beta X.Y.Z-beta.N --phase release
 ```
 
-It first checks all three targets without changing anything: every npm
-member is published and its `latest` is not already newer, the Sonatype
-deployment is validated, and the staged SwiftPM commit is the one recorded in
-the archived export. Only then does it move npm `latest` to `X.Y.Z` for every
-member (the candidate dist-tag stays as a record; npm refuses to delete tags
-with the automation token), request the Sonatype publication and
-wait for `PUBLISHED`, and push the SwiftPM tag `X.Y.Z`. Moving a dist-tag
-requires the `NPM_TOKEN` automation secret; trusted-publisher OIDC only covers
-`npm publish`.
+It first checks all three targets without changing anything: no npm member's
+`latest` is already newer than `X.Y.Z`, and any member already published at
+`X.Y.Z` (a rerun) already has `latest` there; the Sonatype deployment is
+validated; and the staged SwiftPM commit is the one recorded in the archived
+export. Only then does it publish every npm member to `latest` through trusted
+publishing, in dependency order, and wait until npm serves `latest` at
+`X.Y.Z` with the published bytes. Then it requests the Sonatype publication,
+waits for `PUBLISHED`, and pushes the SwiftPM tag `X.Y.Z`. No dist-tag is ever
+moved, so no release step needs an npm token or npm's per-package dist-tag
+permission.
+
+A member found published at `X.Y.Z` without `latest` stops the preflight. A
+maintainer runs `npm dist-tag add @mentra/<package>@X.Y.Z latest` with 2FA,
+then reruns the phase.
 
 Both phases are idempotent: a rerun reuses versions, deployments, and mirror
 commits that already exist and refuses anything that exists with different
@@ -537,7 +553,7 @@ without a state record must be resumed or aborted first.
 
 Stop conditions specific to packages:
 
-- Once phase 1 has published `X.Y.Z` on npm, that identity is spent. An aborted
+- Once phase 2 has published `X.Y.Z` on npm, that identity is spent. An aborted
   promotion cannot be replaced by a different source under the same version;
   bump the family base version on `dev` and cut a new beta.
 - Do not run phase 2 until the Cloud side of the release is at least deployed

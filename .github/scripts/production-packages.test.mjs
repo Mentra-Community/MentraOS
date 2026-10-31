@@ -4,7 +4,6 @@ import test from "node:test"
 import {
   STABLE_CONTAINER_BODY,
   createProductionPackagesPlan,
-  npmCandidateTag,
   planStableContainer,
   requireStableContainer,
   stableContainerPayload,
@@ -75,12 +74,6 @@ test("rejects an incomplete, mismatched, or unpinned beta", () => {
     () => packagesPlan({betaPlan: {...betaPlan, changelog: {...betaPlan.changelog, sha256: "0".repeat(64)}}}),
     /do not match|changelog/,
   )
-})
-
-test("names a candidate dist-tag that npm cannot mistake for a version", () => {
-  assert.equal(npmCandidateTag("3.1.0"), "candidate-3.1.0")
-  assert.match(npmCandidateTag("3.1.0"), /^[a-z][a-z0-9._-]*$/)
-  assert.throws(() => npmCandidateTag("3.1.0-beta.1"), /X\.Y\.Z/)
 })
 
 test("allocates or reuses the stable draft container the rollout finalization also uses", () => {

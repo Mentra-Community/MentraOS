@@ -29,11 +29,6 @@ const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 export const STABLE_CONTAINER_BODY =
   "Canonical production release records. Publish manually only after the completed promotion and final public-availability checks."
 
-export function npmCandidateTag(releaseIdentity) {
-  if (!VERSION_PATTERN.test(releaseIdentity || "")) throw new Error("release identity must be X.Y.Z")
-  return `candidate-${releaseIdentity}`
-}
-
 export function createProductionPackagesPlan({family, betaPlan, betaManifest, betaManifestUrl, betaManifestSha256}) {
   validateSelectedBeta({family, betaPlan, betaManifest})
   if (!/^https:\/\//.test(betaManifestUrl || "")) throw new Error("beta manifest URL must be HTTPS")
@@ -181,7 +176,6 @@ async function main() {
         stable_tag: plan.artifactContainerTag,
         ota_manifest_url: plan.promotion.otaManifest.url,
         ota_manifest_sha256: plan.promotion.otaManifest.sha256,
-        npm_tag: npmCandidateTag(plan.releaseIdentity),
       },
       args["github-output"],
     )
