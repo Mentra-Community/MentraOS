@@ -557,19 +557,32 @@ export async function setBetaBuildWhatsNew(client, {buildId, locale = "en-US", w
   return {localization: localization.data, reused: false}
 }
 
+// An App Store version's name is whatever was typed in App Store Connect, and
+// the console accepts "3.3" for a 3.3.0 bundle (3.3.0 was submitted that way).
+// Version names are therefore matched as numbers, and readers report the
+// three-part form the bundle and the release records use.
+export function canonicalMarketingVersion(versionString) {
+  const parts = String(versionString).split(".")
+  if (parts.length > 3 || !parts.every((part) => /^(0|[1-9]\d*)$/.test(part))) return versionString
+  while (parts.length < 3) parts.push("0")
+  return parts.join(".")
+}
+
 // App Store versions are listed through the app; there is no top-level
 // /v1/appStoreVersions collection (that request answers 403, seen on the
-// first live 3.1.1 submission read-back, run 34891948855).
+// first live 3.1.1 submission read-back, run 34891948855). The versionString
+// filter is exact, so the versions are listed and matched here instead.
 export async function findAppStoreVersion(client, {appId, versionString}) {
-  const response = await client.request(
-    query(`/v1/apps/${encodeURIComponent(appId)}/appStoreVersions`, {
-      "filter[platform]": "IOS",
-      "filter[versionString]": versionString,
-      "limit": "2",
-    }),
+  const versions = await collectPaginatedData(
+    client,
+    query(`/v1/apps/${encodeURIComponent(appId)}/appStoreVersions`, {"filter[platform]": "IOS", "limit": "200"}),
   )
-  if (!Array.isArray(response?.data) || response.data.length === 0) return null
-  return exactlyOne(response, `iOS App Store version ${versionString}`)
+  const expected = canonicalMarketingVersion(versionString)
+  const matches = versions.filter(
+    (version) => canonicalMarketingVersion(version.attributes?.versionString) === expected,
+  )
+  if (matches.length === 0) return null
+  return exactlyOne({data: matches}, `iOS App Store version ${versionString}`)
 }
 
 const PUBLIC_APP_STORE_STATES = new Set(["READY_FOR_DISTRIBUTION", "READY_FOR_SALE"])
@@ -633,7 +646,7 @@ export async function appStoreInventory(client, {app}) {
     current = {
       versionId: currentVersion.id,
       buildId: build.id,
-      marketingVersion: currentVersion.attributes.versionString,
+      marketingVersion: canonicalMarketingVersion(currentVersion.attributes.versionString),
       buildNumber,
       state: currentVersion.attributes?.appStoreState || currentVersion.attributes?.appVersionState,
     }

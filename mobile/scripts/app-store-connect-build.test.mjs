@@ -5,6 +5,7 @@ import test from "node:test"
 import {
   assignBuildToGroup,
   appStoreInventory,
+  canonicalMarketingVersion,
   collectPaginatedData,
   createAppStoreConnectClient,
   ensurePublicBetaGroup,
@@ -247,6 +248,26 @@ test("inventories the current public App Store build and maximum allocated build
     state: "READY_FOR_SALE",
   })
   assert.match(api.calls[0].resource, /filter%5Bapp%5D=app-1/)
+})
+
+test("reports a public App Store version named without its trailing zero in three parts", async () => {
+  const api = client([
+    {data: [], links: {next: null}},
+    {
+      data: [
+        {id: "version-321", attributes: {versionString: "3.2.1", appStoreState: "READY_FOR_SALE"}},
+        {id: "version-33", attributes: {versionString: "3.3", appStoreState: "READY_FOR_SALE"}},
+      ],
+      links: {next: null},
+    },
+    {data: {id: "build-33", attributes: {version: "303000428"}}},
+  ])
+  const inventory = await appStoreInventory(api, {
+    app: {id: "app-1", attributes: {bundleId: "com.mentra.mentra"}},
+  })
+  assert.equal(inventory.current.versionId, "version-33")
+  assert.equal(inventory.current.marketingVersion, "3.3.0")
+  assert.equal(inventory.current.buildNumber, 303000428)
 })
 
 test("allows a new App Store app with no public version", async () => {
@@ -790,9 +811,24 @@ test("follows every TestFlight relationship page before posting", async () => {
   assert.equal(api.calls.length, 2)
 })
 
+test("names App Store versions in the three-part form the bundle uses", () => {
+  assert.equal(canonicalMarketingVersion("3.3"), "3.3.0")
+  assert.equal(canonicalMarketingVersion("3"), "3.0.0")
+  assert.equal(canonicalMarketingVersion("3.3.0"), "3.3.0")
+  assert.equal(canonicalMarketingVersion("3.2.1"), "3.2.1")
+  assert.equal(canonicalMarketingVersion("3.3.0.1"), "3.3.0.1")
+  assert.equal(canonicalMarketingVersion("3.3-beta"), "3.3-beta")
+  assert.equal(canonicalMarketingVersion("03.3"), "03.3")
+})
+
 test("recognizes the exact build after App Store submission", async () => {
   const api = client([
-    {data: [{id: "version-1", attributes: {appStoreState: "WAITING_FOR_REVIEW"}}]},
+    {
+      data: [
+        {id: "version-0", attributes: {versionString: "3.0.0", appStoreState: "READY_FOR_SALE"}},
+        {id: "version-1", attributes: {versionString: "3.1.0", appStoreState: "WAITING_FOR_REVIEW"}},
+      ],
+    },
     {data: {type: "builds", id: "build-1"}},
   ])
   const status = await productionSubmissionStatus(api, {
@@ -802,15 +838,59 @@ test("recognizes the exact build after App Store submission", async () => {
   })
   assert.equal(status.promoted, true)
   assert.equal(status.state, "WAITING_FOR_REVIEW")
+  assert.equal(status.version.id, "version-1")
   // Versions are listed through the app; the top-level collection answers 403.
   assert.match(api.calls[0].resource, /^\/v1\/apps\/app-1\/appStoreVersions\?/)
-  assert.match(api.calls[0].resource, /filter%5BversionString%5D=3\.1\.0/)
+  assert.match(api.calls[0].resource, /filter%5Bplatform%5D=IOS/)
+  assert.doesNotMatch(api.calls[0].resource, /filter%5BversionString%5D/)
   assert.doesNotMatch(api.calls[0].resource, /filter%5Bapp%5D/)
+  assert.equal(api.calls[1].resource, "/v1/appStoreVersions/version-1/relationships/build")
+})
+
+test("matches an App Store version named without its trailing zero", async () => {
+  const api = client([
+    {
+      data: [
+        {id: "version-321", attributes: {versionString: "3.2.1", appStoreState: "READY_FOR_SALE"}},
+        {id: "version-33", attributes: {versionString: "3.3", appStoreState: "PENDING_DEVELOPER_RELEASE"}},
+        {id: "version-331", attributes: {versionString: "3.3.1", appStoreState: "PREPARE_FOR_SUBMISSION"}},
+      ],
+    },
+    {data: {type: "builds", id: "build-1"}},
+  ])
+  const status = await productionSubmissionStatus(api, {appId: "app-1", versionString: "3.3.0", buildId: "build-1"})
+  assert.equal(status.version.id, "version-33")
+  assert.equal(status.state, "PENDING_DEVELOPER_RELEASE")
+  assert.equal(status.promoted, true)
+  assert.equal(api.calls[1].resource, "/v1/appStoreVersions/version-33/relationships/build")
+})
+
+test("refuses an App Store version whose name matches two versions", async () => {
+  const api = client([
+    {
+      data: [
+        {id: "version-33", attributes: {versionString: "3.3", appStoreState: "PENDING_DEVELOPER_RELEASE"}},
+        {id: "version-330", attributes: {versionString: "3.3.0", appStoreState: "PREPARE_FOR_SUBMISSION"}},
+      ],
+    },
+  ])
+  await assert.rejects(
+    productionSubmissionStatus(api, {appId: "app-1", versionString: "3.3.0", buildId: "build-1"}),
+    /Expected exactly one iOS App Store version 3\.3\.0, found 2/,
+  )
+})
+
+test("reports an absent App Store version when no name matches", async () => {
+  const api = client([
+    {data: [{id: "version-321", attributes: {versionString: "3.2.1", appStoreState: "READY_FOR_SALE"}}]},
+  ])
+  const status = await productionSubmissionStatus(api, {appId: "app-1", versionString: "3.3.0", buildId: "build-1"})
+  assert.deepEqual(status, {version: null, state: "ABSENT", attachedBuildId: null, promoted: false})
 })
 
 test("reports an editable version attached to an earlier build as not yet promoted", async () => {
   const api = client([
-    {data: [{id: "version-1", attributes: {appStoreState: "REJECTED"}}]},
+    {data: [{id: "version-1", attributes: {versionString: "3.1.1", appStoreState: "REJECTED"}}]},
     {data: {type: "builds", id: "build-old"}},
   ])
   const status = await productionSubmissionStatus(api, {appId: "app-1", versionString: "3.1.1", buildId: "build-new"})
@@ -818,7 +898,7 @@ test("reports an editable version attached to an earlier build as not yet promot
   assert.equal(status.state, "REJECTED")
   assert.equal(status.attachedBuildId, "build-old")
   const submitted = client([
-    {data: [{id: "version-1", attributes: {appStoreState: "IN_REVIEW"}}]},
+    {data: [{id: "version-1", attributes: {versionString: "3.1.1", appStoreState: "IN_REVIEW"}}]},
     {data: {type: "builds", id: "build-old"}},
   ])
   await assert.rejects(
@@ -829,7 +909,7 @@ test("reports an editable version attached to an earlier build as not yet promot
 
 test("recognizes a build that App Store Connect is processing for distribution", async () => {
   const api = client([
-    {data: [{id: "version-1", attributes: {appStoreState: "PROCESSING_FOR_DISTRIBUTION"}}]},
+    {data: [{id: "version-1", attributes: {versionString: "3.1.0", appStoreState: "PROCESSING_FOR_DISTRIBUTION"}}]},
     {data: {type: "builds", id: "build-1"}},
   ])
   const status = await productionSubmissionStatus(api, {
@@ -843,9 +923,9 @@ test("recognizes a build that App Store Connect is processing for distribution",
 
 test("waits for the App Store version to leave preparation", async () => {
   const api = client([
-    {data: [{id: "version-1", attributes: {appStoreState: "PREPARE_FOR_SUBMISSION"}}]},
+    {data: [{id: "version-1", attributes: {versionString: "3.1.0", appStoreState: "PREPARE_FOR_SUBMISSION"}}]},
     {data: {type: "builds", id: "build-1"}},
-    {data: [{id: "version-1", attributes: {appStoreState: "IN_REVIEW"}}]},
+    {data: [{id: "version-1", attributes: {versionString: "3.1.0", appStoreState: "IN_REVIEW"}}]},
     {data: {type: "builds", id: "build-1"}},
   ])
   const status = await waitForProductionSubmission(api, {
