@@ -790,6 +790,9 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(example, /EXAMPLE_APP_ID: "6792839366"/)
   assert.match(example, /EXAMPLE_BUNDLE_ID: com\.mentra\.bluetoothsdkexample/)
   assert.match(example, /config\.expo\.ios\.bundleIdentifier = process\.env\.EXAMPLE_BUNDLE_ID/)
+  // Production uploads to the same App Store app, so its identifier is stamped
+  // for every channel, never assumed from the example's committed one.
+  assert.doesNotMatch(example, /MENTRA_CHANNEL !== "production"/)
   assert.match(example, /find ios -maxdepth 1 -name '\*\.xcworkspace'/)
   assert.match(example, /select\(\. == "MentraSDKRN"\)/)
   assert.match(example, /security list-keychains -d user -s "\$keychain"/)

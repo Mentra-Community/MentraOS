@@ -224,10 +224,6 @@ jobs:
         working-directory: examples
         run: |
           set -euo pipefail
-          if [[ "$(jq -er .channel "$GITHUB_WORKSPACE/release-input/plan/release-plan.json")" == "production" ]]; then
-            [[ "$(jq -er .expo.ios.bundleIdentifier bluetooth/react-native/app.json)" == "$EXAMPLE_BUNDLE_ID" ]]
-            [[ "$(jq -er .expo.android.package bluetooth/react-native/app.json)" == "$EXAMPLE_BUNDLE_ID" ]]
-          fi
           bun install --frozen-lockfile
 
       # The tooling comes from the workflow revision: the frozen source of a
@@ -262,16 +258,16 @@ jobs:
           BUILD_NUMBER: ${{ steps.coordinates.outputs.build_number }}
         run: |
           set -euo pipefail
-          MENTRA_CHANNEL="$(jq -er .channel "$GITHUB_WORKSPACE/release-input/plan/release-plan.json")"
-          export MENTRA_CHANNEL
+          # Every channel, production included, uploads to the one App Store
+          # example app, so its identifier is stamped here, as
+          # coordinated-example-google-play.mjs stamps the Play package. The
+          # example commits a local development identifier.
           node --input-type=module <<'NODE'
           import {readFileSync, writeFileSync} from "node:fs"
           const file = "app.json"
           const config = JSON.parse(readFileSync(file, "utf8"))
           config.expo.version = process.env.MARKETING_VERSION
-          if (process.env.MENTRA_CHANNEL !== "production") {
-            config.expo.ios.bundleIdentifier = process.env.EXAMPLE_BUNDLE_ID
-          }
+          config.expo.ios.bundleIdentifier = process.env.EXAMPLE_BUNDLE_ID
           config.expo.ios.buildNumber = process.env.BUILD_NUMBER
           config.expo.ios.infoPlist.ITSAppUsesNonExemptEncryption = false
           writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
