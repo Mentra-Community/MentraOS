@@ -1,0 +1,41 @@
+name: Linked PRs
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+jobs:
+  linked:
+    runs-on: ubuntu-latest
+    steps:
+      # No checkout or execution of pull-request code. Dependency data is parsed
+      # as data and read through the GitHub API, including on fork PR events.
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const readToken = process.env.LINKED_PR_READ_TOKEN;
+            const readHeaders = readToken ? {authorization: `Bearer ${readToken}`} : {};
+            const {owner,repo} = context.repo;
+            const prs = context.payload.pull_request ? [context.payload.pull_request] : await github.paginate(github.rest.pulls.list,{owner,repo,state:'open',per_page:100});
+            for (const pr of prs) {
+              const lines=(pr.body||'').split('\n').filter(x=>/^Depends-on:/i.test(x.trim()));
+              let state='success',description='No unmerged dependencies';
+              for (const line of lines) {
+                const m=line.trim().match(/^Depends-on:\s*([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#([0-9]+)\s*$/i);
+                if(!m){state='failure';description='Malformed Depends-on trailer';break;}
+                if(m[1]!==owner){state='failure';description='Dependency must belong to this organization';break;}
+                try {
+                  const {data:d}=await github.rest.pulls.get({owner:m[1],repo:m[2],pull_number:Number(m[3]),headers:readHeaders});
+                  if(d.head.ref!==pr.head.ref){state='failure';description='Linked PR branch names must match';break;}
+                  if(!d.merged){state='failure';description=`Waiting for ${m[2]}#${m[3]} to merge`;break;}
+                }catch{state='failure';description='Cannot read dependency; check token access';break;}
+              }
+              await github.rest.repos.createCommitStatus({owner,repo,sha:pr.head.sha,state,context:'linked-pr/merge-order',description});
+            }
+        env:
+          LINKED_PR_READ_TOKEN: ${{ secrets.LINKED_PR_READ_TOKEN }}
