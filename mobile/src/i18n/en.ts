@@ -1647,6 +1647,7 @@ const en = {
     debugModeMoreTaps: "{{number}} more taps to enable debug mode",
     superMode: "Super mode",
     superModeActivated: "Super mode activated! 🚀",
+    resetOtaManifestUrl: "Reset OTA manifest URL",
     superModeDeactivated: "Super mode deactivated",
     versionInfo: "Version info",
     versionInfoCopied: "Version info copied to clipboard",
