@@ -49,6 +49,10 @@ total, and retries once unless the verdict was already posted. Never launch a ba
   `--request-changes` whose body starts with `Reviewed by local Codex (gpt-6.1-sol, medium).`
   and lists what was checked. If GitHub refuses the formal review it falls back to `--comment`
   with `Approve.` or `Request changes.` as the first line.
+- Balances risk against machinery: complexity is a cost, so only a likely, harmful defect blocks.
+  What can only happen through an unlikely coincidence, or would cost more machinery than the
+  harm, goes under "Accepted-risk candidates" for the owner to decide. Needless machinery in the
+  PR is a finding. Codex weighs an author's reasoned pushback and can change its verdict.
 - Always adds an "Is this change needed?" step: Codex must judge whether the change is needed or
   desirable for the project at all (real problem, existing or planned alternative, surface area
   and maintenance cost versus benefit, smaller change possible) and let that weigh in the
@@ -156,6 +160,9 @@ comment; let Codex weigh comments itself.
 - If the PR is the agent's own and the verdict is request-changes: read the bot comments too,
   fix real defects with a coherent design change, say which comments were ignored and why, push,
   and rerun the script on the new head.
+- Not every finding deserves a fix. Fix what will happen in ordinary use. When a finding only can
+  happen, or its fix adds more tracking than it's worth, say why in a PR comment and rerun: Codex
+  weighs that reasoning. Whoever may merge can also merge over an explained finding.
 - If the PR belongs to someone else, report only; do not rework unless asked.
 - On `codex-pr-review: FAILED`, read `runner.log`, report the failure, and do not claim a review
   was posted.
