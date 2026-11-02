@@ -24,19 +24,6 @@ on:
       - "examples/package.json"
       - "examples/bun.lock"
       - ".github/workflows/oem-host-gate.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "mobile/modules/engine/**"
-      - "mobile/modules/engine-host-internal/**"
-      - "mobile/modules/bluetooth-sdk/**"
-      - "mobile/modules/crust/**"
-      - "mobile/modules/miniapp/**"
-      - "examples/oem-app/**"
-      - "examples/package.json"
-      - "examples/bun.lock"
-      - ".github/workflows/oem-host-gate.yml"
   workflow_dispatch:
 
 concurrency:

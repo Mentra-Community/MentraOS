@@ -8,14 +8,6 @@ on:
       - "mobile/modules/frame-preview/ios/**"
       - "mobile/modules/frame-preview/fixtures/**"
       - ".github/workflows/mentra-glasses-media-swift-tests.yml"
-  push:
-    branches: [main]
-    paths:
-      - "mobile/modules/glasses-media/ios/**"
-      - "mobile/modules/acs-meeting/ios/PolicyKit/**"
-      - "mobile/modules/frame-preview/ios/**"
-      - "mobile/modules/frame-preview/fixtures/**"
-      - ".github/workflows/mentra-glasses-media-swift-tests.yml"
   workflow_dispatch:
 
 concurrency:

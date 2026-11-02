@@ -5,12 +5,6 @@ on:
     paths:
       - "mobile/**"
       - ".github/workflows/augmentos-manager-jest.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "mobile/**"
-      - ".github/workflows/augmentos-manager-jest.yml"
   workflow_dispatch:
 
 # Cancel a branch's in-flight check when a newer commit is pushed to it.

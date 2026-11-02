@@ -22,15 +22,6 @@ on:
           - admin
           - portal
           - account
-  push:
-    branches:
-      - staging
-      - main
-    paths:
-      - "cloud-v2/websites/**"
-      - "cloud-v2/scripts/deploy-pages.ts"
-      - ".github/workflows/cloud-v2-pages.yml"
-
 concurrency:
   group: cloud-v2-pages-${{ github.event_name == 'workflow_dispatch' && inputs.environment || github.ref_name }}
   cancel-in-progress: true

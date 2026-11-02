@@ -1,13 +1,11 @@
 name: Coordinated Mentra Release
 
 # Dev releases come from the Mentra monorepo since 2026-10-24 (its
-# release.yml, publishing to this repository's ledger); staging and
-# production promotion still run here. The monorepo's release dispatches
+# release.yml, publishing to this repository's ledger). Production promotion
+# still runs here. The monorepo's release dispatches
 # `publish-release-npm` here for its npm family: npm trusted publishing (with
 # provenance) accepts this workflow file, from GitHub-hosted runners only.
 on:
-  push:
-    branches: [staging]
   repository_dispatch:
     types: [publish-release-npm]
   workflow_dispatch:

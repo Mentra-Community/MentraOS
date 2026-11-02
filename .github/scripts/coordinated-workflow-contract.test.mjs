@@ -1389,9 +1389,7 @@ test("cache scope receives the generated public runtime environment, including i
 // Dev releases come from the Mentra monorepo: this coordinator runs on staging.
 test("app cache inputs do not gate coordinated staging cloud deployments", () => {
   const coordinator = workflow("coordinated-release.yml")
-  const push = coordinator.split("  push:\n")[1].split("  workflow_dispatch:\n")[0]
-  assert.match(push, /branches: \[staging\]/)
-  assert.doesNotMatch(push, /paths(?:-ignore)?:/)
+  assert.doesNotMatch(coordinator, /^  push:$/m)
   const cloud = jobBlock(coordinator, "cloud-v2")
   assert.match(cloud, /uses: \.\/\.github\/workflows\/reusable-coordinated-cloud-v2.yml/)
   assert.match(cloud, /source_commit: \$\{\{ needs.plan.outputs.source_commit \}\}/)

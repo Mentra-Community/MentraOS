@@ -16,18 +16,6 @@ on:
       - "scripts/softap-call-proof*.mjs"
       - ".github/scripts/install-android-sdk*"
       - ".github/workflows/mentra-app-android-unit-tests.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "mobile/modules/acs-meeting/**"
-      - "mobile/modules/glasses-media/**"
-      - "mobile/modules/frame-preview/**"
-      - "mobile/modules/bluetooth-sdk/**"
-      - "mobile/modules/crust/**"
-      - "scripts/softap-call-proof*.mjs"
-      - ".github/scripts/install-android-sdk*"
-      - ".github/workflows/mentra-app-android-unit-tests.yml"
   workflow_dispatch:
 
 # Cancel a branch's in-flight run when a newer commit is pushed to it.
