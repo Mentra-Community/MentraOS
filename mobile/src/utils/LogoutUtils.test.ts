@@ -1,7 +1,7 @@
 /* eslint-disable import/first -- Register runtime boundaries before the actual logout utility. */
 const mockCoreSignOut = jest.fn()
 const mockAccountSignOut = jest.fn()
-const mockDisconnect = jest.fn()
+const mockUnpair = jest.fn()
 const mockForget = jest.fn()
 const mockStop = jest.fn()
 const mockReset = jest.fn()
@@ -9,7 +9,7 @@ const mockMantleCleanup = jest.fn()
 const mockSettle = jest.fn()
 jest.mock("@mentra/engine", () => ({
   engine: {
-    glasses: {disconnect: () => mockDisconnect(), forget: () => mockForget()},
+    glasses: {forget: () => mockForget()},
     stop: () => mockStop(),
     settings: {resetAllLocal: () => mockReset()},
   },
@@ -17,6 +17,7 @@ jest.mock("@mentra/engine", () => ({
 jest.mock("@/services/cloudClient", () => ({cloudClient: {clearAuthSession: () => mockCoreSignOut()}}))
 jest.mock("@/utils/auth/authClient", () => ({__esModule: true, default: {signOut: () => mockAccountSignOut()}}))
 jest.mock("@/services/MantleManager", () => ({__esModule: true, default: {cleanup: () => mockMantleCleanup()}}))
+jest.mock("@/utils/pairing/unpairSavedGlasses", () => ({unpairSavedGlasses: () => mockUnpair()}))
 jest.mock("@/utils/settleFrame", () => ({settleFrame: () => mockSettle()}))
 jest.mock("@/utils/GlobalEventEmitter", () => ({__esModule: true, default: {emit: jest.fn()}}))
 
@@ -37,7 +38,7 @@ function deferred<T>() {
 describe("LogoutUtils credential-owner ordering", () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockDisconnect.mockResolvedValue(undefined)
+    mockUnpair.mockResolvedValue(undefined)
     mockForget.mockResolvedValue(undefined)
     mockStop.mockResolvedValue(undefined)
     mockMantleCleanup.mockResolvedValue(undefined)
@@ -58,18 +59,29 @@ describe("LogoutUtils credential-owner ordering", () => {
       if (failedOwner === "core") core.reject(new Error("Core unavailable"))
       else account.reject(new Error("Account unavailable"))
       await Promise.resolve()
-      expect(mockDisconnect).not.toHaveBeenCalled()
+      expect(mockUnpair).not.toHaveBeenCalled()
       if (failedOwner === "core") account.resolve(Res.ok(undefined))
       else core.resolve(undefined)
       await complete
       expect(mockSettle).toHaveBeenCalledTimes(1)
-      expect(mockDisconnect).toHaveBeenCalledTimes(1)
-      expect(mockForget).toHaveBeenCalledTimes(1)
+      expect(mockUnpair).toHaveBeenCalledTimes(1)
+      expect(mockForget).not.toHaveBeenCalled()
       expect(mockMantleCleanup).toHaveBeenCalledTimes(1)
       expect(mockStop).toHaveBeenCalledTimes(1)
       expect(mockReset).toHaveBeenCalledTimes(1)
     },
   )
+
+  it("still forgets the glasses when Unpair fails", async () => {
+    mockCoreSignOut.mockResolvedValue(undefined)
+    mockAccountSignOut.mockResolvedValue(Res.ok(undefined))
+    mockUnpair.mockRejectedValue(new Error("Unpair failed"))
+
+    await LogoutUtils.performCompleteLogout()
+
+    expect(mockForget).toHaveBeenCalledTimes(1)
+    expect(mockReset).toHaveBeenCalledTimes(1)
+  })
 
   it("deletes every account credential from the secure store, which clearing MMKV does not reach", async () => {
     mockCoreSignOut.mockResolvedValue(undefined)

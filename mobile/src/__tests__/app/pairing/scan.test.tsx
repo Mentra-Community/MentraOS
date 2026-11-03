@@ -377,6 +377,8 @@ describe("pairing scan screen", () => {
     await act(async () => jest.advanceTimersByTime(60_000))
 
     expect(screen.getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
+    expect(screen.getByText("pairing:liveChooseGlassesHintTitle")).toBeTruthy()
+    expect(screen.queryByText("pairing:notInPairingModeAlertTitle")).toBeNull()
     expect(push).not.toHaveBeenCalled()
     expect(replace).not.toHaveBeenCalled()
     expect(engine.pairing.pair).not.toHaveBeenCalled()
@@ -730,15 +732,16 @@ describe("pairing scan screen", () => {
       ],
     })
 
-    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
       expect(getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
       expect(getByText("PAIR_A")).toBeTruthy()
     })
-    // Keep commissioning instructions available without forcing an existing owner to use them.
-    expect(getByText("pairing:liveChooseGlassesHintTitle")).toBeTruthy()
-    expect(getByText("pairing:liveChooseGlassesHint")).toBeTruthy()
+    // Keep the pairing-mode steps available without forcing an existing owner to use them.
+    expect(getByText("pairing:notInPairingModeAlertTitle")).toBeTruthy()
+    expect(getByText("pairing:notInPairingModeAlertMessage")).toBeTruthy()
+    expect(queryByText("pairing:liveChooseGlassesHintTitle")).toBeNull()
     expect(getByText("IDLE · pairing:notInPairingModeLabel")).toBeTruthy()
     expect(push).not.toHaveBeenCalled()
 

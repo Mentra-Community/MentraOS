@@ -1550,13 +1550,16 @@ class MentraLive: NSObject, SGCManager {
     func dbg1() {}
     func dbg2() {}
 
+    /// Clear the saved device name so the pairing filter is not bypassed on rescan.
+    static func clearSavedPeripheral() {
+        secureTrailerMemory.clear()
+        UserDefaults.standard.removeObject(forKey: prefsDeviceName)
+        UserDefaults.standard.removeObject(forKey: prefsPeripheralIds)
+    }
+
     func forget() {
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
-        Self.secureTrailerMemory.clear()
-
-        // Clear saved device name so the pairing filter is not bypassed on rescan
-        UserDefaults.standard.removeObject(forKey: PREFS_DEVICE_NAME)
-        UserDefaults.standard.removeObject(forKey: PREFS_PERIPHERAL_IDS)
+        Self.clearSavedPeripheral()
         pairFlow("forget", "cleared_saved_peripheral")
 
         // Stop scanning first
@@ -1693,8 +1696,10 @@ class MentraLive: NSObject, SGCManager {
     private let SIGNIFICANT_BLE_TRACE_QUEUE_SIZE = 5
 
     /// Device Settings Keys
-    private let PREFS_DEVICE_NAME = "MentraLiveLastConnectedDeviceName"
-    private let PREFS_PERIPHERAL_IDS = "MentraLivePeripheralIds"
+    private static let prefsDeviceName = "MentraLiveLastConnectedDeviceName"
+    private static let prefsPeripheralIds = "MentraLivePeripheralIds"
+    private let PREFS_DEVICE_NAME = MentraLive.prefsDeviceName
+    private let PREFS_PERIPHERAL_IDS = MentraLive.prefsPeripheralIds
 
     // MARK: - Properties
 

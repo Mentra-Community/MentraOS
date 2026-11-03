@@ -8,6 +8,7 @@ import {accountCredentials, hasStoredAccountSession} from "@/utils/auth/accountC
 import mentraAuth from "@/utils/auth/authClient"
 import {storage} from "@/utils/storage"
 import {cloudClient} from "@/services/cloudClient"
+import {unpairSavedGlasses} from "@/utils/pairing/unpairSavedGlasses"
 
 export class LogoutUtils {
   private static readonly TAG = "LogoutUtils"
@@ -66,8 +67,8 @@ export class LogoutUtils {
       // described above.
       await settleFrame()
 
-      // Step 3: Disconnect and forget any connected glasses
-      await this.disconnectAndForgetGlasses()
+      // Step 3: Unpair the saved glasses
+      await this.unpairGlasses()
 
       // Step 4: Stop island runtime services
       await this.stopToolkitRuntime()
@@ -89,25 +90,21 @@ export class LogoutUtils {
   }
 
   /**
-   * Disconnect and forget any connected glasses
+   * Unpair the saved glasses
    */
-  private static async disconnectAndForgetGlasses(): Promise<void> {
-    console.log(`${this.TAG}: Disconnecting and forgetting glasses...`)
+  private static async unpairGlasses(): Promise<void> {
+    console.log(`${this.TAG}: Unpairing glasses...`)
 
+    // The same Unpair as Device Settings. It needs the link: disconnecting first would discard it,
+    // so the glasses would never hear the unpair and would keep their owner and bonds.
     try {
-      // First try to disconnect any connected glasses
-      await engine.glasses.disconnect()
-      console.log(`${this.TAG}: Disconnected glasses`)
+      await unpairSavedGlasses()
+      console.log(`${this.TAG}: Unpaired glasses`)
     } catch (error) {
-      console.warn(`${this.TAG}: Error disconnecting glasses:`, error)
-    }
-
-    try {
-      // Then forget the glasses completely
-      await engine.glasses.forget()
-      console.log(`${this.TAG}: Forgot glasses pairing`)
-    } catch (error) {
-      console.warn(`${this.TAG}: Error forgetting glasses:`, error)
+      console.warn(`${this.TAG}: Error unpairing glasses:`, error)
+      await engine.glasses.forget().catch((forgetError: unknown) => {
+        console.warn(`${this.TAG}: Error forgetting glasses:`, forgetError)
+      })
     }
   }
 

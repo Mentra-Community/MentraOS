@@ -2138,6 +2138,11 @@ struct ViewState {
         MentraLivePairingStateStore.shared.update("forget") { $0.onForget() }
         clearOwnerLost()
         clearSecureFirmware()
+        // With no connection object, MentraLive.forget() can't run. Only clear Live's saved
+        // identity when Live is the target: forgetting G1/G2 must not touch a Live unit's.
+        if sgc == nil, defaultWearable.contains(DeviceTypes.LIVE) || pendingWearable.contains(DeviceTypes.LIVE) {
+            MentraLive.clearSavedPeripheral()
+        }
         // Call forget first to stop timers/handlers/reconnect logic
         sgc?.forget()
         disconnect()

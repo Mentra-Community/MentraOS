@@ -288,10 +288,13 @@ function GlassesScanScreen() {
     return rawName
   }
 
+  const isNotInPairingMode = (device: Device) => device.securePairingCapable !== false && device.pairingMode === false
+  const showEnterPairingMode = listedResults.some(isNotInPairingMode)
+
   const formatLiveSubtitle = (device: Device) => {
     const base = filterDeviceName(device.name)
     const parts: string[] = [base]
-    if (device.securePairingCapable !== false && device.pairingMode === false) {
+    if (isNotInPairingMode(device)) {
       parts.push(translate("pairing:notInPairingModeLabel"))
     }
     return parts.join(" · ")
@@ -464,9 +467,16 @@ function GlassesScanScreen() {
                 <View className="gap-1 rounded-2xl bg-background px-4 py-3">
                   <Text
                     className="text-sm font-semibold text-foreground"
-                    text={translate("pairing:liveChooseGlassesHintTitle")}
+                    text={translate(
+                      showEnterPairingMode ? "pairing:notInPairingModeAlertTitle" : "pairing:liveChooseGlassesHintTitle",
+                    )}
                   />
-                  <Text className="text-sm text-foreground" text={translate("pairing:liveChooseGlassesHint")} />
+                  <Text
+                    className="text-sm text-foreground"
+                    text={translate(
+                      showEnterPairingMode ? "pairing:notInPairingModeAlertMessage" : "pairing:liveChooseGlassesHint",
+                    )}
+                  />
                 </View>
               ) : null}
             </>
