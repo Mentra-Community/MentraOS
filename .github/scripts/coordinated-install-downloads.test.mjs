@@ -122,8 +122,13 @@ test("Slack uses symmetric rows, direct iPhone and share links; incomplete Apple
     MAC_URL: "https://example.com/m.zip",
   }
   const blocks = platformDownloads(env, (url) => Boolean(url))
-  assert.equal(blocks[0].elements.length, 3)
-  const iphone = blocks[0].elements[1].elements.filter((entry) => entry.type === "link")
+  // The two main links come first, as buttons with https URLs (Slack refuses other schemes).
+  assert.equal(blocks[0].type, "actions")
+  assert.deepEqual(blocks[0].elements.map((entry) => entry.text.text), [":robot_face: Download for Android", ":apple: Install on iPhone"])
+  assert.ok(blocks[0].elements.every((entry) => entry.url.startsWith("https://")))
+  const rows = blocks.find((block) => block.type === "rich_text")
+  assert.equal(rows.elements.length, 3)
+  const iphone = rows.elements[1].elements.filter((entry) => entry.type === "link")
   assert.equal(iphone[0].text, "Install on iPhone")
   assert.ok(iphone[0].url.startsWith("itms-services://"))
   assert.equal(iphone[1].text, "Share install link")
@@ -131,6 +136,9 @@ test("Slack uses symmetric rows, direct iPhone and share links; incomplete Apple
   const failed = platformDownloads(env, (url) => url !== env.MAC_URL)
   assert.match(JSON.stringify(failed), /Download APK/)
   assert.doesNotMatch(JSON.stringify(failed), /Install on iPhone/)
+  assert.deepEqual(failed[0].elements.map((entry) => entry.text.text), [":robot_face: Download for Android"])
+  // Nothing to download: no empty actions block, which Slack would refuse.
+  assert.ok(platformDownloads({...env, MOBILE_APK_URL: "", MOBILE_ASSET_BASE_URL: ""}, () => false).every((block) => block.type !== "actions"))
 })
 test("Slack firmware targets must belong to the current release", () => {
   const manifest = {

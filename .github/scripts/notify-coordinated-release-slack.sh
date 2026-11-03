@@ -176,10 +176,10 @@ payload=$(jq -n \
   '{
     blocks: [
       {type: "header", text: {type: "plain_text", text: $header, emoji: true}},
+      $platforms[],
       {type: "section", text: {type: "mrkdwn", text: $commit}},
       {type: "section", text: {type: "mrkdwn", text: $release}},
       {type: "divider"},
-      $platforms[],
       {type: "section", text: {type: "mrkdwn", text: (($android | split("\n")[1]) + "\n" + ($ios | split("\n")[1]))}},
       {type: "section", text: {type: "mrkdwn", text: $asg}},
       {type: "section", text: {type: "mrkdwn", text: $examples}},
