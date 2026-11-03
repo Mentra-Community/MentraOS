@@ -1,12 +1,20 @@
 /// <reference types="bun-types" />
 
-import {afterEach, beforeEach, describe, expect, test} from "bun:test"
-import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from "fs"
+import {afterEach, beforeEach, describe, expect, setSystemTime, test} from "bun:test"
+import {createHash} from "node:crypto"
+import {mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync} from "fs"
 import {tmpdir} from "os"
 import {join} from "path"
 import JSZip from "jszip"
 
-import {buildProjectZip, classifyWatchEvent, listProjectFiles} from "./dev-server"
+import {
+  buildProjectSnapshot,
+  buildProjectZip,
+  classifyWatchEvent,
+  listProjectFiles,
+  reloadSignalsForBatch,
+  startDevSidecar,
+} from "./dev-server"
 
 describe("listProjectFiles — dist/ inclusion", () => {
   let root: string
@@ -137,6 +145,63 @@ describe("buildProjectZip — two-output bundle contract", () => {
   })
 })
 
+describe("buildProjectSnapshot: the ZIP the served miniapp.json names", () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "mentra-snapshot-test-"))
+  })
+
+  afterEach(() => {
+    setSystemTime()
+    rmSync(root, {recursive: true, force: true})
+  })
+
+  function touch(rel: string, contents = "// stub") {
+    const abs = join(root, rel)
+    mkdirSync(join(abs, ".."), {recursive: true})
+    writeFileSync(abs, contents)
+  }
+
+  const manifest = '{"packageName":"com.test","version":"1.0.0","name":"Test","hardwareRequirements":[]}'
+
+  test("names the ZIP's SHA-256 and the miniapp.json inside it", async () => {
+    touch("miniapp.json", manifest)
+    touch("dist/background/index.js", "console.log('bg')")
+    const snapshot = await buildProjectSnapshot(root)
+    expect(snapshot.sha256).toBe(createHash("sha256").update(snapshot.zip).digest("hex"))
+    expect(snapshot.manifest).toBe(manifest)
+    const zip = await JSZip.loadAsync(snapshot.zip)
+    expect(await zip.files["miniapp.json"]!.async("string")).toBe(manifest)
+  })
+
+  test("the same files make the same ZIP, whenever it is built", async () => {
+    touch("miniapp.json", manifest)
+    touch("dist/background/index.js", "console.log('bg')")
+    touch("dist/ui/assets/main.js", "console.log('ui')")
+    setSystemTime(new Date("2026-01-01T10:00:00Z"))
+    const first = await buildProjectSnapshot(root)
+    setSystemTime(new Date("2026-06-01T18:30:07Z"))
+    const second = await buildProjectSnapshot(root)
+    expect(second.sha256).toBe(first.sha256)
+    expect(Buffer.from(second.zip).equals(Buffer.from(first.zip))).toBe(true)
+    expect(await buildProjectZip(root)).toEqual(second.zip)
+  })
+
+  test("changed files make a different ZIP", async () => {
+    touch("miniapp.json", manifest)
+    touch("dist/background/index.js", "console.log('bg')")
+    const before = await buildProjectSnapshot(root)
+    touch("dist/background/index.js", "console.log('bg 2')")
+    expect((await buildProjectSnapshot(root)).sha256).not.toBe(before.sha256)
+  })
+
+  test("a project without miniapp.json has no manifest", async () => {
+    touch("dist/background/index.js")
+    expect((await buildProjectSnapshot(root)).manifest).toBeNull()
+  })
+})
+
 describe("classifyWatchEvent: which layer a watcher event touched", () => {
   test("POSIX paths: background respawns, UI and other files reload", () => {
     expect(classifyWatchEvent("src/background/index.ts", "/")).toBe("respawn-bg")
@@ -171,4 +236,69 @@ describe("classifyWatchEvent: which layer a watcher event touched", () => {
   test("a backslash is left alone on platforms where it is not the separator", () => {
     expect(classifyWatchEvent("src\\background\\index.ts", "/")).toBe("reload")
   })
+})
+
+describe("classifyWatchEvent: shared code", () => {
+  test("src/shared/ is imported by both layers, so it needs both", () => {
+    expect(classifyWatchEvent("src/shared/channels.ts", "/")).toBe("both")
+    expect(classifyWatchEvent("packages/app/src/shared/channels.ts", "/")).toBe("both")
+    expect(classifyWatchEvent("src\\shared\\channels.ts", "\\")).toBe("both")
+  })
+})
+
+describe("reloadSignalsForBatch: what one save sends the phone", () => {
+  test("one layer sends its own signal", () => {
+    expect(reloadSignalsForBatch(["reload", "reload"])).toEqual(["reload"])
+    expect(reloadSignalsForBatch(["respawn-bg"])).toEqual(["respawn-bg"])
+  })
+
+  test("both layers send both, the background first", () => {
+    expect(reloadSignalsForBatch(["reload", "respawn-bg"])).toEqual(["respawn-bg", "reload"])
+    expect(reloadSignalsForBatch(["respawn-bg", "reload"])).toEqual(["respawn-bg", "reload"])
+    expect(reloadSignalsForBatch(["both"])).toEqual(["respawn-bg", "reload"])
+  })
+
+  test("an empty batch sends nothing", () => {
+    expect(reloadSignalsForBatch([])).toEqual([])
+  })
+})
+
+describe("startDevSidecar: a save that touches both layers", () => {
+  let dir: string
+  let sidecar: ReturnType<typeof startDevSidecar> | null = null
+
+  beforeEach(() => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), "mentra-dev-sidecar-")))
+    mkdirSync(join(dir, "src", "ui"), {recursive: true})
+    mkdirSync(join(dir, "src", "background"), {recursive: true})
+  })
+
+  afterEach(() => {
+    sidecar?.stop()
+    sidecar = null
+    rmSync(dir, {recursive: true, force: true})
+  })
+
+  test("respawns the background and reloads the screen", async () => {
+    const port = 47_000 + Math.floor(Math.random() * 2_000)
+    sidecar = startDevSidecar({port, watchDir: dir, silent: true})
+    const received: string[] = []
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/__mentra_dev`)
+    await new Promise<void>((resolve, reject) => {
+      ws.onopen = () => resolve()
+      ws.onerror = () => reject(new Error("sidecar socket failed"))
+    })
+    ws.onmessage = (event) => received.push(JSON.parse(String(event.data)).type)
+    // Let the watcher settle before the save.
+    await Bun.sleep(1_000)
+    writeFileSync(join(dir, "src", "ui", "App.tsx"), "export const ui = 2\n")
+    writeFileSync(join(dir, "src", "background", "index.ts"), "export const bg = 2\n")
+    const deadline = Date.now() + 10_000
+    const both = () => received.includes("respawn-bg") && received.includes("reload")
+    while (!both() && Date.now() < deadline) await Bun.sleep(50)
+    ws.close()
+    // One batch sends ["respawn-bg", "reload"]; on a slow machine the two writes can land in separate batches. Either
+    // way the screen reloads, which a lone respawn-bg never did.
+    expect([...new Set(received)].sort()).toEqual(["reload", "respawn-bg"])
+  }, 20_000)
 })

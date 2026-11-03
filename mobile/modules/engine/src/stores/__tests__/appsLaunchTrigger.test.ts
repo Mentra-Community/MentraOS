@@ -17,6 +17,7 @@ mock.module("../../services/AppRegistry", () => ({
     getInstalledMiniapps: installedApps,
     uninstall: mock(async () => Res.ok(undefined)),
     requiresLocalSttModel: (packageName: string) => packageName === "com.test.speech",
+    isMiniappAccessRevoked: (packageName: string) => packageName === "com.test.revoked",
     subscribe: () => () => {},
   },
 }))
@@ -27,7 +28,6 @@ mock.module("../../services/MiniappRunningRegistry", () => ({
 mock.module("../../services/LocalDisplayManager", () => ({default: {onCoreAppChange: () => {}}}))
 mock.module("../../services/NotificationsEmitter", () => ({islandNotifications: {emit: () => {}}}))
 mock.module("../../services/STTModelManager", () => ({default: {isModelAvailable: async () => modelAvailable}}))
-mock.module("../../services/SystemMiniappPolicy", () => ({isStoreMiniappPackage: () => false}))
 mock.module("../../utils/hardware/hardware", () => ({HardwareCompatibility: {checkCompatibility: () => compatible}}))
 mock.module("../../types/hardware", () => ({getModelCapabilities: () => ({})}))
 mock.module("../../utils/storage/storage", () => ({
@@ -111,6 +111,7 @@ describe("what a start shows", () => {
       onUpdateBlocked: (app) => shown.push(`updating:${app.packageName}`),
       onIncompatibleBlocked: (app) => shown.push(`incompatible:${app.packageName}`),
       onMissingSpeechModel: (app) => shown.push(`speech:${app.packageName}`),
+      onAccessRevoked: (app) => shown.push(`revoked:${app.packageName}`),
     })
   })
 
@@ -133,6 +134,9 @@ describe("what a start shows", () => {
     expect(await apps.getState().start(speech, {trigger: "automatic"})).toBe(false)
     apps.setState({apps: [target], updatingPackages: new Set([target.packageName])})
     expect(await apps.getState().start(target, {skipNavigation: true})).toBe(false)
+    const revoked = {...target, packageName: "com.test.revoked", name: "Revoked"}
+    apps.setState({apps: [revoked], updatingPackages: new Set()})
+    expect(await apps.getState().start(revoked)).toBe(false)
     expect(shown).toEqual([])
     expect(ensureRunning).not.toHaveBeenCalled()
   })
@@ -219,6 +223,14 @@ describe("launch reports", () => {
     expect(launches).toEqual([])
   })
 
+  test("a miniapp whose access was revoked is not a launch", async () => {
+    const revokedApp = {...target, packageName: "com.test.revoked", name: "Revoked"}
+    apps.setState({apps: [revokedApp]})
+    expect(await apps.getState().start(revokedApp, {trigger: "user"})).toBe(false)
+    expect(launches).toEqual([])
+    expect(ensureRunning).not.toHaveBeenCalled()
+  })
+
   test("a package the store does not know, or one the host made unavailable, is not a launch", async () => {
     const stranger = {...target, packageName: "com.test.unknown", name: "Unknown"}
     expect(await apps.getState().start(stranger, {trigger: "user"})).toBe(false)
@@ -234,6 +246,24 @@ describe("launch reports", () => {
       {packageName: "com.test.notes", miniappName: "Notes", versionName: "1.0.30", start: "user", outcome: "failed"},
     ])
     expect(apps.getState().apps[0].running).toBe(false)
+  })
+
+  test("a failed start carries the reason the launcher classified for the spawn it held back", async () => {
+    ensureRunning.mockImplementationOnce(async () => {
+      fleetEvents.launchUnlessClaimed({packageName: "com.test.notes", start: "user", outcome: "failed", failureReason: "spawn_failed"})
+      throw new Error("spawn failed")
+    })
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
+    expect(launches).toEqual([
+      {
+        packageName: "com.test.notes",
+        miniappName: "Notes",
+        versionName: "1.0.30",
+        start: "user",
+        outcome: "failed",
+        failureReason: "spawn_failed",
+      },
+    ])
   })
 
   test("a start that throws once it began is reported as failed, and still throws", async () => {

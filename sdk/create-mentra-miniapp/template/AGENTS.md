@@ -5,6 +5,10 @@
 - Put glasses subscriptions, `session.*` calls, durable state, and logic that
   must survive UI closure in `src/background/`.
 - Put React, rendering, DOM access, and browser UI libraries in `src/ui/`.
+- Keep `<MentraProvider>` at the root of `src/ui/main.tsx`. Once the app has
+  mounted it calls `mentra.ready()`, which hides the Mentra App's loading
+  screen. A UI page without the provider must call `mentra.ready()` itself, or
+  the miniapp fails to open.
 - The layers do not share memory. Exchange serializable data through the typed
   `mentra.*` / `session.ui.*` channels declared in `src/shared/channels.ts`.
 - The background is a bare JavaScript engine, not a browser or Node. Supported

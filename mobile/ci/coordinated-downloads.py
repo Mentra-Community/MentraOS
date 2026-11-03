@@ -85,7 +85,10 @@ def package(plan_path, ipa, output):
                 'CFBundleVersion': info['CFBundleVersion']}}
         (archive / 'Info.plist').write_bytes(plistlib.dumps(archive_info))
         configure(root / 'signing', os.environ['MENTRA_CI_KEYCHAIN'])
-        run('xcodebuild', '-exportArchive', '-archivePath', archive,
+        # Signs with the job keychain first in the search list, under the lock
+        # the runners sharing an office Mac take (pr-ios/keychain-search.py).
+        run(sys.executable, Path(__file__).resolve().parent / 'pr-ios/keychain-search.py', 'run',
+            os.environ['MENTRA_CI_KEYCHAIN'], 'xcodebuild', '-exportArchive', '-archivePath', archive,
             '-exportOptionsPlist', root / 'signing/ExportOptions.plist', '-exportPath', root / 'export')
         exported = list((root / 'export').glob('*.ipa'))
         if len(exported) != 1:

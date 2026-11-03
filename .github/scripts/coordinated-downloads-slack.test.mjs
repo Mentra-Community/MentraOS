@@ -25,6 +25,14 @@ test("early preparation failure points at the preflight before any Mac build exi
   assert.match(detail, /\/job\/123/)
 })
 
+test("a release run in another repository is read and linked there", async () => {
+  const detail = await releaseFailureDetail({...env, RUN_REPOSITORY: "Mentra-Community/Mentra"}, async url => {
+    assert.equal(url, "https://api.github.com/repos/Mentra-Community/Mentra/actions/runs/100/attempts/2/jobs?per_page=100")
+    return response([ios])
+  })
+  assert.match(detail, /github\.com\/Mentra-Community\/Mentra\/actions\/runs\/100\/job\/123/)
+})
+
 test("API outages and missing jobs retain a useful release link without blocking Slack", async () => {
   for (const fetchImpl of [async () => new Response("private provider error", {status: 403}), async () => response([]),
     async () => { throw new Error("private provider error") }]) {
@@ -86,7 +94,7 @@ test("source ID sections stay bounded for many routines with an inventory overfl
   const [block] = await coordinatedRoutineLinks(published, catalogFetch(rows), {select: async ({platform}) => ({archive: {
     url: platform === "android" ? published.MOBILE_APK_URL : published.MAC_URL, sha256: "d".repeat(64)}})})
   assert.ok(block.text.text.length <= 3000, block.text.text.length)
-  assert.match(block.text.text, /Request pipeline/)
+  assert.doesNotMatch(block.text.text, /Request pipeline|actions\/workflows/)
   assert.match(block.text.text, /routineCatalog=1\|View routine inventory in Admin/)
   const links = [...block.text.text.matchAll(/<(https:[^|]+)\|[^>]+>/g)]
   assert.ok(links.every(match => new URL(match[1]).protocol === "https:"))

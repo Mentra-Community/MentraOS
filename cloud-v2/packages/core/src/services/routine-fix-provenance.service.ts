@@ -27,8 +27,8 @@ export class RoutineFixProvenanceService {
   const binding=observed?.frameworkBinding,archive=observed?observedArchive:selectedArchive
   const producer=z.object({buildRunId:z.number().int().positive(),publicationAttempt:z.number().int().positive(),prNumber:z.number().int().positive().optional()}).safeParse(selected.build.source)
   return{requestId,observed:observed!==null,app:{repository:selected.build.repository,headSha:selected.build.headSha,...(archive.success?{artifactSha256:archive.data.sha256}:{}),...(producer.success?{producer:producer.data}:{})},
-   routine:{revision:'definitionRevision'in selected?selected.definitionRevision:selected.routineRevision,...(selected.routineSource?{bundleSha256:selected.routineSource.bundle.sha256}:{})},
-   framework:binding?{revision:binding.revision,version:binding.version,runtimeSha256:binding.runtimeSha256,apiVersion:binding.routineApiVersion}:null,
+   routine:{revision:'definitionRevision'in selected?selected.definitionRevision:selected.routineRevision,...(selected.routineSource?{repository:selected.routineSource.repository,bundleSha256:selected.routineSource.bundle.sha256}:{})},
+   framework:binding?{...(binding.repository?{repository:binding.repository}:{}),revision:binding.revision,version:binding.version,runtimeSha256:binding.runtimeSha256,apiVersion:binding.routineApiVersion}:null,
    glasses:selected.build.manifestSha256?{manifestSha256:selected.build.manifestSha256}:null,
    execution:observed?{hostId:observed.hostId,laneId:observed.laneId}:null,backend:null}
  }

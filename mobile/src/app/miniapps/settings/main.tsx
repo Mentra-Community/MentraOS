@@ -1,3 +1,4 @@
+import {useFocusEffect} from "@react-navigation/native"
 import {Platform, View} from "react-native"
 import {ScrollView} from "react-native-gesture-handler"
 
@@ -8,12 +9,14 @@ import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {roleLabel} from "@/effects/FleetSheets"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
+import {refreshMyWorkspace, useMyWorkspaceStore} from "@/services/fleet/myWorkspace"
 import {useDeployment} from "@/services/deployment"
 import {isMiniappDevelopmentAllowed} from "@/services/deployment/miniappDevelopmentPolicy"
 import {SETTINGS, useSetting} from "@mentra/engine"
-import {useRef} from "react"
+import {useCallback, useRef} from "react"
 import {useRegisterCapsule} from "@/stores/capsule"
 
 export default function MainSettingsPage() {
@@ -24,6 +27,14 @@ export default function MainSettingsPage() {
   const [appearanceMenuEnabled] = useSetting(SETTINGS.appearance_menu_enabled.key)
   const {activeDeployment} = useDeployment()
   const viewShotRef = useRef<View>(null)
+  const workspace = useMyWorkspaceStore((state) => state.workspace)
+
+  // The role can change in the portal at any time: read it again each time the page gains focus.
+  useFocusEffect(
+    useCallback(() => {
+      void refreshMyWorkspace()
+    }, []),
+  )
 
   useRegisterCapsule({
     packageName: "com.mentra.settings",
@@ -57,6 +68,17 @@ export default function MainSettingsPage() {
               }
             />
           </Group>
+
+          {workspace && (
+            <Group title={translate("fleet:settingsGroup")}>
+              <RouteButton
+                icon={<Icon name="building-2" size={24} color={theme.colors.secondary_foreground} />}
+                label={workspace.name}
+                subtitle={roleLabel(workspace.role)}
+                onPress={() => push("/miniapps/settings/workspace")}
+              />
+            </Group>
+          )}
 
           {/* Device/glasses settings, flattened inline (previously a separate page) */}
           <DeviceSettingsSection />

@@ -16,6 +16,7 @@ export type WorkspaceErrorCode =
   | "invalid_request"
   | "workspace_deleted"
   | "already_member"
+  | "already_in_workspace"
   | "email_mismatch"
   | "email_unverified"
   | "invitation_expired"
@@ -41,6 +42,7 @@ const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
   invalid_request: 400,
   workspace_deleted: 410,
   already_member: 409,
+  already_in_workspace: 409,
   email_mismatch: 403,
   email_unverified: 403,
   invitation_expired: 410,

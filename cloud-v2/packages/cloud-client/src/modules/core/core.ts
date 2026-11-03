@@ -7,7 +7,8 @@
  * core never touches credentials itself.
  *
  * Today it exposes the unified report submission surface, the support
- * profile update and the Fleet report.
+ * profile update, the Fleet report, the workspace calls, the miniapp
+ * registry calls and the person's declared age.
  *
  * Guardrail: this is device-facing only. It deliberately carries none of the
  * Dev Console / OEM Portal / store web UI surface; those are separate clients.
@@ -16,8 +17,27 @@
  * ("src/modules/core/core.ts").
  */
 import type { HttpClient } from "../../http";
-import type { FleetReport } from "@mentra/cloud-protocol";
+import type {
+  DeclaredAge,
+  FleetDesiredState,
+  FleetReport,
+  RegistryRegisterRequest,
+  RegistryRegisterResponse,
+  RegistryStatusRequest,
+  RegistryStatusResponse,
+} from "@mentra/cloud-protocol";
+import type {
+  AcceptInvitationResult,
+  DeclineInvitationResult,
+  LeaveWorkspaceRequest,
+  MyWorkspaceResponse,
+  PendingInvitationsResponse,
+} from "./workspace-types";
+import type { AccountCallOptions, CoreTokenSource } from "./account-call";
+import { Account } from "./account";
 import { Fleet, type FleetReportOutcome } from "./fleet";
+import { Registry } from "./registry";
+import { Workspaces } from "./workspaces";
 import {
   Reports,
   type AddReportArtifactsResult,
@@ -56,6 +76,13 @@ export type {
   SubmitReportResult,
 } from "./reports";
 export type { FleetAck, FleetAckResult, FleetReportOutcome } from "./fleet";
+export {
+  CoreRequestError,
+  CoreResponseError,
+  SessionChangedError,
+  type AccountCallOptions,
+  type CoreTokenSource,
+} from "./account-call";
 export type {
   SupportConnectionState,
   SupportProfileUpdateResult,
@@ -65,6 +92,11 @@ export type {
 /** The dependencies `cloud.core` is wired with. */
 export interface CoreDeps {
   http: HttpClient;
+  /**
+   * Where workspace, desired-state, registry and account calls get the signed-in account's Core token (`cloud.auth`).
+   * Without it those calls reject, because they must be made as one account.
+   */
+  auth?: CoreTokenSource;
 }
 
 /**
@@ -112,13 +144,48 @@ export class Core {
      * that Core token instead of the token source's.
      */
     report(batch: FleetReport, opts?: { signal?: AbortSignal; bearer?: string }): Promise<FleetReportOutcome>;
+    /**
+     * `GET /api/client/fleet/desired-state`, validated. Resolves only with a complete `managed` or `unmanaged` answer;
+     * every failure rejects (`CoreRequestError`, `CoreResponseError`, `SessionChangedError`, auth errors, abort), so
+     * none can be read as an empty set.
+     */
+    desiredState(opts?: AccountCallOptions): Promise<FleetDesiredState>;
+  };
+  readonly workspaces: {
+    /** `GET /api/client/workspaces/mine`. */
+    mine(opts?: AccountCallOptions): Promise<MyWorkspaceResponse>;
+    /** `GET /api/client/workspaces/invitations/mine`. */
+    pendingInvitations(opts?: AccountCallOptions): Promise<PendingInvitationsResponse>;
+    /** `POST /api/client/workspaces/invitations/:invitationId/accept`. */
+    acceptInvitation(invitationId: string, opts?: AccountCallOptions): Promise<AcceptInvitationResult>;
+    /** `POST /api/client/workspaces/invitations/:invitationId/decline`. */
+    declineInvitation(invitationId: string, opts?: AccountCallOptions): Promise<DeclineInvitationResult>;
+    /** `POST /api/client/workspaces/leave`, naming `opts.workspaceId` when given. */
+    leave(opts?: AccountCallOptions & LeaveWorkspaceRequest): Promise<void>;
+  };
+  /** The miniapp registry (`registry.ts`). Each call is made as one account. */
+  readonly registry: {
+    /** `POST /api/client/registry/register`, at each install of a miniapp URL. */
+    registerMiniappUrl(request: RegistryRegisterRequest, opts?: AccountCallOptions): Promise<RegistryRegisterResponse>;
+    /** `POST /api/client/registry/status`: one batch of installed URLs. */
+    registryStatus(request: RegistryStatusRequest, opts?: AccountCallOptions): Promise<RegistryStatusResponse>;
+  };
+  /** What the phone keeps on the signed-in person's account (`account.ts`). Each call is made as one account. */
+  readonly account: {
+    /** `GET /api/account/declared-age`: the age the person declared and when, both null until they answer. */
+    declaredAge(opts?: AccountCallOptions): Promise<DeclaredAge>;
+    /** `PUT /api/account/declared-age`: keep `age` as the person's declared age, dated now. */
+    setDeclaredAge(age: number, opts?: AccountCallOptions): Promise<DeclaredAge>;
   };
 
   constructor(deps: CoreDeps) {
-    const { http } = deps;
+    const { http, auth } = deps;
     const reports = new Reports({ http });
     const supportProfiles = new SupportProfiles(http);
-    const fleet = new Fleet(http);
+    const fleet = new Fleet(http, auth);
+    const workspaces = new Workspaces(http, auth);
+    const registry = new Registry(http, auth);
+    const account = new Account(http, auth);
 
     this.reports = {
       submit: reports.submit.bind(reports),
@@ -134,6 +201,22 @@ export class Core {
     };
     this.fleet = {
       report: fleet.report.bind(fleet),
+      desiredState: fleet.desiredState.bind(fleet),
+    };
+    this.workspaces = {
+      mine: workspaces.mine.bind(workspaces),
+      pendingInvitations: workspaces.pendingInvitations.bind(workspaces),
+      acceptInvitation: workspaces.acceptInvitation.bind(workspaces),
+      declineInvitation: workspaces.declineInvitation.bind(workspaces),
+      leave: workspaces.leave.bind(workspaces),
+    };
+    this.registry = {
+      registerMiniappUrl: registry.registerMiniappUrl.bind(registry),
+      registryStatus: registry.registryStatus.bind(registry),
+    };
+    this.account = {
+      declaredAge: account.declaredAge.bind(account),
+      setDeclaredAge: account.setDeclaredAge.bind(account),
     };
   }
 }

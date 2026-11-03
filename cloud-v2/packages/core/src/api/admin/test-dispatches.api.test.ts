@@ -1,5 +1,5 @@
 import {testRoutineSource} from "../../testing/framework-fixtures"
-import {expect, test} from "bun:test";
+import {expect, spyOn, test} from "bun:test";
 import {createTestDispatchAdminApi, HOST_STATE_FRESHNESS_MS} from "./test-dispatches.api";
 import {requestInputDigest, TestRequestService, type StoredRequest} from "../../services/test-request.service";
 import {RoutineDispatchService} from "../../services/routine-dispatch.service";
@@ -8,6 +8,7 @@ import type {StoredRoutineJob} from "../../types/routine-job.types";
 import {routineAdmissionInput} from "../../services/routine-admission.service";
 import type {RoutineDefinitionService} from "../../services/routine-definition.service";
 import type {TestBuildGateway} from "../../services/test-builds.service";
+import {TestRunGithubApp} from "../../services/test-run-github-app";
 import type {TestHostStateService} from "../../services/test-host-state.service";
 const selection = {requestId: "request-1", hostId: "mini", laneId: "mac", routineId: "no-glasses", platform: "ios-on-mac",
  source: {channel: "dev", buildRunId: 15, publicationAttempt: 1}, archiveSha256: "c".repeat(64)};
@@ -61,6 +62,62 @@ function fixture(changed = false, offline = false, clockSkew = 0, receiptAge = 0
   }
 }
 const post = (app: ReturnType<typeof createTestDispatchAdminApi>, body: unknown, path="/test-dispatches/picker") => app.request(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+test("default Admin inventories retain public staging and honor canonical dev and explicit pins", async () => {
+  const prior = process.env.TESTING_REPOSITORY, calls: string[] = [];
+  process.env.TESTING_REPOSITORY = 'Mentra-Community/Mentra';
+  const token = spyOn(TestRunGithubApp.prototype, 'token').mockResolvedValue('test-only-token');
+  const fetcher = Object.assign(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+    calls.push(String(input)); return Response.json({workflow_runs: []});
+  }, {preconnect: globalThis.fetch.preconnect});
+  const network = spyOn(globalThis, 'fetch').mockImplementation(fetcher);
+  try {
+    const app = createTestDispatchAdminApi();
+    for (const query of ['channel=staging&platform=android', 'channel=dev&platform=android',
+      'channel=staging&platform=android&repository=Mentra-Community%2FMentra'])
+      expect((await app.request('/test-builds?' + query)).status).toBe(200);
+    expect(calls).toEqual([
+      'https://api.github.com/repos/Mentra-Community/MentraOS/actions/workflows/coordinated-release.yml/runs?branch=staging&per_page=10',
+      'https://api.github.com/repos/Mentra-Community/Mentra/actions/workflows/release.yml/runs?branch=dev&per_page=10',
+      'https://api.github.com/repos/Mentra-Community/Mentra/actions/workflows/release.yml/runs?branch=staging&per_page=10',
+    ]);
+    expect(token.mock.calls.map(call => call[1])).toEqual([
+      'Mentra-Community/MentraOS', 'Mentra-Community/Mentra', 'Mentra-Community/Mentra',
+    ]);
+  } finally {
+    network.mockRestore(); token.mockRestore();
+    if (prior === undefined) delete process.env.TESTING_REPOSITORY; else process.env.TESTING_REPOSITORY = prior;
+  }
+});
+test("default Admin PR inventories use public app workflows and repository-scoped credentials", async () => {
+  const prior = process.env.TESTING_REPOSITORY, calls: string[] = [];
+  process.env.TESTING_REPOSITORY = 'Mentra-Community/Mentra';
+  const repository = 'Mentra-Community/MentraOS', headSha = 'a'.repeat(40);
+  const token = spyOn(TestRunGithubApp.prototype, 'token').mockResolvedValue('test-only-token');
+  const fetcher = Object.assign(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+    const url = String(input); calls.push(url);
+    if (url.endsWith('/pulls/12')) return Response.json({number: 12, state: 'open', title: 'Candidate',
+      head: {sha: headSha, ref: 'candidate', repo: {full_name: repository}}, base: {ref: 'dev'}});
+    if (url.endsWith('/git/ref/heads/dev')) return Response.json({ref: 'refs/heads/dev',
+      object: {type: 'commit', sha: 'b'.repeat(40)}});
+    return Response.json({workflow_runs: []});
+  }, {preconnect: globalThis.fetch.preconnect});
+  const network = spyOn(globalThis, 'fetch').mockImplementation(fetcher);
+  try {
+    const app = createTestDispatchAdminApi();
+    for (const platform of ['android', 'ios-on-mac'])
+      expect((await app.request(`/test-builds?channel=pr&pr=12&platform=${platform}`)).status).toBe(200);
+    expect(calls).toEqual(['mentra-app-android-build.yml', 'mentra-app-ios-build.yml'].flatMap(workflow => [
+      `https://api.github.com/repos/${repository}/pulls/12`,
+      `https://api.github.com/repos/${repository}/actions/workflows/${workflow}/runs?event=pull_request&head_sha=${headSha}&per_page=100&page=1`,
+      `https://api.github.com/repos/${repository}/actions/workflows/${workflow}/runs?event=workflow_dispatch&branch=dev&per_page=100&page=1`,
+      `https://api.github.com/repos/${repository}/git/ref/heads/dev`,
+    ]));
+    expect(token.mock.calls.map(call => call[1])).toEqual(Array(8).fill(repository));
+  } finally {
+    network.mockRestore(); token.mockRestore();
+    if (prior === undefined) delete process.env.TESTING_REPOSITORY; else process.env.TESTING_REPOSITORY = prior;
+  }
+});
 test("picker freezes fresh main, selected publication and explicit target before host preparation", async () => {
  const f=fixture();expect((await post(f.app,selection)).status).toBe(202);
  expect(f.admitted()).toMatchObject({requestId:"request-1",state:"awaiting-source",fleetTarget:{hostId:"mini",laneId:"mac"},fleetSelection:{routineId:"no-glasses",routineRevision:"a".repeat(40),platform:"ios-on-mac",build:{headSha:"b".repeat(40),kind:"mac-ci-package",archive:{sha256:"c".repeat(64)}}}});

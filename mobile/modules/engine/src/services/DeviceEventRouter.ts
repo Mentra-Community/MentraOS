@@ -19,6 +19,8 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {shallow} from "zustand/shallow"
 
+import audioPlaybackService from "./AudioPlaybackService"
+import {wakeWordService} from "./WakeWordService"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
@@ -140,6 +142,23 @@ export function startDeviceEventRouter(): void {
     }),
   )
 
+  // Mentra Live pairing state is owned by the Bluetooth SDK (`normal`, `pairing_mode`,
+  // `pairing_rejected`). The engine only mirrors it into the glasses store so the app renders
+  // from one source: the pairing-mode popup, and the Pair Again card.
+  subs.push(
+    BluetoothSdk.addListener("pairing_state_changed", (event) => {
+      useGlassesStore.getState().setGlassesInfo({pairingState: event.state})
+    }),
+  )
+
+  // Whether the user has to do anything for glasses audio is decided by the Bluetooth SDK. The
+  // engine mirrors it; the pairing flow and Home render Pair Audio from it.
+  subs.push(
+    BluetoothSdk.addListener("audio_setup_changed", (event) => {
+      useGlassesStore.getState().setGlassesInfo({audioSetup: event.state})
+    }),
+  )
+
   // --- coordinators (owns()-gated) ---
 
   // Phone-owned photo errors settle the in-flight long-poll fast (vs. timeout).
@@ -206,9 +225,33 @@ export function startDeviceEventRouter(): void {
       localMiniappRuntime.forwardEvent("head_up", {position: event.up ? "up" : "down", timestamp: Date.now()})
     }),
   )
+  // On-device "Hey Mentra" → every miniapp subscribed to the wake word. Warm
+  // up the audio player on each detection so the next sound starts quickly.
+  subs.push(
+    BluetoothSdk.addListener("wake_word", (event) => {
+      if (event.kind === "detected" && localMiniappRuntime.hasStreamSubscribers("wake_word")) {
+        void audioPlaybackService.prepareForPlayback().catch((error) => {
+          console.warn("Audio playback preparation after wake word failed", error)
+        })
+      }
+      const forwarded = wakeWordService.onNativeEvent(event)
+      if (forwarded) localMiniappRuntime.forwardEvent("wake_word", forwarded)
+    }),
+  )
+  // Phone-side voice activity (native Silero) → `vad`, one event per start or
+  // stop. Native counts a gap in microphone audio as silence.
+  subs.push(
+    BluetoothSdk.addListener("speech_activity", (event) => {
+      localMiniappRuntime.forwardEvent("vad", {
+        status: event.speaking,
+        silentForMs: event.silentForMs,
+        timestamp: event.timestamp,
+      })
+    }),
+  )
   // On-device STT transcripts → local miniapps only while the local engine is
-  // active (cloud fallback or an explicit forceLocal subscription). The runtime
-  // filters mixed local/cloud delivery per miniapp to avoid double-delivery.
+  // active (a localOnly or preferLocal listener, or the cloud fallback). The
+  // runtime routes each listener to one source, so nothing arrives twice.
   // forwardEvent is subscriber-gated — a no-op when no miniapp listens.
   // (Was MantleManager.handle_local_transcription; its offline-captions display branch
   // went away with the pseudo captions renderer.)

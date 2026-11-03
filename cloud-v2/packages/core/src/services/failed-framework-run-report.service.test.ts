@@ -5,6 +5,7 @@ import {recordedFrameworkRunSchema, type RecordedFrameworkRun} from "../types/fr
 import {
   FailedFrameworkRunReportService,
   failedRunDiagnostics,
+  failedRunNeedsReport,
   FAILED_RUN_DIAGNOSTIC_BYTES,
 } from "./failed-framework-run-report.service"
 import {FrameworkResultService} from "./framework-result.service"
@@ -273,3 +274,21 @@ test("original classified failures still report when aggregate test is cancelled
     expect(await fixture.instance.complete(accepted, requestInputDigest(accepted))).toBeDefined()
   }
 })
+
+test('cleanup-only failures create the ordinary incident and retain their cause without flattened copies', async () => {
+  for (const phase of ['teardown', 'evidence'] as const) for (const location of ['teardown', 'outcome'] as const) {
+    const frozen = run('android', 'pass');
+    const error = {phase, actionId: 'recorder', message: `Original ${location} ${phase} cause`};
+    if (location === 'teardown') frozen.result.teardown.errors = [error];
+    else frozen.result.teardown.outcomes = [{state: 'cleaned', resourceId: 'recorder', evidence: [], errors: [error]}];
+    const digest = requestInputDigest(frozen), fixture = service();
+    expect(failedRunNeedsReport(frozen)).toBe(true);
+    const diagnostic = failedRunDiagnostics(frozen);
+    expect(diagnostic.failures).toEqual([error]); expect(diagnostic.phases).toEqual([phase]);
+    expect(diagnostic.omittedFailures).toBe(0);
+    expect(await fixture.instance.complete(frozen, digest)).toEqual(await fixture.instance.complete(frozen, digest));
+    expect(fixture.reports.size).toBe(1); expect(fixture.attachments.size).toBe(1);
+    expect([...fixture.reports.values()][0]).toContain(error.message);
+    expect(frozen.result.failures).toEqual([]); expect(requestInputDigest(frozen)).toBe(digest);
+  }
+});

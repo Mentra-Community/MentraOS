@@ -1,9 +1,10 @@
 # @mentra/cloud-protocol
 
 The MentraOS phone ↔ cloud wire protocol: message schemas, envelopes, and
-error types shared by everything that speaks to the MentraOS cloud. Pure
-TypeScript + [zod](https://github.com/colinhacks/zod) — no server or native
-dependencies.
+error types shared by everything that speaks to the MentraOS cloud, and the
+miniapp URL rules Core and the engine both apply. Pure TypeScript +
+[zod](https://github.com/colinhacks/zod), and [tldts](https://github.com/remusao/tldts)
+for the Public Suffix List — no server or native dependencies.
 
 This is a **leaf package**: [`@mentra/cloud-client`](https://www.npmjs.com/package/@mentra/cloud-client)
 and [`@mentra/engine`](https://www.npmjs.com/package/@mentra/engine) depend on
@@ -33,7 +34,8 @@ import {normalizePhotoSizeTier} from "@mentra/cloud-protocol/camera";
 ```
 
 Modules: `envelope`, `messages`, `handshake`, `control`, `camera`, `audio`,
-`maps`, `errors` — each importable as `@mentra/cloud-protocol/<module>`.
+`maps`, `errors`, `miniapp-url` — each importable as
+`@mentra/cloud-protocol/<module>`.
 
 The package ships TypeScript source (`main: ./src/index.ts`) and targets
 consumers that compile TS themselves (Metro / bundlers / tsc); it is not

@@ -183,4 +183,62 @@ final class NimoCanvasTransportTests: XCTestCase {
         XCTAssertEqual(written.count, expected.count + 1)
         canvas.disconnected(); queue.reset()
     }
+
+    func testEncoderInvalidationRetainsRunningWorkerAndPendingDelivery() {
+        let main = NimoTestClock(), worker = NimoTestClock()
+        var delivered = false
+        var encoder: NimoCanvasEncoder!
+        encoder = NimoCanvasEncoder(main: main.schedule, worker: worker.schedule, failure: { XCTFail("\($0)") })
+        encoder.submit(encode: {
+            XCTAssertEqual(encoder.workerCount, 1)
+            encoder.invalidate()
+            XCTAssertEqual(encoder.workerCount, 1) // Running encode is not cancelled by dropping its result.
+            return Data([1])
+        }, deliver: { _ in delivered = true })
+        worker.advance()
+        XCTAssertEqual(encoder.workerCount, 0)
+        XCTAssertEqual(encoder.deliveryCount, 1)
+        main.advance()
+        XCTAssertEqual(encoder.deliveryCount, 0)
+        XCTAssertFalse(delivered)
+    }
+
+    func testWriterResetCannotEraseRealInFlightOrPostedCompletion() {
+        let clock = NimoTestClock(), original = NSObject(), replacement = NSObject(), characteristic = NSObject()
+        let queue = NimoWriteQueue<NSObject>(schedule: clock.schedule, write: { _, _ in true }, failure: { XCTFail($0) })
+        queue.connected(original)
+        queue.enqueue(original, characteristic: characteristic, frames: [Data([1])])
+        XCTAssertEqual(queue.activeCount, 1)
+        queue.reset()
+        XCTAssertEqual(queue.activeCount, 1)
+        queue.written(replacement, characteristic: characteristic, success: true)
+        XCTAssertEqual(queue.activeCount, 1)
+        queue.connectionClosed(replacement)
+        XCTAssertEqual(queue.activeCount, 1)
+        queue.connectionClosed(original)
+        XCTAssertEqual(queue.activeCount, 0)
+        queue.connected(original)
+        queue.enqueue(original, characteristic: characteristic, frames: [Data([1])])
+        queue.written(original, characteristic: characteristic, success: true)
+        queue.reset()
+        XCTAssertEqual(queue.activeCount, 1) // Real scheduled completion still must run its fence.
+        clock.advance(0.005)
+        XCTAssertEqual(queue.activeCount, 0)
+    }
+
+    func testCancelledQueuedEncoderRemainsInRosterUntilBothRealFencesExecute() {
+        let main = NimoTestClock(), worker = NimoTestClock()
+        var encoded = false
+        let encoder = NimoCanvasEncoder(main: main.schedule, worker: worker.schedule, failure: { XCTFail("\($0)") })
+        encoder.submit(encode: { encoded = true; return Data([1]) }, deliver: { _ in XCTFail("Cancelled delivery") })
+        encoder.invalidate()
+        XCTAssertEqual(encoder.workerCount, 1)
+        worker.advance()
+        XCTAssertFalse(encoded)
+        XCTAssertEqual(encoder.workerCount, 0)
+        XCTAssertEqual(encoder.deliveryCount, 1)
+        main.advance()
+        XCTAssertEqual(encoder.deliveryCount, 0)
+    }
+
 }

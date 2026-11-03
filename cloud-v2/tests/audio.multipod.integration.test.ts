@@ -13,11 +13,17 @@
  *
  *   - **Cross-pod isolation**: two users on different pods don't cross-talk.
  *
- * Prereqs (same as audio.integration.test.ts): Mongo + Redis on default
+ * Prereqs (same as audio.integration.test.ts): local Mongo + Redis on default
  * ports. Uses fixed test ports — 13000, 13001, 13002 (HTTP/WS), 18001, 18002
  * (UDP), 13100 (test-oem).
  *
  * Run: `bun test tests/audio.multipod.integration.test.ts`
+ *
+ * Safety: Mongo comes from `localTestMongoUrl` (loopback only, random database
+ * name, ignores `MONGO_URL`), checked before any destructive call and dropped
+ * afterwards. Redis comes from `localTestRedisUrl` (loopback only; refuses to
+ * run when `REDIS_URL` is set), so the keys this suite deletes are on a local
+ * server even under `doppler run`. Override with `CLOUD_V2_TEST_MONGO_URL` / `CLOUD_V2_TEST_REDIS_URL`.
  */
 
 import crypto from "node:crypto";
@@ -61,11 +67,9 @@ const TEST_OEM_ID = "test-oem";
       oemIdClaim: "oem_id",
     },
   ]);
-  process.env.MONGO_URL ??=
-    "mongodb://127.0.0.1:27017/mentra-cloud-v2-multipod-test";
   // Different Redis DB from other test files so parallel runs don't conflict
   // on shared `audio:*` / `{user:*}:owner` keys. See audio.integration.test.ts.
-  process.env.REDIS_URL ??= "redis://127.0.0.1:6379/2";
+  process.env.REDIS_URL = localTestRedisUrl(2);
   // Deterministic offline transcript source: this suite tests cross-pod routing
   // and failover, not transcription. Propagated to spawned pods via process.env.
   process.env.AUDIO_PROVIDER ??= "mock";
@@ -73,6 +77,8 @@ const TEST_OEM_ID = "test-oem";
 }
 
 import { startCore, type CoreHandle } from "../packages/core/src/index";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+import { localTestRedisUrl } from "./support/local-redis";
 import {
   startTestOem,
   type TestOemHandle,
@@ -102,6 +108,11 @@ let podB: PodHandle;
 
 // === Lifecycle ===
 
+const databaseUrl = localTestMongoUrl("audio-multipod");
+// Set only once the live connection is confirmed to be our random database;
+// every destructive call is gated on it.
+let verified = false;
+
 beforeAll(async () => {
   // Reset key caches that may be stale from a prior test file in the same
   // Bun test process. See audio.integration.test.ts for the explanation.
@@ -115,7 +126,9 @@ beforeAll(async () => {
   resetSigningKeyCache();
 
   testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
-  coreHandle = await startCore({ port: CORE_PORT });
+  coreHandle = await startCore({ port: CORE_PORT, mongoUrl: databaseUrl });
+  assertConnectedTo(databaseUrl, UserModel.db.name);
+  verified = true;
 
   // Connect this test process to Redis too — we use it for setup/teardown
   // and for asserting on stream contents.
@@ -150,6 +163,10 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  if (verified && UserModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, UserModel.db.name);
+    await UserModel.db.dropDatabase();
+  }
   // Kill pods FIRST so they don't keep writing to Redis we're about to wipe.
   await Promise.all([podA?.kill(), podB?.kill()]);
   await disconnectRedis();
@@ -158,6 +175,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  assertConnectedTo(databaseUrl, UserModel.db.name);
   await Promise.all([
     OemModel.deleteMany({}),
     UserModel.deleteMany({}),

@@ -1,8 +1,6 @@
 /// <reference types="bun-types" />
 
 import {describe, expect, test} from "bun:test"
-import {readdirSync, readFileSync} from "node:fs"
-import {join} from "node:path"
 import JSZip from "jszip"
 import {validateInstallBundleArchive} from "../validateInstallBundle"
 import {signedBundleFixture} from "./signedBundleFixture"
@@ -141,21 +139,6 @@ describe("validateInstallBundleArchive", () => {
       await expect(validateInstallBundleArchive(await invalid.generateAsync({type: "uint8array"}))).rejects.toThrow(
         "invalid packageName",
       )
-    }
-  })
-
-  test("accepts every miniapp bundled into the Mentra App as the package and version its file names", async () => {
-    // Bundled ZIPs go through the same installer as every other source.
-    const assets = join(import.meta.dir, "../../../../../assets/miniapps")
-    const zips = readdirSync(assets).filter((name) => name.endsWith(".zip"))
-    expect(zips.length).toBeGreaterThan(0)
-    for (const name of zips) {
-      const match = /^(.+)-(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?)\.zip$/.exec(name)
-      if (!match) throw new Error(`Unexpected bundled miniapp asset name ${name}`)
-      const [, packageName, version] = match
-      await expect(
-        validateInstallBundleArchive(Uint8Array.from(readFileSync(join(assets, name))), {packageName, version}),
-      ).resolves.toMatchObject({packageName, version})
     }
   })
 

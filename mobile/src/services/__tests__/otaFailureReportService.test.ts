@@ -1,3 +1,4 @@
+import {otaArtifactFailure} from "../../../modules/engine/src/services/OtaArtifactFailure"
 import {submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
 import {
   submitOtaFailureReport,
@@ -105,4 +106,31 @@ it("suppresses repeated durable failure replies beyond the facade throttle windo
   } finally {
     now.mockRestore()
   }
+})
+
+it("keeps classified native download details in private evidence without signed URLs", async () => {
+  const input = evidence()
+  input.artifactFailure = otaArtifactFailure(
+    Object.assign(new Error("Software caused connection abort https://cdn.example.com/a?token=private"), {
+      code: "RNFS",
+    }),
+    {
+      artifact: "apk",
+      stage: "download",
+      httpStatus: 200,
+      bytesWritten: 40,
+      contentLength: 100,
+    },
+  )
+  await submitOtaFailureReport(input)
+  const report = submit.mock.calls[0][0]
+  expect(report.context.otaFailure.artifactFailure).toMatchObject({
+    category: "connection",
+    httpStatus: 200,
+    bytesWritten: 40,
+    nativeErrors: [{name: "Error", code: "RNFS", message: expect.stringContaining("Software caused connection abort")}],
+  })
+  expect(report.report.actualBehavior).not.toContain("token=private")
+  input.artifactFailure.nativeErrors[0].message = "changed after failure"
+  expect(report.context.otaFailure.artifactFailure.nativeErrors[0].message).not.toContain("changed after failure")
 })

@@ -380,6 +380,130 @@ export interface InvitationPreview {
   expiresAt: string
 }
 
+// --- Mentra App workspace calls (`/api/client/workspaces`) ------------------
+// A person belongs to at most one workspace, so a phone sees one workspace, or none.
+
+/** The workspace the signed-in phone's person belongs to (`GET /api/client/workspaces/mine`), or null when none. */
+export interface MyWorkspace {
+  workspaceId: string
+  name: string
+  role: WorkspaceRole
+  membershipId: string
+}
+
+/** `GET /api/client/workspaces/mine`. */
+export interface MyWorkspaceResponse {
+  workspace: MyWorkspace | null
+}
+
+/** `GET /api/client/workspaces/invitations/mine`: the invitations addressed to the signed-in person. */
+export interface PendingInvitationsResponse {
+  invitations: InvitationPreview[]
+}
+
+/** `POST /api/client/workspaces/invitations/:invitationId/accept`. */
+export interface AcceptInvitationResult {
+  workspace: MyWorkspace
+}
+
+/**
+ * `POST /api/client/workspaces/invitations/:invitationId/decline`. Declining twice is idempotent. Decline opens and
+ * closes no membership interval.
+ */
+export interface DeclineInvitationResult {
+  invitationId: string
+  declined: true
+}
+
+/**
+ * `POST /api/client/workspaces/leave`. A body is optional: with `workspaceId`, Core leaves that workspace only while
+ * the person is in it, and answers `membership_changed` (409) otherwise; without one, the person's workspace.
+ */
+export interface LeaveWorkspaceRequest {
+  workspaceId?: string
+}
+
+/** Codes a client workspace call can fail with, so the Mentra App can map each to its own words. */
+export const CLIENT_WORKSPACE_ERRORS = {
+  /** The person already belongs to a workspace; leave it first. */
+  alreadyInWorkspace: "already_in_workspace",
+  /** The only Owner cannot leave. */
+  lastOwner: "last_owner",
+  invitationExpired: "invitation_expired",
+  invitationNotFound: "invitation_not_found",
+  emailUnverified: "email_unverified",
+  /** The membership changed under the call: its role, or the workspace a leave named is no longer the person's. */
+  membershipChanged: "membership_changed",
+} as const
+export type ClientWorkspaceErrorCode = (typeof CLIENT_WORKSPACE_ERRORS)[keyof typeof CLIENT_WORKSPACE_ERRORS]
+
+/** `action` of the change-feed event recorded when an invitee declines. It opens and closes no interval. */
+export const INVITATION_DECLINED_ACTION = "invitation.declined"
+
+// --- Membership interval history (Core -> Fleet) -----------------------------
+
+/** Why a membership interval ended. */
+export type MembershipIntervalEndReason = "left" | "removed" | "workspace_deleted" | "account_deleted"
+
+/**
+ * One continuous stretch of an account's membership in a workspace: one membership generation. It begins when
+ * the membership's account is known: for a membership imported from the Store and waiting for its person that is
+ * the claim (`membership.claimed`), never the import, so records observed earlier are never counted. A membership
+ * that has no account yet is not an interval at all. `end` is null while the membership is open. `role` is the role
+ * held now, or the last one before the end; a role change does not split an interval (visibility follows
+ * membership, not role), and `roles` lists the role intervals within it. A leave and a later re-join are two
+ * intervals with two `membershipId`s.
+ * `membership.merged_duplicate` and `membership.replaced` act on memberships with no account and so end no interval.
+ */
+export interface MembershipInterval {
+  membershipId: string
+  workspaceId: string
+  mentraUserId: string
+  role: WorkspaceRole
+  /** ISO 8601 UTC. */
+  start: string
+  /** ISO 8601 UTC, or null while the membership is open. */
+  end: string | null
+  endReason: MembershipIntervalEndReason | null
+  /**
+   * The role intervals within this one that overlap the lookback window, oldest first: each role from when it took
+   * effect (never before `start`) until the next took effect, the last until `end`. Never empty.
+   */
+  roles: MembershipRoleInterval[]
+}
+
+/** One role held within a membership interval. */
+export interface MembershipRoleInterval {
+  role: WorkspaceRole
+  /** ISO 8601 UTC. */
+  start: string
+  /** ISO 8601 UTC, or null while the role is still held. */
+  end: string | null
+}
+
+/** `GET /api/internal/workspaces/workspaces/:workspaceId/members` (service `fleet` only): who is in the workspace now. */
+export interface WorkspaceMembersResponse {
+  /** Active memberships, oldest first. `name` is null when Core has none; Fleet then shows the full email. */
+  members: MemberView[]
+}
+
+/**
+ * One page of `GET /api/internal/workspaces/membership-intervals` (service `fleet` only).
+ *
+ * Core returns every interval that overlaps `[windowStart, now]`, where `windowStart` is `now` minus
+ * `lookbackDays` (`CLOUD_CORE_FLEET_HISTORY_MAX_DAYS`). An interval still open whose `start` is older than the
+ * window is returned with its real `start` and `end: null`, so long-standing members never vanish. One that ended
+ * before `windowStart` is not returned. `feedSeq` is the change-feed position the read is consistent with: a
+ * consumer applies feed events after it. `next` is an opaque cursor, or null on the last page.
+ */
+export interface MembershipIntervalsResponse {
+  lookbackDays: number
+  windowStart: string
+  feedSeq: number
+  intervals: MembershipInterval[]
+  next: string | null
+}
+
 /** A credential as shown to people (a workspace `msk_` key or an organization `mak_` operator key). It never includes the token or its hash. */
 export interface CredentialView {
   credentialId: string
@@ -421,4 +545,182 @@ export interface AuditEventView {
 export interface OrganizationView {
   capabilities: OrganizationCapability[]
   workspaceCreation: {allowed: boolean; reason: "email_unverified" | "organization_admins_only" | "not_a_person" | null}
+}
+
+// --- The miniapp registry ----------------------------------------------------
+//
+// Core's miniapp registry, over the signed service API at `/api/internal/registry/*`. Fleet checks and names
+// miniapps (`check`, `lookup`); the directory reads and archives entries (`entries`, `archive`). The phone's own
+// registry calls, and the wire types they share with these, are in `@mentra/cloud-protocol` (`miniapp-registry.ts`).
+
+/** The most URLs one `check` may name. */
+export const REGISTRY_CHECK_MAX_URLS = 50
+/** The most package names one `lookup` may name. */
+export const REGISTRY_LOOKUP_MAX_PACKAGES = 500
+/** `403`: the workspace `check` names isn't active, or the person it names isn't a live account. */
+export const NOT_A_MEMBER_ERROR = "not_a_member"
+/** `404` from `entries`: the registry has no entry for the URL. */
+export const REGISTRY_ENTRY_NOT_FOUND_ERROR = "not_found"
+
+/** The age ratings a `miniapp.json` may declare. */
+export type RegistryAgeRating = "4+" | "9+" | "13+" | "16+" | "18+"
+
+/**
+ * One registry entry, as Core shows it. The same shape as `RegistryEntryView` in `@mentra/cloud-protocol`, which
+ * the phone's registry calls answer with.
+ */
+export interface RegistryEntryView {
+  /** The normalized miniapp URL: the entry's key. */
+  url: string
+  packageName: string
+  registrableDomain: string
+  /** Null when Core knows only the package name, or doesn't show this caller more (see each route). */
+  name: string | null
+  version: string | null
+  ageRating: RegistryAgeRating | null
+  iconUrl: string | null
+  /** `verified`: Core read the URL's `miniapp.json` itself. `phone_reported`: Core couldn't; a phone reported it. */
+  verification: "verified" | "phone_reported"
+  /** Its server asks for sign-in. */
+  private: boolean
+  /** `archived` when its own status is, or when an archive rule covers it. */
+  status: "active" | "archived"
+  /** ISO 8601. */
+  firstRegisteredAt: string
+  /** ISO 8601, or null when Core has never read it. */
+  lastVerifiedAt: string | null
+}
+
+/**
+ * Core's verified copy of a served `miniapp.json`. The fields every copy has are typed here; the rest are kept as
+ * served. `ServedMiniappManifestSchema` in `@mentra/cloud-protocol` parses it in full.
+ */
+export interface RegistryManifest {
+  packageName: string
+  version: string
+  name: string
+  description?: string
+  /** Relative to the miniapp URL, or an absolute URL. */
+  icon?: string
+  ageRating?: RegistryAgeRating
+  /** The directory's listing: the optional category and screenshots. Not checked by Core. */
+  listing?: unknown
+  bundle: {url: string; sha256: string}
+  [field: string]: unknown
+}
+
+/** `GET /api/internal/registry/entries?url=` (the directory): an entry and Core's verified `miniapp.json`. */
+export interface RegistryEntryDetail extends RegistryEntryView {
+  /** Null unless the entry is verified, and always for a private entry. */
+  manifest: RegistryManifest | null
+}
+
+export interface RegistryEntryResponse {
+  entry: RegistryEntryDetail
+}
+
+/**
+ * What `check` found at a URL:
+ * - `accepted`: Core read a valid `miniapp.json` whose package name passes the domain rule;
+ * - `accepted_unverified`: Core couldn't read it, and holds a phone's report of it, or its server asks for sign-in
+ *   and refused the assigning admin's token;
+ * - `archived`: an archive rule covers it;
+ * - `not_a_miniapp`: an invalid `miniapp.json`, a package name its domain doesn't own, or not a public HTTPS URL;
+ * - `unreachable`: Core couldn't read it and no phone has reported it;
+ * - `unknown`: Core didn't finish checking it in time, or the admin has registered too many URLs this hour. Never a
+ *   yes: ask again later.
+ */
+export type RegistryCheckStatus =
+  | "accepted"
+  | "accepted_unverified"
+  | "archived"
+  | "not_a_miniapp"
+  | "unreachable"
+  | "unknown"
+
+export const REGISTRY_CHECK_STATUSES: readonly RegistryCheckStatus[] = [
+  "accepted",
+  "accepted_unverified",
+  "archived",
+  "not_a_miniapp",
+  "unreachable",
+  "unknown",
+]
+
+/** `POST /api/internal/registry/check` (Fleet): the URLs an admin is assigning, at most 50. */
+export interface RegistryCheckRequest {
+  /** Each a miniapp URL, normalized as `normalizeMiniappUrl` does. */
+  urls: string[]
+  /** The assigning workspace: a private miniapp's token names it. */
+  workspaceId: string
+  /** The assigning admin: the person registering an unknown URL. */
+  mentraUserId: string
+}
+
+/** One URL's answer, in the order asked, with the URL as it was sent. */
+export interface RegistryCheckResult {
+  url: string
+  status: RegistryCheckStatus
+  /** The URL's package; null when Core doesn't know it. */
+  packageName: string | null
+  /** The miniapp's name; null when Core doesn't know it, or for a private miniapp whose server refused the admin. */
+  name: string | null
+  /** The icon's absolute HTTPS URL, under the same rule as `name`. */
+  iconUrl: string | null
+  /** Its server asks for sign-in. */
+  private: boolean
+  /** ISO 8601: when Core answered for this URL. */
+  checkedAt: string
+}
+
+export interface RegistryCheckResponse {
+  results: RegistryCheckResult[]
+}
+
+/** `POST /api/internal/registry/lookup` (Fleet): names for a workspace's views, for at most 500 packages. */
+export interface RegistryLookupRequest {
+  workspaceId: string
+  packageNames: string[]
+}
+
+/**
+ * A package as a workspace's views name it: from the package's most recently verified active entry (a
+ * phone-reported one when none is verified). `archived` is true when every entry for the package is archived. A
+ * private miniapp's `name` and `iconUrl` are null unless the workspace assigned the package through Fleet.
+ */
+export interface RegistryLookupEntry {
+  name: string | null
+  iconUrl: string | null
+  private: boolean
+  archived: boolean
+}
+
+export interface RegistryLookupResponse {
+  /** Every package asked about; null for one the registry has no entry for. */
+  entries: Record<string, RegistryLookupEntry | null>
+}
+
+/** What an archive rule names: a miniapp URL, a package name, a registrable domain, or a `mentraUserId`. */
+export type RegistryArchiveRuleKind = "url" | "package" | "domain" | "account"
+
+export interface RegistryArchiveRule {
+  kind: RegistryArchiveRuleKind
+  value: string
+}
+
+/** `POST /api/internal/registry/archive` (the directory): a staff member archives through the directory. */
+export interface RegistryArchiveRequest {
+  rule: RegistryArchiveRule
+  reason: string
+  /** The staff member, recorded as the actor (`store:<actorEmail>`) in Core's admin audit log. */
+  actorEmail: string
+}
+
+export interface RegistryArchiveResponse {
+  /** The rule as Core stores it (a URL normalized, a domain lowercased). */
+  rule: RegistryArchiveRule
+  /** False when the rule already existed; it keeps its first reason and author. */
+  created: boolean
+  /** How many entries this call moved to archived. */
+  entriesArchived: number
 }

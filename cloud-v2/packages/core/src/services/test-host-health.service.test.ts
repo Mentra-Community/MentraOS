@@ -38,7 +38,7 @@ describe("passive host health", () => {
     try {
       TestHostSampleModel.collection.find = ((filter: unknown, options: unknown) => {calls.filter = filter; calls.options = options; return cursor;}) as any;
       expect(await new MongoTestHostHealthRepository().history("mini-1", new Date(start - 60_000), new Date(start), 2)).toEqual([row]);
-      expect(calls).toEqual({filter: {hostId: "mini-1", sampledAt: {$gte: new Date(start - 60_000), $lte: new Date(start)}},
+      expect(calls).toEqual({filter: {hostId: "mini-1", kind: {$ne: 'framework-debug'}, sampledAt: {$gte: new Date(start - 60_000), $lte: new Date(start)}},
         options: {projection: hostHistoryProjection}, sort: {sampledAt: -1, sampleId: -1}, hint: "host_sample_history", limit: 2, maxTimeMS: 5_000});
       expect(hostHistoryProjection).not.toHaveProperty("payload");
       expect(hostHistoryProjection).not.toHaveProperty("payload.components");

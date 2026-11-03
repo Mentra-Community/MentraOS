@@ -4,12 +4,15 @@ import {routineEnrollmentSchema, recordedRoutineEnrollmentSchema, type RecordedR
 import {requestInputDigest} from './test-request.service';
 import {TestingDetailStorage, testingDetailPointerSchema} from './testing-detail-storage.service';
 import {TestRunError} from './test-result-error';
+import {testingRepositorySchema} from '../types/testing-source.types';
 
 export const ROUTINE_COLLECTION_BATCH_SIZE = 8;
 
 export const routineCollectionDetailSchema = z.object({commit: z.string().regex(/^[a-f0-9]{40}$/),
+  repository: testingRepositorySchema.optional(),
   version: z.number().int().positive(), definitions: z.array(recordedRoutineEnrollmentSchema)}).strict();
 export const routineCollectionManifestSchema = z.object({commit: z.string().regex(/^[a-f0-9]{40}$/),
+  repository: testingRepositorySchema.optional(),
   version: z.number().int().positive(), definitions: z.array(z.object({routineId: z.string(), platform: z.string(),
     definitionRevision: z.string(), definitionSha256: z.string(), routineSource: routineSourceRefSchema.optional(),
     detail: testingDetailPointerSchema}).strict()).max(1000)}).strict();

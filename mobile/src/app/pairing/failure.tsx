@@ -42,8 +42,10 @@ export default function PairingFailureScreen() {
     clearHistoryAndGoHome()
   }
 
+  const routeDeviceModel = Array.isArray(deviceModel) ? deviceModel[0] : deviceModel
+
   return (
-    <Screen preset="fixed" className="" safeAreaEdges={["top", "bottom"]}>
+    <Screen preset="scroll" className="" safeAreaEdges={["top", "bottom"]}>
       <Header />
 
       <Animated.View style={animatedContainerStyle} className="flex-1 items-center justify-center px-4">
@@ -60,9 +62,9 @@ export default function PairingFailureScreen() {
         />
 
         <Text
-          text={translate(error as TxKeyPath, {glassesModel: deviceModel || "glasses"})}
+          text={translate(error as TxKeyPath, {glassesModel: routeDeviceModel || "glasses"})}
           preset="default"
-          className="text-[16px] text-center mb-12 leading-6 px-4 text-text-dim"
+          className="text-[16px] mb-12 leading-6 px-4 text-text-dim text-center"
         />
 
         <View className="w-full gap-3 flex-grow items-end justify-end">

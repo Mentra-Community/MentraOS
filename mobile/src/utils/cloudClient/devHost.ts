@@ -82,3 +82,11 @@ export function devServerHost(): string | undefined {
 
   return candidates.find((h) => !isLoopback(h))
 }
+
+/**
+ * The dev machine as this phone reaches it: its LAN address, else the loopback a USB `adb reverse` publishes it on
+ * (only this phone can use that one).
+ */
+export function devMachineHost(): string | undefined {
+  return devServerHost() ?? [hostOf(scriptURL()), hostOf(Constants.expoConfig?.hostUri)].find((h) => !!h)
+}

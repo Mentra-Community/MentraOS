@@ -10,6 +10,7 @@ import {candidateAssets, fingerprintMobile, MOBILE_INPUT_PATHS, MOBILE_PR_PATHS,
 const input = {tree: "mobile tree", env: {EXPO_PUBLIC_BUILD_ENV: "dev"}, tools: {node: "20", java: "17"}}
 test("configuration-only packaging inputs do not invalidate compiled APK reuse", () => {
   const a = fingerprintMobile(input)
+  assert.notEqual(a, fingerprintMobile({...input, env: {...input.env, MENTRA_NIMO_DIAGNOSTIC: "true"}}))
   assert.equal(
     a,
     fingerprintMobile({
@@ -140,7 +141,7 @@ test("reuse requires exact fingerprint and checksum metadata, newest first", () 
 test("Android triggers are covered by ASG, and PR binaries are not duplicated as Actions artifacts", () => {
   const android = readFileSync(new URL("../workflows/mentra-app-android-build.yml", import.meta.url), "utf8")
   const asg = readFileSync(new URL("../workflows/mentra-asg-client-build.yml", import.meta.url), "utf8")
-  const paths = (s) => s.split("    paths:\n")[1].split("\n  push:")[0]
+  const paths = (s) => s.split("    paths:\n")[1].split("\n  workflow_dispatch:")[0]
   assert.equal(paths(android), paths(asg))
   assert.match(android, /Upload Release APK \(artifact\)\n        if: \(github.event_name != 'pull_request' && inputs.routine_pr == ''\)/)
   assert.match(android, /Package this PR's configuration and sign/)
@@ -189,7 +190,7 @@ test("iOS and Android never select each other's binaries, and all producer trigg
   const paths = (name) =>
     readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
       .split("    paths:\n")[1]
-      .split("\n  push:")[0]
+      .split("\n  workflow_dispatch:")[0]
       .trim()
   assert.equal(paths("mentra-app-ios-build.yml"), paths("mentra-app-android-build.yml"))
   assert.equal(paths("mentra-asg-client-build.yml"), paths("mentra-app-android-build.yml"))
@@ -198,7 +199,7 @@ test("iOS and Android never select each other's binaries, and all producer trigg
 test("every producer trigger path is a shared mobile PR path, and every shared path triggers each producer", () => {
   for (const name of ["mentra-app-android-build.yml", "mentra-app-ios-build.yml", "mentra-asg-client-build.yml"]) {
     const block = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
-      .split("\n  pull_request:\n")[1].split("\n  push:")[0].split("    paths:\n")[1].split("\n")
+      .split("\n  pull_request:\n")[1].split("\n  workflow_dispatch:")[0].split("    paths:\n")[1].split("\n")
     // Keep the existing shape: the block is only quoted path entries.
     const triggers = block.map(line => /^      - "([^"]+)"$/.exec(line)?.[1])
     assert.ok(triggers.every(Boolean), `${name} has an unexpected trigger line`)
@@ -210,17 +211,12 @@ test("every producer trigger path is a shared mobile PR path, and every shared p
     assert.ok(MOBILE_PR_PATHS.includes(path))
 })
 
-test("standalone push compile checks use the app input boundary while coordinated releases still deploy every dev/staging push", () => {
-  for (const name of ["mentra-app-android-build.yml", "mentra-app-ios-build.yml", "mentra-asg-client-build.yml"]) {
+test("no mobile or release workflow runs on a branch push: the monorepo builds and releases", () => {
+  for (const name of ["mentra-app-android-build.yml", "mentra-app-ios-build.yml", "mentra-asg-client-build.yml", "coordinated-release.yml"]) {
     const workflow = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
-    const push = workflow.split("\n  push:\n")[1].split("\n  workflow_dispatch:")[0]
-    const triggers = push.split("    paths:\n")[1].split("\n").map(line => /^      - "([^"]+)"$/.exec(line)?.[1])
-    assert.deepEqual(triggers, MOBILE_PR_PATHS)
+    assert.doesNotMatch(workflow, /^  push:$/m, name)
   }
   const release = readFileSync(new URL("../workflows/coordinated-release.yml", import.meta.url), "utf8")
-  const push = release.split("\n  push:\n")[1].split("\n  workflow_dispatch:")[0]
-  assert.match(push, /branches: \[dev, staging\]/)
-  assert.doesNotMatch(push, /paths:/)
   assert.match(release, /uses: \.\/\.github\/workflows\/reusable-coordinated-cloud-v2\.yml/)
 })
 

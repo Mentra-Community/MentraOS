@@ -13,7 +13,6 @@ import type { WorkspaceApi } from "../api";
 import { cn } from "../lib/utils";
 import { workspaceKeys } from "../queries";
 import { Button } from "../ui/button";
-import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { ErrorNotice } from "./common";
@@ -92,37 +91,5 @@ export function CreateWorkspaceForm({
         </Button>
       </div>
     </form>
-  );
-}
-
-/** "Create workspace" as a dialog: just the name. */
-export function CreateWorkspaceDialog({
-  api,
-  open,
-  onClose,
-  onCreated,
-}: {
-  api: WorkspaceApi;
-  open: boolean;
-  onClose(): void;
-  /** The workspace exists and the dialog has closed: open it. */
-  onCreated(workspace: WorkspaceDetail): void;
-}) {
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title="Create a workspace"
-      description="A workspace is where your team works together. You will be its owner and can invite people next."
-    >
-      <CreateWorkspaceForm
-        api={api}
-        onCancel={onClose}
-        onCreated={(created) => {
-          onClose();
-          onCreated(created);
-        }}
-      />
-    </Dialog>
   );
 }

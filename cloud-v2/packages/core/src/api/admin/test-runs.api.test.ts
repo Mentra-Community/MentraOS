@@ -12,6 +12,22 @@ import {requestInputDigest, TestRequestService, type StoredTestRequest, type Sto
 import {routineEnrollmentSchema} from "../../types/routine-definition.types";
 import {frameworkRunSchema} from "../../types/framework-run.types";
 import {TestRequestProgressService} from '../../services/test-request-progress.service';
+import {TestHostStateService} from '../../services/test-host-state.service';
+import {sharedResourceWait} from '../../services/routine-resource-wait';
+import {TestRequestMatchService} from '../../services/test-request-match.service';
+import {readAcceptedRoutineRequest} from '../../services/routine-request-input';
+import {recordedFrameworkRequestInputSchema} from '../../types/framework-request.types';
+
+test('exact original matching route returns identical no-store JSON outside generic result lookup', async () => {
+  const report = {requestId: 'exact-original', stage: 'Candidate check and return', lanes: []}
+  const matching = spyOn(TestRequestMatchService.prototype, 'get').mockResolvedValue(report as never)
+  const result = spyOn(FrameworkResultService.prototype, 'detailByRun').mockRejectedValue(new Error('must not inspect run history'))
+  try {
+    const response = await createTestRunAdminApi().request('/requests/exact-original/matching')
+    expect(response.status).toBe(200); expect(response.headers.get('Cache-Control')).toBe('no-store')
+    expect(await response.json()).toEqual(report); expect(matching).toHaveBeenCalledWith('exact-original'); expect(result).not.toHaveBeenCalled()
+  } finally {matching.mockRestore(); result.mockRestore()}
+});
 
 test('the ordinary run detail carries live progress until its published result replaces the request', async () => {
   const input = {routineSource: testRoutineSource(), routineId: 'miniapps', definitionRevision: 'a'.repeat(40), platform: 'android',
@@ -284,6 +300,38 @@ test('historical request detail preserves an absent routine source and original 
   await expect(new Requests().submit('new-request', 'mini', input)).rejects.toMatchObject({status: 400});
 });
 
+test('historical retired glasses input projects its original identity and digest without enabling new admission', async () => {
+  const input = {routineId: 'retired-connection', definitionRevision: 'a'.repeat(40), platform: 'android' as const, laneId: 'old-android',
+    routineSource: {...testRoutineSource(), minimumRoutineApiVersion: 43}, glassesModel: 'nimo',
+    resources: [{id: 'old-glasses', kind: 'glasses' as const}],
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev' as const, headSha: 'b'.repeat(40)}};
+  const before = JSON.stringify(input), inputSha256 = requestInputDigest(input);
+  const row: StoredTestRequest = {requestId: 'retired-request', hostId: 'old-host', input, inputSha256,
+    state: 'terminal', terminalStatus: 'not-run'};
+  class Results extends FrameworkResultService {
+    override async detailByRun(): Promise<never> {throw new TestRunError(404, 'missing result');}
+    override async detail(): Promise<never> {throw new TestRunError(404, 'missing result');}
+  }
+  class Requests extends TestRequestService {override async get() {return row;}}
+  const app = createTestRunAdminApi(undefined, undefined, new Results(), new Requests());
+  const response = await app.request('/retired-request');
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({kind: 'request', request: {requestId: row.requestId, inputSha256,
+    routineId: input.routineId, definitionRevision: input.definitionRevision, routineSource: input.routineSource, build: input.build}});
+  expect(readAcceptedRoutineRequest(row)).toEqual({ready: true, input});
+  expect(JSON.stringify(input)).toBe(before);
+  expect(requestInputDigest(recordedFrameworkRequestInputSchema.parse(input))).toBe(inputSha256);
+  await expect(new Requests().submit('new-request', 'old-host', input)).rejects.toMatchObject({status: 400});
+  row.inputSha256 = 'c'.repeat(64);
+  expect((await app.request('/retired-request')).status).toBe(503);
+  expect(() => readAcceptedRoutineRequest(row)).toThrow('frozen input');
+  for (const invalid of [{...input, platform: 'unknown'}, {...input, resources: [{id: 'old-glasses', kind: 'unknown'}]},
+    {...input, routineSource: {...input.routineSource, minimumRoutineApiVersion: 0}},
+    {...input, routineSource: {...input.routineSource, commit: 'c'.repeat(40)}},
+    {...input, build: {...input.build, headSha: 'invalid'}}, {...input, glassesStart: {model: 'other'}}])
+    expect(recordedFrameworkRequestInputSchema.safeParse(invalid).success).toBe(false);
+});
+
 
 test('activity and detail show input-free exact source preparation with its observed wait reason', async () => {
   const {TestRequestModel} = await import('../../models/test-request.model');
@@ -383,12 +431,48 @@ test('activity reads and displays bounded fleet preparation failures', async () 
  try{const response=await createTestRunAdminApi().request('/activity');expect(response.status).toBe(200);expect(await response.json()).toMatchObject({requests:[{requestId:selected.requestId,reason:row.fleetPreparationStatus.reason}]});expect(projection).toMatchObject({fleetPreparationStatus:1});}
  finally{find.mockRestore();}
 });
+test('Admin activity and request detail project the actual exclusive blocker through existing reason text, with safe unknown fallback', async () => {
+  const {TestRequestModel} = await import('../../models/test-request.model');
+  const source = {channel: 'dev', buildRunId: 1, publicationAttempt: 1};
+  const selected = {requestId: 'account-waiting', routineId: 'account-google', platform: 'ios-on-mac', routineRevision: 'a'.repeat(40), source,
+    build: {repository: 'Mentra-Community/MentraOS', headSha: 'b'.repeat(40), channel: 'dev', kind: 'mac-ci-package', source,
+      archive: {name: 'app.zip', url: 'https://artifactscdn.mentraglass.com/app.zip', size: 100, sha256: 'c'.repeat(64)},
+      receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 10, sha256: 'd'.repeat(64)}}};
+  const row = {requestId: selected.requestId, state: 'awaiting-runner', fleetSelection: selected, fleetSelectionSha256: requestInputDigest(selected),
+    fleetInputSha256: 'e'.repeat(64), fleetResourceAdmission: {intent: {operationId: `run:${selected.requestId}`, hostId: 'borrower', laneId: 'mac',
+      owner: {id: selected.requestId, kind: 'run'}, inputSha256: 'e'.repeat(64), controller: {incarnation: 'one', generation: 1, sequence: 1},
+      resources: [{id: 'fixtures', capabilities: ['google-authentication']}]},
+      dependencies: [{resourceId: 'private-account', authorityHostId: 'mini', capability: 'google-authentication'}]}};
+  const hosts = [{hostId: 'mini', lanes: [], receivedAt: '2026-10-17T01:00:00Z', authorityReservations: [{kind: 'exclusive',
+    resourceId: 'private-account', authorityHostId: 'mini', borrowerHostId: 'private-host', laneId: 'private-lane', owner: {id: 'private-owner', kind: 'run'}}]}];
+  let projection: any;
+  const find = spyOn(TestRequestModel, 'find').mockReturnValue({sort(){return this},limit(){return this},select(value:any){projection=value;return this},read(){return this},readConcern(){return this},lean:async()=>[row]} as any);
+  const read = spyOn(TestHostStateService.prototype, 'list').mockResolvedValue(hosts as any);
+  const detail = spyOn(FrameworkResultService.prototype, 'detailByRun').mockRejectedValue(new TestRunError(404, 'pending'));
+  const byRequest = spyOn(FrameworkResultService.prototype, 'detail').mockRejectedValue(new TestRunError(404, 'pending'));
+  const requests = spyOn(TestRequestService.prototype, 'get').mockResolvedValue(row as any);
+  try {
+    const api = createTestRunAdminApi(), before = structuredClone(row);
+    const activity = await (await api.request('/activity')).json() as any;
+    const pending = await (await api.request('/account-waiting')).json() as any;
+    expect(activity.requests[0].reason).toBe(sharedResourceWait('google-authentication'));
+    expect(pending.request.reason).toBe(activity.requests[0].reason); expect(projection.fleetResourceAdmission).toBe(1);
+    for (const secret of ['private-account', 'private-host', 'private-lane', 'private-owner']) expect(JSON.stringify(pending.request)).not.toContain(secret);
+    expect(row).toEqual(before);
+    read.mockRejectedValue(new Error('Authority observation unavailable'));
+    expect((await (await api.request('/account-waiting')).json() as any).request.reason).toBe('Awaiting a compatible testing runner.');
+    expect((await api.request('/activity')).status).toBe(200);
+  } finally {find.mockRestore();read.mockRestore();detail.mockRestore();byRequest.mockRestore();requests.mockRestore();}
+});
 
 test('recovery button body uses existing authenticated lane-control admission and refuses anonymous operators', async () => {
   const {LaneControlsService} = await import('../../services/lane-controls.service')
   const observed: unknown[] = []
   class Controls extends LaneControlsService {
-    override async submit(value: unknown, operator: string, operatorLabel?: string) {
+    override async submit(value: import('../../types/lane-control.types').LaneControlInput, operator: string, label?: string): Promise<import('../../types/lane-control.types').LaneControlView>
+    override async submit(value: import('../../types/lane-control.types').ResourceControlInput, operator: string, label?: string): Promise<import('../../types/lane-control.types').ResourceControlView>
+    override async submit(value: unknown, operator: string, label?: string): Promise<import('../../types/lane-control.types').LaneControlView | import('../../types/lane-control.types').ResourceControlView>
+    override async submit(value: unknown, operator: string, operatorLabel?: string): Promise<import('../../types/lane-control.types').LaneControlView | import('../../types/lane-control.types').ResourceControlView> {
       const {laneControlInputSchema} = await import('../../types/lane-control.types')
       const input = laneControlInputSchema.parse(value); observed.push({input, operator, operatorLabel})
       return {operationId: input.operationId, hostId: input.hostId, laneId: input.laneId,

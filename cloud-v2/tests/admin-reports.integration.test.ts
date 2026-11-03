@@ -92,6 +92,7 @@ import { createWorkspace } from "../packages/core/src/services/workspaces/worksp
 import { createWorkspaceCredential } from "../packages/core/src/services/workspaces/credential.service";
 import { legacyAdminKey, legacyKeyAddress } from "./support/legacy-admin-key";
 import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+import { resetReportStorage } from "../packages/core/src/services/report.service";
 import { resetCoreKeyCaches } from "./support/key-caches";
 
 const REPORTS_PATH = "http://localhost/api/client/reports";
@@ -107,8 +108,10 @@ let workspaceBearer: string;
 let adminEmail: string;
 
 beforeAll(async () => {
-  // This suite's keys were set when the file loaded; a suite before it may have cached its own.
+  // This suite's keys and storage directory were set when the file loaded; a suite before it may have
+  // cached its own.
   resetCoreKeyCaches();
+  resetReportStorage();
   await connectMongo(databaseUrl);
   assertConnectedTo(databaseUrl, ReportModel.db.name);
   verified = true;
@@ -160,6 +163,7 @@ afterAll(async () => {
   await disconnectMongo();
   await rm(STORAGE_DIR, { recursive: true, force: true });
   resetCoreKeyCaches();
+  resetReportStorage();
 });
 
 beforeEach(async () => {

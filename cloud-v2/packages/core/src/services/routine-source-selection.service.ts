@@ -4,15 +4,58 @@ import {routineRevisionSchema} from '../types/routine-dispatch.types';
 import {TestRunGithubApp} from './test-run-github-app';
 import {TestRunError} from './test-result-error';
 import {createLogger} from '@mentra/cloud-shared/logger';
+import {configuredTestingTarget, testingRepositorySchema, testingTarget, type TestingRepository} from '../types/testing-source.types';
 
 const logger = createLogger('core').child({service: 'routine-source-selection.service'});
+export type NightlySourceOccurrence = {occurrenceId: string; startedAt: string; trigger: 'nightly' | 'manual'; workflowRunId?: number};
 type SourceDiagnostic = {phase: 'authentication' | 'request' | 'response' | 'body' | 'integrity';
   blobSha: string; expectedBytes: number; elapsedMs: number; status?: number; receivedBytes?: number;
-  failure: 'unavailable' | 'deadline' | 'identity-mismatch'};
+  failure: 'unavailable' | 'deadline' | 'identity-mismatch'; upstream?: SourceDenial};
+type SourceDenial = {
+  kind: 'unknown' | 'primary-rate-limit' | 'secondary-rate-limit' | 'integration-access-denied' | 'bad-credentials';
+  message: string; bodyState: 'unavailable' | 'empty' | 'json' | 'invalid' | 'oversize';
+  githubRequestId?: string; retryAfter?: number | string; acceptedPermissions?: string;
+  rateLimit?: {limit?: number; remaining?: number; reset?: number; used?: number; resource?: string};
+};
+export const ROUTINE_SOURCE_DOWNLOAD_UNAVAILABLE = 'Routine files could not be downloaded.';
+const denialBodyBytes = 4096;
+const denialMessages = [
+  [/^API rate limit exceeded\b/, 'primary-rate-limit', 'GitHub reported an API rate limit.'],
+  [/^You have exceeded a secondary rate limit(?:\.|$)/, 'secondary-rate-limit', 'GitHub reported a secondary rate limit.'],
+  [/^Resource not accessible by integration\.?$/, 'integration-access-denied', 'GitHub reported that the integration cannot access this resource.'],
+  [/^Bad credentials\.?$/, 'bad-credentials', 'GitHub reported invalid credentials.'],
+] as const;
+
+/** Provider text is untrusted: retain fixed messages and strictly parsed header values only. */
+export function denialHeaders(headers: Headers): SourceDenial {
+  const value: SourceDenial = {kind: 'unknown', message: 'GitHub refused the routine source download.', bodyState: 'unavailable'};
+  const number = (name: string) => {
+    const raw = headers.get(name);
+    return raw !== null && /^(0|[1-9]\d{0,15})$/.test(raw) && Number.isSafeInteger(Number(raw)) ? Number(raw) : undefined;
+  };
+  const id = headers.get('x-github-request-id');
+  if (id && id.length <= 128 && /^[\da-f]+(?::[\da-f]+)+$/i.test(id)) value.githubRequestId = id;
+  const rateLimit: NonNullable<SourceDenial['rateLimit']> = {};
+  for (const key of ['limit', 'remaining', 'reset', 'used'] as const) {
+    const parsed = number(`x-ratelimit-${key}`); if (parsed !== undefined) rateLimit[key] = parsed;
+  }
+  const resource = headers.get('x-ratelimit-resource');
+  if (resource && ['core', 'search', 'code_search', 'graphql', 'integration_manifest'].includes(resource)) rateLimit.resource = resource;
+  if (Object.keys(rateLimit).length) value.rateLimit = rateLimit;
+  const retryAfter = number('retry-after'), retryDate = headers.get('retry-after');
+  if (retryAfter !== undefined) value.retryAfter = retryAfter;
+  else if (retryDate && /^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(retryDate) && Number.isFinite(Date.parse(retryDate)))
+    value.retryAfter = new Date(retryDate).toISOString();
+  const permissions = headers.get('x-accepted-github-permissions');
+  if (permissions && permissions.length <= 128 && permissions.split(/[,;]/).every(part =>
+    /^(contents|pull_requests|actions|checks|metadata)=(read|write)$/.test(part.trim())))
+    value.acceptedPermissions = permissions.split(/[,;]/).map(part => part.trim()).join(';');
+  return value;
+}
 
 /** Resolve main once per new selection; retries use the durable selected SHA. */
 export class GithubRoutineSourceGateway {
-  private readonly inventories = new Map<string, Promise<{commit: string; files: Array<{path: string; gitBlobSha1: string; size: number}>}>>();
+  private readonly inventories = new Map<string, Promise<{commit: string; repository?: TestingRepository; files: Array<{path: string; gitBlobSha1: string; size: number}>}>>();
   private readonly blobs = new Map<string, Uint8Array>();
   private readonly blobFlights = new Map<string, {size: number; work: Promise<Uint8Array>}>();
   private blobBytes = 0;
@@ -35,45 +78,101 @@ export class GithubRoutineSourceGateway {
       return Buffer.concat(chunks);
     } finally {signal.removeEventListener('abort', cancel); await reader.cancel().catch(() => undefined); reader.releaseLock();}
   }
-  private async get(path: string, maxBytes = 256 * 1024): Promise<unknown> {
-    const deadline = AbortSignal.timeout(20_000);
+  private async withinDeadline<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) throw new Error('Source selection expired');
+    let abort!: () => void;
+    const expired = new Promise<never>((_, reject) => {abort = () => reject(new Error('Source selection expired'));
+      signal.addEventListener('abort', abort, {once: true});});
+    try {return await Promise.race([work, expired]);} finally {signal.removeEventListener('abort', abort);}
+  }
+  private async denialBody(response: Response, metadata: SourceDenial, deadline: AbortSignal): Promise<SourceDenial> {
+    if (!response.body) return {...metadata, bodyState: 'empty'};
+    let bytes: Uint8Array;
+    try {bytes = await this.bytes(new Response(response.body), denialBodyBytes, deadline);}
+    catch (error) {return {...metadata, bodyState: error instanceof Error && error.message === 'Source response exceeds its bound' ? 'oversize' : 'unavailable'};}
+    if (!bytes.length) return {...metadata, bodyState: 'empty'};
     try {
-      const response = await this.transport(`https://api.github.com/repos/Mentra-Community/Mentra-Automated-Testing/${path}`, {
+      const body = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(bytes)) as {message?: unknown} | null;
+      const known = typeof body?.message === 'string' ? denialMessages.find(([pattern]) => pattern.test(body.message as string)) : undefined;
+      return {...metadata, bodyState: 'json', ...(known ? {kind: known[1], message: known[2]} : {})};
+    } catch {return {...metadata, bodyState: 'invalid'};}
+  }
+  private async page(path: string, maxBytes: number, deadline: AbortSignal, repository: TestingRepository, scope: 'harness' | 'private' = 'harness') {
+    try {
+      const token = await this.withinDeadline(this.app.token(scope, repository), deadline);
+      const response = await this.withinDeadline(this.transport(`https://api.github.com/repos/${repository}/${path}`, {
         redirect: 'error', signal: deadline, headers: {
-          Authorization: `Bearer ${await this.app.token('harness')}`, Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28'},
-      });
-      return JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(await this.bytes(response, maxBytes, deadline)));
+      }), deadline);
+      const bytes = await this.withinDeadline(this.bytes(response, maxBytes, deadline), deadline);
+      return {body: JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(bytes)) as unknown, link: response.headers.get('link')};
     } catch {throw new TestRunError(503, 'Routine main source is unavailable; retry the same selection');}
   }
-  async resolve(revision?: string): Promise<string> {
+  private async get(path: string, repository: TestingRepository, maxBytes = 256 * 1024, deadline = AbortSignal.timeout(20_000)): Promise<unknown> {
+    return (await this.page(path, maxBytes, deadline, repository)).body;
+  }
+  async resolve(revision?: string, before?: string, repository: TestingRepository = configuredTestingTarget().repository): Promise<string> {
+    const target = testingTarget(repository), branch = target.ref.slice('refs/heads/'.length);
     if (revision && !routineRevisionSchema.safeParse(revision).success) throw new TestRunError(400, 'Invalid routine revision');
-    const exact = z.object({sha: routineRevisionSchema}).parse(await this.get(revision ? `git/commits/${revision}` : 'commits/main')).sha;
+    if (before !== undefined) throw new TestRunError(400, 'Select the exact nightly workflow source instead of a historical boundary');
+    const exact = z.object({sha: routineRevisionSchema}).parse(await this.get(revision ? `git/commits/${revision}` : `commits/${branch}`, repository)).sha;
     if (revision && exact !== revision) throw new TestRunError(503, 'GitHub commit differs from the exact requested routine revision');
     return exact;
   }
-  async inventory(commit: string) {
+  /** The original scheduler run already records its immutable source; branch history is irrelevant. */
+  async resolveNightly(occurrence: NightlySourceOccurrence, repository: TestingRepository = configuredTestingTarget().repository): Promise<string> {
+    const originalRunId = /^manual-dev-([1-9]\d*)$/.exec(occurrence.occurrenceId)?.[1];
+    const runId = occurrence.workflowRunId ?? (originalRunId ? Number(originalRunId) : undefined);
+    if (repository !== 'Mentra-Community/Mentra' || !Number.isSafeInteger(runId) || !runId || runId < 1
+      || originalRunId !== undefined && Number(originalRunId) !== runId
+      || !z.string().datetime({offset: true}).safeParse(occurrence.startedAt).success)
+      throw new TestRunError(400, 'Nightly source requires its original workflow run');
+    const deadline = AbortSignal.timeout(20_000);
+    const run = z.object({id: z.number().int().positive().safe(), head_sha: routineRevisionSchema,
+      path: z.literal('.github/workflows/nightly-device-routines.yml'), head_branch: z.literal('dev'),
+      event: z.enum(['schedule', 'workflow_dispatch']), created_at: z.string().datetime({offset: true}),
+      repository: z.object({full_name: z.literal('Mentra-Community/Mentra')}),
+      head_repository: z.object({full_name: z.literal('Mentra-Community/Mentra')})})
+      .safeParse((await this.page(`actions/runs/${runId}`, 256 * 1024, deadline, repository, 'private')).body);
+    const started = Date.parse(occurrence.startedAt), created = run.success ? Date.parse(run.data.created_at) : NaN;
+    const date = new Intl.DateTimeFormat('en-CA', {timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date(started));
+    if (!run.success || run.data.id !== runId || (occurrence.trigger === 'manual'
+      ? occurrence.occurrenceId !== `manual-dev-${runId}` || run.data.event !== 'workflow_dispatch' || created !== started
+      : occurrence.occurrenceId !== `nightly-dev-${date}` || run.data.event !== 'schedule' || created < started))
+      throw new TestRunError(409, 'Nightly workflow source differs from its original occurrence');
+    return run.data.head_sha;
+  }
+  async inventory(commit: string, repository: TestingRepository = testingTarget().repository) {
+    testingRepositorySchema.parse(repository);
     routineRevisionSchema.parse(commit);
-    const cached = this.inventories.get(commit);
+    const key = `${repository}@${commit}`, cached = this.inventories.get(key);
     if (cached) return cached;
-    const work = this.readInventory(commit).catch(error => {this.inventories.delete(commit); throw error;});
+    const work = this.readInventory(commit, repository).catch(error => {this.inventories.delete(key); throw error;});
     if (this.inventories.size >= 32) this.inventories.delete(this.inventories.keys().next().value!);
-    this.inventories.set(commit, work);
+    this.inventories.set(key, work);
     return work;
   }
-  private async readInventory(commit: string) {
+  private async readInventory(commit: string, repository: TestingRepository) {
     const item = z.object({path: z.string(), mode: z.string(), type: z.enum(['blob', 'tree', 'commit']),
       sha: routineRevisionSchema, size: z.number().int().nonnegative().safe().optional()});
     const tree = z.object({truncated: z.literal(false), tree: z.array(item).max(10000)});
     const revision = z.object({sha: routineRevisionSchema, tree: z.object({sha: routineRevisionSchema})})
-      .parse(await this.get(`git/commits/${commit}`));
+      .parse(await this.get(`git/commits/${commit}`, repository));
     if (revision.sha !== commit) throw new TestRunError(503, 'GitHub source commit differs from the selected request');
-    const parsedRoot = tree.safeParse(await this.get(`git/trees/${revision.tree.sha}`, 4 * 1024 ** 2));
+    const parsedRoot = tree.safeParse(await this.get(`git/trees/${revision.tree.sha}`, repository, 4 * 1024 ** 2));
     if (!parsedRoot.success) throw new TestRunError(422, 'Selected source root tree is incomplete or invalid');
-    const root = parsedRoot.data;
+    let root = parsedRoot.data;
+    if (testingTarget(repository).sourceRoot) {
+      const testing = root.tree.find(value => value.path === 'testing' && value.type === 'tree' && value.mode === '040000');
+      if (!testing) throw new TestRunError(422, 'Selected source has no testing directory');
+      const nested = tree.safeParse(await this.get(`git/trees/${testing.sha}`, repository, 4 * 1024 ** 2));
+      if (!nested.success) throw new TestRunError(422, 'Selected testing tree is incomplete or invalid');
+      root = nested.data;
+    }
     const routines = root.tree.find(value => value.path === 'routines' && value.type === 'tree');
     if (!routines) throw new TestRunError(422, 'Selected source has no routines directory');
-    const parsedSource = tree.safeParse(await this.get(`git/trees/${routines.sha}?recursive=1`, 8 * 1024 ** 2));
+    const parsedSource = tree.safeParse(await this.get(`git/trees/${routines.sha}?recursive=1`, repository, 8 * 1024 ** 2));
     if (!parsedSource.success) throw new TestRunError(422, 'Selected routines tree is incomplete or exceeds its bound');
     const source = parsedSource.data;
     const files = source.tree.filter(value => value.type !== 'tree').map(value => {
@@ -84,16 +183,17 @@ export class GithubRoutineSourceGateway {
     }).sort((left, right) => left.path.localeCompare(right.path));
     if (!files.length || new Set(files.map(file => file.path)).size !== files.length || files.reduce((sum, file) => sum + file.size, 0) > 512 * 1024 ** 2)
       throw new TestRunError(422, 'Routine source inventory exceeds its bounded allowance');
-    return {commit, files};
+    return {commit, files, ...(repository === testingTarget().repository ? {} : {repository})};
   }
-  async blob(file: {gitBlobSha1: string; size: number}) {
+  async blob(file: {gitBlobSha1: string; size: number}, repository: TestingRepository = testingTarget().repository) {
+    testingRepositorySchema.parse(repository);
     routineRevisionSchema.parse(file.gitBlobSha1);
-    const cached = this.blobs.get(file.gitBlobSha1);
+    const key = `${repository}@${file.gitBlobSha1}`, cached = this.blobs.get(key);
     if (cached) {
       if (cached.byteLength !== file.size) throw new TestRunError(503, 'GitHub routine blob differs from its exact inventory');
       return Uint8Array.from(cached);
     }
-    const flight = this.blobFlights.get(file.gitBlobSha1);
+    const flight = this.blobFlights.get(key);
     if (flight) {
       if (flight.size !== file.size) throw new TestRunError(503, 'GitHub routine blob differs from its exact inventory');
       return Uint8Array.from(await flight.work);
@@ -101,38 +201,44 @@ export class GithubRoutineSourceGateway {
     if (this.blobFlights.size >= 512 || this.pendingBlobBytes + file.size > 64 * 1024 ** 2)
       throw new TestRunError(503, 'Routine source downloads exceed their concurrent bound');
     this.pendingBlobBytes += file.size;
-    const work = this.readBlob(file).then(bytes => {
+    const work = this.readBlob(file, repository).then(bytes => {
       if (bytes.byteLength <= 16 * 1024 ** 2) {
         while (this.blobs.size >= 512 || this.blobBytes + bytes.byteLength > 16 * 1024 ** 2) {
           const first = this.blobs.keys().next().value!;
           this.blobBytes -= this.blobs.get(first)!.byteLength; this.blobs.delete(first);
         }
-        this.blobs.set(file.gitBlobSha1, bytes); this.blobBytes += bytes.byteLength;
+        this.blobs.set(key, bytes); this.blobBytes += bytes.byteLength;
       }
       return bytes;
-    }).finally(() => {this.pendingBlobBytes -= file.size; this.blobFlights.delete(file.gitBlobSha1);});
-    this.blobFlights.set(file.gitBlobSha1, {size: file.size, work});
+    }).finally(() => {this.pendingBlobBytes -= file.size; this.blobFlights.delete(key);});
+    this.blobFlights.set(key, {size: file.size, work});
     return Uint8Array.from(await work);
   }
-  private async readBlob(file: {gitBlobSha1: string; size: number}) {
+  private async readBlob(file: {gitBlobSha1: string; size: number}, repository: TestingRepository) {
     let bytes: Uint8Array;
     let phase: SourceDiagnostic['phase'] = 'authentication', status: number | undefined;
+    let upstream: SourceDenial | undefined;
     const startedAt = Date.now();
     const deadline = AbortSignal.timeout(60_000);
     try {
-      const token = await this.app.token('harness');
+      const token = await this.app.token('harness', repository);
       phase = 'request';
-      const response = await this.transport(`https://api.github.com/repos/Mentra-Community/Mentra-Automated-Testing/git/blobs/${file.gitBlobSha1}`, {
+      const response = await this.transport(`https://api.github.com/repos/${repository}/git/blobs/${file.gitBlobSha1}`, {
         redirect: 'error', signal: deadline, headers: {Authorization: `Bearer ${token}`,
           Accept: 'application/vnd.github.raw+json', 'X-GitHub-Api-Version': '2022-11-28'},
       });
       phase = 'response'; status = response.status;
+      if (!response.ok) {
+        upstream = denialHeaders(response.headers);
+        upstream = await this.withinDeadline(this.denialBody(response, upstream, deadline), deadline);
+        throw new Error('Source response is unavailable');
+      }
       if (response.ok && response.body) phase = 'body';
       bytes = await this.bytes(response, file.size + 1, deadline);
     } catch {
       this.report({phase, blobSha: file.gitBlobSha1, expectedBytes: file.size, elapsedMs: Date.now() - startedAt,
-        ...(status === undefined ? {} : {status}), failure: deadline.aborted ? 'deadline' : 'unavailable'});
-      throw new TestRunError(503, 'Exact routine source bytes are unavailable; retry preparation');
+        ...(status === undefined ? {} : {status}), ...(upstream ? {upstream} : {}), failure: deadline.aborted ? 'deadline' : 'unavailable'});
+      throw new TestRunError(503, ROUTINE_SOURCE_DOWNLOAD_UNAVAILABLE);
     }
     if (bytes.byteLength !== file.size || createHash('sha1').update(`blob ${file.size}\0`).update(bytes).digest('hex') !== file.gitBlobSha1) {
       this.report({phase: 'integrity', blobSha: file.gitBlobSha1, expectedBytes: file.size, receivedBytes: bytes.byteLength,

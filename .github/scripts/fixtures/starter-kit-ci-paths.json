@@ -1,0 +1,31 @@
+{
+  "source": "Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit dev: .github/workflows/example-app-builds.yml",
+  "note": "Source paths the kit's own CI builds from. The export must produce each one; paths the CI generates (Expo prebuild android/ folders, build outputs, caches) are not listed.",
+  "directories": [
+    "examples/android",
+    "examples/ios",
+    "examples/macos",
+    "examples/react-native",
+    "examples/react-native-elevenlabs-audio",
+    "examples/react-native-macos",
+    "examples/react-native-macos/macos"
+  ],
+  "files": [
+    "examples/android/gradlew",
+    "examples/android/gradle.properties",
+    "examples/android/scripts/check-foreground-service.py",
+    "examples/ios/MentraExample.xcodeproj/project.pbxproj",
+    "examples/ios/scripts/setup-gstreamer-ios.sh",
+    "examples/macos/run.sh",
+    "examples/react-native/package.json",
+    "examples/react-native/scripts/check-android-16kb.sh",
+    "examples/react-native-elevenlabs-audio/package.json",
+    "examples/react-native-macos/package.json",
+    "examples/react-native-macos/macos/Podfile"
+  ],
+  "lockfiles": [
+    "examples/react-native/bun.lock",
+    "examples/react-native-elevenlabs-audio/bun.lock",
+    "examples/react-native-macos/bun.lock"
+  ]
+}

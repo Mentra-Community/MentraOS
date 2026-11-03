@@ -15,6 +15,8 @@ interface MediaMetadataSheetProps {
   bottomSheetRef: React.RefObject<BottomSheet | null>
   photo: PhotoInfo
   dimensions?: MediaDimensions
+  // Height of the viewer's app bar. The sheet's highest snap point stops below it.
+  topInset: number
   onChange: (index: number) => void
 }
 
@@ -43,7 +45,7 @@ function MetadataRows({rows}: {rows: MetadataRow[]}) {
   )
 }
 
-export function MediaMetadataSheet({bottomSheetRef, photo, dimensions, onChange}: MediaMetadataSheetProps) {
+export function MediaMetadataSheet({bottomSheetRef, photo, dimensions, topInset, onChange}: MediaMetadataSheetProps) {
   const {theme} = useAppTheme()
   const insets = useSaferAreaInsets()
   const snapPoints = useMemo(() => ["62%", "92%"], [])
@@ -93,7 +95,10 @@ export function MediaMetadataSheet({bottomSheetRef, photo, dimensions, onChange}
     [],
   )
 
-  const details = buildMediaDetails(photo, dimensions, loaded?.actualSize)
+  // The viewer reports its decoded preview's size, which Android downscales to the
+  // screen. Photos wait for the size stored in the file; videos report their real size.
+  const resolution = loaded?.dimensions ?? (photo.is_video || loaded ? dimensions : undefined)
+  const details = buildMediaDetails(photo, resolution, loaded?.actualSize)
   const exifRows = flattenExifMetadata(loaded?.exif)
 
   return (
@@ -101,6 +106,7 @@ export function MediaMetadataSheet({bottomSheetRef, photo, dimensions, onChange}
       ref={bottomSheetRef}
       index={-1}
       snapPoints={snapPoints}
+      topInset={topInset}
       animateOnMount={false}
       enableDynamicSizing={false}
       enablePanDownToClose

@@ -44,7 +44,11 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 
 ## No Devices Found
 
-- Confirm the glasses are charged and in pairing mode.
+- Confirm the glasses are charged and in pairing mode. Mentra Live glasses with no paired phone enter pairing mode on their own once they finish starting up. Otherwise, press the power button 3 times quickly. Supported Mentra Live firmware opens one 120-second window: the LED flashes and the glasses speak a 4-character code. Press the power button 3 times again to cancel that window.
+- Mentra Live connects only to the phone it is paired with. If the glasses were paired to a different phone, press the power button 3 times to open a pairing window, then pair from this phone. That replaces the previous phone's pairing. On the previous iPhone, also forget Mentra Live in Settings > Bluetooth.
+- While the window is open, the phone that was already paired has `GlassesStatus.pairingState` set to `pairing_mode`, with `windowId` and `endsAtMs`, and receives `entering_pairing_mode` (including `window_id`) plus `pairing_state_changed`. Automatic reconnect stays paused until `endsAtMs`, which is the window plus a 30-second margin. After a timeout or a second triple-press, the glasses emit `pairing_mode_ended` with `reason` `"timeout"` or `"cancelled"`, and that phone reconnects on its own. The Mentra App tells the user the glasses are in pairing mode and that three power-button presses exit it.
+- If another phone completes pairing, the previous phone's `pairingState` becomes `pairing_rejected`. Reconnect stops. Show Pair Again. That state clears only after a successful explicit pair or `forget()`. The Mentra App shows a Pair Again card and does not keep reconnecting. `owner_replaced` is deprecated and is never emitted.
+- An explicit pair that fails because iOS still holds a stale Bluetooth pairing emits `pair_failure` with `code: "ios_forget_pairing"`. Open Settings > Bluetooth, tap Forget This Device next to the glasses, then pair again. The Mentra App shows that forget-pairing screen for this code.
 - Confirm OS Bluetooth permissions are granted.
 - On Android, confirm location permission is granted and device Location services are enabled.
 - Confirm the selected `DeviceModel` matches the target glasses family.

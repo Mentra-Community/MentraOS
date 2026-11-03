@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "mentra-miniapp dev",
     "build": "bun run build.ts",
-    "pack": "mentra-miniapp pack"
+    "pack": "mentra-miniapp pack",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@mentra/miniapp": "workspace:*",

@@ -308,6 +308,8 @@ public final class MentraBluetoothSDK {
     /// instead of throwing `request_in_flight` and refusing the next join.
     private var hotspotTail: Task<HotspotStatusEvent, Error>?
     private var pendingVersionInfo: PendingVersionInfoRequest?
+    private let besCrashReports = BesCrashReportWaiters()
+    private static let besCrashReportedTimeoutMs = 10000
     private let wifiSessionCapabilities = WifiSessionCapabilities()
     private var configuredOtaVersionUrl: String?
 
@@ -540,6 +542,7 @@ public final class MentraBluetoothSDK {
         let isController = ControllerTypes.ALL.contains(device.model.deviceType)
         if !isController {
             requiresAncsForBluetoothRestore = options.requiresAncs
+            MentraLive.enableTransportBridging = options.enableTransportBridging
         }
         if options.cancelExistingConnectionAttempt {
             if isController {
@@ -547,6 +550,9 @@ public final class MentraBluetoothSDK {
             } else {
                 cancelConnectionAttempt()
             }
+        }
+        if !isController {
+            MentraLive.clearStaleIosBondPrompt()
         }
         if options.saveAsDefault && !isController {
             setDefaultDevice(device)
@@ -566,6 +572,7 @@ public final class MentraBluetoothSDK {
     public func connectDefault(options: ConnectOptions = ConnectOptions()) throws {
         clearBluetoothRestoreIntent()
         requiresAncsForBluetoothRestore = options.requiresAncs
+        MentraLive.enableTransportBridging = options.enableTransportBridging
         guard let device = currentDefaultDevice() else {
             throw BluetoothSdkError(
                 code: "default_device_missing",
@@ -1185,8 +1192,12 @@ public final class MentraBluetoothSDK {
     /// Fire-and-forget Mentra Live Wi-Fi ADB toggle. Glasses do not ack this
     /// command, so there is no pending-response wait (unlike hotspot / Wi-Fi forget).
     public func setWifiAdbState(enabled: Bool) async throws {
+        try await setWifiAdbState(enabled: enabled, expectedBluetoothMac: nil)
+    }
+
+    public func setWifiAdbState(enabled: Bool, expectedBluetoothMac: String?) async throws {
         try requireGlassesConnected(operation: "toggle Wi-Fi ADB")
-        DeviceManager.shared.setWifiAdbState(enabled)
+        try DeviceManager.shared.setWifiAdbState(enabled, expectedBluetoothMac: expectedBluetoothMac)
     }
 
     func setSystemTime(timestampMs: Int64) {
@@ -1778,6 +1789,18 @@ public final class MentraBluetoothSDK {
 
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) throws {
         try DeviceManager.shared.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
+    }
+
+    /// Resolves on the glasses' matching `ok:true` ack; throws on `ok:false`, disconnect or timeout.
+    func sendBesCrashReported(incidentKey: String, reportId: String) async throws {
+        try requireGlassesConnected(operation: "report the BES crash")
+        try await besCrashReports.report(
+            incidentKey: incidentKey,
+            reportId: reportId,
+            timeoutMs: Self.besCrashReportedTimeoutMs
+        ) {
+            try DeviceManager.shared.sendBesCrashReported(incidentKey: incidentKey, reportId: reportId)
+        }
     }
 
     public func invalidate() {
@@ -2458,6 +2481,10 @@ public final class MentraBluetoothSDK {
         case "glasses":
             if changes["connected"] as? Bool == false {
                 resetWifiProtocolSession(sessionId: "", code: "wifi_session_disconnected")
+                besCrashReports.rejectAll(BluetoothSdkError(
+                    code: "glasses_not_connected",
+                    message: "Glasses disconnected before acknowledging bes_crash_reported."
+                ))
             }
             // CBCentralManager state is read here on the main actor, not on the analytics queue.
             let phoneBluetoothOff = BluetoothAvailability.shared.isPoweredOff
@@ -2705,9 +2732,9 @@ public final class MentraBluetoothSDK {
             let event = GalleryStatusEvent(values: data)
             pendingGalleryStatus?.resolve(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "gallery_status", values: event.values))
-        case "pairing_info":
-            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "pairing_info", values: data))
-        case "entering_pairing_mode", "owner_replaced":
+        case "pairing_info", "pairing_state_changed", "audio_setup_changed":
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
+        case "entering_pairing_mode", "pairing_mode_ended", "owner_replaced":
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
         case "photo_response":
             let event = PhotoResponseEvent(values: data)
@@ -2785,6 +2812,13 @@ public final class MentraBluetoothSDK {
                 }
             }
             delegate?.mentraBluetoothSDK(self, didReceive: .otaStatus(event))
+        case "bes_crash_detected":
+            var values = data
+            values["type"] = "bes_crash_detected"
+            delegate?.mentraBluetoothSDK(self, didReceive: .besCrashDetected(BesCrashDetectedEvent(values: values)))
+        case "bes_crash_reported_ack":
+            // Request-scoped: consumed by the waiting sendBesCrashReported call, never a delegate event.
+            besCrashReports.onAck(data)
         case "settings_ack":
             let event = SettingsAckEvent(values: data)
             handleSettingsAckForRequests(event)
@@ -2803,7 +2837,8 @@ public final class MentraBluetoothSDK {
                 self,
                 didFail: BluetoothSdkError(
                     code: "pair_failure",
-                    message: data["error"] as? String ?? data.description
+                    message: data["error"] as? String ?? data.description,
+                    failureCode: data["code"] as? String
                 )
             )
         default:

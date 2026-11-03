@@ -121,6 +121,11 @@ public class CrustModule: Module {
             "Hello world! 👋"
         }
 
+        // Where a path really is, symlinks resolved; the engine checks miniapp-named paths with it.
+        Function("canonicalFilePath") { (path: String) -> String? in
+            CanonicalFilePath.of(path)
+        }
+
         AsyncFunction("setValueAsync") { (value: String) in
             self.sendEvent("onChange", [
                 "value": value,

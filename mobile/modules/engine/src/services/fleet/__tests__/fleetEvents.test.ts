@@ -152,6 +152,17 @@ describe("fleetEvents", () => {
       ])
     })
 
+    test("keeps the reason a held-back launch failed for, for the start's own report", () => {
+      const launch = mock((_event: unknown) => {})
+      subscribe({launch})
+      const release = fleetEvents.claimLaunch("com.a")
+      fleetEvents.launchUnlessClaimed({packageName: "com.a", start: "user", outcome: "failed", failureReason: "spawn_failed"})
+      fleetEvents.launchUnlessClaimed({packageName: "com.a", start: "user", outcome: "failed", failureReason: "unknown"})
+      expect(release()).toBe("spawn_failed")
+      expect(launch).not.toHaveBeenCalled()
+      expect(fleetEvents.claimLaunch("com.a")()).toBeUndefined()
+    })
+
     test("two starts of one miniapp hold it until both are done, and releasing twice changes nothing", () => {
       const launch = mock((_event: unknown) => {})
       subscribe({launch})

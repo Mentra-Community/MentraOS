@@ -1,9 +1,11 @@
+import {appRepositorySchema} from './testing-source.types'
 import {z} from 'zod'
 import {frameworkIdentitySchema} from './framework-request.types'
 import {routineIdentitySchema, routineResourceRequirementSchema} from './routine-definition.types'
 import {routineJobTargetSchema, portableRequirementsSchema} from './routine-job.types'
 import {testBuildSourceSchema} from './test-build.types'
 import {firmwareManifestSchema} from './glasses-software.types'
+import {testingRepositorySchema} from './testing-source.types'
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/)
 export const workHashSchema = z.string().regex(/^[a-f0-9]{64}$/)
@@ -51,12 +53,12 @@ const fields = {
       expected: z.array(description).min(1).max(100),
     })
     .strict(),
-  source: z.object({repository: z.literal('Mentra-Community/Mentra-Automated-Testing'), revision: sha}).strict(),
+  source: z.object({repository: testingRepositorySchema, revision: sha}).strict(),
   target: z.object({hostId: frameworkIdentitySchema, laneId: frameworkIdentitySchema}).strict(),
   requirements: routineWorkRequirementsSchema,
   origin: z
     .object({
-      repository: z.literal('Mentra-Community/MentraOS'),
+      repository: appRepositorySchema,
       prNumber: z.number().int().positive().safe(),
       headSha: sha,
     })
@@ -67,7 +69,7 @@ const pin = z.object({url: z.string().url(), sha256: workHashSchema, size: z.num
 export const routineWorkBuildSchema = z
   .object({
     kind: z.enum(['mac-ci-package', 'android-apk']),
-    repository: z.literal('Mentra-Community/MentraOS'),
+    repository: appRepositorySchema,
     headSha: sha,
     channel: z.enum(['dev', 'staging', 'pr']),
     prNumber: z.number().int().positive().safe().optional(),
@@ -84,6 +86,7 @@ export const routineWorkBuildSchema = z
   .strict()
   .superRefine((value, ctx) => {
     if (
+      (value.source.repository ?? 'Mentra-Community/MentraOS') !== value.repository ||
       value.source.channel !== value.channel ||
       (value.channel === 'pr'
         ? value.source.channel !== 'pr' ||
@@ -151,7 +154,7 @@ export const routineWorkLocalRegistrationSchema = z.object({
     ctx.addIssue({code: 'custom', message: 'Local registration requires its originless accepted host and work'})
 })
 const publicText = z.string().min(1).max(4000)
-const githubPr = z.string().regex(/^https:\/\/github\.com\/Mentra-Community\/Mentra-Automated-Testing\/pull\/[1-9]\d*$/)
+const githubPr = z.string().regex(/^https:\/\/github\.com\/Mentra-Community\/(?:Mentra-Automated-Testing|Mentra)\/pull\/[1-9]\d*$/)
 export const routineWorkProgressSchema = z
   .object({
     observedAt: z.string().datetime({offset: true}),
@@ -165,7 +168,7 @@ export const routineWorkProgressSchema = z
 const reviewUrl = z
   .string()
   .regex(
-    /^https:\/\/github\.com\/Mentra-Community\/Mentra-Automated-Testing\/pull\/[1-9]\d*#pullrequestreview-[1-9]\d*$/,
+    /^https:\/\/github\.com\/Mentra-Community\/(?:Mentra-Automated-Testing|Mentra)\/pull\/[1-9]\d*#pullrequestreview-[1-9]\d*$/,
   )
 const sameReviewPr = (value: {prUrl: string; reviewUrl: string}) => value.reviewUrl.split('#')[0] === value.prUrl
 export const routineWorkReviewSchema = z
@@ -297,12 +300,22 @@ export const routineWorkVerificationIdentitySchema = z.object({
   decisionId: frameworkIdentitySchema, inputSha256: workHashSchema,
   acceptedAt: z.string().datetime({offset:true}), deadline: z.string().datetime({offset:true}),
   failureEventId: frameworkIdentitySchema, failureSha256: workHashSchema,
-  previousFailure: z.object({code:z.enum(['recording-response','permission-required']),reason:publicText}).strict(),
+  previousFailure: z.object({code:z.enum(['recording-response','permission-required','completion-operation-failed','workspace-generated-unaccounted','authoring-detail-limit']),reason:publicText}).strict(),
   admission: z.object({requestId:frameworkIdentitySchema,originalAdmissionExpiresAt:z.number().int().positive()}).strict().optional(),
+  finalization: z.object({requestId:frameworkIdentitySchema,sourceRevision:sha,runInputSha256:workHashSchema,operationId:frameworkIdentitySchema,
+    originalDeadline:z.string().datetime({offset:true}),completionSha256:workHashSchema,cacheProofSha256:workHashSchema,
+    candidateSha256:workHashSchema,recordingSha256:workHashSchema,restorationSha256:workHashSchema}).strict().optional(),
+  reconciliation: z.object({parentIdentitySha256:workHashSchema,parentFailureEventId:frameworkIdentitySchema,
+    parentFailureSequence:z.number().int().positive().safe(),parentFailureSha256:workHashSchema}).strict().optional(),
 }).strict().refine(value => Date.parse(value.deadline)>Date.parse(value.acceptedAt) &&
   Date.parse(value.deadline)-Date.parse(value.acceptedAt)<=30*60*1000,'Verification retry requires its bounded original window')
   .refine(value=>value.previousFailure.code==='permission-required' ? Boolean(value.admission&&
     /^local:([0-9]{13}):([A-Za-z0-9_-]{1,120})$/.exec(value.admission.requestId)?.[1]===String(value.admission.originalAdmissionExpiresAt)) :
     value.admission===undefined,'Pre-admission retry requires its original finite local request identity')
+  .refine(value=>['completion-operation-failed','workspace-generated-unaccounted','authoring-detail-limit'].includes(value.previousFailure.code)
+    ? Boolean(value.finalization&&!value.admission&&Date.parse(value.deadline)<=Date.parse(value.finalization.originalDeadline))
+    : value.finalization===undefined,'Finalization retry requires the original passed candidate and cannot extend its deadline')
+  .refine(value=>value.previousFailure.code==='authoring-detail-limit' ? Boolean(value.reconciliation&&value.finalization&&!value.admission)
+    : value.reconciliation===undefined,'Finalization reconciliation requires its one exact failed predecessor')
 export const routineWorkVerificationSchema = z.object({identity:routineWorkVerificationIdentitySchema,event:routineWorkStatusSchema}).strict()
 export type RoutineWorkVerification = z.infer<typeof routineWorkVerificationSchema>

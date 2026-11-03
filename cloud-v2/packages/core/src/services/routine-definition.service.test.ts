@@ -8,6 +8,7 @@ import {requestInputDigest} from "./test-request.service";
 import {GithubRoutineMergeGateway} from './routine-merge-eligibility.service';
 import {RoutineWorkModel} from '../models/routine-work.model';
 import {writeRoutineDefinition} from './routine-definition-detail.service';
+import {TestingDetailStorage} from './testing-detail-storage.service';
 import {authoringWorkSchema} from '../types/routine-work.types';
 
 const revision = "a".repeat(40);
@@ -195,120 +196,53 @@ test("lifecycle definitions retain optional hook metadata and unique action IDs 
   ]) await expect(submit(invalid)).rejects.toThrow("Invalid routine definition");
 });
 
-test('collection manifest freezes membership and waits for bounded, settled promotion batches', async () => {
-  const rows = new Map<string, any>(), collections = new Map<string, any>();
-  const identity = (query: any) => query.routineId + ':' + query.platform + ':' + query.definitionRevision;
-  const chain = (get: () => unknown) => ({read() {return this;}, readConcern() {return this;}, sort() {return this;}, select() {return this;}, session() {return this;}, lean: async () => get()});
-  const find = spyOn(RoutineDefinitionModel, 'findOne').mockImplementation((query?: any) => chain(() => rows.get(identity(query)) ?? null) as any);
+test('optional catalog processing updates only its typed projection and preserves exact enrollment authority', async () => {
+  const collections = new Map<string, any>()
+  const chain = (get: () => unknown) => ({read() {return this}, readConcern() {return this}, sort() {return this}, select() {return this}, lean: async () => get()})
   const publication = spyOn(RoutineCollectionModel, 'findOne').mockImplementation((query?: any) => chain(() => {
-    const values = [...collections.values()];
+    const values = [...collections.values()]
     return query?.$or ? values.find(row => query.$or.some((part: any) => part.commit === row.commit || part.version === row.version)) ?? null
-      : query?.commit ? collections.get(query.commit) ?? null : values.sort((a, b) => b.version - a.version)[0] ?? null;
-  }) as any);
-  const all = spyOn(RoutineDefinitionModel, 'find').mockImplementation((query?: any) => chain(() => [...rows.values()]
-    .filter(row => row.definitionRevision === query.definitionRevision && query.$or.some((member: any) => member.routineId === row.routineId && member.platform === row.platform))
-    .map(({ordinaryEnrolledAt: _at, ...row}) => row)) as any);
-  const insert = spyOn(RoutineDefinitionModel, 'create').mockImplementation(async (values: any) => {
-    for (const row of values) rows.set(identity(row), structuredClone(row)); return values;
-  });
-  const savePublication = spyOn(RoutineCollectionModel, 'create').mockImplementation(async (values: any) => {
-    for (const row of values) collections.set(row.commit, structuredClone(row)); return values;
-  });
-  const update = spyOn(RoutineDefinitionModel, 'updateOne').mockImplementation(((query: any, values: any) => {
-    Object.assign(rows.get(identity(query)), values.$set); return Promise.resolve({matchedCount: 1});
-  }) as any);
-  const transaction = spyOn(RoutineDefinitionModel.db, 'transaction').mockImplementation((async (fn: any) => {
-    const beforeRows = structuredClone(rows), beforeCollections = structuredClone(collections);
-    try {await fn({});} catch (error) {
-      rows.clear(); for (const [key, value] of beforeRows) rows.set(key, value);
-      collections.clear(); for (const [key, value] of beforeCollections) collections.set(key, value);
-      throw error;
-    }
-  }) as any);
-  const service = new RoutineDefinitionService(undefined, undefined, null);
+      : values.sort((left, right) => right.version - left.version)[0] ?? null
+  }) as any)
+  const insert = spyOn(RoutineCollectionModel, 'create').mockImplementation(async (values: any) => {
+    for (const row of values) collections.set(row.commit, structuredClone(row)); return values
+  })
+  const exactInsert = spyOn(RoutineDefinitionModel, 'create').mockImplementation(async () => {throw new Error('Catalog must not enroll exact run source')})
+  const transaction = spyOn(RoutineDefinitionModel.db, 'transaction').mockImplementation(async () => {throw new Error('Catalog needs no per-run transaction')})
+  const detail = spyOn(TestingDetailStorage.prototype, 'write').mockImplementation(async () => {throw new Error('Catalog needs no R2 write')})
+  let promoted = 0
+  const service = new RoutineDefinitionService(undefined, undefined, {async enroll() {promoted++; throw new Error('Catalog cannot promote candidates')}})
   const at = (revision: string, id = 'no-glasses') => {
-    const row = enrollment(), definition = {...row.definition, id, source: {...row.definition.source, revision, path: `routines/${id}/routine.ts`}};
-    return {...row, routineId: id, definition, definitionRevision: revision,
-      definitionSha256: requestInputDigest(definition), routineSource: testRoutineSource(revision)};
-  };
+    const {routineSource: _source, ...row} = enrollment()
+    const definition = {...row.definition, id, source: {...row.definition.source, revision, path: `routines/${id}/routine.ts`}}
+    return {...row, routineId: id, definition, definitionRevision: revision, definitionSha256: requestInputDigest(definition)}
+  }
   try {
-    const a = at('c'.repeat(40)), b = at(a.definitionRevision, 'notes'), c = at(a.definitionRevision, 'captions');
-    const original = {commit:a.definitionRevision, version:30, definitions:[a,b]};
-    await service.publishCollection(original);
-    expect(await service.current()).toEqual([a,b]);
-    const counts = [insert.mock.calls.length, savePublication.mock.calls.length];
-    await service.publishCollection({...original, definitions:[b,a]});
-    expect([insert.mock.calls.length, savePublication.mock.calls.length]).toEqual(counts);
-    for (const changed of [
-      {...original, definitions:[a,c]}, {...original, definitions:[a]}, {...original, definitions:[a,b,c]},
-      {...original, version:31}, {commit:'b'.repeat(40), version:30, definitions:[at('b'.repeat(40))]},
-    ]) await expect(service.publishCollection(changed)).rejects.toThrow('manifest conflicts');
-    expect(await service.current()).toEqual([a,b]);
-    const conflict = {...a, routineSource:{...a.routineSource,bundle:{...a.routineSource.bundle,sha256:'f'.repeat(64)}}};
-    await expect(service.publishCollection({...original, definitions:[conflict,b]})).rejects.toThrow('manifest conflicts');
-    await expect(service.publishCollection({...original, definitions:[a,a]})).rejects.toThrow('identity');
-    await expect(service.publishCollection({version:-1})).rejects.toThrow('Invalid published collection');
-    await service.publishCollection({commit:'b'.repeat(40), version:20, definitions:[at('b'.repeat(40))]});
-    expect(await service.current()).toEqual([a,b]);
-    const next = at('d'.repeat(40));
-    // A reader which already chose a receipt must still read that exact membership after newer publication.
-    const readRows = publication.getMockImplementation()!;
-    // Restore before publish inside the mock to avoid recursively handling its transaction lookup.
-    publication.mockImplementationOnce(((query: any) => chain(async () => {
-      const original = await (readRows(query) as any).lean();
-      publication.mockImplementation(readRows);
-      await service.publishCollection({commit:next.definitionRevision, version:40, definitions:[next]});
-      return original;
-    })) as any);
-    expect(await service.current()).toEqual([a,b]);
-    publication.mockImplementation(readRows);
-    expect(await service.current()).toEqual([next]);
-    const legacy = at('e'.repeat(40));
-    rows.set(identity(legacy), {...legacy, routineSource: undefined});
-    await expect(service.publishCollection({commit:legacy.definitionRevision, version:50, definitions:[legacy]})).rejects.toThrow('bytes conflict');
-    expect(await service.current()).toEqual([next]);
-
-    const promoting = Array.from({length: 17}, (_, index) => at('f'.repeat(40), `promote-${index}`));
-    const started: string[] = [], pending: (() => void)[] = [], waiting = new Map<number, () => void>();
-    let active = 0, maximum = 0, responseSettled = false;
-    const waitFor = (count: number) => started.length >= count ? Promise.resolve() : new Promise<void>(resolve => waiting.set(count, resolve));
-    const promotionService = new RoutineDefinitionService(undefined, undefined, {async enroll(row) {
-      expect(collections.get(row.definitionRevision)?.members).toHaveLength(17);
-      started.push(row.routineId); maximum = Math.max(maximum, ++active);
-      const ready = new Promise<void>(resolve => pending.push(resolve));
-      for (const [count, resolve] of waiting) if (started.length >= count) {waiting.delete(count); resolve();}
-      await ready; active--;
-    }});
-    const response = promotionService.publishCollection({commit: promoting[0]!.definitionRevision, version: 60, definitions: promoting})
-      .finally(() => responseSettled = true);
-    await waitFor(8); expect(responseSettled).toBe(false); expect(started).toHaveLength(8);
-    pending.splice(0).reverse().forEach(resolve => resolve());
-    await waitFor(16); expect(responseSettled).toBe(false); expect(started).toHaveLength(16);
-    pending.splice(0).reverse().forEach(resolve => resolve());
-    await waitFor(17); expect(responseSettled).toBe(false); pending.splice(0).forEach(resolve => resolve());
-    expect(await response).toEqual({commit: 'f'.repeat(40), version: 60, definitions: 17});
-    expect(maximum).toBe(8); expect(active).toBe(0);
-    expect(started).toEqual([...promoting].sort((left, right) => left.routineId.localeCompare(right.routineId)).map(row => row.routineId));
-
-    let releasePeer!: () => void, peerStarted!: () => void, failedSettled = false;
-    const peer = new Promise<void>(resolve => releasePeer = resolve), peerRunning = new Promise<void>(resolve => peerStarted = resolve);
-    const failedStarted: string[] = [], failure = Error('Promotion failed');
-    const failedPromotion = new RoutineDefinitionService(undefined, undefined, {async enroll(row) {
-      expect(collections.get(row.definitionRevision)?.members).toHaveLength(9);
-      failedStarted.push(row.routineId);
-      if (row.routineId === 'fail-0') throw failure;
-      if (row.routineId === 'fail-1') {peerStarted(); await peer;}
-    }});
-    const failed = failedPromotion.publishCollection({commit: '6'.repeat(40), version: 70,
-      definitions: Array.from({length: 9}, (_, index) => at('6'.repeat(40), `fail-${index}`))}).finally(() => failedSettled = true);
-    const outcome = failed.then(() => null, error => error);
-    await peerRunning; await Promise.resolve(); expect(failedSettled).toBe(false);
-    releasePeer(); expect(await outcome).toBe(failure);
-    expect(failedStarted).toHaveLength(8); expect(failedSettled).toBe(true);
-    // A post-commit failure does not erase the already committed collection.
-    expect(collections.get('6'.repeat(40))?.members).toHaveLength(9);
-  } finally {find.mockRestore(); publication.mockRestore(); all.mockRestore(); insert.mockRestore(); savePublication.mockRestore(); update.mockRestore(); transaction.mockRestore();}
-});
+    const first = at('c'.repeat(40)), second = at(first.definitionRevision, 'notes')
+    const original = {commit: first.definitionRevision, version: 30, definitions: [first, second]}
+    expect(await service.publishCollection(original)).toEqual({commit: original.commit, version: 30, definitions: 2})
+    expect(await service.current()).toEqual([first, second])
+    expect((await service.overview()).map(row => row.routineId)).toEqual(['no-glasses', 'notes'])
+    expect(exactInsert).not.toHaveBeenCalled(); expect(transaction).not.toHaveBeenCalled(); expect(detail).not.toHaveBeenCalled(); expect(promoted).toBe(0)
+    await service.publishCollection({...original, definitions: [second, first]})
+    expect(insert).toHaveBeenCalledTimes(1)
+    await expect(service.publishCollection({...original, definitions: [first]})).rejects.toThrow('immutable catalog conflicts')
+    await expect(service.publishCollection({...original, version: 31})).rejects.toThrow('immutable catalog conflicts')
+    const failing = {commit: 'd'.repeat(40), version: 31, definitions: [at('d'.repeat(40))]}
+    insert.mockImplementationOnce(async () => {throw new Error('catalog unavailable')})
+    await expect(service.publishCollection(failing)).rejects.toThrow('catalog unavailable')
+    expect(await service.current()).toEqual([first, second])
+    expect(exactInsert).not.toHaveBeenCalled(); expect(promoted).toBe(0)
+    const future = at('e'.repeat(40))
+    future.definition.minimumRoutineApiVersion = 999
+    future.definition.resourceRequirements.push({kind: 'app', capabilities: ['future-capability']} as any)
+    future.definitionSha256 = requestInputDigest(future.definition)
+    await service.publishCollection({commit: future.definitionRevision, version: 32, definitions: [future]})
+    expect((await service.current())[0]!.definition.minimumRoutineApiVersion).toBe(999)
+    await expect(service.enroll({...future, routineSource: testRoutineSource(future.definitionRevision)})).rejects.toThrow('Invalid routine definition enrollment')
+    expect(exactInsert).not.toHaveBeenCalled()
+  } finally {publication.mockRestore(); insert.mockRestore(); exactInsert.mockRestore(); transaction.mockRestore(); detail.mockRestore()}
+})
 
 test('exact manual selection requires an ordinary enrollment while candidate readers retain exact source', async () => {
   const row = enrollment();

@@ -33,6 +33,7 @@ mock.module("../../runtime/bootstrap", () => ({
   getConfigValues: () => ({}),
   isDevMiniappAllowed: () => true,
   isInstalledMiniappAllowed: () => true,
+  isLocalMiniappPackageAllowed: () => true,
   isOfflineSystemMiniappAllowed: () => true,
   isMiniappAvailable: () => true,
 }))
@@ -48,6 +49,8 @@ mock.module("expo-file-system", () => ({
   File: class {},
   Paths: {cache: {list: () => []}, document: "file:///test-documents"},
 }))
+// Extraction checks each unpacked file's real path through Crust.
+mock.module("@mentra/crust", () => ({default: {canonicalFilePath: (path: string) => path}}))
 mock.module("react-native-zip-archive", () => ({unzip: mock()}))
 mock.module("../../utils/storage/zip", () => ({printDirectory: mock()}))
 

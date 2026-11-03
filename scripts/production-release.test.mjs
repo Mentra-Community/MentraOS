@@ -218,11 +218,11 @@ test("dispatches stable package phases from the promoted beta without a promotio
   )
   assert.match(
     packagesConfirmationMessage({beta_identity: "3.1.0-beta.192", phase: "publish"}),
-    /candidate npm dist-tag/,
+    /npm packages without publishing them/,
   )
   assert.match(
     packagesConfirmationMessage({beta_identity: "3.1.0-beta.192", phase: "release"}),
-    /moves npm latest.*3\.1\.0/,
+    /publishes the plain 3\.1\.0 npm packages to latest/,
   )
 })
 
@@ -283,7 +283,7 @@ test("dispatches the production example from the promoted beta and never promise
   assert.deepEqual(validateExampleOptions({beta: "3.1.0-beta.212"}), {beta_identity: "3.1.0-beta.212"})
   assert.throws(() => validateExampleOptions({beta: "3.1.0"}), /--beta X\.Y\.Z-beta\.N/)
   const message = exampleConfirmationMessage({beta_identity: "3.1.0-beta.212"})
-  assert.match(message, /example 3\.1\.0 from the public 3\.1\.0 packages/)
+  assert.match(message, /example 3\.1\.0 from the promoted beta.s source/)
   assert.match(message, /never releases the example to a store/)
 })
 

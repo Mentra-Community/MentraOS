@@ -1,0 +1,63 @@
+// Captured from the deterministic Harness original-A/replacement-B regression; no device data.
+export default {
+  "command": "failure",
+  "state": "error",
+  "phase": "setup",
+  "actionId": "establish-entry",
+  "failureObservedAt": "2026-10-19T03:26:01.744Z",
+  "phoneProcessWitness": {
+    "original": {
+      "pid": 1234,
+      "startSeq": 17,
+      "bootId": "67e1e537-4f43-4f96-b4b8-2c18fdbb818f",
+      "apkSha256": "d7cbbb688b2e506c022e95cef8c4f629a29b9b36a6e50324e70dff466dbb95af",
+      "build": "15"
+    },
+    "state": "replaced",
+    "observedAt": "2026-10-19T03:26:01.784Z",
+    "current": {
+      "pid": 4321,
+      "startSeq": 22
+    }
+  },
+  "precedingAppImage": {
+    "assetId": "screenshots/failure-setup-27a5255a13287612c78228483d521d8bd3c3df7e8726544800c00dc46cbcf790-31a3ef86-14ee-4367-929d-4d608d6e3e63.png",
+    "boundary": "before-password-input",
+    "original": {
+      "pid": 1234,
+      "startSeq": 17,
+      "bootId": "67e1e537-4f43-4f96-b4b8-2c18fdbb818f",
+      "apkSha256": "d7cbbb688b2e506c022e95cef8c4f629a29b9b36a6e50324e70dff466dbb95af",
+      "build": "15"
+    },
+    "captureStartedAt": "2026-10-19T03:26:01.689Z",
+    "captureFinishedAt": "2026-10-19T03:26:01.690Z"
+  },
+  "currentPhoneImage": {
+    "assetId": "screenshots/failure-setup-80a768fd20215e2029b931ff48e6a8b66e41c7a23cef672fa405831094342aff-ee4ca612-e9e4-4a74-b81e-9754e020e1af.png",
+    "source": "system",
+    "captureStartedAt": "2026-10-19T03:26:01.752Z",
+    "captureFinishedAt": "2026-10-19T03:26:01.754Z"
+  },
+  "desktopImages": [
+    {
+      "assetId": "screenshots/failure-setup-b37715ffddad5630b76a5ab08305891d871183736d8abd0c9cc1dc0c14d50bb1-f26ef3e9-9761-4a40-bebc-223e944cf404.png",
+      "displayId": 1,
+      "captureStartedAt": "2026-10-19T03:26:01.746Z",
+      "captureFinishedAt": "2026-10-19T03:26:01.775Z"
+    },
+    {
+      "assetId": "screenshots/failure-setup-2a66103d9968377715e1b1dd11559bd4981fb8cf261409ccece11529bcaab25b-21a4fbe9-e045-4164-89f2-0f93604f1a50.png",
+      "displayId": 2,
+      "captureStartedAt": "2026-10-19T03:26:01.746Z",
+      "captureFinishedAt": "2026-10-19T03:26:01.775Z"
+    }
+  ],
+  "desktopAssetIds": [
+    "screenshots/failure-setup-b37715ffddad5630b76a5ab08305891d871183736d8abd0c9cc1dc0c14d50bb1-f26ef3e9-9761-4a40-bebc-223e944cf404.png",
+    "screenshots/failure-setup-2a66103d9968377715e1b1dd11559bd4981fb8cf261409ccece11529bcaab25b-21a4fbe9-e045-4164-89f2-0f93604f1a50.png"
+  ],
+  "error": {
+    "message": "Original password focus failure"
+  }
+};

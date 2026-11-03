@@ -31,12 +31,11 @@ class NimoCanvasCoordinatorTest {
         val writes = mutableListOf<ByteArray>()
         val failures = mutableListOf<String>()
         val rejections = mutableListOf<Int>()
-        var holdPreemptions = 0
         var rejectWrites = false
         val queue = NimoGattQueue<Any>(clock, { _, bytes -> writes += bytes; !rejectWrites }, { failures += it })
         val canvas = NimoCanvasCoordinator(clock, { 20 },
             { frames, started, completed -> queue.enqueue(connection, characteristic, frames, started, completed) },
-            { queue.reset(); failures += it }, { rejections += it }, { holdPreemptions++ })
+            { queue.reset(); failures += it }, { rejections += it })
         init { queue.connected(connection) }
         fun written(success: Boolean = true) {
             queue.written(connection, characteristic, success)
@@ -242,60 +241,6 @@ class NimoCanvasCoordinatorTest {
         f.ack(3)
         assertEquals(before + 1, f.writes.size)
         assertTrue(f.failures.isEmpty())
-    }
-
-    @Test fun diagnosticHoldWaitsForCurrentBusinessAckAndThenResumesLatestScene() {
-        val f = Fixture()
-        val initial = byteArrayOf(0, 0, 1)
-        val latest = byteArrayOf(2, 0, 1)
-        f.launch(initial)
-        var ready = 0
-        f.canvas.hold { ready++ }
-        f.canvas.offer(byteArrayOf(1, 0, 1), "one:1")
-        f.canvas.offer(latest, "one:1")
-
-        assertEquals(0, ready)
-        f.finishUpdate(initial)
-        assertEquals(1, ready)
-        val beforeRelease = f.writes.size
-
-        f.canvas.releaseHold()
-
-        assertEquals(beforeRelease + 1, f.writes.size)
-        assertArrayEquals(NimoCanvasCodec.frames(4, latest, 20).first(), f.writes.last())
-    }
-
-    @Test fun scopeTakeoverPreemptsHoldWithoutFlushingHeldScene() {
-        val f = Fixture()
-        val initial = byteArrayOf(0, 0, 1)
-        val held = byteArrayOf(1, 0, 1)
-        val takeover = byteArrayOf(2, 0, 1)
-        f.launch(initial); f.finishUpdate(initial)
-        var ready = 0
-        f.canvas.hold { ready++ }
-        f.canvas.offer(held, "one:1")
-        val beforeTakeover = f.writes.size
-
-        f.canvas.offer(takeover, "two:1")
-
-        assertEquals(1, ready)
-        assertEquals(1, f.holdPreemptions)
-        assertEquals(beforeTakeover + 1, f.writes.size)
-        assertArrayEquals(NimoCanvasCodec.frames(4, takeover, 20).first(), f.writes.last())
-    }
-
-    @Test fun firstScopePreemptsHoldAcquiredBeforeAnyCanvasScene() {
-        val f = Fixture()
-        var ready = 0
-        f.canvas.readiness(true)
-        f.canvas.hold { ready++ }
-        assertEquals(1, ready)
-
-        f.canvas.offer(byteArrayOf(0, 0, 1), "first:1")
-
-        assertEquals(1, f.holdPreemptions)
-        assertEquals(1, f.writes.size)
-        assertArrayEquals(NimoCanvasCodec.frames(1, writeCapacity = 20).single(), f.writes.single())
     }
 
     @Test fun reentrantCompletionCannotReleaseNewConnectionWrite() {

@@ -9,13 +9,17 @@ import { MiniappSession } from "../session"
 
 export interface ShareOptions {
   text?: string
+  /**
+   * An http(s) link, or the `file://` uri of one of this miniapp's blobs
+   * (`session.blob`). The host refuses any other file or scheme.
+   */
   url?: string
   title?: string
   /** Base64-encoded file data for file sharing. */
   base64?: string
   /** MIME type when sharing base64 data. */
   mimeType?: string
-  /** Filename when sharing base64 data. */
+  /** File name when sharing base64 data: one name; path separators become `_`. */
   filename?: string
 }
 
@@ -25,9 +29,10 @@ export interface ShareResult {
 }
 
 export interface DownloadOptions {
-  /** URL to download from, OR base64 data. */
+  /** An http: or https: URL to download from, OR base64 data. */
   url?: string
   base64?: string
+  /** One file name; path separators become `_`. */
   filename?: string
   mimeType?: string
 }
@@ -58,7 +63,7 @@ export class SystemModule {
     return result ?? { success: false }
   }
 
-  /** Open a URL in the system browser. Blocks dangerous schemes (javascript:, file:). */
+  /** Open a URL in the system browser. Never opens local files or scripts (file:, content:, javascript:, data:). */
   openUrl(url: string): void {
     this.session.sendOneShot({
       type: MiniappRequestType.OPEN_URL,

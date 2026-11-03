@@ -13,23 +13,24 @@ function client() {
   return query;
 }
 
-test('system health has seven accessible tabs with only the selected panel content mounted', () => {
+test('system health has accessible tabs with only the selected panel content mounted', () => {
   for (const tab of SYSTEM_HEALTH_TABS) {
     const query = client();
     const html = renderToStaticMarkup(<QueryClientProvider client={query}><SystemHealthPage tab={tab.id} /></QueryClientProvider>);
     const buttons = html.match(/<button[^>]*role="tab"[^>]*>.*?<\/button>/g) ?? [];
-    expect(buttons).toHaveLength(7);
+    expect(buttons).toHaveLength(SYSTEM_HEALTH_TABS.length);
     expect(buttons.map(button => button.match(/>([^<]*)<\/button>/)?.[1])).toEqual(SYSTEM_HEALTH_TABS.map(row => row.label.replace('&', '&amp;')));
     const active = buttons[SYSTEM_HEALTH_TABS.findIndex(row => row.id === tab.id)]!;
     expect(active).toContain('aria-selected="true"');
     expect(active).toContain('tabindex="0"');
     const panels = html.match(/<div[^>]*role="tabpanel"[^>]*>/g) ?? [];
-    expect(panels).toHaveLength(7);
+    expect(panels).toHaveLength(SYSTEM_HEALTH_TABS.length);
     const selectedPanel = panels.find(panel => !panel.includes('hidden=""'))!;
     expect(selectedPanel).toContain(`id="${active.match(/aria-controls="([^"]*)"/)?.[1]}"`);
     buttons.forEach(button => expect(panels.some(panel => panel.includes(`id="${button.match(/aria-controls="([^"]*)"/)?.[1]}"`))).toBe(true));
     expect(buttons.filter(button => button.includes('aria-selected="false"')).every(button => button.includes('tabindex="-1"'))).toBe(true);
     const keys = query.getQueryCache().getAll().map(row => row.queryKey[0]);
+    expect(keys.includes('resource-lifecycle')).toBe(tab.id === 'resources');
     expect(keys.includes('test-pending-queue')).toBe(tab.id === 'pending');
     expect(keys.includes('lane-restoration')).toBe(tab.id === 'repair');
     expect(keys.includes('test-host-history')).toBe(['memory', 'disk'].includes(tab.id));

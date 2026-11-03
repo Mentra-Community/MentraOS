@@ -201,7 +201,8 @@ export class BlobModule {
   /**
    * Download `url` straight into a blob under `key`, host-side. The bytes never
    * cross the bridge (like the web Cache API's `cache.add`). `opts.headers` lets
-   * you pass auth. Resolves to the stored blob's metadata.
+   * you pass auth. Resolves to the stored blob's metadata. Only http: and https:
+   * URLs are downloaded; any other scheme is refused.
    */
   setFromUrl(key: string, url: string, opts: BlobSetFromUrlOptions = {}): Promise<BlobMeta> {
     return this.session.sendRequest<BlobMeta>({

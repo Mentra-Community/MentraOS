@@ -14,9 +14,10 @@ import type { LicenseView, MemberView } from "@mentra/workspace-contract";
 
 import { isLicenseChangedError } from "../../errors";
 import type { JoinedLicense, SeatCounts } from "../../lib/license-join";
+import { miniappLink } from "../../lib/miniapp-link";
 import { cn } from "../../lib/utils";
 import { licenseStrings as t } from "../../strings/licenses";
-import { Button } from "../../ui/button";
+import { Button, buttonVariants } from "../../ui/button";
 import { AlertText, Badge, ErrorNotice, Spinner, type BadgeTone } from "../common";
 
 /**
@@ -92,6 +93,21 @@ export function Fact({
 /** A placeholder for a value that isn't there yet (a license that is still being set up). It holds no text. */
 export function Skeleton({ className = "w-24" }: { className?: string }) {
   return <span className={cn("bg-surface inline-block h-4 rounded-full align-middle", className)} />;
+}
+
+/** The miniapp a license is for, as a success dialog offers to open it on a phone: its package, and its name (if billing gave one). */
+export interface MiniappToOpen {
+  packageName: string;
+  appName: string | null;
+}
+
+/** "Open Mentra Call": a link that opens the miniapp in the Mentra App (`miniappLink`), the dialog's main action. */
+export function OpenMiniappButton({ app }: { app: MiniappToOpen }) {
+  return (
+    <a className={buttonVariants({})} href={miniappLink(app.packageName)}>
+      {t.purchase.openIn(app.appName)}
+    </a>
+  );
 }
 
 /**

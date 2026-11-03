@@ -80,6 +80,10 @@ jobs:
           node --test deploy/azure/enterprise-reference/scripts/*.test.mjs
           python3 -m unittest discover -s deploy/azure/enterprise-reference/installer -p 'test_*.py'
 
+      - name: Test the Core egress policy
+        working-directory: cloud-v2
+        run: node --test deploy/kubernetes/*.test.mjs
+
       - name: Test Miniapp CLI
         working-directory: sdk
         run: bun test miniapp-cli/src
@@ -115,7 +119,9 @@ jobs:
             websites/admin/src/pages/workspaces.test.tsx \
             websites/admin/src/pages/operator-keys.test.tsx \
             websites/admin/src/pages/fleet.test.tsx \
-            websites/admin/src/pages/licenses.test.tsx
+            websites/admin/src/pages/licenses.test.tsx \
+            websites/admin/src/pages/registry.test.tsx \
+            websites/admin/src/pages/registry-dialogs.test.tsx
 
       - name: Typecheck backend packages
         working-directory: cloud-v2
@@ -217,13 +223,35 @@ jobs:
             tests/fleet-forwarding.integration.test.ts \
             tests/portal-modules.integration.test.ts \
             tests/legacy-admin-keys.integration.test.ts \
+            tests/account-auth.integration.test.ts \
             tests/account-deletion.integration.test.ts \
+            tests/declared-age.integration.test.ts \
             tests/licenses.integration.test.ts \
             tests/license-features.integration.test.ts \
+            tests/miniapp-token-claims.integration.test.ts \
+            tests/miniapp-registry.integration.test.ts \
+            tests/registry-service-api.integration.test.ts \
             tests/admin-licenses.integration.test.ts \
+            tests/admin-registry.integration.test.ts \
             tests/migrate-store-developer-orgs.integration.test.ts \
             tests/legacy-identity-claim.integration.test.ts \
-            tests/legacy-miniapp-registry.integration.test.ts
+            tests/legacy-miniapp-registry.integration.test.ts \
+            tests/account-email.integration.test.ts \
+            tests/client-workspaces-api.integration.test.ts \
+            tests/membership-history.integration.test.ts \
+            tests/one-workspace-cleanup.integration.test.ts \
+            tests/one-workspace-guard.integration.test.ts \
+            tests/oem-auth.integration.test.ts \
+            tests/refresh-rotation.integration.test.ts \
+            tests/reports.integration.test.ts \
+            tests/trusted-issuer-auth.integration.test.ts \
+            tests/startup-migrations.integration.test.ts
+
+      - name: Verify nightly selection-result projection
+        working-directory: cloud-v2
+        env:
+          TEST_HISTORY_MONGO_URI: mongodb://127.0.0.1:27017
+        run: bun test --max-concurrency=1 --timeout 30000 packages/core/src/services/nightly-selection-result.test.ts
 
       - name: Show Mongo logs after a failure
         if: failure()

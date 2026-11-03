@@ -5,6 +5,8 @@ import {TestRunError} from './test-result-error';
 import {testRoutineSource} from '../testing/framework-fixtures';
 import {nightlySuiteProjection} from './test-suite.service';
 import {individualRerunSchema, rerunPreviewSchema} from '../types/test-rerun.types';
+import {RoutineJobService} from './routine-job.service';
+import {routineSourceRepository, testingTarget, type TestingRepository} from '../types/testing-source.types';
 const source={channel:'dev' as const,buildRunId:123,publicationAttempt:1};
 const nativeInput={routineId:'captions',routineSource:testRoutineSource(),platform:'android' as const,definitionRevision:'a'.repeat(40),laneId:'android',resources:[{id:'app',kind:'app' as const}],build:{repository:'Mentra-Community/MentraOS' as const,headSha:'b'.repeat(40),channel:'dev' as const,kind:'android-apk' as const,source,archive:{name:'app.apk',url:'https://artifactscdn.mentraglass.com/app.apk',size:100,sha256:'c'.repeat(64)},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',size:10,sha256:'d'.repeat(64)}}};
 
@@ -61,10 +63,22 @@ test('new preparation records still require routine bundle provenance when read'
  const request=f.requests.get(p.plan.members[0]!.requestId);delete request.input.routineSource;request.inputSha256=requestInputDigest(request.input);
  await expect(f.service.detail('new')).rejects.toThrow('frozen input');
 });
-function fixture(){
+test('intent-bound historical originals remain readable in rerun history with their recorded app-only build',async()=>{
+ const f=fixture(),input={...structuredClone(nativeInput),glassesModel:'nimo',resources:[{id:'old-glasses',kind:'glasses'}]},
+  manifest={url:'https://artifactscdn.mentraglass.com/live/manifest.json',sha256:'f'.repeat(64),size:100};
+ const intent={requestId:'original-20',routineId:input.routineId,platform:input.platform,routineRevision:input.definitionRevision,
+  routineSource:input.routineSource,laneId:input.laneId,source,build:{...input.build,manifest,manifestSha256:manifest.sha256}};
+ const row={requestId:intent.requestId,hostId:'mini',state:'terminal',terminalStatus:'failed',input,inputSha256:requestInputDigest(input),
+  dispatchIntent:intent,dispatchIntentSha256:requestInputDigest(intent)};
+ f.requests.set(row.requestId,row);const before=JSON.stringify(row);
+ const history=await f.service.history({requestId:row.requestId},row.requestId);
+ expect(history.original).toMatchObject({requestId:row.requestId,status:'failed',build:input.build});
+ expect(JSON.stringify(row)).toBe(before);expect(f.executions).toBe(0);
+});
+function fixture(memberCount = 28){
  const rows=new Map<string,RerunRecord>(),claims=new Set<string>(),requests=new Map<string,any>(),results=new Map<string,any>();
  let time=Date.parse('2026-10-06T12:00:00Z'),prepared=0,failId='',executions=0;
- const members=Array.from({length:28},(_,i)=>({memberId:`member-${i}`,requestId:`original-${i}`,routineId:'captions',platform:'android',status:i<20?'pass':i<22?'failed':'setup-failed',publicationComplete:true,routineSource:testRoutineSource()}));
+ const members=Array.from({length:memberCount},(_,i)=>({memberId:`member-${i}`,requestId:`original-${i}`,routineId:'captions',platform:'android',status:i<20?'pass':i<22?'failed':'setup-failed',publicationComplete:true,routineSource:testRoutineSource()}));
  for(const member of members) requests.set(member.requestId,{requestId:member.requestId,hostId:'mini',state:'terminal',input:nativeInput,inputSha256:requestInputDigest(nativeInput)});
  const store:RerunRepository={async get(id){return structuredClone(rows.get(id)??null)},async insert(row){if(rows.has(row.rerunId))throw Object.assign(new Error(),{code:11000});rows.set(row.rerunId,structuredClone(row));},async accept(id,digest,keys,acceptedAt){const row=rows.get(id)!;if(row.state==='accepted')return null;if(keys.some(k=>claims.has(k)))throw Object.assign(new Error(),{code:11000});keys.forEach(k=>claims.add(k));row.state='accepted';row.acceptedAt=acceptedAt;return structuredClone(row);},async latest(roots:string[]){return [...rows.values()].filter(row=>row.state==='accepted'&&row.plan.members.some(member=>roots.includes(member.rootKey))).map(row=>structuredClone(row))},async history(root,before,limit){return [...rows.values()].filter(r=>r.state==='accepted'&&r.plan.members.some(m=>m.rootKey===root&&m.attemptNumber<before)).sort((a,b)=>b.plan.members.find(m=>m.rootKey===root)!.attemptNumber-a.plan.members.find(m=>m.rootKey===root)!.attemptNumber).slice(0,limit).map(r=>structuredClone(r));},async children(id,before,limit){const cursor=before?JSON.parse(Buffer.from(before,"base64url").toString()):null;return [...rows.values()].filter(r=>r.state==='accepted'&&'suiteId' in r.plan.parent&&r.plan.parent.suiteId===id&&(!cursor||r.acceptedAt!<cursor.acceptedAt||(r.acceptedAt===cursor.acceptedAt&&r.rerunId<cursor.rerunId))).sort((a,b)=>b.acceptedAt!.localeCompare(a.acceptedAt!)||b.rerunId.localeCompare(a.rerunId)).slice(0,limit)},async byRequest(id){return [...rows.values()].find(r=>r.state==='accepted'&&r.plan.members.some(m=>m.requestId===id))??null}};
  const jobs={async cancelFrozen(selection:any,deadline:string,value:{reason:string}) {const old=requests.get(selection.requestId); if (!old) requests.set(selection.requestId,{requestId:selection.requestId,fleetSelection:selection,fleetSelectionSha256:requestInputDigest(selection),fleetDeadline:new Date(deadline),state:'terminal',terminalStatus:'not-run',fleetCancellation:value}); else old.fleetCancellation=value;return {} as any},async freezeSelection(selected:any,inherited?:any){prepared++;return {...selected,build:inherited??{...structuredClone(nativeInput.build),source:selected.source}}},
@@ -80,6 +94,29 @@ test('28-member suite selects only its eight failures; preview queues nothing an
  expect(await f.preview()).toEqual(p);expect(f.prepared).toBe(8);
  const input={rerunId:p.rerunId,previewDigest:p.previewDigest};await f.service.submit(input);await f.service.submit(input);expect(f.executions).toBe(8);expect(f.members).toEqual(original);
  await expect(f.service.preview({rerunId:'repair',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},source,reason:'different'},'admin')).rejects.toThrow('different selection');
+});
+
+test('35 frozen rerun admissions acknowledge without Actions inventory; normal ticks deliver each original once', async () => {
+ const f=fixture(35), originals=structuredClone([...f.requests]), time=Date.parse('2026-10-06T12:00:00Z');
+ let githubReads=0; const dispatched:string[]=[];
+ const rows={async get(id:string){return structuredClone(f.requests.get(id)??null)},
+  async insert(row:any){if(f.requests.has(row.requestId))throw Object.assign(Error('duplicate'),{code:11000});f.requests.set(row.requestId,structuredClone(row));},
+  async pending(limit:number){return [...f.requests.values()].filter(row=>row.fleetSelection&&!row.fleetDispatch&&!row.fleetCancellation).slice(0,limit).map(row=>structuredClone(row));},
+  async dispatch(id:string,previous:any,value:any){const row=f.requests.get(id);if(requestInputDigest(row.fleetDispatch??null)!==requestInputDigest(previous??null))return null;row.fleetDispatch=structuredClone(value);return structuredClone(row);}};
+ const jobs=new RoutineJobService(rows as any,undefined,undefined,{async getExact(){return null}} as any,undefined,undefined,undefined,()=>time,
+  {async runs(){githubReads++;return []},async dispatch(id){dispatched.push(id)},async cancel(){}});
+ (f.service as any).jobs.submitFrozen=jobs.submitFrozen.bind(jobs);
+ const preview=await f.preview('all35',{memberIds:f.members.map(member=>member.memberId)}), input={rerunId:preview.rerunId,previewDigest:preview.previewDigest};
+ const acknowledgement=await f.service.submit(input);
+ expect(acknowledgement.admissions).toHaveLength(35);expect(acknowledgement.admissions.every(value=>value.admitted)).toBe(true);
+ expect(githubReads).toBe(0);expect(dispatched).toEqual([]);
+ for(const member of preview.plan.members){const row=f.requests.get(member.requestId);expect(row).toMatchObject({state:'awaiting-source',fleetSelection:member.selection,fleetSelectionSha256:requestInputDigest(member.selection)});expect(row.fleetDeadline.toISOString()).toBe('2026-10-06T15:00:00.000Z');expect(row.fleetBinding).toBeUndefined();}
+ await f.service.submit(input);expect(githubReads).toBe(0);
+ await jobs.reconcilePending();expect(dispatched).toHaveLength(20);
+ await jobs.reconcilePending();expect(dispatched).toHaveLength(35);expect(new Set(dispatched).size).toBe(35);
+ await jobs.reconcilePending();expect(dispatched).toHaveLength(35);
+ expect(dispatched.slice().sort()).toEqual(preview.plan.members.map(member=>member.requestId).sort());
+ for(const [id,row] of originals)expect(f.requests.get(id)).toEqual(row);
 });
 
 test('a linked minimum worker version is frozen into every selected request and immutable retries',async()=>{
@@ -113,6 +150,83 @@ test('unbound original fleet selections retain their worker floor without recons
  const preview=await f.service.preview({rerunId:'unbound-minimum',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},reason:'Same frozen worker floor'},'admin');
  expect(preview.plan.members[0]!.selection.minimumFrameworkVersion).toBe(716);
  expect(preview.plan.members[0]!.selection.build).toEqual(nativeInput.build);
+});
+
+for(const path of ['fleet','intent','input','suite-request','suite-unsubmitted'] as const) {
+ for(const repository of [testingTarget().repository,'Mentra-Community/Mentra'] as TestingRepository[]) {
+  for(const override of [false,true]) test(`rerun retains ${repository} through ${path}${override?' with an exact revision override':''}`,async()=>{
+   const previous=process.env.TESTING_REPOSITORY, f=fixture(),originalId='original-20';
+   const selection={requestId:originalId,routineId:'captions',platform:'android' as const,routineRevision:nativeInput.definitionRevision,
+    ...(repository===testingTarget().repository?{}:{routineRepository:repository}),source,build:structuredClone(nativeInput.build),
+    ...(path==='suite-unsubmitted'?{}:{minimumFrameworkVersion:716})};
+   let original:any;
+   if(path==='input') {
+    const input={...structuredClone(nativeInput),minimumFrameworkVersion:716,routineSource:{...testRoutineSource(),repository}};
+    original={requestId:originalId,hostId:'mini',state:'terminal',terminalStatus:'not-run',input,inputSha256:requestInputDigest(input)};
+   } else if(path==='intent') {
+    const intent={...selection,laneId:'android'};
+    original={requestId:originalId,hostId:'mini',state:'terminal',terminalStatus:'not-run',dispatchIntent:intent,dispatchIntentSha256:requestInputDigest(intent)};
+   } else original={requestId:originalId,state:'terminal',terminalStatus:'not-run',fleetSelection:selection,fleetSelectionSha256:requestInputDigest(selection)};
+   f.requests.set(originalId,original);
+   let projectedOriginal:any;
+   if(path==='suite-unsubmitted') {
+    const suite={suiteId:'nightly',channel:'dev' as const,trigger:'nightly' as const,startedAt:'2026-10-06T11:00:00Z',build:{headSha:nativeInput.build.headSha},
+     members:[20,21].map(i=>({memberId:`member-${i}`,requestId:`original-${i}`,routineId:'captions',platform:'android' as const}))};
+    const members=suite.members.map(member=>({...member,requestId:member.requestId!,routineRevision:selection.routineRevision,
+     definitionRevision:selection.routineRevision,build:selection.build,selection:{...selection,requestId:member.requestId!}}));
+    const plan={occurrenceId:'unsubmitted-occurrence',suiteId:suite.suiteId,startedAt:suite.startedAt,trigger:suite.trigger,suite,members};
+    const result={...plan,members:members.map(member=>({...member,status:'not-run' as const,publicationComplete:false})),expectedCount:2,passed:0,status:'failed' as const,finishedAt:'2026-10-06T11:30:00Z'};
+    projectedOriginal={suite,plan,result};
+    const projected=nightlySuiteProjection(suite,plan,result);
+    expect(projected.members[0]).not.toHaveProperty('routineSource');
+    if(repository===testingTarget().repository)expect(projected.members[0]).not.toHaveProperty('routineRepository');
+    else expect(projected.members[0]!.routineRepository).toBe(repository);
+    (f.service as any).suites={async detail(){return nightlySuiteProjection(suite,plan,result)},async summary(){return nightlySuiteProjection(suite,plan,result)}};
+    f.requests.delete(originalId);
+   }
+   const before=JSON.stringify({original,projectedOriginal}),revision=override?'f'.repeat(40):selection.routineRevision;
+   let freezes=0;
+   (f.service as any).jobs.freezeSelection=async(value:unknown,inherited:any)=>{
+    freezes++;
+    return RoutineJobService.prototype.freezeSelection.call({sources:{async resolve(){throw Error('Original exact revision must not be resolved again')}},
+     builds:{async resolve(){throw Error('Original exact app must not be resolved again')}}} as any,value,inherited);
+   };
+   try {
+    process.env.TESTING_REPOSITORY=repository===testingTarget().repository?'Mentra-Community/Mentra':testingTarget().repository;
+    const parent=path.startsWith('suite-')?{suiteId:'nightly'}:{requestId:originalId};
+    const input={rerunId:'repository-rerun',parent,selection:{memberIds:[path.startsWith('suite-')?'member-20':originalId]},
+     ...(override?{routineRevision:revision}:{}),reason:'Retain original repository'};
+    const preview=path==='suite-unsubmitted'?await f.service.individual({requestId:input.rerunId,parent:{suiteId:'nightly',memberId:'member-20'},
+     predecessorAttemptId:originalId,...(override?{routineRevision:revision}:{}),reason:input.reason},'admin'):await f.service.preview(input,'admin');
+    const frozen=preview.plan.members[0]!.selection;
+    expect(routineSourceRepository(frozen)).toBe(repository);
+    expect(frozen).toMatchObject({routineRevision:revision,build:nativeInput.build,source,...(path==='suite-unsubmitted'?{}:{minimumFrameworkVersion:716})});
+    if(path!=='input'||override)expect(frozen.routineSource).toBeUndefined();
+    expect(JSON.stringify({original,projectedOriginal})).toBe(before);
+    expect(f.executions).toBe(0);
+    if(path!=='suite-unsubmitted') {
+     process.env.TESTING_REPOSITORY=repository;
+     expect(await f.service.preview(input,'admin')).toEqual(preview);expect(freezes).toBe(1);
+    }
+   } finally {if(previous===undefined)delete process.env.TESTING_REPOSITORY;else process.env.TESTING_REPOSITORY=previous;}
+  });
+ }
+}
+
+for(const override of [false,true]) test(`recorded input without routine identity remains legacy despite a canonical app build${override?' and routine override':''}`,async()=>{
+ const f=fixture(),previous=process.env.TESTING_REPOSITORY,{routineSource:_,...recorded}=structuredClone(nativeInput);
+ const appSource={...source,repository:'Mentra-Community/Mentra' as const},build={...recorded.build,repository:'Mentra-Community/Mentra' as const,source:appSource};
+ const input={...recorded,build},original={requestId:'original-20',hostId:'mini',state:'terminal',terminalStatus:'not-run',input,inputSha256:requestInputDigest(input)};
+ f.requests.set(original.requestId,original);const before=JSON.stringify(original);
+ (f.service as any).jobs.freezeSelection=(value:unknown,inherited:any)=>RoutineJobService.prototype.freezeSelection.call({} as any,value,inherited);
+ try {
+  process.env.TESTING_REPOSITORY='Mentra-Community/Mentra';
+  const preview=await f.service.individual({requestId:'recorded-repository',parent:{requestId:original.requestId},predecessorAttemptId:original.requestId,
+   ...(override?{routineRevision:'f'.repeat(40)}:{}),reason:'Retain historical routine source'},'admin');
+  const frozen=preview.plan.members[0]!.selection;
+  expect(routineSourceRepository(frozen)).toBe(testingTarget().repository);
+  expect(frozen.build).toEqual(build);expect(frozen.routineSource).toBeUndefined();expect(JSON.stringify(original)).toBe(before);
+ } finally {if(previous===undefined)delete process.env.TESTING_REPOSITORY;else process.env.TESTING_REPOSITORY=previous;}
 });
 
 test('rerun minimum versions use the existing worker-version validation on both admission paths',()=>{

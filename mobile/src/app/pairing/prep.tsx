@@ -17,7 +17,6 @@ import {CDN_BASE_URL} from "@/constants/appConfig"
 import {getAr99DisplayName, getAr99ImageSource} from "@/utils/getGlassesImage"
 import {ThemedStyle} from "@/theme"
 import {preparePairingScan} from "@/utils/pairing/preparePairingScan"
-import {isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
 import {deploymentStore} from "@/services/deployment"
 import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPolicy"
 
@@ -89,19 +88,6 @@ export default function PairingPrepScreen() {
             info: translate("onboarding:livePowerOnInfo"),
           },
         ]
-    if (isMentraLiveSecurePairingEnabled()) {
-      steps.push({
-        name: "pairing_mode_tutorial",
-        type: "image",
-        source: require("@assets/onboarding/live/thumbnails/ONB0_power.png"),
-        transition: false,
-        title: translate("pairing:livePairingModeTitle"),
-        subtitle: translate("pairing:livePairingModeSubtitle"),
-        info: translate("pairing:livePairingModeInfo"),
-        compactHeader: true,
-      })
-    }
-
     return (
       <OnboardingGuide
         steps={steps}

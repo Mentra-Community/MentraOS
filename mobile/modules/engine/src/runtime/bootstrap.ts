@@ -60,10 +60,6 @@ export interface IslandConfigValues {
   supportedMiniappSdkRange?: string
   /** Package identities backed by miniapp ZIPs shipped in this host build. */
   bundledSystemMiniappPackages?: readonly string[]
-  /** Store packages selected by the build; each must also be a bundled package. */
-  bundledStoreMiniappPackages?: readonly string[]
-  /** Bundled package -> the bundled Store allowed to update it automatically. */
-  bundledSystemMiniappStoreOwners?: Readonly<Record<string, string>>
   /**
    * Where Mentra hosts its own miniapps for this deployment, for example
    * `https://miniapps.mentraglass.com/`. Each bundled miniapp updates from
@@ -71,6 +67,25 @@ export interface IslandConfigValues {
    * miniapps on the versions the build or deployment ships.
    */
   firstPartyMiniappsUrl?: string | null
+  /**
+   * Register every miniapp URL the engine installs in Core's registry, and stop an install the registry has
+   * archived. On by default, as on iOS and Android. Off, the engine installs any miniapp URL without registering
+   * it; the domain rule still applies. A host app that turns it off answers to the app stores' rules itself.
+   */
+  requireRegistry?: boolean
+  /**
+   * Whether a URL opens this host app itself: its own URL schemes, and the addresses it claims as app links. A
+   * miniapp never opens one through `session.system.openUrl`: it would reach the host's own link handling, such as
+   * its install sheet or its sign-in callbacks, which no miniapp may drive. Omitted, nothing more is refused.
+   */
+  isHostLink?: (url: string) => boolean
+  /**
+   * The host app's own App Store age rating, for example `"12+"`. A miniapp whose `ageRating` is above it installs or
+   * opens only for a person whose declared age is old enough: the engine asks once through the `askDeclaredAge` seam
+   * and keeps the answer on the person's Core account. A miniapp without a rating is never gated. Omitted, nothing is
+   * gated; a host app that leaves it out answers to the app stores' rules itself.
+   */
+  hostAgeRating?: string | null
   /** Optional per-package configuration supplied by the host deployment. */
   miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
   /** Deployment-scoped key for the persisted Core refresh token. */
@@ -135,6 +150,26 @@ export interface IslandUiSeams {
    * miniapps get NOT_IMPLEMENTED.
    */
   scanQr?: (options?: ScanQrOptions) => Promise<ScanQrResult>
+  /**
+   * Ask the person how old they are, once: a miniapp rated above `hostAgeRating` is installing or opening and their
+   * Core account has no declared age yet. Resolve the whole number of years they give, or null when they cancel. The
+   * engine keeps the answer, with the date, on their account and never sends it to a miniapp. Absent ⇒ such
+   * miniapps don't install or open until the account has a declared age.
+   */
+  askDeclaredAge?: () => Promise<number | null>
+  /** A miniapp the person was installing or opening was stopped by its age rating. The host says why. */
+  showAgeRestricted?: (notice: AgeRestrictionNotice) => void
+}
+
+/** Why the age gate stopped a miniapp the person was installing or opening. */
+export interface AgeRestrictionNotice {
+  packageName: string
+  /** The miniapp's name. */
+  name: string
+  /** The rating it declares, for example `"18+"`. */
+  ageRating: string
+  /** `too_young`: their declared age is below its rating. `unavailable`: their age could not be checked (offline). */
+  reason: "too_young" | "unavailable"
 }
 
 export interface ScanQrOptions {
@@ -157,14 +192,29 @@ export function isMiniappAvailable(packageName: string, mode: MiniappAvailabilit
   return options?.config?.isMiniappAvailable?.(packageName, mode) ?? true
 }
 
-export function isLocalMiniappPackageAllowed(packageName: string): boolean {
+/** What, besides a release's provenance, decides whether a package or release may run. */
+export interface InstalledMiniappContext {
+  /**
+   * The account's current workspace assigned the package through Fleet, or the install is that assignment's. It
+   * admits the package under a workspace policy, and a release of it installed from a URL.
+   */
+  assigned?: boolean
+}
+
+/**
+ * The deployment lets this package run at all: launches check it before its release. Under a workspace policy, a
+ * package its system list or its manifest names, or one the account's current workspace assigned through Fleet that
+ * this build doesn't bundle (a bundled package follows the system list).
+ */
+export function isLocalMiniappPackageAllowed(packageName: string, context: InstalledMiniappContext = {}): boolean {
   if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
   if (policy) {
     return (
       policy.systemPackageNames === null ||
       policy.systemPackageNames.includes(packageName) ||
-      policy.managed.some((entry) => entry.packageName === packageName)
+      policy.managed.some((entry) => entry.packageName === packageName) ||
+      (context.assigned === true && !options?.config?.bundledSystemMiniappPackages?.includes(packageName))
     )
   }
   const allowlist = options?.config?.localMiniappAllowlist
@@ -207,6 +257,7 @@ export function isInstalledMiniappAllowed(
     deploymentId?: string
     deploymentOrigin?: string
   } | null,
+  context: InstalledMiniappContext = {},
 ): boolean {
   if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
@@ -215,11 +266,19 @@ export function isInstalledMiniappAllowed(
   const systemApproved = policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
   if (systemApproved && releaseIdentity?.source === "bundled_asset") return true
   // A compatible update of an approved bundled package, from Mentra's own host
-  // or the Store the build assigns to it, keeps the visibility of the bundled
-  // release it replaced.
+  // (or, for an older install, the retired Mentra Store), keeps the visibility
+  // of the bundled release it replaced.
   if (isTrustedSystemMiniappRelease(options?.config ?? {}, packageName, releaseIdentity)) return true
-  // A release a developer installed from the scanner's release QR.
+  // An explicit install: from the scanner's release QR, or from a miniapp URL. A package this build bundles follows
+  // the system policy above whatever URL it came from: a deployment that leaves it out doesn't get it from a URL.
   if (releaseIdentity?.source === "direct_download") return isMiniappDevelopmentAllowed()
+  if (releaseIdentity?.source === "url") {
+    if (options?.config?.bundledSystemMiniappPackages?.includes(packageName)) return false
+    // A workspace's Fleet assignment is its admins' deployment, not development: it runs where the developer tools
+    // are off. It rewrites no deployment trust, so a package the deployment's manifest pins stays the manifest's.
+    if (context.assigned && !policy.managed.some((entry) => entry.packageName === packageName)) return true
+    return isMiniappDevelopmentAllowed()
+  }
   if (!version || releaseIdentity?.source !== "deployment_manifest") return false
 
   return policy.managed.some(

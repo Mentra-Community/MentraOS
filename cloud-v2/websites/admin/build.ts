@@ -1,10 +1,17 @@
 import tailwind from "bun-plugin-tailwind";
 import { cp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+
 import { workspacePortalUrl } from "./src/lib/config";
 
+// Public build-time configuration (scripts/deploy-pages.ts sets it): PORTAL_URL, the workspace portal the
+// Workspaces page links to. Unset (a Private Cloud, CI or a local build): no link.
+const configuredPortal = process.env.PORTAL_URL?.trim() ?? "";
+const portalUrl = workspacePortalUrl(configuredPortal);
+if (configuredPortal && !portalUrl) throw new Error(`PORTAL_URL must be an absolute http(s) URL, not "${configuredPortal}".`);
+console.log(` Workspace portal link: ${portalUrl ?? "none"}`);
+
 const outdir = path.join(process.cwd(), "dist");
-const portalUrl = workspacePortalUrl(process.env.PORTAL_URL);
 
 /** Red Hat Display weights in public/fonts (the sign-in page's), preloaded so the first render uses them. */
 const FONTS = ["/fonts/RedHatDisplay-Regular.ttf", "/fonts/RedHatDisplay-SemiBold.ttf"];

@@ -1377,7 +1377,11 @@ export function GalleryScreen() {
               </TouchableOpacity>
             </View>
           ) : (
-            <TouchableOpacity onPress={() => push("/asg/gallery-settings")} style={themed($settingsButton)}>
+            <TouchableOpacity
+              onPress={() => push("/asg/gallery-settings")}
+              style={themed($settingsButton)}
+              accessibilityRole="button"
+              accessibilityLabel={translate("glasses:gallerySettings")}>
               <Icon name="settings" size={24} color={theme.colors.text} />
             </TouchableOpacity>
           )

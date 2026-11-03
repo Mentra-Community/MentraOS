@@ -55,7 +55,8 @@ anything larger as a [stream](#large-files-streaming).
 
 `setFromUrl` downloads a URL straight to disk host-side, and `importFile` opens
 the OS file picker and stores the chosen file. In both cases the bytes never pass
-through your JS context, which keeps large files off the bridge.
+through your JS context, which keeps large files off the bridge. `setFromUrl`
+downloads only `http:` and `https:` URLs.
 
 ```typescript
 // Host downloads the URL to disk. opts.headers can carry an auth token.
@@ -166,7 +167,7 @@ await reader.close();
 | `createdAt` | `number` | Epoch ms first written. |
 | `updatedAt` | `number` | Epoch ms last written. |
 | `md5` | `string` | Content md5 (lowercase hex). Skipped for very large blobs. |
-| `uri` | `string` | `file://` URI. Feed to `session.speaker.play`, `session.blob.share`, etc. |
+| `uri` | `string` | `file://` URI. Feed to `session.speaker.play` or `session.system.share`; they accept no other file. |
 | `meta` | `Record<string, string \| number \| boolean>` | App-defined metadata persisted with the blob. |
 
 ## Size limits

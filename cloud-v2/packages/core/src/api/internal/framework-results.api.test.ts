@@ -87,7 +87,10 @@ test("a 2437-asset frozen result publishes unchanged through the authenticated r
     assets,
     result: {runId: "original-ota", finishedAt: "2026-10-05T15:38:30.929Z", setup: {status: "passed"}, test: "failed",
       steps: [{id: "OTA-04-requested", status: "failed", durationMs: 347211}],
-      teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      teardown: {ready: true, outcomes: [{state: 'cleaned', resourceId: 'app', evidence: [],
+        idleCheck: {conditions: [{id: 'app-absent', observed: {processes: []}, outcome: 'passed'}]},
+        newDiagnostic: {measurements: [true, 1, null], explanation: 'Original return observation'}}],
+        errors: [], unavailableResources: []},
       failures: [{phase: "test", actionId: "OTA-04-requested", message: "offer did not arrive within 90000 ms; no update was repeated"}],
       evidence: assets.map(asset => asset.id), timing: {startedAt: "2026-10-05T15:12:49.686Z", setupMs: 0, testMs: 347211, teardownMs: 1000}},
   }
@@ -128,6 +131,7 @@ test("a 2437-asset frozen result publishes unchanged through the authenticated r
   expect(await first.json()).toEqual(receipt);
   expect(stored!.payload.assets).toEqual(assets);
   expect(stored!.payload.result.evidence).toEqual(run.result.evidence);
+  expect(stored!.payload as unknown).toEqual(run);
   expect((await service.detail(run.requestId)).outcome).toBe("failed");
   expect(await (await post()).json()).toEqual({...receipt, created: false});
   expect((await api.request(`/${run.requestId}/complete`, {method: "POST", headers})).status).toBe(409);
@@ -136,7 +140,9 @@ test("a 2437-asset frozen result publishes unchanged through the authenticated r
     payloadSha256: receipt.payloadSha256, manifestSha256: requestInputDigest(assets)});
   expect((await api.request("/", {method: "POST", headers, body: JSON.stringify({...run,
     assets: [...assets.slice(0, -1), {...assets.at(-1)!, sha256: "d".repeat(64)}]})})).status).toBe(409);
-  expect((await api.request("/", {method: "POST", headers, body: body.slice(0, -1) + `,"notes":"${"x".repeat(FRAMEWORK_JSON_BYTES)}"}`})).status).toBe(413);
+  const oversized = structuredClone(run);
+  oversized.result.teardown.outcomes[0]!.newDiagnostic.explanation = 'x'.repeat(FRAMEWORK_JSON_BYTES);
+  expect((await api.request("/", {method: "POST", headers, body: JSON.stringify(oversized)})).status).toBe(413);
 })
 
 test("completion logs bounded Mongo failure details without exposing operation bodies or credentials", async () => {

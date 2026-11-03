@@ -28,6 +28,25 @@ export function formatDateTime(iso: string): string {
   return date ? dateTime.format(date) : iso;
 }
 
+/** The calendar day of `date` in the viewer's time zone, as a day number (so a difference of days is whole). */
+function dayNumber(date: Date): number {
+  return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000);
+}
+
+/**
+ * When something ends, as the Invited tab says it: "Today", "Tomorrow", "In 6 days", counted in the viewer's calendar
+ * days, and "Expired" once it has passed. The raw string when it is not a date. `now` is for tests.
+ */
+export function formatExpiry(iso: string, now: Date = new Date()): string {
+  const date = parse(iso);
+  if (!date) return iso;
+  if (date.getTime() <= now.getTime()) return "Expired";
+  const days = dayNumber(date) - dayNumber(now);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  return `In ${days} days`;
+}
+
 /**
  * "Sep 2, 2026" in the viewer's time zone, in the portal's `locale` (`en-US` unless given: "2 Sep 2026" for
  * `en-GB`); the raw string when it is not a date. The zone is read on every call, not once at load.

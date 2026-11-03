@@ -366,7 +366,10 @@ export async function deleteUser(userId: string): Promise<void> {
 /** Build the GoTrue authorize URL for an OAuth provider (browser is redirected
  * here; the callback lands back on core). `codeChallenge` is S256 of core's
  * verifier: GoTrue only issues a PKCE-exchangeable auth code when the challenge
- * rides on the authorize request, so omitting it breaks `exchangeOAuthCode`. */
+ * rides on the authorize request, so omitting it breaks `exchangeOAuthCode`.
+ * Google gets `prompt=select_account` (GoTrue passes it on), so each sign-in
+ * shows its account chooser instead of reusing the account the browser last
+ * signed in with, which survives signing out of Mentra. */
 export function authorizeUrl(provider: string, redirectTo: string, codeChallenge: string): string {
   const q = new URLSearchParams({
     provider,
@@ -374,6 +377,7 @@ export function authorizeUrl(provider: string, redirectTo: string, codeChallenge
     code_challenge: codeChallenge,
     code_challenge_method: "s256",
   });
+  if (provider === "google") q.set("prompt", "select_account");
   return `${baseUrl()}/auth/v1/authorize?${q}`;
 }
 

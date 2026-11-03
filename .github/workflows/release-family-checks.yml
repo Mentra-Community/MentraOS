@@ -2,13 +2,24 @@ name: Coordinated Release Family Checks
 
 on:
   pull_request:
-    branches: [dev, staging, main]
+    # dev releases come from the Mentra monorepo.
+    branches: [staging, main]
     paths:
       - ".github/release-family.json"
       - ".github/production-release/**"
       - ".github/scripts/*.mjs"
       - ".github/artifact-storage/**"
       - ".github/workflows/coordinated-*.yml"
+      - ".github/actions/stamp-release/**"
+      - ".github/workflows/bluetooth-starter-kit-export.yml"
+      - ".github/workflows/example-app-builds.yml"
+      - ".github/workflows/reusable-bluetooth-examples.yml"
+      - ".github/workflows/submit-example-testflight-review.yml"
+      - "examples/package.json"
+      - "examples/bun.lock"
+      - "examples/patches/**"
+      - "examples/bluetooth/**"
+      - "mintlify-docs/docs.json"
       - ".github/workflows/release-family-checks.yml"
       - ".github/workflows/reusable-coordinated-*.yml"
       - ".github/workflows/reusable-production-*.yml"

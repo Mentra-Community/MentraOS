@@ -15,9 +15,20 @@
  * the engine restores miniapps while the account it collects for may still be being resolved, and those launches are
  * that account's. The reporter discards them when the account changes. Photo stages are not kept.
  *
+ * Phase 12 adds a miniapp's own events (`telemetry`, from `session.telemetry.capture`, attributed by the runtime to the
+ * package whose bridge sent it), its crashes, install attempts, and the glasses' pairing and connection changes. None of
+ * these is kept while nothing listens: with no run collecting (Fleet not installed on the phone's Core, nobody signed
+ * in) they are dropped, and telemetry dropped this way is not counted.
+ *
  * This module imports nothing at run time, so the hot paths that import it carry no Fleet weight.
  */
-import type {FleetRecord} from "@mentra/cloud-protocol"
+import type {
+  FleetConnectionEventPayload,
+  FleetLaunchFailureReason,
+  FleetMiniappCrashPayload,
+  FleetMiniappInstallPayload,
+  FleetRecord,
+} from "@mentra/cloud-protocol"
 
 /** A miniapp start the engine attempted, and how it went. */
 export type FleetLaunchEvent = Extract<FleetRecord, {kind: "miniapp_launch"}>["payload"]
@@ -34,18 +45,42 @@ export interface UndeliveredLaunch {
   observedAt: number
 }
 
+/** A miniapp's own event as the bridge delivered it: unchecked, the collector applies the limits. */
+export interface FleetTelemetryEvent {
+  packageName: string
+  versionName?: string
+  event: unknown
+  properties: unknown
+}
+
+/** A crash: the collector adds the miniapp's execution session. */
+export type FleetCrashEvent = Omit<FleetMiniappCrashPayload, "executionSessionId">
+export type FleetInstallEvent = FleetMiniappInstallPayload
+/** A pairing or connection change: the collector adds the glasses, their model and the Mentra App's version. */
+export type FleetConnectionEvent = Pick<FleetConnectionEventPayload, "event" | "category" | "reconnectMs">
+
 export interface FleetEventListener {
   launch?: (event: FleetLaunchEvent) => void
   photo?: (event: FleetPhotoEvent) => void
+  telemetry?: (event: FleetTelemetryEvent) => void
+  crash?: (event: FleetCrashEvent) => void
+  install?: (event: FleetInstallEvent) => void
+  connection?: (event: FleetConnectionEvent) => void
 }
 
 /** More launches than this before the collector starts are not one boot's restores; the oldest go first. */
 const MAX_UNDELIVERED_LAUNCHES = 32
 
 const listeners = new Set<FleetEventListener>()
+let lastUserDisconnectAt = 0
 const undelivered: UndeliveredLaunch[] = []
+/** A start under way that reports its own launch: why a spawn it held back failed, if one did. */
+interface LaunchClaim {
+  failureReason?: FleetLaunchFailureReason
+}
+
 /** Starts under way that report their own launch, by package. */
-const claims = new Map<string, number>()
+const claims = new Map<string, Set<LaunchClaim>>()
 
 function warnListenerFailed(error: unknown): void {
   // The event is left out of the warning: it names a package or an operation.
@@ -86,20 +121,34 @@ export const fleetEvents = {
    * same miniapp is under way, which reports it. Never throws.
    */
   launchUnlessClaimed(event: FleetLaunchEvent): void {
-    if ((claims.get(event.packageName) ?? 0) > 0) return
-    deliverLaunch(event)
+    const held = claims.get(event.packageName)
+    if (!held) {
+      deliverLaunch(event)
+      return
+    }
+    // The start reports this attempt as its own, so it keeps the reason the spawn failed for.
+    const reason = event.failureReason
+    if (reason === undefined) return
+    for (const claim of held) if (claim.failureReason === undefined || claim.failureReason === "unknown") claim.failureReason = reason
   },
 
-  /** A start of `packageName` that reports its own launch is under way, until the returned function is called. */
-  claimLaunch(packageName: string): () => void {
-    claims.set(packageName, (claims.get(packageName) ?? 0) + 1)
+  /**
+   * A start of `packageName` that reports its own launch is under way, until the returned function is called. That
+   * function returns why a spawn the start held back failed, for the start's own report, or undefined.
+   */
+  claimLaunch(packageName: string): () => FleetLaunchFailureReason | undefined {
+    const claim: LaunchClaim = {}
+    const held = claims.get(packageName) ?? new Set<LaunchClaim>()
+    held.add(claim)
+    claims.set(packageName, held)
     let released = false
     return () => {
-      if (released) return
-      released = true
-      const left = (claims.get(packageName) ?? 1) - 1
-      if (left > 0) claims.set(packageName, left)
-      else claims.delete(packageName)
+      if (!released) {
+        released = true
+        held.delete(claim)
+        if (held.size === 0 && claims.get(packageName) === held) claims.delete(packageName)
+      }
+      return claim.failureReason
     }
   },
 
@@ -115,13 +164,48 @@ export const fleetEvents = {
 
   /** A photo operation reached a stage. Never throws. */
   photo(event: FleetPhotoEvent): void {
-    if (listeners.size === 0) return
-    for (const listener of [...listeners]) {
-      try {
-        listener.photo?.(event)
-      } catch (error) {
-        warnListenerFailed(error)
-      }
-    }
+    deliver("photo", event)
   },
+
+  /** A miniapp captured one of its own events. Never throws. */
+  telemetry(event: FleetTelemetryEvent): void {
+    deliver("telemetry", event)
+  },
+
+  /** A miniapp crashed. Never throws. */
+  crash(event: FleetCrashEvent): void {
+    deliver("crash", event)
+  },
+
+  /** An install, update or removal of a miniapp was attempted. Never throws. */
+  install(event: FleetInstallEvent): void {
+    deliver("install", event)
+  },
+
+  /** The person asked the glasses to disconnect (or forgot or unpaired them): the next disconnect is theirs. */
+  userDisconnect(): void {
+    lastUserDisconnectAt = Date.now()
+  },
+
+  /** When the person last asked the glasses to disconnect (epoch ms), or 0. */
+  lastUserDisconnect(): number {
+    return lastUserDisconnectAt
+  },
+
+  /** The glasses' pairing or connection changed. Never throws. */
+  connection(event: FleetConnectionEvent): void {
+    deliver("connection", event)
+  },
+}
+
+/** Hands `event` to every listener of `kind`; with none, it is dropped. */
+function deliver<K extends "photo" | "telemetry" | "crash" | "install" | "connection">(kind: K, event: Parameters<NonNullable<FleetEventListener[K]>>[0]): void {
+  if (listeners.size === 0) return
+  for (const listener of [...listeners]) {
+    try {
+      ;(listener[kind] as ((value: typeof event) => void) | undefined)?.(event)
+    } catch (error) {
+      warnListenerFailed(error)
+    }
+  }
 }

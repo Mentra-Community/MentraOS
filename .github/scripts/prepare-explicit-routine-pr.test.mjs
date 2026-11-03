@@ -11,3 +11,10 @@ test('explicit build uses authenticated exact open head/base synthetic merge', (
     {...pr, head: {...pr.head, repo: {full_name: 'outside/fork'}}}, {...pr, merge_commit_sha: null}])
     assert.throws(() => explicitRoutinePr(value, inputs, 'Mentra-Community/MentraOS'))
 })
+
+test('the Mentra monorepo builds its own same-repository PRs; other repositories are refused', () => {
+  const monorepo = {...pr, head: {...pr.head, repo: {full_name: 'Mentra-Community/Mentra'}}}
+  assert.equal(explicitRoutinePr(monorepo, inputs, 'Mentra-Community/Mentra').mergeSha, merge)
+  assert.throws(() => explicitRoutinePr(pr, inputs, 'Mentra-Community/Mentra'))
+  assert.throws(() => explicitRoutinePr({...pr, head: {...pr.head, repo: {full_name: 'outside/repo'}}}, inputs, 'outside/repo'))
+})

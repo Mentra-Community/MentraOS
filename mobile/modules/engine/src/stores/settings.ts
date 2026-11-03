@@ -344,6 +344,20 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
     nativeAuthoritative: true,
   },
+  // Set from the saved glasses' `pairing_info` (native `secure_pairing_capable`).
+  // Native uses it to treat repeated connect-time rejections as a takeover only
+  // for secure-pairing firmware; legacy firmware never rejects a non-owner on
+  // purpose. Cleared on forget; refreshed by the next `pairing_info`.
+  mentra_live_secure_firmware: {
+    key: "mentra_live_secure_firmware",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    // Native owns this flag and echoes it down via save_setting; a stale JS
+    // value must not overwrite what the glasses just reported on connect.
+    nativeAuthoritative: true,
+  },
   default_controller: {
     key: "default_controller",
     defaultValue: () => "",
@@ -482,9 +496,10 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   /*
-   * Mentra Live can power itself off after ~20 minutes off the wearer's face
-   * (cs_swit type 11). Off unless Super Mode turns it on. Re-pushed on connect,
-   * so this default is what a new install sends to the glasses.
+   * Mentra Live wear detection, audio/media policy, and ~20-minute unworn shutdown
+   * (cs_swit type 11). Off by default, matching the firmware. Re-pushed on
+   * connect, so this default is what a new install sends to the glasses, and
+   * it overwrites a value saved on the glasses.
    */
   auto_power_off_enabled: {
     key: "auto_power_off_enabled",
@@ -854,6 +869,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.device_name.key,
   SETTINGS.device_address.key,
   SETTINGS.project_name.key,
+  SETTINGS.mentra_live_secure_firmware.key,
   SETTINGS.default_controller.key,
   SETTINGS.pending_controller.key,
   SETTINGS.controller_device_name.key,
@@ -1165,6 +1181,19 @@ export const useSettingsStore = create<SettingsState>()(
           // repeated attempt per launch until a write succeeds.
           if (allCleared) {
             storage.save(BUILD_ENV_KEY, buildEnv)
+          }
+        }
+
+        // Turn wear behavior off once for every install, including those an earlier migration
+        // turned on. A later explicit opt-in remains.
+        const WEAR_DEFAULT_OFF_KEY = "migration:wear_detection_disabled_v3"
+        const wearDefaultOffDone = storage.load<boolean>(WEAR_DEFAULT_OFF_KEY)
+        if (wearDefaultOffDone.is_error() || !wearDefaultOffDone.value) {
+          const result = await get().setSetting(SETTINGS.auto_power_off_enabled.key, false, true)
+          if (result.is_error()) {
+            console.log("SETTINGS: wear detection default-off migration failed:", result.error)
+          } else {
+            storage.save(WEAR_DEFAULT_OFF_KEY, true)
           }
         }
 

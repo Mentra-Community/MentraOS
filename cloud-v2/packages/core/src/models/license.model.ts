@@ -8,8 +8,10 @@
  * insert, which is what caps the seats.
  *
  * `revision` is billing's, and a write applies only when it is newer. `endedAt` and `endedReason` are set
- * when its workspace is deleted (`workspace_deleted`); an ended license takes no seat and no write. Nothing
- * is ever deleted.
+ * when its workspace is deleted (`workspace_deleted`: it takes no seat and no write) or when billing writes
+ * that its subscription was cancelled and its term has run out (`lapsed`: it takes no seat, and only a newer
+ * revision of billing's, which a cancelled subscription never sends, makes it stand again). Nothing is ever
+ * deleted.
  *
  * `seatRequests` are the ids of the seat requests (`LicenseWrite.seatRequest`) Core has decided for the
  * license, the latest 20: each is decided once, on the first applied write that carries it, and its id is

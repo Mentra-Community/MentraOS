@@ -1,8 +1,8 @@
 appId: ${MAESTRO_APP_ID}
 ---
 # Start signed in at an unpaired Home. No physical glasses are required.
-# An unfinished scan remains resumable after restart; explicit
-# cancellation must retire that selection and restore the real unpaired card.
+# A scan left unfinished (here: the app is killed on it) is cancelled when
+# Home comes back: Home shows the unpaired card, never a finish-pairing state.
 - launchApp:
     permissions:
       all: allow
@@ -13,16 +13,15 @@ appId: ${MAESTRO_APP_ID}
 - tapOn:
     id: "pairing-model-mentra_live"
 - extendedWaitUntil:
-    visible: "Turn on your glasses"
+    visible: "Put your glasses in pairing mode"
     timeout: 20000
 - stopApp
 - launchApp
-- assertVisible: "Finish pairing"
-- tapOn: "Cancel pairing"
 - extendedWaitUntil:
     visible: "Pair glasses"
     timeout: 10000
 - assertNotVisible: "Finish pairing"
+- assertNotVisible: "Cancel pairing"
 - stopApp
 - launchApp
 - assertVisible: "Pair glasses"

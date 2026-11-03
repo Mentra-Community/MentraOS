@@ -34,7 +34,7 @@ jest.mock("@/services/cloudClient", () => ({
 jest.mock("@/utils/auth/authClient", () => ({AuthClient: class {}}))
 
 import {AccountAuthProvider} from "./accountClient"
-import {storage} from "@/utils/storage"
+import {accountCredentials} from "@/utils/auth/accountCredentials"
 
 const CORE = "http://localhost:3000"
 const TEST_EMAIL = process.env.MENTRA_LIVE_TEST_EMAIL
@@ -82,8 +82,8 @@ describeLive("AccountAuthProvider concurrent refresh (live, RUN_LIVE_AUTH_TESTS=
     // hit the /api/account/me probe, get rejected, and attempt a refresh with
     // the same (real, valid, unused) refresh token — faithfully reproducing
     // "access token expired after backgrounding" without waiting out a TTL.
-    storage.save(ACCESS_KEY, "garbage-expired-access-token")
-    storage.save(REFRESH_KEY, real.refresh)
+    await accountCredentials.set(ACCESS_KEY, "garbage-expired-access-token")
+    await accountCredentials.set(REFRESH_KEY, real.refresh)
 
     const provider = new AccountAuthProvider()
 
@@ -94,10 +94,10 @@ describeLive("AccountAuthProvider concurrent refresh (live, RUN_LIVE_AUTH_TESTS=
     const [sessionResult, subjectResult] = await Promise.all([provider.getSession(), provider.getSubjectToken()])
 
     const tokensAfter = {
-      access: storage.load<string>(ACCESS_KEY),
-      refresh: storage.load<string>(REFRESH_KEY),
+      access: await accountCredentials.get(ACCESS_KEY),
+      refresh: await accountCredentials.get(REFRESH_KEY),
     }
-    const survived = tokensAfter.access.is_ok() && tokensAfter.refresh.is_ok()
+    const survived = Boolean(tokensAfter.access) && Boolean(tokensAfter.refresh)
 
     console.log("session result:", sessionResult.is_ok() ? "ok" : sessionResult.error.message)
     console.log("subjectToken result:", subjectResult.is_ok() ? "ok" : subjectResult.error.message)
@@ -111,8 +111,8 @@ describeLive("AccountAuthProvider concurrent refresh (live, RUN_LIVE_AUTH_TESTS=
 
   test("a caller presenting an already-rotated refresh token does not wipe the winner's session", async () => {
     const real = await loginForRealTokens()
-    storage.save(ACCESS_KEY, real.access)
-    storage.save(REFRESH_KEY, real.refresh)
+    await accountCredentials.set(ACCESS_KEY, real.access)
+    await accountCredentials.set(REFRESH_KEY, real.refresh)
 
     const provider = new AccountAuthProvider() as any
 
@@ -130,10 +130,10 @@ describeLive("AccountAuthProvider concurrent refresh (live, RUN_LIVE_AUTH_TESTS=
     const afterB = await provider.performRefresh(real.refresh)
 
     const stored = {
-      access: storage.load<string>(ACCESS_KEY),
-      refresh: storage.load<string>(REFRESH_KEY),
+      access: await accountCredentials.get(ACCESS_KEY),
+      refresh: await accountCredentials.get(REFRESH_KEY),
     }
-    const survived = stored.access.is_ok() && stored.refresh.is_ok()
+    const survived = Boolean(stored.access) && Boolean(stored.refresh)
 
     console.log("caller B result:", afterB ? "recovered current session" : "null (would clearTokens)")
     console.log("tokens survived after the stale caller:", survived)

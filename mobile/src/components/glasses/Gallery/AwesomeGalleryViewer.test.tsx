@@ -7,6 +7,8 @@ import {AwesomeGalleryViewer, CustomOverlay} from "./AwesomeGalleryViewer"
 
 let mockGalleryProps: Record<string, unknown> = {}
 let mockImageProps: Record<string, unknown> = {}
+let mockRenderedImageProps: Record<string, unknown>[] = []
+let mockSheetProps: Record<string, unknown> = {}
 let mockVideoProps: Record<string, unknown> = {}
 let mockSliderProps: Record<string, unknown> = {}
 const mockSeek = jest.fn()
@@ -38,10 +40,16 @@ jest.mock("@/contexts/ThemeContext", () => {
 jest.mock("expo-image", () => ({
   Image: (props: Record<string, unknown>) => {
     mockImageProps = props
+    mockRenderedImageProps.push(props)
     return null
   },
 }))
-jest.mock("./MediaMetadataSheet", () => ({MediaMetadataSheet: () => null}))
+jest.mock("./MediaMetadataSheet", () => ({
+  MediaMetadataSheet: (props: Record<string, unknown>) => {
+    mockSheetProps = props
+    return null
+  },
+}))
 jest.mock("react-native-gesture-handler", () => {
   const React = require("react")
   const {View} = require("react-native")
@@ -153,6 +161,51 @@ describe("CustomOverlay", () => {
       source: {uri: "file:///gallery/photo.jpg"},
       transition: 0,
     })
+  })
+
+  it("layers the full-size image only while the active photo is zoomed", () => {
+    const first = {name: "first.jpg", filePath: "/gallery/first.jpg", is_video: false} as PhotoInfo
+    const second = {name: "second.jpg", filePath: "/gallery/second.jpg", is_video: false} as PhotoInfo
+    type RenderItem = (info: {item: PhotoInfo; index: number; setImageDimensions: jest.Mock}) => React.ReactElement
+    const renderedImages = (item: PhotoInfo, index: number) => {
+      mockRenderedImageProps = []
+      render((mockGalleryProps.renderItem as RenderItem)({item, index, setImageDimensions: jest.fn()}))
+      return mockRenderedImageProps
+    }
+    const fullResolution = (images: Record<string, unknown>[]) =>
+      images.filter((image) => image.testID === "gallery-full-resolution-image")
+
+    render(<AwesomeGalleryViewer visible photos={[first, second]} initialIndex={0} onClose={jest.fn()} />)
+    expect(mockGalleryProps.onScaleChangeRange).toEqual({start: 1, end: Number.POSITIVE_INFINITY})
+    expect(fullResolution(renderedImages(first, 0))).toHaveLength(0)
+
+    act(() => (mockGalleryProps.onScaleChange as (scale: number) => void)(1.4))
+
+    expect(fullResolution(renderedImages(first, 0))).toEqual([
+      expect.objectContaining({
+        allowDownscaling: false,
+        cachePolicy: "memory",
+        source: {uri: "file:///gallery/first.jpg"},
+      }),
+    ])
+    // The screen-sized preview stays underneath until the original paints.
+    expect(renderedImages(first, 0)[0]).toMatchObject({allowDownscaling: true})
+    expect(fullResolution(renderedImages(second, 1))).toHaveLength(0)
+
+    act(() => (mockGalleryProps.onIndexChange as (index: number) => void)(1))
+    expect(fullResolution(renderedImages(second, 1))).toHaveLength(0)
+
+    act(() => (mockGalleryProps.onIndexChange as (index: number) => void)(0))
+    expect(fullResolution(renderedImages(first, 0))).toHaveLength(0)
+  })
+
+  it("keeps the media details sheet below the app bar", () => {
+    const photo = {name: "photo.jpg", filePath: "/gallery/photo.jpg", is_video: false} as PhotoInfo
+    const view = render(<AwesomeGalleryViewer visible photos={[photo]} initialIndex={0} onClose={jest.fn()} />)
+
+    fireEvent(view.getByTestId("media-viewer-header"), "layout", {nativeEvent: {layout: {height: 96}}})
+
+    expect(mockSheetProps.topInset).toBe(96)
   })
 
   it("uses the active theme background throughout video previews", () => {

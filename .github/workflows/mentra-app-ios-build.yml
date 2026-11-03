@@ -3,45 +3,7 @@ run-name: "${{ inputs.routine_pr && format('Routine PR #{0} {1} {2}{3}', inputs.
 
 on:
   pull_request:
-    paths:
-      - "mobile/**"
-      - "android_core/**"
-      - "cloud-v2/packages/cloud-client/src/**"
-      - "cloud-v2/packages/cloud-client/react-native/**"
-      - "cloud-v2/packages/cloud-client/package.json"
-      - "cloud-v2/packages/protocol/src/**"
-      - "cloud-v2/packages/protocol/package.json"
-      - "cloud-v2/packages/runtime/src/protocol/**"
-      - "cloud-v2/bun.lock"
-      - "package.json"
-      - "bun.lock"
-      - "asg_client/**"
-      - ".github/workflows/mentra-app-android-build.yml"
-      - ".github/workflows/mentra-asg-client-build.yml"
-      - ".github/actions/inject-signing/**"
-      - ".github/scripts/pr-mobile-build*"
-      - ".github/scripts/mobile-build-inputs*"
-      - ".github/scripts/ensure-android-ndk*"
-      - ".github/scripts/install-android-sdk*"
-      - ".github/scripts/pr_mobile_config.py"
-      - ".github/scripts/prepare-pr-mobile.mjs"
-      - ".github/scripts/repackage-pr-apk*"
-      - ".github/scripts/test_repackage_pr_apk.py"
-      - ".github/scripts/notify-pr-builds*"
-      - ".github/workflows/mentra-app-ios-build.yml"
-      - ".github/workflows/reusable-pr-build-notification.yml"
-      - ".github/scripts/pr-ios-artifacts*"
-      - ".github/scripts/ios-*"
-      - ".github/actions/disk-guard/**"
-      - ".github/scripts/pr-android-artifacts*"
-      - ".github/scripts/select-pr-asg.mjs"
-      - ".github/scripts/compute-asg-build-identity.mjs"
-      - ".github/scripts/allocate-asg-version.mjs"
-      - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
-  push:
-    branches:
-      - main
-      - dev
+    branches-ignore: [dev]
     paths:
       - "mobile/**"
       - "android_core/**"
@@ -347,21 +309,25 @@ jobs:
               CLOUD_CORE="https://core.dev.us-west-2.mentraglass.com"
               CLOUD_RT="https://runtime.dev.us-west-2.mentraglass.com"
               CLOUD_MINIAPPS="https://miniapps.dev.mentraglass.com/"
+              CLOUD_DIRECTORY="https://api.apps.dev.mentraglass.com/"
               ;;
             staging)
               CLOUD_CORE="https://core.staging.us-west-2.mentraglass.com"
               CLOUD_RT="https://runtime.staging.us-west-2.mentraglass.com"
               CLOUD_MINIAPPS="https://miniapps.staging.mentraglass.com/"
+              CLOUD_DIRECTORY="https://api.apps.staging.mentraglass.com/"
               ;;
             prod)
               CLOUD_CORE="https://core.us-west-2.mentraglass.com"
               CLOUD_RT="https://runtime.us-west-2.mentraglass.com"
               CLOUD_MINIAPPS="https://miniapps.mentraglass.com/"
+              CLOUD_DIRECTORY="https://api.apps.mentraglass.com/"
               ;;
             *)
               CLOUD_CORE=""
               CLOUD_RT=""
               CLOUD_MINIAPPS=""
+              CLOUD_DIRECTORY=""
               ;;
           esac
           if [ -n "$CLOUD_CORE" ]; then
@@ -369,6 +335,7 @@ jobs:
                 -e "s|^EXPO_PUBLIC_CLOUD_CORE_URL=.*|EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE|" \
                 -e "s|^EXPO_PUBLIC_CLOUD_RUNTIME_URL=.*|EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT|" \
                 -e "s|^EXPO_PUBLIC_MINIAPPS_URL=.*|EXPO_PUBLIC_MINIAPPS_URL=$CLOUD_MINIAPPS|" \
+                -e "s|^EXPO_PUBLIC_DIRECTORY_URL=.*|EXPO_PUBLIC_DIRECTORY_URL=$CLOUD_DIRECTORY|" \
                 .env > .env.tmp && mv .env.tmp .env
             # Make the pin authoritative for every later step. release:android /
             # release:ios call setBuildEnv(), which keeps any value already
@@ -380,12 +347,13 @@ jobs:
             # inherited endpoint, and validateReleaseArchive() would compare the
             # bundle against that same inherited process env and pass. GITHUB_ENV
             # takes precedence over the runner's inherited environment, so the
-            # four keys agree from here on.
+            # pinned keys agree from here on.
             {
               echo "EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV"
               echo "EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE"
               echo "EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT"
               echo "EXPO_PUBLIC_MINIAPPS_URL=$CLOUD_MINIAPPS"
+              echo "EXPO_PUBLIC_DIRECTORY_URL=$CLOUD_DIRECTORY"
             } >> "$GITHUB_ENV"
             echo "Cloud backend pinned to $CLOUD_ENV ($CLOUD_CORE)"
           elif [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.routine_pr }}" != "" ]; then
@@ -568,6 +536,10 @@ jobs:
       - name: Test native hotspot error facts
         if: steps.select-ipa.outputs.reused != 'true'
         run: mobile/scripts/test-hotspot-error-facts.sh
+
+      - name: Test the WebView's miniapp origins
+        if: steps.select-ipa.outputs.reused != 'true'
+        run: mobile/scripts/test-webview-miniapp-origin.sh
 
       - name: Validate CocoaPods post-install project integrity
         if: steps.select-ipa.outputs.reused != 'true'

@@ -24,6 +24,12 @@ class MacInstallerPackagingTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
 
+    def test_installer_origin_follows_the_building_repository(self):
+        self.assertEqual(installer.installer_defines({"GITHUB_REPOSITORY": "Mentra-Community/Mentra"}),
+                         ["-D", "MENTRA_MONOREPO"])
+        self.assertEqual(installer.installer_defines({"GITHUB_REPOSITORY": "Mentra-Community/MentraOS"}), [])
+        self.assertEqual(installer.installer_defines({}), [])
+
     def test_missing_credentials_fail_before_importing_or_building(self):
         with patch.object(installer, "run") as command:
             with self.assertRaisesRegex(ValueError, "MAC_INSTALLER_P12_BASE64"):

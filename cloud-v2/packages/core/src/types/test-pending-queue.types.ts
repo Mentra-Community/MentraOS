@@ -14,6 +14,12 @@ export interface PendingQueueItem {
   state: string;
   createdAt?: string;
   reason?: string;
+  diagnosis?: {
+    stage: string;
+    nextAction: string;
+    conditions: {label: string; status: 'passed' | 'waiting' | 'unknown' | 'failed'; expected: string; observed: string;
+      hostId?: string; laneId?: string; resourceId?: string; owner?: string}[];
+  };
   build?: {headSha: string; prNumber?: number; channel: string};
   assignment?: {hostId: string; laneId: string};
   compatibilityKnown: boolean;

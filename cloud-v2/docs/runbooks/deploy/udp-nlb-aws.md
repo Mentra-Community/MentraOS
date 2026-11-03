@@ -31,15 +31,17 @@ a `Service` of `type: LoadBalancer` with the right annotations.
 Our audio path needs **NLB** (UDP, low latency). Our HTTP/WS path stays on
 the **ALB** (Porter manages it; it's the `*.onporter.run` hostname).
 
-## What's deployed (verified 2026-07-09)
+## What's deployed (verified 2026-10-29)
 
 Per-environment state:
 
 | Env | NLB Service | UDP path |
 | --- | --- | --- |
+| `cloud-prod` | `cloud-prod-audio-udp` (applied 2026-10-29) | WORKING: Doppler `prod` advertises the raw NLB hostname |
+| `cloud-staging` | `cloud-staging-audio-udp` (applied 2026-10-29) | WORKING: Doppler `staging` advertises the raw NLB hostname |
 | `cloud-isaiah` | `cloud-isaiah-audio-udp` (applied 2026-07-09) | WORKING: probe packets from the internet reach the pod; `AUDIO_UDP_ADVERTISED_HOST` is the raw NLB hostname |
-| `cloud-dev` / `cloud-debug` / `cloud-staging` / `cloud-prod` | none applied | WS fallback only; Doppler advertises `audio-udp.<env>` names that have no DNS record |
-| (legacy) | `cloud-v2-audio-udp` still exists in-cluster | DEAD: selects the retired `cloud-v2` app, zero endpoints, still billing ~$16/mo; candidate for `kubectl delete svc cloud-v2-audio-udp` |
+| `cloud-dev` / `cloud-debug` | none applied | WS fallback only: `dev_aws` advertises the legacy `cloud-v2-audio-udp` hostname (wrong app), `dev_debug` a name with no DNS record |
+| (legacy) | `cloud-v2-audio-udp` still exists in-cluster | Selects the retired `cloud-v2` app, which still runs one dev-config pod. Until 2026-10-29 prod and staging advertised it too, so their probes reached that dev pod and every session fell back to WS. Delete it once `dev_aws` stops advertising it |
 
 - The apps are now per-environment (`cloud-dev`, `cloud-debug`,
   `cloud-staging`, `cloud-prod`, plus personal envs like `cloud-isaiah`),
@@ -161,9 +163,9 @@ doppler secrets set "AUDIO_UDP_ADVERTISED_HOST=<nlb-hostname>" \
   --project cloud-v2 --config dev_<env>
 
 # 6. The Doppler→Porter integration auto-syncs the env group in ~5s, but
-#    pods do not restart on env changes. Redeploy the env:
-#    trigger its GitHub workflow (cloud-v2-<env>.yml) or
-#    `porter apply -f porter.<env>.yaml` from cloud-v2/.
+#    pods do not restart on env changes. The synced secret is updated in
+#    place, so a rolling restart keeps the image and picks up the new host:
+kubectl rollout restart deployment/cloud-<env>-runtime
 
 # 7. Verify UDP reachability from outside the cluster (UDP packet → NLB → pod).
 #    The test-client's smoke script is the easiest way. If packets vanish,
@@ -197,6 +199,22 @@ aws eks update-kubeconfig --region us-west-2 --name <cluster-name>
 kubectl get nodes
 kubectl auth can-i create svc
 # → "yes" if your IAM role has the right RBAC mapping
+```
+
+EKS access entries currently map the `GigaAdmin` SSO role and Porter's roles.
+An `aws login` as the account root has no entry; grant it a temporary
+namespace-scoped one and remove it afterwards:
+
+```bash
+aws eks create-access-entry --cluster-name aws-us-west-2 --region us-west-2 \
+  --principal-arn arn:aws:iam::<account>:root
+aws eks associate-access-policy --cluster-name aws-us-west-2 --region us-west-2 \
+  --principal-arn arn:aws:iam::<account>:root \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy \
+  --access-scope type=namespace,namespaces=default
+# ... apply, restart ...
+aws eks delete-access-entry --cluster-name aws-us-west-2 --region us-west-2 \
+  --principal-arn arn:aws:iam::<account>:root
 ```
 
 **Alternative**: Porter dashboard → Settings → Cluster → "Raw Manifests"

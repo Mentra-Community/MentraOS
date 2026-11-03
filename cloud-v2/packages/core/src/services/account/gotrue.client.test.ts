@@ -1,6 +1,7 @@
 import {afterEach, beforeEach, describe, expect, test} from "bun:test"
 import {
   assertSupabaseApiKeys,
+  authorizeUrl,
   deleteUser,
   resendVerification,
   signUp,
@@ -193,5 +194,25 @@ describe("account email redirect", () => {
     await resendVerification("a@b.co")
     expect(urls[0]!.pathname).toBe("/auth/v1/resend")
     expect(urls[0]!.searchParams.get("redirect_to")).toBe("https://verified.example.test/done")
+  })
+})
+
+describe("OAuth authorize URL", () => {
+  test("Google asks for account selection on every sign-in", () => {
+    const url = new URL(authorizeUrl("google", "https://core.example.test/api/account/oauth/callback?state=s1", "challenge-1"))
+    expect(url.origin + url.pathname).toBe("https://auth.example.test/auth/v1/authorize")
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      provider: "google",
+      redirect_to: "https://core.example.test/api/account/oauth/callback?state=s1",
+      code_challenge: "challenge-1",
+      code_challenge_method: "s256",
+      prompt: "select_account",
+    })
+  })
+
+  test("Apple gets no Google-specific prompt", () => {
+    const url = new URL(authorizeUrl("apple", "https://core.example.test/api/account/oauth/callback?state=s2", "challenge-2"))
+    expect(url.searchParams.get("provider")).toBe("apple")
+    expect(url.searchParams.has("prompt")).toBe(false)
   })
 })

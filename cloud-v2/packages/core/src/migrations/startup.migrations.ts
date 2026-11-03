@@ -27,6 +27,8 @@ import {ReportAssetModel, reconcileReportAssetIndexes} from '../models/report-as
 import { AccessCredentialModel } from "../models/access-credential.model";
 import { LicenseSeatModel } from "../models/license-seat.model";
 import { LicenseModel } from "../models/license.model";
+import { WorkspaceAssignedPackagesModel } from "../models/workspace-assigned-packages.model";
+import { MiniappRegistryArchiveRuleModel, MiniappRegistryEntryModel } from "../models/miniapp-registry.model";
 import { WorkspaceAuditCounterModel } from "../models/workspace-audit-counter.model";
 import { WorkspaceAuditEventModel } from "../models/workspace-audit-event.model";
 import { WorkspaceInvitationModel } from "../models/workspace-invitation.model";
@@ -34,6 +36,7 @@ import { WorkspaceMembershipModel } from "../models/workspace-membership.model";
 import { WorkspaceModel } from "../models/workspace.model";
 import { LegacyBrowserIdentityModel } from "../models/legacy-browser-identity.model";
 import { convertLegacyAdminKeys } from "../services/workspaces/legacy-admin-keys";
+import { initializeGuards } from "../services/workspaces/membership-guard.service";
 import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
@@ -109,7 +112,8 @@ export async function runStartupMigrations(): Promise<void> {
   // identities are among them: their collection is created here while it is
   // empty, so its unique index can be built on Azure Cosmos DB too. The change
   // feed's counter collection is new and built empty the same way, as are the
-  // licenses and their seats (one seat per license and membership); the feed's
+  // licenses and their seats (one seat per license and membership), and each
+  // workspace's assigned miniapps (one set per workspace); the feed's
   // `seq` index on the already populated audit events is not unique, because
   // Cosmos DB cannot add a unique index to a populated collection. An index the
   // database refuses (some databases a Private Cloud uses support only part of
@@ -126,6 +130,7 @@ export async function runStartupMigrations(): Promise<void> {
       LegacyBrowserIdentityModel,
       LicenseModel,
       LicenseSeatModel,
+      WorkspaceAssignedPackagesModel,
     ].map(
       async (model) => {
         try {
@@ -140,9 +145,32 @@ export async function runStartupMigrations(): Promise<void> {
       },
     ),
   );
+  // The miniapp registry: one entry per URL and one archive rule per kind and value (both unique), built empty
+  // with their collections before the first registration. A refused index is logged, as above.
+  await Promise.all(
+    [MiniappRegistryEntryModel, MiniappRegistryArchiveRuleModel].map(async (model) => {
+      try {
+        await model.createCollection();
+        await model.createIndexes();
+      } catch (error) {
+        logger.error(
+          { collection: model.collection.collectionName, error: (error as Error)?.message },
+          "failed to create miniapp registry collection indexes",
+        );
+      }
+    }),
+  );
   // Allowlisted admin API keys keep working as operator keys, before any
   // request is served. A key that fails is logged and retried next start.
   await convertLegacyAdminKeys();
+  // One workspace per person: everyone with exactly one active membership gets the guard that keeps it
+  // one. Idempotent; a failure is logged and retried at the next start (joins are still refused for anyone
+  // who holds an active membership, so nothing slips through meanwhile).
+  try {
+    await initializeGuards();
+  } catch (error) {
+    logger.error({ error: (error as Error)?.message }, "failed to write one-workspace guards");
+  }
   await ensureMentraAccountOem();
 }
 

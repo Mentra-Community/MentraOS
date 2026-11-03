@@ -29,6 +29,8 @@ import {
   useStop,
 } from "@mentra/engine"
 
+import {hasAssignmentReason} from "@mentra/engine-host-internal"
+
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {SYSTEM_APPS} from "@/constants/miniapps"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
@@ -776,16 +778,19 @@ export function AppsGrid({
               }
             },
           },
-        !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
-          label: translate("appInfo:uninstall"),
-          icon: "trash",
-          destructive: true,
-          onPress: () => {
-            if (liveSelectedApp) {
-              uninstallAppUI(liveSelectedApp)
-            }
+        // A miniapp a workspace assigned is managed: its menu has no Uninstall (the board's managed menu).
+        // Remove above only takes it off Home; the assignment keeps it installed.
+        !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") &&
+          !(liveSelectedApp && hasAssignmentReason(liveSelectedApp.packageName)) && {
+            label: translate("appInfo:uninstall"),
+            icon: "trash",
+            destructive: true,
+            onPress: () => {
+              if (liveSelectedApp) {
+                uninstallAppUI(liveSelectedApp)
+              }
+            },
           },
-        },
       ].filter(Boolean) as PopoverAction[],
     [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push, homePackageNames],
   )
@@ -941,11 +946,14 @@ export function AppsGrid({
                 textShadowOffset: {width: 0, height: 0},
                 textShadowRadius: 30,
               }}
-              numberOfLines={item.updating ? 1 : 2}
+              numberOfLines={item.updating || item.isMiniappDev ? 1 : 2}
               ellipsizeMode="tail"
               text={item.name}
             />
             {item.updating && <Text className="text-muted-foreground text-[10px]" tx="home:miniappUpdating" />}
+            {!item.updating && item.isMiniappDev && (
+              <Text className="text-muted-foreground text-[10px]" numberOfLines={1} tx="home:developmentBuild" />
+            )}
           </View>
         </Pressable>
       )

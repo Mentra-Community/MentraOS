@@ -41,6 +41,15 @@ function getStorage() {
   return (storageInstance ??= createStorageService());
 }
 
+/**
+ * Forget the storage provider, so the next use reads the provider env vars again. For tests: Bun runs a
+ * command's test files in one process, and a suite that points the storage somewhere else must not keep
+ * writing where an earlier suite pointed it.
+ */
+export function resetReportStorage(): void {
+  storageInstance = undefined;
+}
+
 export type ReportKind = "bug" | "feedback" | "automatic";
 export type ReportStatus = "collecting" | "ready" | "closed";
 export type ReportSystemPriority = "low" | "medium" | "high" | "critical";

@@ -45,7 +45,8 @@ export function runDisplayStatus(outcome: string, evidenceStatus: string, upload
     : passed && (evidenceStatus !== "complete" || !uploadsComplete) ? "evidence pending" : outcome;
 }
 
-function HistoryBuild({build}: {build: {channel?: string; repository?: string; headSha: string; prNumber?: number; release?: string; producerUrl?: string}}) {
+function HistoryBuild({build}: {build?: {channel?: string; repository?: string; headSha: string; prNumber?: number; release?: string; producerUrl?: string}}) {
+  if (!build) return <span className={MUTED}>No build selected</span>;
   const repository = build.repository;
   const commit = repository && /^[\w-]+\/[\w.-]+$/.test(repository) && /^[a-f0-9]{40}$/.test(build.headSha)
     ? `https://github.com/${repository}/commit/${build.headSha}` : null;
@@ -105,7 +106,7 @@ function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: 
     </TableCell>
     <TableCell className="whitespace-nowrap tabular-nums" title={entry.finishedAt ? `Finished ${new Date(entry.finishedAt).toLocaleString()}` : "Elapsed time"}>{duration ?? "—"}</TableCell>
     <TableCell><TestLaneBadges lanes={lanes}/></TableCell>
-    <TableCell><HistoryBuild build={suite ? {...entry.build, channel: entry.channel} : entry.build}/></TableCell>
+    <TableCell><HistoryBuild build={suite ? entry.build && {...entry.build, channel: entry.channel} : entry.build}/></TableCell>
     <TableCell className="min-w-40">
       {suite ? <HistoryStatus outcome={outcome}/> : <OriginalLatestStatus original={outcome} latest={entry.latest}/>}
       {entry.kind === "run" && entry.followUp && <CompactFollowUp row={entry.followUp}/>}

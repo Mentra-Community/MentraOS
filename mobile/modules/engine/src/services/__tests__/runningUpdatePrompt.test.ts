@@ -1,29 +1,34 @@
-import {afterEach, beforeEach, describe, expect, test} from "bun:test"
+import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
 
-import {reactNativeAppState} from "./reactNativeTestMock"
-import {miniappRunningRegistry} from "../MiniappRunningRegistry"
+import "./reactNativeTestMock"
 import type {PendingRunningUpdatePrompt} from "../runningUpdatePrompt"
 
+mock.module("../../utils/storage/storage", () => ({
+  storage: {load: () => ({is_ok: () => false}), save: () => ({is_ok: () => true})},
+}))
 const {
   canShowRunningUpdatePrompt,
   emitRunningUpdateFailed,
+  forgetRunningUpdateDecline,
+  noteMiniappOpened,
   onRunningUpdateFailed,
   onRunningUpdatePrompt,
+  onRunningUpdatePromptDue,
   requestRunningUpdatePrompt,
   setRunningUpdatePromptEnvironmentForTests,
 } = await import("../runningUpdatePrompt")
 
 const request = {packageName: "com.acme.notes", displayName: "Notes", version: "1.1.0"}
 let foreground = true
-const prompted = new Set<string>()
+const declined = new Set<string>()
 
 beforeEach(() => {
   foreground = true
-  prompted.clear()
+  declined.clear()
   setRunningUpdatePromptEnvironmentForTests({
     isForeground: () => foreground,
-    wasPromptedThisRun: (packageName) => prompted.has(packageName),
-    recordPrompted: (packageName) => prompted.add(packageName),
+    isDeclined: (packageName) => declined.has(packageName),
+    setDeclined: (packageName, value) => void (value ? declined.add(packageName) : declined.delete(packageName)),
   })
 })
 
@@ -43,17 +48,38 @@ describe("running update prompt", () => {
     const {shown} = answerWith("update")
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("update")
     expect(shown.map(({packageName, displayName, version}) => ({packageName, displayName, version}))).toEqual([request])
-    expect(prompted.has(request.packageName)).toBe(true)
+    // Update leaves nothing that would hold back a later prompt.
+    expect(canShowRunningUpdatePrompt(request.packageName)).toBe(true)
   })
 
-  test("Not now is an answer, and this run of the miniapp is not asked again", async () => {
+  test("after Not now it asks again the next time the person opens that miniapp, and not before", async () => {
     const {shown} = answerWith("not_now")
+    const due: string[] = []
+    onRunningUpdatePromptDue((packageName) => due.push(packageName))
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("not_now")
     expect(canShowRunningUpdatePrompt(request.packageName)).toBe(false)
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("not_shown")
-    // Another miniapp is not limited by this one's prompt.
+    // Another miniapp is neither held back by this one's answer nor does opening it count.
     await expect(requestRunningUpdatePrompt({...request, packageName: "com.acme.other"})).resolves.toBe("not_now")
-    expect(shown).toHaveLength(2)
+    noteMiniappOpened("com.acme.third")
+    expect(canShowRunningUpdatePrompt(request.packageName)).toBe(false)
+    expect(due).toEqual([])
+
+    noteMiniappOpened(request.packageName)
+    expect(due).toEqual([request.packageName])
+    await expect(requestRunningUpdatePrompt(request)).resolves.toBe("not_now")
+    expect(shown).toHaveLength(3)
+    // Opening it again only counts once per Not now.
+    noteMiniappOpened("com.acme.other")
+    noteMiniappOpened("com.acme.other")
+    expect(due).toEqual([request.packageName, "com.acme.other"])
+  })
+
+  test("once the put-off update installs, a later update asks without waiting for an open", async () => {
+    answerWith("not_now")
+    await requestRunningUpdatePrompt(request)
+    forgetRunningUpdateDecline(request.packageName)
+    expect(canShowRunningUpdatePrompt(request.packageName)).toBe(true)
   })
 
   test("is not shown while the Mentra App is in the background, and that does not count as asking", async () => {
@@ -61,7 +87,7 @@ describe("running update prompt", () => {
     foreground = false
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("not_shown")
     expect(shown).toHaveLength(0)
-    expect(prompted.size).toBe(0)
+    expect(declined.size).toBe(0)
     foreground = true
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("update")
   })
@@ -90,25 +116,8 @@ describe("running update prompt", () => {
       throw new Error("no modal")
     })
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("not_shown")
-    expect(prompted.size).toBe(0)
+    expect(declined.size).toBe(0)
     expect(canShowRunningUpdatePrompt(request.packageName)).toBe(true)
-  })
-
-  test("by default, asks again the next time the miniapp is opened, and not before", async () => {
-    setRunningUpdatePromptEnvironmentForTests(null)
-    reactNativeAppState.currentState = "active"
-    answerWith("not_now")
-    miniappRunningRegistry.add(request.packageName)
-    try {
-      await expect(requestRunningUpdatePrompt(request)).resolves.toBe("not_now")
-      expect(canShowRunningUpdatePrompt(request.packageName)).toBe(false)
-      // Stopping and opening it again starts a new run.
-      miniappRunningRegistry.remove(request.packageName)
-      miniappRunningRegistry.add(request.packageName)
-      expect(canShowRunningUpdatePrompt(request.packageName)).toBe(true)
-    } finally {
-      miniappRunningRegistry.remove(request.packageName)
-    }
   })
 
   test("fans update failures out to the host", () => {

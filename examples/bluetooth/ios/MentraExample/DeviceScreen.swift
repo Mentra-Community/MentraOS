@@ -1,0 +1,735 @@
+import MentraBluetoothSDK
+import SwiftUI
+
+struct DeviceScreen: View {
+    @ObservedObject var model: BluetoothViewModel
+    @Environment(\.keyboardVisible) private var keyboardVisible
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                PageHeader(title: "Device")
+
+                if model.glassesConnected {
+                    heroCard
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+
+                    statRow
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+
+                    if model.otaStatus != nil || model.otaUpdateAvailable || model.otaNoUpdateVisible {
+                        otaCard
+                            .padding(.horizontal, 16)
+                            .padding(.top, 10)
+                    }
+
+                    if !model.glassesWifiConnected {
+                        OfflineNotice(message: "Connect the glasses to Wi-Fi from the System tab before checking or starting OTA updates. OTA downloads run over the glasses network connection.")
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                    }
+                }
+
+                quickActions
+                    .padding(.horizontal, 16)
+                    .padding(.top, model.glassesConnected ? 16 : 8)
+
+                liveStatus
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
+            }
+            .padding(.bottom, LayoutMetric.scrollBottomPadding(keyboardVisible: keyboardVisible))
+        }
+        .background(AppColor.bg)
+        .scrollDismissesKeyboard(.interactively)
+    }
+
+    private var heroCard: some View {
+        GlassCard {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(connectionLabel(model.glassesValues))
+                        .font(.system(size: 10, weight: .semibold))
+                        .tracking(1.2)
+                        .foregroundColor(AppColor.greenAccent)
+                    Text(modelLabel(model.glassesValues))
+                        .font(.system(size: 28, weight: .heavy))
+                        .tracking(-0.7)
+                        .foregroundColor(AppColor.ink)
+                    Text(deviceLabel(model.glassesValues))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(AppColor.muted)
+                }
+                Spacer()
+                Image(glassesAssetName(model.glassesValues))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 145, height: 52)
+            }
+            Divider().background(AppColor.hairline).padding(.top, 14).padding(.bottom, 12)
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("BATTERY")
+                        .font(.system(size: 10, weight: .semibold))
+                        .tracking(1.2)
+                        .foregroundColor(AppColor.muted)
+                    HStack(alignment: .lastTextBaseline, spacing: 6) {
+                        Text(batteryLevel(model.glassesValues).map(String.init) ?? "--")
+                            .font(.system(size: 56, weight: .heavy))
+                            .tracking(-2.2)
+                            .foregroundColor(AppColor.ink)
+                        Text("%")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundColor(AppColor.muted)
+                    }
+                    HStack(spacing: 6) {
+                        Image(systemName: "bolt.fill").foregroundColor(AppColor.greenAccent).font(.system(size: 11))
+                        Text(model.glassesValues?.battery?.charging == true ? "Charging" : "Not charging").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.greenAccent)
+                    }
+                }
+                Spacer()
+                HStack(alignment: .bottom, spacing: 4) {
+                    ForEach(0..<7, id: \.self) { i in
+                        let heights: [CGFloat] = [14, 22, 30, 38, 46, 54, 62]
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill((batteryLevel(model.glassesValues) ?? 0) > Int(Double(i) / 7.0 * 100.0) ? AppColor.greenAccent : Color.black.opacity(0.06))
+                            .frame(width: 6, height: heights[i])
+                    }
+                }
+                .padding(.bottom, 6)
+            }
+        }
+    }
+
+    private var statRow: some View {
+        let currentWifi = connectedWifiStatus(model.glassesValues)
+        return HStack(spacing: 10) {
+            StatTile(label: "FIRMWARE", value: firmwareCardLabel(model: model), sub: firmwareCardSubLabel(model: model), subColor: AppColor.greenAccent)
+            StatTile(label: "WI-FI", value: wifiLabel(model.glassesValues), sub: currentWifi?.localIp ?? "unknown", subColor: AppColor.muted, bold: true)
+            StatTile(label: "RSSI", value: rssiLabel(model.glassesValues), sub: rssiUpdatedLabel(model.glassesValues), subColor: AppColor.greenAccent, bold: true)
+        }
+    }
+
+    private var quickActions: some View {
+        let connected = model.glassesConnected
+        let canConnect = !connected && canConnectTarget(model: model)
+        let hasDefaultTarget = hasSavedConnectionTarget(model.bluetoothValues)
+        let displaySupported = connected && supportsDisplay(model.glassesValues)
+        let otaWifiRequired = connected && !model.glassesWifiConnected
+        let otaInProgress = isOtaInProgress(model: model)
+        let canCheckOta = connected && model.glassesWifiConnected && !otaInProgress
+        return GlassCard {
+            HStack {
+                Text(connected ? "Quick actions" : "Connect glasses")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(AppColor.inkAlt)
+                Spacer()
+                Text("SDK")
+                    .font(.system(size: 10, weight: .semibold).monospaced())
+                    .tracking(1.6)
+                    .foregroundColor(AppColor.inkAlt.opacity(0.4))
+            }
+            .padding(.bottom, 16)
+
+            scanModelPicker
+                .padding(.bottom, 12)
+
+            targetPicker
+                .padding(.bottom, 12)
+
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    DarkActionButton(icon: "magnifyingglass", title: "Scan", bg: Color(hex: 0x0E2C1A), enabled: !connected, action: model.startScan)
+                    DarkActionButton(icon: "link", title: connected ? "Connected" : "Connect", bg: AppColor.greenPrimary, enabled: canConnect, action: model.connect)
+                }
+                HStack(spacing: 8) {
+                    LightActionButton(icon: "display", title: "Display Hello", enabled: displaySupported, action: model.displayHello)
+                    LightActionButton(icon: "display.slash", title: "Clear Display", enabled: displaySupported, action: model.clearDisplay)
+                }
+                HStack(spacing: 8) {
+                    LightActionButton(icon: "arrow.triangle.2.circlepath", title: otaWifiRequired ? "Connect Wi-Fi" : "Check OTA", enabled: canCheckOta, action: model.checkForOtaUpdate)
+                    LightActionButton(icon: "arrow.down.to.line", title: model.otaStartPending ? "Starting OTA..." : "Start OTA", enabled: canStartOta(model: model), action: model.startOtaUpdate)
+                }
+                HStack(spacing: 8) {
+                    LightActionButton(icon: "trash", title: "Clear Default", enabled: hasDefaultTarget, action: model.clearDefaultDevice)
+                    let disconnecting = model.activeAction == "Disconnect"
+                    Button {
+                        model.disconnect()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "wifi.slash").foregroundColor(.white).font(.system(size: 14, weight: .bold))
+                            Text(disconnecting ? "Disconnecting" : "Disconnect").foregroundColor(.white).font(.system(size: 13, weight: .semibold))
+                        }
+                        .frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .background(LinearGradient(colors: [Color(hex: 0xDE3A30), Color(hex: 0xC43B30)], startPoint: .top, endPoint: .bottom))
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                    }
+                    .disabled(!connected || disconnecting)
+                    .opacity(connected ? 1 : 0.45)
+                }
+                if connected && !supportsDisplay(model.glassesValues) {
+                    DisplayCapabilityNotice(text: "\(modelLabel(model.glassesValues)) has no display, so display commands are disabled.")
+                }
+            }
+        }
+    }
+
+    private var scanModelPicker: some View {
+        let connected = model.glassesConnected
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("SCAN MODEL")
+                    .font(.system(size: 10, weight: .semibold).monospaced())
+                    .tracking(1.4)
+                    .foregroundColor(AppColor.inkAlt.opacity(0.45))
+                Spacer()
+                if connected {
+                    Text("Disconnect to change")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(AppColor.muted)
+                }
+            }
+
+            HStack(spacing: 8) {
+                ForEach(scanModelOptions, id: \.self) { scanModel in
+                    ScanModelChip(
+                        model: scanModel,
+                        active: model.selectedScanModel == scanModel,
+                        enabled: !connected
+                    ) {
+                        model.selectScanModel(scanModel)
+                    }
+                }
+            }
+        }
+    }
+
+    private var targetPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(model.glassesConnected ? "Connected device" : "Connection target")
+                    .font(.system(size: 10, weight: .semibold).monospaced())
+                    .tracking(1.4)
+                    .foregroundColor(AppColor.inkAlt.opacity(0.45))
+                Spacer()
+                if !model.glassesConnected, !model.discoveredDevices.isEmpty {
+                    Text("\(model.discoveredDevices.count) found")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(AppColor.greenDeep)
+                }
+            }
+
+            if model.glassesConnected {
+                TargetDeviceRow(
+                    name: deviceLabel(model.glassesValues),
+                    detail: "Active BLE connection",
+                    selected: true,
+                    enabled: false,
+                    action: {}
+                )
+            } else if model.discoveredDevices.isEmpty, let hint = model.scanHint {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Glasses may be in use").font(.subheadline.weight(.semibold))
+                    Text(hint).font(.subheadline).foregroundStyle(AppColor.muted)
+                }
+            } else if model.discoveredDevices.isEmpty, hasSavedConnectionTarget(model.bluetoothValues) {
+                TargetDeviceRow(
+                    name: savedConnectionTargetName(model.bluetoothValues),
+                    detail: savedConnectionTargetDetail(model.bluetoothValues),
+                    selected: true,
+                    enabled: false,
+                    action: {}
+                )
+            } else if model.discoveredDevices.isEmpty {
+                TargetDeviceRow(
+                    name: "Scan required",
+                    detail: "No saved default target yet. Scan to choose nearby glasses.",
+                    selected: false,
+                    enabled: false,
+                    action: {}
+                )
+            } else {
+                ForEach(Array(model.discoveredDevices.enumerated()), id: \.offset) { _, device in
+                    TargetDeviceRow(
+                        name: device.name,
+                        detail: targetDeviceDetail(device),
+                        selected: (model.selectedDiscoveredDevice.map { discoveredDeviceKey($0) } ?? "") == discoveredDeviceKey(device),
+                        enabled: true
+                    ) {
+                        model.selectDiscoveredDevice(device)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(AppColor.ink.opacity(0.035))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var liveStatus: some View {
+        GlassCard(padding: EdgeInsets(top: 22, leading: 0, bottom: 22, trailing: 0)) {
+            HStack {
+                HStack(spacing: 8) {
+                    Circle().fill(AppColor.greenPrimary).frame(width: 7, height: 7)
+                    Text("Live status").font(.system(size: 16, weight: .bold)).foregroundColor(AppColor.inkAlt)
+                }
+                Spacer()
+                Text("REC")
+                    .font(.system(size: 10, weight: .semibold).monospaced())
+                    .tracking(1.6)
+                    .foregroundColor(AppColor.greenInk)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(AppColor.greenInk.opacity(0.06))
+                    .clipShape(Capsule())
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 16)
+
+            VStack(spacing: 0) {
+                StatusKVRow(label: "LAST ACTION", value: model.lastAction, first: true)
+                StatusKVRow(label: "CONNECTION", custom: AnyView(
+                    HStack(spacing: 6) { Circle().fill(AppColor.greenPrimary).frame(width: 6, height: 6); Text(connectionLabel(model.glassesValues)).font(.system(size: 13, weight: .semibold)).foregroundColor(AppColor.greenInk) }
+                ))
+                StatusKVRow(label: "DEVICE", value: deviceLabel(model.glassesValues), mono: true)
+                if shouldShowMentraLiveVersions(model.glassesValues) {
+                    StatusKVRow(label: "ASG CLIENT", value: versionLabel(model.mentraLiveVersions.appVersion), mono: true)
+                    StatusKVRow(label: "MTK", value: versionLabel(model.mentraLiveVersions.mtkFirmwareVersion), mono: true)
+                    StatusKVRow(label: "BES", value: versionLabel(model.mentraLiveVersions.besFirmwareVersion), mono: true)
+                }
+                StatusKVRow(label: "BATTERY", custom: AnyView(
+                    HStack(spacing: 8) {
+                        Text(batteryLabel(model.glassesValues)).font(.system(size: 13, weight: .semibold)).foregroundColor(AppColor.inkAlt)
+                        HStack(spacing: 4) {
+                            Image(systemName: "bolt.fill").foregroundColor(AppColor.greenPrimary).font(.system(size: 8))
+                            Text("charging").font(.system(size: 11, weight: .semibold)).foregroundColor(AppColor.greenPrimary)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 2)
+                        .background(AppColor.greenPrimary.opacity(0.08)).clipShape(Capsule())
+                    }
+                ))
+                StatusKVRow(label: "BLUETOOTH", value: bluetoothSearchLabel(model.bluetoothValues))
+                StatusKVRow(label: "TARGET", value: connectionTargetLabel(model: model), mono: true)
+                StatusKVRow(label: "DISCOVERED", value: model.discoveredDevices.map(\.name).joined(separator: ", ").isEmpty ? "None yet" : model.discoveredDevices.map(\.name).joined(separator: ", "), mono: true)
+                StatusKVRow(label: "PERMISSIONS", value: "iOS prompts as needed")
+                StatusKVRow(label: "CAMERA", value: model.cameraStatus)
+                StatusKVRow(label: "OTA", value: otaStatusLine(model: model))
+                StatusKVRow(label: "LATEST EVENT", custom: AnyView(
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            HStack(spacing: 4) {
+                                Circle().fill(AppColor.greenPrimary).frame(width: 5, height: 5)
+                                Text(model.events.first?.tag ?? "NONE").font(.system(size: 10, weight: .semibold).monospaced()).foregroundColor(AppColor.greenPrimary)
+                            }
+                            .padding(.horizontal, 7).padding(.vertical, 2).background(AppColor.greenPrimary.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 5))
+                            Text(model.events.first?.time ?? "--:--:--").font(.system(size: 11, design: .monospaced)).foregroundColor(AppColor.inkAlt.opacity(0.65))
+                        }
+                        Text(model.events.first?.text ?? "No events yet").font(.system(size: 13, weight: .medium)).foregroundColor(AppColor.inkAlt)
+                    }
+                ))
+            }
+            .padding(.horizontal, 18)
+        }
+    }
+
+    private var otaCard: some View {
+        let updateRequired = model.otaUpdateAvailable && model.otaStatus == nil
+        let installing = isOtaInstalling(model: model)
+        return VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .top) {
+                HStack(alignment: .center, spacing: 10) {
+                    if updateRequired {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 7).fill(AppColor.amber.opacity(0.10))
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(AppColor.amber)
+                        }
+                        .frame(width: 30, height: 30)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(updateRequired ? "OTA UPDATE" : "OTA")
+                            .font(.system(size: 10, weight: .semibold).monospaced())
+                            .foregroundColor(updateRequired ? Color(hex: 0x9A5A00) : AppColor.muted)
+                        Text(otaCardTitle(model: model))
+                            .font(.system(size: updateRequired ? 16 : 15, weight: .bold))
+                            .foregroundColor(AppColor.ink)
+                    }
+                }
+                Spacer()
+                if model.otaStartPending || installing {
+                    ProgressView()
+                        .tint(AppColor.greenPrimary)
+                        .controlSize(.small)
+                } else if let status = model.otaStatus {
+                    Text("\(otaDisplayPercent(model: model, status: status))%")
+                        .font(.system(size: 15, weight: .bold).monospacedDigit())
+                        .foregroundColor(AppColor.greenInk)
+                }
+            }
+            if let status = model.otaStatus, !installing {
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(AppColor.greenInk.opacity(0.08))
+                        Capsule()
+                            .fill(AppColor.greenPrimary)
+                            .frame(width: geometry.size.width * CGFloat(min(max(otaDisplayPercent(model: model, status: status), 0), 100)) / 100.0)
+                    }
+                }
+                .frame(height: 4)
+            }
+            Text(otaCardDetail(model: model))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(AppColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            if updateRequired {
+                Button(action: model.startOtaUpdate) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.down.to.line")
+                            .font(.system(size: 15, weight: .bold))
+                        Text(model.otaStartPending ? "Starting OTA..." : canStartOta(model: model) ? "Start OTA" : "Connect Wi-Fi first")
+                            .font(.system(size: 13, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 42)
+                    .background(canStartOta(model: model) ? AppColor.greenInk : AppColor.muted.opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canStartOta(model: model))
+            }
+        }
+        .padding(14)
+        .background(updateRequired ? Color(hex: 0xFFFCF5) : .white)
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(updateRequired ? AppColor.amber.opacity(0.32) : AppColor.ink.opacity(0.08), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private func glassesAssetName(_ values: GlassesRuntimeState?) -> String {
+    let device = connectedGlassesInfo(values)
+    let model = [
+        device?.deviceModel?.deviceType,
+        device?.bluetoothName,
+    ]
+    .compactMap { $0 }
+    .joined(separator: " ")
+    .lowercased()
+
+    if model.contains("even"), model.contains("g2") {
+        return "even_realities_g2"
+    }
+    if model.contains("even") || model.contains("g1") {
+        return "even_realities_g1"
+    }
+    if model.contains("display") {
+        return "mentra_display"
+    }
+    if model.contains("vuzix") || model.contains("z100") {
+        return "vuzix_z100"
+    }
+    if model.contains("unknown") {
+        return "unknown_wearable"
+    }
+    return "mentra_live"
+}
+
+private func targetDeviceDetail(_ device: Device) -> String {
+    if let rssi = device.rssi {
+        return "\(deviceModelLabel(device.model)) · \(rssi) dBm"
+    }
+    return deviceModelLabel(device.model)
+}
+
+@MainActor
+private func canStartOta(model: BluetoothViewModel) -> Bool {
+    model.glassesConnected && model.glassesWifiConnected && model.otaUpdateAvailable && !isOtaInProgress(model: model)
+}
+
+@MainActor
+private func isOtaInProgress(model: BluetoothViewModel) -> Bool {
+    model.otaStartPending || model.otaStatus?.status == "in_progress" || model.otaStatus?.status == "step_complete"
+}
+
+@MainActor
+private func otaStatusLine(model: BluetoothViewModel) -> String {
+    if model.otaStartPending {
+        return "starting update"
+    }
+    if isOtaInstalling(model: model) {
+        return "installing update"
+    }
+    if let status = model.otaStatus {
+        return "\(status.status.replacingOccurrences(of: "_", with: " ")) · \(otaDisplayPercent(model: model, status: status))%"
+    }
+    if model.otaUpdateAvailable {
+        return "Firmware update available"
+    }
+    if let message = model.otaStatusMessage {
+        return message
+    }
+    return model.glassesConnected ? "Check not run" : "Connect glasses"
+}
+
+@MainActor
+private func otaDisplayPercent(model: BluetoothViewModel, status: OtaStatusEvent) -> Int {
+    model.otaDisplayPercent ?? status.overallPercent
+}
+
+@MainActor
+private func otaCardTitle(model: BluetoothViewModel) -> String {
+    if model.otaStartPending {
+        return "Starting update"
+    }
+    if model.otaStatus?.status == "failed" {
+        return "Update failed"
+    }
+    if isOtaInstalling(model: model) {
+        return "Installing update"
+    }
+    if let status = model.otaStatus, isOtaInProgress(model: model) {
+        return "Updating \(status.stepType.isEmpty ? "firmware" : status.stepType)"
+    }
+    if model.otaUpdateAvailable {
+        return "Firmware update available"
+    }
+    if model.otaNoUpdateVisible {
+        return "No OTA available"
+    }
+    return "OTA status"
+}
+
+@MainActor
+private func otaCardDetail(model: BluetoothViewModel) -> String {
+    if model.otaStartPending {
+        return "Sending the OTA start request to the glasses."
+    }
+    if let error = model.otaStatus?.errorMessage {
+        return error
+    }
+    if isOtaInstalling(model: model) {
+        return "The glasses client may restart to finish installation."
+    }
+    if let status = model.otaStatus {
+        return "\(status.phase.isEmpty ? "status" : status.phase) · step \(status.currentStep)/\(status.totalSteps)"
+    }
+    if model.otaUpdateAvailable {
+        return "A newer firmware version is available for these glasses."
+    }
+    if model.otaNoUpdateVisible {
+        return "Your glasses firmware is up to date."
+    }
+    return "Tap Check OTA to compare the current glasses version with the SDK OTA manifest."
+}
+
+@MainActor
+private func isOtaInstalling(model: BluetoothViewModel) -> Bool {
+    model.otaStatus?.status == "in_progress" && model.otaStatus?.phase == "install"
+}
+
+@MainActor
+private func connectionTargetLabel(model: BluetoothViewModel) -> String {
+    if model.glassesConnected {
+        return deviceLabel(model.glassesValues)
+    }
+    if let device = model.selectedDiscoveredDevice {
+        return device.name
+    }
+    if hasSavedConnectionTarget(model.bluetoothValues) {
+        return savedConnectionTargetName(model.bluetoothValues)
+    }
+    return "Scan required"
+}
+
+@MainActor
+private func canConnectTarget(model: BluetoothViewModel) -> Bool {
+    model.selectedDiscoveredDevice != nil || !model.discoveredDevices.isEmpty || hasSavedConnectionTarget(model.bluetoothValues)
+}
+
+struct ScanModelChip: View {
+    let model: DeviceModel
+    let active: Bool
+    let enabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(deviceModelLabel(model))
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(active ? AppColor.greenInk : AppColor.muted)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .frame(minHeight: 40)
+                .background(active ? AppColor.greenPrimary.opacity(0.10) : Color.white.opacity(0.72))
+                .overlay(
+                    Capsule()
+                        .stroke(active ? AppColor.greenPrimary.opacity(0.32) : AppColor.hairline, lineWidth: 1)
+                )
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+    }
+}
+
+struct TargetDeviceRow: View {
+    let name: String
+    let detail: String
+    let selected: Bool
+    let enabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(selected ? AppColor.greenPrimary : Color.white)
+                        .frame(width: 18, height: 18)
+                    if selected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundColor(.white)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(AppColor.inkAlt)
+                    Text(detail)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(AppColor.muted)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(selected ? AppColor.greenPrimary.opacity(0.08) : Color.white.opacity(0.7))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? AppColor.greenPrimary.opacity(0.18) : Color.white.opacity(0.7), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+}
+
+struct DisplayCapabilityNotice: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(AppColor.greenPrimary)
+                .padding(.top, 1)
+            Text(text)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(AppColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(AppColor.greenSoft.opacity(0.18))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+struct StatTile: View {
+    let label: String
+    let value: String
+    let sub: String
+    let subColor: Color
+    var bold: Bool = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 10, weight: .semibold)).tracking(1.1).foregroundColor(AppColor.muted)
+            Text(value).font(.system(size: 15, weight: bold ? .bold : .semibold)).foregroundColor(AppColor.ink)
+            Text(sub).font(.system(size: 12, weight: .medium)).foregroundColor(subColor)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .background(Color.white)
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.7), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .shadow(color: Color(hex: 0x0F2A1D).opacity(0.07), radius: 22, x: 0, y: 8)
+    }
+}
+
+struct DarkActionButton: View {
+    let icon: String; let title: String; let bg: Color
+    var enabled: Bool = true
+    let action: () -> Void
+    var body: some View {
+        Button {
+            action()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon).foregroundColor(.white).font(.system(size: 14, weight: .bold))
+                Text(title).foregroundColor(.white).font(.system(size: 13, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity).padding(.vertical, 14)
+            .background(bg).clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+    }
+}
+
+struct LightActionButton: View {
+    let icon: String; let title: String
+    var enabled: Bool = true
+    let action: () -> Void
+    var body: some View {
+        Button {
+            action()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon).foregroundColor(AppColor.inkAlt).font(.system(size: 14, weight: .bold))
+                Text(title).foregroundColor(AppColor.inkAlt).font(.system(size: 13, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity).padding(.vertical, 14)
+            .background(Color.white)
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: 0xDBDBDB), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+    }
+}
+
+struct StatusKVRow: View {
+    let label: String
+    var value: String? = nil
+    var custom: AnyView? = nil
+    var mono: Bool = false
+    var first: Bool = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold).monospaced())
+                .tracking(1.4)
+                .foregroundColor(AppColor.inkAlt.opacity(0.5))
+                .frame(width: 90, alignment: .leading)
+            Group {
+                if let custom = custom { custom }
+                else if let value = value {
+                    Text(value)
+                        .font(mono ? .system(size: 12, design: .monospaced) : .system(size: 13, weight: .medium))
+                        .foregroundColor(AppColor.inkAlt)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 11)
+        .overlay(alignment: .top) {
+            if !first { Rectangle().fill(Color(hex: 0xF2EDE0)).frame(height: 1) }
+        }
+    }
+}

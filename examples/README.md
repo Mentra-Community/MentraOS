@@ -1,0 +1,54 @@
+# Examples
+
+Example apps for integrators who embed Mentra's platform SDKs in their own
+apps:
+
+- [`bluetooth/`](bluetooth/README.md): the Bluetooth SDK Starter Kit. Native
+  Android, iOS, and macOS apps and React Native apps that use
+  `@mentra/bluetooth-sdk` (`com.mentraglass:bluetooth-sdk` on Android,
+  `MentraBluetoothSDK` on Apple platforms) to connect to smart glasses directly
+  over Bluetooth, plus local media and streaming helpers.
+- [`oem-app/`](oem-app/README.md): a minimal Expo host that embeds
+  `@mentra/engine`, the on-device miniapp registry and runtime, the way a
+  second host app would.
+- [`miniapp/`](miniapp/README.md): the reference Mentra miniapp ("Mentra
+  Example") built with the Mentra Miniapp SDK, with live captions and an SDK
+  Tester page for each `session` module.
+
+To start a new Mentra miniapp, use the Mentra Miniapp SDK and tooling in
+[`sdk/`](../sdk/README.md) (`bunx create-mentra-miniapp`).
+
+## Building from source
+
+The examples build against the SDK source in this repository, so SDK changes
+take effect in the next example build without publishing anything:
+
+- `miniapp/` is not a member of the `examples/` workspace. It belongs to the
+  repository root and `sdk/` Bun workspaces, which link `@mentra/miniapp` and
+  `@mentra/miniapp-cli` (`workspace:*`) to `mobile/modules/miniapp` and
+  `sdk/miniapp-cli`. Install with `bun install` at the repository root or in
+  `sdk/`, then run `bun run dev` or `bun run build` in `examples/miniapp`.
+- The React Native examples and `oem-app` are members of the `examples/` Bun
+  workspace ([`package.json`](package.json), [`bun.lock`](bun.lock)). It links
+  `@mentra/*` (`workspace:*`) to `mobile/modules` and `cloud-v2/packages`, the
+  same way `sdk/` does, and resolves one Expo / React Native version for all
+  the examples. Install with `cd examples && bun install`; installing runs the
+  linked packages' `prepare` scripts, which build them.
+- The native Android example includes `mobile/modules/bluetooth-sdk/android`
+  as a Gradle composite build.
+- The native iOS and macOS examples use `mobile/modules/bluetooth-sdk` as a
+  local Swift package.
+
+The standalone
+[Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit)
+is generated from `bluetooth/` with its SDK dependencies pinned to published
+versions: the export turns each example into a standalone project that
+depends on published package versions. A scheduled workflow exports each
+channel's latest completed release; intermediate releases are skipped
+(`.github/workflows/bluetooth-starter-kit-export.yml`, script
+`.github/scripts/export-bluetooth-starter-kit.mjs`). The kit's own CI lives in
+the kit repository, is left untouched by the export, and validates each export
+push.
+
+CI: `Example App Builds` builds the Bluetooth examples; `OEM Host Boundary
+Gate` and `OEM Example App APK` cover `oem-app/`.

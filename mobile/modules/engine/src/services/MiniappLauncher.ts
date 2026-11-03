@@ -29,14 +29,20 @@
  * A launch the apps store's `start` makes is reported by `start` itself
  * (`fleetEvents.claimLaunch`); a context already executing, or one a hidden
  * action wake keeps out of the running tray, is no launch.
+ *
+ * Age ratings: every launch path comes through here, so this is where a miniapp rated above the host app's own
+ * rating meets the age gate as it opens, whether it was installed with the sheet or headlessly (a Fleet assignment,
+ * a system miniapp). A launch the person makes in front of the app may ask their age once; any other launch needs it
+ * declared already.
  */
 
+import type {FleetLaunchFailureReason} from "@mentra/cloud-protocol"
 import {File} from "expo-file-system"
+import {AppState, Platform} from "react-native"
 
 import {
+  getConfigValues,
   isDevMiniappAllowed,
-  isInstalledMiniappAllowed,
-  isLocalMiniappPackageAllowed,
   isMiniappAvailable,
   type MiniappAvailabilityMode,
 } from "../runtime/bootstrap"
@@ -47,8 +53,50 @@ import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./
 import devServerBridge from "./DevServerBridge"
 import {fleetEvents} from "./fleet/fleetEvents"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
+import {checkManifestVersions} from "./manifestVersionGate"
 import type {MentraJSRouter} from "./MentraJSRouter"
+import {checkMiniappAge, type AgeGateVerdict, type AgeRatedMiniapp} from "./miniappAgeGate"
+import {developmentOriginName, miniappOrigin, miniappOriginUrl, type MiniappOriginPlatform} from "./miniappOrigin"
 import {isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
+
+/** The miniapp's server no longer admits this account (Fleet revocation): it cannot launch until access returns. */
+export class MiniappAccessRevokedError extends Error {
+  constructor(readonly packageName: string) {
+    super(`MiniappLauncher: access to ${packageName} was revoked`)
+    this.name = "MiniappAccessRevokedError"
+  }
+}
+
+/**
+ * The miniapp is rated above the host app's own rating and the person's declared age doesn't let it open (see
+ * {@link AgeGateVerdict}). A person opening it in front of the app was asked their age, or told why.
+ */
+export class MiniappAgeRestrictedError extends Error {
+  constructor(
+    readonly packageName: string,
+    readonly verdict: Exclude<AgeGateVerdict, "allowed">,
+  ) {
+    super(`MiniappLauncher: ${packageName} is age-rated and did not open (${verdict})`)
+    this.name = "MiniappAgeRestrictedError"
+  }
+}
+
+/**
+ * The bundle needs a newer Mentra App, or a Mentra Miniapp SDK this one doesn't run: the rule installs refuse by,
+ * checked again as it launches. A release a newer Mentra App installed stays on disk when an older one replaces it (a
+ * development build replaced from TestFlight), and would otherwise start against features this one lacks. The message
+ * is for logs; a screen explains it in the person's language, as an install refused by the same rule does.
+ */
+export class MiniappIncompatibleHostError extends Error {
+  constructor(
+    readonly packageName: string,
+    readonly miniappName: string,
+    readonly reason: string,
+  ) {
+    super(`${miniappName} can't run on this phone: ${reason}`)
+    this.name = "MiniappIncompatibleHostError"
+  }
+}
 
 interface LauncherDeps {
   /** The host-constructed router (needs the native Crust binding). */
@@ -80,10 +128,20 @@ function availabilityMode(options?: RuntimeLaunchOptions): MiniappAvailabilityMo
 /** Everything the launcher resolved for a package — bg source + UI entry. */
 export interface ResolvedBundle {
   bgSource: string
+  /** Where the screen loads from. See {@link LaunchResult.uiUri}. */
   uiUri: string | null
-  uiBaseDir: string | null
+  /** The origin `uiUri` belongs to. See {@link LaunchResult.uiOrigin}. */
+  uiOrigin: string | null
+  /** The bundle root the package's origin serves. See {@link LaunchResult.uiRootDir}. */
+  uiRootDir: string | null
+  /** The name the origin is for. See {@link LaunchResult.uiOriginName}. */
+  uiOriginName: string | null
+  /** A development build: a live development server or a development snapshot. */
+  devBuild: boolean
   declaredPermissions: string[]
   installedManifest?: InstalledMiniappManifest
+  /** What the bundle's `miniapp.json` declares as `ageRating`; null when it declares none. */
+  ageRating: unknown
   /** Build-owned SYSTEM trust derived from install provenance, never the manifest. */
   hostTrustedSystem: boolean
   /** Set for dev miniapps (HTTP off the dev server); null for released. */
@@ -93,8 +151,72 @@ export interface ResolvedBundle {
 
 /** What the host needs back to render the UI layer. */
 export interface LaunchResult {
+  /**
+   * Where the screen loads from. An installed release loads from its
+   * package's own origin: `miniapp://<packageName>/<ui entry>` on iOS and
+   * `https://<host>.miniapp.invalid/<ui entry>` on Android (see
+   * {@link miniappOriginUrl}), a development snapshot from the origin of its
+   * {@link uiOriginName}. A live development build loads from its development
+   * server. Null when there is no screen to load.
+   */
   uiUri: string | null
-  uiBaseDir: string | null
+  /** The origin `uiUri` belongs to, for the WebView's `originWhitelist`. */
+  uiOrigin: string | null
+  /**
+   * The root of the active version's bundle, which the package's origin
+   * serves (the WebView's `miniappOrigin.rootDir`). Null when the screen loads
+   * from a development server.
+   */
+  uiRootDir: string | null
+  /**
+   * The name the origin serves `uiRootDir` under (the WebView's
+   * `miniappOrigin.packageName`): the package name for a release, and
+   * {@link developmentOriginName} for a development snapshot, so a development
+   * build never shares web storage with a release of its name. Null with
+   * `uiRootDir`.
+   */
+  uiOriginName: string | null
+  /** A development build: a live development server or a development snapshot. */
+  devBuild: boolean
+}
+
+const NO_UI: LaunchResult = {uiUri: null, uiOrigin: null, uiRootDir: null, uiOriginName: null, devBuild: false}
+
+function launchResultOf(resolved: ResolvedBundle | null | undefined): LaunchResult {
+  if (!resolved) return NO_UI
+  return {
+    uiUri: resolved.uiUri,
+    uiOrigin: resolved.uiOrigin,
+    uiRootDir: resolved.uiRootDir,
+    uiOriginName: resolved.uiOriginName,
+    devBuild: resolved.devBuild,
+  }
+}
+
+/** The platform whose origin shape the Mentra App's WebView serves. */
+function originPlatform(): MiniappOriginPlatform {
+  return Platform.OS === "android" ? "android" : "ios"
+}
+
+/** `scheme://host[:port]` of an http(s) URL, lowercased as a page's `location.origin` reads it. */
+function serverOrigin(url: string): string | null {
+  const match = /^(https?:\/\/[^/?#]+)/i.exec(url)
+  return match ? match[1].toLowerCase() : null
+}
+
+/**
+ * Why a launch failed, as the code Fleet takes (Phase 12): never the error's text. A bundle that cannot be found is
+ * `bundle_missing`; one that needs a newer Mentra App `incompatible_host`; a deployment, age or access block
+ * `policy_blocked`; a context that did not start `spawn_failed`.
+ */
+export function launchFailureReason(error: unknown): FleetLaunchFailureReason {
+  if (error instanceof MiniappIncompatibleHostError) return "incompatible_host"
+  if (error instanceof MiniappAgeRestrictedError || error instanceof MiniappAccessRevokedError) return "policy_blocked"
+  const message = error instanceof Error ? error.message : ""
+  if (message.includes("cannot resolve bundle")) return "bundle_missing"
+  if (message.includes("by deployment policy")) return "policy_blocked"
+  if (message.includes("spawn failed")) return "spawn_failed"
+  return "unknown"
 }
 
 class MiniappLauncher {
@@ -164,6 +286,21 @@ class MiniappLauncher {
     }
   }
 
+  /**
+   * The name and age rating of the installed bundle a launch of `packageName` runs (the version `getActiveVersion`
+   * chooses, a development snapshot included), read without waiting. The apps store checks it before it opens the
+   * screen or stops other miniapps, so a refusal changes nothing. A live development server's rating is read when
+   * its context spawns, where every launch is checked again.
+   */
+  installedAgeRating(packageName: string): AgeRatedMiniapp {
+    const version = appRegistry.peekActiveVersion(packageName)
+    const manifest = version
+      ? (appRegistry.getMiniappManifest(packageName, version) as {name?: unknown; ageRating?: unknown} | null)
+      : null
+    const name = typeof manifest?.name === "string" && manifest.name ? manifest.name : packageName
+    return {packageName, name, ageRating: manifest?.ageRating ?? null}
+  }
+
   /** Wire the router in. Called once from MiniappEngine construction. */
   configure(deps: LauncherDeps): void {
     this.deps = deps
@@ -189,7 +326,8 @@ class MiniappLauncher {
   /**
    * Resolve the background JS source + UI entry + declared permissions for a
    * package. Handles both dev (HTTP off the running dev server) and released
-   * (file:// from the installed snapshot). Reads disk/network/storage; does
+   * (the installed snapshot on disk, whose screen loads from the package's own
+   * origin). Reads disk/network/storage; does
    * NOT spawn. Returns null when the bundle can't be resolved (dev server
    * unreachable with no on-disk snapshot, missing entry, no installed version).
    */
@@ -227,7 +365,7 @@ class MiniappLauncher {
       return null
     }
 
-    // --- Released: resolve from the installed file:// snapshot. ---
+    // --- Released: resolve from the installed snapshot on disk. ---
     // A view can retain its old version prop across an install or rollback.
     // Resolve the committed pointer here, including after an installation wait.
     const version = await appRegistry.getActiveVersion(packageName)
@@ -281,9 +419,13 @@ class MiniappLauncher {
     return {
       bgSource,
       uiUri,
-      uiBaseDir: uiUri ? uiUri.replace(/\/[^/]+$/, "/") : null,
+      uiOrigin: uiUri ? serverOrigin(uiUri) : null,
+      uiRootDir: null,
+      uiOriginName: null,
+      devBuild: true,
       declaredPermissions,
       installedManifest,
+      ageRating: manifest.ageRating ?? null,
       // A dev server is never host-trusted, whatever package name it claims.
       hostTrustedSystem: false,
       devUrl: resolvedUrl,
@@ -302,6 +444,7 @@ class MiniappLauncher {
       sdkVersion?: string
       minHostVersion?: string
       type?: string
+      ageRating?: unknown
       entry?: {background?: string; ui?: string}
       permissions?: Array<{type: string; required?: boolean; description?: string}>
       hardwareRequirements?: Array<{type: string; level: string; description?: string}>
@@ -339,17 +482,45 @@ class MiniappLauncher {
       return null
     }
 
+    // The screen loads from the package's own origin, which serves only this
+    // version's bundle and never grants file access. A development snapshot
+    // claims its name without proof, so it loads from a development origin of
+    // that name instead and never sees a release's web storage. A package name
+    // that can't have an origin gets no screen rather than a file:// page.
+    const devBuild = version.startsWith("dev-")
+    const originName = devBuild ? developmentOriginName(packageName) : packageName
+    const platform = originPlatform()
+    const uiUri = entryPaths.uiPath ? miniappOriginUrl(originName, entryPaths.uiPath, platform) : null
+    if (entryPaths.uiPath && !uiUri) {
+      console.warn(`MiniappLauncher: ${packageName} can't have an origin of its own, so its screen doesn't load`)
+    }
+
     return {
       bgSource,
-      uiUri: entryPaths.ui ?? null,
-      uiBaseDir: entryPaths.ui ? entryPaths.ui.replace(/\/[^/]+$/, "/") : null,
+      uiUri,
+      uiOrigin: uiUri ? miniappOrigin(originName, platform) : null,
+      uiRootDir: uiUri ? entryPaths.rootDir : null,
+      uiOriginName: uiUri ? originName : null,
+      devBuild,
       declaredPermissions,
       installedManifest,
-      hostTrustedSystem: isHostTrustedSystemMiniapp(packageName, appRegistry.getReleaseIdentity(packageName, version)),
-      // Snapshot fallback is file:// — do not wire the sidecar; the laptop is gone.
+      ageRating: manifest?.ageRating ?? null,
+      // A development build never runs with the build's privileges, whatever name it claims.
+      hostTrustedSystem:
+        !devBuild && isHostTrustedSystemMiniapp(packageName, appRegistry.getReleaseIdentity(packageName, version)),
+      // A snapshot on disk — do not wire the sidecar; the laptop is gone.
       devUrl: null,
       devPort: null,
     }
+  }
+
+  /** Throws {@link MiniappIncompatibleHostError} when this Mentra App can't run the resolved bundle. */
+  assertRunsOnPhone(packageName: string, resolved: ResolvedBundle): void {
+    const manifest = resolved.installedManifest
+    const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
+    if (!manifest || !hostVersion || !supportedMiniappSdkRange) return
+    const versions = checkManifestVersions(manifest, {hostVersion, supportedSdkRange: supportedMiniappSdkRange})
+    if (!versions.ok) throw new MiniappIncompatibleHostError(packageName, manifest.name || packageName, versions.reason)
   }
 
   /**
@@ -374,10 +545,11 @@ class MiniappLauncher {
     if (installation) await installation
     if (
       !isMiniappAvailable(packageName, availabilityMode(runtimeOptions)) ||
-      !isLocalMiniappPackageAllowed(packageName)
+      !appRegistry.isPackageAllowed(packageName)
     ) {
       throw new Error(`MiniappLauncher: ${packageName} is disabled by deployment policy`)
     }
+    if (appRegistry.isMiniappAccessRevoked(packageName)) throw new MiniappAccessRevokedError(packageName)
     const router = this.requireRouter()
     const projectRunning = runtimeOptions?.projectRunning ?? true
 
@@ -389,7 +561,7 @@ class MiniappLauncher {
       const promoted = projectRunning && this.promote(packageName)
       const existing = await this.resolveBundle(packageName, hints, runtimeOptions).catch(() => null)
       if (promoted) this.reportLaunch(packageName, "started", runtimeOptions, existing?.installedManifest)
-      return {uiUri: existing?.uiUri ?? null, uiBaseDir: existing?.uiBaseDir ?? null}
+      return launchResultOf(existing)
     }
 
     // Coalesce concurrent launches of the same package onto one promise.
@@ -401,7 +573,7 @@ class MiniappLauncher {
         result = await pending
       } catch (error) {
         // A visible launch reports its own failure; one joined to a hidden wake fails with it.
-        if (projectRunning && joinedHidden) this.reportLaunch(packageName, "failed", runtimeOptions)
+        if (projectRunning && joinedHidden) this.reportLaunch(packageName, "failed", runtimeOptions, undefined, launchFailureReason(error))
         throw error
       }
       if (projectRunning && this.promote(packageName)) this.reportLaunch(packageName, "started", runtimeOptions)
@@ -414,7 +586,7 @@ class MiniappLauncher {
     try {
       return await launch
     } catch (error) {
-      if (projectRunning) this.reportLaunch(packageName, "failed", runtimeOptions)
+      if (projectRunning) this.reportLaunch(packageName, "failed", runtimeOptions, undefined, launchFailureReason(error))
       throw error
     } finally {
       this.inFlight.delete(packageName)
@@ -436,6 +608,7 @@ class MiniappLauncher {
     outcome: "started" | "failed",
     runtimeOptions?: RuntimeLaunchOptions,
     manifest?: InstalledMiniappManifest,
+    failureReason?: FleetLaunchFailureReason,
   ): void {
     fleetEvents.launchUnlessClaimed({
       packageName,
@@ -443,6 +616,7 @@ class MiniappLauncher {
       ...(manifest?.version ? {versionName: manifest.version} : {}),
       start: runtimeOptions?.trigger ?? "automatic",
       outcome,
+      ...(outcome === "failed" ? {failureReason: failureReason ?? "unknown"} : {}),
     })
   }
 
@@ -457,7 +631,17 @@ class MiniappLauncher {
     if (!resolved) {
       throw new Error(`MiniappLauncher: cannot resolve bundle for ${packageName}`)
     }
+    // Before the age gate, so a miniapp this app can't run never asks the person's age.
+    this.assertRunsOnPhone(packageName, resolved)
     const version = resolved.installedManifest?.version
+    const projectRunning = runtimeOptions?.projectRunning ?? true
+    // The age gate, before the deployment checks below, which then see the state after any question the person
+    // answered. Only a launch the person makes in front of the app may ask.
+    const verdict = await checkMiniappAge(
+      {packageName, name: resolved.installedManifest?.name || packageName, ageRating: resolved.ageRating},
+      {interactive: projectRunning && AppState.currentState === "active"},
+    )
+    if (verdict !== "allowed") throw new MiniappAgeRestrictedError(packageName, verdict)
     // A live dev server sets devUrl. A snapshot keeps the directory name `dev-*`
     // as the active version. Either one is the scanned build; a release fallback is neither.
     const activeVersion = await appRegistry.getActiveVersion(packageName)
@@ -465,20 +649,13 @@ class MiniappLauncher {
     if (
       // Availability may change while the bundle resolves.
       !isMiniappAvailable(packageName, availabilityMode(runtimeOptions)) ||
-      (devBuild
-        ? !isDevMiniappAllowed(packageName)
-        : !isInstalledMiniappAllowed(
-            packageName,
-            version,
-            version ? appRegistry.getReleaseIdentity(packageName, version) : null,
-          ))
+      (devBuild ? !isDevMiniappAllowed(packageName) : !appRegistry.isReleaseAllowed(packageName, version))
     ) {
       throw new Error(`MiniappLauncher: ${packageName} bundle is not authorized by deployment policy`)
     }
 
     // Re-check after the async resolve: a different path may have spawned it
     // while we were fetching/reading the bundle.
-    const projectRunning = runtimeOptions?.projectRunning ?? true
     if (router.registeredPackages().includes(packageName)) {
       if (projectRunning && this.promote(packageName)) {
         this.reportLaunch(packageName, "started", runtimeOptions, resolved.installedManifest)
@@ -489,6 +666,7 @@ class MiniappLauncher {
         installedManifest: resolved.installedManifest,
         hostTrustedSystem: resolved.hostTrustedSystem,
         projectRunning,
+        developmentBuild: resolved.devBuild,
       })
       if (!ok) {
         throw new Error(`MiniappLauncher: spawn failed for ${packageName}`)
@@ -507,7 +685,7 @@ class MiniappLauncher {
       if (projectRunning) this.reportLaunch(packageName, "started", runtimeOptions, resolved.installedManifest)
     }
 
-    return {uiUri: resolved.uiUri, uiBaseDir: resolved.uiBaseDir}
+    return launchResultOf(resolved)
   }
 
   /**
@@ -528,9 +706,10 @@ class MiniappLauncher {
    * persisted running flag if ensureRunning fails (for example, bundle resolution,
    * deployment policy, or context spawning) so it does not retry every boot.
    * Each restore is an automatic launch to Fleet, reported by ensureRunning.
-   * Not compatibility-gated: a previously-running background app shouldn't be
+   * Not gated on the glasses' hardware: a previously-running background app shouldn't be
    * dropped just because glasses are momentarily disconnected at boot — it
-   * resumes when they reconnect, same as mid-session.
+   * resumes when they reconnect, same as mid-session. A release this Mentra App
+   * can't run is refused like any launch (see {@link assertRunsOnPhone}).
    */
   async autostartLocalMiniapps(): Promise<void> {
     const apps = await appRegistry.getInstalledMiniapps()

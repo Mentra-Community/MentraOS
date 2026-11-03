@@ -8,34 +8,29 @@
  * waited for it reads the login again and uses the refreshed tokens. A command
  * paused long enough to lose the lock does not spend the refresh token, and a
  * refresh stores its result only over the login it started from. Every
- * other change to a stored login (a new sign-in, selecting a workspace, signing
- * out) takes the same lock and starts from the login as stored then, so none
- * undoes a refresh and no refresh brings back a login that was replaced or
- * signed out. The rotated refresh
- * token is stored before the new access token is used. A refused refresh
- * token clears the login (`SessionExpiredError`).
+ * other change to a stored login (a new sign-in, signing out) takes the same
+ * lock and starts from the login as stored then, so none undoes a refresh and
+ * no refresh brings back a login that was replaced or signed out. The rotated
+ * refresh token is stored before the new access token is used. A refused
+ * refresh token clears the login (`SessionExpiredError`).
  *
- * The Store can refuse an access token before it expires: Core refuses every
- * token of a person whose sign-ins were revoked ("log out everywhere" in the
- * Mentra App, a deleted account). A Store request answered 401 then refreshes
- * the login at once (`renewRefusedLogin`) and is retried once, so a login
- * whose grant has ended says so at its next request instead of at its next
+ * Core can refuse an access token before it expires: it refuses every token
+ * of a person whose sign-ins were revoked ("log out everywhere" in the Mentra
+ * App, a deleted account). A Core request answered 401 then refreshes the
+ * login at once (`renewRefusedLogin`) and is retried once, so a login whose
+ * grant has ended says so at its next request instead of at its next
  * scheduled refresh.
  */
 
 import {refreshLoginToken, revokeLogin, SessionExpiredError} from "./api"
-import type {CliTarget} from "./config"
+import {normalizeUrl} from "./config"
 import {withFileLock, type FileLease} from "./file-lock"
 import {
   clearCredentials,
-  isStoredLogin,
-  loadCredentials,
   loadStoredLogin,
   refreshLockPath,
   saveCredentials,
-  targetOf,
   type CliCredentials,
-  type CommandCredentials,
 } from "./credentials"
 
 /** Refresh when the access token has less than this left. */
@@ -52,14 +47,13 @@ export function needsRefresh(credentials: CliCredentials, now = Date.now()): boo
 }
 
 /**
- * What a command acts with against `target`: `MENTRA_CLI_TOKEN`, or the
- * stored login, refreshed when it is about to expire. Null when signed out.
- * Throws `SessionExpiredError` (after clearing the login) when the refresh
- * token is refused.
+ * The login stored for the Core at `target`, refreshed when it is about to
+ * expire. Null when signed out. Throws `SessionExpiredError` (after clearing
+ * the login) when the refresh token is refused.
  */
-export async function loadFreshCredentials(target: CliTarget): Promise<CommandCredentials | null> {
-  const credentials = await loadCredentials(target)
-  if (!credentials || !isStoredLogin(credentials) || !needsRefresh(credentials)) return credentials
+export async function loadFreshCredentials(target: string): Promise<CliCredentials | null> {
+  const credentials = await loadStoredLogin(target)
+  if (!credentials || !needsRefresh(credentials)) return credentials
   return withRefreshLock(target, async lease => {
     // Another command may have refreshed (or cleared) the login while this one waited.
     const current = await loadStoredLogin(target)
@@ -69,14 +63,14 @@ export async function loadFreshCredentials(target: CliTarget): Promise<CommandCr
 }
 
 /**
- * After the Store refused `refusedToken`, an access token of `mentraUserId`'s stored login on `target`
+ * After Core refused `refusedToken`, an access token of `mentraUserId`'s stored login for `target`
  * (401): the login to retry with. When the stored login already carries another token (another command,
  * or an earlier request of this one, refreshed it meanwhile) it is used as stored. Otherwise it is
  * refreshed now, although it has not expired: a refused refresh token clears it (`SessionExpiredError`).
  * Null when there is nothing to retry with: signed out, or another person's login is stored now.
  */
 export function renewRefusedLogin(
-  target: CliTarget,
+  target: string,
   mentraUserId: string,
   refusedToken: string,
 ): Promise<CliCredentials | null> {
@@ -93,7 +87,7 @@ export function renewRefusedLogin(
  * Refresh `current`, the login as stored when this command took the refresh lock, and store the result
  * over it. Returns the login to use: the refreshed one, or whatever another command stored meanwhile.
  */
-async function refreshUnderLock(target: CliTarget, current: CliCredentials, lease: FileLease): Promise<CliCredentials | null> {
+async function refreshUnderLock(target: string, current: CliCredentials, lease: FileLease): Promise<CliCredentials | null> {
   // Paused past the lock's stale age, this command may have lost it: never spend the refresh token then.
   if (!lease.held()) throw new Error(LOST_LOCK)
   let refreshed: CliCredentials
@@ -121,33 +115,16 @@ async function refreshUnderLock(target: CliTarget, current: CliCredentials, leas
   return refreshed
 }
 
-/** Store a new sign-in, replacing its target's login once no refresh of that login is running. */
+/** Store a new sign-in, replacing its Core's login once no refresh of that login is running. */
 export function storeLogin(credentials: CliCredentials): Promise<"keychain" | "file"> {
-  return withRefreshLock(targetOf(credentials), () => saveCredentials(credentials))
+  return withRefreshLock(normalizeUrl(credentials.coreUrl), () => saveCredentials(credentials))
 }
 
 /**
- * Select `workspaceId`, which was checked for `chosenFor`'s person, on `target`'s login as it is
- * stored now, keeping whatever tokens a refresh rotated meanwhile. Null, changing nothing, when signed
- * out or when another person's login has replaced it since (the workspace was not checked for them).
+ * Sign out of the Core at `target`: once no refresh is running, revoke the stored login's refresh token
+ * at the sign-in server and delete the login, even when the server cannot be reached.
  */
-export function selectWorkspace(
-  target: CliTarget,
-  workspaceId: string,
-  chosenFor: {mentraUserId: string},
-): Promise<"keychain" | "file" | null> {
-  return withRefreshLock(target, async lease => {
-    const current = await loadStoredLogin(target)
-    if (!current || current.mentraUserId !== chosenFor.mentraUserId || !lease.held()) return null
-    return saveCredentials({...current, workspaceId})
-  })
-}
-
-/**
- * Sign out of `target`: once no refresh is running, revoke the stored login's refresh token at the
- * sign-in server and delete the login, even when the server cannot be reached.
- */
-export function signOut(target: CliTarget): Promise<{signedIn: boolean; confirmed: boolean}> {
+export function signOut(target: string): Promise<{signedIn: boolean; confirmed: boolean}> {
   return withRefreshLock(target, async lease => {
     const stored = await loadStoredLogin(target)
     let confirmed = false
@@ -163,7 +140,7 @@ export function signOut(target: CliTarget): Promise<{signedIn: boolean; confirme
   })
 }
 
-function withRefreshLock<T>(target: CliTarget, work: (lease: FileLease) => Promise<T>): Promise<T> {
+function withRefreshLock<T>(target: string, work: (lease: FileLease) => Promise<T>): Promise<T> {
   return withFileLock(
     refreshLockPath(target),
     {

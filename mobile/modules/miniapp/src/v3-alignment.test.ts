@@ -2,6 +2,8 @@
 import {describe, expect, test} from "bun:test"
 
 import {parseEnvelope, serializeEnvelope} from "./envelope"
+import type {TranscriptionData} from "./modules/events"
+import {MiniappValidationError} from "./modules/languages"
 import {MiniappRequestType, MiniappResponseType, MiniappStreamType} from "./protocol"
 import {MiniappSession, type PermissionRecord} from "./session"
 import {Transport, TransportDisconnectHandler, TransportMessageHandler} from "./transport/types"
@@ -147,123 +149,182 @@ describe("v3 alignment — module hasPermission getters", () => {
 })
 
 describe("v3 alignment — session.transcription", () => {
-  test("on() subscribes to transcription:auto", async () => {
+  type Subscribe = {
+    subscriptions: Array<string | Record<string, unknown>>
+    transcriptionListeners: Array<Record<string, unknown>>
+  }
+  const lastSubscribe = (transport: FakeTransport) =>
+    parseEnvelope(transport.sent[transport.sent.length - 1]!)!.payload as Subscribe
+
+  test("on() subscribes to transcription:auto on the cloud by default", async () => {
     const {session, transport} = await connectedSession()
     transport.sent.length = 0
     session.transcription.on(() => {})
     const env = parseEnvelope(transport.sent[0]!)
-    const payload = env!.payload as {type: string; subscriptions: string[]}
+    const payload = env!.payload as {type: string} & Subscribe
     expect(payload.type).toBe(MiniappRequestType.SUBSCRIBE)
-    expect(payload.subscriptions).toContain("transcription:auto")
+    expect(payload.subscriptions).toContainEqual({stream: "transcription:auto", processing: "preferCloud"})
+    expect(payload.transcriptionListeners).toEqual([
+      {id: expect.any(String), stream: "transcription:auto", processing: "preferCloud"},
+    ])
   })
 
   test("forLanguage('en-US', handler) subscribes to transcription:en-US", async () => {
     const {session, transport} = await connectedSession()
     transport.sent.length = 0
     session.transcription.forLanguage("en-US", () => {})
-    const env = parseEnvelope(transport.sent[0]!)
-    const payload = env!.payload as {subscriptions: string[]}
-    expect(payload.subscriptions).toContain("transcription:en-US")
+    expect(lastSubscribe(transport).subscriptions).toContainEqual({
+      stream: "transcription:en-US",
+      processing: "preferCloud",
+    })
   })
 
   test("forLanguage(['en-US', 'es-ES'], handler) subscribes to both", async () => {
     const {session, transport} = await connectedSession()
     transport.sent.length = 0
-    session.transcription.forLanguage(["en-US", "es-ES"], () => {})
+    session.transcription.forLanguage(["en-US", "es-ES"], () => {}, {processing: "preferLocal"})
     // Last SUBSCRIBE envelope contains both.
-    const last = parseEnvelope(transport.sent[transport.sent.length - 1]!)
-    const payload = last!.payload as {subscriptions: string[]}
-    expect(payload.subscriptions).toContain("transcription:en-US")
-    expect(payload.subscriptions).toContain("transcription:es-ES")
+    const payload = lastSubscribe(transport)
+    expect(payload.subscriptions).toContainEqual({stream: "transcription:en-US", processing: "preferLocal"})
+    expect(payload.subscriptions).toContainEqual({stream: "transcription:es-ES", processing: "preferLocal"})
   })
 
-  test("forceLocal transcription is encoded as subscription metadata", async () => {
+  test("localOnly also carries the forceLocal flag that older hosts read", async () => {
     const {session, transport} = await connectedSession()
     transport.sent.length = 0
-    session.transcription.on(() => {}, {forceLocal: true})
-    const env = parseEnvelope(transport.sent[0]!)
-    const payload = env!.payload as {subscriptions: Array<string | {stream: string; forceLocal: boolean}>}
-    expect(payload.subscriptions).toContainEqual({stream: "transcription:auto", forceLocal: true})
+    session.transcription.on(() => {}, {processing: "localOnly"})
+    const payload = lastSubscribe(transport)
+    expect(payload.subscriptions).toEqual([{stream: "transcription:auto", processing: "localOnly", forceLocal: true}])
+    expect(payload.transcriptionListeners).toEqual([
+      {id: expect.any(String), stream: "transcription:auto", processing: "localOnly", forceLocal: true},
+    ])
   })
 
-  test("mixed listeners request both local and cloud routes for one stream", async () => {
+  test("the deprecated forceLocal means localOnly, and processing wins over it", async () => {
+    const {session, transport} = await connectedSession()
+    transport.sent.length = 0
+    const stop = session.transcription.on(() => {}, {forceLocal: true})
+    expect(lastSubscribe(transport).subscriptions).toEqual([
+      {stream: "transcription:auto", processing: "localOnly", forceLocal: true},
+    ])
+    stop()
+    session.transcription.on(() => {}, {processing: "preferLocal", forceLocal: true})
+    expect(lastSubscribe(transport).subscriptions).toEqual([{stream: "transcription:auto", processing: "preferLocal"}])
+  })
+
+  test("an unknown processing value throws before subscribing", async () => {
+    const {session, transport} = await connectedSession()
+    transport.sent.length = 0
+    expect(() => session.transcription.on(() => {}, {processing: "cloudOnly" as never})).toThrow(MiniappValidationError)
+    expect(() => session.transcription.forLanguage("en-US", () => {}, {processing: "local" as never})).toThrow(
+      MiniappValidationError,
+    )
+    expect(transport.sent).toHaveLength(0)
+  })
+
+  test("listeners with different processing on one stream each get an entry", async () => {
     const {session, transport} = await connectedSession()
     transport.sent.length = 0
     session.transcription.on(() => {})
-    session.transcription.on(() => {}, {forceLocal: true})
+    const stopLocal = session.transcription.on(() => {}, {processing: "localOnly"})
+    session.transcription.on(() => {}, {processing: "preferLocal"})
 
-    const last = parseEnvelope(transport.sent[transport.sent.length - 1]!)
-    const payload = last!.payload as {
-      subscriptions: Array<string | {stream: string; forceLocal: boolean; includeCloud?: boolean}>
-    }
-    expect(payload.subscriptions).toContainEqual({
-      stream: "transcription:auto",
-      forceLocal: true,
-      includeCloud: true,
-    })
+    let payload = lastSubscribe(transport)
+    expect(payload.subscriptions).toEqual([
+      {stream: "transcription:auto", processing: "preferCloud"},
+      {stream: "transcription:auto", processing: "localOnly", forceLocal: true},
+      {stream: "transcription:auto", processing: "preferLocal"},
+    ])
+    expect(payload.transcriptionListeners.map((listener) => listener.processing)).toEqual([
+      "preferCloud",
+      "localOnly",
+      "preferLocal",
+    ])
+
+    stopLocal()
+    payload = lastSubscribe(transport)
+    expect(payload.subscriptions).toEqual([
+      {stream: "transcription:auto", processing: "preferCloud"},
+      {stream: "transcription:auto", processing: "preferLocal"},
+    ])
   })
 
-  test("adding and removing a default listener updates an existing local-only route", async () => {
-    const {session, transport} = await connectedSession()
-    transport.sent.length = 0
-    session.transcription.on(() => {}, {forceLocal: true})
-    const stopCloud = session.transcription.on(() => {})
-
-    let last = parseEnvelope(transport.sent[transport.sent.length - 1]!)
-    let payload = last!.payload as {
-      subscriptions: Array<string | {stream: string; forceLocal: boolean; includeCloud?: boolean}>
-    }
-    expect(payload.subscriptions).toContainEqual({
-      stream: "transcription:auto",
-      forceLocal: true,
-      includeCloud: true,
-    })
-
-    stopCloud()
-
-    last = parseEnvelope(transport.sent[transport.sent.length - 1]!)
-    payload = last!.payload as {
-      subscriptions: Array<string | {stream: string; forceLocal: boolean; includeCloud?: boolean}>
-    }
-    expect(payload.subscriptions).toContainEqual({stream: "transcription:auto", forceLocal: true})
-  })
-
-  test("mixed listeners receive only their routed transcription events", async () => {
+  test("listeners receive only the events tagged for their class", async () => {
     const {session, transport} = await connectedSession()
     const cloudText: string[] = []
+    const preferLocalText: string[] = []
     const localText: string[] = []
     session.transcription.on((data) => cloudText.push(data.text))
-    session.transcription.on((data) => localText.push(data.text), {forceLocal: true})
+    session.transcription.on((data) => preferLocalText.push(data.text), {processing: "preferLocal"})
+    session.transcription.on((data) => localText.push(data.text), {processing: "localOnly"})
+
+    for (const [text, transcriptionRoute] of [
+      ["cloud", "default"],
+      ["local", "forceLocal"],
+      ["fallback", "all"],
+    ]) {
+      transport.deliverFromPhone({
+        type: MiniappResponseType.EVENT,
+        streamType: "transcription:en-US",
+        transcriptionRoute,
+        data: {text, isFinal: true},
+      })
+    }
+
+    expect(cloudText).toEqual(["cloud", "fallback"])
+    expect(preferLocalText).toEqual(["cloud", "fallback"])
+    expect(localText).toEqual(["local", "fallback"])
+  })
+
+  test("an event addressed to one listener reaches only that listener, with its source", async () => {
+    const {session, transport} = await connectedSession()
+    transport.sent.length = 0
+    const cloud: TranscriptionData[] = []
+    const preferLocal: TranscriptionData[] = []
+    session.transcription.on((data) => cloud.push(data))
+    session.transcription.on((data) => preferLocal.push(data), {processing: "preferLocal"})
+    const ids = lastSubscribe(transport).transcriptionListeners.map((listener) => listener.id)
 
     transport.deliverFromPhone({
       type: MiniappResponseType.EVENT,
       streamType: "transcription:en-US",
       transcriptionRoute: "default",
-      data: {text: "cloud", isFinal: true},
+      listenerId: ids[1],
+      data: {text: "on device", isFinal: true, source: "local"},
+    })
+
+    expect(cloud).toEqual([])
+    expect(preferLocal).toEqual([{text: "on device", isFinal: true, source: "local"}])
+  })
+
+  test("events from hosts without source get it from the transcript type", async () => {
+    const {session, transport} = await connectedSession()
+    const sources: string[] = []
+    session.transcription.on((data) => sources.push(data.source))
+    session.transcription.on((data) => sources.push(data.source), {processing: "localOnly"})
+
+    transport.deliverFromPhone({
+      type: MiniappResponseType.EVENT,
+      streamType: "transcription:en-US",
+      transcriptionRoute: "default",
+      data: {type: "transcription", text: "cloud", isFinal: true},
     })
     transport.deliverFromPhone({
       type: MiniappResponseType.EVENT,
       streamType: "transcription:en-US",
       transcriptionRoute: "forceLocal",
-      data: {text: "local", isFinal: true},
-    })
-    transport.deliverFromPhone({
-      type: MiniappResponseType.EVENT,
-      streamType: "transcription:en-US",
-      transcriptionRoute: "all",
-      data: {text: "fallback", isFinal: true},
+      data: {type: "local_transcription", text: "local", isFinal: true},
     })
 
-    expect(cloudText).toEqual(["cloud", "fallback"])
-    expect(localText).toEqual(["local", "fallback"])
+    expect(sources).toEqual(["cloud", "local"])
   })
 
-  test("legacy untagged transcription never reaches a forceLocal listener", async () => {
+  test("legacy untagged transcription never reaches a localOnly listener", async () => {
     const {session, transport} = await connectedSession()
     const cloudText: string[] = []
     const localText: string[] = []
     session.transcription.on((data) => cloudText.push(data.text))
-    session.transcription.on((data) => localText.push(data.text), {forceLocal: true})
+    session.transcription.on((data) => localText.push(data.text), {processing: "localOnly"})
 
     transport.deliverFromPhone({
       type: MiniappResponseType.EVENT,
@@ -275,18 +336,15 @@ describe("v3 alignment — session.transcription", () => {
     expect(localText).toEqual([])
   })
 
-  test("removing the last forceLocal listener restores cloud transcription for the stream", async () => {
+  test("removing the last localOnly listener leaves only the cloud entry for the stream", async () => {
     const {session, transport} = await connectedSession()
     transport.sent.length = 0
     session.transcription.on(() => {})
-    const stopLocal = session.transcription.on(() => {}, {forceLocal: true})
+    const stopLocal = session.transcription.on(() => {}, {processing: "localOnly"})
 
     stopLocal()
 
-    const last = parseEnvelope(transport.sent[transport.sent.length - 1]!)
-    const payload = last!.payload as {subscriptions: Array<string | {stream: string; forceLocal: boolean}>}
-    expect(payload.subscriptions).toContain("transcription:auto")
-    expect(payload.subscriptions).not.toContainEqual({stream: "transcription:auto", forceLocal: true})
+    expect(lastSubscribe(transport).subscriptions).toEqual([{stream: "transcription:auto", processing: "preferCloud"}])
   })
 
   test("configure() sends a TRANSCRIPTION_CONFIG envelope", async () => {

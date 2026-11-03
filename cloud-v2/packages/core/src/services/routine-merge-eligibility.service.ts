@@ -11,33 +11,37 @@ import {authoringJobViewSchema} from '../types/routine-work.types'
 import {requestInputDigest} from './test-request.service'
 import {TestRunGithubApp} from './test-run-github-app'
 import {readTestMetadata} from './test-builds.service'
+import {testingRepositorySchema, testingTarget, type TestingRepository} from '../types/testing-source.types'
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/)
 const pull = z.object({merged: z.boolean(), merge_commit_sha: sha.nullable(),
-  head: z.object({sha, repo: z.object({full_name: z.literal('Mentra-Community/Mentra-Automated-Testing')})})})
+  head: z.object({sha, repo: z.object({full_name: testingRepositorySchema})}), base: z.object({ref: z.string()}).optional()})
 
 /** Only normal source enrollment checks merge provenance; candidates never promote themselves. */
 export class GithubRoutineMergeGateway {
   constructor(private readonly app = new TestRunGithubApp(),
     private readonly transport: (url: string, init: RequestInit) => Promise<Response> = fetch) {}
-  private async get(path: string): Promise<unknown> {
+  private async get(path: string, repository: TestingRepository): Promise<unknown> {
     try {
-      const response = await this.transport(`https://api.github.com/repos/Mentra-Community/Mentra-Automated-Testing/${path}`, {
+      const response = await this.transport(`https://api.github.com/repos/${repository}/${path}`, {
         redirect: 'error', signal: AbortSignal.timeout(20_000), headers: {
-          Authorization: `Bearer ${await this.app.token('harness')}`, Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${await this.app.token('harness', repository)}`, Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28'},
       })
       return JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(await readTestMetadata(response, 256 * 1024)))
     } catch {throw new Error('Routine merge provenance is unavailable; retry normal source enrollment')}
   }
-  async merged(prUrl: string, reviewedRevision: string, enrolledRevision: string): Promise<boolean> {
-    const number = /^https:\/\/github\.com\/Mentra-Community\/Mentra-Automated-Testing\/pull\/([1-9]\d*)$/.exec(prUrl)?.[1]
-    if (!number || !sha.safeParse(reviewedRevision).success || !sha.safeParse(enrolledRevision).success) return false
-    const pr = pull.parse(await this.get(`pulls/${number}`))
-    if (!pr.merged || !pr.merge_commit_sha || pr.head.sha !== reviewedRevision) return false
+  async merged(prUrl: string, reviewedRevision: string, enrolledRevision: string, sourceRepository?: TestingRepository): Promise<boolean> {
+    const match = /^https:\/\/github\.com\/(Mentra-Community\/(?:Mentra-Automated-Testing|Mentra))\/pull\/([1-9]\d*)$/.exec(prUrl)
+    if (!match || !sha.safeParse(reviewedRevision).success || !sha.safeParse(enrolledRevision).success) return false
+    const repository = testingRepositorySchema.parse(match[1]), number = match[2]
+    if (sourceRepository !== undefined && repository !== sourceRepository) return false
+    const pr = pull.parse(await this.get(`pulls/${number}`, repository))
+    if (!pr.merged || !pr.merge_commit_sha || pr.head.sha !== reviewedRevision || pr.head.repo.full_name !== repository ||
+      repository === 'Mentra-Community/Mentra' && pr.base?.ref !== testingTarget(repository).ref.slice('refs/heads/'.length)) return false
     if (pr.merge_commit_sha === enrolledRevision) return true
     const comparison = z.object({status: z.enum(['ahead', 'behind', 'identical', 'diverged'])})
-      .parse(await this.get(`compare/${pr.merge_commit_sha}...${enrolledRevision}?per_page=1`))
+      .parse(await this.get(`compare/${pr.merge_commit_sha}...${enrolledRevision}?per_page=1`, repository))
     return comparison.status === 'ahead' || comparison.status === 'identical'
   }
 }
@@ -104,7 +108,7 @@ export class RoutineMergeEligibilityService {
     }
     for (const candidate of await this.rows.candidates(row)) {
       if (semantic(candidate.definition) === semantic(row.definition) &&
-          await this.github.merged(candidate.prUrl, candidate.sourceRevision, row.definitionRevision))
+          await this.github.merged(candidate.prUrl, candidate.sourceRevision, row.definitionRevision, row.routineSource.repository))
         await this.rows.promote(candidate)
     }
   }

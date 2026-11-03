@@ -102,6 +102,11 @@ describe("operator key scopes", () => {
     expect(ORGANIZATION_CAPABILITIES).toContain("organization.licenses.read")
     expect(OPERATOR_KEY_SCOPES).not.toContain("organization.licenses.read")
   })
+
+  test("organization.registry.administer is an organization capability and not an operator key scope", () => {
+    expect(ORGANIZATION_CAPABILITIES).toContain("organization.registry.administer")
+    expect(OPERATOR_KEY_SCOPES).not.toContain("organization.registry.administer")
+  })
 })
 
 describe("license capabilities", () => {

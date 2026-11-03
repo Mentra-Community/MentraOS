@@ -271,6 +271,10 @@ class BluetoothSdkModule : Module() {
                     sendEvent("ota_status", event.values)
                 }
 
+                override fun onBesCrashDetected(event: BesCrashDetectedEvent) {
+                    sendEvent("bes_crash_detected", event.toEventMap())
+                }
+
                 override fun onSettingsAck(event: SettingsAckEvent) {
                     sendEvent("settings_ack", event.values)
                 }
@@ -310,7 +314,9 @@ class BluetoothSdkModule : Module() {
                 }
 
                 override fun onError(error: BluetoothError) {
-                    sendEvent("pair_failure", mapOf("error" to error.message))
+                    val body = mutableMapOf<String, Any>("error" to error.message)
+                    error.failureCode?.let { body["code"] = it }
+                    sendEvent("pair_failure", body)
                 }
 
                 override fun onRawEvent(eventName: String, values: Map<String, Any>) {
@@ -349,6 +355,8 @@ class BluetoothSdkModule : Module() {
             "speaking_status",
             "battery_status",
             "local_transcription",
+            "wake_word",
+            "speech_activity",
             "wifi_status_change",
             "wifi_scan_result",
             "wifi_forget_result",
@@ -379,6 +387,9 @@ class BluetoothSdkModule : Module() {
             "pair_failure",
             "pairing_info",
             "entering_pairing_mode",
+            "pairing_mode_ended",
+            "pairing_state_changed",
+            "audio_setup_changed",
             "owner_replaced",
             "audio_pairing_needed",
             "audio_connected",
@@ -401,6 +412,7 @@ class BluetoothSdkModule : Module() {
             "ota_start_ack",
             "ota_status",
             "ar99_ota_status",
+            "bes_crash_detected",
             // Nex / BLE debug (NexEventUtils —Bridge.sendTypedMessage)
             "send_command_to_ble",
             "receive_command_from_ble",
@@ -562,6 +574,12 @@ class BluetoothSdkModule : Module() {
             sdk?.startScan(DeviceModel.fromDeviceType(model))
         }
 
+        SdkAsyncFunction("getBondedGlasses") { ->
+            com.mentra.bluetoothsdk.sgcs.MentraLive.soleBondedMentraLive(Bridge.getContext())?.let {
+                mapOf("name" to (it.name ?: ""), "address" to it.address)
+            }
+        }
+
         SdkAsyncFunction("getScanDiagnostic") { model: String ->
             sdk?.connectedDeviceScanDiagnostic(DeviceModel.fromDeviceType(model))?.let {
                 mapOf("code" to it.code, "message" to it.message)
@@ -621,6 +639,10 @@ class BluetoothSdkModule : Module() {
             requireSdk().sendIncidentId(incidentId, apiBaseUrl)
         }
 
+        SdkCoroutineFunction("sendBesCrashReported") { incidentKey: String, reportId: String ->
+            requireSdk().sendBesCrashReported(incidentKey, reportId)
+        }
+
         // MARK: - Native Notification Centre
 
         // Public controls use the SDK facade; phone payload delivery uses DeviceManager.
@@ -652,8 +674,9 @@ class BluetoothSdkModule : Module() {
             requireSdk().setHotspotState(enabled).values
         }
 
-        SdkAsyncFunction("setWifiAdbState") { enabled: Boolean ->
-            sdk?.setWifiAdbState(enabled)
+        SdkAsyncFunction("setWifiAdbState") { enabled: Boolean, expectedBluetoothMac: String? ->
+            val current = sdk ?: throw BluetoothSdkException("glasses_not_connected", "Bluetooth SDK is unavailable.")
+            current.setWifiAdbState(enabled, expectedBluetoothMac)
         }
 
         SdkAsyncFunction("setSystemTime") { timestampMs: Double ->
@@ -879,11 +902,40 @@ class BluetoothSdkModule : Module() {
             sdk?.setMicSourcePin(source)
         }
 
-        // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: restart()
-        // does a synchronous JNI model reload that would otherwise block every other
-        // native call in the app until it completes.
+        // MARK: - On-device voice
+        //
+        // Everything that can wait on a model load or a worker runs on Dispatchers.IO,
+        // never on the shared Expo AsyncFunctionQueue, which every other native call
+        // (and every miniapp) waits behind.
+
+        AsyncFunction("setWakeWordDetection") Coroutine { enabled: Boolean, modelDir: String? ->
+            withContext(Dispatchers.IO) {
+                com.mentra.bluetoothsdk.stt.WakeWordDetector.configure(enabled, modelDir)
+            }
+        }
+
+        // Lock-free: never waits on a model load.
+        AsyncFunction("isSttModelLoaded") { path: String ->
+            deviceManager?.isSttModelLoaded(path) ?: false
+        }
+
+        // Resolves with the final text, "" when nothing was pending, or null when no
+        // streaming model is active, the model can't finalize early, or after 3 s.
+        AsyncFunction("finishTranscription") Coroutine { ->
+            withContext(Dispatchers.IO) { deviceManager?.finishTranscription() }
+        }
+
         AsyncFunction("restartTranscriber") Coroutine { ->
             withContext(Dispatchers.IO) { deviceManager?.restartTranscriber() }
+        }
+
+        AsyncFunction("setSpeechActivityDetection") Coroutine { enabled: Boolean, options: Map<String, Any?>? ->
+            val minSilenceMs =
+                    (options?.get("minSilenceMs") as? Number)?.toInt()
+                            ?: com.mentra.bluetoothsdk.stt.SpeechActivityEngine.DEFAULT_MIN_SILENCE_MS
+            withContext(Dispatchers.IO) {
+                com.mentra.bluetoothsdk.stt.SpeechActivityDetector.configure(enabled, minSilenceMs)
+            }
         }
 
         // MARK: - Audio Playback Monitoring
@@ -925,6 +977,33 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("pcmStreamAbort") { streamId: String ->
             PcmStreamManager.abort(streamId)
+        }
+
+        // Native HTTP GET of raw s16le mono PCM, played as it arrives. Blocks a
+        // Dispatchers.IO thread (never the shared queue) until the body has played.
+        AsyncFunction("pcmStreamPlayUrl") Coroutine {
+            streamId: String,
+            url: String,
+            sampleRate: Int,
+            volume: Double,
+            jitterMs: Int?,
+            ->
+            withContext(Dispatchers.IO) {
+                try {
+                    mapOf(
+                            "durationMs" to
+                                    PcmStreamManager.playUrl(
+                                            streamId,
+                                            url,
+                                            sampleRate,
+                                            volume.toFloat(),
+                                            jitterMs,
+                                    )
+                    )
+                } catch (error: com.mentra.bluetoothsdk.utils.audio.PcmUrlPlaybackException) {
+                    throw CodedException(error.code, error.message ?: error.code, error)
+                }
+            }
         }
 
         // *Blocking on Dispatchers.IO, not the shared AsyncFunctionQueue: these wait on

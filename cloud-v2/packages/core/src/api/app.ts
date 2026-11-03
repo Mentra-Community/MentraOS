@@ -13,8 +13,12 @@
  *   /api/client/reports/*       — device-filed reports
  *   /api/client/bluetooth-sdk/* — Bluetooth SDK startup update check,
  *                                 unauthenticated (called from customer apps)
+ *   /api/client/workspaces/*    — the Mentra App's workspace: mine, invitations (accept,
+ *                                 decline), leave
  *   /api/client/fleet/*         — a phone's Fleet reports, forwarded to the optional Fleet
  *                                 service (404 fleet_not_installed without one)
+ *   /api/client/registry/*      — the Mentra App's registry calls: register a miniapp URL at
+ *                                 install (Core verifies it), and the updater's status batch
  *   /api/client/miniapps/*      — LEGACY: the frozen preinstalled catalog that
  *                                 released Mentra App versions still install from
  *   /api/agent/reports/*        — read-only private dev-agent access
@@ -33,6 +37,11 @@
  *   /api/internal/workspaces/*  — the signed service API the Store calls (64 KiB body limit)
  *   /api/internal/licenses/*    — the signed license API the Store's billing module calls
  *                                 (64 KiB body limit)
+ *   /api/internal/fleet/*       — the signed API Fleet calls: each workspace's assigned
+ *                                 miniapps (64 KiB body limit)
+ *   /api/internal/registry/*    — the miniapp registry's signed API: Fleet checks and names
+ *                                 miniapps, the directory reads and archives entries (64 KiB
+ *                                 body limit)
  *   everything else (GET)       — the admin portal's files, when
  *                                 CLOUD_CORE_ADMIN_STATIC_DIR is set (Private Cloud)
  *
@@ -75,14 +84,18 @@ import testHostObservations from "./internal/test-host-observations.api";
 import clientAuth from "./client/auth.api";
 import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
+import clientWorkspaces from "./client/workspaces.api";
 import clientMiniapps from "./client/miniapps.api";
+import clientRegistry from "./client/registry.api";
 import clientBluetoothSdk from "./client/bluetooth-sdk.api";
 import { clientFleetApi } from "./fleet/fleet-forwarding";
 import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
 import cliApi from "./cli/cli.api";
 import portalEnterprise from "./portal/enterprise.api";
+import internalFleet from "./internal/fleet.api";
 import internalLicenses from "./internal/licenses.api";
+import internalRegistry from "./internal/registry.api";
 import internalWorkspaces from "./internal/workspaces.api";
 import { createOrganizationApi } from "./organization/organization.api";
 import { createWorkspacesApi } from "./workspaces/workspaces.api";
@@ -93,7 +106,7 @@ import { createOidcApi } from "./oidc/oidc.api";
 
 const logger = createLogger("core").child({ service: "app" });
 
-/** The largest body the signed workspace and license service APIs read. */
+/** The largest body the signed workspace, license, Fleet and registry service APIs read. */
 const INTERNAL_WORKSPACES_BODY_LIMIT_BYTES = 64 * 1024;
 
 export interface CreateAppOptions {
@@ -142,7 +155,9 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/auth", clientAuth);
   app.route("/api/client/reports", clientReports);
   app.route("/api/client/support-profile", clientSupportProfile);
+  app.route("/api/client/workspaces", clientWorkspaces);
   app.route("/api/client/bluetooth-sdk", clientBluetoothSdk);
+  app.route("/api/client/registry", clientRegistry);
   // Fleet is optional and lives in its own service; Core authenticates the phone (its own gate) and forwards.
   app.route("/api/client/fleet", clientFleetApi);
   app.route("/api/agent/reports", reportAgent);
@@ -164,6 +179,22 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
     }),
   );
   app.route("/api/internal/licenses", internalLicenses);
+  app.use(
+    "/api/internal/fleet/*",
+    bodyLimit({
+      maxSize: INTERNAL_WORKSPACES_BODY_LIMIT_BYTES,
+      onError: (c) => c.json({ error: "payload_too_large" }, 413),
+    }),
+  );
+  app.route("/api/internal/fleet", internalFleet);
+  app.use(
+    "/api/internal/registry/*",
+    bodyLimit({
+      maxSize: INTERNAL_WORKSPACES_BODY_LIMIT_BYTES,
+      onError: (c) => c.json({ error: "payload_too_large" }, 413),
+    }),
+  );
+  app.route("/api/internal/registry", internalRegistry);
   app.route("/api/internal/test-requests", createRoutineJobBindingApi());
   app.route("/api/internal/test-requests", createTestRequestsApi());
   app.route("/api/internal/routine-cases", createInternalRoutineCaseApi());

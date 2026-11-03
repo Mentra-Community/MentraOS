@@ -36,7 +36,11 @@ describe("package entry points", () => {
     expect(root.OWNER_NOT_FOUND_ERROR).toBe("owner_not_found")
     // A license is a workspace's: there is no other owner.
     expect(root.LICENSE_OWNER_TYPES).toEqual(["workspace"])
-    expect(root.LICENSE_ENDED_REASONS).toEqual(["workspace_deleted", "admin_reset"])
+    expect(root.LICENSE_ENDED_REASONS).toEqual(["workspace_deleted", "lapsed", "admin_reset"])
+    expect(root.LICENSE_WRITE_ENDED_REASONS).toEqual(["lapsed"])
+    // The admin portal's registry page and Core's admin routes share the rule kinds and the limits.
+    expect(root.ADMIN_REGISTRY_RULE_KINDS).toEqual(["url", "package", "domain", "account"])
+    expect(root.ADMIN_REGISTRY_REGISTER_MAX_URLS).toBe(50)
     expect(Object.keys(root)).not.toContain("signServiceRequest")
     expect(Object.keys(root)).not.toContain("createCoreWorkspaceClient")
     // The Fleet UI contract names DOM types, so it has its own subpath and server packages never see it.

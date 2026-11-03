@@ -7,6 +7,7 @@ import type {LaneRestorationAttempt, LaneRestorationHost, LaneRestorationList} f
 import {restorationHostIsFresh} from "../../../../packages/core/src/types/lane-restoration.types";
 import {api} from "../lib/api";
 import {repairActivityLabel} from '../lib/repair-status';
+import {useState} from 'react';
 const time = (value: string | null) => value ? new Date(value).toLocaleString() : "Unknown";
 export function restorationElapsed(attempt: LaneRestorationAttempt, observedAt: string) {
   const start = attempt.startedAt;
@@ -62,6 +63,26 @@ export function RestorationHost({host, fresh, laneId}: {host: LaneRestorationHos
     {host.restoration?.truncated ? <p className="text-xs text-[#a64235]">The controller reports only a bounded portion of its restoration history. Older attempts may be absent.</p> : null}
   </section>;
 }
+function RestorationHistoryHost({host, fresh, now}: {host: LaneRestorationHost; fresh: boolean; now:number}) {
+  const [open, setOpen] = useState(false);
+  const query = useQuery({queryKey: ['lane-restoration', host.hostId], enabled: open,
+    refetchInterval: open ? 30_000 : false,
+    queryFn: () => api<LaneRestorationList>(`/api/admin/test-runs/restoration/list?hostId=${encodeURIComponent(host.hostId)}`)});
+  const detail = query.data?.hosts.find(value => value.hostId === host.hostId);
+  const displayed = detail && Date.parse(detail.receivedAt) >= Date.parse(host.receivedAt) ? detail
+    : detail ? {...host,restoration:detail.restoration} : undefined;
+  return <section className="space-y-3"><h3 className="font-semibold">{host.hostId}</h3>
+    <p className="text-xs text-[#68746d]">{fresh ? 'Controller reporting' : 'Current controller state unknown'} · Last received {time(host.receivedAt)}</p>
+    <p className="text-xs text-[#59655e]">{host.lanes.map(lane => `${lane.id} · ${fresh ? '' : 'last reported '}${lane.state.replaceAll('-', ' ')}`).join(' · ')}</p>
+    <details open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+      <summary className="cursor-pointer text-sm font-medium">Repair history and resume receipts</summary>
+      {open && (query.isPending ? <LoadingIndicator label="Loading restoration history" /> : <>
+        {query.isError ? <p className="text-sm text-[#a64235]">Restoration history could not refresh. Current lane state remains the host observation above.</p> : null}
+        {displayed ? <RestorationHost host={displayed} fresh={!query.isError && restorationHostIsFresh(displayed,now,query.data!.freshForMs)} /> : !query.isError ? <p className="text-sm text-[#68746d]">No restoration history was returned for this controller.</p> : null}
+      </>)}
+    </details>
+  </section>;
+}
 export function LaneRestorationPage() {
   const query = useQuery({queryKey: ["lane-restoration"], queryFn: () => api<LaneRestorationList>("/api/admin/test-runs/restoration/list"), refetchInterval: 30_000});
   const now = useClock();
@@ -70,7 +91,7 @@ export function LaneRestorationPage() {
     <a href="/?systemHealth=1" className="mt-2 inline-block text-sm font-medium text-[#087d50] hover:underline">Back to System health</a></div>
     <TestingButton className="text-sm" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh</TestingButton></div>
     {query.isError ? <p className="text-sm text-[#a64235]">Restoration records could not refresh. Current status is unknown; any displayed history is the last received observation.</p> : null}
-    {query.data?.hosts.map(host => <RestorationHost key={host.hostId} host={host} fresh={!query.isError && restorationHostIsFresh(host, now, query.data!.freshForMs)} />)}
+    {query.data?.hosts.map(host => <RestorationHistoryHost key={host.hostId} host={host} now={now} fresh={!query.isError && restorationHostIsFresh(host, now, query.data!.freshForMs)} />)}
     {!query.data?.hosts.length ? query.isPending ? <LoadingIndicator label="Loading restoration records" /> : <p className="text-sm text-[#68746d]">No controller lane observation is available. Restoration status is unknown.</p> : null}
     {query.data?.truncated ? <p className="text-xs text-[#a64235]">Only the first 32 reporting controllers are shown.</p> : null}
     <details className="text-xs text-[#747780]"><summary className="cursor-pointer">Timing and receipt details</summary><p className="mt-2">Agent elapsed time starts at the recorded invocation. The lane handoff time and its ten-minute alert are separate. Missing start, end or receipt data stays unknown. This page does not start agents, answer questions or resume a lane.</p></details>

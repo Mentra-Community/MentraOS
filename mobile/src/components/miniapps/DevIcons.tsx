@@ -1,5 +1,6 @@
 import {Icon} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {translate} from "@/i18n"
 import {View} from "react-native"
 
 /**
@@ -17,10 +18,10 @@ export function DevIcon({size = 24}: {size?: number}) {
 }
 
 /**
- * Small orange dot overlaid on a miniapp's icon to mark it as a dev miniapp
- * (loaded via QR scan / dev URL, not from the store). Positioned at the
- * top-right of the icon's bounding box with a white border so it stays visible
- * against any logo.
+ * Small orange dot overlaid on a miniapp's icon to mark it as a development
+ * build (a local-network install, a dev server or a development snapshot),
+ * announced as "Development build". Positioned at the top-right of the icon's
+ * bounding box with a white border so it stays visible against any logo.
  *
  * Render this as a SIBLING of the (overflow-hidden) icon container, inside a
  * relatively-positioned wrapper — not inside the squircle, or it gets clipped.
@@ -29,6 +30,9 @@ export function DevMiniappBadge({size = 10}: {size?: number}) {
   return (
     <View
       pointerEvents="none"
+      accessible
+      accessibilityLabel={translate("home:developmentBuild")}
+      testID="development-build-badge"
       style={{
         position: "absolute",
         top: -2,

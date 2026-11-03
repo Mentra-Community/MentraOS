@@ -178,6 +178,19 @@ jest.mock("react-native-zip-archive", () => ({
   },
 }))
 jest.mock("../../../modules/engine/src/utils/storage/zip", () => ({printDirectory: jest.fn()}))
+// Extraction checks each unpacked file's real path (no links) through Crust, as the native module answers.
+jest.mock("@mentra/crust", () => ({
+  __esModule: true,
+  default: {
+    canonicalFilePath: (path: string) => {
+      try {
+        return require("node:fs").realpathSync(path)
+      } catch {
+        return null
+      }
+    },
+  },
+}))
 // The release installer's own suite covers its prompt and deferral. Here it
 // installs like the real one, after asking when the miniapp is open.
 const mockRunning = new Set<string>()
@@ -189,6 +202,8 @@ jest.mock("@mentra/engine-host-internal", () => {
   const appRegistry = jest.requireActual("../../../modules/engine/src/services/AppRegistry").default
   const {MiniappRunningError} = jest.requireActual("../../../modules/engine/src/utils/storeInstallRuntime")
   return {
+    // LogoutUtils reaches the account credential vault.
+    ...jest.requireActual("../../../modules/engine/src/utils/credentials/platform"),
     appRegistry,
     sha256Hex: async () => mockDigest,
     MiniappRunningError,
@@ -400,9 +415,9 @@ it("migrates legacy ownership before the session store is cleared", async () => 
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
 })
 
-it("adopts a byte-identical consumer registry release after logout", async () => {
-  await registry.installFromLocalZip("consumer-registry.zip", {
-    releaseIdentity: {source: "preinstalled_registry", releaseId: "consumer-release"},
+it("adopts a byte-identical consumer release after logout", async () => {
+  await registry.installFromLocalZip("consumer-release.zip", {
+    releaseIdentity: {source: "url", sourceUrl: `https://miniapps.mentraglass.com/${pkg}/`},
   })
   await LogoutUtils.performCompleteLogout()
   await deploymentManagedMiniappSync.sync(workspace)
@@ -864,14 +879,14 @@ describe("one installer for every install source", () => {
   })
 })
 
-describe("staged Store installs", () => {
-  const storeIdentity = {source: "system_store" as const, storePackageName: "com.mentra.store"}
+describe("staged updates", () => {
+  const urlIdentity = {source: "url" as const, sourceUrl: `https://miniapps.mentraglass.com/${pkg}/`}
 
   function stagedInstall(whenStaged: () => Promise<void>) {
-    return registry.installFromUrl("https://store.example/call.zip", {
+    return registry.installFromUrl(`https://miniapps.mentraglass.com/${pkg}/call.zip`, {
       expectedPackageName: pkg,
       expectedVersion: mockVersion,
-      releaseIdentity: storeIdentity,
+      releaseIdentity: urlIdentity,
       whenStaged,
     })
   }
@@ -884,7 +899,7 @@ describe("staged Store installs", () => {
 
   it("unpacks before waiting and does not hold up other installs while it waits", async () => {
     mockVersion = "2.1.30"
-    mockScript = "store update"
+    mockScript = "url update"
     const staged = deferred()
     const answer = deferred()
     const install = stagedInstall(async () => {
@@ -899,8 +914,8 @@ describe("staged Store installs", () => {
     answer.resolve()
     expect((await install).is_ok()).toBe(true)
     expect(await registry.getActiveVersion(pkg)).toBe("2.1.30")
-    expect(new File(registry.getBundleDir(pkg, "2.1.30"), "call.js").textSync()).toBe("store update")
-    expect(registry.getReleaseIdentity(pkg, "2.1.30")).toMatchObject(storeIdentity)
+    expect(new File(registry.getBundleDir(pkg, "2.1.30"), "call.js").textSync()).toBe("url update")
+    expect(registry.getReleaseIdentity(pkg, "2.1.30")).toMatchObject(urlIdentity)
   })
 
   it("discards the unpacked release when the wait is refused", async () => {
@@ -925,13 +940,13 @@ describe("staged Store installs", () => {
   })
 })
 
-describe("release cleanup after Store updates", () => {
+describe("release cleanup after updates", () => {
   async function installRelease(nextVersion: string) {
     mockVersion = nextVersion
-    const result = await registry.installFromUrl("https://store.example/call.zip", {
+    const result = await registry.installFromUrl(`https://miniapps.mentraglass.com/${pkg}/call.zip`, {
       expectedPackageName: pkg,
       expectedVersion: nextVersion,
-      releaseIdentity: {source: "system_store", storePackageName: "com.mentra.store"},
+      releaseIdentity: {source: "url", sourceUrl: `https://miniapps.mentraglass.com/${pkg}/`},
     })
     expect(result.is_ok()).toBe(true)
   }
@@ -1008,7 +1023,7 @@ describe("workspace updates while a managed miniapp may be open", () => {
     await ownCurrentRelease()
     mockDownload.mockClear()
     mockRunning.add(pkg)
-    // In the background, or within a day of the last prompt.
+    // In the background, or after Not now and before the miniapp is opened again.
     mockCanPrompt = false
     await deploymentManagedMiniappSync.sync(updated)
     await deploymentManagedMiniappSync.sync(updated)

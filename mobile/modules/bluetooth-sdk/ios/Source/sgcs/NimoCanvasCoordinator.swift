@@ -134,6 +134,11 @@ final class NimoWriteQueue<Characteristic: AnyObject> {
     private var generation: UInt64 = 0
     private var queue: [Write] = []
     private var current: Write?
+    private var outstanding: [(AnyObject, Characteristic)] = []
+    private var scheduledCompletions = 0
+    var activeCount: Int { outstanding.count + scheduledCompletions }
+    var queuedCount: Int { queue.count }
+    func connectionClosed(_ closed: AnyObject) { outstanding.removeAll { $0.0 === closed } }
     private var cancelDeadline: (() -> Void)?
 
     init(schedule: @escaping NimoScheduler, write: @escaping (Characteristic, Data) -> Bool, failure: @escaping (String) -> Void) {
@@ -165,14 +170,18 @@ final class NimoWriteQueue<Characteristic: AnyObject> {
     }
 
     func written(_ connection: AnyObject, characteristic: Characteristic, success: Bool) {
+        if let index = outstanding.firstIndex(where: { $0.0 === connection && $0.1 === characteristic }) { outstanding.remove(at: index) }
         guard connection === self.connection, let item = current,
               characteristic === item.characteristic, !item.callbackReceived else { return }
         item.callbackReceived = true
         cancelDeadline?(); cancelDeadline = nil
         guard success else { fail("GATT write failed"); return }
         let expected = generation
+        scheduledCompletions += 1
         _ = schedule(0.005) { [weak self] in
-            guard let self, self.generation == expected, self.current === item else { return }
+            guard let self else { return }
+            self.scheduledCompletions -= 1
+            guard self.generation == expected, self.current === item else { return }
             self.current = nil
             item.completed()
             self.drain()
@@ -185,6 +194,7 @@ final class NimoWriteQueue<Characteristic: AnyObject> {
         current = item
         let expected = generation
         guard write(item.characteristic, item.bytes) else { fail("GATT transport unavailable"); return }
+        outstanding.append((connection!, item.characteristic))
         item.started()
         cancelDeadline = schedule(3) { [weak self] in
             guard let self, self.generation == expected, self.current === item, !item.callbackReceived else { return }
@@ -199,26 +209,41 @@ final class NimoWriteQueue<Characteristic: AnyObject> {
 
 /// Coalesces pending encodes and fences running results on scene change, Exit and disconnect.
 final class NimoCanvasEncoder {
+    private final class Work {
+        enum Stage { case queued, worker, delivery, settled }
+        var stage = Stage.queued
+        var cancelled = false
+    }
     private let worker: NimoScheduler
     private let main: NimoScheduler
     private let failure: (Error) -> Void
+    private let lock = NSLock()
     private var generation: UInt64 = 0
-    private var cancelPending: (() -> Void)?
+    private var jobs: [Work] = []
+    var workerCount: Int { lock.lock(); defer { lock.unlock() }; return jobs.filter { $0.stage == .queued || $0.stage == .worker }.count }
+    var deliveryCount: Int { lock.lock(); defer { lock.unlock() }; return jobs.filter { $0.stage == .delivery }.count }
 
     init(main: @escaping NimoScheduler, worker: @escaping NimoScheduler, failure: @escaping (Error) -> Void) {
         self.main = main; self.worker = worker; self.failure = failure
     }
 
-    /// submit/invalidate and delivery run on Main; the worker only reads its captured request.
     func submit(encode: @escaping () throws -> Data, deliver: @escaping (Data) -> Void) {
         invalidate()
-        let expected = generation
-        cancelPending = worker(0) { [weak self] in
-            let result = Result { try encode() }
+        let expected = generation, job = Work()
+        lock.lock(); jobs.append(job); lock.unlock()
+        _ = worker(0) { [weak self] in
             guard let self else { return }
+            self.lock.lock()
+            guard job.stage == .queued else { self.lock.unlock(); return }
+            let shouldEncode = !job.cancelled
+            job.stage = .worker; self.lock.unlock()
+            let result: Result<Data, Error>? = shouldEncode ? Result { try encode() } : nil
+            self.lock.lock(); job.stage = .delivery; self.lock.unlock()
             _ = self.main(0) { [weak self] in
-                guard let self, self.generation == expected else { return }
-                self.cancelPending = nil
+                guard let self else { return }
+                self.lock.lock(); job.stage = .settled; self.jobs.removeAll { $0 === job }; self.lock.unlock()
+                guard self.generation == expected else { return }
+                guard let result else { return }
                 switch result {
                 case let .success(bytes): deliver(bytes)
                 case let .failure(error): self.failure(error)
@@ -228,6 +253,11 @@ final class NimoCanvasEncoder {
     }
 
     func invalidate() {
-        generation &+= 1; cancelPending?(); cancelPending = nil
+        generation &+= 1
+        lock.lock()
+        for job in jobs where job.stage == .queued { job.cancelled = true }
+        lock.unlock()
+        // Do not erase queued producers: their no-op worker and Main delivery
+        // fences must actually execute before teardown can report settlement.
     }
 }

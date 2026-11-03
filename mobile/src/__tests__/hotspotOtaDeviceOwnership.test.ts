@@ -43,7 +43,7 @@ beforeEach(async () => {
   downloader.prepareArtifacts.mockReset().mockResolvedValue([])
   downloader.cleanupArtifacts.mockClear()
   localNetwork.connect.mockClear()
-  localNetwork.disconnect.mockClear()
+  localNetwork.disconnect.mockReset().mockResolvedValue(undefined)
   server.start.mockClear()
   server.stop.mockClear()
 })
@@ -231,4 +231,82 @@ it("retains a failed server stop while still releasing the network", async () =>
   expect(server.stop).toHaveBeenCalledTimes(2)
   expect(localNetwork.disconnect).toHaveBeenCalledTimes(1)
   expect(downloader.cleanupArtifacts).toHaveBeenCalledTimes(1)
+})
+
+it("holds completion and the OTA owner until native returned-network observation settles", async () => {
+  bluetoothSdkMock.setHotspotState.mockResolvedValueOnce({
+    type: "hotspot_status",
+    state: "enabled",
+    ssid: "A",
+    password: "password",
+    localIp: "192.168.43.1",
+  })
+  await hotspotOtaTransport.prepare(check)
+  let settle!: () => void
+  let entered!: () => void
+  const enteredNativeLeave = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  localNetwork.disconnect.mockImplementationOnce(() => {
+    entered()
+    return new Promise<void>((resolve) => {
+      settle = resolve
+    })
+  })
+  bluetoothSdkMock.setHotspotState.mockResolvedValueOnce({type: "hotspot_status", state: "disabled"})
+  let completed = false
+  const cleanup = hotspotOtaTransport.teardown().then(() => {
+    completed = true
+  })
+  await enteredNativeLeave
+  expect(localNetwork.disconnect).toHaveBeenCalledWith(expect.any(Symbol), true)
+  expect(completed).toBe(false)
+  expect(downloader.cleanupArtifacts).not.toHaveBeenCalled()
+  let nextStarted = false
+  const nextPreparation = hotspotOtaTransport.prepare(check).then(() => {
+    nextStarted = true
+  })
+  for (let i = 0; i < 3; i++) await Promise.resolve()
+  expect(nextStarted).toBe(false)
+  expect(localNetwork.connect).toHaveBeenCalledTimes(1)
+  const alsoWaiting = hotspotOtaTransport.teardown()
+  expect(localNetwork.disconnect).toHaveBeenCalledTimes(1)
+  settle()
+  await Promise.all([cleanup, alsoWaiting])
+  expect(completed).toBe(true)
+  expect(downloader.cleanupArtifacts).toHaveBeenCalledTimes(1)
+  await nextPreparation
+  expect(nextStarted).toBe(true)
+})
+
+it("a device change during returned-network observation cannot enable the replacement glasses", async () => {
+  bluetoothSdkMock.setHotspotState.mockResolvedValueOnce({
+    type: "hotspot_status",
+    state: "enabled",
+    ssid: "A",
+    password: "password",
+    localIp: "192.168.43.1",
+  })
+  await hotspotOtaTransport.prepare(check)
+  let settle!: () => void
+  let entered!: () => void
+  const enteredNativeLeave = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  localNetwork.disconnect.mockImplementationOnce(() => {
+    entered()
+    return new Promise<void>((resolve) => {
+      settle = resolve
+    })
+  })
+  bluetoothSdkMock.setHotspotState.mockResolvedValueOnce({type: "hotspot_status", state: "disabled"})
+  const cleanup = hotspotOtaTransport.teardown()
+  await enteredNativeLeave
+  const nextPreparation = hotspotOtaTransport.prepare(check).catch((error: Error) => error)
+  emitBluetoothSdkEvent("default_device_changed", {device: pair("B")})
+  expect(bluetoothSdkMock.setHotspotState).toHaveBeenCalledTimes(2)
+  settle()
+  await cleanup
+  expect(await nextPreparation).toEqual(expect.objectContaining({message: "The OTA glasses have changed"}))
+  expect(localNetwork.disconnect).toHaveBeenCalledTimes(1)
 })

@@ -2,6 +2,7 @@ package com.mentra.bluetoothsdk
 
 import android.os.Handler
 import android.os.Looper
+import com.mentra.bluetoothsdk.sgcs.GlassesAudioSetupPolicy
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.ConnTypes
 import com.mentra.bluetoothsdk.utils.MicMap
@@ -79,6 +80,8 @@ object DeviceStore {
         store.set("glasses", "micEnabled", false)
         store.set("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
         store.set("glasses", "bluetoothClassicConnected", false)
+        store.set("glasses", "bluetoothClassicProfilesConnected", false)
+        store.set("glasses", "bluetoothAudioRouted", false)
         store.set("glasses", "caseRemoved", true)
         store.set("glasses", "caseOpen", true)
         store.set("glasses", "caseCharging", false)
@@ -167,6 +170,16 @@ object DeviceStore {
         return store.get(category, key)
     }
 
+    /**
+     * `GlassesStatus.audioSetup` follows readiness on every model ([GlassesAudioSetupPolicy]), so
+     * the snapshot that changed `fullyBooted` already carries the new state. Announce it like
+     * `pairing_state_changed`, only when it changed.
+     */
+    private fun publishAudioSetupChange(wasReady: Boolean, ready: Boolean) {
+        val state = GlassesAudioSetupPolicy.change(wasReady, ready) ?: return
+        Bridge.sendTypedMessage("audio_setup_changed", mapOf("state" to state.toMap()))
+    }
+
     fun set(category: String, key: String, value: Any) {
         store.set(category, key, value)
     }
@@ -175,11 +188,19 @@ object DeviceStore {
     fun apply(category: String, key: String, value: Any) {
         val oldValue = store.get(category, key)
         store.set(category, key, value)
+        if (category == "glasses" && key == "bluetoothClassicConnected") {
+            // Android has no separate profile/route signal; keep both equal to the Classic audio state.
+            store.set(category, "bluetoothClassicProfilesConnected", value)
+            store.set(category, "bluetoothAudioRouted", value)
+        }
         val skipped = observableStoreWouldHaveSkipped(oldValue, value)
         val forceMicReset =
                 category == ObservableStore.BLUETOOTH_CATEGORY && key == "mic_tuning" && isMicTuningReset(value)
         if (skipped && !forceMicReset) {
             return
+        }
+        if (category == "glasses" && key == "fullyBooted" && value is Boolean) {
+            publishAudioSetupChange(oldValue as? Boolean ?: false, value)
         }
 
         // Trigger hardware updates based on setting changes

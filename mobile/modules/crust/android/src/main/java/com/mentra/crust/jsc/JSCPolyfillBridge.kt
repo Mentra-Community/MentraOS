@@ -138,8 +138,15 @@ object JSCPolyfillBridge {
                 ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.open: missing sid")
             val url = req["url"] as? String
                 ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.open: missing url")
+            if (!MiniappNetworkPolicy.allowsWebSocket(url)) {
+                return@register JSCDispatchOutcome.Error("UNSUPPORTED_SCHEME", MiniappNetworkPolicy.WEB_SOCKET_REFUSAL)
+            }
             val protocols = (req["protocols"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
-            val builder = Request.Builder().url(url)
+            val builder = try {
+                Request.Builder().url(url)
+            } catch (e: IllegalArgumentException) {
+                return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.open: ${e.message}")
+            }
             if (protocols.isNotEmpty()) {
                 builder.header("Sec-WebSocket-Protocol", protocols.joinToString(", "))
             }
@@ -247,6 +254,9 @@ object JSCPolyfillBridge {
             if (reqId == null) {
                 return@register JSCDispatchOutcome.Error("INVALID_ARGS", "fetch.request requires reqId (use __mentraSendRequest)")
             }
+            if (!MiniappNetworkPolicy.allowsFetch(url)) {
+                return@register JSCDispatchOutcome.Error("UNSUPPORTED_SCHEME", MiniappNetworkPolicy.FETCH_REFUSAL)
+            }
 
             val method = (req["method"] as? String) ?: "GET"
             val headers = (req["headers"] as? Map<*, *>)?.mapNotNull { (k, v) ->
@@ -260,7 +270,11 @@ object JSCPolyfillBridge {
                     ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "fetch.request: bodyBase64 is not base64")
             }
 
-            val request = buildHttpRequest(method, url, headers, bodyString, bodyBytes)
+            val request = try {
+                buildHttpRequest(method, url, headers, bodyString, bodyBytes)
+            } catch (e: IllegalArgumentException) {
+                return@register JSCDispatchOutcome.Error("INVALID_ARGS", "fetch.request: ${e.message}")
+            }
 
             httpClient.newCall(request).enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {

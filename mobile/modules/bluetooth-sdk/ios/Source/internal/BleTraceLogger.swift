@@ -17,7 +17,8 @@ enum BleTraceLogger {
         bytes: Int? = nil,
         sourceFile: String = #fileID,
         sourceFunction: String = #function,
-        sourceLine: Int = #line
+        sourceLine: Int = #line,
+        forwardToBridge: Bool = true
     ) {
         guard let payload else {
             emit(format(
@@ -27,7 +28,7 @@ enum BleTraceLogger {
                 type: "null",
                 bytes: bytes,
                 payload: "null"
-            ))
+            ), forwardToBridge: forwardToBridge)
             return
         }
 
@@ -39,7 +40,7 @@ enum BleTraceLogger {
             type: extractType(from: payload),
             bytes: bytes,
             payload: jsonString(sanitized)
-        ))
+        ), forwardToBridge: forwardToBridge)
     }
 
     static func logMap(
@@ -50,7 +51,8 @@ enum BleTraceLogger {
         bytes: Int? = nil,
         sourceFile: String = #fileID,
         sourceFunction: String = #function,
-        sourceLine: Int = #line
+        sourceLine: Int = #line,
+        forwardToBridge: Bool = true
     ) {
         let sanitized = sanitizeDictionary(payload)
         emit(format(
@@ -60,7 +62,7 @@ enum BleTraceLogger {
             type: type ?? extractType(from: sanitized),
             bytes: bytes,
             payload: jsonString(sanitized)
-        ))
+        ), forwardToBridge: forwardToBridge)
     }
 
     static func logLifecycle(component: String, event: String, extra: [String: Any] = [:]) {
@@ -82,8 +84,9 @@ enum BleTraceLogger {
         logMap(direction: "phone_app", layer: "app_lifecycle", type: event, payload: payload)
     }
 
-    private static func emit(_ line: String) {
+    private static func emit(_ line: String, forwardToBridge: Bool = true) {
         os_log("%{public}@", log: log, type: .info, line)
+        guard forwardToBridge else { return }
         // Log events are excluded from tracing in Bridge, so forwarding a trace
         // cannot recursively generate another trace.
         Bridge.sendTypedMessage("log", body: ["message": line])

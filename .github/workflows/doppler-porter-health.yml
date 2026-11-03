@@ -1,8 +1,8 @@
 name: Doppler Porter health
 
+# The hourly audit runs from Mentra's monorepo (doppler-porter-health.yml
+# there); this keeps its pull request checks and manual runs.
 on:
-  schedule:
-    - cron: "17 * * * *"
   workflow_dispatch:
   pull_request:
     paths:

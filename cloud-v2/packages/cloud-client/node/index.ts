@@ -52,5 +52,8 @@ export {
   AuthExpiredError,
   AuthUnavailableError,
   SessionRevocationError,
+  CoreRequestError,
+  CoreResponseError,
+  SessionChangedError,
   noopLogger,
 } from "@mentra/cloud-client";

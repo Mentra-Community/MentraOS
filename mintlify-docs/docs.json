@@ -3,10 +3,10 @@
   "theme": "aspen",
   "name": "MentraOS",
   "variables": {
-    "release-version": "3.3.0",
-    "release-artifacts-url": "https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v3.3.0",
+    "release-version": "3.4.0",
+    "release-artifacts-url": "https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v3.4.0",
     "example-app-download-label": "Browse React Native example APK releases",
-    "example-app-url": "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases",
+    "example-app-url": "https://github.com/Mentra-Community/MentraOS/releases",
     "example-app-ios-url": "https://appstoreconnect.apple.com/teams/52733bd2-726b-4742-b1e2-1cfc0174c696/apps/6792839366/testflight/groups/1b1daeae-9175-4020-9c1b-52fd6b14cc49"
   },
   "colors": {
@@ -41,6 +41,7 @@
               "app-devs/getting-started/quickstart",
               "app-devs/getting-started/example-apps",
               "app-devs/getting-started/distribution",
+              "app-devs/getting-started/publish",
               "app-devs/getting-started/ai-ide-integration"
             ]
           },
@@ -116,7 +117,8 @@
               "app-devs/core-concepts/storage",
               "app-devs/core-concepts/blob",
               "app-devs/core-concepts/auth",
-              "app-devs/core-concepts/cloud"
+              "app-devs/core-concepts/cloud",
+              "app-devs/core-concepts/telemetry"
             ]
           },
           {
@@ -211,8 +213,8 @@
     ],
     "primary": {
       "type": "button",
-      "label": "Developer Portal",
-      "href": "https://console.mentra.glass"
+      "label": "Submit a miniapp",
+      "href": "https://apps.mentraglass.com/submit"
     }
   },
   "contextual": {

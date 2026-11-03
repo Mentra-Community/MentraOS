@@ -14,6 +14,7 @@
     "@mentra/workspace-contract": "workspace:*",
     "fflate": "0.8.2",
     "hono": "^4.11.1",
+    "ipaddr.js": "2.5.0",
     "jose": "^5.9.6",
     "mongoose": "^8.8.4",
     "oidc-provider": "9.12.2",

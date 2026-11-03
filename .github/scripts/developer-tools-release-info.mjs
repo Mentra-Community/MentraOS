@@ -78,7 +78,7 @@ const PACKAGES = [
 ]
 
 const outputPath = process.env.GITHUB_OUTPUT
-const branch = process.env.GITHUB_REF_NAME || ""
+const branch = process.env.MENTRA_RELEASE_BRANCH || process.env.GITHUB_REF_NAME || ""
 const forceRelease = process.env.FORCE_RELEASE === "true"
 const dryRun = process.env.DRY_RUN === "true"
 

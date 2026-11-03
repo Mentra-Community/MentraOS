@@ -1,6 +1,7 @@
 import {recorderStorageRequirementSchema} from './recorder-storage.types';
 import {routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
+import {testingRepositorySchema, testingTarget} from './testing-source.types';
 import {permissionRequirementsSchema} from "./resource-permissions.types";
 import {glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
@@ -16,8 +17,8 @@ const action = z.object({id, instruction: text, expected: text}).strict();
 export const routinePlatformSchema = z.enum(["ios-on-mac", "android"]);
 export const routineResourceKindSchema = z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]);
 export const resourceCapabilityMap = {
-  app: ['relaunch'], phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs'],
-  glasses: ['glasses-ble', 'connection', 'software', 'wifi'], recorder: ['quiet-room'],
+  app: ['relaunch'], phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs', 'backend-connectivity'],
+  glasses: ['glasses-ble', 'connection', 'software', 'wifi', 'button'], recorder: ['quiet-room'],
   audio: ['speech', 'witness', 'synthesis', 'recognition'], browser: ['external-window'],
   network: ['independent-uplink'],
   'fixture-data': ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode', 'stream-receivers'],
@@ -47,8 +48,10 @@ export const publishedRoutineDefinitionSchema = z.object({
   privateEvidenceIntervals: z.array(z.object({startStepId: id, endStepId: id, reason: text}).strict()).max(30).optional(),
   execution: z.object({resourceKinds: z.array(z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"])).min(1),
     policy: z.record(z.unknown()).optional()}).strict().optional(),
-  source: z.object({repository: z.string().regex(/^[\w-]+\/[\w.-]+$/),
-    revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string().regex(/^routines\/[\w.-]+\/routine\.ts$/)}).strict(),
+  source: z.object({repository: testingRepositorySchema,
+    revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string().regex(/^(?:testing\/)?routines\/[\w.-]+\/routine\.ts$/)
+      .refine(path => path.split('/').every(part => part !== '.' && part !== '..'))}).strict()
+    .refine(value => value.path.startsWith(`${testingTarget(value.repository).sourceRoot}routines/`), 'Routine path differs from its repository root'),
 }).strict().superRefine((definition, ctx) => {
   const resourceKinds = definition.resourceRequirements.map(value => value.kind);
   const executionKinds = definition.execution?.resourceKinds ?? [];
@@ -87,12 +90,28 @@ export const routineEnrollmentSchema = z.object({
   if (row.routineId !== row.definition.id || row.definitionRevision !== row.definition.source.revision
     || !row.definition.platforms.includes(row.platform))
     ctx.addIssue({code: "custom", message: "Enrollment identity contradicts its definition"});
-  if (row.routineSource.commit !== row.definitionRevision || row.routineSource.minimumRoutineApiVersion !== row.definition.minimumRoutineApiVersion)
+  if (row.routineSource.repository !== row.definition.source.repository || row.routineSource.commit !== row.definitionRevision || row.routineSource.minimumRoutineApiVersion !== row.definition.minimumRoutineApiVersion)
     ctx.addIssue({code: 'custom', message: 'Routine bundle contradicts its definition/API requirement'});
   if (row.verification && row.verification.sourceRevision !== row.definitionRevision)
     ctx.addIssue({code: 'custom', message: 'Candidate verification source differs from its definition'});
 });
 export type RoutineEnrollment = z.infer<typeof routineEnrollmentSchema>;
+
+/** Catalog metadata describes source; it supplies no executable bundle or candidate authority. */
+const catalogDefinition = publishedRoutineDefinitionSchema.innerType().extend({
+  // Source metadata can describe a future capability before a worker implements it.
+  // Implementation/capability and execution-policy checks remain run admission.
+  resourceRequirements: z.array(routineResourceRequirementSchema.innerType().innerType()
+    .extend({kind: routineIdentitySchema})).max(9),
+  execution: z.object({resourceKinds: z.array(routineIdentitySchema).min(1), policy: z.record(z.unknown()).optional()}).strict().optional(),
+});
+export const routineCatalogDefinitionSchema = routineEnrollmentSchema.innerType()
+  .omit({routineSource: true, verification: true}).extend({definition: catalogDefinition}).strict().superRefine((row, ctx) => {
+    if (row.routineId !== row.definition.id || row.definitionRevision !== row.definition.source.revision ||
+      !row.definition.platforms.includes(row.platform))
+      ctx.addIssue({code: 'custom', message: 'Catalog definition identity differs'});
+  });
+export type RoutineCatalogDefinition = z.infer<typeof routineCatalogDefinitionSchema>;
 
 /** Exact recorded source for history; executable admission separately requires routineEnrollmentSchema. */
 export const recordedRoutineDefinitionSchema = z.object({

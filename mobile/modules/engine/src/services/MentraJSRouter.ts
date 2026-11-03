@@ -33,16 +33,19 @@
  * visible without bringing up a separate sink.
  */
 
+import type {FleetCrashCategory} from "@mentra/cloud-protocol"
 import type {EventSubscription} from "expo-modules-core"
 
 import devServerBridge from "./DevServerBridge"
+import {fleetEvents} from "./fleet/fleetEvents"
 import type localMiniappRuntime from "./LocalMiniappRuntime"
 import type {InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSCrashController} from "./MentraJSCrashController"
 import {MentraJSLogRingBuffer, MentraJSLogThrottle, redactSecrets} from "./MentraJSLogPipeline"
 import {islandNotifications} from "./NotificationsEmitter"
 import type {MentraUIRouter} from "./MentraUIRouter"
-import {miniappRunningRegistry} from "./MiniappRunningRegistry"
+import {recordMiniappBuild} from "./miniappBuildKind"
+import {miniappContextRegistry, miniappRunningRegistry} from "./MiniappRunningRegistry"
 
 /** The runtime's runtime instance type — the singleton exported from
  * LocalMiniappRuntime.ts (the file's `export default` is the instance,
@@ -111,6 +114,8 @@ interface SpawnCache {
   hostTrustedSystem: boolean
   /** Whether this context is normal user-visible activity (false for a transient action wake). */
   projectRunning: boolean
+  /** A local or development build: its data is kept apart and its tokens are marked. */
+  developmentBuild: boolean
 }
 
 export class MentraJSRouter {
@@ -198,7 +203,7 @@ export class MentraJSRouter {
     // respawn machinery as a crash so it comes back automatically, with
     // the crash controller's backoff + crash-loop protection.
     this.runtime.onLivenessTimeout = (packageName) => {
-      this.handleCrash(packageName, "liveness: missed pings")
+      this.handleCrash(packageName, "liveness: missed pings", "unresponsive")
     }
   }
 
@@ -229,7 +234,10 @@ export class MentraJSRouter {
     installedManifest?: InstalledMiniappManifest,
     hostTrustedSystem = false,
     projectRunning = true,
+    developmentBuild = false,
   ): void {
+    // Before the context is live: its data partition is pinned, and its tokens are marked, by the build it runs.
+    recordMiniappBuild(packageName, {localBuild: developmentBuild})
     this.runtime.registerApp(
       packageName,
       (raw: string) => {
@@ -240,6 +248,7 @@ export class MentraJSRouter {
       projectRunning,
     )
     this.registered.add(packageName)
+    miniappContextRegistry.add(packageName)
     this.replacementConnects.add(packageName)
     this.uiRouter?.backgroundStarting(packageName)
     this.armReadyDeadline(packageName)
@@ -266,6 +275,8 @@ export class MentraJSRouter {
       hostTrustedSystem?: boolean
       /** False for an invocation-scoped transient action wake. */
       projectRunning?: boolean
+      /** A local or development build (a local-network install, a development server or snapshot). */
+      developmentBuild?: boolean
     },
   ): Promise<boolean> {
     if (!this.crust.mentraJsSpawn) {
@@ -293,7 +304,8 @@ export class MentraJSRouter {
     }
     const hostTrustedSystem = options?.hostTrustedSystem ?? false
     const projectRunning = options?.projectRunning ?? true
-    this.registerApp(packageName, options?.installedManifest, hostTrustedSystem, projectRunning)
+    const developmentBuild = options?.developmentBuild ?? false
+    this.registerApp(packageName, options?.installedManifest, hostTrustedSystem, projectRunning, developmentBuild)
     // Cache spawn arguments so the crash controller can respawn the
     // same code after a backoff. permissions + manifest are cached too
     // because the native side resets setManifest on every spawn and
@@ -305,6 +317,7 @@ export class MentraJSRouter {
       installedManifest: options?.installedManifest,
       hostTrustedSystem,
       projectRunning,
+      developmentBuild,
     })
     this.crashController?.onSpawn(packageName)
 
@@ -326,7 +339,7 @@ export class MentraJSRouter {
    * handler. The controller returns an outcome that tells us whether
    * to respawn (with delay) or leave the context dead.
    */
-  private handleCrash(packageName: string, reason: string): void {
+  private handleCrash(packageName: string, reason: string, category: FleetCrashCategory = "unknown"): void {
     const cached = this.spawnCache.get(packageName)
     // A transient action cannot resume after a crash. Remove the worker (which
     // fails its pending invocations); only a new invocation may spawn another.
@@ -360,6 +373,16 @@ export class MentraJSRouter {
       return
     }
     const outcome = controller.onCrash(packageName, reason)
+    // Fleet hears the crash by its category, never its reason text (Phase 12).
+    const versionName = this.runtime.installedVersionOf?.(packageName)
+    fleetEvents.crash({
+      packageName,
+      ...(versionName ? {versionName} : {}),
+      surface: "context",
+      category,
+      outcome: outcome.surfaceCrashloopBanner || outcome.scheduleRespawnAfterMs == null ? "crash_loop_stopped" : "respawn_scheduled",
+      crashesInWindow: Math.max(1, controller.crashCount(packageName)),
+    })
     if (outcome.surfaceCrashloopBanner) {
       this.uiRouter?.backgroundStopped(packageName)
       this.onCrashloop?.(packageName, reason)
@@ -397,7 +420,13 @@ export class MentraJSRouter {
         if (cached.permissions.length > 0) {
           await this.crust.mentraJsSetManifest(packageName, cached.permissions)
         }
-        this.registerApp(packageName, cached.installedManifest, cached.hostTrustedSystem, cached.projectRunning)
+        this.registerApp(
+          packageName,
+          cached.installedManifest,
+          cached.hostTrustedSystem,
+          cached.projectRunning,
+          cached.developmentBuild,
+        )
         controller.onSpawn(packageName)
         // Re-fire the init envelope so the respawned context's
         // `registerMiniapp` handler runs again.
@@ -454,6 +483,7 @@ export class MentraJSRouter {
     this.registered.delete(packageName)
     // JSContext torn down → miniapp is no longer "running".
     miniappRunningRegistry.remove(packageName)
+    miniappContextRegistry.remove(packageName)
     if (this.crust.mentraJsKill) {
       try {
         await this.crust.mentraJsKill(packageName)
@@ -553,8 +583,8 @@ export class MentraJSRouter {
         method === "warn"
           ? this.logger.warn
           : method === "error" || method === "fatal"
-          ? this.logger.error
-          : this.logger.log
+            ? this.logger.error
+            : this.logger.log
       // Emit a synthetic "[throttled N]" line in place of the next
       // would-be-allowed log to summarise drops.
       if (!decision.allowed) {
@@ -603,7 +633,7 @@ export class MentraJSRouter {
         // log path — those don't end the JSContext.
         const isCrash = method === "exception" || method === "unhandledRejection" || method === "uncaught"
         if (isCrash) {
-          this.handleCrash(packageName, this.summarizeReason(payload, method))
+          this.handleCrash(packageName, this.summarizeReason(payload, method), "uncaught_exception")
         }
       }
       return

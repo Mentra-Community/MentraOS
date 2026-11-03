@@ -27,6 +27,10 @@ class CrustModule extends NativeModule<CrustModuleEvents> {
     this.httpRequests.get(requestId)?.abort()
     this.httpRequests.delete(requestId)
   }
+  /** The web has no local files to resolve. */
+  canonicalFilePath(_path: string): string | null {
+    return null
+  }
   hello() {
     return "Hello world! 👋"
   }

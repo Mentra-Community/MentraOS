@@ -10,11 +10,13 @@ name: Production Release - Stable Packages
 # container mentra-vX.Y.Z; the promotion state machine is read solely to refuse
 # an identity that a live attempt froze from a different beta, never written.
 #
-# publish  - stage: npm X.Y.Z under `candidate-X.Y.Z`, a validated but
-#            unpublished USER_MANAGED Sonatype deployment, and the exported
-#            SwiftPM commit on the mirror branch `release/X.Y.Z`.
-# release  - go public: move npm `latest`, request the Sonatype publication,
-#            and push the SwiftPM tag `X.Y.Z`.
+# publish  - stage: build and verify the npm family without publishing it, a
+#            validated but unpublished USER_MANAGED Sonatype deployment, and
+#            the exported SwiftPM commit on the mirror branch `release/X.Y.Z`.
+# release  - go public: publish npm X.Y.Z straight to `latest` through trusted
+#            publishing, request the Sonatype publication, and push the
+#            SwiftPM tag `X.Y.Z`. No npm token is used and no dist-tag is
+#            moved (see npm-latest.mjs).
 
 on:
   workflow_dispatch:
@@ -57,7 +59,6 @@ jobs:
       stable_tag: ${{ steps.plan.outputs.stable_tag }}
       ota_url: ${{ steps.plan.outputs.ota_manifest_url }}
       ota_sha256: ${{ steps.plan.outputs.ota_manifest_sha256 }}
-      npm_tag: ${{ steps.plan.outputs.npm_tag }}
       plan_artifact: ${{ steps.artifact.outputs.name }}
       stable_release_id: ${{ steps.container.outputs.release_id }}
       promotion_note: ${{ steps.guard.outputs.note }}
@@ -201,7 +202,6 @@ jobs:
             echo "- Selected beta: \`${{ inputs.beta_identity }}\`"
             echo "- Source: \`${{ steps.plan.outputs.source_commit }}\`"
             echo "- Stable container: \`${{ steps.plan.outputs.stable_tag }}\`"
-            echo "- npm candidate dist-tag: \`${{ steps.plan.outputs.npm_tag }}\`"
             echo "- Promotion: ${{ steps.guard.outputs.note }}"
             echo
             echo "This phase does not deploy Cloud, upload a mobile app, or change any store."
@@ -218,10 +218,14 @@ jobs:
     steps:
       - run: |
           echo "Approved publishing ${{ needs.load.outputs.release_identity }} packages from ${{ needs.load.outputs.source_commit }}."
-          echo "npm publishes under ${{ needs.load.outputs.npm_tag }}; latest, Maven Central, and the SwiftPM tag wait for the release phase."
+          echo "npm is built and verified only; npm, Maven Central, and the SwiftPM tag go public in the release phase."
 
+  # Builds, packs, and verifies every npm member from the frozen source and
+  # refuses a registry copy with different bytes, without publishing: the npm
+  # identity is spent only by the release phase. The tag is explicit because
+  # the frozen source's publisher may predate the production default.
   npm:
-    name: Publish plain npm versions under the candidate dist-tag
+    name: Build and verify the npm family without publishing
     if: inputs.phase == 'publish'
     needs: [load, approve]
     uses: ./.github/workflows/reusable-coordinated-npm.yml
@@ -232,8 +236,8 @@ jobs:
       result_artifact: production-packages-npm-${{ github.run_id }}
       ota_manifest_url: ${{ needs.load.outputs.ota_url }}
       ota_manifest_sha256: ${{ needs.load.outputs.ota_sha256 }}
-      npm_tag: ${{ needs.load.outputs.npm_tag }}
-    secrets: inherit
+      npm_tag: latest
+      dry_run: true
 
   sdk-native:
     name: Stage Maven Central deployment and SwiftPM export
@@ -281,7 +285,6 @@ jobs:
       - name: Assemble immutable publication evidence
         id: evidence
         env:
-          NPM_TAG: ${{ needs.load.outputs.npm_tag }}
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -296,7 +299,6 @@ jobs:
             --slurpfile plan "$plan" \
             --slurpfile npm "$npm" \
             --slurpfile native "$native" \
-            --arg tag "$NPM_TAG" \
             --arg actor "$GITHUB_ACTOR" \
             --arg url "$RUN_URL" \
             '{
@@ -306,7 +308,6 @@ jobs:
               releaseIdentity: $plan[0].releaseIdentity,
               sourceCommit: $plan[0].sourceCommit,
               selectedBetaIdentity: $plan[0].promotion.selectedBetaIdentity,
-              npmCandidateTag: $tag,
               npm: $npm[0],
               sdkNative: $native[0],
               actor: $actor,
@@ -338,23 +339,31 @@ jobs:
             echo "## Stable packages staged"
             echo
             echo "- Release: \`${{ needs.load.outputs.release_identity }}\` from \`${{ needs.load.outputs.source_commit }}\`"
-            echo "- npm: plain versions published under \`${{ needs.load.outputs.npm_tag }}\`; \`latest\` unchanged"
+            echo "- npm: family built and verified from the frozen source; nothing published"
             echo "- Maven Central: USER_MANAGED deployment validated, not published"
             echo "- SwiftPM: export staged on \`release/${{ needs.load.outputs.release_identity }}\`; no public tag"
             echo "- Evidence: \`${{ steps.evidence.outputs.asset_name }}\` in \`${{ needs.load.outputs.stable_tag }}\`"
             echo "- Promotion: ${{ needs.load.outputs.promotion_note }}"
             echo
-            echo "Run the release phase to move npm latest, publish Maven Central, and push the SwiftPM tag."
+            echo "Run the release phase to publish npm latest, publish Maven Central, and push the SwiftPM tag."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  release:
-    name: Move latest, publish Maven Central, and tag SwiftPM
+  # The release phase checks every target before the first irreversible
+  # mutation, behind the production-packages-release approval: nothing goes
+  # public until npm, Maven Central, and SwiftPM are all ready.
+  release-preflight:
+    name: Check npm, Maven Central, and SwiftPM before anything goes public
     if: inputs.phase == 'release'
     needs: load
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 120
+    timeout-minutes: 20
     environment:
       name: production-packages-release
+    outputs:
+      artifact: ${{ steps.artifact.outputs.name }}
+      mirror_sha: ${{ steps.swiftpm.outputs.mirror_sha }}
+      swiftpm_status: ${{ steps.swiftpm.outputs.status }}
+      tag_url: ${{ steps.swiftpm.outputs.tag_url }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -363,7 +372,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-          registry-url: https://registry.npmjs.org
 
       - uses: actions/download-artifact@v4
         with:
@@ -372,26 +380,18 @@ jobs:
 
       - name: Require registry credentials
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
           PUSH_TOKEN: ${{ secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
         run: |
           set -euo pipefail
-          test -n "$NPM_TOKEN"
           test -n "$MAVEN_CENTRAL_TOKEN_BASE64"
           test -n "$PUSH_TOKEN"
 
-      # Every public mutation below is irreversible, so all three targets are
-      # checked first and nothing moves until each one is ready.
-      - name: Preflight npm without moving any dist-tag
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Preflight npm latest without publishing
         run: >-
-          node .github/scripts/promote-npm-latest.mjs
+          node .github/scripts/npm-latest.mjs preflight
           --plan release-intent/release-plan.json
-          --npm-tag "${{ needs.load.outputs.npm_tag }}"
-          --output-dir packages-output/npm-preflight
-          --dry-run true
+          --output-dir packages-output/npm
 
       - name: Preflight the validated Sonatype deployment
         env:
@@ -461,13 +461,72 @@ jobs:
             echo "tag_url=https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios/tree/$VERSION"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Move npm latest to the staged plain versions
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Name the preflight artifact
+        id: artifact
+        run: echo "name=production-packages-preflight-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            packages-output/npm
+            packages-output/maven
+          if-no-files-found: error
+          retention-days: 30
+
+  # Trusted publishing (OIDC) authenticates every publish, so no npm token is
+  # passed. Publishing with `--tag latest` sets latest with each version; members
+  # the preflight found already at latest are reused.
+  npm-release:
+    name: Publish plain npm versions to latest
+    if: inputs.phase == 'release'
+    needs: [load, release-preflight]
+    uses: ./.github/workflows/reusable-coordinated-npm.yml
+    with:
+      source_commit: ${{ needs.load.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.load.outputs.plan_artifact }}
+      members: all
+      result_artifact: production-packages-npm-${{ github.run_id }}
+      ota_manifest_url: ${{ needs.load.outputs.ota_url }}
+      ota_manifest_sha256: ${{ needs.load.outputs.ota_sha256 }}
+      npm_tag: latest
+
+  release:
+    name: Publish Maven Central and tag SwiftPM
+    if: inputs.phase == 'release'
+    needs: [load, release-preflight, npm-release]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.load.outputs.plan_artifact }}
+          path: release-intent
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.release-preflight.outputs.artifact }}
+          path: packages-output
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: production-packages-npm-${{ github.run_id }}
+          path: packages-input/npm
+
+      - name: Verify npm serves latest at the published plain versions
         run: >-
-          node .github/scripts/promote-npm-latest.mjs
+          node .github/scripts/npm-latest.mjs verify
           --plan release-intent/release-plan.json
-          --npm-tag "${{ needs.load.outputs.npm_tag }}"
+          --preflight packages-output/npm/npm-preflight.json
+          --publications packages-input/npm/npm-publications.json
           --output-dir packages-output/npm
 
       - name: Publish the validated Sonatype deployment to Maven Central
@@ -480,16 +539,35 @@ jobs:
             --output packages-output/maven/sonatype-publication.json
           [[ "$(jq -er .deploymentState packages-output/maven/sonatype-publication.json)" == "PUBLISHED" ]]
 
+      - name: Checkout the SwiftPM mirror
+        uses: actions/checkout@v4
+        with:
+          repository: Mentra-Community/mentra-bluetooth-sdk-ios
+          path: mentra-bluetooth-sdk-ios
+          token: ${{ secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
+          fetch-depth: 0
+
       - name: Push the public SwiftPM tag at the staged commit
-        if: steps.swiftpm.outputs.status == 'published'
+        if: needs.release-preflight.outputs.swiftpm_status == 'published'
         working-directory: mentra-bluetooth-sdk-ios
         env:
           VERSION: ${{ needs.load.outputs.release_identity }}
-          MIRROR_SHA: ${{ steps.swiftpm.outputs.mirror_sha }}
+          MIRROR_SHA: ${{ needs.release-preflight.outputs.mirror_sha }}
         run: |
           set -euo pipefail
-          git tag "$VERSION" "$MIRROR_SHA"
-          git push origin "refs/tags/$VERSION"
+          # A rerun of this job keeps the preflight's outputs, so the tag may
+          # already be public from an earlier attempt: reuse it only at the
+          # staged commit.
+          if git rev-parse -q --verify "refs/tags/$VERSION^{commit}" >/dev/null; then
+            tagged=$(git rev-parse "refs/tags/$VERSION^{commit}")
+            if [[ "$tagged" != "$MIRROR_SHA" ]]; then
+              echo "Tag $VERSION points at $tagged, not the staged commit $MIRROR_SHA." >&2
+              exit 1
+            fi
+          else
+            git tag "$VERSION" "$MIRROR_SHA"
+            git push origin "refs/tags/$VERSION"
+          fi
           if git merge-base --is-ancestor "refs/remotes/origin/main" "$MIRROR_SHA"; then
             git push origin "$MIRROR_SHA:refs/heads/main"
           else
@@ -506,9 +584,9 @@ jobs:
             --slurpfile plan release-intent/release-plan.json \
             --slurpfile npm packages-output/npm/npm-latest.json \
             --slurpfile maven packages-output/maven/sonatype-publication.json \
-            --arg mirror "${{ steps.swiftpm.outputs.mirror_sha }}" \
-            --arg swiftStatus "${{ steps.swiftpm.outputs.status }}" \
-            --arg tagUrl "${{ steps.swiftpm.outputs.tag_url }}" \
+            --arg mirror "${{ needs.release-preflight.outputs.mirror_sha }}" \
+            --arg swiftStatus "${{ needs.release-preflight.outputs.swiftpm_status }}" \
+            --arg tagUrl "${{ needs.release-preflight.outputs.tag_url }}" \
             --arg actor "$GITHUB_ACTOR" \
             --arg url "$RUN_URL" \
             '{
@@ -560,9 +638,9 @@ jobs:
             echo "## Stable packages released"
             echo
             echo "- Release: \`${{ needs.load.outputs.release_identity }}\` from \`${{ needs.load.outputs.source_commit }}\`"
-            echo "- npm: \`latest\` now points at the plain versions; \`${{ needs.load.outputs.npm_tag }}\` retired"
+            echo "- npm: plain versions published to \`latest\` through trusted publishing"
             echo "- Maven Central: deployment \`$(jq -er .deploymentState packages-output/maven/sonatype-publication.json)\` (sync to search can lag)"
-            echo "- SwiftPM: ${{ steps.swiftpm.outputs.tag_url }} (\`${{ steps.swiftpm.outputs.status }}\`)"
+            echo "- SwiftPM: ${{ needs.release-preflight.outputs.tag_url }} (\`${{ needs.release-preflight.outputs.swiftpm_status }}\`)"
             echo "- Evidence: \`${{ steps.evidence.outputs.asset_name }}\` in \`${{ needs.load.outputs.stable_tag }}\`"
             echo "- Promotion: ${{ needs.load.outputs.promotion_note }}"
             echo

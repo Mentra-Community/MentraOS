@@ -20,8 +20,8 @@ const texts = (value) =>
 const identifiers = (value) => Array.isArray(value) && value.length <= 30 && value.every(routineId)
 const resourceCapabilities = {
   app: ['relaunch'],
-  phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs'],
-  glasses: ['glasses-ble', 'connection', 'software', 'wifi'],
+  phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs', 'backend-connectivity'],
+  glasses: ['glasses-ble', 'connection', 'software', 'wifi', 'button'],
   recorder: ['quiet-room'],
   audio: ['speech', 'witness', 'synthesis', 'recognition'],
   browser: ['external-window'],

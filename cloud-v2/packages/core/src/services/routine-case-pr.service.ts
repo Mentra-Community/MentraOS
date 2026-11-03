@@ -15,7 +15,7 @@ export class RoutineCasePrReader implements CasePrReader {
     private readonly now = Date.now) {}
   async observe(value: CasePr, options?: CasePrReadOptions) {
     const pr = casePrSchema.parse(value), deadline = options?.deadline ?? this.now() + 20_000
-    const token = await this.app.token(pr.repository.endsWith('/MentraOS') ? 'checks' : 'harness')
+    const token = await this.app.token(pr.repository.endsWith('/MentraOS') ? 'checks' : 'harness', pr.repository)
     const read = async (path: string) => {
       const remaining = deadline - this.now()
       if (remaining <= 0) throw new TestRunError(503, 'Fixing PR observation is unavailable')

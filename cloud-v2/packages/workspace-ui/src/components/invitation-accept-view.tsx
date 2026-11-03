@@ -7,7 +7,9 @@
  *
  * Accepting needs the signed-in person's verified email to be the invited address. When the host says who
  * is signed in (`viewerEmail`) and it is someone else, the card says so up front and offers to switch
- * accounts instead of an Accept the server would refuse.
+ * accounts instead of an Accept the server would refuse. A person belongs to one workspace, so when the host
+ * says they are in another (`inWorkspace`), the card says "You're in <workspace>. Leave it to join <this
+ * one>." instead of Accept, and offers Decline and the host's `leaveAction`.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -16,7 +18,7 @@ import { CircleAlert, MailIcon } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import type { AcceptedInvitation, WorkspaceApi } from "../api";
 import { errorMessage, isInvitationGone, WorkspaceApiError } from "../errors";
-import { formatDate } from "../lib/format";
+import { formatExpiry } from "../lib/format";
 import { invitationPreviewQuery, workspaceKeys } from "../queries";
 import { ROLE_LABELS } from "../roles";
 import { Button } from "../ui/button";
@@ -133,22 +135,33 @@ export function InvitationAcceptCard({
   onRetry,
   onAccept,
   onDismiss,
+  onDecline,
+  declining = false,
   accepting,
   acceptError,
   viewerEmail,
   onSwitchAccount,
   switchingAccount = false,
+  inWorkspace = null,
+  leaveAction,
 }: {
   load: InvitationLoad;
   onRetry(): void;
   onAccept(): void;
   onDismiss?(): void;
+  /** Offer Decline: turns the invitation down for good (unlike Dismiss, which only hides it here). */
+  onDecline?(): void;
+  declining?: boolean;
   accepting: boolean;
   acceptError: unknown;
   /** Who is signed in. When known and not the invited address, Accept gives way to Switch account. */
   viewerEmail?: string | null;
   onSwitchAccount?(): void;
   switchingAccount?: boolean;
+  /** The workspace the viewer already belongs to. While it is set, Accept gives way to the leave-first message. */
+  inWorkspace?: { name: string } | null;
+  /** Where the viewer leaves `inWorkspace` (a link to its Settings), shown where Accept would be. */
+  leaveAction?: ReactNode;
 }) {
   const dismiss = onDismiss ? (
     <Button type="button" variant="secondary" size="sm" onClick={onDismiss}>
@@ -199,6 +212,8 @@ export function InvitationAcceptCard({
   const { workspaceName, email, role } = preview;
   const invitedBy = preview.invitedByEmail?.trim() || null;
   const otherAccount = isInvitationForOtherAccount(preview, viewerEmail);
+  // Only for the person it is addressed to: for someone else the switch-account notice comes first.
+  const leaveFirst = !otherAccount && inWorkspace !== null;
   const strong = (text: string) => <strong className="font-semibold [overflow-wrap:anywhere]">{text}</strong>;
 
   let notice: ReactNode;
@@ -212,12 +227,20 @@ export function InvitationAcceptCard({
         </span>
       </p>
     );
-  } else if (viewerEmail?.trim()) {
+  } else if (leaveFirst || viewerEmail?.trim()) {
+    const expiry = preview.expiresAt ? formatExpiry(preview.expiresAt) : null;
     notice = (
-      <p className="text-muted-foreground mt-4 text-sm">
-        Sent to {email}
-        {preview.expiresAt ? ` · Expires ${formatDate(preview.expiresAt)}` : null}
-      </p>
+      <>
+        {leaveFirst ? (
+          <p role="status" className="rounded-notice bg-surface mt-6 px-4 py-3 text-sm">
+            You&apos;re in {strong(inWorkspace.name)}. Leave it to join {strong(workspaceName)}.
+          </p>
+        ) : null}
+        <p className="text-muted-foreground mt-4 text-sm">
+          Sent to {email}
+          {expiry ? ` · ${expiry === "Expired" ? expiry : `Expires ${expiry.charAt(0).toLowerCase()}${expiry.slice(1)}`}` : null}
+        </p>
+      </>
     );
   } else {
     notice = (
@@ -240,9 +263,18 @@ export function InvitationAcceptCard({
       </Button>,
     );
   }
-  if (!otherAccount) {
+  if (onDecline && !otherAccount) {
     actions.push(
-      <Button key="accept" type="button" size="lg" disabled={accepting} onClick={onAccept}>
+      <Button key="decline" type="button" variant="secondary" size="lg" disabled={declining || accepting} onClick={onDecline}>
+        {declining ? "Declining…" : "Decline"}
+      </Button>,
+    );
+  }
+  if (leaveFirst) {
+    if (leaveAction) actions.push(<span key="leave" className="grid">{leaveAction}</span>);
+  } else if (!otherAccount) {
+    actions.push(
+      <Button key="accept" type="button" size="lg" disabled={accepting || declining} onClick={onAccept}>
         {accepting ? "Joining…" : "Accept invitation"}
       </Button>,
     );
@@ -280,7 +312,17 @@ export function InvitationAcceptCard({
       </div>
       {notice}
       {actions.length > 0 ? (
-        <div className={actions.length === 2 ? "mt-6 grid grid-cols-2 gap-2.5" : "mt-6 grid"}>{actions}</div>
+        <div className={actions.length >= 2 ? "mt-6 grid grid-cols-2 gap-2.5" : "mt-6 grid"}>
+          {actions.length === 3
+            ? [
+                ...actions.slice(0, 2),
+                // Three pills do not fit the card's width: the main action takes a row of its own.
+                <div key="main" className="col-span-2 grid">
+                  {actions[2]}
+                </div>,
+              ]
+            : actions}
+        </div>
       ) : null}
       {acceptError ? (
         <p role="alert" className="rounded-notice bg-error text-error-foreground mt-4 px-4 py-3 text-sm">
@@ -298,5 +340,9 @@ export function acceptErrorMessage(error: unknown, invitedEmail: string): string
     return `This invitation is for ${invitedEmail}. To accept it, sign in with that address and make sure it's verified.`;
   }
   if (error instanceof WorkspaceApiError && error.code === "already_member") return "You're already in this workspace.";
+  // A person belongs to one workspace: they leave the current one (Settings, then Leave workspace) and come back.
+  if (error instanceof WorkspaceApiError && error.code === "already_in_workspace") {
+    return "You're already in a workspace. Leave it in Settings first, then accept this invitation.";
+  }
   return errorMessage(error);
 }

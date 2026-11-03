@@ -191,13 +191,26 @@ describe("Delete workspace", () => {
 
 describe("Revoke invitation", () => {
   const pending = () => mount("owner", (api) => <WorkspacePendingInvitationsPanel api={api} workspaceId={WORKSPACE_ID} />);
-  const NEWBIE = "Revoke invitation for newbie@acme.test";
-  const BOSS = "Revoke invitation for boss@acme.test";
+  // Each invitation's "…" menu holds Resend and Revoke; Revoke asks.
+  const NEWBIE = "More for newbie@acme.test";
+  const BOSS = "More for boss@acme.test";
+  const revokeFrom = async (menu: string) => {
+    await click(trigger(menu));
+    await click(byText("Revoke", '[role="menuitem"]'));
+  };
+
+  test("a row's menu holds Resend and Revoke, and nothing is sent by opening it", async () => {
+    const { writes } = await pending();
+    expect(findAll('[role="menuitem"]')).toHaveLength(0);
+    await click(trigger(NEWBIE));
+    expect(findAll('[role="menuitem"]').map(item => item.textContent!.trim())).toEqual(["Resend", "Revoke"]);
+    expect(writes()).toHaveLength(0);
+  });
 
   test("asks in a dialog, Cancel sends nothing and gives focus back, Revoke sends the request and focus moves on", async () => {
     const { writes } = await pending();
     expect(findAll('[role="group"]')).toHaveLength(0);
-    await click(trigger(NEWBIE));
+    await revokeFrom(NEWBIE);
     const dialog = theDialog();
     expect(find("h2", dialog).textContent).toBe("Revoke the invitation for newbie@acme.test?");
     expect(dialog.textContent).toContain("The link they were sent stops working.");
@@ -210,7 +223,7 @@ describe("Revoke invitation", () => {
     expect(writes()).toHaveLength(0);
     expect(document.activeElement).toBe(trigger(NEWBIE));
 
-    await click(trigger(NEWBIE));
+    await revokeFrom(NEWBIE);
     await click(inDialog("Revoke"));
     await until(() => openDialogs().length === 0 && findAll(`button[aria-label="${NEWBIE}"]`).length === 0, "the invitation to go");
     expect(writes()).toEqual([{ method: "DELETE", path: `${WS}/invitations/inv_member`, body: undefined }]);
@@ -221,7 +234,7 @@ describe("Revoke invitation", () => {
   test("a refusal is shown in the dialog, which stays open", async () => {
     const { world } = await pending();
     world.refuse = (call) => (call.method === "DELETE" ? reply(403, { error: "forbidden" }) : undefined);
-    await click(trigger(NEWBIE));
+    await revokeFrom(NEWBIE);
     await click(inDialog("Revoke"));
     await until(() => findAll('[role="alert"]', theDialog()).length === 1, "the refusal");
     expect(find('[role="alert"]', theDialog()).textContent).toBe("You do not have permission to do that.");

@@ -7,7 +7,7 @@ import type {TestRunGithubApp} from './test-run-github-app'
 import {requestInputDigest} from './test-request.service'
 
 const start = Date.parse('2026-10-05T10:00:00Z')
-function fixture() {
+function fixture(repository = 'Mentra-Community/MentraOS') {
   let now = start,
     sequence = 0,
     createCalls = 0,
@@ -19,9 +19,9 @@ function fixture() {
     kind: 'edit',
     routineId: 'flow-one',
     brief: {goal: 'Observe the whole flow'},
-    origin: {repository: 'Mentra-Community/MentraOS', prNumber: 12, headSha: 'a'.repeat(40)},
+    origin: {repository, prNumber: 12, headSha: 'a'.repeat(40)},
     target: {hostId: 'mini', laneId: 'mac'},
-    build: {headSha: 'a'.repeat(40), prNumber: 12, source: {buildRunId: 20, publicationAttempt: 1}},
+    build: {repository, headSha: 'a'.repeat(40), prNumber: 12, source: {buildRunId: 20, publicationAttempt: 1, ...(repository === 'Mentra-Community/MentraOS' ? {} : {repository})}},
   }
   const row = {
     workId: 'work-one',
@@ -69,10 +69,11 @@ function fixture() {
       return true
     },
   }
+  const targets: Array<string | undefined> = [], urls: string[] = []
   const app = {
     applicationId: 123,
-    async token(scope: string) {
-      scopes.push(scope)
+    async token(scope: string, repository?: string) {
+      scopes.push(scope); targets.push(repository)
       return 'secret'
     },
   } as TestRunGithubApp
@@ -80,6 +81,7 @@ function fixture() {
     new RoutineWorkNotification(
       app,
       async (url, init) => {
+        urls.push(url)
         if (outage) return new Response(null, {status: 403})
         if (init.method === 'GET') return Response.json(comments)
         if (init.method === 'POST') {
@@ -124,7 +126,7 @@ function fixture() {
     comments,
     notification,
     status,
-    scopes,
+    scopes, targets, urls,
     get createCalls() {
       return createCalls
     },
@@ -320,6 +322,7 @@ test('foreign marker is never adopted and live lease prevents two reporters crea
 
 test('terminal status received during comment lookup prevents a stale progress write', async () => {
   const f = fixture()
+  const targets: Array<string | undefined> = [], urls: string[] = []
   const app = {
     applicationId: 123,
     async token() {
@@ -517,3 +520,25 @@ test('one reporting timer keeps PR ticks independent and serialized while normal
     timers.mockRestore()
   }
 })
+
+
+test('source-PR reporting and lost-response reconciliation stay on the retained app repository', async () => {
+  for (const repository of ['Mentra-Community/Mentra', 'Mentra-Community/MentraOS'] as const) {
+    const f = fixture(repository); f.loseReply = true;
+    await expect(f.notification().publish(f.row)).rejects.toThrow('retained');
+    f.now = start + 60_000;
+    await f.notification().reconcile(f.row.workId);
+    expect(f.createCalls).toBe(1);
+    expect(f.targets.every(target => target === repository)).toBe(true);
+    expect(f.urls.every(url => url.startsWith(`https://api.github.com/repos/${repository}/`))).toBe(true);
+    expect(f.row.work.origin!.repository).toBe(repository);
+  }
+  const mismatch = fixture('Mentra-Community/Mentra');
+  mismatch.row.work.build.source.repository = 'Mentra-Community/MentraOS';
+  mismatch.row.inputSha256 = requestInputDigest(mismatch.row.work);
+  await expect(mismatch.notification().publish(mismatch.row)).rejects.toThrow('repository differs');
+  expect(mismatch.urls).toHaveLength(0); expect(mismatch.targets).toHaveLength(0);
+  const wrong = fixture('other/Mentra');
+  await expect(wrong.notification().publish(wrong.row)).rejects.toThrow();
+  expect(wrong.urls).toHaveLength(0); expect(wrong.targets).toHaveLength(0);
+});

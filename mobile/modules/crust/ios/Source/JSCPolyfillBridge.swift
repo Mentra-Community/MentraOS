@@ -37,6 +37,22 @@ public enum JSCPolyfillBridge {
     fileprivate final class WebSocketSessionDelegate: NSObject, URLSessionWebSocketDelegate {
         static let shared = WebSocketSessionDelegate()
 
+        /// A redirect is followed only to another network URL, never to a local scheme.
+        /// Completion-handler data tasks still ask the delegate about redirects.
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            willPerformHTTPRedirection response: HTTPURLResponse,
+            newRequest request: URLRequest,
+            completionHandler: @escaping (URLRequest?) -> Void,
+        ) {
+            guard let url = request.url, MiniappNetworkPolicy.allowsFetch(url) else {
+                completionHandler(nil)
+                return
+            }
+            completionHandler(request)
+        }
+
         func urlSession(
             _ session: URLSession,
             webSocketTask: URLSessionWebSocketTask,
@@ -97,6 +113,11 @@ public enum JSCPolyfillBridge {
             }
             guard let reqId else {
                 return .error(code: "INVALID_ARGS", message: "fetch.request requires reqId (use __mentraSendRequest)")
+            }
+            // URLSession reads file: URLs. Miniapp code can call this route without the
+            // polyfill's own check, so the scheme is checked here (MiniappNetworkPolicy).
+            guard MiniappNetworkPolicy.allowsFetch(url) else {
+                return .error(code: "UNSUPPORTED_SCHEME", message: MiniappNetworkPolicy.fetchRefusal)
             }
 
             var urlRequest = URLRequest(url: url)
@@ -272,6 +293,10 @@ public enum JSCPolyfillBridge {
                   let urlString = req["url"] as? String,
                   let url = URL(string: urlString) else {
                 return .error(code: "INVALID_ARGS", message: "ws.open expects {sid, url, protocols?}")
+            }
+            // A WebSocket task also needs a network scheme; any other raises an exception.
+            guard MiniappNetworkPolicy.allowsWebSocket(url) else {
+                return .error(code: "UNSUPPORTED_SCHEME", message: MiniappNetworkPolicy.webSocketRefusal)
             }
             var urlRequest = URLRequest(url: url)
             if let protocols = req["protocols"] as? [String], !protocols.isEmpty {

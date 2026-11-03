@@ -1,0 +1,99 @@
+import {engine, type InstallMiniappErrorCode, type MiniappInstallPreview} from "@mentra/engine"
+
+import {confirmMiniappInstall, localMiniappAddress} from "@/components/miniapps/MiniappInstallSheet"
+import {translate} from "@/i18n"
+
+export {localMiniappAddress}
+
+/**
+ * Installing a miniapp from a local-network address, such as the URL `mentra dev` prints: the install sheet says
+ * "From your local network" with the address, and the engine installs it as a development build
+ * (`installMiniapp`, spec "Local-network miniapps").
+ */
+
+/**
+ * The install sheet for a local-network build: the Mentra App's one install sheet, which says "From your local
+ * network" with the address. Resolves true when the person taps Install.
+ */
+export function confirmLocalMiniappInstall(preview: MiniappInstallPreview): Promise<boolean> {
+  // The replace line names the copy installed now, which can be a development build under another name.
+  const installed = engine.miniapps.list().find((app) => app.packageName === preview.packageName)
+  return confirmMiniappInstall(preview, installed?.name)
+}
+
+export interface InstalledLocalMiniapp {
+  packageName: string
+  name: string
+  version: string
+}
+
+export interface LocalMiniappInstallOptions {
+  /**
+   * Runs once the person taps Install, before anything installs: a running copy of the package restarts on the new
+   * build as it installs, so what it needs (its required permissions) is granted here. False cancels the install.
+   */
+  beforeInstall?: (preview: MiniappInstallPreview) => Promise<boolean>
+}
+
+/**
+ * Install the miniapp at a local-network `url`, asking first. Resolves what installed, or null when the person
+ * cancelled. Rejects with the engine's `InstallMiniappError` otherwise.
+ */
+export async function installLocalMiniapp(
+  url: string,
+  options: LocalMiniappInstallOptions = {},
+): Promise<InstalledLocalMiniapp | null> {
+  let name: string | undefined
+  // The engine reads any failure inside the sheet as a cancellation: a failed preparation is the install's error.
+  let preparation: {failed: true; error: unknown} | null = null
+  try {
+    const result = await engine.miniapps.install(url, {
+      source: "local",
+      confirm: async (preview) => {
+        name = preview.name
+        if (!(await confirmLocalMiniappInstall(preview))) return false
+        if (!options.beforeInstall) return true
+        try {
+          return await options.beforeInstall(preview)
+        } catch (error) {
+          preparation = {failed: true, error}
+          return false
+        }
+      },
+    })
+    return {packageName: result.packageName, name: name ?? result.packageName, version: result.version}
+  } catch (error) {
+    if (preparation) throw (preparation as {error: unknown}).error
+    if (installErrorCode(error) === "cancelled") return null
+    throw error
+  }
+}
+
+/** The code of an `InstallMiniappError`, or null for any other failure. */
+function installErrorCode(error: unknown): InstallMiniappErrorCode | null {
+  if (!(error instanceof Error) || error.name !== "InstallMiniappError") return null
+  const code = (error as Error & {code?: unknown}).code
+  return typeof code === "string" ? (code as InstallMiniappErrorCode) : null
+}
+
+/** Alert copy for a local-network install that failed. */
+export function localMiniappInstallErrorAlert(error: unknown, url: string): {title: string; message: string} {
+  const address = localMiniappAddress(url)
+  const title = translate("debugSettings:miniappLocalInstallFailedTitle")
+  switch (installErrorCode(error)) {
+    case "not_a_miniapp":
+      return {title, message: translate("debugSettings:miniappLocalInstallNotAMiniapp", {address})}
+    case "network":
+      return {title, message: translate("debugSettings:miniappLocalInstallNetwork", {address})}
+    case "access_denied":
+      return {title, message: translate("debugSettings:miniappLocalInstallAccessDenied")}
+    case "needs_newer_app":
+      return {title, message: translate("debugSettings:miniappLocalInstallNeedsNewerApp")}
+    case "integrity":
+      return {title, message: translate("debugSettings:miniappLocalInstallIntegrity")}
+    case "signature_invalid":
+      return {title, message: translate("debugSettings:miniappLocalInstallSignature")}
+    default:
+      return {title, message: error instanceof Error ? error.message : String(error)}
+  }
+}

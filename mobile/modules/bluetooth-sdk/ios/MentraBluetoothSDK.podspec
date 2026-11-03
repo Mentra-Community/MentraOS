@@ -53,6 +53,10 @@ Pod::Spec.new do |s|
   s.resource_bundles = {
     'BluetoothSDKPrivacy' => ['Source/PrivacyInfo.xcprivacy']
   }
+  # Phone-side Silero speech activity runs through the iOS-only sherpa-onnx framework.
+  s.ios.resource_bundles = {
+    'MentraSileroVad' => ['Resources/SileroVad/silero_vad.onnx']
+  }
 
   native_source_files = [
     "Source/**/*.{h,m,mm,swift,hpp,cpp,c}",

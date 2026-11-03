@@ -838,7 +838,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     // phone-side copy outranks it. Only a failed ota_status carries a current code.
     const glassesCode = installSnapshot.otaStatus?.status === "failed" ? installSnapshot.otaStatus.error || null : null
     // Precedence mirrors the legacy screen: the BES restart instruction, then a phone-side
-    // watchdog/preflight message (English-only, no copy key), then the glasses code mapped to
+    // watchdog/preflight message (translated when a copy key is available), then the glasses code mapped to
     // copy (unknown codes get the generic glasses-error copy rather than the raw code).
     let displayedError: string
     let copyKey: string | null
@@ -847,7 +847,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       copyKey = OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY
     } else if (installSnapshot.errorMsg) {
       displayedError = installSnapshot.errorMsg
-      copyKey = null
+      copyKey = installSnapshot.errorCopyKey ?? null
     } else {
       displayedError = getOtaErrorMessage(glassesCode)
       copyKey = otaErrorCopyKey(glassesCode)

@@ -189,6 +189,11 @@ def configure(keychain, output, env=os.environ, intermediate=None):
     print("Verified Developer ID Application signing and Apple notarization credentials")
 
 
+def installer_defines(env=os.environ):
+    """The installer fetches receipts from the building repository's PR builds."""
+    return ["-D", "MENTRA_MONOREPO"] if env.get("GITHUB_REPOSITORY") == "Mentra-Community/Mentra" else []
+
+
 def create_app(package, manifest):
     app = package / "Install Mentra.app"
     contents = app / "Contents"
@@ -209,6 +214,7 @@ def create_app(package, manifest):
                                   "CFBundleTypeRole": "Viewer"}]}
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     run("xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macosx14.0",
+        *installer_defines(),
         HERE / "mac-installer/InstallerCore.swift", HERE / "mac-installer/Distribution.swift",
         HERE / "mac-installer/Installer.swift",
         "-o", contents / "MacOS/Installer")

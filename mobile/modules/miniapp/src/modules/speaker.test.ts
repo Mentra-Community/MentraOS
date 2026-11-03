@@ -50,7 +50,7 @@ describe("SpeakerModule.speak", () => {
     const speaker = new SpeakerModule(session)
 
     const result = await speaker.speak("First sentence. Second sentence.", {
-      forceLocal: true,
+      processing: "localOnly",
       stopOtherAudio: false,
     })
 
@@ -64,22 +64,48 @@ describe("SpeakerModule.speak", () => {
         volume: undefined,
         stopOtherAudio: false,
         enableSanitization: true,
+        processing: "localOnly",
         forceLocal: true,
       },
     ])
     expect(requestOptions).toEqual([{timeoutMs: 0}])
   })
 
+  test("defaults to preferCloud, and the deprecated forceLocal means localOnly", async () => {
+    const {session, requestCalls} = mockSession([{completed: true}])
+    const speaker = new SpeakerModule(session)
+
+    await speaker.speak("Hello.")
+    await speaker.speak("Hello.", {processing: "preferLocal"})
+    await speaker.speak("Hello.", {forceLocal: true})
+    await speaker.speak("Hello.", {processing: "preferCloud", forceLocal: true})
+
+    expect(requestCalls.map(({processing, forceLocal}) => [processing, forceLocal])).toEqual([
+      ["preferCloud", false],
+      ["preferLocal", false],
+      ["localOnly", true],
+      ["preferCloud", false],
+    ])
+  })
+
+  test("rejects an unknown processing value without sending", async () => {
+    const {session, requestCalls} = mockSession([{completed: true}])
+    await expect(new SpeakerModule(session).speak("Hello.", {processing: "cloudOnly" as never})).rejects.toThrow(
+      "unknown processing",
+    )
+    expect(requestCalls).toHaveLength(0)
+  })
+
   test("sends an explicit sentence list through the normal SPEAK request", async () => {
     const {session, requestCalls} = mockSession([{completed: true}])
     const speaker = new SpeakerModule(session)
 
-    await speaker.speak(["First sentence.", "Second sentence."], {forceLocal: true})
+    await speaker.speak(["First sentence.", "Second sentence."], {processing: "localOnly"})
 
     expect(requestCalls[0]).toMatchObject({
       type: MiniappRequestType.SPEAK,
       text: ["First sentence.", "Second sentence."],
-      forceLocal: true,
+      processing: "localOnly",
     })
   })
 
@@ -287,4 +313,13 @@ describe("SpeakerModule.createStream validation", () => {
     expect(speaker.createStream({volume: 1.1})).rejects.toThrow("between 0 and 1")
     expect(requestCalls).toHaveLength(0)
   })
+})
+
+test("short cues can request native 80ms headroom without changing other streams", async () => {
+  const {session, requestCalls} = mockSession([{streamId: "cue"}])
+  await new SpeakerModule(session).createStream({sampleRate: 48000, jitterMs: 80})
+  expect(requestCalls[0]).toMatchObject({type: MiniappRequestType.SPEAKER_STREAM_OPEN, jitterMs: 80})
+  for (const jitterMs of [NaN, -1, 79, 501, Infinity])
+    await expect(new SpeakerModule(session).createStream({jitterMs})).rejects.toThrow(RangeError)
+  expect(requestCalls).toHaveLength(1)
 })

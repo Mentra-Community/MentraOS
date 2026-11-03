@@ -48,9 +48,10 @@ They hold every organization capability (`organization.workspaces.administer`,
 `organization.credentials.manage`, `organization.incidents.read`,
 `organization.supportProfiles.read`, `organization.testing.read`,
 `organization.testing.manage`, `organization.fleet.administer`,
-`organization.licenses.read`) and act as Owner in every workspace, which is how
-they recover a workspace whose Owners are gone. Recovery names an existing
-account; a deleted account is refused (`404 user_not_found`).
+`organization.licenses.read`, `organization.registry.administer`) and act as
+Owner in every workspace, which is how they recover a workspace whose Owners
+are gone. Recovery names an existing account; a deleted account is refused
+(`404 user_not_found`).
 
 ## The workspace portal
 
@@ -61,9 +62,10 @@ Admin" when an Organization Admin's powers go beyond it), and lists your other w
 
 **Addresses.** Your own workspace is never in the address: `/licenses`
 ([Licenses](licenses.md#in-the-workspace-portal)), `/members` (members, with pending
-invitations under them), `/settings` and `/audit` are its pages. The sidebar lists Licenses,
-Members and Settings, in that order, and offers only what your role opens; the audit log has no
-sidebar item and opens only at `/audit`. `/` opens the current workspace's first sidebar page. Another workspace is named
+invitations under them) and `/settings` are its pages. The sidebar lists Licenses, Members and
+Settings, in that order, and offers only what your role opens; Fleet Management (`/fleet`), where
+Fleet is installed, is its own group under them. `/` opens the current workspace's first sidebar
+page. Another workspace is named
 by `?workspace=<workspaceId>` on any of them, which is how an Organization Admin opens a
 customer's; the sidebar's links carry it exactly when the workspace is not the one the bare
 address opens, and a `?workspace=` that names the bare address is dropped from the address in
@@ -173,8 +175,9 @@ licenses are assigned from the Licenses page.
   both are on the change feed or neither is. The workspace being joined is never
   the one deleted. A workspace that holds anything is kept, as is any the person
   did not make for themselves: one where they are a Member or share ownership,
-  or one made with `POST /`. The join then succeeds as it would for anyone, and
-  the person has both memberships.
+  or one made with `POST /`. A person is in one workspace at a time, so while
+  they keep one, accepting and `recoverOwnership` are refused (`409
+  already_in_workspace`) and a claim discards the imported membership.
 - An invitation names an email, a role and an expiry (14 days). Admins invite
   Members and Developers, Owners anyone. Core stores only a hash of the
   invitation token; the link carries the token. The email names the inviter.
@@ -202,7 +205,8 @@ licenses are assigned from the Licenses page.
   change or remove them like any other member, and the keys they created
   validate.
 - Deleting a workspace ends its memberships and revokes its keys and
-  invitations at once. It is refused (`409 workspace_has_holds`) while a
+  invitations at once, and forgets the miniapps it assigned through Fleet
+  ([Fleet integration](fleet-integration.md#assigned-miniapps)). It is refused (`409 workspace_has_holds`) while a
   service holds the workspace, whoever asks, Organization Admins included: the
   Mentra Miniapp Store holds a workspace while it owns any miniapp that is not
   deleted, a draft included, and the portals say so where the delete is ("This

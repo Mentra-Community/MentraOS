@@ -28,3 +28,14 @@ test('empty queue only reports jobs waiting to start', () => {
   expect(html).not.toContain('active requests');
   client.clear();
 });
+test('pending queue exposes stage and an expected/observed checklist with owner and next action', () => {
+  const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
+  const item = {requestId: 'original', state: 'awaiting-runner', reason: 'Waiting for the original return', compatibilityKnown: true,
+    compatibleLanes: [], platformCandidates: [], diagnosis: {stage: 'Candidate check and return', nextAction: 'Inspect the owning lane report',
+      conditions: [{label: 'Original claim', status: 'waiting' as const, expected: 'Authenticated return', observed: 'Original check remains pending',
+        hostId: 'mini', laneId: 'mac', resourceId: 'exact-resource', owner: 'run:original'}]}};
+  client.setQueryData(['test-pending-queue', undefined], {total: 1, observedAt: new Date().toISOString(), items: [item]} satisfies PendingQueuePage);
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><PendingQueueSection /></QueryClientProvider>);
+  for (const value of ['Waiting stage:','Candidate check and return','Expected:','Observed:','Authenticated return','exact-resource','run:original','Next action:']) expect(html).toContain(value);
+  client.clear();
+});

@@ -1,3 +1,5 @@
+import {currentHostStateProjection} from './test-host-state.service'
+import {mergeHostDebugHistory} from './test-host-history.repository'
 import {expect, spyOn, test} from "bun:test"
 import {createTestHostStateApi} from '../api/internal/test-host-state.api'
 import {TestHostStateModel} from "../models/test-host-state.model"
@@ -6,6 +8,14 @@ import {hostStateSchema, TestHostStateService} from "./test-host-state.service"
 import {routineProgressSchema} from '../types/routine-progress.types'
 import {compatibleRoutineLane, routineJobRouting} from './routine-job.service'
 import {permissionContext} from '../types/resource-permissions.types'
+import type {ExclusiveHostReservation} from '../types/resource-reservations.types'
+import {isDeepStrictEqual} from 'node:util'
+import {randomUUID} from 'node:crypto'
+import {LaneControlsService} from './lane-controls.service'
+import {LaneRestorationService} from './lane-restoration.service'
+import {testFrameworkBinding} from '../testing/framework-fixtures'
+import {evaluateRoutineLaneReadiness} from './routine-lane-eligibility'
+import type {RoutingTestHostState} from './test-host-state.service'
 
 test('run progress lookup selects only one lane snapshot and uses a bounded consistent read', async () => {
   const selections: unknown[] = [], settings: unknown[] = [], filters: unknown[] = [];
@@ -45,28 +55,35 @@ test('routing reads only fresh current offers and preserves permission and physi
     resources: [{id: 'app', kind: 'app' as const, capabilities: ['camera'], permissionObservations: [observation]},
       {id: 'glasses', kind: 'glasses' as const, capabilities: ['display']}],
     glasses: [{resourceId: 'glasses', deviceId: 'physical-one', model: 'mentra-live', capabilities: ['display']}]};
-  const current = {hostId: 'mini', frameworkBinding: binding, lanes: [lane]};
+  const current = {hostId: 'mini', observedAt: new Date(now).toISOString(), frameworkBinding: binding, lanes: [lane]};
   const requirements = {platform: 'ios-on-mac' as const, resources: [{kind: 'app' as const, capabilities: ['camera'],
     permissions: [{permission: 'camera' as const, recipient: 'app' as const}]}, {kind: 'glasses' as const, capabilities: ['display']}],
     glasses: {models: ['mentra-live'], capabilities: ['display']}};
   const selections: unknown[] = [], settings: unknown[] = [], filters: unknown[] = [];
+  const retained: ExclusiveHostReservation[] = [{kind: 'exclusive', id: 'a1d9b22e-12c1-4f5b-b210-0bca2b0798c6', authorityHostId: 'mini',
+    borrowerHostId: 'air1', laneId: 'android', resourceId: 'google-account', operationId: 'run:pending-original',
+    owner: {kind: 'run', id: 'pending-original'}, inputSha256: 'a'.repeat(64), intentSha256: 'b'.repeat(64),
+    controllerIncarnation: 'one', controllerGeneration: 1, borrowerSequence: 1, reservedAt: new Date(now).toISOString()}];
   let reads = 0;
   const find = spyOn(TestHostStateModel, 'find').mockImplementation(((filter: unknown) => {
     filters.push(filter);
     const query = {select(value: unknown) {selections.push(value); return query},
       limit(value: unknown) {settings.push(value); return query}, read(value: unknown) {settings.push(value); return query},
       readConcern(value: unknown) {settings.push(value); return query}, async lean() {
-        reads++; return [{hostId: 'mini', snapshot: structuredClone(current), receivedAt: new Date(now)}];
+        reads++; return [{hostId: 'mini', snapshot: structuredClone(current), receivedAt: new Date(now), resourceReservations: retained}];
       }}; return query;
   }) as never);
   const previous = process.env.TEST_HOST_TOKENS;
   process.env.TEST_HOST_TOKENS = JSON.stringify({mini: 't'.repeat(32), invalid: 'short'});
   try {
     const service = new TestHostStateService(), [offered] = await service.list();
-    expect(offered).toEqual({...current, receivedAt: new Date(now).toISOString()});
-    expect(selections).toEqual([{hostId: 1, receivedAt: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+    expect(offered).toEqual({...current, receivedAt: new Date(now).toISOString(), authorityReservations: retained});
+    expect(selections).toEqual([{hostId: 1, receivedAt: 1, resourceReservations: 1, laneControls: 1,
+      'resourceLifecycleCursor.schemaVersion': 1, 'resourceLifecycleCursor.subjects': 1,
+      'snapshot.resourceReservations.resourceReadiness': 1, 'snapshot.observedAt': 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+      'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle.schemaVersion': 1, 'snapshot.resourceLifecycle.subjects': 1, 'snapshot.resources': 1,
       'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
-      'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
+      'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.activity': 1, 'snapshot.lanes.resources': 1,
       'snapshot.lanes.glasses': 1, _id: 0}]);
     expect(settings).toEqual([100, 'primary', 'majority']);
     expect(filters).toEqual([{hostId: {$in: ['mini']}}]);
@@ -74,11 +91,11 @@ test('routing reads only fresh current offers and preserves permission and physi
       frameworkHistory: [], restoration: {diagnostics: 'baggage'.repeat(10000)}, receivedAt: offered.receivedAt};
     expect(routineJobRouting(requirements, [offered], now, undefined, build)).toEqual(routineJobRouting(requirements, [full], now, undefined, build));
     expect(compatibleRoutineLane(requirements, offered.lanes[0], permissionContext(binding, build, now))).toBe(true);
-    expect(compatibleRoutineLane(requirements, offered.lanes[0], permissionContext(binding, {...build, headSha: '0'.repeat(40)}, now))).toBe(false);
+    expect(compatibleRoutineLane(requirements, offered.lanes[0], permissionContext(binding, {...build, headSha: '0'.repeat(40)}, now))).toBe(true);
     observation.observedAt = new Date(now - 120001).toISOString();
     const [fresh] = await service.list();
     expect(reads).toBe(2);
-    expect(compatibleRoutineLane(requirements, fresh.lanes[0], permissionContext(binding, build, now))).toBe(false);
+    expect(compatibleRoutineLane(requirements, fresh.lanes[0], permissionContext(binding, build, now))).toBe(true);
     current.lanes[0].glasses[0].resourceId = 'unoffered';
     await expect(service.list()).rejects.toThrow('Glasses inventory must exactly identify declared glasses resources');
     current.lanes[0].glasses[0].resourceId = 'glasses';
@@ -93,35 +110,139 @@ test('routing reads only fresh current offers and preserves permission and physi
   }
 })
 
-function fixture() {
+test('projected routing and the full snapshot use the same current lane custody checklist', async () => {
+  const now = Date.parse('2026-10-29T11:22:15Z'), at = new Date(now).toISOString();
+  const current: RoutingTestHostState = {hostId: 'air2', receivedAt: at, observedAt: at, frameworkBinding: testFrameworkBinding(),
+    lanes: [{id: 'android', platform: 'android', dispatchMode: 'automatic', state: 'out-of-service',
+      resources: [{id: 'phone', kind: 'phone', capabilities: []}]}]};
+  const requirements = {platform: 'android' as const, resources: [{kind: 'phone' as const, capabilities: []}]};
+  const include = (target: any, source: any, keys: string[]): any => {
+    if (source === undefined) return target;
+    if (!keys.length) return structuredClone(source);
+    if (Array.isArray(source)) return source.map((item, index) => include(target?.[index], item, keys));
+    const [key, ...rest] = keys, selected = include(target?.[key!], source?.[key!], rest);
+    return selected === undefined ? target : {...target, [key!]: selected};
+  };
+  const find = spyOn(TestHostStateModel, 'find').mockImplementation((() => {
+    let projection: Record<string, number> = {};
+    const query = {select(value: Record<string, number>) {projection = value; return query}, limit() {return query},
+      read() {return query}, readConcern() {return query}, async lean() {
+        const {receivedAt: _receivedAt, ...snapshot} = current;
+        const document = {hostId: current.hostId, receivedAt: new Date(now), snapshot};
+        let projected = {};
+        for (const [path, selected] of Object.entries(projection)) if (selected === 1)
+          projected = include(projected, document, path.split('.'));
+        return [projected];
+      }};
+    return query;
+  }) as never);
+  const previous = process.env.TEST_HOST_TOKENS;
+  process.env.TEST_HOST_TOKENS = JSON.stringify({air2: 't'.repeat(32)});
+  try {
+    const service = new TestHostStateService();
+    for (const owner of [undefined, {id: 'stopped-fixer', kind: 'fixer' as const},
+      {id: 'original-run', kind: 'run' as const, requestId: 'original-run'}, {id: 'authoring-owner', kind: 'authoring' as const}]) {
+      if (owner) current.lanes[0]!.activity = {generation: 1294, owner};
+      else delete current.lanes[0]!.activity;
+      const [offered] = await service.list();
+      expect(offered!.lanes[0]!.activity).toEqual(current.lanes[0]!.activity);
+      const context = {now, binding: current.frameworkBinding!};
+      const full = evaluateRoutineLaneReadiness(requirements, current, current.lanes[0]!, context, now);
+      const routing = evaluateRoutineLaneReadiness(requirements, offered!, offered!.lanes[0]!, context, now);
+      expect(routing).toEqual(full);
+      expect(routing.conditions.find(condition => condition.id === 'idle')?.status).toBe(owner ? 'blocked' : 'match');
+      expect(Boolean(routineJobRouting(requirements, [offered!], now, undefined, undefined, true,
+        {requestId: 'queued-original', inputSha256: 'a'.repeat(64)}).waitingReason)).toBe(Boolean(owner));
+    }
+    current.lanes[0]!.activity = {generation: 1294, owner: {id: 'other-owner', kind: 'run', requestId: 'wrong-run'}};
+    await expect(service.list()).rejects.toThrow('Lane run reference must identify its actual run owner');
+  } finally {
+    find.mockRestore();
+    if (previous === undefined) delete process.env.TEST_HOST_TOKENS; else process.env.TEST_HOST_TOKENS = previous;
+  }
+})
+
+function fixture(onAccepted?: (host: unknown) => Promise<unknown>, castLegacyUnsets = false) {
+  let debug: Record<string, any> = {}
   let row: Record<string, any> | null = null,
     now = Date.parse("2026-10-03T01:00:00Z"),
     writes = 0,
     reads = 0,
     writeAttempts = 0,
     failedWrites = 0
-  const readProjections: Array<Record<string, number> | undefined> = [], writeProjections: Array<Record<string, number> | undefined> = []
-  const project = (value: Record<string, any> | null, fields?: Record<string, number>) => value &&
-    (fields ? structuredClone(Object.fromEntries(Object.entries(value).filter(([key]) => fields[key]))) : structuredClone(value))
+  const readProjections: Array<Record<string, any> | undefined> = [], writeProjections: Array<Record<string, any> | undefined> = []
+  const project = (value: Record<string, any> | null, fields?: Record<string, any>) => {
+    if(!value || !fields) return structuredClone(value)
+    const include = (target: any, source: any, keys: string[]): any => {
+      if (source === undefined) return target
+      if (!keys.length) return structuredClone(source)
+      if (Array.isArray(source)) return source.map((item, index) => include(target?.[index], item, keys))
+      const [key, ...rest] = keys, selected = include(target?.[key!], source?.[key!], rest)
+      return selected === undefined ? target : {...target, [key!]: selected}
+    }
+    const evaluate = (expression:any,variables:Record<string,any>={}):any => {
+      if(typeof expression==='string'&&expression.startsWith('$')) {
+        const [root,...keys]=expression.slice(expression.startsWith('$$')?2:1).split('.')
+        return expression.startsWith('$$')?keys.reduce((v,key)=>v?.[key],variables[root!]):[root!,...keys].reduce((v,key)=>v?.[key],value)
+      }
+      if(Array.isArray(expression))return expression.map(part=>evaluate(part,variables))
+      if(!expression||typeof expression!=='object')return expression
+      if('$literal' in expression)return expression.$literal
+      if('$isArray' in expression)return Array.isArray(evaluate(expression.$isArray,variables))
+      if('$cond' in expression)return evaluate(expression.$cond[evaluate(expression.$cond[0],variables)?1:2],variables)
+      if('$ifNull' in expression)return evaluate(expression.$ifNull[0],variables)??evaluate(expression.$ifNull[1],variables)
+      if('$eq' in expression)return Object.is(evaluate(expression.$eq[0],variables),evaluate(expression.$eq[1],variables))
+      if('$ne' in expression)return !Object.is(evaluate(expression.$ne[0],variables),evaluate(expression.$ne[1],variables))
+      if('$gte' in expression)return evaluate(expression.$gte[0],variables)>=evaluate(expression.$gte[1],variables)
+      if('$gt' in expression)return evaluate(expression.$gt[0],variables)>evaluate(expression.$gt[1],variables)
+      if('$lte' in expression)return evaluate(expression.$lte[0],variables)<=evaluate(expression.$lte[1],variables)
+      if('$not' in expression)return !evaluate(expression.$not[0],variables)
+      if('$or' in expression)return expression.$or.some((part:any)=>evaluate(part,variables))
+      if('$convert' in expression) {const parsed=Date.parse(evaluate(expression.$convert.input,variables));return Number.isFinite(parsed)?new Date(parsed):null}
+      if('$and' in expression)return expression.$and.every((part:any)=>evaluate(part,variables))
+      if('$filter' in expression) {const filter=expression.$filter;return evaluate(filter.input,variables).filter((item:any)=>evaluate(filter.cond,{...variables,[filter.as]:item}))}
+      if('$map' in expression) {const map=expression.$map;return evaluate(map.input,variables).map((item:any)=>evaluate(map.in,{...variables,[map.as]:item}))}
+      if('$reduce' in expression) {const reduce=expression.$reduce;return evaluate(reduce.input,variables).reduce((value:any,item:any)=>
+        evaluate(reduce.in,{...variables,value,this:item}),evaluate(reduce.initialValue,variables))}
+      if('$let' in expression)return evaluate(expression.$let.in,{...variables,...Object.fromEntries(
+        Object.entries(expression.$let.vars).map(([key,part])=>[key,evaluate(part,variables)]))})
+      if('$in' in expression)return evaluate(expression.$in[1],variables).some((item:any)=>isDeepStrictEqual(item,evaluate(expression.$in[0],variables)))
+      if('$concatArrays' in expression)return expression.$concatArrays.flatMap((part:any)=>evaluate(part,variables))
+      if('$arrayElemAt' in expression)return evaluate(expression.$arrayElemAt[0],variables)?.[expression.$arrayElemAt[1]]
+      if(Object.keys(expression).some(key=>key.startsWith('$')))throw Error('Unsupported test projection expression')
+      return Object.fromEntries(Object.entries(expression).map(([key,part])=>[key,evaluate(part,variables)]).filter(([,part])=>part!==undefined))
+    }
+    let result: Record<string, any> = {}
+    for(const [path,included] of Object.entries(fields)) {
+      if(included===1)result=include(result,value,path.split('.'))
+      else if(included&&typeof included==='object') {const selected=evaluate(included),keys=path.split('.');
+        if(selected!==undefined)result=include(result,keys.reduceRight((value,key)=>({[key]:value}),selected),keys)}
+    }
+    return result
+  }
+
   let beforeWrite: ((change: Record<string, any>) => void | Promise<void>) | undefined
+  const originalUpdate=TestHostStateModel.findOneAndUpdate,castUpdates:Record<string,any>[]=[]
   const find = spyOn(TestHostStateModel, "findOne").mockImplementation((() => {
     let fields: Record<string, number> | undefined
     const query = {
       select(value: Record<string, number>) {fields = value; return query},
+      read(){return query},readConcern(){return query},setOptions(){return query},
       lean: async () => {
         reads++
         readProjections.push(fields)
         return project(row, fields)
       },
     }; return query}) as any)
-  const update = spyOn(TestHostStateModel, "findOneAndUpdate").mockImplementation(((
+  const applyUpdate = (
     filter: Record<string, unknown>,
-    change: {$set: Record<string, any>},
+    change: {$set: Record<string, any>; $unset?: Record<string,unknown>; $setOnInsert?:Record<string,unknown>; $inc?:Record<string,number>},
     options: {upsert: boolean},
   ) => {
     let fields: Record<string, number> | undefined
     const query = {
       select(value: Record<string, number>) {fields = value; return query},
+      read(){return query},readConcern(){return query},setOptions(){return query},
       lean: async () => {
         writeAttempts++
         await beforeWrite?.(change.$set)
@@ -129,26 +250,38 @@ function fixture() {
           failedWrites--
           return null
         }
-        if (
-          row &&
-          Object.entries(filter).some(([key, value]) =>
-            typeof value === "object" && value !== null && "$exists" in value
-              ? (row![key] !== undefined) !== (value as {$exists: boolean}).$exists
-              : row![key] !== value,
-          )
-        ) {
+        const matches=(part:Record<string,unknown>):boolean=>Object.entries(part).every(([key,value])=>
+          key==='$or'?(value as Record<string,unknown>[]).some(matches):
+          typeof value==='object'&&value!==null&&'$exists' in value?
+            (row?.[key]!==undefined)===(value as {$exists:boolean}).$exists:isDeepStrictEqual(row?.[key],value))
+        if (row && !matches(filter)) {
           if (options.upsert) throw Object.assign(new Error('Duplicate host identity'), {code: 11000})
           return null
         }
         if (!row && !options.upsert) return null
-        row = {...row, ...change.$set}
+        row = {...(!row?change.$setOnInsert:{}),...row, ...change.$set}
+        for(const key of Object.keys(change.$unset??{})) delete row[key]
+        for(const [key,value] of Object.entries(change.$inc??{})) row[key]=(row[key]??0)+value
         writes++
         writeProjections.push(fields)
         return project(row, fields)
       },
-    }; return query}) as any)
+    }; return query
+  }
+  const update = spyOn(TestHostStateModel, "findOneAndUpdate").mockImplementation(((filter:any,change:any,options:any)=>
+    castLegacyUnsets?originalUpdate.call(TestHostStateModel,filter,change,options):applyUpdate(filter,change,options)) as any)
+  // Execute the actual Mongoose query, including option forwarding, casting
+  // and BSON serialization. Only the driver I/O is replaced with the CAS above.
+  const collectionUpdate=castLegacyUnsets?spyOn(TestHostStateModel.collection,'findOneAndUpdate').mockImplementation((async(filter:any,change:any,options:any)=>{
+    const {BSON}=TestHostStateModel.base.mongo
+    const wire=BSON.deserialize(BSON.serialize(change));castUpdates.push(wire)
+    const query=applyUpdate(filter,wire as any,{upsert:Boolean(options.upsert)})
+    if(options.projection)query.select(options.projection)
+    return query.lean()
+  }) as any):undefined
   return {
-    service: new TestHostStateService(() => now),
+    service: new TestHostStateService(() => now, onAccepted as never, {async debug(value) {debug = mergeHostDebugHistory(debug, value.payload)}, async detail() {return structuredClone(debug)}}),
+    debug: () => debug,
     advance: (ms: number) => (now += ms),
     writes: () => writes,
     reads: () => reads,
@@ -157,9 +290,11 @@ function fixture() {
     beforeWrite: (hook: typeof beforeWrite) => {beforeWrite = hook},
     row: () => row!,
     readProjections, writeProjections,
+    castUpdates,
     stop: () => {
       find.mockRestore()
       update.mockRestore()
+      collectionUpdate?.mockRestore()
     },
   }
 }
@@ -175,6 +310,27 @@ const snapshot = (
   sequence,
   observedAt,
   lanes: [{id: "mac", platform: "ios-on-mac", dispatchMode: "automatic", state: "idle", resources: []}],
+})
+
+for(const writer of ['controller','updater'] as const) test(`ordinary ${writer} extraction preserves legacy unsets through real Mongoose casting`,async()=>{
+ const f=fixture(undefined,true);try{
+  await f.service.report(accepted(1,1),'mini')
+  const stopped={installationId:'release-1',process:accepted(1,1).frameworkProcess,observedAt:'2026-10-03T01:00:01.500Z'}
+  f.row().frameworkHistory=[{unrelated:'debug'}];f.row().frameworkStopReceipts=[stopped]
+  const claims=[{current:'foreign custody'}];f.row().resourceReservations=claims
+  if(writer==='controller') await f.service.report(accepted(2,1),'mini')
+  else await f.service.reportDeployment(observation(1,{stopped}),'mini')
+  expect(f.castUpdates.at(-1)?.$unset).toMatchObject({frameworkHistory:'',frameworkStopReceipts:''})
+  expect(f.row()).not.toHaveProperty('frameworkHistory');expect(f.row()).not.toHaveProperty('frameworkStopReceipts')
+  expect(f.row().resourceReservations).toEqual(claims)
+  expect(TestHostStateModel.schema.path('frameworkHistory')).toBeUndefined()
+  expect(TestHostStateModel.schema.path('frameworkStopReceipts')).toBeUndefined()
+  expect(TestHostStateModel.schema.options.strict).toBe(true)
+  const before=structuredClone(f.row())
+  if(writer==='controller') await expect(f.service.report({...accepted(3,1),untrustedWrite:'forbidden'},'mini')).rejects.toThrow()
+  else await expect(f.service.reportDeployment({...observation(2),untrustedWrite:'forbidden'},'mini')).rejects.toThrow()
+  expect(f.row()).toEqual(before)
+ }finally{f.stop()}
 })
 
 const runningSnapshot = (sequence = 1) => {
@@ -441,9 +597,9 @@ test("optional restoration history survives controller restart with explicit unk
   try {
     const restoration = {schemaVersion: 1 as const, attempts: [], truncated: true}
     await f.service.report({...snapshot(1, 1), restoration}, "mini")
-    expect((await f.service.get("mini"))!.restoration).toEqual(restoration)
+    expect(await f.service.get("mini")).not.toHaveProperty("restoration")
     await f.service.report({...snapshot(2, 1), restoration}, "mini")
-    expect((await f.service.get("mini"))!.restoration).toEqual(restoration)
+    expect(await f.service.get("mini")).not.toHaveProperty("restoration")
   } finally {
     f.stop()
   }
@@ -479,6 +635,200 @@ const observation = (sequence: number, extra: Record<string, unknown> = {}) => (
   ...extra,
 })
 
+for(const oldDocument of [false,true]) for(const changed of ['binding','process','accepted-time'] as const) test(`framework metadata omission retains the accepted identity fence: ${changed}, old=${oldDocument}`,async()=>{
+ const f=fixture();try{
+  f.advance(10_000)
+  await f.service.report(accepted(1,1),'mini')
+  if(oldDocument) delete f.row().frameworkAcceptedIdentity
+  await f.service.report(snapshot(1,2),'mini')
+  expect(await f.service.frameworkObservation('mini')).toBeNull()
+  await expect(f.service.admitPreparationFramework('mini','omitted-request','a'.repeat(64),'b'.repeat(64),1,
+    {kind:'reject',rejectionSha256:'c'.repeat(64)})).rejects.toThrow()
+  const altered={...accepted(1,3),...(changed==='binding'?{frameworkBinding:binding(2)}:
+    changed==='process'?{frameworkProcess:{pid:999,startedAt:'foreign-birth'}}:{frameworkAcceptedAt:'2026-10-03T01:00:03Z'})}
+  await expect(f.service.report(altered,'mini')).rejects.toThrow('identity changed')
+  expect(f.row().frameworkAcceptedIdentity).toEqual({frameworkBinding:binding(1),frameworkProcess:accepted(1,1).frameworkProcess,
+    frameworkAcceptedAt:accepted(1,1).frameworkAcceptedAt,incarnation:'boot-1',incarnationGeneration:1})
+  expect(f.row().sequence).toBe(2)
+  expect(await f.service.frameworkObservation('mini')).toBeNull()
+  await f.service.report(accepted(1,3),'mini')
+  expect(await f.service.frameworkObservation('mini')).toMatchObject({binding:binding(1)})
+ }finally{f.stop()}
+})
+
+for(const oldDocument of [false,true]) for(const stoppedBeforeOmission of [false,true]) test(`framework metadata omission cannot revive the exact stopped process: stop-before=${stoppedBeforeOmission}, old=${oldDocument}`,async()=>{
+ const f=fixture();try{
+  f.advance(10_000)
+  await f.service.report(accepted(1,1),'mini')
+  if(oldDocument) delete f.row().frameworkAcceptedIdentity
+  const stopped={installationId:'release-1',process:accepted(1,1).frameworkProcess,observedAt:'2026-10-03T01:00:01.500Z'}
+  if(stoppedBeforeOmission) await f.service.reportDeployment(observation(1,{stopped}),'mini')
+  await f.service.report(snapshot(1,2),'mini')
+  if(!stoppedBeforeOmission) await f.service.reportDeployment(observation(1,{stopped}),'mini')
+  const claims=[{current:'foreign owner retained'}];f.row().resourceReservations=claims
+  expect(await f.service.frameworkObservation('mini')).toBeNull()
+  await expect(f.service.report(accepted(1,3),'mini')).rejects.toThrow('stopped')
+  expect(f.row().frameworkAcceptedIdentity).toEqual({frameworkBinding:binding(1),frameworkProcess:accepted(1,1).frameworkProcess,
+    frameworkAcceptedAt:accepted(1,1).frameworkAcceptedAt,incarnation:'boot-1',incarnationGeneration:1})
+  expect(f.row().sequence).toBe(2);expect(f.row().frameworkCurrentStop).toEqual(stopped)
+  await expect(f.service.admitPreparationFramework('mini','stopped-request','a'.repeat(64),'b'.repeat(64),1,
+    {kind:'reject',rejectionSha256:'c'.repeat(64)})).rejects.toThrow()
+  expect(f.row().resourceReservations).toEqual(claims)
+  await f.service.report(accepted(2,1),'mini')
+  expect(await f.service.frameworkObservation('mini')).toMatchObject({binding:binding(2)})
+  const admission=await f.service.admitPreparationFramework('mini','successor-request','a'.repeat(64),'b'.repeat(64),1,
+    {kind:'reject',rejectionSha256:'c'.repeat(64)})
+  expect(admission.binding).toEqual(binding(2));expect(f.row().resourceReservations).toEqual(claims)
+ }finally{f.stop()}
+})
+
+test('untouched legacy stopped row retains cessation through a metadata-omitting report',async()=>{
+ const f=fixture();try{
+  f.advance(10_000);await f.service.report(accepted(1,1),'mini')
+  const stopped={installationId:'release-1',process:accepted(1,1).frameworkProcess,observedAt:'2026-10-03T01:00:01.500Z'}
+  delete f.row().frameworkAcceptedIdentity;delete f.row().frameworkCurrentStop
+  f.row().frameworkStopReceipts=[{unrelated:'debug'},stopped]
+  await f.service.report(snapshot(1,2),'mini')
+  expect(f.row().frameworkCurrentStop).toEqual(stopped)
+  expect(f.row()).not.toHaveProperty('frameworkStopReceipts')
+  await expect(f.service.report(accepted(1,3),'mini')).rejects.toThrow('stopped')
+  expect(await f.service.frameworkObservation('mini')).toBeNull()
+  await expect(f.service.admitPreparationFramework('mini','legacy-stop-request','a'.repeat(64),'b'.repeat(64),1,
+    {kind:'reject',rejectionSha256:'c'.repeat(64)})).rejects.toThrow()
+ }finally{f.stop()}
+})
+
+for(const writer of ['controller','updater']) for(const kind of ['binding','process','stopped'])
+ test(`already-omitted legacy snapshot retains its original authority at ${writer}: ${kind}`,async()=>{
+  const f=fixture();try{
+   f.advance(10_000);await f.service.report(accepted(1,1),'mini')
+   const old={binding:binding(1),process:accepted(1,1).frameworkProcess,incarnation:'boot-1',incarnationGeneration:1,
+    effectiveAt:accepted(1,1).frameworkAcceptedAt,observedAt:accepted(1,1).observedAt,
+    ...(kind==='stopped'?{endedAt:'2026-10-03T01:00:01.500Z',endReason:'observed-stop'}:{})}
+   delete f.row().frameworkAcceptedIdentity;delete f.row().frameworkCurrentStop
+   Object.assign(f.row(),{sequence:2,snapshot:snapshot(1,2),frameworkHistory:[{unrelated:'debug'},old]})
+   if(writer==='controller') await f.service.report(snapshot(1,3),'mini')
+   else await f.service.reportDeployment(observation(1),'mini')
+   const altered={...accepted(1,4),...(kind==='binding'?{frameworkBinding:binding(2)}:
+    kind==='process'?{frameworkProcess:{pid:999,startedAt:'foreign'}}:{})}
+   await expect(f.service.report(altered,'mini')).rejects.toThrow(kind==='stopped'?'stopped':'identity changed')
+   expect(f.row().frameworkAcceptedIdentity.frameworkBinding).toEqual(binding(1))
+   expect(f.row()).not.toHaveProperty('frameworkHistory')
+   if(kind==='stopped') expect(f.row().frameworkCurrentStop).toEqual({installationId:'release-1',process:old.process,observedAt:old.endedAt})
+   expect(await f.service.frameworkObservation('mini')).toBeNull()
+   await expect(f.service.admitPreparationFramework('mini','old-omitted-request','a'.repeat(64),'b'.repeat(64),1,
+    {kind:'reject',rejectionSha256:'c'.repeat(64)})).rejects.toThrow()
+  }finally{f.stop()}
+ })
+
+test('old writer successor omission cannot fall back to an older extracted identity',async()=>{
+ const f=fixture();try{
+  f.advance(10_000);await f.service.report(accepted(1,1),'mini')
+  const next=accepted(2,1)
+  Object.assign(f.row(),{incarnation:'boot-2',incarnationGeneration:2,sequence:2,snapshot:snapshot(2,2),
+   frameworkHistory:[{binding:next.frameworkBinding,process:next.frameworkProcess,incarnation:'boot-2',incarnationGeneration:2,
+    effectiveAt:next.frameworkAcceptedAt,observedAt:next.observedAt}]})
+  await f.service.report(snapshot(2,3),'mini')
+  await expect(f.service.report({...accepted(2,4),frameworkProcess:{pid:999,startedAt:'foreign'}},'mini')).rejects.toThrow('identity changed')
+  expect(f.row().frameworkAcceptedIdentity.frameworkBinding).toEqual(binding(2))
+ }finally{f.stop()}
+})
+
+test('legacy accepted predecessor remains a chronology fence before a successor first reports framework metadata',async()=>{
+ const f=fixture();try{
+  f.advance(10_000);await f.service.report(accepted(1,1),'mini')
+  delete f.row().frameworkAcceptedIdentity
+  Object.assign(f.row(),{incarnation:'boot-2',incarnationGeneration:2,sequence:1,snapshot:snapshot(2,1),
+   frameworkHistory:[{binding:binding(1),process:accepted(1,1).frameworkProcess,incarnation:'boot-1',incarnationGeneration:1,
+    effectiveAt:'2026-10-03T01:00:02Z',observedAt:accepted(1,1).observedAt}]})
+  await expect(f.service.report({...accepted(2,2),frameworkAcceptedAt:'2026-10-03T01:00:01Z'},'mini')).rejects.toThrow('precedes')
+  await f.service.report(accepted(2,2),'mini')
+  expect(await f.service.frameworkObservation('mini')).toMatchObject({binding:binding(2)})
+ }finally{f.stop()}
+})
+
+for(const kind of ['unknown-selected','unrelated-future','same-generation-debug','unrelated-debug-payload'])
+ test(`legacy identity extraction keeps operational facts separate from debug: ${kind}`,async()=>{
+  const f=fixture();try{
+   f.advance(10_000);await f.service.report(accepted(1,1),'mini')
+   if(kind!=='same-generation-debug') delete f.row().frameworkAcceptedIdentity
+   const old:any={binding:kind==='same-generation-debug'?binding(2):binding(1),process:accepted(1,1).frameworkProcess,
+    incarnation:'boot-1',incarnationGeneration:1,effectiveAt:accepted(1,1).frameworkAcceptedAt,observedAt:'discarded diagnostic timestamp'}
+   if(kind==='unknown-selected') delete old.process.startedAt
+   if(kind==='unrelated-debug-payload') old.diagnostics={invalid:'unrelated debug'}
+   Object.assign(f.row(),{sequence:2,snapshot:snapshot(1,2),frameworkHistory:[old,
+    ...(kind==='unrelated-future'?[{incarnationGeneration:999,invalid:'future debug'}]:[])]})
+   if(kind==='unknown-selected') {
+    await expect(f.service.report(snapshot(1,3),'mini')).rejects.toThrow()
+    expect(f.row().frameworkHistory).toEqual([old]);expect(f.row().sequence).toBe(2)
+   } else {
+    await f.service.report(snapshot(1,3),'mini')
+    expect(f.row().frameworkAcceptedIdentity.frameworkBinding).toEqual(binding(1))
+    await expect(f.service.report({...accepted(1,4),frameworkBinding:binding(2)},'mini')).rejects.toThrow('identity changed')
+   }
+  }finally{f.stop()}
+ })
+
+async function legacyRepairFixture(kind='valid') {
+ const f=fixture();f.advance(10_000);await f.service.report(snapshot(1,1),'mini')
+ const repair={executionId:'fixer:original',interruptionId:'repair:mac:98',laneId:'mac',state:'halted',
+  current:false,startedAt:'2026-10-03T01:00:00Z',finishedAt:'2026-10-03T01:00:01Z',haltDecisionId:'halt:original'}
+ const original={...repair,report:{debug:'ignored'.repeat(1000)},actions:[{invalid:'debug'}]}
+ if(kind==='foreign-owner') original.executionId='fixer:foreign'
+ if(kind==='foreign-lane') original.laneId='other'
+ if(kind==='working') original.state='working'
+ if(kind==='unknown-halt') original.haltDecisionId='halt:foreign'
+ f.row().snapshot.laneControls={schemaVersion:1,receipts:[],reopenRepair:true}
+ f.row().snapshot.lanes=[{id:'mac',platform:'ios-on-mac',state:'out-of-service',dispatchMode:'automatic',resources:[],
+   activity:{generation:99,owner:{id:repair.executionId,kind:'fixer'}}}]
+ f.row().snapshot.restoration={schemaVersion:1,attempts:[{invalid:'unrelated debug'},original,
+   ...(kind==='duplicate'?[original]:[])],truncated:false}
+ if(kind==='new-current-empty') f.row().snapshot.repairStatuses=[]
+ const claims=[{current:'foreign custody'}];f.row().resourceReservations=claims
+ const find=spyOn(TestHostStateModel,'find').mockImplementation((()=>{
+  const q=TestHostStateModel.findOne({hostId:'mini'}) as any,lean=q.lean.bind(q)
+  q.sort=q.limit=q.maxTimeMS=()=>q;q.lean=async()=>[await lean()];return q
+ }) as any)
+ const controls=new LaneControlsService(undefined,()=>Date.parse('2026-10-03T01:00:10Z'))
+ const restoration=new LaneRestorationService(undefined,()=>Date.parse('2026-10-03T01:00:10Z'))
+ const input={operationId:randomUUID(),expiresAt:Date.parse('2026-10-03T01:02:10Z'),hostId:'mini',laneId:'mac',
+  action:'reopen-repair' as const,repair:{interruptionId:repair.interruptionId,expectedHaltDecisionId:repair.haltDecisionId,
+   changedConditions:'Operator completed the requested setting.'}}
+ return {...f,repair,claims,controls,restoration,input,stop(){find.mockRestore();f.stop()}}
+}
+test('untouched legacy halted repair retains current overview and list controls without fetching debug arrays',async()=>{
+ const f=await legacyRepairFixture();try{
+  for(const result of [await f.restoration.overview(),await f.restoration.list()])
+   expect(result.hosts[0]!.lanes[0]!.repair).toMatchObject(f.repair)
+  expect(f.readProjections.every(fields=>!fields||!Object.keys(fields).some(key=>key.includes('restoration')))).toBe(true)
+  expect(f.row().resourceReservations).toEqual(f.claims)
+ }finally{f.stop()}
+})
+test('untouched legacy halted repair permits only its exact supported reopening command',async()=>{
+ const f=await legacyRepairFixture();try{
+  expect(await f.controls.submit(f.input,'operator')).toMatchObject({action:'reopen-repair'})
+  expect(f.row().laneControls).toHaveLength(1)
+  expect(f.row().snapshot.lanes[0].activity.owner.id).toBe(f.repair.executionId)
+  expect(f.row().resourceReservations).toEqual(f.claims)
+ }finally{f.stop()}
+})
+test('explicit current repair state wins over old restoration diagnostics at report ingress',async()=>{
+ const f=await legacyRepairFixture();try{
+  await f.service.report({...f.row().snapshot,sequence:2,repairStatuses:[]},'mini')
+  expect(f.row().snapshot.repairStatuses).toEqual([])
+  await expect(f.controls.submit(f.input,'operator')).rejects.toThrow('Recovery changed')
+  expect(f.row().snapshot.lanes[0].activity.owner.id).toBe(f.repair.executionId)
+ }finally{f.stop()}
+})
+for(const kind of ['foreign-owner','foreign-lane','working','unknown-halt','duplicate','new-current-empty'])
+ test(`legacy repair projection keeps current recovery fences: ${kind}`,async()=>{
+  const f=await legacyRepairFixture(kind);try{
+   await expect(f.controls.submit(f.input,'operator')).rejects.toThrow('Recovery changed')
+   expect(f.row().laneControls).toBeUndefined()
+   expect(f.row().resourceReservations).toEqual(f.claims)
+  }finally{f.stop()}
+ })
+
 test('heartbeat and updater acknowledgements preserve large diagnostics without returning them from Mongo', async () => {
   const f = fixture()
   try {
@@ -498,7 +848,7 @@ test('heartbeat and updater acknowledgements preserve large diagnostics without 
       expect(JSON.stringify(selected).length).toBeLessThan(2048)
     }
     expect(f.row().unrelatedDiagnostics).toEqual(diagnostics)
-    expect(f.row().frameworkHistory).toHaveLength(1)
+    expect(f.debug().frameworkHistory).toHaveLength(1)
     expect((await f.service.get('mini'))!.frameworkBinding).toEqual(binding(1))
   } finally {f.stop()}
 })
@@ -514,7 +864,7 @@ for (const updaterFirst of [true, false]) {
       expect(receipts).toHaveLength(2)
       expect(f.row()).toMatchObject({sequence: 2, deploymentGeneration: 1, deploymentSequence: 1,
         deploymentObservation: observation(1).deployment, snapshot: accepted(1, 2)})
-      expect(f.row().frameworkHistory).toHaveLength(1)
+      expect(f.debug().frameworkHistory).toHaveLength(1)
       expect(f.writes()).toBe(3)
       expect(f.writeAttempts()).toBe(4)
     } finally {f.stop()}
@@ -533,7 +883,7 @@ test('a competing controller cannot claim an enrolled generation after a CAS mis
     expect(results[1].status).toBe('rejected')
     expect((results[1] as PromiseRejectedResult).reason.message).toContain('another process')
     expect(f.row().incarnation).toBe('boot-2')
-    expect(f.row().frameworkHistory.map((value: any) => value.incarnation)).toEqual(['boot-1', 'boot-2'])
+    expect(f.debug().frameworkHistory.map((value: any) => value.incarnation)).toEqual(['boot-1', 'boot-2'])
     expect(f.writes()).toBe(2)
   } finally {f.stop()}
 })
@@ -552,7 +902,7 @@ for (const competingGeneration of [2, 3]) {
         expect((results[1] as PromiseRejectedResult).reason.message).toContain('another process')
       } else expect(results[1]).toMatchObject({status: 'fulfilled', value: {incarnation: 'boot-3', incarnationGeneration: 3}})
       expect(f.row().incarnation).toBe('boot-3')
-      expect(f.row().frameworkHistory).toHaveLength(1)
+      expect(f.debug().frameworkHistory).toHaveLength(1)
       expect(f.writes()).toBe(1)
     } finally {f.stop()}
   })
@@ -570,11 +920,11 @@ test('a stop that wins against its own controller heartbeat remains a semantic c
     ])
     expect(results[0].status).toBe('fulfilled')
     expect(results[1].status).toBe('rejected')
-    expect((results[1] as PromiseRejectedResult).reason.message).toContain('observed stopped')
+    expect((results[1] as PromiseRejectedResult).reason.message).toContain('stopped')
     expect(f.row().sequence).toBe(1)
-    expect(f.row().frameworkHistory).toHaveLength(1)
-    expect(f.row().frameworkHistory[0]).toMatchObject({endedAt: stopped.observedAt, endReason: 'observed-stop'})
-    expect(f.row().frameworkStopReceipts).toEqual([stopped])
+    expect(f.debug().frameworkHistory).toHaveLength(1)
+    expect(f.debug().frameworkHistory[0]).toMatchObject({endedAt: stopped.observedAt, endReason: 'observed-stop'})
+    expect(f.debug().frameworkStopReceipts).toEqual([stopped])
     expect(f.writes()).toBe(2)
   } finally {f.stop()}
 })
@@ -629,11 +979,12 @@ test('history reconciliation on repeated CAS misses preserves the exact reported
     f.failWrites(2)
     await f.service.report(input, 'mini')
     expect(input).toEqual(original)
-    expect(f.row().snapshot.frameworkHistory).toEqual(original.frameworkHistory)
-    expect(f.row().frameworkHistory).toHaveLength(2)
-    expect(f.row().frameworkHistory[0]).toMatchObject({endedAt: stopped.observedAt, endReason: 'observed-stop'})
+    expect(f.row().snapshot).not.toHaveProperty('frameworkHistory'); expect(f.debug().frameworkHistory).toEqual(expect.arrayContaining(original.frameworkHistory))
+    expect(f.debug().frameworkHistory).toHaveLength(2)
+    expect(f.debug().frameworkHistory.find((value: any) => value.incarnation === 'boot-1')).toMatchObject(original.frameworkHistory[0])
+    expect(f.row()).not.toHaveProperty('frameworkCurrentStop')
     expect(f.row().deploymentSequence).toBe(1)
-    expect(f.row().frameworkStopReceipts).toEqual([stopped])
+    expect(f.debug().frameworkStopReceipts).toEqual([stopped])
   } finally {f.stop()}
 })
 
@@ -648,7 +999,7 @@ test('actual HTTP host-state API resolves updater CAS contention but preserves s
     f.beforeWrite(async () => {f.beforeWrite(undefined); await f.service.reportDeployment(observation(1), 'mini')})
     expect((await post(accepted(1, 2))).status).toBe(200)
     expect(f.row()).toMatchObject({sequence: 2, deploymentSequence: 1})
-    expect(f.row().frameworkHistory).toHaveLength(1)
+    expect(f.debug().frameworkHistory).toHaveLength(1)
     const semantic = await post({...accepted(1, 3), incarnation: 'competing-process'})
     expect(semantic.status).toBe(409)
     expect(await semantic.json()).toEqual({error: 'host_state_conflict', message: 'Controller incarnation generation belongs to another process'})
@@ -668,15 +1019,15 @@ test("accepted framework intervals preserve exact source and process across cont
   try {
     await f.service.report(accepted(1, 1), "mini")
     await f.service.report(accepted(1, 2), "mini")
-    expect(f.row().frameworkHistory).toHaveLength(1)
+    expect(f.debug().frameworkHistory).toHaveLength(1)
     await expect(f.service.report({...accepted(1, 3), frameworkBinding: binding(2)}, "mini")).rejects.toThrow(
-      "cannot change",
+      "identity changed",
     )
     await expect(
       f.service.report({...accepted(1, 3), frameworkProcess: {pid: 999, startedAt: "foreign"}}, "mini"),
     ).rejects.toThrow("identity changed")
     await f.service.report(accepted(2, 1), "mini")
-    expect((await f.service.get("mini"))!.frameworkHistory).toMatchObject([
+    expect(f.debug().frameworkHistory).toMatchObject([
       {
         binding: binding(1),
         incarnation: "boot-1",
@@ -734,13 +1085,13 @@ test("only exact observed old process closes its interval and delayed controller
       observation(1, {stopped: {...stopped, process: {pid: 101, startedAt: "reused-pid"}}}),
       "mini",
     )
-    expect(f.row().frameworkHistory[0].endedAt).toBeUndefined()
+    expect(f.debug().frameworkHistory[0].endedAt).toBeUndefined()
     await f.service.reportDeployment(observation(2, {stopped}), "mini")
-    expect(f.row().frameworkHistory[0]).toMatchObject({endedAt: stopped.observedAt, endReason: "observed-stop"})
-    await expect(f.service.report(accepted(1, 2), "mini")).rejects.toThrow("observed stopped")
+    expect(f.debug().frameworkHistory[0]).toMatchObject({endedAt: stopped.observedAt, endReason: "observed-stop"})
+    await expect(f.service.report(accepted(1, 2), "mini")).rejects.toThrow("stopped")
     await f.service.report(accepted(3, 1), "mini")
     await f.service.reportDeployment(observation(3, {stopped}), "mini")
-    expect(f.row().frameworkHistory.at(-1).endedAt).toBeUndefined()
+    expect(f.debug().frameworkHistory.at(-1).endedAt).toBeUndefined()
     const delayed = {
       installationId: "release-3",
       process: {pid: 103, startedAt: "process-3"},
@@ -748,11 +1099,12 @@ test("only exact observed old process closes its interval and delayed controller
     }
     await f.service.report(accepted(4, 1), "mini")
     await f.service.reportDeployment(observation(4, {stopped: delayed}), "mini")
-    expect(f.row().frameworkHistory.find((value: any) => value.binding.version === 3)).toMatchObject({
-      endedAt: delayed.observedAt,
-      endReason: "observed-stop",
+    expect(f.debug().frameworkHistory.find((value:any)=>value.binding.version===3)).toMatchObject({
+      endedAt:accepted(4,1).frameworkAcceptedAt,endReason:'accepted-replacement',
     })
-    expect(f.row().frameworkHistory.at(-1).endedAt).toBeUndefined()
+    expect(f.debug().frameworkStopReceipts).toContainEqual(delayed)
+    expect(await f.service.frameworkObservation('mini')).toMatchObject({binding:binding(4)})
+    expect(f.row()).not.toHaveProperty('frameworkCurrentStop')
   } finally {
     f.stop()
   }
@@ -775,10 +1127,10 @@ test("controller and updater history writes use one row CAS instead of losing ob
       f.service.report(accepted(2, 1), "mini"),
     ])
     expect(results.map((value) => value.status)).toEqual(["fulfilled", "fulfilled"])
-    expect(f.row().frameworkHistory[0].endReason).toBe("observed-stop")
-    expect(f.row().frameworkHistory).toHaveLength(2)
-    expect(f.row().frameworkHistory.at(-1).endedAt).toBeUndefined()
-    expect(f.row().frameworkStopReceipts).toHaveLength(1)
+    expect(f.debug().frameworkHistory[0].endReason).toBe("observed-stop")
+    expect(f.debug().frameworkHistory).toHaveLength(2)
+    expect(f.debug().frameworkHistory.at(-1).endedAt).toBeUndefined()
+    expect(f.debug().frameworkStopReceipts).toHaveLength(1)
   } finally {
     f.stop()
   }
@@ -789,18 +1141,18 @@ test('stop received before delayed startup is retained and closes the subsequent
     await f.service.report(snapshot(1, 1), 'mini')
     const stopped = {installationId: 'release-1', process: accepted(1, 1).frameworkProcess, observedAt: '2026-10-03T01:00:02Z'}
     await f.service.reportDeployment(observation(1, {stopped}), 'mini')
-    expect(f.row().frameworkHistory).toEqual([])
-    expect(f.row().frameworkStopReceipts).toEqual([stopped])
+    expect(f.debug().frameworkHistory ?? []).toEqual([])
+    expect(f.debug().frameworkStopReceipts).toEqual([stopped])
     await f.service.report(accepted(1, 2), 'mini')
-    expect((await f.service.get('mini'))!.frameworkHistory).toMatchObject([
+    expect(f.debug().frameworkHistory).toMatchObject([
       {binding: binding(1), endedAt: stopped.observedAt, endReason: 'observed-stop'},
     ])
-    await expect(f.service.report(accepted(1, 3), 'mini')).rejects.toThrow('observed stopped')
+    await expect(f.service.report(accepted(1, 3), 'mini')).rejects.toThrow('stopped')
     await f.service.reportDeployment(observation(2, {stopped}), 'mini')
-    expect(f.row().frameworkStopReceipts).toHaveLength(1)
+    expect(f.debug().frameworkStopReceipts).toHaveLength(1)
   } finally {f.stop()}
 })
-test('unmatched stop receipt reconciles delayed offline history without closing a reused PID or current framework', async () => {
+test('unmatched stop and offline debug remain separate without closing a reused PID or current framework', async () => {
   const f = fixture()
   try {
     await f.service.report(accepted(3, 1), 'mini')
@@ -812,23 +1164,117 @@ test('unmatched stop receipt reconciles delayed offline history without closing 
       process: accepted(1, 1).frameworkProcess, effectiveAt: accepted(1, 1).frameworkAcceptedAt,
       observedAt: accepted(1, 1).frameworkAcceptedAt, endedAt: accepted(3, 1).frameworkAcceptedAt, endReason: 'accepted-replacement'}
     await f.service.report({...accepted(3, 2), frameworkHistory: [interval]}, 'mini')
-    expect(f.row().frameworkHistory.find((value: any) => value.incarnation === 'boot-1')).toMatchObject({
-      endedAt: stopped.observedAt, endReason: 'observed-stop',
-    })
-    expect(f.row().frameworkHistory.at(-1).endedAt).toBeUndefined()
+    expect(f.debug().frameworkHistory.find((value: any) => value.incarnation === 'boot-1')).toEqual(interval)
+    expect(f.debug().frameworkStopReceipts).toContainEqual(stopped)
+    expect(f.row()).not.toHaveProperty('frameworkCurrentStop')
+    expect(await f.service.frameworkObservation('mini')).toMatchObject({binding: binding(3)})
   } finally {f.stop()}
 })
-test('unmatched observed stop receipts retain a bounded recent history', async () => {
+test('late foreign supervisor observations stay debug and cannot close the current accepted process', async () => {
+  const f=fixture()
+  try {
+    await f.service.report(accepted(3,1),'mini')
+    const interval={binding:binding(1),incarnation:'boot-1',incarnationGeneration:1,
+      process:accepted(1,1).frameworkProcess,effectiveAt:accepted(1,1).frameworkAcceptedAt,
+      observedAt:accepted(1,1).frameworkAcceptedAt,endedAt:'2026-10-03T01:00:02.500Z',endReason:'observed-stop'}
+    const stopped={installationId:'release-1',process:interval.process,observedAt:'2026-10-03T01:00:01.500Z'}
+    await f.service.report({...accepted(3,2),frameworkHistory:[interval]},'mini')
+    await f.service.reportDeployment(observation(1,{stopped}),'mini')
+    await f.service.report({...accepted(3,3),frameworkHistory:[interval]},'mini')
+    await f.service.reportDeployment(observation(2,{stopped:{...stopped,observedAt:'2026-10-03T01:00:02Z'}}),'mini')
+    expect(f.debug().frameworkHistory.find((value:any)=>value.incarnation==='boot-1')).toEqual(interval)
+    expect(f.debug().frameworkStopReceipts).toHaveLength(2)
+    expect(f.row()).not.toHaveProperty('frameworkCurrentStop')
+    expect(await f.service.frameworkObservation('mini')).toMatchObject({binding:binding(3)})
+  } finally {f.stop()}
+})
+
+test('unaccepted stop capacity refuses a new delivery without discarding unresolved process points', async () => {
   const f = fixture()
   try {
     await f.service.report(snapshot(1, 1), 'mini')
-    for (let version = 1; version <= 105; version++)
+    for (let version = 1; version <= 100; version++)
       await f.service.reportDeployment(observation(version, {stopped: {installationId: `release-${version}`,
         process: {pid: version + 100, startedAt: `process-${version}`}, observedAt: '2026-10-03T01:00:02Z'}}), 'mini')
-    expect(f.row().frameworkStopReceipts).toHaveLength(100)
-    expect(f.row().frameworkStopReceipts[0].installationId).toBe('release-6')
-    expect(f.row().frameworkStopReceipts.at(-1).installationId).toBe('release-105')
+    expect(f.debug().frameworkStopReceipts).toHaveLength(100)
+    expect(f.debug().frameworkStopReceipts[0].installationId).toBe('release-1')
+    expect(f.row().frameworkUnacceptedStops).toHaveLength(100)
+    const next=observation(101,{stopped:{installationId:'release-101',process:{pid:201,startedAt:'process-101'},observedAt:'2026-10-03T01:00:02Z'}})
+    await expect(f.service.reportDeployment(next,'mini')).rejects.toThrow()
+    expect(f.row().deploymentSequence).toBe(100)
+    expect(f.row().frameworkUnacceptedStops).toHaveLength(100)
+    await f.service.report({...accepted(3,1),frameworkBinding:binding(200),frameworkProcess:{pid:999,startedAt:'replacement'}},'mini')
+    expect(f.row().frameworkUnacceptedStops).toEqual([])
+    await f.service.reportDeployment(next,'mini')
+    expect(f.row().deploymentSequence).toBe(101)
   } finally {f.stop()}
+})
+
+for(const legacy of [false,true]) test(`multiple delayed successors retain exact unfinished stops until authentic replacement, legacy=${legacy}`,async()=>{
+ const f=fixture();try{
+  await f.service.report(accepted(1,1),'mini')
+  const stops=[2,3].map(version=>({installationId:`release-${version}`,process:accepted(version,1).frameworkProcess,observedAt:`2026-10-03T01:00:0${version}.500Z`}))
+  if(legacy) {delete f.row().frameworkUnacceptedStops;f.row().frameworkStopReceipts=[{invalid:'debug'},...stops]}
+  else for(const [index,stopped] of stops.entries()) await f.service.reportDeployment(observation(index+1,{stopped}),'mini')
+  await f.service.report(accepted(1,2),'mini')
+  expect(f.row().frameworkUnacceptedStops).toEqual(stops)
+  expect(f.row()).not.toHaveProperty('frameworkStopReceipts')
+  for(const [index,stopped] of stops.entries()) {
+   await f.service.report(accepted(index+2,1),'mini')
+   expect(f.row().frameworkCurrentStop).toEqual(stopped)
+   expect(await f.service.frameworkObservation('mini')).toBeNull()
+   await expect(f.service.report(accepted(index+2,2),'mini')).rejects.toThrow('stopped')
+  }
+  await f.service.report(accepted(4,1),'mini')
+  expect(await f.service.frameworkObservation('mini')).toMatchObject({binding:binding(4)})
+  expect(f.row().frameworkUnacceptedStops).toEqual([])
+ }finally{f.stop()}
+})
+
+test('unknown legacy successor stop is preserved without invalidating an unrelated current process',async()=>{
+ const f=fixture();try{
+  await f.service.report(accepted(1,1),'mini')
+  const stop={installationId:'release-2',process:accepted(2,1).frameworkProcess,observedAt:'unknown'}
+  delete f.row().frameworkUnacceptedStops;f.row().frameworkStopReceipts=[{invalid:'debug'},stop]
+  await f.service.report(accepted(1,2),'mini')
+  expect(await f.service.frameworkObservation('mini')).toMatchObject({binding:binding(1)})
+  expect(f.row().frameworkUnacceptedStops).toEqual([stop])
+  await expect(f.service.report(accepted(2,1),'mini')).rejects.toThrow()
+  expect(f.row().incarnation).toBe('boot-1')
+  expect(f.row().frameworkUnacceptedStops).toEqual([stop])
+ }finally{f.stop()}
+})
+
+test('an old writer stop after extraction still fences its current tuple and retains later successors',async()=>{
+ const f=fixture();try{
+  await f.service.report(accepted(1,1),'mini')
+  await f.service.reportDeployment(observation(1,{stopped:{installationId:'release-1',process:accepted(1,1).frameworkProcess,observedAt:'2026-10-03T01:00:01.500Z'}}),'mini')
+  const stops=[2,3].map(version=>({installationId:`release-${version}`,process:accepted(version,1).frameworkProcess,observedAt:`2026-10-03T01:00:0${version}.500Z`}))
+  f.row().frameworkStopReceipts=stops
+  Object.assign(f.row(),{snapshot:accepted(2,1),incarnation:'boot-2',incarnationGeneration:2,sequence:1})
+  expect(await f.service.frameworkObservation('mini')).toBeNull()
+  await expect(f.service.report(accepted(2,2),'mini')).rejects.toThrow('stopped')
+  await f.service.report(accepted(3,1),'mini')
+  expect(f.row().frameworkCurrentStop).toEqual(stops[1])
+  expect(await f.service.frameworkObservation('mini')).toBeNull()
+  expect(f.row().frameworkUnacceptedStops).toEqual([])
+  expect(f.row()).not.toHaveProperty('frameworkStopReceipts')
+ }finally{f.stop()}
+})
+
+for(const exact of [false,true]) test(`only fresh exact supervisor cessation can answer unknown current stop metadata, exact=${exact}`,async()=>{
+ const f=fixture();try{
+  await f.service.report(accepted(1,1),'mini')
+  const original={installationId:'release-1',process:accepted(1,1).frameworkProcess,observedAt:'unknown'}
+  f.row().frameworkCurrentStop=original
+  const claims=[{current:'foreign authority'}];f.row().resourceReservations=claims
+  expect(await f.service.frameworkObservation('mini').catch(()=>null)).toBeNull()
+  const stopped={...original,process:exact?original.process:{...original.process,startedAt:'foreign'},observedAt:'2026-10-03T01:00:02Z'}
+  await f.service.reportDeployment(observation(1,{stopped}),'mini')
+  expect(f.row().frameworkCurrentStop).toEqual(exact?stopped:original)
+  expect(await f.service.frameworkObservation('mini').catch(()=>null)).toBeNull()
+  expect(f.row().resourceReservations).toEqual(claims)
+ }finally{f.stop()}
 })
 test('startup winning the shared CAS forces stop retry, which preserves the same exact ending', async () => {
   const f = fixture()
@@ -840,8 +1286,8 @@ test('startup winning the shared CAS forces stop retry, which preserves the same
       f.service.reportDeployment(observation(1, {stopped}), 'mini'),
     ])
     expect(results.map(value => value.status)).toEqual(['fulfilled', 'fulfilled'])
-    expect(f.row().frameworkHistory[0]).toMatchObject({endedAt: stopped.observedAt, endReason: 'observed-stop'})
-    expect(f.row().frameworkStopReceipts).toEqual([stopped])
+    expect(f.debug().frameworkHistory[0]).toMatchObject({endedAt: stopped.observedAt, endReason: 'observed-stop'})
+    expect(f.debug().frameworkStopReceipts).toEqual([stopped])
   } finally {f.stop()}
 })
 for (const stopFirst of [false, true]) for (const withHistory of [false, true]) {
@@ -852,15 +1298,22 @@ for (const stopFirst of [false, true]) for (const withHistory of [false, true]) 
       const shared = {...accepted(2, 1), frameworkBinding: binding(1), frameworkProcess: accepted(1, 1).frameworkProcess}
       const stopped = {installationId: 'release-1', process: shared.frameworkProcess, observedAt: '2026-10-03T01:00:03Z'}
       if (stopFirst) await f.service.reportDeployment(observation(1, {stopped}), 'mini')
-      await f.service.report({...shared, ...(withHistory ? {frameworkHistory: [
+      const input=({...shared, ...(withHistory ? {frameworkHistory: [
         {binding: binding(1), incarnation: 'boot-1', incarnationGeneration: 1, process: shared.frameworkProcess,
           effectiveAt: accepted(1, 1).frameworkAcceptedAt, observedAt: accepted(1, 1).observedAt,
           endedAt: shared.frameworkAcceptedAt, endReason: 'accepted-replacement'},
         {binding: binding(1), incarnation: 'boot-2', incarnationGeneration: 2, process: shared.frameworkProcess,
           effectiveAt: shared.frameworkAcceptedAt, observedAt: shared.observedAt},
-      ]} : {})}, 'mini')
+      ]} : {})})
+      if(stopFirst) {
+        await expect(f.service.report(input,'mini')).rejects.toThrow('stopped')
+        expect(f.row().incarnation).toBe('boot-1')
+        expect(f.row().frameworkCurrentStop).toEqual(stopped)
+        return
+      }
+      await f.service.report(input,'mini')
       if (!stopFirst) await f.service.reportDeployment(observation(1, {stopped}), 'mini')
-      const history = (await f.service.get('mini'))!.frameworkHistory!
+      const history = f.debug().frameworkHistory
       expect(history[0]).toMatchObject({incarnation: 'boot-1', endedAt: shared.frameworkAcceptedAt, endReason: 'accepted-replacement'})
       expect(history[1]).toMatchObject({incarnation: 'boot-2', endedAt: stopped.observedAt, endReason: 'observed-stop'})
     } finally {f.stop()}
@@ -877,9 +1330,9 @@ test("compact installation history caps accepted intervals without discarding cu
         },
         "mini",
       )
-    expect(f.row().frameworkHistory).toHaveLength(100)
-    expect(f.row().frameworkHistory[0].binding.version).toBe(6)
-    expect(f.row().frameworkHistory.at(-1).binding.version).toBe(105)
+    expect(f.debug().frameworkHistory).toHaveLength(100)
+    expect(f.debug().frameworkHistory[0].binding.version).toBe(6)
+    expect(f.debug().frameworkHistory.at(-1).binding.version).toBe(105)
   } finally {
     f.stop()
   }
@@ -902,15 +1355,208 @@ test("offline accepted intervals merge idempotently without relabeling current o
     const offline = {...accepted(3, 1), frameworkHistory: [interval(1), interval(2), interval(3)]}
     await f.service.report(offline, "mini")
     await f.service.report({...offline, sequence: 2}, "mini")
-    expect(f.row().frameworkHistory.map((value: any) => value.binding.version)).toEqual([1, 2, 3])
+    expect(f.debug().frameworkHistory.map((value: any) => value.binding.version).sort((a:number,b:number)=>a-b)).toEqual([1, 2, 3])
     expect((await f.service.get("mini"))!.frameworkBinding?.version).toBe(3)
-    await expect(
-      f.service.report({...offline, sequence: 3, frameworkHistory: [{...interval(2), binding: binding(99)}]}, "mini"),
-    ).rejects.toThrow("changed accepted identity")
-    await expect(f.service.report({...offline, sequence: 3, frameworkHistory: [interval(4)]}, "mini")).rejects.toThrow(
-      "future",
-    )
+    await expect(f.service.report({...offline,sequence:3,frameworkHistory:[{...interval(2),binding:binding(99)}]},'mini')).resolves.toMatchObject({sequence:3})
+    await expect(f.service.report({...offline,sequence:4,frameworkHistory:[interval(4)]},'mini')).resolves.toMatchObject({sequence:4})
+    expect((await f.service.get('mini'))!.frameworkBinding).toEqual(binding(3))
+    expect(f.row().snapshot).not.toHaveProperty('frameworkHistory')
   } finally {
     f.stop()
   }
+})
+
+test('lifecycle comparison survives omitted envelope and omitted subject without renewing observation', async () => {
+  const {projectResourceLifecycle} = await import('./resource-lifecycle.service')
+  for (const omission of [undefined, {schemaVersion: 1, subjects: [], history: []}]) {
+    const f = fixture()
+    const at = '2026-10-03T01:00:00Z'
+    const subject = {subject: {kind: 'resource', id: 'resource-one', authorityHostId: 'mini'}, generation: 10,
+      status: 'unknown', observedAt: at, receivedAt: null, current: true, reason: null, owner: null,
+      idle: {contractVersion: 'v1', outcome: 'not-checked', checkedAt: null, acceptedCheck: null, qualifiedScope: {kind: 'unqualified'}, evidenceRefs: []},
+      repair: {configured: false, state: 'none'}, supportedActions: [], resource: {kind: 'account', capabilities: [], memberships: [], dependencies: [], placement: 'fleet'}}
+    const lifecycle = {schemaVersion: 1, subjects: [subject], history: [{id: 'original-event', resourceId: 'resource-one', subjectGeneration: 10, at, event: 'checking'}]}
+    try {
+      await f.service.report({...snapshot(1, 1), resourceLifecycle: lifecycle}, 'mini')
+      await f.service.report({...snapshot(1, 2), ...(omission ? {resourceLifecycle: omission} : {})}, 'mini')
+      expect(f.row().resourceLifecycleCursor.subjects[0].generation).toBe(10)
+      const stored=f.row()
+      const projected = projectResourceLifecycle([{hostId:'mini',receivedAt:stored.receivedAt,snapshot:stored.snapshot,resourceLifecycleCursor:stored.resourceLifecycleCursor}], Date.parse(at)).subjects[0]!
+      expect(projected.status).toBe('unknown'); expect(projected.current).toBe(false)
+      expect(projected.supportedActions).toEqual([])
+      await expect(f.service.report({...snapshot(1, 3), resourceLifecycle: {...lifecycle,
+        subjects: [{...subject, generation: 1}], history: []}}, 'mini')).rejects.toThrow('generation regressed')
+      await expect(f.service.report({...snapshot(1, 3), resourceLifecycle: {...lifecycle,
+        history: [{...lifecycle.history[0], event: 'active'}]}}, 'mini')).resolves.toMatchObject({sequence:3})
+      expect(f.row().sequence).toBe(3)
+    } finally {f.stop()}
+  }
+})
+
+test('routing carries only the installed whole-resource producer flag, keeping historical observation payloads out of matching', async () => {
+  const current = {hostId: 'host', observedAt: '2026-10-24T16:00:00.000Z',
+    resourceReservations: {resourceReadiness: true}, lanes: [{id: 'android', platform: 'android',
+      dispatchMode: 'automatic', state: 'idle', resources: []}]}
+  const selections: Record<string, number>[] = []
+  const find = spyOn(TestHostStateModel, 'find').mockImplementation((() => {
+    const query = {select(value: Record<string, number>) {selections.push(value); return query},
+      limit() {return query}, read() {return query}, readConcern() {return query},
+      async lean() {return [{hostId: 'host', snapshot: structuredClone(current), receivedAt: new Date(current.observedAt)}]}}
+    return query
+  }) as never)
+  const previous = process.env.TEST_HOST_TOKENS
+  process.env.TEST_HOST_TOKENS = JSON.stringify({host: 'synthetic-host-token-'.repeat(3)})
+  try {
+    const [offered] = await new TestHostStateService().list()
+    expect(offered?.resourceReservations?.resourceReadiness).toBe(true)
+    expect(selections[0]?.['snapshot.resourceReservations.resourceReadiness']).toBe(1)
+    expect(selections[0]?.['snapshot.resourceReservations']).toBeUndefined()
+    expect(Object.keys(offered?.resourceReservations ?? {})).toEqual(['resourceReadiness'])
+  } finally {find.mockRestore(); if (previous === undefined) delete process.env.TEST_HOST_TOKENS; else process.env.TEST_HOST_TOKENS = previous}
+})
+
+for (const includeHistory of [false,true]) test(`selected host read remains current-only when an old caller asks for history=${includeHistory}`,async()=>{
+ const selections:Record<string,unknown>[]=[],consistency:unknown[]=[],row={snapshot:snapshot(1,1),receivedAt:new Date('2026-10-03T01:00:00Z'),
+   resourceReservations:[],laneControls:[],frameworkHistory:[{invalid:true}],repairDiagnostics:'unrelated'.repeat(19000)}
+ const find=spyOn(TestHostStateModel,'findOne').mockImplementation(((filter:unknown)=>{
+  expect(filter).toEqual({hostId:'mini'});const query={select(value:Record<string,unknown>){selections.push(value);return query},
+   read(value:unknown){consistency.push(value);return query},readConcern(value:unknown){consistency.push(value);return query},setOptions(){return query},async lean(){return row}}
+  return query
+ }) as never)
+ try {
+  const result=await new TestHostStateService().get('mini')
+  expect(result?.incarnation).toBe('boot-1');expect(result?.authorityReservations).toEqual([])
+  expect(result).not.toHaveProperty('frameworkHistory');expect(result).not.toHaveProperty('repairDiagnostics')
+  expect(consistency).toEqual(['primary','majority'])
+  expect(selections).toEqual([currentHostStateProjection])
+  for(const fields of selections)for(const key of ['snapshot','snapshot.lanes','snapshot.resourceLifecycle','frameworkHistory','frameworkStopReceipts'])expect(fields).not.toHaveProperty(key)
+ } finally {find.mockRestore()}
+})
+
+for (const unavailable of [false, true]) test(`accepted idle report schedules current recorder cleanup without another host read (unavailable=${unavailable})`, async () => {
+  const hosts: any[] = [], f = fixture(async host => {hosts.push(host); if (unavailable) throw Error('cleanup unavailable')});
+  try {
+    await f.service.report(snapshot(1, 1), 'mini');
+    expect(hosts).toHaveLength(0);
+    const claim = {id: 'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab', requestId: 'original', fleetInputSha256: 'c'.repeat(64),
+      hostId: 'mini', laneId: 'mac', poolId: 'mini:disk:1', minimumAvailableBytes: 3 * 1024 ** 3, reservedAt: '2026-10-03T01:00:00Z'};
+    Object.assign(f.row(), {resourceReservations: [claim], resourceReservationVersion: 7, laneControlVersion: 4});
+    f.advance(1000); const newer = snapshot(1, 2, '2026-10-03T01:00:01Z'), reads = f.reads();
+    expect(await f.service.report(newer, 'mini')).toEqual({hostId: 'mini', incarnation: 'boot-1', incarnationGeneration: 1, sequence: 2});
+    await Promise.resolve();
+    expect(f.reads() - reads).toBe(1); expect(hosts).toHaveLength(1);
+    expect(hosts[0]).toMatchObject({hostId: 'mini', incarnationGeneration: 1, sequence: 2,
+      resourceReservations: [claim], resourceReservationVersion: 7, laneControlVersion: 4, snapshot: newer});
+    expect(hosts[0]).not.toHaveProperty('frameworkHistory');
+    await expect(f.service.report(newer, 'foreign')).rejects.toThrow('authenticated controller');
+    expect(hosts).toHaveLength(1);
+  } finally {f.stop()}
+});
+
+test('current stop before delayed acceptance cannot make the exact ceased process available',async()=>{
+ const f=fixture();try{
+  await f.service.report(snapshot(1,1),'mini');
+  const stopped={installationId:'release-1',process:accepted(1,1).frameworkProcess,observedAt:'2026-10-03T01:00:02Z'};
+  await f.service.reportDeployment(observation(1,{stopped}),'mini');
+  await f.service.report(accepted(1,2),'mini');
+  expect(f.row().frameworkCurrentStop).toEqual(stopped);
+  expect(f.row()).not.toHaveProperty('frameworkCurrentInterval');
+  expect(await f.service.frameworkObservation('mini')).toBeNull();
+  await expect(f.service.report(accepted(1,3),'mini')).rejects.toThrow('stopped');
+  await f.service.report(accepted(2,1),'mini');
+  expect(f.row()).not.toHaveProperty('frameworkCurrentInterval');
+  expect(f.row()).not.toHaveProperty('frameworkCurrentStop');
+ }finally{f.stop()}
+});
+test('old writer current snapshot replaces only a stale different interval and never revives its exact stopped process',async()=>{
+ const f=fixture();try{
+  await f.service.report(accepted(1,1),'mini');
+  const old={invalid:'retired WIP field must not define current source'};
+  Object.assign(f.row(),{snapshot:accepted(2,1),incarnation:'boot-2',incarnationGeneration:2,sequence:1,frameworkCurrentInterval:old});
+  expect(await f.service.frameworkObservation('mini')).toMatchObject({binding:binding(2)});
+  const stopped={installationId:'release-2',process:accepted(2,1).frameworkProcess,observedAt:'2026-10-03T01:00:03Z'};
+  await f.service.reportDeployment(observation(1,{stopped}),'mini');
+  expect(f.row().frameworkCurrentStop).toEqual(stopped);
+  expect(await f.service.frameworkObservation('mini')).toBeNull();
+  await expect(f.service.report(accepted(2,2),'mini')).rejects.toThrow('stopped');
+ }finally{f.stop()}
+});
+
+test('old host document preserves its exact still-current stopped process at the writer boundary', async () => {
+  const f=fixture()
+  try {
+    await f.service.report(accepted(1,1),'mini')
+    const stop={installationId:'release-1',process:accepted(1,1).frameworkProcess,observedAt:'2026-10-03T01:00:02Z'}
+    f.row().frameworkStopReceipts=[{...stop,process:{...stop.process,startedAt:'foreign birth'}},stop]
+    delete f.row().frameworkCurrentStop
+    await expect(f.service.report(accepted(1,2),'mini')).rejects.toThrow('stopped')
+    expect(f.row().sequence).toBe(1)
+  } finally {f.stop()}
+})
+
+for (const ceasedCurrent of [false,true]) test(`successor cessation survives delayed acceptance while current ceased=${ceasedCurrent}`, async()=>{
+ const f=fixture()
+ try {
+  await f.service.report(accepted(1,1),'mini')
+  if(ceasedCurrent) await f.service.reportDeployment(observation(1,{stopped:{installationId:'release-1',process:accepted(1,1).frameworkProcess,observedAt:'2026-10-03T01:00:01.500Z'}}),'mini')
+  const stopped={installationId:'release-2',process:accepted(2,1).frameworkProcess,observedAt:'2026-10-03T01:00:02.500Z'}
+  await f.service.reportDeployment(observation(2,{stopped}),'mini')
+  expect((await f.service.frameworkObservation('mini'))===null).toBe(ceasedCurrent)
+  await f.service.report(accepted(2,1),'mini')
+  expect(f.row().frameworkCurrentStop).toEqual(stopped)
+  expect(await f.service.frameworkObservation('mini')).toBeNull()
+  await expect(f.service.admitPreparationFramework('mini','new-request','a'.repeat(64),'b'.repeat(64),1,{kind:'reject',rejectionSha256:'c'.repeat(64)})).rejects.toThrow()
+  await expect(f.service.report(accepted(2,2),'mini')).rejects.toThrow('stopped')
+  await f.service.report(accepted(3,1),'mini')
+  expect(await f.service.frameworkObservation('mini')).toMatchObject({binding:binding(3)})
+ }finally{f.stop()}
+})
+
+for(const kind of ['known-stop','malformed-stop','foreign-birth'] as const) test(`legacy current reads never admit a stopped process before writer extraction: ${kind}`,async()=>{
+ const f=fixture()
+ try {
+  await f.service.report(accepted(1,1),'mini')
+  f.row().frameworkStopReceipts=[{invalid:'unrelated debug'}, {installationId:'release-1',process:{...accepted(1,1).frameworkProcess,...(kind==='foreign-birth'?{startedAt:'foreign'}:{})},observedAt:kind==='malformed-stop'?'unknown':'2026-10-03T01:00:02Z'}]
+  if(kind==='foreign-birth') expect(await f.service.frameworkObservation('mini')).toMatchObject({binding:binding(1)})
+  else {
+   expect(await f.service.frameworkObservation('mini').catch(()=>null)).toBeNull()
+   await expect(f.service.admitPreparationFramework('mini','new-request','a'.repeat(64),'b'.repeat(64),1,{kind:'complete',inputSha256:'c'.repeat(64)})).rejects.toThrow()
+  }
+  expect(f.row()).not.toHaveProperty('frameworkCurrentStop')
+  expect(f.readProjections.every(fields=>!fields||!('frameworkStopReceipts' in fields))).toBe(true)
+ }finally{f.stop()}
+})
+
+for(const kind of ['current-stop','early-stop','foreign-birth','malformed-current','new-process'] as const) test(`old writer boundary retains only relevant stopped authority: ${kind}`,async()=>{
+ const f=fixture()
+ try {
+  await f.service.report(kind==='early-stop'?snapshot(1,1):accepted(1,1),'mini')
+  const stop={installationId:'release-1',process:accepted(1,1).frameworkProcess,observedAt:'2026-10-03T01:00:02Z'}
+  f.row().frameworkStopReceipts=[{invalid:true},kind==='foreign-birth'?{...stop,process:{...stop.process,startedAt:'foreign'}}:
+    kind==='malformed-current'?{...stop,observedAt:'unknown'}:stop,{...stop,process:kind==='foreign-birth'?{...stop.process,startedAt:'foreign'}:stop.process,observedAt:'2026-10-03T01:00:03Z'}]
+  const claims=[{current:'foreign authority remains unchanged'}];f.row().resourceReservations=claims
+  delete f.row().frameworkCurrentStop
+  if(kind==='current-stop'||kind==='malformed-current') {
+   await expect(f.service.report(accepted(1,2),'mini')).rejects.toThrow()
+   expect(f.row().sequence).toBe(1)
+  } else if(kind==='early-stop') {
+   await f.service.report(accepted(1,2),'mini')
+   expect(f.row().frameworkCurrentStop).toEqual(stop)
+   await f.service.reportDeployment(observation(2,{stopped:{...stop,observedAt:'2026-10-03T01:00:03Z'}}),'mini')
+   expect(f.row().frameworkCurrentStop).toEqual(stop)
+   expect(await f.service.frameworkObservation('mini')).toBeNull()
+   await expect(f.service.report(accepted(1,3),'mini')).rejects.toThrow('stopped')
+  } else if(kind==='foreign-birth') {
+   await f.service.report(accepted(1,2),'mini')
+   expect(f.row()).not.toHaveProperty('frameworkCurrentStop')
+   expect(await f.service.frameworkObservation('mini')).toMatchObject({binding:binding(1)})
+  } else {
+   await f.service.report(accepted(2,1),'mini')
+   expect(f.row()).not.toHaveProperty('frameworkCurrentStop')
+   expect(await f.service.frameworkObservation('mini')).toMatchObject({binding:binding(2)})
+  }
+  expect(f.row().resourceReservations).toEqual(claims)
+  if(kind!=='current-stop'&&kind!=='malformed-current')expect(f.row()).not.toHaveProperty('frameworkStopReceipts')
+  expect(f.readProjections.every(fields=>!fields||!('frameworkStopReceipts' in fields))).toBe(true)
+ }finally{f.stop()}
 })

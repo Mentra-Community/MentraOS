@@ -9,7 +9,7 @@
         "@config-plugins/react-native-webrtc": "^13.0.0",
         "@craftzdog/react-native-buffer": "^6.1.2",
         "@douglowder/expo-av-route-picker-view": "^0.0.5",
-        "@dr.pogodin/react-native-fs": ">=2.37.0 <2.41.0",
+        "@dr.pogodin/react-native-fs": "2.38.2",
         "@expo-google-fonts/red-hat-display": "^0.4.1",
         "@expo-google-fonts/space-grotesk": "^0.4.1",
         "@expo/metro-runtime": "~55.0.11",
@@ -72,6 +72,7 @@
         "expo-notifications": "~55.0.23",
         "expo-router": "~55.0.14",
         "expo-screen-capture": "~55.0.14",
+        "expo-secure-store": "~55.0.14",
         "expo-splash-screen": "~55.0.21",
         "expo-squircle-view": "^1.1.0",
         "expo-status-bar": "~55.0.6",
@@ -153,12 +154,13 @@
     },
     "../cloud-v2/packages/cloud-client": {
       "name": "@mentra/cloud-client",
-      "version": "3.3.0",
+      "version": "3.4.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.3.0",
+        "@mentra/cloud-protocol": "3.4.0",
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
+        "@mentra/workspace-contract": "workspace:*",
         "@types/ws": "^8.5.12",
         "ws": "^8.18.0",
       },
@@ -171,17 +173,25 @@
     },
     "../cloud-v2/packages/protocol": {
       "name": "@mentra/cloud-protocol",
-      "version": "3.3.0",
+      "version": "3.4.0",
+      "dependencies": {
+        "tldts": "7.4.19",
+        "zod": "^3.24.1",
+      },
+    },
+    "../cloud-v2/packages/workspace-contract": {
+      "name": "@mentra/workspace-contract",
+      "version": "0.0.0",
       "dependencies": {
         "zod": "^3.24.1",
       },
     },
     "modules/acs-meeting": {
       "name": "@mentra/acs-meeting",
-      "version": "3.3.0",
+      "version": "3.4.0",
       "dependencies": {
         "@expo/config-plugins": "~55.0.10",
-        "@mentra/glasses-media": "3.3.0",
+        "@mentra/glasses-media": "3.4.0",
       },
       "devDependencies": {
         "expo-module-scripts": "^55.0.2",
@@ -195,9 +205,9 @@
     },
     "modules/bluetooth-sdk": {
       "name": "@mentra/bluetooth-sdk",
-      "version": "3.3.0",
+      "version": "3.4.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.3.0",
+        "@mentra/cloud-protocol": "3.4.0",
       },
       "devDependencies": {
         "@types/node": "^25.9.3",
@@ -214,9 +224,9 @@
     },
     "modules/crust": {
       "name": "@mentra/crust",
-      "version": "3.3.0",
+      "version": "3.4.0",
       "dependencies": {
-        "@mentra/jspolyfill": "3.3.0",
+        "@mentra/jspolyfill": "3.4.0",
       },
       "devDependencies": {
         "@expo/config-plugins": ">=8.0.0",
@@ -233,15 +243,15 @@
     },
     "modules/engine": {
       "name": "@mentra/engine",
-      "version": "3.3.0",
+      "version": "3.4.0",
       "dependencies": {
-        "@mentra/acs-meeting": "3.3.0",
-        "@mentra/bluetooth-sdk": "3.3.0",
-        "@mentra/cloud-client": "3.3.0",
-        "@mentra/cloud-protocol": "3.3.0",
-        "@mentra/crust": "3.3.0",
-        "@mentra/glasses-media": "3.3.0",
-        "@mentra/miniapp": "3.3.0",
+        "@mentra/acs-meeting": "3.4.0",
+        "@mentra/bluetooth-sdk": "3.4.0",
+        "@mentra/cloud-client": "3.4.0",
+        "@mentra/cloud-protocol": "3.4.0",
+        "@mentra/crust": "3.4.0",
+        "@mentra/glasses-media": "3.4.0",
+        "@mentra/miniapp": "3.4.0",
         "buffer": "^6.0.3",
         "events": "^3.3.0",
         "jszip": "^3.10.1",
@@ -259,12 +269,13 @@
       },
       "peerDependencies": {
         "@craftzdog/react-native-buffer": "*",
-        "@dr.pogodin/react-native-fs": ">=2.37.0 <2.41.0",
+        "@dr.pogodin/react-native-fs": "2.38.2",
         "@react-native-community/netinfo": "*",
         "@types/react": "*",
         "axios": "*",
         "expo": "~55.0.24",
         "expo-application": "~55.0.15",
+        "expo-asset": "~55.0.17",
         "expo-audio": "~55.0.14",
         "expo-battery": "^55.0.13",
         "expo-calendar": "~55.0.14",
@@ -275,6 +286,7 @@
         "expo-location": "~55.1.10",
         "expo-modules-core": "~55.0.25",
         "expo-notifications": "~55.0.23",
+        "expo-secure-store": "~55.0.14",
         "expo-task-manager": "~55.0.16",
         "react": "*",
         "react-native": "*",
@@ -316,7 +328,7 @@
       "name": "@mentra/frame-preview",
       "version": "3.3.0",
       "dependencies": {
-        "@mentra/glasses-media": "3.3.0",
+        "@mentra/glasses-media": "3.4.0",
       },
       "peerDependencies": {
         "expo": "*",
@@ -326,23 +338,23 @@
     },
     "modules/glasses-media": {
       "name": "@mentra/glasses-media",
-      "version": "3.3.0",
+      "version": "3.4.0",
       "peerDependencies": {
         "expo-modules-core": "~55.0.25",
       },
     },
     "modules/jspolyfill": {
       "name": "@mentra/jspolyfill",
-      "version": "3.3.0",
+      "version": "3.4.0",
       "devDependencies": {
         "esbuild": "^0.23.0",
       },
     },
     "modules/miniapp": {
       "name": "@mentra/miniapp",
-      "version": "3.3.0",
+      "version": "3.4.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.3.0",
+        "@mentra/cloud-protocol": "3.4.0",
         "eventemitter3": "^5.0.1",
       },
       "devDependencies": {
@@ -371,6 +383,7 @@
     "react-native-mmkv",
   ],
   "patchedDependencies": {
+    "react-native@0.83.6": "patches/react-native@0.83.6.patch",
     "@dr.pogodin/react-native-fs@2.38.2": "patches/@dr.pogodin%2Freact-native-fs@2.38.2.patch",
     "expo-router@55.0.16": "patches/expo-router@55.0.16.patch",
     "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
@@ -998,6 +1011,8 @@
     "@mentra/jspolyfill": ["@mentra/jspolyfill@workspace:modules/jspolyfill"],
 
     "@mentra/miniapp": ["@mentra/miniapp@workspace:modules/miniapp"],
+
+    "@mentra/workspace-contract": ["@mentra/workspace-contract@workspace:../cloud-v2/packages/workspace-contract"],
 
     "@nicolo-ribaudo/chokidar-2": ["@nicolo-ribaudo/chokidar-2@2.1.8-no-fsevents.3", "", {}, "sha512-s88O1aVtXftvp5bCPB7WnmXc5IwOZZ7YPuwNPt+GtOOXpPvad1LfbmjYv+qII7zP6RU2QGnqve27dnLycEnyEQ=="],
 
@@ -1780,6 +1795,8 @@
     "expo-router": ["expo-router@55.0.16", "", { "dependencies": { "@expo/metro-runtime": "^55.0.11", "@expo/schema-utils": "^55.0.4", "@radix-ui/react-slot": "^1.2.0", "@radix-ui/react-tabs": "^1.1.12", "@react-navigation/bottom-tabs": "^7.15.5", "@react-navigation/native": "^7.1.33", "@react-navigation/native-stack": "^7.14.5", "client-only": "^0.0.1", "debug": "^4.3.4", "escape-string-regexp": "^4.0.0", "expo-glass-effect": "^55.0.11", "expo-image": "^55.0.11", "expo-server": "^55.0.11", "expo-symbols": "^55.0.9", "fast-deep-equal": "^3.1.3", "invariant": "^2.2.4", "nanoid": "^3.3.8", "query-string": "^7.1.3", "react-fast-compare": "^3.2.2", "react-native-is-edge-to-edge": "^1.2.1", "semver": "~7.6.3", "server-only": "^0.0.1", "sf-symbols-typescript": "^2.1.0", "shallowequal": "^1.1.0", "use-latest-callback": "^0.2.1", "vaul": "^1.1.2" }, "peerDependencies": { "@expo/log-box": "55.0.12", "@react-navigation/drawer": "^7.9.4", "@testing-library/react-native": ">= 13.2.0", "expo": "*", "expo-constants": "^55.0.16", "expo-linking": "^55.0.15", "react": "*", "react-dom": "*", "react-native": "*", "react-native-gesture-handler": "*", "react-native-reanimated": "*", "react-native-safe-area-context": ">= 5.4.0", "react-native-screens": "*", "react-native-web": "*", "react-server-dom-webpack": "~19.0.4 || ~19.1.5 || ~19.2.4" }, "optionalPeers": ["@react-navigation/drawer", "@testing-library/react-native", "react-dom", "react-native-gesture-handler", "react-native-reanimated", "react-native-web", "react-server-dom-webpack"] }, "sha512-xVwWsDz3Ar2+3hRpMMrZMYFzkJak322vCA5/XCP7WOL0hEXnWhgQGhv5IEYZyz/TXZbl2IYD6/1MnH9mBhjwKQ=="],
 
     "expo-screen-capture": ["expo-screen-capture@55.0.14", "", { "peerDependencies": { "expo": "*", "react": "*" } }, "sha512-R9IcHvsl+sD7YAO9K1VDcu88MLJWJ+Z6IzJZP7ZX5470P6cvLWt54gNgCtNRG/nCUVY26bfHuE7rqQrOwtYHyw=="],
+
+    "expo-secure-store": ["expo-secure-store@55.0.18", "", { "peerDependencies": { "expo": "*" } }, "sha512-shKZYQf7/KA45Z3oEIXUkXdrfRNFxsc+fJC182bbpuKqS4nLPZslsJUqruQ937Zkkbev126N/QJv+zmd6FpZjA=="],
 
     "expo-server": ["expo-server@55.0.11", "", {}, "sha512-AxRdHqcv0H1g4s923vu+5n1Nrhne23bjXbP+Vl7+Lwfpe7MG9PuU1IS95IJK6a+7BVV1mRN6QlZvs8Yv7EEXNQ=="],
 
@@ -2824,6 +2841,10 @@
     "throat": ["throat@5.0.0", "", {}, "sha512-fcwX4mndzpLQKBS1DVYhGAcYaYt7vsHNIvQV+WXMvnow5cgjPphq5CaayLaGsjRdSCKZFNGt7/GYAuXaNOiYCA=="],
 
     "tinyglobby": ["tinyglobby@0.2.17", "", { "dependencies": { "fdir": "^6.5.0", "picomatch": "^4.0.4" } }, "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g=="],
+
+    "tldts": ["tldts@7.4.19", "", { "dependencies": { "tldts-core": "^7.4.19" }, "bin": { "tldts": "bin/cli.js" } }, "sha512-48dH6aSpQnpbzDUc4vIQZ1VjB8tkK+e8c1yx05/SZK+rkssgjEOlxDd/yU8/a4vGYQ9vRgJr9dwMq9TJ0b3X2Q=="],
+
+    "tldts-core": ["tldts-core@7.4.19", "", {}, "sha512-goNXV6Ho9TIOfpJZanTd6CKG5DyYgYAL+k+22T0SLh8l6+KHIfBUPFuePuSZv05UttIaaLmI9tb7TmGIdK5AkQ=="],
 
     "tmp": ["tmp@0.2.7", "", {}, "sha512-e0votIpp4Uo2AJYSzVHV6xCcawuiez3DzqDAbrTc3YxBkplN6e+dM13ZeIcZnDg/QpSuU2zfZ3rzwY8ukEnaXw=="],
 

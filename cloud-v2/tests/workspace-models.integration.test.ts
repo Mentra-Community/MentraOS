@@ -28,6 +28,7 @@ import {AccessCredentialModel} from "../packages/core/src/models/access-credenti
 import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
 import {LicenseSeatModel} from "../packages/core/src/models/license-seat.model"
 import {LicenseModel} from "../packages/core/src/models/license.model"
+import {WorkspaceAssignedPackagesModel} from "../packages/core/src/models/workspace-assigned-packages.model"
 import {
   WORKSPACE_AUDIT_COUNTER_ID,
   WorkspaceAuditCounterModel,
@@ -49,6 +50,7 @@ const MODELS: Model<any>[] = [
   LegacyBrowserIdentityModel,
   LicenseModel,
   LicenseSeatModel,
+  WorkspaceAssignedPackagesModel,
 ]
 
 /** Run `fn` and return whatever it throws (fails the test if it does not throw). */

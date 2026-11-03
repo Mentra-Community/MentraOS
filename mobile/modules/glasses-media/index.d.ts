@@ -7,5 +7,5 @@ export const glassesHotspot: {
     gateway?: string,
     purpose?: "outgoing-client" | "incoming-server",
   ): Promise<string>
-  leave(id: string): Promise<void>
+  leave(id: string, waitForInternet?: boolean): Promise<void>
 }

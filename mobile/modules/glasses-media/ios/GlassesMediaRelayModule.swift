@@ -31,10 +31,10 @@ public final class GlassesMediaRelayModule: Module {
             }
         }
 
-        AsyncFunction("leaveLocalHotspot") { (id: String, promise: Promise) in
+        AsyncFunction("leaveLocalHotspot") { (id: String, waitForInternet: Bool, promise: Promise) in
             self.queue.async {
                 guard self.localHotspotOwner == id else { promise.resolve(nil); return }
-                self.localHotspot.leave { result in
+                self.localHotspot.leave(waitForInternet: waitForInternet) { result in
                     self.queue.async {
                         switch result {
                         case .success:

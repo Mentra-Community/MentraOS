@@ -5,8 +5,17 @@ final class BluetoothAvailability: NSObject, CBCentralManagerDelegate {
     static let shared = BluetoothAvailability()
 
     private var centralManager: CBCentralManager?
-    private var state: CBManagerState = .unknown
+    private var systemState: CBManagerState = .unknown
     private var listeners: [UUID: (CBManagerState) -> Void] = [:]
+
+    /// Test seam: while set, listeners and availability checks see this state instead of the
+    /// host's radio, so a test does not depend on the machine's Bluetooth. Set it before the SDK
+    /// under test registers its listener; the system's own updates are not delivered meanwhile.
+    var stateOverride: CBManagerState?
+
+    private var state: CBManagerState {
+        stateOverride ?? systemState
+    }
 
     override private init() {
         super.init()
@@ -15,11 +24,12 @@ final class BluetoothAvailability: NSObject, CBCentralManagerDelegate {
             queue: .main,
             options: [CBCentralManagerOptionShowPowerAlertKey: false]
         )
-        state = centralManager?.state ?? .unknown
+        systemState = centralManager?.state ?? .unknown
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        state = central.state
+        systemState = central.state
+        guard stateOverride == nil else { return }
         for listener in Array(listeners.values) {
             listener(state)
         }
@@ -44,7 +54,7 @@ final class BluetoothAvailability: NSObject, CBCentralManagerDelegate {
     /// Whether phone Bluetooth is switched off right now. Read on the main thread,
     /// where the central manager delivers its state.
     var isPoweredOff: Bool {
-        (centralManager?.state ?? state) == .poweredOff
+        (stateOverride ?? centralManager?.state ?? systemState) == .poweredOff
     }
 
     /// Read-only system lookup. It neither connects nor claims ownership.
@@ -56,7 +66,7 @@ final class BluetoothAvailability: NSObject, CBCentralManagerDelegate {
 
     func requirePoweredOn(operation: String) throws {
         if let current = centralManager?.state {
-            state = current
+            systemState = current
         }
         switch state {
         case .poweredOn:

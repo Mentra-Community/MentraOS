@@ -1,10 +1,20 @@
+import type {FleetAssignmentReason} from "@mentra/cloud-protocol"
 import {useAppStatusStore} from "../stores/apps"
 import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
 import {installWithRuntimeReload, MiniappRunningError} from "../utils/storeInstallRuntime"
-import appRegistry, {type InstallBundleOptions, type LocalZipInstallOptions} from "./AppRegistry"
+import appRegistry, {
+  type InstallBundleOptions,
+  type LocalZipInstallOptions,
+  type MiniappInstallReason,
+} from "./AppRegistry"
 import {markMiniappUpdateDeferred} from "./deferredMiniappUpdates"
 import {miniappLauncher} from "./MiniappLauncher"
-import {canShowRunningUpdatePrompt, emitRunningUpdateFailed, requestRunningUpdatePrompt} from "./runningUpdatePrompt"
+import {
+  canShowRunningUpdatePrompt,
+  emitRunningUpdateFailed,
+  forgetRunningUpdateDecline,
+  requestRunningUpdatePrompt,
+} from "./runningUpdatePrompt"
 
 /**
  * A release archive: a URL the installer downloads, or a ZIP its caller already
@@ -53,6 +63,15 @@ export interface ReleaseInstallOptions extends InstallBundleOptions {
    * shown, and nothing restarts into the ended session.
    */
   isCancelled?: () => boolean
+  /** With `askIfRunning`: called when the staged release waits for the person's answer to its update prompt. */
+  onAsking?: () => void
+  /**
+   * With `onlyIfStopped`: a package that is not installed may be installed
+   * (a managed first install). It is silent: no updating state, no prompt.
+   * Launches still wait while its files activate. An installed package
+   * updates as usual.
+   */
+  firstInstall?: boolean
 }
 
 /** The session that requested an install ended before the release activated. */
@@ -64,7 +83,7 @@ export class MiniappInstallCancelledError extends Error {
 }
 
 /**
- * Shared release installation for QR, Store and workspace callers. The caller
+ * Shared release installation for QR, URL and workspace callers. The caller
  * authorizes the source; the archive goes through the one AppRegistry installer, which
  * binds it to the expected package and version and applies the signer and
  * version rules again inside its serialized transaction.
@@ -78,28 +97,34 @@ export class MiniappInstallCancelledError extends Error {
  *   verify and unpack first, then ask; on Update the miniapp closes, the
  *   release commits, and the miniapp restarts silently (not at all when the
  *   glasses it needs are not connected).
+ * - A managed first install (`firstInstall`) of a package that is not
+ *   installed shows nothing and holds launches only while its files change.
  */
 export async function installMiniappRelease(
   archive: MiniappReleaseArchive,
   options: ReleaseInstallOptions,
 ): Promise<void> {
-  const {onlyIfStopped, askIfRunning, isCancelled, ...requestedOptions} = options
+  const {onlyIfStopped, askIfRunning, isCancelled, onAsking, firstInstall, ...requestedOptions} = options
   const packageName = options.expectedPackageName
   const install = archiveInstaller(archive)
   const assertCurrent = () => {
     if (isCancelled?.()) throw new MiniappInstallCancelledError(packageName)
   }
+  // An explicit install is the user's choice; an automatic update changes no reason.
+  const installReason =
+    requestedOptions.installReason ?? (onlyIfStopped ? undefined : explicitInstallReason(requestedOptions))
+  const reasonOptions: InstallBundleOptions = installReason ? {...requestedOptions, installReason} : requestedOptions
   // Only the activation hook is wrapped: a `whenStaged` hook moves unpacking
   // out of the serialized install queue, so it is never added here.
   const installOptions: InstallBundleOptions = isCancelled
     ? {
-        ...requestedOptions,
+        ...reasonOptions,
         beforeActivate: () => {
           assertCurrent()
-          requestedOptions.beforeActivate?.()
+          reasonOptions.beforeActivate?.()
         },
       }
-    : requestedOptions
+    : reasonOptions
   assertCurrent()
   // An early check avoids stopping or reserving an app for a known downgrade.
   // AppRegistry checks again in its serialized filesystem transaction.
@@ -118,10 +143,13 @@ export async function installMiniappRelease(
     return
   }
 
-  assertStillInstalled(packageName)
+  const installsFirst = firstInstall === true && appRegistry.getInstalledVersions(packageName).length === 0
+  if (!installsFirst) assertStillInstalled(packageName)
   try {
-    if (askIfRunning && miniappLauncher.isProjectedRunning(packageName)) {
-      await installRunningUpdate(install, installOptions, packageName, options.expectedVersion, isCancelled)
+    if (installsFirst) {
+      await installFirstWhenIdle(install, installOptions, packageName)
+    } else if (askIfRunning && miniappLauncher.isProjectedRunning(packageName)) {
+      await installRunningUpdate(install, installOptions, packageName, options.expectedVersion, isCancelled, onAsking)
     } else {
       await installIdleUpdate(install, installOptions, packageName)
     }
@@ -129,6 +157,8 @@ export async function installMiniappRelease(
     if (error instanceof MiniappRunningError) markMiniappUpdateDeferred(packageName)
     throw error
   }
+  // The update the person put off has installed: a later one asks afresh.
+  forgetRunningUpdateDecline(packageName)
   await useAppStatusStore.getState().refresh()
 }
 
@@ -137,6 +167,34 @@ function assertStillInstalled(packageName: string): void {
   if (appRegistry.getInstalledVersions(packageName).length === 0) {
     throw new Error(`${packageName} is no longer installed`)
   }
+}
+
+function explicitInstallReason(options: InstallBundleOptions): Exclude<MiniappInstallReason, "assignment"> {
+  switch (options.releaseIdentity?.source) {
+    case "bundled_asset":
+      return "bundled"
+    case "deployment_manifest":
+      return "manifest"
+    default:
+      return "explicit"
+  }
+}
+
+/** A managed first install shows nothing: no updating state and no prompt. A launch waits only while it activates. */
+function installFirstWhenIdle(
+  install: ArchiveInstaller,
+  options: InstallBundleOptions,
+  packageName: string,
+): Promise<void> {
+  return miniappLauncher.installWhenIdle(packageName, (reserveActivation) =>
+    install({
+      ...options,
+      beforeActivate: () => {
+        options.beforeActivate?.()
+        reserveActivation()
+      },
+    }),
+  )
 }
 
 /**
@@ -166,6 +224,7 @@ async function installRunningUpdate(
   packageName: string,
   version: string,
   isCancelled: (() => boolean) | undefined,
+  onAsking: (() => void) | undefined,
 ): Promise<void> {
   const assertCurrent = () => {
     if (isCancelled?.()) throw new MiniappInstallCancelledError(packageName)
@@ -192,6 +251,7 @@ async function installRunningUpdate(
         // and the files are unpacked; nothing is reserved yet. If the user
         // closed the miniapp meanwhile, it updates like an idle one.
         if (miniappLauncher.isRunning(packageName)) {
+          if (canShowRunningUpdatePrompt(packageName)) onAsking?.()
           const answer = await requestRunningUpdatePrompt({packageName, displayName, version})
           if (answer !== "update") throw new MiniappRunningError(packageName)
           assertCurrent()
@@ -243,4 +303,49 @@ async function restartAfterUpdate(packageName: string, reopen: boolean): Promise
     // A launch error is reported by the runtime; it does not undo a committed release.
     console.warn(`Miniapp ${packageName} could not restart after its update`, error)
   }
+}
+
+// ---- Managed (Fleet) installs -----------------------------------------------------------------------------------
+
+/** Why a managed install did not commit: an assignment reason, or it waits (`running`) or was superseded. */
+export type ManagedInstallFailure = FleetAssignmentReason | "running" | "cancelled"
+
+/** Map an installer error to a stable reason. Never error text. */
+export function classifyManagedInstallError(error: unknown): {kind: ManagedInstallFailure; retryable: boolean} {
+  if (error instanceof MiniappRunningError) return {kind: "running", retryable: true}
+  if (error instanceof MiniappInstallCancelledError) return {kind: "cancelled", retryable: true}
+  const message = error instanceof Error ? error.message : String(error)
+  if (/ENOSPC|no space|not enough space|disk is full|storage (is )?full|quota/i.test(message))
+    return {kind: "storage_full", retryable: true}
+  if (/signature|signer|unsigned bundle|publisher/i.test(message)) return {kind: "signature_invalid", retryable: false}
+  if (/is already installed/.test(message)) return {kind: "newer_version_installed", retryable: false}
+  if (/Requires Mentra App|Built for SDK|Mentra App version|Miniapp SDK version|not compatible/i.test(message))
+    return {kind: "incompatible_host", retryable: false}
+  if (/bundle version mismatch|SHA-256 mismatch/i.test(message)) return {kind: "download_failed", retryable: true}
+  if (
+    /package mismatch|miniapp\.json|UNZIP_FAILED|READ_MANIFEST_FAILED|invalid miniapp version|bundle (exceeds|must be|contains)/i.test(
+      message,
+    )
+  )
+    return {kind: "not_a_miniapp", retryable: false}
+  return {kind: "download_failed", retryable: true}
+}
+
+/** Uninstall a withdrawn miniapp. Its data stays in its partition for a later reinstall. */
+export async function uninstallManagedMiniapp(packageName: string): Promise<void> {
+  const result = await useAppStatusStore.getState().uninstall(packageName, undefined, {fleetSource: "assignment"})
+  if (result.is_error()) throw result.error
+}
+
+/**
+ * The miniapp's server stopped admitting this account: block its launch and stop its running code now, whatever
+ * its reasons. Not deferred like an update. Nothing is uninstalled.
+ */
+export async function stopMiniappForRevocation(packageName: string): Promise<void> {
+  appRegistry.revokeMiniappAccess(packageName)
+  const state = useAppStatusStore.getState()
+  if (state.foregroundedPackage === packageName) state.clearForeground()
+  await state.stop(packageName)
+  if (miniappLauncher.isRunning(packageName)) await miniappLauncher.stop(packageName)
+  await useAppStatusStore.getState().refresh()
 }

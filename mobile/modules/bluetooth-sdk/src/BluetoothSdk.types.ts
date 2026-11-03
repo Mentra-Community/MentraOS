@@ -100,6 +100,28 @@ export type GlassesMediaVolumeSetResult = {
   statusCode: number
 }
 
+/** On-device keyword spotter state and detections. Describes only the wake-word model. */
+export type WakeWordEvent = {
+  kind: "loading" | "ready" | "detected" | "error"
+  phrase: string
+  /** Unix epoch milliseconds. */
+  timestamp: number
+  message?: string
+}
+
+/**
+ * Phone-side speech activity from the on-device Silero detector
+ * ([setSpeechActivityDetection]). Sent on transitions only. A gap in incoming
+ * microphone audio counts as silence.
+ */
+export type SpeechActivityEvent = {
+  speaking: boolean
+  /** 0 while speaking; on a silence transition, how long the audio has been silent. */
+  silentForMs: number
+  /** Unix epoch milliseconds. */
+  timestamp: number
+}
+
 export type LocalTranscriptionEvent = {
   text: string
   isFinal?: boolean
@@ -876,9 +898,69 @@ export type StreamKeepAliveRequest = {
   ackId: string
 }
 
+/**
+ * Stable machine-readable `pair_failure` causes. Unknown native codes still typecheck.
+ * `ios_forget_pairing`: iOS holds a stale Bluetooth pairing for these glasses during an
+ * explicit attempt; the user must remove it in Settings > Bluetooth before pairing again.
+ */
+export type PairFailureCode = "ios_forget_pairing" | string
+
 export type PairFailureEvent = {
   type: "pair_failure"
   error: string
+  /** Stable cause, when the SDK can classify the failure. */
+  code?: PairFailureCode
+}
+
+/**
+ * Mentra Live pairing state, owned by the SDK.
+ * - `normal`: no pairing mode in effect; automatic reconnect is allowed.
+ * - `pairing_mode`: the glasses opened a pairing window. Automatic reconnect is paused until
+ *   `endsAtMs` or until the glasses report the window ended. `windowId` identifies the
+ *   window and survives a cold restart.
+ * - `pairing_rejected`: the glasses no longer accept this phone (another phone paired, or repeated
+ *   authentication rejections on secure-pairing firmware). Reconnect has stopped. Render Pair Again.
+ */
+export type MentraLivePairingState =
+  | {state: "normal"}
+  | {state: "pairing_mode"; windowId: number; endsAtMs: number}
+  | {state: "pairing_rejected"}
+
+export type PairingStateChangedEvent = {
+  state: MentraLivePairingState
+}
+
+/**
+ * Whether the user has to do anything to get glasses audio working, decided by the SDK for
+ * every glasses model. Render it; do not add your own audio timers or platform checks.
+ *
+ * - `idle`: no glasses session.
+ * - `not_applicable`: no user step for audio. Android attaches Classic audio from the BLE bond,
+ *   and glasses without Classic audio have nothing to set up.
+ * - `connecting`: the glasses are connected, audio is not, and the SDK still expects audio to
+ *   come up on its own (for example iPhone audio derived from the BLE pair). After setup, Mentra
+ *   Live firmware that reports `classic_link` reconnects audio itself and stays here.
+ * - `connected`: Classic audio (A2DP or HFP) to the glasses is up.
+ * - `needs_user`: audio did not come up on its own. Ask the user to connect the glasses in the
+ *   system Bluetooth settings (iPhone: Settings > Bluetooth). The state moves to `connected`
+ *   as soon as audio comes up.
+ */
+export type GlassesAudioSetupState =
+  | {state: "idle"}
+  | {state: "not_applicable"}
+  | {state: "connecting"}
+  | {state: "connected"}
+  | {state: "needs_user"; action: "connect_in_settings"}
+
+export type AudioSetupChangedEvent = {
+  state: GlassesAudioSetupState
+}
+
+export type PairingModeEndedReason = "paired" | "cancelled" | "timeout" | string
+
+export type PairingModeEndedEvent = {
+  reason: PairingModeEndedReason
+  window_id?: number
 }
 
 export type PairingInfoEvent = {
@@ -887,13 +969,27 @@ export type PairingInfoEvent = {
   classic_bond_ready?: boolean
   secure_pairing_capable?: boolean
   protocol_version?: number
+  /** Present when the glasses build includes ownership transfer. */
+  ownership_transfer?: boolean
+  /** True when the glasses derive Classic audio from the LE pair (CTKD), so audio should connect on its own. */
+  auto_audio?: boolean
+  /** True only after a BLE bond committed the owner and the window closed. */
+  owner_committed?: boolean
 }
 
 export type EnteringPairingModeEvent = {
   window_ms: number
+  /** Identifies this pairing window. Also carried in `pairing_mode_ended` and the advertisement. */
+  window_id?: number
   reason?: string
+  /** The glasses kept their bonds when the window opened; they change only if another phone pairs. */
+  owner_retained?: boolean
 }
 
+/**
+ * @deprecated No longer emitted. Observe `pairing_state_changed` (or `GlassesStatus.pairingState`)
+ * and render Pair Again for `pairing_rejected`.
+ */
 export type OwnerReplacedEvent = {
   reason: string
 }
@@ -1119,6 +1215,54 @@ export type OtaStatusEvent = {
 
 export type OtaQueryResult = OtaStatusEvent
 
+/** Lifecycle of a BES crash incident bundle on Mentra Live glasses. */
+export type BesCrashIncidentState = "COLLECTING" | "STORED" | "REPORTED" | "UPLOADED" | "EVICTED"
+
+/** One incident bundle the glasses dropped to stay within their storage budget. */
+export type BesCrashEviction = {
+  incidentKey: string
+  reason: string
+  bytes: number
+  ms: number
+}
+
+/**
+ * Glasses-side summary of a BES crash incident. Fields the glasses could not
+ * determine (for example `dumpId` of a reset without a dump) may be absent or null.
+ */
+export type BesCrashSummary = {
+  attribution: "match" | "older" | "unknown"
+  dumpId?: string | null
+  bootId?: string | null
+  resetHw?: number | null
+  resetSw?: number | null
+  crashUnixMs?: number | null
+  coveredFromMs?: number | null
+  coveredToMs?: number | null
+  traceGaps: number
+  truncated: boolean
+  torn: boolean
+  tailCaptured: boolean
+  dumpGap: boolean
+  evictedCount: number
+  recentEvictions: BesCrashEviction[]
+}
+
+/**
+ * Mentra Live stored a BES crash or unexpected-reset incident. Sent when the
+ * incident becomes `STORED`, and again on every reconnect while it is `STORED`
+ * or `REPORTED`, so handlers must be idempotent per `incidentKey`.
+ */
+export type BesCrashDetectedEvent = {
+  type: "bes_crash_detected"
+  incidentKey: string
+  reason: "bes_crash" | "bes_unexpected_reset"
+  state: BesCrashIncidentState
+  /** Cloud report already recorded for this incident, or null before one is reported. */
+  reportId: string | null
+  summary: BesCrashSummary
+}
+
 /** Nex BLE protobuf trace (NexEventUtils); payload matches native Map keys. */
 export type BleCommandTraceEvent = {
   command: string
@@ -1150,6 +1294,8 @@ export type BluetoothSdkModuleEvents = {
   voice_activity_detection_status: (event: VoiceActivityDetectionStatusEvent) => void
   speaking_status: (event: SpeakingStatusEvent) => void
   battery_status: (event: BatteryStatusEvent) => void
+  wake_word: (event: WakeWordEvent) => void
+  speech_activity: (event: SpeechActivityEvent) => void
   local_transcription: (event: LocalTranscriptionEvent) => void
   native_notification_status: (event: NativeNotificationStatus) => void
   native_notification_delivery: (event: NativeNotificationDelivery) => void
@@ -1182,6 +1328,10 @@ export type BluetoothSdkModuleEvents = {
   pair_failure: (event: PairFailureEvent) => void
   pairing_info: (event: PairingInfoEvent) => void
   entering_pairing_mode: (event: EnteringPairingModeEvent) => void
+  pairing_mode_ended: (event: PairingModeEndedEvent) => void
+  pairing_state_changed: (event: PairingStateChangedEvent) => void
+  audio_setup_changed: (event: AudioSetupChangedEvent) => void
+  /** @deprecated No longer emitted. Use `pairing_state_changed`. */
   owner_replaced: (event: OwnerReplacedEvent) => void
   audio_pairing_needed: (event: AudioPairingNeededEvent) => void
   audio_connected: (event: AudioConnectedEvent) => void
@@ -1199,6 +1349,7 @@ export type BluetoothSdkModuleEvents = {
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void
   ar99_ota_status: (event: Ar99OtaStatusEvent) => void
+  bes_crash_detected: (event: BesCrashDetectedEvent) => void
   version_info: (event: VersionInfoEvent) => void
   send_command_to_ble: (event: BleCommandTraceEvent) => void
   receive_command_from_ble: (event: BleCommandTraceEvent) => void
@@ -1320,6 +1471,8 @@ export type BluetoothSdkEventMap = {
   voice_activity_detection_status: VoiceActivityDetectionStatusEvent
   speaking_status: SpeakingStatusEvent
   battery_status: BatteryStatusEvent
+  wake_word: WakeWordEvent
+  speech_activity: SpeechActivityEvent
   local_transcription: LocalTranscriptionEvent
   wifi_status_change: WifiStatusChangeEvent
   wifi_scan_result: WifiScanResultEvent
@@ -1346,6 +1499,10 @@ export type BluetoothSdkEventMap = {
   pair_failure: PairFailureEvent
   pairing_info: PairingInfoEvent
   entering_pairing_mode: EnteringPairingModeEvent
+  pairing_mode_ended: PairingModeEndedEvent
+  pairing_state_changed: PairingStateChangedEvent
+  audio_setup_changed: AudioSetupChangedEvent
+  /** @deprecated No longer emitted. Use `pairing_state_changed`. */
   owner_replaced: OwnerReplacedEvent
   audio_pairing_needed: AudioPairingNeededEvent
   audio_connected: AudioConnectedEvent
@@ -1361,6 +1518,8 @@ export type BluetoothSdkEventMap = {
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
   ar99_ota_status: Ar99OtaStatusEvent
+  /** Mentra Live stored a BES crash incident for the phone to report. */
+  bes_crash_detected: BesCrashDetectedEvent
   version_info: VersionInfoEvent
   extraction_progress: ExtractionProgressEvent
 }
@@ -1430,7 +1589,9 @@ export interface BluetoothSdkPublicModule {
   /** Set the glasses clock from the phone after an OTA clock-skew failure. */
   setSystemTime(timestampMs: number): Promise<void>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
-  setWifiAdbState(enabled: boolean): Promise<void>
+  /** When supplied, binds native admission to this full MAC observed in the current BLE session.
+   * Resolves on queue admission, without confirming glasses-side state. */
+  setWifiAdbState(enabled: boolean, expectedBluetoothMac?: string): Promise<void>
 
   /**
    * Persistently enable/disable unauthenticated HTTP gallery access on the glasses' Wi-Fi.
@@ -1564,7 +1725,30 @@ export interface BluetoothSdkPublicModule {
   checkSttModelAvailable(): Promise<boolean>
   validateSttModel(path: string): Promise<boolean>
   extractTarBz2(sourcePath: string, destinationPath: string): Promise<boolean>
+  /**
+   * Start or stop on-device keyword spotting on microphone PCM. `modelDir` must contain
+   * `encoder.int8.onnx`, `decoder.onnx`, `joiner.int8.onnx`, `tokens.txt` and `keywords.txt`;
+   * it is required when enabling. Disabling releases the model.
+   */
+  setWakeWordDetection(enabled: boolean, modelDir?: string | null): Promise<void>
+  /**
+   * Finalize the active on-device recognizer's current utterance now. Resolves after the final
+   * `local_transcription` event for it has been emitted, with that final text (empty when nothing
+   * was pending). Resolves `null` when no streaming model is active or the loaded model can't
+   * finalize early.
+   */
+  finishTranscription(): Promise<string | null>
+  /**
+   * Reload the selected speech model when on-device transcription is in demand. Resolves after
+   * it is loaded; rejects when loading fails; resolves immediately when there is no demand.
+   */
   restartTranscriber(): Promise<void>
+  /**
+   * Start or stop the on-device Silero speech detector on microphone PCM. While enabled it emits
+   * `speech_activity` transitions; `minSilenceMs` (default 300) is the quiet gap before a silence
+   * transition. Disabling releases the model.
+   */
+  setSpeechActivityDetection(enabled: boolean, options?: {minSilenceMs?: number}): Promise<void>
 
   // TTS Commands (TODO: MOVE TO CRUST)
   setTtsModelDetails(path: string, languageCode: string): Promise<void>
@@ -1637,6 +1821,10 @@ export interface GlassesStatus {
   micEnabled: boolean
   voiceActivityDetectionEnabled: boolean
   bluetoothClassicConnected: boolean
+  /** iOS: an HFP input is available or a matching Bluetooth output is active. Android: same as `bluetoothClassicConnected`. */
+  bluetoothClassicProfilesConnected: boolean
+  /** iOS: a matching Bluetooth output is the active audio route. Android: same as `bluetoothClassicConnected`. */
+  bluetoothAudioRouted: boolean
   signalStrength: number
   /** Milliseconds since epoch when signalStrength was last refreshed by the phone BLE stack. */
   signalStrengthUpdatedAt: number
@@ -1651,6 +1839,10 @@ export interface GlassesStatus {
   leftMacAddress: string
   rightMacAddress: string
   buildNumber: string
+  /** Mentra Live pairing state owned by the SDK. Absent on other models. */
+  pairingState?: MentraLivePairingState
+  /** Audio setup state owned by the SDK, on every model. See `GlassesAudioSetupState`. */
+  audioSetup?: GlassesAudioSetupState
   /** Glasses System.currentTimeMillis() from last version_info (clock skew detection). */
   systemTimeMs?: number
   otaVersionUrl: string
@@ -1745,6 +1937,14 @@ export interface ConnectOptions {
    * Android accepts this option as a no-op.
    */
   requiresAncs?: boolean
+  /**
+   * iOS Mentra Live only. When true, CoreBluetooth is asked to bring up the
+   * Classic profiles (A2DP/HFP) after the BLE connection
+   * (CBConnectPeripheralOptionEnableTransportBridgingKey). Defaults to true:
+   * without it the pairing screen waits for an audio route that never appears.
+   * Android accepts this option as a no-op.
+   */
+  enableTransportBridging?: boolean
 }
 
 export type ScanResultsCallback = (devices: Device[]) => void

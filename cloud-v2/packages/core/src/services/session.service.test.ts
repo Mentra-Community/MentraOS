@@ -109,6 +109,39 @@ describe("issueMiniappToken features", () => {
   })
 })
 
+describe("issueMiniappToken workspace and local-build claims", () => {
+  const issue = async (extra: {workspaceId?: string | null; localBuild?: boolean}) => {
+    setSigningEnv()
+    const {token} = await issueMiniappToken({
+      mentraUserId: "mu_01TEST",
+      tenantId: "mentra",
+      packageName: "com.acme.tools",
+      ...extra,
+    })
+    return jose.decodeJwt(token)
+  }
+
+  test("names the workspace it is given", async () => {
+    const claims = await issue({workspaceId: "ws_acme"})
+    expect(claims).toMatchObject({sub: "mu_01TEST", aud: "com.acme.tools", tenantId: "mentra", workspaceId: "ws_acme"})
+    expect("localBuild" in claims).toBe(false)
+  })
+
+  test("marks a local build, and never names a workspace in its token", async () => {
+    const claims = await issue({workspaceId: "ws_acme", localBuild: true})
+    expect(claims.localBuild).toBe(true)
+    expect("workspaceId" in claims).toBe(false)
+  })
+
+  test("leaves both claims out otherwise", async () => {
+    for (const extra of [{}, {workspaceId: null, localBuild: false}, {workspaceId: ""}]) {
+      const claims = await issue(extra)
+      expect("workspaceId" in claims).toBe(false)
+      expect("localBuild" in claims).toBe(false)
+    }
+  })
+})
+
 describe("revokeSession", () => {
   test("blacklists the access token before deleting the refresh token", async () => {
     const order: string[] = []

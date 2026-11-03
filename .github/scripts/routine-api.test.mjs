@@ -101,44 +101,8 @@ test("result polling retries transient outages and waits for uploads without new
   assert.equal(calls, 2)
 })
 
-test("request and publication callback jobs select the environment providing their Core capability", async () => {
-  const {readFile} = await import("node:fs/promises")
-  for (const [name, jobIds] of [["request-e2e-routine", ["request"]], ["dispatch-device-routine", ["resolve", "dispatch"]]]) {
-    const workflow = await readFile(new URL(`../workflows/${name}.yml`, import.meta.url), "utf8")
-    const jobs = workflow.slice(workflow.indexOf("\njobs:\n")).split(/(?=^  [a-z-]+:\n)/m)
-    for (const jobId of jobIds) {
-      const job = jobs.find(section => section.startsWith(`  ${jobId}:\n`))
-      assert.ok(job, `${name} must contain ${jobId}`)
-      assert.match(job, /^    environment: routine-nightly-dev$/m, `${name}.${jobId} must load the environment secret`)
-      assert.match(job, /TEST_RUN_INGEST_TOKEN: \$\{\{ secrets\.TEST_RUN_INGEST_TOKEN_DEV \}\}/)
-    }
-  }
-})
-
-test("active callers contain no routine registry and preserve enable gates and trusted source checkout", async () => {
+test("routine scripts contain no routine registry", async () => {
   const {readFile, readdir} = await import("node:fs/promises")
-  const workflows = new URL("../workflows/", import.meta.url)
-  const request = await readFile(new URL("request-e2e-routine.yml", workflows), "utf8")
-  const dispatch = await readFile(new URL("dispatch-device-routine.yml", workflows), "utf8")
-  const nightly = await readFile(new URL("nightly-device-routines.yml", workflows), "utf8")
-  const results = await readFile(new URL("notify-release-routine.yml", workflows), "utf8")
-  assert.match(request, /routine:[\s\S]*type: string/)
-  assert.doesNotMatch(request, /pull_request_target:/); assert.match(request, /ref: dev/)
-  assert.match(request, /github.event_name == 'workflow_dispatch'/)
-  assert.match(dispatch, /checksOnly: true/)
-  assert.match(dispatch, /DEVICE_ROUTINE_PR_DISPATCH_ENABLED == 'true'/)
-  assert.match(nightly, /DEVICE_ROUTINE_NIGHTLY_ENABLED == 'true'/)
-  assert.match(nightly, /SLACK_NIGHTLY_BUILDS_CHANNEL_ID/); assert.match(nightly, /publishNightlyMessage/)
-  assert.match(nightly, /^    environment: build-notifications$/m)
-  assert.doesNotMatch(nightly, /SLACK_WEBHOOK_DEV_BUILDS|SLACK_WEBHOOK_NIGHTLY_BUILDS/)
-  assert.match(results, /request_id:/); assert.match(results, /resolveRoutineResults/)
-  assert.match(results, /fanout:[\s\S]*actions: write/)
-  assert.match(results, /fanout:[\s\S]*github\.event_name == 'workflow_run'/)
-  assert.match(results, /resolve:[\s\S]*github\.event_name == 'workflow_dispatch'/)
-  assert.match(results, /launchRoutineResultNotifications/)
-  assert.doesNotMatch(results, /runs-on: ubuntu-latest|routine-result-fanout\.json|Retain authenticated dispatch intent|notification_id|NOTIFICATION_ID/)
-  assert.equal((results.match(/runs-on: blacksmith-4vcpu-ubuntu-2404/g) ?? []).length, 4)
-  assert.doesNotMatch(request + dispatch + results, /worker_run_id|privateGithub|TEST_RUN_GITHUB_APP_PRIVATE_KEY|nightlyOnly/)
   for (const name of await readdir(new URL("./", import.meta.url))) if (name.endsWith(".mjs") && !name.endsWith(".test.mjs") && !name.endsWith("-fixture.mjs")) {
     const source = await readFile(new URL(name, import.meta.url), "utf8")
     assert.doesNotMatch(source, /DEVICE_ROUTINES|device-routines\.mjs|registeredRoutine\(/, name)

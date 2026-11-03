@@ -166,6 +166,16 @@ async function newWorkspace(name = "Acme") {
   return {workspaceId, workspace, owner, developer, admin, member, stranger}
 }
 
+/**
+ * A workspace made by `ownerKey`'s person in which `holder` also holds the owner role: a second membership for
+ * `holder`, which the one-workspace guard refuses through the services, so it is legacy data written directly.
+ */
+async function workspaceWithLegacyOwner(holder: Person, name: string, ownerKey: string) {
+  const created = await createWorkspace(actorOf(await person(ownerKey)), {name})
+  await addMember(created.workspaceId, holder, "owner")
+  return created
+}
+
 /** The PEM body of a key, as Core's key variables hold it. */
 const pemBody = (pem: string) => pem.replace(/-----[A-Z ]+-----/g, "").replace(/\s+/g, "")
 
@@ -897,9 +907,9 @@ describe("POST /authorize", () => {
 describe("POST /principal", () => {
   test("a Supabase access token resolves to the contract's principal and the person's active workspaces", async () => {
     const {workspaceId, developer} = await newWorkspace()
-    const other = await createWorkspace(actorOf(developer), {name: "Second"})
-    const gone = await createWorkspace(actorOf(developer), {name: "Gone"})
-    await deleteWorkspace(actorOf(developer), gone.workspaceId, {confirmName: "Gone"})
+    const other = await workspaceWithLegacyOwner(developer, "Second", "second-owner")
+    const gone = await workspaceWithLegacyOwner(developer, "Gone", "gone-owner")
+    await deleteWorkspace(actorOf(await person("gone-owner")), gone.workspaceId, {confirmName: "Gone"})
 
     const resolved = await store().resolvePrincipal(developer.bearer)
 
@@ -1081,9 +1091,10 @@ describe("POST /principal", () => {
 describe("POST /memberships/check", () => {
   test("answers a role and capabilities for each workspace the person is in and null for every other", async () => {
     const {workspaceId, developer} = await newWorkspace()
-    const second = await createWorkspace(actorOf(developer), {name: "Second"})
-    const gone = await createWorkspace(actorOf(developer), {name: "Gone"})
-    await deleteWorkspace(actorOf(developer), gone.workspaceId, {confirmName: "Gone"})
+    // One workspace per person goes through the services; the developer's other memberships are legacy rows.
+    const second = await workspaceWithLegacyOwner(developer, "Second", "second-owner")
+    const gone = await workspaceWithLegacyOwner(developer, "Gone", "gone-owner")
+    await deleteWorkspace(actorOf(await person("gone-owner")), gone.workspaceId, {confirmName: "Gone"})
     const strangersOnly = await createWorkspace(actorOf(await person("someone-else")), {name: "Theirs"})
 
     const memberships = await store().checkMemberships(developer.mentraUserId, [

@@ -73,7 +73,7 @@ export function fingerprintMobile({tree, env, tools}) {
         ([key]) =>
           !packagingKeys.has(key) &&
           (key.startsWith("EXPO_PUBLIC_") ||
-            ["MENTRAOS_BUILD_NAME", "MENTRAOS_NATIVE_MARKETING_VERSION", "NODE_ENV"].includes(key)),
+            ["MENTRAOS_BUILD_NAME", "MENTRAOS_NATIVE_MARKETING_VERSION", "NODE_ENV", "MENTRA_NIMO_DIAGNOSTIC"].includes(key)),
       )
       .sort(([a], [b]) => a.localeCompare(b)),
   )
@@ -167,6 +167,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const platform = process.argv[2] || "android"
   if (!["android", "ios"].includes(platform)) throw new Error("Expected android or ios")
   const tree = execFileSync("git", ["ls-tree", "-r", "HEAD", "--", ...MOBILE_INPUT_PATHS], {encoding: "utf8"})
+  // A repository that builds this tree inside a larger one (the Mentra
+  // monorepo) fingerprints the inputs it adds outside it: the miniapps it
+  // packs into the app and its own build workflows.
+  const host = process.env.MENTRA_PR_HOST_FINGERPRINT
+  if (host && !/^[a-f0-9]{64}$/.test(host)) throw new Error("Invalid MENTRA_PR_HOST_FINGERPRINT")
   const fingerprint = fingerprintMobile({
     tree,
     env: process.env,
@@ -186,6 +191,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
           }),
       platform: process.platform,
       arch: process.arch,
+      ...(host ? {host} : {}),
     },
   })
   appendFileSync(process.env.GITHUB_ENV, `MENTRA_PR_MOBILE_FINGERPRINT=${fingerprint}\n`)

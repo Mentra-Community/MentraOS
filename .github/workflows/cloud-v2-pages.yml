@@ -22,16 +22,6 @@ on:
           - admin
           - portal
           - account
-  push:
-    branches:
-      - dev
-      - staging
-      - main
-    paths:
-      - "cloud-v2/websites/**"
-      - "cloud-v2/scripts/deploy-pages.ts"
-      - ".github/workflows/cloud-v2-pages.yml"
-
 concurrency:
   group: cloud-v2-pages-${{ github.event_name == 'workflow_dispatch' && inputs.environment || github.ref_name }}
   cancel-in-progress: true
@@ -42,6 +32,9 @@ permissions:
 jobs:
   deploy:
     name: Deploy Cloud V2 Pages
+    # MentraOS dev mirrors Mentra's monorepo, whose own CI deploys dev
+    # (cloud-v2-pages.yml there); staging and main still deploy from here.
+    if: github.ref_name != 'dev'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

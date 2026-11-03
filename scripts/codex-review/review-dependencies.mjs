@@ -1,5 +1,5 @@
 import {existsSync, lstatSync, readFileSync, readdirSync, realpathSync} from "node:fs"
-import {dirname, join, resolve} from "node:path"
+import {dirname, isAbsolute, join, relative, resolve, sep} from "node:path"
 
 // External package storage may be shared. Workspace source and incompatible
 // dependency resolutions must stay outside this exact-head review.
@@ -7,7 +7,10 @@ const [review, anchor] = process.argv.slice(2)
 const names = ["node_modules", "tools/mentra-e2e/node_modules"]
 const sources = names.map((name) => join(anchor, name)).filter(existsSync)
 const roots = sources.map((source) => realpathSync(source))
-const inside = (path) => roots.some((root) => path === root || path.startsWith(`${root}/`))
+const inside = (path) => roots.some((root) => {
+  const fromRoot = relative(root, path)
+  return fromRoot === "" || (fromRoot !== ".." && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot))
+})
 const fail = (message) => {throw new Error(message)}
 const locks = ["bun.lock", "bun.lockb", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"]
 const fields = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]

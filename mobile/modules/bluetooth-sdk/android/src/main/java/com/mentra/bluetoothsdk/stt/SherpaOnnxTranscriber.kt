@@ -1,36 +1,56 @@
 package com.mentra.bluetoothsdk.stt
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
-import com.mentra.bluetoothsdk.utils.NativeLog as Log
-import com.k2fsa.sherpa.onnx.*
+import com.k2fsa.sherpa.onnx.OnlineModelConfig
+import com.k2fsa.sherpa.onnx.OnlineNeMoCtcModelConfig
+import com.k2fsa.sherpa.onnx.OnlineRecognizer
+import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OnlineStream
+import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.BlockingQueue
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 
 /**
- * SherpaOnnxTranscriber handles real-time audio transcription using Sherpa-ONNX.
+ * Real-time on-device transcription with Sherpa-ONNX.
  *
- * It works fully offline and processes PCM audio in real-time to provide partial and final ASR
- * results. This class runs on a background thread, processes short PCM chunks, and emits
- * transcribed text using a listener.
+ * Each loaded model is a session with its own worker thread. Audio and control requests
+ * (finish, reset, release) go through one bounded queue, and the session's native recognizer
+ * and stream are only ever touched on that worker, including when they are released. Replacing
+ * or shutting down a session therefore never frees native memory that a decode is still using:
+ * the release runs on the worker after the audio already queued to it.
  *
- * Ported from iOS SherpaOnnxTranscriber.swift to match iOS functionality 1:1
+ * [initialModelPath] / [initialModelLanguage] pin a specific model; without them the model
+ * stored by [STTTools.setSttModelDetails] is used.
  */
-class SherpaOnnxTranscriber(private val context: Context) {
+class SherpaOnnxTranscriber
+@JvmOverloads
+constructor(
+    private val context: Context,
+    private var initialModelPath: String? = null,
+    private var initialModelLanguage: String? = null,
+) {
     companion object {
         private const val TAG = "SherpaOnnxTranscriber"
         private const val SAMPLE_RATE = 16000 // Sherpa-ONNX model's required sample rate
         private const val QUEUE_CAPACITY = 100 // Max number of audio buffers to keep in queue
-        private const val PREFS_NAME = "MentraPrefs"
-        private const val KEY_STT_MODEL_PATH = "STTModelPath"
-        private const val KEY_STT_MODEL_LANGUAGE = "STTModelLanguageCode"
+
+        /**
+         * Streaming transducers (Zipformer, including Kroko) decode in real time on low-end
+         * phones only with several threads. Decided by model type, never by folder name, and
+         * the same on iOS.
+         */
+        internal const val TRANSDUCER_THREADS = 4
+        internal const val CTC_THREADS = 1
+
+        /** How long [finishUtterance] waits for the worker before giving up. */
+        internal const val FINISH_TIMEOUT_MS = 3_000L
     }
 
     /** Interface to receive transcription results from Sherpa-ONNX */
@@ -42,187 +62,270 @@ class SherpaOnnxTranscriber(private val context: Context) {
         fun onFinalResult(text: String, language: String)
     }
 
-    private val pcmQueue: BlockingQueue<ByteArray> = ArrayBlockingQueue(QUEUE_CAPACITY)
-    private val running = AtomicBoolean(false)
+    internal enum class ModelType {
+        /** Streaming transducer: can be finalized early. */
+        TRANSDUCER,
+        /** Streaming NeMo CTC. */
+        CTC,
+    }
+
+    private sealed class Item {
+        class Audio(val pcm: ByteArray) : Item()
+        class Finish(val result: CompletableFuture<String?>) : Item()
+        object Reset : Item()
+        object Close : Item()
+    }
+
     private val mainHandler = Handler(Looper.getMainLooper())
-
-    private var workerThread: Thread? = null
-    private var recognizer: OnlineRecognizer? = null
-    private var stream: OnlineStream? = null
-
-    private var lastPartialResult = ""
     @Volatile private var transcriptListener: TranscriptListener? = null
+    @Volatile private var session: Session? = null
+    private val lifecycleLock = Any()
 
-    private val restartLock = Any()
-    private var restartRunning = false
+    /** One loaded model and its worker. */
+    private inner class Session(
+        /** Path as selected (before resolving a stale Documents prefix). */
+        val requestedPath: String,
+        /** Directory the model was loaded from. */
+        val modelPath: String,
+        val language: String,
+        val modelType: ModelType,
+        val casing: SttTextFormatter.Casing,
+        private val recognizer: OnlineRecognizer,
+        private var stream: OnlineStream,
+    ) {
+        private val queue = BoundedAudioQueue<Item>(QUEUE_CAPACITY) { it is Item.Audio }
+        @Volatile var closed = false
+            private set
+        private var lastPartialResult = ""
+        private var lastDropLogAt = 0L
+        private val worker = Thread({ runLoop() }, "SherpaOnnxProcessor").apply { isDaemon = true }
 
-    private val prefs: SharedPreferences by lazy {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        fun start() = worker.start()
+
+        fun accept(pcm: ByteArray) {
+            if (closed) return
+            if (queue.offer(Item.Audio(pcm)) != null) {
+                val now = System.currentTimeMillis()
+                if (now - lastDropLogAt > 5_000) {
+                    lastDropLogAt = now
+                    Bridge.log("STT: audio queue full; dropped ${queue.droppedAudio} buffer(s) so far")
+                }
+            }
+        }
+
+        fun finish(): CompletableFuture<String?> {
+            val result = CompletableFuture<String?>()
+            if (closed) {
+                result.complete(null)
+            } else {
+                queue.offer(Item.Finish(result))
+            }
+            return result
+        }
+
+        fun reset() {
+            if (closed) return
+            queue.clearAudio()
+            queue.offer(Item.Reset)
+        }
+
+        /** Release after the audio already queued; returns immediately. */
+        fun close() {
+            if (closed) return
+            closed = true
+            queue.offer(Item.Close)
+        }
+
+        private fun runLoop() {
+            try {
+                while (true) {
+                    when (val item = queue.poll(1_000) ?: continue) {
+                        is Item.Audio -> decode(item.pcm)
+                        is Item.Finish -> finishStream(item.result)
+                        Item.Reset -> resetStream()
+                        Item.Close -> return
+                    }
+                }
+            } finally {
+                for (item in queue.drain()) {
+                    if (item is Item.Finish) item.result.complete(null)
+                }
+                try {
+                    stream.release()
+                    recognizer.release()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error releasing Sherpa resources", e)
+                }
+                Bridge.log("STT: released model at $modelPath")
+            }
+        }
+
+        private fun decode(pcm: ByteArray) {
+            try {
+                stream.acceptWaveform(toFloatArray(pcm), SAMPLE_RATE)
+                while (recognizer.isReady(stream)) {
+                    recognizer.decode(stream)
+                }
+                val text = recognizer.getResult(stream).text.trim()
+                if (recognizer.isEndpoint(stream)) {
+                    if (text.isNotEmpty()) deliver(this, text, isFinal = true, onDelivered = null)
+                    recognizer.reset(stream) // Start new utterance
+                    lastPartialResult = ""
+                } else if (text.isNotEmpty() && text != lastPartialResult) {
+                    deliver(this, text, isFinal = false, onDelivered = null)
+                    lastPartialResult = text
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing audio", e)
+                resetStream()
+            }
+        }
+
+        private fun finishStream(result: CompletableFuture<String?>) {
+            if (modelType != ModelType.TRANSDUCER) {
+                result.complete(null)
+                return
+            }
+            try {
+                val startedAt = System.currentTimeMillis()
+                val current = stream
+                // Sherpa's streaming file decoder uses 660 ms of padding before inputFinished.
+                // This is synthetic context, decoded immediately; it is not a wall-clock wait.
+                current.acceptWaveform(FloatArray(SAMPLE_RATE * 66 / 100), SAMPLE_RATE)
+                current.inputFinished()
+                while (recognizer.isReady(current)) recognizer.decode(current)
+                val text = recognizer.getResult(current).text.trim()
+                // An ended stream cannot accept new samples. Keep the model, replace the stream.
+                stream = recognizer.createStream("")
+                current.release()
+                lastPartialResult = ""
+                Bridge.log(
+                    "STT_FINISH elapsedMs=${System.currentTimeMillis() - startedAt} characters=${text.length}"
+                )
+                if (text.isEmpty()) {
+                    result.complete("")
+                } else {
+                    // Resolve only once the final event has been handed to the bridge.
+                    deliver(this, text, isFinal = true) { formatted -> result.complete(formatted) }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error finishing utterance", e)
+                result.complete(null)
+                resetStream()
+            }
+        }
+
+        private fun resetStream() {
+            try {
+                recognizer.reset(stream)
+                lastPartialResult = ""
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to reset stream", e)
+            }
+        }
     }
 
     /**
-     * Get the custom model path from SharedPreferences Resolves relative paths from Documents
-     * directory
+     * Get the custom model path from SharedPreferences. Resolves a stale Documents prefix
+     * (app id changes between dev builds) against the current files directory.
      */
-    private fun getCustomModelPath(): String? {
-        val storedPath = prefs.getString(KEY_STT_MODEL_PATH, null) ?: return null
-
-        // Always resolve to absolute path if it contains "Documents/"
-        // This handles app ID changes between dev builds
+    private fun resolveModelPath(storedPath: String): String {
         if (storedPath.contains("/Documents/")) {
-            val documentsDir =
-                    context.filesDir // In Android, this is the app's private files directory
             val relativePath = storedPath.substringAfter("/Documents/")
-            val fixedPath = File(documentsDir, relativePath).absolutePath
+            val fixedPath = File(context.filesDir, relativePath).absolutePath
             Bridge.log("Reconstructed STTModelPath: $fixedPath")
             return fixedPath
         }
-
-        Bridge.log("STTModelPath (raw): $storedPath")
         return storedPath
     }
 
-    /** Get the model language code from SharedPreferences */
-    private fun getModelLanguage(): String {
-        return prefs.getString(KEY_STT_MODEL_LANGUAGE, "en-US") ?: "en-US"
+    /**
+     * Load the model now (synchronously, on the calling thread), replacing any loaded one.
+     * The previous model is released on its own worker after the audio queued to it.
+     * Throws when there is no model or it can't be loaded.
+     */
+    internal fun load() {
+        val requestedPath =
+            initialModelPath?.takeIf { it.isNotBlank() }
+                ?: STTTools.getSttModelPath(context).takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("No on-device speech model is selected")
+        val language = initialModelLanguage ?: STTTools.getSttModelLanguage(context)
+        val modelPath = resolveModelPath(requestedPath)
+        val next = createSession(requestedPath, modelPath, language)
+        val previous =
+            synchronized(lifecycleLock) {
+                val old = session
+                session = next
+                old
+            }
+        next.start()
+        previous?.close()
+        Bridge.log("Sherpa-ONNX ASR initialized with ${next.modelType} model at $modelPath")
     }
 
-    /**
-     * Initialize the Sherpa-ONNX recognizer. Loads models and configuration, sets up processing
-     * thread.
-     */
-    fun initialize() {
-        try {
-            val modelPath = getCustomModelPath()
-
-            if (modelPath == null) {
-                Bridge.log("No Sherpa ONNX model available. Transcription will be disabled.")
-                Bridge.log("Please download a model using the model downloader in settings.")
-                recognizer = null
-                stream = null
-                return
-            }
-
-            val modelDir = File(modelPath)
-            if (!modelDir.exists() || !modelDir.isDirectory) {
-                Bridge.log("Model path does not exist or is not a directory: $modelPath")
-                recognizer = null
-                stream = null
-                return
-            }
-
-            val tokensPath = File(modelDir, "tokens.txt").absolutePath
-            val tokensFile = File(tokensPath)
-
-            if (!tokensFile.exists()) {
-                throw IllegalStateException("tokens.txt not found at path: $modelPath")
-            }
-
-            val modelType: String
-            val modelConfig = OnlineModelConfig()
-
-            // Detect model type based on available files
-            val ctcModelFile = findReadableFile(modelDir, listOf("model.int8.onnx", "model.onnx"))
-            val transducerEncoderFile =
-                    findReadableFile(modelDir, listOf("encoder.onnx", "encoder.int8.onnx"))
-
-            when {
-                ctcModelFile.exists() -> {
-                    // CTC model detected
-                    modelType = "ctc"
-                    Bridge.log("Detected CTC model at $modelPath")
-
-                    val nemoCtc = OnlineNeMoCtcModelConfig()
-                    nemoCtc.model = ctcModelFile.absolutePath
-
-                    modelConfig.tokens = tokensPath
-                    modelConfig.numThreads = 1
-                    modelConfig.neMoCtc = nemoCtc
-                }
-                transducerEncoderFile.exists() -> {
-                    // Transducer model detected
-                    modelType = "transducer"
-                    Bridge.log("Detected transducer model at $modelPath")
-
-                    val decoderFile =
-                            findReadableFile(modelDir, listOf("decoder.onnx", "decoder.int8.onnx"))
-                    val joinerFile =
-                            findReadableFile(modelDir, listOf("joiner.onnx", "joiner.int8.onnx"))
-
-                    if (!decoderFile.exists() || !joinerFile.exists()) {
-                        throw IllegalStateException(
-                                "Transducer model files incomplete at path: $modelPath"
-                        )
-                    }
-
-                    val transducer = OnlineTransducerModelConfig()
-                    transducer.encoder = transducerEncoderFile.absolutePath
-                    transducer.decoder = decoderFile.absolutePath
-                    transducer.joiner = joinerFile.absolutePath
-
-                    modelConfig.tokens = tokensPath
-                    modelConfig.transducer = transducer
-                    modelConfig.numThreads = 1
-                }
-                else -> {
-                    throw IllegalStateException("No valid model files found at path: $modelPath")
-                }
-            }
-
-            // Configure recognizer
-            val config = OnlineRecognizerConfig()
-            config.modelConfig = modelConfig
-            config.decodingMethod = "greedy_search"
-            config.enableEndpoint = true
-
-            // Create recognizer (pass null for AssetManager since we're using file paths)
-            recognizer =
-                    try {
-                        OnlineRecognizer(null, config)
-                    } catch (e: Exception) {
-                        Log.e(
-                                TAG,
-                                "Failed to create OnlineRecognizer - model file may be corrupted or incomplete",
-                                e
-                        )
-                        null
-                    }
-
-            if (recognizer == null) {
-                throw IllegalStateException("Failed to create recognizer")
-            }
-
-            stream = recognizer?.createStream("")
-
-            startProcessingThread()
-            running.set(true)
-
-            Bridge.log("Sherpa-ONNX ASR initialized successfully with $modelType model")
-        } catch (e: Exception) {
-            Bridge.log("Failed to initialize Sherpa-ONNX: ${e.message}")
-            Log.e(TAG, "Failed to initialize Sherpa-ONNX", e)
-
-            // Clean up any partially initialized resources
-            stream?.let {
-                try {
-                    it.release()
-                } catch (releaseEx: Exception) {
-                    Log.e(TAG, "Error releasing stream after initialization failure", releaseEx)
-                }
-            }
-            stream = null
-
-            recognizer?.let {
-                try {
-                    it.release()
-                } catch (releaseEx: Exception) {
-                    Log.e(TAG, "Error releasing recognizer after initialization failure", releaseEx)
-                }
-            }
-            recognizer = null
-
-            running.set(false)
+    private fun createSession(requestedPath: String, modelPath: String, language: String): Session {
+        val modelDir = File(modelPath)
+        if (!modelDir.isDirectory) {
+            throw IllegalStateException("Model path does not exist or is not a directory: $modelPath")
         }
+        val tokensFile = File(modelDir, "tokens.txt")
+        if (!tokensFile.isFile) {
+            throw IllegalStateException("tokens.txt not found at path: $modelPath")
+        }
+
+        val modelConfig = OnlineModelConfig()
+        modelConfig.tokens = tokensFile.absolutePath
+        val ctcModelFile = findReadableFile(modelDir, listOf("model.int8.onnx", "model.onnx"))
+        val encoderFile = findReadableFile(modelDir, listOf("encoder.onnx", "encoder.int8.onnx"))
+        val modelType: ModelType
+        when {
+            ctcModelFile.exists() -> {
+                modelType = ModelType.CTC
+                val nemoCtc = OnlineNeMoCtcModelConfig()
+                nemoCtc.model = ctcModelFile.absolutePath
+                modelConfig.neMoCtc = nemoCtc
+                modelConfig.numThreads = CTC_THREADS
+            }
+            encoderFile.exists() -> {
+                modelType = ModelType.TRANSDUCER
+                val decoderFile = findReadableFile(modelDir, listOf("decoder.onnx", "decoder.int8.onnx"))
+                val joinerFile = findReadableFile(modelDir, listOf("joiner.onnx", "joiner.int8.onnx"))
+                if (!decoderFile.exists() || !joinerFile.exists()) {
+                    throw IllegalStateException("Transducer model files incomplete at path: $modelPath")
+                }
+                val transducer = OnlineTransducerModelConfig()
+                transducer.encoder = encoderFile.absolutePath
+                transducer.decoder = decoderFile.absolutePath
+                transducer.joiner = joinerFile.absolutePath
+                modelConfig.transducer = transducer
+                modelConfig.numThreads = TRANSDUCER_THREADS
+            }
+            else -> throw IllegalStateException("No valid model files found at path: $modelPath")
+        }
+
+        val config = OnlineRecognizerConfig()
+        config.modelConfig = modelConfig
+        config.decodingMethod = "greedy_search"
+        config.enableEndpoint = true
+
+        // Null AssetManager: the model is loaded from file paths.
+        val recognizer = OnlineRecognizer(null, config)
+        val stream =
+            try {
+                recognizer.createStream("")
+            } catch (e: Exception) {
+                recognizer.release()
+                throw e
+            }
+        return Session(
+            requestedPath = requestedPath,
+            modelPath = modelPath,
+            language = language,
+            modelType = modelType,
+            casing = SttTextFormatter.casingForModel(modelDir),
+            recognizer = recognizer,
+            stream = stream,
+        )
     }
 
     private fun findReadableFile(modelDir: File, candidates: List<String>): File {
@@ -232,210 +335,117 @@ class SherpaOnnxTranscriber(private val context: Context) {
     }
 
     /**
-     * Feed PCM audio data (16-bit little endian) into the transcriber. This method should be called
-     * continuously with short chunks (e.g., 100-300ms).
-     *
-     * Audio is queued directly; microphone VAD gating is not applied in the SDK.
+     * Initialize the Sherpa-ONNX recognizer. Loads the model and starts its worker. On failure
+     * the transcriber stays uninitialized (see [isInitialized]).
      */
-    fun acceptAudio(pcm16le: ByteArray) {
-        if (!running.get()) {
-            // Bridge.log("⚠️ Ignoring audio - transcriber not running")
-            return
+    fun initialize() {
+        try {
+            load()
+        } catch (e: Exception) {
+            Bridge.log("Failed to initialize Sherpa-ONNX: ${e.message}")
+            Log.e(TAG, "Failed to initialize Sherpa-ONNX", e)
         }
-
-        if (!pcmQueue.offer(pcm16le.copyOf())) {
-            // Queue is full, drop oldest and try again
-            pcmQueue.poll()
-            pcmQueue.offer(pcm16le.copyOf())
-            Bridge.log("⚠️ Audio queue overflow - dropped buffer")
-        }
-    }
-
-    /** Start a background thread to continuously consume audio and decode using Sherpa */
-    private fun startProcessingThread() {
-        Bridge.log("🚀 Starting Sherpa-ONNX processing thread...")
-
-        workerThread =
-                Thread({ runLoop() }, "SherpaOnnxProcessor").apply {
-                    isDaemon = true
-                    start()
-                }
     }
 
     /**
-     * Main processing loop that handles transcription in real-time. Pulls audio from queue, feeds
-     * into Sherpa, emits partial/final results.
+     * Feed PCM audio data (16-bit little endian, 16 kHz mono). Never blocks and never touches
+     * native code on the calling thread.
      */
-    private fun runLoop() {
-        Bridge.log("🔄 Sherpa-ONNX processing loop started")
+    fun acceptAudio(pcm16le: ByteArray) {
+        session?.accept(pcm16le.copyOf())
+    }
 
-        while (running.get()) {
-            try {
-                val currentRecognizer = recognizer
-                val currentStream = stream
+    /** Whether the loaded model can finish its current utterance early (streaming transducer). */
+    internal val canFinalize: Boolean
+        get() = session?.modelType == ModelType.TRANSDUCER
 
-                if (currentRecognizer == null || currentStream == null) {
-                    Bridge.log("⚠️ Recognizer or stream not available, skipping audio chunk")
-                    Thread.sleep(100)
-                    continue
-                }
+    /** The selected path of the loaded model, or null. Lock-free. */
+    internal val loadedModelPath: String?
+        get() = session?.requestedPath
 
-                // Pull data from queue with timeout
-                val audioData = pcmQueue.poll(50, java.util.concurrent.TimeUnit.MILLISECONDS)
+    /** Whether [path] is the loaded model. Lock-free. */
+    internal fun isModelLoaded(path: String): Boolean {
+        val current = session ?: return false
+        return current.requestedPath == path || current.modelPath == path
+    }
 
-                if (audioData != null) {
-                    // Convert PCM to float [-1.0, 1.0]
-                    val floatBuf = toFloatArray(audioData)
-
-                    // Pass audio data to the Sherpa-ONNX stream
-                    currentStream.acceptWaveform(floatBuf, SAMPLE_RATE)
-
-                    // Decode continuously while model is ready
-                    var decodeCount = 0
-                    while (currentRecognizer.isReady(currentStream)) {
-                        currentRecognizer.decode(currentStream)
-                        decodeCount++
-                    }
-
-                    // If utterance endpoint detected
-                    if (currentRecognizer.isEndpoint(currentStream)) {
-                        val result = currentRecognizer.getResult(currentStream)
-                        val finalText = result.text.trim()
-
-                        if (finalText.isNotEmpty()) {
-                            handleTranscriptionResult(finalText, isFinal = true)
-                        }
-
-                        currentRecognizer.reset(currentStream) // Start new utterance
-                        lastPartialResult = ""
-                    } else {
-                        // Emit partial results if changed
-                        val result = currentRecognizer.getResult(currentStream)
-                        val partial = result.text.trim()
-
-                        if (partial != lastPartialResult && partial.isNotEmpty()) {
-                            handleTranscriptionResult(partial, isFinal = false)
-                            lastPartialResult = partial
-                        }
-                    }
-                }
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-                Bridge.log("Processing thread interrupted")
-                break
-            } catch (e: Exception) {
-                Log.e(TAG, "Error processing audio", e)
-                // Attempt stream reset to recover
-                try {
-                    recognizer?.let { rec -> stream?.let { str -> rec.reset(str) } }
-                } catch (resetEx: Exception) {
-                    Log.e(TAG, "Failed to reset stream after error", resetEx)
-                }
-            }
+    /**
+     * Finish the current utterance after all PCM queued before this call. Returns the final
+     * text once its final result has been delivered to the listener, `""` when nothing was
+     * pending, or null when no model is loaded, the model can't finalize early (not a
+     * streaming transducer), or the worker didn't answer within [timeoutMs].
+     */
+    internal fun finishUtterance(timeoutMs: Long = FINISH_TIMEOUT_MS): String? {
+        val current = session ?: return null
+        if (current.modelType != ModelType.TRANSDUCER) return null
+        return try {
+            current.finish().get(timeoutMs, TimeUnit.MILLISECONDS)
+        } catch (e: java.util.concurrent.TimeoutException) {
+            Bridge.log("STT: finishUtterance timed out after ${timeoutMs}ms")
+            null
+        } catch (e: Exception) {
+            Bridge.log("STT: finishUtterance failed: ${e.message}")
+            null
         }
-
-        Bridge.log("ASR processing thread stopped")
     }
 
     /** Convert 16-bit PCM byte data (little-endian) to float array [-1.0, 1.0] */
     private fun toFloatArray(pcmData: ByteArray): FloatArray {
         val count = pcmData.size / 2
         val samples = FloatArray(count)
-
         val buffer = ByteBuffer.wrap(pcmData).order(ByteOrder.LITTLE_ENDIAN)
-
         for (i in 0 until count) {
             samples[i] = buffer.short / 32768.0f
         }
-
         return samples
     }
 
-    /** Handle transcription results - send to listener on main thread */
-    private fun handleTranscriptionResult(text: String, isFinal: Boolean) {
-        val language = getModelLanguage()
-
-        // Forward to listener on main thread
+    /**
+     * Format with the loaded model's casing and deliver on the main thread. [onDelivered] runs
+     * right after the listener, with the delivered text.
+     */
+    private fun deliver(
+        from: Session,
+        text: String,
+        isFinal: Boolean,
+        onDelivered: ((String) -> Unit)?,
+    ) {
+        val formatted = SttTextFormatter.format(text, from.casing)
         mainHandler.post {
-            transcriptListener?.let { listener ->
-                if (isFinal) {
-                    listener.onFinalResult(text, language)
-                } else {
-                    listener.onPartialResult(text, language)
+            try {
+                transcriptListener?.let { listener ->
+                    if (isFinal) {
+                        listener.onFinalResult(formatted, from.language)
+                    } else {
+                        listener.onPartialResult(formatted, from.language)
+                    }
                 }
+            } finally {
+                onDelivered?.invoke(formatted)
             }
         }
     }
 
     /**
-     * Stop transcription processing. This shuts down the processing thread and releases Sherpa-ONNX
-     * resources.
+     * Stop transcription. Returns immediately; the model is released on its worker after the
+     * audio already queued to it.
      */
     fun shutdown() {
-        Bridge.log("🛑 Shutting down SherpaOnnxTranscriber...")
-
-        running.set(false)
-
-        workerThread?.let { thread ->
-            thread.interrupt()
-            try {
-                thread.join(500)
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
+        val previous =
+            synchronized(lifecycleLock) {
+                val old = session
+                session = null
+                old
             }
-        }
-        workerThread = null
-
-        try {
-            stream?.let {
-                Bridge.log("🧹 Cleaning up Sherpa-ONNX stream")
-                it.release()
-            }
-            stream = null
-
-            recognizer?.let {
-                Bridge.log("🧹 Cleaning up Sherpa-ONNX recognizer")
-                it.release()
-            }
-            recognizer = null
-        } catch (e: Exception) {
-            Log.e(TAG, "Error releasing Sherpa resources", e)
-        }
-
-        // Clear any remaining audio buffers
-        val remainingBuffers = pcmQueue.size
-        if (remainingBuffers > 0) {
-            Bridge.log("🗑️ Clearing $remainingBuffers remaining audio buffers")
-        }
-        pcmQueue.clear()
-
-        Bridge.log("✅ SherpaOnnxTranscriber shutdown complete")
+        previous?.close()
     }
 
-    /**
-     * Restarts the transcriber after a model change. Shuts down existing resources, clears buffers,
-     * and reinitializes the recognizer.
-     */
+    /** Reload the selected model (for example after a model change). */
     fun restart() {
-        synchronized(restartLock) {
-            if (restartRunning) {
-                Bridge.log("Restart already in progress, skipping")
-                return
-            }
-            restartRunning = true
-        }
-
-        try {
-            Bridge.log("♻️ Restarting SherpaOnnxTranscriber...")
-            shutdown()
-            // Small delay to ensure cleanup completes
-            Thread.sleep(100)
-            initialize()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error during transcriber restart", e)
-        } finally {
-            synchronized(restartLock) { restartRunning = false }
-        }
+        initialModelPath = null
+        initialModelLanguage = null
+        Bridge.log("Restarting SherpaOnnxTranscriber")
+        initialize()
     }
 
     /** Register a listener to receive partial and final transcription updates */
@@ -444,29 +454,10 @@ class SherpaOnnxTranscriber(private val context: Context) {
     }
 
     /** Check if the transcriber was successfully initialized */
-    fun isInitialized(): Boolean {
-        return recognizer != null && stream != null
-    }
+    fun isInitialized(): Boolean = session != null
 
-    /** Handle microphone state changes */
+    /** Handle microphone state changes: turning off drops queued audio and starts a new utterance. */
     fun microphoneStateChanged(state: Boolean) {
-        if (!state) {
-            // Microphone turned off - clear queue and reset stream
-            pcmQueue.clear()
-
-            recognizer?.let { rec ->
-                stream?.let { str ->
-                    try {
-                        rec.reset(str)
-                        lastPartialResult = ""
-                        Log.d(TAG, "Microphone off — stream reset")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error resetting stream on mic off", e)
-                    }
-                }
-            }
-        } else {
-            Log.d(TAG, "Microphone on")
-        }
+        if (!state) session?.reset()
     }
 }

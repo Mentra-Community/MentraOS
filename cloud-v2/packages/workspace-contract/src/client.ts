@@ -1,31 +1,58 @@
 /**
- * Signed client for Core's internal service API (`/api/internal/workspaces/*`, and the Store's
- * `/api/internal/licenses/*`), for a service that shares a secret with its Core (the Store, Fleet). Every
- * request is signed over its timestamp, method, path and body hash (`service-signature.ts`); no request
- * names an organization.
+ * Signed client for Core's internal service API (`/api/internal/workspaces/*`, the Store's
+ * `/api/internal/licenses/*`, and the miniapp registry's `/api/internal/registry/*`), for a service that shares a
+ * secret with its Core (the Store, Fleet). Every request is signed over its timestamp, method, path and body hash
+ * (`service-signature.ts`); no request names an organization.
  */
+import {WORKSPACE_ROLES} from "./capabilities"
 import {isWorkspaceDeletionHold} from "./deletion-holds"
 import {OWNER_NOT_FOUND_ERROR, STALE_REVISION_ERROR} from "./licenses"
 import type {LicensesResponse, LicenseView, LicenseWrite, LicenseWriteResponse} from "./licenses"
 import {SERVICE_HEADERS, signServiceRequest} from "./service-signature"
-import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR, USER_NOT_FOUND_ERROR, WORKSPACE_NOT_FOUND_ERROR} from "./types"
+import {
+  INVALID_TOKEN_ERROR,
+  REGISTRY_CHECK_STATUSES,
+  REGISTRY_ENTRY_NOT_FOUND_ERROR,
+  SERVICE_UNAUTHORIZED_ERROR,
+  USER_NOT_FOUND_ERROR,
+  WORKSPACE_NOT_FOUND_ERROR,
+} from "./types"
 import type {
   AuthorizeRequest,
   AuthorizeResponse,
   DeletionHoldsResponse,
   DeletionHoldUpdate,
   MembershipCheckEntry,
+  MembershipInterval,
+  MembershipIntervalsResponse,
   PrincipalResponse,
+  RegistryArchiveRequest,
+  RegistryArchiveResponse,
+  RegistryArchiveRuleKind,
+  RegistryCheckRequest,
+  RegistryCheckResult,
+  RegistryEntryDetail,
+  RegistryLookupEntry,
+  RegistryLookupRequest,
   WorkspaceChangeEvent,
   WorkspaceChangesResponse,
+  WorkspaceMembersResponse,
   WorkspaceSummary,
 } from "./types"
 
 const API_PREFIX = "/api/internal/workspaces"
 const LICENSES_PREFIX = "/api/internal/licenses"
+const REGISTRY_PREFIX = "/api/internal/registry"
+const REGISTRY_RULE_KINDS: readonly RegistryArchiveRuleKind[] = ["url", "package", "domain", "account"]
+const AGE_RATINGS = ["4+", "9+", "13+", "16+", "18+"]
 /** A feed cursor: a `seq` as a decimal string, with no sign, leading zero or fraction. */
 const CURSOR = /^[1-9]\d*$/
 const DEFAULT_TIMEOUT_MS = 5_000
+/**
+ * The least time a registry check gets: Core answers it within 10 seconds (`REGISTRY_CHECK_DEADLINE_MS` in Core),
+ * so the client waits that long and a little more for the answer to arrive, whatever its own timeout.
+ */
+export const REGISTRY_CHECK_TIMEOUT_MS = 15_000
 
 export type CoreWorkspaceClientErrorCode =
   /** Core could not be reached, timed out, or answered with a 5xx. */
@@ -71,6 +98,15 @@ export interface CoreWorkspaceClient {
    * the page was not full. Store a cursor only after the events up to it are processed.
    */
   listChanges(input: {after?: string | null; limit?: number}): Promise<WorkspaceChangesResponse>
+  /**
+   * One page of membership interval history (Fleet only). Every interval overlapping the lookback window is
+   * returned, including an open one that started before it. `after` is the previous page's opaque `next`
+   * (omitted or null starts from the beginning); `limit` is at most 500. The response's `feedSeq` is the change-feed
+   * position the read is consistent with, so a consumer then applies feed events after it.
+   */
+  listMembershipIntervals(input: {after?: string | null; limit?: number}): Promise<MembershipIntervalsResponse>
+  /** Who is in a workspace now, with names (Fleet only). An unknown or deleted workspace is `workspace_not_found`. */
+  listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMembersResponse>
   mintServiceCredential(input: {
     workspaceId: string
     name: string
@@ -114,6 +150,31 @@ export interface CoreWorkspaceClient {
   putLicense(write: LicenseWrite): Promise<LicenseWriteResponse>
   /** One workspace's licenses, ended ones included, each with how many seats are assigned (the Store only). */
   listLicenses(workspaceId: string): Promise<LicensesResponse>
+  /**
+   * What the miniapp registry says of each URL an admin is assigning (Fleet only): one result per URL, in order.
+   * Core registers a URL it doesn't know as the admin's own install would, answering a sign-in challenge with a
+   * token that names `workspaceId` when the admin is an active member of it (anyone else, such as an Organization
+   * Admin who isn't one, gets their own ordinary token), and gives up on a URL it hasn't finished within 10 seconds
+   * (`unknown`), so this call waits at least `REGISTRY_CHECK_TIMEOUT_MS` whatever the client's `timeoutMs`. A
+   * workspace that isn't active, or a person who isn't a live account, is `forbidden` (`403 not_a_member`).
+   */
+  checkRegistry(input: RegistryCheckRequest): Promise<RegistryCheckResult[]>
+  /**
+   * Names for a workspace's views (Fleet only): every package asked about, null where the registry has none. A
+   * private miniapp is named only for a workspace that assigned it.
+   */
+  lookupRegistry(input: RegistryLookupRequest): Promise<Record<string, RegistryLookupEntry | null>>
+  /**
+   * The registry's entry for a miniapp URL and Core's verified `miniapp.json` (the Store only), or null when the
+   * registry has none (`404 not_found`). Core shows a private or phone-reported entry's URL and package only.
+   */
+  getRegistryEntry(url: string): Promise<RegistryEntryDetail | null>
+  /**
+   * Archive a URL, a package name, a registrable domain or an account's entries (the Store only), for the staff
+   * member `actorEmail`. Archiving a rule that exists changes nothing (`created: false`). A rule that can't name any
+   * entry is `bad_request`.
+   */
+  archiveRegistry(input: RegistryArchiveRequest): Promise<RegistryArchiveResponse>
 }
 
 export interface CoreWorkspaceClientOptions {
@@ -174,6 +235,58 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
     return event as unknown as WorkspaceChangeEvent
   }
 
+  const INTERVAL_END_REASONS = ["left", "removed", "workspace_deleted", "account_deleted"]
+
+  /** An interval as Core lists it: a closed one names why it ended, an open one does not. */
+  function checkInterval(path: string, value: unknown): MembershipInterval {
+    const interval = checkRecord(path, value, "an interval")
+    for (const field of ["membershipId", "workspaceId", "mentraUserId", "role"] as const) {
+      if (typeof interval[field] !== "string" || !interval[field]) throw badResponse(path, `an interval has no ${field}`)
+    }
+    if (typeof interval.start !== "string" || Number.isNaN(Date.parse(interval.start))) {
+      throw badResponse(path, "an interval's start is not a time")
+    }
+    if (interval.end === null) {
+      if (interval.endReason !== null) throw badResponse(path, "an open interval names an endReason")
+    } else {
+      if (typeof interval.end !== "string" || Number.isNaN(Date.parse(interval.end))) {
+        throw badResponse(path, "an interval's end is neither a time nor null")
+      }
+      if (Date.parse(interval.end) < Date.parse(interval.start)) throw badResponse(path, "an interval ends before it starts")
+      if (typeof interval.endReason !== "string" || !INTERVAL_END_REASONS.includes(interval.endReason)) {
+        throw badResponse(path, "a closed interval has no known endReason")
+      }
+    }
+    checkRoleIntervals(path, interval)
+    return interval as unknown as MembershipInterval
+  }
+
+  /** An interval's role intervals: at least one, in order, inside the interval, only the last one open. */
+  function checkRoleIntervals(path: string, interval: Json): void {
+    const roles = interval.roles
+    if (!Array.isArray(roles) || roles.length === 0) throw badResponse(path, "an interval has no role intervals")
+    const start = Date.parse(interval.start as string)
+    const end = interval.end === null ? null : Date.parse(interval.end as string)
+    let previousEnd = start
+    roles.forEach((value, index) => {
+      const entry = checkRecord(path, value, "a role interval")
+      if (typeof entry.role !== "string" || !(WORKSPACE_ROLES as readonly string[]).includes(entry.role)) {
+        throw badResponse(path, "a role interval has no known role")
+      }
+      const from = typeof entry.start === "string" ? Date.parse(entry.start) : NaN
+      if (Number.isNaN(from) || from < previousEnd) throw badResponse(path, "a role interval starts out of order")
+      const last = index === roles.length - 1
+      if (entry.end === null) {
+        if (!last || end !== null) throw badResponse(path, "only the last role of an open interval is open")
+        return
+      }
+      const to = typeof entry.end === "string" ? Date.parse(entry.end) : NaN
+      if (Number.isNaN(to) || to < from || (end !== null && to > end)) throw badResponse(path, "a role interval's end is out of range")
+      if (last && end === null) throw badResponse(path, "the last role of an open interval is still held")
+      previousEnd = to
+    })
+  }
+
   function checkWorkspace(path: string, value: unknown, what: string): Json {
     const workspace = checkRecord(path, value, what)
     if (typeof workspace.workspaceId !== "string") throw badResponse(path, `${what} has no workspaceId`)
@@ -214,12 +327,89 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
     return {workspaceId: raw.workspaceId, holds: raw.holds, ignored: raw.ignored}
   }
 
+  const isTextOrNull = (value: unknown) => value === null || typeof value === "string"
+  const isTime = (value: unknown) => typeof value === "string" && !Number.isNaN(Date.parse(value))
+
+  /** A check result for `url`, the URL asked about in its place. */
+  function checkCheckResult(path: string, value: unknown, url: string): RegistryCheckResult {
+    const result = checkRecord(path, value, "a check result")
+    if (result.url !== url) throw badResponse(path, "the results are not the URLs asked about, in order")
+    if (typeof result.status !== "string" || !(REGISTRY_CHECK_STATUSES as readonly string[]).includes(result.status)) {
+      throw badResponse(path, "a check result has no known status")
+    }
+    for (const field of ["packageName", "name", "iconUrl"] as const) {
+      if (!isTextOrNull(result[field])) throw badResponse(path, `a check result's ${field} is not text or null`)
+    }
+    if (typeof result.private !== "boolean") throw badResponse(path, "a check result's private is not a boolean")
+    if (!isTime(result.checkedAt)) throw badResponse(path, "a check result's checkedAt is not a time")
+    return {
+      url,
+      status: result.status as RegistryCheckResult["status"],
+      packageName: result.packageName as string | null,
+      name: result.name as string | null,
+      iconUrl: result.iconUrl as string | null,
+      private: result.private,
+      checkedAt: result.checkedAt as string,
+    }
+  }
+
+  function checkLookupEntry(path: string, value: unknown): RegistryLookupEntry | null {
+    if (value === null) return null
+    const entry = checkRecord(path, value, "a lookup entry")
+    if (!isTextOrNull(entry.name) || !isTextOrNull(entry.iconUrl)) {
+      throw badResponse(path, "a lookup entry's name or iconUrl is not text or null")
+    }
+    if (typeof entry.private !== "boolean" || typeof entry.archived !== "boolean") {
+      throw badResponse(path, "a lookup entry's private or archived is not a boolean")
+    }
+    return {
+      name: entry.name as string | null,
+      iconUrl: entry.iconUrl as string | null,
+      private: entry.private,
+      archived: entry.archived,
+    }
+  }
+
+  /** A registry entry as `entries` answers it: the view's fields, each of its type, and the manifest or null. */
+  function checkRegistryEntry(path: string, value: unknown): RegistryEntryDetail {
+    const entry = checkRecord(path, value, "the registry entry")
+    for (const field of ["url", "packageName", "registrableDomain"] as const) {
+      if (typeof entry[field] !== "string" || !entry[field]) throw badResponse(path, `the registry entry has no ${field}`)
+    }
+    for (const field of ["name", "version", "iconUrl"] as const) {
+      if (!isTextOrNull(entry[field])) throw badResponse(path, `the registry entry's ${field} is not text or null`)
+    }
+    if (entry.ageRating !== null && !AGE_RATINGS.includes(entry.ageRating as string)) {
+      throw badResponse(path, "the registry entry's ageRating is not a rating or null")
+    }
+    if (entry.verification !== "verified" && entry.verification !== "phone_reported") {
+      throw badResponse(path, "the registry entry has no known verification")
+    }
+    if (entry.status !== "active" && entry.status !== "archived") throw badResponse(path, "the registry entry has no known status")
+    if (typeof entry.private !== "boolean") throw badResponse(path, "the registry entry's private is not a boolean")
+    if (!isTime(entry.firstRegisteredAt)) throw badResponse(path, "the registry entry's firstRegisteredAt is not a time")
+    if (entry.lastVerifiedAt !== null && !isTime(entry.lastVerifiedAt)) {
+      throw badResponse(path, "the registry entry's lastVerifiedAt is neither a time nor null")
+    }
+    if (entry.manifest !== null) {
+      const manifest = checkRecord(path, entry.manifest, "the registry entry's manifest")
+      for (const field of ["packageName", "version", "name"] as const) {
+        if (typeof manifest[field] !== "string") throw badResponse(path, `the manifest has no ${field}`)
+      }
+      if (!isRecord(manifest.bundle) || typeof manifest.bundle.url !== "string" || typeof manifest.bundle.sha256 !== "string") {
+        throw badResponse(path, "the manifest has no bundle")
+      }
+    }
+    return entry as unknown as RegistryEntryDetail
+  }
+
   /** Sends one signed request. Resolves to the parsed JSON body, or null when `nullOn` accepts the failure. */
   async function call(
     method: "GET" | "POST" | "PUT" | "DELETE",
     pathWithQuery: string,
     payload?: unknown,
     nullOn?: (status: number, error: string | undefined) => boolean,
+    callTimeoutMs: number = timeoutMs,
   ): Promise<unknown> {
     const body = payload === undefined ? "" : JSON.stringify(payload)
     const timestampMs = Date.now()
@@ -245,7 +435,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
         headers,
         body: payload === undefined ? undefined : body,
         redirect: "error",
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(callTimeoutMs),
       })
       status = response.status
       text = await response.text()
@@ -362,6 +552,54 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       return {events: raw.events as WorkspaceChangeEvent[], next: raw.next}
     },
 
+    async listWorkspaceMembers(workspaceId) {
+      const path = `${API_PREFIX}/workspaces/${encodeURIComponent(workspaceId)}/members`
+      const raw = checkRecord(path, await call("GET", path), "the member list")
+      if (!Array.isArray(raw.members)) throw badResponse(path, "missing members")
+      for (const entry of raw.members) {
+        const member = checkRecord(path, entry, "a member")
+        if (typeof member.membershipId !== "string" || !member.membershipId) throw badResponse(path, "a member has no membershipId")
+        if (typeof member.role !== "string" || !member.role) throw badResponse(path, "a member has no role")
+        for (const field of ["mentraUserId", "email"] as const) {
+          if (member[field] !== null && typeof member[field] !== "string") throw badResponse(path, `a member's ${field} is not text or null`)
+        }
+        if (member.name !== undefined && member.name !== null && typeof member.name !== "string") {
+          throw badResponse(path, "a member's name is not text or null")
+        }
+      }
+      return {members: raw.members as WorkspaceMembersResponse["members"]}
+    },
+
+    async listMembershipIntervals(input) {
+      const query = new URLSearchParams()
+      if (input.after !== undefined && input.after !== null) query.set("after", input.after)
+      if (input.limit !== undefined) query.set("limit", String(input.limit))
+      const queryString = query.toString()
+      const path = `${API_PREFIX}/membership-intervals${queryString ? `?${queryString}` : ""}`
+      const raw = checkRecord(path, await call("GET", path), "the interval page")
+      if (typeof raw.lookbackDays !== "number" || !Number.isSafeInteger(raw.lookbackDays) || raw.lookbackDays < 1) {
+        throw badResponse(path, "lookbackDays is not a positive whole number")
+      }
+      if (typeof raw.windowStart !== "string" || Number.isNaN(Date.parse(raw.windowStart))) {
+        throw badResponse(path, "windowStart is not a time")
+      }
+      if (typeof raw.feedSeq !== "number" || !Number.isSafeInteger(raw.feedSeq) || raw.feedSeq < 0) {
+        throw badResponse(path, "feedSeq is not a whole number")
+      }
+      if (!Array.isArray(raw.intervals)) throw badResponse(path, "missing intervals")
+      if (raw.next !== null && (typeof raw.next !== "string" || raw.next.length === 0)) {
+        throw badResponse(path, "next is neither a cursor nor null")
+      }
+      const intervals = raw.intervals.map(value => checkInterval(path, value))
+      return {
+        lookbackDays: raw.lookbackDays,
+        windowStart: raw.windowStart,
+        feedSeq: raw.feedSeq,
+        intervals,
+        next: raw.next,
+      }
+    },
+
     async mintServiceCredential(input) {
       const path = `${API_PREFIX}/credentials`
       const raw = checkRecord(path, await call("POST", path, input), "the credential")
@@ -401,7 +639,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       if (typeof raw.applied !== "boolean" || typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision)) {
         throw badResponse(path, "missing applied or a whole revision")
       }
-      return {applied: raw.applied, revision: raw.revision}
+      return {applied: raw.applied, revision: raw.revision, ...(raw.ended === true ? {ended: true as const} : {})}
     },
 
     async listLicenses(workspaceId) {
@@ -410,6 +648,65 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       const raw = checkRecord(path, await call("GET", path), "the license list")
       if (!Array.isArray(raw.licenses)) throw badResponse(path, "licenses is not a list")
       return {licenses: raw.licenses.map(license => checkLicense(path, license))}
+    },
+
+    async checkRegistry(input) {
+      const path = `${REGISTRY_PREFIX}/check`
+      const body: RegistryCheckRequest = {urls: input.urls, workspaceId: input.workspaceId, mentraUserId: input.mentraUserId}
+      // Core takes up to 10 seconds to answer a check, longer than the client's usual timeout.
+      const answer = await call("POST", path, body, undefined, Math.max(timeoutMs, REGISTRY_CHECK_TIMEOUT_MS))
+      const raw = checkRecord(path, answer, "the check")
+      if (!Array.isArray(raw.results) || raw.results.length !== input.urls.length) {
+        throw badResponse(path, "results is not one result per URL")
+      }
+      return raw.results.map((result, index) => checkCheckResult(path, result, input.urls[index]!))
+    },
+
+    async lookupRegistry(input) {
+      const path = `${REGISTRY_PREFIX}/lookup`
+      const body: RegistryLookupRequest = {workspaceId: input.workspaceId, packageNames: input.packageNames}
+      const raw = checkRecord(path, await call("POST", path, body), "the lookup")
+      const entries = checkRecord(path, raw.entries, "the lookup's entries")
+      // Built from the names asked about, so a name such as `__proto__` is an own entry like any other.
+      return Object.fromEntries(
+        input.packageNames.map(packageName => {
+          if (!Object.prototype.hasOwnProperty.call(entries, packageName)) {
+            throw badResponse(path, "the lookup leaves out a package asked about")
+          }
+          return [packageName, checkLookupEntry(path, entries[packageName])]
+        }),
+      )
+    },
+
+    async getRegistryEntry(url) {
+      const path = `${REGISTRY_PREFIX}/entries?${new URLSearchParams({url}).toString()}`
+      const raw = await call(
+        "GET",
+        path,
+        undefined,
+        (status, error) => status === 404 && error === REGISTRY_ENTRY_NOT_FOUND_ERROR,
+      )
+      if (raw === null) return null
+      return checkRegistryEntry(path, checkRecord(path, raw, "the entry response").entry)
+    },
+
+    async archiveRegistry(input) {
+      const path = `${REGISTRY_PREFIX}/archive`
+      const body: RegistryArchiveRequest = {rule: input.rule, reason: input.reason, actorEmail: input.actorEmail}
+      const raw = checkRecord(path, await call("POST", path, body), "the archive answer")
+      const rule = checkRecord(path, raw.rule, "the archive rule")
+      if (!REGISTRY_RULE_KINDS.includes(rule.kind as RegistryArchiveRuleKind) || typeof rule.value !== "string") {
+        throw badResponse(path, "the archive rule has no known kind or value")
+      }
+      if (typeof raw.created !== "boolean") throw badResponse(path, "created is not a boolean")
+      if (typeof raw.entriesArchived !== "number" || !Number.isSafeInteger(raw.entriesArchived) || raw.entriesArchived < 0) {
+        throw badResponse(path, "entriesArchived is not a whole number")
+      }
+      return {
+        rule: {kind: rule.kind as RegistryArchiveRuleKind, value: rule.value},
+        created: raw.created,
+        entriesArchived: raw.entriesArchived,
+      }
     },
   }
 

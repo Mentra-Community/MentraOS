@@ -38,7 +38,7 @@ That gives you a button-to-display path and a UI-to-background path to edit from
 
 ## The in-repo reference miniapp
 
-If you've cloned the monorepo, `miniapps/example-miniapp` is the reference app
+If you've cloned the monorepo, `examples/miniapp` is the reference app
 that consumes the SDK. Its manifest names it "Mentra Example", and it exercises
 more of the surface than the starter does: transcription, text-wall display, TTS,
 button events, and an "SDK Tester" UI that drives each session module
@@ -47,8 +47,8 @@ button events, and an "SDK Tester" UI that drives each session module
 Run it from the repo to see the SDK working against your phone:
 
 ```bash
-cd miniapps/example-miniapp
-bun install
+bun install          # at the repository root
+cd examples/miniapp
 bun dev
 ```
 

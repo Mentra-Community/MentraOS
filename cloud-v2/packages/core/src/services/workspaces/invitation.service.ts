@@ -43,7 +43,12 @@
 import {createHash, randomBytes} from "node:crypto"
 
 import {createLogger} from "@mentra/cloud-shared"
-import {canChangeRole, type InvitationPreview, type WorkspaceRole} from "@mentra/workspace-contract"
+import {
+  canChangeRole,
+  INVITATION_DECLINED_ACTION,
+  type InvitationPreview,
+  type WorkspaceRole,
+} from "@mentra/workspace-contract"
 import type {ClientSession} from "mongoose"
 import {ulid} from "ulid"
 import {withTransaction} from "../../connections/mongo.connection"
@@ -61,6 +66,7 @@ import {consumeRateLimit} from "../signin/rate-limit.service"
 import {isDeletedAccountId} from "../user.service"
 import {recordWorkspaceEvent} from "./audit.service"
 import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
+import {acquireGuard} from "./membership-guard.service"
 import {invitationEmail} from "./invitation-email"
 import {
   auditActor,
@@ -440,6 +446,9 @@ async function acceptPendingInvitation(
     await yieldAutomaticWorkspace(session, actor, actor.mentraUserId, {except: invitation.workspaceId})
 
     const membershipId = `wm_${ulid()}`
+    // One workspace per person: another workspace refuses the accept (`already_in_workspace`, 409), and a
+    // concurrent accept elsewhere loses at the guard's insert rather than at a check that has passed.
+    await acquireGuard(session, actor.mentraUserId, {workspaceId: invitation.workspaceId, membershipId})
     const role = invitation.role as WorkspaceRole
     const memberEmail = actor.email?.trim() || null
     const claimed = await WorkspaceInvitationModel.updateOne(
@@ -483,6 +492,56 @@ async function acceptPendingInvitation(
       after: {role},
     })
     return {workspaceId: invitation.workspaceId, membershipId}
+  })
+}
+
+/**
+ * Decline the invitation `invitationId` as `actor`, the person it is addressed to. Authorized exactly as
+ * accepting is (a verified email equal to the invited address, otherwise `email_mismatch`), but it asks
+ * nothing of the inviter or the expiry: a person can always turn an invitation down, even one that has
+ * lapsed or whose inviter has since lost the authority to send it.
+ *
+ * Declining twice is idempotent. A revoked, accepted or unknown invitation is `invitation_not_found`.
+ * Nothing about a membership changes (so the change feed's `membership.*` events, and Fleet's membership
+ * intervals, are untouched); the audit event `invitation.declined` is the only record, and a later
+ * invitation to the same address can be sent as usual (the declined row no longer counts as pending).
+ */
+export async function declineInvitation(
+  actor: Actor & {kind: "user"},
+  invitationId: string,
+): Promise<{invitationId: string; declined: true}> {
+  if (actor?.kind !== "user" || !isId(actor.mentraUserId)) fail("forbidden", "a signed-in user is required")
+  if (!isId(invitationId)) fail("invitation_not_found", "invitation not found")
+
+  return withTransaction(async session => {
+    const invitation = await WorkspaceInvitationModel.findOne({
+      invitationId,
+      status: {$in: ["pending", "declined"]},
+    })
+      .session(session)
+      .lean<WorkspaceInvitationRow>()
+    if (!invitation) fail("invitation_not_found", "invitation not found")
+    if (actor.emailVerified !== true || normalizeAddress(actor.email) !== invitation.email) {
+      fail("email_mismatch", "sign in with the verified email address this invitation was sent to")
+    }
+    await refuseDeletedAccount(session, actor.mentraUserId)
+    if (invitation.status === "declined") return {invitationId, declined: true as const}
+
+    const declined = await WorkspaceInvitationModel.updateOne(
+      {invitationId, status: "pending"},
+      {$set: {status: "declined"}},
+      {session},
+    )
+    if (declined.modifiedCount !== 1) fail("invitation_not_found", "invitation not found")
+    await recordWorkspaceEvent(session, {
+      workspaceId: invitation.workspaceId,
+      action: INVITATION_DECLINED_ACTION,
+      actor: auditActor(actor),
+      target: {invitationId, email: invitation.email},
+      before: {status: "pending", role: invitation.role},
+      after: {status: "declined"},
+    })
+    return {invitationId, declined: true as const}
   })
 }
 

@@ -165,10 +165,10 @@ describe("CaptionsController offline speech to text", () => {
     expect(controller.settings.useOfflineStt).toBe(true)
   })
 
-  test("persists the setting and rebuilds the subscription with forceLocal", async () => {
+  test("persists the setting and rebuilds the subscription on-device only", async () => {
     const previousCleanup = mock(() => {})
     const nextCleanup = mock(() => {})
-    const on = mock((_handler: (data: unknown) => void, _options?: {forceLocal?: boolean}) => nextCleanup)
+    const on = mock((_handler: (data: unknown) => void, _options?: {processing?: string}) => nextCleanup)
     const set = mock(() => Promise.resolve())
     const send = mock(() => {})
 
@@ -192,12 +192,12 @@ describe("CaptionsController offline speech to text", () => {
     expect(previousCleanup).toHaveBeenCalledTimes(1)
     expect(set).toHaveBeenCalledWith("useOfflineStt", "true")
     expect(on).toHaveBeenCalledTimes(1)
-    expect(on.mock.calls[0]?.[1]).toEqual({forceLocal: true})
+    expect(on.mock.calls[0]?.[1]).toEqual({processing: "localOnly"})
     expect(send).toHaveBeenCalledWith("captions:settings-update", expect.objectContaining({useOfflineStt: true}))
   })
 
   test("returns to cloud transcription when the setting is disabled", async () => {
-    const on = mock((_handler: (data: unknown) => void, _options?: {forceLocal?: boolean}) => mock(() => {}))
+    const on = mock((_handler: (data: unknown) => void, _options?: {processing?: string}) => mock(() => {}))
     const controller = new CaptionsController({
       storage: {set: mock(() => Promise.resolve())},
       transcription: {
@@ -220,7 +220,7 @@ describe("CaptionsController offline speech to text", () => {
 
   test("uses the local model for a selected language", () => {
     const forLanguage = mock(
-      (_language: string, _handler: (data: unknown) => void, _options?: {forceLocal?: boolean}) => mock(() => {}),
+      (_language: string, _handler: (data: unknown) => void, _options?: {processing?: string}) => mock(() => {}),
     )
     const controller = new CaptionsController({
       transcription: {
@@ -243,6 +243,6 @@ describe("CaptionsController offline speech to text", () => {
 
     expect(forLanguage).toHaveBeenCalledTimes(1)
     expect(forLanguage.mock.calls[0]?.[0]).toBe("fr-FR")
-    expect(forLanguage.mock.calls[0]?.[2]).toEqual({forceLocal: true})
+    expect(forLanguage.mock.calls[0]?.[2]).toEqual({processing: "localOnly"})
   })
 })

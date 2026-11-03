@@ -1,3 +1,4 @@
+import type {AppRepository} from '../types/testing-source.types'
 import {expect, test} from 'bun:test'
 import {GithubPrRoutineChecks} from './pr-routine-check-github'
 import {TestRunGithubApp} from './test-run-github-app'
@@ -11,14 +12,14 @@ const check = (id = 99, external_id = 'gate-one:1', applicationId = appId, head_
   ({id, external_id, name: ROUTINE_CHECK_NAME, head_sha, app: {id: applicationId}, status: 'in_progress', conclusion: null, completed_at: null})
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), {status})
 type Call = {path: string; method: string; init: RequestInit; body?: Record<string, unknown>}
-function fixture(respond: (call: Call) => Response | Promise<Response>) {
-  const calls: Call[] = [], scopes: string[] = []
+function fixture(respond: (call: Call) => Response | Promise<Response>, repository: AppRepository = ROUTINE_CHECK_REPOSITORY) {
+  const calls: Call[] = [], scopes: string[] = [], targets: Array<string | undefined> = []
   class App extends TestRunGithubApp {
-    override async token(scope: Parameters<TestRunGithubApp['token']>[0]) {scopes.push(scope); return `test-${scope}`}
+    override async token(scope: Parameters<TestRunGithubApp['token']>[0], repository?: Parameters<TestRunGithubApp['token']>[1]) {scopes.push(scope); targets.push(repository); return `test-${scope}`}
   }
   const app = new App({credentials: {appId: String(appId)}})
   const transport = (async (url: string | URL | Request, init: RequestInit = {}) => {
-    const prefix = `https://api.github.com/repos/${ROUTINE_CHECK_REPOSITORY}/`
+    const prefix = `https://api.github.com/repos/${repository}/`
     expect(String(url).startsWith(prefix)).toBe(true)
     expect(init.redirect).toBe('error')
     expect(init.signal).toBeInstanceOf(AbortSignal)
@@ -28,7 +29,7 @@ function fixture(respond: (call: Call) => Response | Promise<Response>) {
     calls.push(call)
     return respond(call)
   }) as typeof fetch
-  return {github: new GithubPrRoutineChecks(app, transport), calls, scopes}
+  return {github: new GithubPrRoutineChecks(app, transport), calls, scopes, targets}
 }
 const inventory = (rows: ReturnType<typeof check>[], total = rows.length) => reply({total_count: total, check_runs: rows})
 
@@ -334,3 +335,45 @@ test('rerun authority follows the last actual label applier rather than unrelate
  expect(await f.github.context(12)).toMatchObject({labelActors:{[label]:'triage-user'},labelEvents:{[label]:125}})
  expect(f.calls.filter(call=>call.path.startsWith('issues/')).map(call=>call.path)).toEqual(['issues/12/events?per_page=100&page=1'])
 })
+
+
+test('Mentra context, producer adoption, dispatch and check delivery retain the requested repository', async () => {
+  const repository = 'Mentra-Community/Mentra', operation = 'c'.repeat(64);
+  const context: PrRoutineContext = {repository, number: 12, headSha: head, baseRef: 'dev', headRef: 'feature', sameRepository: true, open: true, labels: [], peers: [12]};
+  const pr = {number: 12, state: 'open', head: {sha: head, ref: 'feature', repo: {full_name: repository}}, base: {ref: 'dev'}, labels: []};
+  const f = fixture(call => {
+    if (call.path === 'pulls/12') return reply(pr);
+    if (call.path.startsWith('pulls?')) return reply([pr]);
+    if (call.path === 'actions/runs/44') return reply({id: 44, head_sha: head, pull_requests: [{number: 12, head: {sha: head}, base: {ref: 'dev'}}],
+      display_title: `Routine PR #12 ${head} dev ${operation}`, path: '.github/workflows/mentra-app-android-build.yml', event: 'workflow_dispatch', head_branch: 'dev',
+      status: 'completed', conclusion: 'success', repository: {full_name: repository}, head_repository: {full_name: repository}});
+    if (call.path.includes('/dispatches')) return new Response(null, {status: 204});
+    if (call.path.startsWith('commits/')) return inventory([]);
+    return reply(check(99, payload.external_id));
+  }, repository);
+  expect(await f.github.context(12, repository)).toEqual(context);
+  expect(await f.github.producer('android', context, operation, 44)).toEqual({id: 44, failed: false});
+  await f.github.requestBuild('android', context, operation);
+  expect(await f.github.deliver(undefined, payload, true, repository)).toBe(99);
+  expect(f.targets.every(target => target === repository)).toBe(true);
+  for (const wrong of [ROUTINE_CHECK_REPOSITORY, 'other/Mentra']) {
+    const invalid = fixture(() => reply({id: 44, head_sha: head, pull_requests: [], display_title: `Routine PR #12 ${head} dev ${operation}`,
+      path: '.github/workflows/mentra-app-android-build.yml', event: 'workflow_dispatch', head_branch: 'dev', status: 'completed', conclusion: 'success',
+      repository: {full_name: wrong}, head_repository: {full_name: wrong}}), repository);
+    await expect(invalid.github.producer('android', context, operation, 44)).rejects.toThrow('ownership differs');
+  }
+});
+
+test('legacy retained checks still reconcile in MentraOS after a Mentra check is created', async () => {
+  const repositories: string[] = [];
+  class App extends TestRunGithubApp {override async token(_scope: any, repository?: any) {repositories.push(repository); return 'test'}}
+  const transport = (async (url: any, init: RequestInit = {}) => {
+    expect(String(url)).toContain(`/repos/${repositories.at(-1)}/`);
+    if (String(url).includes('/commits/')) return inventory([]);
+    return reply(check(99, payload.external_id));
+  }) as typeof fetch;
+  const github = new GithubPrRoutineChecks(new App({credentials: {appId: String(appId)}}), transport);
+  await github.deliver(undefined, payload, true, 'Mentra-Community/Mentra');
+  await github.deliver(undefined, payload, true);
+  expect(repositories).toEqual(['Mentra-Community/Mentra', 'Mentra-Community/Mentra', ROUTINE_CHECK_REPOSITORY, ROUTINE_CHECK_REPOSITORY]);
+});

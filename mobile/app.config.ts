@@ -2,6 +2,7 @@ import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
 import {VARIANT_RE, resolveAndroidPackageName} from "./scripts/android-package-name.cjs"
 import {getBuildNumber} from "./scripts/build-number.mjs"
+import {backendTarget} from "./scripts/backend-target.cjs"
 
 const familyBaseVersion = require("../package.json").version as string
 
@@ -54,7 +55,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, spaces, or underscores.`,
     )
   }
-  const appName = isValidVariant ? variantName : variant.appName
+  const appName = variantName && isValidVariant ? variantName : variant.appName
   const androidPackage = resolveAndroidPackageName()
   const iosBundleId = androidPackage
 
@@ -86,13 +87,24 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   }
 
   const buildNumber = getBuildNumber()
+  const coreUrl = backendTarget(process.env.EXPO_PUBLIC_CLOUD_CORE_URL)
+  // Generated target metadata cannot be inherited from a previous Expo config.
+  const {mentraBackendTarget: _previousBackendTarget, ...originalExtra} = config.extra ?? {}
+  const packagedExtra = {
+    ...originalExtra,
+    mentraBackendTarget: {schemaVersion: 1, coreUrl},
+    // The Mentra App's own age rating, as App Store Connect shows it. A miniapp rated above it installs or opens
+    // only for a person whose declared age is old enough. Change it with the App Store rating.
+    MENTRA_APP_AGE_RATING: "12+",
+  }
 
   return {
     ...config,
+    extra: packagedExtra,
     ...(process.env.MENTRA_PR_MOBILE_FINGERPRINT
       ? {
           extra: {
-            ...config.extra,
+            ...packagedExtra,
             mentraPrBuild: {
               schemaVersion: 1,
               mobileFingerprint: process.env.MENTRA_PR_MOBILE_FINGERPRINT,
@@ -152,21 +164,17 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // while-in-use permission only. Blocking it avoids the Play Store
       // background-location declaration/video review.
       blockedPermissions: ["android.permission.ACCESS_BACKGROUND_LOCATION"],
+      // App Links for the miniapp install links (the open link and the package link): Android verifies them
+      // against the directory website's assetlinks.json. The rest of the website stays in the browser.
       intentFilters: [
         {
           action: "VIEW",
           autoVerify: true,
           data: [
-            {
-              scheme: "https",
-              host: "apps.mentra.glass",
-              pathPrefix: "/package/",
-            },
-            {
-              scheme: "https",
-              host: "apps.mentraglass.com",
-              pathPrefix: "/package/",
-            },
+            {scheme: "https", host: "apps.mentra.glass", path: "/open"},
+            {scheme: "https", host: "apps.mentra.glass", pathPrefix: "/package/"},
+            {scheme: "https", host: "apps.mentraglass.com", path: "/open"},
+            {scheme: "https", host: "apps.mentraglass.com", pathPrefix: "/package/"},
           ],
           category: ["DEFAULT", "BROWSABLE"],
         },

@@ -1,12 +1,83 @@
 import {afterEach, expect, test, spyOn} from 'bun:test';
 import {Hono} from 'hono';
 import {createRoutineJobBindingApi, createRoutineJobsApi} from './routine-jobs.api';
-import {RoutineJobService} from '../../services/routine-job.service';
+import {RoutineJobService, RoutineLaneAcceptanceConflict, RoutineBindingConflict} from '../../services/routine-job.service';
 import {RoutineWorkService} from '../../services/routine-work.service';
 import {TestRunError} from '../../services/test-result-error';
 import {TestRequestConflict} from '../../services/test-request.service';
 import {TestDispatchError} from '../../services/test-builds.service';
 import type {AppEnv} from '../../types/hono.types';
+import {requestContext} from '../middleware/context.middleware';
+import {randomUUID} from 'node:crypto';
+
+test('pending preparation warns before the transport deadline with the actual inbound request identity', async () => {
+  process.env.TEST_RUN_INGEST_TOKEN = observerToken;
+  const reqId = randomUUID(), warnings: unknown[] = [];
+  let now = 0, alarm: (() => void) | undefined, cleared = false;
+  let complete: (value: {jobId: string}) => void = () => {}, notifyStarted: () => void = () => {};
+  const answer = new Promise<{jobId: string}>(resolve => {complete = resolve;});
+  const started = new Promise<void>(resolve => {notifyStarted = resolve;});
+  const jobs = {async preparation(_id: string, onPhase?: (phase: string) => void) {
+    onPhase?.('job-lookup'); notifyStarted(); return answer;
+  }} as unknown as RoutineJobService;
+  const clock = spyOn(Date, 'now').mockImplementation(() => now);
+  const timer = spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void, delay: number) => {
+    expect(delay).toBe(10000); alarm = callback; return 1;
+  }) as any);
+  const cancel = spyOn(globalThis, 'clearTimeout').mockImplementation((() => {cleared = true;}) as any);
+  const restores: (() => void)[] = [];
+  let bindings: unknown;
+  const app = new Hono<AppEnv>(); app.use('*', requestContext);
+  app.use('*', async (c, next) => {
+    bindings = c.var.logger.bindings();
+    const info = spyOn(c.var.logger, 'info').mockImplementation((() => {}) as any);
+    const warn = spyOn(c.var.logger, 'warn').mockImplementation(((fields: unknown) => {warnings.push(fields);}) as any);
+    restores.push(() => {info.mockRestore(); warn.mockRestore();}); await next();
+  });
+  app.route('/', createRoutineJobsApi(jobs));
+  const pending = app.request('/one/preparation', {headers: {authorization: `Bearer ${observerToken}`, 'x-request-id': reqId}});
+  try {
+    await started; expect(alarm).toBeDefined(); now = 10000; alarm!();
+    expect(bindings).toMatchObject({reqId, method: 'GET', path: '/one/preparation'});
+    expect(warnings).toEqual([{operation: 'lookup', phase: 'job-lookup', jobId: 'one', reqId,
+      stageElapsedMs: 10000, requestElapsedMs: 10000}]);
+    expect(cleared).toBe(false);
+    complete({jobId: 'one'});
+    const response = await pending;
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-request-id')).toBe(reqId);
+    expect(cleared).toBe(true);
+  } finally {
+    complete({jobId: 'one'}); await pending;
+    restores.forEach(restore => restore()); clock.mockRestore(); timer.mockRestore(); cancel.mockRestore();
+  }
+});
+
+test('completed matching logs its computed wait and target without exposing the preparation body', async () => {
+  process.env.TEST_RUN_INGEST_TOKEN = observerToken;
+  for (const waiting of [true, false]) {
+    const result = {jobId: 'one', state: 'awaiting-runner', waitingReason: waiting ? 'Recorder space is unavailable' : undefined,
+      resourceTarget: waiting ? undefined : {hostId: 'mini', laneId: 'android'},
+      routingLabels: waiting ? [] : ['mentra-platform-android'], selection: {privateSource: 'private prepared source body'}};
+    const records: {fields: Record<string, unknown>; message: string}[] = [];
+    const jobs = {async preparation() {return result;}} as unknown as RoutineJobService;
+    const app = new Hono<AppEnv>();
+    app.use('*', async (c, next) => {
+      c.set('reqId', 'matching-request');
+      c.set('logger', {info: (fields: Record<string, unknown>, message: string) => records.push({fields, message})} as any);
+      await next();
+    });
+    app.route('/', createRoutineJobsApi(jobs));
+    const response = await app.request('/one/preparation', {headers: {authorization: `Bearer ${observerToken}`}});
+    expect(response.status).toBe(200);
+    const completed = records.filter(record => record.message === 'routine job preparation matching completed');
+    expect(completed).toHaveLength(1);
+    expect(completed[0]!.fields).toMatchObject({operation: 'lookup', jobId: 'one', reqId: 'matching-request', state: 'awaiting-runner',
+      waitingReason: waiting ? 'Recorder space is unavailable' : null,
+      resourceTarget: waiting ? null : {hostId: 'mini', laneId: 'android'}, routingLabelCount: waiting ? 0 : 1});
+    expect(JSON.stringify(records)).not.toContain(result.selection.privateSource);
+  }
+});
 
 test('normal observations stay quiet and a slow original request retains its phase and existing request context',async()=>{
   process.env.TEST_RUN_INGEST_TOKEN=observerToken;
@@ -66,6 +137,41 @@ const previous = process.env.TEST_RUN_INGEST_TOKEN;
 afterEach(() => {if (previous === undefined) delete process.env.TEST_RUN_INGEST_TOKEN; else process.env.TEST_RUN_INGEST_TOKEN=previous});
 const observerToken='observer-token-at-least-thirty-two-characters';
 const hostToken='host-token-at-least-thirty-two-characters';
+test('bind acceptance checklist retains the installed conflict envelope and actual request correlation', async () => {
+  const reqId = randomUUID(), records: unknown[] = [], restores: (() => void)[] = [];
+  const diagnostic = {stage: 'after-reservation' as const, hostId: 'mini', laneId: 'android', conditions: [
+    {id: 'enrolled-host', status: 'passed' as const, expected: 'Authenticated host', observed: 'mini'},
+    {id: 'lane-automatic', status: 'failed' as const, expected: 'automatic', observed: 'manual'},
+    {id: 'resource-state', status: 'not-evaluated' as const, expected: 'Original resource authority'},
+  ]};
+  const jobs = {async bind() {throw new RoutineLaneAcceptanceConflict(diagnostic);}} as unknown as RoutineJobService;
+  const app = new Hono<AppEnv>(); app.use('*', requestContext);
+  app.use('*', async (c, next) => {
+    const warn = spyOn(c.var.logger, 'warn').mockImplementation(((fields: unknown, message: string) => records.push({fields, message})) as any);
+    restores.push(() => warn.mockRestore()); await next();
+  });
+  app.route('/test-requests', createRoutineJobBindingApi(jobs, () => JSON.stringify({mini: hostToken})));
+  try {
+    const response = await app.request('/test-requests/original/bind', {method: 'POST', headers: {
+      authorization: `Bearer ${hostToken}`, 'content-type': 'application/json', 'x-request-id': reqId},
+      body: JSON.stringify({privateSource: 'private-body-sentinel'})});
+    const body = await response.json() as {error: string; message: string};
+    expect(response.status).toBe(409); expect(Object.keys(body).sort()).toEqual(['error', 'message']);
+    expect(body.error).toBe('routine_job_conflict'); expect(body.message).toContain('after-reservation: lane-automatic');
+    expect(body.message).toContain('resource-state=not-evaluated'); expect(body.message.length).toBeLessThanOrEqual(2000);
+    expect(response.headers.get('x-request-id')).toBe(reqId);
+    expect(records).toEqual([{fields: {jobId: 'original', reqId, ...diagnostic}, message: 'routine job lane acceptance refused'}]);
+    expect(JSON.stringify({body, records})).not.toContain(hostToken);
+    expect(JSON.stringify({body, records})).not.toContain('private-body-sentinel');
+  } finally {restores.forEach(restore => restore());}
+});
+test('generic binding conflicts keep their prior response and do not invent a checklist', async () => {
+  const jobs = {async bind() {throw new TestRequestConflict('Original immutable input changed');}} as unknown as RoutineJobService;
+  const app = createRoutineJobBindingApi(jobs, () => JSON.stringify({mini: hostToken}));
+  const response = await app.request('/original/bind', {method: 'POST', headers: {authorization: `Bearer ${hostToken}`,
+    'content-type': 'application/json'}, body: '{}'});
+  expect(response.status).toBe(409); expect(await response.json()).toEqual({error: 'routine_job_conflict', message: 'Original immutable input changed'});
+});
 test('trusted observer cannot impersonate host; host identity comes only from enrolled token',async()=>{
   process.env.TEST_RUN_INGEST_TOKEN=observerToken;const bindings:unknown[]=[];
   const jobs={async preparation(){return {jobId:'one',state:'awaiting-runner',routingLabels:['mentra-platform-android']}},async observation(){return {jobId:'one',terminal:false}},
@@ -164,4 +270,30 @@ test('author fleet intake dispatches, binds exact local work and finishes observ
   expect((await app.request('/test-requests/author-fleet/dispatch-completion',{method:'POST',headers:hostHeaders,body:JSON.stringify({...completion,inputSha256:prepared.inputSha256})})).status).toBe(409);
   expect((await app.request('/test-requests/author-fleet/dispatch-completion',{method:'POST',headers:hostHeaders,body:JSON.stringify(completion)})).status).toBe(200);
   expect(await (await app.request('/routine-jobs/author-fleet/observation',{headers})).json()).toMatchObject({terminal:true,state:'awaiting-review',inputSha256:prepared.inputSha256,cleanupDisposition:'clean'});
+});
+
+
+test('binding commit refusal keeps the HTTP409 envelope and logs its exact stage under the authenticated request', async () => {
+  const reqId = randomUUID(), records: unknown[] = [], restores: (() => void)[] = [];
+  const diagnostics = {stage: 'host-cas' as const, predicate: 'unchanged-host-selector', hostId: 'mini', laneId: 'android',
+    expected: {sequence: 10, laneControlVersion: null, laneControlVersionAbsent: true}};
+  const jobs = {async bind() {throw new RoutineBindingConflict('Routine resource admission did not commit worker binding', diagnostics);}} as unknown as RoutineJobService;
+  const app = new Hono<AppEnv>(); app.use('*', requestContext);
+  app.use('*', async (c, next) => {
+    const warn = spyOn(c.var.logger, 'warn').mockImplementation(((fields: unknown, message: string) => records.push({fields, message})) as any);
+    restores.push(() => warn.mockRestore()); await next();
+  });
+  app.route('/test-requests', createRoutineJobBindingApi(jobs, () => JSON.stringify({mini: hostToken})));
+  try {
+    const response = await app.request('/test-requests/original/bind', {method: 'POST', headers: {
+      authorization: `Bearer ${hostToken}`, 'content-type': 'application/json', 'x-request-id': reqId}, body: JSON.stringify({secret: 'private-body-sentinel'})});
+    const body = await response.json() as {error: string; message: string};
+    expect(response.status).toBe(409); expect(Object.keys(body).sort()).toEqual(['error', 'message']);
+    expect(body.error).toBe('routine_job_conflict'); expect(body.message).toContain('host-cas: unchanged-host-selector');
+    expect(body.message).toContain('expected {\"sequence\":10,\"laneControlVersion\":null,\"laneControlVersionAbsent\":true}');
+    expect(body.message.length).toBeLessThan(2000); expect(response.headers.get('x-request-id')).toBe(reqId);
+    expect(records).toEqual([{fields: {jobId: 'original', reqId, ...diagnostics}, message: 'routine job binding commit refused'}]);
+    expect(JSON.stringify({body, records})).not.toContain(hostToken);
+    expect(JSON.stringify({body, records})).not.toContain('private-body-sentinel');
+  } finally {restores.forEach(restore => restore());}
 });

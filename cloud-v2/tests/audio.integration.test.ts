@@ -12,14 +12,19 @@
  *   5. Audio echoes back UDP_PACKET_RECEIVED (debug-echo mode)
  *
  * Prereqs:
- *   - A running Mongo at `MONGO_URL` (default mongodb://127.0.0.1:27017).
- *     We use a test-only database name; collections are dropped each test.
- *   - A running Redis at `REDIS_URL` (default redis://127.0.0.1:6379).
+ *   - A local Mongo (default mongodb://127.0.0.1:27017).
+ *   - A local Redis (default redis://127.0.0.1:6379).
  *
  * Run: `bun test tests/audio.integration.test.ts`
  *
  * Uses fixed test ports (13000/13001/13100, UDP 18000) to avoid stepping on
  * the dev environment's defaults.
+ *
+ * Safety: Mongo comes from `localTestMongoUrl` (loopback only, random database
+ * name, ignores `MONGO_URL`), checked before any destructive call and dropped
+ * afterwards. Redis comes from `localTestRedisUrl` (loopback only; refuses to
+ * run when `REDIS_URL` is set), so the keys this suite deletes are on a local
+ * server even under `doppler run`. Override with `CLOUD_V2_TEST_MONGO_URL` / `CLOUD_V2_TEST_REDIS_URL`.
  */
 
 import crypto from "node:crypto";
@@ -61,11 +66,9 @@ const TEST_OEM_PORT = 13100;
       oemIdClaim: "oem_id",
     },
   ]);
-  process.env.MONGO_URL ??=
-    "mongodb://127.0.0.1:27017/mentra-cloud-v2-audio-test";
   // Each test file gets its own Redis DB so parallel runs don't stomp each
   // other's keys. (Redis defaults to 16 DBs — plenty for our suites.)
-  process.env.REDIS_URL ??= "redis://127.0.0.1:6379/1";
+  process.env.REDIS_URL = localTestRedisUrl(1);
   process.env.AUDIO_UDP_ADVERTISED_HOST = "127.0.0.1";
   process.env.AUDIO_UDP_ADVERTISED_PORT = String(AUDIO_UDP_PORT);
   // Deterministic offline transcript source: this suite tests the audio routing
@@ -78,6 +81,8 @@ const TEST_OEM_PORT = 13100;
 }
 
 import { startCore, type CoreHandle } from "../packages/core/src/index";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+import { localTestRedisUrl } from "./support/local-redis";
 import { startAudio, type AudioHandle } from "../packages/runtime/src/index";
 import {
   startTestOem,
@@ -109,6 +114,11 @@ let testOemHandle: TestOemHandle;
 
 // === Test lifecycle ===
 
+const databaseUrl = localTestMongoUrl("audio");
+// Set only once the live connection is confirmed to be our random database;
+// every destructive call is gated on it.
+let verified = false;
+
 beforeAll(async () => {
   // If another test file already ran in this same Bun test process, its
   // Mentra keypair is cached in shared/auth and core/session.service. We
@@ -124,7 +134,9 @@ beforeAll(async () => {
   resetSigningKeyCache();
 
   testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
-  coreHandle = await startCore({ port: CORE_PORT });
+  coreHandle = await startCore({ port: CORE_PORT, mongoUrl: databaseUrl });
+  assertConnectedTo(databaseUrl, UserModel.db.name);
+  verified = true;
 
   // Wait for index sync so the seen-jti replay index actually fires.
   await Promise.all([
@@ -144,12 +156,17 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (verified && UserModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, UserModel.db.name);
+    await UserModel.db.dropDatabase();
+  }
   await audioHandle?.stop();
   await coreHandle?.stop();
   await testOemHandle?.stop();
 });
 
 beforeEach(async () => {
+  assertConnectedTo(databaseUrl, UserModel.db.name);
   await Promise.all([
     OemModel.deleteMany({}),
     UserModel.deleteMany({}),

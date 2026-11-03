@@ -1,3 +1,5 @@
+import {frameworkFailures} from '../../../../packages/core/src/types/framework-run-failures';
+import {RequestMatchReport} from '../components/request-match-report';
 import {StepSourceLink} from "../components/step-source-link";
 import {LoadingIndicator} from "../components/loading-indicator";
 import {HistoryStatus, runDisplayStatus} from "../components/test-history-table";
@@ -16,7 +18,7 @@ import {RecordingVideo} from "../components/recording-video";
 import {Switch} from "../components/ui/switch";
 import {TestHistoryTable} from "../components/test-history-table";
 import {testRunLocation} from "../lib/test-run-links";
-import type {RoutineEnrollment, RoutineCardDefinition} from "../../../../packages/core/src/types/routine-definition.types";
+import type {RoutineEnrollment, RoutineCatalogDefinition, RoutineCardDefinition} from "../../../../packages/core/src/types/routine-definition.types";
 import type {FrameworkRequestDisplay} from "../../../../packages/core/src/types/framework-request.types";
 import {Check, Circle, Loader2} from 'lucide-react';
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table';
@@ -35,7 +37,7 @@ export function requestLiveStatus(request: FrameworkRequestDisplay, now = Date.n
     elapsed: elapsedDuration(Math.max(0, Date.parse(live.progress.observedAt) - Date.parse(live.progress.startedAt)) + (stale ? 0 : age))};
 }
 
-type CatalogRow = RoutineEnrollment & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null; nightlyEnabled?: boolean};
+type CatalogRow = RoutineCatalogDefinition & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null; nightlyEnabled?: boolean};
 type Detail = CatalogRow & {history: CatalogHistoryRun[]; nextCursor: string | null};
 type CardRow = RoutineCardDefinition & Pick<CatalogRow, 'example' | 'latestAttempt' | 'nightlyEnabled'>;
 const PANEL = TESTING_PANEL;
@@ -75,25 +77,34 @@ export function matchesBuildSearch(build: {headSha: string; prNumber?: number; r
 export function matchesHistorySearch(entry: TestHistoryEntry, routines: RoutineCardDefinition[], filters: RoutineSearchFilters) {
   if (!hasRoutineFilters(filters)) return true;
   if (entry.kind === "unavailable") return false;
-  const buildMatch = matchesBuildSearch(entry.build, filters.search);
+  const buildMatch = entry.build ? matchesBuildSearch(entry.build, filters.search) : false;
   const memberFilters = buildMatch ? {...filters, search: ""} : filters;
   if (buildMatch && !filters.platform && !filters.glasses) return true;
   const members = entry.kind === "suite" ? entry.members ?? [] : [entry];
   return members.some(member => matchesRoutineSearch(runSearchMetadata(member, routines), memberFilters));
 }
+export function hasCatalogPassingRun(routine: {example: CatalogExample | null}, showWithoutPassingRun = false) {
+  return showWithoutPassingRun || routine.example !== null;
+}
 export function RoutineCatalogList() {
+  const [showWithoutPassingRun, setShowWithoutPassingRun] = useState(false);
   const [filters, setFilters] = useRoutineSearch();
   const catalog = useSearchCatalog();
   if (catalog.isPending) return <LoadingIndicator label="Loading routines" />;
   if (catalog.error && !catalog.data) return <p role="alert">Could not load routines: {catalog.error.message}</p>;
   const routines = catalog.data.routines;
-  const filtered = routines.filter(row => matchesRoutineSearch(searchableRoutine(row), filters));
+  const filtered = routines.filter(row => hasCatalogPassingRun(row, showWithoutPassingRun) && matchesRoutineSearch(searchableRoutine(row), filters));
   return <div className="space-y-5">
     <section className={PANEL} aria-label="Routine filters">
       <RoutineSearch filters={filters} onChange={setFilters} routines={routines.map(searchableRoutine)} countLabel={`Showing ${filtered.length} of ${routines.length} routines`} />
+      <div className="mt-3 flex items-center gap-2">
+        <Switch checked={showWithoutPassingRun} onChange={event => setShowWithoutPassingRun(event.currentTarget.checked)}>
+          Show routines without a passing run
+        </Switch>
+      </div>
     </section>
     {catalog.error && <p role="alert">Routines could not refresh: {catalog.error.message}</p>}
-    {!routines.length ? <p>No routine has a published passing example on the new framework yet.</p>
+    {!routines.length ? <p>No routine catalog has been processed yet.</p>
       : !filtered.length && <p>No routines match your filters. Try another search or clear the filters.</p>}
     <div className="grid gap-5 lg:grid-cols-2">{filtered.map(row => <EditableRoutineCatalogCard key={`${row.routineId}/${row.platform}`} routine={row} />)}</div>
   </div>;
@@ -240,6 +251,7 @@ function RequestCard({request, responseReceivedAt, observing, refreshing, onRefr
     {request.createdAt && <p className="mt-2 text-sm">Requested {new Date(request.createdAt).toLocaleString()}</p>}
     {request.acceptedAt && <p className="mt-2 text-sm">Host accepted {new Date(request.acceptedAt).toLocaleString()}</p>}
     {request.reason && <p className="mt-3">{request.reason}</p>}
+    <RequestMatchReport requestId={request.requestId} />
     {request.cancellationRequested && <p className="mt-2 text-sm">Cancellation requested · {!request.inputSha256 ? "Cancelled before execution." : request.cancellationAcknowledged ? "Host acknowledged; cleanup may still be running." : "Awaiting host acknowledgement."}</p>}
     <p className="mt-3 text-sm text-[#68746d]">{live ? 'Final result and evidence are pending.' : 'No routine result has been published.'}{request.state !== "terminal" && " This request refreshes automatically."}
       {request.terminalStatus === "cancelled" && (observing ? " Checking for final host custody or a published result for ten minutes." : "Automatic observation has ended. Refresh to check for later host custody or results.")}</p>
@@ -251,7 +263,7 @@ export function runFailureSummary(run: RecordedFrameworkRun, outcome: string, ev
   const phase: FrameworkFailureScreen['phase'] | null = outcome === "setup-failed" ? "setup" : outcome === "failed" ? "test" : outcome === "teardown-failed" ? "teardown"
     : evidenceStatus === "failed" ? "evidence" : null;
   if (!phase) return null;
-  const failure = run.result.failures.find(item => item.phase === phase);
+  const failure = frameworkFailures(run.result).find(item => item.phase === phase);
   const label = {setup: "Setup", test: "Test", teardown: "Teardown", evidence: "Evidence"}[phase];
   const message = failure?.message ?? (phase === "teardown" ? run.result.teardown.unavailableResources[0]?.cause : undefined)
     ?? `${label} failed. No detailed reason was recorded.`;
@@ -276,17 +288,29 @@ export function stepRecordingPlayback(run: RecordedFrameworkRun, step: RecordedF
 }
 
 export function selectedFailureScreen(run: RecordedFrameworkRun, screens: FrameworkFailureScreen[] | undefined, actionId: string | undefined,
-  phase: FrameworkFailureScreen['phase'], source: 'app' | 'desktop' = 'app') {
-  const failure = run.result.failures.find(failure => failure.actionId === actionId && failure.phase === phase);
+  phase: FrameworkFailureScreen['phase'], source: 'app' | 'desktop' | 'preceding' | 'system' = 'app') {
+  const failure = frameworkFailures(run.result).find(failure => failure.actionId === actionId && failure.phase === phase);
   const screen = failure && screens?.find(screen => screen.phase === failure.phase && screen.actionId === failure.actionId);
-  return screen && run.assets.find(asset => asset.id === (source === 'app' ? screen.assetId : screen.desktopAssetId) && asset.kind === 'screenshot' &&
+  return screen && run.assets.find(asset => asset.id === (source === 'app' ? screen.assetId : source === 'desktop' ? screen.desktopAssetId
+    : source === 'preceding' ? screen.precedingAppImage?.assetId : screen.currentPhoneImage?.source === 'system' ? screen.currentPhoneImage.assetId : undefined) && asset.kind === 'screenshot' &&
     ['image/png', 'image/jpeg'].includes(asset.mimeType));
 }
 
-function FailureScreenshot({label, actionId, href}: {label: 'App' | 'Desktop'; actionId?: string; href: string}) {
+export function selectedFailureProvenance(run: RecordedFrameworkRun, screens: FrameworkFailureScreen[] | undefined,
+  actionId: string | undefined, phase: FrameworkFailureScreen['phase']) {
+  return frameworkFailures(run.result).some(failure => failure.phase === phase && failure.actionId === actionId)
+    ? screens?.find(screen => screen.phase === phase && screen.actionId === actionId) : undefined;
+}
+
+const imageIntervalLabel = (image: {captureStartedAt: string; captureFinishedAt: string} | undefined) => image
+  ? `Captured between ${new Date(image.captureStartedAt).toLocaleString()} and ${new Date(image.captureFinishedAt).toLocaleString()}.` : undefined;
+
+function FailureScreenshot({label, actionId, href, interval}: {label: string; actionId?: string; href: string;
+  interval?: {captureStartedAt: string; captureFinishedAt: string}}) {
   const [failed, setFailed] = useState(false);
   return <figure className="min-w-0">
     <figcaption className="mb-2 text-sm font-medium">{label}</figcaption>
+    {interval && <p className="mb-2 text-sm text-[#747780]">{imageIntervalLabel(interval)}</p>}
     {failed ? <p role="alert">{label} screenshot could not load.</p> : <img src={href} alt={`${label}: ${actionId}`}
       onError={() => setFailed(true)} className="mx-auto block h-[var(--recording-height)] w-full rounded-lg bg-black object-contain" />}
     <a className={`${TESTING_LINK} mt-2 inline-block text-sm`} href={href}>Open {label.toLowerCase()} screenshot</a>
@@ -300,7 +324,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const pendingPlayback = useRef<ReturnType<typeof stepRecordingPlayback>>(null);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [selectedStep, setSelectedStep] = useState<string | undefined>(stepId);
-  const [mediaView, setMediaView] = useState<'failure' | 'desktop' | 'recording'>(stepId ? 'recording' : 'failure');
+  const [mediaView, setMediaView] = useState<'failure' | 'desktop' | 'preceding' | 'system' | 'recording'>(stepId ? 'recording' : 'failure');
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
   const [stepSearch, setStepSearch] = useState("");
@@ -386,17 +410,35 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const hasRecording = uploadsComplete && run.assets.some(asset => asset.id === recordingAsset && asset.kind === "recording");
   const selectedScreen = uploadsComplete ? selectedFailureScreen(run, failureScreens, activeStep, 'test') : undefined;
   const selectedDesktop = uploadsComplete ? selectedFailureScreen(run, failureScreens, activeStep, 'test', 'desktop') : undefined;
-  const selectedFailure = !!selectedScreen || !!selectedDesktop;
+  const selectedProvenance = uploadsComplete ? selectedFailureProvenance(run, failureScreens, activeStep, 'test') : undefined;
+  const selectedFailure = !!selectedScreen || !!selectedDesktop || !!selectedProvenance;
   const failureScreen = selectedFailure ? selectedScreen : (uploadsComplete && failureSummary
     ? selectedFailureScreen(run, failureScreens, failureSummary.actionId, failureSummary.phase) : undefined);
   const desktopScreen = selectedFailure ? selectedDesktop : (uploadsComplete && failureSummary
     ? selectedFailureScreen(run, failureScreens, failureSummary.actionId, failureSummary.phase, 'desktop') : undefined);
   const failureScreenAction = selectedFailure ? activeStep : failureSummary?.actionId;
-  const displayedScreen = mediaView === 'desktop' ? desktopScreen : failureScreen ?? desktopScreen;
-  const showFailureScreen = !!displayedScreen && mediaView !== 'recording';
+  const provenance = selectedFailure ? selectedProvenance : uploadsComplete && failureSummary
+    ? selectedFailureProvenance(run, failureScreens, failureSummary.actionId, failureSummary.phase) : undefined;
+  const imagePhase = selectedFailure ? 'test' : failureSummary?.phase;
+  const precedingScreen = uploadsComplete && imagePhase ? selectedFailureScreen(run, failureScreens, failureScreenAction, imagePhase, 'preceding') : undefined;
+  const systemScreen = uploadsComplete && imagePhase ? selectedFailureScreen(run, failureScreens, failureScreenAction, imagePhase, 'system') : undefined;
+  const desktopImages = provenance?.desktopImages?.flatMap(image => {
+    const asset = run.assets.find(asset => asset.id === image.assetId && asset.kind === 'screenshot'
+      && ['image/png', 'image/jpeg'].includes(asset.mimeType));
+    return asset ? [{asset, image}] : [];
+  }) ?? [];
+  const showDesktopGallery = desktopImages.length > 1 && mediaView !== 'recording'
+    && (mediaView === 'desktop' || !failureScreen && !systemScreen && !precedingScreen);
+  const displayedScreen = mediaView === 'desktop' ? desktopScreen : mediaView === 'preceding' ? precedingScreen
+    : mediaView === 'system' ? systemScreen : failureScreen ?? systemScreen ?? precedingScreen ?? desktopScreen;
+  const showFailureScreen = (!!displayedScreen || showDesktopGallery) && mediaView !== 'recording';
   const showMacScreens = run.platform === 'ios-on-mac' && showFailureScreen;
-  const screenLabel = displayedScreen === desktopScreen ? 'Desktop screenshot' : 'Failure screenshot';
-  const hasMedia = hasRecording || !!failureScreen || !!desktopScreen;
+  const screenLabel = displayedScreen === desktopScreen ? 'Desktop screenshot' : displayedScreen === precedingScreen ? 'App before failure'
+    : displayedScreen === systemScreen ? 'Phone after failure' : 'Failure screenshot';
+  const displayedInterval = displayedScreen === precedingScreen ? provenance?.precedingAppImage
+    : displayedScreen === systemScreen || displayedScreen === failureScreen ? provenance?.currentPhoneImage
+      : provenance?.desktopImages?.find(image => image.assetId === displayedScreen?.id);
+  const hasMedia = hasRecording || !!failureScreen || !!desktopScreen || !!precedingScreen || !!systemScreen || desktopImages.length > 0;
   const definitionSteps = new Map(definition?.steps.map(step => [step.id, step]) ?? []);
   const visibleSteps = run.result.steps.map((step, index) => ({step, index, source: definitionSteps.get(step.id)}))
     .filter(({step, source}) => matchesStepSearch(step, source, stepSearch));
@@ -436,18 +478,26 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
         </dl>
       </details>
       {evidenceStatus === "failed" && <p role="alert" className="mt-3 text-sm text-[#cf222e]">Evidence failed; the execution verdict is unchanged.</p>}
+      {provenance?.phoneProcessWitness && provenance.phoneProcessWitness.state !== 'same' && <p className="mt-3 text-sm">
+        {provenance.phoneProcessWitness.state === 'replaced' ? 'The original app stopped and another app process was observed.'
+          : provenance.phoneProcessWitness.state === 'ceased' ? 'The original app was no longer running when failure evidence was collected.'
+            : 'The original app state could not be confirmed when failure evidence was collected.'}
+        {precedingScreen && ' The last masked app image before failure is preserved separately.'}
+      </p>}
       {!uploadsComplete && <p role="status" className="mt-3 text-sm text-[#747780]">Evidence upload pending.</p>}
     </section>
     <LifecyclePanel phase="setup" actions={run.result.setup.actions} status={run.result.setup.status}
-      actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} sources={run.result.stepSources?.setup} failures={run.result.failures.filter(failure => failure.phase === "setup")} />
+      actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} sources={run.result.stepSources?.setup} failures={frameworkFailures(run.result).filter(failure => failure.phase === "setup")} />
     <div className={hasMedia ? `grid gap-5 ${showMacScreens ? 'lg:h-[calc(var(--recording-height)+10rem)]' : 'lg:h-[calc(var(--recording-height)+8rem)]'} lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]` : "space-y-5"}>
     {hasMedia && <section aria-label="Run evidence viewer" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold">{showMacScreens ? 'Failure screenshots' : showFailureScreen ? screenLabel : 'Recording'}</h3>
-        {(failureScreen || desktopScreen) && <div className="flex flex-wrap gap-2">
+        <h3 className="font-semibold">{showDesktopGallery ? 'Desktop screenshots' : showMacScreens ? 'Failure screenshots' : showFailureScreen ? screenLabel : 'Recording'}</h3>
+        {(failureScreen || desktopScreen || precedingScreen || systemScreen || desktopImages.length > 0) && <div className="flex flex-wrap gap-2">
           {run.platform === 'ios-on-mac' ? <TestingButton disabled={showFailureScreen} onClick={() => {video.current?.pause(); setMediaView('failure');}}>Failure screenshots</TestingButton> : <>
             {failureScreen && <TestingButton disabled={showFailureScreen && displayedScreen === failureScreen} onClick={() => {video.current?.pause(); setMediaView('failure'); setImageError(false);}}>Failure screenshot</TestingButton>}
-            {desktopScreen && <TestingButton disabled={showFailureScreen && displayedScreen === desktopScreen} onClick={() => {video.current?.pause(); setMediaView('desktop'); setImageError(false);}}>Desktop screenshot</TestingButton>}
+            {precedingScreen && <TestingButton disabled={showFailureScreen && displayedScreen === precedingScreen} onClick={() => {video.current?.pause(); setMediaView('preceding'); setImageError(false);}}>App before failure</TestingButton>}
+            {systemScreen && <TestingButton disabled={showFailureScreen && displayedScreen === systemScreen} onClick={() => {video.current?.pause(); setMediaView('system'); setImageError(false);}}>Phone after failure</TestingButton>}
+            {(desktopScreen || desktopImages.length > 0) && <TestingButton disabled={showDesktopGallery || showFailureScreen && displayedScreen === desktopScreen} onClick={() => {video.current?.pause(); setMediaView('desktop'); setImageError(false);}}>{desktopImages.length > 1 ? 'Desktop screenshots' : 'Desktop screenshot'}</TestingButton>}
           </>}
           {hasRecording && <TestingButton disabled={!showFailureScreen} onClick={() => {
             const step = run.result.steps.find(step => step.id === activeStep);
@@ -457,11 +507,16 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
         </div>}
       </div>
       <div className="mt-3 lg:min-h-0 lg:flex-1">
-      {showMacScreens ? <div className={`grid gap-3 ${failureScreen && desktopScreen ? 'sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]' : ''}`}>
+      {showDesktopGallery ? <div className="grid gap-3">
+        {desktopImages.map(({asset, image}) => <FailureScreenshot key={asset.id} label={`Desktop display ${image.displayId}`}
+          actionId={failureScreenAction} href={assetHref(asset.id)} interval={image} />)}
+      </div> : showMacScreens ? <div className={`grid gap-3 ${failureScreen && desktopScreen ? 'sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]' : ''}`}>
         {failureScreen && <FailureScreenshot key={failureScreen.id} label="App" actionId={failureScreenAction} href={assetHref(failureScreen.id)} />}
         {desktopScreen && <FailureScreenshot key={desktopScreen.id} label="Desktop" actionId={failureScreenAction} href={assetHref(desktopScreen.id)} />}
       </div> : showFailureScreen ? <>
-        {imageError ? <p role="alert">Failure screenshot could not load.</p> : <img src={assetHref(displayedScreen!.id)}
+        {displayedInterval && <p className="mb-2 text-sm text-[#747780]">{imageIntervalLabel(displayedInterval)}
+          {displayedScreen === precedingScreen && ' This image precedes the failure; it does not show the failure state.'}</p>}
+        {imageError ? <p role="alert">{screenLabel} could not load.</p> : <img src={assetHref(displayedScreen!.id)}
           alt={`${screenLabel}: ${failureScreenAction}`} onError={() => setImageError(true)}
           className="mx-auto block h-[var(--recording-height)] w-full max-w-[60rem] rounded-lg bg-black object-contain" />}
         <a className={`${TESTING_LINK} mt-2 inline-block text-sm`} href={assetHref(displayedScreen!.id)}>Open {screenLabel.toLowerCase()}</a>
@@ -498,20 +553,20 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
           </div>
         </li>;
       })}</ol>
-      {run.result.failures.filter(failure => failure.phase === "test").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
+      {frameworkFailures(run.result).filter(failure => failure.phase === "test").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
       </div>
     </section>
     </div>
     <LifecyclePanel phase="teardown" actions={run.result.teardown.actions} status={!run.result.teardown.ready
-      || run.result.failures.some(failure => failure.phase === 'teardown') ? "failed" : "passed"}
-      durationMs={run.result.timing.teardownMs} sources={run.result.stepSources?.teardown} failures={run.result.failures.filter(failure => failure.phase === "teardown")}
+      || frameworkFailures(run.result).some(failure => failure.phase === 'teardown') ? "failed" : "passed"}
+      durationMs={run.result.timing.teardownMs} sources={run.result.stepSources?.teardown} failures={frameworkFailures(run.result).filter(failure => failure.phase === "teardown")}
       unavailable={run.result.teardown.unavailableResources} ready={run.result.teardown.ready} />
     {!!run.result.diagnostics?.length && run.result.timing.diagnosticsMs !== undefined && <LifecyclePanel phase="diagnostics"
       actions={run.result.diagnostics} status={run.result.diagnostics.some(action => action.status === 'failed') ? 'failed'
         : run.result.diagnostics.some(action => action.status === 'cancelled') ? 'cancelled' : 'passed'}
       durationMs={run.result.timing.diagnosticsMs} failures={[]} />}
     <section id="run-phase-evidence" tabIndex={-1} className={PANEL}><h3 className="font-semibold">Evidence</h3>
-      {run.result.failures.filter(failure => failure.phase === "evidence").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
+      {frameworkFailures(run.result).filter(failure => failure.phase === "evidence").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
       <ul className="mt-3 space-y-2">{run.assets.map(asset => <li key={asset.id}>{uploadsComplete ? <a className={TESTING_LINK} href={assetHref(asset.id)}>{asset.path}</a> : asset.path} · {asset.kind}</li>)}</ul>
       <p className="mt-4 text-xs">Source revision: <code>{run.definitionRevision}</code></p>
     </section>

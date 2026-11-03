@@ -6,7 +6,14 @@
  */
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 
-import {configure, resetForTests} from "../../runtime/bootstrap"
+import "./reactNativeTestMock"
+
+import {
+  configure,
+  isInstalledMiniappAllowed,
+  isLocalMiniappPackageAllowed,
+  resetForTests,
+} from "../../runtime/bootstrap"
 import type {ClientApp} from "../../types/applet"
 import {installWithRuntimeReload} from "../../utils/storeInstallRuntime"
 import {fleetEvents, type FleetLaunchEvent} from "../fleet/fleetEvents"
@@ -20,7 +27,7 @@ let missingBundles = new Set<string>()
 /** Packages the deployment does not make available. */
 let unavailable = new Set<string>()
 
-const MANIFESTS: Record<string, {name: string; version: string}> = {
+const MANIFESTS: Record<string, {name: string; version: string; minHostVersion?: string}> = {
   "com.mentra.notes": {name: "Notes", version: "1.0.30"},
   "com.mentra.maps": {name: "Maps", version: "2.1.0"},
 }
@@ -28,13 +35,24 @@ const MANIFESTS: Record<string, {name: string; version: string}> = {
 mock.module("../AppRegistry", () => ({
   default: {
     getInstalledMiniapps: async () => installed,
+    isMiniappAccessRevoked: () => false,
     getActiveVersion: async (packageName: string) => MANIFESTS[packageName]?.version ?? "1.0.0",
     getPublisherKeyFingerprint: () => null,
     getSelectedDevSnapshot: () => null,
     getMiniappEntryPaths: (packageName: string, version: string) =>
-      missingBundles.has(packageName) ? null : {background: `file:///bundle/${packageName}/${version}/bg.js`, ui: null},
+      missingBundles.has(packageName)
+        ? null
+        : {
+            background: `file:///bundle/${packageName}/${version}/bg.js`,
+            ui: null,
+            rootDir: `file:///bundle/${packageName}/${version}/`,
+            uiPath: null,
+          },
     getMiniappManifest: (packageName: string) => ({packageName, ...MANIFESTS[packageName], permissions: []}),
     getReleaseIdentity: () => ({source: "bundled_asset"}),
+    isPackageAllowed: (packageName: string) => isLocalMiniappPackageAllowed(packageName),
+    isReleaseAllowed: (packageName: string, version: string | undefined) =>
+      isInstalledMiniappAllowed(packageName, version, {source: "bundled_asset"}),
     getLatestDevSnapshotVersion: () => null,
     hasDevSnapshot: () => false,
   },
@@ -101,7 +119,14 @@ function launchesOf(packageName: string) {
 }
 
 beforeAll(async () => {
-  configure({auth: {}, config: {isMiniappAvailable: (packageName) => !unavailable.has(packageName)}})
+  configure({
+    auth: {},
+    config: {
+      isMiniappAvailable: (packageName) => !unavailable.has(packageName),
+      hostVersion: "3.3.0",
+      supportedMiniappSdkRange: "^0.3.0",
+    },
+  })
   miniappLauncher = (await import("../MiniappLauncher")).miniappLauncher
 })
 
@@ -113,6 +138,7 @@ beforeEach(() => {
   savedRunningState.length = 0
   missingBundles = new Set()
   unavailable = new Set()
+  delete MANIFESTS[NOTES].minHostVersion
   launches.length = 0
   fleetEvents.discardUndeliveredLaunches()
   stopListening = fleetEvents.subscribe({launch: (event) => launches.push(event)})
@@ -142,6 +168,17 @@ describe("a restore after a process death", () => {
       [NOTES, "automatic", "failed"],
       [MAPS, "automatic", "started"],
     ])
+    expect(savedRunningState).toEqual([[NOTES, false]])
+  })
+
+  test("of a release that needs a newer Mentra App is one failed launch for that reason, and stays stopped", async () => {
+    MANIFESTS[NOTES].minHostVersion = "3.4.0"
+    await miniappLauncher.autostartLocalMiniapps()
+    expect(launches.map((launch) => [launch.packageName, launch.outcome, launch.failureReason])).toEqual([
+      [NOTES, "failed", "incompatible_host"],
+      [MAPS, "started", undefined],
+    ])
+    expect(miniappLauncher.isRunning(NOTES)).toBe(false)
     expect(savedRunningState).toEqual([[NOTES, false]])
   })
 
@@ -270,7 +307,8 @@ describe("a start through the apps store", () => {
     router.failingSpawns.add(NOTES)
     const release = fleetEvents.claimLaunch(NOTES)
     await expect(miniappLauncher.ensureRunning(NOTES)).rejects.toThrow()
-    release()
+    // The start reports the failure itself, with the reason the launcher classified.
+    expect(release()).toBe("spawn_failed")
     expect(launches).toEqual([])
   })
 })

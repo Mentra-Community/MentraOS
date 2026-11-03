@@ -3,27 +3,30 @@ import {z} from "zod";
 import {createLogger} from "@mentra/cloud-shared";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {testWriteConcern} from "../models/test-write-concern";
-import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
-import type {RoutineEnrollment} from "../types/routine-definition.types";
+import {frameworkIdentitySchema, recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
+import {routineResourceKindSchema, type RoutineEnrollment} from "../types/routine-definition.types";
 import {routineDispatchIntentSchema, type RoutineDispatchIntent} from "../types/routine-dispatch.types";
 import {GithubRoutineSourceGateway} from "./routine-source-selection.service";
+import {configuredAppRepository, configuredTestingTarget, testingTarget, type TestingRepository} from '../types/testing-source.types';
 import {selectedBuildInput, type TestBuild, type TestBuildPlatform} from "../types/test-build.types";
 import {testSuiteSchema, type TestSuite} from "../types/test-suite.types";
 import {RoutineCatalogService} from "./routine-catalog.service";
 import {GithubTestBuildGateway, TestDispatchError} from "./test-builds.service";
-import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest} from "./test-request.service";
+import {TestRequestService, requestInputDigest, acknowledgedTerminalCancellation, isExecutableRequest, type StoredRequest} from "./test-request.service";
 import {FrameworkResultService} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
-import {portableRoutineSelectionSchema, routineJobBindingSchema, routinePublicationFailureSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
-import {RoutineJobService} from "./routine-job.service";
+import {portableRoutineSelectionSchema, routineJobBindingSchema, routineJobPreparationSchema, routinePublicationFailureSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
+import {RoutineJobService, routineJobInputDigest} from "./routine-job.service";
 import {NIGHTLY_COMPLETION_BOUNDARY_REASON, nightlyUnassignedReason} from "./nightly-deadline-reason";
+import {recordedBuildMatchesIntent} from './routine-request-input';
 
 export const nightlyOccurrenceSchema = z.object({occurrenceId: frameworkIdentitySchema,
-  startedAt: z.string().datetime({offset: true}), trigger: z.enum(["nightly", "manual"])}).strict();
+  startedAt: z.string().datetime({offset: true}), trigger: z.enum(["nightly", "manual"]), workflowRunId: z.number().int().positive().safe().optional()}).strict();
 type Occurrence = z.infer<typeof nightlyOccurrenceSchema>;
 const nightlyCancellationSchema = z.object({requestedAt: z.string().datetime({offset: true}), reason: z.string().min(1).max(2000)}).strict();
 export type NightlyCancellation = z.infer<typeof nightlyCancellationSchema>;
-type RequestInput = z.infer<typeof frameworkRequestInputSchema>;
+type RequestInput = z.infer<typeof recordedFrameworkRequestInputSchema>;
+type RoutineResourceKind = z.infer<typeof routineResourceKindSchema>;
 export interface NightlySelectionError {stage: "build" | "host" | "admission"; status?: number; message: string}
 type PlatformSelection = {build?: TestBuild; errors: NightlySelectionError[]};
 const logger = createLogger("core").child({service: "nightly-routine"});
@@ -43,7 +46,7 @@ export interface NightlyPlanRepository {
   requestCancellation(suiteId: string, cancellation: NightlyCancellation): Promise<NightlyCancellation>;
 }
 export interface NightlyResult {occurrenceId: string; suiteId: string; startedAt: string; trigger: Occurrence["trigger"];
-  members: (NightlyMember & {input?: RequestInput; inputSha256?: string; status: string; publicationComplete: boolean; evidenceStatus?: 'complete' | 'failed'; runId?: string; runStartedAt?: string; runFinishedAt?: string})[];
+  members: (NightlyMember & {input?: RequestInput; inputSha256?: string; requiredResourceKinds?: RoutineResourceKind[]; assignmentEvidence?: 'invalid'; status: string; publicationComplete: boolean; evidenceStatus?: 'complete' | 'failed'; runId?: string; runStartedAt?: string; runFinishedAt?: string})[];
   expectedCount: number; passed: number; status: string; resultUrl?: string; finishedAt?: string; cancellation?: NightlyCancellation}
 export const nightlyPlanRepository: NightlyPlanRepository = {
   async get(suiteId) {
@@ -87,31 +90,47 @@ const finite = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
 /** A prepared request may add source/resources, but cannot change the frozen source or app selection. */
 export function nightlyPreparedInput(member: NightlyMember, value: unknown, digest: string | undefined): RequestInput {
-  const input = frameworkRequestInputSchema.safeParse(value), intent = member.dispatchIntent ?? member.selection;
+  const input = recordedFrameworkRequestInputSchema.safeParse(value), intent = member.dispatchIntent ?? member.selection;
   if (!input.success || !intent || digest !== requestInputDigest(input.data) || input.data.routineId !== intent.routineId
     || input.data.platform !== intent.platform || input.data.definitionRevision !== intent.routineRevision
     || member.dispatchIntent && input.data.laneId !== member.dispatchIntent.laneId
     || member.binding && input.data.laneId !== member.binding.laneId || input.data.minimumFrameworkVersion !== intent.minimumFrameworkVersion
-    || requestInputDigest(input.data.build) !== requestInputDigest(frameworkExecutableBuild(intent.build, input.data.glassesModel))
+    || !recordedBuildMatchesIntent(input.data.build, intent.build)
     || intent.routineSource && requestInputDigest(input.data.routineSource) !== requestInputDigest(intent.routineSource))
     throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
   return input.data;
+}
+
+/** Requested kinds come only from the original digest-checked preparation, independently of binding. */
+export function nightlyRequiredResourceKinds(member: NightlyMember, job: StoredRoutineJob): RoutineResourceKind[] | undefined {
+  try {
+    const prepared = routineJobPreparationSchema.safeParse(job.fleetPreparation);
+    if (!prepared.success || !member.selection || job.requestId !== member.requestId ||
+      requestInputDigest(job.fleetSelection) !== requestInputDigest(member.selection) ||
+      job.fleetSelectionSha256 !== requestInputDigest(member.selection) || routineJobInputDigest(job) !== job.fleetInputSha256 ||
+      requestInputDigest(prepared.data.definition) !== prepared.data.definitionSha256 ||
+      prepared.data.requirements.platform !== member.platform || prepared.data.definition.id !== member.routineId ||
+      prepared.data.routineSource.commit !== member.routineRevision || prepared.data.definition.source.revision !== member.routineRevision ||
+      member.selection.routineSource && requestInputDigest(prepared.data.routineSource) !== requestInputDigest(member.selection.routineSource)) return undefined;
+    return prepared.data.requirements.resources.map(resource => resource.kind);
+  } catch {return undefined;}
 }
 
 /** One immutable occurrence selects the catalog once; host controllers own execution and resource allocation. */
 export class NightlyRoutineService {
   private completionCursor?: {startedAt: Date; suiteId: string};
 
-  constructor(private readonly catalog: Pick<RoutineCatalogService, "list"> = new RoutineCatalogService(),
+  constructor(private readonly catalog: Pick<RoutineCatalogService, "selection"> = new RoutineCatalogService(),
     private readonly builds: {latestDev(platform: TestBuildPlatform, before: string): Promise<TestBuild | null>;
-      resolve(source: TestBuild["source"], platform: TestBuildPlatform): Promise<TestBuild>} = new GithubTestBuildGateway(),
+      resolve(source: TestBuild["source"], platform: TestBuildPlatform): Promise<TestBuild>;
+      forSelection?(before: string): NightlyRoutineService["builds"]} = new GithubTestBuildGateway({repository: configuredAppRepository()}),
     private readonly requests: Pick<TestRequestService, "get"> = new TestRequestService(),
     private readonly repository: NightlyPlanRepository = nightlyPlanRepository,
     private readonly results: Pick<FrameworkResultService, "summary"> = new FrameworkResultService(),
     private readonly now: () => number = Date.now,
     private readonly logSelectionError: (error: unknown, context: {occurrenceId: string; platform: TestBuildPlatform; stage: NightlySelectionError["stage"]}) => void
       = (error, context) => logger.error({err: error, ...context}, "Nightly selection failed"),
-    private readonly sources: Pick<GithubRoutineSourceGateway, "resolve"> = new GithubRoutineSourceGateway(),
+    private readonly sources: Pick<GithubRoutineSourceGateway, "resolveNightly"> = new GithubRoutineSourceGateway(),
     private readonly jobs: Pick<RoutineJobService, "submitFrozen" | "cancelFrozen" | "cancel"> = new RoutineJobService()) {}
 
   private selectionError(error: unknown, stage: NightlySelectionError["stage"], occurrenceId: string, platform: TestBuildPlatform): NightlySelectionError {
@@ -127,11 +146,14 @@ export class NightlyRoutineService {
     const occurrence = parsed.data, suiteId = nightlySuiteId(occurrence.occurrenceId);
     let plan = await this.repository.get(suiteId);
     if (!plan) plan = await this.repository.freeze(await this.select(occurrence, suiteId));
-    if (requestInputDigest({occurrenceId: plan.occurrenceId, startedAt: plan.startedAt, trigger: plan.trigger}) !== requestInputDigest(occurrence))
+    if (requestInputDigest({occurrenceId: plan.occurrenceId, startedAt: plan.startedAt, trigger: plan.trigger}) !== requestInputDigest({occurrenceId: occurrence.occurrenceId, startedAt: occurrence.startedAt, trigger: occurrence.trigger})
+      || occurrence.workflowRunId !== undefined && occurrence.workflowRunId !== (plan.workflowRunId
+        ?? Number(/^manual-dev-([1-9]\d*)$/.exec(plan.occurrenceId)?.[1])))
       throw new TestRunError(409, "Occurrence retry changed its original trigger or boundary");
+    if (await this.repository.completed(suiteId)) return {plan, admissions: []};
     // Each member is independent. A failed queue write is retried with its original immutable request ID/intent.
     const cancellation = await this.repository.cancellation(suiteId);
-    if (cancellation || await this.repository.completed(suiteId) || this.now() >= Date.parse(plan.startedAt) + 3 * 3600_000) {
+    if (cancellation || this.now() >= Date.parse(plan.startedAt) + 3 * 3600_000) {
       await this.cancelAdmissions(plan, cancellation);
       return {plan, admissions: []};
     }
@@ -153,22 +175,24 @@ export class NightlyRoutineService {
   }
 
   private async select(occurrence: Occurrence, suiteId: string): Promise<NightlyPlan> {
-    const catalog = (await this.catalog.list()).filter(row => row.nightlyEnabled !== false)
+    const catalog = (await this.catalog.selection()).filter(row => row.nightlyEnabled !== false)
       .map(row => ({routineId: row.routineId, platform: row.platform}));
     if (catalog.length > 100) throw new TestRunError(503, "Nightly catalog exceeds the occurrence bound; no members were selected");
-    const routineRevision = catalog.length ? await this.sources.resolve() : undefined;
+    const routineRepository = configuredTestingTarget().repository;
+    const routineRevision = catalog.length ? await this.sources.resolveNightly(occurrence, routineRepository) : undefined;
     const platforms = [...new Set(catalog.map(row => row.platform))].sort();
     const selected = new Map<TestBuildPlatform, PlatformSelection>();
+    const builds = this.builds.forSelection?.(occurrence.startedAt) ?? this.builds;
     let anchor: TestBuild | null = null;
     let anchorFailure: {error: unknown} | undefined;
-    try {if (platforms[0]) anchor = await this.builds.latestDev(platforms[0], occurrence.startedAt);}
+    try {if (platforms[0]) anchor = await builds.latestDev(platforms[0], occurrence.startedAt);}
     catch (error) {anchorFailure = {error};}
     await Promise.all(platforms.map(async platform => {
       const selection: PlatformSelection = {errors: []};
       // Resolve independently so an unavailable observation cannot discard an exact published artifact.
       const [artifact] = await Promise.allSettled([
         anchorFailure ? Promise.reject(anchorFailure.error) : !anchor ? Promise.resolve(null)
-          : platform === platforms[0] ? Promise.resolve(anchor) : this.builds.resolve(anchor.source, platform),
+          : platform === platforms[0] ? Promise.resolve(anchor) : builds.resolve(anchor.source, platform),
       ]);
       if (artifact.status === "fulfilled") {
         const build = artifact.value;
@@ -180,7 +204,7 @@ export class NightlyRoutineService {
       } else selection.errors.push(this.selectionError(artifact.reason, "build", occurrence.occurrenceId, platform));
       selected.set(platform, selection);
     }));
-    const members = catalog.map(row => this.member(row, routineRevision!, suiteId, selected.get(row.platform)!));
+    const members = catalog.map(row => this.member(row, routineRevision!, suiteId, selected.get(row.platform)!, routineRepository));
     const firstBuild = members.find(member => member.build)?.build;
     const suiteHeadSha = anchor?.headSha ?? firstBuild?.headSha;
     const suiteRelease = anchor?.release ?? firstBuild?.releaseIdentity;
@@ -194,7 +218,7 @@ export class NightlyRoutineService {
       ...(anchor ? {publication: {source: anchor.source, headSha: anchor.headSha, ...(anchor.release ? {release: anchor.release} : {})}} : {})});
   }
 
-  private member(row: Pick<RoutineEnrollment, "routineId" | "platform">, routineRevision: string, suiteId: string, selected: PlatformSelection): NightlyMember {
+  private member(row: Pick<RoutineEnrollment, "routineId" | "platform">, routineRevision: string, suiteId: string, selected: PlatformSelection, routineRepository: TestingRepository): NightlyMember {
     const memberId = `member-${digestId([row.routineId, row.platform])}`, requestId = `${suiteId}-${memberId}`;
     const buildInput = selected.build?.availability === "available" && selected.build.archive && selected.build.receipt ? {...selectedBuildInput(selected.build, row.platform), ...(selected.build.manifest ? {manifest:selected.build.manifest,manifestSha256:selected.build.manifestSha256} : {})} : undefined;
     const base = {memberId, requestId, routineId: row.routineId, platform: row.platform, routineRevision, definitionRevision: routineRevision, ...(buildInput ? {build: buildInput} : {})};
@@ -203,7 +227,7 @@ export class NightlyRoutineService {
     try {
       if (!buildInput) throw new TestRunError(409, selected.build?.reason ?? "No immutable artifact is available for this platform.");
       const selection = portableRoutineSelectionSchema.parse({requestId, routineId: row.routineId, platform: row.platform,
-        routineRevision, source: selected.build!.source, build: buildInput});
+        routineRevision, ...(routineRepository === testingTarget().repository ? {} : {routineRepository}), source: selected.build!.source, build: buildInput});
       return {...base, selection};
     }
     catch (error) {if (error instanceof TestRunError) return {...base, unavailableReason: error.message,
@@ -277,9 +301,11 @@ export class NightlyRoutineService {
         if (request.requestId !== member.requestId || !portableRoutineSelectionSchema.safeParse(job.fleetSelection).success || requestInputDigest(job.fleetSelection) !== job.fleetSelectionSha256
           || requestInputDigest(job.fleetSelection) !== requestInputDigest(member.selection))
           return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Request identity differs from the frozen selection."};
+        const requiredResourceKinds = nightlyRequiredResourceKinds(member, job);
+        boundMember = {...member, ...(requiredResourceKinds ? {requiredResourceKinds} : {})};
         if (!job.fleetBinding) {
           const recordedWaitingReason = job.preparation?.reason ?? job.fleetDispatch?.error;
-          return {...member, status: job.fleetCancellation ? "incomplete" : "waiting", publicationComplete: false,
+          return {...boundMember, status: job.fleetCancellation ? "incomplete" : "waiting", publicationComplete: false,
             unavailableReason: nightlyUnassignedReason({reason: job.fleetCancellation?.reason ?? recordedWaitingReason
               ?? (job.state === "awaiting-source" ? "Awaiting exact routine source preparation." : "Awaiting compatible runner."),
               startedAt: plan.startedAt, observedAt: job.fleetCancellation?.requestedAt, unassigned: true, recordedWaitingReason})};
@@ -287,12 +313,12 @@ export class NightlyRoutineService {
         const binding = routineJobBindingSchema.safeParse(job.fleetBinding), intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
         if (!binding.success || !intent.success || binding.data.jobId !== member.requestId || binding.data.requestId !== member.requestId || request.hostId !== binding.data.hostId || intent.data.laneId !== binding.data.laneId
           || request.dispatchIntentSha256 !== requestInputDigest(intent.data) || job.fleetPreparation && requestInputDigest(intent.data.routineSource) !== requestInputDigest(job.fleetPreparation.routineSource))
-          return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Bound request identity differs from its assignment."};
+          return {...boundMember, assignmentEvidence: 'invalid', status: "incomplete", publicationComplete: false, unavailableReason: "Bound request identity differs from its assignment."};
         const {laneId: _lane, routineSource: _source, ...boundSelection} = intent.data;
         const {routineSource: selectedSource, ...expectedSelection} = member.selection;
         if (requestInputDigest(boundSelection) !== requestInputDigest(expectedSelection) || selectedSource && requestInputDigest(_source) !== requestInputDigest(selectedSource))
-          return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Bound request source differs from the frozen selection."};
-        boundMember = {...member, hostId: binding.data.hostId, binding: binding.data, dispatchIntent: intent.data};
+          return {...boundMember, assignmentEvidence: 'invalid', status: "incomplete", publicationComplete: false, unavailableReason: "Bound request source differs from the frozen selection."};
+        boundMember = {...boundMember, hostId: binding.data.hostId, binding: binding.data, dispatchIntent: intent.data};
       } else if (request.requestId !== member.requestId || request.hostId !== member.hostId || request.dispatchIntentSha256 !== requestInputDigest(member.dispatchIntent)
         || !request.dispatchIntent || requestInputDigest(request.dispatchIntent) !== request.dispatchIntentSha256)
         return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Request identity differs from the frozen intent."};
@@ -315,6 +341,8 @@ export class NightlyRoutineService {
           runId: run.runId, runStartedAt: run.startedAt, runFinishedAt: run.finishedAt};
       } catch (error) {
         if (!(error instanceof TestRunError) || error.status !== 404) return {...this.unavailableEvidence(boundMember, error, "Result"), input, inputSha256: request.inputSha256};
+        if (acknowledgedTerminalCancellation(request)) return {...prepared, status: "incomplete", publicationComplete: false,
+          unavailableReason: request.hostCancellation!.reason};
         if (request.publicationFailure) {
           const failure = routinePublicationFailureSchema.safeParse(request.publicationFailure);
           if (!failure.success || failure.data.entityId !== member.requestId || request.hostReceipt?.requestId !== member.requestId
@@ -342,7 +370,7 @@ export class NightlyRoutineService {
       members, expectedCount: members.length, passed: members.filter(member => member.status === "pass" && member.publicationComplete).length,
       status: !members.length ? "skipped" : !terminal ? "running" : members.every(member => member.status === "pass" && member.publicationComplete) ? "pass"
         : members.some(member => member.status === "incomplete") ? "incomplete" : members.every(member => member.status === "cancelled") ? "cancelled" : "failed",
-      ...(plan.suite ? {resultUrl: `https://admin.dev.mentraglass.com/?testSuite=${encodeURIComponent(plan.suiteId)}`}
+      ...(plan.members.length >= 2 ? {resultUrl: `https://admin.dev.mentraglass.com/?testSuite=${encodeURIComponent(plan.suiteId)}`}
         : singleResultId ? {resultUrl: `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(singleResultId)}`} : {})};
   }
 
@@ -370,9 +398,9 @@ export class NightlyRoutineService {
   }
 
   async complete(occurrenceId: string) {
-    const plan = await this.plan(occurrenceId), completed = await this.repository.completed(plan.suiteId),
-      cancellation = await this.repository.cancellation(plan.suiteId);
-    if (completed) {await this.cancelAdmissions(plan, cancellation); return completed;}
+    const plan = await this.plan(occurrenceId), completed = await this.repository.completed(plan.suiteId);
+    if (completed) return completed;
+    const cancellation = await this.repository.cancellation(plan.suiteId);
     const deadline = Date.parse(plan.startedAt) + 3 * 3600_000;
     let deadlineReached = this.now() >= deadline;
     if (deadlineReached || cancellation) await this.cancelAdmissions(plan, cancellation);

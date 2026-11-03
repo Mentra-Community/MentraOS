@@ -1,5 +1,8 @@
 package com.mentra.bluetoothsdk
 
+import com.mentra.bluetoothsdk.sgcs.GlassesAudioSetupPolicy
+import com.mentra.bluetoothsdk.sgcs.GlassesAudioSetupState
+
 data class WifiScanResult(
     val ssid: String,
     val requiresPassword: Boolean,
@@ -35,6 +38,8 @@ internal data class GlassesStatus(
     val voiceActivityDetectionEnabled: Boolean,
     val connectionState: GlassesConnectionState,
     val bluetoothClassicConnected: Boolean,
+    val bluetoothClassicProfilesConnected: Boolean,
+    val bluetoothAudioRouted: Boolean,
     val signalStrength: Int,
     val signalStrengthUpdatedAt: Long,
     val deviceModel: String,
@@ -77,6 +82,14 @@ internal data class GlassesStatus(
     val controllerBatteryLevel: Int,
     val controllerSignalStrength: Int,
     val ringSignalStrength: Int,
+    /** Mentra Live `MentraLivePairingState` map (`{state, windowId?, endsAtMs?}`); absent for other glasses. */
+    val pairingState: Map<String, Any>? = null,
+    /**
+     * `GlassesAudioSetupState` map, on every model. Derived from [fullyBooted] by
+     * [GlassesAudioSetupPolicy] rather than stored, so a snapshot that reports ready never
+     * carries a stale `idle`.
+     */
+    val audioSetup: Map<String, Any> = GlassesAudioSetupPolicy.state(fullyBooted).toMap(),
 ) {
     internal fun toMap(): Map<String, Any> {
         val values =
@@ -85,6 +98,8 @@ internal data class GlassesStatus(
             "micEnabled" to micEnabled,
             "voiceActivityDetectionEnabled" to voiceActivityDetectionEnabled,
             "bluetoothClassicConnected" to bluetoothClassicConnected,
+            "bluetoothClassicProfilesConnected" to bluetoothClassicProfilesConnected,
+            "bluetoothAudioRouted" to bluetoothAudioRouted,
             "signalStrength" to signalStrength,
             "signalStrengthUpdatedAt" to signalStrengthUpdatedAt,
             "deviceModel" to deviceModel,
@@ -123,6 +138,8 @@ internal data class GlassesStatus(
             "ringSignalStrength" to ringSignalStrength,
         )
         systemTimeMs?.let { values["systemTimeMs"] = it }
+        pairingState?.let { values["pairingState"] = it }
+        values["audioSetup"] = audioSetup
         return values
     }
 
@@ -137,6 +154,9 @@ internal data class GlassesStatus(
                         ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
                 connectionState = GlassesConnectionState.fromValue(stringValue(values, "connectionState")),
                 bluetoothClassicConnected = boolValue(values, "bluetoothClassicConnected") ?: false,
+                // Android has no separate profile/route signal; both mirror the Classic audio state.
+                bluetoothClassicProfilesConnected = boolValue(values, "bluetoothClassicConnected") ?: false,
+                bluetoothAudioRouted = boolValue(values, "bluetoothClassicConnected") ?: false,
                 signalStrength = numberValue(values, "signalStrength") ?: -1,
                 signalStrengthUpdatedAt = longValue(values, "signalStrengthUpdatedAt") ?: 0L,
                 deviceModel = stringValue(values, "deviceModel") ?: "",
@@ -174,8 +194,23 @@ internal data class GlassesStatus(
                 controllerBatteryLevel = numberValue(values, "controllerBatteryLevel") ?: -1,
                 controllerSignalStrength = numberValue(values, "controllerSignalStrength") ?: -1,
                 ringSignalStrength = numberValue(values, "ringSignalStrength") ?: -1,
+                pairingState = pairingStateValue(values),
             )
     }
+}
+
+/** `audioSetup` from an event or update map, keeping only a known state and its action. */
+internal fun audioSetupValue(values: Map<String, Any>): Map<String, Any>? =
+    GlassesAudioSetupState.fromMap(values["audioSetup"])?.toMap()
+
+/** `pairingState` from a store or event map, keeping only string keys. */
+internal fun pairingStateValue(values: Map<String, Any>): Map<String, Any>? {
+    val raw = values["pairingState"] as? Map<*, *> ?: return null
+    val state = raw["state"] as? String ?: return null
+    val result = mutableMapOf<String, Any>("state" to state)
+    (raw["windowId"] as? Number)?.let { result["windowId"] = it.toInt() }
+    (raw["endsAtMs"] as? Number)?.let { result["endsAtMs"] = it.toLong() }
+    return result
 }
 
 data class VersionInfoResult(
@@ -406,6 +441,8 @@ internal data class GlassesStatusUpdate(
     val voiceActivityDetectionEnabled: Boolean? = null,
     val connectionState: GlassesConnectionState? = null,
     val bluetoothClassicConnected: Boolean? = null,
+    val bluetoothClassicProfilesConnected: Boolean? = null,
+    val bluetoothAudioRouted: Boolean? = null,
     val signalStrength: Int? = null,
     val signalStrengthUpdatedAt: Long? = null,
     val deviceModel: String? = null,
@@ -442,6 +479,9 @@ internal data class GlassesStatusUpdate(
     val controllerBatteryLevel: Int? = null,
     val controllerSignalStrength: Int? = null,
     val ringSignalStrength: Int? = null,
+    val pairingState: Map<String, Any>? = null,
+    /** Explicit `GlassesAudioSetupState` map. When absent, an update that sets [fullyBooted] carries the matching state. */
+    val audioSetup: Map<String, Any>? = null,
 ) {
     internal fun toMap(): Map<String, Any> =
         buildMap {
@@ -458,6 +498,8 @@ internal data class GlassesStatusUpdate(
             putIfNotNull("micEnabled", micEnabled)
             putIfNotNull("voiceActivityDetectionEnabled", voiceActivityDetectionEnabled)
             putIfNotNull("bluetoothClassicConnected", bluetoothClassicConnected)
+            putIfNotNull("bluetoothClassicProfilesConnected", bluetoothClassicProfilesConnected)
+            putIfNotNull("bluetoothAudioRouted", bluetoothAudioRouted)
             putIfNotNull("signalStrength", signalStrength)
             putIfNotNull("signalStrengthUpdatedAt", signalStrengthUpdatedAt)
             putIfNotNull("deviceModel", deviceModel)
@@ -498,6 +540,10 @@ internal data class GlassesStatusUpdate(
             putIfNotNull("controllerBatteryLevel", controllerBatteryLevel)
             putIfNotNull("controllerSignalStrength", controllerSignalStrength)
             putIfNotNull("ringSignalStrength", ringSignalStrength)
+            pairingState?.let { put("pairingState", it) }
+            (audioSetup ?: fullyBooted?.let { GlassesAudioSetupPolicy.state(it).toMap() })?.let {
+                put("audioSetup", it)
+            }
         }
 
     companion object {
@@ -509,6 +555,8 @@ internal data class GlassesStatusUpdate(
                 voiceActivityDetectionEnabled = optionalBoolValue(values, "voiceActivityDetectionEnabled"),
                 connectionState = GlassesConnectionState.optionalFromValue(optionalStringValue(values, "connectionState")),
                 bluetoothClassicConnected = optionalBoolValue(values, "bluetoothClassicConnected"),
+                bluetoothClassicProfilesConnected = optionalBoolValue(values, "bluetoothClassicProfilesConnected"),
+                bluetoothAudioRouted = optionalBoolValue(values, "bluetoothAudioRouted"),
                 signalStrength = optionalNumberValue(values, "signalStrength"),
                 signalStrengthUpdatedAt = optionalLongValue(values, "signalStrengthUpdatedAt"),
                 deviceModel = optionalStringValue(values, "deviceModel"),
@@ -559,6 +607,8 @@ internal data class GlassesStatusUpdate(
                 controllerBatteryLevel = optionalNumberValue(values, "controllerBatteryLevel"),
                 controllerSignalStrength = optionalNumberValue(values, "controllerSignalStrength"),
                 ringSignalStrength = optionalNumberValue(values, "ringSignalStrength"),
+                pairingState = pairingStateValue(values),
+                audioSetup = audioSetupValue(values),
             )
     }
 }

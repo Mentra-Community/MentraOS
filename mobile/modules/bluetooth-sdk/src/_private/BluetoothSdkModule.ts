@@ -97,6 +97,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   connectDefaultWithOptions(options: Required<ConnectOptions>): Promise<void>
   setDefaultDevice(device: Device | null): Promise<void>
   clearDefaultDevice(): Promise<void>
+  /** Android only: iOS cannot read its Bluetooth bonds. */
+  getBondedGlasses?: () => Promise<{name: string; address: string} | null>
   getScanDiagnostic?: (model: DeviceModel) => Promise<ScanDiagnostic | null>
   startScan(model: DeviceModel): Promise<void>
   stopScan(): Promise<void>
@@ -128,6 +130,12 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Incident Reporting
   sendIncidentId(incidentId: string, apiBaseUrl?: string | null): Promise<void>
+  /**
+   * Tell Mentra Live that Cloud recorded `reportId` for the BES crash incident
+   * `incidentKey`. Resolves only on the glasses' matching `ok:true` ack; rejects
+   * on `ok:false`, disconnect, or after 10 s. Call `sendIncidentId` only after it resolves.
+   */
+  sendBesCrashReported(incidentKey: string, reportId: string): Promise<void>
 
   // WiFi Commands
   requestWifiScan(): Promise<WifiSearchResult[]>
@@ -136,7 +144,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   forgetWifiNetwork(ssid: string): Promise<WifiForgetResult>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
-  setWifiAdbState(enabled: boolean): Promise<void>
+  setWifiAdbState(enabled: boolean, expectedBluetoothMac?: string): Promise<void>
   /** Set the glasses system clock when phone detects clock skew (Mentra Live and G2). */
   setSystemTime(timestampMs: number): Promise<void>
   /** Logs current WiFi frequency (MHz) and 5 GHz band to Android logcat. */
@@ -257,7 +265,16 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
    * so a caller that depends on the guarantee must gate on platform.
    */
   setMicSourcePin(source: string | null): Promise<void>
+  /** See the public `setWakeWordDetection`. `modelDir` is required when enabling. */
+  setWakeWordDetection(enabled: boolean, modelDir?: string | null): Promise<void>
+  /** Whether the active recognizer has `path` loaded. Never blocks on a model load. */
+  isSttModelLoaded(path: string): Promise<boolean>
+  /** See the public `finishTranscription`. */
+  finishTranscription(): Promise<string | null>
+  /** See the public `restartTranscriber`. */
   restartTranscriber(): Promise<void>
+  /** See the public `setSpeechActivityDetection`. */
+  setSpeechActivityDetection(enabled: boolean, options?: {minSilenceMs?: number}): Promise<void>
 
   // Audio Playback Monitoring
   // Notify native side when our app starts/stops playing audio
@@ -271,10 +288,15 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   /**
    * Open a PCM stream session. One AudioTrack per id; caller manages ids.
    *
-   * `jitterMs` sizes the playout buffer and is therefore also the stream's floor latency, since a
-   * streaming track fills to its buffer and stays there. Omit it for one-way media, where the
-   * default cushion is inaudible; pass a small value for conversational audio, where the same
-   * cushion is delay before the far end is heard. Android only — iOS accepts and ignores it.
+   * `jitterMs` (default 500) is how much audio is queued before playback starts, and the playout
+   * cushion after that. Omit it for one-way media, where the default cushion is inaudible; pass a
+   * small value for conversational audio, where the same cushion is delay before the far end is
+   * heard. Both platforms honor it: playback starts once `jitterMs` is queued or the stream is
+   * closed, so a sound shorter than `jitterMs` still plays.
+   *
+   * A stream that has not received audio yet is aborted when the audio route changes (Bluetooth
+   * or glasses connect/disconnect, a call starting or ending, an audio-session interruption), so
+   * its next write rejects with "stream not open" instead of playing on a stale route.
    */
   pcmStreamOpen(
     streamId: string,
@@ -293,6 +315,21 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   pcmStreamClose(streamId: string): Promise<{durationMs: number}>
   /** Stop immediately, dropping any backlog. Idempotent. */
   pcmStreamAbort(streamId: string): Promise<void>
+  /**
+   * Fetch `url` (HTTP GET) and play its body as raw 16-bit little-endian mono PCM at `sampleRate`
+   * while it downloads, through the same stream player as `pcmStreamOpen`. Native code reads the
+   * body; audio never crosses into JavaScript. Resolves with the played duration after the whole
+   * body has played. Rejects on a non-2xx response or a network error (whatever already played
+   * stays played), and with "aborted" after `pcmStreamAbort(streamId)`. Must not block the shared
+   * module queue while it runs.
+   */
+  pcmStreamPlayUrl(
+    streamId: string,
+    url: string,
+    sampleRate: number,
+    volume: number,
+    jitterMs?: number,
+  ): Promise<{durationMs: number}>
 
   /** Mentra Live only: K900 `cs_getvol` / `sr_getvol`. */
   getGlassesMediaVolume(): Promise<GlassesMediaVolumeGetResult>
@@ -358,6 +395,7 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
   saveAsDefault: true,
   cancelExistingConnectionAttempt: true,
   requiresAncs: true,
+  enableTransportBridging: true,
 }
 
 const DEFAULT_SCAN_TIMEOUT_MS = 15_000
@@ -751,6 +789,10 @@ NativeBluetoothSdkModule.requestWearTuning = bindNativeMethod<() => Promise<void
   "requestWearTuning",
 )
 NativeBluetoothSdkModule.resetWearTuning = bindNativeMethod<() => Promise<void>>(nativeWearModule, "resetWearTuning")
+
+NativeBluetoothSdkModule.sendBesCrashReported = bindNativeMethod<
+  (incidentKey: string, reportId: string) => Promise<void>
+>(NativeBluetoothSdkModule as unknown as Record<string, unknown>, "sendBesCrashReported")
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule

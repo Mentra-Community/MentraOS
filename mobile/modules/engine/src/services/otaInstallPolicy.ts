@@ -127,13 +127,10 @@ export const OtaProgressMessages = {
   globalTimeout: "Update took too long. Please try again.",
   restartTimeout: "Glasses did not finish restarting. Restart them before trying the update again.",
   sendOtaStartFailed: "Failed to communicate with glasses.",
-  hotspotArtifactDownloadFailed: "Could not download the update to your phone. Check phone internet and try again.",
-  hotspotArtifactVerifyFailed: "The update package could not be verified. Please try again later.",
+  hotspotArtifactDownloadFailed: "The update could not be downloaded to your phone. Please try again.",
+  hotspotArtifactVerifyFailed: "The update file could not be verified. Please try again later.",
   hotspotWifiPermissionDenied: "Allow nearby devices access so the phone can connect to the glasses hotspot.",
-  hotspotWifiDisabled: "Turn on your phone's Wi-Fi so it can connect to the glasses hotspot, then try again.",
   hotspotStartFailed: "Could not start the glasses hotspot. Please try again.",
   hotspotJoinFailed: "Could not connect the phone to the glasses hotspot. Please try again.",
-  hotspotJoinFailedIos:
-    "Could not connect the phone to the glasses hotspot. Make sure your phone's Wi-Fi is on, then try again.",
   hotspotServerFailed: "Could not make the update available to the glasses. Please try again.",
 } as const

@@ -40,6 +40,7 @@ import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-in
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {accountEmail, markAccountEmailChanged} from "../packages/core/src/services/account/account-email.service"
+import {setDeclaredAge} from "../packages/core/src/services/account/declared-age.service"
 import * as trustedEmail from "../packages/core/src/services/account/trusted-email.service"
 import {
   confirmAccountDeletion,
@@ -168,7 +169,11 @@ async function scenario() {
   const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId})
   const self = {...actor(mentraUserId), email}
 
+  const solo = await createWorkspace(self, {name: "Solo"})
+  const soloMembershipId = (await WorkspaceMembershipModel.findOne({workspaceId: solo.workspaceId}).lean())!.membershipId
   const team = await createWorkspace(actor("mu_team_owner"), {name: "Team"})
+  // The person is also in "Team": a second membership is legacy data the one-workspace guard predates, so it is
+  // written directly (the guard refuses it through the services).
   const teamMembershipId = await addMember(team.workspaceId, {mentraUserId, email, role: "developer"})
   const otherMembershipId = await addMember(team.workspaceId, {mentraUserId: "mu_other", role: "developer"})
   const teamKey = await createWorkspaceCredential(self, team.workspaceId, {name: "CI"})
@@ -180,8 +185,6 @@ async function scenario() {
     actorEmail: email,
   })
 
-  const solo = await createWorkspace(self, {name: "Solo"})
-  const soloMembershipId = (await WorkspaceMembershipModel.findOne({workspaceId: solo.workspaceId}).lean())!.membershipId
   const soloKey = await createWorkspaceCredential(self, solo.workspaceId, {name: "Solo CI"})
   const sentInvitationId = await invite(solo.workspaceId, "invitee@example.test", {
     membershipId: soloMembershipId,
@@ -345,6 +348,21 @@ describe("confirmAccountDeletion", () => {
     const after = await AccountEmailModel.find({mentraUserId: s.mentraUserId}).lean()
     expect(after.map(row => ({email: row.email, deleted: row.deletedAt instanceof Date}))).toEqual([{email: null, deleted: true}])
     expect(await accountEmail(s.mentraUserId)).toBeNull()
+  })
+
+  test("the age the person declared is cleared with the account, and can't be given again", async () => {
+    const s = await scenario()
+    await setDeclaredAge(s.mentraUserId, 15)
+
+    await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
+
+    const user = await UserModel.findOne({mentraUserId: s.mentraUserId}).lean()
+    expect(user?.accountDeletionCompletedAt).toBeInstanceOf(Date)
+    expect({declaredAge: user?.declaredAge, declaredAgeAt: user?.declaredAgeAt}).toEqual({
+      declaredAge: null,
+      declaredAgeAt: null,
+    })
+    await expect(setDeclaredAge(s.mentraUserId, 15)).rejects.toThrow("user not found")
   })
 
   test("a lookup still in flight when the account is deleted does not store the email it read", async () => {

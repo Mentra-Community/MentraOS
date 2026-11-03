@@ -1,19 +1,22 @@
-import {PrRoutineCaseService,type PrRoutineCaseAttacher} from './pr-routine-case.service'
 import {createHash} from 'node:crypto'
-import {ROUTINE_CHECK_NAME, ROUTINE_CHECK_REPOSITORY, ROUTINE_RERUN_ACTION, type CheckPayload, type PrRoutineAttempt,
+import {appRepositorySchema, configuredTestingTarget, testingTarget, type AppRepository} from '../types/testing-source.types'
+import {PrRoutineCaseService,type PrRoutineCaseAttacher} from './pr-routine-case.service'
+import {ROUTINE_CHECK_NAME, ROUTINE_CHECK_REPOSITORY, routineCheckRepository, ROUTINE_RERUN_ACTION, type CheckPayload, type PrRoutineAttempt,
   type PrRoutineCheck, type PrRoutineCheckRow, type PrRoutineContext, type PrRoutineMember} from '../types/pr-routine-check.types'
 import {RoutineJobService} from './routine-job.service'
 import {RoutineDispatchService} from './routine-dispatch.service'
 import {RoutineDefinitionService} from './routine-definition.service'
 import {GithubTestBuildGateway} from './test-builds.service'
+import {selectedBuildInput} from '../types/test-build.types'
 import {TestRequestService, requestInputDigest} from './test-request.service'
 import {FrameworkResultService} from './framework-result.service'
 import {TestSuiteService} from './test-suite.service'
 import {TestRerunService} from './test-rerun.service'
 import {TestHostStateService} from './test-host-state.service'
 import {TestRunError} from './test-result-error'
-import {frameworkRequestInputSchema} from '../types/framework-request.types'
+import {recordedFrameworkRequestInputSchema} from '../types/framework-request.types'
 import type {StoredRoutineJob} from '../types/routine-job.types'
+import {routinePreparedBuildSchema} from '../types/routine-dispatch.types'
 import {GithubRoutineSourceGateway} from './routine-source-selection.service'
 import {PrBuildDispatchFailure, GithubPrRoutineChecks, type PrRoutineGithub} from './pr-routine-check-github'
 import {prRoutineCheckRepository, type PrRoutineCheckRepository} from './pr-routine-check.repository'
@@ -22,8 +25,9 @@ import {matchingRoutineProgress} from '../types/routine-progress.types'
 
 const digest = (value: unknown) => requestInputDigest(value)
 const selectionDigest = ({requestId: _requestId, ...selected}: NonNullable<PrRoutineMember['selection']>) => digest(selected)
-export const prRoutineGateId = (headSha: string) => `pr-check-${createHash('sha256').update(`${ROUTINE_CHECK_REPOSITORY}:${headSha}`).digest('hex')}`
-const selectionKey = (context: PrRoutineContext) => digest({number: context.number, headSha: context.headSha,
+const hasRequestedCoverage = (context: PrRoutineContext) => context.labels.some(label => label.startsWith('routine:') || label.startsWith('rerun:'))
+export const prRoutineGateId = (headSha: string, repository: AppRepository = ROUTINE_CHECK_REPOSITORY) => `pr-check-${createHash('sha256').update(`${appRepositorySchema.parse(repository)}:${headSha}`).digest('hex')}`
+const selectionKey = (context: PrRoutineContext) => digest({...(routineCheckRepository(context) === ROUTINE_CHECK_REPOSITORY ? {} : {repository: routineCheckRepository(context)}), number: context.number, headSha: context.headSha,
   baseRef: context.baseRef, sameRepository: context.sameRepository, labels: context.labels, peers: context.peers, labelEvents: context.labelEvents ?? {}, labelActors: context.labelActors ?? {}})
 const externalId = (gate: Pick<PrRoutineCheck, 'gateId' | 'coverageGeneration' | 'attempt'>) =>
   `${gate.gateId}:${gate.coverageGeneration}:${gate.attempt.generation}`
@@ -43,34 +47,36 @@ const adminBase = () => {
 const resultsUrl = (gate: PrRoutineCheck) => gate.attempt.suiteId
   ? `${adminBase()}/?testSuite=${encodeURIComponent(gate.attempt.suiteId)}`
   : gate.attempt.members[0]?.requestId ? `${adminBase()}/?testRun=${encodeURIComponent(gate.attempt.members[0].requestId)}`
-    : `https://github.com/${ROUTINE_CHECK_REPOSITORY}/pull/${gate.context.number}`
+    : `https://github.com/${routineCheckRepository(gate.context)}/pull/${gate.context.number}`
 
 const adminUrl = (gate: PrRoutineCheck) => `${adminBase()}/?prCheck=${encodeURIComponent(gate.gateId)}`
 
 export function routineCheckPayload(gate: PrRoutineCheck, now: number): CheckPayload {
   const attempt = gate.attempt, done = !!attempt.conclusion
+  const empty = attempt.conclusion === 'success' && !attempt.members.length && !hasRequestedCoverage(gate.context)
   const rows = attempt.members.map(member => {
     const progress = member.progress, stale = !progress || now - Date.parse(progress.observedAt) > 60_000
+    const progressEnd = progress && (done ? Date.parse(attempt.finishedAt ?? progress.observedAt) : stale ? Date.parse(progress.observedAt) : now)
     const step = progress?.currentStep, name = step && member.stepIds[step.index] === step.id
       ? member.stepNames[step.index] : undefined
     const stage = member.settled ? member.status : stale ? 'Progress unavailable' : progress!.phase.replace(/-/g, ' ')
     const original = member.linkedTarget ? `${adminBase()}/?${'suiteId' in member.linkedTarget.parent ? 'testSuite=' + encodeURIComponent(member.linkedTarget.parent.suiteId) : 'testRun=' + encodeURIComponent(member.linkedTarget.parent.requestId)}` : undefined
     const result = member.requestId ? `${adminBase()}/?testRun=${encodeURIComponent(member.requestId)}` : undefined
-    return `| ${member.title}${original ? ` · [Original](${original})` : ''}${result ? ` · [Run](${result})` : ''} | ${member.laneLabel ?? member.platform} | ${member.status === 'pass' && !member.publicationComplete ? 'publishing evidence' : member.status} | ${member.waitReason ?? stage}${member.followUp && 'state' in member.followUp && member.followUp.state === 'unavailable' ? ' · Follow-up record unavailable during canonical conversion' : ''}${name ? `: ${name} (${step!.index + 1}/${member.stepIds.length})` : ''}${progress ? ` · ${progress.completedSteps}/${progress.totalSteps} test steps · ${Math.max(0, Math.floor(((stale ? Date.parse(progress.observedAt) : now) - Date.parse(progress.startedAt)) / 1000))}s · observed ${progress.observedAt}` : ''} |`
+    return `| ${member.title}${original ? ` · [Original](${original})` : ''}${result ? ` · [Run](${result})` : ''} | ${member.laneLabel ?? member.platform} | ${member.status === 'pass' && !member.publicationComplete ? 'publishing evidence' : member.status} | ${member.waitReason ?? stage}${member.followUp && 'state' in member.followUp && member.followUp.state === 'unavailable' ? ' · Follow-up record unavailable during canonical conversion' : ''}${name ? `: ${name} (${step!.index + 1}/${member.stepIds.length})` : ''}${progress ? ` · ${progress.completedSteps}/${progress.totalSteps} test steps · ${Math.max(0, Math.floor((progressEnd! - Date.parse(progress.startedAt)) / 1000))}s · observed ${progress.observedAt}` : ''} |`
   })
   const coverage = attempt.members.length ? `Selected ${attempt.members.length} routine/platform member(s) at ${gate.routineRevision ?? 'pending source'}.`
-    : gate.selectionError ?? gate.selectionWait ?? (gate.context.labels.length ? 'Preparing selected routine coverage.' : 'No routine tests requested.')
+    : gate.selectionError ?? gate.selectionWait ?? (hasRequestedCoverage(gate.context) ? 'Preparing selected routine coverage.' : 'No routine tests requested.')
   const stopping = attempt.cancellation && (!done || attempt.conclusion === 'timed_out') ? '\nCancellation requested; ordinary cleanup and containment must settle before a rerun.' : ''
   const summary = [coverage, gate.selectionError ? `Selection failed: ${gate.selectionError}` : '', stopping,
     rows.length ? '\n| Routine | Lane | Result | Current activity |\n|---|---|---|---|\n' + rows.join('\n') : '',
-    `\nAccepted ${attempt.acceptedAt}; deadline ${attempt.deadline}.`, `\n[Results and diagnostics](${resultsUrl(gate)})
+    `\nAccepted ${attempt.acceptedAt}${empty ? '.' : `; deadline ${attempt.deadline}.`}`, `\n[Results and diagnostics](${resultsUrl(gate)})
 [Open controls](${adminUrl(gate)})`].filter(Boolean).join('\n')
   return {name: ROUTINE_CHECK_NAME, head_sha: gate.headSha, external_id: gate.checkExternalId,
     status: done ? 'completed' : attempt.cancellation || attempt.members.some(member => member.progress && !member.waitReason || ['running', 'accepted'].includes(member.status)) ? 'in_progress' : 'queued', ...(attempt.conclusion ? {conclusion: attempt.conclusion} : {}),
     started_at: attempt.acceptedAt, ...(attempt.finishedAt ? {completed_at: attempt.finishedAt} : {}), details_url: adminUrl(gate),
-    output: {title: done ? attempt.conclusion === 'success' ? 'Routine tests passed' : 'Routine tests did not pass' :
+    output: {title: empty ? 'No routine tests requested.' : done ? attempt.conclusion === 'success' ? 'Routine tests passed' : 'Routine tests did not pass' :
       attempt.cancellation ? 'Routine tests are stopping' : 'Routine tests in progress', summary},
-    actions: done ? [ROUTINE_RERUN_ACTION] : []}
+    actions: done && !empty ? [ROUTINE_RERUN_ACTION] : []}
 }
 
 export class PrRoutineCheckService {
@@ -89,22 +95,29 @@ export class PrRoutineCheckService {
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve'> = new GithubRoutineSourceGateway(),
     private readonly references: Pick<PrRerunReferenceService, 'resolve'> = new PrRerunReferenceService(),
     private readonly followUps: PrRoutineCaseAttacher = new PrRoutineCaseService()) {}
-  private attempt(generation: number): PrRoutineAttempt {
+  private attempt(generation: number, context: PrRoutineContext): PrRoutineAttempt {
     const acceptedAt = iso(this.now())
+    if (context.open && (context.peers.length === 0 || context.peers.length === 1 && context.peers[0] === context.number) &&
+        !hasRequestedCoverage(context))
+      return {generation, acceptedAt, deadline: acceptedAt, members: [], conclusion: 'success', finishedAt: acceptedAt}
     return {generation, acceptedAt, deadline: iso(this.now() + 3 * 3600_000), members: []}
   }
   private settled(gate: PrRoutineCheck) {
     return !!gate.attempt.conclusion && [gate.attempt, ...gate.retired].every(attempt =>
       attempt.members.every(member => member.settled && !member.containmentPending))
   }
+  private completedAndDelivered(gate: PrRoutineCheck) {
+    return this.settled(gate) && ['success', 'failure'].includes(gate.attempt.conclusion!) &&
+      gate.reporting.deliveredDigest === digest(routineCheckPayload(gate, this.now()))
+  }
   private next(gate: PrRoutineCheck, pendingAt: number) {
     return this.settled(gate) && !gate.reporting.intended && !gate.reporting.error &&
       gate.reporting.deliveredDigest === digest(routineCheckPayload(gate, this.now())) ? null : new Date(pendingAt)
   }
-  async intake(number: number, deliveryId: string, eventDigest: string, receivedContext?: PrRoutineContext) {
-    const context = receivedContext ?? await this.github.context(number), gateId = prRoutineGateId(context.headSha)
+  async intake(number: number, deliveryId: string, eventDigest: string, receivedContext?: PrRoutineContext, repository: AppRepository = ROUTINE_CHECK_REPOSITORY) {
+    const context = receivedContext ?? await this.github.context(number, repository), gateId = prRoutineGateId(context.headSha, routineCheckRepository(context))
     await this.rows.event(deliveryId, eventDigest, gateId, {kind: 'intake', number, context})
-    const attempt = this.attempt(1), key = selectionKey(context), predecessors = await this.rows.predecessors(number, gateId)
+    const attempt = this.attempt(1, context), key = selectionKey(context), predecessors = await this.rows.predecessors(number, gateId, routineCheckRepository(context))
     const value: PrRoutineCheck = {gateId, headSha: context.headSha, context, selectionKey: key, coverageGeneration: 1,
       attempt, retired: [], controls: [], predecessors, checkExternalId: `${gateId}:1:1`, reporting: {nextAt: iso(this.now())}}
     const pending = routineCheckPayload(value, this.now())
@@ -113,13 +126,15 @@ export class PrRoutineCheckService {
     return {gateId, accepted: true}
   }
   async receiveControl(input: {deliveryId: string; digest: string; gateId: string; checkId: number; externalId: string;
-    headSha: string; kind: 'rerun' | 'cancel'; actor: string}) {
+    headSha: string; kind: 'rerun' | 'cancel'; actor: string; repository?: AppRepository}) {
     await this.rows.event(input.deliveryId, input.digest, input.gateId, input)
     return {gateId: input.gateId, accepted: true}
   }
   async control(input: {deliveryId: string; digest: string; gateId: string; checkId: number; externalId: string;
-    headSha: string; kind: 'rerun' | 'cancel'; actor: string}) {
+    headSha: string; kind: 'rerun' | 'cancel'; actor: string; repository?: AppRepository}) {
     const row = await this.rows.get(input.gateId)
+    if (row && input.repository !== undefined && routineCheckRepository(row.payload.context) !== appRepositorySchema.parse(input.repository))
+      throw new TestRunError(409, 'Control targets a different routine check repository')
     const retained = row?.payload.controls.find(control => control.id === input.deliveryId)
     if (retained) {
       await this.rows.event(input.deliveryId, input.digest, input.gateId, input)
@@ -127,9 +142,9 @@ export class PrRoutineCheckService {
     }
     if (!row || row.payload.headSha !== input.headSha || row.payload.checkId !== input.checkId ||
         row.payload.checkExternalId !== input.externalId) throw new TestRunError(409, 'Control targets an obsolete routine check')
-    if (!await this.github.ownedCheck(input.checkId, input.headSha, input.externalId) || !await this.github.permission(input.actor))
+    if (!await this.github.ownedCheck(input.checkId, input.headSha, input.externalId, routineCheckRepository(row.payload.context)) || !await this.github.permission(input.actor, routineCheckRepository(row.payload.context)))
       throw new TestRunError(409, 'Routine check control requires repository write permission and its owning App')
-    const context = await this.github.context(row.payload.context.number)
+    const context = await this.github.context(row.payload.context.number, routineCheckRepository(row.payload.context))
     if (!context.open || context.headSha !== input.headSha || selectionKey(context) !== row.payload.selectionKey)
       throw new TestRunError(409, 'Routine check context changed; reconcile the current PR first')
     await this.rows.event(input.deliveryId, input.digest, input.gateId, input)
@@ -150,7 +165,7 @@ export class PrRoutineCheckService {
         }
         await this.completeOriginalSuite(gate, gate.attempt)
         gate.retired.push(gate.attempt)
-        gate.attempt = {...this.attempt(gate.attempt.generation + 1), routineRevision: gate.attempt.routineRevision, suiteId: gate.attempt.suiteId, suiteStartedAt: gate.attempt.suiteStartedAt ?? gate.attempt.acceptedAt,
+        gate.attempt = {...this.attempt(gate.attempt.generation + 1, gate.context), routineRevision: gate.attempt.routineRevision, ...(gate.attempt.routineRepository ? {routineRepository: gate.attempt.routineRepository} : {}), suiteId: gate.attempt.suiteId, suiteStartedAt: gate.attempt.suiteStartedAt ?? gate.attempt.acceptedAt,
           members: gate.attempt.members.map(member => ({...member, progress: undefined}))}
         gate.checkExternalId = externalId(gate)
         delete gate.checkId; delete gate.creation
@@ -179,7 +194,7 @@ export class PrRoutineCheckService {
       throw new TestRunError(409, 'PR check generation changed; refresh before cancelling')
     const gate = row.payload, eventId = `admin-${input.coverageGeneration}-${input.attemptGeneration}-${input.operationId}`
     if (gate.controls.some(control => control.id === eventId)) return {accepted: true}
-    const context = await this.github.context(gate.context.number)
+    const context = await this.github.context(gate.context.number, routineCheckRepository(gate.context))
     if (!context.open || context.headSha !== gate.headSha || selectionKey(context) !== gate.selectionKey)
       throw new TestRunError(409, 'PR check context changed; refresh before cancelling')
     const claimed = await this.rows.claim(gateId, new Date(this.now()))
@@ -204,7 +219,7 @@ export class PrRoutineCheckService {
       canCancel: !gate.attempt.conclusion && !gate.attempt.cancellation, cancelling: !!gate.attempt.cancellation && !gate.attempt.conclusion,
       check: routineCheckPayload(gate, now), resultsUrl: resultsUrl(gate),
       members: gate.attempt.members.map(member => ({id: member.memberId, title: member.title, lane: member.laneLabel ?? member.platform,
-        ...(member.linkedTarget ? {original: member.linkedTarget, fixingPrUrl: `https://github.com/${ROUTINE_CHECK_REPOSITORY}/pull/${gate.context.number}`} : {}),
+        ...(member.linkedTarget ? {original: member.linkedTarget, fixingPrUrl: `https://github.com/${routineCheckRepository(gate.context)}/pull/${gate.context.number}`} : {}),
         ...(member.requestId ? {resultsUrl: `${adminBase()}/?testRun=${encodeURIComponent(member.requestId)}`} : {}),
         status: member.status, activity: member.waitReason ?? (member.progress && now - Date.parse(member.progress.observedAt) <= 60_000
           ? member.progress.phase.replace(/-/g, ' ') + (member.progress.currentStep ? `: ${member.stepNames[member.progress.currentStep.index] ?? member.progress.currentStep.id}` : '') : member.settled ? member.status : 'Progress unavailable')})),
@@ -225,7 +240,7 @@ export class PrRoutineCheckService {
       gate.selectionError = 'Routine selection is invalid or exceeds 30 routines.'; return
     }
     const members: PrRoutineMember[] = []
-    for (const label of linkedLabels) if (!context.labelActors?.[label] || !await this.github.permission(context.labelActors[label]!)) {
+    for (const label of linkedLabels) if (!context.labelActors?.[label] || !await this.github.permission(context.labelActors[label]!, routineCheckRepository(context))) {
       gate.selectionError = 'Linked verification requires a repository writer to apply the rerun labels; reapply a label whose authority is unavailable.'; return
     }
     for (const label of linkedLabels) {
@@ -242,7 +257,7 @@ export class PrRoutineCheckService {
         stepIds: definition.definition.steps.map(step => step.id), stepNames: definition.definition.steps.map(step => routineCheckPublicName(step.instruction, step.id)),
         linkedTarget: target, status: 'waiting for app build', publicationComplete: false, settled: false})
     }
-    const selected = ids.length ? await this.catalog.catalog(gate.routineRevision, ids) : undefined
+    const selected = ids.length ? await this.catalog.catalog(gate.routineRevision, ids, testingTarget(gate.routineRepository).repository) : undefined
     if (selected) gate.routineRevision = selected.routineRevision
     for (const routineId of ids) {
       const description = selected!.routines.find(row => row.routineId === routineId)
@@ -257,7 +272,9 @@ export class PrRoutineCheckService {
           status: 'waiting for app build', publicationComplete: false, settled: false})
       }
     }
-    gate.attempt.members = members; gate.attempt.routineRevision = gate.routineRevision; gate.selectionComplete = true
+    gate.attempt.members = members; gate.attempt.routineRevision = gate.routineRevision;
+    if (gate.routineRepository) gate.attempt.routineRepository = gate.routineRepository;
+    gate.selectionComplete = true
     if (gate.attempt.members.filter(member => !member.linkedTarget).length >= 2) gate.attempt.suiteId = `pr-suite-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration})}`
   }
   private async observe(member: PrRoutineMember) {
@@ -283,8 +300,8 @@ export class PrRoutineCheckService {
       !!request.hostRejection && !request.hostReceipt || !!job.preparationRejection || !!job.preparationCancellation
     if (job.publicationFailure) {member.status = 'incomplete'; member.publicationComplete = false}
     delete member.progress
-    const input = frameworkRequestInputSchema.safeParse(request.input)
-    if (request.hostId && request.inputSha256 && input.success) {
+    const input = recordedFrameworkRequestInputSchema.safeParse(request.input)
+    if (request.hostId && request.inputSha256 && input.success && requestInputDigest(input.data) === request.inputSha256) {
       const host = await this.hosts.get(request.hostId), lane = host?.lanes.find(lane => lane.id === input.data.laneId)
       const waiting = lane?.waiting?.find(value => value.requestId === request.requestId && value.requestDigest === request.inputSha256 && value.acceptedAt === request.hostReceipt?.acceptedAt);
       if (waiting && !lane?.progress && ['queued', 'accepted'].includes(request.state)) member.waitReason = `${waiting.reason} · observed ${waiting.observedAt}`;
@@ -349,11 +366,13 @@ export class PrRoutineCheckService {
     const sources = new Map<string, Awaited<ReturnType<GithubTestBuildGateway['inventory']>>>()
     for (const member of attempt.members) {
       if (!member.selection && !member.linkedSource) {
-        if (!sources.has(member.platform)) sources.set(member.platform, await this.builds.inventory({channel: 'pr', pr: gate.context.number, platform: member.platform}, true, gate.buildRequests?.[member.platform]?.runId))
-        const eligible = sources.get(member.platform)!.filter(build => build.headSha === gate.headSha && build.availability === 'available')
+        if (!sources.has(member.platform)) sources.set(member.platform, await this.builds.inventory({channel: 'pr', pr: gate.context.number, platform: member.platform, ...(routineCheckRepository(gate.context) === ROUTINE_CHECK_REPOSITORY ? {} : {repository: routineCheckRepository(gate.context)})}, true, gate.buildRequests?.[member.platform]?.runId))
+        const eligible = sources.get(member.platform)!.filter(build => build.headSha === gate.headSha && build.availability === 'available' &&
+          (build.source.repository ?? ROUTINE_CHECK_REPOSITORY) === routineCheckRepository(gate.context))
           .sort((a, b) => b.source.buildRunId - a.source.buildRunId)
         if (!eligible[0]) {
-          const newest = sources.get(member.platform)!.filter(build => build.headSha === gate.headSha && build.source.channel === 'pr')
+          const newest = sources.get(member.platform)!.filter(build => build.headSha === gate.headSha && build.source.channel === 'pr' &&
+            (build.source.repository ?? ROUTINE_CHECK_REPOSITORY) === routineCheckRepository(gate.context))
             .sort((a, b) => b.source.buildRunId - a.source.buildRunId)[0]
           const producerBoundary = gate.buildRequests?.[member.platform]?.requestedAt ?? attempt.acceptedAt
           if (newest?.producerStatus === 'failed' && Date.parse(newest.createdAt) >= Date.parse(producerBoundary)) {
@@ -375,7 +394,9 @@ export class PrRoutineCheckService {
         member.requestId = id(gate, member.memberId)
         member.requestDeadline = attempt.deadline
         member.selection = await this.jobs.freezeSelection({requestId: member.requestId, routineId: member.routineId,
-          platform: member.platform, routineRevision: gate.routineRevision, source: eligible[0].source})
+          platform: member.platform, routineRevision: gate.routineRevision, routineRepository: testingTarget(gate.routineRepository).repository, source: eligible[0].source},
+          routinePreparedBuildSchema.parse({...selectedBuildInput(eligible[0], member.platform),
+            ...(eligible[0].manifest ? {manifest: eligible[0].manifest, manifestSha256: eligible[0].manifestSha256} : {})}))
         changed = true
       }
     }
@@ -430,7 +451,7 @@ export class PrRoutineCheckService {
       try {
         const preview = await this.reruns.preview({rerunId: member.linkedPreview.id, parent: member.linkedTarget!.parent,
           selection: {memberIds: [member.linkedTarget!.memberId]}, source: member.linkedSource, deadline: attempt.deadline,
-          reason: `Verify fix in ${ROUTINE_CHECK_REPOSITORY}#${gate.context.number}`}, gate.context.labelActors?.[member.linkedTarget!.labels[0]!] ?? gate.controls.at(-1)?.actor ?? 'GitHub routine check')
+          reason: `Verify fix in ${routineCheckRepository(gate.context)}#${gate.context.number}`}, gate.context.labelActors?.[member.linkedTarget!.labels[0]!] ?? gate.controls.at(-1)?.actor ?? 'GitHub routine check')
         const selected = preview.plan.members[0]!
         member.linkedPreview.digest = preview.previewDigest; member.requestId = selected.requestId; member.selection = selected.selection
         member.requestDeadline = preview.plan.deadline ?? attempt.deadline; member.originalRequestId = selected.originalRequestId
@@ -445,7 +466,7 @@ export class PrRoutineCheckService {
       if (!member.selection || !member.originalRequestId || member.followUp) continue
       try {
         const actor = gate.context.labelActors?.[member.linkedTarget!.labels[0]!] ?? gate.controls.at(-1)?.actor ?? 'GitHub routine check'
-        const attached = await this.followUps.attach(member.originalRequestId, {repository: ROUTINE_CHECK_REPOSITORY, number: gate.context.number}, actor)
+        const attached = await this.followUps.attach(member.originalRequestId, {repository: routineCheckRepository(gate.context), number: gate.context.number}, actor)
         member.followUp = attached.caseId ? {caseId: attached.caseId} : {state: attached.unavailable ? 'unavailable' : 'not-required'}
         delete member.waitReason; changed = true
       } catch {
@@ -610,16 +631,18 @@ export class PrRoutineCheckService {
     try {
       let context = gate.context
       try {
-        context = await this.github.context(gate.context.number)
+        context = await this.github.context(gate.context.number, routineCheckRepository(gate.context))
       } catch (error) {if (!gate.attempt.cancellation) throw error}
-      if (context.headSha !== gate.headSha || !context.open) {
+      const contextEnded = context.headSha !== gate.headSha || !context.open
+      const preserveCompleted = contextEnded && this.completedAndDelivered(gate)
+      if (contextEnded && !preserveCompleted) {
         gate.attempt.cancellation ??= {kind: context.open ? 'superseded' : 'closed', requestedAt: iso(this.now())}
         if (gate.attempt.conclusion && !['timed_out', 'cancelled'].includes(gate.attempt.conclusion)) {gate.attempt.conclusion = 'cancelled'; gate.attempt.finishedAt = iso(this.now())}
       }
-      else if (selectionKey(context) !== gate.selectionKey) {
+      else if (!contextEnded && selectionKey(context) !== gate.selectionKey) {
         gate.retired.push({...gate.attempt, cancellation: {kind: 'superseded', requestedAt: iso(this.now())}})
         gate.context = context; gate.selectionKey = selectionKey(context); gate.coverageGeneration++
-        gate.attempt = this.attempt(1); delete gate.routineRevision; delete gate.selectionError; delete gate.selectionWait; delete gate.selectionComplete; delete gate.buildRequests
+        gate.attempt = this.attempt(1, context); delete gate.routineRevision; delete gate.routineRepository; delete gate.selectionError; delete gate.selectionWait; delete gate.selectionComplete; delete gate.buildRequests
         gate.checkExternalId = externalId(gate); delete gate.checkId; delete gate.creation
         gate.reporting = {nextAt: iso(this.now())}
         const pending = routineCheckPayload(gate, this.now())
@@ -628,7 +651,9 @@ export class PrRoutineCheckService {
         if (saved) await this.deliver(gateId)
         return saved
       }
-      gate.context = context
+      // A fully settled verdict already acknowledged by GitHub belongs to its
+      // frozen source. Closing/merging or advancing the PR cannot rewrite it.
+      if (!preserveCompleted) gate.context = context
       for (const retired of gate.retired.filter(attempt => attempt.cancellation)) {
         if (retired.members.some(member => !member.settled)) await this.cancel(retired)
         await this.completeOriginalSuite(gate, retired)
@@ -653,7 +678,9 @@ export class PrRoutineCheckService {
         } else {
           if (!gate.selectionComplete && !gate.selectionError && !gate.attempt.rerun) {
             if (!gate.routineRevision && gate.context.labels.some(label => label.startsWith('routine:'))) {
-              gate.routineRevision = await this.sources.resolve()
+              const repository = gate.routineRepository ?? configuredTestingTarget().repository
+              if (repository !== testingTarget().repository) gate.routineRepository = repository
+              gate.routineRevision = await this.sources.resolve(undefined, undefined, repository)
               return this.rows.save(row, gate, new Date(this.now()))
             }
             try {await this.select(gate)} catch (error) {
@@ -683,6 +710,9 @@ export class PrRoutineCheckService {
           }
         }
       }
+      // Retire a stale error only after ordinary cancellation and suite
+      // finalization have succeeded, rather than skipping their retained work.
+      delete gate.reporting.error
     } catch (error) {
       reconciled = false
       gate.reporting.error = 'Routine check reconciliation is unavailable; retained work will retry.'
@@ -706,7 +736,7 @@ export class PrRoutineCheckService {
     if (!intended) {await this.rows.save(row, gate, this.next(gate, this.now() + 15_000)); return}
     try {
       if (intended.payload.conclusion === 'success') {
-        const context = await this.github.context(gate.context.number)
+        const context = await this.github.context(gate.context.number, routineCheckRepository(gate.context))
         if (!context.open || context.headSha !== gate.headSha || selectionKey(context) !== gate.selectionKey) {
           delete gate.reporting.intended
           await this.rows.save(row, gate, new Date(this.now()))
@@ -717,7 +747,7 @@ export class PrRoutineCheckService {
         throw new TestRunError(503, 'GitHub delivery exceeded its retained lease budget')
       let allowCreate = false
       if (!gate.checkId) {
-        gate.checkId = await this.github.findCheck(intended.payload)
+        gate.checkId = await this.github.findCheck(intended.payload, routineCheckRepository(gate.context))
         if (!gate.checkId) {
           const creation = gate.creation
           if (creation) {
@@ -741,9 +771,11 @@ export class PrRoutineCheckService {
           allowCreate = true
         }
       }
-      gate.checkId = await this.github.deliver(gate.checkId, intended.payload, allowCreate)
+      gate.checkId = await this.github.deliver(gate.checkId, intended.payload, allowCreate, routineCheckRepository(gate.context))
       gate.reporting.deliveredDigest = intended.digest; gate.reporting.deliveredAt = iso(this.now())
-      gate.reporting.nextAt = iso(this.now() + 15_000); delete gate.reporting.intended; delete gate.reporting.error
+      gate.reporting.nextAt = iso(this.now() + 15_000); delete gate.reporting.intended
+      // A delivered verdict cannot acknowledge a failed suite/custody operation.
+      if (gate.reporting.error !== 'Routine check reconciliation is unavailable; retained work will retry.') delete gate.reporting.error
     } catch {gate.reporting.error = 'GitHub App check delivery is unavailable; verify checks:write and webhook installation.'}
     await this.rows.save(row, gate, this.next(gate, this.now() + 15_000))
   }
@@ -767,7 +799,8 @@ export class PrRoutineCheckService {
       const row = await this.rows.get(gateId)
       const intake = events.filter(event => admittedEvents.some(admitted => admitted.deliveryId === event.deliveryId))
         .map(event => event.control as {kind?: string; context?: PrRoutineContext})
-        .filter(control => control.kind === 'intake' && control.context?.headSha === row?.payload.headSha).at(-1)
+        .filter(control => control.kind === 'intake' && control.context && control.context.headSha === row?.payload.headSha && row &&
+          routineCheckRepository(control.context) === routineCheckRepository(row.payload.context)).at(-1)
       const reconciled = await this.reconcile(gateId, intake?.context)
       await Promise.all(admittedEvents.filter(event => event.gateId === gateId).map(event =>
         this.rows.eventSettled(event.deliveryId, reconciled ? undefined : new Date(this.now() + 30_000))))

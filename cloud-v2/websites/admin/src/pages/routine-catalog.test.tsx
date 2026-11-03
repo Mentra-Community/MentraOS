@@ -11,6 +11,7 @@ import {
   FrameworkRunsPage,
   RoutineCatalogCard,
   RoutineCatalogList,
+  hasCatalogPassingRun,
   frameworkRunHref,
   frameworkRunRefetchInterval,
   routineHref,
@@ -28,6 +29,55 @@ import {readTestRunLink} from "../lib/test-run-links"
 import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routine-definition.types"
 import {frameworkRunSchema, recordedFrameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types"
 import {lifecycleRuns} from '../../../../packages/core/src/testing/framework-lifecycle.fixture';
+
+test('crashed app evidence distinguishes preceding app from the current phone screen', () => {
+  const image = (id: string) => ({id, kind: 'screenshot' as const, path: `screenshots/${id}.png`, sha256: 'd'.repeat(64), size: 10, mimeType: 'image/png' as const});
+  const preceding = image('preceding-app'), system = image('current-system'), desktop = image('failure-desktop');
+  const run = recordedFrameworkRunSchema.parse({schemaVersion: 1, requestId: 'crash-display', hostId: 'testing-pro-1', laneId: 'phone',
+    routineId: 'login', definitionRevision: 'c'.repeat(40), platform: 'android',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: '2026-10-03T19:00:00Z', finishedAt: '2026-10-03T19:01:00Z', assets: [preceding, system, desktop],
+    result: {runId: 'crash-display', finishedAt: '2026-10-03T19:01:00Z', setup: {status: 'failed', actionId: 'entry'}, test: 'not-run',
+      steps: [{id: 'connect', status: 'not-run', durationMs: 0}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [{phase: 'setup', actionId: 'entry', message: 'App process disappeared'}], evidence: [],
+      timing: {startedAt: '2026-10-03T19:00:00Z', setupMs: 10000, testMs: 0, teardownMs: 1000}}});
+  const original = {pid: 29776, startSeq: 7632, bootId: 'f37d778b-baa3-4c56-a4a8-bc88bd207464', apkSha256: '9'.repeat(64), build: '991'};
+  const screen = {phase: 'setup' as const, actionId: 'entry', desktopAssetId: desktop.id, failureObservedAt: '2026-10-03T19:00:10Z',
+    phoneProcessWitness: {state: 'replaced' as const, original, current: {pid: 30444, startSeq: 7635}, observedAt: '2026-10-03T19:00:11Z'},
+    precedingAppImage: {assetId: preceding.id, boundary: 'before-password-input' as const, original,
+      captureStartedAt: '2026-10-03T19:00:08Z', captureFinishedAt: '2026-10-03T19:00:09Z'},
+    currentPhoneImage: {assetId: system.id, source: 'system' as const, captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:13Z'}};
+  const client = new QueryClient(), display = {run, definition: null, outcome: 'setup-failed', uploadsComplete: true,
+    evidenceStatus: 'complete', failureScreens: [screen]};
+  const render = () => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+  client.setQueryData(['framework-run', run.requestId], display);
+  expect(render()).toContain('The original app stopped and another app process was observed.');
+  expect(render()).toContain('alt="Phone after failure: entry"');
+  expect(render()).toContain('/assets/current-system');
+  expect(render()).toContain('App before failure</button>');
+  expect(render()).not.toContain('Failure screenshot</button>');
+  expect(render()).toContain('Execution: setup failed');
+  expect(selectedFailureScreen(run, [screen], 'entry', 'setup')).toBeUndefined();
+  expect(selectedFailureScreen(run, [screen], 'entry', 'setup', 'preceding')).toEqual(preceding);
+  expect(selectedFailureScreen(run, [screen], 'entry', 'setup', 'system')).toEqual(system);
+  client.setQueryData(['framework-run', run.requestId], {...display, failureScreens: [{...screen, currentPhoneImage: undefined}]});
+  expect(render()).toContain('alt="App before failure: entry"');
+  expect(render()).toContain('This image precedes the failure; it does not show the failure state.');
+  expect(render()).not.toContain('alt="Failure screenshot:');
+  client.setQueryData(['framework-run', run.requestId], {...display, uploadsComplete: false});
+  expect(render()).not.toContain('<img');
+  expect(selectedFailureScreen(run, [{...screen, precedingAppImage: {...screen.precedingAppImage, assetId: 'foreign'}}], 'entry', 'setup', 'preceding')).toBeUndefined();
+  const second = image('second-desktop'), desktopImages = [desktop, second].map((asset, displayId) => ({assetId: asset.id, displayId,
+    captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:14Z'}));
+  client.setQueryData(['framework-run', run.requestId], {...display, run: {...run, assets: [...run.assets, second]}, failureScreens: [{
+    phase: 'setup', actionId: 'entry', failureObservedAt: screen.failureObservedAt, desktopImages,
+  }]});
+  expect(render()).toContain('Desktop screenshots');
+  expect(render()).toContain('alt="Desktop display 0: entry"');
+  expect(render()).toContain('alt="Desktop display 1: entry"');
+  expect(render().match(/<img /g)).toHaveLength(2);
+  expect(render()).not.toContain('alt="Failure screenshot:');
+});
 
 test('active run page shows current phase, completed count and named steps before final publication', () => {
   const now = new Date().toISOString(), requestId = 'active-miniapps';
@@ -197,12 +247,12 @@ test("catalog filter controls derive options from the whole catalog and retain c
   const client = new QueryClient()
   client.setQueryData(["routine-catalog"], {
     routines: [
-      {...routine, example: null},
+      {...routine, example: {runId: "recorded", definitionRevision: routine.definitionRevision, recordingAssetId: "video", startedAt: "2026-10-01T00:00:00Z", finishedAt: "2026-10-01T00:01:00Z", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}}},
       {
         ...routine,
         platform: "android",
         definition: {...routine.definition, glasses: {models: ["mentra-live", "even-g1"]}},
-        example: null,
+        example: {runId: "recorded", definitionRevision: routine.definitionRevision, recordingAssetId: "video", startedAt: "2026-10-01T00:00:00Z", finishedAt: "2026-10-01T00:01:00Z", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}},
       },
     ],
   })
@@ -226,14 +276,14 @@ test("catalog filter controls derive options from the whole catalog and retain c
     expect(html).toContain(`>${label}</option>`)
   expect(html).toContain("Showing 2 of 2 routines")
   expect(html.match(/<article /g)).toHaveLength(2)
-  expect(html.match(/role="switch"/g)).toHaveLength(2)
+  expect(html.match(/role="switch"/g)).toHaveLength(3)
   client.setQueryData(["routine-catalog"], {routines: []})
   const empty = renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <RoutineCatalogList />
     </QueryClientProvider>,
   )
-  expect(empty).toContain("No routine has a published passing example")
+  expect(empty).toContain("No routine catalog has been processed yet.")
   expect(empty).not.toContain("No routines match your filters")
 })
 test("catalog labels a historical example without claiming the current definition passed", () => {
@@ -1183,6 +1233,8 @@ test('preparing request detail explains exact source custody without calling it 
   client.setQueryData(['framework-run','preparing-source'],{kind:'request',request:{requestId:'preparing-source',hostId:'mini',dispatchIntentSha256:'d'.repeat(64),routineId:'new-main',definitionRevision:'a'.repeat(40),platform:'android',laneId:'phone',state:'preparing',reason:'Waiting for installed routine API.',build:{repository:'Mentra-Community/MentraOS',channel:'dev',headSha:'b'.repeat(40)}}});
   const html=renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId='preparing-source'/></QueryClientProvider>);
   expect(html).toContain('new-main: preparing');expect(html).toContain('The exact routine source is being prepared');expect(html).toContain('Waiting for installed routine API.');expect(html).not.toContain('this historical request');
+  expect(html).toContain('Requirements and lane checklist');
+  expect(client.getQueryState(['request-matching', 'preparing-source'])?.fetchStatus).toBe('idle');
 });
 
 
@@ -1251,7 +1303,7 @@ test("failure summary follows the execution verdict and stays brief", () => {
     {phase: "evidence", actionId: "upload", message: "Upload failed"},
     {phase: "test", actionId: "connect", message: "Meeting did not connect.\nDetailed diagnostic"},
     {phase: "setup", actionId: "prepare", message: "Software preparation timed out"},
-  ], teardown: {unavailableResources: [{cause: "Camera is still active"}]}}} as any;
+  ], teardown: {errors: [], outcomes: [], unavailableResources: [{cause: "Camera is still active"}]}}} as any;
   expect(runFailureSummary(run, "failed", "failed")).toEqual({phase: "test", actionId: "connect", reason: "Test: Meeting did not connect.", target: "run-failure-test-0"});
   expect(runFailureSummary(run, "setup-failed", "failed")?.reason).toBe("Setup: Software preparation timed out");
   expect(runFailureSummary(run, "teardown-failed", "failed")).toMatchObject({reason: "Teardown: Camera is still active", target: "run-phase-teardown"});
@@ -1261,6 +1313,35 @@ test("failure summary follows the execution verdict and stays brief", () => {
   expect(runFailureSummary(run, "failed", "complete")?.reason).toBe("Test: Test failed. No detailed reason was recorded.");
   run.result.failures = [{phase: "test", actionId: "connect", message: "x".repeat(300)}];
   expect(runFailureSummary(run, "failed", "complete")?.reason.length).toBe(164);
+});
+
+test('cleanup-only failures display their actual cause, phase and image without flattened copies', () => {
+  for (const phase of ['teardown', 'evidence'] as const) for (const location of ['teardown', 'outcome'] as const) {
+    const error = {phase, actionId: 'recorder', message: `Original ${location} ${phase} cause`};
+    const image = {id: 'cleanup-image', kind: 'screenshot', path: 'screenshots/cleanup.png', sha256: 'a'.repeat(64), size: 10, mimeType: 'image/png'};
+    const run = recordedFrameworkRunSchema.parse({schemaVersion: 1, requestId: 'cleanup-only', hostId: 'mini', routineId: 'notes',
+      definitionRevision: 'c'.repeat(40), platform: 'android', laneId: 'phone',
+      build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+      startedAt: '2026-10-03T19:00:00Z', finishedAt: '2026-10-03T19:01:00Z', assets: [image],
+      result: {runId: 'cleanup-only', finishedAt: '2026-10-03T19:01:00Z', setup: {status: 'passed'}, test: 'passed',
+        steps: [{id: 'required', status: 'passed', durationMs: 1}], failures: [], evidence: [],
+        teardown: {ready: true, outcomes: location === 'outcome' ? [{state: 'cleaned', resourceId: 'recorder', evidence: [], errors: [error]}] : [],
+          errors: location === 'teardown' ? [error] : [], unavailableResources: []},
+        timing: {startedAt: '2026-10-03T19:00:00Z', setupMs: 0, testMs: 1, teardownMs: 0}}});
+    const outcome = phase === 'teardown' ? 'teardown-failed' : 'pass', evidenceStatus = phase === 'evidence' ? 'failed' : 'complete';
+    const screens = [{phase, actionId: error.actionId, assetId: image.id}], client = new QueryClient();
+    client.setQueryData(['framework-run', run.requestId], {run, definition: null, outcome, evidenceStatus, uploadsComplete: true, failureScreens: screens});
+    const before = JSON.stringify(run);
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+    expect(html).toContain(error.message); expect(html).toContain(`id="run-failure-${phase}-0"`);
+    expect(runFailureSummary(run, outcome, evidenceStatus)?.actionId).toBe(error.actionId);
+    expect(selectedFailureScreen(run, screens, error.actionId, phase)?.id).toBe(image.id);
+    if (phase === 'teardown') {
+      const section = html.slice(html.indexOf('<section id="run-phase-teardown"'), html.indexOf('<section id="run-phase-evidence"'));
+      expect(section).toContain('>Failed</span>'); expect(section).not.toContain('>Passed</span>');
+    }
+    expect(JSON.stringify(run)).toBe(before); client.clear();
+  }
 });
 
 test('failed run links to its reported incident without changing failure selection', () => {
@@ -1285,4 +1366,21 @@ test('failed run links to its reported incident without changing failure selecti
   expect(render(null)).not.toContain('>Incident report</a>');
   expect(render()).not.toContain('>Incident report</a>');
   expect(render('rep_EXACT', 'pass')).not.toContain('>Incident report</a>');
+});
+
+ test('unrecorded routine visibility is a local UI filter, hidden by default', () => {
+  expect(hasCatalogPassingRun({example: null})).toBe(false)
+  expect(hasCatalogPassingRun({example: null}, true)).toBe(true)
+  expect(hasCatalogPassingRun({example: {} as any})).toBe(true)
+})
+
+
+test('catalog hides unrecorded definitions by default and exposes the display toggle', () => {
+  const client = new QueryClient();
+  client.setQueryData(['routine-catalog'], {routines: [{...routine, example: null}]});
+  const markup = renderToStaticMarkup(<QueryClientProvider client={client}><RoutineCatalogList /></QueryClientProvider>);
+  expect(markup).toContain('Show routines without a passing run');
+  expect(markup).toContain('Showing 0 of 1 routines');
+  expect(markup).not.toContain('<article ');
+  expect(markup).not.toContain('checked=""');
 });

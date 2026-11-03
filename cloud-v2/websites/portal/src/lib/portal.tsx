@@ -67,6 +67,8 @@ export function creationNotice(creation: WorkspaceCreation): string | null {
 export interface PortalSession {
   /** The signed-in person, for display ("Signed in" when Core has no address for them). */
   userEmail: string;
+  /** The signed-in person's name as sign-in gave it (`/api/portal/me` user.name), shown in the account footer; null when there is none. */
+  userName?: string | null;
   /** The signed-in person's email address as Core has it, or null: what an invitation is matched against. */
   accountEmail: string | null;
   creation: WorkspaceCreation;

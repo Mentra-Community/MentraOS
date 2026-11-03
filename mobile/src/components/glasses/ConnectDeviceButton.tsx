@@ -8,6 +8,7 @@ import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
+import {usePairingReconnectHold} from "@/hooks/usePairingReconnectHold"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 
 export const ConnectDeviceButton = () => {
@@ -25,7 +26,17 @@ export const ConnectDeviceButton = () => {
   const pairingReadiness = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
     engine.pairing.onReadiness(onChange),
   )
-  const busy = isSearching || pairingReadiness.nativeLinkBusy
+  const inPairingMode =
+    pairedModel === DeviceTypes.LIVE && !glassesConnected && glassesStatus.pairingState?.state === "pairing_mode"
+  const pairingRejected =
+    pairedModel === DeviceTypes.LIVE && !glassesConnected && glassesStatus.pairingState?.state === "pairing_rejected"
+  const holdReconnectAfterPairing = usePairingReconnectHold({
+    inPairingMode,
+    connected: glassesConnected,
+    rejected: pairingRejected,
+    linkBusy: isSearching || pairingReadiness.nativeLinkBusy,
+  })
+  const busy = isSearching || pairingReadiness.nativeLinkBusy || inPairingMode || holdReconnectAfterPairing
 
   if (glassesConnected) {
     return null
@@ -82,14 +93,7 @@ export const ConnectDeviceButton = () => {
   }
 
   if (identity.kind !== "paired") {
-    // A pending selection (chosen model, pairing never completed) resumes the
-    // scan for that model instead of restarting from model selection.
-    if (identity.kind === "pending") {
-      if (identity.model === DeviceTypes.AR99) {
-        return <Button onPress={() => push("/pairing/select-glasses-model")} tx="home:finishPairingGlasses" />
-      }
-      return <Button onPress={() => push("/pairing/scan", {deviceModel: identity.model})} tx="home:finishPairingGlasses" />
-    }
+    // A selection that never finished pairing is not resumed: Home cancels it.
     return <Button onPress={() => push("/pairing/select-glasses-model")} tx="home:pairGlasses" />
   }
 
@@ -206,5 +210,3 @@ export const ConnectControllerButton = () => {
 
   return null
 }
-
-

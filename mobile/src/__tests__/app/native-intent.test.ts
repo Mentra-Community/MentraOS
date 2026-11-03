@@ -10,11 +10,21 @@ it("lets a cold app complete its normal boot instead of opening an uninitialized
   expect(redirectSystemPath({path, initial: true})).toBe("/")
 })
 
+it.each(["com.mentra://settings", "com.mentra:///settings", "/settings"])(
+  "leaves Settings link %s with its miniapp handler instead of the root router",
+  (link) => {
+    expect(redirectSystemPath({path: link, initial: false})).toBeNull()
+    expect(redirectSystemPath({path: link, initial: true})).toBe("/")
+  },
+)
+
 it.each([
   "/home",
   "com.mentra://home",
   "com.mentra://auth/callback?code=example",
   "https://example.com/test/submit-incident-report",
+  "https://example.com/settings",
+  "com.mentra://settings/profile",
 ])("preserves unrelated URL %s", (other) => {
   expect(redirectSystemPath({path: other, initial: false})).toBe(other)
 })
@@ -34,6 +44,16 @@ it("preserves the current screen for a passive permission status request", () =>
 test("attended permission command stays with the handler instead of navigating", () => {
   expect(redirectSystemPath({path: "com.mentra://test/request-permissions?request_id=batch-1", initial: false})).toBeNull()
   expect(redirectSystemPath({path: "com.mentra://test/request-permissions?request_id=batch-1", initial: true})).toBe("/")
+})
+
+it.each([
+  "https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F",
+  "https://apps.mentra.glass/package/com.example.notes",
+  "com.mentra://open?url=https%3A%2F%2Fnotes.example.com%2F",
+  "/package/com.example.notes",
+])("leaves miniapp install link %s to the install sheet", (link) => {
+  expect(redirectSystemPath({path: link, initial: false})).toBeNull()
+  expect(redirectSystemPath({path: link, initial: true})).toBe("/")
 })
 
 it.each([

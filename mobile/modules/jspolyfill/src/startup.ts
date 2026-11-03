@@ -877,9 +877,24 @@ declare const __nativeClearTimer: (token: number) => void
   // responds with bodyBase64 whenever the bytes are not exactly UTF-8 text.
   // Either way arrayBuffer() is exact and text() follows the Fetch
   // Standard's UTF-8 decode.
+  //
+  // Only http: and https: URLs are fetched. Miniapp code is untrusted, and a
+  // file: URL would read the Mentra App's own files. Native refuses them too;
+  // this check gives the browser's TypeError instead of a bridge error.
+  // Leading C0 controls and spaces are skipped, as a URL parser does.
+  const urlScheme = (url: string): string | null => {
+    const match = /^[\u0000- ]*([A-Za-z][A-Za-z0-9+.-]*):/.exec(url)
+    return match ? match[1].toLowerCase() : null
+  }
   if (typeof (g as Record<string, unknown>).fetch !== "function") {
     ;(g as Record<string, unknown>).fetch = async (input: string | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString()
+      const scheme = urlScheme(url)
+      if (scheme !== "http" && scheme !== "https") {
+        throw new TypeError(
+          `fetch: only http: and https: URLs can be fetched, not ${scheme ? `${scheme}:` : "a relative URL"}`,
+        )
+      }
       const method = (init?.method ?? "GET").toUpperCase()
       let bodyString: string | null = null
       let bodyBase64: string | undefined
@@ -1032,6 +1047,13 @@ declare const __nativeClearTimer: (token: number) => void
 
       constructor(url: string, protocols?: string | string[]) {
         this.url = String(url)
+        // As in a browser, a URL that is not a network address throws here.
+        const scheme = urlScheme(this.url)
+        if (scheme !== "ws" && scheme !== "wss" && scheme !== "http" && scheme !== "https") {
+          throw new SyntaxError(
+            `WebSocket: the URL's scheme must be ws:, wss:, http: or https:, not ${scheme ? `${scheme}:` : "none"}`,
+          )
+        }
         const protoList = Array.isArray(protocols) ? protocols : protocols ? [protocols] : []
         // Allocate a session id JS-side so the dispatcher's response is a
         // simple ack rather than carrying the sid we then have to wait for.

@@ -143,6 +143,44 @@ public struct OtaStatusEvent: CustomStringConvertible {
     }
 }
 
+/// Mentra Live stored a BES crash incident; `values` is the glasses message unchanged.
+public struct BesCrashDetectedEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        var values = values
+        // JavaScript sees null, not undefined, before the incident has a report.
+        if stringValue(values, "reportId")?.isEmpty ?? true {
+            values["reportId"] = NSNull()
+        }
+        self.values = values
+    }
+
+    public var incidentKey: String {
+        stringValue(values, "incidentKey") ?? ""
+    }
+
+    public var reason: String {
+        stringValue(values, "reason") ?? ""
+    }
+
+    public var state: String {
+        stringValue(values, "state") ?? ""
+    }
+
+    public var reportId: String? {
+        stringValue(values, "reportId")
+    }
+
+    public var summary: [String: Any] {
+        values["summary"] as? [String: Any] ?? [:]
+    }
+
+    public var description: String {
+        "BesCrashDetectedEvent(incidentKey: \(incidentKey), state: \(state))"
+    }
+}
+
 public struct OtaQueryResult: CustomStringConvertible {
     public let values: [String: Any]
 
@@ -273,6 +311,7 @@ public enum BluetoothEvent: CustomStringConvertible {
     case keepAliveAck(KeepAliveAckEvent)
     case otaStartAck(OtaStartAckEvent)
     case otaStatus(OtaStatusEvent)
+    case besCrashDetected(BesCrashDetectedEvent)
     case settingsAck(SettingsAckEvent)
     case versionInfo(VersionInfoResult)
     case localTranscription(LocalTranscriptionEvent)
@@ -315,6 +354,8 @@ public enum BluetoothEvent: CustomStringConvertible {
         case let .otaStartAck(event):
             event.description
         case let .otaStatus(event):
+            event.description
+        case let .besCrashDetected(event):
             event.description
         case let .settingsAck(event):
             event.description

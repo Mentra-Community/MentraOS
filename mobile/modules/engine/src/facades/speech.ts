@@ -31,8 +31,10 @@ export const speech = {
         onExtractionProgress?: (progress: SttExtractionProgress) => void,
       ]
     ): Promise<void> => sttModelManager.downloadModel(...args),
-    activate: (code: string) => sttModelManager.setCurrentLanguage(code),
-    cancelDownload: () => sttModelManager.cancelDownload(),
+    /** Select a downloaded model and persist it natively, so the next transcriber restart loads it. */
+    activate: (code: string): Promise<void> => sttModelManager.activateLanguage(code),
+    /** Cancel one download: `code`'s, or the most recently started one. */
+    cancelDownload: (code?: string) => sttModelManager.cancelDownload(code),
     deleteModel: (...args: Parameters<typeof sttModelManager.deleteModel>) => sttModelManager.deleteModel(...args),
     /** Current auto-download status of the offline STT model. */
     status: (): OfflineModelDownloadStatus | null => offlineSpeechModelService.getStatus(),

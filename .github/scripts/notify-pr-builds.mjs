@@ -7,12 +7,54 @@ import {artifactUrl} from "./release-artifact-storage.mjs"
 import {routineLabelIds} from "./routine-api.mjs"
 import {slackRoutineSection, slackRoutineText} from "./slack-routine-section.mjs"
 
-export function iosBuildRequired(files) {
-  return files.some(({filename}) =>
-    MOBILE_PR_PATHS.some((pattern) =>
-      pattern.endsWith("*") ? filename.startsWith(pattern.replace(/\*+$/, "")) : filename === pattern,
-    ),
-  )
+// The Mentra monorepo holds this tree at public/mentraos, the ASG client at
+// mentra_live/asg_client and the miniapps the app bundles at miniapps/; its
+// producer workflows sit at the root's .github/workflows/.
+export const MONOREPO = "Mentra-Community/Mentra"
+const MONOREPO_ROOT = "public/mentraos/"
+
+/** A changed file's path in MentraOS's layout; null when it has none (a bundled miniapp). */
+export function mentraOsPath(filename, repository) {
+  if (repository !== MONOREPO) return filename
+  if (filename.startsWith(MONOREPO_ROOT)) return filename.slice(MONOREPO_ROOT.length)
+  if (filename.startsWith("mentra_live/asg_client/")) return filename.slice("mentra_live/".length)
+  if (filename.startsWith("miniapps/")) return null
+  return filename
+}
+
+/**
+ * Monorepo paths that start the PR app builds beyond MentraOS's own (the paths of its root mentra-app-*-build.yml and
+ * mentra-asg-client-build.yml workflows): its glasses firmware and build scripts, and the SDK packages the bundled
+ * miniapps are built with.
+ */
+export const MONOREPO_PR_BUILD_PATHS = [
+  "public/mentraos/cloud-v2/tsconfig.base.json",
+  "public/mentraos/cloud-v2/packages/auth/*",
+  "public/mentraos/cloud-v2/packages/miniapp-tools/*",
+  "public/mentraos/cloud-v2/packages/protocol/*",
+  "public/mentraos/sdk/miniapp-cli/*",
+  "mentra_live/bes/*",
+  ".github/workflows/bes.yml",
+  ".github/workflows/mentra-app-android-build.yml",
+  ".github/workflows/mentra-app-ios-build.yml",
+  ".github/workflows/mentra-asg-client-build.yml",
+  ".github/workflows/reusable-pr-build-notification.yml",
+  ".github/ci/pack-miniapps.sh",
+  ".github/ci/bundled-miniapps.sh",
+  ".github/ci/asg-build-identity.mjs",
+]
+
+const matches = (path, pattern) =>
+  pattern.endsWith("*") ? path.startsWith(pattern.replace(/\*+$/, "")) : path === pattern
+
+export function iosBuildRequired(files, repository) {
+  return files.some(({filename}) => {
+    if (repository === MONOREPO && MONOREPO_PR_BUILD_PATHS.some((pattern) => matches(filename, pattern))) return true
+    const path = mentraOsPath(filename, repository)
+    // The monorepo packs every miniapp into the app it builds.
+    if (path === null) return true
+    return MOBILE_PR_PATHS.some((pattern) => matches(path, pattern))
+  })
 }
 
 const link = (url, label) => `<${url}|${slackRoutineText(label, 200).replaceAll("|", " ")}>`
@@ -132,10 +174,8 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   }
   if (routines.length) lines.push(slackRoutineSection({
     lines: routines.map(routine =>
-      `*Requested tests:* ${slackRoutineText(routine.title ?? routine.id, 200)}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n${[
-        routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable ? slackRoutineText(routine.resultsUnavailable, 200) : `Results link available with the ${routine.platform === "android" ? "Android" : "Mac"} build`,
-        link(routine.pipelineUrl, routine.pipelineLabel),
-      ].join(" · ")}`),
+      `*Requested tests:* ${slackRoutineText(routine.title ?? routine.id, 200)}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n${
+        routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable ? slackRoutineText(routine.resultsUnavailable, 200) : `Results link available with the ${routine.platform === "android" ? "Android" : "Mac"} build`}`),
     footer: "Results appear after the device run is uploaded.", overflowUrl, overflowLabel: "View all requested tests on the PR",
   }))
   lines.push(
@@ -182,25 +222,25 @@ export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId
 
 function requestedRoutineLinks({context, pr, sha, ios, android, requested, androidAvailable}) {
   const repository = `${context.repo.owner}/${context.repo.repo}`
-  const result = {
-    pipelineUrl: `https://github.com/${repository}/actions/workflows/request-e2e-routine.yml`,
-    pipelineLabel: "Request pipeline (workflow)",
-  }
   // Platform labels name published app builds, not inferred routine support or execution.
   const platforms = [...(androidAvailable ? ["android"] : []), ...(ios.assets ? ["ios-on-mac"] : [])]
-  return requested.flatMap(id => platforms.length ? platforms.map(platform => ({...result, id, title: id, platform,
+  return requested.flatMap(id => platforms.length ? platforms.map(platform => ({id, title: id, platform,
     ...(platform === "android" && android.receiptUnavailable
       ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
     resultsUrl: routineResultsUrl({repository, pr: pr.number, sha,
       archiveSha256: platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: id, platform})}))
-    : [{...result, id, title: id, resultsUnavailable: "No published app platform is available for this build; no execution is inferred."}])
+    : [{id, title: id, resultsUnavailable: "No published app platform is available for this build; no execution is inferred."}])
 }
+
+// The run name of a label change that requests no build: never the build.
+export const NO_BUILD_RUN_NAME = "No build: label change"
 
 export function matchingBuildRun(runs, pr, sha) {
   return runs
     .filter(
       (run) =>
         run.event === "pull_request" &&
+        run.display_title !== NO_BUILD_RUN_NAME &&
         run.head_sha === sha &&
         run.head_branch === pr.head.ref &&
         run.head_repository?.full_name === pr.head.repo.full_name,
@@ -297,7 +337,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const mismatch = (platform, actual) =>
     `${platform} was built for ${["dev", "staging"].includes(actual) ? `the ${backendName(actual)}` : "an unrecorded"} backend, but this PR now targets ${destination}; rebuild it for this destination.`
   const files = await github.paginate(github.rest.pulls.listFiles, {...repo, pull_number: pr.number, per_page: 100})
-  const ios = {required: iosBuildRequired(files)}
+  const ios = {required: iosBuildRequired(files, `${repo.owner}/${repo.repo}`)}
   const [androidBuild, asgBuild, iosBuild] = await Promise.all([
     readBuild(github, context, pr, sha, "android"),
     readBuild(github, context, pr, sha, "asg"),
@@ -371,7 +411,8 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       ios.backend = backend
       ios.archiveSha256 = assets.mac.sha256
       if (macHandoff) ios.macInstallUrl = macInstallPageUrl(urls.install, receipt.runAttempt)
-      ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/mobile/ci/pr-ios/README.md`
+      const tree = `${repo.owner}/${repo.repo}` === MONOREPO ? MONOREPO_ROOT : ""
+      ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/${tree}mobile/ci/pr-ios/README.md`
     } catch (failure) {
       ios.error = failure.message
     }
@@ -384,7 +425,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       const coordinates = {pr: pr.number, sha, runId: androidBuild.run.id, attempt: androidBuild.attempt}
       receipt = await (await request(artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds",
         androidReceiptName(pr.number, sha, coordinates.runId, coordinates.attempt)))).json()
-      asset = validateAndroidReceipt(receipt, coordinates).android
+      // The monorepo's APKs pin its own OTA manifests; MentraOS's pin MentraOS's.
+      const repository = `${repo.owner}/${repo.repo}` === MONOREPO ? MONOREPO : undefined
+      asset = validateAndroidReceipt(receipt, {...coordinates, repository}).android
     } catch (failure) {
       receipt = undefined
       core.warning(`Android receipt unavailable: ${failure.message}; publish available downloads and keep receipt verification retryable.`)
@@ -495,7 +538,6 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       `**Requested tests:** ${routine.title ?? routine.id}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n\n${[
         ...(routine.resultsUrl ? [`[View results](${routine.resultsUrl})`] : []),
         ...(routine.resultsUnavailable ? [routine.resultsUnavailable] : []),
-        `[${routine.pipelineLabel}](${routine.pipelineUrl})`,
       ].join(" · ")}\n\nResults appear after the device run is uploaded.`,
     )
   const body = `${marker}\n<!-- ${identity} -->\n${

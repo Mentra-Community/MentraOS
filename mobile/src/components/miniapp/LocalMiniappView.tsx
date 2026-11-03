@@ -1,6 +1,6 @@
 import {miniappHistoryBridge} from "./historyBridge"
-import {useCallback, useEffect, useRef, useState} from "react"
-import {AppState, findNodeHandle, Platform, View, type AppStateStatus} from "react-native"
+import {useCallback, useEffect, useMemo, useRef, useState} from "react"
+import {AppState, findNodeHandle, Linking, Platform, View, type AppStateStatus} from "react-native"
 import {WebView, type WebViewMessageEvent, type WebViewProps} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
@@ -14,8 +14,10 @@ import {BgTimer, engine, SETTINGS, useSetting} from "@mentra/engine"
 import {
   buildMentraUiShim,
   buildMiniappGlobalsScript,
+  fleetEvents,
   localMiniappRuntime,
   miniappLauncher,
+  useAppStatusStore,
 } from "@mentra/engine-host-internal"
 import {devServerBridge} from "@mentra/engine-host-internal/devtools"
 import {useNavigationStore, type NavInterceptor} from "@/stores/navigation"
@@ -23,6 +25,15 @@ import CapsuleMenu from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {getStreamPreviewCoordinator, STREAM_PREVIEW_BIND_TIMEOUT_MS} from "@/services/streamPreview"
+import {
+  applyWebStorageReport,
+  openWebStorageKeeper,
+  parseWebStorageReport,
+  webStorageKeeperAfterLoad,
+  type WebStorageKeeper,
+} from "@/services/miniapps/webStorageMigration"
+import {decideMiniappNavigation, miniappOriginWhitelist} from "./miniappNavigation"
+import {useOldWebStorageReader} from "./OldWebStorageReader"
 import {getWebViewLoadErrorDiagnostics} from "./webViewLoadErrorDiagnostics"
 
 /**
@@ -42,7 +53,7 @@ import {getWebViewLoadErrorDiagnostics} from "./webViewLoadErrorDiagnostics"
  * Compositor only arms its edge-swipe once the WebView is at page 0.
  */
 
-// Reload-retry tuning for the miniapp `ready` handshake (see readyTimerRef).
+// Ready-handshake tuning (see readyTimerRef). Reloads only retry a page the shim reached late or not at all.
 const READY_TIMEOUT_MS = 5000
 const MAX_LOAD_ATTEMPTS = 10
 const UI_RESYNC_INTERVAL_MS = 10_000
@@ -98,8 +109,26 @@ function LocalMiniappView({
   const spaDepth = useRef(0)
   const nativeCanGoBack = useRef(false)
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
+  // The screen's URL, the origin it belongs to, and (for an installed bundle)
+  // the bundle root that origin serves, under the name it serves it for. See
+  // MiniappLauncher's LaunchResult.
   const [uiUri, setUiUri] = useState<string | null>(null)
-  const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
+  const [uiOrigin, setUiOrigin] = useState<string | null>(null)
+  const [uiRootDir, setUiRootDir] = useState<string | null>(null)
+  const [uiOriginName, setUiOriginName] = useState<string | null>(null)
+  // Moving a first-party miniapp's web storage to its own origin.
+  const {
+    reader: oldWebStorageReader,
+    read: readOldWebStorage,
+    cancel: cancelOldWebStorageRead,
+  } = useOldWebStorageReader()
+  // The host's copy of the screen's localStorage, and the keeper script this launch's WebView gets.
+  const [storageKeeperScript, setStorageKeeperScript] = useState("")
+  const storageKeeperRef = useRef<WebStorageKeeper | null>(null)
+  const setStorageKeeper = useCallback((next: {keeper: WebStorageKeeper | null; script: string} | null) => {
+    storageKeeperRef.current = next?.keeper ?? null
+    setStorageKeeperScript(next?.script ?? "")
+  }, [])
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
   // Stream preview. For a CAMERA miniapp on Android the WebView is first rendered without its real
   // source: the preview's WebMessageListener only appears in documents that start loading after
@@ -115,8 +144,11 @@ function LocalMiniappView({
   // The `ready` handshake has exactly one source of truth: `connected`.
   // onLoadEnd only means the WebView painted — not that the miniapp UI JS
   // mounted and called mentra.ready(). After each load we arm a timer; if no
-  // `ready` envelope arrives within READY_TIMEOUT_MS we reload, up to
-  // MAX_LOAD_ATTEMPTS total, then give up with an error.
+  // `ready` envelope arrives within READY_TIMEOUT_MS, a page that announced
+  // `page_loaded` (the shim only does so when it ran before the page's
+  // scripts) never called mentra.ready() and fails at once. Any other page
+  // lost the shim injection race: reload it, up to MAX_LOAD_ATTEMPTS total,
+  // then give up with an error.
   //
   //   connected     — state; drives the splash (isLoaded) and re-renders.
   //   connectedRef  — ref mirror read inside handleLoadEnd and the ready
@@ -131,6 +163,7 @@ function LocalMiniappView({
   //                   reload side effect can't live inside a setLoadAttempts
   //                   updater — updaters must stay pure).
   //   readyTimerRef — the pending ready-timeout timer, if any.
+  //   pageLoadedRef — the shim announced `page_loaded` for the current document.
   const [connected, setConnected] = useState(false)
   const [contentRevealed, setContentRevealed] = useState(false)
   const handleSplashHidden = useCallback(() => {
@@ -144,6 +177,7 @@ function LocalMiniappView({
   const [loadAttempts, setLoadAttempts] = useState(0)
   const attemptsRef = useRef(0)
   const readyTimerRef = useRef<number | null>(null)
+  const pageLoadedRef = useRef(false)
 
   const clearReadyTimer = useCallback(() => {
     if (readyTimerRef.current) {
@@ -182,6 +216,7 @@ function LocalMiniappView({
   const resetLoadState = useCallback(() => {
     connectedRef.current = false
     setConnected(false)
+    pageLoadedRef.current = false
     attemptsRef.current = 0
     setLoadAttempts(0)
     clearReadyTimer()
@@ -320,6 +355,8 @@ function LocalMiniappView({
     resetLoadState()
     setUiReleased(false)
     previewBoundInstanceRef.current = null
+    // The keeper stays with the WebView that is still showing until this launch
+    // replaces it, so that page's reports aren't dropped meanwhile.
 
     const ac = new AbortController()
     const {signal} = ac
@@ -365,21 +402,62 @@ function LocalMiniappView({
         })
         return
       }
-      const previewEligible = !!result.uiUri && localMiniappRuntime.hasManifestPermission(packageName, "CAMERA")
+      const screenUri = result.uiUri && result.uiOrigin ? result.uiUri : null
+
+      // Every screen's localStorage: the host keeps a copy in the miniapp's data
+      // partition, restores it before the page's own scripts and takes the
+      // page's changes. A first-party miniapp's first open on its own origin
+      // also moves its keys from the old shared file:// store (the hidden
+      // reader runs before the miniapp's page loads).
+      const keeper =
+        screenUri && result.uiOrigin
+          ? await openWebStorageKeeper({
+              packageName,
+              origin: result.uiOrigin,
+              devBuild: result.devBuild,
+              previous: storageKeeperRef.current,
+              readOldStore: readOldWebStorage,
+              checkpoint,
+            })
+          : null
+      checkpoint()
+      setStorageKeeper(keeper)
+
+      const previewEligible = !!screenUri && localMiniappRuntime.hasManifestPermission(packageName, "CAMERA")
       previewEligibleRef.current = previewEligible
       // Batched with setUiUri so the WebView's first render already has no source.
       setHoldSource(previewEligible && Platform.OS === "android")
       // Set unconditionally: when the launcher resolves no UI entry (e.g. a
       // re-foreground couldn't re-resolve a non-dev package), clearing prevents
       // the WebView from continuing to show a stale / previous URL.
-      setUiUri(result.uiUri)
-      setUiBaseDir(result.uiBaseDir)
+      setUiUri(screenUri)
+      setUiOrigin(screenUri ? result.uiOrigin : null)
+      setUiRootDir(screenUri ? result.uiRootDir : null)
+      setUiOriginName(screenUri ? result.uiOriginName : null)
       // No WebView means no ready event or timeout can expose escape controls.
-      if (!result.uiUri) fail(translate("common:miniappUiUnavailable"))
+      if (!screenUri) fail(translate("common:miniappUiUnavailable"))
     }
 
     launch().catch((e: Error) => {
       if (e.name === "AbortError") return // stale run — ignore entirely
+      // The age gate kept it from opening (MiniappAgeRestrictedError): the person answered the age question, or was
+      // told why on the alert sheet. Close the screen instead of showing an error on it, but only for this view's
+      // current launch, while this miniapp is still the one in front: a refusal that arrives after the person moved
+      // on leaves the screen they're on alone.
+      if (e.name === "MiniappAgeRestrictedError") {
+        if (!signal.aborted && useAppStatusStore.getState().foregroundedPackage === packageName) {
+          engine.miniapps.clearForeground()
+        }
+        return
+      }
+      // A build this Mentra App can't run says why on its screen, as its install would have; a development build too,
+      // which is not offline.
+      if (e.name === "MiniappIncompatibleHostError") {
+        console.warn(`LocalMiniappView: ${e.message}`)
+        const {miniappName} = e as Error & {miniappName?: string}
+        fail(translate("miniappInstall:needsNewerApp", {name: miniappName || appNameRef.current || packageName}))
+        return
+      }
       if (devUrl) {
         // Dev bundle couldn't be resolved (dev server unreachable, or the
         // manifest/background bundle fetch failed) — route to the dedicated
@@ -399,11 +477,23 @@ function LocalMiniappView({
 
     return () => {
       ac.abort()
+      cancelOldWebStorageRead()
       clearReadyTimer()
       getMentraJS()?.uiRouter.unbindWebView(packageName)
       getStreamPreviewCoordinator().viewDestroyed(packageName, "miniapp-unmounted")
     }
-  }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer, fail])
+  }, [
+    packageName,
+    version,
+    devUrl,
+    devPort,
+    resetLoadState,
+    clearReadyTimer,
+    fail,
+    readOldWebStorage,
+    cancelOldWebStorageRead,
+    setStorageKeeper,
+  ])
 
   useEffect(() => {
     if (!packageName) return
@@ -504,11 +594,23 @@ function LocalMiniappView({
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
       if (!packageName) return
+      // The page changing its localStorage, which the host keeps a copy of.
+      const keeper = storageKeeperRef.current
+      const report = keeper ? parseWebStorageReport(event.nativeEvent.data, keeper) : null
+      if (keeper && report) {
+        applyWebStorageReport(keeper, report)
+        if (report.loaded && keeper.session.mode === "replace") setStorageKeeper(webStorageKeeperAfterLoad(keeper))
+        return
+      }
       try {
         const message = JSON.parse(event.nativeEvent.data)
         if (message.type === "mentra_history" && Number.isInteger(message.depth) && message.depth >= 0) {
           spaDepth.current = message.depth
           setWebViewCanGoBack(message.depth > 0 || nativeCanGoBack.current)
+          return
+        }
+        if (message.type === "page_loaded") {
+          pageLoadedRef.current = true
           return
         }
       } catch {
@@ -535,7 +637,27 @@ function LocalMiniappView({
       const mj = getMentraJS()
       mj?.uiRouter.routeFromWebView(packageName, event.nativeEvent.data)
     },
-    [packageName, markConnected],
+    [packageName, markConnected, setStorageKeeper],
+  )
+
+  // The miniapp's own document stays on its origin; frames may show web content;
+  // a top-level link elsewhere opens in the system browser.
+  const handleShouldStartLoad = useCallback<NonNullable<WebViewProps["onShouldStartLoadWithRequest"]>>(
+    (request) => {
+      if (!uiOrigin) return false
+      const decision = decideMiniappNavigation(request, uiOrigin)
+      if (decision === "open_externally") {
+        Linking.openURL(request.url).catch((e) =>
+          console.warn(`LocalMiniappView: couldn't open a link from ${packageName}`, e),
+        )
+      } else if (decision === "refuse") {
+        console.warn(
+          `LocalMiniappView: ${packageName} navigation refused (${request.isTopFrame === false ? "frame" : "top"})`,
+        )
+      }
+      return decision === "load"
+    },
+    [packageName, uiOrigin],
   )
 
   const handleNavStateChange = useCallback(({canGoBack}: {canGoBack: boolean}) => {
@@ -543,9 +665,17 @@ function LocalMiniappView({
     setWebViewCanGoBack(canGoBack || spaDepth.current > 0)
   }, [])
 
+  // A new document (a reload, a dev reload, the held source arriving) has not
+  // heard from its own shim yet.
+  const handleLoadStart = useCallback(() => {
+    pageLoadedRef.current = false
+  }, [])
+
   // onLoadEnd means the WebView painted, not that the miniapp is ready. Arm a
-  // timer; if the `ready` envelope hasn't arrived by READY_TIMEOUT_MS we count
-  // it as a failed attempt and reload, up to MAX_LOAD_ATTEMPTS, then error.
+  // timer; if the `ready` envelope hasn't arrived by READY_TIMEOUT_MS and the
+  // shim announced `page_loaded`, the page never called mentra.ready() and a
+  // reload would only repeat that. Otherwise the shim ran late or not at all:
+  // count a failed attempt and reload, up to MAX_LOAD_ATTEMPTS, then error.
   //
   // The attempt counter is bumped only when a timer actually fires without
   // `ready` — NOT on every onLoadEnd. A single page load can fire onLoadEnd
@@ -560,13 +690,26 @@ function LocalMiniappView({
     readyTimerRef.current = BgTimer.setTimeout(() => {
       readyTimerRef.current = null
       if (connectedRef.current) return
+      if (pageLoadedRef.current) {
+        devServerBridge.forwardLog(
+          packageName,
+          "error",
+          [
+            "The page loaded but never called mentra.ready(). Wrap the app in <MentraProvider>, or call mentra.ready() once it has mounted.",
+          ],
+          Date.now(),
+          "ui",
+        )
+        fail(translate(devMode || devUrl ? "common:miniappNeverReady" : "common:miniappFailedToLoad"))
+        return
+      }
       // A real "ready never arrived" timeout — this counts as one attempt.
       const attempt = attemptsRef.current + 1
       attemptsRef.current = attempt
       setLoadAttempts(attempt)
       if (attempt >= MAX_LOAD_ATTEMPTS) {
         console.warn(`LocalMiniappView: ${packageName} never sent ready after ${MAX_LOAD_ATTEMPTS} attempts`)
-        setErrorMessage("miniapp failed to load")
+        setErrorMessage(translate("common:miniappFailedToLoad"))
         setLabel(undefined)
       } else {
         console.log(`LocalMiniappView: reloading, attempt ${attempt} of ${MAX_LOAD_ATTEMPTS}`)
@@ -577,11 +720,21 @@ function LocalMiniappView({
         }
       }
     }, READY_TIMEOUT_MS)
-  }, [packageName, clearReadyTimer])
+  }, [packageName, clearReadyTimer, fail, devMode, devUrl])
 
   const handleTerminate = useCallback(() => {
     if (!packageName) return
     getStreamPreviewCoordinator().documentEnded(packageName, "content_process_terminated")
+    // Fleet (Phase 12): the miniapp's screen crashed and closes; nothing restarts it until the person opens it again.
+    const versionName = localMiniappRuntime.installedVersionOf(packageName)
+    fleetEvents.crash({
+      packageName,
+      ...(versionName ? {versionName} : {}),
+      surface: "webview",
+      category: "content_process_terminated",
+      outcome: "closed",
+      crashesInWindow: 1,
+    })
     useStressTestStore.getState().recordEvent({
       packageName,
       at: Date.now(),
@@ -627,27 +780,32 @@ function LocalMiniappView({
     })
   }, [packageName, devUrl, resetLoadState])
 
+  // Built once per change: the keeper script carries the miniapp's whole kept localStorage (up to 5 MB).
+  const insetBottom = Platform.OS === "android" ? insets.bottom : 0
+  const injectedJS = useMemo(
+    () =>
+      [
+        // First, so the kept values are in place before anything else runs.
+        storageKeeperScript,
+        buildMiniappGlobalsScript({
+          packageName,
+          miniappLocal: true,
+          miniappDeveloperMode: !!devUrl,
+          safeAreaInsets: {top: insets.top, bottom: insetBottom, left: insets.left, right: insets.right},
+          webviewFillsStatusBar: true,
+          colorScheme,
+        }),
+        buildMentraUiShim({packageName}),
+        Platform.OS === "android" ? miniappHistoryBridge : "",
+      ].join("\n"),
+    [storageKeeperScript, packageName, devUrl, insets.top, insetBottom, insets.left, insets.right, colorScheme],
+  )
+
   if (!packageName) {
     return <Text text="Missing required parameters" />
   }
 
   const isDevApp = !!devUrl
-
-  const globalsScript = buildMiniappGlobalsScript({
-    packageName,
-    miniappLocal: true,
-    miniappDeveloperMode: !!devUrl,
-    safeAreaInsets: {
-      top: insets.top,
-      bottom: Platform.OS === "android" ? insets.bottom : 0,
-      left: insets.left,
-      right: insets.right,
-    },
-    webviewFillsStatusBar: true,
-    colorScheme,
-  })
-  const uiShim = buildMentraUiShim({packageName})
-  const injectedJS = `${globalsScript}\n${uiShim}\n${Platform.OS === "android" ? miniappHistoryBridge : ""}`
 
   // While the WebView is mounted but the miniapp hasn't sent `ready` yet,
   // show retry progress on the splash. Once connected, the splash hides;
@@ -662,14 +820,20 @@ function LocalMiniappView({
     <View ref={viewShotRef} collapsable={false} className="flex-1" style={{backgroundColor: theme.colors.background}}>
       {/* The splash uncovers the page and capsule together in the same fade. */}
       <View className="flex-1" style={{zIndex: 0}} pointerEvents={contentRevealed ? "auto" : "none"}>
-        {uiUri ? (
+        {oldWebStorageReader}
+        {uiUri && uiOrigin ? (
           <WebView
+            // A new bundle root (an update) is a new document on the same URL.
+            key={uiRootDir ?? uiUri}
             ref={handleRef}
             source={holdSource ? undefined : {uri: uiUri}}
-            originWhitelist={["*"]}
-            allowFileAccess={true}
-            allowFileAccessFromFileURLs={true}
-            allowingReadAccessToURL={uiBaseDir ?? undefined}
+            // An installed bundle loads from its own origin, which serves only
+            // that bundle and never has file access: the package's for a
+            // release, a development origin for a development snapshot. A live
+            // development build loads from its server.
+            miniappOrigin={uiRootDir ? {packageName: uiOriginName ?? packageName, rootDir: uiRootDir} : undefined}
+            originWhitelist={miniappOriginWhitelist(uiOrigin)}
+            onShouldStartLoadWithRequest={handleShouldStartLoad}
             javaScriptEnabled={true}
             domStorageEnabled={true}
             // Miniapps such as Livestreamer render muted autoplay previews using
@@ -682,6 +846,7 @@ function LocalMiniappView({
             injectedJavaScriptBeforeContentLoaded={injectedJS}
             injectedJavaScript={Platform.OS === "android" ? miniappHistoryBridge : undefined}
             onMessage={handleMessage}
+            onLoadStart={handleLoadStart}
             onLoadEnd={handleLoadEnd}
             onContentProcessDidTerminate={handleTerminate}
             onError={handleError}

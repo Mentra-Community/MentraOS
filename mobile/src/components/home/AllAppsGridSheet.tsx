@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {AppState, BackHandler, Keyboard, Platform, Pressable, TextInput, View} from "react-native"
-import {Icon} from "@/components/ignite"
+import {Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import BottomSheet, {
   BottomSheetBackdrop,
@@ -11,6 +11,7 @@ import {Easing} from "react-native-reanimated"
 import {AppsGrid} from "@/components/home/AppsGrid"
 import {translate} from "@/i18n"
 import GlassView from "@/components/ui/GlassView"
+import {useNavigationStore} from "@/stores/navigation"
 
 const GRID_COLUMNS = 4
 
@@ -27,6 +28,10 @@ export default function AllAppsGridSheet({
   const [isOpen, setIsOpen] = useState(false)
   const searchInputRef = useRef<TextInput>(null)
   const clearSearch = useCallback(() => setSearchQuery(""), [])
+  const addMiniapp = useCallback(() => {
+    bottomSheetRef.current?.close()
+    useNavigationStore.getState().push("/miniapps/add")
+  }, [bottomSheetRef])
 
   const snapPoints = useMemo(() => ["90%"], [])
 
@@ -197,7 +202,18 @@ export default function AllAppsGridSheet({
               </View>
               {/* <View className="h-px bg-border my-4" /> */}
             </View>
-            <View className="h-2" />
+            {/* Installing from a link, a QR code or a pasted URL, for everyone. */}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={translate("miniappInstall:homeLink")}
+              testID="home.allApps.addMiniapp"
+              onPress={addMiniapp}
+              hitSlop={8}
+              className="flex-row items-center gap-2 self-start py-3"
+              style={({pressed}) => ({opacity: pressed ? 0.4 : 1})}>
+              <Icon name="plus" size={20} color={theme.colors.foreground} />
+              <Text tx="miniappInstall:homeLink" className="text-base text-foreground" />
+            </Pressable>
             <AppsGrid
               showPlaceholders={!isOpen}
               // The sheet stays mounted while closed (index -1), so its skeleton

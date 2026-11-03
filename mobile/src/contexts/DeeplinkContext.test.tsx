@@ -21,6 +21,16 @@ jest.mock("@/services/permissionStatusRequest", () => ({
 jest.mock("@/services/miniapps/loadAuthoringMiniapp", () => ({
   loadAuthoringMiniapp: (...args: unknown[]) => mockLoadAuthoringMiniapp(...args),
 }))
+const mockStartMiniappInstallFromLink = jest.fn()
+const mockToastShow = jest.fn()
+const mockToastHide = jest.fn()
+jest.mock("react-native-toast-message", () => ({
+  __esModule: true,
+  default: {show: (...args: unknown[]) => mockToastShow(...args), hide: () => mockToastHide()},
+}))
+jest.mock("@/services/miniapps/miniappInstallFlow", () => ({
+  startMiniappInstallFromLink: (...args: unknown[]) => mockStartMiniappInstallFromLink(...args),
+}))
 
 jest.mock("@/components/diagnostics/IncidentReportRequest", () => ({
   __esModule: true,
@@ -559,6 +569,20 @@ it("claims a pending replay before concurrent authentication completes", async (
   expect(mockPendingRoute).toBeNull()
 })
 
+// Opening the existing controls must not enable Super Mode or change a device setting.
+it("opens Super Settings for an authenticated user", async () => {
+  mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "signed-in"}})
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl("com.mentra://miniapps/settings/super")
+  })
+  expect(mockPush).toHaveBeenCalledWith("/miniapps/settings/super")
+})
+
 it("explicit attended route requests without auth, an extra page, or splash and leaves passive status separate", async () => {
   render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
   const url = "com.mentra://test/request-permissions?request_id=batch-1&readback_id=read-1&features=camera&timeout_ms=1000"
@@ -570,6 +594,60 @@ it("explicit attended route requests without auth, an extra page, or splash and 
   expect(mockPush).not.toHaveBeenCalled()
   expect(mockReplaceAll).not.toHaveBeenCalled()
   expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+})
+
+describe("the Settings link", () => {
+  const settings = {packageName: "com.mentra.settings", name: "Settings"}
+
+  beforeEach(() => {
+    mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+    mockMiniappsList.mockReturnValue([settings])
+  })
+
+  it.each(["com.mentra://settings", "com.mentra:///settings", "/settings"])("starts Settings from %s before opening its existing overlay", async (url) => {
+    let completeStart!: (started: boolean) => void
+    mockMiniappsStart.mockReturnValueOnce(new Promise<boolean>((resolve) => {completeStart = resolve}))
+    render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+    await act(async () => {
+      const opening = processUrl(url)
+      await Promise.resolve()
+      expect(mockSetForeground).not.toHaveBeenCalled()
+      completeStart(true)
+      await opening
+    })
+    expect(mockMiniappsStart).toHaveBeenCalledWith(settings, {trigger: "user", skipNavigation: true})
+    expect(mockSetForeground).toHaveBeenCalledWith(settings.packageName)
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(mockReplaceAll).not.toHaveBeenCalled()
+  })
+
+  it("preserves the current page when the normal miniapp start is refused", async () => {
+    mockMiniappsStart.mockResolvedValueOnce(false)
+    render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+    await act(async () => {await processUrl("com.mentra://settings")})
+    expect(mockMiniappsStart).toHaveBeenCalledTimes(1)
+    expect(mockSetForeground).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  it("preserves the current page when Settings is not registered", async () => {
+    mockMiniappsList.mockReturnValueOnce([])
+    render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+    await act(async () => {await processUrl("com.mentra://settings")})
+    expect(mockMiniappsStart).not.toHaveBeenCalled()
+    expect(mockSetForeground).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  it("keeps authentication required instead of opening Settings while signed out", async () => {
+    mockGetSession.mockResolvedValueOnce({is_error: () => false, value: {token: undefined}})
+    render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+    await act(async () => {await processUrl("com.mentra://settings")})
+    expect(mockMiniappsStart).not.toHaveBeenCalled()
+    expect(mockSetForeground).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(mockSetPendingRoute).toHaveBeenCalledWith("com.mentra://settings")
+  })
 })
 
 describe("the Gallery link", () => {
@@ -622,5 +700,110 @@ describe("the Gallery link", () => {
     })
     expect(mockMiniappsStart).not.toHaveBeenCalled()
     expect(mockPush).toHaveBeenCalledWith("/asg/gallery")
+  })
+})
+
+describe("miniapp install links", () => {
+  const signedIn = () => mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+
+  it.each([
+    "https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F",
+    "https://apps.mentra.glass/open/?url=https%3A%2F%2Fnotes.example.com%2F",
+    "com.mentra://open?url=https%3A%2F%2Fnotes.example.com%2F",
+    "https://apps.mentraglass.com/package/com.example.notes",
+    "https://apps.mentraglass.com/package/com.example.notes/",
+    "https://apps.mentraglass.com/app/com.example.notes",
+    "com.mentra://package/com.example.notes",
+  ])("hands %s to the install flow, with no splash over its sheet", async (url) => {
+    signedIn()
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(url)
+    })
+    expect(mockStartMiniappInstallFromLink).toHaveBeenCalledWith(url, "link", {onPresent: expect.any(Function)})
+    expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(mockReplaceAll).not.toHaveBeenCalled()
+  })
+
+  it("reads an open link whose host a source stripped", async () => {
+    signedIn()
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl("/open?url=https%3A%2F%2Fnotes.example.com%2F")
+    })
+    expect(mockStartMiniappInstallFromLink).toHaveBeenCalledWith(
+      "https://apps.mentra.glass/open?url=https%3A%2F%2Fnotes.example.com%2F",
+      "link",
+      expect.anything(),
+    )
+  })
+
+  it("says the link is opening until its sheet shows", async () => {
+    signedIn()
+    mockStartMiniappInstallFromLink.mockImplementationOnce(
+      async (_url: string, _source: string, options: {onPresent: () => void}) => {
+        expect(mockToastShow).toHaveBeenCalledTimes(1)
+        expect(mockToastHide).not.toHaveBeenCalled()
+        options.onPresent()
+      },
+    )
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl("https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F")
+    })
+    expect(mockToastShow).toHaveBeenCalledWith({type: "info", text1: expect.any(String)})
+    expect(mockToastHide).toHaveBeenCalledTimes(1)
+  })
+
+  it("waits for sign-in before installing", async () => {
+    const url = "https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F"
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(url)
+    })
+    expect(mockStartMiniappInstallFromLink).not.toHaveBeenCalled()
+    expect(mockSetPendingRoute).toHaveBeenCalledWith(url)
+  })
+
+  it("ignores the same link again while its sheet is open", async () => {
+    signedIn()
+    let finish!: () => void
+    mockStartMiniappInstallFromLink.mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)))
+    const url = "https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F"
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    let first!: Promise<void>
+    await act(async () => {
+      first = processUrl(url)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await processUrl(url, true)
+    })
+    expect(mockStartMiniappInstallFromLink).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      finish()
+      await first
+    })
   })
 })

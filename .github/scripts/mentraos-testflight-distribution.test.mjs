@@ -57,7 +57,9 @@ test("coordinator freezes public-beta intent and mobile reports review state", (
   for (const command of planCommands) assert.match(command, /--public-beta-testflight\s+true\b/)
   assert.match(coordinator, /testflight_group=Mentra Staging Public/)
   assert.match(coordinator, /testflight_audience=external/)
-  assert.match(coordinator, /testflight_audience=internal/)
+  // The internal audience was dev's, whose releases come from the Mentra
+  // monorepo; the mobile workflow defaults to it (below).
+  assert.doesNotMatch(coordinator, /testflight_audience=internal/)
   const mobile = readFileSync(new URL("../workflows/reusable-coordinated-mobile.yml", import.meta.url), "utf8")
   const audienceInput = mobile.match(/^([ \t]*)testflight_audience:[ \t]*\n([\s\S]*?)(?=^\1\S|(?![\s\S]))/m)?.[2]
   assert.ok(audienceInput, "TestFlight audience input is present")

@@ -4,6 +4,7 @@ import { registerModel } from "./register-model";
 // Separate from lane ownership and immutable routine results. No execution/cleanup authority.
 const sample = new Schema({
   hostId: { type: String, required: true }, sampleId: { type: String, required: true },
+  kind: { type: String, enum: ['health', 'framework-debug'] },
   sampledAt: { type: Date, required: true }, receivedAt: { type: Date, required: true },
   expiresAt: { type: Date, required: true }, digest: { type: String, required: true },
   payload: { type: Schema.Types.Mixed, required: true },

@@ -1,9 +1,10 @@
 import * as Linking from "expo-linking"
 import * as WebBrowser from "expo-web-browser"
+import Toast from "react-native-toast-message"
 import {FC, ReactNode, createContext, useContext, useEffect, useRef, useState} from "react"
 import {AppState, Platform} from "react-native"
 
-import {cameraPackageName} from "@/constants/miniapps"
+import {cameraPackageName, settingsPackageName} from "@/constants/miniapps"
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import mentraAuth from "@/utils/auth/authClient"
 import {confirmLinkSignIn} from "@/utils/auth/confirmLinkSignIn"
@@ -11,8 +12,10 @@ import {BgTimer, engine, glassesMicProbe, parseMicProbeParams} from "@mentra/eng
 import {useNavigationStore} from "@/stores/navigation"
 import IncidentReportRequest from "@/components/diagnostics/IncidentReportRequest"
 import {loadAuthoringMiniapp} from "@/services/miniapps/loadAuthoringMiniapp"
+import {startMiniappInstallFromLink} from "@/services/miniapps/miniappInstallFlow"
 import {publishPermissionStatusRequest} from "@/services/permissionStatusRequest"
 import {requestAttendedPermissions} from "@/services/attendedPermissionRequest"
+import {translate} from "@/i18n"
 
 /**
  * adb / zsh often backslash-escapes `&` in a custom-scheme URL. That turns
@@ -53,9 +56,36 @@ export interface DeepLinkRoute {
   pattern: string
   handler: (url: string, params: Record<string, string>, ui: DeepLinkRouteUi) => void | Promise<void>
   requiresAuth?: boolean
-  /** Diagnostic observations must not cover the currently selected app screen. */
+  /**
+   * No splash covers the current screen while the handler runs: diagnostic observations, and handlers that present
+   * their own sheet (which the splash would hide).
+   */
   presentation?: "passive"
 }
+
+/**
+ * The open link (`/open?url=<miniapp URL>`) and the package link (`/package/<packageName>`, and the directory's older
+ * `/app/<packageName>`) install a miniapp through the install sheet (distribution spec, "Installing"), as Universal
+ * Links and App Links on apps.mentraglass.com and apps.mentra.glass, and on the app's own scheme. The flow reads the
+ * whole link, and says so when it names no miniapp.
+ */
+const miniappInstallRoutes: DeepLinkRoute[] = [
+  "/open",
+  "/open/",
+  "/package/:packageName",
+  "/package/:packageName/",
+  "/app/:packageName",
+  "/app/:packageName/",
+].map((pattern) => ({
+  pattern,
+  requiresAuth: true,
+  presentation: "passive",
+  handler: async (url: string) => {
+    // The miniapp's URL is fetched before its sheet shows.
+    Toast.show({type: "info", text1: translate("miniappInstall:opening")})
+    await startMiniappInstallFromLink(url, "link", {onPresent: () => Toast.hide()})
+  },
+}))
 
 /**
  * Define all deep link routes for the app
@@ -84,10 +114,18 @@ const deepLinkRoutes: DeepLinkRoute[] = [
   // Settings routes
   {
     pattern: "/settings",
-    handler: (url: string, params: Record<string, string>) => {
-      const nav = useNavigationStore.getState()
-      nav.push("/miniapps/settings")
+    handler: async () => {
+      const settings = engine.miniapps.list().find((app) => app.packageName === settingsPackageName)
+      if (settings && await engine.miniapps.start(settings, {trigger: "user", skipNavigation: true})) {
+        await engine.miniapps.setForeground(settingsPackageName)
+      }
     },
+    requiresAuth: true,
+  },
+  {
+    // Open the existing controls without enabling Super Mode or changing settings.
+    pattern: "/miniapps/settings/super",
+    handler: () => {useNavigationStore.getState().push("/miniapps/settings/super")},
     requiresAuth: true,
   },
   {
@@ -439,6 +477,7 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     },
     requiresAuth: true,
   },
+  ...miniappInstallRoutes,
 ]
 
 interface DeeplinkContextType {

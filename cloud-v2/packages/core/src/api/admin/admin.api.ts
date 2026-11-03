@@ -13,6 +13,8 @@
  *  - `/reports`: `organization.incidents.read`;
  *  - `/support-profiles`: `organization.supportProfiles.read`;
  *  - `/licenses`: `organization.licenses.read`, read-only (an Organization Admin; an operator key cannot hold it);
+ *  - `/registry`: `organization.registry.administer`, the miniapp registry (an Organization Admin; an operator key
+ *    cannot hold it);
  *  - `/test-runs`, `/routine-catalog`, `/routines`, `/test-routines`, `/test-builds`, `/test-dispatches`:
  *    `organization.testing.read`, and `organization.testing.manage` for anything that writes;
  *  - `/workspaces`: the workspace API, for people, each route gated on the caller's
@@ -45,6 +47,7 @@ import {createWorkspacesApi} from "../workspaces/workspaces.api"
 import auditLog from "./audit-log.api"
 import licenses from "./licenses.api"
 import workspaceLicenseResets from "./workspace-license-resets.api"
+import registry from "./registry.api"
 import reports from "./reports.api"
 import {createRoutineCatalogApi} from "./routine-catalog.api"
 import {createRoutinePreferencesApi} from "./routine-preferences.api"
@@ -137,6 +140,7 @@ app.route("/fleet", adminFleetApi)
 const readsIncidents = requireOrganizationCapability("organization.incidents.read")
 const readsSupportProfiles = requireOrganizationCapability("organization.supportProfiles.read")
 const readsLicenses = requireOrganizationCapability("organization.licenses.read")
+const administersRegistry = requireOrganizationCapability("organization.registry.administer")
 const readsTesting = requireOrganizationCapability("organization.testing.read")
 const managesTesting = requireOrganizationCapability("organization.testing.manage")
 
@@ -151,6 +155,7 @@ const testingGate: MiddlewareHandler<AppEnv> = (c, next) =>
 app.use("/reports/*", readsIncidents)
 app.use("/support-profiles/*", readsSupportProfiles)
 app.use("/licenses/*", readsLicenses)
+app.use("/registry/*", administersRegistry)
 app.use("/test-runs/*", testingGate)
 app.use("/routine-catalog/*", testingGate)
 app.use("/routines/*", testingGate)
@@ -161,6 +166,7 @@ app.use("/test-dispatches/*", testingGate)
 app.route("/reports", reports)
 app.route("/support-profiles", supportProfiles)
 app.route("/licenses", licenses)
+app.route("/registry", registry)
 app.route("/test-runs", testRuns)
 app.route("/routine-catalog", createRoutineCatalogApi())
 app.route("/routines", createRoutinePreferencesApi())

@@ -1,0 +1,35 @@
+# UDP Network Load Balancer for the cloud-staging runtime audio.
+# Cloned from audio-udp-nlb-debug.yaml (the per-env template).
+#
+# Apply with DIRECT kubectl (the EKS kubeconfig; `porter kubectl` is
+# read-only and cannot create Services):
+#   kubectl apply -f deploy/audio-udp-nlb-staging.yaml
+#
+# Then put the provisioned NLB hostname into Doppler cloud-v2/staging
+# (AUDIO_UDP_ADVERTISED_HOST) and restart cloud-staging runtime, or clients
+# keep advertising a dead host and silently fall back to WS audio.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-staging-audio-udp
+  namespace: default
+  labels:
+    porter.run/app-name: cloud-staging
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: "UDP LoadBalancer for cloud-v2 staging runtime audio (not managed by Porter)"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    porter.run/app-name: cloud-staging
+    porter.run/service-name: runtime
+  ports:
+    - name: udp-audio
+      protocol: UDP
+      port: 8000
+      targetPort: 8000
+  externalTrafficPolicy: Local

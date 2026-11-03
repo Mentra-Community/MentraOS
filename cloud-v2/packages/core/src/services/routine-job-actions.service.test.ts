@@ -1,5 +1,5 @@
 import {expect, test} from 'bun:test';
-import {GithubRoutineJobActions, cancelRoutineActions} from './routine-job-actions.service';
+import {GithubRoutineJobActions, cancelRoutineActions, routineActionsRetry} from './routine-job-actions.service';
 
 test('fleet transport can dispatch only the trusted Harness main workflow and cancels one member run',async()=>{
   const calls:Array<{url:string;input:RequestInit}>=[], scopes:string[]=[];
@@ -15,6 +15,18 @@ test('provider failure is bounded and exposes no token or body while retaining a
   const actions=new GithubRoutineJobActions({async token(){return 'secret-token'}},async()=>Response.json({error:'secret-provider-body'},{status:403}));
   await expect(actions.dispatch('retained')).rejects.toThrow('Harness Actions write permission');
   try {await actions.dispatch('retained')} catch(error){expect(String(error)).not.toContain('secret')}
+});
+
+test('Actions denial logging preserves parsed quota evidence without request bodies or credentials',async()=>{
+ const reports:Array<Record<string,unknown>>=[];
+ const actions=new GithubRoutineJobActions({async token(){return 'secret-token'}},async()=>new Response('secret-provider-body',{status:403,
+  headers:{'x-ratelimit-remaining':'0','x-ratelimit-reset':'1793066874','x-ratelimit-resource':'core','x-github-request-id':'1234:ABCD:5678:EF90'}}),value=>reports.push(value));
+ await expect(actions.runs('retained','2026-10-08T00:00:00Z')).rejects.toThrow('Harness Actions write permission');
+ expect(reports).toEqual([{consumer:'routine-actions',endpoint:'/repos/Mentra-Community/Mentra-Automated-Testing/actions/workflows/routine-device.yml/runs',
+  method:'GET',status:403,githubRequestId:'1234:ABCD:5678:EF90',rateLimit:{remaining:0,reset:1793066874,resource:'core'}}]);
+ await expect(actions.dispatch('retained')).rejects.toThrow('Harness Actions write permission');
+ expect(reports[1]).toMatchObject({consumer:'routine-actions',endpoint:'/repos/Mentra-Community/Mentra-Automated-Testing/actions/workflows/routine-device.yml/dispatches',method:'POST',status:403});
+ expect(JSON.stringify(reports)).not.toContain('secret');expect(JSON.stringify(reports)).not.toContain('retained');
 });
 
 test('run discovery correlates only the exact logical job on the trusted main workflow before preparation',async()=>{
@@ -85,4 +97,16 @@ test('shared discovery failures are discarded and cannot become cancellation abs
  const results=await Promise.allSettled(Array.from({length:26},(_,index)=>actions.runs(`member-${index}`,'2026-10-08T00:00:00Z')));
  expect(calls).toBe(1);expect(results.every(result=>result.status==='rejected')).toBe(true);
  failed=false;expect(await actions.runs('member-0','2026-10-08T00:00:00Z')).toEqual([]);expect(calls).toBe(2);
+});
+
+
+test('completed delivery history does not impose a lifetime retry limit', () => {
+ const now=Date.parse('2026-10-08T00:10:00Z'), receipt={attempts:20,firstAttemptAt:'2026-10-08T00:00:00Z',lastAttemptAt:'2026-10-08T00:00:00Z',acknowledgedAt:'2026-10-08T00:00:01Z'};
+ const runs=Array.from({length:20},(_,n)=>({actionsRunId:String(n+1),status:'completed',conclusion:'failure'}));
+ expect(routineActionsRetry(receipt,runs,now)).toBe(true);
+ for(const status of ['queued','in_progress','waiting','pending'])expect(routineActionsRetry(receipt,[...runs,{actionsRunId:'21',status,conclusion:null}],now)).toBe(false);
+ expect(routineActionsRetry({...receipt,lastAttemptAt:new Date(now-29_999).toISOString()},runs,now)).toBe(false);
+ expect(routineActionsRetry({...receipt,firstAttemptAt:undefined},[],now)).toBe(false);
+ expect(routineActionsRetry({...receipt,acknowledgedAt:new Date(now-119_999).toISOString()},[],now)).toBe(false);
+ expect(routineActionsRetry(receipt,[],now)).toBe(true);
 });

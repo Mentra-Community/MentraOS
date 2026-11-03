@@ -12,10 +12,10 @@ const time = (value: string) => new Date(value).toLocaleString();
 
 export function FrameworkHealth({host, fresh, showHistory = true}: {host: LaneOverviewHost | LaneRestorationHost; fresh: boolean; showHistory?: boolean}) {
   const history = 'restoration' in host ? host.frameworkHistory ?? [] : [],
-    last = 'frameworkCurrentInterval' in host ? host.frameworkCurrentInterval : history.at(-1),
-    binding = host.frameworkBinding ?? last?.binding
+    last = host.frameworkCurrentInterval,
+    binding = host.frameworkBinding
   const stopped = last?.endedAt && last.binding.installationId === binding?.installationId
-  const current = !!host.frameworkBinding && fresh && !stopped
+  const current = !!host.frameworkBinding && !!last && fresh && !stopped
   const target = host.deployment?.desiredTarget
   const source = (revision: string) => `https://github.com/Mentra-Community/Mentra-Automated-Testing/commit/${revision}`
   return (
@@ -35,12 +35,12 @@ export function FrameworkHealth({host, fresh, showHistory = true}: {host: LaneOv
         <p className="mt-2 text-sm text-[#747780]">
           {stopped
             ? "Controller stop was observed."
-            : "Current framework status is unknown because the controller report is stale."}
+            : "Current framework status is unknown; a fresh accepted process observation is required."}
         </p>
       )}
-      {(host.frameworkAcceptedAt ?? last?.effectiveAt) && (
+      {host.frameworkAcceptedAt && (
         <p className="mt-1 text-xs text-[#747780]">
-          Startup accepted {time((host.frameworkAcceptedAt ?? last?.effectiveAt)!)}
+          Startup accepted {time(host.frameworkAcceptedAt!)}
         </p>
       )}
       {host.deployment && (

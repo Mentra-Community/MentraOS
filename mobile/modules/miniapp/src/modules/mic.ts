@@ -31,6 +31,22 @@ export interface MicLease {
   release(): Promise<void>
 }
 
+/**
+ * On-device wake-word ("Hey Mentra") event. It describes only the wake-word
+ * model: `loading` while the phone loads it, `ready` once it is listening,
+ * `detected` for each detection, and `error` when it cannot run (`message`
+ * says why). The state of the on-device speech-to-text model is reported
+ * separately by `session.transcription.onModelStatus`.
+ */
+export interface WakeWordEvent {
+  kind: "loading" | "ready" | "detected" | "error"
+  /** The phrase this event is about. Currently always "Hey Mentra". */
+  phrase: string
+  /** Unix epoch milliseconds. */
+  timestamp: number
+  message?: string
+}
+
 export class MicModule {
   /** All active unsubscribe functions for stop() to tear down at once. */
   private readonly unsubs = new Set<UnsubscribeFn>()
@@ -38,17 +54,27 @@ export class MicModule {
   constructor(private readonly session: MiniappSession) {}
 
   /**
-   * Subscribe to voice activity detection (VAD) events. `data.status` is
-   * `true` while the user is speaking, `false` when silent.
+   * Subscribe to on-device voice activity detection. One event when the user
+   * starts speaking (`status: true`) and one when they stop (`status: false`,
+   * with `silentForMs` saying how long the audio has already been quiet). A
+   * gap in microphone audio counts as silence. Requires MICROPHONE permission.
    */
   onVoiceActivity(handler: (data: VadData) => void): UnsubscribeFn {
     return this.track(this.session._subscribe(MiniappStreamType.VAD, handler as (data: unknown) => void))
   }
 
   /**
-   * Subscribe to raw audio chunks. Format depends on the phone's mic mode
-   * (PCM or LC3, base64-encoded).
+   * Subscribe to the on-device "Hey Mentra" wake word. Every subscribed
+   * miniapp receives every detection. You get the detector's current state
+   * right away, then every change. The phone loads the wake-word model while
+   * any miniapp subscribes and downloads it on first use. Requires MICROPHONE
+   * permission.
    */
+  onWakeWord(handler: (event: WakeWordEvent) => void): UnsubscribeFn {
+    return this.track(this.session._subscribe(MiniappStreamType.WAKE_WORD, handler as (data: unknown) => void))
+  }
+
+  /** Subscribe to raw audio chunks in the phone's PCM/LC3 microphone format. */
   onAudioChunk(handler: (data: AudioChunkData) => void): UnsubscribeFn {
     return this.track(this.session._subscribe(MiniappStreamType.AUDIO_CHUNK, handler as (data: unknown) => void))
   }

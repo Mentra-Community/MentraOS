@@ -5,17 +5,24 @@ import {routineIdentitySchema, routinePlatformSchema, routineResourceKindSchema,
 import {firmwareManifestSchema, glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
 import type {RoutineLiveProgress} from './routine-progress.types';
+import {exclusiveResourceDependenciesSchema} from './resource-reservations.types';
+import {testBuildArtifactSourceSchema} from './test-build.types';
+import {frameworkIdentitySchema} from './framework-identity.types';
+import {resourceIdleContractSchema} from './resource-lifecycle.types';
 
-export const frameworkIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/);
+export {frameworkIdentitySchema} from './framework-identity.types';
 export const frameworkBuildSchema = z.object({
   repository: z.string().regex(/^[\w-]+\/[\w.-]+$/),
   headSha: z.string().regex(/^[a-f0-9]{40}$/),
+  artifactSource: testBuildArtifactSourceSchema.optional(),
   channel: z.enum(["dev", "staging", "pr", "local"]),
   prNumber: z.number().int().positive().optional(),
   manifest: firmwareManifestSchema.optional(),
   manifestSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).passthrough().superRefine((build, ctx) => {
   if (build.channel === "pr" && !build.prNumber) ctx.addIssue({code: "custom", message: "PR build requires its PR number"});
+  if (build.artifactSource && (build.repository !== 'Mentra-Community/Mentra' || !['dev', 'staging'].includes(build.channel)))
+    ctx.addIssue({code: 'custom', message: 'Exported artifact source requires a canonical coordinated release'});
 });
 const frozenFrameworkRequestInputSchema = z.object({
   routineId: routineIdentitySchema,
@@ -31,29 +38,29 @@ const frozenFrameworkRequestInputSchema = z.object({
     laneId: frameworkIdentitySchema.optional(),
     capabilities: z.array(routineIdentitySchema).max(30).optional(),
     permissionObservations: permissionObservationsSchema.optional(),
+    exclusiveDependencies: exclusiveResourceDependenciesSchema.optional(),
+    idleContract: resourceIdleContractSchema.optional(),
   }).strict().refine(resource => resource.capabilities === undefined || routineResourceRequirementSchema.safeParse({
     kind: resource.kind, capabilities: resource.capabilities,
   }).success, "Resource capabilities must match their declared kind")),
   policy: z.record(z.unknown()).optional(),
-  glassesModel: z.literal('nimo').optional(),
+  glassesModel: z.never().optional(),
   glassesStart: glassesSoftwareRefSchema.optional(),
   glassesReturn: glassesSoftwareRefSchema.optional(),
   verification: candidateVerificationSchema.optional(),
 }).passthrough();
-const recordedInputSchema = frozenFrameworkRequestInputSchema.extend({routineSource: routineSourceRefSchema.optional()});
-function validateFrameworkRequestInput(input: z.infer<typeof recordedInputSchema>, ctx: z.RefinementCtx) {
+const recordedInputSchema = frozenFrameworkRequestInputSchema.omit({glassesModel: true})
+  .extend({routineSource: routineSourceRefSchema.optional()});
+function validateFrameworkRequestIdentity(input: z.infer<typeof recordedInputSchema>, ctx: z.RefinementCtx) {
   if (input.verification && input.verification.sourceRevision !== input.definitionRevision)
     ctx.addIssue({code: 'custom', message: 'Candidate verification source differs from the request'});
   if (input.routineSource && input.routineSource.commit !== input.definitionRevision)
     ctx.addIssue({code: 'custom', message: 'Routine source differs from its definition revision'});
+}
+function validateFrameworkRequestInput(input: z.infer<typeof recordedInputSchema>, ctx: z.RefinementCtx) {
+  validateFrameworkRequestIdentity(input, ctx);
   const glasses = input.resources.some(resource => resource.kind === "glasses");
-  if (input.glassesModel && (!glasses || input.platform !== 'android' || input.glassesStart || input.glassesReturn))
-    ctx.addIssue({code: 'custom', message: 'NIMO requires its selected Android glasses resource without Mentra Live firmware references'});
-  if (input.glassesModel && (!input.routineSource || input.routineSource.minimumRoutineApiVersion < 43))
-    ctx.addIssue({code: 'custom', message: 'NIMO connection requires routine API 43 or later'});
-  if (input.glassesModel && (input.build.manifest !== undefined || input.build.manifestSha256 !== undefined))
-    ctx.addIssue({code: 'custom', message: 'NIMO executable build cannot contain Mentra Live firmware references'});
-  if ((glasses && !input.glassesModel && !(input.glassesStart && input.glassesReturn)) || (!glasses && (input.glassesStart || input.glassesReturn)) ||
+  if ((glasses && !(input.glassesStart && input.glassesReturn)) || (!glasses && (input.glassesStart || input.glassesReturn)) ||
     (input.glassesStart === undefined) !== (input.glassesReturn === undefined))
     ctx.addIssue({code: "custom", message: "Selected glasses resource requires frozen start and return software references"});
   if (input.glassesStart && input.glassesReturn) {
@@ -66,15 +73,9 @@ function validateFrameworkRequestInput(input: z.infer<typeof recordedInputSchema
 }
 /** New admission always requires the exact published routine bundle. */
 export const frameworkRequestInputSchema = frozenFrameworkRequestInputSchema.superRefine(validateFrameworkRequestInput);
-/** Historical display only: preserve requests recorded before bundle provenance, without a fallback source. */
-export const recordedFrameworkRequestInputSchema = recordedInputSchema.superRefine(validateFrameworkRequestInput);
-
-/** Keep the frozen app selection; NIMO has no Live glasses firmware component. */
-export function frameworkExecutableBuild(build: z.infer<typeof frameworkBuildSchema>, glassesModel?: 'nimo') {
-  if (glassesModel !== 'nimo') return build;
-  const {manifest: _manifest, manifestSha256: _manifestSha256, ...app} = build;
-  return app;
-}
+/** Recorded display validates structure and source identity, preserving original metadata and digest.
+ * Current execution/software requirements belong to admission, never retrospective display. */
+export const recordedFrameworkRequestInputSchema = recordedInputSchema.superRefine(validateFrameworkRequestIdentity);
 
 /** Admin delivery projection; it describes a request without claiming execution evidence. */
 export interface FrameworkRequestDisplay {

@@ -70,7 +70,9 @@ describe("getOtaErrorMessage", () => {
   })
 
   it("maps download_failed to download message", () => {
-    expect(getOtaErrorMessage("download_failed")).toBe("Download failed — check glasses Wi-Fi connection")
+    expect(getOtaErrorMessage("download_failed")).toBe(
+      "The update could not be downloaded to your glasses. Please try again.",
+    )
   })
 
   it("maps firmware_too_large to size message", () => {
@@ -92,7 +94,7 @@ describe("getOtaErrorMessage", () => {
   })
 
   it("maps install_failed to install message", () => {
-    expect(getOtaErrorMessage("install_failed")).toBe("Install failed — please try again")
+    expect(getOtaErrorMessage("install_failed")).toBe("The update could not be installed on your glasses. Please try again.")
   })
 
   it("keeps the BES restart instruction as phone-side UI copy", () => {
@@ -114,24 +116,20 @@ describe("getOtaErrorMessage", () => {
   })
 
   it("returns generic message for undefined error", () => {
-    expect(getOtaErrorMessage(undefined)).toBe("Update failed")
+    expect(getOtaErrorMessage(undefined)).toBe("Something went wrong. Please try again.")
   })
 
   it("never echoes an unknown glasses code as the message", () => {
-    expect(getOtaErrorMessage("some_custom_error")).toBe(
-      "Your glasses reported an unexpected error. Restart your glasses and try again.",
-    )
+    expect(getOtaErrorMessage("some_custom_error")).toBe("Something went wrong. Please try again.")
   })
 
   it("returns generic message for empty string", () => {
-    expect(getOtaErrorMessage("")).toBe("Update failed")
+    expect(getOtaErrorMessage("")).toBe("Something went wrong. Please try again.")
   })
 
   it("treats codes that name inherited Object members as unknown", () => {
     for (const code of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
-      expect(getOtaErrorMessage(code)).toBe(
-        "Your glasses reported an unexpected error. Restart your glasses and try again.",
-      )
+      expect(getOtaErrorMessage(code)).toBe("Something went wrong. Please try again.")
     }
   })
 })

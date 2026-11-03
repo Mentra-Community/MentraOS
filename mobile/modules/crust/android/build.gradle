@@ -100,13 +100,16 @@ dependencies {
   // APK weight). `:navigation` is the core engine; `:tripdata` carries the
   // banner/maneuver formatting used to label turns.
   // Version pinned to 3.25.0 — re-check https://docs.mapbox.com/android/navigation/releases/
+  // The -ndk27 artifacts are Mapbox's 16 KB page-aligned builds. The
+  // unsuffixed 3.25.0 artifacts still ship 4 KB-aligned native libraries,
+  // which Google Play rejects for 64-bit updates after Feb 1, 2027.
   def isChinaBuild = System.getenv("EXPO_PUBLIC_DEPLOYMENT_REGION") == "china"
   if (isChinaBuild) {
-    compileOnly 'com.mapbox.navigationcore:navigation:3.25.0'
-    compileOnly 'com.mapbox.navigationcore:tripdata:3.25.0'
+    compileOnly 'com.mapbox.navigationcore:navigation-ndk27:3.25.0'
+    compileOnly 'com.mapbox.navigationcore:tripdata-ndk27:3.25.0'
   } else {
-    implementation 'com.mapbox.navigationcore:navigation:3.25.0'
-    implementation 'com.mapbox.navigationcore:tripdata:3.25.0'
+    implementation 'com.mapbox.navigationcore:navigation-ndk27:3.25.0'
+    implementation 'com.mapbox.navigationcore:tripdata-ndk27:3.25.0'
   }
 
   // Required for Java 8+ APIs on minSdk < 26 (was needed by Google Nav SDK;

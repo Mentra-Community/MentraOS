@@ -2,7 +2,7 @@ import {z} from "zod";
 import {frameworkRunIdSchema} from "../types/framework-run.types";
 import {frameworkBuildSchema} from "../types/framework-request.types";
 import {TestRunModel} from "../models/test-run.model";
-import type {RoutineEnrollment, RoutineCardDefinition} from "../types/routine-definition.types";
+import type {RoutineEnrollment, RoutineCatalogDefinition, RoutineCardDefinition} from "../types/routine-definition.types";
 import type {CatalogExample, CatalogHistoryRun} from "../types/test-history.types";
 import {RoutineDefinitionService} from "./routine-definition.service";
 import {nativeRunFilter, readFrameworkRunSummaryProjection} from "./framework-run-summary.service";
@@ -67,14 +67,19 @@ export class RoutineCatalogService {
     const [definitions, preferences] = await Promise.all([this.definitions.overview(), this.preferences.list()]);
     return this.entries(definitions, preferences);
   }
-  private async entries<T extends RoutineCardDefinition | RoutineEnrollment>(definitions: T[], preferences: Awaited<ReturnType<RoutinePreferenceRepository['list']>>) {
+  /** Execution selection does not read videos or run history. */
+  async selection() {
+    const [definitions, preferences] = await Promise.all([this.definitions.overview(), this.preferences.list()]);
+    return definitions.map(definition => ({...definition,
+      nightlyEnabled: preferences.find(row => row.routineId === definition.routineId && row.platform === definition.platform)?.nightlyEnabled ?? true}));
+  }
+  private async entries<T extends RoutineCardDefinition | RoutineCatalogDefinition>(definitions: T[], preferences: Awaited<ReturnType<RoutinePreferenceRepository['list']>>) {
     const entries = await Promise.all(definitions.map(async definition => {
       const [example, history] = await Promise.all([this.runs.latestPassing(definition), this.runs.history(definition.routineId, definition.platform, null, 1)]);
       const nightlyEnabled = preferences.find(row => row.routineId === definition.routineId && row.platform === definition.platform)?.nightlyEnabled ?? true;
-      return {...definition, example, latestAttempt: history[0] ?? null, nightlyEnabled};
+      return {...definition, example, latestAttempt: history.length ? history[0]! : null, nightlyEnabled};
     }));
-    // Discovered definitions without a published example remain authoring work.
-    return entries.filter(entry => entry.example !== null);
+    return entries;
   }
   async detail(routineId: string, platform: string, cursor?: string, limit = 25) {
     if (!["ios-on-mac", "android"].includes(platform) || !Number.isInteger(limit) || limit < 1 || limit > 100)
@@ -97,8 +102,8 @@ export class RoutineCatalogService {
     return {...definition, example, history, nextCursor, nightlyEnabled: preference?.nightlyEnabled ?? true};
   }
   async setPreference(routineId: string, platform: string, nightlyEnabled: boolean) {
-    const detail = await this.detail(routineId, platform, undefined, 1);
-    if (!detail.example) throw new RoutineCatalogError(404, "Routine has no recorded passing example");
+    if (!(await this.definitions.getCurrent(routineId, platform)))
+      throw new RoutineCatalogError(404, "Routine is not enrolled on this platform");
     await this.preferences.set({routineId, platform, nightlyEnabled});
     return {routineId, platform, nightlyEnabled};
   }

@@ -4,8 +4,10 @@ import {createStorageService, type StorageService} from './storage/storage.servi
 import {TestRunError} from './test-result-error';
 import {routineIdentitySchema} from '../types/routine-definition.types';
 import {ROUTINE_BUNDLE_BODY_BYTES, routineSourceRefSchema} from '../types/framework-version.types';
+import {testingRepositorySchema, testingTarget} from '../types/testing-source.types';
 
 export const routineBundleMetadataSchema = z.object({commit: z.string().regex(/^[a-f0-9]{40}$/),
+  repository: testingRepositorySchema.optional(),
   routineId: routineIdentitySchema, minimumRoutineApiVersion: z.number().int().positive().safe(),
   definitionSha256: z.string().regex(/^[a-f0-9]{64}$/), size: z.number().int().positive().max(ROUTINE_BUNDLE_BODY_BYTES)}).strict();
 /** Existing storage owns immutable routine bytes; no per-host clone or source registry. */
@@ -35,7 +37,7 @@ export class RoutineSourceBundleService {
     // A content-addressed key only accepts verified identical bytes, so retries cannot replace another source.
     const receipt = await this.storage().putObject({key, body: bytes, contentType: 'application/gzip'});
     if (receipt.sha256 !== digest || receipt.sizeBytes !== size) throw new TestRunError(503, 'Routine source storage receipt differs');
-    return routineSourceRefSchema.parse({repository: 'Mentra-Community/Mentra-Automated-Testing', commit: row.commit,
+    return routineSourceRefSchema.parse({repository: row.repository ?? testingTarget().repository, commit: row.commit,
       minimumRoutineApiVersion: row.minimumRoutineApiVersion, bundle: {
         url: `${new URL(origin).origin}/api/internal/routine-definitions/bundles/${digest}`, sha256: digest, size}});
   }

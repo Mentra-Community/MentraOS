@@ -41,6 +41,7 @@ import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {clearDeletionHold, setDeletionHold} from "../packages/core/src/services/workspaces/deletion-hold.service"
 import {OPERATOR_KEY_SCOPES, ORGANIZATION_CAPABILITIES} from "../packages/workspace-contract/src/index"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
+import {membershipRow} from "./support/membership-row"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {nextHoldAsOf} from "./support/hold-as-of"
 import {
@@ -203,6 +204,28 @@ async function createWorkspace(owner: Person, name = "Acme") {
   const reply = await call("POST", "/api/workspaces", {as: owner, body: {name}})
   expect(reply.status).toBe(201)
   return reply.json as {workspaceId: string; authorizationRevision: number; membership: {membershipId: string}}
+}
+
+/**
+ * A workspace made by a second person, in which `holder` also holds the owner role. One workspace per person goes
+ * through the API, so `holder`'s second membership is legacy data and is written directly.
+ */
+let legacySeq = 0
+async function otherWorkspaceOf(holder: Person, name: string) {
+  const maker = await person(`maker-${legacySeq++}`)
+  const created = await createWorkspace(maker, name)
+  await WorkspaceMembershipModel.create(
+    membershipRow({
+      membershipId: `wm_legacy_${legacySeq++}`,
+      workspaceId: created.workspaceId,
+      mentraUserId: holder.mentraUserId,
+      email: holder.email,
+      role: "owner",
+      status: "active",
+      startedAt: new Date(),
+    }),
+  )
+  return created
 }
 
 /** Invite `invitee` through the API and accept as them. Returns the new membership id. */
@@ -435,6 +458,7 @@ describe("authentication", () => {
       ["GET", `/api/workspaces/${workspaceId}/audit`],
       ["POST", "/api/workspaces/invitations/peek"],
       ["POST", "/api/workspaces/invitations/accept"],
+      ["POST", "/api/workspaces/invitations/decline"],
       ["GET", "/api/portal/workspaces"],
       ["GET", "/api/organization"],
       ["GET", "/api/organization/workspaces"],
@@ -945,9 +969,9 @@ describe("members", () => {
       ws.memberMembershipId,
     ])
     for (const item of reply.json.items) {
-      expect(Object.keys(item).sort()).toEqual(
-        ["email", "membershipId", "mentraUserId", "name", "pending", "role", "startedAt"].sort(),
-      )
+      expect(Object.keys(item).sort()).toEqual(["email", "membershipId", "mentraUserId", "name", "pending", "role", "startedAt"].sort())
+      // Core has recorded no name for these test people, so Fleet would show their full email.
+      expect(item.name).toBeNull()
       expect(item.pending).toBe(false)
       expect(Number.isNaN(Date.parse(item.startedAt))).toBe(false)
     }
@@ -980,6 +1004,7 @@ describe("members", () => {
         membershipId: "wm_imported_pending",
         mentraUserId: null,
         email: "dev@acme.example",
+        // A person who has not signed in has no recorded name.
         name: null,
         role: "developer",
         startedAt: startedAt.toISOString(),
@@ -1194,7 +1219,7 @@ describe("members", () => {
 
   test("a membership of another workspace is 404 through this workspace's URL, even for someone who owns both", async () => {
     const ws = await newWorkspace()
-    const other = await createWorkspace(ws.owner, "Other")
+    const other = await otherWorkspaceOf(ws.owner, "Other")
     const stranded = await person("other-member")
     const strandedMembershipId = await join(other.workspaceId, ws.owner, stranded, "member")
     const revisionHere = await revisionOf(ws.workspaceId, ws.owner)
@@ -1289,7 +1314,7 @@ describe("invitations", () => {
 
   test("an invitation of another workspace is 404 through this workspace's URL, and stays pending", async () => {
     const ws = await newWorkspace()
-    const other = await createWorkspace(ws.owner, "Other")
+    const other = await otherWorkspaceOf(ws.owner, "Other")
     const invited = await call("POST", `/api/workspaces/${other.workspaceId}/invitations`, {
       as: ws.owner,
       body: {email: "hire@example.test", role: "member"},
@@ -1364,6 +1389,34 @@ describe("invitations", () => {
     const missing = await call("POST", "/api/workspaces/invitations/accept", {as: outsider, body: {token: "nope"}})
     expect(missing.status).toBe(404)
     expect(missing.json.error).toBe("invitation_not_found")
+  })
+
+  test("declining turns an invitation down for the person it is addressed to, once, and changes no membership", async () => {
+    const ws = await newWorkspace()
+    const invitee = await person("decliner")
+    const outsider = await person("decline-outsider")
+    const invited = await call("POST", `/api/workspaces/${ws.workspaceId}/invitations`, {
+      as: ws.owner,
+      body: {email: invitee.email, role: "member"},
+    })
+    expect(invited.status).toBe(201)
+    const mine = await call("GET", "/api/workspaces/invitations/mine", {as: invitee})
+    const invitationId = mine.json.items[0].invitationId as string
+
+    expect((await call("POST", "/api/workspaces/invitations/decline", {as: invitee, body: {}})).status).toBe(400)
+    const wrong = await call("POST", "/api/workspaces/invitations/decline", {as: outsider, body: {invitationId}})
+    expect(wrong.status).toBe(403)
+    expect(wrong.json.error).toBe("email_mismatch")
+
+    const declined = await call("POST", "/api/workspaces/invitations/decline", {as: invitee, body: {invitationId}})
+    expect(declined.status).toBe(200)
+    expect(declined.json).toEqual({invitationId, declined: true})
+    // Declining twice is the same answer, and the invitation no longer lists or accepts.
+    expect((await call("POST", "/api/workspaces/invitations/decline", {as: invitee, body: {invitationId}})).status).toBe(200)
+    expect((await call("GET", "/api/workspaces/invitations/mine", {as: invitee})).json.items).toEqual([])
+    const accept = await call("POST", "/api/workspaces/invitations/accept", {as: invitee, body: {invitationId}})
+    expect(accept.status).toBe(404)
+    expect((await call("GET", "/api/workspaces", {as: invitee})).json.items).toEqual([])
   })
 
   test("accepting needs the invited address verified by the identity provider", async () => {
@@ -1532,6 +1585,7 @@ describe("workspace credentials", () => {
 describe("audit", () => {
   test("each event records the id of the request that caused it", async () => {
     const owner = await person("request-id-owner")
+    const secondOwner = await person("request-id-second-owner")
 
     const chosen = await app.request("http://localhost/api/workspaces", {
       method: "POST",
@@ -1540,7 +1594,7 @@ describe("audit", () => {
     })
     const minted = await app.request("http://localhost/api/workspaces", {
       method: "POST",
-      headers: {authorization: `Bearer ${owner.bearer}`, "content-type": "application/json"},
+      headers: {authorization: `Bearer ${secondOwner.bearer}`, "content-type": "application/json"},
       body: JSON.stringify({name: "Minted"}),
     })
     expect([chosen.status, minted.status]).toEqual([201, 201])
@@ -1962,14 +2016,13 @@ describe("the automatic workspace", () => {
     ])
     expect((await call("POST", ENSURE, {as: owner})).status).toBe(200)
 
+    // One workspace per person, so the joiner is someone who holds none yet.
     const someone = await person("someone")
+    const joiner = await person("joiner")
     const theirs = (await call("POST", "/api/workspaces/ensure", {as: someone})).json.workspaceId
-    await join(theirs, someone, owner, "admin")
-    const items = (await call("GET", "/api/workspaces", {as: owner})).json.items
-    expect(items.map((item: any) => [item.workspaceId, item.replaceable])).toEqual([
-      [made.workspaceId, false],
-      [theirs, false],
-    ])
+    await join(theirs, someone, joiner, "admin")
+    const items = (await call("GET", "/api/workspaces", {as: joiner})).json.items
+    expect(items.map((item: any) => [item.workspaceId, item.replaceable])).toEqual([[theirs, false]])
   })
 })
 

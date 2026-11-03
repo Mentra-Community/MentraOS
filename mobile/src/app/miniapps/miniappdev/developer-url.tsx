@@ -12,6 +12,8 @@ import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
 import {decideDevOpenRoute, engine} from "@mentra/engine"
 import {assertDevBuildAllowed, registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
+import {startMiniappInstallFromLink} from "@/services/miniapps/miniappInstallFlow"
+import {parseMiniappInstallLink} from "@/services/miniapps/miniappInstallLinks"
 import {showDevBuildError} from "@/utils/devMiniappAlerts"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
@@ -156,6 +158,18 @@ export default function MiniappDeveloperUrlScreen() {
       showAlert(translate("debugSettings:miniappUrlEmptyTitle"), translate("debugSettings:miniappUrlEmptyBody"), [
         {text: "OK"},
       ])
+      return
+    }
+    // A miniapp's own URL, an open link or a package link installs through the install sheet. Development servers are
+    // on the local network, and keep loading below.
+    const link = parseMiniappInstallLink(trimmed)
+    if (link && (link.kind === "package" || !link.local)) {
+      setLoading(true)
+      try {
+        await startMiniappInstallFromLink(trimmed, "paste")
+      } finally {
+        setLoading(false)
+      }
       return
     }
     if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {

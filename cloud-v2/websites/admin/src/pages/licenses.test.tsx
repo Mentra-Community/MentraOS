@@ -267,7 +267,7 @@ describe("the Licenses item in the admin portal's navigation", () => {
   test("is offered, labelled Licenses and right after Workspaces, once licenses are available", async () => {
     const { visibleNav } = await loadNav();
     const nav = visibleNav(visiblePages(orgAdmin({ available: true })));
-    expect(nav.map(item => item.key)).toEqual(["incidents", "test-runs", "routine-catalog", "system-health", "workspaces", "licenses", "operator-keys", "audit"]);
+    expect(nav.map(item => item.key)).toEqual(["incidents", "test-runs", "routine-catalog", "system-health", "workspaces", "licenses", "registry", "operator-keys", "audit"]);
     expect(nav.find(item => item.key === "licenses")?.label).toBe("Licenses");
   });
 

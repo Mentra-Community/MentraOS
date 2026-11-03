@@ -13,6 +13,13 @@
  *   sequence and the oldest and newest record keys.
  * - `l:<partition>` holds the losses not yet reported: `{dropped, expired, from, to, updatedAt}`.
  * - `n:<partition>` holds the collector-session sequence counters, as `[collectorSessionId, next][]`.
+ * - `t:<partition>` holds the miniapp telemetry lost and not yet reported, per package (`FleetTelemetryLosses`).
+ *
+ * Telemetry (Phase 12) has a share of the queue: a `telemetry_event`'s record ID starts with `tel.`, so its key says
+ * what it is. Telemetry takes at most 2,000 of the 10,000 places. When that share or the queue is full, the oldest
+ * telemetry record gives way, and a record of any other kind never does to telemetry: an arriving record that finds
+ * the queue full evicts the oldest telemetry before anything else. Telemetry that is evicted, expires, or that MFM
+ * rejects is counted per package under `t:`, never as a coverage gap, and the reporter sends it as `telemetry_loss`.
  *
  * MMKV can list keys only by listing all of them, so the first call for a partition in a process scans the store
  * once, repairs the index if a crash left it behind, and keeps the partition's ordered record keys in memory.
@@ -29,7 +36,7 @@
  * `sweepExpired` is how the 7-day bound still holds for it: one scan finds every partition, expires its old
  * records and removes what an empty partition no longer needs.
  */
-import {FLEET_LIMITS, type FleetRecord} from "@mentra/cloud-protocol"
+import {FLEET_LIMITS, FLEET_TELEMETRY_LIMITS, type FleetRecord} from "@mentra/cloud-protocol"
 import {normalizeCoreUrl} from "./coreUrl"
 import {getFleetStore} from "./fleetStorage"
 import {sha256HexOfText, utf8ByteLength} from "./utf8"
@@ -53,6 +60,18 @@ export interface FleetLosses {
   /** The latest `observedAt` among the lost records, or null if none had a readable one. */
   to: string | null
 }
+
+/** The telemetry the queue (or the Mentra App's limits) lost, per package, since the last `takeTelemetryLosses`. */
+export interface FleetTelemetryLosses {
+  packages: Record<string, {overLimit: number; evicted: number; expired: number; rejected: number}>
+  from: string | null
+  to: string | null
+}
+export type FleetTelemetryLossKind = "overLimit" | "evicted" | "expired" | "rejected"
+
+/** A telemetry record's ID starts with this, so the queue tells telemetry from the rest by its key. */
+export const TELEMETRY_RECORD_PREFIX = "tel."
+export const isTelemetryRecordId = (recordId: string) => recordId.startsWith(TELEMETRY_RECORD_PREFIX)
 
 /** A partition is one account on one Core. */
 export interface FleetQueue {
@@ -86,6 +105,10 @@ export interface FleetQueue {
    * an idle reporter does not wake to sweep). `now` defaults to the queue's clock.
    */
   sweepExpired(now?: number): void
+  /** Counts `count` of `packageName`'s telemetry as lost, as of `at` (epoch ms). Never throws. */
+  noteTelemetryLoss(partition: string, packageName: string, kind: FleetTelemetryLossKind, count: number, at?: number): void
+  /** The telemetry lost since the last call, per package, and resets the counters; `null` when nothing was lost. */
+  takeTelemetryLosses(partition: string, now: number): FleetTelemetryLosses | null
   /** Forgets everything held for the partition: records, losses and sequence counters. */
   clearPartition(partition: string): void
   size(partition: string): number
@@ -138,6 +161,7 @@ const recordPrefix = (partition: string) => `q:${partition}:`
 const indexKey = (partition: string) => `i:${partition}`
 const lossKey = (partition: string) => `l:${partition}`
 const sequenceKey = (partition: string) => `n:${partition}`
+const telemetryLossKey = (partition: string) => `t:${partition}`
 
 function recordKey(partition: string, sequence: number, recordId: string): string {
   return `${recordPrefix(partition)}${String(sequence).padStart(SEQUENCE_WIDTH, "0")}:${recordId}`
@@ -213,6 +237,7 @@ interface FoundPartition {
   records: string[]
   hasIndex: boolean
   hasLosses: boolean
+  hasTelemetryLosses: boolean
   hasSequences: boolean
 }
 
@@ -224,7 +249,7 @@ function groupByPartition(keys: string[]): Map<string, FoundPartition> {
   const entry = (partition: string): FoundPartition => {
     let existing = found.get(partition)
     if (!existing) {
-      existing = {records: [], hasIndex: false, hasLosses: false, hasSequences: false}
+      existing = {records: [], hasIndex: false, hasLosses: false, hasTelemetryLosses: false, hasSequences: false}
       found.set(partition, existing)
     }
     return existing
@@ -236,6 +261,7 @@ function groupByPartition(keys: string[]): Map<string, FoundPartition> {
     } else if (key.startsWith("i:")) entry(key.slice(2)).hasIndex = true
     else if (key.startsWith("l:")) entry(key.slice(2)).hasLosses = true
     else if (key.startsWith("n:")) entry(key.slice(2)).hasSequences = true
+    else if (key.startsWith("t:")) entry(key.slice(2)).hasTelemetryLosses = true
   }
   return found
 }
@@ -367,10 +393,11 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
 
   /** Discards records that cannot be read, counting them as dropped. */
   function discardUnreadable(partition: string, state: PartitionState, unreadable: string[]): void {
+    // An unreadable telemetry record names no miniapp to count it for, and is never a coverage gap.
     noteLosses(
       partition,
       "dropped",
-      unreadable.map(() => undefined),
+      unreadable.filter((key) => !isTelemetryKey(partition, key)).map(() => undefined),
     )
     const gone = new Set(unreadable)
     for (const key of unreadable) removeKey(key)
@@ -378,12 +405,54 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
     persistIndex(partition, state)
   }
 
+  const idOffsetOf = (partition: string) => recordPrefix(partition).length + SEQUENCE_WIDTH + 1
+  const isTelemetryKey = (partition: string, key: string) => isTelemetryRecordId(key.slice(idOffsetOf(partition)))
+
+  /** Removes the telemetry record at `key`, counting it as `kind` for its package. */
+  function evictTelemetry(partition: string, state: PartitionState, key: string, kind: "evicted" | "expired", at: number = now()): void {
+    const record = readEntry(key)?.record
+    const packageName = record?.kind === "telemetry_event" ? record.payload.packageName : null
+    if (packageName !== null) noteTelemetryLoss(partition, packageName, kind, 1, at, record!.observedAt)
+    state.keys.splice(state.keys.indexOf(key), 1)
+    removeKey(key)
+  }
+
+  /**
+   * Keeps the partition inside its places: telemetry inside its share, and the whole inside 10,000, the oldest
+   * telemetry going first. Only a queue full of other records drops the oldest record of all, as a coverage gap.
+   */
   function trimToCapacity(partition: string, state: PartitionState): void {
+    const telemetry = state.keys.filter((key) => isTelemetryKey(partition, key))
+    while (telemetry.length > FLEET_TELEMETRY_LIMITS.queueShare) evictTelemetry(partition, state, telemetry.shift()!, "evicted")
+    while (state.keys.length > FLEET_LIMITS.phoneQueueMaxRecords && telemetry.length > 0) evictTelemetry(partition, state, telemetry.shift()!, "evicted")
     const excess = state.keys.length - FLEET_LIMITS.phoneQueueMaxRecords
     if (excess <= 0) return
     const observedAts = state.keys.slice(0, excess).map((key) => readEntry(key)?.record.observedAt)
     noteLosses(partition, "dropped", observedAts)
     removeOldest(state, excess)
+  }
+
+  function readTelemetryLosses(partition: string): (FleetTelemetryLosses & {updatedAt: number}) | null {
+    const value = readJson(telemetryLossKey(partition)) as (FleetTelemetryLosses & {updatedAt: number}) | null
+    return value && typeof value === "object" && value.packages && typeof value.packages === "object" ? value : null
+  }
+
+  function noteTelemetryLoss(partition: string, packageName: string, kind: FleetTelemetryLossKind, count: number, at: number = now(), observedAt?: string): void {
+    if (!(count > 0)) return
+    try {
+      const stored = readTelemetryLosses(partition) ?? {packages: {}, from: null, to: null, updatedAt: at}
+      const entry = stored.packages[packageName] ?? {overLimit: 0, evicted: 0, expired: 0, rejected: 0}
+      entry[kind] += count
+      stored.packages[packageName] = entry
+      const when = observedAt ?? new Date(at).toISOString()
+      stored.from = earlier(stored.from, when)
+      stored.to = later(stored.to, when)
+      stored.updatedAt = at
+      store.set(telemetryLossKey(partition), JSON.stringify(stored))
+    } catch (error) {
+      // Telemetry losses are best effort: a count that cannot be stored is lost with the events it counted.
+      warn("could not persist a telemetry loss count", error)
+    }
   }
 
   function expire(partition: string, state: PartitionState, at: number): void {
@@ -395,9 +464,14 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
     // a young record can sit ahead of older ones; those wait until it ages out, which only delays their expiry.
     for (; head < state.keys.length; head += 1) {
       const entry = readEntry(state.keys[head])
-      if (entry === null) unreadable.push(undefined)
-      else if (entry.enqueuedAt < cutoff) expired.push(entry.record.observedAt)
-      else break
+      if (entry === null) {
+        if (!isTelemetryKey(partition, state.keys[head]!)) unreadable.push(undefined)
+      } else if (entry.enqueuedAt < cutoff) {
+        // Expired telemetry is counted per package, never as a coverage gap.
+        if (entry.record.kind === "telemetry_event") {
+          noteTelemetryLoss(partition, entry.record.payload.packageName, "expired", 1, at, entry.record.observedAt)
+        } else expired.push(entry.record.observedAt)
+      } else break
     }
     if (head === 0) return
     noteLosses(partition, "expired", expired, at)
@@ -416,6 +490,10 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
     if (found.hasLosses) {
       const losses = readLosses(partition)
       if (losses === null || at - losses.updatedAt > FLEET_LIMITS.phoneQueueMaxAgeMs) removeKey(lossKey(partition))
+    }
+    if (found.hasTelemetryLosses) {
+      const losses = readTelemetryLosses(partition)
+      if (losses === null || at - losses.updatedAt > FLEET_LIMITS.phoneQueueMaxAgeMs) removeKey(telemetryLossKey(partition))
     }
   }
 
@@ -441,7 +519,9 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
         state.nextSeq += 1
       } catch (error) {
         warn("could not store a record", error)
-        noteLosses(partition, "dropped", [record?.observedAt])
+        // Telemetry that cannot be stored is its miniapp's loss, never a coverage gap.
+        if (record?.kind === "telemetry_event") noteTelemetryLoss(partition, record.payload.packageName, "evicted", 1, now(), record.observedAt)
+        else noteLosses(partition, "dropped", [record?.observedAt])
         return
       }
       trimToCapacity(partition, state)
@@ -516,11 +596,24 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
       }
     },
 
+    noteTelemetryLoss(partition, packageName, kind, count, at) {
+      noteTelemetryLoss(partition, packageName, kind, count, at)
+    },
+
+    takeTelemetryLosses(partition, at) {
+      expire(partition, load(partition), at)
+      const losses = readTelemetryLosses(partition)
+      if (losses === null || Object.keys(losses.packages).length === 0) return null
+      removeKey(telemetryLossKey(partition))
+      return {packages: losses.packages, from: losses.from, to: losses.to}
+    },
+
     clearPartition(partition) {
       const state = load(partition)
       for (const key of state.keys) removeKey(key)
       removeKey(indexKey(partition))
       removeKey(lossKey(partition))
+      removeKey(telemetryLossKey(partition))
       removeKey(sequenceKey(partition))
       state.keys = []
       state.nextSeq = 0

@@ -1,0 +1,202 @@
+# Core's egress network policy: Core's pods may reach the public internet and
+# the cluster's DNS. Every private, internal and non-routable range is denied,
+# including the instance metadata address (169.254.169.254). This backs up
+# Core's fetcher, which already refuses those addresses itself. The VPC CNI
+# always lets a pod reach its own node, whatever a policy says; the runbook
+# lists what the policy doesn't cover.
+#
+# One policy per environment. Porter runs dev, staging and prod in the same
+# namespace, so each policy selects one app's Core pods. Apply one
+# environment at a time, by label:
+#
+#   kubectl apply -f deploy/kubernetes/core-egress-networkpolicy.yaml \
+#     -l mentra.glass/environment=dev
+#
+# Porter doesn't manage this file; applying needs cluster-admin kubectl, not
+# `porter kubectl`. The three policies must stay identical apart from their
+# names and selectors (core-egress-networkpolicy.test.mjs checks this).
+#
+# Runbook (inventory, apply, verify, roll back, record):
+# docs/runbooks/core-egress-policy.md
+#
+# NetworkPolicies add up: any other policy that selects these pods and allows
+# more (for example Porter's `networkPolicy.blockIMDS`, which allows
+# 0.0.0.0/0) reopens the private ranges. Keep this the only one.
+#
+# The DNS rule: pods resolve through 172.21.0.10, the kube-dns Service, which
+# node-local-dns answers on each node (it also listens on 169.254.20.10).
+# The kube-dns selector covers CoreDNS and the Service's address; the two
+# /32 blocks keep DNS working if either path changes. Port 53 only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cloud-dev-core-egress
+  namespace: default
+  labels:
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/part-of: cloud-v2
+    mentra.glass/environment: dev
+spec:
+  podSelector:
+    matchLabels:
+      porter.run/app-name: cloud-dev
+      porter.run/service-name: core
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock:
+            cidr: 172.21.0.10/32
+        - ipBlock:
+            cidr: 169.254.20.10/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - ::1/128
+              - ::ffff:0:0/96
+              - 64:ff9b::/96
+              - fc00::/7
+              - fe80::/10
+              - ff00::/8
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cloud-staging-core-egress
+  namespace: default
+  labels:
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/part-of: cloud-v2
+    mentra.glass/environment: staging
+spec:
+  podSelector:
+    matchLabels:
+      porter.run/app-name: cloud-staging
+      porter.run/service-name: core
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock:
+            cidr: 172.21.0.10/32
+        - ipBlock:
+            cidr: 169.254.20.10/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - ::1/128
+              - ::ffff:0:0/96
+              - 64:ff9b::/96
+              - fc00::/7
+              - fe80::/10
+              - ff00::/8
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cloud-prod-core-egress
+  namespace: default
+  labels:
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/part-of: cloud-v2
+    mentra.glass/environment: prod
+spec:
+  podSelector:
+    matchLabels:
+      porter.run/app-name: cloud-prod
+      porter.run/service-name: core
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock:
+            cidr: 172.21.0.10/32
+        - ipBlock:
+            cidr: 169.254.20.10/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - ::1/128
+              - ::ffff:0:0/96
+              - 64:ff9b::/96
+              - fc00::/7
+              - fe80::/10
+              - ff00::/8

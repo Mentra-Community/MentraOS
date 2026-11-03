@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 @main
 struct LaunchIOSOnMac {
@@ -15,10 +16,15 @@ struct LaunchIOSOnMac {
     @MainActor
     static func launch() async throws {
         let quitOnly = CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--quit"
-        guard CommandLine.arguments.count == 2 || quitOnly else {
+        let passive = CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--permission-status"
+        guard CommandLine.arguments.count == 2 || quitOnly || passive else {
             throw NSError(domain: "MentraLauncher", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected a built .app path"])
         }
-        let url = URL(fileURLWithPath: CommandLine.arguments[quitOnly ? 2 : 1]).standardizedFileURL
+        let nonce = passive ? CommandLine.arguments[2] : nil
+        if let nonce, nonce.range(of: "^[A-Za-z0-9_-]{1,120}$", options: .regularExpression) == nil {
+            throw NSError(domain: "MentraLauncher", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid passive permission nonce"])
+        }
+        let url = URL(fileURLWithPath: CommandLine.arguments[passive ? 3 : quitOnly ? 2 : 1]).standardizedFileURL
         let innerURL = url.appendingPathComponent("WrappedBundle").resolvingSymlinksInPath()
         guard let bundle = Bundle(url: innerURL), let id = bundle.bundleIdentifier else {
             throw NSError(domain: "MentraLauncher", code: 2, userInfo: [NSLocalizedDescriptionKey: "Cannot read app identity"])
@@ -50,7 +56,13 @@ struct LaunchIOSOnMac {
             exit(1)
         }
         defer { timeout.cancel() }
-        let app = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+        let app: NSRunningApplication
+        if let nonce {
+            let request = URL(string: "com.mentra://test/permissions?request_id=\(nonce)")!
+            app = try await NSWorkspace.shared.open([request], withApplicationAt: url, configuration: configuration)
+        } else {
+            app = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+        }
         print("Launched \(id) pid=\(app.processIdentifier) without requesting foreground activation.")
     }
 }

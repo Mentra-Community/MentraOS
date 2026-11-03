@@ -10,7 +10,24 @@ import type { HttpClient } from "../../http";
 
 const TTS_PATH = "/api/tts/speak";
 
+/**
+ * Audio encoding of the returned source. `mp3` (default) plays in a media
+ * player. `pcm_24000` is raw signed 16-bit little-endian mono PCM at 24 kHz,
+ * for hosts that stream it into a PCM player as it downloads.
+ */
+export type RuntimeTtsFormat = "mp3" | "pcm_24000";
+
+/** Content-type prefix the runtime must return for each format. */
+const FORMAT_CONTENT_TYPE: Record<RuntimeTtsFormat, string> = {
+  mp3: "audio/",
+  pcm_24000: "audio/pcm",
+};
+
 export interface RuntimeTtsSpeakOptions {
+  /** Reuse a successful runtime readiness check for 30 seconds. */
+  reusePreflight?: boolean;
+  /** Audio encoding to request. Default `mp3`. */
+  format?: RuntimeTtsFormat;
   voiceId?: string;
   voice_id?: string;
   modelId?: string;
@@ -31,6 +48,7 @@ export interface TtsDeps {
 
 export class Tts {
   private readonly http: HttpClient;
+  private ready?: { endpoint: string; format: RuntimeTtsFormat; contentType: string; expiresAt: number };
 
   constructor(deps: TtsDeps) {
     this.http = deps.http;
@@ -49,11 +67,31 @@ export class Tts {
       throw new Error("runtime.tts.speak requires text");
     }
 
+    const format = options.format ?? "mp3";
     const path = this.buildTtsPath(text, options);
-    const res = await this.http.head(path, { idempotent: true });
-    const contentType = res.headers.get("content-type") ?? "";
-    if (!contentType.toLowerCase().startsWith("audio/")) {
-      throw new Error(`Runtime TTS returned non-audio content-type: ${contentType || "missing"}`);
+    const endpoint = this.http.url(TTS_PATH);
+    let contentType: string;
+    const ready = this.ready;
+    if (
+      options.reusePreflight &&
+      ready?.endpoint === endpoint &&
+      ready.format === format &&
+      ready.expiresAt > Date.now()
+    ) {
+      contentType = ready.contentType;
+    } else {
+      const res = await this.http.head(path, { idempotent: true });
+      contentType = res.headers.get("content-type") ?? "";
+      const normalized = contentType.toLowerCase();
+      if (!normalized.startsWith("audio/")) {
+        throw new Error(`Runtime TTS returned non-audio content-type: ${contentType || "missing"}`);
+      }
+      // A runtime that predates `format` ignores it and answers MP3. Playing
+      // those bytes as PCM would be noise, so refuse before playback.
+      if (!normalized.startsWith(FORMAT_CONTENT_TYPE[format])) {
+        throw new Error(`Runtime TTS does not support format ${format} (returned ${contentType})`);
+      }
+      if (options.reusePreflight) this.ready = { endpoint, format, contentType, expiresAt: Date.now() + 30_000 };
     }
 
     return {
@@ -75,6 +113,9 @@ export class Tts {
 
     const voiceSettings = options.voiceSettings ?? options.voice_settings;
     if (voiceSettings) query.set("voice_settings", JSON.stringify(voiceSettings));
+
+    // MP3 is the runtime default; leave its URL unchanged for older runtimes.
+    if (options.format && options.format !== "mp3") query.set("format", options.format);
 
     return `${TTS_PATH}?${query.toString()}`;
   }

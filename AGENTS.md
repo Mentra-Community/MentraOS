@@ -37,7 +37,7 @@ Consult module-specific AGENTS.md when working within that module.
 
 ## Project Structure & Module Organization
 
-Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
+Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Example apps for integrators embedding `@mentra/bluetooth-sdk` and `@mentra/engine`, and the reference miniapp built with the Mentra Miniapp SDK (`examples/miniapp/`), live in `examples/` (see [`examples/README.md`](examples/README.md)). Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
 
 First-party miniapps and their backends also live in `miniapps/`. All of those
 miniapps are part of this repository's source scope, for example
@@ -154,11 +154,6 @@ validates the public Maven artifact dependency shape.
 
 Cloud V2 services use Bun tests via `cd cloud-v2 && bun run test`; add suites in `cloud-v2/tests/` or beside the relevant package code and mock external providers. Mobile UI logic uses Jest (`bun test`, `bun test:watch`) with files colocated in `mobile/test/` and snapshots beside components. Device flows rely on Maestro (`bun test:maestro`), so update scripts whenever navigation or pairing shifts. Features touching pairing, BLE, or transcription need unit coverage plus an end-to-end path.
 
-For a failing nightly device suite, use
-[`fix-nightly-failures`](.agents/skills/fix-nightly-failures/SKILL.md). Keep independent
-members running, diagnose failures as they arrive, and choose targeted manual runs
-or held authoring for verification after the suite finishes.
-
 ## GitHub Actions runners
 
 When adding or editing GitHub Actions workflows, use the
@@ -170,13 +165,6 @@ requests an exception. Apply this to reusable workflows and runner matrices too.
 ## Commit & Pull Request Guidelines
 
 Write imperative, present-tense commit subjects (e.g., "Add BLE retry delay") and keep scope focused. Reference issue IDs or Slack threads in the body when applicable. Before opening a PR, run relevant `bun run test` suites and platform builds, attach log excerpts for hardware-dependent steps, and call out configuration updates. PR descriptions should outline scope, test evidence, and screenshots or screen recordings for UI-impacting changes.
-
-When opening or updating a PR, use the
-[`select-pr-routines` skill](.agents/skills/select-pr-routines/SKILL.md) to search
-device-test coverage. Add relevant `routine:<id>` labels for existing coverage;
-when the behavior needs changed or new coverage, submit the skill's authoring
-brief with `routine-work:edit` or `routine-work:create`. Explain the coverage and
-any missing prerequisite in the PR; a request is not a passing test result.
 
 ### AI agent attribution
 

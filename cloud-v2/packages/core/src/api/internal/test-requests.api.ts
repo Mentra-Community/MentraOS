@@ -3,11 +3,13 @@ import {frameworkIdentitySchema} from "../../types/framework-request.types";
 import {z} from "zod";
 import {Hono} from "hono";
 import {frameworkBodyLimit, frameworkJson} from "./framework-json";
-import {hostCancellationSchema, hostRejectionSchema, TestRequestConflict, TestRequestService} from "../../services/test-request.service";
+import {hostCancellationSchema, hostRejectionSchema, TestRequestConflict, TestRequestService, type TestRequestDeliveryPhase} from "../../services/test-request.service";
 import {createTestHostAuth, type TestHostEnv} from "../middleware/test-host-auth.middleware";
 import {RoutineDispatchService} from '../../services/routine-dispatch.service';
 import {GithubRoutineSourceGateway} from '../../services/routine-source-selection.service';
 import {RoutineJobService} from '../../services/routine-job.service';
+import {ownedRoutineQualificationSchema, unclaimedRoutineQualificationSchema} from '../../types/routine-job.types';
+import {routineSourceRepository} from '../../types/testing-source.types';
 
 const acceptanceSchema = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
   inputSha256: z.string().regex(/^[a-f0-9]{64}$/), acceptedAt: z.string().datetime({offset: true})}).strict();
@@ -30,8 +32,59 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
   app.get("/", async c => {
     const requested = c.req.query('qualificationTargets');
     if (requested !== undefined && requested !== '1') return c.json({error: 'invalid_request'}, 400);
-    const page = await service.queued(c.var.testHostId, c.req.query("after"), Number(c.req.query("limit") ?? 50));
-    return c.json(requested === '1' ? {...page, qualificationTargets: await qualifications.qualificationTargets(c.var.testHostId)} : page);
+    const minimum = c.req.query('preparationFrameworkMinimum');
+    if (minimum !== undefined && minimum !== '1') return c.json({error: 'invalid_request'}, 400);
+    const ownedQuery = c.req.query('ownedQualification');
+    if (ownedQuery !== undefined && (requested !== '1' || ownedQuery.length > 8192)) return c.json({error: 'invalid_request'}, 400);
+    let owned: z.infer<typeof ownedRoutineQualificationSchema> | undefined;
+    if (ownedQuery !== undefined) {
+      let parsed: unknown;
+      try {parsed = JSON.parse(ownedQuery);} catch {return c.json({error: 'invalid_request'}, 400);}
+      owned = ownedRoutineQualificationSchema.parse(parsed);
+    }
+    const unclaimedQuery = c.req.query('unclaimedQualification');
+    if (unclaimedQuery !== undefined && (requested !== '1' || ownedQuery !== undefined || unclaimedQuery.length > 8192)) return c.json({error: 'invalid_request'}, 400);
+    let unclaimed: z.infer<typeof unclaimedRoutineQualificationSchema> | undefined;
+    if (unclaimedQuery !== undefined) {
+      let parsed: unknown;
+      try {parsed = JSON.parse(unclaimedQuery);} catch {return c.json({error: 'invalid_request'}, 400);}
+      unclaimed = unclaimedRoutineQualificationSchema.parse(parsed);
+    }
+    const startedAt = Date.now(); let phase = 'request', phaseStartedAt = startedAt, rowCount: number | undefined;
+    const fields = () => ({phase, hostId: c.var.testHostId, reqId: c.var.reqId, jobId: owned?.jobId ?? unclaimed?.jobId,
+      qualificationMode: owned ? 'owned' : unclaimed ? 'unclaimed' : requested === '1' ? 'discovery' : 'none',
+      minimumRequested: minimum === '1', rowCount,
+      stageElapsedMs: Math.max(0, Date.now() - phaseStartedAt), requestElapsedMs: Math.max(0, Date.now() - startedAt)});
+    const onPhase: TestRequestDeliveryPhase = (value, count) => {
+      c.var.logger?.info(fields(), 'controller request delivery stage completed');
+      phase = value; phaseStartedAt = Date.now(); rowCount = count;
+    };
+    const timer = setTimeout(() => c.var.logger?.warn(fields(), 'controller request delivery is slow'), 10_000);
+    try {
+      // Exact qualification revalidation consumes only its target and echoed descriptor.
+      // Ordinary intake retains queue/completion delivery and source preparation.
+      const page = owned || unclaimed ? {requests: [], preparations: [], dispatchCompletions: [], nextCursor: null} :
+        await service.queued(c.var.testHostId, c.req.query("after"), Number(c.req.query("limit") ?? 50), onPhase);
+      let minimumFrameworkVersion: number | null | undefined;
+      if (minimum === '1') {
+        onPhase('preparation-framework-minimum-read');
+        minimumFrameworkVersion = await service.preparationFrameworkMinimum(c.var.testHostId);
+      }
+      let qualificationTargets: Awaited<ReturnType<typeof qualifications.qualificationTargets>> | undefined;
+      if (requested === '1') {
+        onPhase('qualification-targets-read');
+        qualificationTargets = await qualifications.qualificationTargets(c.var.testHostId, owned, unclaimed);
+      }
+      c.var.logger?.info({...fields(), requestCount: page.requests.length, preparationCount: page.preparations.length,
+        completionCount: page.dispatchCompletions.length, qualificationTargetCount: qualificationTargets?.length},
+        'controller request delivery completed');
+      return c.json({...page, ...(minimum === '1' ? {minimumFrameworkVersion} : {}),
+        ...(requested === '1' ? {qualificationTargets, ...(owned ? {ownedQualification: owned} : {}),
+          ...(unclaimed ? {unclaimedQualification: unclaimed} : {})} : {})});
+    } catch (error) {
+      c.var.logger?.error({...fields(), errorName: error instanceof Error ? error.name : 'unknown'}, 'controller request delivery phase failed');
+      throw error;
+    } finally {clearTimeout(timer);}
   });
   app.get("/cancellations", async c => c.json(await service.cancellations(c.var.testHostId,
     c.req.query("after"), Number(c.req.query("limit") ?? 50))));
@@ -41,16 +94,17 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
     await dispatch.validatePreparationSource(row.dispatchIntent!);
     return row.dispatchIntent!;
   };
-  app.get('/:requestId/preparation', async c => c.json({request: await service.preparation(c.req.param('requestId'), c.var.testHostId)}));
+  app.get('/:requestId/preparation', async c => c.json({request: await service.preparationView(c.req.param('requestId'), c.var.testHostId)}));
   app.get('/:requestId/routine-source/inventory', async c => {
     const intent = await active(c.req.param('requestId'), c.var.testHostId);
-    return c.json(await sources.inventory(intent.routineRevision));
+    return c.json(await sources.inventory(intent.routineRevision, routineSourceRepository(intent)));
   });
   app.get('/:requestId/routine-source/blobs/:sha', async c => {
     const intent = await active(c.req.param('requestId'), c.var.testHostId);
-    const inventory = await sources.inventory(intent.routineRevision), file = inventory.files.find(value => value.gitBlobSha1 === c.req.param('sha'));
+    const repository = routineSourceRepository(intent);
+    const inventory = await sources.inventory(intent.routineRevision, repository), file = inventory.files.find(value => value.gitBlobSha1 === c.req.param('sha'));
     if (!file) throw new TestRequestConflict('Requested GitHub blob is not part of this exact routine inventory');
-    const bytes = await sources.blob(file);
+    const bytes = await sources.blob(file, repository);
     await active(c.req.param('requestId'), c.var.testHostId);
     return new Response(bytes, {headers: {'Content-Type': 'application/octet-stream', 'Content-Length': String(bytes.byteLength),
       'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'}});

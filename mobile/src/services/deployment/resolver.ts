@@ -335,6 +335,7 @@ function allConfiguredUrls(manifest: DeploymentManifest): string[] {
     manifest.artifacts.sttModelBaseUrl,
     manifest.artifacts.ttsModelBaseUrl,
     manifest.artifacts.firstPartyMiniappsUrl ?? null,
+    manifest.artifacts.directoryUrl ?? null,
     manifest.appUpdates.storeUrls.android,
     manifest.appUpdates.storeUrls.ios,
     manifest.appUpdates.reviewUrls.android,

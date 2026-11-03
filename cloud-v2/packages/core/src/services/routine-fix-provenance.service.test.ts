@@ -57,6 +57,22 @@ test('ordinary nightly provenance follows the prepared bundle and bound executab
   expect(preparing.attempts[0].delta).not.toBeNull();expect('inclusions' in preparing.attempts[0] && preparing.attempts[0].inclusions).toEqual([])
  }finally{f.restore()}
 })
+test('intent-bound historical fix provenance preserves the recorded app-only projection without changing original rows',async()=>{
+ const f=fixture(),manifest={url:'https://artifactscdn.mentraglass.com/live/manifest.json',sha256:'f'.repeat(64),size:100}
+ try{
+  for(const id of ['original','attempt']){
+   const row=f.requests.get(id),recorded={...row.input,glassesModel:'nimo',resources:[{id:'old-glasses',kind:'glasses'}]}
+   const intent={requestId:id,routineId:recorded.routineId,platform:recorded.platform,routineRevision:recorded.definitionRevision,
+    routineSource:recorded.routineSource,laneId:recorded.laneId,source,build:{...recorded.build,manifest,manifestSha256:manifest.sha256}}
+   Object.assign(row,{input:recorded,inputSha256:requestInputDigest(recorded),dispatchIntent:intent,dispatchIntentSha256:requestInputDigest(intent)})
+   f.results.set(id,{...recorded,hostId:'air',frameworkBinding:testFrameworkBinding()})
+  }
+  const before=JSON.stringify([...f.requests.values()]),history=await f.service.history(occurrence)
+  expect(history.original).toMatchObject({observed:true,app:{headSha:build.headSha,artifactSha256:build.archive.sha256},glasses:null})
+  expect(history.attempts[0]).toMatchObject({delta:{changes:[]}})
+  expect(JSON.stringify([...f.requests.values()])).toBe(before)
+ }finally{f.restore()}
+})
 test('changed binding source or executable input fails closed even when the changed fields have internally valid digests',async()=>{
  for(const target of ['binding-source','executable-build','observed-lane'] as const){
   const f=fixture(true)

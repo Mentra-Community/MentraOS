@@ -107,7 +107,24 @@ jest.mock("react-native-mmkv", () => {
       }),
       clearAll: jest.fn(() => mockStorage.clear()),
       getAllKeys: jest.fn(() => Array.from(mockStorage.keys())),
+      trim: jest.fn(),
     })),
+  }
+})
+
+// Mock expo-secure-store (the Keychain / Keystore-backed store of Core
+// credentials) with an in-memory store. Plain functions, so mock resets keep it.
+jest.mock("expo-secure-store", () => {
+  const mockItems = new Map()
+  return {
+    AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: 1,
+    getItemAsync: async (key) => mockItems.get(key) ?? null,
+    setItemAsync: async (key, value) => {
+      mockItems.set(key, value)
+    },
+    deleteItemAsync: async (key) => {
+      mockItems.delete(key)
+    },
   }
 })
 
@@ -174,6 +191,8 @@ jest.mock("react-native-keyboard-controller", () => {
     __esModule: true,
     KeyboardAwareScrollView,
     KeyboardProvider: ({children}) => React.createElement(React.Fragment, null, children),
+    // The keyboard is closed in Jest.
+    useReanimatedKeyboardAnimation: () => ({height: {value: 0}, progress: {value: 0}}),
   }
 })
 
@@ -553,6 +572,9 @@ const mockIslandEntries = () => {
             connected: realGlasses.isGlassesConnected(glassesState.connection),
             fullyBooted: realGlasses.isGlassesReady(glassesState.connection),
             bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
+            bluetoothClassicProfilesConnected: glassesState.bluetoothClassicProfilesConnected,
+            bluetoothAudioRouted: glassesState.bluetoothAudioRouted,
+            audioSetup: glassesState.audioSetup ?? {state: "idle"},
             nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
           }
         }),
@@ -564,6 +586,9 @@ const mockIslandEntries = () => {
               connected: realGlasses.isGlassesConnected(glassesState.connection),
               fullyBooted: realGlasses.isGlassesReady(glassesState.connection),
               bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
+              bluetoothClassicProfilesConnected: glassesState.bluetoothClassicProfilesConnected,
+              bluetoothAudioRouted: glassesState.bluetoothAudioRouted,
+              audioSetup: glassesState.audioSetup ?? {state: "idle"},
               nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
             }
           }
@@ -587,6 +612,7 @@ const mockIslandEntries = () => {
         markPendingSelection: jest.fn((model) => realPairingIdentity.markPendingSelection(model)),
         scan: jest.fn(),
         diagnoseEmptyScan: jest.fn(() => Promise.resolve(null)),
+        bondedGlasses: jest.fn(() => Promise.resolve(null)),
         scanning: jest.fn(() => false),
         searchResults: jest.fn(() => []),
         onFound: jest.fn(() => () => {}),
@@ -830,6 +856,13 @@ const mockIslandEntries = () => {
     SignedMiniappDevBuildError: jest.requireActual("./modules/engine/src/services/publisherIdentityPolicy")
       .SignedMiniappDevBuildError,
     installMiniappFromJsonUrl: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
+    // Fleet's managed/unmanaged answer: a pure module, so tests drive the real one (`setFleetManagementState`).
+    ...jest.requireActual("./modules/engine/src/services/fleet/fleetManagementState"),
+    // Credential vaults (real), over the in-memory expo-secure-store and MMKV mocks above.
+    ...jest.requireActual("./modules/engine/src/utils/credentials/platform"),
+    // The host's copy of miniapp screens' localStorage (real, over the MMKV mock); one data partition.
+    ...jest.requireActual("./modules/engine/src/services/miniappWebStorage"),
+    resolveMiniappDataPartition: jest.fn(() => ({id: "test-partition", personalUserId: "test-user"})),
     __esModule: true,
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
     // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates)
@@ -916,6 +949,7 @@ const mockIslandEntries = () => {
       stopManagedStream: jest.fn(() => Promise.resolve()),
       isConnected: jest.fn(() => false),
       onConnectionChange: jest.fn(() => () => {}),
+      resolveMentraUserId: jest.fn(() => Promise.resolve("test-user")),
     },
     // Bluetooth SDK passthrough — the same mock singleton @mentra/bluetooth-sdk
     // is mocked with, so emitBluetoothSdkEvent/resetBluetoothSdkMock still drive

@@ -11,7 +11,7 @@ const suite: TestHistoryEntry = {kind: "suite", suiteId: "private-suite-id", cha
 const run: Extract<TestHistoryEntry, {kind: "run"}> = {kind: "run", runId: "private-run-id", requestId: "request", routineId: "notes-phone",
   hostId: "mini", laneId: "mac", platform: "ios-on-mac", startedAt: suite.startedAt, finishedAt: suite.finishedAt!,
   outcome: "pass", uploadsComplete: true, evidenceStatus: "complete", stepCounts: {passed: 12, total: 14, skipped: 2},
-  build: {...suite.build, repository: "Mentra-Community/MentraOS", channel: "dev"}};
+  build: {...suite.build!, repository: "Mentra-Community/MentraOS", channel: "dev"}};
 
 test("history is a semantic table with named links, exact lane pairs and accepted suite rerun count", () => {
   const html = renderToStaticMarkup(<TestHistoryTable entries={[suite]} routines={[]}/>);
@@ -122,7 +122,7 @@ test("suite without reruns omits the badge and an included rerun links to its au
   expect(renderToStaticMarkup(<TestHistoryTable entries={[{...suite, rerunCount: 0}]} routines={[]}/>)).not.toContain("routine reruns");
   const run: Extract<TestHistoryEntry, {kind: "run"}> = {kind: "run", runId: "private-run-id", requestId: "request", routineId: "notes-phone",
     hostId: "mini", laneId: "mac", platform: "ios-on-mac", startedAt: suite.startedAt, finishedAt: suite.finishedAt!,
-    outcome: "failed", uploadsComplete: true, evidenceStatus: "complete", build: {...suite.build, repository: "Mentra-Community/MentraOS", channel: "dev"},
+    outcome: "failed", uploadsComplete: true, evidenceStatus: "complete", build: {...suite.build!, repository: "Mentra-Community/MentraOS", channel: "dev"},
     rerun: {rerunId: "accepted-rerun", parentSuiteId: suite.suiteId}};
   const html = renderToStaticMarkup(<TestHistoryTable entries={[run]} routines={[]}/>);
   expect(html).toContain('href="/?testRerun=accepted-rerun"');
@@ -139,7 +139,7 @@ test("incomplete suites and unpublished passes remain neutral instead of claimin
 test("terminal evidence failure is distinct from pending uploads on an otherwise passing run", () => {
   const run: Extract<TestHistoryEntry, {kind: "run"}> = {kind: "run", runId: "run", requestId: "request", routineId: "notes",
     hostId: "mini", laneId: "mac", platform: "ios-on-mac", startedAt: suite.startedAt, finishedAt: suite.finishedAt!,
-    outcome: "pass", uploadsComplete: false, evidenceStatus: "failed", build: {...suite.build, repository: "Mentra-Community/MentraOS", channel: "dev"}};
+    outcome: "pass", uploadsComplete: false, evidenceStatus: "failed", build: {...suite.build!, repository: "Mentra-Community/MentraOS", channel: "dev"}};
   const failed = renderToStaticMarkup(<TestHistoryTable entries={[run]} routines={[]}/>);
   expect(failed).toContain("Evidence failed");
   expect(failed).not.toContain("Evidence pending");
@@ -162,7 +162,7 @@ test("PR builds show the PR link followed by the recorded commit link", () => {
 test("a suite without a recorded repository does not invent a commit destination", () => {
   const html = renderToStaticMarkup(<TestHistoryTable entries={[{...suite, channel: "pr"}]} routines={[]}/>);
   expect(html).toContain("PR number unavailable");
-  expect(html).toContain(suite.build.headSha.slice(0, 10));
+  expect(html).toContain(suite.build!.headSha.slice(0, 10));
   expect(html).not.toContain("github.com/Mentra-Community/MentraOS/commit/");
 });
 
@@ -174,4 +174,10 @@ test('suite badges and counts use the same original evidence and coverage projec
   expect(html).not.toContain('>Incomplete</span>');
   expect(html).toContain('1/3 failed, 1 pending, 1 incomplete');
   expect(html).not.toContain('to latest');
+});
+
+test("history retains incomplete original coverage when no build was selected", () => {
+  const html = renderToStaticMarkup(<TestHistoryTable entries={[{...suite, build: undefined, outcome: "failed", passed: 0, expectedCount: 27, rerunCount: 0, failedCount: 0, comparison: {original: {failed: 0, total: 27, skipped: 0, pending: 0, incomplete: 27}}, lanes: []}]} routines={[]} now={Date.parse(suite.startedAt)}/>);
+  expect(html).toContain("No build selected"); expect(html).toContain("27 incomplete"); expect(html).toContain("Incomplete");
+  expect(html).not.toContain("3.3.0-dev.698"); expect(html).not.toContain("/commit/");
 });

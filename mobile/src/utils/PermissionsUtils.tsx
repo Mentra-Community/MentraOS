@@ -735,7 +735,7 @@ export const checkFeaturePermissions = async (featureKey: string): Promise<boole
   return false
 }
 
-export const askPermissionsUI = async (app: AppletInterface, _theme: Theme): Promise<number> => {
+export const askPermissionsUI = async (app: AppletInterface, _theme?: Theme): Promise<number> => {
   const neededPermissions = await checkPermissionsUI(app)
 
   if (neededPermissions.length == 0) {

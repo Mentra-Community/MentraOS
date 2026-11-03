@@ -16,6 +16,7 @@ import {
   npmReadbackWaitSeconds,
   npmViewPublishedTarball,
   NPM_READBACK_POLL_SECONDS,
+  provenanceArgs,
   publishWithRetry,
   releaseMetadataArgs,
   requireNpmProvenanceSource,
@@ -29,7 +30,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 test("maps coordinated channels to npm tags", () => {
   assert.equal(npmReleaseTag("dev"), "dev")
   assert.equal(npmReleaseTag("beta"), "beta")
-  assert.throws(() => npmReleaseTag("production"), /explicit candidate dist-tag/)
+  assert.equal(npmReleaseTag("production"), "latest")
   assert.throws(() => npmReleaseTag("nightly"), /Unsupported/)
   assert.equal(resolveNpmReleaseTag("production", "candidate-3-1-0"), "candidate-3-1-0")
   assert.throws(() => resolveNpmReleaseTag("production", "3.1.0"), /Invalid npm dist-tag/)
@@ -410,4 +411,10 @@ test("fails closed without retrying on any other npm conflict", () => {
     /conflict that is not its own staged version[\s\S]*cannot modify pre-existing version/,
   )
   assert.equal(publishes, 1)
+})
+
+test("provenance is requested unless NPM_PUBLISH_PROVENANCE is false", () => {
+  assert.deepEqual(provenanceArgs({}), ["--provenance"])
+  assert.deepEqual(provenanceArgs({NPM_PUBLISH_PROVENANCE: "true"}), ["--provenance"])
+  assert.deepEqual(provenanceArgs({NPM_PUBLISH_PROVENANCE: "false"}), [])
 })

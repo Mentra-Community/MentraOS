@@ -1,3 +1,4 @@
+import {routineCheckRepository} from '../types/pr-routine-check.types'
 import {createHmac} from 'node:crypto'
 import {expect, test} from 'bun:test'
 import {PrRoutineCheckService, prRoutineGateId, routineCheckPayload, routineCheckPublicName} from './pr-routine-check.service'
@@ -11,9 +12,12 @@ import {createPrRoutineCheckApi} from '../api/internal/pr-routine-check.api'
 
 function fixture() {
   let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, contextCalls = 0, loseIntakeWake = false, resolveCount = 0, deliveries = 0, lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false, canWrite = true
-  const stored = new Map<string, PrRoutineCheckRow>(), events = new Map<string, string>(), requests = new Map<string, any>(), results = new Map<string, any>()
+  const stored = new Map<string, PrRoutineCheckRow>(), events = new Map<string, string>(), requests = new Map<string, any>(), results = new Map<string, any>(), hosts = new Map<string, any>()
   const controls = new Map<string,{deliveryId:string;digest:string;control:unknown;nextAt:Date}>(), processed = new Set<string>()
   const nativeIds = new Map<string, number>()
+  let routineRepository = 'Mentra-Community/Mentra-Automated-Testing'
+  const routineSourceCalls: Array<{operation: string; repository: string | undefined}> = []
+  const repositoryCalls: Array<{operation: string; repository: string | undefined}> = [], inventoryQueries: unknown[] = []
   const checkPayloads: CheckPayload[] = [], submissions: Array<{selection: any; deadline: string}> = [], cancellations: string[] = []
   const context: PrRoutineContext = {number: 12, headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'dev', open: true,
     sameRepository: true, labels: ['routine:login'], peers: [12]}
@@ -28,19 +32,20 @@ function fixture() {
       return true},
     async wake(id, date) {const row=stored.get(id); if(loseIntakeWake) {loseIntakeWake=false; return}; if(row && (!row.nextAt || row.nextAt>date)) row.nextAt=date},
     async due(date) {return [...stored.values()].filter(row => row.nextAt && row.nextAt <= date).sort((a,b)=>a.nextAt!.getTime()-b.nextAt!.getTime()).slice(0,20).map(row => row.gateId)},
-    async predecessors(number, except) {return [...stored.values()].filter(row => row.payload.context.number === number && row.gateId !== except).map(row => row.gateId)},
+    async predecessors(number, except, repository = 'Mentra-Community/MentraOS') {return [...stored.values()].filter(row => row.payload.context.number === number && routineCheckRepository(row.payload.context) === repository && row.gateId !== except).map(row => row.gateId)},
     async eventsDue(date) {return [...controls.values()].filter(row=>!processed.has(row.deliveryId)&&row.nextAt<=date)}, async eventSettled(id,nextAt) {if(nextAt) controls.get(id)!.nextAt=nextAt;else processed.add(id)}, async event(id, hash, _gateId, control) {if (events.has(id) && events.get(id) !== hash) throw Error('conflict'); events.set(id, hash); if(control && !controls.has(id)) controls.set(id,{deliveryId:id,digest:hash,control:structuredClone(control),nextAt:new Date(now)})},
   }
   let builds: any[] = [], history: any[] = [], failSubmit = false, failHistory = false, failCancellation: string | undefined, holdCancellation: Promise<void> | undefined, dispatchFailure: boolean | undefined
   const buildCalls: string[] = [], retainedProducerIds: Array<number | undefined> = []
   let producerReceipt: {id: number; failed: boolean} | undefined, findCalls = 0
-  const previews: any[] = [], rerunSubmits: any[] = []
+  const previews: any[] = [], rerunSubmits: any[] = [], suiteCompletions: string[] = []
+  let failSuiteCompletion = false
   const definition = {id: 'login', title: 'Account login', steps: [{id: 'open', instruction: 'Open account'}, {id: 'check', instruction: 'Verify login'}], platforms: ['android']}
   const createService = () => new PrRoutineCheckService(rows, {
-    async context() {contextCalls++; return structuredClone(context)}, async permission() {return canWrite}, async ownedCheck() {return true},
-    async findCheck(payload) {findCalls++; return !lostDelivery ? nativeIds.get(payload.external_id) : undefined}, async producer(_platform, _context, _operationId, retainedRunId) {retainedProducerIds.push(retainedRunId); return producerReceipt}, async deliver(_id, payload) {if (unavailableDelivery) throw Error('outage'); deliveries++; checkPayloads.push(structuredClone(payload)); if (!nativeIds.has(payload.external_id)) nativeIds.set(payload.external_id, 99 + nativeIds.size); if (lostDelivery) {lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false; throw Error('lost')} return nativeIds.get(payload.external_id)!}, async requestBuild(platform) {buildCalls.push(platform); if (dispatchFailure !== undefined) throw new PrBuildDispatchFailure(dispatchFailure)},
+    async context(_number, repository = 'Mentra-Community/MentraOS') {contextCalls++; repositoryCalls.push({operation: 'context', repository}); const {repository: _, ...legacy} = context; return {...structuredClone(legacy), ...(repository === 'Mentra-Community/MentraOS' ? {} : {repository})}}, async permission(_actor, repository) {repositoryCalls.push({operation: 'permission', repository}); return canWrite}, async ownedCheck(_id, _head, _external, repository) {repositoryCalls.push({operation: 'ownedCheck', repository}); return true},
+    async findCheck(payload, repository) {repositoryCalls.push({operation: 'findCheck', repository}); findCalls++; return !lostDelivery ? nativeIds.get(payload.external_id) : undefined}, async producer(_platform, _context, _operationId, retainedRunId) {retainedProducerIds.push(retainedRunId); return producerReceipt}, async deliver(_id, payload, _allowCreate, repository) {repositoryCalls.push({operation: 'deliver', repository}); if (unavailableDelivery) throw Error('outage'); deliveries++; checkPayloads.push(structuredClone(payload)); if (!nativeIds.has(payload.external_id)) nativeIds.set(payload.external_id, 99 + nativeIds.size); if (lostDelivery) {lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false; throw Error('lost')} return nativeIds.get(payload.external_id)!}, async requestBuild(platform) {buildCalls.push(platform); if (dispatchFailure !== undefined) throw new PrBuildDispatchFailure(dispatchFailure)},
   }, {
-    async freezeSelection(value: any) {return {...value, build: {repository: 'Mentra-Community/MentraOS', kind: 'android-apk', channel: 'pr', headSha: context.headSha, source: value.source,
+    async freezeSelection(value: any) {routineSourceCalls.push({operation: 'freeze', repository: value.routineRepository}); const selection = {...value}; if (selection.routineRepository === 'Mentra-Community/Mentra-Automated-Testing') delete selection.routineRepository; return {...selection, build: {repository: value.source.repository ?? 'Mentra-Community/MentraOS', kind: 'android-apk', channel: 'pr', headSha: context.headSha, source: value.source,
       archive: {name: 'app.apk', url: 'https://artifactscdn.mentraglass.com/app.apk', size: 10, sha256: 'd'.repeat(64)}, receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 1, sha256: 'e'.repeat(64)}}} as any},
     async submitFrozen(selection, deadline) {submissions.push({selection: structuredClone(selection), deadline}); if (failSubmit) throw Error('unavailable before admission');
       if (!requests.has(selection.requestId)) requests.set(selection.requestId, {requestId: selection.requestId, fleetSelection: selection,
@@ -48,22 +53,24 @@ function fixture() {
       return requests.get(selection.requestId)},
     async cancel(id) {cancellations.push(id); if (holdCancellation) await holdCancellation; if (id === failCancellation) throw Error('provider-sensitive-cancel-error'); return {} as any},
     async cancelFrozen(selection, _deadline, value) {await this.cancel(selection.requestId, value); return {} as any},
-  }, {async catalog(revision) {return {routineRevision: revision!, routines: [{routineId: 'login', platforms: ['android']}]}}},
+  }, {async catalog(revision, _ids, repository) {routineSourceCalls.push({operation: 'catalog', repository}); return {routineRevision: revision!, routines: [{routineId: 'login', platforms: ['android']}]}}},
   {async getExact() {return {routineId: 'login', platform: 'android', definitionRevision: 'a'.repeat(40), definitionSha256: requestInputDigest(definition),
-    routineSource: testRoutineSource(), definition} as any}}, {async inventory() {return structuredClone(builds)}},
+    routineSource: {...testRoutineSource(), repository: routineRepository}, definition} as any}}, {async inventory(query) {inventoryQueries.push(query); return structuredClone(builds)}},
   {async get(id) {return requests.get(id) ?? null}}, {async summary(id) {if (!results.has(id)) throw new TestRunError(404, 'missing'); return results.get(id)}},
-  {async create() {return {} as any}, async bind() {return {} as any}, async complete() {return {} as any}},
+  {async create() {return {} as any}, async bind() {return {} as any}, async complete(id) {suiteCompletions.push(id); if (failSuiteCompletion) throw Error('suite finalization unavailable'); return {} as any}},
   {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async cancelRequest() {return false}, async cancelPlan() {return false}, async detail() {return {state: 'accepted'} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
-  {async get() {return null}}, () => now, {async resolve() {resolveCount++; return 'a'.repeat(40)}})
+  {async get(id) {return hosts.get(id) ?? null}}, () => now, {async resolve(_revision, _before, repository) {resolveCount++; routineRepository = repository ?? 'Mentra-Community/Mentra-Automated-Testing'; routineSourceCalls.push({operation: 'resolve', repository}); return 'a'.repeat(40)}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
-  return {get service() {return service}, canWrite(value: boolean) {canWrite=value}, loseIntakeWake() {loseIntakeWake=true}, restart() {service = createService()}, stored, context, requests, results, submissions, cancellations, checkPayloads, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
+  return {get service() {return service}, canWrite(value: boolean) {canWrite=value}, loseIntakeWake() {loseIntakeWake=true}, restart() {service = createService()}, stored, context, requests, results, hosts, submissions, cancellations, checkPayloads, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
     failSubmit(value = true) {failSubmit = value}, failHistory(value = true) {failHistory = value}, failCancellation(value?: string) {failCancellation = value}, holdCancellation(value?: Promise<void>) {holdCancellation = value}, history(value: any[]) {history = value},
     gate: () => stored.get(gateId)!.payload, advance(ms = 30000) {now += ms}, get now() {return now},
     get contextCalls() {return contextCalls}, get resolves() {return resolveCount}, get deliveries() {return deliveries}, get findCalls() {return findCalls}, outage(value = true) {unavailableDelivery = value}, crashAtCreation() {crashCreation = true}, crashAtProducer() {crashProducer = true}, receipt(value: typeof producerReceipt) {producerReceipt = value}, loseDelivery() {lostDelivery = true},
-    inventory(value: any[]) {builds = value},
-    retainedProducerIds,
-    build() {builds = [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}]},
+    inventory(value: any[]) {builds = value}, suiteCompletions, failSuiteCompletion(value = true) {failSuiteCompletion = value},
+    retainedProducerIds, repositoryCalls, inventoryQueries, routineSourceCalls,
+    build() {builds = [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1, ...(context.repository ? {repository: context.repository} : {})},
+      archive: {name: 'app.apk', url: 'https://artifactscdn.mentraglass.com/app.apk', size: 10, sha256: 'd'.repeat(64)},
+      receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 1, sha256: 'e'.repeat(64)}}]},
     async intake(event = 'event-one') {await service.intake(12, event, requestInputDigest(event)); await service.tick()},
     async drain(count = 6) {for (let i = 0; i < count; i++) {now += 30000; await service.tick()}}
   }
@@ -110,6 +117,57 @@ test('no labels succeeds explicitly, unsupported selected source fails and same-
     expect(f.submissions).toHaveLength(0)
   }
 })
+
+test('empty requested coverage is delivered terminal immediately without a waiting budget or device work', async () => {
+  for (const labels of [[], ['bug', 'documentation']]) {
+    const f = fixture(); f.context.labels = labels;
+    await f.intake();
+    expect(f.checkPayloads).toHaveLength(1);
+    expect(f.checkPayloads[0]).toMatchObject({status: 'completed', conclusion: 'success',
+      started_at: new Date(f.now).toISOString(), completed_at: new Date(f.now).toISOString(),
+      output: {title: 'No routine tests requested.'}, actions: []});
+    expect(f.checkPayloads[0]!.output.summary).toContain('No routine tests requested.');
+    expect(f.checkPayloads[0]!.output.summary).not.toContain('deadline');
+    expect(f.gate().attempt.deadline).toBe(f.gate().attempt.acceptedAt);
+    expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+    expect(f.resolves).toBe(0); expect(f.buildCalls).toEqual([]); expect(f.inventoryQueries).toEqual([]);
+    expect(f.submissions).toEqual([]); expect(f.previews).toEqual([]); expect(f.rerunSubmits).toEqual([]);
+  }
+});
+
+test('removing coverage completes the empty check while retaining ordinary cleanup of its previous jobs', async () => {
+  const f = fixture(); await f.intake(); f.build(); await f.drain();
+  const original = f.gate().attempt.members[0]!.requestId!;
+  f.context.labels = []; await f.intake('remove-coverage');
+  expect(f.checkPayloads.at(-1)).toMatchObject({status: 'completed', conclusion: 'success',
+    output: {title: 'No routine tests requested.'}, actions: []});
+  expect(f.gate().retired[0]!.members[0]).toMatchObject({requestId: original, settled: false});
+  expect(f.stored.get(f.gate().gateId)!.nextAt).toBeDefined();
+  await f.drain(1); expect(f.cancellations).toContain(original);
+  expect(f.gate().retired[0]!.members[0]!.settled).toBe(false);
+  const request = f.requests.get(original); request.state = 'terminal'; request.terminalStatus = 'cancelled';
+  request.dispatchCompletion = {disposition: 'clean'}; await f.drain(2);
+  expect(f.gate().retired[0]!.members[0]!.settled).toBe(true);
+  expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+});
+
+test('empty coverage retries only its unchanged completed delivery and parks after acknowledgment', async () => {
+  const f = fixture(); f.context.labels = []; f.loseDelivery(); await f.intake();
+  const intended = f.checkPayloads[0]!;
+  expect(intended.status).toBe('completed'); expect(f.checkPayloads).toHaveLength(2);
+  f.restart(); await f.drain(1);
+  expect(f.checkPayloads.at(-1)).toEqual(intended);
+  expect(f.checkPayloads).toHaveLength(2);
+  expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+  expect(f.submissions).toEqual([]); expect(f.resolves).toBe(0);
+});
+
+test('ambiguous empty PR context still fails through ordinary context validation', async () => {
+  const f = fixture(); f.context.labels = []; f.context.peers = [12, 13];
+  await f.intake(); await f.drain(4);
+  expect(f.gate().attempt.conclusion).toBe('failure'); expect(f.gate().selectionError).toContain('Several open PRs');
+  expect(f.submissions).toEqual([]);
+});
 
 test('cancellation command redelivery preserves one attempt and waits for native cessation', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain()
@@ -192,7 +250,7 @@ test('late old-head success intent cannot publish green after head changes', asy
   const before = f.checkPayloads.length; f.context.headSha = 'c'.repeat(40)
   f.stored.get(gate.gateId)!.nextAt = new Date(f.now); await f.drain(1)
   expect(f.checkPayloads.slice(before).some(value => value.conclusion === 'success')).toBe(false)
-  await f.drain(2); expect(f.gate().attempt.conclusion).toBe('cancelled')
+  await f.drain(2); expect(f.gate().attempt.conclusion).toBe('success')
 })
 test('active rerun and stale context control do not create replacement requests', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain()
@@ -450,14 +508,77 @@ test('public progress renders observed completed test counts across named lifecy
  }
 });
 
-test('closed and superseded terminal delivery keeps its first timestamp and parks after all custody settles', async () => {
- for (const changed of ['closed','head']) {
-  const f=fixture(); f.context.labels=[]; await f.intake(); await f.drain(3);
+test('recorded PR progress preserves app-only inputs and refuses changed recorded digests', async () => {
+ const f = fixture(); await f.intake(); f.build(); await f.drain();
+ const member = f.gate().attempt.members[0]!, request = f.requests.get(member.requestId!);
+ request.hostId = 'testing-air-1';
+ request.input = {routineId: 'login', platform: 'android', definitionRevision: 'a'.repeat(40), routineSource: testRoutineSource(),
+  laneId: 'android', build: {...request.fleetSelection.build, prNumber: 12}, resources: [{id: 'original-glasses', kind: 'glasses'}]};
+ request.inputSha256 = requestInputDigest(request.input);
+ const progress = {requestId: request.requestId, requestDigest: request.inputSha256, ownerGeneration: 2,
+  controllerIncarnation: 'original-controller', sequence: 3, phase: 'test' as const, completedSteps: 1, totalSteps: 2,
+  startedAt: new Date(f.now - 30000).toISOString(), lastProgressAt: new Date(f.now).toISOString(), observedAt: new Date(f.now).toISOString()};
+ f.hosts.set(request.hostId, {incarnation: 'original-controller', sequence: 3, lanes: [{id: 'android',
+  activity: {owner: {kind: 'run', id: request.requestId}, generation: 2}, progress}]});
+ await f.service.reconcile(f.gate().gateId);
+ expect(f.gate().attempt.members[0]!.progress).toEqual(progress);
+ request.inputSha256 = 'f'.repeat(64);
+ f.hosts.get(request.hostId).lanes[0].progress.requestDigest = request.inputSha256;
+ await f.service.reconcile(f.gate().gateId);
+ expect(f.gate().attempt.members[0]!.progress).toBeUndefined();
+});
+
+test('closing or advancing a PR preserves its already delivered settled verdict and timestamp', async () => {
+ for (const outcome of ['pass', 'failed']) for (const changed of ['closed','head']) {
+  const f=fixture(); await f.intake(); f.build(); await f.drain(); await complete(f,outcome);
+  const finished=f.gate().attempt.finishedAt, payload=requestInputDigest(routineCheckPayload(f.gate(),f.now)), delivered=f.deliveries;
   if(changed==='closed') f.context.open=false; else f.context.headSha='c'.repeat(40);
-  await f.service.reconcile(f.gate().gateId); const finished=f.gate().attempt.finishedAt, payload=requestInputDigest(routineCheckPayload(f.gate(),f.now)), delivered=f.deliveries;
-  expect(f.gate().attempt.conclusion).toBe('cancelled'); expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+  await f.service.reconcile(f.gate().gateId);
+  expect(f.gate().attempt.conclusion).toBe(outcome==='pass'?'success':'failure'); expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+  expect(f.gate().attempt.cancellation).toBeUndefined(); expect(f.cancellations).toHaveLength(0);
   for(let i=0;i<3;i++) {f.advance();await f.service.reconcile(f.gate().gateId)}
   expect(f.gate().attempt.finishedAt).toBe(finished); expect(requestInputDigest(routineCheckPayload(f.gate(),f.now))).toBe(payload); expect(f.deliveries).toBe(delivered);
+ }
+})
+
+test('terminal progress duration stays frozen across freshness expiry and later PR closure', async () => {
+ for(const outcome of ['pass','failed']) for(const changed of ['closed','head']) {
+ const f=fixture();await f.intake();f.build();await f.drain();await complete(f,outcome);
+ const member=f.gate().attempt.members[0]!;
+ member.progress={requestId:member.requestId!,requestDigest:'d'.repeat(64),ownerGeneration:1,controllerIncarnation:'controller',sequence:1,
+  phase:'publication',completedSteps:2,totalSteps:2,startedAt:new Date(f.now-30000).toISOString(),lastProgressAt:new Date(f.now).toISOString(),observedAt:new Date(f.now).toISOString()};
+ await f.service.reconcile(f.gate().gateId);
+ const payload=requestInputDigest(routineCheckPayload(f.gate(),f.now)),finished=f.gate().attempt.finishedAt,delivered=f.deliveries;
+ f.advance(10000);expect(requestInputDigest(routineCheckPayload(f.gate(),f.now))).toBe(payload);
+ f.advance(120000);expect(requestInputDigest(routineCheckPayload(f.gate(),f.now))).toBe(payload);
+ f.restart();if(changed==='closed') f.context.open=false;else f.context.headSha='c'.repeat(40);
+ await f.service.reconcile(f.gate().gateId);
+ expect(f.gate().attempt.conclusion).toBe(outcome==='pass'?'success':'failure');expect(f.gate().attempt.finishedAt).toBe(finished);expect(f.deliveries).toBe(delivered);
+ }
+})
+
+test('closing a PR still contains a pass with unsettled custody before reaching a cancelled verdict', async () => {
+ const f=fixture(); await f.intake(); f.build(); await f.drain();
+ const requestId=f.gate().attempt.members[0]!.requestId!, request=f.requests.get(requestId);
+ request.state='terminal';request.terminalStatus='pass';
+ f.results.set(requestId,{routineId:'login',platform:'android',definitionRevision:'a'.repeat(40),
+  build:{headSha:f.context.headSha},outcome:'pass',uploadsComplete:true,evidenceStatus:'complete'});
+ await f.drain(1);expect(f.gate().attempt.conclusion).toBeUndefined();
+ f.context.open=false;await f.drain(1);
+ expect(f.cancellations).toContain(requestId);expect(f.gate().attempt.conclusion).toBeUndefined();
+ request.dispatchCompletion={disposition:'repair'};await f.drain(2);
+ expect(f.gate().attempt.conclusion).toBe('cancelled');
+})
+
+test('an undelivered success cannot become a new green check after closure or source change', async () => {
+ for(const changed of ['closed','head']) {
+  const f=fixture();await f.intake();f.build();await f.drain();f.outage();await complete(f,'pass');
+  expect(f.gate().attempt.conclusion).toBe('success');expect(f.gate().reporting.intended).toBeDefined();
+  const delivered=f.deliveries;
+  if(changed==='closed') f.context.open=false;else f.context.headSha='c'.repeat(40);
+  f.outage(false);await f.drain(2);
+  expect(f.gate().attempt.conclusion).toBe('cancelled');
+  expect(f.checkPayloads.slice(delivered).some(value=>value.conclusion==='success')).toBe(false);
  }
 })
 
@@ -533,3 +654,131 @@ test('accepted native rerun creates a current check without duplicate jobs or hi
  await expect(f.service.control({...command, deliveryId:'historical-other-event',digest:requestInputDigest('historical-other-event')})).rejects.toThrow('obsolete routine check');
  expect(f.gate().attempt.generation).toBe(2); expect(f.gate().controls).toHaveLength(1);
 })
+
+
+test('same-head and same-number app PRs keep repository-specific gates, predecessors and reporting after restart', async () => {
+  const f = fixture(); f.context.labels = [];
+  const legacyId = prRoutineGateId(f.context.headSha), currentId = prRoutineGateId(f.context.headSha, 'Mentra-Community/Mentra');
+  expect(currentId).not.toBe(legacyId);
+  await f.service.intake(12, 'legacy-pr', requestInputDigest('legacy-pr'), f.context);
+  await f.service.intake(12, 'current-pr', requestInputDigest('current-pr'), {...f.context, repository: 'Mentra-Community/Mentra'});
+  expect(f.stored.size).toBe(2);
+  expect(f.stored.get(legacyId)!.payload.context).not.toHaveProperty('repository');
+  expect(f.stored.get(currentId)!.payload.context.repository).toBe('Mentra-Community/Mentra');
+  expect(f.stored.get(currentId)!.payload.predecessors).toEqual([]);
+  f.restart(); await f.service.tick();
+  expect(f.repositoryCalls.filter(row => row.operation === 'deliver').map(row => row.repository).sort()).toEqual(['Mentra-Community/Mentra', 'Mentra-Community/MentraOS']);
+  expect(f.stored.get(legacyId)!.payload.context).not.toHaveProperty('repository');
+  expect(f.stored.get(currentId)!.payload.context.repository).toBe('Mentra-Community/Mentra');
+  const current = f.stored.get(currentId)!.payload;
+  const calls = f.repositoryCalls.length;
+  await expect(f.service.control({deliveryId: 'wrong-repo', digest: 'c'.repeat(64), gateId: currentId, checkId: current.checkId!,
+    externalId: current.checkExternalId, headSha: current.headSha, actor: 'writer', kind: 'rerun', repository: 'Mentra-Community/MentraOS'})).rejects.toThrow('different routine check repository');
+  expect(f.repositoryCalls).toHaveLength(calls);
+});
+
+
+test('new canonical routine source stays pinned while legacy revisions remain legacy after a config switch', async () => {
+ const previous = process.env.TESTING_REPOSITORY;
+ try {
+  process.env.TESTING_REPOSITORY = 'Mentra-Community/Mentra';
+  const f = fixture(); f.context.repository = 'Mentra-Community/Mentra'; f.build();
+  const gateId = prRoutineGateId(f.context.headSha, 'Mentra-Community/Mentra');
+  await f.service.intake(12, 'canonical-source', requestInputDigest('canonical-source'), f.context); await f.service.tick();
+  expect(f.stored.get(gateId)!.payload.routineRepository).toBe('Mentra-Community/Mentra');
+  process.env.TESTING_REPOSITORY = 'Mentra-Community/Mentra-Automated-Testing';
+  f.restart(); await f.drain();
+  expect(f.stored.get(gateId)!.payload.attempt.routineRepository).toBe('Mentra-Community/Mentra');
+  expect(f.routineSourceCalls.every(call => call.repository === 'Mentra-Community/Mentra')).toBe(true);
+  expect(f.submissions[0]!.selection.routineRepository).toBe('Mentra-Community/Mentra');
+  expect(f.submissions[0]!.selection.source.repository).toBe('Mentra-Community/Mentra');
+  const legacy = fixture(); legacy.build(); await legacy.intake('legacy-source');
+  expect(legacy.gate().routineRevision).toBe('a'.repeat(40)); expect(legacy.gate()).not.toHaveProperty('routineRepository');
+  process.env.TESTING_REPOSITORY = 'Mentra-Community/Mentra'; legacy.restart(); await legacy.drain();
+  expect(legacy.routineSourceCalls.every(call => call.repository === 'Mentra-Community/Mentra-Automated-Testing')).toBe(true);
+  expect(legacy.submissions[0]!.selection).not.toHaveProperty('routineRepository');
+ } finally {if (previous === undefined) delete process.env.TESTING_REPOSITORY; else process.env.TESTING_REPOSITORY = previous;}
+});
+
+
+test('successful ordinary reconciliation clears its stale error and stops recurring context reads', async () => {
+  const f = fixture(); f.context.labels = []; await f.intake();
+  expect(f.gate().attempt.conclusion).toBe('success');
+  expect(f.gate().reporting.intended).toBeUndefined();
+  const row = f.stored.get(prRoutineGateId(f.context.headSha))!;
+  row.payload.reporting.error = 'Routine check reconciliation is unavailable; retained work will retry.';
+  row.nextAt = new Date(f.now);
+  const before = f.contextCalls;
+  await f.drain(1);
+  expect(f.contextCalls).toBe(before + 1);
+  expect(f.gate().reporting.error).toBeUndefined();
+  expect(f.stored.get(row.gateId)!.nextAt).toBeUndefined();
+  await f.drain(2);
+  expect(f.contextCalls).toBe(before + 1);
+});
+
+test('delivered conclusions retry failed current and retired suite finalization across restart before parking', async () => {
+  for (const kind of ['current', 'retired', 'new-delivery'] as const) {
+    const f = fixture(); f.context.labels = []; await f.intake();
+    const row = f.stored.get(prRoutineGateId(f.context.headSha))!;
+    const attempt = {...structuredClone(row.payload.attempt), suiteId: `original-${kind}`,
+      cancellation: {kind: 'timeout' as const, requestedAt: new Date(f.now).toISOString()},
+      conclusion: 'timed_out' as const};
+    if (kind === 'retired') row.payload.retired.push(attempt);
+    else row.payload.attempt = attempt;
+    row.payload.reporting.deliveredDigest = kind === 'new-delivery' ? '0'.repeat(64) : requestInputDigest(routineCheckPayload(row.payload, f.now));
+    row.payload.reporting.error = 'Routine check reconciliation is unavailable; retained work will retry.';
+    row.nextAt = new Date(f.now); f.failSuiteCompletion();
+    const submissions = f.submissions.length;
+    await f.drain(1);
+    expect(f.suiteCompletions).toEqual([attempt.suiteId]);
+    expect(f.gate().reporting.error).toContain('reconciliation is unavailable');
+    expect(f.stored.get(row.gateId)!.nextAt).toBeDefined();
+    f.restart(); await f.drain(1);
+    expect(f.suiteCompletions).toEqual([attempt.suiteId, attempt.suiteId]);
+    expect(f.stored.get(row.gateId)!.nextAt).toBeDefined();
+    f.failSuiteCompletion(false); await f.drain(1);
+    expect(f.suiteCompletions).toEqual([attempt.suiteId, attempt.suiteId, attempt.suiteId]);
+    expect(f.gate().reporting.error).toBeUndefined();
+    expect(f.stored.get(row.gateId)!.nextAt).toBeUndefined();
+    const reads = f.contextCalls; await f.drain(2);
+    expect(f.contextCalls).toBe(reads); expect(f.submissions).toHaveLength(submissions);
+    expect(f.gate().attempt.conclusion).toBe(kind === 'retired' ? 'success' : 'timed_out');
+  }
+});
+
+test('concluded checks with unmatched delivery or actual pending intent still reconcile', async () => {
+  for (const pending of ['digest', 'intent'] as const) {
+    const f = fixture(); f.context.labels = []; await f.intake();
+    const row = f.stored.get(prRoutineGateId(f.context.headSha))!;
+    row.payload.reporting.error = 'GitHub App check delivery is unavailable';
+    if (pending === 'digest') row.payload.reporting.deliveredDigest = '0'.repeat(64);
+    else row.payload.reporting.intended = {revision: row.revision + 1,
+      payload: routineCheckPayload(row.payload, f.now), digest: row.payload.reporting.deliveredDigest!};
+    row.nextAt = new Date(f.now); f.outage();
+    const before = f.contextCalls;
+    await f.drain(1);
+    expect(f.contextCalls).toBeGreaterThan(before);
+    expect(f.gate().reporting.error).toBeDefined();
+    expect(f.stored.get(row.gateId)!.nextAt).toBeDefined();
+  }
+});
+
+test('terminal checks retain current unknown custody and explicit new webhook context', async () => {
+  const f = fixture(); f.context.labels = []; await f.intake();
+  const row = f.stored.get(prRoutineGateId(f.context.headSha))!;
+  row.payload.retired.push({...structuredClone(row.payload.attempt), cancellation: {kind: 'superseded', requestedAt: new Date(f.now).toISOString()},
+    members: [{memberId: 'foreign.android', routineId: 'login', platform: 'android', title: 'Foreign original', requestId: 'foreign-original',
+      status: 'not-run', settled: false, containmentPending: true, stepIds: [], stepNames: [], publicationComplete: false}]});
+  f.requests.set('foreign-original', {state: 'running', fleetBinding: {hostId: 'foreign-host', laneId: 'android'}});
+  row.payload.reporting.error = 'Routine check reconciliation is unavailable'; row.nextAt = new Date(f.now);
+  const before = f.contextCalls; await f.drain(1);
+  expect(f.contextCalls).toBeGreaterThan(before);
+  expect(f.gate().retired[0]!.members[0]!.settled).toBe(false);
+  const fresh = fixture(); fresh.context.labels = []; await fresh.intake();
+  fresh.context.labels = ['routine:login'];
+  const prior = fresh.contextCalls;
+  await fresh.service.reconcile(prRoutineGateId(fresh.context.headSha), fresh.context);
+  expect(fresh.contextCalls).toBeGreaterThan(prior);
+  expect(fresh.gate().attempt.conclusion).toBeUndefined();
+});

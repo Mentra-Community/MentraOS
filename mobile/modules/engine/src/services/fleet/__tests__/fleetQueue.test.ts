@@ -453,6 +453,18 @@ describe("FleetQueue.sweepExpired", () => {
     expect(store.keys()).toEqual([])
   })
 
+  test("a partition holding only telemetry losses is swept too, once they are older than 7 days", () => {
+    const swept = START + STALE
+    newQueue().noteTelemetryLoss(A, "com.mentra.call", "overLimit", 2, swept)
+    restart().sweepExpired(swept)
+    expect(keysOf(A)).toEqual([`t:${A}`])
+
+    restart().sweepExpired(swept + 7 * DAY)
+    expect(keysOf(A)).toEqual([`t:${A}`])
+    restart().sweepExpired(swept + 7 * DAY + 1)
+    expect(store.keys()).toEqual([])
+  })
+
   test("leaves a fresh partition untouched", () => {
     const queue = newQueue()
     queue.enqueue(A, gap("old", at(0)))
@@ -554,8 +566,9 @@ describe("FleetQueue.sweepExpired", () => {
     expect(store.values.has(`n:${A}`)).toBe(true)
   })
 
-  test("removes loss counters it cannot read, and an index with nothing behind it", () => {
+  test("removes loss counters it cannot read, telemetry ones included, and an index with nothing behind it", () => {
     store.values.set(`l:${A}`, "{not json")
+    store.values.set(`t:${A}`, "{not json")
     store.values.set(`i:${A}`, JSON.stringify({count: 0, nextSeq: 4, oldest: null, newest: null}))
     newQueue().sweepExpired(START)
     expect(keysOf(A)).toEqual([])
@@ -909,5 +922,93 @@ describe("the app's queue", () => {
     expect(defaultInstance.getAllKeys()).toEqual([])
     expect(ids(queue.nextBatch(partition, 10, 1_000_000))).toEqual(["survivor"])
     expect(queue.nextSequence(partition, "session")).toBe(nextSequence + 1)
+  })
+})
+
+describe("FleetQueue telemetry share (Phase 12)", () => {
+  const telemetry = (n: number, packageName = "com.mentra.call", observedAt = at(n)): FleetRecord => ({
+    schemaVersion: 1,
+    recordId: `tel.${n}`,
+    phoneDeviceId: "PHONE",
+    collectorSessionId: "SESSION",
+    sequence: n,
+    observedAt,
+    capabilities: ["miniapp_telemetry"],
+    kind: "telemetry_event",
+    payload: {packageName, event: "call_ended", properties: {}, droppedProperties: 0, cutValues: 0},
+  })
+
+  test("telemetry keeps at most 2,000 places: the oldest gives way, counted for its package, never as a gap", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("usage"))
+    for (let n = 0; n < 2_000; n += 1) queue.enqueue(A, telemetry(n, n === 0 ? "com.mentra.notes" : "com.mentra.call"))
+    queue.enqueue(A, telemetry(2_000))
+    queue.enqueue(A, telemetry(2_001))
+    expect(queue.size(A)).toBe(2_001)
+    expect(ids(queue.nextBatch(A, 2, 1_000_000))).toEqual(["usage", "tel.2"])
+    expect(queue.takeLosses(A, clock)).toEqual({dropped: 0, expired: 0, from: null, to: null})
+    expect(queue.takeTelemetryLosses(A, clock)?.packages).toEqual({
+      "com.mentra.notes": {overLimit: 0, evicted: 1, expired: 0, rejected: 0},
+      "com.mentra.call": {overLimit: 0, evicted: 1, expired: 0, rejected: 0},
+    })
+    expect(queue.takeTelemetryLosses(A, clock)).toBeNull()
+  })
+
+  test("a full queue evicts telemetry before any other record, and telemetry never evicts another kind", () => {
+    const queue = newQueue()
+    for (let n = 0; n < 10; n += 1) queue.enqueue(A, telemetry(n))
+    for (let index = 0; index < FLEET_LIMITS.phoneQueueMaxRecords - 10; index += 1) queue.enqueue(A, gap(`r${index}`))
+    queue.enqueue(A, gap("usage-after-full"))
+    expect(queue.size(A)).toBe(10_000)
+    expect(queue.takeLosses(A, clock).dropped).toBe(0)
+    expect(queue.takeTelemetryLosses(A, clock)?.packages["com.mentra.call"]?.evicted).toBe(1)
+
+    // Telemetry arriving at a queue holding no other telemetry gives way itself.
+    const full = newQueue(new MemoryFleetStore())
+    for (let index = 0; index < FLEET_LIMITS.phoneQueueMaxRecords; index += 1) full.enqueue(B, gap(`g${index}`))
+    full.enqueue(B, telemetry(1))
+    expect(full.size(B)).toBe(10_000)
+    expect(ids(full.nextBatch(B, 1, 1_000_000))).toEqual(["g0"])
+    expect(full.takeLosses(B, clock).dropped).toBe(0)
+    expect(full.takeTelemetryLosses(B, clock)?.packages["com.mentra.call"]?.evicted).toBe(1)
+  })
+
+  test("an unreadable telemetry record is never a coverage gap", () => {
+    const queue = newQueue()
+    queue.enqueue(A, telemetry(1))
+    queue.enqueue(A, gap("usage"))
+    const key = store.keys().find((k) => k.endsWith(":tel.1"))!
+    store.set(key, "{not json")
+    expect(ids(queue.nextBatch(A, 10, 1_000_000))).toEqual(["usage"])
+    expect(queue.takeLosses(A, clock)).toEqual({dropped: 0, expired: 0, from: null, to: null})
+  })
+
+  test("telemetry the store will not take is its miniapp's loss, never a coverage gap", () => {
+    const failing = new MemoryFleetStore()
+    const queue = newQueue(failing)
+    const set = failing.set.bind(failing)
+    failing.set = (key: string, value: string) => {
+      if (key.startsWith("q:")) throw new Error("disk full")
+      set(key, value)
+    }
+    queue.enqueue(A, telemetry(1))
+    expect(queue.takeLosses(A, clock)).toEqual({dropped: 0, expired: 0, from: null, to: null})
+    expect(queue.takeTelemetryLosses(A, clock)?.packages["com.mentra.call"]?.evicted).toBe(1)
+  })
+
+  test("expired telemetry and losses the reporter notes count per package; clearing the partition forgets them", () => {
+    const queue = newQueue()
+    queue.enqueue(A, telemetry(1))
+    queue.enqueue(A, gap("old"))
+    clock = START + STALE
+    queue.noteTelemetryLoss(A, "com.mentra.call", "overLimit", 3, clock)
+    queue.noteTelemetryLoss(A, "com.mentra.call", "rejected", 1, clock)
+    const losses = queue.takeTelemetryLosses(A, clock)
+    expect(losses?.packages).toEqual({"com.mentra.call": {overLimit: 3, evicted: 0, expired: 1, rejected: 1}})
+    expect(queue.takeLosses(A, clock)).toMatchObject({dropped: 0, expired: 1})
+
+    queue.noteTelemetryLoss(A, "com.mentra.call", "overLimit", 1, clock)
+    queue.clearPartition(A)
+    expect(queue.takeTelemetryLosses(A, clock)).toBeNull()
   })
 })

@@ -165,6 +165,7 @@ export type LaneRestorationHost = {
   restoration: LaneRestorationProjection | null
   frameworkBinding?: FrameworkBinding
   frameworkAcceptedAt?: string
+  frameworkCurrentInterval?: FrameworkHistoryEntry
   frameworkHistory?: FrameworkHistoryEntry[]
   deployment?: FrameworkDeployment
   deploymentReceivedAt?: string
@@ -178,7 +179,6 @@ export type LaneRestorationList = {
 
 /** Current status does not carry retained repair attempts or installation history. */
 export type LaneOverviewHost = Omit<LaneRestorationHost, 'restoration' | 'frameworkHistory'> & {
-  frameworkCurrentInterval?: FrameworkHistoryEntry
 }
 export type LaneOverviewList = Omit<LaneRestorationList, 'hosts'> & {hosts: LaneOverviewHost[]}
 

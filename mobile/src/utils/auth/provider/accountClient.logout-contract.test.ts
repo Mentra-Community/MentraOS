@@ -13,6 +13,8 @@ jest.mock("@mentra/engine", () => ({
 
 import {AccountAuthProvider} from "./accountClient"
 import {storage} from "@/utils/storage"
+import {accountCredentials} from "@/utils/auth/accountCredentials"
+import {resetAccountCredentials, storedCredential} from "@/test-utils/accountCredentials"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -36,10 +38,11 @@ describe("AccountAuthProvider logout completion", () => {
   const originalFetch = global.fetch
   const fetchMock = jest.fn()
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage.clearAll()
-    storage.save(ACCESS, "access-1")
-    storage.save(REFRESH, "refresh-1")
+    await resetAccountCredentials()
+    await accountCredentials.set(ACCESS, "access-1")
+    await accountCredentials.set(REFRESH, "refresh-1")
     storage.save(PROFILE, JSON.stringify({id: user.mentraUserId, email: user.email}))
     fetchMock.mockReset()
     global.fetch = fetchMock as unknown as typeof fetch
@@ -70,7 +73,7 @@ describe("AccountAuthProvider logout completion", () => {
     expect(freshSession.is_ok()).toBe(true)
     if (freshSession.is_error()) throw freshSession.error
     expect(freshSession.value).toEqual({token: undefined})
-    expect(storage.load(REFRESH).is_error()).toBe(true)
+    expect(await storedCredential(REFRESH)).toBeNull()
 
     finish.resolve(response(200, stage === "probe" ? user : {}))
     expect((await signingOut).is_ok()).toBe(true)
@@ -78,8 +81,8 @@ describe("AccountAuthProvider logout completion", () => {
     expect(after.is_ok()).toBe(true)
     if (after.is_error()) throw after.error
     expect(after.value).toEqual({token: undefined})
-    expect(storage.load(ACCESS).is_error()).toBe(true)
-    expect(storage.load(REFRESH).is_error()).toBe(true)
+    expect(await storedCredential(ACCESS)).toBeNull()
+    expect(await storedCredential(REFRESH)).toBeNull()
   })
 
   it("an earlier session read cannot return a signed-in user after signOut completed", async () => {
@@ -99,13 +102,13 @@ describe("AccountAuthProvider logout completion", () => {
     const oldSession = provider.getSession()
     await entered.promise
     expect((await provider.signOut()).is_ok()).toBe(true)
-    expect(storage.load(ACCESS).is_error()).toBe(true)
+    expect(await storedCredential(ACCESS)).toBeNull()
     finish.resolve(response(200, user))
     const stale = await oldSession
     expect(stale.is_error()).toBe(true)
     expect(storage.load(PROFILE).is_error()).toBe(true)
-    expect(storage.load(ACCESS).is_error()).toBe(true)
-    expect(storage.load(REFRESH).is_error()).toBe(true)
+    expect(await storedCredential(ACCESS)).toBeNull()
+    expect(await storedCredential(REFRESH)).toBeNull()
   })
 
   it("an already in-flight refresh cannot repersist tokens after signOut completed", async () => {
@@ -129,23 +132,23 @@ describe("AccountAuthProvider logout completion", () => {
     // Logout's later /me succeeds with the old token, so it does not join the
     // earlier rotation; the outstanding refresh is allowed to finish later.
     expect((await provider.signOut()).is_ok()).toBe(true)
-    expect(storage.load(ACCESS).is_error()).toBe(true)
-    expect(storage.load(REFRESH).is_error()).toBe(true)
+    expect(await storedCredential(ACCESS)).toBeNull()
+    expect(await storedCredential(REFRESH)).toBeNull()
     finish.resolve(response(200, {access_token: "access-2", refresh_token: "refresh-2"}))
     expect((await refreshingSession).is_error()).toBe(true)
     const fresh = await new AccountAuthProvider().getSession()
     expect(fresh.is_ok()).toBe(true)
     if (fresh.is_error()) throw fresh.error
     expect(fresh.value).toEqual({token: undefined})
-    expect(storage.load(REFRESH).is_error()).toBe(true)
+    expect(await storedCredential(REFRESH)).toBeNull()
   })
 
   it("revokes an expired access token through a private refreshed snapshot without saving it", async () => {
     fetchMock
       .mockResolvedValueOnce(response(401, {error: "invalid_grant"}))
       .mockImplementationOnce(async () => {
-        expect(storage.load(ACCESS).is_error()).toBe(true)
-        expect(storage.load(REFRESH).is_error()).toBe(true)
+        expect(await storedCredential(ACCESS)).toBeNull()
+        expect(await storedCredential(REFRESH)).toBeNull()
         return response(200, {access_token: "private-access", refresh_token: "private-refresh"})
       })
       .mockResolvedValueOnce(response(200))
@@ -153,8 +156,8 @@ describe("AccountAuthProvider logout completion", () => {
     expect(result.is_ok()).toBe(true)
     expect(fetchMock.mock.calls[1][1].body).toBe("grant_type=refresh_token&refresh_token=refresh-1")
     expect(fetchMock.mock.calls[2][1].headers.authorization).toBe("Bearer private-access")
-    expect(storage.load(ACCESS).is_error()).toBe(true)
-    expect(storage.load(REFRESH).is_error()).toBe(true)
+    expect(await storedCredential(ACCESS)).toBeNull()
+    expect(await storedCredential(REFRESH)).toBeNull()
   })
 
   it.each(["network", "rejected"])("keeps local logout and fanout when remote revoke is %s", async (failure) => {
@@ -169,8 +172,8 @@ describe("AccountAuthProvider logout completion", () => {
       const result = await provider.signOut()
       expect(result.is_error()).toBe(true)
       expect(listener).toHaveBeenCalledWith("SIGNED_OUT", {token: undefined})
-      expect(storage.load(ACCESS).is_error()).toBe(true)
-      expect(storage.load(REFRESH).is_error()).toBe(true)
+      expect(await storedCredential(ACCESS)).toBeNull()
+      expect(await storedCredential(REFRESH)).toBeNull()
     } finally {
       sub.value.unsubscribe()
     }
@@ -194,8 +197,8 @@ describe("AccountAuthProvider logout completion", () => {
       await Promise.resolve()
       await Promise.resolve()
       expect(fetchMock).toHaveBeenCalledTimes(2)
-      expect(storage.load(ACCESS).is_error()).toBe(true)
-      expect(storage.load(REFRESH).is_error()).toBe(true)
+      expect(await storedCredential(ACCESS)).toBeNull()
+      expect(await storedCredential(REFRESH)).toBeNull()
     } finally {
       jest.useRealTimers()
     }
@@ -222,8 +225,8 @@ describe("AccountAuthProvider logout completion", () => {
         }
         return response(200, url.endsWith("/me") ? user : {})
       })
-      storage.save("mentra.account.oauth.state", "oauth-state")
-      storage.save("mentra.account.oauth.verifier", "oauth-verifier")
+      await accountCredentials.set("mentra.account.oauth.state", "oauth-state")
+      await accountCredentials.set("mentra.account.oauth.verifier", "oauth-verifier")
       const oldSignIn =
         flow === "password"
           ? provider.signInWithPassword({email: user.email, password: "test"})
@@ -236,10 +239,30 @@ describe("AccountAuthProvider logout completion", () => {
       expect((await provider.signOut()).is_ok()).toBe(true)
       finish.resolve(response(200, {access_token: "late-access", refresh_token: "late-refresh"}))
       expect((await oldSignIn).is_error()).toBe(true)
-      expect(storage.load(ACCESS).is_error()).toBe(true)
-      expect(storage.load(REFRESH).is_error()).toBe(true)
+      expect(await storedCredential(ACCESS)).toBeNull()
+      expect(await storedCredential(REFRESH)).toBeNull()
     },
   )
+
+  it("signs out locally, OAuth state included, even when the stored session cannot be read", async () => {
+    await accountCredentials.set("mentra.account.oauth.verifier", "oauth-verifier")
+    const unreadable = jest.spyOn(accountCredentials, "get").mockRejectedValue(new Error("Keystore unavailable"))
+    const provider = new AccountAuthProvider()
+    const listener = jest.fn()
+    const sub = provider.onAuthStateChange(listener)
+    if (sub.is_error()) throw sub.error
+    try {
+      expect((await provider.signOut()).is_ok()).toBe(true)
+      expect(listener).toHaveBeenCalledWith("SIGNED_OUT", {token: undefined})
+    } finally {
+      unreadable.mockRestore()
+      sub.value.unsubscribe()
+    }
+    expect(await storedCredential(ACCESS)).toBeNull()
+    expect(await storedCredential(REFRESH)).toBeNull()
+    expect(await storedCredential("mentra.account.oauth.verifier")).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 
   it("can sign in again on the same provider after local logout", async () => {
     fetchMock.mockImplementation(async (url: string) =>

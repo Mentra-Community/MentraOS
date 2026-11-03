@@ -1397,11 +1397,13 @@ class Nimo: NSObject, SGCManager {
     private func handleRxPacket(_ packet: Data) {
         if packet.count >= 10, packet[8] == 7, [1, 3, 4].contains(packet[9]) {
             if let response = NimoCanvasCodec.response(packet) {
+                guard (DeviceManager.shared.sgc as? Nimo) === self else { return }
                 if response.key == 1 { Bridge.log("NIMO: canvas Launch response status=\(response.payload.first.map(Int.init) ?? -1)") }
                 canvas.response(key: response.key, payload: response.payload)
             }
             return
         }
+        guard (DeviceManager.shared.sgc as? Nimo) === self else { return }
         receiveAssembler.cleanup()
         for frame in receiveAssembler.ingest(packet) {
             guard let decoded = NimoFrameCodec.decode(frame),
@@ -1590,6 +1592,7 @@ class Nimo: NSObject, SGCManager {
     // MARK: - Mic Audio
 
     private func handleMicPacket(_ data: Data) {
+        guard (DeviceManager.shared.sgc as? Nimo) === self else { return }
         guard let packet = NimoAudioParser.parse(data) else { return }
         let now = Date()
         switch packet.type {
@@ -1676,6 +1679,7 @@ extension Nimo: CBCentralManagerDelegate {
                 "NIMO: Failed to connect \(peripheral.name ?? "unknown"): \(error?.localizedDescription ?? "unknown")"
             )
             guard self.peripheral === peripheral else { return }
+            self.writes.connectionClosed(peripheral)
             self.peripheral = nil
             self.startReconnectionTimer()
         }
@@ -1687,6 +1691,7 @@ extension Nimo: CBCentralManagerDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             Bridge.log("NIMO: Disconnected: \(error?.localizedDescription ?? "clean")")
+            self.writes.connectionClosed(peripheral)
             if self.isDisconnecting || self.peripheral !== peripheral { return }
 
             self.peripheral = nil
@@ -1695,9 +1700,11 @@ extension Nimo: CBCentralManagerDelegate {
             self.micChar = nil
             self.resetSessionState()
 
-            DeviceStore.shared.apply("glasses", "connected", false)
-            DeviceStore.shared.apply("glasses", "fullyBooted", false)
-            DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
+            if (DeviceManager.shared.sgc as? Nimo) === self {
+                DeviceStore.shared.apply("glasses", "connected", false)
+                DeviceStore.shared.apply("glasses", "fullyBooted", false)
+                DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
+            }
             self.startReconnectionTimer()
         }
     }

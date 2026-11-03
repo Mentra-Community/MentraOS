@@ -67,7 +67,7 @@ interface Token {
 }
 interface Request {
   packageName: string
-  opts: {minTtlMs?: number; fresh?: boolean} | undefined
+  opts: {minTtlMs?: number; fresh?: boolean; localBuild?: boolean} | undefined
 }
 type Plan = (request: Request) => Promise<Token>
 
@@ -114,10 +114,12 @@ function fixture() {
   }
 
   const warnings: string[] = []
+  /** Packages whose context started as a local or development build (the router records it at the spawn). */
+  const localBuilds = new Set<string>()
   const Host = new Function(
     "BgTimer",
     "cloudClientService",
-    "getDevAppSourcePackage",
+    "isLocalBuildContext",
     "useSettingsStore",
     "ISLAND_SETTINGS_KEYS",
     "DeviceTypes",
@@ -133,7 +135,7 @@ function fixture() {
   )(
     bgTimer,
     cloudClientService,
-    () => undefined,
+    (packageName: string) => localBuilds.has(packageName),
     {getState: () => ({getSetting: () => undefined})},
     {defaultWearable: "default_wearable"},
     {NONE: "none"},
@@ -205,6 +207,7 @@ function fixture() {
     host,
     requests,
     warnings,
+    localBuilds,
     visibility,
     /** Tokens the miniapp was handed, in order (CONNECT's delivery and every AUTH_UPDATE after it). */
     /** The results the miniapp was sent for its own AUTH_REFRESH requests. */
@@ -291,6 +294,26 @@ describe("a miniapp that connects", () => {
     await f.connect()
 
     expect(f.armed()).toEqual([HOUR_MS - HEADROOM_MS])
+  })
+
+  test("asks for a token marked as a local build's when it runs a local or development build", async () => {
+    const f = fixture()
+    f.localBuilds.add(CALL)
+    await f.connect()
+    await f.askForRefresh(60_000)
+
+    expect(f.requests).toEqual([
+      {packageName: CALL, opts: {fresh: true, localBuild: true}},
+      {packageName: CALL, opts: {minTtlMs: 60_000, localBuild: true}},
+    ])
+  })
+
+  test("asks for its package's ordinary token otherwise", async () => {
+    const f = fixture()
+    f.localBuilds.add("com.example.other")
+    await f.connect()
+
+    expect(f.requests).toEqual([{packageName: CALL, opts: {fresh: true}}])
   })
 })
 

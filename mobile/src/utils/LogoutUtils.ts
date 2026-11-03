@@ -4,9 +4,11 @@ import {engine} from "@mentra/engine"
 import mantle from "@/services/MantleManager"
 import {settleFrame} from "@/utils/settleFrame"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
+import {accountCredentials, hasStoredAccountSession} from "@/utils/auth/accountCredentials"
 import mentraAuth from "@/utils/auth/authClient"
 import {storage} from "@/utils/storage"
 import {cloudClient} from "@/services/cloudClient"
+import {unpairSavedGlasses} from "@/utils/pairing/unpairSavedGlasses"
 
 export class LogoutUtils {
   private static readonly TAG = "LogoutUtils"
@@ -65,8 +67,8 @@ export class LogoutUtils {
       // described above.
       await settleFrame()
 
-      // Step 3: Disconnect and forget any connected glasses
-      await this.disconnectAndForgetGlasses()
+      // Step 3: Unpair the saved glasses
+      await this.unpairGlasses()
 
       // Step 4: Stop island runtime services
       await this.stopToolkitRuntime()
@@ -88,25 +90,21 @@ export class LogoutUtils {
   }
 
   /**
-   * Disconnect and forget any connected glasses
+   * Unpair the saved glasses
    */
-  private static async disconnectAndForgetGlasses(): Promise<void> {
-    console.log(`${this.TAG}: Disconnecting and forgetting glasses...`)
+  private static async unpairGlasses(): Promise<void> {
+    console.log(`${this.TAG}: Unpairing glasses...`)
 
+    // The same Unpair as Device Settings. It needs the link: disconnecting first would discard it,
+    // so the glasses would never hear the unpair and would keep their owner and bonds.
     try {
-      // First try to disconnect any connected glasses
-      await engine.glasses.disconnect()
-      console.log(`${this.TAG}: Disconnected glasses`)
+      await unpairSavedGlasses()
+      console.log(`${this.TAG}: Unpaired glasses`)
     } catch (error) {
-      console.warn(`${this.TAG}: Error disconnecting glasses:`, error)
-    }
-
-    try {
-      // Then forget the glasses completely
-      await engine.glasses.forget()
-      console.log(`${this.TAG}: Forgot glasses pairing`)
-    } catch (error) {
-      console.warn(`${this.TAG}: Error forgetting glasses:`, error)
+      console.warn(`${this.TAG}: Error unpairing glasses:`, error)
+      await engine.glasses.forget().catch((forgetError: unknown) => {
+        console.warn(`${this.TAG}: Error forgetting glasses:`, forgetError)
+      })
     }
   }
 
@@ -181,6 +179,12 @@ export class LogoutUtils {
     } catch (error) {
       console.error(`${this.TAG}: Error clearing app settings:`, error)
     }
+    // The account credentials live in the secure store, which storage.clearAll() does not reach.
+    try {
+      await accountCredentials.clear()
+    } catch (error) {
+      console.error(`${this.TAG}: Error clearing the stored account credentials:`, error)
+    }
   }
 
   /**
@@ -231,10 +235,8 @@ export class LogoutUtils {
    */
   public static async verifyLogoutSuccess(): Promise<boolean> {
     // The device only holds V2 account tokens now (issue 019); logged out
-    // means the MMKV token pair is gone.
-    const access = storage.load<string>("mentra.account.accessToken")
-    const refresh = storage.load<string>("mentra.account.refreshToken")
-    const isLoggedOut = (access.is_error() || !access.value) && (refresh.is_error() || !refresh.value)
+    // means the stored token pair is gone.
+    const isLoggedOut = !(await hasStoredAccountSession().catch(() => true))
 
     console.log(`${this.TAG}: Logout verification - Success: ${isLoggedOut}`)
     return isLoggedOut
