@@ -574,6 +574,12 @@ class BluetoothSdkModule : Module() {
             sdk?.startScan(DeviceModel.fromDeviceType(model))
         }
 
+        SdkAsyncFunction("getBondedGlasses") { ->
+            com.mentra.bluetoothsdk.sgcs.MentraLive.soleBondedMentraLive(Bridge.getContext())?.let {
+                mapOf("name" to (it.name ?: ""), "address" to it.address)
+            }
+        }
+
         SdkAsyncFunction("getScanDiagnostic") { model: String ->
             sdk?.connectedDeviceScanDiagnostic(DeviceModel.fromDeviceType(model))?.let {
                 mapOf("code" to it.code, "message" to it.message)

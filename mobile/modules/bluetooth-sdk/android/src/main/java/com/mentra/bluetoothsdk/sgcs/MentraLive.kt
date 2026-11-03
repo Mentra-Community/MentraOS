@@ -460,6 +460,22 @@ class MentraLive : SGCManager() {
             }
         }
 
+        /** The one Mentra Live this phone is bonded with. Null when there is none, several, or no permission to read bonds. */
+        fun soleBondedMentraLive(context: Context?): BluetoothDevice? {
+            val adapter =
+                    (context?.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)
+                            ?.adapter
+                            ?: return null
+            return try {
+                adapter.bondedDevices
+                        ?.filter { isMentraLiveBluetoothName(safeBondedDeviceName(it)) }
+                        ?.singleOrNull()
+            } catch (e: Exception) {
+                Bridge.log("LIVE: Unable to read bonded devices: " + e.message)
+                null
+            }
+        }
+
         private const val SHUTDOWN_RECENT_MS = 45_000L // Consider "recent shutdown" for 45s
 
         // Keep-alive parameters

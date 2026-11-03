@@ -172,6 +172,7 @@ describe("pairing scan screen", () => {
     resetBluetoothSdkMock()
     jest.clearAllMocks()
     ;(engine.pairing.diagnoseEmptyScan as jest.Mock).mockReset().mockResolvedValue(null)
+    ;(engine.pairing.bondedGlasses as jest.Mock).mockReset().mockResolvedValue(null)
     ;(engine.pairing.pair as jest.Mock).mockReset().mockResolvedValue(undefined)
     useCoreStore.getState().reset()
     useGlassesStore.getState().reset()
@@ -519,6 +520,37 @@ describe("pairing scan screen", () => {
       })
     })
   })
+  describe("bonded glasses", () => {
+    const bonded = (name: string) => ({id: name, model: "Mentra Live", name, address: name})
+
+    it("reconnects them without asking for pairing mode or a choice", async () => {
+      setPlatformOS("android")
+      ;(engine.pairing.bondedGlasses as jest.Mock).mockResolvedValue(bonded("MENTRA_LIVE_BLE_BOND"))
+
+      render(<SelectGlassesBluetoothScreen />)
+
+      await waitFor(() => {
+        expect(push).toHaveBeenCalledWith("/pairing/loading", expect.objectContaining({deviceName: "MENTRA_LIVE_BLE_BOND"}))
+      })
+      // Discovery would drop the Classic link this reconnect keeps, and the firmware decides secure pairing.
+      expect(engine.pairing.scan).not.toHaveBeenCalled()
+      expect(push.mock.calls[0][1].securePairingCapable).toBeUndefined()
+    })
+
+    it("tries them once, so glasses that refuse don't loop back into pairing", async () => {
+      setPlatformOS("android")
+      ;(engine.pairing.bondedGlasses as jest.Mock).mockResolvedValue(bonded("MENTRA_LIVE_BLE_REFUSES"))
+
+      const first = render(<SelectGlassesBluetoothScreen />)
+      await waitFor(() => expect(push).toHaveBeenCalledTimes(1))
+      first.unmount()
+      render(<SelectGlassesBluetoothScreen />)
+      await waitFor(() => expect(engine.pairing.scan).toHaveBeenCalledTimes(1))
+
+      expect(push).toHaveBeenCalledTimes(1)
+    })
+  })
+
   it("shows retry controls when permission denial blocks a selected Mentra Live", async () => {
     jest.useFakeTimers()
     try {

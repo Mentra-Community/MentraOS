@@ -295,6 +295,16 @@ export const pairing = {
 
   /** Start scanning for nearby glasses. Results land on `searchResults()`/`onFound()`. */
   scan: (model: DeviceModel): Promise<void> => BluetoothSdk.startScan(model),
+  /** The glasses this phone is still bonded with, which never unpaired. Android only: iOS can't read its bonds. */
+  bondedGlasses: async (): Promise<Device | null> => {
+    try {
+      const bonded = await BluetoothSdk.getBondedGlasses?.()
+      // A bond says nothing about firmware: the session finds out whether they support secure pairing.
+      return bonded?.name ? {id: bonded.address, model: "Mentra Live", name: bonded.name, address: bonded.address} : null
+    } catch {
+      return null
+    }
+  },
   /** Best-effort advisory after a caller-managed scan completes empty. */
   diagnoseEmptyScan: async (model: DeviceModel): Promise<ScanDiagnostic | null> => {
     try {

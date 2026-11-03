@@ -612,6 +612,7 @@ const mockIslandEntries = () => {
         markPendingSelection: jest.fn((model) => realPairingIdentity.markPendingSelection(model)),
         scan: jest.fn(),
         diagnoseEmptyScan: jest.fn(() => Promise.resolve(null)),
+        bondedGlasses: jest.fn(() => Promise.resolve(null)),
         scanning: jest.fn(() => false),
         searchResults: jest.fn(() => []),
         onFound: jest.fn(() => () => {}),

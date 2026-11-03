@@ -25,6 +25,8 @@ const normalizeProjectName = (value?: string | null) => value?.trim().toUpperCas
 const SUPPORTED_AR99_PROJECT_NAMES = new Set<string>(AR99_MODEL_OPTIONS.map((option) => option.projectName))
 
 const PAIRING_SCAN_TIMEOUT_MS = 15_000
+/** Bonded glasses already tried since the app started: if they refuse, the user pairs them from the list. */
+const triedBondedGlasses = new Set<string>()
 
 export default function SelectGlassesBluetoothScreen() {
   const {deviceModel} = useLocalSearchParams<{deviceModel: DeviceModel}>()
@@ -44,14 +46,6 @@ function GlassesScanScreen() {
   const [scanTimedOut, setScanTimedOut] = useState(false)
   const [scanDiagnostic, setScanDiagnostic] = useState<ScanDiagnostic | null>(null)
   const connectingRef = useRef(false)
-  // The scan screen stays mounted under loading and the iOS "Forget the old pairing" screen.
-  // A tap latches this so a double-tap cannot start two pairings. Coming back must clear it,
-  // or the next tap on a glasses row does nothing.
-  useFocusEffect(
-    useCallback(() => {
-      connectingRef.current = false
-    }, []),
-  )
   const scanGenerationRef = useRef(0)
   const [scanGeneration, setScanGeneration] = useState(0)
   const isMentraLivePairingScan = deviceModel === DeviceTypes.LIVE
@@ -134,6 +128,7 @@ function GlassesScanScreen() {
     }
   }
 
+  const scanOnReturnRef = useRef(false)
   const startScanAttempt = useCallback(async () => {
     if (!allowedByDeployment) return
     const generation = scanGenerationRef.current + 1
@@ -144,13 +139,28 @@ function GlassesScanScreen() {
     setScanDiagnostic(null)
     setRememberedSearchResults([])
     try {
+      // A bond means the glasses were never unpaired, so they need no pairing mode and no choosing.
+      // Discovery waits for this: it drops their Classic link, which an owner's reconnect keeps.
+      const bonded =
+        isMentraLivePairingScan && engine.pairing.identity().kind !== "paired"
+          ? await engine.pairing.bondedGlasses()
+          : null
+      if (generation !== scanGenerationRef.current) return
+      if (bonded && !triedBondedGlasses.has(bonded.name)) {
+        triedBondedGlasses.add(bonded.name)
+        scanOnReturnRef.current = true
+        void triggerGlassesPairingGuide(bonded)
+        return
+      }
       await engine.pairing.scan(deviceModel)
     } catch (error) {
       if (generation === scanGenerationRef.current) {
         console.error("Failed to start glasses scan:", error)
       }
     }
-  }, [allowedByDeployment, deviceModel])
+    // triggerGlassesPairingGuide is intentionally not memoized; it reads nothing that changes between scans.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowedByDeployment, deviceModel, isMentraLivePairingScan])
 
   const visibleResults = useMemo(
     () => rememberedSearchResults.filter((r) => r.name !== "NOTREQUIREDSKIP" && matchesSelectedModel(r)),
@@ -176,6 +186,18 @@ function GlassesScanScreen() {
   useEffect(() => {
     void startScanAttempt()
   }, [startScanAttempt])
+
+  // The scan screen stays mounted under loading and the iOS "Forget the old pairing" screen.
+  // A tap latches this so a double-tap cannot start two pairings. Coming back must clear it,
+  // or the next tap on a glasses row does nothing.
+  useFocusEffect(
+    useCallback(() => {
+      connectingRef.current = false
+      if (!scanOnReturnRef.current) return
+      scanOnReturnRef.current = false
+      void startScanAttempt()
+    }, [startScanAttempt]),
+  )
 
   useEffect(() => {
     if (!allowedByDeployment) return
