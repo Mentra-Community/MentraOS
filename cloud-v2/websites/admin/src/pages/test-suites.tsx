@@ -14,7 +14,6 @@ import {OriginalLatestStatus, SuiteCountComparison} from "../components/test-sta
 import {comparedSuiteCounts, suiteDisplayStatus, observedTestStatus, testStatusCounts} from "../../../../packages/core/src/types/test-status-comparison";
 import {CompactFollowUp} from '../components/routine-follow-up';
 import type {CaseFollowUpSummary} from '../../../../packages/core/src/types/routine-fix-provenance.types';
-import {CopyRerunLabel} from '../components/copy-rerun-label';
 
 export interface TestSuiteResult {
   suiteId: string; channel: string; trigger: string; startedAt: string; finishedAt?: string;
@@ -109,8 +108,7 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
             {member.unavailableReason && <details className="mt-2 min-w-40 max-w-xs text-xs text-[#747780]"><summary className="cursor-pointer">Failure reason</summary><p className="mt-2 break-words">{member.unavailableReason}</p></details>}
           </td>
           <td><TestingButton variant="ghost" size="icon-sm" title="Rerun" aria-label={`Rerun ${member.routineId} (${member.platform})`} disabled={!canRerun(member)}
-            onClick={()=>setDispatchMembers([member.memberId])}><RefreshCw size={16} aria-hidden="true"/></TestingButton>
-            {canRerun(member) && <CopyRerunLabel routineId={member.routineId} kind={member.requestId ? 'r' : 's'} targetId={member.requestId ?? suiteId}/>}</td>
+            onClick={()=>setDispatchMembers([member.memberId])}><RefreshCw size={16} aria-hidden="true"/></TestingButton></td>
         </tr>)}</tbody>
       </table>
     </div>

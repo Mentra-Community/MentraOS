@@ -408,18 +408,6 @@ test('unpublished rejection detail keeps its explicit reason without fabricating
  expect(body.run).toBeUndefined();
 });
 
-test('Admin gate cancellation requires operator identity and strict retained generation input', async () => {
- const calls: any[] = [], checks = {async cancelFromAdmin(...args: any[]) {calls.push(args); return {accepted: true}}};
- const gateId = 'pr-check-' + 'a'.repeat(64), body = {operationId: '00000000-0000-4000-8000-000000000001', coverageGeneration: 1, attemptGeneration: 2};
- const unauthenticated = createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, checks as any);
- expect((await unauthenticated.request(`/pr-checks/${gateId}/cancel`, {method: 'POST', body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}})).status).toBe(403);
- const app = new Hono<any>(); app.use('*', async (c, next) => {c.set('developer', {developerId: 'operator-one', email: 'operator@example.test'}); await next()});
- app.route('/', createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, checks as any));
- expect((await app.request(`/pr-checks/${gateId}/cancel`, {method: 'POST', body: JSON.stringify({...body, shell: 'bad'}), headers: {'Content-Type': 'application/json'}})).status).toBe(400);
- expect((await app.request(`/pr-checks/${gateId}/cancel`, {method: 'POST', body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}})).status).toBe(202);
- expect(calls).toEqual([[gateId, body, 'admin:operator-one']]);
-});
-
 test('activity reads and displays bounded fleet preparation failures', async () => {
  const {TestRequestModel}=await import('../../models/test-request.model');
  const {portableRoutineSelectionSchema}=await import('../../types/routine-job.types');
@@ -482,7 +470,7 @@ test('recovery button body uses existing authenticated lane-control admission an
   const body = {operationId: '11111111-1111-4111-8111-111111111111', hostId: 'air', laneId: 'mac',
     expiresAt: Date.now() + 120000, action: 'reopen-repair', repair: {interruptionId: 'repair:mac:98',
       expectedHaltDecisionId: 'halt:98', changedConditions: 'I allowed microphone access.'}}
-  const route = () => createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, undefined, new Controls())
+  const route = () => createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, new Controls())
   const options = {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}
   expect((await route().request('/lanes/controls', options)).status).toBe(403)
   expect(observed).toEqual([])
@@ -507,7 +495,7 @@ test('lane reserve forwards an authenticated operator-key label and preserves re
     async replace(_host, expected, next) {if (expected !== version) return false; records = next; version++; return true}}, () => now)
   const app = new Hono<any>()
   app.use('*', async (c, next) => {c.set('developer', {developerId: 'api_key:operator', email: 'credential:operator'}); await next()})
-  app.route('/', createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, undefined, controls))
+  app.route('/', createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, controls))
   const body = {operationId: '33333333-3333-4333-8333-333333333333', hostId: 'air', laneId: 'mac',
     expiresAt: now + 120000, action: 'reserve', purpose: 'Manual work'}
   const options = {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}

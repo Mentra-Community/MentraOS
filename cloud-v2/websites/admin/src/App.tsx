@@ -1,5 +1,4 @@
 import {LoadingIndicator} from "./components/loading-indicator";
-import {PrRoutineCheckPage, readPrCheckId} from './pages/pr-routine-check';
 import {TestRunsTabs} from "./pages/test-runs-tabs";
 import {TestRerunPage, readRerunId} from "./pages/test-reruns";
 import {TestSuitePage, readSuiteId} from "./pages/test-suites";
@@ -125,7 +124,7 @@ export function visibleNav(visible: readonly AdminPageKey[]): NavItem[] {
 export function requestedPage(search: string, reportId: string | null = null): AdminPageKey | null {
   if (new URLSearchParams(search).get("systemHealth") === "1") return "system-health";
   if (
-    readPrCheckId(search) || readRerunId(search) || readSuiteId(search) || readTestRunLink(search) ||
+    readRerunId(search) || readSuiteId(search) || readTestRunLink(search) ||
     readTestRunListScope(search) || new URLSearchParams(search).get("testRuns") === "1"
   ) return "test-runs";
   if (new URLSearchParams(search).get("routineCatalog") === "1") return "routine-catalog";
@@ -160,7 +159,6 @@ export function App() {
 // out the param must stay in the address bar so LoginGate's return_to brings
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
-const initialPrCheckId = readPrCheckId(window.location.search);
 const initialRerunId = readRerunId(window.location.search);
 const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
@@ -173,7 +171,6 @@ function AdminPage() {
   // The page asked for, if any. What shows is `resolvePage(page, visible)`: a page this principal cannot
   // open (a deep link, say) falls back to their first visible page.
   const [page, setPage] = useState<AdminPageKey | null>(() => requestedPage(window.location.search, pendingDeepLinkReportId));
-  const [prCheckId, setPrCheckId] = useState<string | null>(initialPrCheckId);
   const [rerunId, setRerunId] = useState<string | null>(initialRerunId);
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
   const [healthTab, setHealthTab] = useState(initialHealthTab);
@@ -218,8 +215,6 @@ function AdminPage() {
       setLaneSelection(readLaneSelection(window.location.search));
       const requested = requestedPage(window.location.search);
       if (requested === "system-health") { setPage("system-health"); return; }
-      const prCheck = readPrCheckId(window.location.search);
-      setPrCheckId(prCheck);
       const rerun = readRerunId(window.location.search);
       setRerunId(rerun);
       const suite = readSuiteId(window.location.search);
@@ -242,7 +237,6 @@ function AdminPage() {
   }
 
   function selectTestRun(selection: TestRunLink | null, replace = false) {
-    setPrCheckId(null);
     setRerunId(null);
     setSuiteId(null);
     setTestRunLink(selection);
@@ -327,10 +321,9 @@ function AdminPage() {
       {active === "test-runs" ? <SystemHealthSummary /> : null}
       {active === "system-health" ? <SystemHealthPage tab={healthTab} lane={laneSelection} onTabChange={selectHealthTab} /> : null}
       {active === "routine-catalog" ? <RoutineCatalogPage /> : null}
-      {active === "test-runs" && prCheckId ? <PrRoutineCheckPage gateId={prCheckId} /> : null}
-      {active === "test-runs" && !prCheckId && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
-      {active === "test-runs" && !prCheckId && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
-      {active === "test-runs" && !prCheckId && !rerunId && !suiteId ? (
+      {active === "test-runs" && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
+      {active === "test-runs" && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
+      {active === "test-runs" && !rerunId && !suiteId ? (
         testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <TestRunsTabs>
           {testRunListScope && <section className="rounded-2xl border border-[#e0e4de] bg-white p-5">
             <h2 className="font-semibold">Results for the selected build</h2>

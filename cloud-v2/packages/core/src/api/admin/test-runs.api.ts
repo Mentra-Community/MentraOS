@@ -17,9 +17,7 @@ import {frameworkIdentitySchema, recordedFrameworkRequestInputSchema, type Frame
 import {createTestRerunRoutes} from "../internal/test-reruns.api";
 import {routineDispatchIntentSchema} from '../../types/routine-dispatch.types';
 import {portableRoutineSelectionSchema, type StoredRoutineJob} from '../../types/routine-job.types';
-import {PrRoutineCheckService} from '../../services/pr-routine-check.service';
 import {LaneRestorationService} from "../../services/lane-restoration.service";
-import {PrRerunReferenceService} from '../../services/pr-rerun-reference.service';
 import {TestRequestProgressService} from '../../services/test-request-progress.service';
 import {TestHostStateService, type RoutingTestHostState} from '../../services/test-host-state.service';
 import {sharedResourceWaitingReason} from '../../services/routine-resource-wait';
@@ -27,7 +25,7 @@ import {TestRequestMatchService} from '../../services/test-request-match.service
 
 /** Results and delivery projections only; the host controller owns lanes and repairs. */
 export function createTestRunAdminApi(health = new TestHostHealthService(), history = new TestHistoryService(),
-  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), checks = new PrRoutineCheckService(), controls = new LaneControlsService(), rerunLabels = new PrRerunReferenceService(), progress = new TestRequestProgressService(), hosts: Pick<TestHostStateService, 'list'> = new TestHostStateService(), matching = new TestRequestMatchService(hosts)) {
+  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), controls = new LaneControlsService(), progress = new TestRequestProgressService(), hosts: Pick<TestHostStateService, 'list'> = new TestHostStateService(), matching = new TestRequestMatchService(hosts)) {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
   app.onError((error, c) => {
@@ -40,12 +38,6 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   const suites = new TestSuiteService();
   app.route("/follow-ups", createRoutineCaseApi());
   app.route("/reruns", createTestRerunRoutes(undefined, "admin"));
-  app.get('/rerun-label', async c => {
-    const input = z.object({routineId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/),
-      kind: z.enum(['s', 'r']), targetId: frameworkIdentitySchema}).strict().safeParse(c.req.query());
-    if (!input.success) throw new TestRunError(400, 'Invalid rerun label selection');
-    return c.json(await rerunLabels.copy(input.data.routineId, input.data.kind, input.data.targetId));
-  });
   app.get("/suite-index/labels", async c => c.json(await suites.labels((c.req.query("requestIds") ?? "").split(",").filter(Boolean))));
   app.get("/suite-index/list", async c => c.json(await suites.list()));
   app.get("/history/list", async c => c.json(await history.list(c.req.query())));
@@ -80,18 +72,6 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   app.get("/resources/overview", async c => c.json(await new ResourceLifecycleService().list()));
   app.get("/lanes/overview", async c => c.json(await restoration.overview()));
   app.get("/restoration/list", async c => c.json(await restoration.list(c.req.query('hostId'))));
-  app.get('/pr-checks/:gateId', async c => {
-    const id = c.req.param('gateId');
-    if (!/^pr-check-[a-f0-9]{64}$/.test(id)) throw new TestRunError(400, 'Invalid PR check identity');
-    return c.json(await checks.adminDetail(id));
-  });
-  app.post('/pr-checks/:gateId/cancel', frameworkBodyLimit(4096), async c => {
-    const id = c.req.param('gateId'), input = z.object({operationId: z.string().uuid(), coverageGeneration: z.number().int().positive().safe(),
-      attemptGeneration: z.number().int().positive().safe()}).strict().safeParse(await frameworkJson(c));
-    if (!/^pr-check-[a-f0-9]{64}$/.test(id) || !input.success) throw new TestRunError(400, 'Invalid PR cancellation operation');
-    if (!c.var.developer?.developerId) return c.json({error: 'testing_operator_required'}, 403);
-    return c.json(await checks.cancelFromAdmin(id, input.data, `admin:${c.var.developer.developerId}`), 202);
-  });
   app.get("/:runId", async c => {
     const id = c.req.param("runId");
     if (!frameworkIdentitySchema.safeParse(id).success) throw new TestRunError(400, "Invalid run or request identity");
