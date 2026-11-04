@@ -355,35 +355,29 @@ export function selectMtkUpdate(
   return full
 }
 
-export function checkBesUpdate(besFirmware: BesFirmware | undefined, currentVersion: string | undefined): boolean {
+/**
+ * Whether the manifest's BES firmware applies: its version differs from the installed one, in
+ * either direction, mirroring the glasses-side `BesUpdateGate`. With an APK downgrade pending, an
+ * unknown BES version is out of scope, because the glasses will not flash it in that session.
+ */
+export function checkBesUpdate(
+  besFirmware: BesFirmware | undefined,
+  currentVersion: string | undefined,
+  isApkDowngrade = false,
+): boolean {
   if (!besFirmware) {
     return false
   }
 
   if (!currentVersion) {
+    if (isApkDowngrade) {
+      console.log(`📱 BES current version unknown during a downgrade - leaving BES for a later check`)
+      return false
+    }
     console.log(`📱 BES current version unknown - assuming update needed (server: ${besFirmware.version})`)
     return true
   }
-  return compareVersions(besFirmware.version, currentVersion) > 0
-}
-
-export function compareVersions(version1: string, version2: string): number {
-  if (version1.includes(".") && version2.includes(".")) {
-    const parts1 = version1.split(".")
-    const parts2 = version2.split(".")
-    const maxLen = Math.max(parts1.length, parts2.length)
-
-    for (let i = 0; i < maxLen; i++) {
-      const v1 = i < parts1.length ? parseInt(parts1[i], 10) : 0
-      const v2 = i < parts2.length ? parseInt(parts2[i], 10) : 0
-      if (v1 !== v2) {
-        return v1 - v2
-      }
-    }
-    return 0
-  }
-
-  return version1.localeCompare(version2)
+  return besFirmware.version !== currentVersion
 }
 
 export async function checkForOtaUpdate(
@@ -463,7 +457,11 @@ export async function checkForOtaUpdate(
       `OTA: MTK patch available: ${mtkUpdateAvailable ? "yes" : "no"} (current MTK: ${currentMtkVersion || "unknown"})`,
     )
 
-    const besUpdateAvailable = checkBesUpdate(versionJson?.bes_firmware, currentBesVersion)
+    const besUpdateAvailable = checkBesUpdate(
+      versionJson?.bes_firmware,
+      currentBesVersion,
+      apkDirection === "downgrade",
+    )
     console.log(`OTA: BES update available: ${besUpdateAvailable} (current BES: ${currentBesVersion || "unknown"})`)
 
     const updates: string[] = []

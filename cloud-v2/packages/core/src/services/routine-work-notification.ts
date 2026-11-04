@@ -209,12 +209,12 @@ export class RoutineWorkNotification {
 }
 /** Durable due dates outlive this process. One immediate overdue update resumes cadence after restart. */
 export function startRoutineWorkReporting(notification = new RoutineWorkNotification(), intervalMs = 30_000,
-  reportNotifications?: () => Promise<void>, reportPrChecks?: () => Promise<void>) {
+  reportNotifications?: () => Promise<void>) {
   let stopped = false
   const callbacks = [async () => {
     const results = await Promise.allSettled([notification.tick(), reportNotifications?.()])
     if (results.some(result => result.status === 'rejected')) console.error('Cloud reporting reconciliation is unavailable')
-  }, ...(reportPrChecks ? [reportPrChecks] : [])]
+  }]
   const active: Array<Promise<void> | undefined> = []
   const tick = () => {
     if (stopped) return
