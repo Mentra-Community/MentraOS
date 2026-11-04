@@ -9,6 +9,7 @@ import {iosInstallationFiles} from "./pr-ios-artifacts-install.mjs"
 import {
   iosBuildRequired,
   buildPost,
+  changedMiniappBackends,
   matchingBuildRun,
   NO_BUILD_RUN_NAME,
   notifyPrBuilds,
@@ -856,4 +857,17 @@ test("a staging PR with a missing Android receipt stays idempotent", async () =>
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 1)
   assert.equal(h.written.length, 1)
+})
+
+test("names the miniapps whose backend a PR changes, once each", () => {
+  assert.deepEqual(
+    changedMiniappBackends([
+      {filename: "miniapps/notes/backend/src/a.ts"},
+      {filename: "miniapps/notes/backend/src/b.ts"},
+      {filename: "miniapps/public/captions/backend/c.ts"},
+      {filename: "miniapps/notes/miniapp/d.tsx"},
+      {filename: "public/mentraos/mobile/e.ts"},
+    ]),
+    ["captions", "notes"],
+  )
 })

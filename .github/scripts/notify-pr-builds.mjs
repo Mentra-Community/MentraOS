@@ -97,6 +97,12 @@ export function readOtaTargets(manifest, number, sha) {
 
 const backendName = (backend) => (backend === "staging" ? "Staging" : "Dev")
 
+/** The miniapps whose backend this PR changes: a PR build runs against the deployed ones. */
+export function changedMiniappBackends(files) {
+  const names = files.flatMap((file) => file.filename.match(/^miniapps\/(?:public\/)?([^/]+)\/backend\//)?.[1] ?? [])
+  return [...new Set(names)].sort()
+}
+
 /** `backend` is shown only when a published receipt verified it for this PR's destination. */
 export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRunUrl, asgRunUrl, error, ios,
   backend, unverifiedBackend = []}) {
@@ -292,6 +298,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const mismatch = (platform, actual) =>
     `${platform} was built for ${["dev", "staging"].includes(actual) ? `the ${backendName(actual)}` : "an unrecorded"} backend, but this PR now targets ${destination}; rebuild it for this destination.`
   const files = await github.paginate(github.rest.pulls.listFiles, {...repo, pull_number: pr.number, per_page: 100})
+  const changedBackends = changedMiniappBackends(files)
   const ios = {required: iosBuildRequired(files, `${repo.owner}/${repo.repo}`)}
   const [androidBuild, asgBuild, iosBuild] = await Promise.all([
     readBuild(github, context, pr, sha, "android"),
@@ -474,7 +481,11 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     incomplete ? "⚠️ PR build incomplete" : "✅ PR build ready to test"
   } for \`${sha.slice(0, 7)}\` — posted to **#pr-builds**.\n\n${downloads.join(
     "\n\n",
-  )}\n\n[Android build logs](${androidRunUrl})${ios.runUrl ? ` · [iOS build logs](${ios.runUrl})` : ""}`
+  )}${
+    changedBackends.length
+      ? `\n\n⚠️ This PR changes the backend of ${changedBackends.join(", ")}, and this build doesn't include that: it runs against the deployed backend until the PR is merged.`
+      : ""
+  }\n\n[Android build logs](${androidRunUrl})${ios.runUrl ? ` · [iOS build logs](${ios.runUrl})` : ""}`
 
   if (comment) await github.rest.issues.updateComment({...repo, comment_id: comment.id, body})
   else await github.rest.issues.createComment({...repo, issue_number: pr.number, body})
