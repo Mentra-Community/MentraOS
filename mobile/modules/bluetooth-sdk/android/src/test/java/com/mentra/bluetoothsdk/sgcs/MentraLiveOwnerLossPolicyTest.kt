@@ -15,6 +15,14 @@ class MentraLiveOwnerLossPolicyTest {
     }
 
     @Test
+    fun aRefusedBondIsStaleOnlyWhilePairingAnew() {
+        assertTrue(MentraLiveOwnerLossPolicy.isStaleBondDuringPairing(5, manualPairing = true, bonded = true))
+        assertFalse(MentraLiveOwnerLossPolicy.isStaleBondDuringPairing(5, manualPairing = false, bonded = true))
+        assertFalse(MentraLiveOwnerLossPolicy.isStaleBondDuringPairing(5, manualPairing = true, bonded = false))
+        assertFalse(MentraLiveOwnerLossPolicy.isStaleBondDuringPairing(19, manualPairing = true, bonded = true))
+    }
+
+    @Test
     fun legacyFirmwareRejectionsAreNeverOwnerLoss() {
         assertFalse(gattRejection(5, secureFirmware = false))
         assertFalse(gattRejection(15, secureFirmware = false))

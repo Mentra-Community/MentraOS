@@ -2800,6 +2800,15 @@ class MentraLive : SGCManager() {
                         // Clean up resources
                         closeGattQuietly(false)
 
+                        if (MentraLiveOwnerLossPolicy.isStaleBondDuringPairing(
+                                        status,
+                                        isExplicitPairingAttempt(),
+                                        gatt.device.bondState == BluetoothDevice.BOND_BONDED,
+                                )
+                        ) {
+                            removeBond(gatt.device)
+                        }
+
                         // Secure glasses reject a non-owner at connect time with HCI
                         // Authentication Failure. One rejection can also be a glasses reboot or
                         // a stale bond, so the pairing state machine decides: one failed

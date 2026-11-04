@@ -52,6 +52,17 @@ internal object MentraLiveOwnerLossPolicy {
     ): Boolean = secureFirmware && !manualPairing && isOwnerRejectionStatus(status)
 
     /**
+     * Pairing anew with glasses this phone is bonded with, and they refuse its keys: they have
+     * bonded elsewhere since. The phone keeps offering those keys until the bond goes, and glasses
+     * in pairing mode can't accept it until then.
+     */
+    fun isStaleBondDuringPairing(
+            status: Int,
+            manualPairing: Boolean,
+            bonded: Boolean,
+    ): Boolean = manualPairing && bonded && isOwnerRejectionStatus(status)
+
+    /**
      * Android deletes its BLE keys when the glasses answer an encryption request without them.
      * Right after an automatic reconnect that can mean the glasses forgot this phone. Like
      * [isOwnerRejectionOnGattError] this is one observation, not yet owner loss.
