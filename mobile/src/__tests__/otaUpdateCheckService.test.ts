@@ -803,6 +803,47 @@ describe("OtaUpdateCheckService", () => {
     expect(result.updateAvailable).toBe(false)
   })
 
+  it("moves BES to the pinned release's version during a downgrade, upgrades stay newer-only", async () => {
+    const manifest = (versionCode: number) => ({
+      apps: {
+        "com.mentra.asg_client": {
+          versionCode,
+          versionName: String(versionCode),
+          downloadUrl: "u",
+          apkSize: 1,
+          sha256: "s",
+          releaseNotes: "",
+        },
+      },
+      bes_firmware: {version: "17.26.1.13", url: "https://ota.example/bes.bin"},
+    })
+    const check = (versionCode: number) => {
+      global.fetch = jest.fn(() =>
+        Promise.resolve({ok: true, json: () => Promise.resolve(manifest(versionCode))} as unknown as Response),
+      ) as unknown as typeof fetch
+      return checkCurrentGlassesForUpdate({
+        refreshVersionInfo: false,
+        fixClockBeforeCheck: false,
+        waitForBesVersionMs: 0,
+        waitForMtkVersionMs: 0,
+        floorVersionCode: 9,
+      })
+    }
+
+    // Glasses on build 10 with BES 17.26.1.14; the pin is build 9 with an older BES.
+    let result = await check(9)
+    expect(result.isApkDowngrade).toBe(true)
+    expect(result.updates).toEqual(["apk", "bes"])
+    expect(useGlassesStore.getState().otaUpdateAvailable).toEqual(
+      expect.objectContaining({isDowngrade: true, updates: ["apk", "bes"], besVersion: "17.26.1.13"}),
+    )
+
+    // The same older BES in an upgrade manifest is not offered.
+    result = await check(11)
+    expect(result.isApkDowngrade).toBe(false)
+    expect(result.updates).toEqual(["apk"])
+  })
+
   it("checks the current glasses and writes the available OTA snapshot", async () => {
     global.fetch = jest.fn(() =>
       Promise.resolve({

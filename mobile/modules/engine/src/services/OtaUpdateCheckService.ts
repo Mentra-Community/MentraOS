@@ -355,16 +355,31 @@ export function selectMtkUpdate(
   return full
 }
 
-export function checkBesUpdate(besFirmware: BesFirmware | undefined, currentVersion: string | undefined): boolean {
+/**
+ * Whether the manifest's BES firmware applies. Upgrades stay newer-only. When the same manifest
+ * pins an APK downgrade, any differing BES version applies, mirroring the glasses-side
+ * `BesUpdateGate`: the newer ASG flashes BES before handing off the APK downgrade. An unknown
+ * BES version is then out of scope, because the glasses will not flash it in that session.
+ */
+export function checkBesUpdate(
+  besFirmware: BesFirmware | undefined,
+  currentVersion: string | undefined,
+  isApkDowngrade = false,
+): boolean {
   if (!besFirmware) {
     return false
   }
 
   if (!currentVersion) {
+    if (isApkDowngrade) {
+      console.log(`📱 BES current version unknown during a downgrade - leaving BES for a later check`)
+      return false
+    }
     console.log(`📱 BES current version unknown - assuming update needed (server: ${besFirmware.version})`)
     return true
   }
-  return compareVersions(besFirmware.version, currentVersion) > 0
+  const comparison = compareVersions(besFirmware.version, currentVersion)
+  return isApkDowngrade ? comparison !== 0 : comparison > 0
 }
 
 export function compareVersions(version1: string, version2: string): number {
@@ -463,7 +478,11 @@ export async function checkForOtaUpdate(
       `OTA: MTK patch available: ${mtkUpdateAvailable ? "yes" : "no"} (current MTK: ${currentMtkVersion || "unknown"})`,
     )
 
-    const besUpdateAvailable = checkBesUpdate(versionJson?.bes_firmware, currentBesVersion)
+    const besUpdateAvailable = checkBesUpdate(
+      versionJson?.bes_firmware,
+      currentBesVersion,
+      apkDirection === "downgrade",
+    )
     console.log(`OTA: BES update available: ${besUpdateAvailable} (current BES: ${currentBesVersion || "unknown"})`)
 
     const updates: string[] = []

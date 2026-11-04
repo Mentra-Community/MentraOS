@@ -88,6 +88,17 @@ describe("checkBesUpdate", () => {
   it("returns false when current version is newer", () => {
     expect(checkBesUpdate(firmware, "17.26.2.0")).toBe(false)
   })
+
+  it("returns true for any differing version during an APK downgrade", () => {
+    expect(checkBesUpdate(firmware, "17.26.2.0", true)).toBe(true)
+    expect(checkBesUpdate(firmware, "17.26.1.14", true)).toBe(true)
+    expect(checkBesUpdate(firmware, "17.26.1.15", true)).toBe(false)
+  })
+
+  it("leaves an unknown version out of an APK downgrade", () => {
+    expect(checkBesUpdate(firmware, undefined, true)).toBe(false)
+    expect(checkBesUpdate(firmware, "", true)).toBe(false)
+  })
 })
 
 describe("checkVersionUpdateAvailable", () => {
