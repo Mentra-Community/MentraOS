@@ -18,7 +18,7 @@ function me(
 
 describe("the admin portal's pages follow capabilities", () => {
   test("an Organization Admin sees exactly the operations pages and then the audit log, and opens on incidents", () => {
-    const pages: AdminPageKey[] = ["incidents", "test-runs", "routine-catalog", "system-health", "workspaces", "registry", "operator-keys", "audit"];
+    const pages: AdminPageKey[] = ["incidents", "workspaces", "registry", "operator-keys", "audit"];
     const visible = visiblePages(me(ORGANIZATION_CAPABILITIES, true));
     expect(visible).toEqual(pages);
     expect(resolvePage(null, visible)).toBe("incidents");
@@ -26,7 +26,7 @@ describe("the admin portal's pages follow capabilities", () => {
 
   test("there is no Fleet page: Fleet Management opens in the workspace portal, from Workspaces", () => {
     expect([...PAGE_ORDER]).toEqual([
-      "incidents", "test-runs", "routine-catalog", "system-health", "workspaces", "licenses", "registry", "operator-keys", "audit",
+      "incidents", "workspaces", "licenses", "registry", "operator-keys", "audit",
     ]);
     expect([...PAGE_ORDER] as string[]).not.toContain("fleet");
     // Installed or not, and whatever the principal holds, no page is offered for it.
@@ -42,7 +42,7 @@ describe("the admin portal's pages follow capabilities", () => {
   test("an Organization Admin sees the Licenses page, right after Workspaces, once licenses are available", () => {
     const visible = visiblePages(me(ORGANIZATION_CAPABILITIES, true, undefined, { available: true }));
     expect(visible).toEqual([
-      "incidents", "test-runs", "routine-catalog", "system-health", "workspaces", "licenses", "registry", "operator-keys", "audit",
+      "incidents", "workspaces", "licenses", "registry", "operator-keys", "audit",
     ]);
     expect(resolvePage("licenses", visible)).toBe("licenses");
   });
@@ -70,6 +70,10 @@ describe("the admin portal's pages follow capabilities", () => {
     expect(visiblePages(me(["organization.licenses.read"], false, undefined, { available: true }))).toEqual(["licenses"]);
   });
 
+  test("organization.testing.read alone opens no page", () => {
+    expect(visiblePages(me(["organization.testing.read"]))).toEqual([]);
+  });
+
   test("a signed-in person without capabilities sees none", () => {
     expect(visiblePages(me([]))).toEqual([]);
   });
@@ -86,7 +90,7 @@ describe("the admin portal's pages follow capabilities", () => {
       fleet: { installed: true },
       licenses: { available: true },
     };
-    expect(visiblePages(key)).toEqual(["incidents", "test-runs", "routine-catalog", "system-health"]);
+    expect(visiblePages(key)).toEqual(["incidents"]);
     // Even a key holding every capability: no capability opens the audit log.
     const everything: Pick<AdminMe, "organization" | "user" | "fleet" | "licenses"> = {
       organization: { capabilities: [...ORGANIZATION_CAPABILITIES] },
@@ -100,7 +104,7 @@ describe("the admin portal's pages follow capabilities", () => {
 
   test("a requested page falls back to the default when it is not visible", () => {
     expect(resolvePage("workspaces", ["incidents"])).toBe("incidents");
-    expect(resolvePage("audit", ["incidents", "test-runs"])).toBe("incidents");
+    expect(resolvePage("audit", ["incidents", "workspaces"])).toBe("incidents");
     expect(resolvePage("incidents", ["incidents", "audit"])).toBe("incidents");
     expect(resolvePage(null, [])).toBeNull();
   });

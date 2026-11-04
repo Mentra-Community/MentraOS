@@ -3,9 +3,6 @@ import type { OrganizationCapability, PrincipalResponse } from "@mentra/workspac
 /** The admin portal's pages, in navigation order. */
 export type AdminPageKey =
   | "incidents"
-  | "test-runs"
-  | "routine-catalog"
-  | "system-health"
   | "workspaces"
   | "licenses"
   | "registry"
@@ -35,9 +32,6 @@ export interface AdminMe {
 /** The pages in navigation order. The first one a principal can see is their default page. */
 export const PAGE_ORDER: readonly AdminPageKey[] = [
   "incidents",
-  "test-runs",
-  "routine-catalog",
-  "system-health",
   "workspaces",
   "licenses",
   "registry",
@@ -48,9 +42,6 @@ export const PAGE_ORDER: readonly AdminPageKey[] = [
 /** The organization capability each other page needs. */
 const PAGE_CAPABILITY: Partial<Record<AdminPageKey, OrganizationCapability>> = {
   incidents: "organization.incidents.read",
-  "test-runs": "organization.testing.read",
-  "routine-catalog": "organization.testing.read",
-  "system-health": "organization.testing.read",
   workspaces: "organization.workspaces.administer",
   licenses: "organization.licenses.read",
   registry: "organization.registry.administer",
