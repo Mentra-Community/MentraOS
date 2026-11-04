@@ -249,7 +249,6 @@ function harness(options = {}) {
   }
 }
 process.env.SLACK_WEBHOOK_PR_BUILDS = "https://example.com/webhook"
-process.env.TEST_RUN_INGEST_TOKEN = "synthetic-ingest-token"
 
 test("publishes direct iPhone installation and a shareable Safari link without the raw IPA download", async () => {
   const receipt = structuredClone(iosReceipt)
