@@ -5,6 +5,7 @@ import {iosInstallUrl} from "./pr-ios-artifacts-install.mjs"
 
 const text = (value) => ({type: "text", text: value})
 const link = (url, label) => ({type: "link", url, text: label})
+const button = (label, url) => ({type: "button", text: {type: "plain_text", text: label, emoji: true}, style: "primary", url})
 const reachable = (url) => {
   if (!url?.startsWith("https://")) return false
   try {
@@ -40,7 +41,14 @@ export function platformDownloads(env, check = reachable) {
     ],
     ["computer", "macOS", apple ? [link(env.MAC_URL, "Download ZIP")] : []],
   ]
+  // The two links people come for, first and as buttons: Slack images cannot be clickable. A
+  // button needs an https URL, so iPhone opens the install page rather than itms-services.
+  const buttons = [
+    ...(check(apk) ? [button(":robot_face: Download for Android", apk)] : []),
+    ...(apple ? [button(":apple: Install on iPhone", env.IPHONE_SHARE_URL)] : []),
+  ]
   return [
+    ...(buttons.length ? [{type: "actions", elements: buttons}] : []),
     {
       type: "rich_text",
       elements: rows.map(([icon, name, links]) => ({
