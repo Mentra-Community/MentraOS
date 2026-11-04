@@ -14,14 +14,8 @@ import {TestAssetService} from "./test-asset.service"
 import {TestAssetModel, TestRunModel} from "../models/test-run.model"
 import {testFrameworkBinding, testRoutineSource} from "../testing/framework-fixtures"
 import {recordedFrameworkRunSchema} from "../types/framework-run.types"
-import {
-  addLogArtifact,
-  ensureTestRunReport,
-  getReport,
-  readReportArtifact,
-  referenceTestRunDiagnostics,
-  referenceDeviceIncidentDiagnostics,
-} from "./report.service"
+import {addLogArtifact, getReport, readReportArtifact} from "./report.service"
+import {ensureTestRunReport, referenceTestRunDiagnostics, referenceDeviceIncidentDiagnostics} from "./test-run-report.service"
 import {FailedFrameworkRunReportService} from "./failed-framework-run-report.service"
 import {ReportSlackDeliveryService} from "./report-slack-delivery.service"
 import {requestInputDigest} from "./test-request.service"

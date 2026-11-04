@@ -14,7 +14,7 @@ import type {CandidateVerification} from '../types/candidate-verification.types'
 import type {RoutineSourceRef} from '../types/framework-version.types';
 import {readFailureScreens} from './framework-failure-screen';
 import {readRunIncident, readRunIncidentCorrelation} from './framework-run-incident';
-import {findTestRunReport, findDeviceIncidentReport, referenceDeviceIncidentDiagnostics} from './report.service';
+import {findTestRunReport, findDeviceIncidentReport, referenceDeviceIncidentDiagnostics} from './test-run-report.service';
 import {readStoredRun, writeRunEnvelope, completeStoredRun, readAcceptedTestAsset} from './framework-run-detail.service';
 import {RoutineDefinitionService} from './routine-definition.service';
 import {failedRunNeedsReport} from './failed-framework-run-report.service';

@@ -27,8 +27,7 @@ import {startRoutineWorkReporting} from "./services/routine-work-notification"
 import {RoutineJobService} from './services/routine-job.service'
 import {RoutineWorkService} from './services/routine-work.service'
 import {NightlyRoutineService} from "./services/nightly-routine.service"
-import {ReportSlackDeliveryService} from "./services/report-slack-delivery.service"
-import {ReportServerLogCollectionService} from './services/report-server-log-collection.service'
+import {startReportReconciliation} from "./services/report-reconciliation"
 import {assertSupabaseApiKeys} from "./services/account/gotrue.client"
 import {assertSigninConfiguration} from "./services/signin/config"
 import {assertOidcConfiguration} from "./services/oidc/startup"
@@ -85,13 +84,12 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const boundPort = server.port!
   // Confirmed account deletions are finished by Core itself, after a crash or an account-directory outage too.
   const stopAccountDeletionCompletion = startAccountDeletionCompletion()
-  const reportNotifications = new ReportSlackDeliveryService()
-  const reportServerLogs = new ReportServerLogCollectionService()
+  const stopReportReconciliation = startReportReconciliation()
   const routineJobs = new RoutineJobService()
   const routineAuthors = new RoutineWorkService()
   const nightlyRoutines = new NightlyRoutineService()
   const stopRoutineWorkReporting = startRoutineWorkReporting(undefined, 15_000, async () => {
-    await Promise.allSettled([reportNotifications.tick(), reportServerLogs.tick(), routineJobs.reconcilePending(), routineAuthors.reconcilePending(), nightlyRoutines.reconcilePending()])
+    await Promise.allSettled([routineJobs.reconcilePending(), routineAuthors.reconcilePending(), nightlyRoutines.reconcilePending()])
   })
 
   logger.info({port: boundPort}, "cloud-v2 core listening")
@@ -101,6 +99,7 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
     url: `http://localhost:${boundPort}`,
     stop: createCoreStop(server, async () => {
       await stopAccountDeletionCompletion()
+      await stopReportReconciliation()
       await stopRoutineWorkReporting()
       await stopOidcBridge()
       await disconnectMongo()

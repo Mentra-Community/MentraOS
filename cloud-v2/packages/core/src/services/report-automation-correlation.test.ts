@@ -1,6 +1,7 @@
 import {afterEach, expect, spyOn, test} from 'bun:test';
 import {ReportModel} from '../models/report.model';
-import {findDeviceIncidentReport, submitReport} from './report.service';
+import {submitReport} from './report.service';
+import {findDeviceIncidentReport} from './test-run-report.service';
 
 afterEach(() => {for (const mock of mocks.splice(0)) mock.mockRestore();});
 const mocks: Array<{mockRestore(): void}> = [];

@@ -2,10 +2,11 @@ import {afterEach, expect, spyOn, test} from 'bun:test';
 import {createHash} from 'node:crypto';
 import {ReportAssetModel} from '../models/report-asset.model';
 import {ReportModel} from '../models/report.model';
+import {ReportNativeRunModel} from '../models/report-native-run.model';
 import {TestAssetModel, TestRunModel} from '../models/test-run.model';
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures';
 import {recordedFrameworkRunSchema} from '../types/framework-run.types';
-import {referenceDeviceIncidentDiagnostics, referenceTestRunDiagnostics} from './report.service';
+import {referenceDeviceIncidentDiagnostics, referenceTestRunDiagnostics} from './test-run-report.service';
 import {requestInputDigest} from './test-request.service';
 import {writeRunEnvelope} from './framework-run-detail.service';
 import {readNativeReportAssets} from './report-native-detail.service';
@@ -34,7 +35,9 @@ async function models(count: number) {
   const row: any = {...owner, createdAt: new Date('2026-10-08T10:02:00Z'), artifacts: []};
   const chain = (value: unknown) => ({read() {return this;}, readConcern() {return this;}, select() {return this;}, setOptions() {return this;}, async lean() {return value;}});
   mocks.push(spyOn(ReportModel, 'findOne').mockImplementation(() => chain(row) as never));
-  mocks.push(spyOn(TestRunModel, 'findOne').mockImplementation(() => chain({runId: run.result.runId, payloadSha256, uploadsComplete: true, detail}) as never));
+  const runRow = {runId: run.result.runId, payloadSha256, uploadsComplete: true, detail};
+  mocks.push(spyOn(TestRunModel, 'findOne').mockImplementation(() => chain(runRow) as never));
+  mocks.push(spyOn(ReportNativeRunModel, 'findOne').mockImplementation(() => chain(runRow) as never));
   const bulk = spyOn(ReportAssetModel, 'bulkWrite'), custody = spyOn(TestAssetModel, 'find');
   const write = spyOn(ReportModel, 'updateOne').mockImplementation(((_filter: unknown, change: any) => {
     row.nativeDiagnostics ??= change.$set.nativeDiagnostics; return Promise.resolve({matchedCount: 1});

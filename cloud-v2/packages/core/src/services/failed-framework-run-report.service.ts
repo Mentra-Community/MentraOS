@@ -6,7 +6,8 @@ import {
   recordedFrameworkRunSchema,
   type RecordedFrameworkRun,
 } from "../types/framework-run.types"
-import {addLogArtifact, ensureTestRunReport, referenceTestRunDiagnostics, ReportArtifactError} from "./report.service"
+import {addLogArtifact, ReportArtifactError} from "./report.service"
+import {ensureTestRunReport, referenceTestRunDiagnostics} from "./test-run-report.service"
 import {ReportSlackDeliveryService} from "./report-slack-delivery.service"
 import {REPORT_TESTING_SOURCE} from "./report-category"
 import {requestInputDigest} from "./test-request.service"
