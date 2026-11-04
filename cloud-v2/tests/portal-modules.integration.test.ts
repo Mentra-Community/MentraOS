@@ -541,7 +541,7 @@ describe("who may call", () => {
     useBilling("prod")
     const owner = await person("owner")
     const workspaceId = await workspaceOf(owner, "Acme")
-    const keys = [await workspaceKey(owner, workspaceId), await operatorKey(["organization.testing.read"])]
+    const keys = [await workspaceKey(owner, workspaceId), await operatorKey(["organization.supportProfiles.read"])]
 
     for (const key of keys) {
       for (const rest of [`/workspaces/${workspaceId}/licenses`, "/ui/entry.js"]) {

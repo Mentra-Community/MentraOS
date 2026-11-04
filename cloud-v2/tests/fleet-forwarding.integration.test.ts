@@ -591,7 +591,7 @@ describe("a phone", () => {
   })
 
   test("no token, a garbled token and a key are 401", async () => {
-    const key = await operatorKey(["organization.testing.read"])
+    const key = await operatorKey(["organization.supportProfiles.read"])
 
     for (const headers of [{}, {authorization: "Bearer not-a-token"}, {authorization: `Bearer ${key}`}]) {
       const reply = await send("POST", "/api/client/fleet/report", {headers, body: "{}"})
@@ -853,7 +853,7 @@ describe("Fleet's UI module", () => {
   })
 
   test("it has the Fleet gates: keys, a member, a phone token and nobody never reach Fleet, and only GET and HEAD are allowed", async () => {
-    const keys = [await workspaceKey(), await operatorKey(["organization.testing.read", "organization.incidents.read"])]
+    const keys = [await workspaceKey(), await operatorKey(["organization.supportProfiles.read", "organization.incidents.read"])]
     const member = await person("ws-owner")
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
     const phone = await phoneSession("e")
@@ -887,7 +887,7 @@ describe("Fleet's UI module", () => {
 
 describe("everyone else", () => {
   test("a workspace key and an operator key get 403 and never reach Fleet", async () => {
-    const keys = [await workspaceKey(), await operatorKey(["organization.testing.read", "organization.incidents.read"])]
+    const keys = [await workspaceKey(), await operatorKey(["organization.supportProfiles.read", "organization.incidents.read"])]
     const fetched = spyOn(globalThis, "fetch")
 
     for (const token of keys) {
@@ -1265,7 +1265,7 @@ describe("the workspace portal", () => {
     // The admin portal's cookie is not read on the workspace portal's routes.
     const adminCookie = (await person("p-owner-admin-cookie")).cookie
     expect((await send("GET", `/api/portal/fleet/workspaces/${ws}/people`, {headers: {cookie: adminCookie}})).status).toBe(401)
-    for (const token of [await operatorKey(["organization.testing.read"]), await workspaceKey()]) {
+    for (const token of [await operatorKey(["organization.supportProfiles.read"]), await workspaceKey()]) {
       const reply = await send("GET", `/api/portal/fleet/workspaces/${ws}/people`, {headers: {authorization: `Bearer ${token}`}})
       expect(reply.status).toBe(403)
     }

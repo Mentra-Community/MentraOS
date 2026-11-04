@@ -1009,7 +1009,7 @@ describe("createOperatorKey", () => {
   test("an organization admin gets a mak_ key that validates with exactly its scopes", async () => {
     const {credential, token} = await createOperatorKey(orgAdmin, {
       name: "Incident reader",
-      scopes: ["organization.incidents.read", "organization.testing.read"],
+      scopes: ["organization.incidents.read", "organization.supportProfiles.read"],
     })
 
     const parts = parse(token)
@@ -1020,7 +1020,7 @@ describe("createOperatorKey", () => {
       name: "Incident reader",
       display: `mak_local_…${parts.secret.slice(-4)}`,
       workspaceId: null,
-      scopes: ["organization.incidents.read", "organization.testing.read"],
+      scopes: ["organization.incidents.read", "organization.supportProfiles.read"],
       packageNames: [],
       createdByEmail: ADMIN_EMAIL,
       issuedByService: null,
@@ -1044,7 +1044,7 @@ describe("createOperatorKey", () => {
       credentialId: parts.credentialId,
       credentialKind: "organization",
       workspaceId: null,
-      scopes: ["organization.incidents.read", "organization.testing.read"],
+      scopes: ["organization.incidents.read", "organization.supportProfiles.read"],
       packageNames: [],
       label: "Incident reader",
     })
@@ -1123,13 +1123,13 @@ describe("createOperatorKey", () => {
       app.request("https://core.test/api/organization", {headers: {authorization: `Bearer ${token}`}})
     const {token} = await createOperatorKey(orgAdmin, {
       name: "ops",
-      scopes: ["organization.incidents.read", "organization.testing.read"],
+      scopes: ["organization.incidents.read", "organization.supportProfiles.read"],
     })
 
     const allowed = await organization(token)
     expect(allowed.status).toBe(200)
     expect(await allowed.json()).toEqual({
-      capabilities: ["organization.incidents.read", "organization.testing.read"],
+      capabilities: ["organization.incidents.read", "organization.supportProfiles.read"],
       workspaceCreation: {allowed: false, reason: "not_a_person"},
     })
     // A key is never a person, so the organization's administration stays closed to it.
@@ -1203,11 +1203,11 @@ describe("createOperatorKey", () => {
     expect(await AccessCredentialModel.countDocuments({})).toBe(0)
 
     const {credential} = await create([
-      "organization.testing.manage",
-      "organization.testing.manage",
+      "organization.incidents.read",
+      "organization.incidents.read",
       "organization.supportProfiles.read",
     ])
-    expect(credential.scopes).toEqual(["organization.testing.manage", "organization.supportProfiles.read"])
+    expect(credential.scopes).toEqual(["organization.incidents.read", "organization.supportProfiles.read"])
   })
 
   test("expiry must be in the future and is enforced", async () => {
@@ -1498,7 +1498,7 @@ describe("listing", () => {
     const {workspaceId, developer} = await newWorkspace()
     await createWorkspaceCredential(developer, workspaceId, {name: "workspace key"})
     const keep = await createOperatorKey(orgAdmin, {name: "keep", scopes: ["organization.incidents.read"]})
-    const gone = await createOperatorKey(orgAdmin, {name: "gone", scopes: ["organization.testing.read"]})
+    const gone = await createOperatorKey(orgAdmin, {name: "gone", scopes: ["organization.supportProfiles.read"]})
     await revokeCredential(orgAdmin, gone.credential.credentialId)
 
     const listed = await listOperatorKeys()

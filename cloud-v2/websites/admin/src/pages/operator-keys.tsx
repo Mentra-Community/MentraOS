@@ -16,8 +16,6 @@ export const OPERATOR_KEYS_QUERY_KEY = ["admin-operator-keys"] as const;
 export const SCOPE_LABELS: Record<string, string> = {
   "organization.incidents.read": "Read incident reports",
   "organization.supportProfiles.read": "Look up support profiles",
-  "organization.testing.read": "View test runs",
-  "organization.testing.manage": "Manage test runs",
 };
 
 /** A scope this page does not know yet shows as it is rather than disappearing. */

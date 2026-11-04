@@ -16,19 +16,13 @@
  * Specs: cloud-v2/docs/issues/001-oem-auth/, 002-oem-portal/.
  */
 
-import {ensureRoutineCaseIndexes} from './models/routine-case.model'
 import {createLogger} from "@mentra/cloud-shared"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "./connections/mongo.connection"
 import {createApp} from "./api/app"
 import {runStartupMigrations} from "./migrations/startup.migrations"
 import {startAccountDeletionCompletion} from "./services/account/account.service"
 import {createCoreStop, serveCore} from "./http-server"
-import {startRoutineWorkReporting} from "./services/routine-work-notification"
-import {RoutineJobService} from './services/routine-job.service'
-import {RoutineWorkService} from './services/routine-work.service'
-import {NightlyRoutineService} from "./services/nightly-routine.service"
-import {ReportSlackDeliveryService} from "./services/report-slack-delivery.service"
-import {ReportServerLogCollectionService} from './services/report-server-log-collection.service'
+import {startReportReconciliation} from "./services/report-reconciliation"
 import {assertSupabaseApiKeys} from "./services/account/gotrue.client"
 import {assertSigninConfiguration} from "./services/signin/config"
 import {assertOidcConfiguration} from "./services/oidc/startup"
@@ -62,7 +56,6 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   assertOrganizationConfiguration()
   await connectMongo(mongoUrl)
   try {
-    if (process.env.ROUTINE_CASE_API_ENABLED === 'true') await ensureRoutineCaseIndexes()
     await runStartupMigrations()
     // Refuse sign-in configuration that is incomplete or would let one source
     // vouch for another's people. With none of it set, Core starts as before.
@@ -85,14 +78,7 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const boundPort = server.port!
   // Confirmed account deletions are finished by Core itself, after a crash or an account-directory outage too.
   const stopAccountDeletionCompletion = startAccountDeletionCompletion()
-  const reportNotifications = new ReportSlackDeliveryService()
-  const reportServerLogs = new ReportServerLogCollectionService()
-  const routineJobs = new RoutineJobService()
-  const routineAuthors = new RoutineWorkService()
-  const nightlyRoutines = new NightlyRoutineService()
-  const stopRoutineWorkReporting = startRoutineWorkReporting(undefined, 15_000, async () => {
-    await Promise.allSettled([reportNotifications.tick(), reportServerLogs.tick(), routineJobs.reconcilePending(), routineAuthors.reconcilePending(), nightlyRoutines.reconcilePending()])
-  })
+  const stopReportReconciliation = startReportReconciliation()
 
   logger.info({port: boundPort}, "cloud-v2 core listening")
 
@@ -101,7 +87,7 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
     url: `http://localhost:${boundPort}`,
     stop: createCoreStop(server, async () => {
       await stopAccountDeletionCompletion()
-      await stopRoutineWorkReporting()
+      await stopReportReconciliation()
       await stopOidcBridge()
       await disconnectMongo()
     }),

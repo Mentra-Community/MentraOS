@@ -2269,7 +2269,7 @@ describe("operator keys", () => {
 
     const created = await call("POST", "/api/organization/credentials", {
       as: admin,
-      body: {name: "ops", scopes: ["organization.incidents.read", "organization.testing.read"]},
+      body: {name: "ops", scopes: ["organization.incidents.read", "organization.supportProfiles.read"]},
     })
     expect(created.status).toBe(201)
     expect(created.headers.get("cache-control")).toBe("no-store")
@@ -2279,7 +2279,7 @@ describe("operator keys", () => {
       prefix: "mak",
       name: "ops",
       workspaceId: null,
-      scopes: ["organization.incidents.read", "organization.testing.read"],
+      scopes: ["organization.incidents.read", "organization.supportProfiles.read"],
       createdByEmail: ADMIN_EMAIL,
     })
 

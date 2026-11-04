@@ -1,9 +1,6 @@
 import {LoadingIndicator} from "./components/loading-indicator";
-import {TestRunsTabs} from "./pages/test-runs-tabs";
-import {TestRerunPage, readRerunId} from "./pages/test-reruns";
-import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BookOpen, Boxes, Bug, FileText, FlaskConical, History, KeyRound, RefreshCcw, ShieldCheck, Ticket, Users, X } from "lucide-react";
+import { AlertCircle, Boxes, Bug, FileText, History, KeyRound, RefreshCcw, ShieldCheck, Ticket, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
@@ -16,13 +13,6 @@ import { RegistryPage } from "./pages/registry";
 import { WorkspacesPage } from "./pages/workspaces";
 import { loginHref, signOut as signOutEverywhere } from "./lib/session";
 import { SignedOutScreen } from "./components/signed-out";
-import {
-  hasInvalidTestRunListScope, readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
-} from "./lib/test-run-links";
-import { RoutineCatalogPage, FrameworkRunsPage, FrameworkRunPage } from "./pages/routine-catalog";
-import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
-import {readLaneSelection} from "./lib/lane-links";
-import {readSystemHealthTab, systemHealthLocation, type SystemHealthTab} from "./lib/system-health-links";
 import { RecordingVideo } from "./components/recording-video";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
@@ -101,9 +91,6 @@ const queryClient = new QueryClient({
 
 const ADMIN_NAV: readonly NavItem[] = [
   { key: "incidents", label: "Incident system", icon: Bug },
-  { key: "test-runs", label: "Test runs", icon: FlaskConical },
-  { key: "routine-catalog", label: "Routine catalog", icon: BookOpen },
-  { key: "system-health", label: "System health", icon: ShieldCheck },
   { key: "workspaces", label: "Workspaces", icon: Users },
   { key: "licenses", label: "Licenses", icon: Ticket },
   { key: "registry", label: "Miniapp registry", icon: Boxes },
@@ -114,21 +101,6 @@ const ADMIN_NAV: readonly NavItem[] = [
 /** The navigation items for the pages this principal may open, in navigation order. */
 export function visibleNav(visible: readonly AdminPageKey[]): NavItem[] {
   return ADMIN_NAV.filter(item => visible.includes(item.key as AdminPageKey));
-}
-
-/**
- * The page an address asks for, if any. The one place that orders the deep links, for the first load and for
- * Back and Forward alike: system health, the test runs pages, the routine catalog, and (the first load
- * only, as `reportId`) an incident report.
- */
-export function requestedPage(search: string, reportId: string | null = null): AdminPageKey | null {
-  if (new URLSearchParams(search).get("systemHealth") === "1") return "system-health";
-  if (
-    readRerunId(search) || readSuiteId(search) || readTestRunLink(search) ||
-    readTestRunListScope(search) || new URLSearchParams(search).get("testRuns") === "1"
-  ) return "test-runs";
-  if (new URLSearchParams(search).get("routineCatalog") === "1") return "routine-catalog";
-  return reportId ? "incidents" : null;
 }
 
 /**
@@ -159,25 +131,13 @@ export function App() {
 // out the param must stay in the address bar so LoginGate's return_to brings
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
-const initialRerunId = readRerunId(window.location.search);
-const initialSuiteId = readSuiteId(window.location.search);
-const initialTestRunLink = readTestRunLink(window.location.search);
-const initialTestRunListScope = readTestRunListScope(window.location.search);
-const initialHealthTab = readSystemHealthTab(window.location.search);
 
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   // The page asked for, if any. What shows is `resolvePage(page, visible)`: a page this principal cannot
   // open (a deep link, say) falls back to their first visible page.
-  const [page, setPage] = useState<AdminPageKey | null>(() => requestedPage(window.location.search, pendingDeepLinkReportId));
-  const [rerunId, setRerunId] = useState<string | null>(initialRerunId);
-  const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
-  const [healthTab, setHealthTab] = useState(initialHealthTab);
-  const [laneSelection, setLaneSelection] = useState(() => readLaneSelection(window.location.search));
-  const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
-  const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
-  const [invalidTestRunListScope, setInvalidTestRunListScope] = useState(() => hasInvalidTestRunListScope(window.location.search));
+  const [page, setPage] = useState<AdminPageKey | null>(() => pendingDeepLinkReportId ? "incidents" : null);
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
   // Signing out, then on the way to Core's sign-out ("leaving"), or signed out here without one ("signed-out").
   const [signOutState, setSignOutState] = useState<"signing-out" | "leaving" | "signed-out" | null>(null);
@@ -209,51 +169,9 @@ function AdminPage() {
       window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     }
   }, [me.isSuccess]);
-  useEffect(() => {
-    const restore = () => {
-      setHealthTab(readSystemHealthTab(window.location.search));
-      setLaneSelection(readLaneSelection(window.location.search));
-      const requested = requestedPage(window.location.search);
-      if (requested === "system-health") { setPage("system-health"); return; }
-      const rerun = readRerunId(window.location.search);
-      setRerunId(rerun);
-      const suite = readSuiteId(window.location.search);
-      setSuiteId(suite);
-      const selection = readTestRunLink(window.location.search);
-      const scope = readTestRunListScope(window.location.search);
-      setTestRunLink(selection);
-      setTestRunListScope(scope);
-      setInvalidTestRunListScope(hasInvalidTestRunListScope(window.location.search));
-      if (requested === "test-runs" || requested === "routine-catalog") setPage(requested);
-    };
-    window.addEventListener("popstate", restore);
-    return () => window.removeEventListener("popstate", restore);
-  }, []);
-
-  function selectHealthTab(tab: SystemHealthTab) {
-    setHealthTab(tab);
-    setLaneSelection(null);
-    window.history.pushState(null, "", systemHealthLocation(window.location.href, tab));
-  }
-
-  function selectTestRun(selection: TestRunLink | null, replace = false) {
-    setRerunId(null);
-    setSuiteId(null);
-    setTestRunLink(selection);
-    window.history[replace ? "replaceState" : "pushState"](null, "", testRunLocation(window.location.href, selection));
-  }
-
-  function clearTestRunListScope() {
-    setTestRunListScope(null);
-    setInvalidTestRunListScope(false);
-    window.history.replaceState(null, "", testRunListLocation(window.location.href, null));
-  }
 
   const pageMeta: Record<AdminPageKey, { title: string; body: string }> = {
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
-    "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
-    "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
-    "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
     workspaces: { title: "Workspaces", body: "Every workspace in this organization: members, invitations, keys, settings, audit, and ownership recovery." },
     licenses: { title: "Licenses", body: "Every product bought in this organization's workspaces: which workspace holds it, how many licenses are assigned and what it is paid through." },
     registry: { title: "Miniapp registry", body: "Every miniapp URL installed in the Mentra App. Archive a URL, a package, a domain or everything one account registered, and register URLs yourself." },
@@ -289,20 +207,9 @@ function AdminPage() {
       activeKey={active}
       onSelect={key => {
         setPage(key as AdminPageKey);
-        setHealthTab("lanes");
-        const location = new URL(window.location.href);
-        for (const param of ["systemHealth", "healthTab", "restoration", "hostId", "laneId", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
-        window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
         setDeepLinkReportId(null);
-        selectTestRun(null, true);
-        clearTestRunListScope();
-        if (key === "test-runs") window.history.replaceState(null, "", "/?testRuns=1");
-        setLaneSelection(null);
-        if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
-        setSuiteId(null);
-        if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
       }}
       title={pageMeta[active].title}
       description={pageMeta[active].body}
@@ -317,28 +224,6 @@ function AdminPage() {
       {active === "registry" ? <RegistryPage /> : null}
       {active === "operator-keys" ? <OperatorKeysPage /> : null}
       {active === "audit" ? <AuditPage /> : null}
-      <div className={["test-runs", "routine-catalog", "system-health"].includes(active) ? "testing-workspace" : undefined}>
-      {active === "test-runs" ? <SystemHealthSummary /> : null}
-      {active === "system-health" ? <SystemHealthPage tab={healthTab} lane={laneSelection} onTabChange={selectHealthTab} /> : null}
-      {active === "routine-catalog" ? <RoutineCatalogPage /> : null}
-      {active === "test-runs" && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
-      {active === "test-runs" && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
-      {active === "test-runs" && !rerunId && !suiteId ? (
-        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <TestRunsTabs>
-          {testRunListScope && <section className="rounded-2xl border border-[#e0e4de] bg-white p-5">
-            <h2 className="font-semibold">Results for the selected build</h2>
-            <p className="mt-2">{testRunListScope.repository} · {testRunListScope.channel} · <code>{testRunListScope.headSha}</code> · {testRunListScope.routineId} · {testRunListScope.platform}</p>
-            <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
-          </section>}
-          {invalidTestRunListScope ? <section role="alert" className="rounded-2xl border border-[#e0e4de] bg-white p-5">
-            <h2 className="font-semibold">This test-results filter is unavailable</h2>
-            <p className="mt-2">The link has missing or unsupported build details. Open a current result link, or choose all test runs.</p>
-            <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
-          </section> : <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key, value])) : undefined} />}
-        </TestRunsTabs>
-      ) : null}
-
-      </div>
     </AppShell>
   );
 }
@@ -815,7 +700,7 @@ function formatDate(value: string | null | undefined): string {
 }
 
 export function LoginGate({ denied = false, onSignOut, signingOut = false }: { denied?: boolean; onSignOut?: () => void; signingOut?: boolean }) {
-  // The relative path and query preserve report and testRun/step deep links
+  // The relative path and query preserve report deep links
   // through the sign-in round trip; Core accepts only a relative return_to.
   const loginUrl = loginHref();
 
@@ -845,7 +730,7 @@ export function LoginGate({ denied = false, onSignOut, signingOut = false }: { d
             <p className="mx-auto max-w-[300px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
               {denied
                 ? "You're signed in, but this account has no administrator access here: that needs a verified email on the Core admin allowlist. Manage your own workspaces in Mentra Portal, switch accounts, or ask for your email to be added."
-                : "Triage incidents, follow test runs, and manage workspaces and other internal operations."}
+                : "Triage incidents, and manage workspaces and other internal operations."}
             </p>
 
             <div className="h-8" />

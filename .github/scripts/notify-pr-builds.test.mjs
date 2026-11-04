@@ -249,7 +249,6 @@ function harness(options = {}) {
   }
 }
 process.env.SLACK_WEBHOOK_PR_BUILDS = "https://example.com/webhook"
-process.env.TEST_RUN_INGEST_TOKEN = "synthetic-ingest-token"
 
 test("publishes direct iPhone installation and a shareable Safari link without the raw IPA download", async () => {
   const receipt = structuredClone(iosReceipt)
@@ -484,7 +483,7 @@ test("the monorepo maps its layout to MentraOS's paths, and every bundled miniap
     "miniapps/public/captions/src/index.ts", ".github/workflows/mentra-app-ios-build.yml",
     "public/mentraos/.github/scripts/pr-ios-artifacts.mjs", "mentra_live/bes/src/main.c", ".github/workflows/bes.yml",
     ".github/ci/pack-miniapps.sh", ".github/ci/bundled-miniapps.sh", ".github/ci/asg-build-identity.mjs",
-    "public/mentraos/sdk/miniapp-cli/src/pack.ts", "public/mentraos/cloud-v2/packages/auth/src/index.ts",
+    "testing/routines/example.md", "public/mentraos/sdk/miniapp-cli/src/pack.ts", "public/mentraos/cloud-v2/packages/auth/src/index.ts",
     "public/mentraos/cloud-v2/packages/miniapp-tools/src/index.ts", "public/mentraos/cloud-v2/packages/protocol/tsconfig.json",
     "public/mentraos/cloud-v2/tsconfig.base.json"])
     assert.equal(iosBuildRequired([{filename}], monorepo), true, filename)

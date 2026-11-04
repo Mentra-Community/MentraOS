@@ -12,7 +12,7 @@ const key = (credentialId: string, name: string): CredentialView => ({
   name,
   display: `mak_prod_…${credentialId.slice(-4)}`,
   workspaceId: null,
-  scopes: ["organization.testing.read"],
+  scopes: ["organization.supportProfiles.read"],
   packageNames: [],
   createdByEmail: "sam@acme.test",
   issuedByService: null,

@@ -33,6 +33,7 @@ export const MONOREPO_PR_BUILD_PATHS = [
   "public/mentraos/cloud-v2/packages/protocol/*",
   "public/mentraos/sdk/miniapp-cli/*",
   "mentra_live/bes/*",
+  "testing/*",
   ".github/workflows/bes.yml",
   ".github/workflows/mentra-app-android-build.yml",
   ".github/workflows/mentra-app-ios-build.yml",

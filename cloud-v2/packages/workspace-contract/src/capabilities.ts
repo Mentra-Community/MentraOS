@@ -29,8 +29,6 @@ export const ORGANIZATION_CAPABILITIES = [
   "organization.credentials.manage",
   "organization.incidents.read",
   "organization.supportProfiles.read",
-  "organization.testing.read",
-  "organization.testing.manage",
   "organization.fleet.administer",
   "organization.licenses.read",
   "organization.registry.administer",
@@ -41,8 +39,6 @@ export type OrganizationCapability = (typeof ORGANIZATION_CAPABILITIES)[number]
 export const OPERATOR_KEY_SCOPES: readonly OrganizationCapability[] = [
   "organization.incidents.read",
   "organization.supportProfiles.read",
-  "organization.testing.read",
-  "organization.testing.manage",
 ]
 
 /** Capabilities each role adds on top of the role below it. */

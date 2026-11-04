@@ -6,7 +6,7 @@ import {
   type ReportSlackNotification,
   type ReportSlackResult,
 } from "./report-slack.service"
-import {TestRunError} from "./test-result-error"
+import {ReportArtifactError} from "./report.service"
 
 export interface ReportSlackDelivery {
   state: "pending" | "sending" | "uncertain" | "sent"
@@ -34,7 +34,7 @@ const repository: DeliveryRepository = {
       .readConcern("majority")
       .setOptions({timeoutMS: 10_000})
       .lean()
-    if (!row) throw new TestRunError(503, "Routine incident is unavailable")
+    if (!row) throw new ReportArtifactError(503, "Routine incident is unavailable")
     return row.slackDelivery as ReportSlackDelivery | undefined
   },
   async claim(reportId, previous, value) {
@@ -127,7 +127,7 @@ export class ReportSlackDeliveryService {
     }
     if (!(await this.store.claim(notification.reportId, previous, value))) {
       const current = await this.store.read(notification.reportId)
-      if (!current) throw new TestRunError(503, "Routine incident notification intent is unavailable")
+      if (!current) throw new ReportArtifactError(503, "Routine incident notification intent is unavailable")
       return current
     }
     const clientMessageId = messageId(notification.reportId)

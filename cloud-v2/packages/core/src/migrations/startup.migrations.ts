@@ -14,14 +14,6 @@ import { SigninIdentityModel } from "../models/signin-identity.model";
 import { AccountEmailModel } from "../models/account-email.model";
 import { ensureOidcCollections } from "../services/oidc/mongo-adapter";
 import { OemModel } from "../models/oem.model";
-import {TestHostStateModel} from "../models/test-host-state.model";
-import {TestRerunModel} from "../models/test-rerun.model";
-import {TestRequestModel} from "../models/test-request.model";
-import {RoutineDefinitionModel} from "../models/routine-definition.model";
-import {RoutinePreferenceModel} from "../models/routine-preference.model";
-import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.model";
-import { reconcileTestRunIndexes, TestAssetModel, TestRunModel } from "../models/test-run.model";
-import { TestDispatchModel } from "../models/test-dispatch.model";
 import {ReportModel} from '../models/report.model';
 import {ReportAssetModel, reconcileReportAssetIndexes} from '../models/report-asset.model';
 import { AccessCredentialModel } from "../models/access-credential.model";
@@ -37,7 +29,6 @@ import { WorkspaceModel } from "../models/workspace.model";
 import { LegacyBrowserIdentityModel } from "../models/legacy-browser-identity.model";
 import { convertLegacyAdminKeys } from "../services/workspaces/legacy-admin-keys";
 import { initializeGuards } from "../services/workspaces/membership-guard.service";
-import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
 
@@ -78,33 +69,9 @@ export async function runStartupMigrations(): Promise<void> {
   await AccountEmailModel.createIndexes();
   // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
   await RefreshTokenModel.createIndexes();
-  // Immutable run/asset insertion relies on these uniqueness constraints before serving requests.
-  await TestHostStateModel.createIndexes();
-  await TestRequestModel.createIndexes();
-  // Batch successor claims must be unique before admitting any linked rerun.
-  await TestRerunModel.createIndexes();
-  // Existing definitions were ordinary enrollments. Candidate metadata is explicit from this rollout onward.
-  await RoutineDefinitionModel.updateMany({ordinaryEnrolledAt: {$exists: false}, candidateBindings: {$exists: false}},
-    [{$set: {ordinaryEnrolledAt: '$createdAt'}}]);
-  await RoutineDefinitionModel.createIndexes();
-  await RoutinePreferenceModel.createIndexes();
-  await reconcileTestRunIndexes();
-  await TestRunModel.createIndexes();
-  await backfillTestSuiteStartedAt();
-  await TestSuiteModel.createIndexes();
-  await TestAssetModel.createIndexes();
-  // Native incident creation and shared diagnostic references must dedupe before completion ACK.
   await ReportModel.createIndexes();
   await reconcileReportAssetIndexes();
   await ReportAssetModel.createIndexes();
-  // No device execution grant is safe until request IDs are unique across all Core instances.
-  // The send receipt must be unique before any admin can submit a device request.
-  await TestDispatchModel.createIndexes();
-  // A state repair operation may be sent once; its receipt must be unique first.
-  // One compare-and-set row per host resource requires the unique key before any report.
-  // Passive host observations require idempotent identity and indexed, expiring history before ingestion.
-  await TestHostSampleModel.createIndexes();
-  await TestHostLatestModel.createIndexes();
   // Workspaces rely on unique indexes (one active membership per person, one
   // pending invitation per address, unique ids). Build them, and their
   // collections, before serving: a request in the first moments after boot must

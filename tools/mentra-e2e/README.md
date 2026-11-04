@@ -7,8 +7,7 @@ The initial migration is tracked in
 [private PR #1](https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/1).
 
 MentraOS retains the app builds and installer, CI request/dispatch integration,
-Core result/claim APIs and admin results viewer. See the
-[public integration guide](../../.github/DEVICE-ROUTINES.md).
+Core result/claim APIs and admin results viewer.
 
 Run records and firmware are not stored in either repository. Existing local
 attempts and recovery keep their original frozen checkouts, claims and evidence;
