@@ -2,9 +2,6 @@ import {execFileSync} from "node:child_process"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {iosInstallUrl} from "./pr-ios-artifacts-install.mjs"
-import {publishedCoordinatedBuild} from "./coordinated-routine-request.mjs"
-import {routineApi, selectedCatalog} from "./routine-api.mjs"
-import {slackRoutineSection, slackRoutineText} from "./slack-routine-section.mjs"
 
 const text = (value) => ({type: "text", text: value})
 const link = (url, label) => ({type: "link", url, text: label})
@@ -88,8 +85,8 @@ export function otaTargetText(manifest, identity) {
 /** Report the failed job/step, never raw build logs or provider error bodies. */
 export async function releaseFailureDetail(env, fetchImpl = fetch) {
   const fallback = env.MAC_URL || env.MOBILE_APK_URL || env.MOBILE_ASSET_BASE_URL
-    ? "Not requested: the release did not complete successfully."
-    : "Not requested: the release did not publish an installable app build."
+    ? "The release did not complete successfully."
+    : "The release did not publish an installable app build."
   if (env.REPOSITORY !== "Mentra-Community/MentraOS" || !/^[1-9]\d*$/.test(env.RUN_ID ?? "") ||
     !/^[1-9]\d*$/.test(env.RUN_ATTEMPT ?? "")) return fallback
   // The repository whose run built the release: the Mentra monorepo releases
@@ -112,54 +109,23 @@ export async function releaseFailureDetail(env, fetchImpl = fetch) {
       const step = job.steps?.find(step => ["failure", "timed_out", "cancelled"].includes(step.conclusion))
       const stage = job.name.endsWith("Build and distribute coordinated iOS app") ? "iOS/Mac build" : clean(job.name.split(" / ").at(-1))
       const outcome = {failure: "failed", timed_out: "timed out", cancelled: "was cancelled"}[job.conclusion]
-      return `Not requested: ${stage} ${outcome}${step ? ` during “${clean(step.name)}”` : ""}. <${run}/job/${job.id}|View failed job>`
+      return `${stage} ${outcome}${step ? ` during “${clean(step.name)}”` : ""}. <${run}/job/${job.id}|View failed job>`
     }
   } catch { /* Notification delivery must survive a GitHub API outage. */ }
   return `${fallback} <${run}/attempts/${env.RUN_ATTEMPT}|View release jobs>`
 }
 
-/** Current main routine IDs and exact published app platforms; neither implies compatibility or execution. */
-export async function coordinatedRoutineLinks(env, fetchImpl = fetch, {select = publishedCoordinatedBuild} = {}) {
-  if (!["dev", "staging"].includes(env.BRANCH) || env.RELEASE_SCOPE === "examples") return []
-  let detail, lines = []
-  if (env.FINALIZE_RESULT === "success" && env.REPOSITORY === "Mentra-Community/MentraOS") {
-    try {
-      const routines = selectedCatalog(await routineApi({token: env.TEST_RUN_INGEST_TOKEN || env.TEST_RUN_INGEST_TOKEN_DEV,
-        operation: "catalog", fetchImpl}))
-      const archives = new Map()
-      const platforms = [["android", env.MOBILE_APK_URL], ["ios-on-mac", env.MAC_URL]].filter(([, url]) => url)
-      for (const [platform, expected] of platforms) {
-        try {
-          const selection = await select({identity: env.RELEASE_IDENTITY, channel: env.BRANCH, sourceCommit: env.SHA, platform, fetchImpl})
-          if (selection.archive.url !== expected || !/^[a-f0-9]{64}$/.test(selection.archive.sha256)) throw new Error("Another published archive")
-          archives.set(platform, selection.archive.sha256)
-        } catch { /* A missing platform must not borrow another platform's results. */ }
-      }
-      lines = routines.flatMap(row => platforms.map(([value]) => {
-        const digest = archives.get(value), platform = value === "android" ? "Android" : "iOS on Mac"
-        if (!digest) return `${slackRoutineText(row.routineId)} · ${platform} — Published app download could not be verified; results link unavailable.`
-        const url = new URL("https://admin.dev.mentraglass.com/")
-        url.search = new URLSearchParams({testRuns: "1", channel: env.BRANCH, repository: env.REPOSITORY, headSha: env.SHA,
-          archiveSha256: digest, routineId: row.routineId, platform: value}).toString()
-        return `${slackRoutineText(row.routineId)} · ${platform} — <${url.href}|Results for this exact build>`
-      }))
-      detail = routines.length ? "Routine IDs come from current Harness main; platform labels identify available app builds. Compatibility is checked on request. Publishing this build does not request tests."
-        : "No routine IDs are present in current Harness main."
-
-    } catch { detail = "The current Harness routine source inventory is unavailable; no test execution is inferred." }
-  }
-  if (!detail) detail = await releaseFailureDetail(env, fetchImpl)
-  const botConfigured = env.SLACK_BUILDS_BOT_TOKEN && /^C[A-Z0-9]+$/.test(env.BRANCH === "dev"
-    ? env.SLACK_DEV_BUILDS_CHANNEL_ID ?? "" : env.SLACK_STAGING_BUILDS_CHANNEL_ID ?? "")
-  const updates = botConfigured ? "" : "Slack result updates are not configured; use the results link when available."
-  return [{type: "section", block_id: "mentra-release-routines", text: {type: "mrkdwn", text:
-    slackRoutineSection({heading: "*Routine results for published app builds*", detail, lines, footer: updates,
-      overflowUrl: "https://admin.dev.mentraglass.com/?routineCatalog=1", overflowLabel: "View routine inventory in Admin"})}}]
+/** Why a dev or staging release did not finish; nothing when it did. */
+export async function coordinatedReleaseFailure(env, fetchImpl = fetch) {
+  if (!["dev", "staging"].includes(env.BRANCH) || env.RELEASE_SCOPE === "examples" || env.FINALIZE_RESULT === "success") return []
+  return [{type: "section", block_id: "mentra-release-failure", text: {type: "mrkdwn", text:
+    `*Release did not finish*
+${await releaseFailureDetail(env, fetchImpl)}`}}]
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv[2] === "platforms") console.log(JSON.stringify(platformDownloads(process.env)))
-  else if (process.argv[2] === "routines") console.log(JSON.stringify(await coordinatedRoutineLinks(process.env)))
+  else if (process.argv[2] === "failure") console.log(JSON.stringify(await coordinatedReleaseFailure(process.env)))
   else if (process.argv[2] === "ota") {
     try {
       const response = await fetch(process.env.OTA_MANIFEST_URL, {signal: AbortSignal.timeout(20_000)})

@@ -4,8 +4,7 @@ import {createHash} from "node:crypto"
 import {iosInstallUrl, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
-import {routineLabelIds} from "./routine-api.mjs"
-import {slackRoutineSection, slackRoutineText} from "./slack-routine-section.mjs"
+import {slackRoutineText} from "./slack-routine-section.mjs"
 
 // The Mentra monorepo holds this tree at public/mentraos, the ASG client at
 // mentra_live/asg_client and the miniapps the app bundles at miniapps/; its
@@ -98,11 +97,10 @@ export function readOtaTargets(manifest, number, sha) {
 const backendName = (backend) => (backend === "staging" ? "Staging" : "Dev")
 
 /** `backend` is shown only when a published receipt verified it for this PR's destination. */
-export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRunUrl, asgRunUrl, error, ios, routines = [],
+export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRunUrl, asgRunUrl, error, ios,
   backend, unverifiedBackend = []}) {
   const ready = !error && !ios?.error
   const title = ready ? "✅ PR build ready to test" : "⚠️ PR build incomplete"
-  const overflowUrl = pr.html_url
   const lines = [
     `*${title}*`,
     link(pr.html_url, `#${pr.number} — ${pr.title}`),
@@ -172,12 +170,6 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
       "Install the app, connect your Mentra Live glasses, and follow the update prompt if shown. This app targets the versions above.",
     )
   }
-  if (routines.length) lines.push(slackRoutineSection({
-    lines: routines.map(routine =>
-      `*Requested tests:* ${slackRoutineText(routine.title ?? routine.id, 200)}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n${
-        routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable ? slackRoutineText(routine.resultsUnavailable, 200) : `Results link available with the ${routine.platform === "android" ? "Android" : "Mac"} build`}`),
-    footer: "Results appear after the device run is uploaded.", overflowUrl, overflowLabel: "View all requested tests on the PR",
-  }))
   lines.push(
     `${link(pr.html_url, "View PR and checks")} · ${link(androidRunUrl, "Android build logs")}${
       ios?.runUrl ? ` · ${link(ios.runUrl, "iOS / macOS build logs")}` : ""
@@ -192,44 +184,6 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     unfurl_media: false,
     blocks,
   }
-}
-
-export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId, platform}) {
-  if (
-    !/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
-    !Number.isSafeInteger(pr) ||
-    pr <= 0 ||
-    !/^[a-f0-9]{40}$/.test(sha) ||
-    !/^[a-f0-9]{64}$/.test(archiveSha256 ?? "") || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/.test(routineId ?? "") ||
-    !["android", "ios-on-mac"].includes(platform)
-  )
-    return null
-  // Results are stored centrally regardless of the app backend. This is the deployed
-  // admin origin documented in cloud-v2/docs/prds/admin-console.md, not the worker's UI.
-  const url = new URL("https://admin.dev.mentraglass.com/")
-  url.search = new URLSearchParams({
-    testRuns: "1",
-    channel: "pr",
-    repository,
-    pr: String(pr),
-    headSha: sha,
-    archiveSha256,
-    routineId,
-    platform,
-  }).toString()
-  return url.href
-}
-
-function requestedRoutineLinks({context, pr, sha, ios, android, requested, androidAvailable}) {
-  const repository = `${context.repo.owner}/${context.repo.repo}`
-  // Platform labels name published app builds, not inferred routine support or execution.
-  const platforms = [...(androidAvailable ? ["android"] : []), ...(ios.assets ? ["ios-on-mac"] : [])]
-  return requested.flatMap(id => platforms.length ? platforms.map(platform => ({id, title: id, platform,
-    ...(platform === "android" && android.receiptUnavailable
-      ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
-    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha,
-      archiveSha256: platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: id, platform})}))
-    : [{id, title: id, resultsUnavailable: "No published app platform is available for this build; no execution is inferred."}])
 }
 
 // The run name of a label change that requests no build: never the build.
@@ -459,14 +413,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const publicationIdentity = builds
     .map((build) => `${build.run.id}-${build.attempt}`)
     .join(":")
-  // Selected routines are part of the delivered post, so a label added to the same
-  // publications posts their requested tests and result links once.
-  const requested = routineLabelIds(pr)
-  let routines = requestedRoutineLinks({context, pr, sha, ios, android, requested, androidAvailable: !error})
-  const selectionIdentity = requested.length ? createHash("sha256").update(JSON.stringify(routines.map(row =>
-    [row.id, row.platform ?? "unavailable"]))).digest("hex") : undefined
-  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}${
-    selectionIdentity ? `:routines-${selectionIdentity}` : ""}`
+  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}`
   if (android.receiptUnavailable) {
     const previous = comment?.body.split("\n").map(line =>
       new RegExp(`^<!-- ${buildIdentity}:android-([a-f0-9]{64}) -->$`).exec(line)).find(Boolean)
@@ -479,14 +426,6 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       android.receiptUnavailable = false
     }
   }
-  routines = routines.map(row => {
-    if (!row.platform) return row
-    const {resultsUrl, resultsUnavailable, ...definition} = row
-    return {...definition, ...(row.platform === "android" && android.receiptUnavailable
-      ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
-    resultsUrl: routineResultsUrl({repository: `${context.repo.owner}/${context.repo.repo}`, pr: pr.number, sha,
-      archiveSha256: row.platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: row.id, platform: row.platform})}
-  })
   // A verified APK binds its immutable hash; an unverified backend is distinct so a
   // later notification can replace it once its receipt verifies.
   const identity = `${buildIdentity}${android.receiptUnavailable ? ":android-receipt-unavailable" : android.archiveSha256 ? `:android-${android.archiveSha256}` : ""}`
@@ -498,8 +437,6 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     core.info("PR superseded or retargeted before notification.")
     return
   }
-  const currentRequested = new Set(routineLabelIds(pr))
-  routines = routines.filter(routine => currentRequested.has(routine.id))
   const payload = buildPost({
     pr,
     sha,
@@ -510,7 +447,6 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     asgRunUrl: asgRun?.html_url,
     error,
     ios,
-    routines,
     backend: android.backend ?? ios.backend,
     unverifiedBackend: !error && !android.backend ? ["Android"] : [],
   })
@@ -533,13 +469,6 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       }) · [Installation instructions](${ios.instructionsUrl})`,
     )
   else downloads.push(ios.error || "iPhone / Mac: not built for these changed paths.")
-  for (const routine of routines)
-    downloads.push(
-      `**Requested tests:** ${routine.title ?? routine.id}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n\n${[
-        ...(routine.resultsUrl ? [`[View results](${routine.resultsUrl})`] : []),
-        ...(routine.resultsUnavailable ? [routine.resultsUnavailable] : []),
-      ].join(" · ")}\n\nResults appear after the device run is uploaded.`,
-    )
   const body = `${marker}\n<!-- ${identity} -->\n${
     incomplete ? "⚠️ PR build incomplete" : "✅ PR build ready to test"
   } for \`${sha.slice(0, 7)}\` — posted to **#pr-builds**.\n\n${downloads.join(

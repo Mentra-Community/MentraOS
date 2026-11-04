@@ -50,8 +50,6 @@ test("one release message reports the release, the examples and the docs", (t) =
   assert.match(text, /TestFlight: :white_check_mark: passed - <https:\/\/testflight\.apple\.com\/join\/abc\|Open TestFlight>/)
   assert.match(text, /Google Play: :x: failed/)
   assert.match(text, /Docs: :white_check_mark: passed - <https:\/\/docs-dev\.mentraglass\.com\|Open docs>/)
-  assert.match(text, /Routine results for published app builds/)
-  assert.match(text, /current Harness routine source inventory is unavailable/)
   assert.doesNotMatch(text, /No-glasses UI|Requested tests|reported separately|Starter Kit|Example finalize/)
   assert.doesNotMatch(text, /Request pipeline/)
 })

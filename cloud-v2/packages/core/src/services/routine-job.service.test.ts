@@ -2210,34 +2210,6 @@ test('portable preparation lets the ready worker acquire after the earlier candi
       expect(f.row![key]).toEqual(original[key]);
   });
 });
-test('portable preparation refreshes a fallback model until an accepted alternate can take the original', async () => {
-  await withLocalResources(async (f, hosts) => {
-    for (const host of hosts.values()) {
-      host.snapshot.lanes[0].state = 'running';
-      host.snapshot.lanes[0].activity = {generation: 8, owner: {id: 'another-original', kind: 'run', requestId: 'another-original'}};
-    }
-    const prepared = await f.prepare(), original = structuredClone(f.row!), reserve = spyOn(f.rows, 'reserveResources');
-    const {DispatchCore} = await import(new URL('../../../../../../../testing/host/dispatch/core.ts', import.meta.url).pathname);
-    const {awaitRouting} = await import(new URL('../../../../../../../testing/ci/dispatch/prepare.ts', import.meta.url).pathname);
-    let refreshes = 0;
-    const core = new DispatchCore({url: 'https://core.example', credential: 'software-workflow-token', fetch: async () => {
-      refreshes++; return Response.json(await f.service.preparation(original.requestId));
-    }});
-    try {
-      expect(prepared.chosenModel).toBe('g1');
-      expect(prepared.waitingReason).toBeDefined();
-      const routed = await awaitRouting(prepared, {core, now: () => hosts.get('air1').receivedAt.getTime(), wait: async () => {
-        const ready = hosts.get('air1').snapshot.lanes[0]; ready.state = 'idle'; delete ready.activity;
-      }});
-      expect(refreshes).toBe(1);
-      expect(routed.chosenModel).toBe('mentra-live');
-      expect(routed.waitingReason).toBeUndefined();
-      expect(routed.routingLabels).toEqual(routineRequirementLabels(routed.prepared.requirements, 'mentra-live'));
-      expect(reserve).not.toHaveBeenCalled();
-      expect(f.row).toEqual(original);
-    } finally {reserve.mockRestore();}
-  }, [], false, ['g1', 'mentra-live']);
-});
 test('authenticated portable workers race for one original and duplicate binding preserves its winner', async () => {
   await withLocalResources(async (f, hosts) => {
     const prepared = await f.prepare(), original = structuredClone(f.row!);
@@ -2262,31 +2234,6 @@ test('authenticated portable workers race for one original and duplicate binding
     expect((await retry.json() as {binding?: unknown}).binding).toEqual(winner);
     expect(f.row!.fleetBinding).toEqual(winner);
     expect([...hosts.values()].map(host => host.resourceReservations)).toEqual(claims);
-    for (const key of ['requestId', 'fleetSelection', 'fleetInputSha256', 'fleetPreparation', 'fleetDeadline'] as const)
-      expect(f.row![key]).toEqual(original[key]);
-  });
-});
-test('a lost authenticated bind response retries the same committed original through DispatchCore', async () => {
-  await withLocalResources(async (f, hosts) => {
-    const prepared = await f.prepare(), original = structuredClone(f.row!);
-    const credential = 'software-mini-host-token-at-least-thirty-two';
-    const app = new Hono().route('/api/internal/test-requests', createRoutineJobBindingApi(f.service, () => JSON.stringify({mini: credential})));
-    const {DispatchCore} = await import(new URL('../../../../../../../testing/host/dispatch/core.ts', import.meta.url).pathname);
-    let loseReply = true, calls = 0;
-    const core = new DispatchCore({url: 'https://core.example', credential, fetch: async (url: URL, init: RequestInit) => {
-      const response = await app.request(url.pathname, init); calls++;
-      if (response.ok && loseReply) {loseReply = false; throw Error('Authenticated bind reply lost after commit');}
-      return response;
-    }});
-    const input = {inputSha256: prepared.inputSha256, laneId: 'android',
-      descriptorRevision: hosts.get('mini').snapshot.lanes[0].descriptorRevision, actionsRunId: '10', actionsJobId: '20'};
-    await expect(core.bind(original.requestId, input)).rejects.toThrow();
-    const winner = structuredClone(f.row!.fleetBinding), claims = structuredClone(hosts.get('mini').resourceReservations);
-    expect(winner).toBeDefined();
-    expect((await core.bind(original.requestId, input)).binding).toEqual(winner);
-    expect(calls).toBe(2);
-    expect(hosts.get('mini').resourceReservations).toEqual(claims);
-    expect(hosts.get('air1').resourceReservations).toEqual([]);
     for (const key of ['requestId', 'fleetSelection', 'fleetInputSha256', 'fleetPreparation', 'fleetDeadline'] as const)
       expect(f.row![key]).toEqual(original[key]);
   });
@@ -2681,49 +2628,6 @@ test(`a lost Android binding reply retains its exact preparation (binding commit
       expect(f.row!.fleetResourceAdmission).toBeDefined();
       expect(host.resourceReservations).toEqual([f.row!.fleetResourceReservation]);
     } finally {f.rows.bind = bind; release.mockRestore();}
-  });
-});
-
-
-test('DispatchCore receives the original 409, then the same original reoffer and duplicate bind preserve one winner', async () => {
-  await withLocalResources(async (f, hosts) => {
-    const host = hosts.get('mini');
-    host.snapshot.lanes[0].resources.find((resource: any) => resource.kind === 'phone').capabilities = ['backend-connectivity'];
-    host.snapshot.lanes[0].descriptorRevision = routineLaneDescriptorRevision(host.snapshot.lanes[0]);
-    const prepared = await f.prepare(), original = structuredClone(f.row!), credential = 'software-mini-host-token-at-least-thirty-two';
-    const app = new Hono().route('/api/internal/test-requests', createRoutineJobBindingApi(f.service, () => JSON.stringify({mini: credential})));
-    const {DispatchCore, dispatchCoreFailureDiagnostic} = await import(new URL('../../../../../../../testing/host/dispatch/core.ts', import.meta.url).pathname);
-    const statuses: number[] = [], core = new DispatchCore({url: 'https://core.example', credential,
-      fetch: async (url: URL, init: RequestInit) => {const response = await app.request(url.pathname, init); statuses.push(response.status); return response;}});
-    const input = {inputSha256: prepared.inputSha256, laneId: 'android',
-      descriptorRevision: host.snapshot.lanes[0].descriptorRevision, actionsRunId: '10', actionsJobId: '20'}, replace = resourceReservationRepository.replace;
-    let raced = false;
-    resourceReservationRepository.replace = async (captured, claims) => {
-      if (!raced) {raced = true; host.sequence++; host.snapshot.sequence++;}
-      return replace(captured, claims);
-    };
-    try {
-      let error: unknown;
-      try {await core.bind(original.requestId, input);} catch (failure) {error = failure;}
-      expect(dispatchCoreFailureDiagnostic(error)?.status).toBe(409);
-      expect(dispatchCoreFailureDiagnostic(error)?.coreError?.message).toContain('Routine resource admission did not commit worker binding. host-cas: unchanged-host-selector');
-      expect(dispatchCoreFailureDiagnostic(error)?.coreError?.message).toContain('expected {');
-      expect(dispatchCoreFailureDiagnostic(error)?.coreError?.message).toContain('\"sequence\":');
-      expect(f.row!.fleetBinding).toBeUndefined();
-      expect(f.row!.fleetResourceReservation).toBeUndefined();
-      expect(host.resourceReservations).toEqual([]);
-      const reoffered = await f.service.preparation(original.requestId);
-      expect(reoffered.routingLabels?.some(label => label.startsWith('mentra-host-') || label.startsWith('mentra-lane-'))).toBe(false);
-      const winner = (await core.bind(original.requestId, {...input, actionsRunId: '11', actionsJobId: '21'})).binding,
-        claims = structuredClone(host.resourceReservations);
-      expect((await core.bind(original.requestId, {...input, actionsRunId: '11', actionsJobId: '21'})).binding).toEqual(winner);
-      expect(f.row!.fleetBinding).toEqual(winner);
-      expect(host.resourceReservations).toEqual(claims);
-      expect(host.resourceReservations).toHaveLength(1);
-      expect(statuses).toEqual([409, 200, 200]);
-      for (const key of ['requestId', 'fleetSelection', 'fleetInputSha256', 'fleetPreparation', 'fleetDeadline'] as const)
-        expect(f.row![key]).toEqual(original[key]);
-    } finally {resourceReservationRepository.replace = replace;}
   });
 });
 
