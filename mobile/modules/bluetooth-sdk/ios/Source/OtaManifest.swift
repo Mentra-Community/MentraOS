@@ -229,22 +229,6 @@ enum OtaManifestChecker {
         if currentVersion.isEmpty {
             return true
         }
-        return compareVersions(serverVersion, currentVersion) > 0
-    }
-
-    private static func compareVersions(_ version1: String, _ version2: String) -> Int {
-        if version1.contains("."), version2.contains(".") {
-            let parts1 = version1.split(separator: ".").map { Int($0) ?? 0 }
-            let parts2 = version2.split(separator: ".").map { Int($0) ?? 0 }
-            for index in 0 ..< max(parts1.count, parts2.count) {
-                let value1 = index < parts1.count ? parts1[index] : 0
-                let value2 = index < parts2.count ? parts2[index] : 0
-                if value1 != value2 {
-                    return value1 - value2
-                }
-            }
-            return 0
-        }
-        return version1.compare(version2).rawValue
+        return serverVersion != currentVersion
     }
 }

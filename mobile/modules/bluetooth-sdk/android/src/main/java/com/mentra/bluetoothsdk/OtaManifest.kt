@@ -180,22 +180,7 @@ internal object OtaManifestChecker {
             throw BluetoothSdkException("invalid_ota_manifest", "OTA manifest bes_firmware.version is missing.")
         }
         if (currentVersion.isBlank()) return true
-        return compareVersions(serverVersion, currentVersion) > 0
-    }
-
-    private fun compareVersions(version1: String, version2: String): Int {
-        if (version1.contains(".") && version2.contains(".")) {
-            val parts1 = version1.split(".")
-            val parts2 = version2.split(".")
-            val maxLength = maxOf(parts1.size, parts2.size)
-            for (index in 0 until maxLength) {
-                val value1 = parts1.getOrNull(index)?.toIntOrNull() ?: 0
-                val value2 = parts2.getOrNull(index)?.toIntOrNull() ?: 0
-                if (value1 != value2) return value1 - value2
-            }
-            return 0
-        }
-        return version1.compareTo(version2)
+        return serverVersion != currentVersion
     }
 
     private fun JSONObject.hasNumber(key: String): Boolean = !isNull(key) && opt(key) is Number

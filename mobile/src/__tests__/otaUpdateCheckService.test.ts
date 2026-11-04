@@ -803,7 +803,7 @@ describe("OtaUpdateCheckService", () => {
     expect(result.updateAvailable).toBe(false)
   })
 
-  it("moves BES to the pinned release's version during a downgrade, upgrades stay newer-only", async () => {
+  it("moves BES to the manifest's version whenever it differs, with a downgrade or an upgrade", async () => {
     const manifest = (versionCode: number) => ({
       apps: {
         "com.mentra.asg_client": {
@@ -838,10 +838,10 @@ describe("OtaUpdateCheckService", () => {
       expect.objectContaining({isDowngrade: true, updates: ["apk", "bes"], besVersion: "17.26.1.13"}),
     )
 
-    // The same older BES in an upgrade manifest is not offered.
+    // The same older BES is offered with an upgrade too.
     result = await check(11)
     expect(result.isApkDowngrade).toBe(false)
-    expect(result.updates).toEqual(["apk"])
+    expect(result.updates).toEqual(["apk", "bes"])
   })
 
   it("checks the current glasses and writes the available OTA snapshot", async () => {
