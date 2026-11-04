@@ -26,6 +26,28 @@ class ConnectedDeviceMatcherTest {
     }
 
     @Test
+    fun `generic factory fallback names are the same saved glasses`() {
+        for (saved in listOf("XyBLE_3008", "XyBT_3008", "Mentra_Live_3008")) {
+            for (advertised in listOf("XyBLE_3008", "XyBT_3008", "Mentra_Live_3008")) {
+                assertThat(
+                    ConnectedDeviceMatcher.sameSavedName(DeviceModel.MENTRA_LIVE, saved, advertised),
+                ).isTrue()
+            }
+        }
+        assertThat(
+            ConnectedDeviceMatcher.sameSavedName(DeviceModel.MENTRA_LIVE, "XyBLE_1234", "Mentra_Live_3008"),
+        ).isFalse()
+        assertThat(
+            ConnectedDeviceMatcher.matches(
+                model = DeviceModel.MENTRA_LIVE,
+                defaultDevice = Device(DeviceModel.MENTRA_LIVE, "XyBLE_3008"),
+                candidateName = "Mentra_Live_3008",
+                candidateAddress = null,
+            ),
+        ).isTrue()
+    }
+
+    @Test
     fun `matches Mentra Nex advertised name prefixes`() {
         for (name in listOf("Nex1-77", "MENTRA_DISPLAY_02")) {
             assertThat(

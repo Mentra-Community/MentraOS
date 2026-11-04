@@ -9,7 +9,8 @@ enum ConnectedDeviceMatcher {
             let candidateID = identifier.flatMap { $0.isEmpty ? nil : $0 }
             if let savedID, let candidateID {
                 if savedID.caseInsensitiveCompare(candidateID) == .orderedSame { return true }
-            } else if let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, name == saved.name {
+            } else if let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      Self.sameSavedName(model, saved: saved.name, advertised: name) {
                 return true
             }
         }
@@ -22,6 +23,16 @@ enum ConnectedDeviceMatcher {
         default:
             return false
         }
+    }
+
+    /// Saved-name equality, plus the generic factory fallback that moved from
+    /// `XyBLE_3008` / `XyBT_3008` to `Mentra_Live_3008`. Unique names such as
+    /// `XyBLE_1234` stay exact.
+    static func sameSavedName(_ model: DeviceModel, saved: String, advertised: String) -> Bool {
+        if saved == advertised { return true }
+        guard model == .mentraLive else { return false }
+        let generic: Set<String> = ["XyBLE_3008", "XyBT_3008", "Mentra_Live_3008"]
+        return generic.contains(saved) && generic.contains(advertised)
     }
 
     /// Service IDs used by the corresponding SGCs. CoreBluetooth cannot enumerate

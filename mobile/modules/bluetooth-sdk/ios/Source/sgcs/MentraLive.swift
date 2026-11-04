@@ -778,7 +778,9 @@ extension MentraLive: CBCentralManagerDelegate {
             || name.hasPrefix("MENTRA_LIVE_BT") || name.lowercased().hasPrefix("mentra_live")
         {
             let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME)
-            let isReconnectTarget = savedDeviceName != nil && savedDeviceName == name
+            let isReconnectTarget = savedDeviceName.map {
+                ConnectedDeviceMatcher.sameSavedName(.mentraLive, saved: $0, advertised: name)
+            } ?? false
             let discoveredAtMs = Self.monotonicNowMs()
             if advertisesPairingFlag(advertisementData) {
                 Self.secureTrailerMemory.recordSecureTrailer(peripheral.identifier, nowMs: discoveredAtMs)
@@ -809,7 +811,7 @@ extension MentraLive: CBCentralManagerDelegate {
                 return
             }
 
-            let glassType = name == "Xy_A" ? "Standard" : "K900"
+            let glassType = name == "Xy_A" ? "Standard" : "Mentra Live"
             let trailer = parseSecurePairingTrailer(advertisementData)
             // A packet without the trailer from a peripheral that just showed it is a partial
             // advertisement, not legacy firmware. Do not publish it: the scan list would show a
@@ -846,7 +848,9 @@ extension MentraLive: CBCentralManagerDelegate {
                 )
             }
 
-            let isSavedGlasses = savedDeviceName == name
+            let isSavedGlasses = savedDeviceName.map {
+                ConnectedDeviceMatcher.sameSavedName(.mentraLive, saved: $0, advertised: name)
+            } ?? false
             if isSavedGlasses, trailer.secureCapable {
                 observeSavedGlassesAdvertisement(trailer)
             }

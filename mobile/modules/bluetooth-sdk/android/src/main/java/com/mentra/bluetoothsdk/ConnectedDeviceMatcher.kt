@@ -34,7 +34,7 @@ internal object ConnectedDeviceMatcher {
             if (savedAddress != null && address != null) {
                 address.equals(savedAddress, ignoreCase = true)
             } else {
-                !candidateName.isNullOrBlank() && candidateName == defaultDevice.name
+                sameSavedName(model, defaultDevice.name, candidateName)
             }
         } else {
             false
@@ -66,4 +66,18 @@ internal object ConnectedDeviceMatcher {
                     name.startsWith("MENTRA_DISPLAY_")
             else -> false
         }
+
+    /**
+     * Saved-name equality, plus the generic factory fallback that moved from
+     * `XyBLE_3008` / `XyBT_3008` to `Mentra_Live_3008`. Unique shipped names
+     * such as `XyBLE_1234` stay exact. Address matching remains the primary
+     * identity check when both sides have an address.
+     */
+    fun sameSavedName(model: DeviceModel, saved: String?, advertised: String?): Boolean {
+        if (saved.isNullOrBlank() || advertised.isNullOrBlank()) return false
+        if (saved == advertised) return true
+        if (model != DeviceModel.MENTRA_LIVE) return false
+        val generic = setOf("XyBLE_3008", "XyBT_3008", "Mentra_Live_3008")
+        return saved in generic && advertised in generic
+    }
 }

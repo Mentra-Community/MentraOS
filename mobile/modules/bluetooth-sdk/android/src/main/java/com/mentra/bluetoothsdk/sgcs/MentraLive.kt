@@ -41,6 +41,8 @@ import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoSize
 import com.mentra.bluetoothsdk.PhotoMode
 import com.mentra.bluetoothsdk.TouchGesture
+import com.mentra.bluetoothsdk.ConnectedDeviceMatcher
+import com.mentra.bluetoothsdk.DeviceModel
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.ObservableStore
 import com.mentra.bluetoothsdk.incomingGlassesMessageAckId
@@ -1634,7 +1636,11 @@ class MentraLive : SGCManager() {
                         // this name. A discovery-only pairing scan must not auto-connect just
                         // because savedDeviceName still matches (spoof risk).
                         val isSavedGlasses =
-                                savedDeviceName.isNotEmpty() && savedDeviceName == deviceName
+                                ConnectedDeviceMatcher.sameSavedName(
+                                        DeviceModel.MENTRA_LIVE,
+                                        savedDeviceName,
+                                        deviceName,
+                                )
                         val isNamedConnectTarget =
                                 isSavedGlasses && (isReconnecting || explicitConnectByName)
                         if (MentraLiveOwnerLossPolicy.shouldExposeAsNonPairable(
@@ -1662,7 +1668,7 @@ class MentraLive : SGCManager() {
                             )
                             return
                         }
-                        val glassType = if (deviceName == "Xy_A") "Standard" else "K900"
+                        val glassType = if (deviceName == "Xy_A") "Standard" else "Mentra Live"
                         val (pairingMode, pairingCode, secureCapable) = parseSecurePairingTrailer(result)
                         Bridge.log(
                                 "LIVE: Found compatible " +
@@ -1684,7 +1690,12 @@ class MentraLive : SGCManager() {
                                 securePairingCapable = secureCapable,
                         )
 
-                        if (savedDeviceName.isNotEmpty() && savedDeviceName == deviceName) {
+                        if (ConnectedDeviceMatcher.sameSavedName(
+                                        DeviceModel.MENTRA_LIVE,
+                                        savedDeviceName,
+                                        deviceName,
+                                )
+                        ) {
                             observeSavedGlassesAdvertisement(result)
                         }
 

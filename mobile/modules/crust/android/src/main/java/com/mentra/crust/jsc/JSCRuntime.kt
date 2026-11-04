@@ -262,9 +262,11 @@ class JSCRuntime private constructor(private val appContext: Context) {
         // anyway, so this is safe.
         val qjs = try {
             executor.submit<QuickJs> {
-                QuickJs.create(Dispatchers.Unconfined).apply {
-                    memoryLimit = 32L * 1024 * 1024     // 32 MB heap per miniapp
-                    maxStackSize = 512L * 1024          // 512 KB stack
+                QuickJsNativeLifecycle.withNative {
+                    QuickJs.create(Dispatchers.Unconfined).apply {
+                        memoryLimit = 32L * 1024 * 1024     // 32 MB heap per miniapp
+                        maxStackSize = 512L * 1024          // 512 KB stack
+                    }
                 }
             }.get()
         } catch (e: Throwable) {
@@ -575,7 +577,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
         try {
             record.executor.submit {
                 try {
-                    record.qjs.close()
+                    QuickJsNativeLifecycle.withNative { record.qjs.close() }
                 } catch (e: Throwable) {
                     Log.w(TAG, "QuickJs.close() threw for $packageName: ${e.message}")
                 }
