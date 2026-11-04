@@ -4,7 +4,7 @@ export const AUTOMATED_INCIDENT_TIMEOUT_MS = 120_000;
 /** Identity of the single device incident request saved by an automated run.
  * This binds report creation, independently of transport or collection completion.
  * `testRunId` is an opaque string on the wire: released Mentra App versions send it, so the
- * name stays even though Core no longer has test runs to look it up in.
+ * name stays. Core stores it on the report and looks nothing up by it.
  */
 export interface ReportAutomationCorrelation {
   alertId: string;

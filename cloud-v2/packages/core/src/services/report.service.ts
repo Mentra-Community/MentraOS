@@ -26,7 +26,7 @@ import {REPORT_LOG_SOURCES, initialReportLogCollection, isReportLogSource, visib
 import {reportAutomationCorrelation, type ReportAutomationCorrelation} from '@mentra/cloud-protocol/report-automation';
 
 const logger = createLogger("core").child({ service: "report.service" });
-export const attachmentWriteConcern = { w: "majority" as const, j: true, wtimeout: 10_000 };
+const attachmentWriteConcern = { w: "majority" as const, j: true, wtimeout: 10_000 };
 
 // Same provider selection as miniapp assets: local disk in dev, S3/R2 when
 // CLOUD_STORAGE_PROVIDER says so. Created on first use, not at import, so the
@@ -133,7 +133,7 @@ export class ReportArtifactError extends Error {
 
 // 128 digest bits in the existing short alphanumeric ID shape. Keeping IDs short
 // also preserves the scoped incident reader's credential-shaped-text guard.
-export function stableReportId(prefix: "rep" | "art", binding: string): string {
+function stableReportId(prefix: "rep" | "art", binding: string): string {
   const hex = createHash("sha256").update(binding).digest("hex").slice(0, 32);
   return `${prefix}_${BigInt(`0x${hex}`).toString(32).padStart(26, "0").toUpperCase()}`;
 }

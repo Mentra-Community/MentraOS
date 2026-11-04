@@ -27,7 +27,7 @@
  * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/admin-capabilities.integration.test.ts`
  */
 
-import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, spyOn, test} from "bun:test"
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test} from "bun:test"
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
@@ -41,7 +41,6 @@ import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-au
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
-import {RoutineDispatchService} from "../packages/core/src/services/routine-dispatch.service"
 import {createPortalSession} from "../packages/core/src/services/signin/browser-session.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
@@ -325,7 +324,7 @@ describe("GET /api/admin/me", () => {
   })
 
   test("an operator key sees its credential and only the scopes it was created with, and no workspaces", async () => {
-    const key = await operatorKey("ops", ["organization.testing.read", "organization.incidents.read"])
+    const key = await operatorKey("ops", ["organization.supportProfiles.read", "organization.incidents.read"])
 
     const reply = await call("GET", "/api/admin/me", {as: key.token})
 
@@ -335,7 +334,7 @@ describe("GET /api/admin/me", () => {
       user: null,
       credential: {credentialId: key.credentialId, credentialKind: "organization", label: "ops"},
       organization: {
-        capabilities: ["organization.incidents.read", "organization.testing.read"],
+        capabilities: ["organization.incidents.read", "organization.supportProfiles.read"],
       },
       workspaces: [],
       // This suite sets no Fleet URL.
@@ -385,21 +384,11 @@ describe("incident reports", () => {
     expect((await call("GET", "/api/admin/reports/rep_nope", {as: key.token})).status).toBe(404)
   })
 
-  test("the same key cannot write test dispatches or read anything outside its scope", async () => {
+  test("the same key cannot read anything outside its scope", async () => {
     const key = await operatorKey("incidents", ["organization.incidents.read"])
 
-    const dispatch = await call("POST", "/api/admin/test-dispatches", {as: key.token, body: {}})
-    expect(dispatch.status).toBe(403)
-    expect(dispatch.json.error).toBe("forbidden")
-
-    for (const path of [
-      "/api/admin/test-routines",
-      "/api/admin/test-runs",
-      "/api/admin/routine-catalog",
-      "/api/admin/support-profiles/lookup?email=a%40example.test",
-    ]) {
-      expect([path, (await call("GET", path, {as: key.token})).status]).toEqual([path, 403])
-    }
+    const path = "/api/admin/support-profiles/lookup?email=a%40example.test"
+    expect((await call("GET", path, {as: key.token})).status).toBe(403)
   })
 
   test("a workspace key is refused, even though it is a valid credential", async () => {
@@ -420,7 +409,6 @@ describe("incident reports", () => {
     expect((await call("GET", "/api/admin/me", {as: owner})).status).toBe(200)
     for (const via of ["session", "bearer"] as const) {
       expect((await call("GET", "/api/admin/reports", {as: owner, via})).status).toBe(403)
-      expect((await call("GET", "/api/admin/test-routines", {as: owner, via})).status).toBe(403)
       expect((await call("GET", "/api/admin/support-profiles/lookup?email=a%40example.test", {as: owner, via})).status).toBe(
         403,
       )
@@ -450,73 +438,21 @@ describe("incident reports", () => {
   })
 })
 
-// --- Testing ---------------------------------------------------------------
+// --- The old device-testing system -----------------------------------------
 
-describe("testing routes", () => {
-  // The routine catalog reads the routine source from GitHub; these tests are about the gate, not the source.
-  let catalog: ReturnType<typeof spyOn>
-  beforeEach(() => {
-    catalog = spyOn(RoutineDispatchService.prototype, "catalog").mockResolvedValue({
-      routineRevision: "a".repeat(40),
-      routines: [],
-    })
-  })
-  afterEach(() => catalog.mockRestore())
+describe("the old testing routes", () => {
+  test("are gone", async () => {
+    const key = await operatorKey("ops", ["organization.incidents.read", "organization.supportProfiles.read"])
 
-  test("reading needs organization.testing.read and writing needs organization.testing.manage", async () => {
-    const reader = await operatorKey("reader", ["organization.testing.read"])
-    const manager = await operatorKey("manager", ["organization.testing.manage"])
-
-    // A read: allowed for the reader (no routine is enrolled here), refused for a key that can only manage.
-    const routines = await call("GET", "/api/admin/test-routines", {as: reader.token})
-    expect(routines.status).toBe(200)
-    expect(routines.json.routines).toEqual([])
-    expect((await call("GET", "/api/admin/test-routines", {as: manager.token})).status).toBe(403)
-
-    // A write: refused for the reader; for the manager it passes the gate and fails on the body.
-    const refused = await call("POST", "/api/admin/test-dispatches", {as: reader.token, body: {}})
-    expect(refused.status).toBe(403)
-    const invalid = await call("POST", "/api/admin/test-dispatches", {as: manager.token, body: {}})
-    expect(invalid.status).toBe(400)
-    expect(invalid.json.error).toBe("invalid_submission")
-  })
-
-  test("the split is by method, so a method no route serves is still a write", async () => {
-    const reader = await operatorKey("reader", ["organization.testing.read"])
-    const manager = await operatorKey("manager", ["organization.testing.manage"])
-
-    for (const path of ["/api/admin/test-runs/run_1", "/api/admin/routine-catalog/routine-1", "/api/admin/test-builds"]) {
-      expect([path, (await call("DELETE", path, {as: reader.token})).status]).toEqual([path, 403])
-      // Past the gate there is nothing to delete.
-      expect([path, (await call("DELETE", path, {as: manager.token})).status]).toEqual([path, 404])
-    }
-  })
-
-  test("picker dispatches, reruns and routine preferences need organization.testing.manage", async () => {
-    const reader = await operatorKey("reader", ["organization.testing.read"])
-    const manager = await operatorKey("manager", ["organization.testing.manage"])
-    const writes: Array<[method: string, path: string]> = [
-      ["POST", "/api/admin/test-dispatches/picker"],
-      ["POST", "/api/admin/test-runs/reruns/preview"],
-      ["POST", "/api/admin/test-runs/reruns/individual"],
-      ["POST", "/api/admin/test-runs/reruns/submit"],
+    for (const [method, path] of [
+      ["GET", "/api/admin/test-runs"],
+      ["GET", "/api/admin/routine-catalog"],
+      ["GET", "/api/admin/test-routines"],
+      ["GET", "/api/admin/test-builds"],
+      ["POST", "/api/admin/test-dispatches"],
       ["PATCH", "/api/admin/routines/routine-1/platforms/android/preferences"],
-    ]
-
-    for (const [method, path] of writes) {
-      expect([path, (await call(method, path, {as: reader.token, body: {}})).status]).toEqual([path, 403])
-      // Past the gate, a body that is not JSON is the first thing the route objects to.
-      const passed = await call(method, path, {as: manager.token, headers: {"content-type": "text/plain"}})
-      expect([path, passed.status]).toEqual([path, 400])
-    }
-  })
-
-  test("an Organization Admin reads and writes, by session or bearer", async () => {
-    const admin = await person("org-admin", {email: ADMIN_EMAIL})
-
-    for (const via of ["session", "bearer"] as const) {
-      expect((await call("GET", "/api/admin/test-routines", {as: admin, via})).status).toBe(200)
-      expect((await call("POST", "/api/admin/test-dispatches", {as: admin, via, body: {}})).status).toBe(400)
+    ] as const) {
+      expect([path, (await call(method, path, {as: key.token})).status]).toEqual([path, 404])
     }
   })
 })
@@ -706,7 +642,7 @@ describe("/api/admin/organization", () => {
   test("GET /api/admin/organization tells any principal what it may do", async () => {
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
     const ws = await workspaceWithKey()
-    const operator = await operatorKey("testing", ["organization.testing.read"])
+    const operator = await operatorKey("testing", ["organization.supportProfiles.read"])
 
     expect((await call("GET", "/api/admin/organization", {as: admin})).json).toEqual({
       capabilities: [...ORGANIZATION_CAPABILITIES],
@@ -717,7 +653,7 @@ describe("/api/admin/organization", () => {
       workspaceCreation: {allowed: true, reason: null},
     })
     expect((await call("GET", "/api/admin/organization", {as: operator.token})).json).toEqual({
-      capabilities: ["organization.testing.read"],
+      capabilities: ["organization.supportProfiles.read"],
       workspaceCreation: {allowed: false, reason: "not_a_person"},
     })
     expect((await call("GET", "/api/admin/organization", {as: ws.token})).json).toEqual({

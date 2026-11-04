@@ -254,8 +254,6 @@ describe("admin keys keep working", () => {
     expect(body.organization.capabilities.sort()).toEqual([
       "organization.incidents.read",
       "organization.supportProfiles.read",
-      "organization.testing.manage",
-      "organization.testing.read",
     ])
   })
 

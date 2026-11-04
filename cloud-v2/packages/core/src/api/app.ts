@@ -66,20 +66,6 @@ import { AccountError } from "../services/account/account-error";
 import { requestContext } from "./middleware/context.middleware";
 import adminApi from "./admin/admin.api";
 import reportAgent from "./agent/reports.api";
-import {createInternalRoutineCaseApi} from './internal/routine-cases.api';
-import {createTestRequestsApi} from "./internal/test-requests.api";
-import {createFrameworkResultsApi} from "./internal/framework-results.api";
-import {createTestHostStateApi} from "./internal/test-host-state.api";
-import {createRoutineDefinitionsApi} from "./internal/routine-definitions.api";
-import {createNightlyRoutinesApi} from "./internal/nightly-routines.api";
-import {createStateRepairDiagnosticsApi} from "./internal/state-repair-diagnostics.api";
-import {createTestRerunsApi} from "./internal/test-reruns.api";
-import {createRoutineJobsApi, createRoutineJobBindingApi} from './internal/routine-jobs.api';
-import {createTestingDispatchApi} from './internal/testing-dispatch.api';
-import {createRoutineDispatchesApi} from "./internal/routine-dispatches.api";
-import {createRoutineWorkIntakeApi, createRoutineWorkDeliveriesApi} from "./internal/routine-work.api";
-import testRunIngest from "./internal/test-runs.api";
-import testHostObservations from "./internal/test-host-observations.api";
 import clientAuth from "./client/auth.api";
 import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
@@ -194,22 +180,6 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
     }),
   );
   app.route("/api/internal/registry", internalRegistry);
-  app.route("/api/internal/test-requests", createRoutineJobBindingApi());
-  app.route("/api/internal/test-requests", createTestRequestsApi());
-  app.route("/api/internal/routine-cases", createInternalRoutineCaseApi());
-  app.route("/api/internal/routine-jobs", createRoutineJobsApi());
-  app.route("/api/internal/testing/dispatch", createTestingDispatchApi());
-  app.route("/api/internal/framework-results", createFrameworkResultsApi());
-  app.route("/api/internal/test-host-state", createTestHostStateApi());
-  app.route("/api/internal/routine-definitions", createRoutineDefinitionsApi());
-  app.route("/api/internal/nightly-routines", createNightlyRoutinesApi());
-  app.route("/api/internal/test-repairs", createStateRepairDiagnosticsApi());
-  app.route("/api/internal", createRoutineDispatchesApi());
-  app.route("/api/internal/test-reruns", createTestRerunsApi());
-  app.route("/api/internal/routine-work", createRoutineWorkIntakeApi());
-  app.route("/api/internal/routine-work-deliveries", createRoutineWorkDeliveriesApi());
-  app.route("/api/internal/test-runs", testRunIngest);
-  app.route("/api/internal/test-host-observations", testHostObservations);
   // LEGACY: released Mentra App versions install their preinstalled miniapps
   // from here until supported versions install only from the Store's backend.
   app.route("/api/client/miniapps", clientMiniapps);

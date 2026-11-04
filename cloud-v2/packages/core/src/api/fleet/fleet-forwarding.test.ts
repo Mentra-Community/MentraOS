@@ -2856,7 +2856,7 @@ describe("the admin surface", () => {
     configure()
     const member = as("member", person(false))
 
-    for (const path of ["/reports", "/support-profiles/lookup", "/test-runs", "/routine-catalog", "/test-routines"]) {
+    for (const path of ["/reports", "/support-profiles/lookup"]) {
       const response = await root.request(`http://localhost/api/admin${path}`, {headers: {"x-test-principal": member}})
       expect([path, response.status]).toEqual([path, 403])
     }

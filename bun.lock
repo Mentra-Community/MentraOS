@@ -95,7 +95,6 @@
         "@mentra/cloud-protocol": "workspace:*",
         "@mentra/cloud-shared": "workspace:*",
         "@mentra/workspace-contract": "workspace:*",
-        "fflate": "0.8.2",
         "hono": "^4.11.1",
         "ipaddr.js": "2.5.0",
         "jose": "^5.9.6",
@@ -1242,7 +1241,6 @@
 
     "fdir": ["fdir@6.5.0", "", { "peerDependencies": { "picomatch": "^3 || ^4" } }, "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="],
 
-    "fflate": ["fflate@0.8.2", "", {}, "sha512-cPJU47OaAoCbg0pBvzsgpTPhmhqI5eJjh/JIu8tPj5q+T7iLvW/JAYUqmE7KOB4R1ZyEhzBaIQpQpardBF5z8A=="],
 
     "file-entry-cache": ["file-entry-cache@8.0.0", "", { "dependencies": { "flat-cache": "^4.0.0" } }, ""],
 

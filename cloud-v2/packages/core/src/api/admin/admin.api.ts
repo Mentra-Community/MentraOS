@@ -15,8 +15,6 @@
  *  - `/licenses`: `organization.licenses.read`, read-only (an Organization Admin; an operator key cannot hold it);
  *  - `/registry`: `organization.registry.administer`, the miniapp registry (an Organization Admin; an operator key
  *    cannot hold it);
- *  - `/test-runs`, `/routine-catalog`, `/routines`, `/test-routines`, `/test-builds`, `/test-dispatches`:
- *    `organization.testing.read`, and `organization.testing.manage` for anything that writes;
  *  - `/workspaces`: the workspace API, for people, each route gated on the caller's
  *    standing in that workspace (an Organization Admin acts as its owner);
  *  - `/organization`: the organization API (every workspace, ownership
@@ -49,11 +47,7 @@ import licenses from "./licenses.api"
 import workspaceLicenseResets from "./workspace-license-resets.api"
 import registry from "./registry.api"
 import reports from "./reports.api"
-import {createRoutineCatalogApi} from "./routine-catalog.api"
-import {createRoutinePreferencesApi} from "./routine-preferences.api"
 import supportProfiles from "./support-profiles.api"
-import testDispatches from "./test-dispatches.api"
-import testRuns from "./test-runs.api"
 
 /** What `GET /api/admin/me` answers. */
 export interface AdminMeResponse {
@@ -141,36 +135,17 @@ const readsIncidents = requireOrganizationCapability("organization.incidents.rea
 const readsSupportProfiles = requireOrganizationCapability("organization.supportProfiles.read")
 const readsLicenses = requireOrganizationCapability("organization.licenses.read")
 const administersRegistry = requireOrganizationCapability("organization.registry.administer")
-const readsTesting = requireOrganizationCapability("organization.testing.read")
-const managesTesting = requireOrganizationCapability("organization.testing.manage")
-
-/**
- * Testing is read-only for `GET` and `HEAD` and a write for any other method. Deciding by method keeps a
- * route added later fail-closed: a write needs `manage` unless it is a plain read.
- */
-const testingGate: MiddlewareHandler<AppEnv> = (c, next) =>
-  (c.req.method === "GET" || c.req.method === "HEAD" ? readsTesting : managesTesting)(c, next)
 
 // A gate goes on before the routes it covers. `/x/*` also matches `/x`.
 app.use("/reports/*", readsIncidents)
 app.use("/support-profiles/*", readsSupportProfiles)
 app.use("/licenses/*", readsLicenses)
 app.use("/registry/*", administersRegistry)
-app.use("/test-runs/*", testingGate)
-app.use("/routine-catalog/*", testingGate)
-app.use("/routines/*", testingGate)
-app.use("/test-routines/*", testingGate)
-app.use("/test-builds/*", testingGate)
-app.use("/test-dispatches/*", testingGate)
 
 app.route("/reports", reports)
 app.route("/support-profiles", supportProfiles)
 app.route("/licenses", licenses)
 app.route("/registry", registry)
-app.route("/test-runs", testRuns)
-app.route("/routine-catalog", createRoutineCatalogApi())
-app.route("/routines", createRoutinePreferencesApi())
-app.route("/", testDispatches)
 app.route("/", auditLog)
 
 export default app

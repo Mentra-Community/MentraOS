@@ -17,11 +17,11 @@ const detailPointerSchema = z.object({key: z.string().min(1).max(1000), sha256: 
   sizeBytes: z.number().int().positive().max(32 * 1024 * 1024)}).strict();
 const nativeReferenceSchema = z.object({runId: z.string(), payloadSha256: z.string(), count: z.number().int().nonnegative(),
   detail: detailPointerSchema}).strict();
-export const reportNativeSnapshotSchema = z.object({version: z.literal(1), reportId: z.string(), mentraUserId: z.string(),
+const reportNativeSnapshotSchema = z.object({version: z.literal(1), reportId: z.string(), mentraUserId: z.string(),
   runId: z.string(), payloadSha256: z.string(), artifacts: z.array(z.object({artifactId: z.string(), assetId: z.string(),
     createdAt: z.string().datetime({offset: true}), type: z.enum(['screenshot', 'state_snapshot']),
     source: z.enum(['framework-screenshot', 'framework-diagnostic'])}).strict())}).strict();
-export type ReportNativeSnapshot = z.infer<typeof reportNativeSnapshotSchema>;
+type ReportNativeSnapshot = z.infer<typeof reportNativeSnapshotSchema>;
 
 /** Only what a report reads of a stored run. The rest of the payload stays, unparsed, for its digest. */
 const nativeRunEnvelopeSchema = z.object({version: z.literal(1), payloadSha256: sha256Schema,
@@ -31,14 +31,14 @@ const nativeRunEnvelopeSchema = z.object({version: z.literal(1), payloadSha256: 
   acceptedAssets: z.array(z.object({runId: z.string(), assetId: z.string(), storageKey: z.string(),
     sizeBytes: z.number().int().nonnegative(), sha256: sha256Schema}).strict())}).strict();
 
-export interface NativeRunEnvelope {
+interface NativeRunEnvelope {
   payloadSha256: string;
   payload: {result: {runId: string}; assets: Array<{id: string; kind: string; path: string; sha256: string; size: number; mimeType: string}>};
   acceptedAssets: Array<{assetId: string; storageKey: string; sizeBytes: number; sha256: string}>;
 }
 
 /** A stored diagnostic that cannot be trusted or reached right now. */
-export class NativeReportError extends Error {
+class NativeReportError extends Error {
   readonly status = 503 as const;
 }
 
@@ -99,7 +99,7 @@ export async function readNativeReportAssets(row: {reportId: string; mentraUserI
   return expandNativeReportSnapshot(snapshot, verifyStoredRun(envelope, reference));
 }
 
-export function expandNativeReportSnapshot(snapshot: ReportNativeSnapshot, envelope: NativeRunEnvelope) {
+function expandNativeReportSnapshot(snapshot: ReportNativeSnapshot, envelope: NativeRunEnvelope) {
   if (snapshot.runId !== envelope.payload.result.runId || snapshot.payloadSha256 !== envelope.payloadSha256)
     throw new NativeReportError('Native report result identity differs');
   const descriptors = new Map(envelope.payload.assets.map(asset => [asset.id, asset]));

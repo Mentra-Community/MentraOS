@@ -70,10 +70,6 @@ describe("the admin portal's pages follow capabilities", () => {
     expect(visiblePages(me(["organization.licenses.read"], false, undefined, { available: true }))).toEqual(["licenses"]);
   });
 
-  test("organization.testing.read alone opens no page", () => {
-    expect(visiblePages(me(["organization.testing.read"]))).toEqual([]);
-  });
-
   test("a signed-in person without capabilities sees none", () => {
     expect(visiblePages(me([]))).toEqual([]);
   });
@@ -85,7 +81,7 @@ describe("the admin portal's pages follow capabilities", () => {
 
   test("an operator key sees the pages its scopes open, never workspaces, operator keys or the audit log", () => {
     const key: Pick<AdminMe, "organization" | "user" | "fleet" | "licenses"> = {
-      organization: { capabilities: ["organization.incidents.read", "organization.testing.read"] },
+      organization: { capabilities: ["organization.incidents.read"] },
       user: null,
       fleet: { installed: true },
       licenses: { available: true },

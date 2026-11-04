@@ -385,12 +385,13 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
     expect(sameOrigin.status).not.toBe(403)
     expect(sameOrigin.status).not.toBe(401)
 
-    // An operator key (here an admin key converted at startup) with the testing scope writes from anywhere.
+    // An operator key (here an admin key converted at startup) is not held to an origin: past the
+    // principal, this path simply has no route.
     const key = await legacyAdminKey({orgId: "org_admin_keys", name: "ops"})
     const restore = applyEnv({CLOUD_CORE_ADMIN_EMAILS: `${ADMIN_EMAIL},api-key@${key.keyId}.local`})
     try {
       await convertLegacyAdminKeys()
-      const bearer = await app.request(`${ADMIN_ORIGIN}/api/admin/test-dispatches/picker`, {method: "POST", headers: {authorization: `Bearer ${key.token}`, origin: "https://evil.example", "content-type": "application/json"}, body: "{}"})
+      const bearer = await app.request(`${ADMIN_ORIGIN}/api/admin/no-such-route`, {method: "POST", headers: {authorization: `Bearer ${key.token}`, origin: "https://evil.example", "content-type": "application/json"}, body: "{}"})
       expect(bearer.status).not.toBe(403)
       expect(bearer.status).not.toBe(401)
     } finally {

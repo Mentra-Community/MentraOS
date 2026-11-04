@@ -46,8 +46,7 @@ Roles are cumulative: each holds everything the one before it holds.
 `CLOUD_CORE_ADMIN_EMAILS` or in a domain on `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`.
 They hold every organization capability (`organization.workspaces.administer`,
 `organization.credentials.manage`, `organization.incidents.read`,
-`organization.supportProfiles.read`, `organization.testing.read`,
-`organization.testing.manage`, `organization.fleet.administer`,
+`organization.supportProfiles.read`, `organization.fleet.administer`,
 `organization.licenses.read`, `organization.registry.administer`) and act as
 Owner in every workspace, which is how they recover a workspace whose Owners
 are gone. Recovery names an existing account; a deleted account is refused
@@ -242,8 +241,7 @@ environment labels it is configured for.
 - **Operator keys** (`mak_…`) are for tools that read organization data, such as
   `scripts/fetch-incident-logs.sh`. An Organization Admin creates one in the
   admin portal's **Operator keys** page with some of
-  `organization.incidents.read`, `organization.supportProfiles.read`,
-  `organization.testing.read` and `organization.testing.manage`. It works only
+  `organization.incidents.read` and `organization.supportProfiles.read`. It works only
   while its creator's email stays on the Organization Admin allowlist, so create
   shared keys from an admin who will stay. A key whose creator is admitted by
   `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` keeps working while the domain is listed:
@@ -284,10 +282,8 @@ manages operator keys. Those need the matching organization capability and a
 person.
 
 `/api/admin/*` checks a capability per area: incidents
-(`organization.incidents.read`), support profiles
-(`organization.supportProfiles.read`), test runs, the routine catalog and
-system health (`organization.testing.read`, and `organization.testing.manage`
-to write). `/api/admin/me` answers any caller with its capabilities and whether
+(`organization.incidents.read`) and support profiles
+(`organization.supportProfiles.read`). `/api/admin/me` answers any caller with its capabilities and whether
 Fleet is installed on this Core (`fleet.installed`). `/api/admin/fleet/*` forwards
 to the optional Fleet service for a person holding `organization.fleet.administer`
 (an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).
