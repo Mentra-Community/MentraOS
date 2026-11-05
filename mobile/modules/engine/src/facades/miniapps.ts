@@ -28,7 +28,7 @@ import {
 } from "../services/runningUpdatePrompt"
 import {isSystemMiniappPackage} from "../services/SystemMiniappPolicy"
 import {firstPartyMiniappUrl} from "../services/systemMiniappTrust"
-import {onMiniappOpenedByUser, useAppStatusStore} from "../stores/apps"
+import {launchesWithPairedGlasses, onMiniappOpenedByUser, useAppStatusStore} from "../stores/apps"
 import type {ClientApp} from "../types"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
 
@@ -50,6 +50,7 @@ const urlUpdater = new MiniappUrlUpdater({
     const policy = localMiniappRuntime.currentInstallCompatibilityPolicy()
     return policy ? {hostVersion: policy.hostVersion, supportedSdkRange: policy.supportedSdkRange} : null
   },
+  launchesWithPairedGlasses,
   // Redirects come back to the updater, which follows moves itself.
   fetchManifest: (url, {etag, packageName}) =>
     fetchMiniappJson(url, {...(etag ? {etag} : {}), packageForChallenge: packageName, redirect: "manual"}),

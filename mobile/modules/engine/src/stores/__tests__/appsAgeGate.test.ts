@@ -16,6 +16,7 @@ const launcherCalls: string[] = []
 /** Each package's installed rating; absent declares none. */
 const ratings = new Map<string, string>()
 mock.module("../../services/AppRegistry", () => ({
+  buildHardwareRequirements: () => [],
   default: {
     getInstalledMiniapps: async () => [],
     uninstall: mock(async () => Res.ok(undefined)),

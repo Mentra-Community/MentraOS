@@ -19,7 +19,8 @@
  *    - a temporary one within the domain is followed for this check only;
  *    - one to another domain, or away from HTTPS, is a failure.
  * 3. Hands a newer release the phone can run to the shared installer, downloading the ZIP with the same challenge
- *    rule.
+ *    rule. An idle miniapp updates silently. A running one is asked about when the release would start with the
+ *    glasses paired now (the installer checks again right before asking); otherwise it updates once it stops.
  */
 import {
   MINIAPP_REGISTRY_STATUS_MAX_ENTRIES,
@@ -86,6 +87,8 @@ export interface MiniappUrlUpdaterDependencies {
   firstPartyUrl(packageName: string): string | undefined
   hasDevelopmentSelection(packageName: string): boolean
   compatibilityPolicy(): MiniappVersionPolicy | null
+  /** Whether a release declaring these `hardwareRequirements` would pass the launch gate with the glasses paired now. */
+  launchesWithPairedGlasses(hardwareRequirements: unknown, packageName: string): boolean
   /**
    * `miniapp.json`, conditional on `etag`, answering a sign-in challenge for `packageName` only, and answering a
    * redirect with its `location` instead of following it (`fetchMiniappJson` with `redirect: "manual"`). Throws
@@ -211,14 +214,16 @@ interface StoredRegistryStatus {
 const PERMANENT_REDIRECTS = new Set([301, 308])
 
 /**
- * Background checks are silent: a running miniapp's update waits until it
- * stops. Only a check of a miniapp a person just opened asks about it.
+ * Every check, in the background or of a miniapp a person just opened, asks
+ * about a running miniapp's update when its restart can succeed; after Not
+ * now it asks again only once the miniapp is opened.
  */
 export class MiniappUrlUpdater {
   private readonly manifests = new Map<string, CachedManifest>()
   private readonly backoff = new Map<string, Backoff>()
   private readonly lastCheckedAt = new Map<string, number>()
-  private readonly inFlight = new Map<string, {session: number; ask: boolean; check: Promise<void>}>()
+  /** Each check in flight, and `asking`: settled once it waits for the person's answer to its update prompt. */
+  private readonly inFlight = new Map<string, {session: number; check: Promise<void>; asking: Promise<void>}>()
   /** The kept status answer: undefined until read. */
   private status: StoredRegistryStatus | null | undefined
   /** The refresh in flight, and the Core it asks. */
@@ -233,47 +238,48 @@ export class MiniappUrlUpdater {
     return miniappUpdateUrl(packageName, identity, this.deps)
   }
 
-  /** Check every installed miniapp, one at a time. A pass ends with its engine session. */
+  /**
+   * Check every installed miniapp, one at a time. A pass ends with its engine session, and moves on from a check
+   * that waits for the person's answer.
+   */
   async checkAll(): Promise<void> {
     const session = this.deps.installSession()
     const packages = await this.deps.installedPackages()
     for (const packageName of packages) {
       if (this.deps.installSession() !== session) return
-      await this.check(packageName, session)
+      const entry = this.start(packageName, session)
+      await Promise.race([entry.check, entry.asking])
     }
   }
 
-  /**
-   * Check a miniapp a person just opened, unless it was checked moments ago.
-   * The update of an open miniapp is staged and asked about.
-   */
+  /** Check a miniapp a person just opened, unless it was checked moments ago. */
   checkOpened(packageName: string): Promise<void> {
-    // A silent check in flight has not decided yet; the open follows it.
-    const last = this.inFlight.has(packageName) ? undefined : this.lastCheckedAt.get(packageName)
+    const last = this.lastCheckedAt.get(packageName)
     if (last !== undefined && this.deps.now() - last < OPEN_CHECK_INTERVAL_MS) return Promise.resolve()
-    return this.check(packageName, this.deps.installSession(), {ask: true})
+    return this.check(packageName)
   }
 
-  /**
-   * Check one miniapp. Checks of it during the same engine session share one
-   * request; a check that asks follows a silent one already in flight.
-   */
-  check(packageName: string, session = this.deps.installSession(), {ask = false}: {ask?: boolean} = {}): Promise<void> {
+  /** Check one miniapp. Checks of it during the same engine session share one request. */
+  check(packageName: string, session = this.deps.installSession()): Promise<void> {
+    return this.start(packageName, session).check
+  }
+
+  private start(packageName: string, session: number): {check: Promise<void>; asking: Promise<void>} {
     const running = this.inFlight.get(packageName)
-    if (running?.session === session) {
-      if (running.ask || !ask) return running.check
-      const askAfter = () => this.check(packageName, session, {ask})
-      return running.check.then(askAfter, askAfter)
-    }
-    const entry = {session, ask, check: Promise.resolve()}
-    entry.check = this.run(packageName, session, ask).finally(() => {
+    if (running?.session === session) return running
+    let onAsking = () => {}
+    const asking = new Promise<void>((resolve) => {
+      onAsking = resolve
+    })
+    const entry = {session, asking, check: Promise.resolve()}
+    entry.check = this.run(packageName, session, onAsking).finally(() => {
       if (this.inFlight.get(packageName) === entry) this.inFlight.delete(packageName)
     })
     this.inFlight.set(packageName, entry)
-    return entry.check
+    return entry
   }
 
-  private async run(packageName: string, session: number, ask: boolean): Promise<void> {
+  private async run(packageName: string, session: number, onAsking: () => void): Promise<void> {
     // An install started in an ended session must not activate.
     const isCancelled = () => this.deps.installSession() !== session
     if (isCancelled()) return
@@ -413,7 +419,9 @@ export class MiniappUrlUpdater {
         expectedBundleSha256: manifest.bundle.sha256,
         compatibilityPolicy: policy,
         onlyIfStopped: true,
-        askIfRunning: ask,
+        // Not asked, a running miniapp's update waits without downloading.
+        askIfRunning: this.deps.launchesWithPairedGlasses(manifest.hardwareRequirements, packageName),
+        onAsking,
         isCancelled,
         beforeActivate: () => {
           if (this.deps.hasDevelopmentSelection(packageName)) {

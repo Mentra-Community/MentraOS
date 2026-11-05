@@ -61,6 +61,8 @@ let warnings: string[]
 let session: number
 let hostVersion: string
 let duringInstall: ((options: ReleaseInstallOptions) => void) | undefined
+let glassesLaunch: boolean
+let glassesAsked: unknown[]
 let requireRegistry: boolean
 let core: string | null
 let statusStore: Map<string, string>
@@ -100,6 +102,10 @@ function updaterDeps(): ConstructorParameters<typeof MiniappUrlUpdater>[0] {
       hostVersion,
       supportedSdkRange: ">=0.3.0 <4.0.0",
     }),
+    launchesWithPairedGlasses: (hardwareRequirements) => {
+      glassesAsked.push(hardwareRequirements)
+      return glassesLaunch
+    },
     fetchManifest: async (url, {etag}) => {
       fetched.push({url, etag})
       const next = responses.shift()
@@ -169,6 +175,8 @@ beforeEach(() => {
   session = 1
   hostVersion = "3.3.0"
   duringInstall = undefined
+  glassesLaunch = true
+  glassesAsked = []
   requireRegistry = true
   core = "https://core.example.com"
   statusStore = new Map()
@@ -253,24 +261,35 @@ describe("updates from a miniapp's own URL", () => {
       expectedVersion: "1.1.0",
       expectedBundleSha256: sha,
       onlyIfStopped: true,
-      askIfRunning: false,
+      askIfRunning: true,
       releaseIdentity: {source: "url", sourceUrl, bundleSha256: sha},
     })
     expect(kept).toEqual([{packageName: pkg, versions: ["1.1.0", "1.0.0"]}])
   })
 
-  test("only a miniapp a person opens is asked about; every other check is silent", async () => {
-    responses = [served(manifest("1.1.0")), served(manifest("1.1.0"))]
+  test("background checks and opens alike ask about a running miniapp whose release launches with the paired glasses", async () => {
+    responses = [served(manifest("1.1.0", {hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}]}))]
+    responses.push(responses[0]!)
     installError = new RunningError("running")
     const u = updater()
-    await u.check(pkg)
+    await u.checkAll()
     await u.checkOpened(pkg)
-    expect(installs.map((install) => install.options.askIfRunning)).toEqual([false, true])
+    expect(installs.map((install) => install.options.askIfRunning)).toEqual([true, true])
+    expect(glassesAsked).toEqual([[{type: "CAMERA", level: "REQUIRED"}], [{type: "CAMERA", level: "REQUIRED"}]])
   })
 
-  test("an open during a background check of the same miniapp checks again so it can ask", async () => {
+  test("a release the paired glasses can't launch is not asked about: it waits for the miniapp to stop", async () => {
+    glassesLaunch = false
+    responses = [served(manifest("1.1.0"))]
     installError = new RunningError("running")
-    responses = [served(manifest("1.1.0"), {etag: '"v2"'}), {status: 304, url: `${sourceUrl}miniapp.json`}]
+    await updater().checkAll()
+    expect(installs.map((install) => install.options.askIfRunning)).toEqual([false])
+    expect(warnings).toHaveLength(0)
+  })
+
+  test("an open during a background check of the same miniapp shares it", async () => {
+    installError = new RunningError("running")
+    responses = [served(manifest("1.1.0"), {etag: '"v2"'})]
     const u = updater()
     let opened: Promise<void> | undefined
     duringInstall = () => {
@@ -279,7 +298,39 @@ describe("updates from a miniapp's own URL", () => {
     }
     await u.checkAll()
     await opened
-    expect(installs.map((install) => install.options.askIfRunning)).toEqual([false, true])
+    expect(fetched).toHaveLength(1)
+    expect(installs).toHaveLength(1)
+  })
+
+  test("a pass moves on while a prompt waits for the person's answer", async () => {
+    const notes = "com.mentra.notes"
+    active = {[pkg]: "1.0.0", [notes]: "1.0.0"}
+    identities = {[pkg]: {source: "bundled_asset"}, [notes]: {source: "bundled_asset"}}
+    responses = [
+      served(manifest("1.1.0")),
+      served(manifest("1.1.0", {packageName: notes, bundle: {url: `${notes}-1.1.0.zip`, sha256: sha}}), {
+        url: `${host}${notes}/miniapp.json`,
+      }),
+    ]
+    let answer: () => void = () => {}
+    const u = new MiniappUrlUpdater({
+      ...updaterDeps(),
+      install: async (bundleUrl, options) => {
+        installs.push({bundleUrl, options})
+        if (options.expectedPackageName === pkg) {
+          options.onAsking?.()
+          await new Promise<void>((resolve) => {
+            answer = resolve
+          })
+        }
+        active[options.expectedPackageName] = options.expectedVersion
+      },
+    })
+    await u.checkAll()
+    expect(active).toEqual({[pkg]: "1.0.0", [notes]: "1.1.0"})
+    answer()
+    await u.check(pkg)
+    expect(active[pkg]).toBe("1.1.0")
   })
 
   test("a running miniapp's waiting update is checked again the next time it opens, even within a minute", async () => {

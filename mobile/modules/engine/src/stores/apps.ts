@@ -21,7 +21,7 @@ import {DeviceTypes} from "../types/enums"
 import {getModelCapabilities} from "../types/hardware"
 import {HardwareCompatibility, type CompatibilityResult} from "../utils/hardware/hardware"
 import {storage} from "../utils/storage/storage"
-import appRegistry, {type UninstallOptions} from "../services/AppRegistry"
+import appRegistry, {buildHardwareRequirements, type UninstallOptions} from "../services/AppRegistry"
 import localDisplayManager from "../services/LocalDisplayManager"
 import {fleetEvents} from "../services/fleet/fleetEvents"
 import {islandNotifications} from "../services/NotificationsEmitter"
@@ -242,6 +242,26 @@ const startStopApp = async (app: ClientApp, status: boolean): Promise<void> => {
   }
 }
 
+/** What the paired glasses (or none) have: what each app's `compatibility`, and so the gate in `start()`, checks. */
+function pairedGlassesCapabilities() {
+  const defaultWearable =
+    (useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key) as DeviceTypes | undefined) ||
+    DeviceTypes.NONE
+  return getModelCapabilities(defaultWearable)
+}
+
+/**
+ * Whether a release declaring these `hardwareRequirements` (its `miniapp.json`'s) would pass the hardware gate in
+ * `start()` with the glasses paired now.
+ */
+export function launchesWithPairedGlasses(hardwareRequirements: unknown, packageName: string): boolean {
+  const requirements = buildHardwareRequirements(
+    hardwareRequirements as Parameters<typeof buildHardwareRequirements>[0],
+    packageName,
+  )
+  return HardwareCompatibility.checkCompatibility(requirements, pairedGlassesCapabilities()).isCompatible
+}
+
 /**
  * Build the final `apps` array for the store from the installed/offline app
  * source. Pure — same inputs -> same outputs.
@@ -261,10 +281,7 @@ function projectApps(previousState: AppStatusState, localApps: ClientApp[]): Cli
     previousByPackage.set(oldApp.packageName, oldApp)
   }
 
-  const defaultWearable =
-    (useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key) as DeviceTypes | undefined) ||
-    DeviceTypes.NONE
-  const capabilities = getModelCapabilities(defaultWearable)
+  const capabilities = pairedGlassesCapabilities()
 
   // Single pass: dedupe → screenshot carry-over → compat → hidden, all into
   // fresh objects. The previous in-place mutation re-used object references

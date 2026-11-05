@@ -268,9 +268,10 @@ export interface InstallBundleOptions {
    * Runs once the bundle is downloaded, verified, checked against the signer,
    * version and compatibility rules, and unpacked, before the serialized
    * activation. It may wait (for example for the user's consent) without
-   * holding up other installs. Throwing discards the unpacked files.
+   * holding up other installs. Throwing discards the unpacked files. It gets
+   * the hardware requirements the staged release's own manifest declares.
    */
-  whenStaged?: () => Promise<void>
+  whenStaged?: (staged: {hardwareRequirements: HardwareRequirement[]}) => Promise<void>
   /**
    * Synchronous check run inside the serialized install, after extraction and
    * immediately before installed files change. Throwing aborts the install
@@ -637,7 +638,7 @@ interface InstalledBundle {
 
 interface UnpackOptions {
   onProgress?: InstallBundleOptions["onProgress"]
-  whenStaged?: InstallBundleOptions["whenStaged"]
+  whenStaged?: () => Promise<void>
 }
 
 /**
@@ -1556,7 +1557,11 @@ class AppRegistry {
         },
         validateTrust,
         adoptExisting,
-        {onProgress: opts?.onProgress, whenStaged: opts?.whenStaged},
+        {
+          onProgress: opts?.onProgress,
+          whenStaged:
+            opts?.whenStaged && (() => opts.whenStaged!({hardwareRequirements: manifest.hardwareRequirements})),
+        },
       )
     } finally {
       try {

@@ -1,5 +1,5 @@
 import type {FleetAssignmentReason} from "@mentra/cloud-protocol"
-import {useAppStatusStore} from "../stores/apps"
+import {launchesWithPairedGlasses, useAppStatusStore} from "../stores/apps"
 import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
 import {installWithRuntimeReload, MiniappRunningError} from "../utils/storeInstallRuntime"
 import appRegistry, {
@@ -53,8 +53,8 @@ export interface ReleaseInstallOptions extends InstallBundleOptions {
   onlyIfStopped?: boolean
   /**
    * With `onlyIfStopped`: when the miniapp is running, stage the release and
-   * ask whether to update now. Only for a miniapp a person just opened.
-   * Declined or unshown prompts defer.
+   * ask whether to update now, if the staged release can start with the
+   * glasses paired now. Declined, unshown or unaskable prompts defer.
    */
   askIfRunning?: boolean
   /**
@@ -94,9 +94,9 @@ export class MiniappInstallCancelledError extends Error {
  *   updating, and launches wait only while its files change. A launch before
  *   then wins, and the update waits for the miniapp to stop.
  * - Automatic updates of a running miniapp with `askIfRunning` download,
- *   verify and unpack first, then ask; on Update the miniapp closes, the
- *   release commits, and the miniapp restarts silently (not at all when the
- *   glasses it needs are not connected).
+ *   verify and unpack first, then ask if the staged release's hardware
+ *   requirements pass the launch gate with the glasses paired now; on Update
+ *   the miniapp closes, the release commits, and the miniapp restarts silently.
  * - A managed first install (`firstInstall`) of a package that is not
  *   installed shows nothing and holds launches only while its files change.
  */
@@ -244,13 +244,18 @@ async function installRunningUpdate(
   try {
     await install({
       ...options,
-      whenStaged: async () => {
+      whenStaged: async (staged) => {
         assertCurrent()
-        await options.whenStaged?.()
+        await options.whenStaged?.(staged)
         // The download, signer, version and compatibility checks have passed
         // and the files are unpacked; nothing is reserved yet. If the user
         // closed the miniapp meanwhile, it updates like an idle one.
         if (miniappLauncher.isRunning(packageName)) {
+          // Ask only if the restart after Update can start the new release with
+          // the glasses paired now; otherwise it installs once the miniapp stops.
+          if (!launchesWithPairedGlasses(staged.hardwareRequirements, packageName)) {
+            throw new MiniappRunningError(packageName)
+          }
           if (canShowRunningUpdatePrompt(packageName)) onAsking?.()
           const answer = await requestRunningUpdatePrompt({packageName, displayName, version})
           if (answer !== "update") throw new MiniappRunningError(packageName)
