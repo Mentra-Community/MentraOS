@@ -26,9 +26,11 @@ export function SignInView({ auth, origin, interactionId, clientName = "", initi
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
+    // What the fields hold, which is also what a password manager or an assistive tool filled in without typing.
+    const fields = new FormData(event.currentTarget);
     setBusy(true);
     setError(null);
-    const result = await signInWithEmail(auth, email.trim(), password);
+    const result = await signInWithEmail(auth, String(fields.get("email")).trim(), String(fields.get("password")));
     if (result.ok) {
       setPassword("");
       onSignedIn();
