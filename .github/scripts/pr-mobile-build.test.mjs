@@ -131,10 +131,13 @@ test("reuse requires exact fingerprint and checksum metadata, newest first", () 
         {...asset, id: 2},
         {...asset, id: 3, label: "old"},
         {...asset, id: 4, name: "asg-pr-123-abcdef0.apk"},
+        // A publication's receipt-named APK, and still the older mobile-pr-* copies until they age out.
+        {...asset, id: 5, name: `mentra-android-pr-123-${"c".repeat(40)}-9-1.apk`},
+        {...asset, id: 6, name: `mentra-android-nimo-diagnostic-pr-123-${"c".repeat(40)}-9-1.apk`},
       ],
       fp,
     ).map((a) => a.id),
-    [2, 1],
+    [5, 2, 1],
   )
 })
 

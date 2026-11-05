@@ -205,6 +205,9 @@ async function publishing(run, failApk = false, diagnostic = false) {
       assert.equal(command, process.execPath)
       const name = args[args.indexOf("--name") + 1]
       assert.equal(args.includes("--replace"), false)
+      // Only the ordinary APK carries its fingerprint, which later builds reuse it by.
+      assert.equal(args.includes("--fingerprint") && args[args.indexOf("--fingerprint") + 1],
+        name.endsWith(".apk") && !diagnostic && fingerprint)
       calls.push(name)
       if (failApk && name.endsWith(".apk")) throw new Error("APK upload failed")
       return ""
@@ -219,6 +222,7 @@ test("immutable signed APK publication precedes the per-attempt receipt, with no
     const name = androidReceiptName(42, head, 100, 2)
     assert.deepEqual(calls, [name.replace(/\.json$/, ".apk"), name])
     assert.equal(receipt.baseSha, base)
+    assert.match(receipt.packagingFingerprint, /^[a-f0-9]{64}$/)
     assert.equal(receipt.artifacts.android.size, 19)
     const raw = await readFile(path.join(dir, name), "utf8")
     assert.equal(raw.includes("unrelated"), false)
@@ -285,6 +289,7 @@ test("trusted dispatch publishes the pinned PR merge and backend rather than the
     assert.equal(receipt.app.buildSha, merge)
     assert.equal(receipt.headSha, head)
     assert.equal(receipt.baseSha, base)
+    assert.match(receipt.packagingFingerprint, /^[a-f0-9]{64}$/)
     assert.equal(receipt.app.backend, "staging")
     assert.equal(receipt.app.otaManifestUrl, ota)
     assert.equal(validateAndroidReceipt(receipt, {pr: 42, sha: head, runId: 100, attempt: 2}), receipt.artifacts)

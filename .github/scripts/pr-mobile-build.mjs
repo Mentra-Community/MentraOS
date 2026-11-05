@@ -53,6 +53,33 @@ export const MOBILE_PR_PATHS = [
 
 const packagingKeys = new Set(["EXPO_PUBLIC_ASG_OTA_VERSION_URL"])
 
+// What turns a compiled app into a PR publication: its packaging, installer
+// and receipt. A receipt records their fingerprint, and a later head reuses the
+// whole publication only when they are unchanged.
+export const PACKAGING_PATHS = {
+  android: [
+    ".github/scripts/pr-android-artifacts.mjs",
+    ".github/scripts/pr-android-artifacts-diagnostic.mjs",
+    ".github/scripts/repackage-pr-apk.py",
+    ".github/scripts/pr_mobile_config.py",
+  ],
+  ios: [
+    ".github/scripts/pr-ios-artifacts.mjs",
+    ".github/scripts/pr-ios-artifacts-install.mjs",
+    ".github/scripts/pr_mobile_config.py",
+    "mobile/ci/pr-ios",
+  ],
+}
+
+export function packagingFingerprint(platform, exec = execFileSync) {
+  const tree = exec("git", ["ls-tree", "-r", "HEAD", "--", ...PACKAGING_PATHS[platform]], {
+    cwd: fileURLToPath(new URL("../..", import.meta.url)),
+    encoding: "utf8",
+  })
+  if (!tree.trim()) throw new Error(`No ${platform} packaging sources in HEAD`)
+  return hash(JSON.stringify({schemaVersion: 1, platform, tree}))
+}
+
 /** A PR into staging or main uses staging services; every other PR keeps dev.
  * The backend is compiled in and fingerprinted, so reuse never crosses backends. */
 export const prBackend = (baseRef) => (baseRef === "staging" || baseRef === "main" ? "staging" : "dev")
@@ -80,9 +107,12 @@ export function fingerprintMobile({tree, env, tools}) {
   return hash(JSON.stringify({schemaVersion: 1, tree, embeddedEnv, tools}))
 }
 
+// An Android publication's receipt-named APK; mobile-pr-* copies were published before it carried the fingerprint.
 export function candidateAssets(assets, fingerprint, platform = "android") {
   const name =
-    platform === "ios" ? /^mentra-ios-iphone-pr-\d+-[a-f0-9]{40}-\d+-\d+\.ipa$/ : /^mobile-pr-\d+-[a-f0-9]{7}\.apk$/
+    platform === "ios"
+      ? /^mentra-ios-iphone-pr-\d+-[a-f0-9]{40}-\d+-\d+\.ipa$/
+      : /^(?:mentra-android-pr-\d+-[a-f0-9]{40}-\d+-\d+|mobile-pr-\d+-[a-f0-9]{7})\.apk$/
   return assets
     .filter(
       (asset) => name.test(asset.name) && new RegExp(`^mobile-v1:${fingerprint}:[a-f0-9]{64}$`).test(asset.label ?? ""),
