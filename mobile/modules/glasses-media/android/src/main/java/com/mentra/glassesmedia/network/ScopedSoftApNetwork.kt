@@ -195,7 +195,8 @@ class ScopedSoftApNetwork(private val context: Context) {
         }
 
     /**
-     * Join [ssid] and block until it is usable or the request fails.
+     * Join [ssid] and block until it is usable or the request fails. An Unavailable request is
+     * made once more after a short settle; every caller gets that retry.
      *
      * @throws ScopedNetworkError on permission denial, timeout, or an unavailable network
      */
@@ -221,6 +222,20 @@ class ScopedSoftApNetwork(private val context: Context) {
             throw ScopedNetworkError.VpnCapturesApp()
         }
 
+        return try {
+            requestOnce(ssid, passphrase, listener)
+        } catch (error: ScopedNetworkError.Unavailable) {
+            // Leaving the phone's current Wi-Fi (office AP, a phone hotspot) can make the first
+            // specifier fail as Unavailable: Samsung assoc-rejects the glasses SoftAP (status 1025)
+            // after dropping the old network. The same request from the now idle STA succeeds.
+            SoftApTrace.stage("scoped_join_unavailable_retry", "ssid" to ssid, "settleMs" to UNAVAILABLE_RETRY_SETTLE_MS)
+            Thread.sleep(UNAVAILABLE_RETRY_SETTLE_MS)
+            requestOnce(ssid, passphrase, listener)
+        }
+    }
+
+    @Throws(ScopedNetworkError::class)
+    private fun requestOnce(ssid: String, passphrase: String, listener: Listener?): Network {
         release()
 
         val requestSpec = ScopedNetworkRequestSpec.forSoftAp(ssid, passphrase)
@@ -546,12 +561,8 @@ class ScopedSoftApNetwork(private val context: Context) {
         /** Radio + scan need a beat after `isWifiEnabled` flips before specifier can see the AP. */
         const val WIFI_ENABLE_SETTLE_MS = 1_500L
 
-        /**
-         * After `WifiNetworkSpecifier` returns Unavailable while leaving another AP (office Wi-Fi
-         * or a phone hotspot), Samsung has already dropped that network. A second specifier from
-         * an idle STA is the join that succeeds; this is the gap before we issue it.
-         */
-        const val UNAVAILABLE_RETRY_SETTLE_MS = 2_000L
+        /** The gap before [join] asks again after an Unavailable while leaving another AP. */
+        private const val UNAVAILABLE_RETRY_SETTLE_MS = 2_000L
 
         /**
          * dnsmasq (DHCP/DNS) on the hotspot, then the glasses' local HTTP servers. Any answer —

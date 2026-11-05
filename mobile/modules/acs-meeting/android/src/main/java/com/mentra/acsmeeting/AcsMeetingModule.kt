@@ -167,18 +167,6 @@ class AcsMeetingModule : Module() {
           // default route with no internet, hanging the ACS token mint on DNS.
           com.mentra.glassesmedia.trace.SoftApTrace.failure("wifi_disabled_at_join")
           throw error
-        } catch (error: ScopedNetworkError.Unavailable) {
-          // The first specifier steals wlan0 from the phone's current Wi-Fi (iPhone X, office
-          // AP). Samsung then assoc-rejects the glasses SoftAP (status 1025) and fires
-          // onUnavailable. After that request dies the STA is idle — the same join from idle
-          // is what succeeded at 17:43:20 after a failed switch.
-          com.mentra.glassesmedia.trace.SoftApTrace.stage(
-            "scoped_join_unavailable_retry",
-            "ssid" to ssid,
-            "settleMs" to ScopedSoftApNetwork.UNAVAILABLE_RETRY_SETTLE_MS,
-          )
-          Thread.sleep(ScopedSoftApNetwork.UNAVAILABLE_RETRY_SETTLE_MS)
-          scoped.join(ssid, passphrase, listener)
         }
         scoped.localIpv4() ?: throw IllegalStateException("scoped network has no IPv4 address")
       }

@@ -57,13 +57,7 @@ class GlassesMediaRelayModule : Module() {
             override fun onAvailable(network: android.net.Network, localIpv4: String) = Unit
             override fun onLost(error: ScopedNetworkError) { emit(id, "failed", "Glasses hotspot connection was lost") }
           }
-          try {
-            scoped.join(ssid, password, listener)
-          } catch (error: ScopedNetworkError.Unavailable) {
-            // Same recovery as ACS: the first specifier can reject while leaving office Wi-Fi.
-            Thread.sleep(ScopedSoftApNetwork.UNAVAILABLE_RETRY_SETTLE_MS)
-            scoped.join(ssid, password, listener)
-          }
+          scoped.join(ssid, password, listener)
           ScopedNetworkChangeDetector.registerRelayNetwork(scoped)
           val outgoing = PhoneWhipPublisher(context, endpoint, options["captureAudio"] != false,
             (options["bitrate"] as? Number)?.toInt() ?: 2_000_000) { state, reason -> emit(id, state, reason) }
