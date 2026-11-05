@@ -12,7 +12,8 @@ jest.mock("../../modules/engine/src/services/OtaArtifactDownloader", () => ({
 }))
 jest.mock("../../modules/engine/src/services/asg/localNetworkTransport", () => ({
   localNetworkErrorDetails: jest.fn(() => ({
-    native: {domain: "NEHotspotConfigurationErrorDomain", code: 8, completed: true},
+    code: "ERR_HOTSPOT_JOIN",
+    message: "Hotspot join timed out",
   })),
   localNetworkTransport: {connect: jest.fn(async () => "192.168.43.2"), disconnect: jest.fn(async () => {})},
 }))
@@ -24,7 +25,6 @@ jest.mock("@mentra/bluetooth-sdk/ota-transport", () => ({
       manifestUrl: "http://192.168.43.2/version.json",
     })),
     stop: jest.fn(async () => {}),
-    waitForWifiAddress: jest.fn(async () => "192.168.43.2"),
   },
 }))
 const downloader = jest.requireMock("../../modules/engine/src/services/OtaArtifactDownloader")
@@ -146,7 +146,7 @@ it("does not publish an OTA URL when the incoming listener fails after associati
 })
 
 it("retains terminal native join facts and does not repeat downloads or enable requests", async () => {
-  const nativeFailure = Object.assign(new Error("internal error"), {code: "unableToConnect"})
+  const nativeFailure = Object.assign(new Error("Hotspot join timed out"), {code: "ERR_HOTSPOT_JOIN"})
   bluetoothSdkMock.setHotspotState.mockResolvedValueOnce({
     type: "hotspot_status",
     state: "enabled",
@@ -159,12 +159,9 @@ it("retains terminal native join facts and does not repeat downloads or enable r
   expect(failure).toBeInstanceOf(HotspotOtaTransportError)
   expect(JSON.parse(JSON.stringify(failure))).toMatchObject({
     code: "hotspot_join_failed",
-    nativeError: {
-      native: {domain: "NEHotspotConfigurationErrorDomain", code: 8, completed: true},
-    },
+    nativeError: {code: "ERR_HOTSPOT_JOIN", message: "Hotspot join timed out"},
   })
   expect(localNetwork.connect).toHaveBeenCalledWith(expect.any(Symbol), "A", "password", {
-    retryIosInternalError: true,
     assertCurrent: expect.any(Function),
     gateway: "192.168.43.1",
     purpose: "incoming-server",

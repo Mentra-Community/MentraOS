@@ -144,8 +144,7 @@ class HotspotOtaTransport {
       onProgress?.({phase: "joining_hotspot"})
       assertCurrent()
       this.localNetworkRequested = true
-      const scopedAddress = await localNetworkTransport.connect(this.networkOwner, hotspot.ssid, hotspot.password, {
-        retryIosInternalError: true,
+      const localAddress = await localNetworkTransport.connect(this.networkOwner, hotspot.ssid, hotspot.password, {
         assertCurrent,
         gateway: hotspot.localIp,
         // The glasses download from our listener; OTA never calls the Gallery server.
@@ -153,18 +152,6 @@ class HotspotOtaTransport {
       })
       this.localNetworkConnected = true
       assertCurrent()
-      let localAddress = scopedAddress
-      if (Platform.OS === "ios" && !localAddress) {
-        try {
-          localAddress = await otaServer.waitForWifiAddress(hotspot.localIp, 15_000)
-          assertCurrent()
-        } catch (error) {
-          throw new HotspotOtaTransportError(
-            "hotspot_join_failed",
-            error instanceof Error ? error.message : String(error),
-          )
-        }
-      }
       const artifactPaths = Object.fromEntries(this.prepared.map((artifact) => [artifact.sha256, artifact.filePath]))
       // Start exactly one native listener to learn its selected port, then atomically replace
       // the placeholder with the immutable rewritten manifest before ota_start is sent.

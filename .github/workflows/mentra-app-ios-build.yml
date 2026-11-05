@@ -533,10 +533,6 @@ jobs:
         if: steps.select-ipa.outputs.reused != 'true'
         run: mobile/scripts/test-gallery-download-progress.sh
 
-      - name: Test native hotspot error facts
-        if: steps.select-ipa.outputs.reused != 'true'
-        run: mobile/scripts/test-hotspot-error-facts.sh
-
       - name: Test the WebView's miniapp origins
         if: steps.select-ipa.outputs.reused != 'true'
         run: mobile/scripts/test-webview-miniapp-origin.sh

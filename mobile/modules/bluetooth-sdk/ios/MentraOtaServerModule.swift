@@ -31,10 +31,6 @@ public class MentraOtaServerModule: Module {
             self.stopOtaServerInternal()
         }
 
-        AsyncFunction("waitForWifiAddress") { (gateway: String, timeoutMs: Int) -> String in
-            try await self.waitForWifiAddress(gateway: gateway, timeoutMs: timeoutMs)
-        }
-
         AsyncFunction("downloadArtifact") { (source: String, destination: String) in
             try await self.artifactDownloader.download(from: source, to: destination)
         }
@@ -95,18 +91,6 @@ public class MentraOtaServerModule: Module {
         throw OtaServerModuleError(
             "Could not start OTA server: \(lastError?.localizedDescription ?? "all ports unavailable")"
         )
-    }
-
-    private func waitForWifiAddress(gateway: String, timeoutMs: Int) async throws -> String {
-        let deadline = Date().addingTimeInterval(Double(max(timeoutMs, 0)) / 1000.0)
-        repeat {
-            if let address = LocalIPv4.wifiIPv4Address(matchingGateway: gateway) {
-                return address
-            }
-            try await Task.sleep(nanoseconds: 250_000_000)
-        } while Date() < deadline
-
-        throw OtaServerModuleError("The iPhone did not join the glasses hotspot subnet.")
     }
 
     private func stopOtaServerInternal() {

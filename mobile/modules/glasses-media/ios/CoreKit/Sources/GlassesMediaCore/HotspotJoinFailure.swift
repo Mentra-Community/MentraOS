@@ -13,6 +13,10 @@ public struct HotspotJoinFailure {
             code = "ERR_HOTSPOT_JOIN"
             // These messages are authored by the owned hotspot implementation, not NSError.
             message = String(local.message.filter { !$0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }.prefix(512))
+        } else if (error as NSError).domain == "NEHotspotConfigurationErrorDomain", (error as NSError).code == 7 {
+            // NEHotspotConfigurationError.userDenied: the person declined the join prompt.
+            code = "ERR_HOTSPOT_USER_DENIED"
+            message = "The glasses hotspot join was declined"
         } else {
             code = "ERR_HOTSPOT_NATIVE"
             let native = error as NSError

@@ -31,7 +31,6 @@ jest.mock("@mentra/bluetooth-sdk/ota-transport", () => ({
       manifestUrl: "http://192.168.43.2/version.json",
     })),
     stop: jest.fn(async () => {}),
-    waitForWifiAddress: jest.fn(async () => "192.168.43.2"),
   },
 }))
 

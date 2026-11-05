@@ -195,12 +195,12 @@ export function GalleryScreen() {
             {cancelable: false},
           )
           break
-        case "location_permission_required":
+        case "local_network_permission_required":
           showAlert(
-            "Location Access Required",
-            "The app needs location access to verify it joined your glasses’ Wi-Fi network. Enable it in Settings, then try syncing again.",
+            "Local Network Access Required",
+            "Allow Local Network access to sync with your glasses. If you denied it before, turn it on in Settings, or cancel the sync.",
             [
-              {text: "Cancel", style: "cancel"},
+              {text: "Cancel Sync", style: "cancel", onPress: () => void engine.gallery.cancel()},
               {text: "Open Settings", onPress: () => void SettingsNavigationUtils.openAppSettings()},
             ],
           )

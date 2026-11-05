@@ -12,7 +12,7 @@ export type GalleryNoticeCode =
   | "wifi_initializing"
   | "wifi_off"
   | "location_services_off"
-  | "location_permission_required"
+  | "local_network_permission_required"
   | "camera_roll_permission_required"
   | "connect_to_glasses"
 
