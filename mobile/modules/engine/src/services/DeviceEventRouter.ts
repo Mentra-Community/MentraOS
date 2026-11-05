@@ -32,6 +32,7 @@ import {useAppStatusStore} from "../stores/apps"
 import {retirePendingSelectionOnPromotion} from "./PairingIdentity"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
+import {reclaimLateHotspot} from "./GlassesHotspotLease"
 
 let subs: Array<{remove: () => void}> = []
 
@@ -104,6 +105,11 @@ export function startDeviceEventRouter(): void {
       // of hitting the previous network's stale glasses IP.
       asgCameraApi.setServer(localIp || "localhost", 8089)
       GlobalEventEmitter.emit("hotspot_status_change", {enabled, ssid, password, local_ip: localIp})
+      if (enabled) {
+        void reclaimLateHotspot((state) => BluetoothSdk.setHotspotState(state)).catch((error) =>
+          console.warn("[GlassesHotspot] Could not turn off the late hotspot", error),
+        )
+      }
     }),
   )
   subs.push(

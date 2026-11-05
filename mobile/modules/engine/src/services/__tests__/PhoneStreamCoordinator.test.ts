@@ -1294,6 +1294,25 @@ describe("managed relay ownership", () => {
     expect(setHotspotState).toHaveBeenCalledWith(false)
     expect(link.listenerCount()).toBe(0)
   })
+
+  test("a deferred hotspot shutdown is dropped once another owner holds the hotspot", async () => {
+    const {acquireGlassesHotspot} = await import("../GlassesHotspotLease")
+    const link = fakeLink()
+    const setHotspotState = mock(async () => ({state: "disabled"}))
+    bluetoothSdk.setHotspotState = setHotspotState
+    const coord = new PhoneStreamCoordinator({}, {linkSource: link.source})
+    await coord.startManaged("com.a", {ingest: "whip"})
+    link.set(false)
+    await coord.stop("com.a")
+    // Gallery takes the hotspot and enables its own AP before BLE returns.
+    const releaseGallery = acquireGlassesHotspot()
+    link.set(true)
+    await settle()
+    expect(stopStream).toHaveBeenCalledTimes(1)
+    expect(setHotspotState).not.toHaveBeenCalled()
+    expect(link.listenerCount()).toBe(0)
+    releaseGallery()
+  })
 })
 
 describe("relay stop while playback is warming up", () => {
