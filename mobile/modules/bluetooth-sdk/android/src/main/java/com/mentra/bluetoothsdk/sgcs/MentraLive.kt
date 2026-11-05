@@ -160,6 +160,18 @@ class MentraLive : SGCManager() {
         // Longer than the glasses' bounded relay of one report (BES logs, two file transfers,
         // the phone POST), so an unreleased name cannot be reused while its report is in flight.
         internal const val INCIDENT_RELAY_OWNERSHIP_MS = 10 * 60_000L
+        // The BES file arrives first and is older than the MTK ring. Hold it this long so the
+        // MTK log can be uploaded before it; if the MTK file never arrives, upload it anyway.
+        private const val BES_HOLD_MS = 30_000L
+        // A link lost mid-transfer leaves the MTK file incomplete with no terminal event, so stop
+        // waiting after the glasses' own 120 s limit on that transfer.
+        private const val BES_MTK_WAIT_MAX_MS = 150_000L
+        // The glasses delete a BES incident once they receive transfer_complete, so the phone
+        // owns the only copy afterward. Keep that copy on disk and retry the Cloud POST on this
+        // cadence until it is confirmed, surviving a connectivity outage or process death.
+        private const val BES_RETRY_MS = 60_000L
+        // Durable store for held BES logs whose Cloud upload has not yet been confirmed.
+        private const val BES_HELD_DIR = "MentraLive_HeldBes"
         private const val GATT_DISCONNECT_TIMEOUT_MS = 2_000L
         private const val MTU_CALLBACK_TIMEOUT_MS = 3_000L
         private val gattTeardownBarrier = MentraLiveGattTeardownBarrier()
@@ -801,6 +813,9 @@ class MentraLive : SGCManager() {
 
     /** Expected incident log relay files from glasses (B… firmware, L… logcat). */
     private val bleIncidentLogRelays = ConcurrentHashMap<String, BleIncidentLogRelay>()
+    private val heldBesLogs = ConcurrentHashMap<String, HeldBesLog>()
+    // Files with a resume attempt or retry pending, so a reconnect doesn't start a second one.
+    private val resumingBesFiles = ConcurrentHashMap.newKeySet<String>()
 
     // File packet reassembly buffer for handling fragmented BLE notifications
     // Android BLE stack delivers notifications in MTU-sized chunks (253 bytes with default MTU)
@@ -849,10 +864,22 @@ class MentraLive : SGCManager() {
             val fileBaseKey: String,
             val incidentId: String,
             val apiBaseUrl: String,
-            val kind: BleIncidentLogKind
+            val kind: BleIncidentLogKind,
+            val tokenOwner: String?
     ) {
         val reservedAtMs: Long = SystemClock.elapsedRealtime()
         var session: FileTransferSession? = null
+    }
+
+    /** BES bytes kept on the phone until the MTK log for the same report has been uploaded. */
+    private class HeldBesLog(
+            val relay: BleIncidentLogRelay,
+            val fileName: String,
+            val bytes: ByteArray,
+    ) {
+        val savedAtMs: Long = SystemClock.elapsedRealtime()
+        @Volatile var uploadStarted: Boolean = false
+        var flush: Runnable? = null
     }
 
     // Inner class to track incoming file transfers
@@ -5132,6 +5159,14 @@ class MentraLive : SGCManager() {
                     Bridge.log("LIVE: ⚠️ glasses_ready: sendCoreTokenToAsgClient threw: " + t)
                 }
 
+                // Finish any BES log upload that was acknowledged to the glasses but not yet
+                // confirmed by Cloud before a previous process ended.
+                try {
+                    resumePersistedBesUploads()
+                } catch (t: Throwable) {
+                    Bridge.log("LIVE: ⚠️ glasses_ready: resumePersistedBesUploads threw: " + t)
+                }
+
                 // Send stored user email for crash reporting
                 try {
                     sendStoredUserEmailToAsgClient()
@@ -6588,16 +6623,18 @@ class MentraLive : SGCManager() {
         if (coreToken.isNullOrBlank()) {
             throw BluetoothSdkException("core_token_unavailable", "Cannot request incident logs without the current Core access token.")
         }
+        // Logs only ever go to the signed-in Core: there is no default to fall back to.
+        val base = apiBaseUrl?.trim().orEmpty()
+        if (base.isEmpty()) {
+            throw BluetoothSdkException("core_url_unavailable", "Cannot request incident logs without the signed-in Core's URL.")
+        }
         val sessionGeneration = bleSessionGeneration.get()
         try {
-            var base = if (apiBaseUrl != null) apiBaseUrl.trim() else ""
-            if (base.isEmpty()) {
-                base = "https://api.mentra.glass"
-            }
             val bKey = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'B')
             val lKey = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'L')
-            val bRelay = BleIncidentLogRelay(bKey, incidentId, base, BleIncidentLogKind.FIRMWARE)
-            val lRelay = BleIncidentLogRelay(lKey, incidentId, base, BleIncidentLogKind.LOGCAT)
+            val tokenOwner = coreTokenOwner(coreToken)
+            val bRelay = BleIncidentLogRelay(bKey, incidentId, base, BleIncidentLogKind.FIRMWARE, tokenOwner)
+            val lRelay = BleIncidentLogRelay(lKey, incidentId, base, BleIncidentLogKind.LOGCAT, tokenOwner)
             reserveIncidentRelays(bRelay, lRelay)
 
             val auth = JSONObject()
@@ -6607,7 +6644,6 @@ class MentraLive : SGCManager() {
             val json = JSONObject()
             json.put("type", "upload_incident_logs")
             json.put("incidentId", incidentId)
-            json.put("apiBaseUrl", base)
             // Wake ASG with its current token before the upload command enters the same FIFO.
             if (!sendJson(auth, true, true, sessionGeneration) ||
                     sessionGeneration != bleSessionGeneration.get() ||
@@ -8777,6 +8813,7 @@ class MentraLive : SGCManager() {
 
         // Mark as killed to prevent reconnection attempts
         isKilled = true
+        clearHeldBesLogs()
         classicAudioServiceDiscovery.cancel()
         explicitConnectByName = false
         // The pairing state itself lives on in MentraLivePairingStateStore.
@@ -11529,13 +11566,138 @@ class MentraLive : SGCManager() {
             fileName: String,
             jsonUtf8: ByteArray
     ) {
+        handler.post {
+            // A different report now owns this name, so saving or confirming here would mark
+            // ITS file done. Drop the stale completion before it touches Cloud or the glasses.
+            val owner = bleIncidentLogRelays[relay.fileBaseKey]
+            if (owner != null && owner.incidentId != relay.incidentId) {
+                Log.w(TAG, "Dropping stale incident relay callback for " + relay.fileBaseKey)
+                return@post
+            }
+            if (relay.kind == BleIncidentLogKind.FIRMWARE) {
+                saveBesUntilMtkArrives(relay, fileName, jsonUtf8)
+            } else {
+                postIncidentLog(relay, fileName, jsonUtf8, 0) { success, _ ->
+                    finishMtkUpload(relay, fileName, success)
+                }
+            }
+        }
+    }
+
+    /**
+     * The glasses send the BES file first, then wait for transfer_complete before the MTK file.
+     * Keep the BES bytes on the phone and accept the transfer immediately so the MTK log can
+     * arrive and be uploaded first. The BES upload follows that POST.
+     */
+    private fun saveBesUntilMtkArrives(
+            relay: BleIncidentLogRelay,
+            fileName: String,
+            jsonUtf8: ByteArray,
+    ) {
+        val held = HeldBesLog(relay, fileName, jsonUtf8)
+        // The glasses drop their copy once they see this confirmation, so persist the bytes
+        // before acknowledging ownership. A process death or destroy() during the hold/upload
+        // then resumes from disk instead of stranding an already-acknowledged incident. With no
+        // durable copy, the glasses keep theirs and retry.
+        if (!persistHeldBes(held)) {
+            relay.session = null
+            sendTransferCompleteConfirmation(fileName, false)
+            return
+        }
+        val previous = heldBesLogs[relay.incidentId]
+        previous?.flush?.let { handler.removeCallbacks(it) }
+        val flush = Runnable { flushHeldBesIfMtkMissing(relay.incidentId) }
+        held.flush = flush
+        heldBesLogs[relay.incidentId] = held
+        handler.postDelayed(flush, BES_HOLD_MS)
+        sendTransferCompleteConfirmation(fileName, true)
+        Bridge.log("LIVE: Saved BES log until the MTK log is uploaded: " + relay.incidentId)
+    }
+
+    private fun mtkTransferInProgress(incidentId: String): Boolean {
+        for (relay in bleIncidentLogRelays.values) {
+            if (relay.incidentId != incidentId || relay.kind != BleIncidentLogKind.LOGCAT) continue
+            val session = relay.session ?: return false
+            return !session.isComplete
+        }
+        return false
+    }
+
+    private fun flushHeldBesIfMtkMissing(incidentId: String) {
+        val held = heldBesLogs[incidentId] ?: return
+        if (held.uploadStarted) return
+        val waited = SystemClock.elapsedRealtime() - held.savedAtMs
+        if (waited < BES_MTK_WAIT_MAX_MS && mtkTransferInProgress(incidentId)) {
+            val again = Runnable { flushHeldBesIfMtkMissing(incidentId) }
+            held.flush = again
+            handler.postDelayed(again, BES_HOLD_MS)
+            return
+        }
+        startHeldBesUpload(incidentId)
+    }
+
+    private fun finishMtkUpload(relay: BleIncidentLogRelay, fileName: String, success: Boolean) {
+        if (!success) {
+            // Keep the saved BES bytes. The glasses retry the MTK file; it is uploaded first.
+            relay.session = null
+            sendTransferCompleteConfirmation(fileName, false)
+            return
+        }
+        sendTransferCompleteConfirmation(fileName, true)
+        // Release only after the glasses' confirmation is queued, so a report that reuses
+        // this name is ordered behind the owner's completion.
+        bleIncidentLogRelays.remove(relay.fileBaseKey, relay)
+        startHeldBesUpload(relay.incidentId)
+    }
+
+    private fun startHeldBesUpload(incidentId: String) {
+        val held = heldBesLogs[incidentId] ?: return
+        if (held.uploadStarted) return
+        held.uploadStarted = true
+        held.flush?.let { handler.removeCallbacks(it) }
+        held.flush = null
+        // transfer_complete already told the glasses this file arrived, so they will not resend
+        // it. Retry a failed Cloud POST on the phone.
+        postIncidentLog(held.relay, held.fileName, held.bytes, 1) { success, status ->
+            val rejected = IncidentLogBleUploadService.isPermanentRejection(status)
+            if (rejected) {
+                Log.e(TAG, "Cloud refused the BES log for " + incidentId + ": HTTP " + status)
+            }
+            if (success || rejected) {
+                heldBesLogs.remove(incidentId, held)
+                bleIncidentLogRelays.remove(held.relay.fileBaseKey, held.relay)
+                deletePersistedBes(incidentId)
+            } else {
+                Log.e(TAG, "BES log upload failed after the MTK log for " + incidentId)
+                // The flush timer is gone and the MTK relay is released, so nothing else will
+                // retry this acknowledged artifact. Keep the durable copy and schedule another
+                // attempt until Cloud confirms it.
+                held.uploadStarted = false
+                val retry = Runnable { startHeldBesUpload(incidentId) }
+                held.flush = retry
+                handler.postDelayed(retry, BES_RETRY_MS)
+            }
+        }
+    }
+
+    private fun postIncidentLog(
+            relay: BleIncidentLogRelay,
+            fileName: String,
+            jsonUtf8: ByteArray,
+            attemptsLeft: Int,
+            onDone: (Boolean, Int) -> Unit,
+    ) {
         val token = getCoreToken()
+        // After a sign-out or Core switch, the current token must not reach the report's Core.
+        if (coreTokenOwner(token) != relay.tokenOwner) {
+            handler.post { onDone(false, 0) }
+            return
+        }
         IncidentLogBleUploadService.upload(relay.apiBaseUrl, relay.incidentId, token, jsonUtf8) {
                 success,
+                status,
                 message ->
-            Handler(Looper.getMainLooper()).post {
-                // A different report now owns this name (it was admitted after our owner finished),
-                // so a completion here would mark ITS file done. Drop the stale callback.
+            handler.post {
                 val owner = bleIncidentLogRelays[relay.fileBaseKey]
                 if (owner != null && owner.incidentId != relay.incidentId) {
                     Log.w(TAG, "Dropping stale incident relay callback for " + relay.fileBaseKey)
@@ -11548,6 +11710,9 @@ class MentraLive : SGCManager() {
                                     "): " +
                                     relay.incidentId
                     )
+                    onDone(true, status)
+                } else if (attemptsLeft > 0 && !IncidentLogBleUploadService.isPermanentRejection(status)) {
+                    postIncidentLog(relay, fileName, jsonUtf8, attemptsLeft - 1, onDone)
                 } else {
                     Log.e(
                             TAG,
@@ -11556,14 +11721,149 @@ class MentraLive : SGCManager() {
                                     "): " +
                                     message
                     )
-                    // Keep relay entry so glasses can retry after transfer_complete:false.
-                    relay.session = null
+                    onDone(false, status)
                 }
-                sendTransferCompleteConfirmation(fileName, success)
-                // Release only after the glasses' confirmation is queued, so a report that reuses
-                // this name is ordered behind the owner's completion.
-                if (success) {
-                    bleIncidentLogRelays.remove(relay.fileBaseKey, relay)
+            }
+        }
+    }
+
+    /** Who a Core access token speaks for, or null if it isn't a readable token. */
+    private fun coreTokenOwner(token: String?): String? {
+        return try {
+            val payload = token?.split(".")?.getOrNull(1) ?: return null
+            val decoded = android.util.Base64.decode(
+                    payload, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP)
+            val claims = JSONObject(String(decoded, StandardCharsets.UTF_8))
+            claims.optString("iss") + "|" + claims.optString("sub")
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun clearHeldBesLogs() {
+        // Only drop the in-memory timers and cache; the on-disk copies survive so a later
+        // startup can finish uploading an acknowledged incident. Confirmed uploads already
+        // deleted their files.
+        for (held in heldBesLogs.values) {
+            held.flush?.let { handler.removeCallbacks(it) }
+        }
+        heldBesLogs.clear()
+    }
+
+    private fun besHeldDir(): File? {
+        val ctx = context ?: return null
+        val base = ctx.getExternalFilesDir(null) ?: return null
+        val dir = File(base, BES_HELD_DIR)
+        if (!dir.exists() && !dir.mkdirs()) return null
+        return dir
+    }
+
+    private fun besHeldFileName(incidentId: String): String =
+            incidentId.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".json"
+
+    /** Durably store a held BES log so its Cloud POST can survive process death or destroy(). */
+    private fun persistHeldBes(held: HeldBesLog): Boolean {
+        try {
+            val dir = besHeldDir() ?: return false
+            val record = JSONObject()
+            record.put("incidentId", held.relay.incidentId)
+            record.put("fileBaseKey", held.relay.fileBaseKey)
+            record.put("apiBaseUrl", held.relay.apiBaseUrl)
+            record.put("tokenOwner", held.relay.tokenOwner ?: JSONObject.NULL)
+            record.put("fileName", held.fileName)
+            record.put(
+                    "bytesBase64",
+                    android.util.Base64.encodeToString(held.bytes, android.util.Base64.NO_WRAP),
+            )
+            val tmp = File(dir, besHeldFileName(held.relay.incidentId) + ".tmp")
+            FileOutputStream(tmp).use {
+                it.write(record.toString().toByteArray(StandardCharsets.UTF_8))
+                it.fd.sync()
+            }
+            // Rename so a reader never observes a partially written record.
+            if (!tmp.renameTo(File(dir, besHeldFileName(held.relay.incidentId)))) {
+                tmp.delete()
+                return false
+            }
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to persist held BES log for " + held.relay.incidentId, e)
+            return false
+        }
+    }
+
+    private fun deletePersistedBes(incidentId: String) {
+        try {
+            val dir = besHeldDir() ?: return
+            File(dir, besHeldFileName(incidentId)).delete()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete persisted BES log for " + incidentId, e)
+        }
+    }
+
+    /**
+     * Re-POST any BES logs that were acknowledged to the glasses but whose Cloud upload never
+     * confirmed before the previous process ended. The glasses no longer hold these, so the
+     * phone is the only source; keep retrying until Cloud accepts each one.
+     */
+    private fun resumePersistedBesUploads() {
+        if (isKilled) return
+        val dir = besHeldDir() ?: return
+        val files = dir.listFiles { file -> file.name.endsWith(".json") } ?: return
+        for (file in files) {
+            // An entry still tracked in memory is being handled by its live flush/upload path.
+            if (heldBesLogs.values.any { besHeldFileName(it.relay.incidentId) == file.name }) continue
+            if (!resumingBesFiles.add(file.name)) continue
+            resumePersistedBesFile(file)
+        }
+    }
+
+    private fun resumePersistedBesFile(file: File) {
+        if (isKilled) {
+            resumingBesFiles.remove(file.name)
+            return
+        }
+        val record =
+                try {
+                    JSONObject(String(file.readBytes(), StandardCharsets.UTF_8))
+                } catch (e: Exception) {
+                    Log.e(TAG, "Dropping unreadable persisted BES log: " + file.name, e)
+                    file.delete()
+                    resumingBesFiles.remove(file.name)
+                    return
+                }
+        val incidentId = record.optString("incidentId")
+        val apiBaseUrl = record.optString("apiBaseUrl")
+        val bytes =
+                try {
+                    android.util.Base64.decode(record.optString("bytesBase64"), android.util.Base64.NO_WRAP)
+                } catch (e: IllegalArgumentException) {
+                    Log.e(TAG, "Dropping persisted BES log with bad payload: " + file.name, e)
+                    file.delete()
+                    resumingBesFiles.remove(file.name)
+                    return
+                }
+        if (incidentId.isEmpty() || apiBaseUrl.isEmpty()) {
+            file.delete()
+            resumingBesFiles.remove(file.name)
+            return
+        }
+        val token = getCoreToken()
+        val tokenOwner = if (record.isNull("tokenOwner")) null else record.optString("tokenOwner")
+        // A different account or Core is signed in: wait for the one this report belongs to.
+        if (coreTokenOwner(token) != tokenOwner) {
+            handler.postDelayed({ resumePersistedBesFile(file) }, BES_RETRY_MS)
+            return
+        }
+        IncidentLogBleUploadService.upload(apiBaseUrl, incidentId, token, bytes) { success, status, message ->
+            handler.post {
+                if (success || IncidentLogBleUploadService.isPermanentRejection(status)) {
+                    Bridge.log("LIVE: Resumed BES log upload finished for " + incidentId + ": HTTP " + status)
+                    file.delete()
+                    resumingBesFiles.remove(file.name)
+                } else if (!isKilled) {
+                    Log.e(TAG, "Resumed BES log upload failed for " + incidentId + ": " + message)
+                    handler.postDelayed({ resumePersistedBesFile(file) }, BES_RETRY_MS)
                 }
             }
         }

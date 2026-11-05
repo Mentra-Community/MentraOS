@@ -88,6 +88,28 @@ final class IncidentLogDispatchTests: XCTestCase {
         }
     }
 
+    func testCoreUrlStaysOnThePhone() throws {
+        try withToken("synthetic") {
+            let live = IncidentLogTransport()
+            try live.sendIncidentId(incident, apiBaseUrl: apiBase)
+            XCTAssertTrue(sentMessages(live).joined().contains("upload_incident_logs"))
+            XCTAssertFalse(sentMessages(live).joined().contains("apiBaseUrl"))
+        }
+    }
+
+    func testNoCoreUrlRejectsInsteadOfSendingLogsAnywhereElse() throws {
+        try withToken("synthetic") {
+            let live = IncidentLogTransport()
+            for base in [nil, "  "] as [String?] {
+                XCTAssertThrowsError(try live.sendIncidentId(incident, apiBaseUrl: base)) { error in
+                    XCTAssertEqual((error as? BluetoothSdkError)?.code, "core_url_unavailable")
+                }
+            }
+            XCTAssertTrue(live.writes.isEmpty)
+            XCTAssertTrue(live.bleIncidentLogRelays.isEmpty)
+        }
+    }
+
     func testCurrentTokenPrecedesUploadAndNeverAppearsInLogs() throws {
         let token = "synthetic-\(UUID().uuidString)"
         try withToken(token) {
@@ -147,17 +169,213 @@ final class IncidentLogDispatchTests: XCTestCase {
 
             let logcat = "Lrep_01m4hbvt88d"
             try await receive(live, name, "owner")
-            XCTAssertEqual(CloudStub.requests, ["/api/client/reports/\(incident)/artifacts owner"])
+            XCTAssertTrue(CloudStub.requests.isEmpty)
             let confirmation = try XCTUnwrap(sentMessages(live).last { $0.contains("transfer_complete") })
             XCTAssertTrue(confirmation.contains(name) && confirmation.contains("\"success\":true"))
             XCTAssertThrowsError(try live.sendIncidentId(collidingIncident, apiBaseUrl: cloudBase)) { error in
                 XCTAssertEqual((error as? BluetoothSdkError)?.code, "incident_relay_busy")
             }
             try await receive(live, logcat, "owner-logcat")
+            try await waitFor { CloudStub.requests.count == 2 }
+            XCTAssertEqual(CloudStub.requests, [
+                "/api/client/reports/\(incident)/artifacts owner-logcat",
+                "/api/client/reports/\(incident)/artifacts owner",
+            ])
 
             try live.sendIncidentId(collidingIncident, apiBaseUrl: cloudBase)
             try await receive(live, name, "second")
+            XCTAssertEqual(CloudStub.requests.count, 2)
+            try await receive(live, logcat, "second-logcat")
+            try await waitFor { CloudStub.requests.count == 4 }
+            XCTAssertEqual(CloudStub.requests[2], "/api/client/reports/\(collidingIncident)/artifacts second-logcat")
             XCTAssertEqual(CloudStub.requests.last, "/api/client/reports/\(collidingIncident)/artifacts second")
+        }
+    }
+
+    func testSavesTheBesLogAndUploadsTheMtkLogBeforeIt() async throws {
+        try await withCloud(status: 200) {
+            let live = IncidentLogTransport()
+            let name = "Brep_01m4hbvt88d"
+            let logcat = "Lrep_01m4hbvt88d"
+            try live.sendIncidentId(incident, apiBaseUrl: cloudBase)
+            let bes = "{\"retryKey\":\"bes-crash\",\"entries\":[{\"source\":\"BES\"}]}"
+            try await receive(live, name, bes)
+            XCTAssertTrue(CloudStub.requests.isEmpty)
+            XCTAssertEqual(live.bleIncidentLogRelays[name]?.incidentId, incident)
+
+            try await receive(live, logcat, "{\"entries\":[{\"source\":\"MTK\"}]}")
+            try await waitFor { CloudStub.requests.count == 2 }
+            XCTAssertEqual(
+                CloudStub.requests,
+                [
+                    "/api/client/reports/\(incident)/artifacts {\"entries\":[{\"source\":\"MTK\"}]}",
+                    "/api/client/reports/\(incident)/artifacts \(bes)",
+                ]
+            )
+            XCTAssertNil(live.bleIncidentLogRelays[name])
+            XCTAssertNil(live.bleIncidentLogRelays[logcat])
+        }
+    }
+
+    func testHeldBesLogIsDurablyPersistedAndResumedAfterProcessDeath() async throws {
+        clearHeldBesDir()
+        try await withCloud(status: 200) {
+            let live = IncidentLogTransport()
+            let name = "Brep_01m4hbvt88d"
+            try live.sendIncidentId(incident, apiBaseUrl: cloudBase)
+            let bes = "{\"source\":\"BES\"}"
+            try await receive(live, name, bes)
+            // Acknowledged to the glasses but not uploaded yet: the bytes must already be on disk.
+            XCTAssertTrue(CloudStub.requests.isEmpty)
+            XCTAssertTrue(besHeldFileExists(incident))
+
+            // Process death before the MTK log arrives: a fresh instance owns no relay and the
+            // glasses will not resend, so it must finish the upload from the durable copy.
+            let revived = IncidentLogTransport()
+            revived.resumePersistedBesUploads()
+            try await waitFor {
+                CloudStub.requests.contains("/api/client/reports/\(self.incident)/artifacts \(bes)")
+            }
+            try await waitFor { !self.besHeldFileExists(self.incident) }
+        }
+    }
+
+    func testSavedBesLogWaitsForItsOwnAccountAndCore() async throws {
+        clearHeldBesDir()
+        defer { clearHeldBesDir() }
+        try await withCloud(status: 200) {
+            let store = DeviceStore.shared.store
+            store.set("bluetooth", "core_token", jwt(iss: "https://core-a", sub: "user-a"))
+            let live = IncidentLogTransport()
+            let bes = "{\"source\":\"BES\"}"
+            try live.sendIncidentId(incident, apiBaseUrl: cloudBase)
+            try await receive(live, "Brep_01m4hbvt88d", bes)
+
+            let revived = IncidentLogTransport()
+            revived.besRetrySeconds = 0.05
+            store.set("bluetooth", "core_token", jwt(iss: "https://core-b", sub: "user-a"))
+            revived.resumePersistedBesUploads()
+            try await Task.sleep(nanoseconds: 200_000_000)
+            store.set("bluetooth", "core_token", jwt(iss: "https://core-a", sub: "user-b"))
+            try await Task.sleep(nanoseconds: 200_000_000)
+            XCTAssertTrue(CloudStub.requests.isEmpty)
+            XCTAssertTrue(besHeldFileExists(incident))
+
+            store.set("bluetooth", "core_token", jwt(iss: "https://core-a", sub: "user-a"))
+            try await waitFor { !self.besHeldFileExists(self.incident) }
+            XCTAssertEqual(CloudStub.requests.count, 1)
+        }
+    }
+
+    private func jwt(iss: String, sub: String) -> String {
+        let claims = Data("{\"iss\":\"\(iss)\",\"sub\":\"\(sub)\"}".utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return "h.\(claims).s"
+    }
+
+    func testMtkTransferCutOffPartwayStopsHoldingTheBesLog() async throws {
+        clearHeldBesDir()
+        defer { clearHeldBesDir() }
+        try await withCloud(status: 200) {
+            let live = IncidentLogTransport()
+            live.besHoldSeconds = 0.05
+            live.besMtkWaitMaxSeconds = 0.3
+            let bes = "{\"source\":\"BES\"}"
+            try live.sendIncidentId(incident, apiBaseUrl: cloudBase)
+            // Part of the MTK file arrived, then the link dropped: nothing will ever finish it.
+            let mtk = try XCTUnwrap(live.bleIncidentLogRelays["Lrep_01m4hbvt88d"])
+            mtk.session = MentraLiveFileTransferSession(
+                fileName: "Lrep_01m4hbvt88d", fileSize: 100_000, announcedPackets: 1000
+            )
+            try await receive(live, "Brep_01m4hbvt88d", bes)
+
+            try await Task.sleep(nanoseconds: 150_000_000)
+            XCTAssertTrue(CloudStub.requests.isEmpty)
+
+            try await waitFor { !self.besHeldFileExists(self.incident) }
+            XCTAssertEqual(CloudStub.requests, ["/api/client/reports/\(incident)/artifacts \(bes)"])
+        }
+    }
+
+    func testBesLogThatCannotBeSavedIsRefusedSoTheGlassesKeepTheirCopy() async throws {
+        clearHeldBesDir()
+        defer { clearHeldBesDir() }
+        // A file where the directory belongs makes every save fail.
+        let dir = try XCTUnwrap(besHeldDirURL())
+        try FileManager.default.createDirectory(at: dir.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("not a directory".utf8).write(to: dir)
+        try await withCloud(status: 200) {
+            let live = IncidentLogTransport()
+            let name = "Brep_01m4hbvt88d"
+            try live.sendIncidentId(incident, apiBaseUrl: cloudBase)
+            try await receive(live, name, "{\"source\":\"BES\"}")
+            let confirmations = sentMessages(live).filter { $0.contains("transfer_complete") }
+            XCTAssertEqual(confirmations.count, 1)
+            XCTAssertTrue(confirmations[0].contains("false"))
+            XCTAssertEqual(live.bleIncidentLogRelays[name]?.incidentId, incident)
+        }
+    }
+
+    func testBesUploadThatFailsDuringAnOutageIsRetriedUntilCloudConfirmsIt() async throws {
+        clearHeldBesDir()
+        defer { clearHeldBesDir() }
+        try await withCloud(status: 500) {
+            let live = IncidentLogTransport()
+            live.besHoldSeconds = 0.01
+            live.besRetrySeconds = 0.05
+            let name = "Brep_01m4hbvt88d"
+            let bes = "{\"source\":\"BES\"}"
+            try live.sendIncidentId(incident, apiBaseUrl: cloudBase)
+            try await receive(live, name, bes)
+            // No MTK log arrives, so after the hold the phone uploads the BES itself.
+            try await waitFor { CloudStub.requests.count >= 2 }
+            XCTAssertEqual(live.bleIncidentLogRelays[name]?.incidentId, incident)
+            XCTAssertTrue(besHeldFileExists(incident))
+
+            CloudStub.status = 200
+            try await waitFor { !self.besHeldFileExists(self.incident) }
+            XCTAssertNil(live.bleIncidentLogRelays[name])
+        }
+    }
+
+    func testResumedBesUploadRetriesAfterFailureAndReconnectDoesNotDuplicateIt() async throws {
+        clearHeldBesDir()
+        defer { clearHeldBesDir() }
+        try await withCloud(status: 500) {
+            let live = IncidentLogTransport()
+            try live.sendIncidentId(incident, apiBaseUrl: cloudBase)
+            try await receive(live, "Brep_01m4hbvt88d", "{\"source\":\"BES\"}")
+
+            let revived = IncidentLogTransport()
+            revived.besRetrySeconds = 0.2
+            revived.resumePersistedBesUploads()
+            try await waitFor { CloudStub.requests.count == 2 } // Both attempts of one try.
+            revived.resumePersistedBesUploads()
+            revived.resumePersistedBesUploads()
+            XCTAssertEqual(CloudStub.requests.count, 2)
+
+            CloudStub.status = 200
+            CloudStub.requests = []
+            try await waitFor { !self.besHeldFileExists(self.incident) }
+            XCTAssertEqual(CloudStub.requests.count, 1)
+        }
+    }
+
+    func testBesLogCloudPermanentlyRefusesIsDroppedInsteadOfRetriedForever() async throws {
+        clearHeldBesDir()
+        defer { clearHeldBesDir() }
+        try await withCloud(status: 404) {
+            let live = IncidentLogTransport()
+            try live.sendIncidentId(incident, apiBaseUrl: cloudBase)
+            try await receive(live, "Brep_01m4hbvt88d", "{\"source\":\"BES\"}")
+
+            let revived = IncidentLogTransport()
+            revived.besRetrySeconds = 0.05
+            revived.resumePersistedBesUploads()
+            try await waitFor { !self.besHeldFileExists(self.incident) }
+            try await Task.sleep(nanoseconds: 200_000_000)
+            XCTAssertEqual(CloudStub.requests.count, 1)
         }
     }
 
@@ -170,15 +388,16 @@ final class IncidentLogDispatchTests: XCTestCase {
             let staleRelay = try XCTUnwrap(live.bleIncidentLogRelays[name])
             try await receive(live, name, "owner")
             try await receive(live, logcat, "owner-logcat")
+            try await waitFor { CloudStub.requests.count == 2 }
             try live.sendIncidentId(collidingIncident, apiBaseUrl: cloudBase)
             let confirmationsBefore = sentMessages(live).filter { $0.contains("transfer_complete") }.count
             let requestsBefore = CloudStub.requests.count
 
-            // A late callback of the first report's request arrives while the colliding report owns the name.
+            // A late callback of the first report's file arrives while the colliding report owns the name.
             live.uploadBleIncidentLogRelay(relay: staleRelay, fileName: name, data: Data("late".utf8))
-            try await waitFor { CloudStub.requests.count == requestsBefore + 1 }
             try await Task.sleep(nanoseconds: 300_000_000)
 
+            XCTAssertEqual(CloudStub.requests.count, requestsBefore)
             XCTAssertEqual(sentMessages(live).filter { $0.contains("transfer_complete") }.count, confirmationsBefore)
             XCTAssertEqual(live.bleIncidentLogRelays[name]?.incidentId, collidingIncident)
         }
@@ -190,12 +409,22 @@ final class IncidentLogDispatchTests: XCTestCase {
             var now: TimeInterval = 1000
             live.incidentRelayClock = { now }
             let name = "Brep_01m4hbvt88d"
+            let logcat = "Lrep_01m4hbvt88d"
             try live.sendIncidentId(incident, apiBaseUrl: cloudBase)
             live.uploadBleIncidentLogRelay(
                 relay: try XCTUnwrap(live.bleIncidentLogRelays[name]), fileName: name, data: Data("owner".utf8)
             )
-            try await waitFor { wire(live).contains("transfer_complete") }
+            try await waitFor { wire(live).contains("\"success\":true") }
+            XCTAssertTrue(CloudStub.requests.isEmpty)
+            live.uploadBleIncidentLogRelay(
+                relay: try XCTUnwrap(live.bleIncidentLogRelays[logcat]),
+                fileName: logcat,
+                data: Data("owner-logcat".utf8)
+            )
+            try await waitFor { wire(live).contains("\"success\":false") }
+            XCTAssertEqual(CloudStub.requests, ["/api/client/reports/\(incident)/artifacts owner-logcat"])
             XCTAssertEqual(live.bleIncidentLogRelays[name]?.incidentId, incident)
+            XCTAssertEqual(live.bleIncidentLogRelays[logcat]?.incidentId, incident)
             XCTAssertThrowsError(try live.sendIncidentId(collidingIncident, apiBaseUrl: cloudBase)) { error in
                 XCTAssertEqual((error as? BluetoothSdkError)?.code, "incident_relay_busy")
             }
@@ -228,6 +457,22 @@ final class IncidentLogDispatchTests: XCTestCase {
         sentMessages(live).joined()
     }
 
+    private func besHeldDirURL() -> URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("MentraLive_HeldBes", isDirectory: true)
+    }
+
+    private func besHeldFileExists(_ incidentId: String) -> Bool {
+        guard let dir = besHeldDirURL() else { return false }
+        let safe = String(incidentId.map { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_" ? $0 : "_" })
+        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(safe + ".json").path)
+    }
+
+    private func clearHeldBesDir() {
+        guard let dir = besHeldDirURL() else { return }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     private func withCloud(status: Int, body: () async throws -> Void) async throws {
         CloudStub.status = status
         CloudStub.requests = []
@@ -245,8 +490,15 @@ final class IncidentLogDispatchTests: XCTestCase {
 
     private func receive(_ live: IncidentLogTransport, _ name: String, _ payload: String) async throws {
         let relay = try XCTUnwrap(live.bleIncidentLogRelays[name])
+        let confirmations = sentMessages(live).filter { $0.contains("transfer_complete") }.count
         live.uploadBleIncidentLogRelay(relay: relay, fileName: name, data: Data(payload.utf8))
-        try await waitFor { live.bleIncidentLogRelays[name] !== relay }
+        if relay.kind == .firmware {
+            try await waitFor {
+                sentMessages(live).filter { $0.contains("transfer_complete") }.count > confirmations
+            }
+        } else {
+            try await waitFor { live.bleIncidentLogRelays[name] !== relay }
+        }
     }
 
     private func waitFor(_ condition: () -> Bool) async throws {
