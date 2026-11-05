@@ -13,6 +13,7 @@ const ensureRunning = mock(async (): Promise<unknown> => ({}))
 const saveSetting = mock((_key: string, _value: unknown): {is_ok: () => boolean} => ({is_ok: () => true}))
 let modelAvailable = true
 mock.module("../../services/AppRegistry", () => ({
+  buildHardwareRequirements: () => [],
   default: {
     getInstalledMiniapps: installedApps,
     uninstall: mock(async () => Res.ok(undefined)),

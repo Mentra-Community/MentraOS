@@ -73,6 +73,7 @@ mock.module("../../../stores/glasses", () => ({
 // real one: the collector reads it too.
 const compatible = {isCompatible: true, missingRequired: [], missingOptional: [], warnings: []}
 mock.module("../../AppRegistry", () => ({
+  buildHardwareRequirements: () => [],
   default: {
     getInstalledMiniapps: async () => [],
     uninstall: async () => Res.ok(undefined),

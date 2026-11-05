@@ -12,6 +12,7 @@ const ensureRunning = mock(async () => ({}))
 const uninstall = mock(async () => Res.ok(undefined))
 const revoked = new Set<string>()
 mock.module("../../services/AppRegistry", () => ({
+  buildHardwareRequirements: () => [],
   default: {
     getInstalledMiniapps: installedApps,
     uninstall,

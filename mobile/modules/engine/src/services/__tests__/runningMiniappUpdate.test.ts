@@ -115,7 +115,7 @@ async function stagedInstall(first: "download" | "read", options: InstallBundleO
   try {
     assertMiniappUpdateVersion(pkg, options.expectedVersion!, [active])
     calls.push("unpack")
-    await options.whenStaged?.()
+    await options.whenStaged?.({hardwareRequirements: []})
     options.beforeActivate?.()
     calls.push("activate")
     if (activationFailure) throw new Error(activationFailure)
@@ -129,6 +129,7 @@ async function stagedInstall(first: "download" | "read", options: InstallBundleO
 }
 mock.module("../AppRegistry", () => ({
   default: registry,
+  buildHardwareRequirements: (raw: unknown) => raw ?? [],
   getLocalAppRunningState: () => false,
   saveLocalAppRunningState: () => {},
 }))
@@ -164,8 +165,9 @@ mock.module("expo-file-system", () => ({
   },
 }))
 
-const {classifyManagedInstallError, installMiniappRelease, MiniappInstallCancelledError} =
-  await import("../miniappReleaseInstall")
+const {classifyManagedInstallError, installMiniappRelease, MiniappInstallCancelledError} = await import(
+  "../miniappReleaseInstall"
+)
 const {miniappLauncher} = await import("../MiniappLauncher")
 const {miniappRunningRegistry} = await import("../MiniappRunningRegistry")
 isProjected = (packageName) => miniappRunningRegistry.has(packageName)
@@ -348,10 +350,13 @@ describe("update prompt for a running miniapp", () => {
     expect(states.at(-1)).toBe(false)
   })
 
-  test("its restart is silent, and skipped when the glasses it needs aren't connected", async () => {
+  test("its restart is silent, and skipped when the glasses it needs went away after Update", async () => {
     await runApp({open: true})
-    compatible = false
+    const unsubscribe = prompt.onRunningUpdatePrompt(() => {
+      compatible = false
+    })
     await release()
+    unsubscribe()
     expect(calls).toEqual(["download", "verify", "unpack", "prompt", `stop:${pkg}`, "activate"])
     expect(active).toBe("1.1.0")
     expect(incompatible).toEqual([])
@@ -457,6 +462,15 @@ describe("update prompt for a running miniapp", () => {
     await expect(release()).rejects.toThrow()
     expect(calls).toEqual([])
     expect(prompts).toHaveLength(0)
+  })
+
+  test("a running miniapp whose staged release the paired glasses can't launch defers without asking", async () => {
+    await runApp({open: true})
+    compatible = false
+    await expect(release()).rejects.toBeInstanceOf(MiniappRunningError)
+    expect(prompts).toHaveLength(0)
+    expect(calls).toEqual(["download", "verify", "unpack"])
+    expect(active).toBe("1.0.0")
   })
 
   test("without askIfRunning, a running miniapp defers quietly", async () => {
