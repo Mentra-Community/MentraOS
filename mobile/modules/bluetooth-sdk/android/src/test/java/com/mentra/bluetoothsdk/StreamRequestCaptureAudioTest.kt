@@ -48,18 +48,37 @@ class StreamRequestCaptureAudioTest {
     ))
     assertThat(request.ice?.stun).isEqualTo("")
 
-    // The empty string is the host-only request. Dropping it as "blank" is what silently left the
-    // glasses gathering against the default Cloudflare STUN server on an internet-less hotspot.
+    // The empty string is the host-only request. Replacing it with the default STUN server would
+    // leave the glasses gathering against it on an internet-less hotspot.
     @Suppress("UNCHECKED_CAST")
     val ice = request.toMap()["ice"] as Map<String, Any>
     assertThat(ice).containsEntry("stun", "")
   }
 
   @Test
-  fun absentIceStaysAbsentSoGlassesKeepTheirDefault() {
+  fun whipWithoutIceSendsTheDefaultStunServer() {
     val request = StreamRequest.fromMap(mapOf("streamUrl" to "https://example.com/whip"))
     assertThat(request.ice).isNull()
-    assertThat(request.toMap()).doesNotContainKey("ice")
+    @Suppress("UNCHECKED_CAST")
+    val ice = request.toMap()["ice"] as Map<String, Any>
+    assertThat(ice).containsEntry("stun", "stun:stun.cloudflare.com:3478")
+  }
+
+  @Test
+  fun whipKeepsTheStunServerItsCallerNamed() {
+    val request = StreamRequest.fromMap(mapOf(
+      "streamUrl" to "https://example.com/whip",
+      "ice" to mapOf("stun" to "stun:stun.example.com:3478"),
+    ))
+    @Suppress("UNCHECKED_CAST")
+    val ice = request.toMap()["ice"] as Map<String, Any>
+    assertThat(ice).containsEntry("stun", "stun:stun.example.com:3478")
+  }
+
+  @Test
+  fun rtmpAndSrtSendNoIce() {
+    assertThat(StreamRequest(streamUrl = "rtmp://example.com/live").toMap()).doesNotContainKey("ice")
+    assertThat(StreamRequest(streamUrl = "srt://example.com:9000").toMap()).doesNotContainKey("ice")
   }
 
   @Test
