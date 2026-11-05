@@ -57,6 +57,8 @@ export interface ReportSlackNotification {
   context?: Record<string, unknown> | null;
   /** Set on ready-time notifications: how many artifacts were attached. */
   artifactCount?: number;
+  /** Follow-up post: the BES firmware log arrived after the report was announced. */
+  firmwareLogAttached?: boolean;
 }
 
 export interface ReportSlackResult {
@@ -182,7 +184,9 @@ function buildSlackMessage(notification: ReportSlackNotification): {
   const userLabel = notification.userEmail || mentraUserId;
   const env = environmentLabel();
   const header =
-    kind === "bug"
+    notification.firmwareLogAttached
+      ? ":floppy_disk: BES Crash Log Attached"
+      : kind === "bug"
       ? ":bug: New Bug Report"
       : kind === "feedback"
         ? ":bulb: New Feedback"
@@ -282,6 +286,7 @@ function buildSlackMessage(notification: ReportSlackNotification): {
       ? [`Trigger: ${truncate(trigger.reason, TRIGGER_TEXT_MAX)}`]
       : []),
     ...(artifactCount !== undefined ? [`Artifacts: ${artifactCount}`] : []),
+    ...(notification.firmwareLogAttached ? ["BES firmware log attached"] : []),
   ];
 
   return { text: fallbackParts.join("\n"), blocks };

@@ -31,7 +31,7 @@ const base = {
   createdAt: null,
 };
 const url = "/api/admin/reports/rep_SYNTHETIC/artifacts/art_SYNTHETIC";
-type Overrides = { type: "video" | "screenshot" | "logs" | "state_snapshot"; contentType: string | null; filename?: string };
+type Overrides = { type: "video" | "screenshot" | "logs" | "state_snapshot"; contentType: string | null; filename?: string; source?: string };
 const render = (overrides: Overrides) =>
   renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>
@@ -76,8 +76,42 @@ describe("incident report artifact view", () => {
     const logs = render({ type: "logs", contentType: "application/json", filename: "logs.json" });
     expect(logs).toContain("View log entries");
 
+    // A BES firmware log is a logs artifact: readable in place and downloadable as the stored JSON.
+    const bes = render({ type: "logs", source: "glasses_firmware", contentType: "application/json" });
+    expect(bes).toContain("· glasses_firmware");
+    expect(bes).toContain("View log entries");
+    expect(bes).toMatch(new RegExp(`<a [^>]*href="${url}" download=""`));
+    expect(bes).toContain("Download log");
+
     const mislabeled = render({ type: "screenshot", contentType: "video/mp4" });
     expect(mislabeled).not.toContain("<video");
     expect(mislabeled).toContain("Download payload");
+  });
+});
+
+describe("BES crash indicator", () => {
+  let app: typeof import("./App");
+  beforeAll(async () => {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+    Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: { location: new URL("http://localhost/") } });
+    try {
+      app = await import("./App");
+    } finally {
+      if (previous) Object.defineProperty(globalThis, "window", previous);
+      else delete (globalThis as { window?: unknown }).window;
+    }
+  });
+
+  const trigger = (source: string) => ({ type: "automatic", source, reason: "bes_crash" });
+
+  test("flags only automatic reports filed by the firmware crash trigger", () => {
+    expect(app.isBesCrashReport({ kind: "automatic", trigger: trigger("glasses_firmware_crash") })).toBe(true);
+    expect(app.isBesCrashReport({ kind: "automatic", trigger: trigger("watchdog") })).toBe(false);
+    expect(app.isBesCrashReport({ kind: "bug", trigger: trigger("glasses_firmware_crash") })).toBe(false);
+    expect(app.isBesCrashReport({ kind: "automatic", trigger: null })).toBe(false);
+  });
+
+  test("renders a BES crash badge", () => {
+    expect(renderToStaticMarkup(<app.BesCrashTag />)).toContain("BES crash");
   });
 });

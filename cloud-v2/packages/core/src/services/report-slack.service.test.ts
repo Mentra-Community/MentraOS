@@ -179,6 +179,19 @@ describe("notifyReportSlack", () => {
     expect(blocksJson).toContain("*Env:*\\ntest-env");
   });
 
+  test("marks a follow-up post when the BES firmware log arrives", async () => {
+    configureBot();
+    process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC = AUTOMATIC_CHANNEL_ID;
+
+    await notifyReportSlack({ ...bugNotification({ artifactCount: 2 }), kind: "automatic", firmwareLogAttached: true });
+
+    const payload = JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body)) as { channel: string; text: string; blocks: unknown[] };
+    expect(payload.channel).toBe(AUTOMATIC_CHANNEL_ID);
+    expect(payload.text).toContain("BES firmware log attached");
+    expect(payload.text).toContain("Artifacts: 2");
+    expect(JSON.stringify(payload.blocks)).toContain("BES Crash Log Attached");
+  });
+
   test.each(["bug", "feature"] as const)("keeps the signed confirmation URL for %s until Slack interactivity is enabled", async (kind) => {
     configureBot();
     process.env.CLOUD_CORE_ENVIRONMENT = "dev";

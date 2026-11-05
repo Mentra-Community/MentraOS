@@ -69,6 +69,9 @@ const ReportSchema = new Schema(
     // Native completion retries own notification delivery; no separate worker or queue.
     slackDelivery: { type: Schema.Types.Mixed },
     logCollection: {type: LogCollectionSchema},
+    // Set once when the BES log of an already-notified firmware-crash report
+    // arrives and its follow-up Slack post is claimed.
+    firmwareLogNotifiedAt: {type: Date},
     artifacts: { type: [ReportArtifactSchema], default: [] },
     nativeDiagnostics: {type: Schema.Types.Mixed},
     status: {

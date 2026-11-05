@@ -372,6 +372,7 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
                   <div className="flex flex-wrap items-center gap-2">
                     <ReportKindTag kind={report.kind} />
                     <ReportStatusTag status={report.status} />
+                    {isBesCrashReport(report) ? <BesCrashTag /> : null}
                     {report.artifactCount > 0 ? (
                       <span className="rounded-full bg-[#f0f2ef] px-2.5 py-0.5 text-xs font-semibold text-[#4f5d54]">
                         {report.artifactCount} artifact{report.artifactCount === 1 ? "" : "s"}
@@ -469,6 +470,7 @@ function ReportDetailDrawer(props: { reportId: string; onClose: () => void }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <ReportKindTag kind={report.kind} />
                   <ReportStatusTag status={report.status} />
+                  {isBesCrashReport(report) ? <BesCrashTag /> : null}
                 </div>
                 <div className="mt-3 font-mono text-xs text-[#68746d]">{report.reportId}</div>
                 <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#14151b]">{reportSummaryText(report)}</p>
@@ -608,9 +610,14 @@ function LogArtifactViewer({ url }: { url: string }) {
 
   if (!open) {
     return (
-      <Button variant="ghost" className="mt-2 h-8 rounded-full px-3 text-xs text-[#087d50] hover:bg-white" onClick={() => setOpen(true)}>
-        <FileText className="size-3.5" /> View log entries
-      </Button>
+      <div className="mt-2 flex flex-wrap items-center gap-1">
+        <Button variant="ghost" className="h-8 rounded-full px-3 text-xs text-[#087d50] hover:bg-white" onClick={() => setOpen(true)}>
+          <FileText className="size-3.5" /> View log entries
+        </Button>
+        <a className="inline-flex h-8 items-center gap-1 rounded-full px-3 text-xs font-semibold text-[#087d50] hover:bg-white" href={url} download>
+          Download log
+        </a>
+      </div>
     );
   }
   if (logs.isLoading) return <div className="mt-2"><InlineLoading label="Loading log entries" /></div>;
@@ -638,6 +645,20 @@ function ReportKindTag({ kind }: { kind: ReportKind }) {
     automatic: "bg-[#f0f2ef] text-[#68746d]",
   };
   return <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-[0.08em] ${tone[kind]}`}>{kind}</span>;
+}
+
+export const BES_CRASH_TRIGGER_SOURCE = "glasses_firmware_crash";
+
+export function isBesCrashReport(report: Pick<ReportSummary, "kind" | "trigger">): boolean {
+  return report.kind === "automatic" && report.trigger?.source === BES_CRASH_TRIGGER_SOURCE;
+}
+
+export function BesCrashTag() {
+  return (
+    <span className="rounded-full bg-[#fff3f1] px-2.5 py-0.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#a64235]">
+      BES crash
+    </span>
+  );
 }
 
 function ReportStatusTag({ status }: { status: ReportStatus }) {

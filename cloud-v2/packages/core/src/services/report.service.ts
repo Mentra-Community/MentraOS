@@ -455,6 +455,7 @@ async function addRetryableLogArtifact(input: {
       $unset: { [`${receipt}.reason`]: "", [`${receipt}.leaseUntil`]: "" },
     }, { writeConcern: attachmentWriteConcern, timeoutMS }));
     if (marked.modifiedCount) logger.info({ reportId, mentraUserId, source: input.source, artifactId, sizeBytes: bytes.byteLength }, "Report log artifact received");
+    if (input.source === 'glasses_firmware') void notifyFirmwareLogAttached({reportId, mentraUserId});
   }
   return { stored: 1, receipt: { artifactId, sha256, sizeBytes: bytes.byteLength } };
 }
@@ -515,6 +516,50 @@ export async function markReportReady(input: {
       .catch(() => {});
   }
   return "ready";
+}
+
+/** Trigger source the phone files a BES firmware crash under (BesCrashReportService). */
+export const GLASSES_FIRMWARE_CRASH_SOURCE = "glasses_firmware_crash";
+
+/**
+ * Firmware-crash reports complete (and post to Slack) before the glasses
+ * upload their BES log, so the first post cannot show it. When the log lands
+ * on an already-ready report, post one follow-up with the updated artifact
+ * count. The atomic claim keeps retries and duplicate uploads to one post;
+ * a report still collecting needs nothing, since markReportReady will see the
+ * artifact. Best-effort: never throws into the upload path.
+ */
+export async function notifyFirmwareLogAttached(owner: {mentraUserId: string; reportId: string}): Promise<boolean> {
+  try {
+    const claimed = await ReportModel.findOneAndUpdate(
+      { reportId: owner.reportId, mentraUserId: owner.mentraUserId, kind: "automatic", status: "ready",
+        "trigger.source": GLASSES_FIRMWARE_CRASH_SOURCE, firmwareLogNotifiedAt: { $exists: false } },
+      { $set: { firmwareLogNotifiedAt: new Date() } },
+      { returnDocument: "after" },
+    ).lean();
+    if (!claimed) return false;
+    const userEmail = await reportUserEmail(owner.mentraUserId);
+    const result = await notifyReportSlack({
+      reportId: owner.reportId,
+      mentraUserId: owner.mentraUserId,
+      userEmail,
+      kind: claimed.kind,
+      trigger: claimed.trigger,
+      report: claimed.report,
+      feedback: claimed.feedback,
+      context: claimed.context,
+      artifactCount: claimed.artifacts?.length ?? 0,
+      firmwareLogAttached: true,
+    });
+    if (!result.ok) {
+      // Release the claim so a later duplicate upload can try again.
+      await ReportModel.updateOne({ reportId: owner.reportId, mentraUserId: owner.mentraUserId }, { $unset: { firmwareLogNotifiedAt: "" } });
+    }
+    return result.ok;
+  } catch (error) {
+    logger.warn({ reportId: owner.reportId, error: (error as Error)?.message }, "BES log follow-up notification failed");
+    return false;
+  }
 }
 
 interface ReportArtifactPayload {
@@ -618,6 +663,8 @@ async function addArtifacts(input: {
     for (const artifact of artifacts.filter(artifact => artifact.type === 'logs')) {
       logger.info({reportId, mentraUserId, source: artifact.source, artifactId: artifact.artifactId, sizeBytes: artifact.sizeBytes}, 'Report log artifact received');
     }
+    if (artifacts.some(artifact => artifact.type === 'logs' && artifact.source === 'glasses_firmware'))
+      void notifyFirmwareLogAttached({reportId, mentraUserId});
     return { stored: artifacts.length };
   } catch (error) {
     if (stored.length > 0) {
