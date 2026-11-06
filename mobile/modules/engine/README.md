@@ -146,6 +146,8 @@ const pairing = useMentraLivePairing({onExit, onFinished})
 
 As with OTA, customize presentation only: the Bluetooth SDK and Engine decide
 when glasses are ready, whether audio needs the person, and what a failure means.
+The customer guide is
+[Pair Mentra Live](https://docs.mentraglass.com/bluetooth-sdk/pairing).
 
 ## Incident reports and collection completion
 

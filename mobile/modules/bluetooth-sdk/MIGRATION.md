@@ -1,12 +1,12 @@
 # Bluetooth SDK migration: Mentra Live pairing state
 
-This note covers the public pairing API in `@mentra/bluetooth-sdk` `3.3.0` relative to the published `3.2.1` package. `3.3.0` is the current release family in `package.json` and is not on npm yet.
+This note covers the public pairing API change in `@mentra/bluetooth-sdk` `3.3.0`, for apps upgrading from `3.2`.
 
 ## Version
 
 The SDK version is `package.json` `"version"`. The iOS podspec (`ios/MentraBluetoothSDK.podspec`) and the Android Gradle module (`android/build.gradle`) read that same value. Swift package metadata is injected from it at pack time.
 
-This repository keeps the Bluetooth SDK version aligned with the matching Mentra Live software release. It does not cut an independent major for a breaking SDK change. The break below ships in the unpublished `3.3.0` family. No further version bump was applied in this change. Integrators on `3.2.1` pick it up by moving to `3.3.0` when that release is published.
+This repository keeps the Bluetooth SDK version aligned with the matching Mentra Live software release. It does not cut an independent major for a breaking SDK change. The break below shipped in `3.3.0`. Apps on `3.2.1` pick it up by moving to `3.3.0` or later.
 
 ## Removed
 

@@ -21,6 +21,8 @@ The Mentra Bluetooth SDK exposes the same core glasses lifecycle across Android,
 | React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk, {DeviceModels} from '@mentra/bluetooth-sdk'` |
 | React Native hooks | `@mentra/bluetooth-sdk` | `import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react'` |
 | React Native photo receiver | `@mentra/bluetooth-sdk` | `import MentraPhotoReceiver from '@mentra/bluetooth-sdk/photo-receiver'` |
+| React Native pairing flow | `@mentra/engine` | `import {MentraLivePairingFlow, useMentraLivePairing} from '@mentra/engine/pairing'` |
+| React Native OTA flow | `@mentra/engine` | `import {MentraLiveOtaFlow, useMentraLiveOta} from '@mentra/engine/ota'` |
 
 Only documented imports are part of the supported app developer API. Undocumented package subpaths or symbols with a leading underscore can change without notice.
 
@@ -477,8 +479,17 @@ Use `glasses.connected` / `mentra.glasses.connected` before reading connected-on
 
 ## Mentra Live pairing
 
+For React Native apps, use Mentra Engine instead of assembling the scan,
+connect and pairing events yourself. `MentraLivePairingFlow` supplies the exact
+Mentra App pairing pages, and `useMentraLivePairing` supports custom pages over
+the same flow. See [Pair Mentra Live](/bluetooth-sdk/pairing).
+
+The state and events below are low-level building blocks for building pairing
+on the raw SDK, used by native Android/iOS apps and by Mentra Engine. They are
+not a second React Native pairing flow.
+
 <Warning>
-  `confirmReplaceOwner()` and `confirm_replace_owner_result` are removed. `owner_replaced` is deprecated and is never emitted. Move to `GlassesStatus.pairingState`. This break ships in the unpublished `3.3.0` SDK (`package.json`); the podspec and Gradle module read that version. npm still publishes `3.2.1`. The SDK package includes the same steps in `MIGRATION.md`, next to its README.
+  `confirmReplaceOwner()` and `confirm_replace_owner_result` are removed. `owner_replaced` is deprecated and is never emitted. SDK `3.3.0` removed them: move to `GlassesStatus.pairingState`. The SDK package's `MIGRATION.md`, next to its README, has the steps for apps upgrading from `3.2`.
 </Warning>
 
 Supported Mentra Live firmware opens one pairing window when the power button is pressed three times. The window lasts 120 seconds, and the glasses speak a 4-character code. A second triple-press cancels it. After a timeout or a cancel, the phone that was already paired reconnects automatically. If another phone pairs during the window, the previous phone stops reconnecting.

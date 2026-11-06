@@ -1,0 +1,301 @@
+---
+title: "Pair Mentra Live"
+description: "Add the Mentra App's Mentra Live pairing flow to your React Native app, with your own pages if you want them."
+icon: "link"
+---
+
+Pairing Mentra Live takes more than a scan and a connect. The glasses open a
+2-minute pairing window when the person presses the power button three times,
+speak a 4-character code so the person can pick the right pair from the list,
+and only accept the new phone once they commit the bond. On iPhone, audio may
+need a separate Bluetooth pairing in Settings, and a stale pairing left in iOS
+Settings blocks a new one until the person forgets it.
+
+For React Native apps, Mentra Engine owns that whole sequence, the same one the
+Mentra App runs:
+
+- the scan, with glasses that are not in pairing mode marked, and a rescan so
+  the list never goes stale;
+- adopting glasses this phone already bonded, without asking for pairing mode;
+- connecting, waiting for the glasses to boot and become ready;
+- **Pair Audio** when audio needs the person, and cancelling it, which unpairs
+  the glasses;
+- **Forget the old pairing** when iOS holds a stale Bluetooth pairing;
+- success and failure.
+
+Use the stock flow, replace some of its pages, or build every page yourself
+over the same controller. Do not reproduce this sequencing with `scan()`,
+`connect()` and pairing events in application code.
+
+## Use The Exact Mentra App Pairing Pages
+
+This is the simplest integration. `MentraLivePairingFlow` renders the same
+pages as the Mentra App: power on, scan, connecting, Pair Audio, Forget the old
+pairing, success and failure.
+
+Install matching Mentra Engine and Bluetooth SDK releases:
+
+```bash
+bun add @mentra/engine@VERSION @mentra/bluetooth-sdk@VERSION
+```
+
+Render the flow where your app pairs glasses. Your app owns only the
+surrounding navigation:
+
+```tsx
+import {MentraLivePairingFlow} from "@mentra/engine/pairing"
+
+type PairMentraLiveProps = {
+  onDone: () => void
+  onLeave: () => void
+}
+
+export function PairMentraLive({onDone, onLeave}: PairMentraLiveProps) {
+  return <MentraLivePairingFlow initialPage="prep" onExit={onLeave} onFinished={onDone} />
+}
+```
+
+The flow ends in one of two callbacks:
+
+| Callback | When |
+| --- | --- |
+| `onFinished()` | The glasses are paired and the person continued from success, or a standalone Pair Audio finished. |
+| `onExit(page)` | The person left without pairing: back from power on or the scan, Go Home after a failure, a cancelled Pair Audio, or the end of a standalone Forget the old pairing. `page` says where they left from. |
+
+`initialPage` is where the flow starts:
+
+| `initialPage` | Starts on |
+| --- | --- |
+| `"prep"` | Power on: the person turns the glasses on, then continues to the scan. |
+| `"scan"` (default) | The scan, for apps that show their own power-on step. |
+| `"pair_audio"` | Pair Audio on its own, for glasses that are already paired. Pass the glasses' Bluetooth name as `deviceName`. |
+| `"forget_ios_pairing"` | Forget the old pairing on its own, after your app unpaired glasses on iOS. Pass `deviceName`. |
+
+`MentraLivePairingFlow` handles Android Back itself, as each page's own back
+action. It initializes only the Engine projections pairing needs. If your app
+already called `engine.start()`, pass `initializeRuntime={false}`.
+
+A successful pairing leaves the glasses connected. Check for the matching glasses software next: see
+[Update Mentra Live](/bluetooth-sdk/software-update).
+
+## Theme, Translate And Permissions
+
+The stock pages take your colors, copy and permission prompts. This flow uses
+your colors and asks for Android's Bluetooth permissions before the scan:
+
+```tsx
+import {PermissionsAndroid, Platform} from "react-native"
+import {MentraLivePairingFlow} from "@mentra/engine/pairing"
+
+async function requestBluetoothPermissions(): Promise<boolean> {
+  if (Platform.OS !== "android") return true
+  // Android 12 added Bluetooth permissions; older versions scan with location.
+  const permissions =
+    Number(Platform.Version) >= 31
+      ? [PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN, PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT]
+      : [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION]
+  const results = await PermissionsAndroid.requestMultiple(permissions)
+  return Object.values(results).every((result) => result === PermissionsAndroid.RESULTS.GRANTED)
+}
+
+export function BrandedPairMentraLive({onDone, onLeave}: PairMentraLiveProps) {
+  return (
+    <MentraLivePairingFlow
+      initialPage="prep"
+      onExit={onLeave}
+      onFinished={onDone}
+      prepareScan={requestBluetoothPermissions}
+      theme={{background: "#FFFFFF", foreground: "#111111", primary: "#0057FF", buttonBackground: "#0057FF"}}
+    />
+  )
+}
+```
+
+| Prop | Purpose |
+| --- | --- |
+| `theme` | Any of `background`, `card`, `foreground`, `buttonBackground`, `textDim`, `mutedForeground`, `primary`, `border`, `error` and `errorBackground`. Missing colors keep the stock palette. |
+| `translate(key, options)` | Returns the text for a key such as `pairing:scanAgain`, replacing `{{name}}` placeholders from `options`. Without it, the pages use their English copy. The keys and their English text are `ENGLISH_COPY` in [`MentraLivePairingFlow.tsx`](https://github.com/Mentra-Community/MentraOS/blob/dev/mobile/modules/engine/src/react/MentraLivePairingFlow.tsx): add them to your i18n library and pass its lookup. Return text for every key, since a key you don't handle shows as the key itself. |
+| `images` | Your own `glasses`, `prep`, `success`, `pairAudio` and `forgetIosPairing` images. |
+| `prepMedia` | A node shown on the power-on page in place of its image, for example a video of the power button. |
+| `onOpenHelp` | Shows a help link on the scan and connecting pages, for your troubleshooting page. |
+| `onShowAudioDevicePicker` | Shows a button on Pair Audio that opens your audio route picker, when another Bluetooth audio device is connected. |
+| `showAlert(title, message, buttons)` | Your alert, in place of React Native's `Alert.alert`. |
+| `prepareScan()` | Runs when the person continues from power on, so only when the flow starts on `prep`. Ask for Bluetooth permissions here. Return `false` to keep them on power on. A flow that starts on the scan needs the permissions granted before it opens. |
+| `prepareConnect()` | Runs when the person picks glasses, before connecting. Return `false` to keep the list. |
+| `openBluetoothSettings()` | Opens the phone's Bluetooth settings from Pair Audio and Forget the old pairing. Defaults to your app's settings page. |
+| `onRetry()` | Try Again on the failure page. Defaults to scanning again. |
+
+## Replace Some Pages
+
+To keep most stock pages and replace a few, make the controller with
+`useMentraLivePairing` and render `MentraLivePairingPages` with your pages.
+Each page receives `{state, controller}` for that page:
+
+```tsx
+import {Pressable, Text, View} from "react-native"
+import {
+  MentraLivePairingPages,
+  useMentraLivePairing,
+  type MentraLivePairingGlasses,
+  type MentraLivePairingPageOverrides,
+  type MentraLivePairingPageProps,
+} from "@mentra/engine/pairing"
+
+function ScanPage({state, controller}: MentraLivePairingPageProps<"scan">) {
+  return (
+    <View>
+      {state.glasses.map((glasses: MentraLivePairingGlasses) => (
+        <Pressable key={glasses.id} onPress={() => controller.select(glasses)}>
+          <Text>
+            Mentra Live {glasses.label}
+            {glasses.inPairingMode ? "" : " · press the power button 3 times"}
+          </Text>
+        </Pressable>
+      ))}
+      {!state.scanning && (
+        <Pressable onPress={controller.scanAgain}>
+          <Text>Scan again</Text>
+        </Pressable>
+      )}
+      <Pressable onPress={controller.back}>
+        <Text>Cancel</Text>
+      </Pressable>
+    </View>
+  )
+}
+
+const pairingPages: MentraLivePairingPageOverrides = {scan: ScanPage}
+
+export function PairMentraLiveWithOwnScan({onDone, onLeave}: PairMentraLiveProps) {
+  const pairing = useMentraLivePairing({onExit: onLeave, onFinished: onDone})
+  return <MentraLivePairingPages controller={pairing} pages={pairingPages} />
+}
+```
+
+`MentraLivePairingPages` takes the same `theme`, `translate`, `images` and other
+page props as the stock flow, and the options above go to
+`useMentraLivePairing`. Unlike `MentraLivePairingFlow`, it does not handle
+Android Back: wire your navigator's back gesture to `controller.back()`.
+
+## Build Every Page Yourself
+
+Use `useMentraLivePairing` alone when your app needs its own components,
+layout and navigation for every page. The hook exposes the current page and
+the actions that page offers; the Engine keeps all pairing sequencing.
+
+The [Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit)
+does this in its
+[custom pairing folder](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/tree/main/examples/react-native/src/pairing).
+Its flow makes the controller, maps the state to its own presentation, and
+handles Android Back and the Pair Audio cancel itself:
+
+```tsx
+export function CustomMentraLivePairingFlow({
+  initialPage = "prep",
+  initializeRuntime = true,
+  onExit,
+  onFinished,
+}: CustomMentraLivePairingFlowProps) {
+  const controller = useMentraLivePairing({
+    initialPage,
+    initializeRuntime,
+    onExit,
+    onFinished,
+  });
+  const presentation = useMemo(
+    () => pairingPresentation(controller.state),
+    [controller.state],
+  );
+  const palette = toneColors[presentation.tone];
+
+  const backRef = useRef(controller.back);
+  backRef.current = controller.back;
+  useEffect(() => {
+    // This app has no navigation stack: Android Back is the page's own back action.
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      backRef.current();
+      return true;
+    });
+    return () => subscription.remove();
+  }, []);
+
+  const runAction = (action: CustomPairingAction) => {
+    controller[action]();
+  };
+
+  // Leaving Pair Audio during an attempt unpairs the glasses, so ask first.
+  const confirmCancel = () => {
+    Alert.alert("Cancel pairing?", "Your glasses will be unpaired from this phone.", [
+      { text: "Keep pairing", style: "cancel" },
+      {
+        text: "Cancel pairing",
+        style: "destructive",
+        onPress: () =>
+          void controller.cancelPairing().then((cancelled) => {
+            if (!cancelled) Alert.alert("Pairing could not be cancelled. Please try again.");
+          }),
+      },
+    ]);
+  };
+```
+
+Its `pairingPresentation` turns each page's state into a title, message,
+glasses rows and buttons. The scan page, for example:
+
+```ts
+function scanRows(glasses: MentraLivePairingGlasses[]): CustomPairingRow[] {
+  return glasses.map((item) => ({
+    detail: item.inPairingMode ? 'Ready to pair' : 'Press the power button 3 times',
+    glasses: item,
+    label: `Mentra Live ${item.label}`,
+    ready: item.inPairingMode,
+  }));
+}
+```
+
+The app opens the flow from its Device tab and closes it on either callback:
+
+```tsx
+{pairingVisible ? (
+  // Pairing ends connected; the OTA admission above then offers any update, as after a Connect.
+  <CustomMentraLivePairingFlow
+    onExit={closePairing}
+    onFinished={closePairing}
+  />
+) : ...}
+```
+
+Start from that folder and change its presentation and styles. Call only the
+controller's actions. Do not copy or modify the scan, bond adoption, readiness
+or Pair Audio logic, and do not import `@mentra/bluetooth-sdk/internal`, Engine
+stores, or Engine services.
+
+### Pages And Actions
+
+`controller.state.page` is one of these, with the fields and actions it offers:
+
+| Page | State | Actions |
+| --- | --- | --- |
+| `prep` | none | `continueToScan()` runs `prepareScan`, then opens the scan. `back()` leaves. |
+| `scan` | `status`: `"searching"`, `"choosing"`, `"not_found"` or `"in_use"`. `scanning`: false once the scan gave up. `glasses`: the list. `someNotInPairingMode`. | `select(glasses)` pairs them. `scanAgain()` starts over. `back()` returns to prep, or leaves when the flow started on the scan. |
+| `connecting` | `device`, `booting` (the glasses are still starting up) | `back()` abandons the attempt and returns to the scan. |
+| `pair_audio` | `deviceName`, `canCancel` (true during an attempt), `otherAudioConnected` | `openBluetoothSettings()`. `cancelPairing()` when `canCancel`: unpairs the glasses and resolves `false` if that failed. The flow continues on its own once audio connects. |
+| `forget_ios_pairing` | `deviceName` | `openBluetoothSettings()`. Returning to the app from Settings, or `back()`, returns to the scan, or leaves a standalone entry. |
+| `success` | none | `finish()` calls `onFinished`. |
+| `failure` | `error`: a translation key such as `errors:pairingCouldNotStart` or `errors:pairingBatteryTooLow` | `retry()` calls `onRetry`, or scans again. `exit()` or `back()` leaves. |
+
+Each scan row is a `MentraLivePairingGlasses`: `id`, `label` (the Bluetooth
+name without its model prefix, for example `E511`, which matches the code the
+glasses speak), `inPairingMode` (false only when the glasses support secure
+pairing and say their window is closed), and the SDK `device`.
+
+Show `scan` rows that are not in pairing mode, so the person can press the
+power button three times and pick them. `pair_audio` and `success` have no
+`back()`: give them their own buttons.
+
+## Native Android And iOS Apps
+
+Mentra Engine's pairing flow is currently a React Native integration. Native
+Android and iOS apps build pairing on the lower-level pairing state and events
+in the [API Reference](/bluetooth-sdk/api-reference#mentra-live-pairing),
+including the pairing window, `pairingState`, and the Pair Again state.

@@ -1,4 +1,5 @@
 import React from "react"
+import {PermissionsAndroid, Platform, Pressable, Text, View} from "react-native"
 
 import {
   MentraLiveOtaFlow,
@@ -90,24 +91,67 @@ export const lowLevelOtaTransportAvailability = () => ({
   stopServer: otaServer.stop,
 })
 
-// Pairing: the stock flow, one page replaced, and a fully custom flow over the hook.
-export function StockPairingConsumer({onDone, onLeave}: {onDone: () => void; onLeave: () => void}) {
+// Pairing: the docs' examples (bluetooth-sdk/pairing.mdx) and a fully custom flow over the hook.
+type PairMentraLiveProps = {
+  onDone: () => void
+  onLeave: () => void
+}
+
+export function PairMentraLive({onDone, onLeave}: PairMentraLiveProps) {
   return <MentraLivePairingFlow initialPage="prep" onExit={onLeave} onFinished={onDone} />
 }
 
-const pairingPages: MentraLivePairingPageOverrides = {
-  scan: ({state, controller}: MentraLivePairingPageProps<"scan">) =>
-    React.createElement(
-      React.Fragment,
-      null,
-      state.glasses.map((glasses: MentraLivePairingGlasses) => glasses.label).join(", "),
-      state.scanning ? null : String(controller.scanAgain),
-    ),
+async function requestBluetoothPermissions(): Promise<boolean> {
+  if (Platform.OS !== "android") return true
+  // Android 12 added Bluetooth permissions; older versions scan with location.
+  const permissions =
+    Number(Platform.Version) >= 31
+      ? [PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN, PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT]
+      : [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION]
+  const results = await PermissionsAndroid.requestMultiple(permissions)
+  return Object.values(results).every((result) => result === PermissionsAndroid.RESULTS.GRANTED)
 }
 
-export function OverriddenPairingConsumer({onDone, onLeave}: {onDone: () => void; onLeave: () => void}) {
-  const controller = useMentraLivePairing({onExit: onLeave, onFinished: onDone})
-  return <MentraLivePairingPages controller={controller} pages={pairingPages} />
+export function BrandedPairMentraLive({onDone, onLeave}: PairMentraLiveProps) {
+  return (
+    <MentraLivePairingFlow
+      initialPage="prep"
+      onExit={onLeave}
+      onFinished={onDone}
+      prepareScan={requestBluetoothPermissions}
+      theme={{background: "#FFFFFF", foreground: "#111111", primary: "#0057FF", buttonBackground: "#0057FF"}}
+    />
+  )
+}
+
+function ScanPage({state, controller}: MentraLivePairingPageProps<"scan">) {
+  return (
+    <View>
+      {state.glasses.map((glasses: MentraLivePairingGlasses) => (
+        <Pressable key={glasses.id} onPress={() => controller.select(glasses)}>
+          <Text>
+            Mentra Live {glasses.label}
+            {glasses.inPairingMode ? "" : " · press the power button 3 times"}
+          </Text>
+        </Pressable>
+      ))}
+      {!state.scanning && (
+        <Pressable onPress={controller.scanAgain}>
+          <Text>Scan again</Text>
+        </Pressable>
+      )}
+      <Pressable onPress={controller.back}>
+        <Text>Cancel</Text>
+      </Pressable>
+    </View>
+  )
+}
+
+const pairingPages: MentraLivePairingPageOverrides = {scan: ScanPage}
+
+export function PairMentraLiveWithOwnScan({onDone, onLeave}: PairMentraLiveProps) {
+  const pairing = useMentraLivePairing({onExit: onLeave, onFinished: onDone})
+  return <MentraLivePairingPages controller={pairing} pages={pairingPages} />
 }
 
 function pairingLabel(state: MentraLivePairingState): string {

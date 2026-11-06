@@ -452,7 +452,12 @@ await saveDeviceToYourAppStorage(null)
 
 ## Mentra Live pairing
 
-`confirmReplaceOwner()` and `confirm_replace_owner_result` are removed. `owner_replaced` is deprecated and is never emitted. The replacement is `GlassesStatus.pairingState`, also delivered as `pairing_state_changed`. Full steps are in [MIGRATION.md](./MIGRATION.md). The version stays `3.3.0` in `package.json` (podspec and Gradle read it). npm still publishes `3.2.1`.
+React Native apps should use `MentraLivePairingFlow` or `useMentraLivePairing` from
+`@mentra/engine/pairing`. They provide the same scan, bond adoption, connect, Pair
+Audio and failure flow as the Mentra App. See
+[Pair Mentra Live](https://docs.mentraglass.com/bluetooth-sdk/pairing).
+
+`confirmReplaceOwner()` and `confirm_replace_owner_result` are removed. `owner_replaced` is deprecated and is never emitted. The replacement is `GlassesStatus.pairingState`, also delivered as `pairing_state_changed`. SDK `3.3.0` removed them; apps upgrading from `3.2` follow [MIGRATION.md](./MIGRATION.md).
 
 On supported Mentra Live firmware, three power-button presses open one 120-second window and the glasses speak a 4-character code. Three presses again cancel it. The phone that was already paired pauses automatic reconnect for that window plus a 30-second margin (`pairingState.endsAtMs`), then reconnects after `pairing_mode_ended` with `reason` `"timeout"` or `"cancelled"`. If the glasses stop accepting this phone (another phone paired, or repeated authentication rejections on secure-pairing firmware), this phone's state becomes `pairing_rejected`: reconnect stops, and the UI should show Pair Again. That state clears only after a successful explicit pair or `forget()`.
 
