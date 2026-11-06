@@ -175,13 +175,6 @@ describe("pairing loading screen", () => {
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}, audioSetup})
   }
 
-  const expectStillOnSpinner = (screen: {getByText: (text: string) => unknown}) => {
-    expect(screen.getByText("waiting")).toBeTruthy()
-    expect(replace).not.toHaveBeenCalled()
-    expect(push).not.toHaveBeenCalled()
-    expect(engine.pairing.abandonAttempt).not.toHaveBeenCalled()
-  }
-
   const setIosPlatform = () => {
     restorePlatform?.()
     restorePlatform = jest.replaceProperty(Platform, "OS", "ios").restore
@@ -417,20 +410,6 @@ describe("pairing loading screen", () => {
     expect(replace).not.toHaveBeenCalledWith("/pairing/success", expect.anything())
   })
 
-  it("does not start the selected-device kickoff while loading is under Bluetooth Classic", async () => {
-    ;(useIsFocused as jest.Mock).mockReturnValue(false)
-    const screen = render(<GlassesPairingLoadingScreen />)
-
-    act(() => {
-      jest.advanceTimersByTime(10_000)
-    })
-    expect(engine.pairing.pair).not.toHaveBeenCalled()
-    ;(useIsFocused as jest.Mock).mockReturnValue(true)
-    screen.rerender(<GlassesPairingLoadingScreen />)
-    await startPairingKickoff()
-    expect(engine.pairing.pair).toHaveBeenCalledWith(makeDevice("Mentra Live", "MENTRA_LIVE_BLE_001"))
-  })
-
   it("ignores readiness from previously connected glasses until the selected attempt reconnects", async () => {
     ;(useRoute as jest.Mock).mockReturnValue({
       params: makeRouteParams("Mentra Live", "MENTRA_LIVE_BLE_NEW", {securePairingCapable: false}),
@@ -499,71 +478,6 @@ describe("pairing loading screen", () => {
     expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
   })
 
-  describe("forget the old iOS pairing (S8)", () => {
-    const FORGET_ROUTE = "/pairing/forget-ios-pairing"
-
-    it("routes ios_forget_pairing on iOS to the forget screen, never to failure", async () => {
-      setIosPlatform()
-      render(<GlassesPairingLoadingScreen />)
-      await startPairingKickoff()
-      await act(async () => {
-        emitBluetoothSdkEvent("pair_failure", {error: "pairing:failed", code: "ios_forget_pairing"})
-      })
-      expect(replace).toHaveBeenCalledTimes(1)
-      expect(replace).toHaveBeenCalledWith(FORGET_ROUTE, {
-        deviceModel: "Mentra Live",
-        deviceName: "MENTRA_LIVE_BLE_001",
-      })
-      expect(engine.pairing.abandonAttempt).toHaveBeenCalled()
-      expect(replace).not.toHaveBeenCalledWith("/pairing/failure", expect.anything())
-      expect(replace).not.toHaveBeenCalledWith("/pairing/unpair-even", expect.anything())
-    })
-
-    it("sends the same code to the generic failure screen on Android", async () => {
-      render(<GlassesPairingLoadingScreen />)
-      await startPairingKickoff()
-      await act(async () => {
-        emitBluetoothSdkEvent("pair_failure", {error: "pairing:failed", code: "ios_forget_pairing"})
-      })
-      expect(replace).toHaveBeenCalledWith("/pairing/failure", {error: "pairing:failed", deviceModel: "Mentra Live"})
-      expect(replace).not.toHaveBeenCalledWith(FORGET_ROUTE, expect.anything())
-    })
-
-    it.each([
-      ["another code", {error: "pairing:failed", code: "something_else"}],
-      ["no code", {error: "pairing:failed"}],
-      ["the retired error string without a code", {error: "errors:iosForgetGlassesBluetooth"}],
-    ])("does not route %s to the forget screen on iOS", async (_label, failure) => {
-      setIosPlatform()
-      render(<GlassesPairingLoadingScreen />)
-      await startPairingKickoff()
-      await act(async () => {
-        emitBluetoothSdkEvent("pair_failure", failure)
-      })
-      expect(replace).toHaveBeenCalledWith("/pairing/failure", {error: failure.error, deviceModel: "Mentra Live"})
-      expect(replace).not.toHaveBeenCalledWith(FORGET_ROUTE, expect.anything())
-    })
-
-    it("wins over a pending success when it arrives during the success delay", async () => {
-      setIosPlatform()
-      ;(useRoute as jest.Mock).mockReturnValue({
-        params: makeRouteParams("Mentra Live", "MENTRA_LIVE_BLE_001", {securePairingCapable: false}),
-      })
-      render(<GlassesPairingLoadingScreen />)
-      await startPairingKickoff()
-      act(() => {
-        promoteWearable("Mentra Live", "MENTRA_LIVE_BLE_001")
-        markReady({state: "connected"})
-      })
-      act(() => {
-        emitBluetoothSdkEvent("pair_failure", {error: "pairing:failed", code: "ios_forget_pairing"})
-        jest.advanceTimersByTime(5_000)
-      })
-      expect(replace).toHaveBeenCalledTimes(1)
-      expect(replace).toHaveBeenCalledWith(FORGET_ROUTE, expect.objectContaining({deviceModel: "Mentra Live"}))
-    })
-  })
-
   describe("no ownership transfer routing", () => {
     it("never routes to a replace-owner screen, whatever pairing_info carries", async () => {
       setIosPlatform()
@@ -584,133 +498,6 @@ describe("pairing loading screen", () => {
       expect(routes).not.toContain("/pairing/replace-owner")
       expect(push).not.toHaveBeenCalled()
       expect(replace).not.toHaveBeenCalled()
-    })
-  })
-
-  describe("audio setup from the SDK (S6)", () => {
-    const btclassicParams = {
-      device: JSON.stringify({id: "MENTRA_LIVE_BLE_001", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001"}),
-    }
-    const successCalls = () => replace.mock.calls.filter(([route]) => route === "/pairing/success")
-
-    const reachReady = (audioSetup: GlassesAudioSetupState) =>
-      act(() => {
-        promoteWearable("Mentra Live", "MENTRA_LIVE_BLE_001")
-        markReady(audioSetup)
-      })
-
-    const setAudioSetup = (audioSetup: GlassesAudioSetupState) =>
-      act(() => {
-        useGlassesStore.getState().setGlassesInfo({audioSetup})
-      })
-
-    it.each(["connected", "not_applicable"] as const)(
-      "shows success without Pair Audio when audio setup is %s",
-      async (state) => {
-        setIosPlatform()
-        render(<GlassesPairingLoadingScreen />)
-        await startPairingKickoff()
-        reachReady({state})
-        act(() => {
-          jest.advanceTimersByTime(1_000)
-        })
-        expect(push).not.toHaveBeenCalled()
-        expect(successCalls()).toHaveLength(1)
-        act(() => {
-          jest.advanceTimersByTime(60_000)
-        })
-        expect(push).not.toHaveBeenCalled()
-        expect(successCalls()).toHaveLength(1)
-      },
-    )
-
-    it("keeps the spinner while the SDK reports audio connecting, and finishes when it connects", async () => {
-      setIosPlatform()
-      const screen = render(<GlassesPairingLoadingScreen />)
-      await startPairingKickoff()
-      reachReady({state: "connecting"})
-
-      // The SDK owns the deadline; the screen never times audio out itself.
-      act(() => {
-        jest.advanceTimersByTime(60_000)
-      })
-      expectStillOnSpinner(screen)
-
-      setAudioSetup({state: "connected"})
-      act(() => {
-        jest.advanceTimersByTime(1_000)
-      })
-      expect(push).not.toHaveBeenCalled()
-      expect(successCalls()).toHaveLength(1)
-    })
-
-    it("opens Pair Audio once when the SDK says audio needs the user", async () => {
-      setIosPlatform()
-      render(<GlassesPairingLoadingScreen />)
-      await startPairingKickoff()
-      reachReady({state: "needs_user", action: "connect_in_settings"})
-
-      expect(push).toHaveBeenCalledTimes(1)
-      expect(push).toHaveBeenCalledWith("/pairing/btclassic", btclassicParams)
-      expect(successCalls()).toHaveLength(0)
-      act(() => {
-        jest.advanceTimersByTime(60_000)
-      })
-      expect(push).toHaveBeenCalledTimes(1)
-      expect(successCalls()).toHaveLength(0)
-    })
-
-    it("opens Pair Audio when connecting turns into needs_user", async () => {
-      setIosPlatform()
-      render(<GlassesPairingLoadingScreen />)
-      await startPairingKickoff()
-      reachReady({state: "connecting"})
-      expect(push).not.toHaveBeenCalled()
-
-      setAudioSetup({state: "needs_user", action: "connect_in_settings"})
-      expect(push).toHaveBeenCalledTimes(1)
-      expect(push).toHaveBeenCalledWith("/pairing/btclassic", btclassicParams)
-    })
-
-    it("gives exactly one navigation when audio connects after Pair Audio opens", async () => {
-      setIosPlatform()
-      const screen = render(<GlassesPairingLoadingScreen />)
-      await startPairingKickoff()
-      reachReady({state: "needs_user", action: "connect_in_settings"})
-      expect(push).toHaveBeenCalledTimes(1)
-
-      // Pair Audio is on top now, so this screen loses focus.
-      ;(useIsFocused as jest.Mock).mockReturnValue(false)
-      screen.rerender(<GlassesPairingLoadingScreen />)
-      setAudioSetup({state: "connected"})
-      act(() => {
-        jest.advanceTimersByTime(10_000)
-      })
-      expect(push).toHaveBeenCalledTimes(1)
-      expect(successCalls()).toHaveLength(0)
-
-      // Pair Audio advances on its own and hands the screen back; only then does success follow.
-      ;(useIsFocused as jest.Mock).mockReturnValue(true)
-      screen.rerender(<GlassesPairingLoadingScreen />)
-      act(() => {
-        jest.advanceTimersByTime(1_000)
-      })
-      expect(push).toHaveBeenCalledTimes(1)
-      expect(successCalls()).toHaveLength(1)
-    })
-
-    it("does not navigate twice when audio connects while Pair Audio is open and focus never changes", async () => {
-      setIosPlatform()
-      render(<GlassesPairingLoadingScreen />)
-      await startPairingKickoff()
-      reachReady({state: "needs_user", action: "connect_in_settings"})
-      setAudioSetup({state: "connected"})
-      act(() => {
-        jest.advanceTimersByTime(10_000)
-      })
-
-      expect(push).toHaveBeenCalledTimes(1)
-      expect(successCalls()).toHaveLength(0)
     })
   })
 

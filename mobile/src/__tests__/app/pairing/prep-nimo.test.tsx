@@ -9,6 +9,9 @@ import {preparePairingScan} from "@/utils/pairing/preparePairingScan"
 
 jest.mock("@mentra/engine", () => ({DeviceTypes: {NIMO: "NIMO", SIMULATED: "Simulated"}, engine: {}}))
 jest.mock("@react-navigation/native", () => ({useRoute: () => ({params: {deviceModel: "NIMO"}})}))
+// Mentra Live pairs through the Engine's flow, covered by the Engine's own tests.
+jest.mock("@/components/pairing/MentraLivePairingFlowHost", () => ({MentraLivePairingFlowHost: () => null}))
+
 jest.mock("@/stores/navigation", () => ({useNavigationStore: {getState: jest.fn()}}))
 jest.mock("@/contexts/ThemeContext", () => ({useAppTheme: () => ({themed: jest.fn()})}))
 jest.mock("@/services/deployment", () => ({deploymentStore: {getActive: () => ({kind: "consumer"})}}))

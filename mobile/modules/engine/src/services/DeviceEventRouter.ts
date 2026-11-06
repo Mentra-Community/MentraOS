@@ -27,9 +27,8 @@ import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
-import {useSettingsStore} from "../stores/settings"
 import {useAppStatusStore} from "../stores/apps"
-import {retirePendingSelectionOnPromotion} from "./PairingIdentity"
+import {startPairingProjection, stopPairingProjection} from "./PairingProjection"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
 import {reclaimLateHotspot} from "./GlassesHotspotLease"
@@ -131,39 +130,8 @@ export function startDeviceEventRouter(): void {
     }),
   )
 
-  // Hardware-originated setting changes (user changes a setting ON the glasses) → store.
-  // The inbound complement to GlassesSettingsSync (which only pushes store→device).
-  subs.push(
-    BluetoothSdk.addListener("save_setting", async (event) => {
-      const settings = useSettingsStore.getState()
-      // Damp the relay: native re-echoes some settings unconditionally (e.g.
-      // the identity block at every handleDeviceReady) — a same-value echo
-      // must not become a store write (persistence churn + change-push noise).
-      if (settings.getSetting(event.key) !== event.value) {
-        await settings.setSetting(event.key, event.value)
-      }
-      // Two-phase identity: a promoted default retires the pending selection
-      // marker. The rule lives with PairingIdentity (a no-op for other keys).
-      await retirePendingSelectionOnPromotion(event.key, event.value)
-    }),
-  )
-
-  // Mentra Live pairing state is owned by the Bluetooth SDK (`normal`, `pairing_mode`,
-  // `pairing_rejected`). The engine only mirrors it into the glasses store so the app renders
-  // from one source: the pairing-mode popup, and the Pair Again card.
-  subs.push(
-    BluetoothSdk.addListener("pairing_state_changed", (event) => {
-      useGlassesStore.getState().setGlassesInfo({pairingState: event.state})
-    }),
-  )
-
-  // Whether the user has to do anything for glasses audio is decided by the Bluetooth SDK. The
-  // engine mirrors it; the pairing flow and Home render Pair Audio from it.
-  subs.push(
-    BluetoothSdk.addListener("audio_setup_changed", (event) => {
-      useGlassesStore.getState().setGlassesInfo({audioSetup: event.state})
-    }),
-  )
+  // Identity echo, pairing state and audio setup → stores (shared with the standalone pairing flow).
+  startPairingProjection()
 
   // --- coordinators (owns()-gated) ---
 
@@ -290,4 +258,5 @@ export function startDeviceEventRouter(): void {
 export function stopDeviceEventRouter(): void {
   for (const sub of subs) sub.remove()
   subs = []
+  stopPairingProjection()
 }

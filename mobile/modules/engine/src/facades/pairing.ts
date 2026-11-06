@@ -295,6 +295,8 @@ export const pairing = {
 
   /** Start scanning for nearby glasses. Results land on `searchResults()`/`onFound()`. */
   scan: (model: DeviceModel): Promise<void> => BluetoothSdk.startScan(model),
+  /** Stop a scan started with `scan()`. */
+  stopScan: (): Promise<void> => BluetoothSdk.stopScan(),
   /** The glasses this phone is still bonded with, which never unpaired. Android only: iOS can't read its bonds. */
   bondedGlasses: async (): Promise<Device | null> => {
     try {

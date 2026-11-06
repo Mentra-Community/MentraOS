@@ -3,30 +3,34 @@ import {useRoute} from "@react-navigation/native"
 import {Image, ScrollView, View} from "react-native"
 import type {ImageStyle, ViewStyle} from "react-native"
 
+import {MentraLivePairingFlowHost} from "@/components/pairing/MentraLivePairingFlowHost"
 import {NimoPreparation} from "@/components/pairing/NimoPreparation"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {translate} from "@/i18n"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
-import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
-import {CDN_BASE_URL} from "@/constants/appConfig"
 import {getAr99DisplayName, getAr99ImageSource} from "@/utils/getGlassesImage"
 import {ThemedStyle} from "@/theme"
 import {preparePairingScan} from "@/utils/pairing/preparePairingScan"
-import {deploymentStore} from "@/services/deployment"
 import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPolicy"
 
+/** Mentra Live starts the Engine's pairing flow on its Power on page; the other models prepare here. */
 export default function PairingPrepScreen() {
+  const route = useRoute()
+  const {deviceModel} = route.params as {deviceModel: string}
+  if (deviceModel === DeviceTypes.LIVE) return <MentraLivePairingFlowHost initialPage="prep" />
+  return <OtherGlassesPrepScreen />
+}
+
+function OtherGlassesPrepScreen() {
   const route = useRoute()
   const {deviceModel, ar99ProjectName} = route.params as {deviceModel: string; ar99ProjectName?: string}
   const displayName = deviceModel === DeviceTypes.AR99 ? getAr99DisplayName(ar99ProjectName) : deviceModel
   const {goBack, push, clearHistoryAndGoHome} = useNavigationStore.getState()
   const {themed} = useAppTheme()
-  const useRemoteMedia = deploymentStore.getActive().kind === "consumer"
 
   const advanceToPairing = async () => {
     if (!isGlassesModelAllowedByDeployment(deviceModel, ar99ProjectName)) {
@@ -56,53 +60,6 @@ export default function PairingPrepScreen() {
           className="text-sm text-secondary-foreground mt-6"
         />
       </View>
-    )
-  }
-
-  const MentraLivePairingGuide = () => {
-    const CDN_BASE = `${CDN_BASE_URL}/onboarding/mentra-live/light`
-    const poster = require("@assets/onboarding/live/thumbnails/ONB0_power.png")
-    const steps: OnboardingStep[] = useRemoteMedia
-      ? [
-          {
-            name: "power_on_tutorial",
-            type: "video",
-            source: `${CDN_BASE}/ONB1_power_button_loop.mp4`,
-            poster,
-            transition: false,
-            title: translate("pairing:powerOn"),
-            subtitle: translate("onboarding:livePowerOnTutorial"),
-            info: translate("onboarding:livePowerOnInfo"),
-            playCount: -1,
-            showButtonImmediately: true,
-          },
-        ]
-      : [
-          {
-            name: "power_on_tutorial",
-            type: "image",
-            source: poster,
-            transition: false,
-            title: translate("pairing:powerOn"),
-            subtitle: translate("onboarding:livePowerOnTutorial"),
-            info: translate("onboarding:livePowerOnInfo"),
-          },
-        ]
-    return (
-      <OnboardingGuide
-        steps={steps}
-        autoStart={true}
-        showCloseButton={false}
-        showSkipButton={false}
-        showHeader={false}
-        skipFn={() => {
-          advanceToPairing()
-        }}
-        endButtonText={translate("pairing:poweredOn")}
-        endButtonFn={() => {
-          advanceToPairing()
-        }}
-      />
     )
   }
 
@@ -282,8 +239,6 @@ export default function PairingPrepScreen() {
         return <G1PairingGuide />
       case DeviceTypes.G2:
         return <G2PairingGuide />
-      case DeviceTypes.LIVE:
-        return <MentraLivePairingGuide />
       case DeviceTypes.MACH1:
         return <MentraMach1PairingGuide />
       case DeviceTypes.Z100:
@@ -305,7 +260,6 @@ export default function PairingPrepScreen() {
         return <G1Buttons />
       case DeviceTypes.G2:
         return <G2Buttons />
-      case DeviceTypes.LIVE:
       case DeviceTypes.NIMO:
         return null
       default:

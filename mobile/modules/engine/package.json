@@ -16,6 +16,11 @@
       "react-native": "./src/react/index.ts",
       "default": "./build/react/index.js"
     },
+    "./pairing": {
+      "types": "./build/react/pairing.d.ts",
+      "react-native": "./src/react/pairing.ts",
+      "default": "./build/react/pairing.js"
+    },
     "./bluetooth-sdk": {
       "types": "./build/bluetooth-sdk/index.d.ts",
       "react-native": "./src/bluetooth-sdk/index.ts",

@@ -159,6 +159,9 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === "@mentra/engine/ota") {
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "react/index"), platform)
   }
+  if (moduleName === "@mentra/engine/pairing") {
+    return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "react/pairing"), platform)
+  }
   const miniappAlias = MINIAPP_ALIASES[moduleName]
   if (miniappAlias) return (baseResolveRequest ?? context.resolveRequest)(context, miniappAlias, platform)
   if (moduleName === "@mentra/crust") {

@@ -4,6 +4,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardVisibleContext } from './components/keyboardLayout';
 import { TabBar, TabKey } from './components/TabBar';
 import { CustomMentraLiveOtaFlow } from './ota/CustomMentraLiveOtaFlow';
+import { CustomMentraLivePairingFlow } from './pairing/CustomMentraLivePairingFlow';
 import { DeviceScreen } from './screens/DeviceScreen';
 import { CameraScreen } from './screens/CameraScreen';
 import { StreamScreen } from './screens/StreamScreen';
@@ -18,6 +19,7 @@ export default function App() {
   const [tab, setTab] = useState<TabKey>('device');
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [otaVisible, setOtaVisible] = useState(false);
+  const [pairingVisible, setPairingVisible] = useState(false);
   const [waitingForWifi, setWaitingForWifi] = useState(false);
   const otaCompletedGenerationRef = useRef<number | null>(null);
   const sdk = useBluetoothSdkExample({activeTab: tab});
@@ -74,6 +76,9 @@ export default function App() {
     setTab('system');
   };
 
+  const openPairing = () => setPairingVisible(true);
+  const closePairing = () => setPairingVisible(false);
+
   const openOta = () => {
     otaCompletedGenerationRef.current = null;
     setWaitingForWifi(false);
@@ -84,7 +89,13 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar barStyle="dark-content" />
       <KeyboardVisibleContext.Provider value={keyboardVisible}>
-        {otaVisible ? (
+        {pairingVisible ? (
+          // Pairing ends connected; the OTA admission above then offers any update, as after a Connect.
+          <CustomMentraLivePairingFlow
+            onExit={closePairing}
+            onFinished={closePairing}
+          />
+        ) : otaVisible ? (
           <CustomMentraLiveOtaFlow
             deviceName="Mentra Live"
             onFinished={finishOta}
@@ -110,7 +121,7 @@ export default function App() {
               </View>
             )}
             <View style={styles.screen}>
-              {tab === 'device' && <DeviceScreen sdk={sdk} onOpenOta={openOta} />}
+              {tab === 'device' && <DeviceScreen sdk={sdk} onOpenOta={openOta} onOpenPairing={openPairing} />}
               {tab === 'camera' && <CameraScreen sdk={sdk} />}
               {tab === 'stream' && <StreamScreen sdk={sdk} />}
               {tab === 'system' && <SystemScreen sdk={sdk} />}
