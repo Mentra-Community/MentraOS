@@ -50,7 +50,7 @@ for MODE in control fixed; do
   xcrun swiftc -target "$ARCH-apple-ios15.5-simulator" -sdk "$SDK_PATH" \
     -F "$FRAMEWORK" -framework WebRTC -Xlinker -rpath -Xlinker "$FRAMEWORK" \
     "$FACTORY" "$IOS_DIR/ReceiveOnlyAudioDevice.swift" "$IOS_DIR/LocalWhipIngestSource.swift" \
-    "$IOS_DIR/DecodedGlassesMediaSource.swift" "$IOS_DIR/DecodedPcm.swift" \
+    "$IOS_DIR/DecodedGlassesMediaSource.swift" "$IOS_DIR/DecodedPcm.swift" "$IOS_DIR/MediaLog.swift" \
     "$IOS_DIR"/CoreKit/Sources/GlassesMediaCore/*.swift "$TEST_DIR/Probe.swift" -o "$WORK_DIR/probe"
   echo "Running $MODE with WebRTC $SDK_VERSION"
   SIMCTL_CHILD_DYLD_INSERT_LIBRARIES="$WORK_DIR/InternetPathShim.dylib" \

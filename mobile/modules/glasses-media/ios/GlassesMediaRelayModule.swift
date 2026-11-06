@@ -9,7 +9,11 @@ public final class GlassesMediaRelayModule: Module {
 
     public func definition() -> ModuleDefinition {
         Name("MentraGlassesMediaRelay")
-        Events("onRelayState", "onLocalHotspotPermissionRequired")
+        Events("onRelayState", "onLocalHotspotPermissionRequired", "onNativeLog")
+
+        OnCreate {
+            MediaLog.sink = { [weak self] message in self?.sendEvent("onNativeLog", ["message": message]) }
+        }
 
         AsyncFunction("joinLocalHotspot") { (id: String, ssid: String, password: String, gateway: String?, purpose: String, promise: Promise) in
             self.queue.async {
@@ -92,6 +96,7 @@ public final class GlassesMediaRelayModule: Module {
         }
 
         OnDestroy {
+            MediaLog.sink = nil
             self.queue.async {
                 self.session?.stop { result in
                     if case .success = result { self.session = nil }

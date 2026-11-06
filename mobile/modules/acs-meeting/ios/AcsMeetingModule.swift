@@ -117,7 +117,7 @@ public class AcsMeetingModule: Module {
         }
 
         AsyncFunction("beginTrace") { (traceId: String) in
-            NSLog("SOFTAP_TRACE trace=\(traceId) stage=ios_begin")
+            MediaLog.log("SOFTAP_TRACE trace=\(traceId) stage=ios_begin")
         }
         AsyncFunction("probeScopedGateway") { (promise: Promise) in
             self.hotspot.probeGateway { reachable, detail in
@@ -283,7 +283,7 @@ final class AcsMeetingSession {
     private let queue = DispatchQueue(label: "com.mentra.acsmeeting")
     private lazy var scheduler = QueuePolicyScheduler(queue: queue)
     private lazy var controller = SessionAudioController(session: self)
-    private lazy var applier = AudioPolicyApplier(controller: controller, scheduler: scheduler) { NSLog("ACS-SPIKE \($0)") }
+    private lazy var applier = AudioPolicyApplier(controller: controller, scheduler: scheduler) { MediaLog.log("ACS-SPIKE \($0)") }
     private var phase = "idle"
     private var muted = false
     /// Whether ACS is sending `videoStream`. Only `setVideoEnabled` turns it off; every call starts on.
@@ -471,7 +471,7 @@ final class AcsMeetingSession {
                                                   sourceConfig: sourceConfig, dumpWav: dumpWav, video: video) } catch { self.failJoinLocked(error, generation: generation) }
             }
             if let prepared {
-                NSLog("ACS-SPIKE iOS agent reused generation=\(generation)")
+                MediaLog.log("ACS-SPIKE iOS agent reused generation=\(generation)")
                 self.callClient = preparedClient
                 useAgent(prepared)
             } else {
@@ -482,11 +482,11 @@ final class AcsMeetingSession {
                     let options = CallAgentOptions()
                     options.displayName = displayName ?? "Mentra Call"
                     let agentStartedAt = ProcessInfo.processInfo.systemUptime
-                    NSLog("ACS-SPIKE iOS agent creation started generation=\(generation)")
+                    MediaLog.log("ACS-SPIKE iOS agent creation started generation=\(generation)")
                     createMeetingAgent(client: client, credential: credential, guestOptions: options, identityMode: identityMode) { agent, error in
                         self.queue.async {
                             let elapsedMs = Int((ProcessInfo.processInfo.systemUptime - agentStartedAt) * 1000)
-                            NSLog("ACS-SPIKE iOS agent creation completed generation=\(generation) elapsedMs=\(elapsedMs) success=\(agent != nil && error == nil)")
+                            MediaLog.log("ACS-SPIKE iOS agent creation completed generation=\(generation) elapsedMs=\(elapsedMs) success=\(agent != nil && error == nil)")
                             guard self.joinGeneration == generation else { agent?.dispose(); return }
                             guard let agent, error == nil else {
                                 agent?.dispose()
@@ -588,7 +588,7 @@ final class AcsMeetingSession {
         // can be hung up. The retirement deadline still handles an SDK callback that is lost.
         let joinRetirement = CallJoinRetirement<CommonCall>(group: cleanup, queue: queue, dispose: { agent.dispose() }) { call, finished in
             call.hangUp(options: nil) { error in
-                if let error { NSLog("ACS-SPIKE cancelled join hangUp failed: \(error)") }
+                if let error { MediaLog.log("ACS-SPIKE cancelled join hangUp failed: \(error)") }
                 finished()
             }
         }
@@ -687,7 +687,7 @@ final class AcsMeetingSession {
             source.start(config: sourceConfig)
             ready(.success(""))
         }
-        NSLog("ACS-SPIKE iOS ACS join started source=\(audioSource) profile=\(video.width)x\(video.height)@\(video.fps) armVirtual=\(plan.armVirtual) transportMuted=\(plan.transportMuted)")
+        MediaLog.log("ACS-SPIKE iOS ACS join started source=\(audioSource) profile=\(video.width)x\(video.height)@\(video.fps) armVirtual=\(plan.armVirtual) transportMuted=\(plan.transportMuted)")
     }
 
     private func failJoinLocked(_ error: Error, generation: UInt64) {
@@ -762,7 +762,7 @@ final class AcsMeetingSession {
         let attempt = mediaRestartAttempts
         mediaRestartAttempts += 1
         let delayMs = min(Self.mediaRestartBaseMs << min(attempt, 4), Self.mediaRestartMaxMs)
-        NSLog("ACS-SPIKE glasses media source failed (\(reason)); WHEP rebuild #\(attempt + 1) in \(delayMs)ms")
+        MediaLog.log("ACS-SPIKE glasses media source failed (\(reason)); WHEP rebuild #\(attempt + 1) in \(delayMs)ms")
         let task = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.mediaRestartTask = nil
@@ -808,11 +808,11 @@ final class AcsMeetingSession {
                         return
                     }
                     if let error {
-                        NSLog("ACS-SPIKE setVideoEnabled=\(next) failed: \(error)")
+                        MediaLog.log("ACS-SPIKE setVideoEnabled=\(next) failed: \(error)")
                         completion(.failure(error))
                         return
                     }
-                    NSLog("ACS-SPIKE setVideoEnabled=\(next)")
+                    MediaLog.log("ACS-SPIKE setVideoEnabled=\(next)")
                     self.videoEnabled = next
                     let snapshot = self.snapshotLocked()
                     self.onState(snapshot)
@@ -830,9 +830,9 @@ final class AcsMeetingSession {
     func setAudioSource(_ source: String, completion: @escaping ([String: Any]) -> Void) {
         queue.async {
             if AcsAudioPolicy.parseSource(source) == nil {
-                NSLog("ACS-SPIKE unknown audioSource=\(source) ignored; source is locked for this call")
+                MediaLog.log("ACS-SPIKE unknown audioSource=\(source) ignored; source is locked for this call")
             } else {
-                NSLog("ACS-SPIKE setAudioSource=\(source) ignored; audio source is locked for this call at \(self.audioSource)")
+                MediaLog.log("ACS-SPIKE setAudioSource=\(source) ignored; audio source is locked for this call at \(self.audioSource)")
             }
             completion(self.snapshotLocked())
         }
@@ -932,7 +932,7 @@ final class AcsMeetingSession {
                     return
                 }
                 if let error {
-                    NSLog("ACS-SPIKE endForEveryone failed: \(error)")
+                    MediaLog.log("ACS-SPIKE endForEveryone failed: \(error)")
                 }
                 self.queue.async {
                     self.leaveLocked()
@@ -1013,7 +1013,7 @@ final class AcsMeetingSession {
                 || lobby?.reason != self.manageLobby?.reason else { return }
             self.hangUpForEveryone = next
             self.manageLobby = lobby
-            NSLog("ACS-SPIKE hangUpForEveryone allowed=\(next?.allowed.description ?? "unknown") reason=\(next?.reason ?? "-")")
+            MediaLog.log("ACS-SPIKE hangUpForEveryone allowed=\(next?.allowed.description ?? "unknown") reason=\(next?.reason ?? "-")")
             self.onState(self.snapshotLocked())
         }
     }
@@ -1045,7 +1045,7 @@ final class AcsMeetingSession {
         let desired: AudioSourceKind = audioSource == "phone" ? .phone : .glasses
         lastSafety = applier.apply(desired: desired, userMuted: muted, reason: reason)
         if lastSafety == .unsafe {
-            NSLog("ACS-SPIKE audioSafety=unsafe — mute and stopAudio both failed; unintended mic may be live")
+            MediaLog.log("ACS-SPIKE audioSafety=unsafe — mute and stopAudio both failed; unintended mic may be live")
         }
         onState(snapshotLocked())
     }
@@ -1066,7 +1066,7 @@ final class AcsMeetingSession {
         guard outgoingReady, let stream = audioOut else { diagnostics?.record("outgoing_not_ready"); return }
         for frame in pcmBridge?.ingest(pcm16Le: pcm, sampleRate: sampleRate, channels: channels) ?? [] {
             guard let pcmBuffer = PcmBridge.audioBuffer(pcm16Le: frame, sampleRate: PcmBridge.targetRate, channels: 1) else {
-                NSLog("ACS-SPIKE could not create outgoing AVAudioPCMBuffer")
+                MediaLog.log("ACS-SPIKE could not create outgoing AVAudioPCMBuffer")
                 break
             }
             let buffer = RawAudioBuffer()
@@ -1075,7 +1075,7 @@ final class AcsMeetingSession {
             stream.send(buffer: buffer) { error in
                 diagnostics?.record(error == nil ? "send_completed" : "send_failed")
                 if let error {
-                    NSLog("ACS-SPIKE sendRawAudioBuffer failed: \(error)")
+                    MediaLog.log("ACS-SPIKE sendRawAudioBuffer failed: \(error)")
                 }
                 buffer.dispose()
             }
@@ -1135,7 +1135,7 @@ final class AcsMeetingSession {
             let retirement = CallAgentRetirement(group: cleanup, queue: queue) { leavingAgent?.dispose() }
             leavingCall.hangUp(options: nil) { error in
                 self.queue.async {
-                    if let error { NSLog("ACS-SPIKE leave hangUp failed: \(error)") }
+                    if let error { MediaLog.log("ACS-SPIKE leave hangUp failed: \(error)") }
                     retirement.finish()
                 }
             }
@@ -1220,7 +1220,7 @@ final class AcsMeetingSession {
         queue.async {
             guard self.audioOut === stream else { return }
             self.outgoingReady = stream.state == .started
-            NSLog("ACS-SPIKE iOS raw outgoing audio state=\(stream.state)")
+            MediaLog.log("ACS-SPIKE iOS raw outgoing audio state=\(stream.state)")
             self.applyAudioPolicyOnQueue("virtual-stream-state")
         }
     }

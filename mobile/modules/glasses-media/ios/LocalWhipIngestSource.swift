@@ -90,7 +90,7 @@ public final class LocalWhipIngestSource: NSObject, DecodedGlassesMediaSource {
                     }
                     self.forceCloseIngestLocked()
                     let closed = self.awaitIngestClosedLocked(timeoutMs: timeoutMs)
-                    NSLog("SOFTAP_TRACE stage=ingest_rebind oldUrl=\(oldUrl ?? "none") newUrl=\(newUrl) closed=\(closed)")
+                    MediaLog.log("SOFTAP_TRACE stage=ingest_rebind oldUrl=\(oldUrl ?? "none") newUrl=\(newUrl) closed=\(closed)")
                     if !closed {
                         completion(.failure(LocalMediaError("SoftAP ingest rebind did not release the old listener")))
                         return
@@ -350,7 +350,7 @@ public final class LocalWhipIngestSource: NSObject, DecodedGlassesMediaSource {
     private func transition(_ state: SourceState, _ reason: String) {
         guard currentState != state else { return }
         currentState = state
-        NSLog("GLASSES-MEDIA source=\(state.rawValue) reason=\(reason)")
+        MediaLog.log("GLASSES-MEDIA source=\(state.rawValue) reason=\(reason)")
         onStateChange?(state, reason)
     }
 }

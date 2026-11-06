@@ -103,7 +103,7 @@ public final class WhepVideoSource: NSObject, DecodedGlassesMediaSource {
   /// networks; ICE may not have noticed the dead candidate pair yet).
   public func forceRestart() {
     guard let url = currentUrl else { return }
-    NSLog("ACS-SPIKE WHEP forced rebuild state=\(state.rawValue)")
+    MediaLog.log("ACS-SPIKE WHEP forced rebuild state=\(state.rawValue)")
     start(whepUrl: url)
   }
 
@@ -118,7 +118,7 @@ public final class WhepVideoSource: NSObject, DecodedGlassesMediaSource {
   public func setPcmEnabled(_ enabled: Bool) {
     pcmEnabled = enabled
     audioTracks.forEach { $0.isEnabled = enabled }
-    NSLog("ACS-SPIKE WHEP audio track enabled=\(enabled)")
+    MediaLog.log("ACS-SPIKE WHEP audio track enabled=\(enabled)")
   }
 
   public func stop() {
@@ -149,7 +149,7 @@ public final class WhepVideoSource: NSObject, DecodedGlassesMediaSource {
     let previous = state
     state = next
     guard previous != next else { return }
-    NSLog("ACS-SPIKE WHEP source \(previous.rawValue) -> \(next.rawValue) (\(reason))")
+    MediaLog.log("ACS-SPIKE WHEP source \(previous.rawValue) -> \(next.rawValue) (\(reason))")
     onStateChange?(next, reason)
   }
 
@@ -193,11 +193,11 @@ public final class WhepVideoSource: NSObject, DecodedGlassesMediaSource {
     http.dataTask(with: request) { [weak self] data, response, error in
       guard let self, self.generation == gen else { return }
       let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-      NSLog("ACS-SPIKE P3 WHEP \(code) answer bytes=\(data?.count ?? 0)")
+      MediaLog.log("ACS-SPIKE P3 WHEP \(code) answer bytes=\(data?.count ?? 0)")
       guard error == nil, (200 ..< 300).contains(code),
             let data, let answer = String(data: data, encoding: .utf8)
       else {
-        NSLog("ACS-SPIKE WHEP answer rejected code=\(code) error=\(error?.localizedDescription ?? "none")")
+        MediaLog.log("ACS-SPIKE WHEP answer rejected code=\(code) error=\(error?.localizedDescription ?? "none")")
         self.transition(.failed, reason: error != nil ? "whep_post_failed" : "whep_http_\(code)")
         return
       }
@@ -221,7 +221,7 @@ public final class WhepVideoSource: NSObject, DecodedGlassesMediaSource {
       guard let self else { return }
       self.firstFrameDeadline = nil
       guard self.generation == gen, self.firstFrameGeneration == gen, !self.firstFramePromoted else { return }
-      NSLog("ACS-SPIKE WHEP answered but delivered no frame in \(Self.firstFrameTimeout)s")
+      MediaLog.log("ACS-SPIKE WHEP answered but delivered no frame in \(Self.firstFrameTimeout)s")
       self.transition(.failed, reason: "no_first_frame")
     }
     firstFrameDeadline = work
@@ -261,7 +261,7 @@ extension WhepVideoSource: RTCPeerConnectionDelegate {
   public func peerConnection(_: RTCPeerConnection, didRemove _: RTCMediaStream) {}
   public func peerConnectionShouldNegotiate(_: RTCPeerConnection) {}
   public func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
-    NSLog("ACS-SPIKE ICE \(newState.rawValue)")
+    MediaLog.log("ACS-SPIKE ICE \(newState.rawValue)")
     guard isCurrent(peerConnection) else { return }
     if newState == .failed || newState == .disconnected {
       transition(.failed, reason: newState == .failed ? "ice_failed" : "ice_disconnected")
@@ -305,7 +305,7 @@ extension WhepVideoSource: RTCVideoRenderer {
     frameCount += 1
     let now = Date()
     if now.timeIntervalSince(lastFpsLog) >= 1 {
-      NSLog("ACS-SPIKE P3 video \(Int(frame.width))x\(Int(frame.height)) fps=\(frameCount)")
+      MediaLog.log("ACS-SPIKE P3 video \(Int(frame.width))x\(Int(frame.height)) fps=\(frameCount)")
       frameCount = 0
       lastFpsLog = now
     }
