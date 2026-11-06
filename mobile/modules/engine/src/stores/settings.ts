@@ -320,6 +320,15 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
     nativeAuthoritative: true,
   },
+  // The person disconnected the glasses in the app: nothing reconnects them until they connect,
+  // pair, unpair or forget. Per phone, like the identity above.
+  glasses_user_disconnected: {
+    key: "glasses_user_disconnected",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   device_name: {
     key: "device_name",
     defaultValue: () => "",
@@ -870,6 +879,8 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.device_address.key,
   SETTINGS.project_name.key,
   SETTINGS.mentra_live_secure_firmware.key,
+  // The SDK's own reconnect (Bluetooth back on) leaves glasses the person disconnected.
+  SETTINGS.glasses_user_disconnected.key,
   SETTINGS.default_controller.key,
   SETTINGS.pending_controller.key,
   SETTINGS.controller_device_name.key,

@@ -300,7 +300,9 @@ export const pairing = {
     try {
       const bonded = await BluetoothSdk.getBondedGlasses?.()
       // A bond says nothing about firmware: the session finds out whether they support secure pairing.
-      return bonded?.name ? {id: bonded.address, model: "Mentra Live", name: bonded.name, address: bonded.address} : null
+      return bonded?.name
+        ? {id: bonded.address, model: "Mentra Live", name: bonded.name, address: bonded.address}
+        : null
     } catch {
       return null
     }
@@ -352,6 +354,8 @@ export const pairing = {
    * failed attempt can't leave a default identity with no paired device behind.
    */
   pair: async (device: Device, options?: ConnectOptions): Promise<void> => {
+    // Pairing is the person asking for these glasses: a disconnect they made earlier no longer holds.
+    await useSettingsStore.getState().setSetting(SETTINGS.glasses_user_disconnected.key, false, false)
     await pushAllBluetoothSettings(device.model)
     return BluetoothSdk.connect(device, {...options, saveAsDefault: false})
   },

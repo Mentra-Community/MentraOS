@@ -25,6 +25,8 @@ const normalizeProjectName = (value?: string | null) => value?.trim().toUpperCas
 const SUPPORTED_AR99_PROJECT_NAMES = new Set<string>(AR99_MODEL_OPTIONS.map((option) => option.projectName))
 
 const PAIRING_SCAN_TIMEOUT_MS = 15_000
+/** Shorter than the native scan's one minute, so the list never goes stale while it's shown. */
+const PAIRING_RESCAN_INTERVAL_MS = 45_000
 /** Bonded glasses already tried since the app started: if they refuse, the user pairs them from the list. */
 const triedBondedGlasses = new Set<string>()
 
@@ -213,6 +215,22 @@ function GlassesScanScreen() {
   // identify the phone's bond, so let native authentication decide after selection.
   const listedResults = visibleResults
   const shouldShowDeviceList = listedResults.length > 0
+
+  // The native scan ends after a minute. While glasses are listed, scan again before then, so each row
+  // keeps saying whether those glasses are in pairing mode: someone who presses their button later sees
+  // it, and doesn't press again, which would close the window.
+  const listsGlasses = visibleResults.length > 0
+  useEffect(() => {
+    if (!allowedByDeployment || scanTimedOut || !listsGlasses) return
+    const timer = setInterval(() => {
+      // Not while a connection is starting: this screen stays mounted under loading.
+      if (connectingRef.current) return
+      void Promise.resolve(engine.pairing.scan(deviceModel)).catch((error) =>
+        console.warn("Failed to rescan for glasses:", error),
+      )
+    }, PAIRING_RESCAN_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [allowedByDeployment, deviceModel, scanTimedOut, listsGlasses])
 
   useEffect(() => {
     // Keep scanning while the user chooses so newly discovered units still appear.

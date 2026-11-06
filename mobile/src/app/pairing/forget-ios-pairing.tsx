@@ -10,26 +10,34 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
-import {iosBluetoothDeviceLabel} from "@/utils/pairing/iosStaleBond"
+import {iosBluetoothDeviceLabel, type ForgetIosPairingThen} from "@/utils/pairing/iosStaleBond"
 
 const SCAN_ROUTE = "/pairing/scan"
 
 /**
- * "Forget the old pairing" (S8). iOS only, and only `/pairing/loading` opens it, when the SDK reports
- * `pair_failure.code === "ios_forget_pairing"`. The Home screen never routes here.
+ * "Forget the old pairing" (S8). iOS only (the Mac app too): an app there can't remove a Bluetooth
+ * bond, so the person does it in Settings. `/pairing/loading` opens it when the SDK reports
+ * `pair_failure.code === "ios_forget_pairing"`, and Unpair and sign-out open it as they leave the
+ * glasses (`then`).
  *
- * Back and returning from Settings both land on the scan list. Neither starts a connection: the user
- * picks the glasses again.
+ * Back and returning from Settings both go on: to the scan list after a failed pairing, where the user
+ * picks the glasses again, to Home after Unpair, or to sign-in after sign-out. None starts a connection.
  */
 export default function ForgetIosPairingScreen() {
   const route = useRoute()
-  const {deviceModel, deviceName} = (route.params ?? {}) as {deviceModel?: string; deviceName?: string}
+  const {deviceModel, deviceName, then} = (route.params ?? {}) as {
+    deviceModel?: string
+    deviceName?: string
+    then?: ForgetIosPairingThen
+  }
   const returnedRef = useRef(false)
 
   const returnToScanList = (alreadyLeaving = false) => {
     if (returnedRef.current) return
     returnedRef.current = true
-    const {history, goBack, replace} = useNavigationStore.getState()
+    const {history, goBack, replace, clearHistoryAndGoHome, replaceAll} = useNavigationStore.getState()
+    if (then === "home") return clearHistoryAndGoHome()
+    if (then === "sign-in") return replaceAll("/auth/start")
     // Loading replaced itself with this screen, so the scan list is the entry underneath. Pop to it
     // rather than stack a second scan screen.
     if (history?.[history.length - 2] === SCAN_ROUTE) {

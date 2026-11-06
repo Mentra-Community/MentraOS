@@ -1,11 +1,26 @@
+import {DeviceTypes} from "@mentra/engine"
+
 /**
  * `pair_failure.code` the SDK sends when iOS holds a stale Bluetooth pairing for the glasses during
  * an explicit attempt. The user must remove it in Settings > Bluetooth before pairing again.
  */
 export const IOS_FORGET_PAIRING_CODE = "ios_forget_pairing"
 
-/** The route of the "Forget the old pairing" screen. Only the pairing loading screen opens it. */
+/** The route of the "Forget the old pairing" screen. */
 export const FORGET_IOS_PAIRING_ROUTE = "/pairing/forget-ios-pairing"
+
+/** Where that screen goes once the person is done: the scan list when not given. */
+export type ForgetIosPairingThen = "home" | "sign-in"
+
+/**
+ * After Unpair or sign-out on iOS and the Mac, the bond outlives the app's pairing: show the screen
+ * that asks the person to forget the glasses in Settings. Android removes the bond itself.
+ */
+export function askToForgetIosPairing(platform: string, model: string, deviceName: string, then: ForgetIosPairingThen) {
+  return platform === "ios" && model === DeviceTypes.LIVE
+    ? {route: FORGET_IOS_PAIRING_ROUTE, params: {deviceModel: model, deviceName, then}}
+    : null
+}
 
 /** True when a `pair_failure` asks the user to forget the old pairing on iPhone. */
 export const isIosForgetPairingFailure = (event: {code?: string}, platform: string): boolean =>

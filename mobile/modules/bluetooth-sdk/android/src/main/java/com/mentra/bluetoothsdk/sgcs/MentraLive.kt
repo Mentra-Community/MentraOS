@@ -2168,6 +2168,20 @@ class MentraLive : SGCManager() {
         if (isKilled) return
         if (isExplicitPairingAttempt()) return
         leaveGlassesLink()
+        // The glasses deleted this phone's keys. A bond kept here would make the first Pair Again
+        // connect with them, get refused and fail; removed now, Pair Again bonds afresh.
+        forgetRejectedBond()
+    }
+
+    private fun forgetRejectedBond() {
+        val address = DeviceStore.get("bluetooth", "device_address") as? String ?: return
+        if (!BluetoothAdapter.checkBluetoothAddress(address)) return
+        val device = bluetoothAdapter?.getRemoteDevice(address) ?: return
+        try {
+            if (device.bondState == BluetoothDevice.BOND_BONDED) removeBondStandalone(device)
+        } catch (e: SecurityException) {
+            Bridge.log("LIVE: CTKD: removing the rejected bond was refused: " + e.message)
+        }
     }
 
     /** Drop the link and every pending automatic attempt. Bonds and saved identity stay. */

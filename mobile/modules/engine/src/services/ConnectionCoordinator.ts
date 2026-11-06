@@ -31,6 +31,8 @@ export interface ReconnectDecisionInput {
    * pairing window and stops it after a takeover, so the app does not start a connect then.
    */
   pairingState?: LivePairingState
+  /** The person disconnected the glasses in the app and hasn't connected them since. */
+  userDisconnected?: boolean
   /** Wall clock for the pairing window expiry check. Defaults to `Date.now()`. */
   now?: number
 }
@@ -56,6 +58,8 @@ export function decideReconnect(input: ReconnectDecisionInput): ReconnectDecisio
   // second connectDefault() on top of the busy link layer would collide with it
   // (same busy rule as decideConnectButtonAction).
   if (input.connected || input.searching || input.nativeLinkBusy) return {kind: "skip", result: true}
+  // The person disconnected them: they stay disconnected until the person connects.
+  if (input.userDisconnected) return {kind: "skip", result: true}
   // The SDK owns the pairing window: reconnect is paused until it ends, and after a takeover
   // it stays stopped until the user taps Pair Again. A window past its end is stale.
   const pairing = input.pairingState

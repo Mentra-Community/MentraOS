@@ -48,7 +48,12 @@ async function recover(): Promise<void> {
   await mantle.init({background: true})
   await mantle.waitForMiniapps()
   const readiness = engine.pairing.readiness()
-  if (!readiness.connected && !readiness.nativeLinkBusy && (await engine.glasses.hasDefaultDevice())) {
+  if (
+    !readiness.connected &&
+    !readiness.nativeLinkBusy &&
+    !engine.glasses.userDisconnected() &&
+    (await engine.glasses.hasDefaultDevice())
+  ) {
     // Native connect checks existing permissions; never open permission dialogs
     // from a headless task. A live/reconnecting link is left to its native owner.
     await engine.glasses.connectDefault()

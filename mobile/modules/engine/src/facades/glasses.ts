@@ -79,6 +79,10 @@ export type GlassesStatusSnapshot = ReturnType<typeof projectStatus>
 export type ControllerStatusSnapshot = ReturnType<typeof projectControllerStatus>
 export type GlassesInfoSnapshot = ReturnType<typeof projectInfo>
 
+const userDisconnected = async (value: boolean) => {
+  await useSettingsStore.getState().setSetting(SETTINGS.glasses_user_disconnected.key, value, false)
+}
+
 export const glasses = {
   // --- connection (bluetooth-sdk passthrough) ---
   /**
@@ -88,6 +92,7 @@ export const glasses = {
    */
   connectDefault: async (): Promise<void> => {
     try {
+      await userDisconnected(false)
       await pushAllBluetoothSettings()
       await BluetoothSdk.connectDefault()
     } catch (error) {
@@ -96,13 +101,29 @@ export const glasses = {
     }
   },
   // Fleet counts a disconnect the person asked for as theirs, not as a connection problem (Phase 12).
-  disconnect: (): Promise<void> => (fleetEvents.userDisconnect(), BluetoothSdk.disconnect()),
-  forget: (): Promise<void> => (fleetEvents.userDisconnect(), BluetoothSdk.forget()),
+  // It stays disconnected: automatic reconnects skip it until the person connects again.
+  disconnect: async (): Promise<void> => {
+    fleetEvents.userDisconnect()
+    await userDisconnected(true)
+    await BluetoothSdk.disconnect()
+  },
+  forget: async (): Promise<void> => {
+    fleetEvents.userDisconnect()
+    await userDisconnected(false)
+    await BluetoothSdk.forget()
+  },
   /** Explicit user Unpair; NIMO is reset before its local pairing is cleared. */
-  unpair: (): Promise<void> => (fleetEvents.userDisconnect(), BluetoothSdk.unpair()),
+  unpair: async (): Promise<void> => {
+    fleetEvents.userDisconnect()
+    await userDisconnected(false)
+    await BluetoothSdk.unpair()
+  },
+  /** Whether the person disconnected the glasses in the app and hasn't connected them since. */
+  userDisconnected: (): boolean => !!useSettingsStore.getState().getSetting(SETTINGS.glasses_user_disconnected.key),
   /** Connect to a specific (discovered) device. */
   connect: async (device: Device, options?: ConnectOptions): Promise<void> => {
     try {
+      await userDisconnected(false)
       await pushAllBluetoothSettings(device.model)
       await BluetoothSdk.connect(device, options)
     } catch (error) {

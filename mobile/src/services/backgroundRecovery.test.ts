@@ -9,7 +9,7 @@ import {recoverBackgroundRuntime} from "./backgroundRecovery"
 jest.mock("@mentra/engine", () => ({
   engine: {
     pairing: {readiness: jest.fn()},
-    glasses: {hasDefaultDevice: jest.fn(), connectDefault: jest.fn()},
+    glasses: {hasDefaultDevice: jest.fn(), connectDefault: jest.fn(), userDisconnected: jest.fn()},
   },
 }))
 jest.mock("@/services/MantleManager", () => ({
@@ -43,6 +43,7 @@ beforeEach(() => {
   jest.mocked(refreshWorkspaceManifest).mockResolvedValue("not-workspace")
   ;(engine.pairing.readiness as jest.Mock).mockReturnValue({connected: false, nativeLinkBusy: false})
   ;(engine.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(true)
+  ;(engine.glasses.userDisconnected as jest.Mock).mockReturnValue(false)
   ;(engine.glasses.connectDefault as jest.Mock).mockResolvedValue(undefined)
 })
 
@@ -76,6 +77,13 @@ test.each([
   {connected: false, nativeLinkBusy: true},
 ])("does not interrupt an existing native connection: %j", async (readiness) => {
   ;(engine.pairing.readiness as jest.Mock).mockReturnValue(readiness)
+  await recoverBackgroundRuntime()
+  expect(mantle.waitForMiniapps).toHaveBeenCalled()
+  expect(engine.glasses.connectDefault).not.toHaveBeenCalled()
+})
+
+test("leaves glasses the person disconnected alone", async () => {
+  ;(engine.glasses.userDisconnected as jest.Mock).mockReturnValue(true)
   await recoverBackgroundRuntime()
   expect(mantle.waitForMiniapps).toHaveBeenCalled()
   expect(engine.glasses.connectDefault).not.toHaveBeenCalled()
