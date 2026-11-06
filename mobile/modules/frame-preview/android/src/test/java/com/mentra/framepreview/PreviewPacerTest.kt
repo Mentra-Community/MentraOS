@@ -108,6 +108,17 @@ class PreviewPacerTest {
   }
 
   @Test
+  fun `an ack that beats the worker's onPacked returns the credit`() {
+    val pacer = readyPacer()
+    pacer.admit(0)
+    assertThat(pacer.onAck(pacer.generation, 1, period)).isEqualTo(PreviewAckResult.Accepted(period))
+    pacer.onPacked(1, sent = true, nowNs = period)
+    assertThat(pacer.outstandingFrames).isEqualTo(0)
+    assertThat(pacer.hasAckTimedOut(3_000_000_000)).isFalse()
+    assertThat(pacer.admit(period)).isEqualTo(PreviewAdmission.Admit(2))
+  }
+
+  @Test
   fun `ack timeout is reported and a new document revokes credit`() {
     val pacer = readyPacer()
     pacer.admit(0)

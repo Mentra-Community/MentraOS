@@ -38,7 +38,7 @@ class PreviewPacer(targetFps: Int, private val ackTimeoutNs: Long = DEFAULT_ACK_
   private sealed interface State {
     data object Idle : State
 
-    data class Packing(val sequence: Int) : State
+    data class Packing(val sequence: Int, val admittedAtNs: Long) : State
 
     data class AwaitingAck(val sequence: Int, val sentAtNs: Long) : State
   }
@@ -107,7 +107,7 @@ class PreviewPacer(targetFps: Int, private val ackTimeoutNs: Long = DEFAULT_ACK_
     if (nowNs < nextDueNs) return PreviewAdmission.SkipPacing
     advanceSchedule(nowNs)
     sequence += 1
-    state = State.Packing(sequence)
+    state = State.Packing(sequence, nowNs)
     return PreviewAdmission.Admit(sequence)
   }
 
@@ -124,10 +124,17 @@ class PreviewPacer(targetFps: Int, private val ackTimeoutNs: Long = DEFAULT_ACK_
 
   @Synchronized
   fun onAck(generation: Int, sequence: Int, nowNs: Long): PreviewAckResult {
-    val awaiting = state as? State.AwaitingAck ?: return PreviewAckResult.Stale
-    if (generation != this.generation || awaiting.sequence != sequence) return PreviewAckResult.Stale
+    if (generation != this.generation) return PreviewAckResult.Stale
+    // The worker records a frame as sent only after the transport has posted it, so the page's
+    // ack can arrive while the frame is still packing. Refusing it left the frame unacknowledged
+    // until the ack deadline stopped the preview.
+    val sentAtNs = when (val current = state) {
+      is State.AwaitingAck -> current.sentAtNs.takeIf { current.sequence == sequence }
+      is State.Packing -> current.admittedAtNs.takeIf { current.sequence == sequence }
+      State.Idle -> null
+    } ?: return PreviewAckResult.Stale
     state = State.Idle
-    return PreviewAckResult.Accepted(nowNs - awaiting.sentAtNs)
+    return PreviewAckResult.Accepted(nowNs - sentAtNs)
   }
 
   /**
