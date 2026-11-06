@@ -30,14 +30,14 @@
       "manifest": "mobile/modules/glasses-media/package.json",
       "kind": "package",
       "publishTargets": ["npm"],
-      "dependencies": []
+      "dependencies": ["@mentra/bluetooth-sdk"]
     },
     {
       "name": "@mentra/acs-meeting",
       "manifest": "mobile/modules/acs-meeting/package.json",
       "kind": "package",
       "publishTargets": ["npm"],
-      "dependencies": ["@mentra/glasses-media"]
+      "dependencies": ["@mentra/bluetooth-sdk", "@mentra/glasses-media"]
     },
     {
       "name": "@mentra/cloud-client",

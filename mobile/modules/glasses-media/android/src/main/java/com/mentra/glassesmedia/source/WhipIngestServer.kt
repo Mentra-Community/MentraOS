@@ -1,7 +1,7 @@
 package com.mentra.glassesmedia.source
 
 import com.mentra.glassesmedia.trace.MediaLog as Log
-import com.mentra.glassesmedia.trace.SoftApTrace
+import com.mentra.bluetoothsdk.hotspot.SoftApTrace
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.IOException
@@ -92,7 +92,7 @@ class WhipIngestServer(
    * Binds and begins accepting.
    *
    * @param address the phone's own address on the SoftAP, from
-   *   [com.mentra.glassesmedia.network.ScopedSoftApNetwork.localIpv4]
+   *   [com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork.localIpv4]
    * @param port 0 to let the OS choose, which is what production does; the fixed-port form exists
    *   for tests
    */

@@ -1,5 +1,6 @@
 package com.mentra.glassesmedia.network
 
+import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities

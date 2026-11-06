@@ -1,6 +1,6 @@
 package com.mentra.glassesmedia.network
 
-import com.mentra.glassesmedia.trace.SoftApTrace
+import com.mentra.bluetoothsdk.hotspot.SoftApTrace
 import org.webrtc.NetworkChangeDetector
 
 /**

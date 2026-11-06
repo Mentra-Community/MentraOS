@@ -1,6 +1,7 @@
 package com.mentra.glassesmedia.source
 
-import com.mentra.glassesmedia.network.Ipv4Prefix
+import com.mentra.bluetoothsdk.hotspot.NetworkFacts
+import com.mentra.bluetoothsdk.hotspot.Ipv4Prefix
 import com.mentra.glassesmedia.network.ScopedNetworkChangeDetector.PublishedEntry
 
 /**
@@ -64,7 +65,7 @@ object SoftApIceDiagnosis {
             get() = candidates.filterNot { it.onHotspot }
 
         /**
-         * Flattened for [SoftApTrace][com.mentra.glassesmedia.trace.SoftApTrace] and the analyzer.
+         * Flattened for [SoftApTrace][com.mentra.bluetoothsdk.hotspot.SoftApTrace] and the analyzer.
          * Field names are the contract `softap-call-proof.mjs` reads, so they are stable.
          */
         fun fields(): Array<Pair<String, Any?>> =

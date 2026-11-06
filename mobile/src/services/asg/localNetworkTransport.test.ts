@@ -227,8 +227,14 @@ describe("localNetworkTransport", () => {
   it("uses the scoped native connection on supported Android phones", async () => {
     await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
 
-    expect(mockNativeModule.connect).toHaveBeenCalledWith("AndroidShare_test", "password")
+    expect(mockNativeModule.connect).toHaveBeenCalledWith("AndroidShare_test", "password", false)
     expect(localNetworkTransport.isScopedConnectionActive()).toBe(true)
+  })
+
+  it("tells the native join when the glasses will connect to this phone", async () => {
+    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password", {purpose: "incoming-server"})
+
+    expect(mockNativeModule.connect).toHaveBeenCalledWith("AndroidShare_test", "password", true)
   })
 
   it("records an acquired Android network before the caller checks a replaced OTA owner", async () => {

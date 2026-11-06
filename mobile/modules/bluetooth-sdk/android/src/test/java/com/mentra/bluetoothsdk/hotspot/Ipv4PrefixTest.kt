@@ -1,4 +1,4 @@
-package com.mentra.glassesmedia.network
+package com.mentra.bluetoothsdk.hotspot
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

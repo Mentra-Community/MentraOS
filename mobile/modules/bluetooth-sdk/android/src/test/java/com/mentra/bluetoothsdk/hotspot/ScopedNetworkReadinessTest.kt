@@ -1,6 +1,6 @@
-package com.mentra.glassesmedia.network
+package com.mentra.bluetoothsdk.hotspot
 
-import com.mentra.glassesmedia.network.ScopedNetworkReadiness.Verdict
+import com.mentra.bluetoothsdk.hotspot.ScopedNetworkReadiness.Verdict
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 

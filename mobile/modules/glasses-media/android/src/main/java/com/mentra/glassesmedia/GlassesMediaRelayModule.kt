@@ -1,5 +1,7 @@
 package com.mentra.glassesmedia
 
+import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
+import com.mentra.bluetoothsdk.hotspot.ScopedNetworkError
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper

@@ -3,11 +3,11 @@ package com.mentra.glassesmedia.source
 import android.content.Context
 import android.media.AudioAttributes
 import com.mentra.glassesmedia.trace.MediaLog as Log
-import com.mentra.glassesmedia.network.NetworkFacts
+import com.mentra.bluetoothsdk.hotspot.NetworkFacts
 import com.mentra.glassesmedia.network.ScopedNetworkChangeDetector
-import com.mentra.glassesmedia.network.ScopedSoftApNetwork
+import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
 import com.mentra.glassesmedia.telemetry.PipelineStats
-import com.mentra.glassesmedia.trace.SoftApTrace
+import com.mentra.bluetoothsdk.hotspot.SoftApTrace
 import org.webrtc.AudioTrack
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory

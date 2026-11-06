@@ -177,7 +177,7 @@ export const localNetworkTransport = {
       }
     }
     if (!supportsScopedConnection()) throw new Error("The glasses hotspot cannot be joined on this platform")
-    const result = await otaLocalNetwork.connect(ssid, password)
+    const result = await otaLocalNetwork.connect(ssid, password, options?.purpose === "incoming-server")
     scopedConnectionActive = true
     return result.localAddress
   },

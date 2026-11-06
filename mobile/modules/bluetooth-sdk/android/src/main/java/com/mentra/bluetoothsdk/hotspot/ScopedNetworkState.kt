@@ -1,4 +1,4 @@
-package com.mentra.glassesmedia.network
+package com.mentra.bluetoothsdk.hotspot
 
 /**
  * Pure lifecycle state machine for a scoped SoftAP network join.

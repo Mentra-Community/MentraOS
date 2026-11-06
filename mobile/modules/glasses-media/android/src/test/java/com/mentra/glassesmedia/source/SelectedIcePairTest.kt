@@ -1,6 +1,6 @@
 package com.mentra.glassesmedia.source
 
-import com.mentra.glassesmedia.network.Ipv4Prefix
+import com.mentra.bluetoothsdk.hotspot.Ipv4Prefix
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
