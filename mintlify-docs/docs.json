@@ -138,6 +138,7 @@
               "bluetooth-sdk/overview",
               "bluetooth-sdk/quickstart",
               "bluetooth-sdk/build-from-scratch",
+              "bluetooth-sdk/pairing",
               "bluetooth-sdk/software-update",
               "bluetooth-sdk/ai-ide-integration"
             ]
