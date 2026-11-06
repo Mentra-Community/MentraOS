@@ -24,8 +24,9 @@ import AllAppsGridSheet from "@/components/home/AllAppsGridSheet"
 import BottomSheet from "@gorhom/bottom-sheet"
 import {BlurTargetView, BlurView} from "expo-blur"
 
-/** Bonded glasses already handed to the scan screen since the app started: if they refuse, Home stays as it is. */
-let adoptedBondThisRun = false
+/** Home looks for a bond once per app run, when it first shows: a later Unpair removes the bond a moment after Home
+ * returns, and must not bring the glasses straight back. */
+let adoptionDecidedThisRun = false
 
 export default function Homepage() {
   const refreshApps = useRefresh()
@@ -87,11 +88,12 @@ export default function Homepage() {
   // can't read its bonds.
   useFocusEffect(
     useCallback(() => {
-      if (Platform.OS !== "android" || identity.kind !== "none" || adoptedBondThisRun) return
+      if (adoptionDecidedThisRun) return
+      adoptionDecidedThisRun = true
+      if (Platform.OS !== "android" || identity.kind !== "none") return
       let left = false
       void engine.pairing.bondedGlasses().then((device) => {
-        if (!device || left || adoptedBondThisRun) return
-        adoptedBondThisRun = true
+        if (!device || left) return
         useNavigationStore.getState().push("/pairing/scan", {deviceModel: DeviceTypes.LIVE})
       })
       return () => {
