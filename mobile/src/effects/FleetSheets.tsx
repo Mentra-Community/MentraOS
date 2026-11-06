@@ -7,11 +7,13 @@
  * the alert host (`waitForAlertHost`) so a cold start never falls back on a system alert.
  *
  * Words are verbatim from the Fleet design board (round 2); `UPDATE-2026-10-20.md` overrides older drawings.
- * Swiping the invitation presses Decline, its cancel button. A sheet with only OK cannot be swiped.
+ * Swiping the invitation away, its backdrop or Android back leave it for later: it shows again at the next app start,
+ * and only Decline declines it. A sheet with only OK cannot be swiped.
  */
 import {getFleetManagementState, onFleetManagementStateChanged} from "@mentra/engine-host-internal"
 import {useEffect} from "react"
 import {AppState, View} from "react-native"
+import {createMMKV, type MMKV} from "react-native-mmkv"
 import Toast from "react-native-toast-message"
 
 import {Icon, Text} from "@/components/ignite"
@@ -29,13 +31,15 @@ import {
   WORKSPACE_ERROR,
   workspaceErrorCode,
 } from "@/services/fleet/workspaceApi"
-import {storage} from "@/utils/storage"
 
 /**
- * The workspace whose Fleet notice was last shown. It is forgotten when the person leaves, or when Fleet answers
- * that they are unmanaged, so a rejoin (the same workspace included) shows it again.
+ * Per account, the workspace whose Fleet notice was last shown. It is forgotten when Fleet answers that the account is
+ * unmanaged, so a rejoin (the same workspace included) shows it again. Logout clears the default storage, so it lives
+ * in an instance of its own: signing out and in again never shows the notice again.
  */
-const NOTICE_SHOWN_KEY = "fleet.noticeShownWorkspaceId"
+export const NOTICE_STORE_ID = "mentra-fleet-notice"
+let noticeStore: MMKV | undefined
+const notices = (): MMKV => (noticeStore ??= createMMKV({id: NOTICE_STORE_ID}))
 
 /** `setTimeout` takes at most 2^31 - 1 ms. */
 const MAX_TIMER_MS = 2_147_483_647
@@ -185,7 +189,7 @@ const DECLINE = 0
 
 /**
  * The invitation. The main action is Join, or "Leave <current>" when the person is already in a workspace.
- * Decline is its cancel button, so a swipe, the backdrop or Android back declines.
+ * A swipe, the backdrop or Android back close it with no answer, for later.
  */
 function presentInvitation(invitation: InvitationPreview, current: MyWorkspace | null): Promise<number> {
   return present({
@@ -218,6 +222,7 @@ function presentInvitation(invitation: InvitationPreview, current: MyWorkspace |
         </View>
       ),
       allowDismiss: true,
+      dismissWithoutAnswer: true,
     },
   })
 }
@@ -239,29 +244,27 @@ function refreshDesiredStateNow(): void {
   }
 }
 
-const shownNoticeFor = (): string | null => {
-  const saved = storage.load<string>(NOTICE_SHOWN_KEY)
-  return saved.is_ok() ? saved.value : null
-}
-
 /** Notices on screen or waiting, by workspace: a change heard twice never queues the notice twice. */
 const noticePending = new Set<string>()
 
 /**
- * The Fleet notice follows what Fleet says. It shows on the first move to `managed` for a workspace whose notice
- * has not been shown, and never while the state is `unknown` or `unmanaged`. It is marked shown first, so a
- * restart never shows it again. An `unmanaged` answer forgets it, so the next join shows it again.
+ * The Fleet notice follows what Fleet says. It shows on the account's first move to `managed` for a workspace whose
+ * notice it has not been shown, and never while the state is `unknown` or `unmanaged`. It is marked shown first, so a
+ * restart or another sign-in never shows it again. An `unmanaged` answer forgets it, so the next join shows it again.
  */
-export async function showNoticeForFleetState(state: FleetManagementState = getFleetManagementState()): Promise<void> {
+export async function showNoticeForFleetState(
+  accountId: string,
+  state: FleetManagementState = getFleetManagementState(),
+): Promise<void> {
   if (state.status === "unmanaged") {
-    storage.remove(NOTICE_SHOWN_KEY)
+    notices().remove(accountId)
     return
   }
   if (state.status !== "managed") return
-  if (shownNoticeFor() === state.workspaceId || noticePending.has(state.workspaceId)) return
+  if (notices().getString(accountId) === state.workspaceId || noticePending.has(state.workspaceId)) return
   noticePending.add(state.workspaceId)
   try {
-    storage.save(NOTICE_SHOWN_KEY, state.workspaceId)
+    notices().set(accountId, state.workspaceId)
     await presentNotice(state.workspaceName)
   } finally {
     noticePending.delete(state.workspaceId)
@@ -332,7 +335,10 @@ async function handleInvitation(invitation: InvitationPreview): Promise<void> {
       toast("fleet:invitationExpired")
       return
     }
-    if (answer === NO_ANSWER) return
+    if (answer === NO_ANSWER) {
+      putOff.add(invitation.invitationId)
+      return
+    }
 
     if (answer === DECLINE) {
       try {
@@ -377,6 +383,14 @@ async function handleInvitation(invitation: InvitationPreview): Promise<void> {
   }
 }
 
+/** Invitations the person closed without answering: they show again at the next app start, or another sign-in. */
+const putOff = new Set<string>()
+
+/** Shows the invitations put off again: a sign-out, and tests. */
+export function forgetPutOffInvitations(): void {
+  putOff.clear()
+}
+
 /** One look at Core: the person's workspace, then each invitation. */
 async function pass(): Promise<void> {
   const api = getWorkspaceApi()
@@ -410,7 +424,7 @@ async function pass(): Promise<void> {
     return
   }
   for (const invitation of invitations.value) {
-    await handleInvitation(invitation)
+    if (!putOff.has(invitation.invitationId)) await handleInvitation(invitation)
   }
 }
 
@@ -459,15 +473,16 @@ export function FleetSheets() {
   useEffect(() => {
     if (!userId) {
       useMyWorkspaceStore.getState().reset()
+      forgetPutOffInvitations()
       return
     }
     void runFleetSheets()
-    void showNoticeForFleetState()
+    void showNoticeForFleetState(userId)
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") void runFleetSheets()
     })
     const unready = onWorkspaceApiReady(() => void runFleetSheets())
-    const unsubscribe = onFleetManagementStateChanged((state) => void showNoticeForFleetState(state))
+    const unsubscribe = onFleetManagementStateChanged((state) => void showNoticeForFleetState(userId, state))
     return () => {
       subscription.remove()
       unready()

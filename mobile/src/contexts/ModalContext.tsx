@@ -9,7 +9,8 @@
  * - An alert answers once its sheet has slid away, so a button that opens a native surface (a link, a
  *   permission prompt, a picker) never races the sheet.
  * - Swiping the sheet down, tapping outside it and Android back answer with the cancel button, and only
- *   when the alert has one and allows dismissal. Otherwise the sheet waits for a button.
+ *   when the alert has one and allows dismissal; with `dismissWithoutAnswer`, they close it with no answer
+ *   (`NO_ANSWER`), so the person decides later. Otherwise the sheet waits for a button.
  * - Buttons follow iOS alerts: two buttons sit side by side with the main action on the right, unless a
  *   label wouldn't fit on one line. Then, and with three or more buttons, they stack, main action on top.
  * - A sheet whose content has a text field rides above the keyboard while it's open.
@@ -49,6 +50,8 @@ export interface AlertOptions {
   content?: ReactNode
   /** Swipe down, tap outside and Android back answer with the cancel button. Needs a cancel button. */
   allowDismiss?: boolean
+  /** With `allowDismiss`, they close the sheet with no answer (`NO_ANSWER`) instead, and no cancel button is needed. */
+  dismissWithoutAnswer?: boolean
 }
 
 interface AlertRequest {
@@ -249,7 +252,7 @@ export function ModalProvider({children}: {children: ReactNode}) {
 
   const current = queue.current[0]
   const cancelIndex = current ? current.buttons.findIndex((button) => button.style === "cancel") : -1
-  const dismissible = !!current?.options.allowDismiss && cancelIndex !== -1
+  const dismissible = !!current?.options.allowDismiss && (cancelIndex !== -1 || !!current.options.dismissWithoutAnswer)
 
   const finish = useCallback(() => {
     const answered = closing.current
@@ -278,8 +281,10 @@ export function ModalProvider({children}: {children: ReactNode}) {
 
   const cancel = useCallback(() => {
     const alert = queue.current[0]
-    const index = alert ? alert.buttons.findIndex((button) => button.style === "cancel") : -1
-    if (alert?.options.allowDismiss && index !== -1) close(index)
+    if (!alert?.options.allowDismiss) return
+    if (alert.options.dismissWithoutAnswer) return close(NO_ANSWER)
+    const index = alert.buttons.findIndex((button) => button.style === "cancel")
+    if (index !== -1) close(index)
   }, [close])
 
   useEffect(() => {
