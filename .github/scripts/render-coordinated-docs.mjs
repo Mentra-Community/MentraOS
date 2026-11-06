@@ -66,9 +66,14 @@ function validateExampleTestflightResult(releasePlan, exampleTestflightResult) {
   ) {
     throw new Error("Example TestFlight result does not match the coordinated release")
   }
-  const installUrl = exampleTestflightResult.distribution.installUrl
+  return validateExampleIosUrl(releasePlan, exampleTestflightResult.distribution.installUrl)
+}
+
+// The channel's TestFlight link alone, from the group's preflight: the docs
+// need not wait for the example's upload.
+function validateExampleIosUrl(releasePlan, installUrl) {
   if (!/^https:\/\//.test(installUrl || "")) throw new Error("Example TestFlight result has no install URL")
-  if (expectedAudience === "external" && !/^https:\/\/testflight\.apple\.com\/join\//.test(installUrl)) {
+  if (releasePlan.channel !== "dev" && !/^https:\/\/testflight\.apple\.com\/join\//.test(installUrl)) {
     throw new Error("External example TestFlight result has no public invitation link")
   }
   return installUrl
@@ -80,6 +85,7 @@ export function renderCoordinatedDocs({
   releasePlan,
   exampleApkUrl,
   exampleTestflightResult,
+  exampleIosUrl,
   repository,
 }) {
   if (!RELEASE_IDENTITY_PATTERN.test(releasePlan?.releaseIdentity || "")) {
@@ -127,7 +133,9 @@ export function renderCoordinatedDocs({
     config.variables["example-app-download-label"] =
       `Download the React Native example APK for SDK ${releasePlan.releaseIdentity}`
     config.variables["example-app-url"] = reactNativeUrl
-    config.variables["example-app-ios-url"] = validateExampleTestflightResult(releasePlan, exampleTestflightResult)
+    config.variables["example-app-ios-url"] = exampleIosUrl
+      ? validateExampleIosUrl(releasePlan, exampleIosUrl)
+      : validateExampleTestflightResult(releasePlan, exampleTestflightResult)
   }
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
   renderVariables(output, config.variables)
@@ -149,6 +157,7 @@ if (isMain) {
     releasePlan: plan,
     exampleApkUrl,
     exampleTestflightResult,
+    exampleIosUrl: args["example-ios-url"],
     repository: args.repository,
   })
   console.log(`Rendered docs for ${result.releaseIdentity} in ${result.outputDir}`)

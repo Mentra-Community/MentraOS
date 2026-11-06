@@ -95,6 +95,13 @@ while not pathlib.Path(release).exists():
             self.assertEqual(child.returncode, 0, errors.decode())
         self.assertEqual(json.loads(self.state.read_text()), [str(self.keys[2]), *self.original])
 
+    def test_addition_drops_a_keychain_deleted_without_the_lock(self):
+        self.keys[1].unlink()
+        child = self.start('add', self.keys[2])
+        _, errors = child.communicate(timeout=5)
+        self.assertEqual(child.returncode, 0, errors.decode())
+        self.assertEqual(json.loads(self.state.read_text()), [str(self.keys[2]), str(self.keys[0])])
+
     def test_child_retains_lock_when_wrapper_is_terminated(self):
         ready, release = self.root / 'ready', self.root / 'release'
         command = '''import pathlib, sys, time

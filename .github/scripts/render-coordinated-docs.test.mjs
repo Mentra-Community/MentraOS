@@ -195,6 +195,36 @@ test("rejects an inconsistent release plan", (context) => {
   )
 })
 
+test("renders the iPhone link from the TestFlight group alone", (context) => {
+  const {root, source, output} = fixture()
+  context.after(() => rmSync(root, {recursive: true, force: true}))
+  const plan = {
+    releaseIdentity: "3.1.0-beta.57",
+    releaseSetId: "mentra-3.1.0-beta.57",
+    artifactContainerTag: "mentra-builds-v3.1.0",
+    channel: "beta",
+  }
+  const exampleApkUrl =
+    "https://artifactscdn.mentraglass.com/Mentra/MentraOS/releases/mentra-builds-v3.1.0/mentra-example-react-native-3.1.0-beta.57.apk"
+  const render = (exampleIosUrl) =>
+    renderCoordinatedDocs({
+      sourceDir: source,
+      outputDir: output,
+      releasePlan: plan,
+      exampleApkUrl,
+      exampleIosUrl,
+      repository: "Mentra/MentraOS",
+    })
+  render("https://testflight.apple.com/join/public123")
+  const rendered = JSON.parse(readFileSync(path.join(output, "docs.json"), "utf8"))
+  assert.equal(rendered.variables["example-app-ios-url"], "https://testflight.apple.com/join/public123")
+  // A beta's link is the public invitation, never App Store Connect.
+  assert.throws(
+    () => render("https://appstoreconnect.apple.com/apps/1/testflight/groups/2"),
+    /no public invitation link/,
+  )
+})
+
 test("rejects prerelease docs without matching example artifacts", (context) => {
   const {root, source, output} = fixture()
   context.after(() => rmSync(root, {recursive: true, force: true}))
