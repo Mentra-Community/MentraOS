@@ -21,6 +21,11 @@
       "react-native": "./src/react/pairing.ts",
       "default": "./build/react/pairing.js"
     },
+    "./miniapp-view": {
+      "types": "./build/miniapp-view/index.d.ts",
+      "react-native": "./src/miniapp-view/index.ts",
+      "default": "./build/miniapp-view/index.js"
+    },
     "./bluetooth-sdk": {
       "types": "./build/bluetooth-sdk/index.d.ts",
       "react-native": "./src/bluetooth-sdk/index.ts",
@@ -132,6 +137,7 @@
     "react-native-safe-area-context": "*",
     "react-native-svg": "*",
     "react-native-udp": "*",
+    "react-native-webview": "13.16.0",
     "@types/react": "*",
     "react-native-mmkv": "*",
     "react-native-nitro-bg-timer": "*",

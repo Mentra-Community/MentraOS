@@ -167,20 +167,23 @@ The example's `app.json` already includes the Mentra SDK plugin:
 
 The plugins configure the native project so Expo can register the SDK modules. The example uses `expo-build-properties` to set Android `minSdkVersion` to `33` and add native library `pickFirst` rules for `libc++_shared.so`, `libonnxruntime.so`, and `libonnxruntime4j_jni.so`.
 
-`@mentra/engine` declares `@mentra/crust` as a peer for its full runtime, but the
-`@mentra/engine/ota` entry does not use Crust. This OTA-only host excludes Crust
-from Expo autolinking so it does not package the unrelated navigation and
-miniapp-runtime native libraries.
+The Mentra Call tab runs a miniapp, so the app links `@mentra/crust`, the
+Engine's miniapp runtime, and its config plugin. Crust bundles the Mapbox
+Navigation SDK: an Android build needs a Mapbox secret token with
+`Downloads:Read` in `MAPBOX_DOWNLOADS_TOKEN`. Installed miniapp screens load
+from the package's own origin, which the patched `react-native-webview` serves
+(`examples/package.json` applies the Mentra App's patch).
 
 For production Expo apps that need BLE or microphone behavior while iOS is backgrounded or locked, see [Background Operation On iOS](../docs/getting-started.md#background-operation-on-ios).
 
 ## App Walkthrough
 
-The example has five tabs:
+The example has six tabs:
 
 - **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state. Connecting Mentra Live opens the custom full-page OTA presentation in `src/ota` automatically; the Software Update action opens the same flow manually. The presentation mirrors the Mentra App's page content and controller actions in the example app's own visual style, keeps intermediate passes on the controller's `finishing` page, and renders the release transition and accumulated changelogs as styled Markdown in a bounded “What’s new” card only on final success. Hotspot/Wi-Fi transport, APK/MTK/BES sequencing, retries, restarts, and verification remain in Engine. Legacy glasses without hotspot OTA support can return to the System tab for Wi-Fi setup and resume the flow afterward. **Pair Mentra Live** opens the custom full-page pairing presentation in `src/pairing`: power on, the scan with each pair's spoken code and pairing-mode state, connecting, Pair Audio and Forget the old pairing on iOS, success and failure, in the example app's own visual style. The scan, bond adoption, connection readiness and Pair Audio cancel remain in Engine. Pairing ends connected, so the update check then runs as after a Connect.
 - **Camera**: request photo upload to the local demo cloud or directly to this phone, choose automatic or BLE-only photo transfer, record and upload videos to the media webhook, tune manual exposure and ISO, enable **Text Capture Mode** for glasses-side max-resolution capture and text-region cropping, preview received media, or separately scan standard photo previews for barcodes. Text capture and barcode scanning are mutually exclusive; enabling either turns the other off. Direct phone photo is provided by the SDK, while barcode scanning is implemented in a companion local native module.
 - **Stream**: start RTMP, SRT, or WebRTC streams with SDK-managed keep-alives and preview HLS/WebRTC output. Android and iOS can receive WebRTC directly on the phone through the app-hosted GStreamer WHIP receiver.
+- **Call**: Mentra Call, run by the Engine as a miniapp. Opening the tab starts the Engine (`engine.configure` and `engine.start`), installs Mentra Call from its published URL with `engine.miniapps.install`, and shows it with `MiniappView` from `@mentra/engine/miniapp-view`; leaving the tab stops it with `engine.miniapps.stop`. The example has no sign-in yet: it configures the Engine signed out (its `getSubjectToken` refuses, as the Mentra App's does before sign-in), so Mentra Call opens but cannot create or join a meeting.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.
 - **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, video upload, microphone, and SDK diagnostic events.
 

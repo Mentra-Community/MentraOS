@@ -14,14 +14,13 @@
  * makes the per-frame decision. File URLs are refused natively before either
  * runs.
  *
- * A miniapp never opens the Mentra App's own links (`isMentraAppLink`): they
- * reach the app's link handling, which installs miniapps, signs in and runs
- * test commands. The app's own schemes are in the whitelist only so they reach
- * {@link decideMiniappNavigation}, which refuses them; outside it, the library
- * would hand them to the system, which opens the Mentra App.
+ * A miniapp never opens the host app's own links (the host's `isHostLink`):
+ * they reach the app's link handling, which installs miniapps, signs in and
+ * runs test commands. The host's own schemes (`hostLinkPatterns`) are in the
+ * whitelist only so they reach {@link decideMiniappNavigation}, which refuses
+ * them; outside it, the library would hand them to the system, which opens the
+ * host app.
  */
-
-import {isMentraAppLink, MENTRA_APP_SCHEME_PATTERNS} from "@/services/miniapps/miniappInstallLinks"
 
 export type MiniappNavigationDecision = "load" | "open_externally" | "refuse"
 
@@ -35,9 +34,9 @@ const INTENT_SCHEMES = ["intent:*"]
 /** Schemes a top-level link may hand to the system. */
 const EXTERNAL_SCHEMES = ["mailto:*", "tel:*"]
 
-/** The WebView's `originWhitelist` for a page at `pageOrigin`. */
-export function miniappOriginWhitelist(pageOrigin: string): string[] {
-  return [pageOrigin, ...FRAME_SCHEMES, ...EXTERNAL_SCHEMES, ...MENTRA_APP_SCHEME_PATTERNS, ...INTENT_SCHEMES]
+/** The WebView's `originWhitelist` for a page at `pageOrigin`, with the host app's own link schemes. */
+export function miniappOriginWhitelist(pageOrigin: string, hostLinkPatterns: readonly string[] = []): string[] {
+  return [pageOrigin, ...FRAME_SCHEMES, ...EXTERNAL_SCHEMES, ...hostLinkPatterns, ...INTENT_SCHEMES]
 }
 
 /** A URL on another package's Android origin; it is never a website. */
@@ -73,6 +72,7 @@ function isOnOrigin(url: string, origin: string): boolean {
 export function decideMiniappNavigation(
   request: {url: string; isTopFrame?: boolean},
   pageOrigin: string,
+  isHostLink: (url: string) => boolean = () => false,
 ): MiniappNavigationDecision {
   const {url} = request
   const origin = pageOrigin
@@ -87,8 +87,8 @@ export function decideMiniappNavigation(
   }
 
   if (url === "about:blank") return "load"
-  // The Mentra App's install links, sign-in callbacks and test commands are never a miniapp's to open.
-  if (isMentraAppLink(url)) return "refuse"
+  // The host app's install links, sign-in callbacks and test commands are never a miniapp's to open.
+  if (isHostLink(url)) return "refuse"
   // Blob URLs name their creator's origin: the top frame may show the page's own.
   if (scheme === "blob" && isOnOrigin(url.slice("blob:".length), origin)) return "load"
   if (scheme === "https" || scheme === "http" || scheme === "mailto" || scheme === "tel") return "open_externally"

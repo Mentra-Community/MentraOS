@@ -470,3 +470,12 @@ test("Markdown links are rewritten for the kit layout", () => {
   assert.equal(kitLink("android/README.md", "./settings.gradle.kts", apps), "./settings.gradle.kts")
   assert.equal(kitLink("README.md", "https://example.com/a", apps), "https://example.com/a")
 })
+
+test("the examples apply the Mentra App's react-native-webview patch, which miniapp screens load through", () => {
+  // The kit exports only examples/, so it keeps its own copy of the patch.
+  const patch = "patches/react-native-webview@13.16.0.patch"
+  assert.equal(
+    readFileSync(path.join(repositoryRoot, "examples", patch), "utf8"),
+    readFileSync(path.join(repositoryRoot, "mobile", patch), "utf8"),
+  )
+})

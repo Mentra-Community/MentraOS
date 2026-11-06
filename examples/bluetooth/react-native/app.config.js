@@ -36,12 +36,13 @@ module.exports = ({config}) => {
   const engineRequire = createRequire(engineManifest)
   const engine = engineRequire(engineManifest)
 
-  // Older release families do not include ACS. When Engine owns it, resolve
-  // its plugin from that same dependency tree, including non-hoisted installs.
-  if (!engine.dependencies?.['@mentra/acs-meeting']) return config
+  // Crust (the miniapp runtime the Call tab runs on) and ACS belong to Engine:
+  // resolve their plugins from its dependency tree, including non-hoisted
+  // installs. Older release families do not include ACS.
+  const plugins = ['@mentra/crust', '@mentra/acs-meeting']
+    .filter((name) => engine.dependencies?.[name])
+    .map((name) => engineRequire.resolve(`${name}/app.plugin.js`))
 
-  return {
-    ...config,
-    plugins: [...(config.plugins ?? []), engineRequire.resolve('@mentra/acs-meeting/app.plugin.js')],
-  }
+  if (!plugins.length) return config
+  return {...config, plugins: [...(config.plugins ?? []), ...plugins]}
 }

@@ -302,6 +302,7 @@
         "react-native-share": "*",
         "react-native-svg": "*",
         "react-native-udp": "*",
+        "react-native-webview": "13.16.0",
         "react-native-wifi-reborn": "*",
         "react-native-worklets": "0.7.4",
         "react-native-zip-archive": "7.1.1",

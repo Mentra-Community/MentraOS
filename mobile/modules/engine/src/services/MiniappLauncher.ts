@@ -759,6 +759,7 @@ class MiniappLauncher {
       }
     }
     await this.deps?.router.unregister(packageName)
+    console.log(`MiniappLauncher: stopped ${packageName}`)
   }
 
   // --- internals -----------------------------------------------------------

@@ -14,19 +14,13 @@ import {installDevMiniapp, installDevMiniapps} from "@/services/miniapps/devMini
 import {workspaceManifestScheduler} from "@/services/deployment/workspaceManifestScheduler"
 import {installCloudWorkspaceApi} from "@/services/fleet/cloudWorkspaceApi"
 import {BUNDLED_MINIAPPS, BUNDLED_SYSTEM_MINIAPP_PACKAGES} from "@/generated/bundledMiniapps"
-import {
-  CHINA_HIDDEN_APPS,
-  SUPPORTED_MINIAPP_SDK_RANGE,
-  linkLingoPackageName,
-  mentraCallPackageName,
-  notifyPackageName,
-} from "@/constants/miniapps"
+import {CHINA_HIDDEN_APPS, linkLingoPackageName, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
 import {IosMiniappVisibility} from "@/services/miniapps/IosMiniappVisibility"
 import {mentraAppAgeRating} from "@/services/miniapps/mentraAppAgeRating"
 import {askDeclaredAge} from "@/components/miniapps/DeclaredAgeSheet"
 import {showMiniappAgeRestrictedAlert} from "@/utils/miniappAgeRestrictedAlert"
 import {isSuperModeMiniappAllowed, shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
-import {isMentraAppLink} from "@/services/miniapps/miniappInstallLinks"
+import {isMentraAppLink, MENTRA_APP_SCHEME_PATTERNS} from "@/services/miniapps/miniappInstallLinks"
 import {storage} from "@/utils/storage"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
@@ -561,11 +555,11 @@ class MantleManager {
         isLocalMiniappAllowed: isSuperModeMiniappAllowed,
         bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
         hostVersion: Constants.expoConfig?.version ?? process.env.EXPO_PUBLIC_MENTRAOS_VERSION,
-        supportedMiniappSdkRange: SUPPORTED_MINIAPP_SDK_RANGE,
         // Miniapps rated above the Mentra App's own App Store rating need the person's declared age.
         hostAgeRating: mentraAppAgeRating(),
         // A miniapp's openUrl never opens the Mentra App's own links (its install sheet, sign-in, test commands).
         isHostLink: isMentraAppLink,
+        hostLinkPatterns: MENTRA_APP_SCHEME_PATTERNS,
       },
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).

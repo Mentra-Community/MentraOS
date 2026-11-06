@@ -1,4 +1,4 @@
-import {redactSecrets} from "@mentra/engine-host-internal"
+import {redactSecrets} from "../services/MentraJSLogPipeline"
 import type {WebViewProps} from "react-native-webview"
 
 type WebViewError = Parameters<NonNullable<WebViewProps["onError"]>>[0]["nativeEvent"]

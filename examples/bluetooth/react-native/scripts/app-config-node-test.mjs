@@ -33,6 +33,17 @@ test('ACS uses the exact Engine dependency even when it is not hoisted', (t) => 
   assert.deepEqual(config.plugins, ['expo-audio'])
 })
 
+test('Crust, the miniapp runtime, comes from the Engine dependency like ACS', (t) => {
+  const {engine, configure} = fixture(t, {'@mentra/crust': '3.5.0', '@mentra/acs-meeting': '3.5.0'})
+  const plugins = ['crust', 'acs-meeting'].map((name) => {
+    const dir = path.join(engine, `node_modules/@mentra/${name}`)
+    mkdirSync(dir, {recursive: true})
+    writeFileSync(path.join(dir, 'app.plugin.js'), 'module.exports = config => config\n')
+    return realpathSync(path.join(dir, 'app.plugin.js'))
+  })
+  assert.deepEqual(configure({config: {plugins: ['expo-audio']}}).plugins, ['expo-audio', ...plugins])
+})
+
 test('an Engine release declaring ACS fails clearly if its plugin is missing', (t) => {
   const {configure} = fixture(t, {'@mentra/acs-meeting': '3.2.0-dev.136'})
   assert.throws(() => configure({config: {plugins: []}}), /@mentra\/acs-meeting\/app.plugin.js/)

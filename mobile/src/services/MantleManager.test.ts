@@ -677,9 +677,9 @@ describe("MantleManager", () => {
     })
   })
 
-  it("configures the build's bundled miniapps and its miniapp SDK range", () => {
+  it("configures the build's bundled miniapps and leaves the miniapp SDK range to the engine", () => {
     expect(miniappConfig.isMiniappAvailable).toBeUndefined()
-    expect(miniappConfig.supportedMiniappSdkRange).toBe(">=0.3.0 <4.0.0")
+    expect(miniappConfig.supportedMiniappSdkRange).toBeUndefined()
   })
 
   it("starts miniapp updates after restoring sessions", async () => {

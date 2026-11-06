@@ -337,6 +337,10 @@ jobs:
       - name: Build release Android app
         working-directory: examples/bluetooth/react-native/android
         run: ./gradlew :app:assembleRelease --no-daemon --build-cache -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g"
+        env:
+          # Authenticates Mapbox's private Downloads registry for the Navigation
+          # SDK that @mentra/crust, the Engine's miniapp runtime, pulls in.
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
       - name: Verify Android 16 KB page-size support
         run: examples/bluetooth/react-native/scripts/check-android-16kb.sh examples/bluetooth/react-native/android/app/build/outputs/apk/release/app-release.apk

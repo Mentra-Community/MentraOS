@@ -46,6 +46,11 @@ resolve live TypeScript source):
   pairing: `useMentraLivePairing` owns the scan, bond adoption, connect, Pair
   Audio, iOS stale-bond and failure behavior over `engine.pairing`;
   `MentraLivePairingFlow` renders it with the Mentra App's pages.
+- **`@mentra/engine/miniapp-view`** (`src/miniapp-view/index.ts`) — a
+  miniapp's screen. `MiniappView` opens an installed miniapp while it is
+  mounted: it starts the miniapp's background, loads its screen from the
+  package's own origin and wires it to the background. It needs the patched
+  `react-native-webview` the Mentra App ships.
 - **`@mentra/engine/bluetooth-sdk`** (`src/bluetooth-sdk/index.ts`) — the
   complete public Bluetooth SDK surface, re-exported without a wrapper so it
   has the same singleton identity as `@mentra/bluetooth-sdk`. The supported
@@ -74,6 +79,23 @@ import BluetoothSdk from "@mentra/engine/bluetooth-sdk"
 
 - `decideDevLaunchRoute` — pre-flight a dev URL's `miniapp.json` to decide
   whether to mount live or take the user to the offline screen.
+
+### Miniapps
+
+After `engine.configure()` and `engine.start()`, install a miniapp from its URL
+and show it; the background keeps running after the view unmounts, until it is
+stopped:
+
+```tsx
+import {engine} from "@mentra/engine"
+import {MiniappView} from "@mentra/engine/miniapp-view"
+
+await engine.miniapps.install("https://miniapps.mentraglass.com/com.mentra.call/", {source: "system"})
+;<MiniappView packageName="com.mentra.call" onStatus={(status) => console.log(status.state)} />
+await engine.miniapps.stop("com.mentra.call")
+```
+
+`examples/bluetooth/react-native` opens Mentra Call this way in its Call tab.
 
 ### Mentra Live OTA flow
 

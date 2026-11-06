@@ -20,6 +20,15 @@ import {
 describe("deployment feature policy", () => {
   afterEach(() => resetForTests())
 
+  test("runs miniapps as the engine's own version and SDK range unless the host names its own", () => {
+    const {version} = require("../../../package.json") as {version: string}
+    configure({auth: {}})
+    expect(getConfigValues()).toMatchObject({hostVersion: version, supportedMiniappSdkRange: ">=0.3.0 <4.0.0"})
+    resetForTests()
+    configure({auth: {}, config: {hostVersion: "9.9.9"}})
+    expect(getConfigValues().hostVersion).toBe("9.9.9")
+  })
+
   test("preserves consumer behavior when no policy is supplied", () => {
     configure({auth: {}})
     expect(isFeatureEnabled("managedStreams")).toBe(true)

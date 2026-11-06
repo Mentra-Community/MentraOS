@@ -8,6 +8,7 @@ import { CustomMentraLivePairingFlow } from './pairing/CustomMentraLivePairingFl
 import { DeviceScreen } from './screens/DeviceScreen';
 import { CameraScreen } from './screens/CameraScreen';
 import { StreamScreen } from './screens/StreamScreen';
+import { MentraCallScreen } from './screens/MentraCallScreen';
 import { SystemScreen } from './screens/SystemScreen';
 import { ConsoleScreen } from './screens/ConsoleScreen';
 import { otaFlowAdmission } from './otaFlowAdmission';
@@ -124,6 +125,7 @@ export default function App() {
               {tab === 'device' && <DeviceScreen sdk={sdk} onOpenOta={openOta} onOpenPairing={openPairing} />}
               {tab === 'camera' && <CameraScreen sdk={sdk} />}
               {tab === 'stream' && <StreamScreen sdk={sdk} />}
+              {tab === 'call' && <MentraCallScreen />}
               {tab === 'system' && <SystemScreen sdk={sdk} />}
               {tab === 'console' && <ConsoleScreen sdk={sdk} />}
             </View>

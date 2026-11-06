@@ -54,9 +54,9 @@ export interface IslandConfigValues {
    * Omitted allows both.
    */
   isMiniappAvailable?: (packageName: string, mode: MiniappAvailabilityMode) => boolean
-  /** User-facing Mentra App version, compared with a release's `minHostVersion`. */
+  /** User-facing Mentra App version, compared with a release's `minHostVersion`. Defaults to the engine's version. */
   hostVersion?: string
-  /** Semver range of Mentra Miniapp SDK versions (`sdkVersion`) this host runs. */
+  /** Semver range of Mentra Miniapp SDK versions (`sdkVersion`) this host runs. Defaults to the engine's own. */
   supportedMiniappSdkRange?: string
   /** Package identities backed by miniapp ZIPs shipped in this host build. */
   bundledSystemMiniappPackages?: readonly string[]
@@ -79,6 +79,12 @@ export interface IslandConfigValues {
    * its install sheet or its sign-in callbacks, which no miniapp may drive. Omitted, nothing more is refused.
    */
   isHostLink?: (url: string) => boolean
+  /**
+   * The `originWhitelist` patterns of the host app's own URL schemes (for example `"myapp:*"`). A miniapp's
+   * `MiniappView` lists them so their links reach `isHostLink`, which refuses them, instead of the WebView handing
+   * them to the system, which would open the host app.
+   */
+  hostLinkPatterns?: readonly string[]
   /**
    * The host app's own App Store age rating, for example `"12+"`. A miniapp whose `ageRating` is above it installs or
    * opens only for a person whose declared age is old enough: the engine asks once through the `askDeclaredAge` seam
@@ -312,6 +318,11 @@ export function isFeatureEnabled(feature: IslandFeatureName): boolean {
 }
 
 let options: IslandConfigureOptions | null = null
+
+/** The engine's release family version, the same at this depth under src/ and build/. */
+const ENGINE_VERSION = (require("../../package.json") as {version: string}).version
+/** Mentra Miniapp SDK versions (`sdkVersion` in miniapp.json) this engine runs. */
+const SUPPORTED_MINIAPP_SDK_RANGE = ">=0.3.0 <4.0.0"
 let started = false
 
 /**
@@ -328,10 +339,12 @@ export function configure(opts: IslandConfigureOptions): void {
     console.warn("engine.configure() called after engine.start(); ignored — stop() the runtime before reconfiguring")
     return
   }
-  options = {
-    ...opts,
-    config: opts.config ? {...opts.config, ...frozenMiniappPolicy(opts.config)} : undefined,
+  const config = {
+    ...opts.config,
+    hostVersion: opts.config?.hostVersion ?? ENGINE_VERSION,
+    supportedMiniappSdkRange: opts.config?.supportedMiniappSdkRange ?? SUPPORTED_MINIAPP_SDK_RANGE,
   }
+  options = {...opts, config: {...config, ...frozenMiniappPolicy(config)}}
 }
 
 function frozenMiniappPolicy(

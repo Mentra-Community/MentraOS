@@ -4,7 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 import { colors } from './theme';
 
-export type TabKey = 'device' | 'camera' | 'stream' | 'system' | 'console';
+export type TabKey = 'device' | 'camera' | 'stream' | 'call' | 'system' | 'console';
 
 const tabs: { key: TabKey; label: string; icon: (active: boolean) => React.ReactNode }[] = [
   {
@@ -33,6 +33,16 @@ const tabs: { key: TabKey; label: string; icon: (active: boolean) => React.React
       <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={active ? '#fff' : colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
         <Circle cx={12} cy={12} r={2} />
         <Path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.48M20.49 4.93a10 10 0 0 1 0 14.14M3.51 19.07a10 10 0 0 1 0-14.14" />
+      </Svg>
+    ),
+  },
+  {
+    key: 'call',
+    label: 'Call',
+    icon: (active) => (
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={active ? '#fff' : colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="m16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 11" />
+        <Rect x={2} y={6} width={14} height={12} rx={2} />
       </Svg>
     ),
   },

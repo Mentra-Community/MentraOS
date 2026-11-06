@@ -1,4 +1,12 @@
-import {decideMiniappNavigation, miniappOriginWhitelist} from "@/components/miniapp/miniappNavigation"
+import {isMentraAppLink, MENTRA_APP_SCHEME_PATTERNS} from "@/services/miniapps/miniappInstallLinks"
+
+import * as navigation from "../../../../modules/engine/src/miniapp-view/miniappNavigation"
+
+// The engine's navigation policy as the Mentra App configures it (MantleManager's isHostLink and hostLinkPatterns).
+const decideMiniappNavigation = (request: {url: string; isTopFrame?: boolean}, pageOrigin: string) =>
+  navigation.decideMiniappNavigation(request, pageOrigin, isMentraAppLink)
+const miniappOriginWhitelist = (pageOrigin: string) =>
+  navigation.miniappOriginWhitelist(pageOrigin, MENTRA_APP_SCHEME_PATTERNS)
 
 const IOS = "miniapp://com.mentra.notes"
 const ANDROID = "https://com.mentra.notes.miniapp.invalid"

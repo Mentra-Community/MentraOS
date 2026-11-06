@@ -44,3 +44,4 @@ jobs:
   examples:
     name: Bluetooth examples
     uses: ./.github/workflows/reusable-bluetooth-examples.yml
+    secrets: inherit

@@ -4,8 +4,8 @@ import {Linking, Platform} from "react-native"
 import LocalMiniappView from "../LocalMiniappView"
 import {useNavigationStore} from "@/stores/navigation"
 import {useRegisterCapsule} from "@/stores/capsule"
-import {miniappLauncher} from "@mentra/engine-host-internal"
-import {devServerBridge} from "@mentra/engine-host-internal/devtools"
+import {miniappLauncher} from "../../../../modules/engine/src/services/MiniappLauncher"
+import devServerBridge from "../../../../modules/engine/src/services/DevServerBridge"
 import {useStressTestStore} from "@/stores/stressTest"
 import {
   resetWebStorageMoveStateForTests,
@@ -24,7 +24,6 @@ jest.mock("@/contexts/ThemeContext", () => ({
 jest.mock("@/contexts/SaferAreaContext", () => ({
   useSaferAreaInsets: () => ({top: 0, bottom: 0, left: 0, right: 0}),
 }))
-jest.mock("@/services/mentraJsBootstrap", () => ({getMentraJS: () => null}))
 jest.mock("@/components/ignite", () => ({Text: "Text"}))
 jest.mock("@/effects/CapsuleMenu", () => () => {
   const {View} = require("react-native")
@@ -39,11 +38,33 @@ jest.mock("../MiniappSplash", () => (props: {error?: string}) => {
 /** The miniapp in front, as the engine's apps store holds it. */
 let mockForegroundedPackage: string | null = null
 let mockDevMode = false
-jest.mock("@mentra/engine-host-internal", () => ({
+// The engine modules MiniappView runs on.
+jest.mock("../../../../modules/engine/src/services/MiniappLauncher", () => ({
   miniappLauncher: {ensureRunning: jest.fn()},
+}))
+jest.mock("../../../../modules/engine/src/services/MiniappEngine", () => ({getMiniappEngine: () => null}))
+jest.mock("../../../../modules/engine/src/services/LocalMiniappRuntime", () => ({
+  __esModule: true,
+  default: {installedVersionOf: () => null},
+}))
+jest.mock("../../../../modules/engine/src/services/DevServerBridge", () => ({
+  __esModule: true,
+  default: {onReload: jest.fn(), forwardLog: jest.fn()},
+}))
+jest.mock("../../../../modules/engine/src/services/fleet/fleetEvents", () => ({fleetEvents: {crash: jest.fn()}}))
+jest.mock("../../../../modules/engine/src/runtime/bootstrap", () => ({getConfigValues: () => ({})}))
+jest.mock("../../../../modules/engine/src/utils/miniappGlobals", () => ({buildMiniappGlobalsScript: () => ""}))
+jest.mock("../../../../modules/engine/src/services/mentraUiShim", () => ({buildMentraUiShim: () => ""}))
+jest.mock("../../../../modules/engine/src/utils/timers", () => ({
+  BgTimer: {
+    setInterval: jest.fn(),
+    clearInterval: jest.fn(),
+    setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
+    clearTimeout: (id: ReturnType<typeof setTimeout>) => clearTimeout(id),
+  },
+}))
+jest.mock("@mentra/engine-host-internal", () => ({
   useAppStatusStore: {getState: () => ({foregroundedPackage: mockForegroundedPackage})},
-  buildMiniappGlobalsScript: () => "",
-  buildMentraUiShim: () => "",
   localMiniappRuntime: {hasManifestPermission: () => false},
   redactSecrets: jest.requireActual("../../../../modules/engine/src/services/MentraJSLogPipeline").redactSecrets,
   ...jest.requireActual("../../../../modules/engine/src/services/miniappWebStorage"),
@@ -70,9 +91,6 @@ jest.mock("@mentra/engine", () => ({
   SETTINGS: {dev_mode: {key: "dev_mode"}},
   useSetting: () => [mockDevMode],
   engine: {miniapps: {clearForeground: jest.fn()}},
-}))
-jest.mock("@mentra/engine-host-internal/devtools", () => ({
-  devServerBridge: {onReload: jest.fn(), forwardLog: jest.fn()},
 }))
 jest.mock("@/services/streamPreview", () => {
   const coordinator = {
@@ -155,7 +173,7 @@ it("logs the native load error while preserving the existing stress event and lo
       },
     })
   })
-  expect(warn).toHaveBeenCalledWith("[LocalMiniappView:com.mentra.test] WebView load error", {
+  expect(warn).toHaveBeenCalledWith("[MiniappView:com.mentra.test] WebView load error", {
     domain: "NSURLErrorDomain",
     code: -1009,
     description: "Could not load [REDACTED]",

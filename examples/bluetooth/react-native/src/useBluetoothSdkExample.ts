@@ -67,7 +67,7 @@ import {
   type TouchGestureDefaults,
 } from './touchGestureDefaults';
 
-export type ExampleTabKey = 'device' | 'camera' | 'stream' | 'system' | 'console';
+export type ExampleTabKey = 'device' | 'camera' | 'stream' | 'call' | 'system' | 'console';
 export type BluetoothSdkExampleOptions = {
   activeTab?: ExampleTabKey;
 };

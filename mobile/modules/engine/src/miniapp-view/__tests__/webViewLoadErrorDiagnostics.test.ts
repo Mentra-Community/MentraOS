@@ -1,3 +1,7 @@
+/// <reference types="bun-types" />
+
+import {expect, it} from "bun:test"
+
 import {getWebViewLoadErrorDiagnostics} from "../webViewLoadErrorDiagnostics"
 
 const fakeJwt = [
@@ -5,10 +9,6 @@ const fakeJwt = [
   Buffer.from(JSON.stringify({sub: "test-only"})).toString("base64url"),
   "fakeSignature",
 ].join(".")
-
-jest.mock("@mentra/engine-host-internal", () => ({
-  redactSecrets: jest.requireActual("../../../../modules/engine/src/services/MentraJSLogPipeline").redactSecrets,
-}))
 
 it("retains the original native cause and excludes unselected event fields", () => {
   const event = {
