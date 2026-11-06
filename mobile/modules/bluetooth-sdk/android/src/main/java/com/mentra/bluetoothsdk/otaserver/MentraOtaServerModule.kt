@@ -28,13 +28,6 @@ class MentraOtaServerModule : Module() {
       stopOtaServerInternal()
     }
 
-    // API parity with iOS. Android hotspot OTA obtains the authoritative address
-    // directly from the scoped Network and does not call this fallback.
-    AsyncFunction("waitForWifiAddress") { _: String, _: Int ->
-      LocalIpv4.bestLocalIpv4Address()
-        ?: throw IllegalStateException("No Wi-Fi/LAN IPv4 address found for this phone.")
-    }
-
     OnDestroy {
       closeOtaServerInternal()
     }

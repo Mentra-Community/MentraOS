@@ -3,11 +3,9 @@ package com.mentra.bluetoothsdk
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
-import android.net.wifi.WifiNetworkSpecifier
-import android.os.Handler
-import android.os.Looper
 import android.util.Base64
+import com.mentra.bluetoothsdk.hotspot.ScopedNetworkError
+import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
 import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
@@ -15,27 +13,27 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
-import java.net.Inet4Address
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
-/** MentraOS-internal transport for glasses-local traffic without process network binding. */
+/**
+ * MentraOS-internal transport for glasses-local traffic without process network binding. Gallery
+ * sync and hotspot OTA join through [ScopedSoftApNetwork], the same join Mentra Call and the
+ * managed relay use, and send their HTTP over the `Network` it returns.
+ */
 class MentraLocalNetworkModule : Module() {
     private companion object {
         const val TAG = "MentraLocalNetwork"
-        const val NETWORK_READINESS_TIMEOUT_MS = 5_000L
     }
 
     private val lock = Any()
     private val executor = Executors.newCachedThreadPool()
-    private val handler = Handler(Looper.getMainLooper())
+    // Joins block, so they run one at a time off the JS thread. Disconnect does not queue
+    // behind them: releasing the network ends a join in progress at once.
+    private val joins = Executors.newSingleThreadExecutor()
     private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
-    private val networkReadiness = ScopedNetworkReadiness<Network>()
-    private var localNetwork: Network? = null
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    private var pendingConnectPromise: Promise? = null
-    private var pendingReadinessTimeout: Runnable? = null
+    private var scoped: ScopedSoftApNetwork? = null
 
     override fun definition() = ModuleDefinition {
         Name("MentraLocalNetwork")
@@ -49,7 +47,7 @@ class MentraLocalNetworkModule : Module() {
                 sampledAtMs,
                 manager.boundNetworkForProcess,
                 manager.activeNetwork,
-                synchronized(lock) { localNetwork },
+                synchronized(lock) { scoped }?.network(),
             ) { network ->
                 manager.getNetworkCapabilities(network)?.let { capabilities ->
                     mapOf(
@@ -65,8 +63,8 @@ class MentraLocalNetworkModule : Module() {
             }
         }
 
-        AsyncFunction("connect") { ssid: String, password: String, promise: Promise ->
-            connect(ssid, password, promise)
+        AsyncFunction("connect") { ssid: String, password: String, incoming: Boolean, promise: Promise ->
+            connect(ssid, password, incoming, promise)
         }
 
         AsyncFunction("request") {
@@ -106,6 +104,7 @@ class MentraLocalNetworkModule : Module() {
 
         OnDestroy {
             disconnect()
+            joins.shutdown()
         }
     }
 
@@ -114,113 +113,51 @@ class MentraLocalNetworkModule : Module() {
             "ConnectivityManager is unavailable"
         }
 
-    private fun connect(ssid: String, password: String, promise: Promise) {
-        disconnect()
-        val manager = connectivityManager()
-        val specifier =
-            WifiNetworkSpecifier.Builder()
-                .setSsid(ssid)
-                .setWpa2Passphrase(password)
-                .build()
-        val request =
-            NetworkRequest.Builder()
-                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .setNetworkSpecifier(specifier)
-                .build()
+    private fun connect(ssid: String, password: String, incoming: Boolean, promise: Promise) {
+        joins.execute {
+            disconnect()
+            val context = appContext.reactContext?.applicationContext
+            if (context == null) {
+                promise.reject("ERR_LOCAL_WIFI_REQUEST", "No React context", null)
+                return@execute
+            }
+            val network = ScopedSoftApNetwork(context)
+            synchronized(lock) { scoped = network }
+            val listener =
+                object : ScopedSoftApNetwork.Listener {
+                    override fun onAvailable(network: Network, localIpv4: String) = Unit
 
-        val callback =
-            object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) {
-                    synchronized(lock) {
-                        if (networkCallback !== this) {
-                            Log.d(TAG, "Ignoring onAvailable from a stale network request")
-                            return
-                        }
-                        networkReadiness.onAvailable(network)
+                    override fun onLost(error: ScopedNetworkError) {
+                        if (synchronized(lock) { scoped !== network }) return
+                        cancelAll()
+                        sendEvent("networkLost", mapOf("ssid" to ssid))
                     }
-                    Log.i(
-                        TAG,
-                        "Captured glasses WiFi network=$network; waiting for foreground capability " +
-                            "processBoundNetwork=${manager.boundNetworkForProcess}",
-                    )
-                    scheduleReadinessTimeout(this, ssid)
                 }
-
-                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-                    val connectPromise: Promise?
-                    synchronized(lock) {
-                        if (networkCallback !== this || localNetwork != null || pendingConnectPromise == null) return
-                        if (!networkReadiness.isReady(
-                                network,
-                                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_FOREGROUND),
-                            )
-                        ) {
-                            return
-                        }
-                        localNetwork = network
-                        connectPromise = pendingConnectPromise
-                        pendingConnectPromise = null
-                        cancelReadinessTimeoutLocked()
-                    }
-                    Log.i(
-                        TAG,
-                        "Glasses WiFi network=$network is foreground and ready " +
-                            "processBoundNetwork=${manager.boundNetworkForProcess}",
-                    )
-                    val localAddress =
-                        manager.getLinkProperties(network)
-                            ?.linkAddresses
-                            ?.firstOrNull { it.address is Inet4Address }
-                            ?.address
-                            ?.hostAddress
-                    connectPromise?.resolve(
-                        buildMap<String, Any> {
-                            put("connected", true)
-                            put("ssid", ssid)
-                            if (!localAddress.isNullOrBlank()) put("localAddress", localAddress)
-                        },
-                    )
+            try {
+                network.join(ssid, password, listener, incoming)
+                if (synchronized(lock) { scoped !== network }) {
+                    network.release()
+                    promise.reject("ERR_LOCAL_WIFI_CANCELLED", "Local WiFi connection cancelled", null)
+                    return@execute
                 }
-
-                override fun onUnavailable() {
-                    synchronized(lock) {
-                        if (networkCallback !== this) {
-                            Log.d(TAG, "Ignoring onUnavailable from a stale network request")
-                            return
-                        }
-                    }
-                    rejectPendingConnect("ERR_LOCAL_WIFI_UNAVAILABLE", "Could not connect to $ssid")
-                    clearNetworkCallback(this)
-                }
-
-                override fun onLost(network: Network) {
-                    synchronized(lock) {
-                        if (networkCallback !== this ||
-                            (localNetwork != network && !networkReadiness.contains(network))
-                        ) {
-                            Log.d(TAG, "Ignoring onLost from a stale network request")
-                            return
-                        }
-                        localNetwork = null
-                        networkReadiness.clear()
-                    }
-                    cancelAll()
-                    rejectPendingConnect("ERR_LOCAL_WIFI_LOST", "Lost connection to $ssid")
-                    clearNetworkCallback(this)
-                    sendEvent("networkLost", mapOf("ssid" to ssid))
+                Log.i(TAG, "Glasses WiFi network=${network.network()} is ready")
+                promise.resolve(
+                    buildMap<String, Any> {
+                        put("connected", true)
+                        put("ssid", ssid)
+                        network.localIpv4()?.let { put("localAddress", it) }
+                    },
+                )
+            } catch (error: Exception) {
+                val cancelled = synchronized(lock) { (scoped !== network).also { if (!it) scoped = null } }
+                if (cancelled) {
+                    promise.reject("ERR_LOCAL_WIFI_CANCELLED", "Local WiFi connection cancelled", error)
+                } else {
+                    network.release()
+                    val code = (error as? ScopedNetworkError)?.code ?: "ERR_LOCAL_WIFI_REQUEST"
+                    promise.reject(code, error.message ?: "Could not connect to $ssid", error)
                 }
             }
-
-        synchronized(lock) {
-            pendingConnectPromise = promise
-            networkCallback = callback
-        }
-        try {
-            manager.requestNetwork(request, callback, 30_000)
-        } catch (error: Exception) {
-            clearNetworkCallback(callback)
-            rejectPendingConnect("ERR_LOCAL_WIFI_REQUEST", error.message ?: "Local WiFi request failed", error)
         }
     }
 
@@ -334,7 +271,7 @@ class MentraLocalNetworkModule : Module() {
     }
 
     private fun openConnection(requestId: String, url: String): HttpURLConnection {
-        val network = synchronized(lock) { localNetwork }
+        val network = synchronized(lock) { scoped }?.network()
             ?: throw IllegalStateException("Local WiFi is not connected")
         val connection = network.openConnection(URL(url)) as HttpURLConnection
         activeConnections[requestId] = connection
@@ -354,85 +291,9 @@ class MentraLocalNetworkModule : Module() {
         activeConnections.keys.toList().forEach(::cancel)
     }
 
-    private fun scheduleReadinessTimeout(
-        callback: ConnectivityManager.NetworkCallback,
-        ssid: String,
-    ) {
-        val timeout =
-            Runnable {
-                val connectPromise = synchronized(lock) {
-                    if (networkCallback !== callback || pendingConnectPromise == null) return@Runnable
-                    pendingReadinessTimeout = null
-                    val promise = pendingConnectPromise
-                    pendingConnectPromise = null
-                    promise
-                }
-                connectPromise?.reject(
-                    "ERR_LOCAL_WIFI_NOT_READY",
-                    "Connected to $ssid but the network did not become ready",
-                    null,
-                )
-                clearNetworkCallback(callback)
-            }
-        synchronized(lock) {
-            if (networkCallback !== callback || pendingConnectPromise == null) return
-            cancelReadinessTimeoutLocked()
-            pendingReadinessTimeout = timeout
-        }
-        handler.postDelayed(timeout, NETWORK_READINESS_TIMEOUT_MS)
-    }
-
-    private fun cancelReadinessTimeoutLocked() {
-        pendingReadinessTimeout?.let(handler::removeCallbacks)
-        pendingReadinessTimeout = null
-    }
-
     private fun disconnect() {
         cancelAll()
-        val manager = appContext.reactContext?.getSystemService(ConnectivityManager::class.java)
-        val callback: ConnectivityManager.NetworkCallback?
-        synchronized(lock) {
-            callback = networkCallback
-            networkCallback = null
-            localNetwork = null
-            networkReadiness.clear()
-            cancelReadinessTimeoutLocked()
-        }
-        if (callback != null && manager != null) {
-            try {
-                manager.unregisterNetworkCallback(callback)
-            } catch (_: IllegalArgumentException) {
-                // Already unregistered by the platform.
-            }
-        }
-        rejectPendingConnect("ERR_LOCAL_WIFI_CANCELLED", "Local WiFi connection cancelled")
-    }
-
-    private fun clearNetworkCallback(callback: ConnectivityManager.NetworkCallback) {
-        val manager = appContext.reactContext?.getSystemService(ConnectivityManager::class.java)
-        synchronized(lock) {
-            if (networkCallback == callback) {
-                networkCallback = null
-                localNetwork = null
-                networkReadiness.clear()
-                cancelReadinessTimeoutLocked()
-            }
-        }
-        if (manager != null) {
-            try {
-                manager.unregisterNetworkCallback(callback)
-            } catch (_: IllegalArgumentException) {
-                // Callback was not registered or has already been removed.
-            }
-        }
-    }
-
-    private fun rejectPendingConnect(code: String, message: String, cause: Throwable? = null) {
-        val promise: Promise?
-        synchronized(lock) {
-            promise = pendingConnectPromise
-            pendingConnectPromise = null
-        }
-        promise?.reject(code, message, cause)
+        val network = synchronized(lock) { scoped.also { scoped = null } }
+        network?.release()
     }
 }

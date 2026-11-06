@@ -1,6 +1,6 @@
 package com.mentra.glassesmedia.source
 
-import com.mentra.glassesmedia.trace.SoftApTrace
+import com.mentra.bluetoothsdk.hotspot.SoftApTrace
 
 enum class SourceKind {
   /** Subscribe to a Cloudflare WHEP endpoint. The phone is the offerer. */

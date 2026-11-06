@@ -2,11 +2,9 @@ import Darwin
 import Foundation
 import Network
 import NetworkExtension
-import OSLog
 
 /// Shared hotspot association owner. Only local glasses traffic uses Wi-Fi.
 public final class GlassesHotspotNetwork {
-    private let logger = Logger(subsystem: "com.mentra.glassesmedia", category: "hotspot")
     private let queue = DispatchQueue(label: "com.mentra.glassesmedia.hotspot")
     private var ssid: String?
     private var lastHotspotSSID: String?
@@ -333,7 +331,7 @@ public final class GlassesHotspotNetwork {
         applying = true
         ownsConfiguration = true
         applies += 1
-        logger.info("HOTSPOT_JOIN apply_start attempt=\(self.applies) ios_on_mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
+        MediaLog.log("HOTSPOT_JOIN apply_start attempt=\(self.applies) ios_on_mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
         NEHotspotConfigurationManager.shared.apply(config) { error in
             self.queue.async {
                 guard gen == self.generation else { return }
@@ -346,11 +344,11 @@ public final class GlassesHotspotNetwork {
                     if !alreadyAssociated {
                         // Error identifiers are useful without credentials or full userInfo.
                         let underlying = nativeError.userInfo[NSUnderlyingErrorKey] as? NSError
-                        self.logger.error("HOTSPOT_JOIN apply_failed domain=\(nativeError.domain, privacy: .public) code=\(nativeError.code) underlying_domain=\(underlying?.domain ?? "none", privacy: .public) underlying_code=\(underlying.map { String($0.code) } ?? "none", privacy: .public)")
+                        MediaLog.log("HOTSPOT_JOIN apply_failed domain=\(nativeError.domain) code=\(nativeError.code) underlying_domain=\(underlying?.domain ?? "none") underlying_code=\(underlying.map { String($0.code) } ?? "none")")
                         self.finishJoin(.failure(error)); self.finishLeave(); return
                     }
                 }
-                self.logger.info("HOTSPOT_JOIN apply_accepted")
+                MediaLog.log("HOTSPOT_JOIN apply_accepted")
                 self.waitForAddress(ssid: ssid, passphrase: passphrase, generation: gen, remaining: remaining, pollsSinceApply: 0)
             }
         }
@@ -368,7 +366,7 @@ public final class GlassesHotspotNetwork {
                 } else if remaining > 0, network?.ssid != ssid,
                           self.reapplyPolicy.shouldReapply(applies: self.applies, pollsSinceApply: pollsSinceApply) {
                     // iOS reports the request applied even when its one scan missed the hotspot.
-                    self.logger.info("HOTSPOT_JOIN reapply after_polls=\(pollsSinceApply)")
+                    MediaLog.log("HOTSPOT_JOIN reapply after_polls=\(pollsSinceApply)")
                     self.applyConfiguration(ssid: ssid, passphrase: passphrase, generation: gen, remaining: remaining)
                 } else if remaining > 0 {
                     self.queue.asyncAfter(deadline: .now() + 0.5) {
@@ -431,7 +429,7 @@ public final class GlassesHotspotNetwork {
         let evidence = wifiIdentity.trusted[selected.interface] == selected.index ? "wifi_report" : "hotspot_client"
         wifiIdentity.adopt(selected)
         binding = selected
-        logger.info("HOTSPOT_JOIN address_verified interface=\(selected.interface, privacy: .public) evidence=\(evidence, privacy: .public)")
+        MediaLog.log("HOTSPOT_JOIN address_verified interface=\(selected.interface) evidence=\(evidence)")
     }
 
     /// Interface names and their IPv4 addresses only; never credentials or SSIDs.
@@ -463,13 +461,13 @@ public final class GlassesHotspotNetwork {
         localAccess = request
         request.start(onPermissionRequired: { [weak self] in
             guard let self, gen == generation, !cancelled else { return }
-            NSLog("GLASSES-MEDIA local_network_permission=waiting")
+            MediaLog.log("GLASSES-MEDIA local_network_permission=waiting")
             onPermissionRequired?()
         }) { [weak self] result in
             guard let self, gen == generation, !cancelled else { return }
             switch result {
             case .success:
-                NSLog("GLASSES-MEDIA local_network_permission=ready")
+                MediaLog.log("GLASSES-MEDIA local_network_permission=ready")
                 finishJoin(.success(address))
             case let .failure(error):
                 finishJoin(.failure(error))
@@ -542,7 +540,7 @@ public final class GlassesHotspotNetwork {
             // bounded observation ends. Route readiness is not HTTP success;
             // the following ordinary update check still owns that result.
             startInternetObservation(allowWifiAfterRelease: true) { ready, reason in
-                self.logger.info("HOTSPOT_LEAVE internet_recovery ready=\(ready) reason=\(reason, privacy: .public)")
+                MediaLog.log("HOTSPOT_LEAVE internet_recovery ready=\(ready) reason=\(reason)")
                 finish()
             }
         } else { finish() }

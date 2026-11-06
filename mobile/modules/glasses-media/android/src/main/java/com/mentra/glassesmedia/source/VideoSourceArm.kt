@@ -1,5 +1,7 @@
 package com.mentra.glassesmedia.source
 
+import com.mentra.bluetoothsdk.hotspot.NetworkFacts
+
 enum class VideoSourceArm { WHEP, SYNTHETIC }
 
 enum class SyntheticEntropy { CHEAP, MOTION, NOISE }

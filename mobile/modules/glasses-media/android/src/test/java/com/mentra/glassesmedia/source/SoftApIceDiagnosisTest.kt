@@ -1,6 +1,6 @@
 package com.mentra.glassesmedia.source
 
-import com.mentra.glassesmedia.network.Ipv4Prefix
+import com.mentra.bluetoothsdk.hotspot.Ipv4Prefix
 import com.mentra.glassesmedia.network.ScopedNetworkChangeDetector.PublishedEntry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test

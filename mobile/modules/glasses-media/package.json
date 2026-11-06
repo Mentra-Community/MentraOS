@@ -15,6 +15,9 @@
   "publishConfig": {
     "access": "public"
   },
+  "dependencies": {
+    "@mentra/bluetooth-sdk": "3.4.0"
+  },
   "peerDependencies": {
     "expo-modules-core": "~55.0.25"
   },

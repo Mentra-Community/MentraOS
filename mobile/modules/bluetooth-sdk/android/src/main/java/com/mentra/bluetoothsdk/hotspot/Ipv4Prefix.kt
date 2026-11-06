@@ -1,4 +1,4 @@
-package com.mentra.glassesmedia.network
+package com.mentra.bluetoothsdk.hotspot
 
 /**
  * An IPv4 subnet, taken from the phone's own address on a joined network.

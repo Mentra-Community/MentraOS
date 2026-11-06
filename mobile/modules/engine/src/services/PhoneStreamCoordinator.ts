@@ -34,6 +34,7 @@
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {StreamResolvedConfig, StreamStartRequest, StreamStatusEvent} from "@mentra/bluetooth-sdk/internal"
+import {hotspotAcquisitions} from "./GlassesHotspotLease"
 import {createManagedWebRtcRelay, type ManagedRelay} from "./ManagedWebRtcRelay"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
@@ -235,7 +236,14 @@ export class PhoneStreamCoordinator {
    * until its own watchdog fires. `generation` belongs to the publisher that
    * queued it; a later SoftAP media hop must not inherit this stop.
    */
-  private pendingBleStop: {streamId: string; hotspot?: boolean; generation: number; discarded?: boolean} | null = null
+  /** `hotspotAcquisitions` dates a deferred hotspot-off; a later owner's AP is never turned off. */
+  private pendingBleStop: {
+    streamId: string
+    hotspot?: boolean
+    hotspotAcquisitions?: number
+    generation: number
+    discarded?: boolean
+  } | null = null
   /** Bumped each time an unmanaged/managed publisher claims the slot. */
   private publisherGeneration = 0
   /**
@@ -530,7 +538,12 @@ export class PhoneStreamCoordinator {
             },
             () => this.linkSource.isConnected(),
             () => {
-              this.pendingBleStop = {streamId, hotspot: true, generation: this.publisherGeneration}
+              this.pendingBleStop = {
+                streamId,
+                hotspot: true,
+                hotspotAcquisitions: hotspotAcquisitions(),
+                generation: this.publisherGeneration,
+              }
               this.attachLink()
             },
           )
@@ -834,7 +847,9 @@ export class PhoneStreamCoordinator {
     console.info("[STREAM] BLE link back; sending deferred stopStream", pending)
     await BluetoothSdk.stopStream()
     if (pending.discarded || this.pendingBleStop !== pending || this.current) return
-    if (pending.hotspot) {
+    if (pending.hotspot && pending.hotspotAcquisitions !== hotspotAcquisitions()) {
+      console.info("[STREAM] The hotspot has a newer owner; dropping the deferred hotspot shutdown", pending)
+    } else if (pending.hotspot) {
       const result = await BluetoothSdk.setHotspotState(false)
       if (result.state !== "disabled") throw new Error("Deferred hotspot shutdown was not confirmed")
     }
@@ -1084,7 +1099,12 @@ export class PhoneStreamCoordinator {
     // lock for the native timeout). Defer it to the next reconnect instead.
     const linkUp = this.linkSource.isConnected()
     if (sendBleStop && !linkUp) {
-      this.pendingBleStop = {streamId: entry.streamId, hotspot: entry.kind === "managed" && !!entry.relay, generation: this.publisherGeneration}
+      this.pendingBleStop = {
+        streamId: entry.streamId,
+        hotspot: entry.kind === "managed" && !!entry.relay,
+        hotspotAcquisitions: hotspotAcquisitions(),
+        generation: this.publisherGeneration,
+      }
       console.warn("[STREAM] BLE link down during teardown; stopStream deferred", {
         streamId: entry.streamId,
         reason,

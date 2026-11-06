@@ -1,4 +1,4 @@
-package com.mentra.glassesmedia.network
+package com.mentra.bluetoothsdk.hotspot
 
 import android.content.Context
 import android.content.pm.PackageManager
@@ -10,7 +10,6 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
-import com.mentra.glassesmedia.trace.SoftApTrace
 import java.net.Inet4Address
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -19,17 +18,9 @@ import java.util.concurrent.TimeUnit
  * Joins the glasses' SoftAP as a scoped, internet-less network and keeps the [Network] handle
  * in-process.
  *
- * ## Why this is not reused from the Bluetooth SDK
- *
- * `MentraLocalNetworkModule` in `bluetooth-sdk` already holds a scoped `Network` for the same
- * hotspot, but it only exposes `HttpURLConnection`. A `Network` object cannot cross the JS bridge,
- * and `acs-meeting` has no Gradle edge onto `bluetooth-sdk` — adding one would couple this module to
- * the *published public* SDK and force an internal registry to be exported from it.
- *
- * Owning the join here instead puts the `Network` handle in the same module and lifecycle as the
- * `PeerConnectionFactory`, which is precisely what the libwebrtc interface-agreement problem needs:
- * the ingest source has to bind its sockets to the same network object this class produced. The
- * duplication with the Bluetooth SDK is deliberate.
+ * Gallery sync and hotspot OTA (through `MentraLocalNetworkModule`), Mentra Call and the managed
+ * relay all join through this class, so the hotspot has one join on Android. Callers that use
+ * libwebrtc bind their sockets to the [Network] it produces.
  *
  * ## Dual-homing
  *
@@ -50,6 +41,10 @@ class ScopedSoftApNetwork(private val context: Context) {
     private val readiness = ScopedNetworkReadiness()
 
     private var callback: ConnectivityManager.NetworkCallback? = null
+    /** The pending request's wait, so [release] can end it at once. */
+    private var pendingReady: CountDownLatch? = null
+    /** Counts [release] calls; a join that saw one stops instead of retrying. */
+    private var releases = 0
     private var network: Network? = null
     private var localIpv4: String? = null
     private var spec: ScopedNetworkRequestSpec? = null
@@ -195,12 +190,15 @@ class ScopedSoftApNetwork(private val context: Context) {
         }
 
     /**
-     * Join [ssid] and block until it is usable or the request fails.
+     * Join [ssid] and block until it is usable or the request fails. An Unavailable request is
+     * made once more after a short settle; every caller gets that retry.
+     * [incoming] is false for a caller that only dials the glasses (gallery): a VPN that
+     * captures the app blocks the glasses reaching us, not us reaching them.
      *
      * @throws ScopedNetworkError on permission denial, timeout, or an unavailable network
      */
     @Throws(ScopedNetworkError::class)
-    fun join(ssid: String, passphrase: String, listener: Listener? = null): Network {
+    fun join(ssid: String, passphrase: String, listener: Listener? = null, incoming: Boolean = true): Network {
         if (!hasLocalNetworkPermission()) {
             SoftApTrace.failure("scoped_join_permission_denied", "ssid" to ssid)
             throw ScopedNetworkError.PermissionDenied(ScopedNetworkError.LOCAL_NETWORK_PERMISSION)
@@ -216,12 +214,25 @@ class ScopedSoftApNetwork(private val context: Context) {
         // The specifier join would succeed, but the glasses could never complete a TCP handshake
         // to our listener and we could not bind to the hotspot. Fail here, where the message can
         // say why, instead of ten seconds into the camera step.
-        if (isVpnCapturingApp()) {
+        if (incoming && isVpnCapturingApp()) {
             SoftApTrace.failure("scoped_join_vpn_captures_app", "ssid" to ssid)
             throw ScopedNetworkError.VpnCapturesApp()
         }
 
-        release()
+        val releasesAtStart = synchronized(lock) { releases }
+        return retryUnavailableOnce(
+            request = { requestOnce(ssid, passphrase, listener) },
+            settle = {
+                SoftApTrace.stage("scoped_join_unavailable_retry", "ssid" to ssid, "settleMs" to UNAVAILABLE_RETRY_SETTLE_MS)
+                Thread.sleep(UNAVAILABLE_RETRY_SETTLE_MS)
+            },
+            released = { synchronized(lock) { releases } != releasesAtStart },
+        )
+    }
+
+    @Throws(ScopedNetworkError::class)
+    private fun requestOnce(ssid: String, passphrase: String, listener: Listener?): Network {
+        synchronized(lock) { releaseLocked() }
 
         val requestSpec = ScopedNetworkRequestSpec.forSoftAp(ssid, passphrase)
         val manager = connectivityManager()
@@ -229,6 +240,7 @@ class ScopedSoftApNetwork(private val context: Context) {
 
         val generation: Int
         synchronized(lock) {
+            pendingReady = ready
             generation = state.startRequest()
             spec = requestSpec
             this.listener = listener
@@ -306,6 +318,8 @@ class ScopedSoftApNetwork(private val context: Context) {
                     changed: Network,
                     capabilities: NetworkCapabilities,
                 ) {
+                    // A background network is not usable by the app yet; wait for the foreground.
+                    if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_FOREGROUND)) return
                     synchronized(lock) {
                         if (!state.accepts(generation)) return
                         readiness.onCapabilities()
@@ -461,12 +475,17 @@ class ScopedSoftApNetwork(private val context: Context) {
         )
     }
 
-    /** Unregister the callback and drop the network. Safe to call twice. */
+    /** Drop the network. A join in progress on another thread stops waiting and fails. */
     fun release() {
-        synchronized(lock) { releaseLocked() }
+        synchronized(lock) {
+            releases++
+            pendingReady?.countDown()
+            releaseLocked()
+        }
     }
 
     private fun releaseLocked() {
+        pendingReady = null
         val active = callback
         if (active != null) {
             runCatching { connectivityManager().unregisterNetworkCallback(active) }
@@ -546,12 +565,24 @@ class ScopedSoftApNetwork(private val context: Context) {
         /** Radio + scan need a beat after `isWifiEnabled` flips before specifier can see the AP. */
         const val WIFI_ENABLE_SETTLE_MS = 1_500L
 
+        /** The gap before [join] asks again after an Unavailable while leaving another AP. */
+        private const val UNAVAILABLE_RETRY_SETTLE_MS = 2_000L
+
         /**
-         * After `WifiNetworkSpecifier` returns Unavailable while leaving another AP (office Wi-Fi
-         * or a phone hotspot), Samsung has already dropped that network. A second specifier from
-         * an idle STA is the join that succeeds; this is the gap before we issue it.
+         * Leaving the phone's current Wi-Fi (office AP, a phone hotspot) can make the first
+         * specifier fail as Unavailable: Samsung assoc-rejects the glasses SoftAP (status 1025)
+         * after dropping the old network. The same request from the now idle STA succeeds, so
+         * [join] asks once more, unless it was released before or during the settle.
          */
-        const val UNAVAILABLE_RETRY_SETTLE_MS = 2_000L
+        internal fun <T> retryUnavailableOnce(request: () -> T, settle: () -> Unit, released: () -> Boolean): T =
+            try {
+                request()
+            } catch (error: ScopedNetworkError.Unavailable) {
+                if (released()) throw error
+                settle()
+                if (released()) throw error
+                request()
+            }
 
         /**
          * dnsmasq (DHCP/DNS) on the hotspot, then the glasses' local HTTP servers. Any answer —

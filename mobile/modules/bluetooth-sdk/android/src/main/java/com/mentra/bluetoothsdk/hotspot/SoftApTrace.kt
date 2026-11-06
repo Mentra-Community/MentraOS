@@ -1,7 +1,7 @@
-package com.mentra.glassesmedia.trace
+package com.mentra.bluetoothsdk.hotspot
 
 import android.os.SystemClock
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 
 /**
  * Correlated stage logging for the SoftAP calling pipeline (phone side).

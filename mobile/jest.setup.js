@@ -71,7 +71,6 @@ jest.mock("@mentra/bluetooth-sdk/ota-transport", () => {
         }),
       ),
       stop: jest.fn(() => Promise.resolve()),
-      waitForWifiAddress: jest.fn(() => Promise.resolve("127.0.0.1")),
       downloadArtifact: jest.fn(() => Promise.resolve({statusCode: 200, bytesWritten: 0})),
       onArtifactDownloadProgress: jest.fn(() => ({remove: jest.fn()})),
     },

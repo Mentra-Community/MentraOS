@@ -1,11 +1,8 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {otaLocalNetwork, type OtaLocalNetworkDownloadProgress} from "@mentra/bluetooth-sdk/ota-transport"
-import CrustModule from "@mentra/crust"
 import {glassesHotspot} from "@mentra/glasses-media"
 import {Buffer} from "buffer"
 import {Platform} from "react-native"
-import WifiManager from "react-native-wifi-reborn"
-import {BgTimer} from "../../utils/timers"
 
 type DownloadOptions = Parameters<typeof RNFS.downloadFile>[0]
 type DownloadHandle = ReturnType<typeof RNFS.downloadFile>
@@ -15,14 +12,14 @@ let scopedConnectionActive = false
 let nextJobId = 1_000_000
 const nativeJobs = new Map<number, string>()
 const cancelledNativeJobs = new Set<number>()
-let macHotspotOwner: {caller: symbol; nativeId: string} | null = null
+// iOS joins through the shared native owner that also serves Mentra Call and the relay.
+let iosHotspotOwner: {caller: symbol; nativeId: string} | null = null
 
 export type LocalNetworkErrorDetails = {
   code?: string | number
   domain?: string
   message?: string
   underlying?: {code?: string | number; domain?: string}
-  native?: {code: number; domain: string; completed: true; underlying?: {code: number; domain: string}}
 }
 
 // Existing native builds wrap these app-authored LocalMediaError causes in ERR_UNEXPECTED.
@@ -78,7 +75,9 @@ export function localNetworkErrorDetails(error: unknown): LocalNetworkErrorDetai
     : undefined
   const hotspotMessage =
     typeof details.code === "string" &&
-    ["ERR_HOTSPOT_JOIN", "ERR_HOTSPOT_CANCELLED", "ERR_HOTSPOT_NATIVE"].includes(details.code) &&
+    ["ERR_HOTSPOT_JOIN", "ERR_HOTSPOT_CANCELLED", "ERR_HOTSPOT_NATIVE", "ERR_HOTSPOT_USER_DENIED"].includes(
+      details.code,
+    ) &&
     message !== undefined
       ? message.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, 512)
       : details.code === "ERR_UNEXPECTED" && message !== undefined ? legacyHotspotCause(message) : undefined
@@ -88,35 +87,10 @@ export function localNetworkErrorDetails(error: unknown): LocalNetworkErrorDetai
       ? (userInfo as {NSUnderlyingError?: unknown}).NSUnderlyingError
       : undefined,
   )
-  const nativeValue =
-    userInfo && typeof userInfo === "object" ? (userInfo as {RNWifiNativeError?: unknown}).RNWifiNativeError : undefined
-  const nativeFacts = facts(nativeValue)
-  const native =
-    nativeValue &&
-    typeof nativeValue === "object" &&
-    (nativeValue as {completed?: unknown}).completed === true &&
-    typeof nativeFacts.code === "number" &&
-    Number.isSafeInteger(nativeFacts.code) &&
-    nativeFacts.domain
-      ? {code: nativeFacts.code, domain: nativeFacts.domain, completed: true as const}
-      : undefined
-  const nativeUnderlying = facts((nativeValue as {underlying?: unknown} | undefined)?.underlying)
   return {
     ...details,
     ...(hotspotMessage ? {message: hotspotMessage} : {}),
     ...(Object.keys(underlying).length ? {underlying} : {}),
-    ...(native
-      ? {
-          native: {
-            ...native,
-            ...(typeof nativeUnderlying.code === "number" &&
-            Number.isSafeInteger(nativeUnderlying.code) &&
-            nativeUnderlying.domain
-              ? {underlying: {code: nativeUnderlying.code, domain: nativeUnderlying.domain}}
-              : {}),
-          },
-        }
-      : {}),
   }
 }
 
@@ -154,14 +128,15 @@ export const localNetworkTransport = {
     ssid: string,
     password: string,
     options?: {
-      retryIosInternalError?: true
       assertCurrent?: () => void
       gateway?: string
       purpose?: "outgoing-client" | "incoming-server"
+      /** iOS: the join is waiting for Local Network access, which may have been denied. */
+      onPermissionRequired?: () => void
     },
   ): Promise<string | undefined> {
-    const isMac = Platform.OS === "ios" && CrustModule.isIOSAppOnMac === true
-    if (isMac && macHotspotOwner) throw new Error("Previous Mac hotspot session has not been released")
+    const isIos = Platform.OS === "ios"
+    if (isIos && iosHotspotOwner) throw new Error("Previous hotspot session has not been released")
     const generation = ++connectionGeneration
     const assertCurrent = () => {
       if (generation !== connectionGeneration) throw new Error("Local network connection was superseded")
@@ -170,9 +145,14 @@ export const localNetworkTransport = {
     assertCurrent()
     scopedConnectionActive = false
     nativeJobs.clear()
-    if (isMac) {
-      const owner = requestId("mac_hotspot")
-      macHotspotOwner = {caller, nativeId: owner}
+    if (isIos) {
+      // The native join asks iOS again when its scan misses the hotspot and resolves only
+      // with the phone's verified address on it.
+      const owner = requestId("ios_hotspot")
+      iosHotspotOwner = {caller, nativeId: owner}
+      const permission = glassesHotspot.onPermissionRequired((id) => {
+        if (id === owner) options?.onPermissionRequired?.()
+      })
       try {
         const address = await glassesHotspot.join(
           owner,
@@ -187,55 +167,28 @@ export const localNetworkTransport = {
         try {
           await glassesHotspot.leave(owner)
         } catch (cleanupError) {
-          console.warn("[LocalNetworkTransport] Mac hotspot cleanup failed", localNetworkErrorDetails(cleanupError))
+          console.warn("[LocalNetworkTransport] hotspot cleanup failed", localNetworkErrorDetails(cleanupError))
           throw error
         }
-        if (macHotspotOwner?.nativeId === owner) macHotspotOwner = null
+        if (iosHotspotOwner?.nativeId === owner) iosHotspotOwner = null
         throw error
+      } finally {
+        permission.remove()
       }
     }
-    if (!supportsScopedConnection()) {
-      // Gallery already owns its retry loop. OTA opts into this same-network
-      // policy only with current-attempt authority; never race a pending native call.
-      const retryDeadline = Date.now() + 30_000
-      for (let attempt = 1; ; attempt += 1) {
-        assertCurrent()
-        try {
-          await WifiManager.connectToProtectedSSID(ssid, password, false, false)
-          // Report acquisition first; the caller records it before its own
-          // identity check and normal teardown of a replaced OTA attempt.
-          return undefined
-        } catch (error) {
-          assertCurrent()
-          const details = localNetworkErrorDetails(error)
-          console.warn("[LocalNetworkTransport] hotspot join rejected", {attempt, ...details})
-          if (
-            !options?.retryIosInternalError ||
-            Platform.OS !== "ios" ||
-            attempt >= 3 ||
-            details.native?.domain !== "NEHotspotConfigurationErrorDomain" ||
-            details.native.code !== 8 ||
-            Date.now() + 3_000 > retryDeadline
-          )
-            throw error
-          await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, 3_000))
-          assertCurrent()
-          if (Date.now() > retryDeadline) throw error
-        }
-      }
-    }
-    const result = await otaLocalNetwork.connect(ssid, password)
+    if (!supportsScopedConnection()) throw new Error("The glasses hotspot cannot be joined on this platform")
+    const result = await otaLocalNetwork.connect(ssid, password, options?.purpose === "incoming-server")
     scopedConnectionActive = true
     return result.localAddress
   },
 
   async disconnect(caller: symbol, waitForInternet = false): Promise<void> {
-    if (macHotspotOwner && macHotspotOwner.caller !== caller) return
+    if (iosHotspotOwner && iosHotspotOwner.caller !== caller) return
     connectionGeneration += 1
-    if (macHotspotOwner) {
-      const owner = macHotspotOwner.nativeId
+    if (iosHotspotOwner) {
+      const owner = iosHotspotOwner.nativeId
       await glassesHotspot.leave(owner, waitForInternet)
-      if (macHotspotOwner?.nativeId === owner) macHotspotOwner = null
+      if (iosHotspotOwner?.nativeId === owner) iosHotspotOwner = null
     }
     if (supportsScopedConnection()) {
       await otaLocalNetwork.disconnect()

@@ -54,7 +54,11 @@ type LocalNetworkEvents = {
 
 declare class MentraLocalNetworkNativeModule extends NativeModule<LocalNetworkEvents> {
   getNetworkDiagnostics(): NetworkDiagnostics
-  connect(ssid: string, password: string): Promise<{connected: boolean; ssid: string; localAddress?: string}>
+  connect(
+    ssid: string,
+    password: string,
+    incoming: boolean,
+  ): Promise<{connected: boolean; ssid: string; localAddress?: string}>
   request(
     requestId: string,
     url: string,

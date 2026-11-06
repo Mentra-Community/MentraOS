@@ -9,7 +9,11 @@ public final class GlassesMediaRelayModule: Module {
 
     public func definition() -> ModuleDefinition {
         Name("MentraGlassesMediaRelay")
-        Events("onRelayState")
+        Events("onRelayState", "onLocalHotspotPermissionRequired", "onNativeLog")
+
+        OnCreate {
+            MediaLog.sink = { [weak self] message in self?.sendEvent("onNativeLog", ["message": message]) }
+        }
 
         AsyncFunction("joinLocalHotspot") { (id: String, ssid: String, password: String, gateway: String?, purpose: String, promise: Promise) in
             self.queue.async {
@@ -20,6 +24,10 @@ public final class GlassesMediaRelayModule: Module {
                     promise.reject(LocalMediaError("Invalid hotspot access purpose")); return
                 }
                 self.localHotspotOwner = id
+                // The join waits while Local Network access is pending or denied; the caller explains it.
+                self.localHotspot.onPermissionRequired = { [weak self] in
+                    self?.sendEvent("onLocalHotspotPermissionRequired", ["id": id])
+                }
                 self.localHotspot.join(ssid: ssid, passphrase: password, gateway: gateway, purpose: accessPurpose) { result in
                     switch result {
                     case let .success(address): promise.resolve(address)
@@ -88,6 +96,7 @@ public final class GlassesMediaRelayModule: Module {
         }
 
         OnDestroy {
+            MediaLog.sink = nil
             self.queue.async {
                 self.session?.stop { result in
                     if case .success = result { self.session = nil }

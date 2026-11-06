@@ -1,4 +1,4 @@
-package com.mentra.glassesmedia.network
+package com.mentra.bluetoothsdk.hotspot
 
 import android.net.NetworkCapabilities
 import org.assertj.core.api.Assertions.assertThat

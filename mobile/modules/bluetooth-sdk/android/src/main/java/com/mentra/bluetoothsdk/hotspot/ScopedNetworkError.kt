@@ -1,4 +1,4 @@
-package com.mentra.glassesmedia.network
+package com.mentra.bluetoothsdk.hotspot
 
 /**
  * Typed failures for a scoped SoftAP join.

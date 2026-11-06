@@ -275,6 +275,7 @@
       "version": "3.4.0",
       "dependencies": {
         "@expo/config-plugins": "~55.0.10",
+        "@mentra/bluetooth-sdk": "3.4.0",
         "@mentra/glasses-media": "3.4.0",
       },
       "devDependencies": {
@@ -394,6 +395,9 @@
     "../mobile/modules/glasses-media": {
       "name": "@mentra/glasses-media",
       "version": "3.4.0",
+      "dependencies": {
+        "@mentra/bluetooth-sdk": "3.4.0",
+      },
       "peerDependencies": {
         "expo-modules-core": "~55.0.25",
       },

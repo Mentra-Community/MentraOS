@@ -1,4 +1,4 @@
-package com.mentra.glassesmedia.network
+package com.mentra.bluetoothsdk.hotspot
 
 /**
  * Decides when a joined scoped network is actually ready for ICE to gather on.

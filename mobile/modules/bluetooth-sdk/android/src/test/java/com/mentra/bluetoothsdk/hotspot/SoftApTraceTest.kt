@@ -1,4 +1,4 @@
-package com.mentra.glassesmedia.trace
+package com.mentra.bluetoothsdk.hotspot
 
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test

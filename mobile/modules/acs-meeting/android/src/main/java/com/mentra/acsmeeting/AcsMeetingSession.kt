@@ -3,7 +3,7 @@ package com.mentra.acsmeeting
 import android.content.Context
 import android.os.SystemClock
 import android.util.Base64
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.azure.android.communication.calling.AudioStreamBufferDuration
 import com.azure.android.communication.calling.AudioStreamChannelMode
 import com.azure.android.communication.calling.AudioStreamFormat
@@ -73,7 +73,7 @@ import com.mentra.glassesmedia.source.DecoderMode
 import com.mentra.glassesmedia.source.OutgoingRateArm
 import com.mentra.glassesmedia.source.PixelFormatArm
 import com.mentra.glassesmedia.source.GlassesMediaController
-import com.mentra.glassesmedia.network.ScopedSoftApNetwork
+import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
 import com.mentra.glassesmedia.source.DecodedFrameTap
 import com.mentra.glassesmedia.source.GlassesMediaSourceFactory
 import com.mentra.glassesmedia.source.LocalWhipIngestSource
@@ -89,7 +89,7 @@ import com.mentra.glassesmedia.source.VideoSourceArm
 import com.mentra.glassesmedia.telemetry.AvSyncProbe
 import com.mentra.glassesmedia.telemetry.PipelineStats
 import com.mentra.glassesmedia.telemetry.PipelineTicker
-import com.mentra.glassesmedia.trace.SoftApTrace
+import com.mentra.bluetoothsdk.hotspot.SoftApTrace
 import com.mentra.acsmeeting.video.AcsFrameSender
 import com.mentra.acsmeeting.video.OutgoingVideoHold
 import com.mentra.glassesmedia.source.I420Planes

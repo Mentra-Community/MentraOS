@@ -24,6 +24,12 @@ final class HotspotJoinFailureTests: XCTestCase {
             "Hotspot join failed (unavailable, 2)")
     }
 
+    func testDeclinedJoinPromptHasItsOwnCode() {
+        let denied = HotspotJoinFailure(NSError(domain: "NEHotspotConfigurationErrorDomain", code: 7))
+        XCTAssertEqual(denied.code, "ERR_HOTSPOT_USER_DENIED")
+        XCTAssertEqual(HotspotJoinFailure(NSError(domain: "NEHotspotConfigurationErrorDomain", code: 8)).code, "ERR_HOTSPOT_NATIVE")
+    }
+
     func testOwnedMessagesAreBoundedAndSingleLine() {
         let failure = HotspotJoinFailure(LocalMediaError("\n\t" + String(repeating: "a", count: 600)))
         XCTAssertEqual(failure.message, String(repeating: "a", count: 512))

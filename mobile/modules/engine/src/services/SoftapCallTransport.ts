@@ -1351,7 +1351,7 @@ export function createSoftapCallDeps(args: {
         if (!isScopedJoinUnavailable(error)) throw error
         // First specifier left the phone's previous Wi-Fi and assoc-rejected the glasses AP.
         // Cycle the AP and join again from an idle STA — the radio is free now.
-        softapTraceFailure("scoped_join_unavailable_retry", {ssid})
+        softapTraceFailure("scoped_join_unavailable_cycle_hotspot", {ssid})
         report?.("Phone couldn't join; cycling the glasses hotspot and trying again")
         await subsystems.setHotspotState(false)
         const status = await subsystems.setHotspotState(true)

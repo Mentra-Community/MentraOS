@@ -1,4 +1,4 @@
-package com.mentra.glassesmedia.network
+package com.mentra.bluetoothsdk.hotspot
 
 import java.net.Inet4Address
 import java.net.NetworkInterface

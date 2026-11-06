@@ -1,8 +1,10 @@
 package com.mentra.glassesmedia.network
 
+import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
+import com.mentra.bluetoothsdk.hotspot.NetworkFacts
 import android.content.Context
 import android.net.ConnectivityManager
-import com.mentra.glassesmedia.trace.SoftApTrace
+import com.mentra.bluetoothsdk.hotspot.SoftApTrace
 import java.net.Inet4Address
 import org.webrtc.NetworkChangeDetector
 import org.webrtc.NetworkMonitor
