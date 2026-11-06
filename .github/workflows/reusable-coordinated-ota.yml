@@ -340,20 +340,6 @@ jobs:
           asg-key-password: ${{ secrets.ASG_KEY_PASSWORD }}
           asg-key-alias: ${{ secrets.ASG_KEY_ALIAS }}
 
-      - name: Write the ASG backend configuration
-        if: steps.existing-asg.outputs.exists != 'true'
-        working-directory: asg_client
-        # app/build.gradle bakes MENTRAOS_HOST/PORT/SECURE into BuildConfig from
-        # asg_client/.env, which is gitignored, and falls back to "" per field
-        # when the file is missing. ServerConfigUtil only rejects null, so an
-        # absent .env silently yields a "http://:" upload URL instead of failing
-        # the build. Write it explicitly so the released APK never depends on
-        # leftover state in a runner's workspace.
-        run: |
-          set -euo pipefail
-          cp .env.example .env
-          grep -q '^MENTRAOS_HOST=..*' .env
-
       - name: Build signed ASG APK once
         if: steps.existing-asg.outputs.exists != 'true'
         run: >-

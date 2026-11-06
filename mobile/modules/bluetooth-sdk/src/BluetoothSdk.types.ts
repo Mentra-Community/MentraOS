@@ -862,11 +862,10 @@ export type StreamIceConfig = {
   /**
    * STUN server the glasses should use while gathering candidates.
    *
-   * Omit to keep the default Cloudflare STUN server. Pass an empty string to force host-only
+   * Omit to send the default Cloudflare STUN server. Pass an empty string to force host-only
    * gathering, which is what SoftAP calling needs: the WHIP server runs on the phone across the
    * glasses' own hotspot, so a server-reflexive candidate is meaningless and there is no route to
-   * a STUN server anyway. A value that is not a `stun:`/`stuns:` URI is ignored and the default is
-   * kept, so a malformed override cannot silently disable ICE.
+   * a STUN server anyway. The glasses treat a value that is not a `stun:`/`stuns:` URI as host-only.
    */
   stun?: string
 }
