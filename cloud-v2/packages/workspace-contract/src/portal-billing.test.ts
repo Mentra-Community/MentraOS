@@ -725,6 +725,13 @@ describe("requests", () => {
     expect(PurchaseRequestSchema.safeParse({...body, locale: undefined}).success).toBe(false)
   })
 
+  test("a purchase request may name the billing period it buys", () => {
+    const body = {product: "mentra.call.unlimited", seats: 5, locale: "en-US", recurrence: {interval: "month" as const, count: 3}}
+    expect(PurchaseRequestSchema.parse(body)).toEqual(body)
+    expect(PurchaseRequestSchema.safeParse({...body, recurrence: {interval: "fortnight", count: 1}}).success).toBe(false)
+    expect(PurchaseRequestSchema.safeParse({...body, recurrence: {interval: "month", count: 0}}).success).toBe(false)
+  })
+
   test("a session request names an action and a locale, and may name a license and seats", () => {
     expect(SessionRequestSchema.parse({action: "billing_and_invoices", locale: "en"})).toEqual({
       action: "billing_and_invoices",
@@ -890,6 +897,23 @@ describe("the parts of the contract are exported by name", () => {
     expect(PurchaseStatusSchema.safeParse({...statusDocument.purchase, paid: "yes"}).success).toBe(false)
     expect(TestModeSchema.safeParse({cardNumber: "4242424242424242"}).success).toBe(false)
     expect(OfferSchema.safeParse({...callUnlimited.offer, price: {scheme: "per_seat"}}).success).toBe(false)
+  })
+
+  test("an offer may list its billing periods, each a per-user price with its saving", () => {
+    const plan = (interval: "month" | "year", count: number, amountMinor: number, savingPercent?: number) => ({
+      price: {scheme: "per_seat" as const, unit: {amountMinor, currency: "USD"}, recurrence: {interval, count}},
+      tax: "excluded",
+      ...(savingPercent !== undefined ? {savingPercent} : {}),
+    })
+    const plans = [plan("month", 1, 2900), plan("month", 3, 7800, 10), plan("year", 1, 29000, 17)]
+    const offer = {...callUnlimited.offer, plans}
+    expect(OfferSchema.parse(offer).plans).toEqual(plans)
+    // An older Store sends none: the default is the one period.
+    expect(OfferSchema.parse(callUnlimited.offer).plans).toBeUndefined()
+    // A plan is a per-user price, never a fallback scheme, and a saving is a whole percentage.
+    expect(OfferSchema.safeParse({...offer, plans: [{price: {scheme: "tiered", fallbackLabel: "x"}, tax: "none"}]}).success).toBe(false)
+    expect(OfferSchema.safeParse({...offer, plans: [plan("month", 3, 7800, 10.5)]}).success).toBe(false)
+    expect(OfferSchema.safeParse({...offer, plans: [plan("month", 3, 7800, 0)]}).success).toBe(false)
     expect(CatalogFeatureSchema.safeParse({key: "call.unlimited"}).success).toBe(false)
   })
 })

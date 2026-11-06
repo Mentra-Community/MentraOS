@@ -1,11 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, useState, type ReactElement } from "react";
-import type { CatalogEntry, LicenseBilling, Offer, Price } from "@mentra/workspace-contract/portal-billing";
+import type { CatalogEntry, LicenseBilling, Offer, OfferPlan, Price } from "@mentra/workspace-contract/portal-billing";
 import { createBillingApi, type BillingApi } from "./billing-api";
 import { workspaceScope, type BillingScope } from "./billing-scope";
 import { BillingRefusedError } from "./billing-errors";
-import { BuyDialog, canBuy, CatalogCard, CatalogDialog, CatalogGrid, termsNow, type CatalogProps } from "./components/licenses/catalog";
+import { BuyDialog, canBuy, CatalogCard, CatalogDialog, CatalogGrid, choosesPeriod, plansOf, termsNow, type CatalogProps } from "./components/licenses/catalog";
 import { billingKeys } from "./queries";
 import { licenseStrings as t } from "./strings/licenses";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor, perSeat } from "./test-billing-fixtures";
@@ -83,7 +83,7 @@ const payingAt = (url: string) => realBilling(() => ({ body: { url } }));
 
 /** A client of billing whose calls are `mock`s, for what a test only needs to see called. */
 function stubBilling(answers: { purchase?: () => Promise<{ url: string }>; session?: () => Promise<{ url: string }> } = {}) {
-  const purchase = mock(async (_scope: BillingScope, _request: { product: string; seats: number }) => (answers.purchase ?? (async () => ({ url: PAY })))());
+  const purchase = mock(async (_scope: BillingScope, _request: { product: string; seats: number; recurrence?: { interval: string; count: number } }) => (answers.purchase ?? (async () => ({ url: PAY })))());
   const session = mock(
     async (_scope: BillingScope, _request: { action: string; licenseId?: string; seats?: number; forMe?: true }) => (answers.session ?? (async () => ({ url: PAY })))(),
   );
@@ -163,6 +163,7 @@ function grid(options: GridOptions = {}) {
       scope={options.scope ?? WS}
       billing={options.billing ?? stub.billing}
       navigateOut={out.navigateOut}
+      memberCount={options.memberCount}
     />
   );
   return { ui, ...out, ...stub };
@@ -863,6 +864,92 @@ describe("the grid's Buy", () => {
     await settle();
     expect(find('[role="alert"]').textContent).toContain("A purchase of Fleet is already under way.");
     expect(setup.leave).not.toHaveBeenCalled();
+  });
+});
+
+describe("billing periods", () => {
+  const plan = (interval: "month" | "year", count: number, amountMinor: number, savingPercent?: number): OfferPlan => ({
+    price: { scheme: "per_seat", unit: { amountMinor, currency: "USD" }, recurrence: { interval, count } },
+    tax: "excluded",
+    ...(savingPercent !== undefined ? { savingPercent } : {}),
+  });
+  const PLANS = [plan("month", 1, 2900), plan("month", 3, 7800, 10), plan("year", 1, 29000, 17)];
+  const periodic = (overrides: Partial<Offer> = {}) => callFor({ offer: workspaceOffer(2900, { plans: PLANS, ...overrides }) });
+  const radios = () => findAll<HTMLInputElement>('input[type="radio"]', topDialog());
+  const option = (recurrence: string) => find<HTMLInputElement>(`[data-recurrence="${recurrence}"] input`, topDialog());
+
+  test("an offer's periods are its plans, or its one per-user price", () => {
+    expect(plansOf(periodic().offer!)).toEqual(PLANS);
+    expect(plansOf(workspaceOffer(2900))).toEqual([{ price: PLANS[0]!.price, tax: "excluded" }]);
+    expect(plansOf(workspaceOffer(1500, { price: tiered }))).toEqual([]);
+    expect(choosesPeriod(periodic())).toBe(true);
+    expect(choosesPeriod(callFor())).toBe(false);
+    expect(choosesPeriod(periodic({ buy: null }))).toBe(false);
+    expect(choosesPeriod(callFor({ offer: workspaceOffer(2900, { plans: [PLANS[0]!] }) }))).toBe(false);
+  });
+
+  test("the grid's Buy opens the Buy dialog, where Monthly is chosen, each period with its price and saving", async () => {
+    const setup = grid({ products: [periodic(), fleet()], memberCount: 4 });
+    await mount(setup.ui);
+    await click(buttonNamed("Buy", card("mentra.call.unlimited")));
+    await settle();
+    expect(setup.purchase).not.toHaveBeenCalled();
+    expect(openDialogs()).toHaveLength(1);
+    expect(topDialog().textContent).toContain("Billing period");
+    expect(findAll("[data-recurrence]", topDialog()).map((element) => element.textContent)).toEqual([
+      "Monthly$29 per user per month",
+      "Quarterly$78 per user every 3 monthsSave 10%",
+      "Yearly$290 per user per yearSave 17%",
+    ]);
+    expect(radios().map((radio) => radio.checked)).toEqual([true, false, false]);
+    expect(stepper(topDialog()).value).toBe("4");
+    expect(topDialog().textContent).toContain("4 subscriptions × $29 · $116 a month · before tax");
+    // A product with one period still goes straight to checkout.
+    await escape();
+    await click(buttonNamed("Buy", card("mentra.fleet")));
+    await settle();
+    expect(setup.purchase.mock.calls.map((call) => call[1])).toEqual([{ product: "mentra.fleet", seats: 1 }]);
+  });
+
+  test("choosing Yearly changes the terms and the sum, and checkout buys it by its recurrence", async () => {
+    const setup = grid({ products: [periodic()], memberCount: 4 });
+    await mount(setup.ui);
+    await click(buttonNamed("Buy", card("mentra.call.unlimited")));
+    await click(option("1/year"));
+    expect(radios().map((radio) => radio.checked)).toEqual([false, false, true]);
+    expect(topDialog().textContent).toContain("$290 per user per year · Renews every year.");
+    expect(topDialog().textContent).toContain("4 subscriptions × $290 · $1,160 a year · before tax");
+    await click(buttonNamed("Continue to payment", topDialog()));
+    await settle();
+    expect(setup.purchase.mock.calls.map((call) => call[1])).toEqual([
+      { product: "mentra.call.unlimited", seats: 4, recurrence: { interval: "year", count: 1 } },
+    ]);
+    expect(setup.leave).toHaveBeenCalledWith(PAY);
+  });
+
+  test("the request reaches billing with the recurrence, and Quarterly for a workspace of one", async () => {
+    const wire = payingAt(PAY);
+    const setup = chooser({ products: [periodic()], billing: wire.billing, memberCount: 1 });
+    await mount(setup.ui);
+    await click(buttonNamed("Buy", card("mentra.call.unlimited")));
+    await click(option("3/month"));
+    expect(topDialog().textContent).toContain("1 subscription · $78 every 3 months · before tax");
+    await click(buttonNamed("Continue to payment", topDialog()));
+    await settle();
+    expect(wire.requests.map((request) => request.body)).toEqual([
+      { product: "mentra.call.unlimited", seats: 1, locale: "en-US", recurrence: { interval: "month", count: 3 } },
+    ]);
+  });
+
+  test("a product with one period sends no recurrence", async () => {
+    const wire = payingAt(PAY);
+    const setup = chooser({ products: [callFor()], billing: wire.billing, memberCount: 3 });
+    await mount(setup.ui);
+    await click(buttonNamed("Buy", card("mentra.call.unlimited")));
+    expect(radios()).toHaveLength(0);
+    await click(buttonNamed("Continue to payment", topDialog()));
+    await settle();
+    expect(wire.requests.map((request) => request.body)).toEqual([{ product: "mentra.call.unlimited", seats: 3, locale: "en-US" }]);
   });
 });
 

@@ -561,6 +561,7 @@ function LicensesBody({ api, billing, scope, navigateOut, data, manage, flow, ad
       {showCatalog ? (
         <CatalogGrid
           products={products}
+          memberCount={memberCount}
           licenses={status?.licenses}
           scope={scope}
           billing={billing}

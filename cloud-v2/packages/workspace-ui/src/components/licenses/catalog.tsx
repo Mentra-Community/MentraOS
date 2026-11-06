@@ -12,8 +12,13 @@
  * seats step's seats × unit. Any other price shows its `fallbackLabel` exactly, with no arithmetic, no renewal
  * claim and no tax note. "before tax" appears only where billing says tax is `excluded`.
  *
+ * Billing periods: a product billing sells at more than one (its offer's `plans`, such as monthly, quarterly and yearly)
+ * is bought in the Buy dialog, where the buyer picks one. The price, the terms, the sum and the stepper's bounds follow the
+ * choice, and the purchase names its `recurrence`. A saving ("Save 17%") is billing's number, never worked out here.
+ *
  * Every button that leaves the portal for a hosted page is a `HostedPageButton`: Buy, which goes straight to checkout
- * for billing's smallest purchase (more seats are bought from the product's card afterwards), Buy more seats (or, on a
+ * for billing's smallest purchase (more seats are bought from the product's card afterwards) where the product has one
+ * billing period, and otherwise opens the Buy dialog to choose one, Buy more seats (or, on a
  * product whose first payment isn't finished, Complete payment) and Continue to payment. They all leave the way every
  * other billing button does, through `useHostedAction` and the host's `NavigateOut`: the client has already refused
  * any address the contract doesn't accept, and an Buy subscriptions billing lists with `returns: false` opens its tab in the
@@ -22,7 +27,17 @@
  * Words are in `strings/licenses.ts`. This file imports the client's type only, never its schemas.
  */
 
-import { isPerSeat, type Buy, type BillingAction, type CatalogEntry, type LicenseBilling, type Offer, type Price } from "@mentra/workspace-contract/portal-billing";
+import {
+  isPerSeat,
+  type Buy,
+  type BillingAction,
+  type CatalogEntry,
+  type LicenseBilling,
+  type Offer,
+  type OfferPlan,
+  type Price,
+  type Recurrence,
+} from "@mentra/workspace-contract/portal-billing";
 import { CircleCheckIcon } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
 
@@ -58,6 +73,8 @@ export interface BuyingHost {
 export interface CatalogProps extends BuyingHost {
   /** `catalog.products`. */
   products: readonly CatalogEntry[];
+  /** How many members the workspace has: where Buy opens the Buy dialog (to choose a billing period), the count it starts at. */
+  memberCount?: number;
   /** `status.licenses`: which products the owner holds, with their seats and the actions billing lists. */
   licenses?: readonly LicenseBilling[];
 }
@@ -69,6 +86,19 @@ export type BuyableEntry = CatalogEntry & { offer: Offer & { buy: Buy } };
 export function canBuy(entry: CatalogEntry): entry is BuyableEntry {
   return entry.offer !== undefined && entry.offer.buy !== null;
 }
+
+/** The billing periods `offer` is sold at, shortest first: its `plans`, or its one per-user price (none for another scheme). */
+export function plansOf(offer: Offer): OfferPlan[] {
+  if (offer.plans !== undefined && offer.plans.length > 0) return offer.plans;
+  return isPerSeat(offer.price) ? [{ price: offer.price, tax: offer.tax }] : [];
+}
+
+/** Whether buying `entry` starts with choosing a billing period: billing offers it for sale at more than one. */
+export function choosesPeriod(entry: CatalogEntry): entry is BuyableEntry {
+  return canBuy(entry) && plansOf(entry.offer).length > 1;
+}
+
+const sameRecurrence = (a: Recurrence, b: Recurrence) => a.interval === b.interval && a.count === b.count;
 
 /**
  * The product being bought, with the terms billing offers it now. The seats step stays open while the catalog is
@@ -113,10 +143,12 @@ function seatBounds(buy: Buy, price: Price, memberCount: number | undefined): Se
 
 /**
  * What pressing Buy on `entry` does: asks billing for the checkout of its smallest purchase (`minSeats`, one) and goes
- * there, with no step between. Only an entry billing offers for sale.
+ * there, with no step between. A product sold at more than one billing period opens the Buy dialog instead (`choose`),
+ * where the period is picked. Only an entry billing offers for sale.
  */
-const buyNow = (hosted: HostedAction) => (entry: CatalogEntry) => {
-  if (canBuy(entry)) hosted.run({ product: entry.product, seats: entry.offer.buy.minSeats, name: entry.name });
+const buyNow = (hosted: HostedAction, choose: (entry: BuyableEntry) => void) => (entry: CatalogEntry) => {
+  if (choosesPeriod(entry)) choose(entry);
+  else if (canBuy(entry)) hosted.run({ product: entry.product, seats: entry.offer.buy.minSeats, name: entry.name });
 };
 
 /** Buy subscriptions on a held product's license, by the action billing listed for it: its page opens in a tab where billing says it doesn't return. */
@@ -337,13 +369,14 @@ export function CatalogCard({ entry, locale, held, busy, pending, onBuy, onAddSe
  * "You'll pay by card…" line are drawn only when at least one of those products has an `offer` for this viewer; without
  * one the cards are display content and the grid has no buying copy. Buy goes straight to checkout.
  */
-export function CatalogGrid({ products, licenses, ...host }: CatalogProps) {
+export function CatalogGrid({ products, licenses, memberCount, ...host }: CatalogProps) {
   const entries = products;
   const hosted = useHostedAction(host);
   const headingId = useId();
+  const [choosing, setChoosing] = useState<CatalogEntry | null>(null);
   if (entries.length === 0) return null;
   const copy = t.catalog;
-  const onBuy = buyNow(hosted);
+  const onBuy = buyNow(hosted, setChoosing);
   const onAddSeats = addSeatsOf(hosted);
   // The heading is buying copy: they belong to a viewer billing offers something to
   // (an entry with an `offer`). For anyone else the entries are display content, and say nothing about buying.
@@ -374,6 +407,7 @@ export function CatalogGrid({ products, licenses, ...host }: CatalogProps) {
           );
         })}
       </div>
+      <BuyDialog {...host} open={choosing !== null} product={termsNow(choosing, products)} memberCount={memberCount} onClose={() => setChoosing(null)} />
     </section>
   );
 }
@@ -415,10 +449,12 @@ function CatalogRow({
 function CatalogRows({
   products,
   licenses,
+  memberCount,
   host,
-}: Pick<CatalogProps, "products" | "licenses"> & { host: BuyingHost }) {
+}: Pick<CatalogProps, "products" | "licenses" | "memberCount"> & { host: BuyingHost }) {
   const hosted = useHostedAction(host);
-  const onBuy = buyNow(hosted);
+  const [choosing, setChoosing] = useState<CatalogEntry | null>(null);
+  const onBuy = buyNow(hosted, setChoosing);
   const onAddSeats = addSeatsOf(hosted);
   return (
     <div className="space-y-3">
@@ -440,6 +476,7 @@ function CatalogRows({
           );
         })}
       </ul>
+      <BuyDialog {...host} open={choosing !== null} product={termsNow(choosing, products)} memberCount={memberCount} onClose={() => setChoosing(null)} />
     </div>
   );
 }
@@ -448,10 +485,10 @@ function CatalogRows({
  * "Buy licenses": the same catalog as rows, for a workspace that already holds licenses. A product it holds offers
  * Buy more seats instead of Buy; any other shows its price and Buy, which goes straight to checkout.
  */
-export function CatalogDialog({ open, onClose, products, licenses, ...host }: CatalogProps & { open: boolean; onClose(): void }) {
+export function CatalogDialog({ open, onClose, products, licenses, memberCount, ...host }: CatalogProps & { open: boolean; onClose(): void }) {
   return (
     <Dialog open={open} onClose={onClose} title={t.catalog.dialog.title} description={t.catalog.dialog.description} className="max-w-[560px]">
-      <CatalogRows products={products} licenses={licenses} host={host} />
+      <CatalogRows products={products} licenses={licenses} memberCount={memberCount} host={host} />
     </Dialog>
   );
 }
@@ -483,8 +520,17 @@ function BuyForm({
   memberCount?: number;
   onClose(): void;
 }) {
-  const { price } = offer;
   const locale = host.billing.locale;
+  // The billing period: the one chosen while billing still sells it, else the default (the offer's price).
+  const plans = plansOf(offer);
+  const [period, setPeriod] = useState<Recurrence | null>(null);
+  const planOf = (recurrence: Recurrence | null) =>
+    recurrence === null ? undefined : plans.find((candidate) => sameRecurrence(candidate.price.recurrence, recurrence));
+  const plan = planOf(period) ?? planOf(isPerSeat(offer.price) ? offer.price.recurrence : null) ?? plans[0] ?? null;
+  const price = (plan?.price ?? offer.price) as Price;
+  const tax = plan?.tax ?? offer.tax;
+  const choosing = plans.length > 1 && plan !== null;
+  const periodName = useId();
   const bounds = seatBounds(buy, price, memberCount);
   // A workspace of one member buys its one license with no number to choose (when billing sells one).
   const solo = memberCount === 1 && bounds.initial === 1;
@@ -513,13 +559,13 @@ function BuyForm({
     );
     // The one sum Core shows: seats × the unit price, in billing's currency and recurrence.
     sum = solo
-      ? t.buy.solo({ total: formatMoney(price.unit, locale), rate: formatRecurrence(price.recurrence, locale), note: taxNote(offer.tax) })
+      ? t.buy.solo({ total: formatMoney(price.unit, locale), rate: formatRecurrence(price.recurrence, locale), note: taxNote(tax) })
       : t.buy.summary({
           seats,
           unit: formatMoney(price.unit, locale),
           total: formatMoney({ amountMinor: seats * price.unit.amountMinor, currency: price.unit.currency }, locale),
           rate: formatRecurrence(price.recurrence, locale),
-          note: taxNote(offer.tax),
+          note: taxNote(tax),
         });
   } else {
     // A scheme Core doesn't know: billing's words, and nothing computed from them.
@@ -533,6 +579,42 @@ function BuyForm({
           <ProductIcon product={product} size={40} />
           {terms}
         </div>
+        {choosing ? (
+          <fieldset>
+            <legend className="text-sm leading-none font-medium">{t.buy.period}</legend>
+            <div className="mt-2.5 grid gap-2 sm:grid-cols-3">
+              {plans.map((option) => {
+                const { interval, count } = option.price.recurrence;
+                const checked = option === plan;
+                return (
+                  <label
+                    key={`${count}/${interval}`}
+                    data-recurrence={`${count}/${interval}`}
+                    className={cn(
+                      "flex cursor-pointer flex-col gap-0.5 rounded-[12px] border p-3 text-sm",
+                      checked && "border-brand ring-brand ring-1",
+                      pending && "cursor-default opacity-60",
+                    )}
+                  >
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name={periodName}
+                        checked={checked}
+                        disabled={pending}
+                        onChange={() => setPeriod(option.price.recurrence)}
+                        className="accent-brand size-4"
+                      />
+                      <span className="font-semibold">{t.buy.periodName(interval, count)}</span>
+                    </span>
+                    <span className="text-muted-foreground">{priceLine(option.price, locale)}</span>
+                    {option.savingPercent !== undefined ? <span className="text-brand font-semibold">{t.buy.save(option.savingPercent)}</span> : null}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+        ) : null}
         {solo ? null : (
           <div>
             <Label htmlFor={stepperId}>{t.buy.seats}</Label>
@@ -560,7 +642,20 @@ function BuyForm({
           <Button type="button" variant="secondary" onClick={onClose}>
             {t.buy.cancel}
           </Button>
-          <HostedPageButton variant="default" size="default" pending={pending} disabled={held} onClick={() => hosted.run({ product: product.product, seats, name: product.name })}>
+          <HostedPageButton
+            variant="default"
+            size="default"
+            pending={pending}
+            disabled={held}
+            onClick={() =>
+              hosted.run({
+                product: product.product,
+                seats,
+                name: product.name,
+                ...(choosing && plan !== null ? { recurrence: plan.price.recurrence } : {}),
+              })
+            }
+          >
             {t.buy.continue}
           </HostedPageButton>
         </div>
@@ -570,7 +665,8 @@ function BuyForm({
 }
 
 /**
- * The seats step of a purchase: "Buy <product>" with its terms, a stepper bounded by
+ * The seats step of a purchase: "Buy <product>" with its terms, the billing period choice where billing sells it at more
+ * than one (Monthly, Quarterly, Yearly, each with its price and saving), a stepper bounded by
  * billing's limits, the sum, and "Continue to payment ↗", which asks billing for the checkout of `{product, seats}` and
  * goes to the page it answers. The stepper starts at the workspace's member count; a workspace of one has none.
  */

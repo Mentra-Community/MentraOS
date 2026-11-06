@@ -12,7 +12,8 @@
  *    `add_seats` and isn't over-assigned, else **full**;
  * 6. the workspace has a card and they have no membership (an Organization Admin visiting): **already has**;
  * 7. billing sells it now: **buy**, straight to billing's checkout for one license (Core assigns the buyer), or, where
- *    billing's smallest purchase is more than one, **choose**, the seats dialog;
+ *    billing's smallest purchase is more than one or it sells the product at more than one billing period (monthly,
+ *    quarterly, yearly), **choose**, the Buy dialog;
  * 8. anything else: **not for sale**.
  *
  * `decideLink` is the pure half. `LinkDialog` is the drawing half, and does what the outcome asks of it with no
@@ -37,7 +38,7 @@ import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { Dialog } from "../../ui/dialog";
 import { AlertText, Spinner } from "../common";
-import { canBuy } from "./catalog";
+import { canBuy, choosesPeriod } from "./catalog";
 import { HostedFeedback, useHostedAction, type NavigateOut } from "./hosted-action";
 import { OpenMiniappButton, SeatErrorNotice, type MiniappToOpen } from "./parts";
 import { ProductIcon } from "./product";
@@ -125,7 +126,7 @@ export function decideLink({
     return { ...base, kind: "full", count: live.reduce((sum, license) => sum + license.quantity, 0), people };
   }
 
-  if (entry !== null && canBuy(entry)) return { ...base, kind: entry.offer.buy.minSeats > 1 ? "choose" : "buy" };
+  if (entry !== null && canBuy(entry)) return { ...base, kind: entry.offer.buy.minSeats > 1 || choosesPeriod(entry) ? "choose" : "buy" };
   return { ...base, kind: "not_for_sale" };
 }
 

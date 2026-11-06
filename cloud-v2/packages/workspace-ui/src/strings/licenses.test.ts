@@ -114,6 +114,13 @@ describe("the catalog and buying", () => {
     // A workspace of one member buys one license with no number to choose.
     expect(t.buy.solo({ total: "$29", rate: "a month", note: "before tax" })).toBe("1 subscription · $29 a month · before tax");
     expect(t.buy.solo({ total: "$29", rate: "a month", note: null })).toBe("1 subscription · $29 a month");
+    expect([t.buy.periodName("month", 1), t.buy.periodName("month", 3), t.buy.periodName("year", 1), t.buy.periodName("month", 6)]).toEqual([
+      "Monthly",
+      "Quarterly",
+      "Yearly",
+      "Every 6 months",
+    ]);
+    expect(t.buy.save(17)).toBe("Save 17%");
     expect("yoursOnPayment" in t.buy).toBe(false);
     expect("payNote" in t.buy).toBe(false);
     expect([t.buy.cancel, t.buy.continue]).toEqual(["Cancel", "Continue to payment"]);
@@ -567,6 +574,8 @@ const SAMPLES: Record<string, unknown[][]> = {
   "buy.title": [["Fleet"]],
   "buy.terms": [["$15 per user per month", "month"]],
   "buy.members": [[1], [14]],
+  "buy.periodName": [["month", 1], ["month", 3], ["year", 1], ["month", 6, "6"], ["week", 1], ["day", 2]],
+  "buy.save": [[17]],
   "buy.solo": [[{ total: "$29", rate: "a month", note: "before tax" }], [{ total: "$29", rate: "a month", note: null }]],
   "buy.summary": [
     [{ seats: 10, unit: "$15", total: "$150", rate: "a month", note: "before tax" }],

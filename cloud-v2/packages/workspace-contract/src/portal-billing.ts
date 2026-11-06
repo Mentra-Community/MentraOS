@@ -177,14 +177,31 @@ export const BuySchema = z.object({
 export type Buy = z.infer<typeof BuySchema>
 
 /**
+ * One billing period a product is sold at: its `per_seat` price, which says how often it renews, and its tax treatment.
+ * `savingPercent` is how much less it costs over the same time than the offer's shortest period (10 for "Save 10%"),
+ * from billing: Core does no price math beyond licenses × unit. It is absent where there is no saving to show.
+ */
+export const OfferPlanSchema = z.object({
+  price: PerSeatPriceSchema,
+  tax: TaxSchema,
+  savingPercent: z.number().int().min(1).max(99).optional(),
+})
+export type OfferPlan = z.infer<typeof OfferPlanSchema>
+
+/**
  * What a viewer who may manage the owner's billing sees beside a product: its price and tax treatment, and
  * what buying allows. `buy` is null where billing won't sell the product to this owner now (they hold it, or
  * a purchase of it is in progress).
+ *
+ * `price` and `tax` are the default: what a purchase that names no `recurrence` buys. `plans` are the billing periods
+ * the product is sold at, one per recurrence, shortest first, and include the default; absent (an older Store), or with
+ * one, the default is the only one. A purchase picks one by its `recurrence` ({@link PurchaseRequestSchema}).
  */
 export const OfferSchema = z.object({
   price: PriceSchema,
   tax: TaxSchema,
   buy: BuySchema.nullable(),
+  plans: z.array(OfferPlanSchema).optional(),
 })
 export type Offer = z.infer<typeof OfferSchema>
 
@@ -293,11 +310,16 @@ export const BillingStatusSchema = z.object({
 })
 export type BillingStatus = z.infer<typeof BillingStatusSchema>
 
-/** `POST purchase`: one checkout for one product. Billing refuses seats outside `buy`'s limits (`invalid_seats`). */
+/**
+ * `POST purchase`: one checkout for one product. Billing refuses seats outside `buy`'s limits (`invalid_seats`).
+ * `recurrence` picks the billing period, one of the offer's `plans`; without it billing sells the default (the offer's
+ * `price`). A recurrence billing doesn't sell the product at is `not_for_sale`.
+ */
 export const PurchaseRequestSchema = z.object({
   product: z.string(),
   seats: z.number().int().safe(),
   locale: z.string().min(1),
+  recurrence: RecurrenceSchema.optional(),
 })
 export type PurchaseRequest = z.infer<typeof PurchaseRequestSchema>
 

@@ -1563,6 +1563,10 @@ describe("decideLink", () => {
   test("rows 7 and 8: billing sells it (buy, or choose where the smallest purchase is more than one), or the product isn't for sale", () => {
     expect(kind({ product: "mentra.example" })).toBe("buy");
     expect(kind({ product: "mentra.example", products: [callEntry(), exampleEntry({ offer: workspaceOffer({ buy: { minSeats: 5 } }) })] })).toBe("choose");
+    // Sold at more than one billing period: the Buy dialog, to pick one.
+    const yearly = { price: { scheme: "per_seat" as const, unit: { amountMinor: 29000, currency: "USD" }, recurrence: { interval: "year" as const, count: 1 } }, tax: "excluded" };
+    const monthly = { price: { scheme: "per_seat" as const, unit: { amountMinor: 2900, currency: "USD" }, recurrence: { interval: "month" as const, count: 1 } }, tax: "excluded" };
+    expect(kind({ product: "mentra.example", products: [callEntry(), exampleEntry({ offer: workspaceOffer({ plans: [monthly, yearly] }) })] })).toBe("choose");
     expect(kind({ product: "mentra.example", products: [callEntry(), exampleEntry({ offer: undefined })] })).toBe("not_for_sale");
     expect(kind({ product: "mentra.example", products: [callEntry(), exampleEntry({ offer: workspaceOffer({ buy: null }) })] })).toBe("not_for_sale");
     expect(kind({ product: "mentra.nope" })).toBe("not_for_sale");

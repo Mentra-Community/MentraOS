@@ -23,7 +23,7 @@
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { ArrowUpRightIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import type { BillingAction } from "@mentra/workspace-contract/portal-billing";
+import type { BillingAction, Recurrence } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../../api";
 import type { BillingApi } from "../../billing-api";
 import { BillingRefusedError, billingErrorMessage } from "../../billing-errors";
@@ -73,6 +73,8 @@ export interface ActionRequest {
 export interface HostedPurchase {
   product: string;
   seats: number;
+  /** The billing period to buy, one of the offer's `plans`; billing's default without it. */
+  recurrence?: Recurrence;
   /** The product, as a refusal names it, where it isn't the hook's own `product`. */
   name?: string;
 }
@@ -209,7 +211,11 @@ export function useHostedAction({
       void (async () => {
         try {
           const { url } = await (purchasing
-            ? billingApi.purchase(owner, { product: request.product, seats: request.seats })
+            ? billingApi.purchase(owner, {
+                product: request.product,
+                seats: request.seats,
+                ...(request.recurrence ? { recurrence: request.recurrence } : {}),
+              })
             : billingApi.session(owner, {
                 action: request.action.kind,
                 ...(request.licenseId !== undefined ? { licenseId: request.licenseId } : {}),

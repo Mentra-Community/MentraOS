@@ -19,6 +19,7 @@ import {
   type BillingCatalog,
   type BillingStatus,
   type PurchaseAnswer,
+  type Recurrence,
   type SessionAnswer,
 } from "@mentra/workspace-contract/portal-billing";
 import type { FetchLike } from "./api";
@@ -40,8 +41,8 @@ export interface BillingApi {
   catalog(scope: BillingScope): Promise<BillingCatalog>;
   /** The owner's licenses as billing reads them, with the owner's total and actions. `purchase` is the `?purchase=` a checkout returned with. */
   status(scope: BillingScope, options?: { purchase?: string | null }): Promise<BillingStatus>;
-  /** Starts one checkout of `product` for `seats`: the hosted page to send the browser to. */
-  purchase(scope: BillingScope, request: { product: string; seats: number }): Promise<PurchaseAnswer>;
+  /** Starts one checkout of `product` for `seats`, at the billing period `recurrence` names (the default without it): the hosted page to send the browser to. */
+  purchase(scope: BillingScope, request: { product: string; seats: number; recurrence?: Recurrence }): Promise<PurchaseAnswer>;
   /**
    * The hosted page for a billing action (`licenseId` names its license; `seats` is how many `add_seats` adds).
    * `forMe: true` is only for `add_seats` of one license: the person adding it asks for it to be assigned to them.
@@ -110,7 +111,12 @@ export function createBillingApi(opts: {
     purchase: async (scope, request) =>
       parse(
         PurchaseAnswerSchema,
-        await send("POST", `${owner(scope)}/purchase`, { product: request.product, seats: request.seats, locale }),
+        await send("POST", `${owner(scope)}/purchase`, {
+          product: request.product,
+          seats: request.seats,
+          locale,
+          ...(request.recurrence ? { recurrence: request.recurrence } : {}),
+        }),
         "purchase answer",
       ),
 

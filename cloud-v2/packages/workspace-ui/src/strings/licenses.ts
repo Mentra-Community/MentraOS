@@ -268,6 +268,16 @@ export const licenseStrings = {
       `${plural(parts.seats, "subscription")} × ${parts.unit} · ${parts.total} ${parts.rate}${parts.note ? ` · ${parts.note}` : ""}`,
     cancel: "Cancel",
     continue: "Continue to payment",
+    /** The billing period choice, where billing sells the product at more than one. */
+    period: "Billing period",
+    /** A billing period's name: "Monthly", "Quarterly", "Yearly", or "Every 6 months". */
+    periodName: (interval: string, count: number, countText = String(count)) => {
+      if (count === 1) return { day: "Daily", week: "Weekly", month: "Monthly", year: "Yearly" }[interval] ?? `Every ${interval}`;
+      if (interval === "month" && count === 3) return "Quarterly";
+      return `Every ${countText} ${interval}s`;
+    },
+    /** A longer period's saving against the shortest, as billing worked it out: "Save 17%". */
+    save: (percent: number) => `Save ${percent}%`,
   },
 
   card: {
