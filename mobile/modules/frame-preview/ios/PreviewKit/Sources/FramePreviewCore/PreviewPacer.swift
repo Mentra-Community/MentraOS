@@ -29,7 +29,7 @@ public enum PreviewAckResult: Equatable, Sendable {
 public final class PreviewPacer {
   private enum State: Equatable {
     case idle
-    case packing(sequence: UInt32)
+    case packing(sequence: UInt32, admittedAtNs: Int64)
     case awaitingAck(sequence: UInt32, sentAtNs: Int64)
   }
 
@@ -99,22 +99,28 @@ public final class PreviewPacer {
     if nowNs < nextDueNs { return .skipPacing }
     advanceSchedule(nowNs: nowNs)
     sequence &+= 1
-    state = .packing(sequence: sequence)
+    state = .packing(sequence: sequence, admittedAtNs: nowNs)
     return .admit(sequence: sequence)
   }
 
   /// The worker finished with an admitted frame. `sent == false` covers the diagnostic modes that
   /// never reach the transport, which return their own credit immediately.
   public func onPacked(sequence: UInt32, sent: Bool, nowNs: Int64) {
-    guard case let .packing(pending) = state, pending == sequence else { return }
+    guard case let .packing(pending, _) = state, pending == sequence else { return }
     state = sent ? .awaitingAck(sequence: sequence, sentAtNs: nowNs) : .idle
   }
 
   public func onAck(generation ackGeneration: UInt32, sequence ackSequence: UInt32, nowNs: Int64) -> PreviewAckResult {
-    guard ackGeneration == generation,
-          case let .awaitingAck(pending, sentAtNs) = state,
-          pending == ackSequence
-    else { return .stale }
+    guard ackGeneration == generation else { return .stale }
+    // The worker records a frame as sent only after the transport has posted it, so the page's
+    // ack can arrive while the frame is still packing. Refusing it left the frame unacknowledged
+    // until the ack deadline stopped the preview.
+    let sentAtNs: Int64
+    switch state {
+    case let .awaitingAck(pending, sentAt) where pending == ackSequence: sentAtNs = sentAt
+    case let .packing(pending, admittedAt) where pending == ackSequence: sentAtNs = admittedAt
+    default: return .stale
+    }
     state = .idle
     return .accepted(roundTripNs: nowNs - sentAtNs)
   }
