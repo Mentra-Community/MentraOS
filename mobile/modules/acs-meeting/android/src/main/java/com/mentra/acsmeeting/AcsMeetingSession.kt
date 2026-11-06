@@ -3,7 +3,7 @@ package com.mentra.acsmeeting
 import android.content.Context
 import android.os.SystemClock
 import android.util.Base64
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.azure.android.communication.calling.AudioStreamBufferDuration
 import com.azure.android.communication.calling.AudioStreamChannelMode
 import com.azure.android.communication.calling.AudioStreamFormat

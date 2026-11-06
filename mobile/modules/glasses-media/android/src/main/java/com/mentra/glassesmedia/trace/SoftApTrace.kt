@@ -1,7 +1,7 @@
 package com.mentra.glassesmedia.trace
 
 import android.os.SystemClock
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 
 /**
  * Correlated stage logging for the SoftAP calling pipeline (phone side).

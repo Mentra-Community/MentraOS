@@ -6,7 +6,8 @@ import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Base64
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.mentra.glassesmedia.network.*
 import com.mentra.glassesmedia.publisher.PhoneWhipPublisher
 import com.mentra.glassesmedia.publisher.RelayPcmInput
@@ -29,7 +30,9 @@ class GlassesMediaRelayModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("MentraGlassesMediaRelay")
-    Events("onRelayState")
+    Events("onRelayState", "onNativeLog")
+
+    OnCreate { MediaLog.sink = { message -> sendEvent("onNativeLog", mapOf("message" to message)) } }
 
     AsyncFunction("prepare") { options: Map<String, Any?>, promise: Promise ->
       worker.execute {
@@ -102,7 +105,10 @@ class GlassesMediaRelayModule : Module() {
       }
     }
 
-    OnDestroy { worker.execute { runCatching { cleanup() }; worker.shutdown() } }
+    OnDestroy {
+      MediaLog.sink = null
+      worker.execute { runCatching { cleanup() }; worker.shutdown() }
+    }
   }
 
   private fun emit(id: String, state: String, reason: String) {

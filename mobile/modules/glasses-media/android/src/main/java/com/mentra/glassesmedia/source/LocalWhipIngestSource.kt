@@ -2,7 +2,7 @@ package com.mentra.glassesmedia.source
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.mentra.glassesmedia.network.NetworkFacts
 import com.mentra.glassesmedia.network.ScopedNetworkChangeDetector
 import com.mentra.glassesmedia.network.ScopedSoftApNetwork

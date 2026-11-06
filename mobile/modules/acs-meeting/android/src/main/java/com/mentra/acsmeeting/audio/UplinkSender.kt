@@ -1,6 +1,6 @@
 package com.mentra.acsmeeting.audio
 
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.azure.android.communication.calling.RawAudioBuffer
 import com.azure.android.communication.calling.RawOutgoingAudioStream
 import com.mentra.glassesmedia.source.MediaDiagnostics

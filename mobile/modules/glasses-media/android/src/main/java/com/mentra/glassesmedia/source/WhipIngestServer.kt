@@ -1,6 +1,6 @@
 package com.mentra.glassesmedia.source
 
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.mentra.glassesmedia.trace.SoftApTrace
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream

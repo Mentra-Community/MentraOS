@@ -1,6 +1,6 @@
 package com.mentra.glassesmedia.telemetry
 
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import kotlin.math.abs
 
 /**

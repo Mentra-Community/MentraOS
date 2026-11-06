@@ -5,7 +5,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Process
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 
 /**
  * Phone-mic uplink for ACS virtual outgoing. Uses [AudioRecord] MIC at 48 kHz

@@ -8,6 +8,7 @@
  * remain in a private MentraOS host package; they shrink as screens move onto
  * `engine.*`.
  */
+import {installNativeLogConsole} from "@mentra/glasses-media"
 import {
   configure,
   getConfigValues,
@@ -71,6 +72,7 @@ export const engine = {
     // Reports attach recent phone logs, so engine owns console interception for
     // OEM hosts too. Idempotent; the Mentra host may start it earlier.
     logBuffer.startConsoleInterception()
+    installNativeLogConsole()
     await bootstrapStart()
     // Construct + connect the cloud client so the documented configure()+start()
     // lifecycle yields a live engine.session for OEMs. Idempotent for repeated
