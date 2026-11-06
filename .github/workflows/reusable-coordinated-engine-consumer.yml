@@ -99,7 +99,7 @@ jobs:
   ios:
     name: Install public Engine and build iOS host
     if: inputs.dry_run != true
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, shared]
     timeout-minutes: 60
     env:
       # This installed office toolchain compiled the unchanged public Engine

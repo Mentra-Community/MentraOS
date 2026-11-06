@@ -105,7 +105,7 @@ jobs:
 
   build:
     needs: routine-pr
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, shared]
     timeout-minutes: 90
     outputs:
       upload_attempt: ${{ github.run_attempt }}
@@ -788,8 +788,10 @@ jobs:
         run: |
           rm -rf mobile/build/pr-ios/mac-installer-private
           rm -f mobile/build/pr-ios/mac-signing.json
-          python3 mobile/ci/pr-ios/keychain-search.py remove "$PR_IOS_KEYCHAIN"
-          python3 mobile/ci/pr-ios/keychain-search.py locked security delete-keychain "$PR_IOS_KEYCHAIN"
+          # Not under the signing lock, which another runner's signed build
+          # holds for its whole compile: deleting a keychain drops it from the
+          # search list without moving the signer's keychain from first.
+          security delete-keychain "$PR_IOS_KEYCHAIN"
 
       - name: Upload xcodebuild logs
         if: always()

@@ -491,7 +491,7 @@ jobs:
   ios:
     name: Native iOS example
     needs: prepare
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, shared]
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -593,7 +593,7 @@ jobs:
     name: Native macOS example
     needs: prepare
     if: inputs.desktop
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, shared]
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -617,7 +617,7 @@ jobs:
     name: React Native macOS example
     needs: prepare
     if: inputs.desktop
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, shared]
     timeout-minutes: 60
     env:
       RCT_NO_LAUNCH_PACKAGER: 1

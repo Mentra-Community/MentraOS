@@ -18,9 +18,13 @@ each job's `runs-on` must select a Blacksmith runner.
   heavier builds/tests; follow existing 8-vCPU Android build examples when needed.
   Preserve an intentionally pinned Ubuntu 22.04 environment with the corresponding
   `ubuntu-2204` Blacksmith label. Choose ARM only when the job supports it.
-- macOS: use `runs-on: [self-hosted, macOS, ARM64]`, as in
+- macOS: use `runs-on: [self-hosted, macOS, ARM64, shared]`, as in
   [the Mentra App iOS build](../../../.github/workflows/mentra-app-ios-build.yml).
-  Preserve its concurrency pattern so newer commits can cancel superseded builds
+  The three Mac runners (big-bob, big-bob-2, big-bob-3) share one Mac mini;
+  `shared` is on big-bob-2 and big-bob-3 only, so big-bob stays free for
+  published staging releases, which get their labels from release.yml's
+  `channel` job (`mac_runner`). Never leave `shared` off a PR or dev job.
+  Preserve the iOS build's concurrency pattern so newer commits can cancel superseded builds
   without cancelling another branch's work. Check the runner's repository access
   and required Xcode/toolchain before relying on it in another repo.
 
