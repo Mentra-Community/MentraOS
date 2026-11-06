@@ -4,7 +4,7 @@ import {Alert, AppState, BackHandler} from "react-native"
 import Toast from "react-native-toast-message"
 
 import {ModalProvider} from "@/contexts/ModalContext"
-import {FleetSheets, runFleetSheets, showNoticeForFleetState} from "@/effects/FleetSheets"
+import {FleetSheets, forgetPutOffInvitations, runFleetSheets, showNoticeForFleetState} from "@/effects/FleetSheets"
 import en from "@/i18n/en"
 import type {FleetManagementState} from "@/services/fleet/fleetManagement"
 import {useMyWorkspaceStore} from "@/services/fleet/myWorkspace"
@@ -72,6 +72,15 @@ jest.mock("@/utils/storage", () => {
     },
   }
 })
+/** The notice's own MMKV instance, which logout's `storage.clearAll()` does not reach. */
+const mockNoticeStore = new Map<string, string>()
+jest.mock("react-native-mmkv", () => ({
+  createMMKV: () => ({
+    getString: (key: string) => mockNoticeStore.get(key),
+    set: (key: string, value: string) => mockNoticeStore.set(key, value),
+    remove: (key: string) => mockNoticeStore.delete(key),
+  }),
+}))
 let mockUser: {id: string} | null = {id: "user-1"}
 jest.mock("@/contexts/AuthContext", () => ({useAuth: () => ({user: mockUser})}))
 
@@ -184,7 +193,9 @@ beforeEach(() => {
   resetFleetManagementStateForTests()
   mockUser = {id: "user-1"}
   useMyWorkspaceStore.getState().reset()
+  forgetPutOffInvitations()
   require("@/utils/storage").storage.clearAll()
+  mockNoticeStore.clear()
   ;(Toast.show as jest.Mock).mockClear()
   systemAlert = jest.spyOn(Alert, "alert").mockImplementation(() => {})
 })
@@ -224,7 +235,7 @@ describe("the invitation sheet", () => {
     expect(systemAlert).not.toHaveBeenCalled()
   })
 
-  it("a swipe, the backdrop or Android back declines, and the sheet shows its handle", async () => {
+  it("a swipe, the backdrop or Android back put it off: nothing is declined, and it shows again at the next start", async () => {
     const core = fakeCore({invitations: [invitation(RIDGELINE)]})
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
@@ -237,6 +248,19 @@ describe("the invitation sheet", () => {
       fireEvent.press(screen.getByTestId("alert.backdrop"))
     })
     await finish(run)
+    expect(core.api.decline).not.toHaveBeenCalled()
+    expect(core.api.accept).not.toHaveBeenCalled()
+
+    // A foreground looks again, and leaves it put off.
+    await finish(start())
+    expect(screen.queryByText("Ridgeline Field Services invited you to join their workspace")).toBeNull()
+
+    // The next start (or sign-in) offers it again.
+    forgetPutOffInvitations()
+    const again = start()
+    await screen.findByText("Ridgeline Field Services invited you to join their workspace")
+    await press(screen, "Decline")
+    await finish(again)
     expect(core.api.decline).toHaveBeenCalledTimes(1)
   })
 
@@ -365,7 +389,7 @@ describe("the leave-first variant", () => {
     await screen.findByText("Ridgeline Field Services invited you to join their workspace")
     expect(screen.getByText("You're in Northwind Labs. Leave it to join Ridgeline Field Services.")).toBeTruthy()
     expect(buttons(screen)).toEqual(["Leave Northwind Labs", "Decline"])
-    // Decline is the cancel button, so the invitation itself can be swiped away.
+    // The invitation can be swiped away, for later.
     expect(mockDrag.enabled).toBe(true)
 
     await press(screen, "Leave Northwind Labs")
@@ -615,17 +639,44 @@ describe("the Fleet notice", () => {
     screen.unmount()
     await renderApp()
     await act(async () => {
-      await showNoticeForFleetState(RIDGELINE_MANAGED)
+      await showNoticeForFleetState("user-1", RIDGELINE_MANAGED)
     })
     expect(screen.queryByText("OK")).toBeNull()
+  })
+
+  it("is not shown again after signing out and in, and shows for another account on the phone", async () => {
+    setWorkspaceApi(fakeCore({mine: RIDGELINE}).api)
+    await renderApp()
+    await hearFleet(RIDGELINE_MANAGED)
+    await press(screen, "OK")
+    screen.unmount()
+
+    // Logout clears the default storage, and the engine forgets its answer until the next sign-in.
+    require("@/utils/storage").storage.clearAll()
+    mockUser = null
+    await renderApp()
+    await hearFleet({status: "unknown"})
+    screen.unmount()
+    mockUser = {id: "user-1"}
+    await renderApp()
+    await hearFleet(RIDGELINE_MANAGED)
+    expect(screen.queryByText("OK")).toBeNull()
+    screen.unmount()
+
+    await hearFleet({status: "unknown"})
+    mockUser = {id: "user-2"}
+    await renderApp()
+    await hearFleet(RIDGELINE_MANAGED)
+    expect(screen.getByText(NOTICE)).toBeTruthy()
+    await press(screen, "OK")
   })
 
   it("does not queue the notice twice when Fleet's answer is heard twice at once", async () => {
     setWorkspaceApi(fakeCore().api)
     await renderApp()
     await act(async () => {
-      void showNoticeForFleetState(RIDGELINE_MANAGED)
-      void showNoticeForFleetState(RIDGELINE_MANAGED)
+      void showNoticeForFleetState("user-1", RIDGELINE_MANAGED)
+      void showNoticeForFleetState("user-1", RIDGELINE_MANAGED)
       for (let tick = 0; tick < 20; tick++) await Promise.resolve()
     })
     expect(screen.getAllByText(NOTICE)).toHaveLength(1)
