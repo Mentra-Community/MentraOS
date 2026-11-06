@@ -77,8 +77,7 @@ class FramePreviewPort : PreviewFrameTransport {
       listenerInstalled = true
       // A listener registered after the document loaded does not exist inside that document.
       // One reload fixes it; the identity check above stops this from repeating.
-      val needsReload = target.url != null
-      InstallResult(true, null, null, true, needsReload)
+      InstallResult(true, null, null, true, needsInstallReload(target.url))
     } catch (error: Throwable) {
       Log.w(TAG, "addWebMessageListener failed", error)
       InstallResult(false, FEATURE_MISSING, "listener_install_failed", false, false)
@@ -189,6 +188,14 @@ class FramePreviewPort : PreviewFrameTransport {
     const val PORT_NAME = "MentraFramePreviewPort"
 
     const val FEATURE_MISSING = "webview_feature_missing"
+
+    /**
+     * Whether a page is already loaded in a WebView showing [url]. A WebView whose source the host
+     * is still holding shows `about:blank`, and the page that loads next gets the listener; any
+     * other URL is a real document without it. The host reloads on this answer alone, so it must
+     * not guess from its own bookkeeping whether the page had loaded.
+     */
+    fun needsInstallReload(url: String?): Boolean = url != null && url != "about:blank"
   }
 }
 
