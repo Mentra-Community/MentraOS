@@ -1,5 +1,6 @@
-// Every Slack build post, in one layout: the PR builds in #pr-builds and the
-// dev and staging releases. Buttons, never inline links:
+// Every Slack build post, in one layout: the PR builds in #pr-builds, the dev
+// and staging releases, and the lab's nightly results and device notices
+// (testing/agent/slack.ts). Buttons, never inline links:
 //
 //   ✅ PR #123 ready to test: <title>                         [Details]
 //   feature → dev · by someone · abc1234 · Dev backend
@@ -64,10 +65,17 @@ export const glassesLine = ({asg, bes, mtk}) =>
 
 /**
  * A build post: `title` is mrkdwn already escaped, `facts` plain strings for the small line under it, `problems`
- * `{text, url?}` (mrkdwn text; `url` its logs) and `details` the page with everything else.
+ * `{text, url?, icon?}` (mrkdwn text; `url` its logs; ⚠️ unless `icon`) and `details` the page with everything else.
+ * Problems past Slack's 50 blocks to a message are counted, for Details to show.
+ * @param {{text: string, title: string, details?: string, facts?: string[],
+ *   apps?: {name: string, installs: {platform: string, url?: string}[]}[],
+ *   glasses?: {asg: {versionName: string, versionCode: number}, bes: string, mtk: string}, glassesNote?: string,
+ *   problems?: {text: string, url?: string, icon?: string}[]}} post
  */
 export function buildPost({text, title, details, facts = [], apps = [], glasses, glassesNote, problems = []}) {
   const buttons = installButtons(apps)
+  // Four blocks above the problems at most, and one for the count of the rest.
+  const shown = problems.length > 45 ? 44 : problems.length
   return {
     text,
     unfurl_links: false,
@@ -78,11 +86,12 @@ export function buildPost({text, title, details, facts = [], apps = [], glasses,
       // Slack allows 25 elements to an actions block.
       ...(buttons.length ? [{type: "actions", elements: buttons.slice(0, 25)}] : []),
       ...(glasses ? [context(glassesLine(glasses))] : glassesNote ? [context(`:dark_sunglasses: ${slackText(glassesNote, 200)}`)] : []),
-      ...problems.map((problem) => ({
+      ...problems.slice(0, shown).map((problem) => ({
         type: "section",
-        text: {type: "mrkdwn", text: `:warning: ${problem.text}`},
+        text: {type: "mrkdwn", text: `${problem.icon ?? ":warning:"} ${problem.text}`},
         ...(problem.url ? {accessory: button("Logs", problem.url)} : {}),
       })),
+      ...(problems.length > shown ? [context(`…and ${problems.length - shown} more${details ? ", in Details" : ""}`)] : []),
     ],
   }
 }
