@@ -6,7 +6,7 @@ via TestFlight.
 
 ## Requirements
 
-- macOS 14+, Xcode, CocoaPods, Node 20.19.4+ and Bun 1.4.
+- macOS 14+, Xcode 26 or later, CocoaPods, Node 20.19.4+ and Bun 1.4.
 - React Native macOS 0.83.0 with React Native 0.83.6, React 19.2.0 and Expo SDK
   55, the same React Native and Expo versions as the phone examples.
 - A Bluetooth-capable Mac for real device testing.

@@ -8,6 +8,7 @@ import {fileURLToPath} from "node:url"
 import {
   exportCoordinates,
   guardStarterKit,
+  KIT_CI_WORKFLOW,
   kitLink,
   releaseContainer,
   releaseRecordUrl,
@@ -69,6 +70,7 @@ function fixtureWorkspace() {
   write(workspace, "patches/expo-modules-core@55.0.25.patch", "diff --git a/x b/x\n")
   const kit = path.join(workspace, "bluetooth")
   write(kit, "README.md", "# Kit\n\nIn MentraOS this builds from mobile/modules/bluetooth-sdk.\n")
+  write(kit, KIT_CI_WORKFLOW, "name: Example App Builds\n")
   write(
     kit,
     "android/settings.gradle.kts",
@@ -365,8 +367,8 @@ test("the MentraOS examples tree exports to a standalone kit", () => {
     ])
     // Lockfiles are written by the export workflow; everything else is final.
     assert.deepEqual(sourceReferences(path.join(out, "kit")), [])
-    // The kit keeps its own CI in its repository; the export never carries one.
-    assert.equal(existsSync(path.join(out, "kit/.github")), false)
+    // The kit's CI is exported with it.
+    assert.ok(existsSync(path.join(out, "kit", KIT_CI_WORKFLOW)))
   } finally {
     rmSync(out, {recursive: true, force: true})
   }

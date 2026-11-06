@@ -1,5 +1,5 @@
 {
-  "source": "Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit dev: .github/workflows/example-app-builds.yml",
+  "source": "examples/bluetooth/.github/workflows/example-app-builds.yml, exported as the kit's CI",
   "note": "Source paths the kit's own CI builds from. The export must produce each one; paths the CI generates (Expo prebuild android/ folders, build outputs, caches) are not listed.",
   "directories": [
     "examples/android",
