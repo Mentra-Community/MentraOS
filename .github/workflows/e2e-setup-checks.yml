@@ -6,7 +6,8 @@ on:
       - ".github/scripts/coordinated-routine-*"
       - ".github/scripts/published-build-metadata*"
       - ".github/scripts/notify-pr-builds*"
-      - ".github/scripts/release-slack-message*"
+      - ".github/scripts/release-slack-post*"
+      - ".github/scripts/slack-build-post*"
       - ".github/scripts/pr-ios-artifacts*"
       - ".github/scripts/pr-android-artifacts*"
       - "mobile/scripts/install-ios-mac*"
@@ -40,7 +41,8 @@ jobs:
           scripts/fetch-incident-logs.test.mjs
           .github/scripts/coordinated-routine-request.test.mjs
           .github/scripts/notify-pr-builds.test.mjs
-          .github/scripts/release-slack-message.test.mjs
+          .github/scripts/release-slack-post.test.mjs
+          .github/scripts/slack-build-post.test.mjs
           .github/scripts/pr-ios-artifacts.test.mjs
           .github/scripts/pr-android-artifacts.test.mjs
       - name: Verify shared Mac installer and ownership
