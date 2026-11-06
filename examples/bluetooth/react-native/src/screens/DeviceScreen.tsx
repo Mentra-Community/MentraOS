@@ -35,7 +35,15 @@ const glassesImages = {
   vuzixZ100: require('../../assets/glasses/vuzix_z100.png'),
 };
 
-export function DeviceScreen({ sdk, onOpenOta }: { sdk: BluetoothSdkExampleModel; onOpenOta: () => void }) {
+export function DeviceScreen({
+  sdk,
+  onOpenOta,
+  onOpenPairing,
+}: {
+  sdk: BluetoothSdkExampleModel;
+  onOpenOta: () => void;
+  onOpenPairing: () => void;
+}) {
   const scrollBottomPadding = useScrollBottomPadding();
   const level = batteryLevel(sdk.glasses);
   const connected = isGlassesConnected(sdk.glasses);
@@ -140,6 +148,12 @@ export function DeviceScreen({ sdk, onOpenOta }: { sdk: BluetoothSdkExampleModel
                 <Path d="M21 12a9 9 0 0 1-15.5 6.2" /><Path d="M3 12a9 9 0 0 1 15.5-6.2" /><Path d="M18 2v4h-4" /><Path d="M6 22v-4h4" />
               </Svg>
               <Text style={styles.btnTextDark}>Software Update</Text>
+            </Pressable>
+            <Pressable disabled={connected} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, connected && styles.disabled]} onPress={onOpenPairing}>
+              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                <Path d="m7 7 10 10-5 5V2l5 5L7 17" />
+              </Svg>
+              <Text style={styles.btnTextDark}>Pair Mentra Live</Text>
             </Pressable>
           </View>
           <View style={styles.btnRow}>

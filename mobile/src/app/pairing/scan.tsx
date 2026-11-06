@@ -8,6 +8,7 @@ import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {DiscoveredGlassesRow} from "@/components/pairing/DiscoveredGlassesRow"
+import {MentraLivePairingFlowHost} from "@/components/pairing/MentraLivePairingFlowHost"
 import {NimoBluetoothSetup} from "@/components/pairing/NimoBluetoothSetup"
 import {Group} from "@/components/ui/Group"
 import GlassView from "@/components/ui/GlassView"
@@ -25,13 +26,11 @@ const normalizeProjectName = (value?: string | null) => value?.trim().toUpperCas
 const SUPPORTED_AR99_PROJECT_NAMES = new Set<string>(AR99_MODEL_OPTIONS.map((option) => option.projectName))
 
 const PAIRING_SCAN_TIMEOUT_MS = 15_000
-/** Shorter than the native scan's one minute, so the list never goes stale while it's shown. */
-const PAIRING_RESCAN_INTERVAL_MS = 45_000
-/** Bonded glasses already tried since the app started: if they refuse, the user pairs them from the list. */
-const triedBondedGlasses = new Set<string>()
 
+/** Mentra Live pairs through the Engine's flow; the other models scan here. */
 export default function SelectGlassesBluetoothScreen() {
   const {deviceModel} = useLocalSearchParams<{deviceModel: DeviceModel}>()
+  if (deviceModel === DeviceTypes.LIVE) return <MentraLivePairingFlowHost initialPage="scan" />
   if (Platform.OS === "ios" && deviceModel === DeviceTypes.NIMO && isGlassesModelAllowedByDeployment(deviceModel)) {
     return <NimoBluetoothSetup />
   }
@@ -50,7 +49,6 @@ function GlassesScanScreen() {
   const connectingRef = useRef(false)
   const scanGenerationRef = useRef(0)
   const [scanGeneration, setScanGeneration] = useState(0)
-  const isMentraLivePairingScan = deviceModel === DeviceTypes.LIVE
   const allowedByDeployment = isGlassesModelAllowedByDeployment(deviceModel, ar99ProjectName)
 
   const selectedDisplayName = useMemo(() => {
@@ -97,12 +95,10 @@ function GlassesScanScreen() {
     setScanDiagnostic(null)
     // Non-destructive back-out: abandonAttempt decides from the LIVE hydrated
     // default-device read — a re-pair's existing pairing survives, and so does
-    // a pairing that PROMOTED while this flow was open (glasses can finish
-    // pairing even when the user backs out of the UI). Only a genuinely
-    // unpaired attempt forgets. Backing out is the user choosing not to pair
-    // this model now, so the pending marker goes too: Home must not greet
-    // them with a finish-pairing card. If the cancel cannot run (the native
-    // ownership read failed), fall back to the plain back-out cleanup.
+    // a pairing that PROMOTED while this flow was open. Backing out is the user
+    // choosing not to pair this model now, so the pending marker goes too. If
+    // the cancel cannot run (the native ownership read failed), fall back to the
+    // plain back-out cleanup.
     void engine.pairing
       .abandonAttempt({clearPendingSelection: true})
       .catch(() => engine.pairing.abandonAttempt())
@@ -130,7 +126,6 @@ function GlassesScanScreen() {
     }
   }
 
-  const scanOnReturnRef = useRef(false)
   const startScanAttempt = useCallback(async () => {
     if (!allowedByDeployment) return
     const generation = scanGenerationRef.current + 1
@@ -141,28 +136,13 @@ function GlassesScanScreen() {
     setScanDiagnostic(null)
     setRememberedSearchResults([])
     try {
-      // A bond means the glasses were never unpaired, so they need no pairing mode and no choosing.
-      // Discovery waits for this: it drops their Classic link, which an owner's reconnect keeps.
-      const bonded =
-        isMentraLivePairingScan && engine.pairing.identity().kind !== "paired"
-          ? await engine.pairing.bondedGlasses()
-          : null
-      if (generation !== scanGenerationRef.current) return
-      if (bonded && !triedBondedGlasses.has(bonded.name)) {
-        triedBondedGlasses.add(bonded.name)
-        scanOnReturnRef.current = true
-        void triggerGlassesPairingGuide(bonded)
-        return
-      }
       await engine.pairing.scan(deviceModel)
     } catch (error) {
       if (generation === scanGenerationRef.current) {
         console.error("Failed to start glasses scan:", error)
       }
     }
-    // triggerGlassesPairingGuide is intentionally not memoized; it reads nothing that changes between scans.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allowedByDeployment, deviceModel, isMentraLivePairingScan])
+  }, [allowedByDeployment, deviceModel])
 
   const visibleResults = useMemo(
     () => rememberedSearchResults.filter((r) => r.name !== "NOTREQUIREDSKIP" && matchesSelectedModel(r)),
@@ -189,16 +169,12 @@ function GlassesScanScreen() {
     void startScanAttempt()
   }, [startScanAttempt])
 
-  // The scan screen stays mounted under loading and the iOS "Forget the old pairing" screen.
-  // A tap latches this so a double-tap cannot start two pairings. Coming back must clear it,
-  // or the next tap on a glasses row does nothing.
+  // The scan screen stays mounted under loading. A tap latches this so a double-tap cannot start two
+  // pairings. Coming back must clear it, or the next tap on a glasses row does nothing.
   useFocusEffect(
     useCallback(() => {
       connectingRef.current = false
-      if (!scanOnReturnRef.current) return
-      scanOnReturnRef.current = false
-      void startScanAttempt()
-    }, [startScanAttempt]),
+    }, []),
   )
 
   useEffect(() => {
@@ -211,26 +187,7 @@ function GlassesScanScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allowedByDeployment, searchResults])
 
-  // An existing owner can reconnect with pairing mode off. Advertisements do not
-  // identify the phone's bond, so let native authentication decide after selection.
-  const listedResults = visibleResults
-  const shouldShowDeviceList = listedResults.length > 0
-
-  // The native scan ends after a minute. While glasses are listed, scan again before then, so each row
-  // keeps saying whether those glasses are in pairing mode: someone who presses their button later sees
-  // it, and doesn't press again, which would close the window.
-  const listsGlasses = visibleResults.length > 0
-  useEffect(() => {
-    if (!allowedByDeployment || scanTimedOut || !listsGlasses) return
-    const timer = setInterval(() => {
-      // Not while a connection is starting: this screen stays mounted under loading.
-      if (connectingRef.current) return
-      void Promise.resolve(engine.pairing.scan(deviceModel)).catch((error) =>
-        console.warn("Failed to rescan for glasses:", error),
-      )
-    }, PAIRING_RESCAN_INTERVAL_MS)
-    return () => clearInterval(timer)
-  }, [allowedByDeployment, deviceModel, scanTimedOut, listsGlasses])
+  const shouldShowDeviceList = visibleResults.length > 0
 
   useEffect(() => {
     // Keep scanning while the user chooses so newly discovered units still appear.
@@ -287,31 +244,16 @@ function GlassesScanScreen() {
       }
     }
 
-    await startPairing(device)
-  }
-
-  const startPairing = async (device: Device) => {
     const resolvedProjectName = deviceModel === DeviceTypes.AR99 ? (device.projectName ?? ar99ProjectName) : undefined
-    // BLE first on both platforms. iOS opens Settings for Classic audio from
-    // the loading screen after the glasses are ready.
     push("/pairing/loading", {
       device: JSON.stringify(device),
       deviceModel: device.model,
       deviceName: device.name,
       ar99ProjectName: resolvedProjectName,
-      securePairingCapable: device.securePairingCapable,
-      pairingCode: device.pairingCode,
     })
   }
 
-  const filterDeviceName = (deviceName: string) => {
-    let newName = deviceName.replace("MENTRA_LIVE_BLE_", "")
-    newName = newName.replace("MENTRA_LIVE_BT_", "")
-    newName = newName.replace("Mentra_Live_", "")
-    newName = newName.replace("MENTRA_LIVE_", "")
-    newName = newName.replace("MENTRA_DISPLAY_", "")
-    return newName
-  }
+  const filterDeviceName = (deviceName: string) => deviceName.replace("MENTRA_DISPLAY_", "")
 
   const getAr99ResultDisplayName = (device: Device) => getAr99DisplayName(device.projectName ?? ar99ProjectName)
 
@@ -326,18 +268,6 @@ function GlassesScanScreen() {
     }
 
     return rawName
-  }
-
-  const isNotInPairingMode = (device: Device) => device.securePairingCapable !== false && device.pairingMode === false
-  const showEnterPairingMode = listedResults.some(isNotInPairingMode)
-
-  const formatLiveSubtitle = (device: Device) => {
-    const base = filterDeviceName(device.name)
-    const parts: string[] = [base]
-    if (isNotInPairingMode(device)) {
-      parts.push(translate("pairing:notInPairingModeLabel"))
-    }
-    return parts.join(" · ")
   }
 
   useEffect(() => {
@@ -359,32 +289,31 @@ function GlassesScanScreen() {
   }, [searchResults, matchesSelectedModel])
 
   const handleTryAgain = async () => {
-    // Restart scan in place — do not pop back to prep. Explicitly stop first so
-    // iOS forgets the prior allowDuplicates=false result after pairing mode changes.
+    // Restart scan in place — do not pop back to prep.
     await BluetoothSdk.stopScan()
     await startScanAttempt()
   }
 
-  const scanTitle = (() => {
-    if (hasConnectedDeviceHint) return translate("pairing:connectedOnPhoneTitle")
-    if (!isMentraLivePairingScan) {
-      return scanTimedOut
-        ? translate("pairing:noGlassesFound")
-        : translate("pairing:scanningForGlassesModel", {model: selectedDisplayName})
-    }
-    if (shouldShowDeviceList) {
-      return translate("pairing:liveChooseGlassesTitle")
-    }
-    if (scanTimedOut) {
-      return translate("pairing:liveScanHelpTitle")
-    }
-    // Capability is per device: before any unit is found the app cannot know the firmware, so the
-    // 3-press instruction shows while searching. A legacy unit lists immediately.
-    return translate("pairing:livePairingScanTitle")
-  })()
+  const scanTitle = hasConnectedDeviceHint
+    ? translate("pairing:connectedOnPhoneTitle")
+    : scanTimedOut
+      ? translate("pairing:noGlassesFound")
+      : translate("pairing:scanningForGlassesModel", {model: selectedDisplayName})
 
-  const showLivePairingHelp =
-    !hasConnectedDeviceHint && isMentraLivePairingScan && !shouldShowDeviceList && scanTimedOut
+  const deviceList = (className: string, contentContainerClassName: string) => (
+    <ScrollView className={className} contentContainerClassName={contentContainerClassName}>
+      <Group>
+        {visibleResults.map((res: Device) => (
+          <DiscoveredGlassesRow
+            key={res.id}
+            title={deviceModel === DeviceTypes.AR99 ? getAr99ResultDisplayName(res) : selectedDisplayName}
+            subtitle={deviceModel === DeviceTypes.AR99 ? formatAr99Subtitle(res) : filterDeviceName(res.name)}
+            onPress={() => triggerGlassesPairingGuide(res)}
+          />
+        ))}
+      </Group>
+    </ScrollView>
+  )
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
@@ -394,132 +323,25 @@ function GlassesScanScreen() {
           <Image source={selectedImage} className="h-[90px] w-[156px] mx-auto" resizeMode="contain" />
           <Text className="text-center text-xl font-semibold text-text-dim" text={scanTitle} />
 
-          {showLivePairingHelp ? (
-            <View className="gap-3 py-2">
-              <Text
-                className="text-center text-base font-medium text-foreground"
-                text={translate("pairing:liveScanHelpInfo")}
-              />
-              <Text
-                className="text-center text-base font-semibold text-foreground"
-                text={translate("pairing:liveUpdatedGlassesHint")}
-              />
-              <Text
-                className="text-center text-sm leading-5 text-muted-foreground"
-                text={translate("pairing:livePairingModeInfo")}
-              />
-              {!scanTimedOut ? <ActivityIndicator size="small" color={theme.colors.foreground} /> : null}
-              <Button preset="primary" tx="pairing:scanAgain" onPress={handleTryAgain} className="w-full mt-2" />
-            </View>
-          ) : scanTimedOut ? (
+          {scanTimedOut ? (
             <View className="gap-4 py-4">
               <Text
                 className="text-center text-sm text-muted-foreground"
                 text={
                   hasConnectedDeviceHint
                     ? translate("pairing:connectedOnPhoneHint")
-                    : !isMentraLivePairingScan
-                      ? translate("pairing:liveScanHelpInfo")
-                      : translate("pairing:noGlassesFoundHint")
+                    : translate("pairing:liveScanHelpInfo")
                 }
               />
-              {shouldShowDeviceList ? (
-                <ScrollView className="max-h-[220px] -mr-4 pr-4" contentContainerClassName="my-2">
-                  <Group>
-                    {listedResults.map((res: Device) => {
-                      const deviceTitle =
-                        deviceModel === DeviceTypes.AR99 ? getAr99ResultDisplayName(res) : selectedDisplayName
-                      const deviceSubtitle =
-                        deviceModel === DeviceTypes.AR99
-                          ? formatAr99Subtitle(res)
-                          : isMentraLivePairingScan
-                            ? formatLiveSubtitle(res)
-                            : filterDeviceName(res.name)
-                      return (
-                        <DiscoveredGlassesRow
-                          key={res.id}
-                          title={deviceTitle}
-                          subtitle={deviceSubtitle}
-                          onPress={() => triggerGlassesPairingGuide(res)}
-                        />
-                      )
-                    })}
-                  </Group>
-                </ScrollView>
-              ) : null}
+              {shouldShowDeviceList ? deviceList("max-h-[220px] -mr-4 pr-4", "my-2") : null}
               <Button preset="primary" tx="pairing:tryAgain" onPress={handleTryAgain} className="w-full" />
             </View>
           ) : !shouldShowDeviceList ? (
-            isMentraLivePairingScan ? (
-              <View className="justify-center items-center gap-4 py-2">
-                <Text
-                  className="text-center text-base font-medium text-foreground"
-                  text={translate("pairing:livePairingScanPowerOn")}
-                />
-                <Text
-                  className="text-center text-base font-medium text-foreground"
-                  text={translate("pairing:livePairingScanBody")}
-                />
-                <View className="flex-row items-center justify-center gap-2">
-                  <ActivityIndicator
-                    size="small"
-                    color={theme.colors.foreground}
-                    testID="live-scan-searching-spinner"
-                  />
-                  <Text
-                    className="text-sm text-muted-foreground"
-                    text={translate("pairing:livePairingScanSearching")}
-                  />
-                </View>
-              </View>
-            ) : (
-              <View className="justify-center items-center gap-3 min-h-20 py-4">
-                <ActivityIndicator size="large" color={theme.colors.foreground} />
-              </View>
-            )
+            <View className="justify-center items-center gap-3 min-h-20 py-4">
+              <ActivityIndicator size="large" color={theme.colors.foreground} />
+            </View>
           ) : (
-            <>
-              <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
-                <Group>
-                  {listedResults.map((res: Device) => {
-                    const deviceTitle =
-                      deviceModel === DeviceTypes.AR99 ? getAr99ResultDisplayName(res) : selectedDisplayName
-                    const deviceSubtitle =
-                      deviceModel === DeviceTypes.AR99
-                        ? formatAr99Subtitle(res)
-                        : isMentraLivePairingScan
-                          ? formatLiveSubtitle(res)
-                          : filterDeviceName(res.name)
-                    return (
-                      <DiscoveredGlassesRow
-                        key={res.id}
-                        title={deviceTitle}
-                        subtitle={deviceSubtitle}
-                        onPress={() => triggerGlassesPairingGuide(res)}
-                      />
-                    )
-                  })}
-                </Group>
-              </ScrollView>
-              {/* Other people's glasses can fill the list before yours appear, so the pairing-mode
-                  steps stay on screen while the user is choosing. */}
-              {isMentraLivePairingScan ? (
-                <View className="gap-1 rounded-2xl bg-background px-4 py-3">
-                  <Text
-                    className="text-sm font-semibold text-foreground"
-                    text={translate(
-                      showEnterPairingMode ? "pairing:notInPairingModeAlertTitle" : "pairing:liveChooseGlassesHintTitle",
-                    )}
-                  />
-                  <Text
-                    className="text-sm text-foreground"
-                    text={translate(
-                      showEnterPairingMode ? "pairing:notInPairingModeAlertMessage" : "pairing:liveChooseGlassesHint",
-                    )}
-                  />
-                </View>
-              ) : null}
-            </>
+            deviceList("max-h-[300px] -mr-4 pr-4", "my-4")
           )}
         </GlassView>
       </View>

@@ -6,7 +6,6 @@ import type {ReactNode} from "react"
 import {Platform} from "react-native"
 
 import PairingSuccessScreen from "@/app/pairing/success"
-import en from "@/i18n/en"
 import {usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 
@@ -96,57 +95,6 @@ describe("pairing success screen", () => {
     setPlatformOS(originalPlatformOS)
   })
 
-  it("stacks missing Mentra Live setup steps in the expected order", async () => {
-    ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(false)
-
-    const {getAllByText} = render(<PairingSuccessScreen />)
-
-    await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
-    fireEvent.press(getAllByText("onboarding:continueSetup")[1])
-
-    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
-    expect(push).toHaveBeenCalledWith("/pairing/btclassic")
-    expect(pushUnder).toHaveBeenCalledTimes(1)
-    expect(pushUnder).toHaveBeenCalledWith("/ota/check-for-updates")
-    expect(engine.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
-  })
-
-  it("uses connected Mentra Live state to skip btclassic setup", async () => {
-    ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(true)
-
-    const {getAllByText} = render(<PairingSuccessScreen />)
-
-    await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
-    fireEvent.press(getAllByText("onboarding:continueSetup")[1])
-
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/ota/check-for-updates"))
-    expect(pushUnder).not.toHaveBeenCalled()
-    expect(push).not.toHaveBeenCalledWith("/pairing/btclassic")
-    expect(engine.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
-  })
-
-  it("does not push btclassic when Classic is up, on iOS or Android", async () => {
-    for (const os of ["ios", "android"] as const) {
-      jest.clearAllMocks()
-      setPlatformOS(os)
-      ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Mentra Live"}})
-      ;(useNavigationStore.getState as jest.Mock).mockReturnValue({clearHistoryAndGoHome, push})
-      ;(usePushUnder as jest.Mock).mockReturnValue(pushUnder)
-      ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(true)
-
-      const {getAllByText, unmount} = render(<PairingSuccessScreen />)
-
-      await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
-      fireEvent.press(getAllByText("onboarding:continueSetup")[1])
-
-      await waitFor(() => expect(push).toHaveBeenCalledWith("/ota/check-for-updates"))
-      expect(push).toHaveBeenCalledTimes(1)
-      expect(push).not.toHaveBeenCalledWith("/pairing/btclassic")
-      expect(pushUnder).not.toHaveBeenCalled()
-      unmount()
-    }
-  })
-
   it("finishes non-Live pairing without adding setup routes", async () => {
     ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G1"}})
     await useSettingsStore.getState().setSetting(SETTINGS.onboarding_os_completed.key, true, false)
@@ -186,23 +134,5 @@ describe("pairing success screen", () => {
     await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
     expect(push).toHaveBeenCalledWith("/onboarding/os")
     expect(pushUnder).not.toHaveBeenCalled()
-  })
-
-  it("shows the Mentra Live success copy and never routes to replace-owner (S5)", async () => {
-    ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(true)
-
-    const screen = render(<PairingSuccessScreen />)
-
-    await waitFor(() => expect(screen.getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
-    expect(screen.getByText("common:success")).toBeTruthy()
-    expect(screen.getByText("onboarding:liveConnected")).toBeTruthy()
-    expect(en.common.success).toBe("Success")
-    expect(en.onboarding.liveConnected).toBe("Mentra Live connected")
-    expect(en.onboarding.continueSetup).toBe("Continue setup")
-
-    fireEvent.press(screen.getAllByText("onboarding:continueSetup")[1])
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/ota/check-for-updates"))
-    expect(push).not.toHaveBeenCalledWith("/pairing/replace-owner", expect.anything())
-    expect(push).not.toHaveBeenCalledWith("/pairing/replace-owner")
   })
 })
