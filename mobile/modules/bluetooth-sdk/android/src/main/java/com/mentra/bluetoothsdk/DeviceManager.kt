@@ -561,8 +561,9 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
                                 Bridge.log(
                                     "MAN: Bluetooth restored, attempting reconnect to: $deviceName"
                                 )
+                                // A disconnect during the delay still counts.
                                 handler.postDelayed(
-                                    { connectDefault() },
+                                    { if (shouldReconnectAfterBluetoothOn()) connectDefault() },
                                     2000
                                 ) // Small delay to let BT stack stabilize
                             }
@@ -2343,8 +2344,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         sgc?.sendRgbLedControl(requestId, packageName, action, color, onDurationMs, offDurationMs, count)
     }
 
+    /** Glasses the person disconnected in the app stay disconnected. */
     internal fun shouldReconnectAfterBluetoothOn(): Boolean =
-        defaultWearable.isNotEmpty() && deviceName.isNotEmpty()
+        defaultWearable.isNotEmpty() && deviceName.isNotEmpty() &&
+                DeviceStore.store.get("bluetooth", "glasses_user_disconnected") != true
 
     /**
      * A ready Mentra Live session. Only an explicit pair (a pending target) clears

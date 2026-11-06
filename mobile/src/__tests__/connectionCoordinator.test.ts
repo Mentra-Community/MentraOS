@@ -59,6 +59,10 @@ describe("decideReconnect", () => {
     expect(decideReconnect({...base, pairingState: {state: "pairing_rejected"}})).toEqual({kind: "skip", result: true})
   })
 
+  it("skips after the person disconnected the glasses in the app", () => {
+    expect(decideReconnect({...base, userDisconnected: true})).toEqual({kind: "skip", result: true})
+  })
+
   it("connects when paired, idle, and disconnected", () => {
     expect(decideReconnect(base)).toEqual({kind: "connect"})
   })

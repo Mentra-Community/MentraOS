@@ -1,5 +1,6 @@
+import {engine, SETTINGS} from "@mentra/engine"
 import {useState} from "react"
-import {View, Image, ActivityIndicator, ScrollView, ImageStyle, ViewStyle, Modal} from "react-native"
+import {View, Image, ActivityIndicator, ScrollView, ImageStyle, ViewStyle, Modal, Platform} from "react-native"
 import Svg, {Path} from "react-native-svg"
 
 import {WorkspaceBrand} from "@/components/auth/WorkspaceBrand"
@@ -17,6 +18,7 @@ import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
+import {askToForgetIosPairing} from "@/utils/pairing/iosStaleBond"
 import {settleFrame} from "@/utils/settleFrame"
 
 // Default user icon component for profile pictures
@@ -141,6 +143,13 @@ export default function ProfileSettingsPage() {
     try {
       console.log("Profile: Starting sign-out process")
       setIsSigningOut(true)
+      // Sign-out unpairs the glasses; on iOS and the Mac the person then forgets them in Settings.
+      const forget = askToForgetIosPairing(
+        Platform.OS,
+        engine.settings.get<string>(SETTINGS.default_wearable.key) ?? "",
+        engine.settings.get<string>(SETTINGS.device_name.key) ?? "",
+        "sign-in",
+      )
 
       // Leave the miniapp surface BEFORE logging out, not after.
       //
@@ -181,6 +190,7 @@ export default function ProfileSettingsPage() {
       await settleFrame()
 
       await logout()
+      if (forget) push(forget.route, forget.params)
 
       console.log("Profile: Logout completed")
       setIsSigningOut(false)
