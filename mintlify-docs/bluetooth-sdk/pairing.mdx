@@ -114,7 +114,7 @@ export function BrandedPairMentraLive({onDone, onLeave}: PairMentraLiveProps) {
 | Prop | Purpose |
 | --- | --- |
 | `theme` | Any of `background`, `card`, `foreground`, `buttonBackground`, `textDim`, `mutedForeground`, `primary`, `border`, `error` and `errorBackground`. Missing colors keep the stock palette. |
-| `translate(key, options)` | Returns the text for a key such as `pairing:scanAgain`, replacing `{{name}}` placeholders from `options`. Without it, the pages use their English copy. The keys and their English text are `ENGLISH_COPY` in [`MentraLivePairingFlow.tsx`](https://github.com/Mentra-Community/MentraOS/blob/dev/mobile/modules/engine/src/react/MentraLivePairingFlow.tsx): add them to your i18n library and pass its lookup. Return text for every key, since a key you don't handle shows as the key itself. |
+| `translate(key, options)` | Returns the text for a key such as `pairing:scanAgain`, filling its i18next-style placeholders, such as `name`, from `options`. Without it, the pages use their English copy. The keys and their English text are `ENGLISH_COPY` in [`MentraLivePairingFlow.tsx`](https://github.com/Mentra-Community/MentraOS/blob/dev/mobile/modules/engine/src/react/MentraLivePairingFlow.tsx): add them to your i18n library and pass its lookup. Return text for every key, since a key you don't handle shows as the key itself. |
 | `images` | Your own `glasses`, `prep`, `success`, `pairAudio` and `forgetIosPairing` images. |
 | `prepMedia` | A node shown on the power-on page in place of its image, for example a video of the power button. |
 | `onOpenHelp` | Shows a help link on the scan and connecting pages, for your troubleshooting page. |
