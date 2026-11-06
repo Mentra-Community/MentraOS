@@ -27,13 +27,19 @@ export function prepareExternalEngineFixture({sourceDir, outputDir, releaseIdent
   mkdirSync(path.dirname(outputDir), {recursive: true})
   cpSync(sourceDir, outputDir, {
     recursive: true,
-    filter: (entry) => !["node_modules", "android", "ios", "dist"].includes(path.basename(entry)),
+    // Installs anywhere, and the host's own generated native projects and bundles. A local module's native
+    // sources (modules/<name>/android, /ios) are its code and stay.
+    filter: (entry) => {
+      const relative = path.relative(sourceDir, entry)
+      return !relative.split(path.sep).includes("node_modules") && !["android", "ios", "dist"].includes(relative)
+    },
   })
 
   const packageFile = path.join(outputDir, "package.json")
   const packageJson = JSON.parse(readFileSync(packageFile, "utf8"))
-  for (const name of Object.keys(packageJson.dependencies ?? {})) {
-    if (name.startsWith("@mentra/")) delete packageJson.dependencies[name]
+  // The host's own local modules (file:) stay; the published Engine brings the rest.
+  for (const [name, spec] of Object.entries(packageJson.dependencies ?? {})) {
+    if (name.startsWith("@mentra/") && !spec.startsWith("file:")) delete packageJson.dependencies[name]
   }
   packageJson.dependencies["@mentra/engine"] = releaseIdentity
   if (packageJson.expo) delete packageJson.expo.autolinking

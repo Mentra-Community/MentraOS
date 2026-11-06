@@ -38,7 +38,9 @@ function engineClosure(plan) {
 
 export function verifyExternalEngineInstall({fixtureDir, plan}) {
   const packageJson = JSON.parse(readFileSync(path.join(fixtureDir, "package.json"), "utf8"))
-  const directMentra = Object.entries(packageJson.dependencies ?? {}).filter(([name]) => name.startsWith("@mentra/"))
+  // The host's own local modules (file:) are its source, not published packages.
+  const local = new Set(Object.entries(packageJson.dependencies ?? {}).filter(([, spec]) => spec.startsWith("file:")).map(([name]) => name))
+  const directMentra = Object.entries(packageJson.dependencies ?? {}).filter(([name]) => name.startsWith("@mentra/") && !local.has(name))
   if (directMentra.length !== 1 || directMentra[0][0] !== "@mentra/engine") {
     throw new Error("External fixture must directly install only @mentra/engine")
   }
@@ -74,7 +76,7 @@ export function verifyExternalEngineInstall({fixtureDir, plan}) {
     }
   }
 
-  const unexpected = [...installed.keys()].filter((name) => !expected.has(name))
+  const unexpected = [...installed.keys()].filter((name) => !expected.has(name) && !local.has(name))
   if (unexpected.length) throw new Error(`Unexpected Mentra packages in external fixture: ${unexpected.join(", ")}`)
   return [...expected].sort()
 }

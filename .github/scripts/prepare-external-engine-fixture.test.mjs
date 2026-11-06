@@ -15,7 +15,8 @@ test("removes every monorepo shortcut from the external Engine fixture", () => {
   writeFileSync(
     path.join(source, "package.json"),
     JSON.stringify({
-      dependencies: {"@mentra/engine": "workspace:*", "@mentra/crust": "workspace:*", "react": "19.2.0"},
+      dependencies: {"@mentra/engine": "workspace:*", "@mentra/crust": "workspace:*", "react": "19.2.0",
+        "@mentra/react-native-barcode-scanner": "file:modules/mentra-barcode-scanner"},
       expo: {autolinking: {nativeModulesDir: "../../mobile/modules"}},
     }),
   )
@@ -26,16 +27,34 @@ test("removes every monorepo shortcut from the external Engine fixture", () => {
   writeFileSync(path.join(source, "metro.config.js"), "module.exports = {watchFolders: ['/repo']}\n")
   mkdirSync(path.join(source, "node_modules"))
   writeFileSync(path.join(source, "node_modules", "ignored"), "ignored")
+  for (const generated of ["android", "ios"]) {
+    mkdirSync(path.join(source, generated))
+    writeFileSync(path.join(source, generated, "generated"), "generated")
+  }
+  const module = path.join(source, "modules", "mentra-barcode-scanner")
+  for (const native of ["android", "ios"]) mkdirSync(path.join(module, native), {recursive: true})
+  writeFileSync(path.join(module, "android", "build.gradle"), "gradle")
+  writeFileSync(path.join(module, "ios", "Scanner.podspec"), "podspec")
+  mkdirSync(path.join(module, "node_modules"))
+  writeFileSync(path.join(module, "node_modules", "ignored"), "ignored")
 
   prepareExternalEngineFixture({sourceDir: source, outputDir: output, releaseIdentity: "3.1.0-beta.57"})
 
   const packageJson = JSON.parse(readFileSync(path.join(output, "package.json"), "utf8"))
-  assert.deepEqual(packageJson.dependencies, {"react": "19.2.0", "@mentra/engine": "3.1.0-beta.57"})
+  // The host's own local module stays.
+  assert.deepEqual(packageJson.dependencies, {"react": "19.2.0",
+    "@mentra/react-native-barcode-scanner": "file:modules/mentra-barcode-scanner", "@mentra/engine": "3.1.0-beta.57"})
   assert.deepEqual(packageJson.expo, {})
   const tsconfig = JSON.parse(readFileSync(path.join(output, "tsconfig.json"), "utf8"))
   assert.deepEqual(tsconfig.compilerOptions, {strict: true})
   assert.match(readFileSync(path.join(output, "metro.config.js"), "utf8"), /getDefaultConfig\(__dirname\)/)
   assert.throws(() => readFileSync(path.join(output, "node_modules", "ignored")))
+  // The host's generated native projects go; a local module's native sources stay.
+  assert.throws(() => readFileSync(path.join(output, "android", "generated")))
+  assert.throws(() => readFileSync(path.join(output, "ios", "generated")))
+  assert.equal(readFileSync(path.join(output, "modules", "mentra-barcode-scanner", "android", "build.gradle"), "utf8"), "gradle")
+  assert.equal(readFileSync(path.join(output, "modules", "mentra-barcode-scanner", "ios", "Scanner.podspec"), "utf8"), "podspec")
+  assert.throws(() => readFileSync(path.join(output, "modules", "mentra-barcode-scanner", "node_modules", "ignored")))
 })
 
 test("pins external Engine native peers to the app's verified version", () => {

@@ -1,5 +1,5 @@
 import {describe, expect, test} from 'bun:test';
-import type {Device} from '@mentra/bluetooth-sdk';
+import type {Device} from '@mentra/engine/bluetooth-sdk';
 import type {MentraLivePairingState} from '@mentra/engine/pairing';
 
 import {pairingPresentation} from './pairingPresentation';

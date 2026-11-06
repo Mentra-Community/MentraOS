@@ -81,3 +81,15 @@ test("rejects the array dependency shape that cannot occur in a generated plan",
     /dependencies for @mentra\/engine must be an object/,
   )
 })
+
+test("accepts the host's own local modules beside the Engine closure, and nothing else unpublished", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "mentra-engine-install-"))
+  const local = {"@mentra/react-native-barcode-scanner": "file:modules/mentra-barcode-scanner"}
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({dependencies: {"@mentra/engine": plan.releaseIdentity, ...local}}))
+  const lock = {...validLock(), "node_modules/@mentra/react-native-barcode-scanner": {resolved: "modules/mentra-barcode-scanner", link: true}}
+  writeFileSync(path.join(root, "package-lock.json"), JSON.stringify({packages: lock}))
+  assert.deepEqual(verifyExternalEngineInstall({fixtureDir: root, plan}), expectedClosure)
+  // A Mentra package the host neither declares locally nor gets from Engine is still refused.
+  writeFileSync(path.join(root, "package-lock.json"), JSON.stringify({packages: {...lock, "node_modules/@mentra/other": registry("1.0.0")}}))
+  assert.throws(() => verifyExternalEngineInstall({fixtureDir: root, plan}), /Unexpected Mentra packages in external fixture: @mentra\/other/)
+})
