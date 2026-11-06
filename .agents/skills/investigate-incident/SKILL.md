@@ -89,6 +89,13 @@ module's `AGENTS.md` before editing. BES firmware belongs to `mentra-live-bes`;
 follow its guidance and OTA gates if a fix belongs there. Do not assume every
 incident needs a mobile or cloud patch.
 
+When the incident happens on a device, reproduce it on the lab before fixing
+it, as the testing runner's README ("Reproduce a bug") describes: replay a
+routine into the state where it happens with `bun lab run <routine> --steps
+<first>..<last> --goal "Reproduce <the bug>"`, keep the draft as a repro
+routine, measure how often it happens with `--repeat 20`, and give that rate
+before and after the fix (`--pr <fix>`, or `--bes` for firmware) in the PR.
+
 When a fix is supported by the evidence, add focused regression coverage and
 follow the repository's PR workflow if a PR was requested. Include the report
 ID, source Slack link, findings, validation, and any required device checks.
