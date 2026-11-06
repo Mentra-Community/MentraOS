@@ -10,7 +10,7 @@ import sys
 import tempfile
 import zipfile
 
-from artifacts import BUNDLE_ID, HERE, digest, read_profile, run, signer_certificate, unsigned_executable_bytes, validate_profile
+from artifacts import APP, BUNDLE_ID, HERE, digest, read_profile, run, signer_certificate, unsigned_executable_bytes, validate_profile
 sys.path.insert(0, str(HERE.parents[2] / '.github/scripts'))
 from pr_mobile_config import read_build, packaged_config, build_info
 
@@ -35,7 +35,7 @@ def unpack(ipa, root):
 def read_app(app, fingerprint):
     info = plistlib.loads((app / 'Info.plist').read_bytes())
     if info.get('CFBundleIdentifier') != BUNDLE_ID or 'iPhoneOS' not in info.get('CFBundleSupportedPlatforms', []):
-        raise ValueError('Expected the Mentra iOS device app')
+        raise ValueError(f'Expected the {APP["name"]} iOS device app')
     executable = info['CFBundleExecutable']
     if Path(executable).name != executable:
         raise ValueError('Invalid executable name')

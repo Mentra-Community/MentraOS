@@ -70,3 +70,33 @@ for (const withAcs of [false, true]) {
     }
   })
 }
+
+test('CI pins the version and build number, and a PR build carries its packaging contract', (t) => {
+  const names = ['MENTRAOS_PINNED_BUILD_NUMBER', 'MENTRAOS_NATIVE_MARKETING_VERSION', 'MENTRA_PR_MOBILE_FINGERPRINT', 'MENTRA_PR_BUILD_SHA']
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]))
+  t.after(() => {
+    for (const name of names) {
+      if (previous[name] === undefined) delete process.env[name]
+      else process.env[name] = previous[name]
+    }
+  })
+  const {configure} = fixture(t, {})
+  const config = {android: {package: 'com.mentra.example'}, ios: {bundleIdentifier: 'com.mentra.example'}, extra: {a: 1}}
+  for (const name of names) delete process.env[name]
+  assert.equal(configure({config}), config)
+  Object.assign(process.env, {
+    MENTRAOS_PINNED_BUILD_NUMBER: '302010042',
+    MENTRAOS_NATIVE_MARKETING_VERSION: '3.5.0',
+    MENTRA_PR_MOBILE_FINGERPRINT: 'f'.repeat(64),
+    MENTRA_PR_BUILD_SHA: 'a'.repeat(40),
+  })
+  assert.deepEqual(configure({config}), {
+    version: '3.5.0',
+    android: {package: 'com.mentra.example', versionCode: 302010042},
+    ios: {bundleIdentifier: 'com.mentra.example', buildNumber: '302010042'},
+    extra: {
+      a: 1,
+      mentraPrBuild: {schemaVersion: 1, mobileFingerprint: 'f'.repeat(64), mobileSourceCommit: 'a'.repeat(40), otaManifestUrl: ''},
+    },
+  })
+})

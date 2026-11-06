@@ -15,8 +15,9 @@ import subprocess
 import tempfile
 import zipfile
 from mac_installer import DEVELOPER_ID_REQUIREMENT, package_installer
+from pr_apps import APP
 
-BUNDLE_ID = "com.mentra.mentra"
+BUNDLE_ID = APP["bundleId"]
 PROFILE_NAME = f"match AdHoc {BUNDLE_ID}"
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[2] / ".github/scripts"))
@@ -67,7 +68,7 @@ def validate_profile(profile, now=None):
             or profile.get("ProvisionsAllDevices")
             or entitlements.get("get-task-allow") is not False
             or entitlements.get("application-identifier") != f"{team}.{BUNDLE_ID}"):
-        raise ValueError("Expected an unexpired ad hoc profile for com.mentra.mentra with registered devices")
+        raise ValueError(f"Expected an unexpired ad hoc profile for {BUNDLE_ID} with registered devices")
     return team
 
 
@@ -163,9 +164,9 @@ def probe_signing(output, keychain, framework=None):
 
 
 def configure(output, keychain):
-    encoded = os.environ.get("IOS_PR_PROFILE_BASE64")
+    encoded = os.environ.get(APP["profile"])
     if not encoded:
-        raise ValueError("Missing IOS_PR_PROFILE_BASE64 Actions secret; upload the registered-device ad hoc profile first")
+        raise ValueError(f"Missing {APP['profile']} secret; upload the registered-device ad hoc profile first")
     output.mkdir(parents=True, exist_ok=True)
     file = output / "PR.mobileprovision"
     file.write_bytes(base64.b64decode(encoded, validate=True))
@@ -251,7 +252,7 @@ def package(ipa, output, mac_signing):
         app = apps[0]
         info = plistlib.loads((app / "Info.plist").read_bytes())
         if info["CFBundleIdentifier"] != BUNDLE_ID or "iPhoneOS" not in info["CFBundleSupportedPlatforms"]:
-            raise ValueError("IPA is not the Mentra iOS device app")
+            raise ValueError(f"IPA is not the {APP['name']} iOS device app")
         run("codesign", "--verify", "--deep", "--strict", app)
         run("codesign", "--verify", "-R", "=anchor apple generic", app)
         profile = read_profile(app / "embedded.mobileprovision")
@@ -262,27 +263,27 @@ def package(ipa, output, mac_signing):
         if executable.parent != app:
             raise ValueError("Invalid executable name")
         backend = packaged_backend(compilation, os.environ)
-        manifest = {**context, "bundleId": BUNDLE_ID, "app": "Mentra.app", "backend": backend, "otaManifestUrl": ota_url,
-                    "macPackageVersion": 2, "macInstaller": "Install Mentra.app",
+        manifest = {**context, "bundleId": BUNDLE_ID, "app": APP["product"], "backend": backend, "otaManifestUrl": ota_url,
+                    "macPackageVersion": 2, "macInstaller": APP["installer"],
                     "mobileFingerprint": compilation["mobileFingerprint"],
                     "mobileSourceCommit": compilation["mobileSourceCommit"],
                     "reusedCompilation": os.environ.get("PR_IOS_REUSED") == "true",
                     "version": info["CFBundleShortVersionString"], "build": info["CFBundleVersion"],
                     "executableSha256": digest(executable), "javascriptSha256": digest(app / "main.jsbundle"),
                     "profileUUID": profile["UUID"], "profileExpires": profile["ExpirationDate"].isoformat(), "teamId": team}
-        mac = root / "Mentra PR"
+        mac = root / APP["folder"]
         mac.mkdir()
-        run("ditto", app, mac / "Mentra.app")
+        run("ditto", app, mac / APP["product"])
         (mac / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")
         installer = package_installer(mac, manifest, mac_signing, output.parent / "mac-installer-diagnostics")
         shutil.copy2(HERE / "README.md", mac / "README.md")
-        files = {"iphone": f"mentra-ios-iphone-{suffix}.ipa", "mac": f"mentra-ios-mac-{suffix}.zip"}
+        files = {"iphone": f"{APP['prefix']}-ios-iphone-{suffix}.ipa", "mac": f"{APP['prefix']}-ios-mac-{suffix}.zip"}
         shutil.copy2(ipa, output / files["iphone"])
         run("ditto", "-c", "-k", "--keepParent", mac, output / files["mac"])
         # Verify the delivered Mac ZIP, not only the source staging directory.
         run("ditto", "-x", "-k", output / files["mac"], root / "verify")
-        delivered = root / "verify/Mentra PR/Mentra.app"
-        delivered_installer = root / "verify/Mentra PR/Install Mentra.app"
+        delivered = root / "verify" / APP["folder"] / APP["product"]
+        delivered_installer = root / "verify" / APP["folder"] / APP["installer"]
         run("codesign", "--verify", "--deep", "--strict", "-R", DEVELOPER_ID_REQUIREMENT, delivered_installer)
         run("xcrun", "stapler", "validate", delivered_installer)
         if (delivered_installer / "Contents/Resources/build.json").read_bytes() != (mac / "build.json").read_bytes():
@@ -294,7 +295,7 @@ def package(ipa, output, mac_signing):
         receipt = {"schemaVersion": 1, **context, "app": manifest, "macInstaller": installer,
                    "artifacts": {kind: {"name": name, "size": (output / name).stat().st_size,
                                         "sha256": digest(output / name)} for kind, name in files.items()}}
-        (output / f"mentra-ios-{suffix}.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        (output / f"{APP['prefix']}-ios-{suffix}.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
 
 if __name__ == "__main__":

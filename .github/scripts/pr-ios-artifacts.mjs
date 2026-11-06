@@ -4,11 +4,12 @@ import {readFile, stat, writeFile} from "node:fs/promises"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {PR_BUILD_REPOSITORIES} from "./pr-android-artifacts.mjs"
-import {packagingFingerprint} from "./pr-mobile-build.mjs"
+import {packagingFingerprint, prApp} from "./pr-mobile-build.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 import {iosInstallationFiles} from "./pr-ios-artifacts-install.mjs"
 
-export function iosReceiptName(pr, sha, runId, attempt) {
+/** `app` is a key of PR_APPS (pr-mobile-build.mjs). */
+export function iosReceiptName(pr, sha, runId, attempt, app = "mentra") {
   if (
     !Number.isSafeInteger(pr) ||
     pr <= 0 ||
@@ -19,12 +20,13 @@ export function iosReceiptName(pr, sha, runId, attempt) {
     attempt <= 0
   )
     throw new Error("Invalid iOS publication coordinates")
-  return `mentra-ios-pr-${pr}-${sha}-${runId}-${attempt}.json`
+  return `${prApp(app).prefix}-ios-pr-${pr}-${sha}-${runId}-${attempt}.json`
 }
 
 /** A receipt with `reusedFrom` republishes that earlier head's unchanged publication for this head. */
-export function validateIosReceipt(receipt, {pr, sha, runId, attempt}) {
-  iosReceiptName(pr, sha, runId, attempt)
+export function validateIosReceipt(receipt, {pr, sha, runId, attempt, app = "mentra"}) {
+  const {prefix, macInstaller} = prApp(app)
+  iosReceiptName(pr, sha, runId, attempt, app)
   const source = receipt.reusedFrom
   const keys = Object.keys(source ?? {}).filter((key) => key !== "buildAttempt").sort().join()
   if (
@@ -52,8 +54,8 @@ export function validateIosReceipt(receipt, {pr, sha, runId, attempt}) {
   if (receipt.app?.macPackageVersion === 2) {
     const installer = receipt.macInstaller
     if (
-      receipt.app.macInstaller !== "Install Mentra.app" ||
-      installer?.bundleId !== "com.mentra.mac-installer" ||
+      receipt.app.macInstaller !== macInstaller.name ||
+      installer?.bundleId !== macInstaller.bundleId ||
       installer.teamId !== "T5XXXL6N36" ||
       installer.notarizationStatus !== "Accepted" ||
       installer.stapled !== true ||
@@ -62,9 +64,9 @@ export function validateIosReceipt(receipt, {pr, sha, runId, attempt}) {
       throw new Error("Mac package is missing verified installer notarization")
   }
   const sourceName = source
-    ? iosReceiptName(pr, source.headSha, source.runId, source.buildAttempt ?? source.runAttempt)
-    : iosReceiptName(pr, sha, runId, receipt.buildAttempt ?? receipt.runAttempt)
-  const suffix = sourceName.slice("mentra-ios-".length, -".json".length)
+    ? iosReceiptName(pr, source.headSha, source.runId, source.buildAttempt ?? source.runAttempt, app)
+    : iosReceiptName(pr, sha, runId, receipt.buildAttempt ?? receipt.runAttempt, app)
+  const suffix = sourceName.slice(`${prefix}-ios-`.length, -".json".length)
   const kinds =
     receipt.schemaVersion === 2
       ? [
@@ -90,7 +92,7 @@ export function validateIosReceipt(receipt, {pr, sha, runId, attempt}) {
   for (const [kind, ext] of kinds) {
     const asset = receipt.artifacts?.[kind]
     if (
-      asset?.name !== `mentra-ios-${kind}-${suffix}.${ext}` ||
+      asset?.name !== `${prefix}-ios-${kind}-${suffix}.${ext}` ||
       !/^[a-f0-9]{64}$/.test(asset.sha256) ||
       !Number.isSafeInteger(asset.size) ||
       asset.size <= 0
@@ -106,8 +108,9 @@ export async function publishIosArtifacts(directory, env = process.env, {exec = 
     sha: env.PR_HEAD_SHA,
     runId: Number(env.SOURCE_RUN_ID),
     attempt: Number(env.SOURCE_RUN_ATTEMPT),
+    app: env.MENTRA_PR_APP || "mentra",
   }
-  let receiptName = iosReceiptName(coordinates.pr, coordinates.sha, coordinates.runId, coordinates.attempt)
+  let receiptName = iosReceiptName(coordinates.pr, coordinates.sha, coordinates.runId, coordinates.attempt, coordinates.app)
   const receipt = JSON.parse(await readFile(path.join(directory, receiptName), "utf8"))
   const assets = validateIosReceipt(receipt, coordinates)
   const repository = env.GITHUB_REPOSITORY
@@ -128,8 +131,8 @@ export async function publishIosArtifacts(directory, env = process.env, {exec = 
   // receipt for this publication attempt so the notifier cannot pick an old run.
   receipt.buildAttempt = coordinates.attempt
   receipt.runAttempt = Number(env.GITHUB_RUN_ATTEMPT)
-  receiptName = iosReceiptName(coordinates.pr, coordinates.sha, coordinates.runId, receipt.runAttempt)
-  for (const [kind, {name, content}] of Object.entries(iosInstallationFiles(receipt, repository))) {
+  receiptName = iosReceiptName(coordinates.pr, coordinates.sha, coordinates.runId, receipt.runAttempt, coordinates.app)
+  for (const [kind, {name, content}] of Object.entries(iosInstallationFiles(receipt, repository, undefined, coordinates.app))) {
     await writeFile(path.join(directory, name), content)
     assets[kind] = {name, size: Buffer.byteLength(content), sha256: createHash("sha256").update(content).digest("hex")}
   }

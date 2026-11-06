@@ -22,7 +22,7 @@ struct InstallerOptions {
             case "--retained": options.retained = true
             case "--request":
                 guard let value = arguments.next(), let url = URL(string: value) else {
-                    throw InstallerError.invalid("--request requires a Mentra PR installation link.")
+                    throw InstallerError.invalid("--request requires a \(PRApp.name) PR installation link.")
                 }
                 _ = try InstallRequest(url: url)
                 options.requests.append(url)
@@ -45,7 +45,7 @@ func quitMentraNormally() async throws {
     let existing = NSRunningApplication.runningApplications(withBundleIdentifier: BuildManifest.bundleID)
     for application in existing where !application.isTerminated {
         guard application.terminate() else {
-            throw InstallerError.invalid("Mentra did not accept a normal quit request. Close Mentra yourself and try Install again. No app was force-quit.")
+            throw InstallerError.invalid("\(PRApp.name) did not accept a normal quit request. Close \(PRApp.name) yourself and try Install again. No app was force-quit.")
         }
     }
     let deadline = Date().addingTimeInterval(10)
@@ -53,7 +53,7 @@ func quitMentraNormally() async throws {
         try await Task.sleep(for: .milliseconds(100))
     }
     guard existing.allSatisfy(\.isTerminated) else {
-        throw InstallerError.invalid("Mentra is still closing. Close it yourself and try Install again. Your current installation has not been replaced.")
+        throw InstallerError.invalid("\(PRApp.name) is still closing. Close it yourself and try Install again. Your current installation has not been replaced.")
     }
 }
 
@@ -79,7 +79,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
     private var activeRequest: URL?
     private var persistentSession: Bool
     private var window: NSWindow?
-    private let titleLabel = NSTextField(labelWithString: "Install Mentra")
+    private let titleLabel = NSTextField(labelWithString: "Install \(PRApp.name)")
     private let buildLabel = NSTextField(wrappingLabelWithString: "")
     private let statusLabel = NSTextField(wrappingLabelWithString: "Checking the downloaded build…")
     private let chooseButton = NSButton(title: "Choose Folder…", target: nil, action: nil)
@@ -137,7 +137,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
                 if InstallerFiles.exists(sibling.appendingPathComponent("build.json")) {
                     await validate(sibling)
                 } else {
-                    statusLabel.stringValue = "Choose the extracted Mentra PR folder to verify this build. macOS can open this installer separately from the other files in your download."
+                    statusLabel.stringValue = "Choose the extracted \(PRApp.name) PR folder to verify this build. macOS can open this installer separately from the other files in your download."
                     chooseFolder()
                 }
             } catch {
@@ -146,7 +146,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
                     exit(1)
                 }
                 let alert = NSAlert()
-                alert.messageText = "Cannot open the Mentra installer"
+                alert.messageText = "Cannot open the \(PRApp.name) installer"
                 alert.informativeText = error.localizedDescription
                 alert.alertStyle = .warning
                 alert.runModal()
@@ -158,13 +158,13 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
     private func makeWindow(manifest: BuildManifest?, show: Bool) {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 550, height: 360),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-        window.title = "Install Mentra"
+        window.title = "Install \(PRApp.name)"
         window.isReleasedWhenClosed = false
         titleLabel.font = .systemFont(ofSize: 24, weight: .semibold)
         buildLabel.stringValue = manifest?.summary ?? "Ready for #pr-builds links"
         buildLabel.font = .systemFont(ofSize: 14, weight: .medium)
         statusLabel.isSelectable = true
-        let explanation = NSTextField(wrappingLabelWithString: "Keeps one Mentra App in ~/Applications/Mentra E2E and preserves its data. First-time setup also retains this installer in ~/Applications for future PR links. macOS may ask for developer trust or Bluetooth the first time.")
+        let explanation = NSTextField(wrappingLabelWithString: "Keeps one \(PRApp.name) App in ~/Applications/\(PRApp.name) E2E and preserves its data. First-time setup also retains this installer in ~/Applications for future PR links. macOS may ask for developer trust or Bluetooth the first time.")
         explanation.textColor = .secondaryLabelColor
         chooseButton.target = self
         chooseButton.action = #selector(chooseFolder)
@@ -201,8 +201,8 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
     @objc private func chooseFolder() {
         guard let window else { return }
         let panel = NSOpenPanel()
-        panel.title = "Choose the Mentra PR folder you downloaded"
-        panel.message = "Select the extracted folder containing Install Mentra.app, Mentra.app and build.json."
+        panel.title = "Choose the \(PRApp.name) PR folder you downloaded"
+        panel.message = "Select the extracted folder containing \(PRApp.installer), \(PRApp.product) and build.json."
         panel.prompt = "Choose"
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -276,7 +276,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
     private func installCandidate(_ candidate: VerifiedBuild) async throws {
         setReplacing(true)
         defer { setReplacing(false) }
-        statusLabel.stringValue = "Installing Mentra and preserving your app data…"
+        statusLabel.stringValue = "Installing \(PRApp.name) and preserving your app data…"
         installed = try await Task.detached {
             try await install(candidate, quit: { try await quitMentraNormally() }, launch: { destination in
                 await self.finishOpening(destination)
@@ -298,11 +298,11 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
     /// Returns the opened Mentra's PID, or nil when macOS did not open it.
     private func finishOpening(_ destination: URL) async -> pid_t? {
         installed = destination
-        installButton.title = "Open Mentra"
-        statusLabel.stringValue = "Mentra is installed. Approve any macOS developer trust or Bluetooth request to finish first-time setup."
+        installButton.title = "Open \(PRApp.name)"
+        statusLabel.stringValue = "\(PRApp.name) is installed. Approve any macOS developer trust or Bluetooth request to finish first-time setup."
         do { return try await openMentra(destination) }
         catch {
-            statusLabel.stringValue = "Mentra is installed, but macOS did not open it. \(error.localizedDescription) You can finish first-time setup and click Open Mentra again."
+            statusLabel.stringValue = "\(PRApp.name) is installed, but macOS did not open it. \(error.localizedDescription) You can finish first-time setup and click Open \(PRApp.name) again."
             return nil
         }
     }
@@ -331,7 +331,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
             if initialized { processNextRequest() }
         } catch {
             let alert = NSAlert()
-            alert.messageText = "Cannot open this Mentra PR link"
+            alert.messageText = "Cannot open this \(PRApp.name) PR link"
             alert.informativeText = error.localizedDescription
             alert.runModal()
         }
@@ -404,19 +404,19 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
             // then target the running app's public URL instead of guessing its
             // physical location or starting another copy behind a macOS prompt.
             guard application.isFinishedLaunching, let bundle = application.bundleURL else {
-                throw InstallerError.invalid("Another Mentra installer is still starting. Finish its macOS setup prompt, or quit it, before trying the link again.")
+                throw InstallerError.invalid("Another \(PRApp.name) installer is still starting. Finish its macOS setup prompt, or quit it, before trying the link again.")
             }
             guard let resolved = realpath(bundle.path, nil) else {
-                throw InstallerError.invalid("Cannot verify the running Mentra installer. Quit it before trying this link again.")
+                throw InstallerError.invalid("Cannot verify the running \(PRApp.name) installer. Quit it before trying this link again.")
             }
             let canonical = URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
             free(resolved)
             guard try InstallerHost.verify(canonical) == ownedHash else {
-                throw InstallerError.invalid("A different Mentra installer is already running. Quit it before continuing.")
+                throw InstallerError.invalid("A different \(PRApp.name) installer is already running. Quit it before continuing.")
             }
             matches.append(application)
         }
-        guard matches.count <= 1 else { throw InstallerError.invalid("More than one Mentra installer is running. Quit the extra copies before trying this link again.") }
+        guard matches.count <= 1 else { throw InstallerError.invalid("More than one \(PRApp.name) installer is running. Quit the extra copies before trying this link again.") }
         let existing = matches.first
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = !requests.isEmpty
@@ -448,7 +448,7 @@ struct MentraInstaller {
     @MainActor
     static func main() {
         if CommandLine.arguments.dropFirst().contains("--help") {
-            print("Open Install Mentra.app, or run its Contents/MacOS/Installer --package /absolute/directory [--verify-only | --no-launch].")
+            print("Open \(PRApp.installer), or run its Contents/MacOS/Installer --package /absolute/directory [--verify-only | --no-launch].")
             return
         }
         do {
@@ -458,8 +458,8 @@ struct MentraInstaller {
             if options.package == nil {
                 let menu = NSMenu()
                 let applicationItem = NSMenuItem()
-                let applicationMenu = NSMenu(title: "Install Mentra")
-                let quitItem = NSMenuItem(title: "Quit Install Mentra", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+                let applicationMenu = NSMenu(title: "Install \(PRApp.name)")
+                let quitItem = NSMenuItem(title: "Quit Install \(PRApp.name)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
                 quitItem.target = app
                 applicationMenu.addItem(quitItem)
                 applicationItem.submenu = applicationMenu

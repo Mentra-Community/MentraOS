@@ -12,6 +12,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 import mac_installer as installer
+from pr_apps import pr_app
 
 
 class SecretResponse(io.BytesIO):
@@ -255,6 +256,26 @@ class MacInstallerPackagingTests(unittest.TestCase):
         self.assertEqual(info["CFBundleURLTypes"][0]["CFBundleURLSchemes"], ["mentra-install"])
         self.assertTrue(info["LSFileQuarantineEnabled"])
         self.assertTrue(any("swiftc" in call.args for call in command.call_args_list))
+
+    def test_example_app_gets_its_own_installer(self):
+        example = pr_app({"MENTRA_PR_APP": "example"})
+        self.assertEqual((example["folder"], example["installer"], example["product"]),
+                         ("Mentra Example PR", "Install Mentra Example.app", "MentraSDKRN.app"))
+        self.assertEqual(installer.installer_defines({"GITHUB_REPOSITORY": "Mentra-Community/Mentra"}, example),
+                         ["-D", "MENTRA_MONOREPO", "-D", "MENTRA_EXAMPLE"])
+        package = self.root / example["folder"]
+        package.mkdir()
+        manifest = {"build": "302015703", "macPackageVersion": 2}
+        (package / "build.json").write_text(json.dumps(manifest))
+        with patch.object(installer, "APP", example), patch.object(installer, "run") as command:
+            app = installer.create_app(package, manifest)
+        self.assertEqual(app.name, "Install Mentra Example.app")
+        info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+        self.assertEqual(info["CFBundleIdentifier"], "com.mentra.mac-installer.example")
+        self.assertEqual(info["CFBundleURLTypes"][0]["CFBundleURLSchemes"], ["mentra-example-install"])
+        icon = next(call.args[4] for call in command.call_args_list if call.args[0] == "sips")
+        self.assertEqual(icon, Path(installer.HERE).parents[2] / "examples/bluetooth/react-native/assets/app-icon.png")
+        self.assertTrue(icon.exists())
 
     def notarization(self, status):
         commands = []

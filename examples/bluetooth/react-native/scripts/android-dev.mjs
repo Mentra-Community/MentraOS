@@ -7,7 +7,7 @@ import {expoDeviceName, resolveAndroidPhoneTarget} from "./resolve-android-phone
 const port = Number(process.env.EXPO_DEV_SERVER_PORT || process.env.RCT_METRO_PORT || 8081)
 const metroHost = process.env.EXPO_DEV_SERVER_HOST || "localhost"
 const scheme = process.env.EXPO_DEV_CLIENT_SCHEME || "exp+mentra-sdk-rn-example"
-const appId = process.env.EXPO_ANDROID_APP_ID || "com.mentra.bluetoothsdk.example.reactnative"
+const appId = process.env.EXPO_ANDROID_APP_ID || "com.mentra.bluetoothsdkexample"
 const metroUrl = `http://${metroHost}:${port}`
 const devClientUrl = `${scheme}://expo-development-client/?url=${encodeURIComponent(metroUrl)}`
 
@@ -27,7 +27,7 @@ Environment overrides:
   EXPO_DEV_SERVER_PORT       Metro port. Defaults to 8081.
   EXPO_DEV_SERVER_HOST       Metro host in the dev-client URL. Defaults to localhost.
   EXPO_DEV_CLIENT_SCHEME     Dev-client scheme. Defaults to exp+mentra-sdk-rn-example.
-  EXPO_ANDROID_APP_ID        Android app id. Defaults to com.mentra.bluetoothsdk.example.reactnative.
+  EXPO_ANDROID_APP_ID        Android app id. Defaults to com.mentra.bluetoothsdkexample.
   ANDROID_SERIAL             Force a specific phone serial when multiple phones are connected.
   ALLOW_MENTRA_LIVE=1        Allow targeting Mentra Live (not recommended for this example).
 `)

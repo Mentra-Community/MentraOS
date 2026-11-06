@@ -13,8 +13,32 @@ enum InstallerError: LocalizedError {
     }
 }
 
-struct BuildManifest {
+/// The app this installer installs, fixed at compile time: mac_installer.py
+/// defines MENTRA_EXAMPLE for the Bluetooth example app (pr_apps.py, PR_APPS in
+/// .github/scripts/pr-mobile-build.mjs).
+enum PRApp {
+#if MENTRA_EXAMPLE
+    static let bundleID = "com.mentra.bluetoothsdkexample"
+    static let name = "Mentra Example"
+    static let product = "MentraSDKRN.app"
+    static let prefix = "mentra-example"
+    static let installerID = "com.mentra.mac-installer.example"
+    static let scheme = "mentra-example-install"
+#else
     static let bundleID = "com.mentra.mentra"
+    static let name = "Mentra"
+    static let product = "Mentra.app"
+    static let prefix = "mentra"
+    static let installerID = "com.mentra.mac-installer"
+    static let scheme = "mentra-install"
+#endif
+    /// The Mac package's folder and the installer inside it.
+    static let folder = "\(name) PR"
+    static let installer = "Install \(name).app"
+}
+
+struct BuildManifest {
+    static let bundleID = PRApp.bundleID
     static let teamID = "T5XXXL6N36"
     let data: Data
     let pr: Int
@@ -29,11 +53,11 @@ struct BuildManifest {
 
     init(data: Data, expected: Data? = nil) throws {
         if let expected, data != expected {
-            throw InstallerError.invalid("This folder belongs to a different build. Choose the folder containing this Install Mentra app and its original build.json.")
+            throw InstallerError.invalid("This folder belongs to a different build. Choose the folder containing this \(PRApp.installer) and its original build.json.")
         }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Self.supportedPackage(json),
-              json["app"] as? String == "Mentra.app",
+              json["app"] as? String == PRApp.product,
               json["bundleId"] as? String == Self.bundleID,
               json["teamId"] as? String == Self.teamID,
               json["archivePath"] == nil,
@@ -46,7 +70,7 @@ struct BuildManifest {
               let profileUUID = json["profileUUID"] as? String, UUID(uuidString: profileUUID) != nil,
               let expiration = json["profileExpires"] as? String,
               let profileExpires = Self.date(expiration)
-        else { throw InstallerError.invalid("The package does not contain a valid Mentra Mac build manifest. Download a fresh Mac ZIP from #pr-builds.") }
+        else { throw InstallerError.invalid("The package does not contain a valid \(PRApp.name) Mac build manifest. Download a fresh Mac ZIP from #pr-builds.") }
         self.data = data
         self.pr = pr
         headSHA = head
@@ -60,7 +84,7 @@ struct BuildManifest {
     }
 
     var summary: String {
-        "PR #\(pr) · \(headSHA.prefix(8))\nMentra \(version) (\(build))"
+        "PR #\(pr) · \(headSHA.prefix(8))\n\(PRApp.name) \(version) (\(build))"
     }
 
     private static func hex(_ value: String, length: Int) -> Bool {
@@ -76,7 +100,7 @@ struct BuildManifest {
                 && json["launcherPath"] as? String == "launch-ios-on-mac"
                 && (json["launcherSha256"] as? String).map { hex($0, length: 64) } == true
         case 2:
-            return json["macInstaller"] as? String == "Install Mentra.app"
+            return json["macInstaller"] as? String == PRApp.installer
                 && json["launcherPath"] == nil && json["launcherSha256"] == nil
         default: return false
         }
@@ -188,7 +212,7 @@ enum InstallerFiles {
         }
         let marker = try dictionary(read(root.appendingPathComponent("owner.json")))
         guard marker["owner"] as? String == owner, marker["bundleId"] as? String == bundleID else {
-            throw InstallerError.invalid("This installation directory is not owned by the Mentra installer: \(root.path)")
+            throw InstallerError.invalid("This installation directory is not owned by the \(PRApp.name) installer: \(root.path)")
         }
     }
 
@@ -202,8 +226,8 @@ enum InstallerFiles {
     static func commit(root: URL, staging: URL, lock: URL,
                        move: (URL, URL) throws -> Void = InstallerFiles.move) throws
     {
-        let destination = root.appendingPathComponent("Mentra.app")
-        let wrapper = staging.appendingPathComponent("Mentra.app")
+        let destination = root.appendingPathComponent(PRApp.product)
+        let wrapper = staging.appendingPathComponent(PRApp.product)
         let previous = lock.appendingPathComponent("previous.app")
         for directory in [root, staging, lock, wrapper] {
             try requirePath(directory, directory: true)
@@ -284,7 +308,7 @@ func validateProfile(_ profile: [String: Any], manifest: BuildManifest, deviceID
           profile["ProvisionsAllDevices"] as? Bool != true,
           entitlements?["application-identifier"] as? String == "\(BuildManifest.teamID).\(BuildManifest.bundleID)",
           entitlements?["get-task-allow"] as? Bool == false
-    else { throw InstallerError.invalid("The app's provisioning profile does not match this Mentra build.") }
+    else { throw InstallerError.invalid("The app's provisioning profile does not match this \(PRApp.name) build.") }
     guard !deviceID.isEmpty, (profile["ProvisionedDevices"] as? [String])?.contains(deviceID) == true else {
         throw InstallerError.invalid("This Mac is not registered for this build. Ask the release maintainer to register provisioning UDID \(deviceID.isEmpty ? "(unavailable)" : deviceID) and publish a fresh Mac ZIP.")
     }
@@ -320,7 +344,7 @@ func verifyProvisioning(_ app: URL, manifest: BuildManifest) throws {
 func verifyPackage(_ directory: URL, expected: Data) throws -> VerifiedBuild {
     try InstallerFiles.requirePath(directory, directory: true)
     let manifest = try BuildManifest(data: InstallerFiles.read(directory.appendingPathComponent("build.json")), expected: expected)
-    let app = directory.appendingPathComponent("Mentra.app")
+    let app = directory.appendingPathComponent(PRApp.product)
     let requirement = try verifySignedApp(app, manifest: InstallerFiles.dictionary(manifest.data))
     try verifyProvisioning(app, manifest: manifest)
     return VerifiedBuild(directory: directory, manifest: manifest, codeRequirement: requirement)
@@ -339,7 +363,7 @@ final class AppOwnershipLease {
         let folder = homeDirectory.appendingPathComponent(".cache/mentra-e2e")
         try InstallerFiles.manager.createDirectory(at: folder, withIntermediateDirectories: true)
         try InstallerFiles.requirePath(folder, directory: true)
-        path = folder.appendingPathComponent("com.mentra.mentra.lock")
+        path = folder.appendingPathComponent("\(PRApp.bundleID).lock")
         let guardPath = path.path + ".reclaim"
         guard Darwin.mkdir(guardPath, 0o700) == 0 else {
             throw InstallerError.invalid("Another app owner is acquiring the lock; stop all runs before recovering \(guardPath).")
@@ -359,12 +383,12 @@ final class AppOwnershipLease {
         // ever reclaimed here. The record is written privately and renamed over the app's lease, so readers see one
         // owner or the other, never an absent lock; on any failure the app keeps its lease untouched.
         guard errno == EEXIST, let launched = Self.launchedAppPID(path) else {
-            throw InstallerError.invalid("Mentra is owned by a test or installation. Finish it or recover its retained lease before installing: \(path.path).")
+            throw InstallerError.invalid("\(PRApp.name) is owned by a test or installation. Finish it or recover its retained lease before installing: \(path.path).")
         }
         let next = path.path + ".\(token).takeover"
         let temporary = Darwin.open(next, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         guard temporary >= 0 else {
-            throw InstallerError.invalid("Cannot take over Mentra's app lock at \(path.path); it is unchanged.")
+            throw InstallerError.invalid("Cannot take over \(PRApp.name)'s app lock at \(path.path); it is unchanged.")
         }
         do {
             let file = FileHandle(fileDescriptor: temporary, closeOnDealloc: true)
@@ -374,7 +398,7 @@ final class AppOwnershipLease {
             guard Darwin.rename(next, path.path) == 0 else { throw InstallerError.invalid("rename failed") }
         } catch {
             Darwin.unlink(next)
-            throw InstallerError.invalid("Cannot take over Mentra's app lock at \(path.path); it is unchanged.")
+            throw InstallerError.invalid("Cannot take over \(PRApp.name)'s app lock at \(path.path); it is unchanged.")
         }
         adopted = launched
     }
@@ -396,20 +420,20 @@ final class AppOwnershipLease {
     /// the installer's retained lease for explicit recovery.
     func handOff(to pid: pid_t) throws {
         guard pid > 0, pid != getpid() else {
-            throw InstallerError.recovery("Mentra opened without an identifiable process. The app lease is retained at \(path.path).")
+            throw InstallerError.recovery("\(PRApp.name) opened without an identifiable process. The app lease is retained at \(path.path).")
         }
         let guardPath = path.path + ".reclaim"
         guard Darwin.mkdir(guardPath, 0o700) == 0 else {
-            throw InstallerError.recovery("Another app owner is acquiring the lock during Mentra's hand-off; the lease is retained at \(path.path).")
+            throw InstallerError.recovery("Another app owner is acquiring the lock during \(PRApp.name)'s hand-off; the lease is retained at \(path.path).")
         }
         defer { Darwin.rmdir(guardPath) }
         let owner = try InstallerFiles.dictionary(InstallerFiles.read(path))
         guard owner["token"] as? String == token, owner["pid"] as? Int == Int(getpid()) else {
-            throw InstallerError.recovery("The app lock changed before its hand-off to Mentra: \(path.path).")
+            throw InstallerError.recovery("The app lock changed before its hand-off to \(PRApp.name): \(path.path).")
         }
         let next = path.path + ".\(token).handoff"
         let descriptor = Darwin.open(next, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
-        guard descriptor >= 0 else { throw InstallerError.recovery("Cannot hand the app lease to Mentra; it is retained at \(path.path).") }
+        guard descriptor >= 0 else { throw InstallerError.recovery("Cannot hand the app lease to \(PRApp.name); it is retained at \(path.path).") }
         let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         do {
             try file.write(contentsOf: JSONSerialization.data(withJSONObject: ["pid": Int(pid), "token": token, "launchedApp": true]))
@@ -418,7 +442,7 @@ final class AppOwnershipLease {
             guard Darwin.rename(next, path.path) == 0 else { throw InstallerError.invalid("rename failed") }
         } catch {
             Darwin.unlink(next)
-            throw InstallerError.recovery("Cannot hand the app lease to Mentra; it is retained at \(path.path).")
+            throw InstallerError.recovery("Cannot hand the app lease to \(PRApp.name); it is retained at \(path.path).")
         }
         released = true
     }
@@ -481,7 +505,7 @@ func withAppOwnership<T>(homeDirectory: URL = FileManager.default.homeDirectoryF
     let result: T
     do {
         if opensApp, let held = try heldGlassesLeases(homeDirectory: homeDirectory).first {
-            throw InstallerError.invalid("Physical glasses are held by a test (\(held)). Finish or recover it before opening Mentra, or install with --no-launch.")
+            throw InstallerError.invalid("Physical glasses are held by a test (\(held)). Finish or recover it before opening \(PRApp.name), or install with --no-launch.")
         }
         result = try await operation(lease)
     }
@@ -506,7 +530,7 @@ func install(_ verified: VerifiedBuild, homeDirectory: URL = FileManager.default
 private func installOwned(_ verified: VerifiedBuild, homeDirectory: URL, lease: AppOwnershipLease,
                           quit: () async throws -> Void, launch: (URL) async throws -> pid_t?) async throws -> URL
 {
-    let root = homeDirectory.appendingPathComponent("Applications/Mentra E2E")
+    let root = homeDirectory.appendingPathComponent("Applications/\(PRApp.name) E2E")
     try InstallerFiles.claim(root)
     let lock = root.appendingPathComponent(".install-lock")
     do { try InstallerFiles.manager.createDirectory(at: lock, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
@@ -523,19 +547,19 @@ private func installOwned(_ verified: VerifiedBuild, homeDirectory: URL, lease: 
     do {
         try InstallerFiles.manager.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let current = try verifyPackage(verified.directory, expected: verified.manifest.data)
-        let destination = root.appendingPathComponent("Mentra.app")
+        let destination = root.appendingPathComponent(PRApp.product)
         let installedManifest = root.appendingPathComponent("installed-build.json")
         if InstallerFiles.exists(destination) {
             try InstallerFiles.requirePath(destination, directory: true)
             guard try Set(InstallerFiles.manager.contentsOfDirectory(atPath: destination.path)) == ["Wrapper", "WrappedBundle"],
-                  try Set(InstallerFiles.manager.contentsOfDirectory(atPath: destination.appendingPathComponent("Wrapper").path)) == ["Mentra.app"]
+                  try Set(InstallerFiles.manager.contentsOfDirectory(atPath: destination.appendingPathComponent("Wrapper").path)) == [PRApp.product]
             else { throw InstallerError.invalid("The installed app wrapper contains unexpected files. Refusing replacement.") }
             let link = destination.appendingPathComponent("WrappedBundle")
-            guard try InstallerFiles.manager.destinationOfSymbolicLink(atPath: link.path) == "Wrapper/Mentra.app" else {
+            guard try InstallerFiles.manager.destinationOfSymbolicLink(atPath: link.path) == "Wrapper/\(PRApp.product)" else {
                 throw InstallerError.invalid("The installed app wrapper has changed. Refusing to replace it.")
             }
             let previousData = try InstallerFiles.read(installedManifest)
-            _ = try verifySignedApp(destination.appendingPathComponent("Wrapper/Mentra.app"), manifest: InstallerFiles.dictionary(previousData))
+            _ = try verifySignedApp(destination.appendingPathComponent("Wrapper/\(PRApp.product)"), manifest: InstallerFiles.dictionary(previousData))
             try previousData.write(to: lock.appendingPathComponent("previous-installed-build.json"), options: .withoutOverwriting)
             let backup = staging.appendingPathComponent("previous-installation.zip")
             try tool("/usr/bin/ditto", ["-c", "-k", "--keepParent", destination.path, backup.path])
@@ -546,18 +570,18 @@ private func installOwned(_ verified: VerifiedBuild, homeDirectory: URL, lease: 
         } else if InstallerFiles.exists(installedManifest) {
             throw InstallerError.invalid("The installation manifest exists without its app. Restore the prior installation before continuing.")
         }
-        let wrapper = staging.appendingPathComponent("Mentra.app")
-        let inner = wrapper.appendingPathComponent("Wrapper/Mentra.app")
+        let wrapper = staging.appendingPathComponent(PRApp.product)
+        let inner = wrapper.appendingPathComponent("Wrapper/\(PRApp.product)")
         try InstallerFiles.manager.createDirectory(at: inner.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try tool("/usr/bin/ditto", [current.directory.appendingPathComponent("Mentra.app").path, inner.path])
-        try InstallerFiles.manager.createSymbolicLink(atPath: wrapper.appendingPathComponent("WrappedBundle").path, withDestinationPath: "Wrapper/Mentra.app")
+        try tool("/usr/bin/ditto", [current.directory.appendingPathComponent(PRApp.product).path, inner.path])
+        try InstallerFiles.manager.createSymbolicLink(atPath: wrapper.appendingPathComponent("WrappedBundle").path, withDestinationPath: "Wrapper/\(PRApp.product)")
         let requirement = try verifySignedApp(inner, manifest: InstallerFiles.dictionary(current.manifest.data))
         try verifyProvisioning(inner, manifest: current.manifest)
         var installed = try InstallerFiles.dictionary(current.manifest.data)
         installed["codeRequirement"] = requirement
         installed["launchPath"] = destination.path
         installed["installedAt"] = ISO8601DateFormatter().string(from: Date())
-        installed["installationLauncher"] = ["source": "native-installer", "bundleId": "com.mentra.mac-installer"]
+        installed["installationLauncher"] = ["source": "native-installer", "bundleId": InstallerHost.bundleID]
         try InstallerFiles.writeJSON(installed, to: staging.appendingPathComponent("installed-build.json"))
         try await quit()
         try InstallerFiles.commit(root: root, staging: staging, lock: lock)
@@ -574,14 +598,14 @@ private func installOwned(_ verified: VerifiedBuild, homeDirectory: URL, lease: 
 }
 
 enum InstallerHost {
-    static let bundleID = "com.mentra.mac-installer"
+    static let bundleID = PRApp.installerID
     static let owner = "mentra-native-installer-v1"
     static var application: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/Install Mentra.app")
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/\(PRApp.installer)")
     }
 
     static var state: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Mentra Installer")
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/\(PRApp.name) Installer")
     }
 
     static func verify(_ app: URL) throws -> String {
@@ -590,8 +614,8 @@ enum InstallerHost {
         let types = info?["CFBundleURLTypes"] as? [[String: Any]] ?? []
         guard info?["CFBundleIdentifier"] as? String == bundleID,
               info?["CFBundleExecutable"] as? String == "Installer",
-              types.contains(where: { ($0["CFBundleURLSchemes"] as? [String])?.contains("mentra-install") == true })
-        else { throw InstallerError.invalid("This is not a Mentra installer with support for PR links.") }
+              types.contains(where: { ($0["CFBundleURLSchemes"] as? [String])?.contains(PRApp.scheme) == true })
+        else { throw InstallerError.invalid("This is not a \(PRApp.name) installer with support for PR links.") }
         try tool("/usr/bin/codesign", ["--verify", "--deep", "--strict", "-R", "=identifier \"\(bundleID)\"", app.path])
         return try InstallerFiles.hash(app.appendingPathComponent("Contents/MacOS/Installer"))
     }
@@ -616,7 +640,7 @@ enum InstallerHost {
             let installedHash = try verify(destination)
             guard retained["bundleId"] as? String == bundleID,
                   retained["executableSha256"] as? String == installedHash
-            else { throw InstallerError.invalid("The permanent Mentra installer does not match its ownership record. Quit it and ask a maintainer to repair the installation.") }
+            else { throw InstallerError.invalid("The permanent \(PRApp.name) installer does not match its ownership record. Quit it and ask a maintainer to repair the installation.") }
             return destination
         }
         if InstallerFiles.exists(metadata) {
@@ -633,7 +657,7 @@ enum InstallerHost {
         catch { throw InstallerError.invalid("Another installer bootstrap is running or needs recovery: \(lock.path)") }
         var preserveRecovery = false
         defer { if !preserveRecovery { try? FileManager.default.removeItem(at: lock) } }
-        let staged = lock.appendingPathComponent("Install Mentra.app")
+        let staged = lock.appendingPathComponent(PRApp.installer)
         let stagedMetadata = lock.appendingPathComponent("installed-helper.json")
         var moved = false
         do {

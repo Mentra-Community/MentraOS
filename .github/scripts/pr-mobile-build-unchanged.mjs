@@ -10,7 +10,7 @@ import {isDeepStrictEqual} from "node:util"
 import {NO_BUILD_RUN_NAME} from "./notify-pr-builds.mjs"
 import {androidReceiptName, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
-import {packagingFingerprint} from "./pr-mobile-build.mjs"
+import {packagingFingerprint, prApp} from "./pr-mobile-build.mjs"
 import {artifactUrl, readArtifactIndex} from "./release-artifact-storage.mjs"
 
 // A push that changes neither the app nor the glasses software it pins
@@ -22,21 +22,21 @@ import {artifactUrl, readArtifactIndex} from "./release-artifact-storage.mjs"
 // only those it keeps for two more days.
 export const UNCHANGED_MAX_AGE_DAYS = 5
 
+// `app` is a key of PR_APPS (pr-mobile-build.mjs).
 const PLATFORMS = {
   android: {
-    prefix: "mentra-android",
-    receiptName: androidReceiptName,
-    validate: (receipt, coordinates, repository) => validateAndroidReceipt(receipt, {...coordinates, repository}),
+    receiptName: (pr, sha, runId, attempt, app) => androidReceiptName(pr, sha, runId, attempt, false, app),
+    validate: (receipt, coordinates, repository, app) => validateAndroidReceipt(receipt, {...coordinates, repository, app}),
   },
   ios: {
-    prefix: "mentra-ios",
     receiptName: iosReceiptName,
-    validate: (receipt, coordinates) => validateIosReceipt(receipt, coordinates),
+    validate: (receipt, coordinates, repository, app) => validateIosReceipt(receipt, {...coordinates, app}),
   },
 }
 
-function receiptCoordinates(platform, pr, name) {
-  const match = new RegExp(`^${PLATFORMS[platform].prefix}-pr-${pr}-([a-f0-9]{40})-(\\d+)-(\\d+)\\.json$`).exec(name)
+function receiptCoordinates(platform, pr, name, app) {
+  const prefix = `${prApp(app).prefix}-${platform}`
+  const match = new RegExp(`^${prefix}-pr-${pr}-([a-f0-9]{40})-(\\d+)-(\\d+)\\.json$`).exec(name)
   return match ? {pr, sha: match[1], runId: Number(match[2]), attempt: Number(match[3])} : null
 }
 
@@ -109,6 +109,7 @@ const currentIosProfile = () =>
 async function earlierPublication(options) {
   const {github, context, core, platform, env, fetchImpl, readIndex, wait, now, packaging, iosProfile} = options
   const pr = Number(env.PR_NUMBER)
+  const app = env.MENTRA_PR_APP || "mentra"
   const profile = platform === "ios" ? iosProfile() : undefined
   if (platform === "ios" && !profile) throw new Error("This job's iOS provisioning profile is unknown")
   const repository = `${context.repo.owner}/${context.repo.repo}`
@@ -117,7 +118,7 @@ async function earlierPublication(options) {
   const fresh = (asset) => Date.parse(asset?.created_at) > now() - UNCHANGED_MAX_AGE_DAYS * 86400000
   const receipts = assets
     .flatMap((asset) => {
-      const coordinates = receiptCoordinates(platform, pr, asset.name)
+      const coordinates = receiptCoordinates(platform, pr, asset.name, app)
       return coordinates && coordinates.sha !== env.PR_HEAD_SHA && fresh(asset) ? [{asset, coordinates}] : []
     })
     .sort((a, b) => Date.parse(b.asset.created_at) - Date.parse(a.asset.created_at))
@@ -135,7 +136,7 @@ async function earlierPublication(options) {
     )
       continue
     try {
-      PLATFORMS[platform].validate(receipt, coordinates, repository)
+      PLATFORMS[platform].validate(receipt, coordinates, repository, app)
     } catch (error) {
       core.info(`Skipping ${asset.name}: ${error.message}`)
       continue
@@ -228,11 +229,12 @@ export async function publishUnchangedReceipt(
   const {receiptName, validate} = PLATFORMS[platform]
   const repository = env.GITHUB_REPOSITORY
   const pr = Number(env.PR_NUMBER)
-  const source = receiptCoordinates(platform, pr, name)
+  const app = env.MENTRA_PR_APP || "mentra"
+  const source = receiptCoordinates(platform, pr, name, app)
   if (!source || source.sha === env.PR_HEAD_SHA) throw new Error(`${name} is not an earlier publication of this PR`)
   const original = await readJson(fetchImpl, artifactUrl(repository, "pr-builds", name))
   if (original.reusedFrom !== undefined) throw new Error(`${name} already reuses another publication`)
-  validate(original, source, repository)
+  validate(original, source, repository, app)
   const coordinates = {
     pr,
     sha: env.PR_HEAD_SHA,
@@ -244,8 +246,8 @@ export async function publishUnchangedReceipt(
     runId: coordinates.runId,
     runAttempt: coordinates.attempt,
   })
-  validate(receipt, coordinates, repository)
-  const target = receiptName(pr, coordinates.sha, coordinates.runId, coordinates.attempt)
+  validate(receipt, coordinates, repository, app)
+  const target = receiptName(pr, coordinates.sha, coordinates.runId, coordinates.attempt, app)
   const directory = await mkdtemp(path.join(tmpdir(), "pr-mobile-unchanged-"))
   try {
     const file = path.join(directory, target)

@@ -62,7 +62,7 @@ Run on a physical iPhone for Bluetooth testing. Simulators are useful only for U
 
 ### Signing With Your Own Apple Developer Team
 
-The committed bundle identifier, `com.mentra.bluetoothsdk.example.reactnative`, is registered to Mentra's Apple Developer team. Apple App IDs are globally unique, so automatic signing for a physical-device build fails for any other team with errors such as `Provisioning Profile "iOS Team Provisioning Profile: *" does not support the Access Wi-Fi Information capability`, and the Apple Developer portal refuses to register the identifier. Simulator builds are not affected because they are not signed.
+The committed bundle identifier and Android package, `com.mentra.bluetoothsdkexample`, are registered to Mentra's Apple Developer team. Apple App IDs are globally unique, so automatic signing for a physical-device build fails for any other team with errors such as `Provisioning Profile "iOS Team Provisioning Profile: *" does not support the Access Wi-Fi Information capability`, and the Apple Developer portal refuses to register the identifier. Simulator builds are not affected because they are not signed.
 
 Set `MENTRA_IOS_BUNDLE_ID` to your own reverse-DNS identifier before generating the native project. `app.config.js` applies it on top of `app.json`:
 

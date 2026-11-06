@@ -11,9 +11,10 @@ import sys
 from urllib.error import HTTPError
 from urllib.request import build_opener, HTTPRedirectHandler, Request
 
+from pr_apps import APP
+
 HERE = Path(__file__).resolve().parent
 TEAM = "T5XXXL6N36"
-INSTALLER_ID = "com.mentra.mac-installer"
 DEVELOPER_ID_REQUIREMENT = (
     '=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists '
     'and certificate leaf[field.1.2.840.113635.100.6.1.13] exists '
@@ -189,13 +190,13 @@ def configure(keychain, output, env=os.environ, intermediate=None):
     print("Verified Developer ID Application signing and Apple notarization credentials")
 
 
-def installer_defines(env=os.environ):
-    """The installer fetches receipts from the building repository's PR builds."""
-    return ["-D", "MENTRA_MONOREPO"] if env.get("GITHUB_REPOSITORY") == "Mentra-Community/Mentra" else []
+def installer_defines(env=os.environ, app=APP):
+    """The installer fetches receipts from the building repository's PR builds, and installs its app."""
+    return (["-D", "MENTRA_MONOREPO"] if env.get("GITHUB_REPOSITORY") == "Mentra-Community/Mentra" else []) + app["defines"]
 
 
 def create_app(package, manifest):
-    app = package / "Install Mentra.app"
+    app = package / APP["installer"]
     contents = app / "Contents"
     (contents / "MacOS").mkdir(parents=True)
     resources = contents / "Resources"
@@ -203,24 +204,24 @@ def create_app(package, manifest):
     # Bind the notarized installer to this exact adjacent payload. The iOS app
     # stays OUTSIDE the installer and retains its Apple Distribution signature.
     (resources / "build.json").write_bytes((package / "build.json").read_bytes())
-    info = {"CFBundleIdentifier": INSTALLER_ID, "CFBundleName": "Install Mentra",
-            "CFBundleDisplayName": "Install Mentra", "CFBundleExecutable": "Installer",
+    info = {"CFBundleIdentifier": APP["installerId"], "CFBundleName": app.stem,
+            "CFBundleDisplayName": app.stem, "CFBundleExecutable": "Installer",
             "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.0",
             "CFBundleVersion": manifest["build"], "LSMinimumSystemVersion": "14.0",
             "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication",
             "CFBundleIconFile": "AppIcon.icns", "LSFileQuarantineEnabled": True,
-            "CFBundleURLTypes": [{"CFBundleURLName": INSTALLER_ID,
-                                  "CFBundleURLSchemes": ["mentra-install"],
+            "CFBundleURLTypes": [{"CFBundleURLName": APP["installerId"],
+                                  "CFBundleURLSchemes": [APP["scheme"]],
                                   "CFBundleTypeRole": "Viewer"}]}
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     run("xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macosx14.0",
-        *installer_defines(),
+        *installer_defines(app=APP),
         HERE / "mac-installer/InstallerCore.swift", HERE / "mac-installer/Distribution.swift",
         HERE / "mac-installer/Installer.swift",
         "-o", contents / "MacOS/Installer")
     iconset = package / "installer.iconset"
     iconset.mkdir()
-    icon = HERE.parents[1] / "assets/app-icons/ic_launcher.png"
+    icon = HERE.parents[2] / APP["icon"]
     for size in (16, 32, 128, 256, 512):
         for scale in (1, 2):
             suffix = "@2x" if scale == 2 else ""
@@ -268,7 +269,7 @@ def notarize(app, settings, diagnostics):
     run("xcrun", "stapler", "staple", app)
     run("xcrun", "stapler", "validate", app)
     run("spctl", "--assess", "--type", "execute", "--verbose=2", app)
-    return {"bundleId": INSTALLER_ID, "teamId": TEAM, "notarizationId": response["id"],
+    return {"bundleId": APP["installerId"], "teamId": TEAM, "notarizationId": response["id"],
             "notarizationStatus": "Accepted", "stapled": True}
 
 

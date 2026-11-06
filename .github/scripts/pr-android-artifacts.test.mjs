@@ -641,3 +641,21 @@ test('exact capture snapshot expression consumes its post-call literal JSON key'
   actual.replace('const-string v2, "captureRequiredBeforeArm"','const-string v2, "1"\n xor-int/2addr v1, v2\n const-string v2, "captureRequiredBeforeArm"'),
  ]) assert.throws(()=>validateNimoDiagnosticBytecode(replace(changed)),/policy wiring: captureRequiredBeforeArm JSON field/)
 })
+
+test("the Bluetooth example app's receipts carry its own name and package", () => {
+  const example = {...identity, app: "example", config: {...config(), android: {package: "com.mentra.bluetoothsdkexample", versionCode: 303000123}},
+    badging: badging.replace("com.mentra.mentra", "com.mentra.bluetoothsdkexample")}
+  const app = androidAppIdentity(example)
+  assert.equal(app.packageId, "com.mentra.bluetoothsdkexample")
+  // Neither app's identity passes for the other.
+  assert.throws(() => androidAppIdentity({...example, app: "mentra"}), /native manifest/)
+  assert.throws(() => androidAppIdentity({...identity, app: "example", config: config(), badging}), /native manifest/)
+  const name = androidReceiptName(42, head, 100, 2, false, "example")
+  assert.equal(name, `mentra-example-android-pr-42-${head}-100-2.json`)
+  const receipt = {schemaVersion: 1, pr: 42, headSha: head, baseSha: base, buildSha: merge, runId: 100, runAttempt: 2, app,
+    artifacts: {android: {name: name.replace(/\.json$/, ".apk"), sha256: "f".repeat(64), size: 1}}}
+  const coordinates = {pr: 42, sha: head, runId: 100, attempt: 2}
+  assert.equal(validateAndroidReceipt(receipt, {...coordinates, app: "example"}), receipt.artifacts)
+  assert.throws(() => validateAndroidReceipt(receipt, coordinates), /artifact|identity/)
+  assert.throws(() => androidReceiptName(42, head, 100, 2, false, "other"), /Unknown PR app/)
+})

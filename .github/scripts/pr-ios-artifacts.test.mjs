@@ -162,6 +162,50 @@ test("native Mac handoff preserves immutable HTML and selects the public receipt
     assert.throws(() => iosInstallationFiles({...native, ...values}, repository), /coordinates/)
 })
 
+test("the Bluetooth example app's receipts, downloads, installer and page carry its own names", () => {
+  const example = {
+    ...receipt,
+    app: {
+      ...receipt.app,
+      bundleId: "com.mentra.bluetoothsdkexample",
+      macPackageVersion: 2,
+      macInstaller: "Install Mentra Example.app",
+    },
+    macInstaller: {
+      bundleId: "com.mentra.mac-installer.example",
+      teamId: "T5XXXL6N36",
+      notarizationStatus: "Accepted",
+      notarizationId: "12345678-abcd-1234-abcd-123456789012",
+      stapled: true,
+    },
+    artifacts: Object.fromEntries(
+      Object.entries(receipt.artifacts).map(([kind, asset]) => [kind, {...asset, name: asset.name.replace("mentra-", "mentra-example-")}]),
+    ),
+  }
+  assert.equal(iosReceiptName(123, coordinates.sha, 100, 2, "example"), `mentra-example-ios-pr-123-${coordinates.sha}-100-2.json`)
+  assert.equal(validateIosReceipt(example, {...coordinates, app: "example"}), example.artifacts)
+  // Neither app's receipt passes for the other.
+  assert.throws(() => validateIosReceipt(example, coordinates), /installer notarization|artifact/)
+  assert.throws(() => validateIosReceipt({...example, app: {...example.app, macInstaller: "Install Mentra.app"}},
+    {...coordinates, app: "example"}), /notarization/)
+  assert.throws(() => validateIosReceipt({...example, macInstaller: {...example.macInstaller, bundleId: "com.mentra.mac-installer"}},
+    {...coordinates, app: "example"}), /notarization/)
+  assert.throws(() => validateIosReceipt({...example, artifacts: receipt.artifacts}, {...coordinates, app: "example"}), /artifact/)
+
+  const repository = "Mentra-Community/Mentra"
+  const files = iosInstallationFiles(example, repository, undefined, "example")
+  assert.equal(files.install.name, `mentra-example-ios-install-pr-123-${coordinates.sha}-100-1.html`)
+  assert.equal(files.manifest.name, `mentra-example-ios-manifest-pr-123-${coordinates.sha}-100-1.plist`)
+  assert.match(files.manifest.content, /<string>com\.mentra\.bluetoothsdkexample<\/string>/)
+  assert.match(files.manifest.content, /<string>Bluetooth example app<\/string>/)
+  assert.match(files.install.content, /Install the Bluetooth example app/)
+  assert.match(files.install.content, /open <strong>Install Mentra Example\.app<\/strong>/)
+  const script = files.install.content.match(/<script>([\s\S]*?)<\/script>/)[1]
+  assert.match(script, /new URL\("mentra-example-install:\/\/pr"\)/)
+  assert.equal(files.install.content.match(/script-src 'sha256-([^']+)'/)[1], createHash("sha256").update(script).digest("base64"))
+  assert.throws(() => iosInstallationFiles(example, repository), /app identity/)
+})
+
 test("publishes installation files before receipt and preserves their bytes on publication-only retry", async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "mentra-ios-publish-"))
   t.after(() => rm(directory, {recursive: true, force: true}))

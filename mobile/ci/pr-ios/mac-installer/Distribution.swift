@@ -20,16 +20,16 @@ struct InstallRequest {
 
     init(url: URL) throws {
         guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              parts.scheme == "mentra-install", parts.host == "pr", parts.path.isEmpty,
+              parts.scheme == PRApp.scheme, parts.host == "pr", parts.path.isEmpty,
               parts.user == nil, parts.password == nil, parts.port == nil, parts.fragment == nil,
               let items = parts.queryItems, items.count == 4,
               Set(items.map(\.name)) == ["number", "head", "run", "attempt"]
-        else { throw InstallerError.invalid("This is not a valid Mentra PR installation link. Open Install on Mac in #pr-builds again.") }
+        else { throw InstallerError.invalid("This is not a valid \(PRApp.name) PR installation link. Open Install on Mac in #pr-builds again.") }
         let values = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
         func number(_ name: String) throws -> Int {
             guard let string = values[name], let value = Int(string), value > 0,
                   value <= 9_007_199_254_740_991, String(value) == string
-            else { throw InstallerError.invalid("Invalid \(name) in the Mentra installation link.") }
+            else { throw InstallerError.invalid("Invalid \(name) in the \(PRApp.name) installation link.") }
             return value
         }
         guard let head = values["head"], distributionHex(head, length: 40) else {
@@ -46,7 +46,7 @@ struct InstallRequest {
     }
 
     var receiptURL: URL {
-        URL(string: "\(Self.origin)mentra-ios-pr-\(pr)-\(head)-\(runID)-\(attempt).json")!
+        URL(string: "\(Self.origin)\(PRApp.prefix)-ios-pr-\(pr)-\(head)-\(runID)-\(attempt).json")!
     }
 
     var otaURL: String {
@@ -100,7 +100,7 @@ struct DistributionReceipt {
         guard Set(assets.keys) == Set(kinds.keys) else { throw InstallerError.invalid("The receipt contains an unexpected artifact set.") }
         for (kind, ext) in kinds {
             let asset = assets[kind]!
-            let name = "mentra-ios-\(kind)-pr-\(request.pr)-\(request.head)-\(request.runID)-\(buildAttempt).\(ext)"
+            let name = "\(PRApp.prefix)-ios-\(kind)-pr-\(request.pr)-\(request.head)-\(request.runID)-\(buildAttempt).\(ext)"
             guard asset["name"] as? String == name,
                   let hash = asset["sha256"] as? String, distributionHex(hash, length: 64),
                   let size = distributionInteger(asset["size"]), size <= Self.maximumArchiveBytes
@@ -305,7 +305,7 @@ struct ArchiveInspection {
             let components = name.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
             let kind = (attributes >> 16) & 0o170000
             guard components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
-                  components.first == "Mentra PR" || components.first == "__MACOSX",
+                  components.first == PRApp.folder || components.first == "__MACOSX",
                   [0, 0o100000, 0o040000].contains(kind),
                   kind == 0 || (kind == 0o040000) == directory,
                   attributes & 0x10 == 0 || directory,
@@ -325,8 +325,8 @@ struct ArchiveInspection {
                     if last { paths[key] = (partial, isDirectory, true) }
                 } else { paths[key] = (partial, isDirectory, last) }
             }
-            hasManifest = hasManifest || name == "Mentra PR/build.json" && !directory
-            hasApp = hasApp || name.hasPrefix("Mentra PR/Mentra.app/")
+            hasManifest = hasManifest || name == "\(PRApp.folder)/build.json" && !directory
+            hasApp = hasApp || name.hasPrefix("\(PRApp.folder)/\(PRApp.product)/")
             try extras(cursor + 46 + nameLength, extraLength)
             cursor += 46 + nameLength + extraLength + commentLength
             guard cursor <= end, try u32(local) == 0x0403_4B50,
@@ -403,7 +403,7 @@ private func validateArchiveContent(_ data: Data, offset: Int, compressed: Int, 
 private enum DistributionCache {
     static let owner = "mentra-mac-download-v1"
     static var root: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/com.mentra.mac-installer")
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/\(PRApp.installerID)")
     }
 
     static func claim() throws {
@@ -465,7 +465,7 @@ func preparePackage(_ request: InstallRequest) async throws -> VerifiedBuild {
         // preference is removed, including when importing an older CI ZIP.
         try tool("/usr/bin/ditto", ["-x", "-k", archive.path, extracted.path], timeout: 5 * 60)
         try InstallerFiles.requirePlainTree(extracted)
-        let package = extracted.appendingPathComponent("Mentra PR")
+        let package = extracted.appendingPathComponent(PRApp.folder)
         let manifestFile = package.appendingPathComponent("build.json")
         guard try FileManager.default.attributesOfItem(atPath: manifestFile.path)[.size] as? Int ?? Int.max <= DistributionReceipt.maximumReceiptBytes else {
             throw InstallerError.invalid("The packaged build manifest is too large.")
@@ -473,7 +473,7 @@ func preparePackage(_ request: InstallRequest) async throws -> VerifiedBuild {
         let manifest = try InstallerFiles.read(manifestFile)
         try receipt.verifyManifest(manifest)
         let verified = try verifyPackage(package, expected: manifest)
-        let app = package.appendingPathComponent("Mentra.app")
+        let app = package.appendingPathComponent(PRApp.product)
         let config = try InstallerFiles.dictionary(InstallerFiles.read(app.appendingPathComponent("EXConstants.bundle/app.config")))
         let extra = config["extra"] as? [String: Any]
         if let pin = extra?["mentraPrBuild"] {
@@ -495,7 +495,7 @@ func preparePackage(_ request: InstallRequest) async throws -> VerifiedBuild {
 /// request directories are eligible; a manually selected download is retained.
 func cleanupPackage(_ verified: VerifiedBuild) throws {
     let staging = verified.directory.deletingLastPathComponent().deletingLastPathComponent()
-    guard verified.directory.lastPathComponent == "Mentra PR",
+    guard verified.directory.lastPathComponent == PRApp.folder,
           verified.directory.deletingLastPathComponent().lastPathComponent == "extracted",
           staging.deletingLastPathComponent().path == DistributionCache.root.path,
           staging.lastPathComponent.hasPrefix("request-"),

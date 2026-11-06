@@ -218,7 +218,9 @@ function harness(options = {}) {
             ? "bad bytes!"
             : (state.textArtifacts[url.endsWith(".html") ? "install" : "manifest"] ?? "test bytes")
           : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt
-            : url.includes("mentra-android-pr-") ? state.androidReceipt : manifest),
+            : url.includes("mentra-android-pr-") ? state.androidReceipt
+            : url.includes("mentra-example-android-pr-") ? state.exampleReceipt
+            : url.includes("mentra-example-ios-pr-") ? state.exampleIosReceipt : manifest),
       {
         status:
           (state.missingMac && url.endsWith(".zip")) || (state.missingInstall && url.endsWith(".html")) ||
@@ -460,7 +462,8 @@ test("the monorepo maps its layout to MentraOS's paths, and every bundled miniap
     ".github/ci/pack-miniapps.sh", ".github/ci/bundled-miniapps.sh", ".github/ci/asg-build-identity.mjs",
     "testing/routines/example.md", "public/mentraos/sdk/miniapp-cli/src/pack.ts", "public/mentraos/cloud-v2/packages/auth/src/index.ts",
     "public/mentraos/cloud-v2/packages/miniapp-tools/src/index.ts", "public/mentraos/cloud-v2/packages/protocol/tsconfig.json",
-    "public/mentraos/cloud-v2/tsconfig.base.json"])
+    "public/mentraos/cloud-v2/tsconfig.base.json", "public/mentraos/examples/bluetooth/react-native/src/App.tsx",
+    "public/mentraos/examples/bun.lock"])
     assert.equal(iosBuildRequired([{filename}], monorepo), true, filename)
   for (const filename of ["public/mentraos/README.md", "internal_tools/app.ts",
     "public/mentraos/cloud-v2/packages/core/src/service.ts"])
@@ -878,4 +881,42 @@ test("the Bluetooth example's buttons follow the Mentra App's, and its failure i
   const problem = failed.blocks.find((block) => /Bluetooth example:/.test(block.text?.text ?? ""))
   assert.equal(problem.accessory.url, run.html_url)
   assert.deepEqual(installButtonsOf(failed).map((button) => button.text.text), [":robot_face: Android"])
+})
+
+test("the monorepo lists the Bluetooth example app's downloads right after the Mentra App's", async () => {
+  const ota = `https://artifactscdn.mentraglass.com/Mentra-Community/Mentra/releases/pr-builds/ota-pr-123-${sha}.json`
+  const options = (androidResult, iosResult = "success") => ({
+    files: [{filename: "public/mentraos/examples/bluetooth/react-native/src/App.tsx"}],
+    androidReceipt: {...androidReceipt(), app: {...androidReceipt().app, otaManifestUrl: ota}},
+    exampleReceipt: {...androidReceipt("dev", "f".repeat(64)), app: {...androidReceipt().app, packageId: "com.mentra.bluetoothsdkexample", otaManifestUrl: ota},
+      artifacts: {android: {...androidReceipt("dev", "f".repeat(64)).artifacts.android, name: `mentra-example-android-pr-123-${sha}-2-1.apk`}}},
+    exampleIosReceipt: {...iosReceipt, artifacts: Object.fromEntries(Object.entries(iosReceipt.artifacts).map(([kind, asset]) =>
+      [kind, {...asset, name: asset.name.replace("mentra-", "mentra-example-")}]))},
+    jobs: {2: [job("build"), job("example", androidResult)], 3: [job("build"), job("publish"), job("example"), job("example-publish", iosResult)]},
+  })
+  const inMonorepo = (h) => ({...h.args, context: {...h.args.context, repo: {owner: "Mentra-Community", repo: "Mentra"}}})
+  const ready = harness(options("success"))
+  await notifyPrBuilds(inMonorepo(ready))
+  assert.match(ready.posts[0].text, /ready to test/)
+  const buttons = installButtonsOf(ready.posts[0])
+  assert.deepEqual(buttons.map((button) => button.text.text), [":robot_face: Android", ":iphone: iPhone", ":computer: Mac",
+    ":robot_face: Bluetooth example Android", ":iphone: Bluetooth example iPhone", ":computer: Bluetooth example Mac"])
+  assert.match(buttons[3].url, new RegExp(`mentra-example-android-pr-123-${sha}-2-1\\.apk$`))
+  assert.match(buttons[5].url, new RegExp(`mentra-example-ios-mac-pr-123-${sha}-3-1\\.zip$`))
+  assert.match(ready.written[0].body, /\*\*Bluetooth example:\*\* \[Download Android APK\]\(.*mentra-example-android-pr-123-.*\) · \[Install on iPhone\]/)
+  assert.match(ready.written[0].body, /:example-f{64} -->/)
+
+  // Each failure shows as the example's, and the Mentra App's downloads stay.
+  for (const [failed, message] of [[harness(options("failure")), /Bluetooth example:\* Android build failure/],
+    [harness(options("success", "failure")), /Bluetooth example:\* iPhone \/ Mac: iOS failure/]]) {
+    await notifyPrBuilds(inMonorepo(failed))
+    assert.match(failed.posts[0].text, /incomplete/)
+    assert.match(JSON.stringify(failed.posts[0]), message)
+    assert.deepEqual(installButtonsOf(failed.posts[0]).slice(0, 3).map((button) => button.text.text), [":robot_face: Android", ":iphone: iPhone", ":computer: Mac"])
+  }
+
+  // MentraOS has no example jobs.
+  const mentraos = harness()
+  await notifyPrBuilds(mentraos.args)
+  assert.doesNotMatch(JSON.stringify(mentraos.posts[0]), /Bluetooth example/)
 })

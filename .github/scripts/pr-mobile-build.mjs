@@ -24,6 +24,75 @@ export const MOBILE_INPUT_PATHS = [
   ".github/scripts/pr_mobile_config.py",
   ".github/scripts/repackage-pr-apk.py",
 ]
+// The build workflows and scripts every PR app compiles with.
+const SHARED_BUILD_PATHS = MOBILE_INPUT_PATHS.filter((entry) => !MOBILE_SOURCE_PATHS.includes(entry))
+
+// What compiles into the Bluetooth example app: its own sources, its workspace
+// and the SDK packages it links (the `examples` component of the monorepo's
+// component-fingerprints.mjs).
+export const EXAMPLE_INPUT_PATHS = [
+  "examples/bluetooth/react-native",
+  "examples/package.json",
+  "examples/bun.lock",
+  "examples/patches",
+  "mobile/modules/bluetooth-sdk",
+  "mobile/modules/engine",
+  "mobile/modules/crust",
+  "mobile/modules/jspolyfill",
+  "mobile/modules/acs-meeting",
+  "mobile/modules/glasses-media",
+  "mobile/modules/miniapp",
+  "cloud-v2/packages/cloud-client",
+  "cloud-v2/packages/protocol",
+  "cloud-v2/packages/workspace-contract",
+  // The iOS build script, shared with the Mentra App, whose mobile/ tree includes it.
+  "mobile/ci/pr-ios/build.mjs",
+  "mobile/ci/pr-ios/xcode-attempt.mjs",
+  "mobile/ci/pr-ios/configure-signing.rb",
+  "mobile/scripts/release-bundle-config.mjs",
+  ...SHARED_BUILD_PATHS,
+]
+
+/**
+ * The apps a PR build publishes, by MENTRA_PR_APP: each one's receipts and
+ * downloads are named `<prefix>-<platform>-pr-...`, and it is compiled from
+ * its `root` with its `inputs`; on iOS from its `xcodeProject` (workspace,
+ * scheme and product), and installed on a Mac by its own `macInstaller`.
+ * Everything else (signing, packaging, its OTA pin, reuse, receipts and the
+ * notification) is the same for every app. mobile/ci/pr-ios/artifacts.py and
+ * the Mac installer (mobile/ci/pr-ios/mac-installer) mirror the iOS values.
+ */
+export const PR_APPS = Object.freeze({
+  mentra: {
+    name: "Mentra App",
+    prefix: "mentra",
+    packageId: "com.mentra.mentra",
+    root: "mobile",
+    inputs: MOBILE_INPUT_PATHS,
+    xcodeProject: "Mentra",
+    macInstaller: {name: "Install Mentra.app", bundleId: "com.mentra.mac-installer", scheme: "mentra-install"},
+  },
+  example: {
+    name: "Bluetooth example app",
+    prefix: "mentra-example",
+    packageId: "com.mentra.bluetoothsdkexample",
+    root: "examples/bluetooth/react-native",
+    inputs: EXAMPLE_INPUT_PATHS,
+    xcodeProject: "MentraSDKRN",
+    macInstaller: {
+      name: "Install Mentra Example.app",
+      bundleId: "com.mentra.mac-installer.example",
+      scheme: "mentra-example-install",
+    },
+  },
+})
+
+export function prApp(key = "mentra") {
+  const app = PR_APPS[key]
+  if (!app) throw new Error(`Unknown PR app ${JSON.stringify(key)}`)
+  return app
+}
+
 export const MOBILE_PR_PATHS = [
   ...MOBILE_SOURCE_GLOBS,
   "asg_client/**",
@@ -108,11 +177,12 @@ export function fingerprintMobile({tree, env, tools}) {
 }
 
 // An Android publication's receipt-named APK; mobile-pr-* copies were published before it carried the fingerprint.
-export function candidateAssets(assets, fingerprint, platform = "android") {
+export function candidateAssets(assets, fingerprint, platform = "android", app = "mentra") {
+  const {prefix} = prApp(app)
   const name =
     platform === "ios"
-      ? /^mentra-ios-iphone-pr-\d+-[a-f0-9]{40}-\d+-\d+\.ipa$/
-      : /^(?:mentra-android-pr-\d+-[a-f0-9]{40}-\d+-\d+|mobile-pr-\d+-[a-f0-9]{7})\.apk$/
+      ? new RegExp(`^${prefix}-ios-iphone-pr-\\d+-[a-f0-9]{40}-\\d+-\\d+\\.ipa$`)
+      : new RegExp(`^(?:${prefix}-android-pr-\\d+-[a-f0-9]{40}-\\d+-\\d+${app === "mentra" ? "|mobile-pr-\\d+-[a-f0-9]{7}" : ""})\\.apk$`)
   return assets
     .filter(
       (asset) => name.test(asset.name) && new RegExp(`^mobile-v1:${fingerprint}:[a-f0-9]{64}$`).test(asset.label ?? ""),
@@ -155,7 +225,7 @@ export async function selectMobile({
     core.warning(`Reuse index temporarily unavailable (${transient}); checking GitHub candidates or building the app.`)
   }
   const assets = mergeAssets(legacy, indexed)
-  for (const asset of candidateAssets(assets, fingerprint, platform)) {
+  for (const asset of candidateAssets(assets, fingerprint, platform, env.MENTRA_PR_APP || "mentra")) {
     try {
       if (String(asset.id).startsWith("r2:")) {
         await download(repository, asset, candidate)
@@ -193,10 +263,12 @@ export async function selectMobile({
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.loadEnvFile("mobile/.env")
   const platform = process.argv[2] || "android"
   if (!["android", "ios"].includes(platform)) throw new Error("Expected android or ios")
-  const tree = execFileSync("git", ["ls-tree", "-r", "HEAD", "--", ...MOBILE_INPUT_PATHS], {encoding: "utf8"})
+  const app = prApp(process.env.MENTRA_PR_APP || "mentra")
+  // The Mentra App's backend configuration; the example app has none.
+  if (app.root === "mobile") process.loadEnvFile("mobile/.env")
+  const tree = execFileSync("git", ["ls-tree", "-r", "HEAD", "--", ...app.inputs], {encoding: "utf8"})
   // A repository that builds this tree inside a larger one (the Mentra
   // monorepo) fingerprints the inputs it adds outside it: the miniapps it
   // packs into the app and its own build workflows.

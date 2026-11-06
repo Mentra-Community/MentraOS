@@ -18,8 +18,8 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Downloading GStreamer iOS SDK ${VERSION}..."
-curl -fL "$BASE_URL/$PKG_NAME" -o "$TMP_DIR/$PKG_NAME"
-curl -fL "$BASE_URL/$PKG_NAME.sha256sum" -o "$TMP_DIR/$PKG_NAME.sha256sum"
+curl -fL --retry 5 --retry-all-errors "$BASE_URL/$PKG_NAME" -o "$TMP_DIR/$PKG_NAME"
+curl -fL --retry 5 --retry-all-errors "$BASE_URL/$PKG_NAME.sha256sum" -o "$TMP_DIR/$PKG_NAME.sha256sum"
 
 echo "Verifying checksum..."
 (cd "$TMP_DIR" && shasum -a 256 -c "$PKG_NAME.sha256sum")

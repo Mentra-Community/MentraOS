@@ -16,7 +16,7 @@ private func rejects(_ operation: () throws -> Void) throws {
 }
 
 private let head = String(repeating: "a", count: 40)
-private let link = "mentra-install://pr?number=123&head=\(head)&run=100&attempt=2"
+private let link = "\(PRApp.scheme)://pr?number=123&head=\(head)&run=100&attempt=2"
 
 private func encode(_ value: [String: Any]) throws -> Data {
     try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys])
@@ -24,7 +24,7 @@ private func encode(_ value: [String: Any]) throws -> Data {
 
 private func receiptJSON(legacy: Bool = false, schema: Int = 2) -> [String: Any] {
     var app: [String: Any] = [
-        "macPackageVersion": 2, "macInstaller": "Install Mentra.app", "app": "Mentra.app",
+        "macPackageVersion": 2, "macInstaller": PRApp.installer, "app": PRApp.product,
         "bundleId": BuildManifest.bundleID, "teamId": BuildManifest.teamID,
         "pr": 123, "headSha": head, "runId": 100, "runAttempt": 1,
         "buildSha": String(repeating: "b", count: 40), "backend": "dev",
@@ -47,7 +47,7 @@ private func receiptJSON(legacy: Bool = false, schema: Int = 2) -> [String: Any]
     ]
     var artifacts = assets
     for (kind, ext) in extensions {
-        artifacts[kind] = ["name": "mentra-ios-\(kind)-pr-123-\(head)-100-1.\(ext)", "size": 100, "sha256": String(repeating: "c", count: 64)]
+        artifacts[kind] = ["name": "\(PRApp.prefix)-ios-\(kind)-pr-123-\(head)-100-1.\(ext)", "size": 100, "sha256": String(repeating: "c", count: 64)]
     }
     receipt["artifacts"] = artifacts
     return receipt
@@ -98,7 +98,7 @@ private struct Entry {
     var declaredSize: Int?
 }
 
-private let validEntries = [Entry(name: "Mentra PR/build.json"), Entry(name: "Mentra PR/Mentra.app/Info.plist")]
+private let validEntries = [Entry(name: "\(PRApp.folder)/build.json"), Entry(name: "\(PRApp.folder)/\(PRApp.product)/Info.plist")]
 
 private func archive(_ entries: [Entry]) throws -> Data {
     var output = Data()
@@ -179,11 +179,11 @@ private struct DistributionTests {
         let request = try InstallRequest(url: URL(string: link)!)
         try test("select immutable company CI coordinates from a link") {
             try expect(request.pr == 123 && request.runID == 100 && request.attempt == 2 && request.head == head, "Incorrect request")
-            try expect(request.receiptURL.absoluteString == InstallRequest.origin + "mentra-ios-pr-123-\(head)-100-2.json", "Wrong receipt origin")
+            try expect(request.receiptURL.absoluteString == InstallRequest.origin + "\(PRApp.prefix)-ios-pr-123-\(head)-100-2.json", "Wrong receipt origin")
         }
         try test("reject alternate origins, paths, credentials and extra or duplicate arguments") {
             for invalid in [
-                link.replacingOccurrences(of: "mentra-install", with: "https"),
+                link.replacingOccurrences(of: PRApp.scheme, with: "https"),
                 link.replacingOccurrences(of: "://pr?", with: "://other?"),
                 link.replacingOccurrences(of: "://pr?", with: "://user@pr?"),
                 link.replacingOccurrences(of: "://pr?", with: "://pr:443?"),
@@ -290,58 +290,58 @@ private struct DistributionTests {
         }
         try test("accept macOS metadata and a native installer alongside the untouched iOS app") {
             let entries = validEntries + [
-                Entry(name: "Mentra PR/Install Mentra.app/Contents/MacOS/Installer", mode: 0o100755, method: 8),
-                Entry(name: "Mentra PR/Install Mentra.app/Contents/_CodeSignature/CodeResources", method: 8),
-                Entry(name: "__MACOSX/Mentra PR/._Install Mentra.app", method: 8),
-                Entry(name: "__MACOSX/Mentra PR/Install Mentra.app/Contents/MacOS/._Installer", method: 8),
+                Entry(name: "\(PRApp.folder)/\(PRApp.installer)/Contents/MacOS/Installer", mode: 0o100755, method: 8),
+                Entry(name: "\(PRApp.folder)/\(PRApp.installer)/Contents/_CodeSignature/CodeResources", method: 8),
+                Entry(name: "__MACOSX/\(PRApp.folder)/._\(PRApp.installer)", method: 8),
+                Entry(name: "__MACOSX/\(PRApp.folder)/\(PRApp.installer)/Contents/MacOS/._Installer", method: 8),
             ]
             try expect(ArchiveInspection(data: archive(entries)).entryCount == 6, "Mac metadata entries were lost")
         }
         try test("reject traversal, alternate roots and macOS path ambiguity") {
-            for name in ["/Mentra PR/evil", "Mentra PR/../evil", "Mentra PR//evil", "Mentra PR/./evil", "evil/file",
-                         "Mentra PR/back\\slash", "Mentra PR/colon:name", "Mentra PR/control\u{0}", "Mentra PR/../../evil"]
+            for name in ["/\(PRApp.folder)/evil", "\(PRApp.folder)/../evil", "\(PRApp.folder)//evil", "\(PRApp.folder)/./evil", "evil/file",
+                         "\(PRApp.folder)/back\\slash", "\(PRApp.folder)/colon:name", "\(PRApp.folder)/control\u{0}", "\(PRApp.folder)/../../evil"]
             {
                 try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: name)])) }
             }
         }
         try test("reject duplicate, case-colliding and file-as-directory paths") {
             for extra in [
-                [validEntries[0]], [Entry(name: "Mentra PR/BUILD.JSON")],
-                [Entry(name: "Mentra PR/Foo/a"), Entry(name: "Mentra PR/foo/b")],
-                [Entry(name: "Mentra PR/file"), Entry(name: "Mentra PR/file/child")],
+                [validEntries[0]], [Entry(name: "\(PRApp.folder)/BUILD.JSON")],
+                [Entry(name: "\(PRApp.folder)/Foo/a"), Entry(name: "\(PRApp.folder)/foo/b")],
+                [Entry(name: "\(PRApp.folder)/file"), Entry(name: "\(PRApp.folder)/file/child")],
             ] {
                 try rejects { _ = try ArchiveInspection(data: archive(validEntries + extra)) }
             }
         }
         try test("reject symlinks, devices and privileged modes before extraction") {
             for mode in [0o120777, 0o020666, 0o010666, 0o104755] {
-                try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "Mentra PR/link", mode: mode)])) }
+                try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "\(PRApp.folder)/link", mode: mode)])) }
             }
         }
         try test("reject encrypted and unsupported compressed entries") {
-            try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "Mentra PR/encrypted", flags: 1)])) }
-            try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "Mentra PR/unknown", method: 12)])) }
+            try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "\(PRApp.folder)/encrypted", flags: 1)])) }
+            try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "\(PRApp.folder)/unknown", method: 12)])) }
         }
         try test("allow timestamp metadata and reject ZIP64 or path-changing extra fields") {
             var timestamp = Data()
             timestamp.integer(0x5855, width: 2)
             timestamp.integer(8, width: 2)
             timestamp.append(Data(repeating: 0, count: 8))
-            _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "Mentra PR/timestamp", extra: timestamp)]))
+            _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "\(PRApp.folder)/timestamp", extra: timestamp)]))
             for tag in [0x0001, 0x7075, 0x756E] {
                 var extra = Data()
                 extra.integer(tag, width: 2)
                 extra.integer(0, width: 2)
-                try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "Mentra PR/extra", extra: extra)])) }
+                try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "\(PRApp.folder)/extra", extra: extra)])) }
             }
         }
         try test("reject local-header names that differ from the central directory") {
-            try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "Mentra PR/good", localName: "Mentra PR/evil")])) }
+            try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "\(PRApp.folder)/good", localName: "\(PRApp.folder)/evil")])) }
         }
         try test("reject false expanded lengths based on actual inflated bytes") {
-            let bomb = Entry(name: "Mentra PR/bomb", body: Data(repeating: 65, count: 200_000), method: 8, declaredSize: 1)
+            let bomb = Entry(name: "\(PRApp.folder)/bomb", body: Data(repeating: 65, count: 200_000), method: 8, declaredSize: 1)
             try rejects { _ = try ArchiveInspection(data: archive(validEntries + [bomb])) }
-            try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "Mentra PR/huge", declaredSize: ArchiveInspection.maximumExpandedBytes)])) }
+            try rejects { _ = try ArchiveInspection(data: archive(validEntries + [Entry(name: "\(PRApp.folder)/huge", declaredSize: ArchiveInspection.maximumExpandedBytes)])) }
         }
         try test("reject damaged file data, split disks and excessive entry counts") {
             var damaged = try archive(validEntries)

@@ -1,4 +1,5 @@
 import {createHash} from "node:crypto"
+import {prApp} from "./pr-mobile-build.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
 const escape = (value) =>
@@ -19,20 +20,20 @@ export function macInstallPageUrl(pageUrl, attempt) {
 // Fixed code only. The receipt supplies validated coordinates through HTML data
 // attributes; the public receipt attempt travels in the HTTPS handoff query so
 // the immutable page remains identical when publication is retried.
-const macInstallScript = `(() => {
+const macInstallScript = ({name, macInstaller}) => `(() => {
   const query = new URLSearchParams(window.location.search);
   if (query.getAll("platform").length !== 1 || query.get("platform") !== "mac") return;
   const section = document.getElementById("mac-install");
   section.hidden = false;
   document.getElementById("iphone-install").hidden = true;
-  document.getElementById("install-heading").textContent = "Install Mentra on Mac";
+  document.getElementById("install-heading").textContent = "Install the ${name} on Mac";
   const status = document.getElementById("mac-status");
   const attempts = query.getAll("attempt");
   if (attempts.length !== 1 || !/^[1-9][0-9]*$/.test(attempts[0]) || !Number.isSafeInteger(Number(attempts[0]))) {
     status.textContent = "Open the Install on Mac link in #pr-builds to select the published build. For first-time setup, download the installer below.";
     return;
   }
-  const target = new URL("mentra-install://pr");
+  const target = new URL("${macInstaller.scheme}://pr");
   target.searchParams.set("number", section.dataset.number);
   target.searchParams.set("head", section.dataset.head);
   target.searchParams.set("run", section.dataset.run);
@@ -40,16 +41,19 @@ const macInstallScript = `(() => {
   const button = document.getElementById("mac-install-button");
   button.href = target.href;
   button.textContent = "Install on Mac";
-  status.textContent = "Opening your Mentra installer. Allow your browser to open it if asked. If nothing opens, click Install on Mac or complete first-time setup below.";
+  status.textContent = "Opening ${macInstaller.name}. Allow your browser to open it if asked. If nothing opens, click Install on Mac or complete first-time setup below.";
   window.location.assign(target.href);
 })();`
-const macScriptPolicy = `; script-src 'sha256-${createHash("sha256").update(macInstallScript).digest("base64")}'`
 
 // Called only after the publisher validates the handoff receipt and IPA bytes.
-export function iosInstallationFiles(receipt, repository, release = undefined) {
+// `key` is a key of PR_APPS (pr-mobile-build.mjs).
+export function iosInstallationFiles(receipt, repository, release = undefined, key = "mentra") {
   const {app} = receipt
+  const {name, prefix, packageId, macInstaller} = prApp(key)
+  const script = macInstallScript(prApp(key))
+  const macScriptPolicy = `; script-src 'sha256-${createHash("sha256").update(script).digest("base64")}'`
   if (
-    app?.bundleId !== "com.mentra.mentra" ||
+    app?.bundleId !== packageId ||
     !/^\d+(\.\d+){0,2}$/.test(app.build ?? "") ||
     !/^\d+(\.\d+){0,2}$/.test(app.version ?? "")
   )
@@ -57,9 +61,9 @@ export function iosInstallationFiles(receipt, repository, release = undefined) {
 
   const ipaName = receipt.artifacts.iphone.name
   const manifestName =
-    release?.manifestName ?? ipaName.replace("mentra-ios-iphone-", "mentra-ios-manifest-").replace(/\.ipa$/, ".plist")
+    release?.manifestName ?? ipaName.replace(`${prefix}-ios-iphone-`, `${prefix}-ios-manifest-`).replace(/\.ipa$/, ".plist")
   const pageName =
-    release?.pageName ?? ipaName.replace("mentra-ios-iphone-", "mentra-ios-install-").replace(/\.ipa$/, ".html")
+    release?.pageName ?? ipaName.replace(`${prefix}-ios-iphone-`, `${prefix}-ios-install-`).replace(/\.ipa$/, ".html")
   const ipaUrl = artifactUrl(repository, release?.tag ?? "pr-builds", ipaName)
   const manifestUrl = artifactUrl(repository, release?.tag ?? "pr-builds", manifestName)
   const installUrl = iosInstallUrl(manifestUrl)
@@ -72,7 +76,7 @@ export function iosInstallationFiles(receipt, repository, release = undefined) {
   const macEnabled = !release && app.macPackageVersion === 2
   if (
     macEnabled &&
-    (app.macInstaller !== "Install Mentra.app" ||
+    (app.macInstaller !== macInstaller.name ||
       !Number.isSafeInteger(receipt.pr) ||
       receipt.pr <= 0 ||
       !/^[a-f0-9]{40}$/.test(receipt.headSha) ||
@@ -95,7 +99,7 @@ export function iosInstallationFiles(receipt, repository, release = undefined) {
     <key>bundle-identifier</key><string>${escape(app.bundleId)}</string>
     <key>bundle-version</key><string>${escape(app.build)}</string>
     <key>kind</key><string>software</string>
-    <key>title</key><string>Mentra App</string>
+    <key>title</key><string>${escape(name)}</string>
   </dict>
 </dict></array></dict></plist>
 `,
@@ -111,7 +115,7 @@ export function iosInstallationFiles(receipt, repository, release = undefined) {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'${
     macEnabled ? macScriptPolicy : ""
   }">
-  <title>Install Mentra App · ${escape(title)}</title>
+  <title>Install ${escape(name)} · ${escape(title)}</title>
   <style>
     :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; background: light-dark(#f4f7f5, #111a15); color: light-dark(#17251d, #e7f2eb); }
@@ -127,7 +131,7 @@ export function iosInstallationFiles(receipt, repository, release = undefined) {
 </head>
 <body><main>
   <p class="badge">${badge}</p>
-  <h1${macEnabled ? ' id="install-heading"' : ""}>Install the Mentra App</h1>
+  <h1${macEnabled ? ' id="install-heading"' : ""}>Install the ${escape(name)}</h1>
   <p class="details">Version ${escape(app.version)} · Build ${escape(app.build)}<br>
     <a href="${escape(prUrl)}">${escape(title)}</a> · Commit ${escape(
       receipt.headSha.slice(0, 7),
@@ -138,9 +142,9 @@ ${macEnabled ? '  <section id="iphone-install">\n' : ""}  <a class="install" hre
   <ol>
     <li>Open this page in <strong>Safari on your iPhone</strong>. From Slack, use its menu to open the link in Safari.</li>
     <li>Tap <strong>Install on iPhone</strong>, then confirm <strong>Install</strong> in the iOS prompt.</li>
-    <li>Return to your Home Screen. Wait for installation to finish, then open Mentra.</li>
+    <li>Return to your Home Screen. Wait for installation to finish, then open the app.</li>
   </ol>
-  <p>Your iPhone must be registered with Mentra and included in this build’s provisioning profile. This build replaces the existing Mentra App; keep it installed to preserve its data.</p>
+  <p>Your iPhone must be registered with Mentra and included in this build’s provisioning profile. This build replaces the existing ${escape(name)}; keep it installed to preserve its data.</p>
   <p class="secondary">No prompt? Open this page in Safari and tap Install again. If iOS cannot install it, check that your device is included and ask for a fresh build.${retention}</p>
   <p class="secondary"><a href="${escape(ipaUrl)}">Download IPA for installation with a Mac</a></p>
 ${
@@ -150,12 +154,12 @@ ${
     receipt.headSha,
   )}" data-run="${escape(receipt.runId)}" hidden>
     <a id="mac-install-button" class="install" href="${escape(macUrl)}">Download Mac installer</a>
-    <p id="mac-status" role="status">Use Install on Mac in #pr-builds to open the installed Mentra installer.</p>
+    <p id="mac-status" role="status">Use Install on Mac in #pr-builds to open your installed ${escape(macInstaller.name)}.</p>
     <h2>First-time setup</h2>
     <ol>
       <li><a href="${escape(
         macUrl,
-      )}">Download the Mac installer ZIP</a>, unzip it and open <strong>Install Mentra.app</strong>.</li>
+      )}">Download the Mac installer ZIP</a>, unzip it and open <strong>${escape(macInstaller.name)}</strong>.</li>
       <li>Complete installation and any first-use macOS approvals. Your Mac must be registered for the build.</li>
       <li>Next time, use <strong>Install on Mac</strong> in #pr-builds. The installed helper downloads and opens the selected build without another ZIP in Downloads.</li>
     </ol>
@@ -163,7 +167,7 @@ ${
   </section>
 `
     : ""
-}</main>${macEnabled ? `<script>${macInstallScript}</script>` : ""}</body></html>
+}</main>${macEnabled ? `<script>${script}</script>` : ""}</body></html>
 `,
     },
   }

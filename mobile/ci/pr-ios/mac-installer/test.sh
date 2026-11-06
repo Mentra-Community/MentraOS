@@ -13,3 +13,7 @@ xcrun swiftc -parse-as-library -target arm64-apple-macos14.0 "$installer_dir/Ins
 # The monorepo's installer (mac_installer.py defines MENTRA_MONOREPO there).
 xcrun swiftc -parse-as-library -D MENTRA_MONOREPO "$installer_dir/InstallerCore.swift" "$installer_dir/Distribution.swift" "$installer_dir/DistributionTests.swift" -o "$installer_test_dir/distribution-tests-monorepo"
 "$installer_test_dir/distribution-tests-monorepo"
+# The Bluetooth example app's installer (mac_installer.py defines MENTRA_EXAMPLE for it).
+xcrun swiftc -parse-as-library -D MENTRA_MONOREPO -D MENTRA_EXAMPLE "$installer_dir/InstallerCore.swift" "$installer_dir/Distribution.swift" "$installer_dir/DistributionTests.swift" -o "$installer_test_dir/distribution-tests-example"
+"$installer_test_dir/distribution-tests-example"
+xcrun swiftc -parse-as-library -target arm64-apple-macos14.0 -D MENTRA_MONOREPO -D MENTRA_EXAMPLE "$installer_dir/InstallerCore.swift" "$installer_dir/Distribution.swift" "$installer_dir/Installer.swift" -o "$installer_test_dir/Installer-example"

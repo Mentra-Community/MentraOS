@@ -8,7 +8,10 @@ commit, run and attempt with the `mentra-install` URL scheme; the permanent
 installer downloads, verifies, installs and opens the selected build.
 
 `InstallerCore.swift` verifies and installs `Mentra.app` and owns the one-time
-helper bootstrap. `Distribution.swift` accepts only immutable CI coordinates
+helper bootstrap. Its `PRApp` names the app it installs: built with
+`-D MENTRA_EXAMPLE` (`mac_installer.py`, from `pr_apps.py`), it is
+`Install Mentra Example.app`, which installs the Bluetooth example app with its
+own bundle, folder, `mentra-example-install` links and app lease. `Distribution.swift` accepts only immutable CI coordinates
 from links and downloads their receipt and Mac ZIP from the fixed Mentra CDN.
 The package builder supplies the app's Info.plist, icon, and exact `build.json` in
 `Contents/Resources`, then signs and notarizes **the installer**. The iOS payload

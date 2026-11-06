@@ -34,6 +34,12 @@ export const MONOREPO_PR_BUILD_PATHS = [
   "public/mentraos/sdk/miniapp-cli/*",
   "mentra_live/bes/*",
   "testing/*",
+  // The Bluetooth example app, built beside the Mentra App.
+  "public/mentraos/examples/bluetooth/react-native/*",
+  "public/mentraos/examples/package.json",
+  "public/mentraos/examples/bun.lock",
+  "public/mentraos/examples/patches/*",
+  "public/mentraos/cloud-v2/packages/workspace-contract/*",
   ".github/workflows/bes.yml",
   ".github/workflows/mentra-app-android-build.yml",
   ".github/workflows/mentra-app-ios-build.yml",
@@ -207,6 +213,9 @@ const producers = {
   android: {workflow: "mentra-app-android-build.yml", jobs: ["build"]},
   asg: {workflow: "mentra-asg-client-build.yml", jobs: ["select", "build"]},
   ios: {workflow: "mentra-app-ios-build.yml", jobs: ["build", "publish"]},
+  // The Bluetooth example app, which the monorepo builds beside the Mentra App.
+  example: {workflow: "mentra-app-android-build.yml", jobs: ["example"]},
+  exampleIos: {workflow: "mentra-app-ios-build.yml", jobs: ["example", "example-publish"]},
 }
 
 async function readBuild(github, context, pr, sha, lane) {
@@ -291,12 +300,15 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const files = await github.paginate(github.rest.pulls.listFiles, {...repo, pull_number: pr.number, per_page: 100})
   const changedBackends = changedMiniappBackends(files)
   const ios = {required: iosBuildRequired(files, `${repo.owner}/${repo.repo}`)}
-  const [androidBuild, asgBuild, iosBuild] = await Promise.all([
+  const monorepo = `${repo.owner}/${repo.repo}` === MONOREPO
+  const [androidBuild, asgBuild, iosBuild, exampleBuild, exampleIosBuild] = await Promise.all([
     readBuild(github, context, pr, sha, "android"),
     readBuild(github, context, pr, sha, "asg"),
     ios.required ? readBuild(github, context, pr, sha, "ios") : undefined,
+    monorepo ? readBuild(github, context, pr, sha, "example") : undefined,
+    monorepo && ios.required ? readBuild(github, context, pr, sha, "exampleIos") : undefined,
   ])
-  const builds = [androidBuild, asgBuild, iosBuild].filter(Boolean)
+  const builds = [androidBuild, asgBuild, iosBuild, exampleBuild, exampleIosBuild].filter(Boolean)
   if (builds.some((build) => build.pending)) {
     core.info("Build/publication still pending; its completion will reconcile the notification.")
     return
@@ -339,13 +351,14 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       error = failure.message
     }
   }
-  if (ios.required && !ios.error) {
+  // An app's iOS publication (`app` is a key of PR_APPS in pr-mobile-build.mjs), verified into `target`.
+  const verifyIos = async (target, build, app) => {
     try {
-      const coordinates = {pr: pr.number, sha, runId: iosRun.id, attempt: iosBuild.attempt}
+      const coordinates = {pr: pr.number, sha, runId: build.run.id, attempt: build.attempt, app}
       const receiptUrl = artifactUrl(
         `${repo.owner}/${repo.repo}`,
         "pr-builds",
-        iosReceiptName(pr.number, sha, iosRun.id, iosBuild.attempt),
+        iosReceiptName(pr.number, sha, build.run.id, build.attempt, app),
       )
       const receipt = await (await request(receiptUrl)).json()
       const assets = validateIosReceipt(receipt, coordinates)
@@ -360,17 +373,18 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
         } else if (Number(response.headers.get("content-length")) !== asset.size)
           throw new Error(`Published ${kind} download size disagrees with its receipt`)
       }
-      ios.assets = urls
-      ios.backend = backend
-      ios.archiveSha256 = assets.mac.sha256
+      target.assets = urls
+      target.backend = backend
+      target.archiveSha256 = assets.mac.sha256
       // The installation page opens the receipt it was published with: an earlier head's when reused.
-      if (macHandoff) ios.macInstallUrl = macInstallPageUrl(urls.install, receipt.reusedFrom?.runAttempt ?? receipt.runAttempt)
+      if (macHandoff) target.macInstallUrl = macInstallPageUrl(urls.install, receipt.reusedFrom?.runAttempt ?? receipt.runAttempt)
       const tree = `${repo.owner}/${repo.repo}` === MONOREPO ? MONOREPO_ROOT : ""
-      ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/${tree}mobile/ci/pr-ios/README.md`
+      target.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/${tree}mobile/ci/pr-ios/README.md`
     } catch (failure) {
-      ios.error = failure.message
+      target.error = failure.message
     }
   }
+  if (ios.required && !ios.error) await verifyIos(ios, iosBuild, "mentra")
   const android = {}
   if (!error) {
     // The selected publication's receipt is the only evidence of the APK's backend.
@@ -403,13 +417,47 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       error = failure.message
     }
   }
+  // The Bluetooth example app's downloads, from its receipts, verified as the Mentra App's.
+  const example = exampleBuild && {}
+  if (example && exampleBuild.conclusion !== "success") {
+    example.error = `Android build ${exampleBuild.conclusion}; no download is available.`
+    example.runUrl = exampleBuild.run.html_url
+  } else if (example) {
+    try {
+      const coordinates = {pr: pr.number, sha, runId: exampleBuild.run.id, attempt: exampleBuild.attempt}
+      const receipt = await (await request(artifactUrl(MONOREPO, "pr-builds",
+        androidReceiptName(pr.number, sha, coordinates.runId, coordinates.attempt, false, "example")))).json()
+      const asset = validateAndroidReceipt(receipt, {...coordinates, repository: MONOREPO, app: "example"}).android
+      if (receipt.app.backend !== backend) throw new Error(mismatch("Android", receipt.app.backend))
+      const url = artifactUrl(MONOREPO, "pr-builds", asset.name)
+      if (Number((await request(url, "HEAD")).headers.get("content-length")) !== asset.size)
+        throw new Error("Published Android APK size disagrees with its receipt")
+      example.androidUrl = url
+      example.archiveSha256 = asset.sha256
+    } catch (failure) {
+      example.error = failure.message
+      example.runUrl = exampleBuild.run.html_url
+    }
+  }
+  if (example && exampleIosBuild) {
+    const apple = {}
+    if (exampleIosBuild.conclusion !== "success") apple.error = `iOS ${exampleIosBuild.conclusion}; downloads are not ready.`
+    else await verifyIos(apple, exampleIosBuild, "example")
+    if (apple.assets) {
+      example.iphoneUrl = apple.assets.install ?? apple.assets.iphone
+      example.macUrl = apple.macInstallUrl ?? apple.assets.mac
+    } else {
+      example.error = [example.error, `iPhone / Mac: ${apple.error}`].filter(Boolean).join(" ")
+      example.runUrl ??= exampleIosBuild.run.html_url
+    }
+  }
   const comments = await github.paginate(github.rest.issues.listComments, {
     ...repo,
     issue_number: pr.number,
     per_page: 100,
   })
   const comment = comments.find((item) => item.user?.type === "Bot" && item.body?.startsWith(marker))
-  const incomplete = Boolean(error || ios.error)
+  const incomplete = Boolean(error || ios.error || example?.error)
   const publicationIdentity = builds
     .map((build) => `${build.run.id}-${build.attempt}`)
     .join(":")
@@ -428,7 +476,8 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   }
   // A verified APK binds its immutable hash; an unverified backend is distinct so a
   // later notification can replace it once its receipt verifies.
-  const identity = `${buildIdentity}${android.receiptUnavailable ? ":android-receipt-unavailable" : android.archiveSha256 ? `:android-${android.archiveSha256}` : ""}`
+  const identity = `${buildIdentity}${android.receiptUnavailable ? ":android-receipt-unavailable" : android.archiveSha256 ? `:android-${android.archiveSha256}` : ""}${
+    example?.archiveSha256 ? `:example-${example.archiveSha256}` : ""}`
   if (comment?.body.includes(`<!-- ${identity} -->`)) {
     core.info("This PR revision's notification was already delivered.")
     return
@@ -446,6 +495,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     asgRunUrl: asgRun?.html_url,
     error,
     ios,
+    example,
     backend: android.backend ?? ios.backend,
   }
   await postToWebhook(webhook, prBuildPost({
@@ -461,4 +511,5 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   core.info(`Delivered ${identity} to #pr-builds`)
   if (error) core.warning(error)
   if (ios.error) core.warning(ios.error)
+  if (example?.error) core.warning(example.error)
 }

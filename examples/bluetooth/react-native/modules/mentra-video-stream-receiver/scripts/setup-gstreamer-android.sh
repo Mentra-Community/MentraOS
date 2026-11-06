@@ -21,8 +21,8 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Downloading GStreamer Android SDK ${VERSION}..."
-curl -fL "$BASE_URL/$ARCHIVE_NAME" -o "$TMP_DIR/$ARCHIVE_NAME"
-curl -fL "$BASE_URL/$ARCHIVE_NAME.sha256sum" -o "$TMP_DIR/$ARCHIVE_NAME.sha256sum"
+curl -fL --retry 5 --retry-all-errors "$BASE_URL/$ARCHIVE_NAME" -o "$TMP_DIR/$ARCHIVE_NAME"
+curl -fL --retry 5 --retry-all-errors "$BASE_URL/$ARCHIVE_NAME.sha256sum" -o "$TMP_DIR/$ARCHIVE_NAME.sha256sum"
 
 echo "Verifying checksum..."
 (cd "$TMP_DIR" && shasum -a 256 -c "$ARCHIVE_NAME.sha256sum")

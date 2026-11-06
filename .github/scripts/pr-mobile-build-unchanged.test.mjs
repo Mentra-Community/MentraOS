@@ -252,3 +252,33 @@ test("iOS: this head's receipt keeps the earlier build attempt with its origin",
     assert.throws(() => validateIosReceipt(value, coordinates))
   }
 })
+
+test("iOS: the Bluetooth example app reuses only its own earlier publication", async () => {
+  const exampleEnv = {...env, MENTRA_PR_APP: "example"}
+  const h = harness("ios")
+  h.args.env = exampleEnv
+  // Only the Mentra App's publication.
+  assert.equal(await findUnchangedBuild(h.args), undefined)
+  const name = iosReceiptName(7, earlier, 100, 2, "example")
+  const original = iosReceipt()
+  const receipt = {...original,
+    app: {...original.app, bundleId: "com.mentra.bluetoothsdkexample", macInstaller: "Install Mentra Example.app"},
+    macInstaller: {...original.macInstaller, bundleId: "com.mentra.mac-installer.example"},
+    artifacts: Object.fromEntries(Object.entries(original.artifacts).map(([kind, file]) =>
+      [kind, {...file, name: file.name.replace("mentra-", "mentra-example-")}]))}
+  h.state.files[url(name)] = receipt
+  h.state.assets.push({name, created_at: daysAgo(1)},
+    ...Object.values(receipt.artifacts).map((file) => ({name: file.name, size: file.size, created_at: daysAgo(1)})))
+  assert.equal(await findUnchangedBuild(h.args), name)
+
+  const calls = []
+  const exec = (command, args) => {
+    if (command === "gh") return "10\n"
+    calls.push(args[args.indexOf("--name") + 1])
+    return ""
+  }
+  const published = await publishUnchangedReceipt("ios", name, exampleEnv, {exec, fetchImpl: h.args.fetchImpl})
+  assert.deepEqual(calls, [`mentra-example-ios-pr-7-${head}-200-1.json`])
+  assert.equal(validateIosReceipt(published, {pr: 7, sha: head, runId: 200, attempt: 1, app: "example"}), published.artifacts)
+  assert.deepEqual(published.artifacts, receipt.artifacts)
+})
