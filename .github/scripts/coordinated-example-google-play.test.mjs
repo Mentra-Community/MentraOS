@@ -149,8 +149,6 @@ test("coordinator preserves MentraOS tracks and separates example audiences", ()
   assert.doesNotMatch(reusable, /-PreactNativeArchitectures=/)
   assert.match(reusable, /arm64-v8a,x86_64/)
   assert.doesNotMatch(reusable, /track_promote|GOOGLE_PLAY_TRACK: production/)
-  const notification = readFileSync(new URL("notify-coordinated-release-slack.sh", import.meta.url), "utf8")
-  assert.match(notification, /examples_line\+=" \| Google Play:/)
 })
 
 test("the production example has its own closed Play track for an internal audience", () => {

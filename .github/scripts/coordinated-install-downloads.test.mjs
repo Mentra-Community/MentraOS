@@ -5,7 +5,6 @@ import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 import {downloadNames, prepareDownloads, publishDownloads, restoreDownloads, validateDownloads} from "./coordinated-install-downloads.mjs"
-import {platformDownloads, otaTargetText} from "./coordinated-downloads-slack.mjs"
 import {coordinatedFixture} from "./coordinated-routine-fixture.mjs"
 import {createIosRecord} from "./coordinated-mobile-records.mjs"
 
@@ -113,44 +112,6 @@ test("iOS result keeps TestFlight evidence and adds verified downloads for final
   assert.equal(record.publications.mentraos["app-store-connect"].status, "built")
   assert.ok(record.artifacts.some((entry) => entry.coordinate === names.install))
 })
-test("Slack uses symmetric rows, direct iPhone and share links; incomplete Apple downloads stay unavailable", () => {
-  const env = {
-    BRANCH: "staging",
-    MOBILE_APK_URL: "https://example.com/a.apk",
-    IPHONE_MANIFEST_URL: "https://example.com/i.plist",
-    IPHONE_SHARE_URL: "https://example.com/i.html",
-    MAC_URL: "https://example.com/m.zip",
-  }
-  const blocks = platformDownloads(env, (url) => Boolean(url))
-  // The two main links come first, as buttons with https URLs (Slack refuses other schemes).
-  assert.equal(blocks[0].type, "actions")
-  assert.deepEqual(blocks[0].elements.map((entry) => entry.text.text), [":robot_face: Download for Android", ":apple: Install on iPhone"])
-  assert.ok(blocks[0].elements.every((entry) => entry.url.startsWith("https://")))
-  const rows = blocks.find((block) => block.type === "rich_text")
-  assert.equal(rows.elements.length, 3)
-  const iphone = rows.elements[1].elements.filter((entry) => entry.type === "link")
-  assert.equal(iphone[0].text, "Install on iPhone")
-  assert.ok(iphone[0].url.startsWith("itms-services://"))
-  assert.equal(iphone[1].text, "Share install link")
-  assert.doesNotMatch(JSON.stringify(blocks), /Download IPA/)
-  const failed = platformDownloads(env, (url) => url !== env.MAC_URL)
-  assert.match(JSON.stringify(failed), /Download APK/)
-  assert.doesNotMatch(JSON.stringify(failed), /Install on iPhone/)
-  assert.deepEqual(failed[0].elements.map((entry) => entry.text.text), [":robot_face: Download for Android"])
-  // Nothing to download: no empty actions block, which Slack would refuse.
-  assert.ok(platformDownloads({...env, MOBILE_APK_URL: "", MOBILE_ASSET_BASE_URL: ""}, () => false).every((block) => block.type !== "actions"))
-})
-test("Slack firmware targets must belong to the current release", () => {
-  const manifest = {
-    releaseVersion: "3.2.1-dev.57",
-    apps: {"com.mentra.asg_client": {versionName: "3.2.1", versionCode: 302010057}},
-    bes_firmware: {version: "26.9.21.1"},
-    mtk_full_ota: {end_firmware: "MentraLive_20260915.0"},
-  }
-  assert.match(otaTargetText(manifest, manifest.releaseVersion), /302010057/)
-  assert.throws(() => otaTargetText(manifest, "3.2.1-dev.58"), /do not match/)
-})
-
 test("restore accepts only a complete matching published receipt and its original bytes", async (t) => {
   const {plan, directory, names} = fixture(t)
   prepareDownloads(directory, plan, repository, ota)
