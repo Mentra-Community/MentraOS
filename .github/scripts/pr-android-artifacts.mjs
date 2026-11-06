@@ -3,7 +3,7 @@ import {execFileSync} from "node:child_process"
 import {readFile, readdir, writeFile} from "node:fs/promises"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
-import {prBackend} from "./pr-mobile-build.mjs"
+import {packagingFingerprint, prBackend} from "./pr-mobile-build.mjs"
 import {inspectNimoDiagnosticBytecode} from "./pr-android-artifacts-diagnostic.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
@@ -25,16 +25,22 @@ export function androidReceiptName(pr, sha, runId, attempt, diagnostic = false) 
   return `mentra-android-${diagnostic ? "nimo-diagnostic-" : ""}pr-${pr}-${sha}-${runId}-${attempt}.json`
 }
 
+/** A receipt with `reusedFrom` republishes that earlier head's unchanged publication for this head. */
 export function validateAndroidReceipt(receipt, {pr, sha, runId, attempt, diagnostic = false, repository = DEFAULT_REPOSITORY}) {
-  const name = androidReceiptName(pr, sha, runId, attempt, diagnostic)
+  androidReceiptName(pr, sha, runId, attempt, diagnostic)
+  const source = receipt?.reusedFrom
+  requireThat(source === undefined || !diagnostic && Object.keys(source ?? {}).sort().join() === "headSha,runAttempt,runId" &&
+    SHA.test(source.headSha ?? "") && source.headSha !== sha, "Invalid reused Android publication")
+  const origin = source ? {sha: source.headSha, runId: source.runId, attempt: source.runAttempt} : {sha, runId, attempt}
+  const name = androidReceiptName(pr, origin.sha, origin.runId, origin.attempt, diagnostic)
   requireThat(diagnostic ? receipt?.diagnostic === "nimo-resource-v1" && receipt?.app?.diagnostic === "nimo-resource-v1" : receipt?.diagnostic === undefined && receipt?.app?.diagnostic === undefined, "Android diagnostic classification differs")
   requireThat(receipt?.schemaVersion === 1 && receipt.pr === pr && receipt.headSha === sha &&
     receipt.runId === runId && receipt.runAttempt === attempt && SHA.test(receipt.baseSha ?? "") &&
     SHA.test(receipt.buildSha ?? ""), "Android receipt belongs to a different revision or workflow attempt")
   const app = receipt.app
   requireThat(PR_BUILD_REPOSITORIES.includes(repository), "Unsupported Android publication repository")
-  const ota = artifactUrl(repository, "pr-builds", `ota-pr-${pr}-${sha}.json`)
-  requireThat(app?.packageId === "com.mentra.mentra" && app.headSha === sha && app.buildSha === receipt.buildSha &&
+  const ota = artifactUrl(repository, "pr-builds", `ota-pr-${pr}-${origin.sha}.json`)
+  requireThat(app?.packageId === "com.mentra.mentra" && app.headSha === origin.sha && app.buildSha === receipt.buildSha &&
     ["dev", "staging"].includes(app.backend) && app.otaManifestUrl === ota && typeof app.version === "string" && !!app.version &&
     typeof app.build === "string" && /^[1-9]\d*$/.test(app.build) && Number(app.build) <= 2100000000 &&
     (app.mobileFingerprint === undefined || HASH.test(app.mobileFingerprint)) &&
@@ -104,14 +110,17 @@ export async function publishAndroidArtifacts(apk, env = process.env, {exec = ex
   }
   const bytes = await readFile(apk)
   const receipt = {schemaVersion: 1, ...(diagnostic ? {diagnostic: "nimo-resource-v1", diagnosticVerification: {...diagnosticProof, kind:"compiled-capture-wiring-v3", apkSha256:createHash("sha256").update(bytes).digest("hex")}} : {}), pr, headSha, baseSha, buildSha, runId, runAttempt, app,
+    packagingFingerprint: packagingFingerprint("android"),
     artifacts: {android: {name: name.replace(/\.json$/, ".apk"), sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length}}}
   validateAndroidReceipt(receipt, {pr, sha: headSha, runId, attempt: runAttempt, diagnostic, repository})
   const file = path.join(path.dirname(apk), name)
   await writeFile(file, JSON.stringify(receipt, null, 2) + "\n")
   const releaseId = exec("gh", ["api", `repos/${repository}/releases/tags/pr-builds`, "--jq", ".id"], {encoding: "utf8"}).trim()
+  // The APK carries its compilation fingerprint: a later build with the same inputs reuses it (selectMobile).
   for (const [source, target] of [[apk, receipt.artifacts.android.name], [file, name]])
     exec(process.execPath, [fileURLToPath(new URL("./publish-immutable-release-asset.mjs", import.meta.url)),
-      "--file", source, "--name", target, "--release-id", releaseId, "--repository", repository], {stdio: "inherit", env})
+      "--file", source, "--name", target, "--release-id", releaseId, "--repository", repository,
+      ...(source === apk && !diagnostic ? ["--fingerprint", app.mobileFingerprint] : [])], {stdio: "inherit", env})
   return receipt
 }
 

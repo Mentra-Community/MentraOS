@@ -271,7 +271,7 @@ jobs:
             # base, not PR-controlled input. The backend is part of the reuse
             # fingerprint, so a dev binary is never repackaged as staging.
             case "${MENTRA_PR_BASE_REF:-$GITHUB_BASE_REF}" in
-              staging) CLOUD_ENV="staging" ;;
+              staging | main) CLOUD_ENV="staging" ;;
               *) CLOUD_ENV="dev" ;;
             esac
           else

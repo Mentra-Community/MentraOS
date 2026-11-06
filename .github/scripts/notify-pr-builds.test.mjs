@@ -681,33 +681,22 @@ const slack = (post) => post.blocks.flatMap(block => block.text?.text ?? []).joi
 const links = (post) => JSON.stringify(post.blocks[3])
 
 const cdn = "https://artifactscdn.mentraglass.com/o/r/releases/pr-builds"
-const aliasApk = `${cdn}/mobile-pr-123-${sha.slice(0, 7)}.apk`
 const immutableApk = `${cdn}/mentra-android-pr-123-${sha}-2-1.apk`
 const bothLinks = (h, index) => `${links(h.posts[index])}\n${h.written[index].body}`
 
-test("a verified post links the receipt's immutable APK, not a replaced alias, and binds its hash", async () => {
-  // The mutable alias was overwritten by another attempt; its bytes no longer match.
-  const h = harness({files: [{filename: "mobile/app.config.ts"}], lengths: {[aliasApk]: "999"}})
+test("a verified post links the receipt's immutable APK and binds its hash", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}]})
   await notifyPrBuilds(h.args)
   assert.match(slack(h.posts[0]), /Backend: \*Dev\* · Android ARM64/)
   assert.doesNotMatch(h.posts[0].text, /incomplete/)
   assert.ok(bothLinks(h, 0).includes(immutableApk))
-  assert.ok(!bothLinks(h, 0).includes(aliasApk))
-  assert.ok(!h.requests.includes(aliasApk))
+  assert.doesNotMatch(bothLinks(h, 0), /mobile-pr-/)
   assert.match(h.written[0].body, new RegExp(`^<!-- ${sha}:ready:2-1:1-1:3-1:android-${"e".repeat(64)} -->$`, "m"))
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 1)
 })
 
-test("a valid immutable APK is ready even when the legacy alias is missing", async () => {
-  const h = harness({files: [{filename: "mobile/app.config.ts"}], missingUrls: [aliasApk]})
-  await notifyPrBuilds(h.args)
-  assert.doesNotMatch(h.posts[0].text, /incomplete/)
-  assert.match(links(h.posts[0]), /Download APK/)
-  assert.ok(bothLinks(h, 0).includes(immutableApk))
-})
-
-test("a missing or wrong immutable APK after a verified receipt is incomplete without an alias fallback", async () => {
+test("a missing or wrong immutable APK after a verified receipt is incomplete", async () => {
   for (const failure of [{missingUrls: [immutableApk]}, {lengths: {[immutableApk]: "11"}}]) {
     const h = harness({files: [{filename: "mobile/app.config.ts"}], ...failure})
     await notifyPrBuilds(h.args)
@@ -715,9 +704,38 @@ test("a missing or wrong immutable APK after a verified receipt is incomplete wi
     assert.doesNotMatch(slack(h.posts[0]), /Backend: \*Dev\* · Android ARM64/)
     assert.doesNotMatch(links(h.posts[0]), /Download APK/)
     assert.doesNotMatch(h.written[0].body, /Download Android APK/)
-    assert.ok(!bothLinks(h, 0).includes(aliasApk))
     assert.doesNotMatch(h.written[0].body, /:android-/)
   }
+})
+
+test("a later head's receipt reusing an earlier publication links that publication's downloads", async () => {
+  const earlier = "f".repeat(40)
+  const original = androidReceipt()
+  const reused = {...original, runId: 2, runAttempt: 1, reusedFrom: {headSha: earlier, runId: 9, runAttempt: 1},
+    app: {...original.app, headSha: earlier,
+      otaManifestUrl: `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/ota-pr-123-${earlier}.json`},
+    artifacts: {android: {...original.artifacts.android, name: `mentra-android-pr-123-${earlier}-9-1.apk`}}}
+  const receipt = structuredClone(iosReceipt)
+  receipt.schemaVersion = 2
+  receipt.app = {backend: "dev", headSha: earlier, macPackageVersion: 1,
+    otaManifestUrl: `https://artifactscdn.mentraglass.com/Mentra-Community/Mentra/releases/pr-builds/ota-pr-123-${earlier}.json`}
+  receipt.reusedFrom = {headSha: earlier, runId: 8, runAttempt: 3, buildAttempt: 2}
+  for (const [kind, ext] of [["iphone", "ipa"], ["mac", "zip"], ["install", "html"], ["manifest", "plist"]])
+    receipt.artifacts[kind] = {name: `mentra-ios-${kind}-pr-123-${earlier}-8-2.${ext}`, size: 10, sha256: "c".repeat(64)}
+  const page = '<section data-mentra-mac-install="1">'
+  receipt.artifacts.install = {name: receipt.artifacts.install.name, size: Buffer.byteLength(page),
+    sha256: createHash("sha256").update(page).digest("hex")}
+  receipt.artifacts.manifest = {name: receipt.artifacts.manifest.name, size: 10,
+    sha256: createHash("sha256").update("test bytes").digest("hex")}
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], androidReceipt: reused, receipt,
+    textArtifacts: {install: page}})
+  await notifyPrBuilds(h.args)
+  assert.doesNotMatch(h.posts[0].text, /incomplete/)
+  assert.ok(bothLinks(h, 0).includes(`${cdn}/mentra-android-pr-123-${earlier}-9-1.apk`))
+  assert.ok(h.written[0].body.includes(`${cdn}/mentra-ios-mac-pr-123-${earlier}-8-2.zip`))
+  // The earlier page opens the earlier receipt, attempt 3.
+  assert.ok(h.written[0].body.includes(`${cdn}/mentra-ios-install-pr-123-${earlier}-8-2.html?platform=mac&attempt=3`))
+  assert.match(h.written[0].body, new RegExp(`^<!-- ${sha}:ready:2-1:1-1:3-1:android-${"e".repeat(64)} -->$`, "m"))
 })
 
 test("a transient receipt miss never downgrades an already verified post", async () => {
@@ -736,7 +754,7 @@ test("a transient receipt miss never downgrades an already verified post", async
   assert.equal(h.posts.length, 2)
   assert.match(h.posts[1].text, /incomplete/)
   assert.match(slack(h.posts[1]), /Backend: not verified/)
-  assert.ok(bothLinks(h, 1).includes(aliasApk) && !bothLinks(h, 1).includes(immutableApk))
+  assert.ok(bothLinks(h, 1).includes(immutableApk))
   // The changed-readiness fallback does not inherit the earlier verified identity.
   assert.match(h.written[1].body, new RegExp(`^<!-- ${sha}:incomplete:2-1:1-1:3-1:android-receipt-unavailable -->$`, "m"))
   // The receipt returns while the Mac download is still missing: enrich once, then stay quiet.
@@ -747,7 +765,7 @@ test("a transient receipt miss never downgrades an already verified post", async
   assert.equal(h.written.length, 3)
   assert.match(h.posts[2].text, /incomplete/)
   assert.match(slack(h.posts[2]), /Backend: \*Dev\* · Android ARM64/)
-  assert.ok(bothLinks(h, 2).includes(immutableApk) && !bothLinks(h, 2).includes(aliasApk))
+  assert.ok(bothLinks(h, 2).includes(immutableApk))
   assert.match(h.written[2].body, new RegExp(`^<!-- ${sha}:incomplete:2-1:1-1:3-1:android-${"e".repeat(64)} -->$`, "m"))
 })
 
@@ -756,14 +774,15 @@ test("an initially missing receipt enriches the post once with the verified immu
   await notifyPrBuilds(h.args)
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 1)
-  assert.ok(bothLinks(h, 0).includes(aliasApk) && !bothLinks(h, 0).includes(immutableApk))
+  assert.match(slack(h.posts[0]), /Android not verified/)
+  assert.ok(bothLinks(h, 0).includes(immutableApk))
   h.state.androidReceipt = androidReceipt()
   await notifyPrBuilds(h.args)
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 2)
   assert.equal(h.written.length, 2)
   assert.match(slack(h.posts[1]), /Backend: \*Dev\* · Android ARM64/)
-  assert.ok(bothLinks(h, 1).includes(immutableApk) && !bothLinks(h, 1).includes(aliasApk))
+  assert.ok(bothLinks(h, 1).includes(immutableApk))
 })
 
 test("a same-head retarget never relabels retained builds for the new destination", async () => {

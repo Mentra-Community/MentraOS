@@ -321,8 +321,8 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     if (iosBuild.conclusion !== "success") ios.error = `iOS ${iosBuild.conclusion}; downloads are not ready.`
   }
   const base = `https://artifactscdn.mentraglass.com/${repo.owner}/${repo.repo}/releases/pr-builds`
-  // Mutable compatibility alias, linked only while the immutable receipt is unavailable.
-  let androidUrl = `${base}/mobile-pr-${pr.number}-${sha.slice(0, 7)}.apk`
+  // The APK this publication's receipt names when it built one, linked only while that receipt is unavailable.
+  let androidUrl = `${base}/${androidReceiptName(pr.number, sha, androidBuild.run.id, androidBuild.attempt).replace(/\.json$/, ".apk")}`
   const manifestUrl = `${base}/ota-pr-${pr.number}-${sha}.json`
   let targets
   const request = async (url, method = "GET") => {
@@ -365,7 +365,8 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       ios.assets = urls
       ios.backend = backend
       ios.archiveSha256 = assets.mac.sha256
-      if (macHandoff) ios.macInstallUrl = macInstallPageUrl(urls.install, receipt.runAttempt)
+      // The installation page opens the receipt it was published with: an earlier head's when reused.
+      if (macHandoff) ios.macInstallUrl = macInstallPageUrl(urls.install, receipt.reusedFrom?.runAttempt ?? receipt.runAttempt)
       const tree = `${repo.owner}/${repo.repo}` === MONOREPO ? MONOREPO_ROOT : ""
       ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/${tree}mobile/ci/pr-ios/README.md`
     } catch (failure) {
@@ -392,7 +393,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       if (!receipt) await request(androidUrl, "HEAD")
       else if (receipt.app.backend !== backend) error = mismatch("Android", receipt.app.backend)
       else {
-        // Link the exact receipt-bound APK; the alias may hold another attempt's bytes.
+        // Link the exact receipt-bound APK.
         const url = artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds", asset.name)
         if (Number((await request(url, "HEAD")).headers.get("content-length")) !== asset.size)
           throw new Error("Published Android APK size disagrees with its receipt")
