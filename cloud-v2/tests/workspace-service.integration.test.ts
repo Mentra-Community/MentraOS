@@ -801,6 +801,30 @@ describe("the automatic workspace", () => {
     })
   })
 
+  describe("leaving one's own automatic workspace", () => {
+    test("its only Owner leaves an automatic workspace that holds nothing, which deletes it", async () => {
+      const me = user("mu_me")
+      const automaticId = (await ensureWorkspace(await account(me))).workspace.workspaceId
+
+      await leaveWorkspace(me, automaticId)
+
+      expect(await listWorkspacesForUser("mu_me")).toEqual([])
+      expect(await WorkspaceModel.findOne({workspaceId: automaticId}).lean()).toMatchObject({status: "deleted"})
+      const deleted = (await listWorkspaceAudit(automaticId, {limit: 10})).find(e => e.action === "workspace.deleted")
+      expect(deleted).toMatchObject({actor: {kind: "user", mentraUserId: "mu_me"}, after: {status: "deleted", reason: "left"}})
+    })
+
+    test("an automatic workspace that holds something, or one made directly, keeps its last Owner", async () => {
+      const me = user("mu_me")
+      const automaticId = (await ensureWorkspace(await account(me))).workspace.workspaceId
+      await addMember(automaticId, "mu_other", "member")
+      await expectError(() => leaveWorkspace(me, automaticId), "last_owner", 409)
+
+      const made = await newWorkspace(user("mu_owner"), "Made")
+      await expectError(() => leaveWorkspace(user("mu_owner"), made), "last_owner", 409)
+    })
+  })
+
   describe("giving way to recovered ownership", () => {
     async function automaticOf(actor: UserActor): Promise<string> {
       return (await ensureWorkspace(await account(actor))).workspace.workspaceId

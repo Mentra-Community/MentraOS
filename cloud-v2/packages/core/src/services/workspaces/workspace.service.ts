@@ -58,7 +58,7 @@ import {endLicensesForOwner, releaseSeatsForMembership, seatReleaseReasonFor} fr
 import {clearAssignedPackages} from "./assigned-packages.service"
 import {isDeletedAccountId} from "../user.service"
 import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
-import {deletionHoldsOf, replaceableWorkspaces} from "./workspace-holdings"
+import {deletionHoldsOf, replaceableWorkspaces, workspacesHoldingNothing} from "./workspace-holdings"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
 import {acquireGuard, releaseGuard, releaseGuardsOfWorkspace} from "./membership-guard.service"
 import {workspaceCreationPolicy} from "./organization"
@@ -497,17 +497,25 @@ export async function removeMember(
   })
 }
 
-/** The actor leaves a workspace they belong to. The last owner cannot. */
+/** The actor leaves a workspace they belong to. The last owner cannot, unless it is their own automatic workspace holding nothing, which is deleted. */
 export async function leaveWorkspace(actor: Actor & {kind: "user"}, workspaceId: string): Promise<void> {
   await withTransaction(async session => {
-    await loadActiveWorkspace(session, workspaceId)
+    const workspace = await loadActiveWorkspace(session, workspaceId)
     const membership = isId(actor.mentraUserId)
       ? await WorkspaceMembershipModel.findOne({workspaceId, mentraUserId: actor.mentraUserId, status: "active"})
           .session(session)
           .lean<MembershipRow>()
       : null
     if (!membership) fail("not_found", "not a member of this workspace")
-    if (membership.role === "owner") await assertNotLastOwner(session, workspaceId, membership)
+    if (membership.role === "owner") {
+      // The person's own automatic workspace that holds nothing goes, as when they join another: the Mentra App
+      // asks them to leave it before joining, and the last owner could otherwise never leave.
+      if ((await workspacesHoldingNothing(session, actor.mentraUserId, [workspaceId])).has(workspaceId)) {
+        await deleteWorkspaceIn(session, workspace, actor, {reason: "left"})
+        return
+      }
+      await assertNotLastOwner(session, workspaceId, membership)
+    }
 
     const updated = await bumpRevision(session, workspaceId, undefined)
     await endMembership(session, {
