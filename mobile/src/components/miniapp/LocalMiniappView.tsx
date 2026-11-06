@@ -545,11 +545,10 @@ function LocalMiniappView({
               return
             }
             BgTimer.clearTimeout(timer)
-            const sourceWasHeld = !released && holdSourceRef.current
             release()
-            // Only a real document that started loading before the listener existed needs this;
-            // while the source was held, nothing had loaded yet.
-            if (result.installReloadRequired && !sourceWasHeld && webViewRef.current === instance) {
+            // Native answers from the WebView itself: a real document that loaded before the
+            // listener existed has no port and needs this, while a held source never loaded one.
+            if (result.installReloadRequired && webViewRef.current === instance) {
               getStreamPreviewCoordinator().noteInstallReload(packageName)
               instance.reload()
             }
