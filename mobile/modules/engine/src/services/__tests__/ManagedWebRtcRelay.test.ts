@@ -1,9 +1,12 @@
 import {describe, expect, mock, test} from "bun:test"
 import "./bluetoothSdkTestMock"
+// The join keep-alive's background timer needs the native app; its period never elapses here.
+mock.module("../../utils/timers", () => ({BgTimer: {setInterval: () => 0, clearInterval: () => {}}}))
+mock.module("@mentra/bluetooth-sdk", () => ({default: {subscribeGlassesStatus: () => () => {}}}))
 import type {RelayDependencies, RelayOptions} from "../ManagedWebRtcRelay"
 import type {StreamStartRequest} from "@mentra/bluetooth-sdk/internal"
 const {ManagedWebRtcRelay} = await import("../ManagedWebRtcRelay")
-import {acquireGlassesHotspot} from "../GlassesHotspotLease"
+const {acquireGlassesHotspot} = await import("../GlassesHotspotLease")
 
 function deferred<T>() {
   let resolve!: (value: T) => void

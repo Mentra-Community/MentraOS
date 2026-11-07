@@ -10,6 +10,7 @@
  */
 
 import {parsePhotoCompression} from "@mentra/cloud-protocol/photo-compression"
+import {keepHotspotUpWhileJoining} from "./GlassesHotspotJoin"
 import {acquireGlassesHotspot} from "./GlassesHotspotLease"
 import {AppState, Platform} from "react-native"
 import * as Battery from "expo-battery"
@@ -4735,7 +4736,10 @@ class LocalMiniappRuntime {
             return enabled ?? true
           },
           joinScopedNetwork: (ssid, passphrase, gateway, report) =>
-            acsMeetingService.joinScopedNetwork(ssid, passphrase, gateway, report),
+            keepHotspotUpWhileJoining(acsMeetingService.joinScopedNetwork(ssid, passphrase, gateway, report), {
+              enable: () => this.setGlassesHotspotState(true),
+              cancel: () => void acsMeetingService.cancelScopedNetworkJoin().catch(() => undefined),
+            }),
           leaveScopedNetwork: () => acsMeetingService.leaveScopedNetwork(),
           cancelScopedNetworkJoin: () => acsMeetingService.cancelScopedNetworkJoin(),
           probeGateway: async () => {

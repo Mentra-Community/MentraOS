@@ -74,6 +74,8 @@ mock.module("../utils/timers", () => ({
     clearTimeout: (timeoutId: number) => clearTimeout(timeoutId),
   },
 }))
+// The relay's hotspot join watches the glasses link through the public SDK.
+mock.module("@mentra/bluetooth-sdk", () => ({default: {subscribeGlassesStatus: () => () => {}}}))
 mock.module("../../utils/timers", () => ({
   BgTimer: {
     setInterval: (callback: () => void, delay: number) => setInterval(callback, delay) as unknown as number,

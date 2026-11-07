@@ -16,6 +16,9 @@ public final class GlassesHotspotNetwork {
     private var applying = false
     private var ownsConfiguration = false
     private var applies = 0
+    /// When the pending apply() started: iOS answers it only once the person answers its join prompt.
+    private var promptSince: TimeInterval?
+    private var joinDeadline: TimeInterval = 0
     private let reapplyPolicy = HotspotReapplyPolicy()
     private var cancelled = false
     private var joinReply: ((Result<String, Error>) -> Void)?
@@ -56,6 +59,8 @@ public final class GlassesHotspotNetwork {
             self.generation += 1
             let gen = self.generation
             let deadline = ProcessInfo.processInfo.systemUptime + 60
+            self.joinDeadline = deadline
+            self.promptSince = nil
             self.ssid = ssid
             self.lastHotspotSSID = ssid
             self.gatewayAddress = gateway
@@ -71,19 +76,32 @@ public final class GlassesHotspotNetwork {
             } else {
                 self.applyConfiguration(ssid: ssid, passphrase: passphrase, generation: gen)
             }
-            self.queue.asyncAfter(deadline: .now() + max(0, deadline - ProcessInfo.processInfo.systemUptime)) {
-                // Once associated, the user may still be reading the Local Network alert.
-                // Its response time is not a hotspot association timeout.
-                guard gen == self.generation, self.joinReply != nil, self.localAccess == nil else { return }
-                self.cancelled = true
-                self.macAssociation?.cancel()
-                self.macAuthorization?.cancelPending()
-                self.finishJoin(.failure(LocalMediaError("Hotspot join timed out")))
-                // apply() cannot be cancelled. Retain the reservation until its callback and remove the
-                // late configuration before another call is permitted to acquire the network.
-                if self.ownsConfiguration { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid) }
-                if !self.applying { self.finishLeave() }
-            }
+            self.scheduleJoinDeadline(ssid: ssid, generation: gen)
+        }
+    }
+
+    /// Time to associate after the person answers a join prompt late in the join.
+    private static let afterAnswer: TimeInterval = 30
+
+    /// The join gets 60 s of its own, plus however long the person takes to answer iOS's join
+    /// prompt. The engine keeps the glasses AP up meanwhile.
+    private func scheduleJoinDeadline(ssid: String, generation gen: Int) {
+        queue.asyncAfter(deadline: .now() + max(1, joinDeadline - ProcessInfo.processInfo.systemUptime)) {
+            // Once associated, the user may still be reading the Local Network alert.
+            // Its response time is not a hotspot association timeout.
+            guard gen == self.generation, self.joinReply != nil, self.localAccess == nil else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            if self.promptSince != nil { self.joinDeadline = max(self.joinDeadline, now + 1) }
+            if now < self.joinDeadline { self.scheduleJoinDeadline(ssid: ssid, generation: gen); return }
+            MediaLog.log("HOTSPOT_JOIN timed_out prompt_pending=\(self.promptSince != nil)")
+            self.cancelled = true
+            self.macAssociation?.cancel()
+            self.macAuthorization?.cancelPending()
+            self.finishJoin(.failure(LocalMediaError("Hotspot join timed out")))
+            // apply() cannot be cancelled. Retain the reservation until its callback and remove the
+            // late configuration before another call is permitted to acquire the network.
+            if self.ownsConfiguration { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid) }
+            if !self.applying { self.finishLeave() }
         }
     }
 
@@ -331,11 +349,18 @@ public final class GlassesHotspotNetwork {
         applying = true
         ownsConfiguration = true
         applies += 1
+        promptSince = ProcessInfo.processInfo.systemUptime
         MediaLog.log("HOTSPOT_JOIN apply_start attempt=\(self.applies) ios_on_mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
         NEHotspotConfigurationManager.shared.apply(config) { error in
             self.queue.async {
                 guard gen == self.generation else { return }
                 self.applying = false
+                if let asked = self.promptSince {
+                    let now = ProcessInfo.processInfo.systemUptime
+                    self.promptSince = nil
+                    self.joinDeadline = max(self.joinDeadline, now + Self.afterAnswer)
+                    MediaLog.log("HOTSPOT_JOIN apply_answered after_s=\(Int(now - asked))")
+                }
                 if self.cancelled { self.finishLeave(); return }
                 if let error {
                     let nativeError = error as NSError

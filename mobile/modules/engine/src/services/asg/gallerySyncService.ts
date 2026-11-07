@@ -18,6 +18,7 @@ import {SETTINGS, useSettingsStore} from "../../stores/settings"
 import {PhotoInfo, CaptureGroup} from "../../types/asg"
 import GlobalEventEmitter from "../../utils/GlobalEventEmitter"
 import {BgTimer} from "../../utils/timers"
+import {keepHotspotUpWhileJoining} from "../GlassesHotspotJoin"
 import {acquireGlassesHotspot} from "../GlassesHotspotLease"
 import {fixGlassesClockIfSkewed} from "../glassesClockSync"
 import {detectClockSkew, isSyncManifestEmpty} from "../gallerySyncClock"
@@ -102,6 +103,8 @@ class GallerySyncService {
   private hotspotListenerRegistered = false
   private hotspotConnectionTimeout: number | null = null
   private hotspotRequestTimeout: number | null = null
+  /** A join is under way; the keep-alive's enables echo "hotspot ready" back while it waits. */
+  private joiningHotspot = false
   private abortController: AbortController | null = null
   private hotspotOwner: string | null = null
   private isInitialized = false
@@ -395,6 +398,11 @@ class GallerySyncService {
 
     if (!eventData.enabled || !eventData.ssid || !eventData.password) {
       console.log("[GallerySyncService] Hotspot not ready yet")
+      return
+    }
+
+    if (this.joiningHotspot) {
+      console.log("[GallerySyncService] Hotspot still ready while the join waits")
       return
     }
 
@@ -1064,6 +1072,15 @@ class GallerySyncService {
    * - Android: Hotspot needs time to initialize, especially when glasses WiFi was cold
    */
   private async connectToHotspotWifi(hotspotInfo: HotspotInfo, signal = this.abortController?.signal): Promise<void> {
+    this.joiningHotspot = true
+    try {
+      await this.joinHotspotWifi(hotspotInfo, signal)
+    } finally {
+      this.joiningHotspot = false
+    }
+  }
+
+  private async joinHotspotWifi(hotspotInfo: HotspotInfo, signal = this.abortController?.signal): Promise<void> {
     if (signal?.aborted) return
     const store = useGallerySyncStore.getState()
 
@@ -1155,12 +1172,18 @@ class GallerySyncService {
           appBackgroundTime = null
 
           if (signal?.aborted) return
-          const joinedAddress = await localNetworkTransport.connect(this.networkOwner, hotspotInfo.ssid, hotspotInfo.password, {
-            gateway: hotspotInfo.ip,
-            onPermissionRequired: () => {
-              if (!signal?.aborted) emitGalleryNotice({code: "local_network_permission_required"})
+          const joinedAddress = await keepHotspotUpWhileJoining(
+            localNetworkTransport.connect(this.networkOwner, hotspotInfo.ssid, hotspotInfo.password, {
+              gateway: hotspotInfo.ip,
+              onPermissionRequired: () => {
+                if (!signal?.aborted) emitGalleryNotice({code: "local_network_permission_required"})
+              },
+            }),
+            {
+              enable: () => BluetoothSdk.setHotspotState(true),
+              cancel: () => void localNetworkTransport.disconnect(this.networkOwner).catch(() => undefined),
             },
-          })
+          )
           if (signal?.aborted) return
 
           const connectCallDuration = Date.now() - connectCallStartTime

@@ -4,7 +4,7 @@ package com.mentra.bluetoothsdk.hotspot
  * Pure lifecycle state machine for a scoped SoftAP network join.
  *
  * Split from the Android shell so the awkward parts — duplicate callbacks, callbacks arriving after
- * a cancel, a timeout racing a late `onAvailable` — are unit testable without a device. The shell
+ * a cancel racing a late `onAvailable` — are unit testable without a device. The shell
  * ([ScopedSoftApNetwork]) owns `ConnectivityManager` and forwards raw callbacks in here.
  *
  * `ConnectivityManager` gives no ordering or at-most-once guarantee: `onAvailable` can fire more
@@ -23,14 +23,13 @@ class ScopedNetworkState {
         /** Network joined and usable. */
         AVAILABLE,
 
-        /** Terminal for this generation: released, lost, timed out, or failed. */
+        /** Terminal for this generation: released, lost, or failed. */
         LOST,
     }
 
     /** Why a join ended without producing a usable network. */
     enum class Failure {
         NONE,
-        TIMEOUT,
         UNAVAILABLE,
         LOST,
         PERMISSION_DENIED,
@@ -74,15 +73,6 @@ class ScopedNetworkState {
         if (!accepts(callbackGeneration)) return false
         if (phase == Phase.AVAILABLE) return false // duplicate onAvailable
         phase = Phase.AVAILABLE
-        return true
-    }
-
-    /** The request timed out before a usable network arrived. Ignored once available. */
-    fun onTimeout(callbackGeneration: Int): Boolean {
-        if (callbackGeneration != generation) return false
-        if (phase != Phase.REQUESTING) return false
-        phase = Phase.LOST
-        failure = Failure.TIMEOUT
         return true
     }
 

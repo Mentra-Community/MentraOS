@@ -258,6 +258,7 @@ class OtaInstallCoordinator {
   private retryTimeout: ReturnType<typeof setTimeout> | null = null
   private stuckTimeout: ReturnType<typeof setTimeout> | null = null
   private progressTimeout: ReturnType<typeof setTimeout> | null = null
+  private progressTimeoutMs = 0
   private pingInterval: ReturnType<typeof setInterval> | null = null
   private queryReplyTimeout: ReturnType<typeof setTimeout> | null = null
   private continueLockoutTimer: ReturnType<typeof setTimeout> | null = null
@@ -448,7 +449,8 @@ class OtaInstallCoordinator {
       this.clearContinueLockoutTimer()
       this.setErrorMsg("")
       this.maybeStartGlobalTimeout()
-      this.maybeArmStuckWatchdog()
+      // An unprepared hotspot start arms it once the person has answered the join prompt.
+      if (this.selectedTransport === "wifi" || this.hotspotManifestUrl) this.maybeArmStuckWatchdog()
       if (isGlassesConnected(store.connection)) {
         if (this.otaStartOwnership?.outcome === "pending") {
           void this.sendOtaStartWithWatchdogs()
@@ -1141,14 +1143,7 @@ class OtaInstallCoordinator {
       } else if (!stallSig) {
         this.clearProgressTimeout()
       } else {
-        const duration = stallDuration
-        this.clearProgressTimeout()
-        this.progressTimeout = setTimeout(() => {
-          this.progressTimeout = null
-          if (isTerminalForWatchdog(this.computeDisplayStateNow())) return
-          console.log(`[OTA_PROGRESS] watchdog: progress stalled for ${duration}ms, failing`)
-          this.setErrorMsg(OtaProgressMessages.stalledOrStuck, "progress_stalled")
-        }, duration)
+        this.armProgressTimeout(stallDuration)
       }
     }
 
@@ -1696,6 +1691,8 @@ class OtaInstallCoordinator {
           })
           if (!isCurrentAttempt()) return
           this.hotspotManifestUrl = manifestUrl
+          // React Native timers pause while the join prompt is up: count again from its answer.
+          if (this.progressTimeout) this.armProgressTimeout(this.progressTimeoutMs)
         }
         otaVersionUrl = this.hotspotManifestUrl
         this.maybeArmStuckWatchdog()
@@ -1832,6 +1829,26 @@ class OtaInstallCoordinator {
       if (this.otaStartOwnership?.outcome !== "pending" && !this.prepareFreshOtaStartAttempt()) return
       void this.sendOtaStartWithWatchdogs()
     }, QUERY_REPLY_TIMEOUT_MS)
+  }
+
+  private armProgressTimeout(duration: number): void {
+    this.clearProgressTimeout()
+    this.progressTimeoutMs = duration
+    this.progressTimeout = setTimeout(() => {
+      this.progressTimeout = null
+      if (isTerminalForWatchdog(this.computeDisplayStateNow())) return
+      // A hotspot start still waiting on the person's join answer has nothing to stall on yet.
+      if (
+        this.selectedTransport === "hotspot" &&
+        !this.hotspotManifestUrl &&
+        this.otaStartOwnership?.outcome === "pending"
+      ) {
+        this.armProgressTimeout(duration)
+        return
+      }
+      console.log(`[OTA_PROGRESS] watchdog: progress stalled for ${duration}ms, failing`)
+      this.setErrorMsg(OtaProgressMessages.stalledOrStuck, "progress_stalled")
+    }, duration)
   }
 
   // --- timer cleanup helpers ---

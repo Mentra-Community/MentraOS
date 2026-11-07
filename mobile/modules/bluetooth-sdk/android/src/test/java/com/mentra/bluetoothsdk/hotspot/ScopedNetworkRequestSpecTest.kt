@@ -40,18 +40,6 @@ class ScopedNetworkRequestSpecTest {
         assertThat(ScopedNetworkRequestSpec.forSoftAp("Open-AP", "").hasPassphrase).isFalse()
     }
 
-    @Test
-    fun `the default timeout matches the bluetooth sdk hotspot join`() {
-        assertThat(ScopedNetworkRequestSpec.forSoftAp("x", "y").timeoutMs).isEqualTo(30_000)
-        assertThat(ScopedNetworkRequestSpec.DEFAULT_TIMEOUT_MS).isEqualTo(30_000)
-    }
-
-    @Test
-    fun `the timeout is overridable`() {
-        assertThat(ScopedNetworkRequestSpec.forSoftAp("x", "y", timeoutMs = 5_000).timeoutMs)
-            .isEqualTo(5_000)
-    }
-
     /** A spec that kept the internet capability must not read as safe. */
     @Test
     fun `avoidsInternetCapability is false when the capability is not removed`() {
@@ -61,7 +49,6 @@ class ScopedNetworkRequestSpecTest {
                 passphrase = "y",
                 transportTypes = setOf(NetworkCapabilities.TRANSPORT_WIFI),
                 removedCapabilities = emptySet(),
-                timeoutMs = 1_000,
             )
 
         assertThat(unsafe.avoidsInternetCapability).isFalse()

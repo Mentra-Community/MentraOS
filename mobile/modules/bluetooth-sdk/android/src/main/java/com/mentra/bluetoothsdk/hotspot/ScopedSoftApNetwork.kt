@@ -12,7 +12,6 @@ import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
 import java.net.Inet4Address
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 /**
  * Joins the glasses' SoftAP as a scoped, internet-less network and keeps the [Network] handle
@@ -249,7 +248,6 @@ class ScopedSoftApNetwork(private val context: Context) {
         SoftApTrace.stage(
             "scoped_join_requested",
             "ssid" to ssid,
-            "timeoutMs" to requestSpec.timeoutMs,
             "avoidsInternetCapability" to requestSpec.avoidsInternetCapability,
         )
         val startedAtMs = System.currentTimeMillis()
@@ -350,7 +348,10 @@ class ScopedSoftApNetwork(private val context: Context) {
         synchronized(lock) { callback = networkCallback }
 
         try {
-            manager.requestNetwork(request(requestSpec), networkCallback, requestSpec.timeoutMs)
+            // No timeout: Android's "Connect to device?" prompt stays up only while the request
+            // does, and a person may take as long as they like to answer it. The engine keeps the
+            // glasses AP up meanwhile. The join ends on joining, a refusal, or release().
+            manager.requestNetwork(request(requestSpec), networkCallback)
         } catch (error: SecurityException) {
             synchronized(lock) { state.onRequestFailed(generation, permissionDenied = true) }
             clearCallback(networkCallback)
@@ -363,11 +364,7 @@ class ScopedSoftApNetwork(private val context: Context) {
             throw ScopedNetworkError.RequestFailed(error.message ?: "unknown")
         }
 
-        // requestNetwork's own timeout fires onUnavailable, but a slightly longer await guards
-        // against never being called back at all.
-        val awaited =
-            ready.await(requestSpec.timeoutMs.toLong() + AWAIT_GRACE_MS, TimeUnit.MILLISECONDS)
-        if (!awaited) synchronized(lock) { state.onTimeout(generation) }
+        ready.await()
 
         val joinedNetwork =
             synchronized(lock) {
@@ -382,9 +379,8 @@ class ScopedSoftApNetwork(private val context: Context) {
         }
 
         throw synchronized(lock) {
-            val failure =
-                ScopedNetworkError.from(state.failure, ssid, requestSpec.timeoutMs)
-                    ?: ScopedNetworkError.Timeout(ssid, requestSpec.timeoutMs)
+            // A release() wakes the wait with no failure recorded.
+            val failure = ScopedNetworkError.from(state.failure, ssid) ?: ScopedNetworkError.Cancelled(ssid)
             releaseLocked()
             failure
         }
@@ -556,8 +552,6 @@ class ScopedSoftApNetwork(private val context: Context) {
             sdkInt < LOCAL_NETWORK_ENFORCED_SDK ||
                 targetSdkInt < LOCAL_NETWORK_ENFORCED_SDK ||
                 permissionGranted()
-
-        private const val AWAIT_GRACE_MS = 2_000L
 
         /** How long we hold the scoped-join step open for the user to flip the Wi-Fi toggle. */
         const val WIFI_ENABLE_WAIT_MS = 90_000L

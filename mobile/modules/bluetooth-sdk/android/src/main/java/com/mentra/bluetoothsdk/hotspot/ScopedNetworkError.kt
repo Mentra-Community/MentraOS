@@ -4,9 +4,9 @@ package com.mentra.bluetoothsdk.hotspot
  * Typed failures for a scoped SoftAP join.
  *
  * A denied local-network permission must surface as a distinct, immediate error rather than a
- * 30-second hang that looks like a flaky hotspot. `ACCESS_LOCAL_NETWORK` sits in the nearby-devices
- * group, so it is often already granted during development and easy to miss until a user without it
- * hits a silent timeout.
+ * join that never completes, which looks like a flaky hotspot. `ACCESS_LOCAL_NETWORK` sits in the
+ * nearby-devices group, so it is often already granted during development and easy to miss until a
+ * user without it hits it.
  */
 sealed class ScopedNetworkError(val code: String, message: String) : Exception(message) {
 
@@ -17,14 +17,14 @@ sealed class ScopedNetworkError(val code: String, message: String) : Exception(m
             "Local network permission not granted: $permission",
         )
 
-    /** No usable network arrived before the request timeout. */
-    class Timeout(val ssid: String, val timeoutMs: Int) :
-        ScopedNetworkError(CODE_TIMEOUT, "Timed out joining $ssid after ${timeoutMs}ms")
+    /** The join was released by its owner before a usable network arrived. */
+    class Cancelled(val ssid: String) :
+        ScopedNetworkError(CODE_CANCELLED, "Joining $ssid was cancelled")
 
     /**
      * The framework reported it cannot provide this network at all.
      *
-     * WifiNetworkSpecifier does not keep scanning for the request timeout. If the glasses AP is
+     * WifiNetworkSpecifier does not keep scanning until this arrives. If the glasses AP is
      * not in the current scan — or the user dismissed the system join sheet — this arrives in
      * well under a second.
      */
@@ -80,7 +80,7 @@ sealed class ScopedNetworkError(val code: String, message: String) : Exception(m
 
     companion object {
         const val CODE_PERMISSION_DENIED = "SOFTAP_PERMISSION_DENIED"
-        const val CODE_TIMEOUT = "SOFTAP_JOIN_TIMEOUT"
+        const val CODE_CANCELLED = "SOFTAP_JOIN_CANCELLED"
         const val CODE_UNAVAILABLE = "SOFTAP_UNAVAILABLE"
         const val CODE_LOST = "SOFTAP_NETWORK_LOST"
         const val CODE_REQUEST_FAILED = "SOFTAP_REQUEST_FAILED"
@@ -90,10 +90,9 @@ sealed class ScopedNetworkError(val code: String, message: String) : Exception(m
         const val CODE_VPN_ACTIVE = "SOFTAP_VPN_ACTIVE"
 
         /** Map a terminal state-machine failure onto the typed error the call path reports. */
-        fun from(failure: ScopedNetworkState.Failure, ssid: String, timeoutMs: Int): ScopedNetworkError? =
+        fun from(failure: ScopedNetworkState.Failure, ssid: String): ScopedNetworkError? =
             when (failure) {
                 ScopedNetworkState.Failure.NONE -> null
-                ScopedNetworkState.Failure.TIMEOUT -> Timeout(ssid, timeoutMs)
                 ScopedNetworkState.Failure.UNAVAILABLE -> Unavailable(ssid)
                 ScopedNetworkState.Failure.LOST -> Lost(ssid)
                 ScopedNetworkState.Failure.PERMISSION_DENIED -> PermissionDenied(LOCAL_NETWORK_PERMISSION)
