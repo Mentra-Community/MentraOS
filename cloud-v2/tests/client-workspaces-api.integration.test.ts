@@ -265,7 +265,7 @@ describe("invitations", () => {
     expect(await (await call("/mine")).json()).toMatchObject({workspace: {workspaceId: ws}})
   })
 
-  test("accepting while already in a workspace is 409 already_in_workspace and joins nothing", async () => {
+  test("accepting while already in a workspace joins beside it, and answers the workspace that still manages the phone", async () => {
     const first = await workspaceWithOwner("First")
     await person("mu_dev", "dev@example.test")
     await addMember(first, "mu_dev", "member")
@@ -276,11 +276,12 @@ describe("invitations", () => {
     signedInAs("mu_dev")
 
     const res = await call(`/invitations/${created.invitationId}/accept`, {method: "POST"})
-    expect(res.status).toBe(409)
-    expect(((await res.json()) as {error: string}).error).toBe("already_in_workspace")
-    expect(await getActiveMembership(second, "mu_dev")).toBeNull()
-    const row = await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean()
-    expect(row?.status).toBe("pending")
+    expect(res.status).toBe(200)
+    // The first workspace joined keeps managing the phone: the answer is what `/mine` says.
+    expect(((await res.json()) as {workspace: {workspaceId: string}}).workspace.workspaceId).toBe(first)
+    expect(await (await call("/mine")).json()).toMatchObject({workspace: {workspaceId: first}})
+    expect(await getActiveMembership(second, "mu_dev")).toMatchObject({role: "member"})
+    expect(await getActiveMembership(first, "mu_dev")).toMatchObject({role: "member"})
   })
 
   test("accepting someone else's invitation is 403 email_mismatch", async () => {

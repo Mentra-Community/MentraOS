@@ -3,11 +3,13 @@ import {
   AppShell,
   CenteredLayout,
   Count,
-  WorkspaceLabel,
+  ROLE_LABELS,
+  WorkspaceSwitcher,
   workspaceListQuery,
   type ExternalNavItem,
   type NavGroup,
   type SwitcherCurrent,
+  type SwitcherWorkspace,
 } from "@mentra/workspace-ui";
 import { CodeXml, Mail } from "lucide-react";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
@@ -101,10 +103,29 @@ export function portalLinks(developerConsoleUrl: string | null): ExternalNavItem
 }
 
 /**
+ * The person's workspaces for the switcher: each opens at `/?workspace=<id>`, which the route remembers as this tab's
+ * workspace and then drops from the address. The one that manages their device says so.
+ */
+function useSwitcherWorkspaces(): { workspaces: SwitcherWorkspace[] | undefined; failed: boolean; retry(): void } {
+  const list = useQuery(workspaceListQuery(portalWorkspaceApi));
+  const workspaces = useMemo(
+    () =>
+      list.data?.map(item => ({
+        workspaceId: item.workspaceId,
+        name: item.name,
+        roleLabel: ROLE_LABELS[item.membership.role],
+        note: item.managesDevice ? "Manages your device" : null,
+        href: `/?workspace=${encodeURIComponent(item.workspaceId)}`,
+      })),
+    [list.data],
+  );
+  return { workspaces, failed: list.isError && list.data === undefined, retry: () => void list.refetch() };
+}
+
+/**
  * The shared `AppShell` as the portal's: named Mentra Portal, on MentraOS, with the portal's History-API
- * `Link`, the person's one workspace (name and role) at the top of the sidebar, and a link to their invitations
- * under it. A person belongs to one workspace: there is nothing to switch to and no way to create another from
- * here.
+ * `Link`, the workspace switcher at the top of the sidebar (the current workspace, and the person's others to switch
+ * to), and a link to their invitations under it.
  */
 export function PortalShell({
   current,
@@ -128,6 +149,7 @@ export function PortalShell({
 }) {
   const portal = usePortal();
   const invitations = <InvitationsLink />;
+  const switcher = useSwitcherWorkspaces();
 
   return (
     <AppShell
@@ -136,7 +158,17 @@ export function PortalShell({
       linkComponent={Link}
       switcher={
         current ? (
-          <WorkspaceLabel current={current} invitations={invitations} />
+          <div className="space-y-2">
+            <WorkspaceSwitcher
+              current={current}
+              workspaces={switcher.workspaces}
+              listFailed={switcher.failed}
+              onRetry={switcher.retry}
+              invitations={[]}
+              linkComponent={Link}
+            />
+            {invitations}
+          </div>
         ) : (
           // No workspace (billing, a missing page): just the invitations, when there are any.
           invitations

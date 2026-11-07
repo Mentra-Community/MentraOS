@@ -868,7 +868,7 @@ describe("the automatic workspace", () => {
       expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.deleted"})).toBe(0)
     })
 
-    test("an automatic workspace that holds something, or one made with createWorkspace, is kept, and the recovery refused", async () => {
+    test("an automatic workspace that holds something, or one made with createWorkspace, is kept beside the recovered one", async () => {
       const holds: Array<[string, (workspaceId: string) => Promise<unknown>]> = [
         ["a second member", ws => addMember(ws, "mu_second", "member")],
         ["a key", ws => seedCredential(ws, null)],
@@ -891,22 +891,22 @@ describe("the automatic workspace", () => {
         await hold(automaticId)
         const target = await newWorkspace(user("mu_owner"), "Target")
 
-        // One workspace per person: the kept workspace refuses the recovery.
-        await expectError(() => recoverOwnership(orgAdmin, target, "mu_me"), "already_in_workspace", 409)
+        await recoverOwnership(orgAdmin, target, "mu_me")
 
         expect({what, status: (await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status}).toEqual({
           what,
           status: "active",
         })
-        expect(await getActiveMembership(target, "mu_me")).toBeNull()
+        expect(await getActiveMembership(target, "mu_me")).toMatchObject({role: "owner"})
       }
 
       await Promise.all(MODELS.map(model => model.deleteMany({})))
       const me = await account(user("mu_me"))
       const made = await createWorkspace(me, {name: "Made"})
       const target = await newWorkspace(user("mu_owner"), "Target")
-      await expectError(() => recoverOwnership(orgAdmin, target, "mu_me"), "already_in_workspace", 409)
+      await recoverOwnership(orgAdmin, target, "mu_me")
       expect((await WorkspaceModel.findOne({workspaceId: made.workspaceId}).lean())!.status).toBe("active")
+      expect(await getActiveMembership(target, "mu_me")).toMatchObject({role: "owner"})
     })
 
     test("a workspace where the person is a Member, or promoted in place, is never deleted", async () => {
@@ -916,8 +916,9 @@ describe("the automatic workspace", () => {
       await addMember(hostWs, "mu_me", "member")
       const target = await newWorkspace(user("mu_owner"), "Target")
 
-      await expectError(() => recoverOwnership(orgAdmin, target, "mu_me"), "already_in_workspace", 409)
+      await recoverOwnership(orgAdmin, target, "mu_me")
       expect((await WorkspaceModel.findOne({workspaceId: hostWs}).lean())!.status).toBe("active")
+      expect(await getActiveMembership(target, "mu_me")).toMatchObject({role: "owner"})
 
       // Recovering the host workspace's owner role for a member of it deletes nothing either: no membership is made.
       await recoverOwnership(orgAdmin, hostWs, "mu_me")

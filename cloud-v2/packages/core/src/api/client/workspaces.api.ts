@@ -1,11 +1,11 @@
 /**
- * @fileoverview `/api/client/workspaces`: the Mentra App's own view of the workspace a person belongs to.
+ * @fileoverview `/api/client/workspaces`: the Mentra App's own view of the workspace that manages the phone.
  *
- *   GET  /mine                               the person's workspace, or `{workspace: null}`
+ *   GET  /mine                               the workspace managing the person's device, or `{workspace: null}`
  *   GET  /invitations/mine                   invitations addressed to their verified email that they can accept
  *   POST /invitations/:invitationId/accept   join the workspace the invitation is for
  *   POST /invitations/:invitationId/decline  turn it down (idempotent; changes no membership)
- *   POST /leave                              leave the workspace (the only Owner cannot); an optional
+ *   POST /leave                              leave the managing workspace (the only Owner cannot); an optional
  *                                            `{workspaceId}` body names it, and is 409 `membership_changed`
  *                                            when the person is no longer in that workspace
  *
@@ -15,11 +15,11 @@
  * verified email sees no invitations. A missing or invalid token is 401, as on Fleet's phone routes, so
  * the phone refreshes its session instead of treating it as a bad request.
  *
- * A person belongs to at most one workspace. Accepting while already in one that holds anything is
- * `already_in_workspace` (409): the phone says "leave first". An empty automatic workspace of the
- * person's own gives way instead, so a portal user can join from the Mentra App. Both the yield and the
- * refusal live in the workspace services (the membership guard also makes the refusal hold under
- * concurrent accepts); this route defers to them rather than refusing early.
+ * A person may belong to several workspaces; the phone sees the one that manages it
+ * (`managing-workspace.service`): their first real workspace, else their own automatic one. Accepting adds a
+ * membership beside the others, and answers what `/mine` would then say: the workspace joined when it now
+ * manages the phone, else the one that still does. An empty automatic workspace of the person's own gives
+ * way when they join another, as on the web.
  *
  * Failures of an expected kind arrive as `WorkspaceError` and are rendered by the app's error handler.
  */
@@ -43,6 +43,7 @@ import {
   declineInvitation,
   listInvitationsForPerson,
 } from "../../services/workspaces/invitation.service"
+import {managingWorkspaceOf} from "../../services/workspaces/managing-workspace.service"
 import {leaveWorkspace, listWorkspacesForUser, type Actor} from "../../services/workspaces/workspace.service"
 import {fail} from "../../services/workspaces/workspace-error"
 import type {AppContext, AppEnv} from "../../types/hono.types"
@@ -94,18 +95,15 @@ async function requireActor(c: AppContext): Promise<UserActor | Response> {
   }
 }
 
-/**
- * The person's workspace: their oldest active one. Before the one-workspace cleanup a person can belong to
- * several; the oldest is the one the phone shows until it is done.
- */
+/** The workspace the phone shows: the one managing the person's device (`managingWorkspaceOf`). */
 async function workspaceOf(mentraUserId: string): Promise<MyWorkspace | null> {
-  const [first] = await listWorkspacesForUser(mentraUserId)
-  if (!first) return null
+  const managing = await managingWorkspaceOf(mentraUserId)
+  if (!managing) return null
   return {
-    workspaceId: first.workspaceId,
-    name: first.name,
-    role: first.membership.role,
-    membershipId: first.membership.membershipId,
+    workspaceId: managing.workspace.workspaceId,
+    name: managing.workspace.name,
+    role: managing.membership.role,
+    membershipId: managing.membership.membershipId,
   }
 }
 
@@ -149,9 +147,8 @@ app.get("/invitations/mine", async c => {
 app.post("/invitations/:invitationId/accept", async c => {
   const actor = await requireActor(c)
   if (actor instanceof Response) return actor
-  // The service yields an empty automatic workspace of the person's own before joining, and refuses a
-  // workspace that holds anything with `already_in_workspace` (409) at the membership guard; a pre-check
-  // here would skip the yield and strand a portal user who has only an empty automatic workspace.
+  // The service yields an empty automatic workspace of the person's own before joining. The answer is what
+  // `/mine` now says: the joined workspace when it manages the phone, else the one that still does.
   await acceptInvitationById(actor, c.req.param("invitationId"))
   const workspace = await workspaceOf(actor.mentraUserId)
   // The membership was just written in the accepting transaction; a missing one means it was removed since.

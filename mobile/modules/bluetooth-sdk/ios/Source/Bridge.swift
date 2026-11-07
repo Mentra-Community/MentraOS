@@ -253,6 +253,20 @@ class Bridge {
         }
     }
 
+    /// Drops glasses from the search results, for example when their pairing window closed.
+    static func removeDiscoveredDevice(_ deviceModel: String, _ deviceName: String) {
+        Task {
+            await MainActor.run {
+                let searchResults = DeviceStore.shared.get("bluetooth", "searchResults") as? [[String: Any]] ?? []
+                let remaining = searchResults.filter {
+                    !($0["model"] as? String == deviceModel && $0["name"] as? String == deviceName)
+                }
+                if remaining.count == searchResults.count { return }
+                DeviceStore.shared.set("bluetooth", "searchResults", remaining)
+            }
+        }
+    }
+
     private static func mergeStableSearchResults(
         _ currentResults: [[String: Any]],
         newResult: [String: Any],

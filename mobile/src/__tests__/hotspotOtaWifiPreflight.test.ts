@@ -12,6 +12,7 @@ jest.mock("../../modules/engine/src/runtime/bootstrap", () => ({
   getUiSeams: () => mockSeams,
 }))
 jest.mock("react-native-wifi-reborn", () => ({__esModule: true, default: {isEnabled: jest.fn()}}))
+jest.mock("@react-native-community/netinfo", () => ({__esModule: true, default: {fetch: jest.fn()}}))
 jest.mock("../../modules/engine/src/services/OtaArtifactDownloader", () => ({
   planArtifacts: jest.fn(() => []),
   prepareArtifacts: jest.fn(async () => []),
@@ -35,6 +36,8 @@ jest.mock("@mentra/bluetooth-sdk/ota-transport", () => ({
 }))
 
 const wifi = jest.requireMock("react-native-wifi-reborn").default as {isEnabled: jest.Mock}
+const netInfo = jest.requireMock("@react-native-community/netinfo").default as {fetch: jest.Mock}
+const wifiInternet = {type: "wifi", isConnected: true, isInternetReachable: true}
 const downloader = jest.requireMock("../../modules/engine/src/services/OtaArtifactDownloader")
 const localNetwork = jest.requireMock(
   "../../modules/engine/src/services/asg/localNetworkTransport",
@@ -65,6 +68,7 @@ beforeEach(async () => {
   await startOtaDeviceSession()
   jest.spyOn(PermissionsAndroid, "check").mockResolvedValue(true)
   wifi.isEnabled.mockReset().mockResolvedValue(true)
+  netInfo.fetch.mockReset().mockResolvedValue(wifiInternet)
   delete mockSeams.requestPhoneWifiEnable
   downloader.prepareArtifacts.mockClear()
   localNetwork.connect.mockClear()
@@ -74,15 +78,23 @@ afterEach(async () => {
   stopOtaDeviceSession()
 })
 
-it("asks for Wi-Fi before downloading and continues once it is on", async () => {
+it("asks for Wi-Fi before downloading and continues once Wi-Fi carries the internet", async () => {
   wifi.isEnabled.mockResolvedValueOnce(false)
   mockSeams.requestPhoneWifiEnable = jest.fn(async () => {
     expect(downloader.prepareArtifacts).not.toHaveBeenCalled()
     return {enabled: true, cancelled: false}
   })
+  // The radio is on but cellular is still the route; downloading now would drop on the switch.
+  netInfo.fetch.mockResolvedValueOnce({type: "cellular", isConnected: true, isInternetReachable: true})
+  netInfo.fetch.mockImplementationOnce(async () => {
+    expect(downloader.prepareArtifacts).not.toHaveBeenCalled()
+    return wifiInternet
+  })
   bluetoothSdkMock.setHotspotState.mockResolvedValueOnce(enabledHotspot)
   expect(await hotspotOtaTransport.prepare(check)).toBe("http://192.168.43.2/version.json")
   expect(mockSeams.requestPhoneWifiEnable).toHaveBeenCalledTimes(1)
+  expect(netInfo.fetch).toHaveBeenCalledTimes(2)
+  expect(downloader.prepareArtifacts).toHaveBeenCalledTimes(1)
   expect(localNetwork.connect).toHaveBeenCalledTimes(1)
 })
 

@@ -39,8 +39,6 @@ export type MentraLivePairingGlasses = {
   id: string
   /** The Bluetooth name without its model prefix, for example `E511`. */
   label: string
-  /** False only when the glasses support secure pairing and say their window is closed. */
-  inPairingMode: boolean
   device: Device
 }
 
@@ -51,8 +49,8 @@ export type MentraLivePairingState =
       status: MentraLivePairingScanStatus
       /** False once the scan gave up; the list, if any, stays. */
       scanning: boolean
+      /** Only glasses that can pair now: in pairing mode, or older firmware that always pairs. */
       glasses: MentraLivePairingGlasses[]
-      someNotInPairingMode: boolean
     }
   | {page: "connecting"; device: Device; booting: boolean}
   | {
@@ -118,6 +116,8 @@ const MODEL = DeviceTypes.LIVE
 const SCAN_TIMEOUT_MS = 15_000
 /** Shorter than the native scan's one minute, so the list never goes stale while it's shown. */
 const RESCAN_INTERVAL_MS = 45_000
+/** A rescan empties the native list; the rows shown before it stay this long, until glasses advertise again. */
+const RESCAN_GRACE_MS = 5_000
 const KICKOFF_DELAY_MS = 2_000
 const READY_TIMEOUT_MS = 35_000
 const SUCCESS_DELAY_MS = 1_000
@@ -133,8 +133,6 @@ const glassesLabel = (name: string) =>
     .replace("MENTRA_LIVE_BT_", "")
     .replace("Mentra_Live_", "")
     .replace("MENTRA_LIVE_", "")
-
-const inPairingMode = (device: Device) => device.securePairingCapable === false || device.pairingMode !== false
 
 /** The per-attempt latches. A fresh object per attempt, so a stale callback can only touch its own. */
 type Attempt = {
@@ -169,7 +167,8 @@ export function useMentraLivePairing(options: UseMentraLivePairingOptions): Ment
 
   // --- scan ---
   const searchResults = useEngineSnapshot(pairing.searchResults, pairing.onFound)
-  const [remembered, setRemembered] = useState<Device[]>([])
+  // Rows shown when a rescan emptied the native list, kept until glasses advertise again or the grace ends.
+  const [carried, setCarried] = useState<Device[]>([])
   const [scanTimedOut, setScanTimedOut] = useState(false)
   const [diagnostic, setDiagnostic] = useState<ScanDiagnostic | null>(null)
   const [scanGeneration, setScanGeneration] = useState(0)
@@ -200,7 +199,7 @@ export function useMentraLivePairing(options: UseMentraLivePairingOptions): Ment
     connectingRef.current = false
     setScanTimedOut(false)
     setDiagnostic(null)
-    setRemembered([])
+    setCarried([])
     try {
       // A bond means the glasses were never unpaired, so they need no pairing mode and no choosing.
       // Discovery waits for this: it drops their Classic link, which an owner's reconnect keeps.
@@ -234,20 +233,20 @@ export function useMentraLivePairing(options: UseMentraLivePairingOptions): Ment
     [],
   )
 
-  useEffect(() => {
-    setRemembered((previous) => {
-      const combined = [...previous]
-      for (const result of searchResults) {
-        if (result.model !== MODEL) continue
-        const index = combined.findIndex((known) => known.id === result.id)
-        if (index >= 0) combined[index] = result
-        else combined.push(result)
-      }
-      return combined
-    })
-  }, [searchResults])
+  // The native list drops glasses whose pairing window closed, so apart from carried rows it is the list.
+  const visible = useMemo(() => {
+    const found = searchResults.filter((result) => result.model === MODEL && result.name !== "NOTREQUIREDSKIP")
+    const kept = carried.map((row) => found.find((result) => result.id === row.id) ?? row)
+    return [...kept, ...found.filter((result) => !carried.some((row) => row.id === result.id))]
+  }, [searchResults, carried])
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
 
-  const visible = useMemo(() => remembered.filter((result) => result.name !== "NOTREQUIREDSKIP"), [remembered])
+  useEffect(() => {
+    if (carried.length === 0) return
+    const timer = setTimeout(() => setCarried([]), RESCAN_GRACE_MS)
+    return () => clearTimeout(timer)
+  }, [carried])
   const visibleCountRef = useRef(visible.length)
   visibleCountRef.current = visible.length
 
@@ -255,14 +254,14 @@ export function useMentraLivePairing(options: UseMentraLivePairingOptions): Ment
     if (visible.length > 0) setDiagnostic(null)
   }, [visible.length])
 
-  // The native scan ends after a minute. While glasses are listed, scan again before then, so each row
-  // keeps saying whether those glasses are in pairing mode: someone who presses their button later
-  // sees it, and doesn't press again, which would close the window.
+  // The native scan ends after a minute. While glasses are listed, scan again before then, so glasses
+  // whose window closes leave the list and someone who presses their button later still appears.
   const listsGlasses = visible.length > 0
   useEffect(() => {
     if (page !== "scan" || scanTimedOut || !listsGlasses) return
     const timer = setInterval(() => {
       if (connectingRef.current) return
+      setCarried(visibleRef.current)
       void Promise.resolve(pairing.scan(MODEL)).catch((error) => console.warn("Failed to rescan for glasses:", error))
     }, RESCAN_INTERVAL_MS)
     return () => clearInterval(timer)
@@ -609,12 +608,7 @@ export function useMentraLivePairing(options: UseMentraLivePairingOptions): Ment
       case "success":
         return {page}
       case "scan": {
-        const listed = visible.map((device) => ({
-          id: device.id,
-          label: glassesLabel(device.name),
-          inPairingMode: inPairingMode(device),
-          device,
-        }))
+        const listed = visible.map((device) => ({id: device.id, label: glassesLabel(device.name), device}))
         const status: MentraLivePairingScanStatus =
           diagnostic?.code === "device_connected_on_phone" && listed.length === 0
             ? "in_use"
@@ -628,13 +622,12 @@ export function useMentraLivePairing(options: UseMentraLivePairingOptions): Ment
           status,
           scanning: !scanTimedOut,
           glasses: listed,
-          someNotInPairingMode: listed.some((item) => !item.inPairingMode),
         }
       }
       case "connecting":
         return attempt
           ? {page, device: attempt.device, booting}
-          : {page: "scan", status: "searching", scanning: true, glasses: [], someNotInPairingMode: false}
+          : {page: "scan", status: "searching", scanning: true, glasses: []}
       case "pair_audio":
         return {
           page,

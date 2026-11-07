@@ -13,22 +13,18 @@ describe('pairingPresentation', () => {
     expect(presentation.secondary?.action).toBe('back');
   });
 
-  test('lists glasses by code and says which need pairing mode', () => {
+  test('lists glasses by code', () => {
     const state: MentraLivePairingState = {
       page: 'scan',
       status: 'choosing',
       scanning: true,
-      someNotInPairingMode: true,
       glasses: [
-        {id: 'a', label: 'E511', inPairingMode: false, device},
-        {id: 'b', label: 'B2C4', inPairingMode: true, device: {...device, id: 'b'}},
+        {id: 'a', label: 'E511', device},
+        {id: 'b', label: 'B2C4', device: {...device, id: 'b'}},
       ],
     };
     const presentation = pairingPresentation(state);
-    expect(presentation.rows?.map((row) => [row.label, row.ready])).toEqual([
-      ['Mentra Live E511', false],
-      ['Mentra Live B2C4', true],
-    ]);
+    expect(presentation.rows?.map((row) => row.label)).toEqual(['Mentra Live E511', 'Mentra Live B2C4']);
     expect(presentation.indeterminate).toBe(true);
     expect(presentation.primary).toBeUndefined();
   });
@@ -39,7 +35,6 @@ describe('pairingPresentation', () => {
         page: 'scan',
         status,
         scanning: false,
-        someNotInPairingMode: false,
         glasses: [],
       });
       expect(presentation.primary?.action).toBe('scanAgain');

@@ -1670,29 +1670,17 @@ class MentraLive : SGCManager() {
                                 )
                         val isNamedConnectTarget =
                                 isSavedGlasses && (isReconnecting || explicitConnectByName)
-                        if (MentraLiveOwnerLossPolicy.shouldExposeAsNonPairable(
+                        if (MentraLiveOwnerLossPolicy.shouldIgnoreNotPairable(
                                         savedGlasses = isSavedGlasses,
                                         reconnectScan = isReconnecting,
                                         secureTrailer = advertisesPairingFlag(result),
                                         pairingDiscoverable = isPairingDiscoverable(result),
                                 )
                         ) {
-                            // Other secure units stay visible with pairing-mode guidance, and
-                            // the scan screen blocks the connection until they are pairable.
+                            // Only glasses that can pair now are listed; a closed window drops them.
                             // The saved glasses fall through so the pause watch scan can see
                             // the pairing flag clear and reconnect.
-                            Bridge.log(
-                                    "LIVE: Nearby $deviceName is secure firmware not in pairing mode — exposing as non-pairable"
-                            )
-                            Bridge.sendDiscoveredDevice(
-                                    DeviceTypes.LIVE,
-                                    deviceName,
-                                    deviceAddress,
-                                    result.rssi,
-                                    pairingMode = false,
-                                    pairingCode = null,
-                                    securePairingCapable = true,
-                            )
+                            Bridge.removeDiscoveredDevice(DeviceTypes.LIVE, deviceName)
                             return
                         }
                         val glassType = if (deviceName == "Xy_A") "Standard" else "Mentra Live"
@@ -1705,17 +1693,21 @@ class MentraLive : SGCManager() {
                                         if (secureCapable) " (pairingMode=$pairingMode)"
                                         else " (legacy firmware, pairable)"
                         )
-                        Bridge.sendDiscoveredDevice(
-                                DeviceTypes.LIVE,
-                                deviceName,
-                                deviceAddress,
-                                result.rssi,
-                                // Field firmware has no pairing flag. Treat it as pairable so the
-                                // new Mentra App can still find old glasses.
-                                pairingMode = if (secureCapable) pairingMode else true,
-                                pairingCode = pairingCode,
-                                securePairingCapable = secureCapable,
-                        )
+                        // Field firmware has no pairing flag. Treat it as pairable so the new
+                        // Mentra App can still find old glasses.
+                        if (secureCapable && !pairingMode) {
+                            Bridge.removeDiscoveredDevice(DeviceTypes.LIVE, deviceName)
+                        } else {
+                            Bridge.sendDiscoveredDevice(
+                                    DeviceTypes.LIVE,
+                                    deviceName,
+                                    deviceAddress,
+                                    result.rssi,
+                                    pairingMode = true,
+                                    pairingCode = pairingCode,
+                                    securePairingCapable = secureCapable,
+                            )
+                        }
 
                         if (ConnectedDeviceMatcher.sameSavedName(
                                         DeviceModel.MENTRA_LIVE,

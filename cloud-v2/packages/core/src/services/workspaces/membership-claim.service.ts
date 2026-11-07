@@ -17,21 +17,16 @@
  * Claiming an identity, in one transaction for everything the person can claim:
  *  - marks it claimed (`claimedAt`, `claimedBy`); a claimed identity is never
  *    claimed by anyone else, so a second Core user with the same email gets nothing;
- *  - gives the person one workspace from the memberships pending under all of
- *    their identities (`claimPendingMemberships`). A pending membership in a
- *    workspace where the person already holds one merges into it: the kept
- *    membership takes the higher role, the imported one ends (`removed`), and its
- *    live keys and pending invitations move to the kept one (`repointCredentials`),
- *    so nothing the person could do is lost. A person in no workspace takes the one
- *    the import's rule picks (highest role, earliest among equals). Every other
- *    pending membership is discarded (`membership.removed`, its keys and
- *    invitations revoked), so nothing is left to claim later; a discarded last
- *    Owner is replaced by the workspace's next member, and a workspace left with
- *    nobody to promote is logged for an Organization Admin to recover;
+ *  - gives the person every membership pending under all of their identities
+ *    (`claimPendingMemberships`): a person may belong to several workspaces. A
+ *    pending membership in a workspace where the person already holds one merges
+ *    into it: the kept membership takes the higher role, the imported one ends
+ *    (`removed`), and its live keys and pending invitations move to the kept one
+ *    (`repointCredentials`), so nothing the person could do is lost;
  *  - moves enterprise org ownership (`enterprise_orgs.ownerUserId`) from the
  *    WorkOS user id to the person.
- * Each move is audited (`membership.claimed`, `membership.merged_duplicate`,
- * `membership.removed`, `membership.role_changed`, as the system) and bumps its
+ * Each move is audited (`membership.claimed`, `membership.merged_duplicate`, as
+ * the system) and bumps its
  * workspace's authorization revision once, as every change to who holds a role does. Keys and invitations the claimed memberships
  * made are stamped with the person's user id, so deleting their account later
  * finds them.
@@ -57,9 +52,8 @@ import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {isDeletedAccountId} from "../user.service"
 import {recordWorkspaceEvent} from "./audit.service"
 import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
-import {insertGuard} from "./membership-guard.service"
 import {RecentChecks} from "./recent-checks"
-import {countActiveOwners, endMembership, isId, roleEntry, type MembershipRow} from "./workspace.service"
+import {isId, roleEntry, type MembershipRow} from "./workspace.service"
 
 const logger = createLogger("core").child({service: "membership-claim"})
 
@@ -80,9 +74,6 @@ export interface ClaimInput {
 export interface ClaimedMemberships {
   claimed: number
   merged: number
-  discarded: number
-  /** Workspaces a discarded last Owner left with no Owner and nobody to promote, for an Organization Admin. */
-  ownerless: string[]
 }
 
 /** The import's pick: highest role, then the earliest join, then the smallest membership id. */
@@ -96,23 +87,20 @@ function pickOrder(a: MembershipRow, b: MembershipRow): number {
 
 /**
  * Hand the active memberships pending under `workosUserIds` (every WorkOS user the person claims) to
- * `mentraUserId`, inside the caller's transaction, keeping one workspace per person:
+ * `mentraUserId`, inside the caller's transaction. A person may belong to several workspaces, so every one
+ * is claimed:
  *  - a pending membership in a workspace where the person already holds an active one merges into it;
- *  - an automatic workspace of theirs that holds nothing gives way first (`yieldAutomaticWorkspace`), so it
- *    does not count as the one they hold;
- *  - when the person holds none, the one the import's rule picks (`pickOrder`) is claimed in place, and the
- *    others in that workspace merge into it;
- *  - every other one is discarded: ended (`removed`, `membership.removed` as the system) with its keys and
- *    invitations revoked, so nothing is left to claim later. A discarded last Owner is replaced by the
- *    workspace's next member (`promoteNextOwner`); with nobody to promote the workspace is reported as
- *    ownerless, for an Organization Admin to recover.
+ *  - an automatic workspace of theirs that holds nothing gives way first (`yieldAutomaticWorkspace`), as it
+ *    does when they join any other workspace;
+ *  - each other one is claimed in place, in the import's order (`pickOrder`), and the others in that
+ *    workspace merge into it.
  */
 export async function claimPendingMemberships(
   session: ClientSession,
   workosUserIds: string[],
   mentraUserId: string,
 ): Promise<ClaimedMemberships> {
-  const result: ClaimedMemberships = {claimed: 0, merged: 0, discarded: 0, ownerless: []}
+  const result: ClaimedMemberships = {claimed: 0, merged: 0}
   const ids = workosUserIds.filter(isId)
   if (ids.length === 0 || !isId(mentraUserId)) return result
   const pending = (
@@ -146,30 +134,12 @@ export async function claimPendingMemberships(
       continue
     }
 
-    // The person is about to hold a workspace of their own accord: an empty automatic one gives way, once,
-    // before the one-workspace rule below looks at what they hold.
+    // The person is about to hold a workspace of their own accord: an empty automatic one gives way, once.
     if (!yielded && workspace) {
       yielded = true
       for (const gone of await yieldAutomaticWorkspace(session, SYSTEM_ACTOR, mentraUserId, {except: row.workspaceId})) {
         heldByWorkspace.delete(gone)
       }
-    }
-
-    // One workspace per person: once they hold one, every other pending membership is discarded.
-    if (heldByWorkspace.size > 0) {
-      if (!workspace) continue
-      await endMembership(session, {workspace, actor: SYSTEM_ACTOR, membership: row, reason: "removed", action: "membership.removed"})
-      result.discarded += 1
-      if (row.role === "owner" && (await countActiveOwners(row.workspaceId, session)) === 0) {
-        if (!(await promoteNextOwner(session, row.workspaceId, revision, now))) {
-          result.ownerless.push(row.workspaceId)
-          logger.warn(
-            {workspaceId: row.workspaceId, membershipId: row.membershipId},
-            "a discarded imported Owner left the workspace with no Owner; an Organization Admin must recover it",
-          )
-        }
-      }
-      continue
     }
 
     const claimed = await WorkspaceMembershipModel.updateOne(
@@ -178,7 +148,6 @@ export async function claimPendingMemberships(
       {session},
     )
     if (claimed.modifiedCount !== 1) continue
-    await insertGuard(session, mentraUserId, {workspaceId: row.workspaceId, membershipId: row.membershipId})
     result.claimed += 1
     heldByWorkspace.set(row.workspaceId, {...row, mentraUserId, pendingWorkosUserId: null})
     await stampCreator(session, row, mentraUserId)
@@ -192,36 +161,6 @@ export async function claimPendingMemberships(
     })
   }
   return result
-}
-
-/**
- * Make the workspace's next member its Owner, as the duplicate-membership cleanup does: an account that exists,
- * highest role, earliest joined (`membership.role_changed`, as the system). False when there is nobody to promote.
- */
-async function promoteNextOwner(session: ClientSession, workspaceId: string, revision: number, now: Date): Promise<boolean> {
-  const members = await WorkspaceMembershipModel.find({workspaceId, status: "active", mentraUserId: {$type: "string"}})
-    .session(session)
-    .lean<MembershipRow[]>()
-  const candidates: MembershipRow[] = []
-  for (const row of members) {
-    if (!(await isDeletedAccountId(row.mentraUserId as string, session))) candidates.push(row)
-  }
-  const [next] = candidates.sort(pickOrder)
-  if (!next) return false
-  await WorkspaceMembershipModel.updateOne(
-    {membershipId: next.membershipId, status: "active"},
-    {$set: {role: "owner"}, $push: {roleHistory: roleEntry("owner", now, revision)}},
-    {session},
-  )
-  await recordWorkspaceEvent(session, {
-    workspaceId,
-    action: "membership.role_changed",
-    actor: SYSTEM_ACTOR,
-    target: {membershipId: next.membershipId, mentraUserId: next.mentraUserId ?? null, email: next.email ?? null},
-    before: {role: next.role},
-    after: {role: "owner"},
-  })
-  return true
 }
 
 /**
@@ -428,10 +367,10 @@ export async function claimLegacyIdentities(input: ClaimInput): Promise<{claimed
       enterpriseOrgs += owned.modifiedCount
     }
     // One pick across every identity with the email, so the person's one membership is the best of them all.
-    const {ownerless, ...moved} = await claimPendingMemberships(session, mine, mentraUserId)
-    if (claimedIdentities + moved.claimed + moved.merged + moved.discarded + enterpriseOrgs > 0) {
+    const moved = await claimPendingMemberships(session, mine, mentraUserId)
+    if (claimedIdentities + moved.claimed + moved.merged + enterpriseOrgs > 0) {
       logger.info(
-        {mentraUserId, claimedIdentities, ...moved, ...(ownerless.length > 0 ? {ownerless} : {}), enterpriseOrgs},
+        {mentraUserId, claimedIdentities, ...moved, enterpriseOrgs},
         "claimed Store-imported access",
       )
     }

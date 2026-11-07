@@ -28,7 +28,6 @@ import { WorkspaceMembershipModel } from "../models/workspace-membership.model";
 import { WorkspaceModel } from "../models/workspace.model";
 import { LegacyBrowserIdentityModel } from "../models/legacy-browser-identity.model";
 import { convertLegacyAdminKeys } from "../services/workspaces/legacy-admin-keys";
-import { initializeGuards } from "../services/workspaces/membership-guard.service";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
 
@@ -130,13 +129,13 @@ export async function runStartupMigrations(): Promise<void> {
   // Allowlisted admin API keys keep working as operator keys, before any
   // request is served. A key that fails is logged and retried next start.
   await convertLegacyAdminKeys();
-  // One workspace per person: everyone with exactly one active membership gets the guard that keeps it
-  // one. Idempotent; a failure is logged and retried at the next start (joins are still refused for anyone
-  // who holds an active membership, so nothing slips through meanwhile).
+  // A person may belong to several workspaces. The one-workspace guards an earlier release kept in the
+  // memberships collection (`_id` "ows:<mentraUserId>") no longer mean anything: remove them. Idempotent; a
+  // failure is logged and retried at the next start, and a guard left behind refuses nothing.
   try {
-    await initializeGuards();
+    await removeOneWorkspaceGuards();
   } catch (error) {
-    logger.error({ error: (error as Error)?.message }, "failed to write one-workspace guards");
+    logger.error({ error: (error as Error)?.message }, "failed to remove one-workspace guards");
   }
   await ensureMentraAccountOem();
 }
@@ -291,4 +290,14 @@ async function dedupeUserIdentityRows(): Promise<void> {
       "deduped user identity rows before ensuring current unique index",
     );
   }
+}
+
+/**
+ * Delete the one-workspace guard documents an earlier release wrote into the memberships collection. They carry
+ * none of a membership's fields, so no listing ever read them; their `_id` is "ows:<mentraUserId>".
+ */
+export async function removeOneWorkspaceGuards(): Promise<number> {
+  const result = await WorkspaceMembershipModel.collection.deleteMany({ _id: { $regex: "^ows:" } } as any);
+  if (result.deletedCount > 0) logger.info({ deleted: result.deletedCount }, "removed one-workspace guards");
+  return result.deletedCount;
 }

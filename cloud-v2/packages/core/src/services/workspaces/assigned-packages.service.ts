@@ -17,15 +17,18 @@
  * never lands after it; deleting the workspace deletes its set (`clearAssignedPackages`).
  *
  * **Who it names.** `assigningWorkspace` answers the workspace the person is an active member of whose set
- * holds the package. A person belongs to at most one workspace; someone left with several from before that
- * rule gets the one they joined first that assigned the package. Leaving the workspace, or Fleet withdrawing
- * the miniapp, takes the workspace out of the person's next token.
+ * holds the package. A person may belong to several: when more than one assigns the package, the one managing
+ * their device (`managing-workspace.service`) wins, since its Fleet installed the miniapp, and otherwise the
+ * one they joined first. A workspace that does not manage the device still names itself for its own miniapps,
+ * so its members can use them. Leaving the workspace, or Fleet withdrawing the miniapp, takes the workspace
+ * out of the person's next token.
  */
 
 import type {ClientSession} from "mongoose"
 import {withTransaction} from "../../connections/mongo.connection"
 import {WorkspaceAssignedPackagesModel} from "../../models/workspace-assigned-packages.model"
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
+import {managingWorkspaceOf} from "./managing-workspace.service"
 import {fail} from "./workspace-error"
 import {loadActiveWorkspace, touchWorkspace} from "./workspace.service"
 
@@ -132,8 +135,9 @@ export async function clearAssignedPackages(session: ClientSession, workspaceId:
 
 /**
  * The workspace a miniapp token for `packageName` names for this person: the workspace they are an active
- * member of whose assigned set holds the package, or null. With several such memberships (only from before
- * one workspace per person), the one that started first. A person in no workspace costs one query.
+ * member of whose assigned set holds the package, or null. With several such memberships, the one managing
+ * their device when it is among them, else the one that started first. A person in no workspace costs one
+ * query; asking which workspace manages them costs two more, only when several assign the package.
  */
 export async function assigningWorkspace(mentraUserId: string, packageName: string): Promise<string | null> {
   // A missing id or package must not become a `null` filter.
@@ -157,6 +161,10 @@ export async function assigningWorkspace(mentraUserId: string, packageName: stri
     .lean<Array<{workspaceId: string}>>()
   if (assigned.length === 0) return null
   const assigning = new Set(assigned.map(set => set.workspaceId))
+  if (assigning.size > 1) {
+    const managing = await managingWorkspaceOf(mentraUserId)
+    if (managing && assigning.has(managing.workspace.workspaceId)) return managing.workspace.workspaceId
+  }
   return memberships.find(membership => assigning.has(membership.workspaceId))?.workspaceId ?? null
 }
 

@@ -336,6 +336,20 @@ public class Bridge private constructor() {
             DeviceStore.set("bluetooth", "searchResults", uniqueResults)
         }
 
+        /** Drop glasses from the search results, for example when their pairing window closed. */
+        @JvmStatic
+        fun removeDiscoveredDevice(deviceModel: String, deviceName: String) {
+            val searchResults =
+                    DeviceStore.store.getCategory("bluetooth")["searchResults"] as? List<*> ?: return
+            val remaining =
+                    searchResults.filterNot { result ->
+                        val values = result as? Map<*, *>
+                        values?.get("model") == deviceModel && values["name"] == deviceName
+                    }
+            if (remaining.size == searchResults.size) return
+            DeviceStore.set("bluetooth", "searchResults", remaining)
+        }
+
         private fun mergeStableSearchResults(
                 currentResults: List<Map<String, Any>>,
                 newResult: Map<String, Any>,

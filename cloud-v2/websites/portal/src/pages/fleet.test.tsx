@@ -82,7 +82,7 @@ describe("the Fleet route in the address", () => {
 
 describe("what the module is told about the caller", () => {
   test("is the contract's fields, with the workspace the page is open on and nothing else the portal knows", () => {
-    const told = fleetUiMe(ME);
+    const told = fleetUiMe(ME, "ws_acme");
     expect(told).toEqual({
       authenticated: true,
       user: { mentraUserId: "mu_ada", email: "ada@acme.test" },
@@ -95,14 +95,25 @@ describe("what the module is told about the caller", () => {
 
   test("an Organization Admin who is not a member is told exactly the one workspace /me named for them", () => {
     const admin: PortalMe = { ...ME, workspaces: [{ workspaceId: "ws_other", name: "Other", capabilities: ["fleet.read", "fleet.devices.manage", "miniapps.assign"] }] };
-    expect(fleetUiMe(admin).workspaces).toEqual([
+    expect(fleetUiMe(admin, "ws_other").workspaces).toEqual([
       { workspaceId: "ws_other", name: "Other", capabilities: ["fleet.read", "fleet.devices.manage", "miniapps.assign"] },
     ]);
   });
 
+  test("a person in several workspaces is told only about the one the page is open on, with their role there", () => {
+    const several: PortalMe = {
+      ...ME,
+      workspaces: [
+        { workspaceId: "ws_acme", name: "Acme", capabilities: ["fleet.read", "miniapps.assign"] },
+        { workspaceId: "ws_side", name: "Side", capabilities: ["fleet.read"] },
+      ],
+    };
+    expect(fleetUiMe(several, "ws_side").workspaces).toEqual([{ workspaceId: "ws_side", name: "Side", capabilities: ["fleet.read"] }]);
+  });
+
   test("a Core that predates these fields says Fleet is not installed, with no workspaces", () => {
     const old: PortalMe = { ...ME, organization: undefined, workspaces: undefined, fleet: undefined };
-    expect(fleetUiMe(old)).toMatchObject({ organization: { capabilities: [] }, workspaces: [], fleet: { installed: false } });
+    expect(fleetUiMe(old, "ws_acme")).toMatchObject({ organization: { capabilities: [] }, workspaces: [], fleet: { installed: false } });
   });
 });
 
@@ -213,7 +224,7 @@ describe("the Fleet host", () => {
     expect(mounts[0]!.ctx).toMatchObject({
       contractVersion: FLEET_UI_CONTRACT_VERSION,
       apiBase: "/api/portal/fleet/workspaces/ws_acme",
-      me: fleetUiMe(ME),
+      me: fleetUiMe(ME, "ws_acme"),
       route: { path: "/devices", query: "?tab=phones" },
     });
     expect(opened.phases.map(phase => phase.status)).toEqual(["loading", "ready"]);

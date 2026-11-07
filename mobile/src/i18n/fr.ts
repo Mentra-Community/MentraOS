@@ -60,21 +60,15 @@ const fr = {
   pairing: {
     ...en.pairing,
     livePairingScanTitle: "Mettez vos lunettes en mode d'appairage",
-    livePairingScanBody:
-      "Appuyez rapidement 3 fois sur le bouton d'alimentation. Vos lunettes annonceront un code de 4 caractères.",
+    livePairingScanBody: "Appuyez rapidement 3 fois sur le bouton d'alimentation pour passer en mode d'appairage.",
     livePairingScanSearching: "Recherche de vos lunettes",
     pairingModeAlertTitle: "Vos lunettes sont en mode d'appairage",
     pairingModeAlertBody: "Appuyez 3 fois sur le bouton d'alimentation pour quitter.",
     nearbyNotInPairingModeHint:
       "Des lunettes Mentra Live à proximité ont été trouvées, mais elles ne sont pas en mode d'appairage. Appuyez 3 fois rapidement sur le bouton d'alimentation, puis réessayez.",
-    notInPairingModeLabel: "Pas en mode d'appairage",
-    notInPairingModeAlertTitle: "Activez le mode d'appairage",
-    notInPairingModeAlertMessage:
-      "Appuyez 3 fois rapidement sur le bouton d'alimentation. La LED clignote et les lunettes énoncent un code à 4 caractères. Sélectionnez ensuite les lunettes à nouveau.",
     pairingCodeLabel: "Code {{code}}",
     legacyFirmwareLabel: "Firmware hérité",
-    livePairingModeInfo:
-      "Appuyez 3 fois rapidement sur le bouton d'alimentation. La LED clignote et les lunettes énoncent un code à 4 caractères (0–9, A–F). Comparez ce code dans la liste si plusieurs unités apparaissent.",
+    livePairingModeInfo: "Appuyez rapidement 3 fois sur le bouton d'alimentation pour passer en mode d'appairage.",
     noGlassesFoundHint: "Assurez-vous d'avoir appuyé 3 fois rapidement sur le bouton d'alimentation, puis réessayez.",
   },
   onboarding: {

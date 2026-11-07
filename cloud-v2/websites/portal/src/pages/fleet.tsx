@@ -72,13 +72,19 @@ export function fleetLocation(workspaceId: string, bareWorkspaceId: string | nul
   return withFleetParam(sectionHref("fleet", workspaceId, bareWorkspaceId), value);
 }
 
-/** What the module is told about the caller: the contract's fields, and nothing else the portal knows. */
-export function fleetUiMe(me: PortalMe): FleetUiMe {
+/**
+ * What the module is told about the caller: the contract's fields, and nothing else the portal knows. A person may
+ * belong to several workspaces; the module is told only about the one the page is open on (`workspaceId`), so what it
+ * offers follows the caller's role there and not their role in another.
+ */
+export function fleetUiMe(me: PortalMe, workspaceId: string): FleetUiMe {
   return {
     authenticated: true,
     user: { mentraUserId: me.user.mentraUserId ?? me.user.id, email: me.user.email },
     organization: { capabilities: [...(me.organization?.capabilities ?? [])] },
-    workspaces: (me.workspaces ?? []).map(workspace => ({ ...workspace, capabilities: [...workspace.capabilities] })),
+    workspaces: (me.workspaces ?? [])
+      .filter(workspace => workspace.workspaceId === workspaceId)
+      .map(workspace => ({ ...workspace, capabilities: [...workspace.capabilities] })),
     fleet: { installed: me.fleet?.installed === true },
   };
 }
@@ -180,7 +186,7 @@ export function createFleetHost(options: {
       const context: FleetUiContext = {
         contractVersion: FLEET_UI_CONTRACT_VERSION,
         apiBase: fleetApiBase(workspaceId),
-        me: fleetUiMe(inputs().me),
+        me: fleetUiMe(inputs().me, workspaceId),
         route: fleetRoute(path),
         navigate: (to, opts) => {
           // Only the module on screen may move the page.

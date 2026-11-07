@@ -22,6 +22,7 @@ import type {
   AuthorizeResponse,
   DeletionHoldsResponse,
   DeletionHoldUpdate,
+  ManagingWorkspace,
   MembershipCheckEntry,
   MembershipInterval,
   MembershipIntervalsResponse,
@@ -91,6 +92,11 @@ export interface CoreWorkspaceClient {
   checkMemberships(mentraUserId: string, workspaceIds: string[]): Promise<Record<string, MembershipCheckEntry | null>>
   /** Null only when Core says the workspace does not exist (HTTP 404 `workspace_not_found`); any other 404 throws. */
   getWorkspace(workspaceId: string): Promise<WorkspaceSummary | null>
+  /**
+   * The workspace managing the person's device (Fleet only), or null when they belong to none. A person may
+   * belong to several workspaces; Core decides which one manages them, so every caller agrees.
+   */
+  managingWorkspace(mentraUserId: string): Promise<ManagingWorkspace | null>
   /**
    * One page of the change feed, oldest first. `after` is the `seq` of the last event already
    * processed, as a decimal string (omitted or null starts from the beginning); `limit` is at most 500
@@ -525,6 +531,23 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       )
       if (raw === null) return null
       return checkWorkspace(path, raw, "the workspace") as unknown as WorkspaceSummary
+    },
+
+    async managingWorkspace(mentraUserId) {
+      const path = `${API_PREFIX}/users/${encodeURIComponent(mentraUserId)}/managing-workspace`
+      const raw = checkRecord(path, await call("GET", path), "the managing workspace")
+      if (raw.managing === null) return null
+      const managing = checkRecord(path, raw.managing, "the managing workspace")
+      if (typeof managing.workspaceId !== "string" || !managing.workspaceId) throw badResponse(path, "missing workspaceId")
+      if (typeof managing.name !== "string") throw badResponse(path, "the name is not text")
+      if (typeof managing.role !== "string" || !managing.role) throw badResponse(path, "missing role")
+      if (typeof managing.automatic !== "boolean") throw badResponse(path, "automatic is not true or false")
+      return {
+        workspaceId: managing.workspaceId,
+        name: managing.name,
+        role: managing.role as ManagingWorkspace["role"],
+        automatic: managing.automatic,
+      }
     },
 
     async listChanges(input) {

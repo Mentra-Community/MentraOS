@@ -52,7 +52,7 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `createBillingApi({locale, base?, fetch?, credentials?})`, `BillingApi` | Typed client for billing's `catalog`, `status`, `purchase` and `session`; every answer is parsed with the contract's schemas. `base` defaults to `/api/portal/billing`; `locale` rides on every request |
 | `BillingScope`, `workspaceScope(id)` | Whose billing a call is about: a workspace's. A license belongs to a workspace and to nothing else |
 | `BillingRefusedError`, `BillingUnavailableError`, `BillingContractError`, `billingErrorMessage` | A refusal billing worded with a code, a billing that could not answer, one that answered off-contract (`BillingContractError`, a `BillingUnavailableError` the queries do not retry), and the sentence for any |
-| `CreateWorkspaceForm`, `useCreateWorkspace` | Create a person's first workspace from just its name (the first-run screen); the new workspace's detail is cached and the list refreshed. A person belongs to one workspace, so nothing offers a second |
+| `CreateWorkspaceForm`, `useCreateWorkspace` | Create a person's first workspace from just its name (the first-run screen); the new workspace's detail is cached and the list refreshed |
 | `WorkspaceMembersPanel` (`showUserIds?`, `licenses?`, `locale?`) | Members (with a count): name over email, role, licenses and joined, and a row menu ("…") for role changes and removal, which asks in a dialog; `showUserIds` adds each member's copyable Mentra user id (for Organization Admins, who need it to recover ownership); `licenses` adds the read-only Licenses column (see [Members' licenses](#members-licenses)) |
 | `WorkspaceInvitationsPanel` | Invite by email, and the pending invitations with Resend and Revoke, in one card |
 | `WorkspaceInviteDialog` (`open`, `onClose`) | Invite by email and role in a dialog; the link is shown once after sending |
@@ -216,13 +216,14 @@ function ConsoleShell({children}: {children: React.ReactNode}) {
   shell puts on its own `onSelect` buttons. The switcher's menu closes the same way.
 - **The switcher is presentational.** It takes the current workspace, the list (undefined
   while loading; `listFailed` and `onRetry` when it failed), the invitations as entries
-  with the host's own actions. It has no Create workspace: a person belongs to one
-  workspace. Choosing the current workspace's `onSelect` button only closes the menu.
+  with the host's own actions. A workspace's `note` is a short line under its role
+  ("Manages your device"). Choosing the current workspace's `onSelect` button only
+  closes the menu.
   `extraItems` adds rows under the workspaces: give each `role="menuitem"` and
   `SWITCHER_ITEM_CLASS`, so the arrow keys reach it and it matches.
-- **The workspace portal shows `WorkspaceLabel` instead**: the one workspace's name and
-  the person's role as a static block (no chevron, no menu), with whatever the host puts
-  under it (a link to the pending invitations).
+- **The workspace portal shows the switcher**: a person may belong to several
+  workspaces. `WorkspaceLabel` is the same block with no menu, for a host that shows one
+  workspace.
 - **Colours come from the tokens.** The shell uses only `mentra.css`'s theme names, so a
   site that imports it and scans this package's `src` (see [Styling](#styling)) gets the
   portal's look.

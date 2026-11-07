@@ -60,20 +60,15 @@ const es = {
   pairing: {
     ...en.pairing,
     livePairingScanTitle: "Pon tus gafas en modo de emparejamiento",
-    livePairingScanBody: "Pulsa el botón de encendido 3 veces rápidamente. Tus gafas dirán un código de 4 caracteres.",
+    livePairingScanBody: "Pulsa el botón de encendido 3 veces rápidamente para entrar en modo de emparejamiento.",
     livePairingScanSearching: "Buscando tus gafas",
     pairingModeAlertTitle: "Tus gafas están en modo de emparejamiento",
     pairingModeAlertBody: "Pulsa el botón de encendido 3 veces para salir.",
     nearbyNotInPairingModeHint:
       "Se encontraron gafas Mentra Live cerca, pero no están en modo de emparejamiento. Pulsa el botón de encendido 3 veces rápido y vuelve a intentarlo.",
-    notInPairingModeLabel: "No está en modo de emparejamiento",
-    notInPairingModeAlertTitle: "Activa el modo de emparejamiento",
-    notInPairingModeAlertMessage:
-      "Pulsa el botón de encendido 3 veces rápido. El LED parpadea y las gafas dicen un código de 4 caracteres. Luego selecciona las gafas de nuevo.",
     pairingCodeLabel: "Código {{code}}",
     legacyFirmwareLabel: "Firmware heredado",
-    livePairingModeInfo:
-      "Pulsa el botón de encendido 3 veces rápido. El LED parpadea y las gafas dicen un código de 4 caracteres (0–9, A–F). Compara ese código en la lista si aparece más de una unidad.",
+    livePairingModeInfo: "Pulsa el botón de encendido 3 veces rápidamente para entrar en modo de emparejamiento.",
     noGlassesFoundHint: "Asegúrate de pulsar el botón de encendido 3 veces rápido y vuelve a intentarlo.",
   },
   onboarding: {

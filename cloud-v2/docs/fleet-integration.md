@@ -664,6 +664,37 @@ PUT /api/internal/fleet/workspaces/:workspaceId/assigned-packages
   expires (an hour by default). Leaving the workspace, or a push without the
   package, takes the workspace out of the next token. A local build's token
   never names a workspace.
+- **Several workspaces.** A person may belong to several. When more than one
+  of them assigns the package, the token names the one managing their device
+  (below), else the one they joined first. A workspace that does not manage
+  the device still names itself for its own miniapps, so its members can use
+  them.
+
+## The managing workspace
+
+A person may belong to several workspaces, but their phone is managed by at
+most one: Fleet's desired state is that workspace's assignments, never a merge
+of several. Core decides which ([Workspaces](workspaces.md#the-managing-workspace)):
+the earliest-joined membership in a workspace that is not the person's own
+automatic workspace, else their own automatic workspace.
+
+```http
+GET /api/internal/workspaces/users/:mentraUserId/managing-workspace
+
+200 {"managing": {"workspaceId": "ws_...", "name": "Acme", "role": "member", "automatic": false}}
+200 {"managing": null}
+```
+
+- **Who.** Fleet only, signed as service `fleet`; any other service is
+  `403 {"error":"forbidden"}`.
+- **The answer.** `managing` is null for a person in no workspace and for a
+  deleted account. Core answers from its memberships now, so a join the change
+  feed has not delivered yet is already managed.
+- **Fleet.** `GET /v1/client/desired-state` asks this for the phone's account
+  (`managingWorkspace` on the contract client). Against a Core that predates the
+  route (`404`), Fleet falls back to confirming the account's open memberships
+  with `POST /memberships/check` and keeping the highest role, then the
+  earliest join.
 
 ## The miniapp registry
 

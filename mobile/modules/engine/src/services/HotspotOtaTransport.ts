@@ -1,10 +1,12 @@
 import BluetoothSdk, {isEnabledHotspotStatus} from "@mentra/bluetooth-sdk"
+import NetInfo from "@react-native-community/netinfo"
 import {otaServer} from "@mentra/bluetooth-sdk/ota-transport"
 // One coordinator selects the native Android or iOS staging implementation at runtime.
 // eslint-disable-next-line react-native/split-platform-components
 import {PermissionsAndroid, Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
 import {getUiSeams} from "../runtime/bootstrap"
+import {BgTimer} from "../utils/timers"
 import {otaDeviceSessionRevision} from "./OtaDeviceSession"
 import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
 import {
@@ -213,8 +215,26 @@ class HotspotOtaTransport {
     const result = await getUiSeams()
       .requestPhoneWifiEnable?.()
       .catch(() => null)
-    if (result?.enabled === true) return
+    if (result?.enabled === true) {
+      await this.waitForWifiInternet()
+      return
+    }
     throw new HotspotOtaTransportError("hotspot_wifi_disabled", "Phone Wi-Fi is off")
+  }
+
+  /**
+   * A radio just turned on joins a saved network a few seconds later, and Android then drops
+   * cellular as the default network, aborting any download started on it. Let that happen
+   * first. Without a joinable network, download over the current one after the bound.
+   */
+  private async waitForWifiInternet(timeoutMs = 15_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const state = await NetInfo.fetch().catch(() => null)
+      if (state?.type === "wifi" && state.isConnected && state.isInternetReachable !== false) return
+      await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, 500))
+    }
+    console.log("[OTA_PROGRESS] Wi-Fi is on but not the internet route yet; downloading anyway")
   }
 
   private downloadIosArtifact = async (

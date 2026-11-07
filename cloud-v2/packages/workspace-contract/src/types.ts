@@ -86,9 +86,17 @@ export interface PrincipalResponse {
    * pending invitation, key, license that has not ended, or deletion hold. Core deletes such a workspace in
    * the transaction that gives them a membership in another one (accepting an invitation, claiming an
    * imported membership, recovering ownership). An older Core leaves it out.
+   *
+   * A person may belong to several workspaces. `managesDevice` is true for the one that manages their device
+   * (`ManagingWorkspace`): its Fleet installs miniapps on their phone and sees it. An older Core leaves it out.
    */
   workspaces: Array<
-    WorkspaceSummary & {membership: MembershipSummary; capabilities: WorkspaceCapability[]; replaceable?: boolean}
+    WorkspaceSummary & {
+      membership: MembershipSummary
+      capabilities: WorkspaceCapability[]
+      replaceable?: boolean
+      managesDevice?: boolean
+    }
   >
 }
 
@@ -100,6 +108,25 @@ export interface MembershipCheckEntry {
 /** Response of `POST /memberships/check`: one entry per requested workspace, null for a non-member. */
 export interface MembershipCheckResponse {
   memberships: Record<string, MembershipCheckEntry | null>
+}
+
+/**
+ * The workspace managing a person's device: their earliest-joined membership in a workspace other than their own
+ * automatic one, else their own automatic workspace. A person may belong to several workspaces; only this one's
+ * Fleet installs miniapps on their phone and sees it.
+ */
+export interface ManagingWorkspace {
+  workspaceId: string
+  name: string
+  /** The person's role there. */
+  role: WorkspaceRole
+  /** Whether it is the person's own automatic workspace, which manages them only while they have no other. */
+  automatic: boolean
+}
+
+/** Response of `GET /users/:mentraUserId/managing-workspace` (Fleet only): null when the person belongs to none. */
+export interface ManagingWorkspaceResponse {
+  managing: ManagingWorkspace | null
 }
 
 /** Response of `POST /credentials`. The token is shown once. */
@@ -381,9 +408,9 @@ export interface InvitationPreview {
 }
 
 // --- Mentra App workspace calls (`/api/client/workspaces`) ------------------
-// A person belongs to at most one workspace, so a phone sees one workspace, or none.
+// A person may belong to several workspaces; a phone sees the one that manages it (`ManagingWorkspace`), or none.
 
-/** The workspace the signed-in phone's person belongs to (`GET /api/client/workspaces/mine`), or null when none. */
+/** The workspace managing the signed-in phone's person (`GET /api/client/workspaces/mine`), or null when none. */
 export interface MyWorkspace {
   workspaceId: string
   name: string

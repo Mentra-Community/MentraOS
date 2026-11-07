@@ -5,9 +5,9 @@
  *    link or addressed to their verified email; with none they can accept, why they have no workspace and the way
  *    into one. Where the portal can make a workspace it does (App.tsx), so this is never the screen for that.
  *  - the invitations page (`/invitation`, also where an invitation link lands): every invitation the person
- *    can answer, the link's first, each with Accept and Decline, or "Leave it to join" for someone already in
- *    a workspace that does not give way (an automatic one holding nothing does), or Switch account when it is
- *    for someone else. A link Core says is no longer valid says so once, with the way on.
+ *    can answer, the link's first, each with Accept and Decline, or Switch account when it is for someone else.
+ *    A person may belong to several workspaces, so accepting adds one beside any they have. A link Core says
+ *    is no longer valid says so once, with the way on.
  *
  * Accepting opens the workspace joined, at the address the person came to.
  */
@@ -217,7 +217,7 @@ export function InvitationScreen() {
       ) : (
         <Heading title={invitations.length === 1 ? "You're invited" : "Your invitations"}>
           {home && !home.replaceable
-            ? `You belong to one workspace at a time. Leave ${home.name} in Settings to join another.`
+            ? `You'll keep ${home.name} and can switch between them.`
             : "Accept to join the workspace with the account you're signed in with."}
         </Heading>
       )}

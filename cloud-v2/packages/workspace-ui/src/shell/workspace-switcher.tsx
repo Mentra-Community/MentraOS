@@ -13,8 +13,11 @@ export type SwitcherCurrent = {
   roleLabel: string | null;
 };
 
-/** One of the person's workspaces in the menu, and where choosing it goes: an address, or an action. */
-export type SwitcherWorkspace = SwitcherCurrent & ShellTarget;
+/**
+ * One of the person's workspaces in the menu, and where choosing it goes: an address, or an action. `note` is a
+ * short line under its role ("Manages your device").
+ */
+export type SwitcherWorkspace = SwitcherCurrent & ShellTarget & { note?: string | null };
 
 export type SwitcherInvitation = {
   key: string;
@@ -34,9 +37,9 @@ export const SWITCHER_ITEM_CLASS =
   "flex items-center gap-2.5 hover:bg-hover focus-visible:bg-hover rounded-[12px] px-2 py-1.5 text-sm focus-visible:outline-offset-[-3px]";
 
 /**
- * The person's one workspace at the top of the workspace portal's sidebar: its initial, name and their role. A
- * person belongs to at most one workspace, so there is nothing to switch to and nothing to create: no chevron, no
- * menu, no "New workspace". `invitations` is whatever the host shows under it (a link to the pending invitations).
+ * A workspace as a static block at the top of a sidebar: its initial, name and the person's role, with no menu.
+ * `invitations` is whatever the host shows under it (a link to the pending invitations). A site whose people may
+ * switch between workspaces shows {@link WorkspaceSwitcher} instead.
  */
 export function WorkspaceLabel({ current, invitations }: { current: SwitcherCurrent; invitations?: ReactNode }) {
   return (
@@ -58,8 +61,7 @@ export function WorkspaceLabel({ current, invitations }: { current: SwitcherCurr
  * The workspace menu at the top of a sidebar: the current workspace (initial, name, your role), and a menu
  * of your workspaces, the host's `extraItems` and the pending invitations. It is presentational: data and
  * actions come in through props, so it renders the same on the server and in a test, whatever the host's
- * router. A person belongs to one workspace, so nothing here creates another; the workspace portal itself
- * shows {@link WorkspaceLabel}, which has no menu at all.
+ * router. A person may belong to several workspaces; the workspace portal shows it at the top of its sidebar.
  */
 export function WorkspaceSwitcher({
   current,
@@ -205,6 +207,7 @@ export function WorkspaceSwitcher({
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-semibold">{workspace.name}</span>
                     {workspace.roleLabel ? <span className="text-muted-foreground block truncate text-xs">{workspace.roleLabel}</span> : null}
+                    {workspace.note ? <span className="text-muted-foreground block truncate text-xs">{workspace.note}</span> : null}
                   </span>
                   {selected ? <Check className="text-brand size-4 shrink-0" aria-label="Current workspace" /> : null}
                 </>

@@ -57,20 +57,15 @@ const ar = {
   pairing: {
     ...en.pairing,
     livePairingScanTitle: "ضع نظارتك في وضع الاقتران",
-    livePairingScanBody: "اضغط على زر التشغيل 3 مرات بسرعة. ستنطق نظارتك رمزًا مكوّنًا من 4 أحرف.",
+    livePairingScanBody: "اضغط على زر التشغيل 3 مرات بسرعة للدخول إلى وضع الاقتران.",
     livePairingScanSearching: "جارٍ البحث عن نظارتك",
     pairingModeAlertTitle: "نظارتك في وضع الاقتران",
     pairingModeAlertBody: "اضغط على زر التشغيل 3 مرات للخروج.",
     nearbyNotInPairingModeHint:
       "تم العثور على نظارات Mentra Live قريبة، لكنها ليست في وضع الاقتران. اضغط زر الطاقة 3 مرات بسرعة ثم أعد المحاولة.",
-    notInPairingModeLabel: "ليست في وضع الاقتران",
-    notInPairingModeAlertTitle: "ادخل وضع الاقتران",
-    notInPairingModeAlertMessage:
-      "اضغط زر الطاقة 3 مرات بسرعة. يومض المؤشر وتنطق النظارات رمزًا من 4 أحرف. ثم اختر النظارات مرة أخرى.",
     pairingCodeLabel: "الرمز {{code}}",
     legacyFirmwareLabel: "برنامج ثابت قديم",
-    livePairingModeInfo:
-      "اضغط زر الطاقة 3 مرات بسرعة. يومض المؤشر وتنطق النظارات رمزًا من 4 أحرف (0–9، A–F). طابق ذلك الرمز في القائمة إذا ظهرت أكثر من وحدة.",
+    livePairingModeInfo: "اضغط على زر التشغيل 3 مرات بسرعة للدخول إلى وضع الاقتران.",
     noGlassesFoundHint: "تأكد من الضغط على زر الطاقة 3 مرات بسرعة ثم أعد المحاولة.",
   },
   onboarding: {
