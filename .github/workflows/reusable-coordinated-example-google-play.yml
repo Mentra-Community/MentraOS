@@ -54,10 +54,8 @@ jobs:
         with:
           ref: ${{ inputs.source_commit }}
 
-      # The example scripts run from the workflow revision, not from the frozen
-      # source: a production example is built from a promoted beta commit that
-      # may predate the production support in these scripts. On dev and
-      # staging the two revisions are the same commit.
+      # The example scripts run from the workflow revision, which on a staging
+      # push is the release source itself.
       - name: Checkout example tooling from the workflow revision
         uses: actions/checkout@v4
         with:
@@ -98,18 +96,8 @@ jobs:
         run: |
           set -euo pipefail
           release=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")
-          plan=release-input/plan/release-plan.json
           [[ "$(jq -er .tag_name <<< "$release")" == "${{ steps.coordinates.outputs.container_tag }}" ]]
-          if [[ "$(jq -er .channel "$plan")" == "production" ]]; then
-            # The stable container mentra-vX.Y.Z stays a draft until the
-            # rollout completes; it must be the non-prerelease release frozen
-            # to the plan's source (the same contract as production-packages).
-            [[ "$(jq -r .prerelease <<< "$release")" == false ]]
-            [[ "$(jq -r .name <<< "$release")" == "$(jq -er .artifactContainerName "$plan")" ]]
-            [[ "$(jq -r .target_commitish <<< "$release")" == "$(jq -er .sourceCommit "$plan")" ]]
-          else
-            [[ "$(jq -r .draft <<< "$release")" == false ]]
-          fi
+          [[ "$(jq -r .draft <<< "$release")" == false ]]
           assets=$(node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" list --repository "$GITHUB_REPOSITORY" --release-id "$RELEASE_ID")
           matches=$(jq --arg name "${{ steps.coordinates.outputs.aab_name }}" '[.[] | select(.name == $name)]' <<< "$assets")
           [[ "$(jq length <<< "$matches")" -le 1 ]]

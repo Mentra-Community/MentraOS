@@ -1,27 +1,80 @@
 #!/usr/bin/env node
-// A production release builds no OTA set of its own: it promotes the selected
-// beta's. Its release container (mentra-v<identity>) carries byte-identical
-// copies of that beta's OTA manifest and portable OTA bundle under the
-// production names, so the production release record and download page list
-// them next to the rest of the release. The SDK packages and the Mentra App
-// keep pinning the beta's manifest URL, which the production record still
-// records as otaManifest.
+// A production release builds no OTA set of its own: it promotes the beta it
+// was cut from. Its release container (mentra-v<identity>) carries
+// byte-identical copies of that beta's OTA manifest and portable OTA bundle
+// under the production names, so the production release record and download
+// page list them next to the rest of the release. The SDK packages and the
+// Mentra App keep pinning the beta's manifest URL, which the production record
+// records as its otaManifest, with status "promoted".
 //
+//   plan   completes the production release plan from the promoted beta's
+//          plan and release record (in its family container
+//          mentra-builds-v<base>): the beta's OTA inputs and the promotion
+//          provenance every later step checks against
 //   stage  downloads the promoted beta's manifest and bundle, verifies them
 //          against the beta release record, and writes them under the
-//          production names with production-ota-assets.json describing them
+//          production names with production-ota-result.json, the OTA result
+//          the release's finalize assembles into the production record
 import {createHash} from "node:crypto"
 import {appendFileSync, mkdirSync, readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
+import {isDeepStrictEqual} from "node:util"
 import {fileURLToPath} from "node:url"
 
 import {artifactUrl} from "./release-artifact-storage.mjs"
-import {requirePublicHttpsUrl} from "./release-family.mjs"
+import {releaseRecordSha256, requirePublicHttpsUrl, serializeReleaseRecord} from "./release-family.mjs"
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex")
+}
+
+// Where the promoted beta's plan and release record are published.
+export function promotedBetaUrls({plan, betaIdentity, repository}) {
+  const base = plan?.familyBaseVersion
+  if (!base || /^(\d+\.\d+\.\d+)-beta\.[1-9]\d*$/.exec(betaIdentity || "")?.[1] !== base) {
+    throw new Error(`${JSON.stringify(betaIdentity)} is not a beta of ${base}`)
+  }
+  const container = `mentra-builds-v${base}`
+  return {
+    plan: artifactUrl(repository, container, `mentra-release-plan-${betaIdentity}.json`),
+    record: artifactUrl(repository, container, `mentra-release-${betaIdentity}.json`),
+  }
+}
+
+// The production plan, completed with the OTA inputs of the beta it promotes
+// and that beta's exact release record, which pins the OTA manifest.
+export function promotedReleasePlan({plan, betaIdentity, betaPlan, betaRecord, betaRecordUrl, betaRecordSha256}) {
+  if (plan?.channel !== "production" || plan.promotion || !isDeepStrictEqual(plan.otaInputs, {})) {
+    throw new Error("An unfilled production release plan is required")
+  }
+  if (
+    betaPlan?.channel !== "beta" ||
+    betaRecord?.channel !== "beta" ||
+    betaPlan.releaseIdentity !== betaIdentity ||
+    betaRecord.releaseIdentity !== betaIdentity ||
+    betaRecord.releaseSetId !== betaPlan.releaseSetId ||
+    betaRecord.sourceCommit !== betaPlan.sourceCommit ||
+    betaRecord.familyBaseVersion !== plan.familyBaseVersion ||
+    betaRecord.releasePlanSha256 !== releaseRecordSha256(betaPlan)
+  ) {
+    throw new Error(`The published plan and release record of ${betaIdentity} do not describe one beta of ${plan.familyBaseVersion}`)
+  }
+  if (!betaRecord.completedAt) throw new Error(`${betaIdentity} is not complete`)
+  requirePublicHttpsUrl(betaRecord.otaManifest?.url, "beta OTA manifest URL")
+  if (!SHA256_PATTERN.test(betaRecord.otaManifest?.sha256 || "")) throw new Error(`${betaIdentity} pins no OTA manifest`)
+  if (!SHA256_PATTERN.test(betaRecordSha256 || "")) throw new Error("The beta release record SHA-256 is invalid")
+  return {
+    ...plan,
+    otaInputs: betaPlan.otaInputs,
+    promotion: {
+      selectedBetaReleaseSetId: betaPlan.releaseSetId,
+      selectedBetaIdentity: betaIdentity,
+      selectedBetaManifest: {url: requirePublicHttpsUrl(betaRecordUrl, "beta release record URL"), sha256: betaRecordSha256},
+      otaManifest: betaRecord.otaManifest,
+    },
+  }
 }
 
 // What to copy, from the production plan and the promoted beta's record.
@@ -88,6 +141,22 @@ export function productionOtaArtifacts({plan, sources, files, repository}) {
   })
 }
 
+// The OTA result of a production release: the beta's manifest, promoted, the
+// two copies, and the promotion provenance finalizeReleaseManifest checks.
+export function productionOtaResult({plan, artifacts}) {
+  validateProductionOtaArtifacts(plan, artifacts)
+  return {
+    releaseSetId: plan.releaseSetId,
+    otaManifest: {...plan.promotion.otaManifest, status: "promoted"},
+    artifacts,
+    promotion: {
+      selectedBetaReleaseSetId: plan.promotion.selectedBetaReleaseSetId,
+      selectedBetaIdentity: plan.promotion.selectedBetaIdentity,
+      selectedBetaManifest: plan.promotion.selectedBetaManifest,
+    },
+  }
+}
+
 // The production record lists exactly these two copies.
 export function validateProductionOtaArtifacts(plan, artifacts) {
   const expected = [plan.artifactNames?.otaManifest, plan.artifactNames?.otaBundle]
@@ -132,10 +201,26 @@ function parseArgs(args) {
   return values
 }
 
-async function main() {
-  const [command, ...rest] = process.argv.slice(2)
-  if (command !== "stage") throw new Error(`Unknown command ${JSON.stringify(command)}`)
-  const args = parseArgs(rest)
+async function completePlan(args) {
+  const plan = JSON.parse(readFileSync(path.resolve(args.plan), "utf8"))
+  const urls = promotedBetaUrls({plan, betaIdentity: args.beta, repository: args.repository})
+  const betaPlan = JSON.parse((await download(urls.plan)).toString("utf8"))
+  const recordBytes = await download(urls.record)
+  const completed = serializeReleaseRecord(
+    promotedReleasePlan({
+      plan,
+      betaIdentity: args.beta,
+      betaPlan,
+      betaRecord: JSON.parse(recordBytes.toString("utf8")),
+      betaRecordUrl: urls.record,
+      betaRecordSha256: sha256(recordBytes),
+    }),
+  )
+  writeFileSync(path.resolve(args.output), completed)
+  console.log(`Production ${plan.releaseIdentity} promotes ${args.beta} (${urls.record})`)
+}
+
+async function stage(args) {
   const plan = JSON.parse(readFileSync(path.resolve(args.plan), "utf8"))
   const betaBytes = await download(plan.promotion.selectedBetaManifest.url)
   const sources = productionOtaSources({
@@ -154,12 +239,22 @@ async function main() {
   const directory = path.resolve(args["output-dir"])
   mkdirSync(directory, {recursive: true})
   for (const {key, name} of sources) writeFileSync(path.join(directory, name), files[key])
-  writeFileSync(path.join(directory, "production-ota-assets.json"), `${JSON.stringify(artifacts, null, 2)}\n`)
+  writeFileSync(
+    path.join(directory, "production-ota-result.json"),
+    `${JSON.stringify(productionOtaResult({plan, artifacts}), null, 2)}\n`,
+  )
   if (args["github-output"]) {
     appendFileSync(args["github-output"], `manifest_name=${sources[0].name}\nbundle_name=${sources[1].name}\n`)
   }
   for (const artifact of artifacts)
     console.log(`Staged ${artifact.coordinate} from ${artifact.promotedFrom.coordinate}`)
+}
+
+async function main() {
+  const [command, ...rest] = process.argv.slice(2)
+  const commands = {plan: completePlan, stage}
+  if (!Object.hasOwn(commands, command)) throw new Error(`Unknown command ${JSON.stringify(command)}`)
+  await commands[command](parseArgs(rest))
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -145,7 +145,7 @@ test("the production page lists the example apps found in the stable container",
     },
   }
   const manifest = {
-    kind: "mentra-production-release",
+    channel: "production", // as finalizeReleaseManifest writes it
     releaseIdentity: identity,
     sourceCommit: plan.sourceCommit,
     promotion: {selectedBetaIdentity: beta.releaseIdentity},

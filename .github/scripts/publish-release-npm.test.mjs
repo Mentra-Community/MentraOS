@@ -21,7 +21,6 @@ import {
   releaseMetadataArgs,
   requireNpmProvenanceSource,
   requirePlanSourceCommit,
-  resolveNpmReleaseTag,
   sha512Integrity,
 } from "./publish-release-npm.mjs"
 
@@ -32,8 +31,6 @@ test("maps coordinated channels to npm tags", () => {
   assert.equal(npmReleaseTag("beta"), "beta")
   assert.equal(npmReleaseTag("production"), "latest")
   assert.throws(() => npmReleaseTag("nightly"), /Unsupported/)
-  assert.equal(resolveNpmReleaseTag("production", "candidate-3-1-0"), "candidate-3-1-0")
-  assert.throws(() => resolveNpmReleaseTag("production", "3.1.0"), /Invalid npm dist-tag/)
 })
 
 test("selects npm packages in dependency order", () => {

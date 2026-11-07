@@ -12,14 +12,6 @@ on:
       release_id:
         required: false
         type: string
-      artifact_container_tag:
-        description: Optional private container tag for attempt-scoped candidate artifacts
-        required: false
-        type: string
-      artifact_container_name:
-        description: Optional private container name paired with artifact_container_tag
-        required: false
-        type: string
       ota_manifest_url:
         required: true
         type: string
@@ -32,11 +24,6 @@ on:
       play_track:
         description: Google Play track, or internal-app-sharing for a Play-signed build with no track floor
         required: true
-        type: string
-      play_release_status:
-        description: Release status of the track upload (completed, or draft for production candidates)
-        required: false
-        default: completed
         type: string
       testflight_group:
         required: true
@@ -51,11 +38,6 @@ on:
         type: boolean
       installable_downloads:
         description: Export registered-device iPhone and Mac downloads alongside TestFlight
-        required: false
-        default: false
-        type: boolean
-      compatibility_lab:
-        description: Build Mobile N for non-promotable staging compatibility distribution
         required: false
         default: false
         type: boolean
@@ -202,8 +184,6 @@ jobs:
       - name: Validate plan and resolve artifact names
         id: release
         env:
-          ARTIFACT_CONTAINER_NAME: ${{ inputs.artifact_container_name }}
-          ARTIFACT_CONTAINER_TAG: ${{ inputs.artifact_container_tag }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           set -euo pipefail
@@ -211,17 +191,10 @@ jobs:
           [[ "$source" == "$SOURCE_COMMIT" ]]
           identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
           release_set_id=$(jq -er .releaseSetId release-intent/release-plan.json)
-          plan_tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
+          tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
           upload_google_play=$(jq -r '.native.googlePlayUpload != false' release-intent/release-plan.json)
           if [[ "$upload_google_play" == "false" ]]; then
             [[ "$(jq -er .channel release-intent/release-plan.json)" == "dev" ]]
-          fi
-          if [[ -n "$ARTIFACT_CONTAINER_TAG" || -n "$ARTIFACT_CONTAINER_NAME" ]]; then
-            [[ -n "$ARTIFACT_CONTAINER_TAG" && -n "$ARTIFACT_CONTAINER_NAME" ]]
-            [[ "$(jq -er .channel release-intent/release-plan.json)" == "production" ]]
-            tag="$ARTIFACT_CONTAINER_TAG"
-          else
-            tag="$plan_tag"
           fi
           {
             echo "release_tag=$tag"
@@ -233,7 +206,7 @@ jobs:
             echo "apk_name=$(jq -er .artifactNames.androidApp release-intent/release-plan.json)"
             echo "aab_name=$(jq -er .artifactNames.androidStoreApp release-intent/release-plan.json)"
             echo "ipa_name=$(jq -er .artifactNames.iosApp release-intent/release-plan.json)"
-            # Dry runs/lab builds have no persisted artifacts. Normal releases
+            # Dry runs have no persisted artifacts. Normal releases
             # replace these planned URLs with storage-aware selections below.
             echo "apk_url=https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag/$(jq -er .artifactNames.androidApp release-intent/release-plan.json)"
             echo "aab_url=https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag/$(jq -er .artifactNames.androidStoreApp release-intent/release-plan.json)"
@@ -254,11 +227,10 @@ jobs:
 
       - name: Verify and inspect the centrally allocated release container
         id: container
-        if: inputs.dry_run != true && inputs.compatibility_lab != true
+        if: inputs.dry_run != true
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
           ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
-          ARTIFACT_CONTAINER_NAME: ${{ inputs.artifact_container_name }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ inputs.release_id }}
         run: |
@@ -267,24 +239,9 @@ jobs:
           test -n "$RELEASE_ID"
           release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID")
           [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
-          expected_name="$ARTIFACT_CONTAINER_NAME"
-          if [[ -z "$expected_name" ]]; then
-            expected_name=$(jq -er .artifactContainerName release-intent/release-plan.json)
-          fi
-          [[ "$(jq -r .name <<< "$release")" == "$expected_name" ]]
-          channel=$(jq -er .channel release-intent/release-plan.json)
-          if [[ "$channel" == "production" ]]; then
-            [[ "$(jq -r .prerelease <<< "$release")" == "false" ]]
-            if [[ "$(jq -r .draft <<< "$release")" == "true" ]]; then
-              [[ "$(jq -r .target_commitish <<< "$release")" == "${{ inputs.source_commit }}" ]]
-            else
-              git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
-              [[ "$(git rev-parse "$tag^{commit}")" == "${{ inputs.source_commit }}" ]]
-            fi
-          else
-            [[ "$(jq -r .draft <<< "$release")" == "false" ]]
-            [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
-          fi
+          [[ "$(jq -r .name <<< "$release")" == "$(jq -er .artifactContainerName release-intent/release-plan.json)" ]]
+          [[ "$(jq -r .draft <<< "$release")" == "false" ]]
+          [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
 
           release_id="$RELEASE_ID"
           assets=$(node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" list --repository "${GITHUB_REPOSITORY}" --release-id "$release_id")
@@ -440,10 +397,6 @@ jobs:
               --output mobile/.env \
               --backend-environment "${{ inputs.backend_environment }}" \
               --ota-manifest-url "${{ inputs.ota_manifest_url }}"
-          if [[ "${{ inputs.compatibility_lab }}" == "true" ]]; then
-            identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
-            sed -i "s/^EXPO_PUBLIC_MENTRAOS_VERSION=.*/EXPO_PUBLIC_MENTRAOS_VERSION=${identity}-COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/" mobile/.env
-          fi
           node .github/scripts/stage-release-family.mjs --plan release-intent/release-plan.json
           metadata=(
             --family-base-version "${{ needs.prepare.outputs.marketing_version }}"
@@ -462,7 +415,7 @@ jobs:
         uses: ./.github/actions/inject-signing
         with:
           mobile: ${{ inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true' }}
-          play: ${{ needs.prepare.outputs.upload_google_play == 'true' || inputs.compatibility_lab == true }}
+          play: ${{ needs.prepare.outputs.upload_google_play == 'true' }}
           upload-keystore-b64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
           upload-store-password: ${{ secrets.MENTRAOS_UPLOAD_STORE_PASSWORD }}
           upload-key-password: ${{ secrets.MENTRAOS_UPLOAD_KEY_PASSWORD }}
@@ -505,11 +458,9 @@ jobs:
       # release (mentra-coordinated-asg, the cross-family home of Android
       # numbering) as owner-bound markers published before the build: a run
       # that stops after building keeps its code, no later run in any family
-      # takes it, and a retry finds its own marker. Production keeps the family
-      # number. A pair that already exists for this release keeps the code it
-      # was built with. The compatibility lab builds an older source through
-      # Internal App Sharing and reserves nothing; the scripts run from the
-      # workflow revision for the same reason.
+      # takes it, and a retry finds its own marker. A pair that already exists
+      # for this release keeps the code it was built with. Internal App Sharing
+      # has no floor and reserves nothing.
       - name: Resolve and reserve the Android version code
         id: android-code
         env:
@@ -519,8 +470,8 @@ jobs:
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
           GOOGLE_PLAY_VERSION_CODES_OUTPUT: ${{ runner.temp }}/mentra-play-track-codes.json
           GOOGLE_PLAY_USED_VERSION_CODES_OUTPUT: ${{ runner.temp }}/mentra-play-used-codes.json
-          LOOK_UP_TRACK: ${{ inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing' && inputs.play_track != 'production' }}
-          RESERVE: ${{ inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.android_assets_exist != 'true' && inputs.play_track != 'internal-app-sharing' && inputs.play_track != 'production' }}
+          LOOK_UP_TRACK: ${{ inputs.dry_run != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing' }}
+          RESERVE: ${{ inputs.dry_run != true && needs.prepare.outputs.android_assets_exist != 'true' && inputs.play_track != 'internal-app-sharing' }}
           RESERVATION_RELEASE_TAG: mentra-coordinated-asg
           OWNER: coordinated-run-${{ github.run_id }}
         run: |
@@ -629,7 +580,7 @@ jobs:
           fi
 
       - name: Publish immutable Android release assets
-        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.android_assets_exist != 'true'
+        if: inputs.dry_run != true && needs.prepare.outputs.android_assets_exist != 'true'
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
           ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
@@ -648,7 +599,7 @@ jobs:
 
       - name: Check selected Google Play track
         id: play
-        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing'
+        if: inputs.dry_run != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing'
         working-directory: mobile-play
         env:
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
@@ -671,28 +622,19 @@ jobs:
           fi
 
       - name: Upload exact AAB to Google Play
-        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing' && steps.play.outputs.exists != 'true'
+        if: inputs.dry_run != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing' && steps.play.outputs.exists != 'true'
         working-directory: mobile-play
         env:
           GOOGLE_PLAY_AAB: ${{ github.workspace }}/mobile-release/android/${{ needs.prepare.outputs.aab_name }}
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
-          GOOGLE_PLAY_RELEASE_STATUS: ${{ inputs.play_release_status }}
         run: bundle exec fastlane google_play
-
-      - name: Checkout current non-promotable distribution tooling
-        if: inputs.dry_run != true && inputs.compatibility_lab == true
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          path: production-tools
-          sparse-checkout: .github/scripts
 
       # Internal App Sharing has no version-code floor, so it distributes
       # Play-signed builds whose numbers sit below what a track already serves.
       - name: Upload exact AAB to Google Play Internal App Sharing
         if: inputs.dry_run != true && inputs.play_track == 'internal-app-sharing' && needs.prepare.outputs.upload_google_play == 'true'
         run: >-
-          node ${{ inputs.compatibility_lab && 'production-tools' || '.' }}/.github/scripts/google-play-internal-sharing.mjs
+          node .github/scripts/google-play-internal-sharing.mjs
           --credentials "$GOOGLE_PLAY_JSON_KEY"
           --package com.mentra.mentra
           --bundle "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
@@ -822,10 +764,6 @@ jobs:
               --output mobile/.env \
               --backend-environment "${{ inputs.backend_environment }}" \
               --ota-manifest-url "${{ inputs.ota_manifest_url }}"
-          if [[ "${{ inputs.compatibility_lab }}" == "true" ]]; then
-            identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
-            sed -i '' "s/^EXPO_PUBLIC_MENTRAOS_VERSION=.*/EXPO_PUBLIC_MENTRAOS_VERSION=${identity}-COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/" mobile/.env
-          fi
           node .github/scripts/stage-release-family.mjs --plan release-intent/release-plan.json
           metadata=(
             --family-base-version "${{ needs.prepare.outputs.marketing_version }}"
@@ -955,14 +893,10 @@ jobs:
           SENTRY_ALLOW_FAILURE: "true"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           APPLE_TEAM_ID: T5XXXL6N36
-          MENTRA_TESTFLIGHT_INTERNAL_ONLY: ${{ inputs.compatibility_lab }}
           MENTRA_NATIVE_BUILD_CACHE: ${{ steps.native-cache.outputs.scope != '' }}
         run: |
           security unlock-keychain -p "$MENTRA_CI_KEYCHAIN_PASSWORD" "$MENTRA_CI_KEYCHAIN"
           security set-keychain-settings "$MENTRA_CI_KEYCHAIN"
-          if [[ "$MENTRA_TESTFLIGHT_INTERNAL_ONLY" == "true" ]]; then
-            plutil -replace testFlightInternalTestingOnly -bool true ci/ios-export/ExportOptions-Match.plist
-          fi
           bun run release:ios
 
       - name: Download the existing immutable iOS app
@@ -1118,7 +1052,7 @@ jobs:
 
       - name: Publish immutable iOS release asset
         timeout-minutes: 5
-        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.ios_asset_exists != 'true'
+        if: inputs.dry_run != true && needs.prepare.outputs.ios_asset_exists != 'true'
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
           ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}

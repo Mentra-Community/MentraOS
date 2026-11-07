@@ -10,18 +10,10 @@ import {loadReleaseFamily, serializeReleaseRecord} from "./release-family.mjs"
 export function npmReleaseTag(channel) {
   if (channel === "dev") return "dev"
   if (channel === "beta") return "beta"
-  // Production publishes only in the protected release phase of
-  // production-release-packages.yml, after npm-latest.mjs preflight.
+  // Production publishes only behind the monorepo release's production
+  // approval, after npm-latest.mjs preflight (release-npm.yml).
   if (channel === "production") return "latest"
   throw new Error(`Unsupported npm release channel ${JSON.stringify(channel)}`)
-}
-
-export function resolveNpmReleaseTag(channel, override) {
-  if (!override) return npmReleaseTag(channel)
-  if (!/^[a-z][a-z0-9._-]*$/.test(override) || /^v?\d+\.\d+\.\d+/.test(override)) {
-    throw new Error(`Invalid npm dist-tag override ${JSON.stringify(override)}`)
-  }
-  return override
 }
 
 export function sha512Integrity(bytes) {
@@ -410,7 +402,6 @@ export function publishReleaseNpm({
   otaManifestUrl,
   otaManifestSha256,
   sdkTarball,
-  npmTagOverride,
 }) {
   // The Mentra monorepo releases from its own commit, the one Copybara
   // exported as the plan's MentraOS commit: it names it in RELEASE_CHECKOUT_COMMIT.
@@ -419,7 +410,7 @@ export function publishReleaseNpm({
   if (plan.familyBaseVersion !== family.familyBaseVersion)
     throw new Error("Release plan does not match source family base")
   const orderedNames = npmMembersInOrder(family, memberNames)
-  const tag = resolveNpmReleaseTag(plan.channel, npmTagOverride)
+  const tag = npmReleaseTag(plan.channel)
   const publications = {}
   let selectedSdkTarball = sdkTarball
   mkdirSync(outputDir, {recursive: true})
@@ -548,7 +539,6 @@ function main() {
     otaManifestUrl: args["ota-manifest-url"],
     otaManifestSha256: args["ota-manifest-sha256"],
     sdkTarball: args["sdk-tarball"],
-    npmTagOverride: args["npm-tag"],
   })
 }
 

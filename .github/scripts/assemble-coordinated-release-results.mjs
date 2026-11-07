@@ -5,6 +5,7 @@ import path from "node:path"
 import {fileURLToPath} from "node:url"
 
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
+import {validateProductionOtaArtifacts} from "./production-ota-assets.mjs"
 import {validateRuntimeImageRecord} from "./coordinated-runtime-image-records.mjs"
 import {serializeReleaseRecord} from "./release-family.mjs"
 import {createEnginePackageArtifact, mergeReleaseResultRecords} from "./release-result-records.mjs"
@@ -62,6 +63,38 @@ export function assembleCoordinatedReleaseResults({
     throw new Error("Release plan and OTA result do not identify the same release set")
   }
   const merged = mergeReleaseResultRecords({plan, records: [...npmRecords, native, mobile]})
+  const enginePackageArtifacts = enginePackage
+    ? [
+        createEnginePackageArtifact({
+          plan,
+          publications: merged.publications,
+          packageFile: enginePackage,
+          assetBaseUrl: releaseAssetBaseUrl,
+        }),
+      ]
+    : []
+  const nativeBuild =
+    mobile.native?.androidBuildNumber !== undefined ? {native: {androidBuildNumber: mobile.native.androidBuildNumber}} : {}
+  // A production release builds no ASG client or runtime image: its OTA
+  // result (production-ota-assets.mjs) is the promoted beta's manifest, the
+  // copies of it and its bundle in this release's container, and the
+  // promotion provenance.
+  if (plan.channel === "production") {
+    return {
+      schemaVersion: 1,
+      releaseSetId: plan.releaseSetId,
+      ...nativeBuild,
+      publications: merged.publications,
+      otaManifest: ota.otaManifest,
+      artifacts: [
+        ...merged.artifacts,
+        ...validateProductionOtaArtifacts(plan, ota.artifacts),
+        ...enginePackageArtifacts,
+      ],
+      cloud: validateCloudV2DeploymentRecord({plan, record: cloud, allowValidated: true}),
+      promotion: ota.promotion,
+    }
+  }
   const selection = verifyAsgSelection(plan, ota, asgSelectionFile)
   const verifiedCloud = validateCloudV2DeploymentRecord({plan, record: cloud, allowValidated: true})
   const verifiedRuntimeImage = validateRuntimeImageRecord({
@@ -102,24 +135,12 @@ export function assembleCoordinatedReleaseResults({
       size: selection.size,
       provenanceUrl: otaProvenanceUrl,
     },
+    ...enginePackageArtifacts,
   ]
-
-  if (enginePackage) {
-    artifacts.push(
-      createEnginePackageArtifact({
-        plan,
-        publications: merged.publications,
-        packageFile: enginePackage,
-        assetBaseUrl: releaseAssetBaseUrl,
-      }),
-    )
-  }
   return {
     schemaVersion: 1,
     releaseSetId: plan.releaseSetId,
-    ...(mobile.native?.androidBuildNumber !== undefined
-      ? {native: {androidBuildNumber: mobile.native.androidBuildNumber}}
-      : {}),
+    ...nativeBuild,
     publications: merged.publications,
     otaManifest: {
       status: ota.manifest.status,
@@ -155,8 +176,9 @@ function main() {
     native: readJson(path.resolve(args.native)),
     mobile: readJson(path.resolve(args.mobile)),
     cloud: readJson(path.resolve(args.cloud)),
-    runtimeImage: readJson(path.resolve(args["runtime-image"])),
-    asgSelectionFile: path.resolve(args["asg-selection"]),
+    // Production builds neither (see above).
+    runtimeImage: args["runtime-image"] && readJson(path.resolve(args["runtime-image"])),
+    asgSelectionFile: args["asg-selection"] && path.resolve(args["asg-selection"]),
     enginePackage: args["engine-package"] ? path.resolve(args["engine-package"]) : undefined,
     releaseAssetBaseUrl: args["release-asset-base-url"],
   })

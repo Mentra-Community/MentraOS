@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The dev or staging release's post to its builds channel (release.yml's
+// The dev, staging or production release's post to its builds channel (release.yml's
 // notify-slack), in the layout of every build post (slack-build-post.mjs).
 // SLACK_NOTIFY_DRY_RUN=true prints the payload instead of posting it.
 import path from "node:path"
@@ -9,6 +9,8 @@ import {buildPost, DOCS, otaTargets, postToWebhook, slackText} from "./slack-bui
 const CHANNELS = {
   dev: {label: "Dev", webhook: "DEV_SLACK_WEBHOOK_URL"},
   staging: {label: "Staging", webhook: "STAGING_SLACK_WEBHOOK_URL"},
+  // A production release is announced with the betas it promotes.
+  production: {label: "Production", webhook: "STAGING_SLACK_WEBHOOK_URL"},
 }
 // Why a slot has no install, from the job that builds it.
 const MISSING = {failure: "failed", timed_out: "timed out", cancelled: "cancelled", skipped: "not built", success: "not published"}

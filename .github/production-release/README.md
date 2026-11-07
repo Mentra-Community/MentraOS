@@ -1,670 +1,76 @@
 # Production release runbook
 
-This is the employee procedure for promoting one completed coordinated beta to
-production. It covers Cloud V2 and the Mentra App on iOS and Android.
-
-The Bluetooth example app is outside the promotion state machine. Its
-production candidates are built by a separate workflow keyed on the promoted
-beta (see "Bluetooth example" below): it is distributed through a public
-TestFlight link and a dedicated closed Play track and is never submitted for
-App Review or released through a store. Do not add the example app manually to
-a promotion attempt.
-
-The example app is also its own release notion in the coordinated beta. A beta
-is complete, and promotable, when `finalize` writes `mentra-release-<beta>.json`
-for Cloud V2, the Mentra App, the Engine, and the Bluetooth SDK. The examples
-in `examples/bluetooth` are built from the same source in the same run, in
-parallel with the package and app builds, and upload their APKs and unsigned
-iOS IPA to the release container under deterministic names
-(`mentra-example-react-native-<identity>.apk` and so on). An example build or
-store publish that fails never makes the beta incomplete and never blocks a
-promotion.
-
-For dev and staging, `coordinated-release.yml` builds the examples alongside
-the release. After `finalize` it writes the release page once, listing the
-example apps when their build succeeded; uploads the React Native example to
-TestFlight and Google Play; deploys the release-matched docs; and posts one
-Slack message covering the release, the examples and the docs.
-
-Docs require the published React Native example APK and the example
-TestFlight result. Google Play publication does not gate docs, because the
-Android documentation links to the published APK. To retry examples or docs,
-rerun the failed jobs of the release run: example files already in the
-container are kept, never replaced.
-
-The standalone Starter Kit is not part of the release run. A scheduled
-workflow (`bluetooth-starter-kit-export.yml`, every 30 minutes) exports each
-channel's newest completed release once its packages are served. Intermediate
-releases are skipped; there is no export of an older release. The kit's own
-`Example App Builds` validates each export push.
-
-The process is resumable. It records immutable state in a draft GitHub release
-named `mentra-production-promotion-vX.Y.Z-attempt-N`. Store review may take days;
-no GitHub runner waits for it.
-
-## Safety rules
-
-- Promote only a completed coordinated beta whose MentraOS source already
-  contains `main`. If `main` has production-only commits, back-merge them into
-  `staging` and complete a new beta before promotion.
-- Start only after the selected beta's exact sources are in `main`.
-- Never patch or re-sign a beta binary. Production mobile candidates are rebuilt
-  from the frozen source with production configuration.
-- Never edit or replace an existing promotion asset. Retry the same phase or
-  start a new attempt.
-- Never paste tokens, secrets, private keys, customer data, or raw production
-  configuration into evidence.
-- Cloud deployment, candidate upload, store submission, and public release use
-  separate protected GitHub environments. A distinct approver is required for
-  production Cloud and public release.
-- A green readiness endpoint is not mobile acceptance. Both iOS and Android
-  device evidence are required.
-- Stop on any coordinate mismatch. Do not choose a build in a store by date or
-  appearance.
-
-## Release order and compatibility contract
-
-The required order is:
-
-1. Current Mobile N source, configured as a non-promotable lab build, works with
-   staging Cloud N+1.
-2. Deploy Cloud N+1 to production.
-3. The actual Mobile N currently installed from both public stores works with
-   production Cloud N+1.
-4. Build Mobile N+1 from source with production configuration.
-5. The exact TestFlight and Play internal candidates work with Cloud N+1.
-6. Submit those exact candidates, wait for review, and release progressively.
-
-Mobile N+1 compatibility with Cloud N is not a normal gate. Customers will
-inevitably keep Mobile N after Cloud N+1 is deployed, so Mobile N with Cloud N+1
-is mandatory. Step 1 needs the current app's source provenance; the first
-coordinated promotion has none and keeps only step 3 (see "Phase 1").
-
-## One-time repository and account setup
-
-Configure these GitHub environments:
-
-| Environment                    | Purpose                             | Required protection                        |
-| ------------------------------ | ----------------------------------- | ------------------------------------------ |
-| `production-store-status`      | Read-only store inventory/status    | Store credentials; no public mutation      |
-| `production-cloud-status`      | Cloud configuration preflight       | Porter credential; no deployment approval  |
-| `production-compatibility-lab` | Non-promotable Mobile N uploads     | Required reviewer; staging target only     |
-| `production-cloud`             | Cloud V2 deployment                 | Required reviewer different from initiator |
-| `production-mobile-candidates` | Production-signed candidate uploads | Required reviewer; no public release       |
-| `production-store-submission`  | App review submission               | Required reviewer                          |
-| `production-store-release`     | Public release and rollout evidence | Required reviewer different from initiator |
-| `production-packages`          | Stage plain package versions        | Required reviewer                          |
-| `production-packages-release`  | npm latest, Maven Central, SwiftPM  | Required reviewer different from initiator |
-
-Required secrets are the existing Porter, App Store Connect, Google Play,
-Android upload-signing, Apple Match, Doppler, Mapbox, and Sentry credentials
-used by the reusable release workflows. Operators do not download them locally.
-
-npm needs no secret: every npm release member trusts two GitHub Actions
-workflows of `Mentra-Community/MentraOS` as trusted publishers,
-`coordinated-release.yml` (dev and beta) and `production-release-packages.yml`
-(production), each with publish and stage-publish permission and no
-environment. Add both for a new family member before its first release. A
-maintainer adds one with 2FA:
-
-```bash
-npx npm@11 trust github @mentra/<package> --file production-release-packages.yml \
-  --repository Mentra-Community/MentraOS --allow-publish --allow-stage-publish
-```
-
-Before launch week, verify the Mentra App record in App Store Connect and Play
-Console:
-
-- agreements, tax, banking, compliance, privacy, export, data safety, content
-  rating, countries, support/privacy URLs, screenshots, and listing copy;
-- App Review contact, a non-expiring demo account, and complete reviewer steps;
-- internal tester membership and dedicated test devices;
-- a `Mentra Compatibility Lab` internal TestFlight group;
-- automatic TestFlight distribution is off for the production groups;
-- managed publishing is enabled in Google Play; and
-- alerting, dashboards, incident channel, release owner, QA owner, approver, and
-  rollback owner are staffed for the release window.
-
-## Operator commands
-
-First, from a clean, up-to-date `staging` checkout, promote the exact commits
-recorded by the completed coordinated beta:
-
-```bash
-git switch staging
-git pull --ff-only origin staging
-./scripts/production-release.mjs promote --beta X.Y.Z-beta.N
-```
-
-This creates and merges the MentraOS `staging` to `main` pull request. It only
-advances branch history. It does not touch the Starter Kit repository, deploy
-Cloud, upload mobile apps, submit stores, or create production-promotion state.
-It fails before opening the pull request if the selected beta does not already
-contain the `main` head.
-
-Then, from a clean, up-to-date MentraOS `main` checkout:
-
-```bash
-git switch main
-git pull --ff-only origin main
-./scripts/production-release.mjs start --beta X.Y.Z-beta.N
-./scripts/production-release.mjs status --release X.Y.Z
-```
-
-`status` is the source of truth for the current state and next action. Use
-`--json` for machine-readable output. Use `--attempt N` when inspecting an older
-attempt. Use `status --refresh` to dispatch the read-only store status workflow.
-Stable package publication is not part of `next`; see "Stable packages" below.
-
-Mutating commands require typing the release identity, or `--yes` in an already
-reviewed non-interactive procedure. The CLI never reads production credentials
-and never calls Porter or a store directly.
-
-Two human gates may be deferred with `defer --check NAME --reason TEXT`:
-`production-mobile-n-compatibility` (Phase 5) and
-`production-mobile-candidate-acceptance` (Phase 8). Both precede store review,
-which takes days, and neither guards anything user-facing on its own. A
-deferral records who deferred and why, moves the promotion on, and leaves the
-gate open: `attest` the same check later, at any state before public release
-approval, and `release` refuses to proceed while a deferral is unresolved.
-`status` lists the deferred gates still to attest.
-
-## Build numbers
-
-Every store build number of the family, the Mentra App's iOS build and Android
-version code and the ASG client's version code, is derived from the family
-base version: `MAJOR × 100,000,000 + MINOR × 1,000,000 + PATCH × 10,000 +
-sequence`, with major between 2 and 20 and minor and patch at most 99. Design:
-`notes/superpowers/specs/2026-09-14-family-build-numbers.md`.
-
-Sequences restart at 1 for every family. Each coordinated run allocates one
-sequence from the family's build container (`mentra-builds-vX.Y.Z`): the next
-free number above every `mentra-build-number-<code>.json` marker recorded
-there, and records its own marker, which names its owner, before building; a
-retry finds its own marker and reuses the number. The ASG client reuses its
-published code when its sources are unchanged and takes exactly the run's
-number when rebuilt. Production candidates, the production Bluetooth
-example and a compatibility-lab rebuild allocate the same way, from their
-family's container. Release sequences stay below 3,000; the band above is
-reserved for local and pull-request builds.
-
-The Mentra App's 3.1.0 betas and the first 3.2.0 dev builds predate the formula
-and carry a flat `310000000 + run number`, above their families' windows.
-Android testers on the Play beta or internal track with one of those builds
-reinstall the app once to rejoin the release train; glasses are unaffected.
-
-## Phase 1 - select and freeze
-
-`start` dispatches `production-release-prepare.yml`. It only reads completed
-release/store records and creates the draft promotion evidence container. It
-does not deploy, upload, submit, or release anything.
-
-Preparation fails if:
-
-- the beta is incomplete or its immutable artifacts fail verification;
-- its source is not contained in `main`;
-- the public Mentra App does not match the previous production manifest;
-- store build numbers cannot be allocated monotonically; or
-- a published `mentra-vX.Y.Z` release exists but its record does not describe
-  the public Mentra App.
-
-When no published `mentra-vX.Y.Z` release exists yet (the first coordinated
-promotion), the public Mentra App predates this system and cannot be rebuilt
-from provenance. Preparation then freezes the app exactly as both stores serve
-it (`currentMentraApp.provenance` is `store-observed`, with the App Store build
-number and the Play production version code), publishes the store inventory
-into the attempt container, and creates the initial record directly in
-`staging-compatible`: Phase 2 does not exist for that attempt because there is
-no source to build a lab app from. Phase 5 still verifies the real store app
-against production Cloud N+1. Every later promotion finds the `mentra-vX.Y.Z`
-release this one publishes and runs Phase 2 normally.
-
-If preparation stops before `status` can find an initial state record, rerun
-`start` with the same beta. That interrupted bootstrap may leave an empty draft
-attempt, but it has not deployed Cloud, uploaded an app, or consumed a store
-build coordinate. Once `status` returns `selected` (or `staging-compatible` for
-a first coordinated promotion), resume that attempt with `next` rather than
-starting another one.
-
-## Phase 2 - Mobile N against staging Cloud N+1
-
-This phase only exists when the current production app has coordinated
-provenance. `status` shows a first coordinated promotion already in
-`staging-compatible`; continue with Phase 3.
-
-Run the next action and watch it to completion:
-
-```bash
-./scripts/production-release.mjs next --release X.Y.Z
-```
-
-After `production-compatibility-lab` approval, this rebuilds the exact frozen
-current-production Mobile N source with the allocated lab build number and
-staging configuration. It uploads iOS as TestFlight Internal Only to `Mentra
-Compatibility Lab` and Android through Play Internal App Sharing, then records
-the App Store coordinate, Play download URL, source commit, binary digests, and
-target Cloud commit. It does not create a customer-promotable candidate.
-
-Install both builds using the coordinates and content-addressed compatibility
-evidence named in the workflow summary. Diagnostics must show
-`COMPATIBILITY-LAB-NOT-FOR-PRODUCTION` and staging Cloud N+1. Apple documents that a [TestFlight
-Internal Only build cannot be submitted to
-customers](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers/).
-Google documents that an [Internal App Sharing artifact cannot be included in a
-testing or production
-release](https://support.google.com/googleplay/android-developer/answer/9844679).
-
-On both iOS and Android record device/OS, glasses/firmware, exact app version and
-build, tester, Cloud diagnostics, and timestamps. Verify:
-
-- sign-in and session restoration;
-- glasses pair/reconnect;
-- Core and Runtime connection;
-- a short privacy-safe transcription;
-- one representative photo/media/Bluetooth path;
-- restart/reconnect; and
-- no production endpoint in diagnostics or captured traffic.
-
-Copy `evidence/staging-mobile-n.template.json`, fill it, store screenshots/logs
-at durable credential-free HTTPS URLs, then run:
-
-```bash
-./scripts/production-release.mjs attest --release X.Y.Z \
-  --check staging-mobile-n-compatibility \
-  --evidence release-evidence/X.Y.Z/staging-mobile-n.json
-```
-
-Every `appVersion` and `appBuild` must exactly match the frozen coordinates
-shown by `status`; placeholders and coordinates from another build are
-rejected.
-
-Any failure requires a fixed beta identity. Do not carry evidence across source
-changes.
-
-## Phases 3 and 4 - production config and Cloud V2
-
-Run `next` once for preflight and, after it succeeds, again for deployment:
-
-```bash
-./scripts/production-release.mjs next --release X.Y.Z
-```
-
-Preflight loads staging and production configuration into temporary mode-0600
-files, validates the versioned contract, and publishes only key names and
-pass/fail results. It never compares or publishes raw values or secret hashes.
-Some requirements are conditional (`requiredWhen` in the contract): the
-runtime's storage-event webhook secret and its R2/S3 credentials apply only
-while `STORAGE_PROVIDER` is `r2` or `s3`. Production runs the `local` provider
-for managed photos (the cloud photo path is being retired), so those checks
-report `inactive` rather than failing; keys that are present anyway are still
-validated.
-
-Before approving `production-cloud`, compare the frozen source, target, previous
-revision, migration notes, and rollback coordinates in the workflow summary.
-The deploy records the observed Cloud V2 deployment result, not merely the
-request. GitHub's protected-environment history records the approval; after the
-approved job succeeds, the promotion advances once from
-`production-config-ready` to `cloud-deployed`. Stop if readiness, running
-revision, digest, or migration evidence is missing.
-
-## Phase 5 - actual Mobile N against production Cloud N+1
-
-Remove lab builds. Install or update the Mentra App through the public App Store
-and Google Play and verify the displayed coordinates match the frozen current
-production record. On both platforms repeat sign-in/session restore,
-pair/reconnect, Core/Runtime, short transcription, representative media/BLE,
-release-specific backward compatibility, and restart.
-
-Use `evidence/production-mobile-n.template.json` and attest:
-
-```bash
-./scripts/production-release.mjs attest --release X.Y.Z \
-  --check production-mobile-n-compatibility \
-  --evidence release-evidence/X.Y.Z/production-mobile-n.json
-```
-
-If either platform fails, stop. Choose an explicit Cloud rollback or forward
-fix, then repeat all invalidated evidence.
-
-To submit for store review before this verification is done, defer the gate
-and attest it during review:
-
-```bash
-./scripts/production-release.mjs defer --release X.Y.Z \
-  --check production-mobile-n-compatibility --reason "verify during store review"
-```
-
-## Phases 6 through 8 - build, upload, and accept candidates
-
-Run:
-
-```bash
-./scripts/production-release.mjs next --release X.Y.Z
-```
-
-After `production-mobile-candidates` approval, the workflow rebuilds the two
-Mentra App candidates. They target production Cloud and use the frozen OTA pin.
-Outputs go only to:
-
-- TestFlight `Mentra Production Candidates`;
-- the Mentra App Play internal-testing track.
-
-They are normal customer-eligible candidates, never TestFlight Internal Only or
-Internal App Sharing artifacts. A retry reuses only an exact matching coordinate
-and immutable artifact. GitHub candidate archives are stored in this promotion
-attempt's private draft container, not in `mentra-vX.Y.Z`; a replacement attempt
-therefore cannot inherit an earlier attempt's archives.
-
-Install through TestFlight and Play, not local archives. On iOS and Android test
-the Mentra App clean install/upgrade, production auth/session, pair/reconnect,
-Core/Runtime, transcription, media/BLE, OTA identity, permissions/background,
-telemetry environment, no staging endpoints, and every release-specific config
-check.
-
-Use `evidence/production-candidates.template.json` and attest:
-
-```bash
-./scripts/production-release.mjs attest --release X.Y.Z \
-  --check production-mobile-candidate-acceptance \
-  --evidence release-evidence/X.Y.Z/production-candidates.json
-```
-
-A binary/configuration failure needs a new build number and new candidate
-acceptance. Abort this attempt rather than relabeling a failed build.
-
-## Phases 9 and 10 - submit and wait for review
-
-In both consoles first complete all human-only metadata and verify exact build
-numbers. For Apple select manual release; use phased release for normal Mentra
-App updates unless the approver documents an exception. For Play verify managed
-publishing before an existing-app production submission.
-
-Then run `next`. The protected workflow submits the exact iOS build with manual
-release and verifies that the exact Android version code is held on the Google
-production track: the draft the candidate build uploaded in Phase 7, or that
-release already rolled out in the Console and kept unpublished by managed
-publishing (the API never sends Play changes for review on its own). A rerun
-after a later failure reconciles an iOS version already in review instead of
-submitting it again. If a store field blocks the
-API, finish only the equivalent UI action and rerun; the workflow must read
-back the same build.
-
-Apple UI fallback:
-
-1. App Store Connect -> app -> target iOS version.
-2. Select the exact accepted build.
-3. Choose manual release and phased release as applicable.
-4. Add for Review, open the draft submission, verify the build again, and
-   Submit for Review.
-
-Google, always in the Console (this step has no API path):
-
-1. Play Console -> app -> Production -> the draft release that names the exact
-   candidate version code (do not create another release).
-2. Complete release notes/declarations, Review release, then Send for review.
-3. For existing apps, confirm the change remains in managed publishing.
-
-Check without holding a runner:
-
-```bash
-./scripts/production-release.mjs status --release X.Y.Z --refresh
-```
-
-Record rejection messages and responses. Metadata-only corrections may reuse
-the exact binary. Any binary/config change requires a new candidate and full
-candidate acceptance.
-
-When Apple and Google show review complete for both exact coordinates, fill
-`evidence/store-review-approved.template.json` and run:
-
-```bash
-./scripts/production-release.mjs attest --release X.Y.Z \
-  --check store-review-approved \
-  --evidence release-evidence/X.Y.Z/store-review-approved.json
-```
-
-## Phases 11 and 12 - public release and rollout
-
-Every deferred human gate must be attested first; `release` refuses otherwise,
-and so does the promotion chain itself. Then request the protected two-person
-release approval:
-
-```bash
-./scripts/production-release.mjs release --release X.Y.Z
-```
-
-This first appends approval only. It does not pretend that a GitHub approval
-clicked a store button. After approval, perform the exact UI actions:
-
-- Apple: release the exact approved version; leave Mentra App phased release
-  enabled unless an exception was approved.
-- Google: Publishing overview -> Publish changes, then start the
-  approved staged rollout for the exact version code.
-
-The verification workflow requires the exact Google version code to be in a
-production release whose status is `inProgress` with a nonzero rollout fraction
-or `completed`. A draft, halted release, or bare production-track membership
-does not advance the promotion.
-
-Run `next` to verify the exact builds are publicly rolling out and enter
-`rolling-out`.
-
-Use dashboards, crash-free sessions, auth/session, Core/Runtime connection,
-transcription, Bluetooth/media, support reports, Cloud saturation/error rate,
-and store install telemetry. Halt rollout on unexplained regression. Prefer
-halting mobile and forward-fixing Cloud after any Mobile N+1 reaches users;
-Cloud rollback is safe only when the affected N+1-to-N pairing was separately
-proven.
-
-After changing Google rollout percentage in Play Console and verifying Apple
-phased-release state, record monotonically increasing observations:
-
-```bash
-./scripts/production-release.mjs advance --release X.Y.Z --android-percent 25
-./scripts/production-release.mjs advance --release X.Y.Z --android-percent 50
-./scripts/production-release.mjs advance --release X.Y.Z --complete
-```
-
-`--complete` first records 100 percent and enters the durable `finalizing`
-checkpoint. It then stages `mentra-release-plan-X.Y.Z.json` and
-`mentra-release-X.Y.Z.json`, plus the exact finalizing checkpoint record, in the
-draft `mentra-vX.Y.Z` release and only then closes the immutable promotion
-chain. Alongside them it publishes `mentra-live-ota-X.Y.Z.json` and
-`mentra-live-ota-bundle-X.Y.Z.zip`, byte-identical copies of the promoted beta's
-OTA manifest and portable OTA bundle, lists them in `mentra-release-X.Y.Z.json`
-and in the draft release's downloads (with the production example apps when the
-stable container holds them). The scheduled Starter Kit export then picks up
-X.Y.Z for the kit's `main` branch. If finalization is interrupted, rerun the same `--complete` command; it
-verifies identical existing assets and resumes. Do not abort or start a
-replacement attempt after `finalizing`: the 100 percent rollout is already
-public, so the only valid recovery is to finish reconciling this attempt.
-Do not complete until both Mentra App store pages are publicly reachable in
-intended territories, install/update returns the exact coordinates, production
-Cloud is healthy, and the release owner has recorded the final observation
-window.
-
-After completion, inspect the two canonical assets and perform the final public
-availability checks. Publish the already-staged GitHub release manually; no
-workflow in this system publishes it automatically.
-
-## Stable packages - independent of the mobile path
-
-The plain `X.Y.Z` package versions (npm `latest`, the stable Maven Central
-coordinates, and the SwiftPM tag) are published by
-`production-release-packages.yml`. This is a separate step from the Cloud
-deployment and the Mentra App promotion. It is keyed on the promoted beta, not
-on a promotion state, so it can run at any point after `promote` has merged the
-beta source into `main`: before the promotion is prepared, while store review
-is pending, or after rollout. No mobile phase waits on it and it never
-transitions the promotion state machine.
-
-Both phases build from the exact `sourceCommit` recorded in the selected
-beta's `release-plan.json`, verified to be contained in `main`, and reuse the
-beta's frozen OTA manifest pin. The release identity is the beta's base
-version (`3.1.0-beta.192` publishes `3.1.0`).
-
-Phase 1 stages everything without making anything public:
-
-```bash
-./scripts/production-release.mjs packages --beta X.Y.Z-beta.N --phase publish
-```
-
-After `production-packages` approval it runs the same reusable npm and native
-SDK jobs as the coordinated beta on the production channel:
-
-- npm builds, packs, and verifies every family member at `X.Y.Z` from the
-  frozen source without publishing it; a registry copy with different bytes
-  stops the run.
-- Maven Central receives a `USER_MANAGED` Sonatype deployment. The phase only
-  succeeds once Sonatype reports it validated; nothing is public until phase 2.
-- The SwiftPM export is committed and pushed to the mirror branch
-  `release/X.Y.Z` of `mentra-bluetooth-sdk-ios`; no tag is created.
-
-Phase 2 makes them public after `production-packages-release` approval:
-
-```bash
-./scripts/production-release.mjs packages --beta X.Y.Z-beta.N --phase release
-```
-
-It first checks all three targets without changing anything: no npm member's
-`latest` is already newer than `X.Y.Z`, and any member already published at
-`X.Y.Z` (a rerun) already has `latest` there; the Sonatype deployment is
-validated; and the staged SwiftPM commit is the one recorded in the archived
-export. Only then does it publish every npm member to `latest` through trusted
-publishing, in dependency order, and wait until npm serves `latest` at
-`X.Y.Z` with the published bytes. Then it requests the Sonatype publication,
-waits for `PUBLISHED`, and pushes the SwiftPM tag `X.Y.Z`. No dist-tag is ever
-moved, so no release step needs an npm token or npm's per-package dist-tag
-permission.
-
-A member found published at `X.Y.Z` without `latest` stops the preflight. A
-maintainer runs `npm dist-tag add @mentra/<package>@X.Y.Z latest` with 2FA,
-then reruns the phase.
-
-Both phases are idempotent: a rerun reuses versions, deployments, and mirror
-commits that already exist and refuses anything that exists with different
-bytes. Evidence is stored as content-addressed assets in the stable release
-`mentra-vX.Y.Z` (the same draft the rollout finalization stages the canonical
-records into; it is also accepted after that release has been published by
-hand). The promotion chain is never written by these phases, so they cannot
-race a Cloud or mobile transition. It is read once: a live attempt for `X.Y.Z`
-that froze a different beta or source is a hard stop, and an allocated attempt
-without a state record must be resumed or aborted first.
-
-Stop conditions specific to packages:
-
-- Once phase 2 has published `X.Y.Z` on npm, that identity is spent. An aborted
-  promotion cannot be replaced by a different source under the same version;
-  bump the family base version on `dev` and cut a new beta.
-- Do not run phase 2 until the Cloud side of the release is at least deployed
-  or you have explicitly decided that the stable packages may lead it.
-
-## Bluetooth example - production candidates
-
-The production Bluetooth example is built by `production-release-example.yml`
-after the stable packages are public. Like the packages it is keyed on the
-promoted beta, never on a promotion attempt, and it never transitions the
-promotion state machine.
-
-```bash
-./scripts/production-release.mjs example --beta X.Y.Z-beta.N
-```
-
-It refuses to start until `@mentra/bluetooth-sdk@X.Y.Z` and `@mentra/engine@X.Y.Z`
-are public on npm, because the example is released as the SDK X.Y.Z example.
-Then it:
-
-- freezes a production example plan from the beta's exact `sourceCommit` and
-  frozen OTA manifest pin, with one example build number allocated above both
-  store inventories and the beta's own number;
-- builds `examples/bluetooth` at that source, stamped as release X.Y.Z with the
-  beta's OTA pin, and publishes the example APKs and unsigned iOS IPA (including
-  `mentra-example-react-native-X.Y.Z.apk`) to the stable release `mentra-vX.Y.Z`,
-  whose downloads list them once the rollout completes;
-- uploads the iOS build to the external TestFlight group
-  `Mentra Bluetooth Example` (created with its public link on first use) and
-  submits it for Beta App Review, and uploads the Android build to the closed
-  Play track `Mentra Bluetooth Example Production Candidates`. Create that
-  track once in Play Console under exactly that name; a Play track serves one
-  release at a time, so the production example never shares the internal or
-  open-testing tracks with the dev and beta examples. The plan carries
-  `storePromotion: "never"`.
-
-A rerun reuses the published example files, TestFlight build, and Play upload
-that already exist and refuses anything that exists with different bytes. A Play
-upload that fails leaves the example files and TestFlight build in place; rerun
-once Play accepts the build. The public TestFlight link becomes installable when
-Beta App Review approves it.
-
-## Abort, retry, and incident handling
-
-Abort an attempt with:
-
-```bash
-./scripts/production-release.mjs abort --release X.Y.Z --reason "concise reason"
-```
-
-Abort is terminal and does not itself roll Cloud back or remove store builds.
-Follow the incident commander's explicit mitigation. A new attempt allocates
-new store build numbers and references the failed attempt. Never delete failed
-evidence. The workflow refuses to allocate another attempt until every prior
-attempt for that release identity is aborted, and it never permits abort after
-the 100 percent `finalizing` checkpoint. Preparation runs are serialized while
-they allocate attempts, so starting two beta selections does not create two
-active promotions. A retry resumes a zero-state container only when its selected
-beta, source commit, prior-production provenance, store inventories, release
-family, and Mentra App coordinates match exactly through one deterministic
-digest.
-
-Common stop conditions include source/lock mismatch, missing store provenance,
-unclassified Cloud config, non-backward-compatible migration, Mobile N failure,
-wrong endpoint or OTA pin, store coordinate drift, rejected binary, missing
-reviewer access, and monitoring uncertainty during rollout.
-
-## Store rejection: resubmit with a corrected beta
-
-When App Review or Google Play rejects a candidate, the correction lands on
-`staging` like any other change and its coordinated run cuts a new beta of the
-same release identity. The promotion has no "rejected" state; a new attempt
-carries the corrected beta. One command does the whole walk, from a clean,
-up-to-date `staging` checkout:
-
-```bash
-./scripts/production-release.mjs resubmit --release X.Y.Z --beta X.Y.Z-beta.N --reason "what the store rejected and what changed"
-```
-
-It aborts the current attempt (recording the reason), promotes the beta into
-`main` (`--merge-admin` merges the exact head with administrator rights when
-the gate cannot complete), starts the next attempt, then dispatches each
-workflow in turn and waits for it: Cloud preflight, Cloud deploy, the
-candidate builds. If the rejected attempt had deferred
-`production-mobile-n-compatibility`, the deferral is carried over with a
-reason that names the earlier attempt; a gate the earlier attempt attested
-itself is not copied. It stops once the new candidates are uploaded, because
-candidate acceptance is the verification of the correction: install the exact
-builds, then `attest` (or `defer`) `production-mobile-candidate-acceptance` and
-run `next` to submit. Interrupted? Run the same command again; every step is
-decided from the latest promotion records, including a container that
-preparation allocated without a state record yet. Each dispatch carries a
-fresh id that the workflow shows in its run name, so the command waits on
-exactly the run it started, whatever else is running.
-
-On App Store Connect the rejected build stays attached to the version until the
-submission replaces it; nothing needs detaching by hand. On Google Play the new
-candidate arrives as a fresh draft on the production track and replaces the
-held one.
-
-## UI-only GitHub fallback
-
-If the local CLI is unavailable, open Actions, select the workflow named by the
-current state, click Run workflow, keep branch `main`, and copy release identity
-and attempt exactly from the promotion container. Never select a feature branch.
-Human evidence must first be uploaded with the immutable naming convention; the
-recommended recovery is to restore the CLI rather than improvising API calls.
-
-## Validation boundary
-
-Changes to these workflows are validated by pull-request tests and tabletop
-records. A PR must never dispatch a production workflow. The first end-to-end
-external validation necessarily occurs during an explicitly authorized release,
-with every protected approval and stop condition above still in force.
+Production is the third channel of the monorepo's release
+(`.github/workflows/release.yml` in Mentra-Community/Mentra), after dev and
+staging. It promotes a beta that staging already released and that people
+already tested: it never ships a source staging didn't release.
+
+## Promote a beta
+
+1. **Pick the beta.** Any of staging's last 10 completed releases
+   (`mentra-v<X.Y.Z>-beta.<N>` on MentraOS). Its Slack message and release
+   page list what it holds.
+2. **Fill in App Store Connect.** Create the App Store version `X.Y.Z` if it
+   doesn't exist, and write its What's New and review notes. App Review refuses
+   a submission without them, and the release submits on its own.
+3. **Open a pull request from that beta's commit to `main`** in the monorepo
+   and merge it. Usually that's `staging` itself; if staging has moved on,
+   branch from the beta's commit. The merged `main` must have exactly the
+   beta's release inputs (`.github/ci/release-inputs.mjs`): anything else fails
+   the release, and nothing is published.
+4. **Approve the release.** The push to `main` starts `release.yml`. Its gate
+   names the beta it promotes in the run summary, then the run waits for a
+   reviewer of the `production-approval` environment. Nothing is built or
+   published before that approval.
+5. **The release runs** (about the time of a beta):
+   - Cloud V2 prod is deployed from the same source, after its environment
+     group is checked against `cloud-config-contract.json`.
+   - The Mentra App is built with the production backend. Android goes to
+     Google Play's production track as a draft. iOS is uploaded, attached to
+     the App Store version `X.Y.Z` and submitted for App Review, with manual
+     release and phased release.
+   - npm publishes `X.Y.Z` under `latest`, Maven Central publishes `X.Y.Z`,
+     and the Swift package gets the tag `X.Y.Z`.
+   - The OTA manifest and bundle are byte-identical copies of the beta's, so
+     production glasses get exactly the software the beta tested.
+   - `finalize` writes `mentra-release-<X.Y.Z>.json` and tags `mentra-v<X.Y.Z>`
+     on MentraOS `main`. The GitHub release `mentra-v<X.Y.Z>` is published as
+     MentraOS's latest release, and Slack gets the result.
+6. **Go live in the stores.** In Play Console, send the production draft for
+   review and roll it out. In App Store Connect, release the approved version.
+   These are the only manual steps after the merge.
+
+A failed job is rerun in place: every upload is immutable and a rerun reuses
+what it published. A beta that turns out wrong is fixed on staging and
+promoted again as a new beta; a published `X.Y.Z` is never replaced.
+
+## What runs on staging instead
+
+Production used to repeat checks before each promotion. They run on the beta
+now, so a beta that passed them is ready:
+
+- The beta's own release builds and verifies the same source, the npm
+  packages, the SDK and the Engine consumer.
+- The lab's nightly routines test the beta's app and glasses software on
+  hardware.
+- The previous production app against the new Cloud: install the last beta
+  of the previous family (its app uses the staging backend) and run the lab's
+  suite against staging, where the new Cloud already runs.
+
+## Rehearse
+
+Run `release.yml` by hand with `channel: production` from a commit staging
+released: it rehearses that beta's promotion as a dry run, reading the store
+and package state and building, without reserving, tagging or publishing. From
+staging, the Mentra App builds with staging's configuration, since the
+production one is only readable on `main`: the rehearsal tests the run, not
+production's values.
+
+## Setup it relies on
+
+- Environment `production` (branch `main`): `DOPPLER_TOKEN_CI_PRD` and
+  `DOPPLER_TOKEN_MOBILE_PRD`, and access to the Copybara App's key.
+- Environment `production-approval` (branch `main`): the required reviewers.
+- npm trusts `coordinated-release.yml` on MentraOS for every package, and the
+  Bluetooth Starter Kit export (`bluetooth-starter-kit-export.yml`) moves the
+  kit's `main` once npm `latest` and the production record are served.
