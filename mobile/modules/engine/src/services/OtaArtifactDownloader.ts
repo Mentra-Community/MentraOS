@@ -1,4 +1,5 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
+import {BgTimer} from "../utils/timers"
 import {otaArtifactFailure, type OtaArtifactFailure} from "./OtaArtifactFailure"
 import type {OtaCheckCurrentGlassesResult, VersionJson} from "./OtaUpdateCheckService"
 
@@ -222,20 +223,9 @@ export async function prepareArtifacts(
       }
       const downloadResult = nativeDownload
         ? await nativeDownload(entry, partPath, reportProgress)
-        : await RNFS.downloadFile({
-            fromUrl: entry.url,
-            toFile: partPath,
-            connectionTimeout: 30_000,
-            readTimeout: 30_000,
-            progressDivider: 5,
-            begin: (res) => {
-              httpStatus = res.statusCode
-              contentLength = res.contentLength
-            },
-            progress: (res: RNFS.DownloadProgressCallbackResultT) => {
-              reportProgress(res.bytesWritten, res.contentLength)
-            },
-          }).promise
+        : await downloadResumable(entry.url, partPath, reportProgress, (status) => {
+            httpStatus = status
+          })
       httpStatus = downloadResult.statusCode
       // A resumed native download can finish with 206. Accept it only through
       // the same full-file manifest SHA256 verification below.
@@ -266,6 +256,106 @@ export async function prepareArtifacts(
     }
   }
   return prepared
+}
+
+/** Resumes after a dropped connection, such as Android moving the default network to Wi-Fi. */
+const MAX_DOWNLOAD_RESUMES = 3
+const APPEND_CHUNK_BYTES = 4 * 1024 * 1024
+
+/**
+ * Download `url` into `partPath`. When the connection drops with bytes on disk, fetch the
+ * rest with a Range request into a side file and append it, up to MAX_DOWNLOAD_RESUMES
+ * times. The caller's manifest SHA256 check still decides whether the file is good.
+ */
+async function downloadResumable(
+  url: string,
+  partPath: string,
+  onProgress: (bytesWritten: number, contentLength: number) => void,
+  onStatus: (statusCode: number) => void,
+): Promise<{statusCode: number}> {
+  const restPath = `${partPath}.rest`
+  let offset = 0
+  for (let resumes = 0; ; resumes++) {
+    let rangeHonored = false
+    try {
+      const result = await RNFS.downloadFile({
+        fromUrl: url,
+        toFile: offset > 0 ? restPath : partPath,
+        headers: offset > 0 ? {Range: `bytes=${offset}-`} : undefined,
+        connectionTimeout: 30_000,
+        readTimeout: 30_000,
+        progressDivider: 5,
+        begin: (res) => {
+          onStatus(res.statusCode)
+          rangeHonored = offset > 0 && res.statusCode === 206 && contentRangeStart(res.headers) === offset
+        },
+        progress: (res: RNFS.DownloadProgressCallbackResultT) => {
+          const base = rangeHonored ? offset : 0
+          onProgress(base + res.bytesWritten, base + res.contentLength)
+        },
+      }).promise
+      if (offset === 0) return result
+      if (rangeHonored) {
+        await appendFileTo(restPath, partPath)
+        return {statusCode: 200}
+      }
+      if (result.statusCode === 200) {
+        // The server ignored Range and sent the whole file.
+        await RNFS.unlink(partPath)
+        await RNFS.moveFile(restPath, partPath)
+      } else if (result.statusCode === 206) {
+        throw new Error("The resumed download did not start where the file left off")
+      }
+      return result
+    } catch (error) {
+      if (rangeHonored) await appendFileTo(restPath, partPath)
+      const written = await fileSize(partPath)
+      const {category} = otaArtifactFailure(error, {
+        artifact: null,
+        stage: "download",
+        bytesWritten: written,
+        contentLength: 0,
+      })
+      // While Android switches networks, sockets abort and there can briefly be no route at all.
+      if (resumes >= MAX_DOWNLOAD_RESUMES || written === 0 || (category !== "connection" && category !== "internet")) {
+        throw error
+      }
+      console.warn(`[OTA_PROGRESS] artifact download dropped at ${written} bytes, resuming (${resumes + 1})`)
+      offset = written
+      // 2, 4, then 8 s: long enough for a new network to join and validate.
+      await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, 2_000 * 2 ** resumes))
+    } finally {
+      await safeUnlink(restPath)
+    }
+  }
+}
+
+function contentRangeStart(headers: Record<string, string> | undefined): number | null {
+  const value = Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === "content-range")?.[1]
+  const match = value ? /^bytes (\d+)-/i.exec(value.trim()) : null
+  return match ? Number(match[1]) : null
+}
+
+/** RNFS has no native concatenation; copy in bounded base64 chunks. */
+async function appendFileTo(from: string, to: string): Promise<void> {
+  const size = await fileSize(from)
+  let position = 0
+  while (position < size) {
+    const chunk = await RNFS.read(from, Math.min(APPEND_CHUNK_BYTES, size - position), position, "base64")
+    const padding = chunk.endsWith("==") ? 2 : chunk.endsWith("=") ? 1 : 0
+    const bytes = (chunk.length / 4) * 3 - padding
+    if (bytes <= 0) throw new Error("Could not read the resumed artifact bytes")
+    await RNFS.appendFile(to, chunk, "base64")
+    position += bytes
+  }
+}
+
+async function fileSize(path: string): Promise<number> {
+  try {
+    return (await RNFS.exists(path)) ? Number((await RNFS.stat(path)).size) : 0
+  } catch {
+    return 0
+  }
 }
 
 /**

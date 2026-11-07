@@ -6,6 +6,7 @@ process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL ??=
 
 // Mock react-native-permissions
 jest.mock("react-native-permissions", () => require("react-native-permissions/mock"))
+jest.mock("@react-native-community/netinfo", () => require("@react-native-community/netinfo/jest/netinfo-mock"))
 // Requires its native module at import time (island gallery sync uses it for the
 // bluetooth-adapter pre-flight check).
 jest.mock("react-native-ble-manager", () => ({
