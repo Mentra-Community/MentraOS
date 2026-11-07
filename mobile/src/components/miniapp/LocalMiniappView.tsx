@@ -129,6 +129,15 @@ function LocalMiniappView({
     storageKeeperRef.current = next?.keeper ?? null
     setStorageKeeperScript(next?.script ?? "")
   }, [])
+  // The keeper reported its load before the page's scripts run. Changing the injected script makes iOS remove and re-add
+  // the WebView's message handler, which would lose a `ready` posted meanwhile, so the change waits for `ready`.
+  const keeperLoadedRef = useRef(false)
+  const settleKeeperAfterLoad = useCallback(() => {
+    const keeper = storageKeeperRef.current
+    if (!keeperLoadedRef.current || keeper?.session.mode !== "replace") return
+    keeperLoadedRef.current = false
+    setStorageKeeper(webStorageKeeperAfterLoad(keeper))
+  }, [setStorageKeeper])
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
   // Stream preview. For a CAMERA miniapp on Android the WebView is first rendered without its real
   // source: the preview's WebMessageListener only appears in documents that start loading after
@@ -217,6 +226,7 @@ function LocalMiniappView({
     connectedRef.current = false
     setConnected(false)
     pageLoadedRef.current = false
+    keeperLoadedRef.current = false
     attemptsRef.current = 0
     setLoadAttempts(0)
     clearReadyTimer()
@@ -598,7 +608,10 @@ function LocalMiniappView({
       const report = keeper ? parseWebStorageReport(event.nativeEvent.data, keeper) : null
       if (keeper && report) {
         applyWebStorageReport(keeper, report)
-        if (report.loaded && keeper.session.mode === "replace") setStorageKeeper(webStorageKeeperAfterLoad(keeper))
+        if (report.loaded) {
+          keeperLoadedRef.current = true
+          if (connectedRef.current) settleKeeperAfterLoad()
+        }
         return
       }
       try {
@@ -622,6 +635,7 @@ function LocalMiniappView({
       // UI_OPEN to the background), so we must NOT early-return here.
       if (!connectedRef.current && isReadyEnvelope(event.nativeEvent.data)) {
         markConnected()
+        settleKeeperAfterLoad()
       }
       // Intercept `dev_log` envelopes from the WebView's console-tap shim
       // (miniappGlobals.ts wraps console.log/warn/error to post these).
@@ -636,7 +650,7 @@ function LocalMiniappView({
       const mj = getMentraJS()
       mj?.uiRouter.routeFromWebView(packageName, event.nativeEvent.data)
     },
-    [packageName, markConnected, setStorageKeeper],
+    [packageName, markConnected, settleKeeperAfterLoad],
   )
 
   // The miniapp's own document stays on its origin; frames may show web content;

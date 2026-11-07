@@ -529,9 +529,26 @@ describe("the screen's localStorage", () => {
     expect(injected(view)).toContain("var REPLACE = true")
     const nonce = keeperNonce(view)
     act(() => report(view, nonce, [["set", "draft", "after replace"]], true))
+    // The page's `ready` may be on its way: the WebView's scripts don't change until it lands.
+    expect(injected(view)).toContain("var REPLACE = true")
+    act(() => miniappWebView(view)!.props.onMessage({nativeEvent: {data: JSON.stringify({type: "ready"})}}))
     expect(injected(view)).toContain("var REPLACE = false")
     expect(keeperNonce(view)).toBe(nonce)
     expect(keptIn(view)).toEqual({draft: "after replace"})
+  })
+
+  it("after a replace, a keeper that reports its load after `ready` still merges later documents", async () => {
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(INSTALLED)
+    const first = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    first.unmount()
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    const nonce = keeperNonce(view)
+    act(() => miniappWebView(view)!.props.onMessage({nativeEvent: {data: JSON.stringify({type: "ready"})}}))
+    expect(injected(view)).toContain("var REPLACE = true")
+    act(() => report(view, nonce, [], true))
+    expect(injected(view)).toContain("var REPLACE = false")
   })
 
   it("keeps a development build's localStorage, and moves nothing for it", async () => {
