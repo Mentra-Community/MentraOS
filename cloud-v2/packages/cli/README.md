@@ -126,17 +126,13 @@ the staging Core and `bun run mentra:local` a Core on `localhost:3000`.
 
 ## Workspaces
 
-A person belongs to one workspace. Administer it (members, invitations, roles)
-in Mentra Portal.
+A person may belong to several workspaces. Administer them (members,
+invitations, roles) in Mentra Portal.
 
 ```bash
-mentra workspace show                  # your workspace and your role in it
-mentra workspace create "Your Team"    # create your workspace when you have none
+mentra workspace show                  # your workspaces and your role in each
+mentra workspace create "Your Team"    # create a workspace, with you as its Owner
 ```
-
-If an account still belongs to more than one, which Mentra no longer allows,
-`mentra workspace show` lists them and says to contact Mentra support to bring
-the account down to one.
 
 ## Optional publisher signatures
 

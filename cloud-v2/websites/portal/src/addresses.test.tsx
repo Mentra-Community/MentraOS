@@ -185,9 +185,24 @@ describe("the current workspace", () => {
     await open("/settings?workspace=ws_b", { listed: ["ws_a", "ws_b"] }, "Name of ws_b");
     await until(() => window.localStorage.getItem(LAST_WORKSPACE_KEY) === "ws_b", "the workspace to be remembered");
     await until(() => address() === "/settings", "ws_b to be the bare address");
-    // There is no switcher to name the other one from.
-    expect(document.querySelector("button[aria-label^='Workspace:']")).toBeNull();
+    expect(document.querySelector("button[aria-label^='Workspace:']")?.getAttribute("aria-label")).toBe(
+      "Workspace: Name of ws_b. Switch workspace",
+    );
     expect(sidebarHrefs()).toEqual(["/members", "/settings"]);
+  });
+
+  test("the switcher lists the person's workspaces, and choosing one opens it and makes it the bare address", async () => {
+    await open("/settings", { listed: ["ws_a", "ws_b"] }, "Name of ws_a");
+    await click(document.querySelector<HTMLButtonElement>("button[aria-label^='Workspace:']")!);
+    await until(() => document.querySelector('a[role="menuitem"][href="/?workspace=ws_b"]') !== null, "the menu to list ws_b");
+    expect(findAll<HTMLAnchorElement>('a[role="menuitem"]').map(anchor => anchor.getAttribute("href"))).toEqual([
+      "/?workspace=ws_a",
+      "/?workspace=ws_b",
+    ]);
+    await click(document.querySelector<HTMLAnchorElement>('a[role="menuitem"][href="/?workspace=ws_b"]')!);
+    await until(() => window.localStorage.getItem(LAST_WORKSPACE_KEY) === "ws_b", "ws_b to be remembered");
+    await until(() => !address().includes("workspace="), "ws_b to be the bare address");
+    await until(() => page().includes("Name of ws_b"), "ws_b to open");
   });
 
   test("a remembered workspace the person is not in is ignored: the first one opens and the stale one is never asked for", async () => {

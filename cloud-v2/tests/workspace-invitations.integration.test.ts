@@ -1310,32 +1310,24 @@ describe("acceptInvitation", () => {
     expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ws, mentraUserId: "mu_dev"})).toBe(2)
   })
 
-  test("someone already in a workspace cannot accept into another, and nothing changes; after leaving they can", async () => {
+  test("someone already in a workspace accepts into another beside it, and keeps the first untouched", async () => {
     const ws = await newWorkspace()
     const mine = (await createWorkspace(user("mu_dev"), {name: "Mine"})).workspaceId
     const created = await invite(ws, "dev@example.test", "member")
     const myRevision = await revisionOf(mine)
-    const theirRevision = await revisionOf(ws)
-    const memberships = await WorkspaceMembershipModel.countDocuments({})
 
-    await expectError(
-      () => acceptInvitation(user("mu_dev", {email: "dev@example.test"}), created.token),
-      "already_in_workspace",
-      409,
-    )
-
-    expect(await WorkspaceMembershipModel.countDocuments({})).toBe(memberships)
-    expect(await peekInvitation(created.token)).not.toBeNull()
-    expect(await revisionOf(mine)).toBe(myRevision)
-    expect(await revisionOf(ws)).toBe(theirRevision)
-    expect((await listWorkspacesForUser("mu_dev")).map(workspace => workspace.workspaceId)).toEqual([mine])
-
-    // Leaving their only workspace frees them to accept: the same invitation still works.
-    await deleteWorkspace(user("mu_dev"), mine, {confirmName: "Mine"})
     await acceptInvitation(user("mu_dev", {email: "dev@example.test"}), created.token)
+
+    expect(await peekInvitation(created.token)).toBeNull()
+    expect(await revisionOf(mine)).toBe(myRevision)
     expect(
-      (await listWorkspacesForUser("mu_dev")).map(workspace => [workspace.workspaceId, workspace.membership.role]),
-    ).toEqual([[ws, "member"]])
+      (await listWorkspacesForUser("mu_dev")).map(workspace => [workspace.workspaceId, workspace.membership.role]).sort(),
+    ).toEqual(
+      [
+        [mine, "owner"],
+        [ws, "member"],
+      ].sort(),
+    )
   })
 
   test("an actor without a usable user id cannot accept (403 forbidden)", async () => {
@@ -1743,7 +1735,7 @@ describe("an empty automatic workspace gives way to an invitation", () => {
     expect(await WorkspaceModel.findOne({workspaceId: automaticId}).lean()).toMatchObject({status: "deleted"})
   })
 
-  test("a workspace that holds anything is kept, and the accept is refused until the person leaves it", async () => {
+  test("a workspace that holds anything is kept, and the person joins beside it", async () => {
     const holds: Array<[string, (workspaceId: string) => Promise<unknown>]> = [
       ["a second member", ws => addMember(ws, "mu_second", "member")],
       ["a pending invitation", ws => createInvitation(user(NEWCOMER, {email: NEWCOMER_EMAIL}), ws, {email: "x@example.test", role: "member"})],
@@ -1760,32 +1752,28 @@ describe("an empty automatic workspace gives way to an invitation", () => {
       const ws = await newWorkspace()
       const created = await invite(ws, NEWCOMER_EMAIL, "member")
 
-      // One workspace per person: the workspace that did not give way refuses the join.
-      await expectError(() => acceptInvitation(actor, created.token), "already_in_workspace", 409)
+      await acceptInvitation(actor, created.token)
 
       expect({what, status: (await WorkspaceModel.findOne({workspaceId: automaticId}).lean())!.status}).toEqual({
         what,
         status: "active",
       })
-      expect((await listWorkspacesForUser(NEWCOMER)).map(w => w.workspaceId), what).toEqual([automaticId])
-      expect((await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean())!.status, what).toBe(
-        "pending",
-      )
+      expect((await listWorkspacesForUser(NEWCOMER)).map(w => w.workspaceId).sort(), what).toEqual([automaticId, ws].sort())
       expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.deleted"})).toBe(0)
     }
   })
 
-  test("a workspace made with createWorkspace is kept, and the accept is refused", async () => {
+  test("a workspace made with createWorkspace is kept, and the person joins beside it", async () => {
     await account(NEWCOMER)
     const actor = user(NEWCOMER, {email: NEWCOMER_EMAIL})
     const mine = await createWorkspace(actor, {name: "Mine"})
     const ws = await newWorkspace()
     const created = await invite(ws, NEWCOMER_EMAIL, "member")
 
-    await expectError(() => acceptInvitation(actor, created.token), "already_in_workspace", 409)
+    await acceptInvitation(actor, created.token)
 
     expect((await WorkspaceModel.findOne({workspaceId: mine.workspaceId}).lean())!.status).toBe("active")
-    expect((await listWorkspacesForUser(NEWCOMER)).map(w => w.workspaceId)).toEqual([mine.workspaceId])
+    expect((await listWorkspacesForUser(NEWCOMER)).map(w => w.workspaceId).sort()).toEqual([mine.workspaceId, ws].sort())
   })
 
   test("an ended license does not hold the workspace", async () => {
@@ -1800,7 +1788,7 @@ describe("an empty automatic workspace gives way to an invitation", () => {
     expect((await listWorkspacesForUser(NEWCOMER)).map(w => w.workspaceId)).toEqual([ws])
   })
 
-  test("an automatic workspace someone else owns is never deleted, and its Member must leave it first", async () => {
+  test("an automatic workspace someone else owns is never deleted, and its Member joins beside it", async () => {
     await account(NEWCOMER)
     const actor = user(NEWCOMER, {email: NEWCOMER_EMAIL})
     // Another person's empty automatic workspace, where the newcomer is a plain Member.
@@ -1810,9 +1798,10 @@ describe("an empty automatic workspace gives way to an invitation", () => {
     const ws = await newWorkspace()
     const created = await invite(ws, NEWCOMER_EMAIL, "member")
 
-    await expectError(() => acceptInvitation(actor, created.token), "already_in_workspace", 409)
+    await acceptInvitation(actor, created.token)
 
     expect((await WorkspaceModel.findOne({workspaceId: hostWs}).lean())!.status).toBe("active")
+    expect(await getActiveMembership(ws, NEWCOMER)).toMatchObject({role: "member"})
     expect(await getActiveMembership(hostWs, NEWCOMER)).toMatchObject({role: "member"})
     expect(await getActiveMembership(hostWs, "mu_host")).toMatchObject({role: "owner"})
     expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.deleted"})).toBe(0)

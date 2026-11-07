@@ -93,11 +93,11 @@ program
     }
   });
 
-const workspace = program.command("workspace").description("Show or create your workspace (an account belongs to one)");
+const workspace = program.command("workspace").description("Show or create your workspaces (an account may belong to several)");
 
 workspace
   .command("show")
-  .description("Show your workspace and your role in it")
+  .description("Show your workspaces and your role in each")
   .action(async () => {
     const creds = await requireCoreCredentials();
     if (!creds) return;
@@ -108,15 +108,14 @@ workspace
         console.log("This account has no workspace. Create one with `mentra workspace create <name>`.");
         return;
       }
-      if (workspaces.length > 1) {
-        // Nothing to pick among: a person belongs to one workspace, so this is for Mentra support to fix.
-        console.log("This account is in more than one workspace, which Mentra no longer allows. Contact Mentra support to bring it down to one.");
-        for (const each of workspaces) console.log(`  ${each.workspaceId}\t${each.name}`);
+      if (workspaces.length === 1) {
+        const [only] = workspaces;
+        console.log(`Workspace: ${only!.name} (${only!.workspaceId})`);
+        console.log(`Role: ${only!.membership.role}`);
         return;
       }
-      const [only] = workspaces;
-      console.log(`Workspace: ${only!.name} (${only!.workspaceId})`);
-      console.log(`Role: ${only!.membership.role}`);
+      console.log("Workspaces:");
+      for (const each of workspaces) console.log(`  ${each.workspaceId}\t${each.name}\t${each.membership.role}`);
     } catch (error) {
       fail(error);
     }
@@ -125,7 +124,7 @@ workspace
 workspace
   .command("create")
   .argument("<name>", "workspace name")
-  .description("Create your workspace (Core refuses a second one)")
+  .description("Create a workspace, with you as its Owner")
   .action(async (name: string) => {
     const creds = await requireCoreCredentials();
     if (!creds) return;

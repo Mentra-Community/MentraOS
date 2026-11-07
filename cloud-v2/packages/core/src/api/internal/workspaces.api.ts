@@ -16,6 +16,7 @@
  * | `GET /changes?after=&limit=`                              | store, fleet | `WorkspaceChangesResponse`                  |
  * | `GET /membership-intervals?after=&limit=`                 | fleet        | `MembershipIntervalsResponse`               |
  * | `GET /workspaces/:workspaceId/members`                    | fleet        | `WorkspaceMembersResponse`, or 404          |
+ * | `GET /users/:mentraUserId/managing-workspace`             | fleet        | `ManagingWorkspaceResponse`                 |
  * | `POST /credentials`                                       | store        | `{credentialId, token}`                     |
  * | `POST /users/resolve-email`                               | store        | `{mentraUserId}`, or 404 `user_not_found`   |
  * | `PUT /workspaces/:workspaceId/deletion-holds/:service`    | `:service`   | `DeletionHoldsResponse`                     |
@@ -29,6 +30,8 @@
  * `GET /membership-intervals` is the history Fleet starts from: one interval per membership of a known account
  * that overlaps the lookback window (`membership-history.service`), then Fleet keeps current from the feed.
  * `GET /workspaces/:workspaceId/members` is who is in a workspace now, with names, for Fleet's people lists.
+ * `GET /users/:mentraUserId/managing-workspace` is the one workspace managing a person's device
+ * (`managing-workspace.service`): a person may belong to several, and Fleet installs only this one's miniapps.
  *
  * A service knows which organization it is talking to from the Core URL it is
  * configured with, and the shared secret proves both sides, so no response
@@ -74,6 +77,7 @@ import {
   type AuthorizeResponse,
   type CorePrincipal as WirePrincipal,
   type DeletionHoldsResponse,
+  type ManagingWorkspaceResponse,
   type MembershipCheckResponse,
   type PrincipalResponse,
   type ResolveEmailResponse,
@@ -100,6 +104,7 @@ import {
 import {WorkspaceError} from "../../services/workspaces/workspace-error"
 import {toMemberViews} from "../../services/workspaces/member-view.service"
 import {listMembershipIntervals} from "../../services/workspaces/membership-history.service"
+import {managingWorkspaceOf} from "../../services/workspaces/managing-workspace.service"
 import {getWorkspace, listMembers, listWorkspacesForUser} from "../../services/workspaces/workspace.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 import {InvalidRequest} from "../../types/oauth.types"
@@ -211,6 +216,24 @@ app.get("/workspaces/:workspaceId/members", requireService("fleet"), async c => 
   const workspace = await getWorkspace(c.req.param("workspaceId"))
   if (!workspace || workspace.status === "deleted") return c.json({error: WORKSPACE_NOT_FOUND_ERROR}, 404)
   const body: WorkspaceMembersResponse = {members: await toMemberViews(await listMembers(workspace.workspaceId))}
+  c.header("cache-control", "no-store")
+  return c.json(body)
+})
+
+// Fleet only: which of a person's workspaces manages their device. A deleted account is managed by none.
+app.get("/users/:mentraUserId/managing-workspace", requireService("fleet"), async c => {
+  const mentraUserId = c.req.param("mentraUserId")
+  const managing = (await isDeletedAccountId(mentraUserId)) ? null : await managingWorkspaceOf(mentraUserId)
+  const body: ManagingWorkspaceResponse = {
+    managing: managing
+      ? {
+          workspaceId: managing.workspace.workspaceId,
+          name: managing.workspace.name,
+          role: managing.membership.role,
+          automatic: managing.automatic,
+        }
+      : null,
+  }
   c.header("cache-control", "no-store")
   return c.json(body)
 })

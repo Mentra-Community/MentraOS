@@ -108,7 +108,11 @@ export class Workspaces {
     return {invitations: body.invitations.map(readInvitation)}
   }
 
-  /** Joins the workspace the invitation is for. `already_in_workspace` (409) means leave the current one first. */
+  /**
+   * Joins the workspace the invitation is for, beside any the person is in, and answers the workspace that manages
+   * the phone afterwards (what `mine` would). Only an older Core refuses someone already in a workspace
+   * (`already_in_workspace`, 409).
+   */
   async acceptInvitation(invitationId: string, opts?: AccountCallOptions): Promise<AcceptInvitationResult> {
     const body = await this.caller.run(
       bearer =>

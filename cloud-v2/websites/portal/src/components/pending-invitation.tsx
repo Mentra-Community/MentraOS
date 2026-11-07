@@ -7,19 +7,12 @@
  * browser. An invitation for another account offers Switch account (the portal's sign-out) instead.
  */
 
-import {
-  buttonVariants,
-  InvitationAcceptCard,
-  useAcceptInvitation,
-  workspaceKeys,
-  workspaceListQuery,
-} from "@mentra/workspace-ui";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useBareWorkspaceId } from "@/components/portal-shell";
+import { InvitationAcceptCard, useAcceptInvitation, workspaceKeys } from "@mentra/workspace-ui";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { PendingInvitation } from "@/lib/invitations";
-import { Link, navigate } from "@/lib/navigation";
+import { navigate } from "@/lib/navigation";
 import { portalWorkspaceApi, usePortal } from "@/lib/portal";
-import { INVITATION_PATH, joinedAddress, sectionHref } from "@/lib/routes";
+import { INVITATION_PATH, joinedAddress } from "@/lib/routes";
 
 /** Accept and Dismiss for `invitation`, with what each tells the rest of the portal. */
 function useInvitationActions(invitation: PendingInvitation) {
@@ -58,17 +51,12 @@ function useInvitationActions(invitation: PendingInvitation) {
 
 /**
  * The invitation as a card: who invited you to what, when it expires, and Accept (or Switch account), Decline
- * and Dismiss. A person belongs to one workspace, so for someone already in one, Accept gives way to "You're in
- * <workspace>. Leave it to join <this one>." and a link to that workspace's Settings, where they leave. An
- * automatic workspace holding nothing (`replaceable`) gives way to the one joined, so it keeps Accept.
+ * and Dismiss. A person may belong to several workspaces, so someone already in one accepts as anyone else does:
+ * joining adds the workspace beside theirs.
  */
 export function PendingInvitationCard({ invitation }: { invitation: PendingInvitation }) {
   const portal = usePortal();
   const { accept, decline, dismiss } = useInvitationActions(invitation);
-  const list = useQuery(workspaceListQuery(portalWorkspaceApi));
-  const bareWorkspaceId = useBareWorkspaceId();
-  const held = list.data?.[0] ?? null;
-  const current = held && !held.replaceable ? held : null;
   return (
     <InvitationAcceptCard
       load={{ status: "ready", preview: invitation.preview }}
@@ -82,17 +70,6 @@ export function PendingInvitationCard({ invitation }: { invitation: PendingInvit
       viewerEmail={portal.accountEmail}
       onSwitchAccount={portal.signOut}
       switchingAccount={portal.signingOut}
-      inWorkspace={current ? { name: current.name } : null}
-      leaveAction={
-        current ? (
-          <Link
-            href={sectionHref("settings", current.workspaceId, bareWorkspaceId)}
-            className={buttonVariants({ size: "lg" })}
-          >
-            Leave {current.name}
-          </Link>
-        ) : undefined
-      }
     />
   );
 }

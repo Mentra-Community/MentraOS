@@ -247,12 +247,11 @@ describe("the sidebar follows the viewer's role", () => {
 });
 
 describe("a workspace page", () => {
-  test("an owner's members page: the workspace and role as a static block, the sections as links, and Invite", () => {
+  test("an owner's members page: the workspace and role in the switcher, the sections as links, and Invite", () => {
     const markup = render(`/members`, TWO_WORKSPACES);
-    expect(markup).toContain('data-slot="workspace-label"');
+    expect(markup).toContain("Workspace: Acme Field Team. Switch workspace");
     expect(markup).toContain(">Acme Field Team<");
     expect(markup).toContain(">Owner<");
-    expect(markup).not.toContain("Switch workspace");
     expect(hrefs(markup)).toEqual(
       expect.arrayContaining([`/members`, `/settings`]),
     );
@@ -300,7 +299,6 @@ describe("a workspace page", () => {
   test("a developer sees only Settings, and no Invite", () => {
     const markup = render(`/settings?workspace=${NORTHWIND}`, TWO_WORKSPACES);
     expect(markup).toContain(">Northwind Pilot<");
-    expect(markup).not.toContain("Switch workspace");
     expect(hrefs(markup)).toContain(`/settings?workspace=${NORTHWIND}`);
     expect(hrefs(markup)).not.toContain(`/members?workspace=${NORTHWIND}`);
     expect(markup).not.toContain(">Invite<");
@@ -388,22 +386,24 @@ describe("a workspace the viewer may not see", () => {
   });
 });
 
-// The static workspace block's own rendering is tested in packages/workspace-ui. These are the portal's: there is
-// no switcher and no way to create a workspace, and the invitations are one link away.
+// The switcher's own rendering, its menu included, is tested in packages/workspace-ui. These are the portal's: a
+// person may belong to several workspaces and switches between them there, and the invitations are one link away.
 describe("the workspace in the sidebar", () => {
-  test("is a name and a role with no menu, no chevron and no New workspace, on every workspace page", () => {
-    for (const path of [`/members`, `/settings`, `/settings?workspace=${NORTHWIND}`]) {
+  test("is the switcher, naming the current workspace, on every workspace page", () => {
+    for (const [path, name] of [
+      [`/members`, "Acme Field Team"],
+      [`/settings`, "Acme Field Team"],
+      [`/settings?workspace=${NORTHWIND}`, "Northwind Pilot"],
+    ] as const) {
       const page = render(path, TWO_WORKSPACES);
-      expect(page).toContain('data-slot="workspace-label"');
-      for (const gone of ["Switch workspace", "Choose a workspace", "New workspace", "Create workspace", "chevrons-up-down"]) {
-        expect(page).not.toContain(gone);
-      }
+      expect(page).toContain(`Workspace: ${name}. Switch workspace`);
+      expect(page).not.toContain('data-slot="workspace-label"');
     }
   });
 
-  test("a page with no workspace (billing, not found) has no workspace block at all", () => {
+  test("a page with no workspace (billing, not found) has no switcher at all", () => {
     const page = render("/nowhere", TWO_WORKSPACES);
-    expect(page).not.toContain('data-slot="workspace-label"');
+    expect(page).not.toContain("Switch workspace");
     expect(page).not.toContain("New workspace");
   });
 
@@ -473,7 +473,7 @@ describe("the invitation card's Decline and leave-first", () => {
     expect(markup.match(/disabled=""/g)?.length).toBe(2);
   });
 
-  test("a person already in a workspace is told to leave it first; nothing else changes", () => {
+  test("an older Core's refusal of a person already in a workspace still reads plainly", () => {
     const error = new WorkspaceApiError(409, "already_in_workspace", "leave your current workspace first");
     expect(card({ acceptError: error })).toContain("Leave it in Settings first, then accept this invitation.");
   });
@@ -562,15 +562,15 @@ describe("before a workspace", () => {
     expect(markup).not.toContain(TOKEN);
   });
 
-  test("someone already in a workspace is told to leave it first: no Accept, Decline stays, Leave goes to Settings", () => {
+  test("someone already in a workspace accepts beside it: Accept and Decline, and they keep their workspace", () => {
     const markup = render("/invitation", TWO_WORKSPACES, withLink(invitationTo("Northwind Pilot", { role: "developer" })));
     expect(markup).toContain("You&#x27;re invited");
     expect(markup).toContain("Join Northwind Pilot");
-    expect(markup).toContain(">Acme Field Team</strong>. Leave it to join <strong");
+    expect(markup).toContain("You&#x27;ll keep Acme Field Team and can switch between them.");
+    expect(markup).toContain("Accept invitation");
     expect(markup).toContain(">Decline<");
-    expect(markup).toContain(`href="/settings"`);
-    expect(markup).toContain(">Leave Acme Field Team<");
-    expect(markup).not.toContain("Accept invitation");
+    expect(markup).not.toContain("Leave it to join");
+    expect(markup).not.toContain(">Leave Acme Field Team<");
     expect(markup).toContain(`href="/"`);
     expect(markup).not.toContain(TOKEN);
   });
@@ -705,7 +705,7 @@ describe("invitations as the app finds them", () => {
 
   test("a dead link never shows in the sidebar: no link, no badge", async () => {
     const markup = renderHooked(await client(gone(), [], TWO_WORKSPACES), `/members`, TOKEN);
-    expect(markup).toContain('data-slot="workspace-label"');
+    expect(markup).toContain("Switch workspace");
     expect(markup).not.toContain("Pending invitation");
     expect(markup).not.toContain('href="/invitation"');
   });

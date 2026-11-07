@@ -66,7 +66,6 @@ import {consumeRateLimit} from "../signin/rate-limit.service"
 import {isDeletedAccountId} from "../user.service"
 import {recordWorkspaceEvent} from "./audit.service"
 import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
-import {acquireGuard} from "./membership-guard.service"
 import {invitationEmail} from "./invitation-email"
 import {
   auditActor,
@@ -445,10 +444,8 @@ async function acceptPendingInvitation(
     // The person is about to hold a workspace of this invitation: an empty automatic one of their own gives way.
     await yieldAutomaticWorkspace(session, actor, actor.mentraUserId, {except: invitation.workspaceId})
 
+    // A person may belong to several workspaces: the new membership is added beside any they hold.
     const membershipId = `wm_${ulid()}`
-    // One workspace per person: another workspace refuses the accept (`already_in_workspace`, 409), and a
-    // concurrent accept elsewhere loses at the guard's insert rather than at a check that has passed.
-    await acquireGuard(session, actor.mentraUserId, {workspaceId: invitation.workspaceId, membershipId})
     const role = invitation.role as WorkspaceRole
     const memberEmail = actor.email?.trim() || null
     const claimed = await WorkspaceInvitationModel.updateOne(

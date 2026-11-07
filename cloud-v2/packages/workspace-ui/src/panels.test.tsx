@@ -698,26 +698,13 @@ describe("invitation accept view", () => {
     expect(card({ status: "ready", preview: { ...preview, invitedByEmail: null } })).toContain("You have been invited to join");
   });
 
-  test("someone already in a workspace is told to leave it first: no Accept, Decline stays, expiry is relative", () => atLocalNoon(() => {
+  test("Accept, Decline and a relative expiry, whatever workspaces the viewer is already in", () => atLocalNoon(() => {
     const soon = { ...preview, expiresAt: new Date(Date.now() + 3 * 86_400_000 + 3_600_000).toISOString() };
-    const markup = card({ status: "ready", preview: soon }, null, {
-      viewerEmail: "newbie@acme.test",
-      inWorkspace: { name: "Side Project" },
-      leaveAction: <a href="/w/ws_side/settings">Leave Side Project</a>,
-      onDecline: () => {},
-    });
-    expect(markup).toContain("You&#x27;re in <strong");
-    expect(markup).toContain(">Side Project</strong>. Leave it to join <strong");
-    expect(markup).toContain("Leave Side Project");
+    const markup = card({ status: "ready", preview: soon }, null, { viewerEmail: "newbie@acme.test", onDecline: () => {} });
+    expect(markup).toContain("Accept invitation");
     expect(markup).toContain("Decline");
-    expect(markup).not.toContain("Accept invitation");
     expect(markup).toContain("Expires in 3 days");
-    // Someone else's invitation says that first, and is not asked to leave anything.
-    const other = card({ status: "ready", preview }, null, { viewerEmail: "sam@acme.test", inWorkspace: { name: "Side Project" }, onSwitchAccount: () => {} });
-    expect(other).toContain("This invitation is for <strong");
-    expect(other).not.toContain("Leave it to join");
-    // Not in a workspace: plain Accept.
-    expect(card({ status: "ready", preview }, null, { viewerEmail: "newbie@acme.test", inWorkspace: null })).toContain("Accept invitation");
+    expect(markup).not.toContain("Leave it to join");
   }));
 
   test("an invitation for another account says so up front and offers Switch account instead of Accept", () => {

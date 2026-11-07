@@ -8,7 +8,8 @@ Core owns who belongs to which team and what they may do there.
   (`ws_…`), name, memberships, invitations, keys and audit trail.
 - A person is a Core user (`mentraUserId`), the same one the Mentra App has. A
   person can belong to any number of workspaces, with an independent role in
-  each.
+  each. One of them manages their device ([The managing
+  workspace](#the-managing-workspace)).
 
 ## Roles and capabilities
 
@@ -56,8 +57,10 @@ are gone. Recovery names an existing account; a deleted account is refused
 
 The workspace portal (`websites/portal`) is centred on the current workspace. A switcher at
 the top of the sidebar shows it and your role (your membership's; "Member · Organization
-Admin" when an Organization Admin's powers go beyond it), and lists your other workspaces,
-**Create workspace** and your pending invitations with **Accept** and **Dismiss**.
+Admin" when an Organization Admin's powers go beyond it), and its menu lists your workspaces,
+each with your role, the one that manages your device marked "Manages your device". Choosing one
+opens it (`/?workspace=<workspaceId>`, which then becomes the bare address). Under the switcher,
+"Pending invitations" links to `/invitation` while you have any.
 
 **Addresses.** Your own workspace is never in the address: `/licenses`
 ([Licenses](licenses.md#in-the-workspace-portal)), `/members` (members, with pending
@@ -174,9 +177,27 @@ licenses are assigned from the Licenses page.
   both are on the change feed or neither is. The workspace being joined is never
   the one deleted. A workspace that holds anything is kept, as is any the person
   did not make for themselves: one where they are a Member or share ownership,
-  or one made with `POST /`. A person is in one workspace at a time, so while
-  they keep one, accepting and `recoverOwnership` are refused (`409
-  already_in_workspace`) and a claim discards the imported membership.
+  or one made with `POST /`. A workspace that is kept stays beside the one
+  joined: a person may belong to several, so nothing refuses the join and a
+  claim takes every imported membership. (Before multiple workspaces, Core
+  refused such a join with `409 already_in_workspace`; an older Core still
+  does.)
+- <a id="the-managing-workspace"></a>**The managing workspace.** A person's
+  phone is managed by at most one of their workspaces: Fleet installs that
+  workspace's miniapps, and a miniapp token names it first. It is the
+  earliest-joined membership (`startedAt`, then the membership id) in a
+  workspace that is not the person's own automatic workspace, else their own
+  automatic workspace, else none. So the first real workspace someone joins
+  keeps managing them until they leave it; a later join never takes it over;
+  leaving passes it to the next by the same rule; and someone else's automatic
+  workspace that a person joined is a real one to them. Nothing is stored: it
+  follows from the memberships (`managing-workspace.service`). The Mentra App's
+  `GET /api/client/workspaces/mine` answers it, `GET /` marks it
+  `managesDevice: true`, and Fleet reads it from
+  `GET /api/internal/workspaces/users/:mentraUserId/managing-workspace`
+  ([Fleet integration](fleet-integration.md#the-managing-workspace)). The
+  automatic workspace yields to any other only while Fleet is on for every
+  workspace.
 - An invitation names an email, a role and an expiry (14 days). Admins invite
   Members and Developers, Owners anyone. Core stores only a hash of the
   invitation token; the link carries the token. The email names the inviter.

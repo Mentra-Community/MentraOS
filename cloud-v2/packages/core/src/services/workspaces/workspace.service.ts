@@ -58,9 +58,9 @@ import {endLicensesForOwner, releaseSeatsForMembership, seatReleaseReasonFor} fr
 import {clearAssignedPackages} from "./assigned-packages.service"
 import {isDeletedAccountId} from "../user.service"
 import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
+import {pickManaging} from "./managing-workspace.service"
 import {deletionHoldsOf, replaceableWorkspaces, workspacesHoldingNothing} from "./workspace-holdings"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
-import {acquireGuard, releaseGuard, releaseGuardsOfWorkspace} from "./membership-guard.service"
 import {workspaceCreationPolicy} from "./organization"
 import {fail, WorkspaceError, type WorkspaceErrorCode} from "./workspace-error"
 
@@ -100,7 +100,8 @@ export async function getWorkspace(workspaceId: string): Promise<WorkspaceSummar
  * is `replaceable`: the person's own automatic workspace, which they own, while it holds nothing
  * (`replaceableWorkspaces`). That is asked only about such workspaces, all of them at once, so a person
  * with none asks nothing more. A caller that does not use it passes `{replaceable: false}`: nothing is
- * asked, and the items carry no `replaceable`.
+ * asked, and the items carry no `replaceable`. Each also says whether it `managesDevice`
+ * (`managing-workspace.service`), from the rows already read.
  */
 export async function listWorkspacesForUser(
   mentraUserId: string,
@@ -120,6 +121,10 @@ export async function listWorkspacesForUser(
   const askReplaceable = opts.replaceable !== false
   const replaceable =
     askReplaceable && ownAutomatic.length > 0 ? await replaceableWorkspaces(mentraUserId, ownAutomatic) : new Set()
+  const managing = pickManaging(
+    mentraUserId,
+    workspaces.map(workspace => ({membership: byWorkspace.get(workspace.workspaceId)!, workspace})),
+  )?.workspace.workspaceId
   return workspaces.map(workspace => {
     const membership = byWorkspace.get(workspace.workspaceId)!
     const role = membership.role as WorkspaceRole
@@ -128,6 +133,7 @@ export async function listWorkspacesForUser(
       membership: {membershipId: membership.membershipId, role},
       capabilities: [...capabilitiesForRole(role)],
       ...(askReplaceable ? {replaceable: replaceable.has(workspace.workspaceId)} : {}),
+      managesDevice: workspace.workspaceId === managing,
     }
   })
 }
@@ -268,8 +274,6 @@ export async function insertWorkspace(
   const workspaceId = `ws_${ulid()}`
   const membershipId = `wm_${ulid()}`
   const now = new Date()
-  // One workspace per person: refused when they already hold one, atomically with the membership below.
-  await acquireGuard(session, actor.mentraUserId, {workspaceId, membershipId})
   await WorkspaceModel.create(
     [
       {
@@ -369,8 +373,7 @@ export async function deleteWorkspace(actor: Actor, workspaceId: string, opts: {
 /**
  * Every step of deleting `workspace` after the checks of who may and whether it should be, in the
  * caller's transaction: the workspace row becomes `deleted` (one revision bump, which serializes the
- * deletion with any other change there), its active memberships end (`workspace_deleted`) and release
- * their one-workspace guards, its keys and pending invitations are revoked, its licenses end and release their seats, its
+ * deletion with any other change there), its active memberships end (`workspace_deleted`), its keys and pending invitations are revoked, its licenses end and release their seats, its
  * assigned miniapps' set is deleted, and `workspace.deleted`
  * is recorded for `actor`. `after` is merged into that event's `after` (`{status: "deleted", ...after}`).
  * `deleteWorkspace` calls it after `assertCanDelete`; giving way to another workspace
@@ -385,15 +388,6 @@ export async function deleteWorkspaceIn(
   const {workspaceId} = workspace
   const now = new Date()
   await bumpRevision(session, workspaceId, undefined, {status: "deleted", deletedAt: now})
-  const members = await WorkspaceMembershipModel.find({workspaceId, status: "active", mentraUserId: {$type: "string"}})
-    .select({_id: 0, mentraUserId: 1})
-    .session(session)
-    .lean<Array<{mentraUserId: string}>>()
-  await releaseGuardsOfWorkspace(
-    session,
-    workspaceId,
-    members.map(member => member.mentraUserId),
-  )
   await WorkspaceMembershipModel.updateMany(
     {workspaceId, status: "active"},
     {$set: {status: "ended", endedAt: now, endedReason: "workspace_deleted"}},
@@ -577,7 +571,6 @@ export async function recoverOwnership(
       // A person who gains a workspace here no longer needs an empty automatic one of their own.
       await yieldAutomaticWorkspace(session, actor, target, {except: workspaceId})
       membershipId = `wm_${ulid()}`
-      await acquireGuard(session, target, {workspaceId, membershipId})
       await WorkspaceMembershipModel.create(
         [
           {
@@ -809,8 +802,6 @@ export async function endMembership(
     {session},
   )
   if (ended.modifiedCount !== 1) fail("membership_changed")
-  // The person is in no workspace now; their guard goes with the membership it named.
-  if (membership.mentraUserId) await releaseGuard(session, membership.mentraUserId, membership.membershipId)
 
   const credentials = await AccessCredentialModel.find({
     workspaceId: workspace.workspaceId,

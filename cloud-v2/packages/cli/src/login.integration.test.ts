@@ -217,7 +217,7 @@ describe("a stored login", () => {
     expect(coreCalls(mentra, seen)).toEqual([["GET", "/api/workspaces", `Bearer ${storedLogin().token}`]])
   })
 
-  test("workspace show says how to create one, and an account in several says to contact support", async () => {
+  test("workspace show says how to create one, and lists an account's several workspaces with its role in each", async () => {
     const none = core({workspaces: []})
     await login({MENTRA_CORE_URL: none.url})
     const empty = await cli(["workspace", "show"], {MENTRA_CORE_URL: none.url})
@@ -233,8 +233,7 @@ describe("a stored login", () => {
     await login({MENTRA_CORE_URL: several.url})
     const result = await cli(["workspace", "show"], {MENTRA_CORE_URL: several.url})
     expect(result.code).toBe(0)
-    expect(result.stdout).toContain("This account is in more than one workspace, which Mentra no longer allows.")
-    expect(result.stdout).toContain("  ws_1\tOne\n  ws_2\tTwo\n")
+    expect(result.stdout).toBe("Workspaces:\n  ws_1\tOne\towner\n  ws_2\tTwo\towner\n")
   })
 
   test("workspace create creates it at Core", async () => {

@@ -223,6 +223,13 @@ describe("the workspace switcher", () => {
     expect(markup).not.toContain("Pending invitations");
   });
 
+  test("a workspace's note shows under its role, and only where it has one", () => {
+    const noted = workspaces.map(workspace => (workspace.workspaceId === "ws_northwind" ? { ...workspace, note: "Manages your device" } : workspace));
+    const markup = open({ workspaces: noted });
+    expect(markup.match(/Manages your device/g)).toHaveLength(1);
+    expect(markup.indexOf("Manages your device")).toBeGreaterThan(markup.indexOf("Northwind Pilot"));
+  });
+
   test("a workspace with an href is a link through the host's link component", () => {
     const markup = open({ linkComponent: HostLink });
     expect(markup).toMatch(/<a data-host-link="" href="\/w\/ws_acme\/members" role="menuitem" aria-current="true"/);
