@@ -231,6 +231,7 @@ export function MentraLiveOtaPreview({
         install: previewAction,
         retryInstall: previewAction,
         finish: previewAction,
+        dismiss: previewAction,
         discard: previewAction,
         openWifiSetup: previewAction,
       }}
@@ -448,8 +449,9 @@ function OtaFlowContent({
         actions={
           <>
             <FlowButton colors={colors} label="Retry" onPress={controller.retryCheck} />
-            {/* A check that keeps failing (no Internet) must not hold the person here. */}
-            <FlowButton colors={colors} label={translate("common:done")} onPress={controller.finish} secondary />
+            {allowDevSkip ? (
+              <FlowButton colors={colors} label="Skip (dev only)" onPress={controller.finish} secondary />
+            ) : null}
           </>
         }
         colors={colors}
@@ -617,9 +619,9 @@ function OtaFlowContent({
             {state.canOpenWifiSetup ? (
               <FlowButton colors={colors} label="Change Wi-Fi" onPress={controller.openWifiSetup} secondary />
             ) : null}
-            {/* Retry can keep failing: Done leaves the update, as on a failure that can't be retried. */}
-            {state.canRetry ? (
-              <FlowButton colors={colors} label={translate("common:done")} onPress={controller.finish} secondary />
+            {/* A required update offers only Retry; an optional one can be left, as its offer's Later does. */}
+            {state.canDismiss ? (
+              <FlowButton colors={colors} label={translate("ota:updateLater")} onPress={controller.dismiss} secondary />
             ) : null}
           </>
         }

@@ -24,6 +24,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
+import {logPermissionAlert} from "@/utils/permissionLog"
 import {checkFeaturePermissions, PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 
 // Request microphone permission for recording
@@ -201,6 +202,11 @@ export default function GlassesMirrorFullscreen() {
     if (!permission?.granted) {
       const permissionResult = await requestPermission()
       if (!permissionResult.granted) {
+        logPermissionAlert(
+          "camera",
+          {status: permissionResult.status, canAskAgain: permissionResult.canAskAgain},
+          "mirror_camera_permission",
+        )
         showAlert("Permission Required", "Camera permission is needed for recording", undefined, {
           iconName: "videocam-off",
           iconColor: "#FF3B30",
@@ -212,6 +218,7 @@ export default function GlassesMirrorFullscreen() {
     if (!hasMicrophonePermission) {
       const hasPermission = await checkMicrophonePermission()
       if (!hasPermission) {
+        logPermissionAlert("microphone", "requestMicrophonePermission=false", "mirror_microphone_permission")
         showAlert("Permission Required", "Microphone permission is needed for recording", undefined, {
           iconName: "mic-off",
           iconColor: "#FF3B30",

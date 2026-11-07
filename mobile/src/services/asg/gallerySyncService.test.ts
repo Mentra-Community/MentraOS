@@ -448,7 +448,7 @@ describe("GallerySyncService", () => {
     jest.spyOn(localNetworkTransport, "connect").mockImplementation(
       (_owner, _ssid, _password, options) =>
         new Promise((resolve) => {
-          waiting = () => options?.onPermissionRequired?.()
+          waiting = () => options?.onPermissionRequired?.("unsatisfiedReason=localNetworkDenied")
           finish = resolve
         }),
     )

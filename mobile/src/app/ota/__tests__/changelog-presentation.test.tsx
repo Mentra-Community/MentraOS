@@ -70,6 +70,7 @@ Use \`safe mode\`.`,
     const finish = jest.fn()
     const hook = jest.spyOn(otaHook, "useMentraLiveOta").mockReturnValue({
       finish,
+      dismiss: jest.fn(),
       check: jest.fn(),
       retryCheck: jest.fn(),
       install: jest.fn(),

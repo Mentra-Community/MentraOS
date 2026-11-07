@@ -25,7 +25,7 @@ public class AcsMeetingModule: Module {
     }
 
     private func joinHotspot(ssid: String, passphrase: String, gateway: String?, promise: Promise) {
-        hotspot.onPermissionRequired = { [weak self] in
+        hotspot.onPermissionRequired = { [weak self] _ in
             self?.sendEvent("onScopedNetworkProgress", ["permissionRequired": true])
         }
         hotspot.onLost = { [weak self] reason in

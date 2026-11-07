@@ -222,6 +222,7 @@ export function CustomMentraLiveUpdate({onDone, onSetupWifi}: CustomMentraLiveUp
       <View>
         <Text>{state.error?.message}</Text>
         {state.canRetry && <Button title="Retry" onPress={ota.retryInstall} />}
+        {state.canDismiss && <Button title="Later" onPress={ota.dismiss} />}
       </View>
     )
   }

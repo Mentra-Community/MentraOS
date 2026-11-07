@@ -631,7 +631,7 @@ class GallerySyncService {
     if (!bluetoothEnabled) {
       console.warn("[GallerySyncService] Sync aborted - Bluetooth is disabled")
       store.setSyncError("Bluetooth disabled - enable Bluetooth and try again")
-      emitGalleryNotice({code: "bluetooth_off"})
+      emitGalleryNotice({code: "bluetooth_off", data: {systemAnswer: "Bluetooth adapter enabled=false"}})
       return
     }
 
@@ -713,7 +713,10 @@ class GallerySyncService {
         if (!granted) {
           console.warn("[GallerySyncService]   ❌ Camera roll permission denied - auto-save sync cannot continue")
           store.setSyncError("Camera-roll permission required while automatic saving is enabled")
-          emitGalleryNotice({code: "camera_roll_permission_required"})
+          emitGalleryNotice({
+            code: "camera_roll_permission_required",
+            data: {systemAnswer: `media library requestPermission granted=${granted}`},
+          })
           return
         } else {
           console.log("[GallerySyncService]   ✅ Camera roll permission granted")
@@ -842,7 +845,7 @@ class GallerySyncService {
           console.error("[GallerySyncService]   ❌ Android requires Location Services for WiFi operations")
 
           // Emit a notice; the host shows the "enable Location Services" alert + dialog.
-          emitGalleryNotice({code: "location_services_off"})
+          emitGalleryNotice({code: "location_services_off", data: {systemAnswer: "Location Services enabled=false"}})
           store.setSyncError("Location Services disabled - enable in Settings and try again")
 
           // Return early - do NOT proceed with sync
@@ -1175,8 +1178,10 @@ class GallerySyncService {
           const joinedAddress = await keepHotspotUpWhileJoining(
             localNetworkTransport.connect(this.networkOwner, hotspotInfo.ssid, hotspotInfo.password, {
               gateway: hotspotInfo.ip,
-              onPermissionRequired: () => {
-                if (!signal?.aborted) emitGalleryNotice({code: "local_network_permission_required"})
+              onPermissionRequired: (systemAnswer) => {
+                if (!signal?.aborted) {
+                  emitGalleryNotice({code: "local_network_permission_required", data: {systemAnswer}})
+                }
               },
             }),
             {

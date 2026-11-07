@@ -149,6 +149,8 @@ export type MentraLiveOtaController = {
   install: () => void
   retryInstall: () => void
   finish: () => void
+  /** Leaves the update screens after a failed optional update, as the offer's Later does. */
+  dismiss: () => void
   discard: () => void
   openWifiSetup: () => void
 }
@@ -688,6 +690,15 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     returnToCheck()
   }, [deviceRevision, installSnapshot, page, returnToCheck])
 
+  const dismiss = useCallback(async () => {
+    if (deviceRevision !== otaDeviceSessionRevision()) return
+    if (page !== "progress" || installSnapshot.displayState !== "failed" || isUpdateRequired) return
+    stopOtaAutoChain()
+    await ota.installSession.finish()
+    if (deviceRevision !== otaDeviceSessionRevision()) return
+    onFinishedRef.current?.()
+  }, [deviceRevision, installSnapshot.displayState, isUpdateRequired, page])
+
   const discard = useCallback(async () => {
     if (deviceRevision !== otaDeviceSessionRevision()) return
     if (page !== "progress") return
@@ -800,7 +811,6 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         canInstall: screen === "update_available" && canInstall,
         canRetry: screen === "check_failed",
         canFinish:
-          screen === "check_failed" ||
           screen === "up_to_date" ||
           screen === "dev_build" ||
           screen === "unofficial_client" ||
@@ -896,8 +906,9 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       error,
       canInstall: false,
       canRetry: screen === "failed" && !requiresGlassesReboot,
-      canFinish: screen === "complete" || screen === "failed",
-      canDismiss: false,
+      canFinish: screen === "complete" || (screen === "failed" && requiresGlassesReboot),
+      // Upgrades are required; an optional one (a downgrade, or for developers) can be left after a failure.
+      canDismiss: screen === "failed" && !requiresGlassesReboot && !isUpdateRequired,
       canDiscard: screen === "disconnected",
       canOpenWifiSetup: screen === "failed" && !hotspotSupported && showChangeWifi,
       continueDisabled: installSnapshot.continueButtonDisabled,
@@ -926,7 +937,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   ])
 
   return useMemo(
-    () => ({state, check, retryCheck: check, install, retryInstall, finish, discard, openWifiSetup}),
-    [check, discard, finish, install, openWifiSetup, retryInstall, state],
+    () => ({state, check, retryCheck: check, install, retryInstall, finish, dismiss, discard, openWifiSetup}),
+    [check, discard, dismiss, finish, install, openWifiSetup, retryInstall, state],
   )
 }

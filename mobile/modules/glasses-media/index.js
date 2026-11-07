@@ -25,5 +25,7 @@ export const glassesHotspot = Object.freeze({
     native().joinLocalHotspot(id, ssid, password, gateway ?? null, purpose),
   leave: (id, waitForInternet = false) => native().leaveLocalHotspot(id, waitForInternet),
   onPermissionRequired: (listener) =>
-    native().addListener("onLocalHotspotPermissionRequired", (event) => listener(event.id)),
+    native().addListener("onLocalHotspotPermissionRequired", (event) =>
+      listener(event.id, event.systemAnswer ?? "unknown"),
+    ),
 })

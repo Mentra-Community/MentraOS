@@ -188,6 +188,26 @@ describe('custom OTA presentation', () => {
     expect(presentation.message).toBe('Download failed');
   });
 
+  test('offers Later after an optional update fails, and only Retry after a required one', () => {
+    const optional = otaPresentation(otaState({
+      canDismiss: true,
+      canRetry: true,
+      error: {code: 'install_failed', message: 'Download failed'},
+      screen: 'failed',
+    }));
+    expect(optional.primary?.action).toBe('retryInstall');
+    expect(optional.secondary).toEqual({action: 'dismiss', label: 'Later'});
+
+    const required = otaPresentation(otaState({
+      canDismiss: false,
+      canRetry: true,
+      error: {code: 'install_failed', message: 'Download failed'},
+      screen: 'failed',
+    }));
+    expect(required.primary?.action).toBe('retryInstall');
+    expect(required.secondary).toBeUndefined();
+  });
+
   test('does not expose Finish when Engine has no valid failure action', () => {
     const presentation = otaPresentation(otaState({
       canFinish: false,

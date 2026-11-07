@@ -40,7 +40,8 @@ public final class GlassesHotspotNetwork {
     private var waitForInternetAfterLeave = false
     private let internetObservationOwner = HotspotInternetObservationOwner()
     public var onLost: ((String) -> Void)?
-    public var onPermissionRequired: (() -> Void)?
+    /// Gets the system's answer that left the join waiting for Local Network access.
+    public var onPermissionRequired: ((String) -> Void)?
     public init() {}
 
     public func join(ssid: String, passphrase: String, gateway: String? = nil, purpose: HotspotAccessPurpose = .outgoingClient, completion: @escaping (Result<String, Error>) -> Void) {
@@ -484,10 +485,10 @@ public final class GlassesHotspotNetwork {
         let gateway = gatewayAddress ?? address.split(separator: ".").prefix(3).joined(separator: ".") + ".1"
         let request = LocalNetworkAccessRequest(localAddress: address, gateway: gateway, queue: queue)
         localAccess = request
-        request.start(onPermissionRequired: { [weak self] in
+        request.start(onPermissionRequired: { [weak self] systemAnswer in
             guard let self, gen == generation, !cancelled else { return }
-            MediaLog.log("GLASSES-MEDIA local_network_permission=waiting")
-            onPermissionRequired?()
+            MediaLog.log("GLASSES-MEDIA local_network_permission=waiting \(systemAnswer)")
+            onPermissionRequired?(systemAnswer)
         }) { [weak self] result in
             guard let self, gen == generation, !cancelled else { return }
             switch result {

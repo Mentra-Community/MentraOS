@@ -306,9 +306,12 @@ export function otaPresentation(
           : state.canFinish
             ? {action: 'finish', label: 'Done'}
             : undefined,
+        // A required update offers only Retry; an optional one can be left, as its offer's Later does.
         secondary: state.canOpenWifiSetup
           ? {action: 'openWifiSetup', label: 'Change WiFi'}
-          : undefined,
+          : state.canDismiss
+            ? {action: 'dismiss', label: 'Later'}
+            : undefined,
         title: 'Update Failed',
         tone: 'danger',
       };

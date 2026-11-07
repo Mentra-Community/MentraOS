@@ -8,7 +8,7 @@ import {
 } from "@mentra/engine/pairing"
 import {useVideoPlayer, VideoView} from "expo-video"
 import {useCallback, useState} from "react"
-import {Platform} from "react-native"
+import {PermissionsAndroid, Platform} from "react-native"
 
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {CDN_BASE_URL} from "@/constants/appConfig"
@@ -19,6 +19,7 @@ import {deploymentStore} from "@/services/deployment"
 import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPolicy"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
+import {logPermissionAlert} from "@/utils/permissionLog"
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
 import {type ForgetIosPairingThen} from "@/utils/pairing/iosStaleBond"
 import {preparePairingScan} from "@/utils/pairing/preparePairingScan"
@@ -100,6 +101,8 @@ export function MentraLivePairingFlowHost({
     },
     prepareConnect: async () => {
       if (Platform.OS !== "android" || (await requestFeaturePermissions(PermissionFeatures.LOCATION))) return true
+      const fineLocation = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION)
+      logPermissionAlert("location", `ACCESS_FINE_LOCATION check=${fineLocation}`, "pairing_location_permission")
       showAlert(
         "Location Permission Required",
         "Location permission is required to scan for and connect to smart glasses on Android. This is a requirement of the Android Bluetooth system.",

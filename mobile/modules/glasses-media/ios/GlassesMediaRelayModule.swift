@@ -1,5 +1,8 @@
 import ExpoModulesCore
 import Foundation
+import OSLog
+
+private let permissionLog = Logger(subsystem: "com.mentra.mentra", category: "Permission")
 
 public final class GlassesMediaRelayModule: Module {
     private let queue = DispatchQueue(label: "com.mentra.glassesmedia.relay")
@@ -15,6 +18,11 @@ public final class GlassesMediaRelayModule: Module {
             MediaLog.sink = { [weak self] message in self?.sendEvent("onNativeLog", ["message": message]) }
         }
 
+        // The app's `[Permission]` lines, readable in the unified log: NSLog and the JS console are not.
+        Function("logPermission") { (line: String) in
+            permissionLog.notice("\(line, privacy: .public)")
+        }
+
         AsyncFunction("joinLocalHotspot") { (id: String, ssid: String, password: String, gateway: String?, purpose: String, promise: Promise) in
             self.queue.async {
                 guard self.localHotspotOwner == nil else {
@@ -25,8 +33,8 @@ public final class GlassesMediaRelayModule: Module {
                 }
                 self.localHotspotOwner = id
                 // The join waits while Local Network access is pending or denied; the caller explains it.
-                self.localHotspot.onPermissionRequired = { [weak self] in
-                    self?.sendEvent("onLocalHotspotPermissionRequired", ["id": id])
+                self.localHotspot.onPermissionRequired = { [weak self] systemAnswer in
+                    self?.sendEvent("onLocalHotspotPermissionRequired", ["id": id, "systemAnswer": systemAnswer])
                 }
                 self.localHotspot.join(ssid: ssid, passphrase: password, gateway: gateway, purpose: accessPurpose) { result in
                     switch result {
@@ -128,7 +136,7 @@ private final class ManagedRelaySession {
     {
         ready = completion
         hotspot.onLost = { reason in onState("failed", reason) }
-        hotspot.onPermissionRequired = { [weak self] in
+        hotspot.onPermissionRequired = { [weak self] _ in
             self?.queue.async {
                 guard let self, !self.stopped else { return }
                 onState("permission_required", "Allow Local Network access to connect to your glasses. If you previously denied access, enable it in Settings, or cancel to return home.")

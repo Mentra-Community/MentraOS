@@ -9,6 +9,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {showAlert} from "@/utils/AlertUtils"
+import {logPermissionAlert} from "@/utils/permissionLog"
 import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
@@ -85,6 +86,7 @@ export default function PairingPrepScreen() {
               )
 
               if (anyNeverAskAgain) {
+                logPermissionAlert("bluetooth", results, "bluetooth_permission_previously_denied")
                 // Show "previously denied" dialog for Bluetooth
                 showAlert(
                   translate("pairing:permissionRequired"),
@@ -101,6 +103,7 @@ export default function PairingPrepScreen() {
                   ],
                 )
               } else {
+                logPermissionAlert("bluetooth", results, "bluetooth_permission_required")
                 // Show standard permission required dialog
                 showAlert(
                   translate("pairing:bluetoothPermissionRequiredTitle"),

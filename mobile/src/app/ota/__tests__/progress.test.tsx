@@ -408,9 +408,8 @@ describe("progress.tsx display states", () => {
     }
   })
 
-  it("offers Done beside Retry, which leaves the failed pass and ends automatic chaining", async () => {
+  it("offers only Retry when a required update fails", async () => {
     setGlassesConnected()
-    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
     const {getByText, queryByText} = render(<OtaProgressScreen />)
 
     act(() => {
@@ -427,13 +426,10 @@ describe("progress.tsx display states", () => {
       })
     })
 
+    expect(getByText("Update Failed")).toBeDefined()
     expect(getByText("Retry")).toBeDefined()
-    await act(async () => {
-      fireEvent.press(getByText("Done"))
-    })
-
-    expect(isOtaAutoChainActive()).toBe(false)
-    await waitFor(() => expect(queryByText("Update Failed")).toBeNull())
+    expect(queryByText("Done")).toBeNull()
+    expect(queryByText("Later")).toBeNull()
   })
 
   it("restores overlay suppression when retrying after WiFi setup", () => {

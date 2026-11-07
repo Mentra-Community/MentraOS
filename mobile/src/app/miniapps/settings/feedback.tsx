@@ -19,6 +19,7 @@ import {buildReportTrigger} from "@/services/bugReport/bugReportCategorization"
 import {useNavigationStore} from "@/stores/navigation"
 import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
+import {logPermissionAlert} from "@/utils/permissionLog"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {deploymentStore} from "@/services/deployment"
 
@@ -66,6 +67,11 @@ export default function FeedbackPage() {
     // Request permission
     const {status} = await ImagePicker.requestMediaLibraryPermissionsAsync()
     if (status !== "granted") {
+      logPermissionAlert(
+        "photo_library",
+        `requestMediaLibraryPermissionsAsync status=${status}`,
+        "feedback_photo_permission",
+      )
       showAlert(translate("common:error"), translate("feedback:photoPermissionRequired"), [
         {text: translate("common:ok")},
       ])

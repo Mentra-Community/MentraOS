@@ -131,8 +131,8 @@ export const localNetworkTransport = {
       assertCurrent?: () => void
       gateway?: string
       purpose?: "outgoing-client" | "incoming-server"
-      /** iOS: the join is waiting for Local Network access, which may have been denied. */
-      onPermissionRequired?: () => void
+      /** iOS: the join has waited a few seconds for Local Network access, which may have been denied. */
+      onPermissionRequired?: (systemAnswer: string) => void
     },
   ): Promise<string | undefined> {
     const isIos = Platform.OS === "ios"
@@ -150,8 +150,8 @@ export const localNetworkTransport = {
       // with the phone's verified address on it.
       const owner = requestId("ios_hotspot")
       iosHotspotOwner = {caller, nativeId: owner}
-      const permission = glassesHotspot.onPermissionRequired((id) => {
-        if (id === owner) options?.onPermissionRequired?.()
+      const permission = glassesHotspot.onPermissionRequired((id, systemAnswer) => {
+        if (id === owner) options?.onPermissionRequired?.(systemAnswer)
       })
       try {
         const address = await glassesHotspot.join(
