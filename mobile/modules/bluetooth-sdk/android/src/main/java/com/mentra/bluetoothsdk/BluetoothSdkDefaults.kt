@@ -6,8 +6,9 @@ object BluetoothSdkDefaults {
     const val LOUDNESS_GATE_ENABLED = true
 
     /**
-     * Must match the firmware default (on). Re-pushed on connect, so a false
-     * value here would silently turn it off on every pair the app touches.
+     * Must match the firmware and Mentra App default (off). Re-pushed on
+     * connect, so a true value here turns on the 20-minute unworn power-off on
+     * every pair the app touches.
      */
-    const val AUTO_POWER_OFF_ENABLED = true
+    const val AUTO_POWER_OFF_ENABLED = false
 }
