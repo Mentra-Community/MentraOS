@@ -71,6 +71,7 @@ import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
 import clientWorkspaces from "./client/workspaces.api";
 import clientMiniapps from "./client/miniapps.api";
+import clientDeployment from "./client/deployment.api";
 import clientRegistry from "./client/registry.api";
 import clientBluetoothSdk from "./client/bluetooth-sdk.api";
 import { clientFleetApi } from "./fleet/fleet-forwarding";
@@ -183,6 +184,8 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   // LEGACY: released Mentra App versions install their preinstalled miniapps
   // from here until supported versions install only from the Store's backend.
   app.route("/api/client/miniapps", clientMiniapps);
+  // The default miniapps every phone of this deployment gets.
+  app.route("/api/client/deployment", clientDeployment);
   app.route("/api/account", accountApi);
   app.route("/api/account/oauth", accountOauth);
   app.route("/api/portal", portalEnterprise);
