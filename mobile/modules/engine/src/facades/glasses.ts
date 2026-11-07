@@ -131,6 +131,20 @@ export const glasses = {
       throw error
     }
   },
+  /**
+   * Connect the saved glasses while they are in pairing mode. Automatic reconnects wait for the window to end;
+   * this is the person choosing those glasses, so they take this phone back over its bond, leave pairing mode
+   * and stay connected.
+   */
+  connectInPairingMode: async (): Promise<void> => {
+    const device = await BluetoothSdk.getDefaultDevice()
+    if (!device) throw new Error("No saved glasses to connect")
+    // Only glasses with secure pairing tell the phone about a pairing window.
+    await glasses.connect(
+      {...device, securePairingCapable: true},
+      {saveAsDefault: false, cancelExistingConnectionAttempt: true},
+    )
+  },
   /** Connect the built-in simulated glasses (dev/testing). */
   connectSimulated: (): Promise<void> => BluetoothSdk.connectSimulated(),
   /** Set a device as the `connectDefault()` target. */

@@ -157,6 +157,12 @@ class MentraLive : SGCManager() {
         private const val A2DP_CONNECT_MAX_ATTEMPTS = 5
         private const val A2DP_CONNECT_RETRY_MS = 800L
         private const val UNPAIR_FLUSH_MS = 400L
+        /** Classic profile disconnects this soon after the app's own teardown are the app's. */
+        private const val OWN_CLASSIC_TEARDOWN_MS = 10_000L
+        /** Classic profiles going down this close together are one disconnect of the whole device. */
+        private const val CLASSIC_DISCONNECT_PAIR_MS = 3_000L
+        /** How long after the Classic drop the glasses must still be answering over BLE. */
+        private const val CLASSIC_DISCONNECT_CONFIRM_MS = 2_000L
         // Longer than the glasses' bounded relay of one report (BES logs, two file transfers,
         // the phone POST), so an unreleased name cannot be reused while its report is in flight.
         internal const val INCIDENT_RELAY_OWNERSHIP_MS = 10 * 60_000L
@@ -706,6 +712,13 @@ class MentraLive : SGCManager() {
     private var secureFirmwareRefreshRunnable: Runnable? = null
     /** elapsedRealtime of the last GATT link that was not an explicit pairing attempt. */
     private var lastAutoReconnectLinkAt: Long? = null
+    /** elapsedRealtime of the app's last own A2DP/HFP teardown. */
+    private var lastOwnClassicTeardownAt: Long? = null
+    /** elapsedRealtime when Android started disconnecting each Classic profile. */
+    private val classicDisconnectingAt = mutableMapOf<ClassicAudioProfile, Long>()
+    private var classicDisconnectCheck: Runnable? = null
+    /** elapsedRealtime of the last message from the glasses. */
+    private var lastInboundAt = 0L
     /** Hold GATT teardown until the unpair write can leave the phone. */
     private var unpairFlushPending = false
     private var unpairFlushRunnable: Runnable? = null
@@ -4385,6 +4398,7 @@ class MentraLive : SGCManager() {
         }
         BleTraceLogger.logJson("glasses_to_phone", "sdk_ble_event", json, null)
         GlassesLinkDiagnostics.recordInbound()
+        lastInboundAt = SystemClock.elapsedRealtime()
 
         if (MessageChunker.isChunkedMessage(json)) {
             processChunkedJsonMessage(json)
@@ -8066,9 +8080,54 @@ class MentraLive : SGCManager() {
                         if (intent?.action != BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED &&
                                 intent?.action != BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED) return
                         val device = intent.bluetoothDeviceExtra() ?: return
+                        noteClassicDisconnecting(device, intent)
                         refreshClassicAudioConnectionState(device)
                     }
                 }
+    }
+
+    /**
+     * Android's Bluetooth settings Disconnect drops every Classic profile of the glasses (A2DP,
+     * and HFP unless the unworn glasses closed it) and leaves the app's BLE link up, so Home went
+     * on showing them connected. When all the connected profiles start disconnecting within
+     * [CLASSIC_DISCONNECT_PAIR_MS] while the app neither asked nor lost BLE, and the glasses
+     * answer over BLE within [CLASSIC_DISCONNECT_CONFIRM_MS], the person disconnected them: it
+     * lasts like the app's Disconnect, even if the glasses paged their audio back meanwhile. A
+     * restart, power off, pairing window or range loss takes BLE down too; turning off Media or
+     * Call audio leaves the other profile up.
+     */
+    private fun noteClassicDisconnecting(device: BluetoothDevice, intent: Intent) {
+        if (intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, -1) != BluetoothProfile.STATE_CONNECTED ||
+                        intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1) != BluetoothProfile.STATE_DISCONNECTING
+        ) {
+            return
+        }
+        if (isKilled || !isConnected || connectedDevice?.address != device.address) return
+        if (bluetoothAdapter?.state != BluetoothAdapter.STATE_ON) return
+        val now = SystemClock.elapsedRealtime()
+        val ownTeardownAt = lastOwnClassicTeardownAt
+        if (ownTeardownAt != null && now - ownTeardownAt < OWN_CLASSIC_TEARDOWN_MS) return
+        val profile =
+                if (intent.action == BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED) ClassicAudioProfile.A2DP
+                else ClassicAudioProfile.HEADSET
+        classicDisconnectingAt[profile] = now
+        val wereUp = classicAudioConnectionTracker.connectedProfiles() + profile
+        if (!wholeClassicDeviceDisconnecting(wereUp, classicDisconnectingAt, now, CLASSIC_DISCONNECT_PAIR_MS)) return
+        if (classicDisconnectCheck != null) return
+        Bridge.log("LIVE: Classic: Android is disconnecting the glasses' audio - checking the glasses stay up")
+        val session = gattEpoch
+        sendJsonWithoutAck(JSONObject().put("type", "ping"))
+        val check =
+                Runnable {
+                    classicDisconnectCheck = null
+                    if (isKilled || !isConnected || gattEpoch != session || lastInboundAt <= now) {
+                        return@Runnable
+                    }
+                    Bridge.log("LIVE: Classic: Android disconnected the glasses - staying disconnected")
+                    DeviceManager.getInstance().disconnectByUser()
+                }
+        classicDisconnectCheck = check
+        handler.postDelayed(check, CLASSIC_DISCONNECT_CONFIRM_MS)
     }
 
     private fun registerClassicAudioReceiver() {
@@ -8704,6 +8763,7 @@ class MentraLive : SGCManager() {
         // The BLE device reference may already be cleared after a GATT drop. The tracker owns the
         // authoritative target address, so let it decide whether this teardown belongs to the
         // active Classic session instead of consulting connectedDevice.
+        lastOwnClassicTeardownAt = SystemClock.elapsedRealtime()
         if (classicAudioConnectionTracker.invalidate(device.address)) {
             audioConnected = false
         }

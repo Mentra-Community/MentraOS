@@ -459,6 +459,7 @@ const mockIslandEntries = () => {
       }),
       glasses: {
         connectDefault: jest.fn(() => Promise.resolve()),
+        connectInPairingMode: jest.fn(() => Promise.resolve()),
         hasDefaultDevice: jest.fn(() => Promise.resolve(true)),
         disconnect: jest.fn(() => Promise.resolve()),
         userDisconnected: jest.fn(() => false),

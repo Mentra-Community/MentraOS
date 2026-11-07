@@ -186,7 +186,8 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
         }
         return
       }
-      await engine.glasses.connectDefault()
+      if (inPairingMode) await engine.glasses.connectInPairingMode()
+      else await engine.glasses.connectDefault()
     } catch (error) {
       console.error("connect to glasses error:", error)
       showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])
@@ -233,20 +234,15 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     return image
   }
 
-  // The SDK pauses reconnect while the glasses are in pairing mode. Home still shows the normal
-  // reconnecting card (spinner + Cancel) over the popup, never Pair Again, until the user
-  // presses Cancel. The pairing watch scan and the reconnect hold are not a new connect
-  // attempt, so they must not bring the spinner back. Keep the card for a moment after the
-  // window ends so "Connect glasses" does not flash before the reconnect starts.
-  const userStoppedReconnect = reconnectDismissed && (inPairingMode || holdReconnectAfterPairing)
+  // The SDK makes no automatic connection while the glasses are in pairing mode: the card offers
+  // Connect glasses right away, which takes the glasses back from their pairing window. The
+  // pairing watch scan is not a connect attempt, so it must not bring the spinner back. Keep the
+  // reconnecting card for a moment after the window ends so "Connect glasses" does not flash
+  // before the reconnect starts, unless the user pressed Cancel.
+  const userStoppedReconnect = reconnectDismissed && holdReconnectAfterPairing
   let isSearching =
     !userStoppedReconnect &&
-    (searching ||
-      isCheckingConnectivity ||
-      wasSearching ||
-      nativeLinkBusy ||
-      inPairingMode ||
-      holdReconnectAfterPairing)
+    (searching || isCheckingConnectivity || wasSearching || (nativeLinkBusy && !inPairingMode) || holdReconnectAfterPairing)
   let _connectingText = translate("home:connectingGlasses")
   // Only show booting message when we've received a glasses_not_ready event
   if (showGlassesBooting) {
