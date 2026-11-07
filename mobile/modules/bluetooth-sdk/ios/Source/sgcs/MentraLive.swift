@@ -3396,6 +3396,11 @@ class MentraLive: NSObject, SGCManager {
         }
 
         switch type {
+        case "hotspot_keepalive":
+            // Sent every few seconds while the glasses hotspot is up. Receiving it is the whole
+            // point: each BLE notification lets iOS run this app a little longer, so a gallery or
+            // OTA download over the hotspot keeps going while backgrounded or locked.
+            return
         case "glasses_ready":
             // A queued glasses_ready from the connection just left for a pairing window
             // must not count as a session. Only accept readiness on a live GATT.
@@ -6007,7 +6012,8 @@ class MentraLive: NSObject, SGCManager {
             wireBytes: data.count,
             packetCount: Int(info.fragCount),
             protocolVersion: BleWireProtocol.protocolV2,
-            direction: "glasses_to_phone"
+            direction: "glasses_to_phone",
+            bridgeLogging: !BleTraceLogger.isQuietJson(jsonString)
         )
         processJsonMessage(jsonString)
     }

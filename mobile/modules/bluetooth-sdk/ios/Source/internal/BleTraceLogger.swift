@@ -32,12 +32,14 @@ enum BleTraceLogger {
             return
         }
 
+        let type = extractType(from: payload)
+        if isQuietType(type) { return }
         let sanitized = sanitizeDictionary(payload)
         emit(format(
             direction: direction,
             layer: layer,
             source: source(file: sourceFile, function: sourceFunction, line: sourceLine),
-            type: extractType(from: payload),
+            type: type,
             bytes: bytes,
             payload: jsonString(sanitized)
         ), forwardToBridge: forwardToBridge)
@@ -102,6 +104,17 @@ enum BleTraceLogger {
     ) -> String {
         let bytesText = bytes.map { " bytes=\($0)" } ?? ""
         return "BLE_TRACE direction=\(direction) layer=\(layer) source=\(source) type=\(type)\(bytesText) payload=\(truncate(payload))"
+    }
+
+    /// Messages sent every few seconds; tracing each would push everything else out of the
+    /// logs attached to bug reports.
+    static func isQuietType(_ type: String?) -> Bool {
+        type == "hotspot_keepalive"
+    }
+
+    /// Cheap check on a raw inbound JSON string, before it is parsed.
+    static func isQuietJson(_ json: String) -> Bool {
+        json.count <= 256 && json.contains("\"hotspot_keepalive\"")
     }
 
     private static func extractType(from payload: [String: Any]) -> String {

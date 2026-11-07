@@ -4378,6 +4378,9 @@ class MentraLive : SGCManager() {
         }
 
         when (type) {
+            // The glasses send this every few seconds while their hotspot is up, so iPhones keep
+            // running hotspot downloads in the background. Android needs nothing from it.
+            "hotspot_keepalive" -> return
             "file_announce" -> handleFileTransferAnnouncement(json)
             "transfer_timeout" -> handleTransferTimeout(json)
             "transfer_failed" -> handleTransferFailed(json)
@@ -10218,13 +10221,15 @@ class MentraLive : SGCManager() {
                 Log.w(TAG, "Rejected unsupported compact reassembled wire form")
                 return
             }
-            logWireMetrics(
-                    reassembled.size,
-                    data.size,
-                    info.fragCount,
-                    BleWireProtocol.PROTOCOL_V2,
-                    "glasses_to_phone"
-            )
+            if (!BleTraceLogger.isQuietType(json.optString("type"))) {
+                logWireMetrics(
+                        reassembled.size,
+                        data.size,
+                        info.fragCount,
+                        BleWireProtocol.PROTOCOL_V2,
+                        "glasses_to_phone"
+                )
+            }
             processJsonMessage(json)
         } catch (e: JSONException) {
             Log.e(TAG, "Failed to parse reassembled binary wire JSON", e)

@@ -21,8 +21,10 @@ object BleTraceLogger {
             return
         }
 
+        val type = extractType(payload)
+        if (isQuietType(type)) return
         val sanitized = sanitize(payload)
-        Log.i(TAG, format(direction, layer, caller(), extractType(payload), bytes, sanitized.toString()))
+        Log.i(TAG, format(direction, layer, caller(), type, bytes, sanitized.toString()))
     }
 
     @JvmStatic
@@ -73,6 +75,13 @@ object BleTraceLogger {
         val bytesText = bytes?.let { " bytes=$it" } ?: ""
         return "BLE_TRACE direction=$direction layer=$layer source=$source type=$type$bytesText payload=${truncate(payload)}"
     }
+
+    /**
+     * Messages sent every few seconds (the glasses' hotspot keepalive); tracing each would push
+     * everything else out of the logs attached to bug reports.
+     */
+    @JvmStatic
+    fun isQuietType(type: String?): Boolean = type == "hotspot_keepalive"
 
     private fun extractType(payload: JSONObject): String {
         payload.optString("type").takeIf { it.isNotBlank() }?.let { return it }
