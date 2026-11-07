@@ -107,6 +107,16 @@ function LocalMiniappView({
     storageKeeperRef.current = next?.keeper ?? null
     setStorageKeeperScript(next?.script ?? "")
   }, [])
+  // The keeper reported its load before the page's scripts run. Changing the injected script makes iOS remove and re-add
+  // the WebView's message handler, which would lose a `ready` posted meanwhile, so the change waits for `ready`.
+  const keeperLoadedRef = useRef(false)
+  const pageReadyRef = useRef(false)
+  const settleKeeperAfterLoad = useCallback(() => {
+    const keeper = storageKeeperRef.current
+    if (!keeperLoadedRef.current || !pageReadyRef.current || keeper?.session.mode !== "replace") return
+    keeperLoadedRef.current = false
+    setStorageKeeper(webStorageKeeperAfterLoad(keeper))
+  }, [setStorageKeeper])
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
   // Stream preview. For a CAMERA miniapp on Android the WebView is first rendered without its real
   // source: the preview's WebMessageListener only appears in documents that start loading after
@@ -140,12 +150,16 @@ function LocalMiniappView({
   const handleStatus = useCallback(
     (status: MiniappViewStatus) => {
       if (status.state === "loading") {
+        keeperLoadedRef.current = false
+        pageReadyRef.current = false
         setReady(false)
         setErrorMessage(undefined)
         setLoadAttempts(status.attempt)
         return
       }
       if (status.state === "ready") {
+        pageReadyRef.current = true
+        settleKeeperAfterLoad()
         setReady(true)
         return
       }
@@ -199,7 +213,7 @@ function LocalMiniappView({
       }
       setErrorMessage(error.message)
     },
-    [packageName, devUrl, devMode, openDevOffline],
+    [packageName, devUrl, devMode, openDevOffline, settleKeeperAfterLoad],
   )
 
   // Every screen's localStorage: the host keeps a copy in the miniapp's data
@@ -244,10 +258,13 @@ function LocalMiniappView({
       const report = keeper ? parseWebStorageReport(data, keeper) : null
       if (!keeper || !report) return false
       applyWebStorageReport(keeper, report)
-      if (report.loaded && keeper.session.mode === "replace") setStorageKeeper(webStorageKeeperAfterLoad(keeper))
+      if (report.loaded) {
+        keeperLoadedRef.current = true
+        settleKeeperAfterLoad()
+      }
       return true
     },
-    [setStorageKeeper],
+    [settleKeeperAfterLoad],
   )
 
   const {setForceGestureEnabled} = useNavigationStore.getState()
