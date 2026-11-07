@@ -27,7 +27,8 @@ const release = (env) => releasePost({...releaseEnv, ...env}, {check: async () =
   fetchImpl: async (url) => new Response(JSON.stringify(url.endsWith("ota.json") ? manifest(env.RELEASE_IDENTITY ?? releaseEnv.RELEASE_IDENTITY) : jobs))})
 
 const posts = async () => ({
-  "PR ready, with the Bluetooth example": [prBuildPost({...prBase, ios, example: {androidUrl: `${cdn}/example.apk`}}), {ok: true, example: true}],
+  "PR ready, with the Bluetooth example": [prBuildPost({...prBase, ios, example: {androidUrl: `${cdn}/example.apk`,
+    iphoneUrl: `${cdn}/example-i.html`, macUrl: `${cdn}/example-m.zip`}}), {ok: true, example: true}],
   "PR ready, Android only": [prBuildPost({...prBase, ios: {}}), {ok: true}],
   "PR incomplete": [prBuildPost({...prBase, ios: {error: "iOS failure", runUrl: run(3)}, example: {error: "Android failure", runUrl: run(2)}}),
     {ok: false}],
@@ -50,7 +51,15 @@ test("every build post has the one layout: title and Details, facts, one row of 
     const first = buttons.findIndex((button) => !button.style)
     assert.ok(buttons.slice(0, first < 0 ? undefined : first).every((button) => button.style === "primary" && !/Bluetooth/.test(button.text.text)), name)
     assert.equal(buttons.some((button) => /Bluetooth example/.test(button.text.text)), Boolean(example), name)
-    assert.match(rest.find((block) => block.type === "context").elements[0].text, /^:dark_sunglasses: ASG \*3\.4\.0\* \(build 340012\) · BES/, name)
+    // Each app has the same slots, Docs closes the row, and a slot without an install is named under it.
+    const slots = buttons.slice(0, -1).map((button) => button.text.text.split(" ")[0])
+    assert.deepEqual([buttons.at(-1).text.text, buttons.at(-1).url], [":books: Docs", "https://docs-dev.mentraglass.com".replace(
+      "docs-dev", name.startsWith("staging") ? "docs-beta" : "docs-dev")], name)
+    const after = rest[rest.indexOf(actions[0]) + 1]
+    const missing = /^:heavy_minus_sign: Missing: /.test(after.elements?.[0].text)
+    if (example && !missing) assert.deepEqual(slots.slice(0, slots.length / 2), slots.slice(slots.length / 2), name)
+    const glasses = missing ? rest[rest.indexOf(actions[0]) + 2] : after
+    assert.match(glasses.elements[0].text, /^:dark_sunglasses: ASG \*3\.4\.0\* \(build 340012\) · BES/, name)
     const problems = rest.filter((block) => block.type === "section")
     assert.equal(problems.length > 0, !ok, name)
     assert.ok(problems.every((block) => /^:warning: /.test(block.text.text) && block.accessory?.text.text === "Logs"), name)
@@ -63,7 +72,7 @@ test("every build post has the one layout: title and Details, facts, one row of 
 
 test("buttons skip non-HTTPS URLs; nothing to install leaves no actions block", () => {
   assert.deepEqual(installButtons([{name: "Mentra App", installs: [{platform: "Android", url: "itms-services://x"},
-    {platform: "Mac", url: undefined}]}]), [])
+    {platform: "macOS", url: undefined}]}]), [])
   const post = buildPost({text: "t", title: "*t*", apps: [{name: "Mentra App", installs: []}]})
   assert.ok(post.blocks.every((block) => block.type !== "actions"))
   assert.equal(slackText("&<>\n".repeat(2), 6), "&amp;&lt;&gt; &amp;…")
