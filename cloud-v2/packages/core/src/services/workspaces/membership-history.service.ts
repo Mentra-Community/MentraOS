@@ -10,7 +10,9 @@
  *  - it ends at `endedAt`, for `endedReason` (left, removed, the workspace deleted, the account deleted);
  *  - a membership with no account yet (imported, waiting for its person) is not an interval;
  *  - `membership.merged_duplicate` and `membership.replaced` act only on such memberships, so they end none;
- *  - `roles` is the row's `roleHistory` within the interval, so a role held before the claim is never counted.
+ *  - `roles` is the row's `roleHistory` within the interval, so a role held before the claim is never counted;
+ *  - `ownAutomatic` says the workspace is the person's own automatic workspace (made by Core for them), which Fleet
+ *    ranks last when it works out which workspace managed the person when (`managing-workspace.service`).
  *
  * The read covers a lookback window (`CLOUD_CORE_FLEET_HISTORY_MAX_DAYS`, default 90): every interval that
  * overlaps `[now - lookback, now]`. An open interval older than the window is returned with its real start, so a
@@ -31,6 +33,7 @@ import type {Types} from "mongoose"
 import {WorkspaceAuditCounterModel, WORKSPACE_AUDIT_COUNTER_ID} from "../../models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../../models/workspace-audit-event.model"
 import {WorkspaceMembershipModel, type WorkspaceMembershipRow} from "../../models/workspace-membership.model"
+import {WorkspaceModel} from "../../models/workspace.model"
 import {clampPageSize} from "./audit.service"
 import {fail} from "./workspace-error"
 
@@ -126,7 +129,19 @@ function roleIntervals(row: Row, start: Date, end: Date | null, windowStart: Dat
   return roles
 }
 
-function toInterval(row: Row, claimed: Map<string, Date>, windowStart: Date): MembershipInterval {
+/** The automatic workspaces among `rows`', by id, with the person each was made for. One read. */
+async function automaticCreators(rows: Row[]): Promise<Map<string, string>> {
+  const ids = [...new Set(rows.map(row => row.workspaceId))]
+  if (ids.length === 0) return new Map()
+  const automatic = await WorkspaceModel.find({workspaceId: {$in: ids}, automatic: true})
+    .select({_id: 0, workspaceId: 1, createdByMentraUserId: 1})
+    .lean<Array<{workspaceId: string; createdByMentraUserId?: string | null}>>()
+  return new Map(
+    automatic.flatMap(workspace => (workspace.createdByMentraUserId ? [[workspace.workspaceId, workspace.createdByMentraUserId]] : [])),
+  )
+}
+
+function toInterval(row: Row, claimed: Map<string, Date>, windowStart: Date, automatic: Map<string, string>): MembershipInterval {
   const begun = row.claimedAt ?? claimed.get(row.membershipId) ?? row.startedAt
   const ended = row.status === "ended" ? (row.endedAt ?? null) : null
   // A row ended with no time, or before its claim, is an interval of no length at its end, never a negative one.
@@ -141,6 +156,7 @@ function toInterval(row: Row, claimed: Map<string, Date>, windowStart: Date): Me
     end: ended ? ended.toISOString() : null,
     endReason: ended ? (reason as MembershipIntervalEndReason) : null,
     roles: roleIntervals(row, start, ended, windowStart),
+    ownAutomatic: automatic.get(row.workspaceId) === row.mentraUserId,
   }
 }
 
@@ -163,12 +179,12 @@ export async function listMembershipIntervals(opts: {
   }
   if (cursor) filter._id = {$gt: cursor}
   const rows = await WorkspaceMembershipModel.find(filter).sort({_id: 1}).limit(size).lean<Row[]>()
-  const claimed = await claimTimes(rows)
+  const [claimed, automatic] = await Promise.all([claimTimes(rows), automaticCreators(rows)])
   return {
     lookbackDays,
     windowStart: windowStart.toISOString(),
     feedSeq,
-    intervals: rows.map(row => toInterval(row, claimed, windowStart)),
+    intervals: rows.map(row => toInterval(row, claimed, windowStart, automatic)),
     next: rows.length === size ? encodeCursor(rows[rows.length - 1]!._id) : null,
   }
 }

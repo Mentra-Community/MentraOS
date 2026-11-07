@@ -224,6 +224,22 @@ describe("membership intervals", () => {
     expect(mine.endReason).toBe("account_deleted")
   })
 
+  test("ownAutomatic marks only the person's own automatic workspace, not its other members' nor anyone's real one", async () => {
+    const own = await workspace()
+    await WorkspaceModel.updateOne({workspaceId: own}, {$set: {automatic: true, createdByMentraUserId: "mu_maker"}})
+    await member(own, "mu_maker", "owner")
+    await member(own, "mu_guest", "member")
+    const real = await workspace()
+    await member(real, "mu_maker", "member")
+
+    const intervals = await allIntervals()
+    const flag = (workspaceId: string, mentraUserId: string) =>
+      intervals.find(i => i.workspaceId === workspaceId && i.mentraUserId === mentraUserId)!.ownAutomatic
+    expect(flag(own, "mu_maker")).toBe(true)
+    expect(flag(own, "mu_guest")).toBe(false)
+    expect(flag(real, "mu_maker")).toBe(false)
+  })
+
   test("a member who joined 200 days ago, with a 90-day lookback, is returned open with the real start", async () => {
     const ws = await workspace()
     const started = new Date(Date.now() - 200 * DAY_MS)

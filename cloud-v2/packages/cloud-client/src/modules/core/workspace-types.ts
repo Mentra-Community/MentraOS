@@ -22,12 +22,17 @@ export interface InvitationPreview {
   expiresAt: string;
 }
 
-/** The workspace the signed-in phone's person belongs to (`GET /api/client/workspaces/mine`). */
+/** The workspace managing the signed-in phone (`GET /api/client/workspaces/mine`). */
 export interface MyWorkspace {
   workspaceId: string;
   name: string;
   role: ClientWorkspaceRole;
   membershipId: string;
+  /**
+   * Whether it is the person's own automatic workspace: a workspace they join then manages the phone instead.
+   * Otherwise it keeps managing the phone when they join another. An older Core leaves it out.
+   */
+  automatic?: boolean;
 }
 
 /** `GET /api/client/workspaces/mine`. */

@@ -50,6 +50,8 @@ function readWorkspace(value: unknown): MyWorkspace {
     name: value.name,
     role: value.role as MyWorkspace["role"],
     membershipId: value.membershipId,
+    // An older Core sends none.
+    ...(typeof value.automatic === "boolean" ? {automatic: value.automatic} : {}),
   }
 }
 

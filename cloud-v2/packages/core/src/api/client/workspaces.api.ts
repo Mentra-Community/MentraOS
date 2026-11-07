@@ -16,7 +16,8 @@
  * the phone refreshes its session instead of treating it as a bad request.
  *
  * A person may belong to several workspaces; the phone sees the one that manages it
- * (`managing-workspace.service`): their first real workspace, else their own automatic one. Accepting adds a
+ * (`managing-workspace.service`): their first real workspace, else their own automatic one (`automatic: true`,
+ * which a workspace they join replaces as the one managing the phone). Accepting adds a
  * membership beside the others, and answers what `/mine` would then say: the workspace joined when it now
  * manages the phone, else the one that still does. An empty automatic workspace of the person's own gives
  * way when they join another, as on the web.
@@ -104,6 +105,7 @@ async function workspaceOf(mentraUserId: string): Promise<MyWorkspace | null> {
     name: managing.workspace.name,
     role: managing.membership.role,
     membershipId: managing.membership.membershipId,
+    automatic: managing.automatic,
   }
 }
 

@@ -45,6 +45,7 @@ import {
   type Actor,
 } from "../packages/core/src/services/workspaces/workspace.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {membershipRow} from "./support/membership-row"
 
 const MODELS: Model<any>[] = [
   UserModel,
@@ -308,6 +309,25 @@ describe("the managing workspace", () => {
     expect(await managingWorkspaceOf("mu_guest")).toMatchObject({workspace: {workspaceId: mine}, automatic: false})
     await leaveWorkspace(user("mu_guest"), mine)
     expect(await managingWorkspaceOf("mu_guest")).toMatchObject({workspace: {workspaceId: theirs}, automatic: false})
+  })
+
+  test("an imported membership counts from its claim, not from when the Store recorded it", async () => {
+    const joined = await join("mu_a", "mu_team_owner")
+    const imported = (await createWorkspace(user("mu_studio_owner"), {name: "Studio"})).workspaceId
+    // The Store had mu_a in Studio long ago; they only took it up (claimed it) after joining the team.
+    await WorkspaceMembershipModel.create(
+      membershipRow({
+        membershipId: `wm_imported_${nextId()}`,
+        workspaceId: imported,
+        mentraUserId: "mu_a",
+        email: "mu_a@example.test",
+        role: "member",
+        status: "active",
+        startedAt: new Date(Date.now() - 365 * 86_400_000),
+        claimedAt: new Date(Date.now() + 60_000),
+      }),
+    )
+    expect(await managingId("mu_a")).toBe(joined)
   })
 
   test("pickManaging orders by join, then membership id, and puts the person's own automatic workspace last", () => {

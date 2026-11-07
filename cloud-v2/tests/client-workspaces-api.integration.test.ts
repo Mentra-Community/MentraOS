@@ -202,7 +202,7 @@ describe("GET /mine", () => {
     await addMember(ws, "mu_dev", "developer")
     signedInAs("mu_dev")
     expect(await (await call("/mine")).json()).toEqual({
-      workspace: {workspaceId: ws, name: "Acme Corp", role: "developer", membershipId: "wm_mu_dev"},
+      workspace: {workspaceId: ws, name: "Acme Corp", role: "developer", membershipId: "wm_mu_dev", automatic: false},
     })
   })
 
@@ -247,7 +247,14 @@ describe("invitations", () => {
     const body = (await res.json()) as {workspace: {workspaceId: string; name: string; role: string}}
     expect(body.workspace).toMatchObject({workspaceId: ws, name: "Acme", role: "developer"})
     expect((await getActiveMembership(ws, "mu_new"))?.role).toBe("developer")
-    expect(await (await call("/mine")).json()).toMatchObject({workspace: {workspaceId: ws}})
+    expect(await (await call("/mine")).json()).toMatchObject({workspace: {workspaceId: ws, automatic: false}})
+  })
+
+  test("/mine says when the workspace managing the phone is the person's own automatic one", async () => {
+    await person("mu_own", "own@example.test")
+    const automatic = (await ensureWorkspace({...owner, mentraUserId: "mu_own", email: "own@example.test"})).workspace.workspaceId
+    signedInAs("mu_own")
+    expect(await (await call("/mine")).json()).toMatchObject({workspace: {workspaceId: automatic, automatic: true}})
   })
 
   test("accepting yields an empty automatic workspace of the person's own and joins the invited one", async () => {
