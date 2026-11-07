@@ -216,11 +216,14 @@ describe("useMentraLivePairing", () => {
     expect(onExit).not.toHaveBeenCalled()
   })
 
-  test("connects bonded glasses once without a choice", async () => {
+  test("never connects glasses the phone is bonded with until the person chooses them", async () => {
     bonded = live("MENTRA_LIVE_BLE_BOND")
     await renderFlow()
-    expect(controller.state).toMatchObject({page: "connecting", device: {name: "MENTRA_LIVE_BLE_BOND"}})
     await advance(2000)
+    expect(controller.state).toMatchObject({page: "scan", status: "searching"})
+    expect(fakePairing.scan).toHaveBeenCalled()
+    expect(fakePairing.pair).not.toHaveBeenCalled()
+    await selectAndPair(bonded)
     expect(fakePairing.pair).toHaveBeenCalledTimes(1)
   })
 

@@ -135,37 +135,25 @@ describe("onboarding welcome", () => {
     }
   })
 
-  it("skips the question when the phone is still bonded with Mentra Live, and lets the scan connect them", async () => {
-    mockBondedGlasses.mockResolvedValueOnce({id: "a", model: "Mentra Live", name: "Mentra_Live_000B", address: "a"})
-    const os = Platform.OS
-    Platform.OS = "android"
-    try {
-      render(<OnboardingWelcome />)
-      await act(async () => {})
-    } finally {
-      Platform.OS = os
-    }
-
-    expect(mockSetOnboardingCompleted).toHaveBeenCalledWith(true)
-    expect(goHomeAndPush).toHaveBeenCalledWith("/pairing/scan", {deviceModel: "Mentra Live"})
-  })
-
-  it("on Android, I have glasses asks for Bluetooth, then goes straight to the scan for bonded glasses", async () => {
+  it("asks its question and goes to the model choice even when the phone is still bonded with Mentra Live", async () => {
+    mockBondedGlasses.mockResolvedValue({id: "a", model: "Mentra Live", name: "Mentra_Live_000B", address: "a"})
     const os = Platform.OS
     Platform.OS = "android"
     try {
       const {getByTestId} = render(<OnboardingWelcome />)
       await act(async () => {})
-      mockBondedGlasses.mockResolvedValueOnce({id: "a", model: "Mentra Live", name: "Mentra_Live_000B", address: "a"})
+      expect(goHomeAndPush).not.toHaveBeenCalled()
       await act(async () => {
         fireEvent.press(getByTestId("onboarding-setup-with-glasses"))
       })
     } finally {
       Platform.OS = os
+      mockBondedGlasses.mockResolvedValue(null)
     }
 
-    expect(goHomeAndPush).toHaveBeenCalledWith("/pairing/scan", {deviceModel: "Mentra Live"})
-    expect(goHomeAndPush).not.toHaveBeenCalledWith("/pairing/select-glasses-model", {onboarding: true})
+    expect(mockBondedGlasses).not.toHaveBeenCalled()
+    expect(goHomeAndPush).toHaveBeenCalledTimes(1)
+    expect(goHomeAndPush).toHaveBeenCalledWith("/pairing/select-glasses-model", {onboarding: true})
   })
 
   it("hides phone-only setup when the deployment disallows simulated glasses", () => {

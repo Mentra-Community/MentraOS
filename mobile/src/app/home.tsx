@@ -9,7 +9,7 @@ import {AppsGrid} from "@/components/home/AppsGrid"
 import {PairGlassesCard} from "@/components/home/PairGlassesCard"
 import {Screen} from "@/components/ignite"
 import {Group} from "@/components/ui"
-import {BgTimer, DeviceTypes, engine, useRefresh} from "@mentra/engine"
+import {BgTimer, engine, useRefresh} from "@mentra/engine"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {appSwitcherProgress} from "@/stores/appSwitcher"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
@@ -19,14 +19,9 @@ import {GlassesStatus, ControllerStatus} from "@/components/home/DeviceStatus"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {cancelLeftoverPairing} from "@/utils/PairingUtils"
-import {useNavigationStore} from "@/stores/navigation"
 import AllAppsGridSheet from "@/components/home/AllAppsGridSheet"
 import BottomSheet from "@gorhom/bottom-sheet"
 import {BlurTargetView, BlurView} from "expo-blur"
-
-/** Home looks for a bond once per app run, when it first shows: a later Unpair removes the bond a moment after Home
- * returns, and must not bring the glasses straight back. */
-let adoptionDecidedThisRun = false
 
 export default function Homepage() {
   const refreshApps = useRefresh()
@@ -81,25 +76,6 @@ export default function Homepage() {
       },
       [],
     ),
-  )
-
-  // A phone still bonded with Mentra Live never unpaired them, as after the app's data was cleared or it was
-  // reinstalled: the scan screen connects bonded glasses by itself, with no pairing mode. Android only: iOS
-  // can't read its bonds.
-  useFocusEffect(
-    useCallback(() => {
-      if (adoptionDecidedThisRun) return
-      adoptionDecidedThisRun = true
-      if (Platform.OS !== "android" || identity.kind !== "none") return
-      let left = false
-      void engine.pairing.bondedGlasses().then((device) => {
-        if (!device || left) return
-        useNavigationStore.getState().push("/pairing/scan", {deviceModel: DeviceTypes.LIVE})
-      })
-      return () => {
-        left = true
-      }
-    }, [identity.kind]),
   )
 
   useEffect(() => {
