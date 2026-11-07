@@ -448,9 +448,8 @@ function OtaFlowContent({
         actions={
           <>
             <FlowButton colors={colors} label="Retry" onPress={controller.retryCheck} />
-            {allowDevSkip ? (
-              <FlowButton colors={colors} label="Skip (dev only)" onPress={controller.finish} secondary />
-            ) : null}
+            {/* A check that keeps failing (no Internet) must not hold the person here. */}
+            <FlowButton colors={colors} label={translate("common:done")} onPress={controller.finish} secondary />
           </>
         }
         colors={colors}
@@ -617,6 +616,10 @@ function OtaFlowContent({
             />
             {state.canOpenWifiSetup ? (
               <FlowButton colors={colors} label="Change Wi-Fi" onPress={controller.openWifiSetup} secondary />
+            ) : null}
+            {/* Retry can keep failing: Done leaves the update, as on a failure that can't be retried. */}
+            {state.canRetry ? (
+              <FlowButton colors={colors} label={translate("common:done")} onPress={controller.finish} secondary />
             ) : null}
           </>
         }

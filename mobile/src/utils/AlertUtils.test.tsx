@@ -2,7 +2,7 @@ import {act, fireEvent, render} from "@testing-library/react-native"
 import {Alert} from "react-native"
 
 import {ModalProvider} from "@/contexts/ModalContext"
-import showAlert, {dismissAlert} from "@/utils/AlertUtils"
+import showAlert, {dismissAlert, showBluetoothAlert} from "@/utils/AlertUtils"
 
 jest.mock("react-native-gesture-handler", () => ({
   Gesture: {
@@ -119,6 +119,54 @@ describe("AlertUtils.showAlert", () => {
     })
     expect(screen.queryByText("Your glasses are in pairing mode")).toBeNull()
     expect(ok).not.toHaveBeenCalled()
+  })
+
+  it("closes the Bluetooth alert by itself once Bluetooth is on, and only that alert", async () => {
+    const BleManager = require("react-native-ble-manager").default
+    let report: (event: {state: string}) => void = () => {}
+    const remove = jest.fn()
+    BleManager.checkState.mockResolvedValueOnce("off")
+    BleManager.onDidUpdateState.mockImplementationOnce((listener: typeof report) => {
+      report = listener
+      return {remove}
+    })
+    const screen = render(<ModalProvider>{null}</ModalProvider>)
+    await act(async () => {
+      showBluetoothAlert("Connection Issue", "Bluetooth is required to connect to glasses.")
+      showAlert("Connection Issue", "Location permission is required to scan for glasses.", [{text: "OK"}])
+    })
+    expect(screen.getByText("Bluetooth is required to connect to glasses.")).toBeTruthy()
+
+    await act(async () => report({state: "off"}))
+    expect(screen.getByText("Bluetooth is required to connect to glasses.")).toBeTruthy()
+
+    await act(async () => report({state: "on"}))
+    expect(screen.queryByText("Bluetooth is required to connect to glasses.")).toBeNull()
+    expect(screen.getByText("Location permission is required to scan for glasses.")).toBeTruthy()
+    expect(remove).toHaveBeenCalled()
+  })
+
+  it("stops following Bluetooth once the alert is answered", async () => {
+    const BleManager = require("react-native-ble-manager").default
+    const remove = jest.fn()
+    BleManager.checkState.mockResolvedValueOnce("off")
+    BleManager.onDidUpdateState.mockImplementationOnce(() => ({remove}))
+    const screen = render(<ModalProvider>{null}</ModalProvider>)
+    await act(async () => {
+      showBluetoothAlert("Connection Issue", "Bluetooth is required to connect to glasses.")
+    })
+    await act(async () => {
+      fireEvent.press(screen.getByText("Cancel"))
+    })
+    expect(remove).toHaveBeenCalledTimes(1)
+  })
+
+  it("closes the Bluetooth alert at once when Bluetooth came on before it was shown", async () => {
+    const screen = render(<ModalProvider>{null}</ModalProvider>)
+    await act(async () => {
+      showBluetoothAlert("Connection Issue", "Bluetooth is required to connect to glasses.")
+    })
+    expect(screen.queryByText("Bluetooth is required to connect to glasses.")).toBeNull()
   })
 
   it("falls back to the system alert before the sheet is mounted", () => {

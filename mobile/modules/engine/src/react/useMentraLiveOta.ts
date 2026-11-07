@@ -681,7 +681,8 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       installSnapshot.otaProgress,
       installSnapshot.errorMsg,
     )
-    if (requiresGlassesReboot) stopOtaAutoChain()
+    // Leaving a failed pass ends an approved chain: the check that follows only offers the change again.
+    if (requiresGlassesReboot || installSnapshot.displayState === "failed") stopOtaAutoChain()
     await ota.installSession.finish()
     if (deviceRevision !== otaDeviceSessionRevision()) return
     returnToCheck()
@@ -799,6 +800,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         canInstall: screen === "update_available" && canInstall,
         canRetry: screen === "check_failed",
         canFinish:
+          screen === "check_failed" ||
           screen === "up_to_date" ||
           screen === "dev_build" ||
           screen === "unofficial_client" ||
@@ -894,7 +896,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       error,
       canInstall: false,
       canRetry: screen === "failed" && !requiresGlassesReboot,
-      canFinish: screen === "complete" || (screen === "failed" && requiresGlassesReboot),
+      canFinish: screen === "complete" || screen === "failed",
       canDismiss: false,
       canDiscard: screen === "disconnected",
       canOpenWifiSetup: screen === "failed" && !hotspotSupported && showChangeWifi,

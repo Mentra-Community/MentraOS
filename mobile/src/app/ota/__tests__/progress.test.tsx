@@ -408,6 +408,34 @@ describe("progress.tsx display states", () => {
     }
   })
 
+  it("offers Done beside Retry, which leaves the failed pass and ends automatic chaining", async () => {
+    setGlassesConnected()
+    beginOtaAutoChain("initial-offer", false, AUTO_CHAIN_RELEASE_RANGE)
+    const {getByText, queryByText} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "downgrade_handoff_failed",
+      })
+    })
+
+    expect(getByText("Retry")).toBeDefined()
+    await act(async () => {
+      fireEvent.press(getByText("Done"))
+    })
+
+    expect(isOtaAutoChainActive()).toBe(false)
+    await waitFor(() => expect(queryByText("Update Failed")).toBeNull())
+  })
+
   it("restores overlay suppression when retrying after WiFi setup", () => {
     setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)

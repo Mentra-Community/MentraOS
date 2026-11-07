@@ -312,6 +312,31 @@ describe("useMentraLiveOta", () => {
     await act(async () => renderer.unmount())
   })
 
+  test("lets a retryable failure be left, ending an approved chain", async () => {
+    autoChainActive = true
+    const renderer = await renderProbe()
+    installSnapshot = {...installSnapshot, displayState: "failed", errorMsg: "Network lost"}
+    await act(async () => {
+      installListeners.forEach((listener) => listener())
+    })
+
+    expect(latestController.state).toMatchObject({screen: "failed", canRetry: true, canFinish: true})
+    await act(async () => latestController.finish())
+    expect(stopAutoChain).toHaveBeenCalledTimes(1)
+    expect(finish).toHaveBeenCalledTimes(1)
+    await act(async () => renderer.unmount())
+  })
+
+  test("lets a failed check be left", async () => {
+    currentCheckResult = {...checkResult, hasCheckCompleted: false, checkFailureReason: "network"}
+    const renderer = await renderProbe("check")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+    expect(latestController.state).toMatchObject({screen: "check_failed", canRetry: true, canFinish: true})
+    await act(async () => renderer.unmount())
+  })
+
   test("maps a glasses failure code to copy and keeps the raw code for support", async () => {
     const renderer = await renderProbe()
     installSnapshot = {
