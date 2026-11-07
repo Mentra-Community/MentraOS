@@ -20,7 +20,7 @@ export const evenRealitiesG2: Capabilities = {
   // Display capabilities - G2 has a green monochrome display (similar to G1)
   hasDisplay: true,
   display: {
-    position: {depth: {min: 1, max: 3}, height: {min: 1, max: 8}},
+    position: {depth: {min: 1, max: 3}, height: {min: 0, max: 12}},
     count: 2,
     isColor: false,
     color: "green",
