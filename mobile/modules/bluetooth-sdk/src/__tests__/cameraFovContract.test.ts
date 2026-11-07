@@ -1,10 +1,8 @@
 import {readFileSync} from "node:fs"
 import {resolve} from "node:path"
 
-// These values cross separately shipped Java/Kotlin/Swift packages. Guard the wire
-// contract here so changing ASG's recovery allowance cannot silently shorten SDK waits.
-const root = resolve(__dirname, "../../../../../")
-const asg = readFileSync(resolve(root, "asg_client/app/src/main/java/com/mentra/asg_client/AsgConstants.java"), "utf8")
+// ASG now ships from a private repository. Guard the public client wire budget
+// without requiring firmware sources in a standalone MentraOS checkout.
 const android = readFileSync(
   resolve(__dirname, "../../android/src/main/java/com/mentra/bluetoothsdk/MentraBluetoothSdk.kt"),
   "utf8",
@@ -28,14 +26,11 @@ describe("FOV readiness wire deadline", () => {
     ],
     ["iOS", ios, "cameraFovReadyTimeoutMs", "cameraFovDeliveryMarginMs", "cameraFovRequestTimeoutMs"],
   ])("keeps %s aligned with one active and one pending ASG update", (_platform, sdk, ready, margin, total) => {
-    const readyMs = literal(asg, "CAMERA_FOV_READY_TIMEOUT_MS")
-    const marginMs = literal(asg, "CAMERA_FOV_DELIVERY_MARGIN_MS")
+    const readyMs = 20_000
+    const marginMs = 5_000
     expect(literal(sdk, ready)).toBe(readyMs)
     expect(literal(sdk, margin)).toBe(marginMs)
     expect(sdk).toMatch(new RegExp(`${total}\\s*=\\s*2 \\* ${ready} \\+ ${margin}`))
-    expect(asg).toMatch(
-      /CAMERA_FOV_REQUEST_TIMEOUT_MS\s*=\s*2 \* CAMERA_FOV_READY_TIMEOUT_MS \+ CAMERA_FOV_DELIVERY_MARGIN_MS/,
-    )
     expect(2 * readyMs + marginMs).toBe(45_000)
   })
 })
