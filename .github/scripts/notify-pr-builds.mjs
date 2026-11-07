@@ -4,7 +4,7 @@ import {createHash} from "node:crypto"
 import {iosInstallUrl, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
-import {buildPost, otaTargets, postToWebhook, slackText} from "./slack-build-post.mjs"
+import {buildPost, DOCS, otaTargets, postToWebhook, slackText} from "./slack-build-post.mjs"
 
 // The Mentra monorepo holds this tree at public/mentraos, the ASG client at
 // mentra_live/asg_client and the miniapps the app bundles at miniapps/; its
@@ -103,22 +103,19 @@ function backendFact(backend, unverified) {
   return `${backendName(backend)} backend${unverified.length ? ` (${unverified.join(", ")} not verified)` : ""}`
 }
 
-/** The Mentra App's installs: HTTPS pages, which open the iPhone and Mac installers. */
-function mentraInstalls({androidUrl, error, ios}) {
+/** One app's install slots on a PR: HTTPS pages, which open the iPhone and Mac installers. A slot without one failed or wasn't built. */
+function prInstalls({android, androidError, apple, appleError}) {
+  const missing = (error) => (error ? "failed, see Details" : "not built for this PR")
   return [
-    ...(error ? [] : [{platform: "Android", url: androidUrl}]),
-    ...(ios?.assets
-      ? [
-          {platform: "iPhone", url: ios.assets.install ?? ios.assets.iphone},
-          {platform: "Mac", url: ios.macInstallUrl ?? ios.assets.mac},
-        ]
-      : []),
+    {platform: "Android", url: android, missing: missing(androidError)},
+    {platform: "iOS", url: apple?.iphone, missing: missing(appleError)},
+    {platform: "macOS", url: apple?.mac, missing: missing(appleError)},
   ]
 }
 
 /** The #pr-builds post. `details` is the PR comment, which lists everything the post leaves out. */
 export function prBuildPost({pr, sha, androidUrl, targets, androidRunUrl, error, errorRunUrl, ios, backend,
-  unverifiedBackend = [], example, details = pr.html_url}) {
+  unverifiedBackend = [], example, hasExample = Boolean(example), details = pr.html_url}) {
   const ready = !error && !ios?.error && !example?.error
   const title = ready ? "✅ PR build ready to test" : "⚠️ PR build incomplete"
   return buildPost({
@@ -132,14 +129,13 @@ export function prBuildPost({pr, sha, androidUrl, targets, androidRunUrl, error,
       ...(!error || ios?.assets ? [backendFact(backend, unverifiedBackend)] : []),
     ],
     apps: [
-      {name: "Mentra App", installs: mentraInstalls({androidUrl, error, ios})},
-      // The Bluetooth example, right after the Mentra App, when this PR built it.
-      ...(example ? [{name: "Bluetooth example", installs: [
-        {platform: "Android", url: example.androidUrl},
-        {platform: "iPhone", url: example.iphoneUrl},
-        {platform: "Mac", url: example.macUrl},
-      ]}] : []),
+      {name: "Mentra", installs: prInstalls({android: error ? undefined : androidUrl, androidError: error, appleError: ios?.error,
+        apple: ios?.assets && {iphone: ios.assets.install ?? ios.assets.iphone, mac: ios.macInstallUrl ?? ios.assets.mac}})},
+      // The Bluetooth example, right after the Mentra App, in the repository that builds it.
+      ...(hasExample ? [{name: "Bluetooth example", installs: prInstalls({android: example?.androidUrl, androidError: example?.error,
+        apple: example && {iphone: example.iphoneUrl, mac: example.macUrl}, appleError: example?.error})}] : []),
     ],
+    docs: DOCS[pr.base.ref],
     glasses: !error && targets ? {asg: targets.asg, bes: targets.bes, mtk: targets.mtk} : undefined,
     problems: [
       ...(error ? [{text: `*Android:* ${slackText(error, 200)}`, url: errorRunUrl ?? androidRunUrl}] : []),
@@ -503,6 +499,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     pr,
     errorRunUrl: androidBuild.conclusion === "success" && asgBuild.conclusion !== "success" ? asgRun.html_url : androidRunUrl,
     unverifiedBackend: !error && !android.backend ? ["Android"] : [],
+    hasExample: monorepo,
     details: comment?.html_url,
   }), fetchImpl)
   const body = prBuildComment({...post, identity, changedBackends})

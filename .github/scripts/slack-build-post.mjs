@@ -4,7 +4,8 @@
 //
 //   ✅ PR #123 ready to test: <title>                         [Details]
 //   feature → dev · by someone · abc1234 · Dev backend
-//   [Android] [iPhone] [Mac] [Bluetooth example Android] ...
+//   [🤖 Mentra] [🍎 Mentra] [🤖 Bluetooth example] [🍎 Bluetooth example] [📚 Docs]
+//   ➖ Missing: 🍎 Bluetooth example (failed)
 //   🕶️ ASG 3.4.0 (build 340) · BES 26.11.4.0 · MTK MentraLive_20261101
 //   ⚠️ <each problem, with its logs>                         [Logs]
 //
@@ -31,21 +32,36 @@ const button = (label, url, style) => ({
 })
 const context = (text) => ({type: "context", elements: [{type: "mrkdwn", text}]})
 
-const PLATFORM_EMOJI = {Android: ":robot_face:", iPhone: ":iphone:", Mac: ":computer:", "Google Play": ":robot_face:",
-  TestFlight: ":apple:", Docs: ":books:"}
+const PLATFORM_EMOJI = {Android: ":robot_face:", iOS: ":apple:", macOS: ":computer:"}
+
+/** Each channel's docs root, by the branch a release or PR build belongs to. */
+export const DOCS = {
+  dev: "https://docs-dev.mentraglass.com",
+  staging: "https://docs-beta.mentraglass.com",
+  main: "https://docs.mentraglass.com",
+}
+
+const installable = (url) => /^https:\/\//.test(url ?? "")
 
 /**
- * The Mentra App, then the Bluetooth example, each `{name, installs: [{platform, url}]}`: the Mentra App's
- * buttons are named by platform alone and stand out; every other app's carry its name. An app without
- * installs has no buttons.
+ * Mentra, then the Bluetooth example, each `{name, installs: [{platform, url?, missing?}]}`, with the same
+ * slots: Android and iOS, and macOS when either app built it. Each is labelled by the app's name, its
+ * platform by the emoji. A slot without an HTTPS URL is missing, for `missing`'s reason. Mentra's buttons
+ * stand out.
  */
+export function installSlots(apps) {
+  const platforms = ["Android", "iOS",
+    ...(apps.some(({installs}) => installs.some(({platform, url}) => platform === "macOS" && installable(url))) ? ["macOS"] : [])]
+  return apps.flatMap(({name, installs}, index) => platforms.map((platform) => {
+    const install = installs.find((entry) => entry.platform === platform)
+    return {label: `${PLATFORM_EMOJI[platform]} ${name}`, primary: !index,
+      ...(installable(install?.url) ? {url: install.url} : {missing: install?.missing ?? "not built"})}
+  }))
+}
+
 export function installButtons(apps) {
-  return apps.flatMap(({name, installs}, index) =>
-    installs
-      .filter(({url}) => /^https:\/\//.test(url ?? ""))
-      .map(({platform, url}) =>
-        button(`${PLATFORM_EMOJI[platform] ?? ""} ${index ? `${name} ${platform}` : platform}`.trim(), url, index ? undefined : "primary")),
-  )
+  return installSlots(apps).filter(({url}) => url)
+    .map(({label, primary, url}) => button(label, url, primary ? "primary" : undefined))
 }
 
 /** The glasses versions an OTA manifest of this release or PR build (`releaseVersion`) targets. */
@@ -66,26 +82,33 @@ export const glassesLine = ({asg, bes, mtk}) =>
 /**
  * A build post: `title` is mrkdwn already escaped, `facts` plain strings for the small line under it, `problems`
  * `{text, url?, icon?}` (mrkdwn text; `url` its logs; ⚠️ unless `icon`) and `details` the page with everything else.
- * Problems past Slack's 50 blocks to a message are counted, for Details to show.
+ * `docs` adds a Docs button after the installs. Problems past Slack's 50 blocks to a message are counted, for
+ * Details to show.
  * @param {{text: string, title: string, details?: string, facts?: string[],
- *   apps?: {name: string, installs: {platform: string, url?: string}[]}[],
+ *   apps?: {name: string, installs: {platform: string, url?: string, missing?: string}[]}[], docs?: string,
  *   glasses?: {asg: {versionName: string, versionCode: number}, bes: string, mtk: string}, glassesNote?: string,
  *   problems?: {text: string, url?: string, icon?: string}[]}} post
  */
-export function buildPost({text, title, details, facts = [], apps = [], glasses, glassesNote, problems = []}) {
-  const buttons = installButtons(apps)
-  // Four blocks above the problems at most, and one for the count of the rest.
-  const shown = problems.length > 45 ? 44 : problems.length
+export function buildPost({text, title, details, facts = [], apps = [], docs, glasses, glassesNote, problems = []}) {
+  const buttons = [...installButtons(apps), ...(installable(docs) ? [button(":books: Docs", docs)] : [])]
+  const missing = installSlots(apps).filter(({url}) => !url)
+  const top = [
+    {type: "section", text: {type: "mrkdwn", text: title}, ...(details ? {accessory: button("Details", details)} : {})},
+    ...(facts.length ? [context(facts.map((fact) => slackText(fact, 200)).join(" · "))] : []),
+    // Slack allows 25 elements to an actions block.
+    ...(buttons.length ? [{type: "actions", elements: buttons.slice(0, 25)}] : []),
+    ...(missing.length ? [context(`:heavy_minus_sign: Missing: ${missing.map(({label, missing}) =>
+      `${label} (${slackText(missing, 80)})`).join(" · ")}`)] : []),
+    ...(glasses ? [context(glassesLine(glasses))] : glassesNote ? [context(`:dark_sunglasses: ${slackText(glassesNote, 200)}`)] : []),
+  ]
+  // Slack takes 50 blocks to a message: past that, one counts the rest.
+  const shown = top.length + problems.length > 50 ? 49 - top.length : problems.length
   return {
     text,
     unfurl_links: false,
     unfurl_media: false,
     blocks: [
-      {type: "section", text: {type: "mrkdwn", text: title}, ...(details ? {accessory: button("Details", details)} : {})},
-      ...(facts.length ? [context(facts.map((fact) => slackText(fact, 200)).join(" · "))] : []),
-      // Slack allows 25 elements to an actions block.
-      ...(buttons.length ? [{type: "actions", elements: buttons.slice(0, 25)}] : []),
-      ...(glasses ? [context(glassesLine(glasses))] : glassesNote ? [context(`:dark_sunglasses: ${slackText(glassesNote, 200)}`)] : []),
+      ...top,
       ...problems.slice(0, shown).map((problem) => ({
         type: "section",
         text: {type: "mrkdwn", text: `${problem.icon ?? ":warning:"} ${problem.text}`},

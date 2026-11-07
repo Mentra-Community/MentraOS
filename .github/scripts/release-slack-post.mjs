@@ -4,12 +4,14 @@
 // SLACK_NOTIFY_DRY_RUN=true prints the payload instead of posting it.
 import path from "node:path"
 import {fileURLToPath} from "node:url"
-import {buildPost, otaTargets, postToWebhook, slackText} from "./slack-build-post.mjs"
+import {buildPost, DOCS, otaTargets, postToWebhook, slackText} from "./slack-build-post.mjs"
 
 const CHANNELS = {
   dev: {label: "Dev", webhook: "DEV_SLACK_WEBHOOK_URL"},
   staging: {label: "Staging", webhook: "STAGING_SLACK_WEBHOOK_URL"},
 }
+// Why a slot has no install, from the job that builds it.
+const MISSING = {failure: "failed", timed_out: "timed out", cancelled: "cancelled", skipped: "not built", success: "not published"}
 
 // The release's jobs, as release.yml passes their results. The Mentra release (Cloud V2, the Mentra App,
 // Engine, the Bluetooth SDK) is complete when finalize succeeds; the others never make it incomplete.
@@ -43,10 +45,11 @@ export async function reachable(url, fetchImpl = fetch) {
   return false
 }
 
-/** Each install whose URL answers, in order. */
-async function installs(entries, check) {
-  const answers = await Promise.all(entries.map(({url}) => (url ? check(url) : false)))
-  return entries.filter((_, index) => answers[index]).map(({platform, url}) => ({platform, url}))
+/** A platform's install: the first of `urls` that answers, else why there is none, from its job's `result` (none: no job builds it). */
+async function slot(platform, urls, result, check) {
+  const answers = await Promise.all(urls.map((url) => (url ? check(url) : false)))
+  const url = urls.find((_, index) => answers[index])
+  return {platform, url, missing: MISSING[result] ?? "not built"}
 }
 
 /** Report the failed job and step, never raw build logs or provider error bodies. */
@@ -106,28 +109,23 @@ export async function releasePost(env, {check = reachable, fetchImpl = fetch} = 
     : [android, ios, env.OTA_RESULT].includes("success") ? [`*⚠️ ${label} release ${name} incomplete*`, "incomplete"]
       : [`*❌ ${label} release ${name} failed*`, "failed"]
 
-  const base = (key, nameKey) => env[key] || (env.MOBILE_ASSET_BASE_URL && env[nameKey] ? `${env.MOBILE_ASSET_BASE_URL}/${env[nameKey]}` : undefined)
-  const apk = base("MOBILE_APK_URL", "APK_NAME")
-  const ipa = base("MOBILE_IPA_URL", "IPA_NAME")
+  const apk = env.MOBILE_APK_URL || (env.MOBILE_ASSET_BASE_URL && env.APK_NAME ? `${env.MOBILE_ASSET_BASE_URL}/${env.APK_NAME}` : undefined)
   const apple = env.IPHONE_MANIFEST_URL && (await Promise.all([env.IPHONE_MANIFEST_URL, env.IPHONE_SHARE_URL, env.MAC_URL].map(check))).every(Boolean)
+  // Android and iOS for each app, the store's install when the build has no page of its own, then macOS.
   const [mentra, example, ota, problem] = await Promise.all([
-    installs([
-      {platform: "Android", url: apk},
-      ...(apple ? [{platform: "iPhone", url: env.IPHONE_SHARE_URL}, {platform: "Mac", url: env.MAC_URL}]
-        // An old release's store IPA, when it published no install page.
-        : env.IPHONE_MANIFEST_URL ? [] : [{platform: "iPhone", url: ipa}]),
-      {platform: "Google Play", url: env.PLAY_INSTALL_URL},
-      {platform: "TestFlight", url: env.TESTFLIGHT_INSTALL_URL},
-    ], check),
-    // The Bluetooth example, right after the Mentra App: whichever of its installs this release published.
-    installs([
-      {platform: "Android", url: env.EXAMPLE_APK_URL},
-      {platform: "iPhone", url: env.EXAMPLE_IPHONE_SHARE_URL},
-      {platform: "Mac", url: env.EXAMPLE_MAC_URL},
-      {platform: "Google Play", url: env.EXAMPLE_GOOGLE_PLAY_INSTALL_URL},
-      {platform: "TestFlight", url: env.EXAMPLE_TESTFLIGHT_INSTALL_URL},
-      {platform: "Docs", url: env.DOCS_URL},
-    ], check),
+    Promise.all([
+      slot("Android", [apk, env.PLAY_INSTALL_URL], android, check),
+      // TestFlight once testers can install it, not while its beta review is pending or skipped.
+      slot("iOS", [env.TESTFLIGHT_DISTRIBUTION_STATUS === "available" ? env.TESTFLIGHT_INSTALL_URL : undefined,
+        apple ? env.IPHONE_SHARE_URL : undefined], ios, check),
+      slot("macOS", [apple ? env.MAC_URL : undefined], ios, check),
+    ]),
+    Promise.all([
+      slot("Android", [env.EXAMPLE_APK_URL, env.EXAMPLE_GOOGLE_PLAY_INSTALL_URL], env.EXAMPLES_RESULT, check),
+      slot("iOS", [env.EXAMPLE_TESTFLIGHT_INSTALL_URL, env.EXAMPLE_IPHONE_SHARE_URL], env.EXAMPLE_TESTFLIGHT_RESULT, check),
+      // No release job builds the example for macOS yet.
+      slot("macOS", [env.EXAMPLE_MAC_URL], undefined, check),
+    ]),
     glasses(env, fetchImpl),
     env.FINALIZE_RESULT === "success" || env.RELEASE_SCOPE === "examples" ? undefined : releaseFailureDetail(env, fetchImpl),
   ])
@@ -146,7 +144,8 @@ export async function releasePost(env, {check = reachable, fetchImpl = fetch} = 
       ...(env.ANDROID_VERSION_CODE ? [`Android ${env.ANDROID_VERSION_CODE}`] : []),
       ...(env.IOS_BUILD_NUMBER ? [`iOS ${env.IOS_BUILD_NUMBER}`] : []),
     ],
-    apps: [{name: "Mentra App", installs: mentra}, {name: "Bluetooth example", installs: example}],
+    apps: [{name: "Mentra", installs: mentra}, {name: "Bluetooth example", installs: example}],
+    docs: DOCS[env.BRANCH],
     ...ota,
     problems: [
       ...(problem ? [{text: `*Release did not finish:* ${problem.text}`, url: problem.url}] : []),

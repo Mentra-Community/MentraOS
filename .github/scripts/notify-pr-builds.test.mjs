@@ -252,7 +252,8 @@ function harness(options = {}) {
   }
 }
 process.env.SLACK_WEBHOOK_PR_BUILDS = "https://example.com/webhook"
-const installButtonsOf = (post) => post.blocks.find((block) => block.type === "actions")?.elements ?? []
+// The install buttons, without the Docs button every post ends its row with.
+const installButtonsOf = (post) => post.blocks.find((block) => block.type === "actions")?.elements.filter((button) => !button.text.text.endsWith(" Docs")) ?? []
 
 test("publishes direct iPhone installation and a shareable Safari link without the raw IPA download", async () => {
   const receipt = structuredClone(iosReceipt)
@@ -270,7 +271,7 @@ test("publishes direct iPhone installation and a shareable Safari link without t
   await notifyPrBuilds(ready.args)
   // One row of buttons, each to an HTTPS page: Slack refuses an itms-services button.
   const buttons = installButtonsOf(ready.posts[0])
-  assert.deepEqual(buttons.map((button) => button.text.text), [":robot_face: Android", ":iphone: iPhone", ":computer: Mac"])
+  assert.deepEqual(buttons.map((button) => button.text.text), [":robot_face: Mentra", ":apple: Mentra", ":computer: Mentra"])
   assert.ok(buttons.every((button) => new URL(button.url).protocol === "https:" && button.style === "primary"))
   assert.equal(buttons[1].url, ready.requests.find((url) => url.endsWith(".html")))
   assert.match(buttons[2].url, /-3-1\.zip$/)
@@ -333,7 +334,7 @@ test("advertises HTTPS Mac handoff only from a verified capable page and uses th
     ios: {...iosRun, run_attempt: 2},
   })
   await notifyPrBuilds(ready.args)
-  const mac = installButtonsOf(ready.posts[0]).find((button) => button.text.text.endsWith("Mac"))
+  const mac = installButtonsOf(ready.posts[0]).find((button) => button.text.text.startsWith(":computer:"))
   const handoff = new URL(mac.url)
   assert.equal(handoff.protocol, "https:")
   assert.equal(handoff.search, "?platform=mac&attempt=2")
@@ -581,7 +582,7 @@ test("iOS failure, missing downloads or stale receipts never advertise Apple dow
     const h = harness({...options, files: [{filename: "mobile/app.config.ts"}]})
     await notifyPrBuilds(h.args)
     assert.match(h.posts[0].text, /incomplete/)
-    assert.deepEqual(installButtonsOf(h.posts[0]).map((button) => button.text.text), [":robot_face: Android"])
+    assert.deepEqual(installButtonsOf(h.posts[0]).map((button) => button.text.text), [":robot_face: Mentra"])
     assert.match(JSON.stringify(h.posts[0]), /iPhone \/ Mac:/)
     assert.doesNotMatch(h.written[0].body, /Download iPhone IPA|Download Mac app/)
     assert.match(h.written[0].body, /Download Android APK/)
@@ -784,7 +785,7 @@ test("a same-head retarget never relabels retained builds for the new destinatio
   await notifyPrBuilds(rebuilt.args)
   assert.doesNotMatch(rebuilt.posts[0].text, /incomplete/)
   assert.match(slack(rebuilt.posts[0]), /Staging backend/)
-  assert.match(links(rebuilt.posts[0]), /:robot_face: Android/)
+  assert.match(links(rebuilt.posts[0]), /:robot_face: Mentra/)
 })
 
 test("platforms completing separately are each checked against the same destination", async () => {
@@ -796,7 +797,7 @@ test("platforms completing separately are each checked against the same destinat
   const text = slack(h.posts[0])
   assert.match(text, /Staging backend/)
   assert.match(text, /iOS \/ macOS was built for the Dev backend/)
-  assert.match(links(h.posts[0]), /:robot_face: Android/)
+  assert.match(links(h.posts[0]), /:robot_face: Mentra/)
   assert.doesNotMatch(links(h.posts[0]), /iPhone|Mac/)
 })
 
@@ -814,7 +815,7 @@ test("an unavailable Android receipt keeps downloads but does not claim their ba
   const h = harness({files: [{filename: "mobile/app.config.ts"}], androidReceipt: {unavailable: true}})
   await notifyPrBuilds(h.args)
   assert.match(slack(h.posts[0]), /Dev backend \(Android not verified\)/)
-  assert.match(links(h.posts[0]), /:robot_face: Android/)
+  assert.match(links(h.posts[0]), /:robot_face: Mentra/)
   assert.match(h.written[0].body, /:android-receipt-unavailable -->/)
   const androidOnly = harness({androidReceipt: {unavailable: true}})
   await notifyPrBuilds(androidOnly.args)
@@ -849,7 +850,7 @@ test("a staging PR with a missing Android receipt stays idempotent", async () =>
   const text = slack(h.posts[0])
   assert.doesNotMatch(h.posts[0].text, /incomplete/)
   assert.match(text, /Staging backend \(Android not verified\)/)
-  assert.match(links(h.posts[0]), /:robot_face: Android/)
+  assert.match(links(h.posts[0]), /:robot_face: Mentra/)
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 1)
   assert.equal(h.written.length, 1)
@@ -869,18 +870,29 @@ test("names the miniapps whose backend a PR changes, once each", () => {
 })
 
 test("the Bluetooth example's buttons follow the Mentra App's, and its failure is its own problem", () => {
-  const post = (example) => buildPost({pr, sha, androidUrl: "https://example.com/a.apk", targets: readOtaTargets(manifest, 123, sha),
-    androidRunUrl: run.html_url, ios: {}, backend: "dev", example})
+  const post = (example, base = "dev") => buildPost({pr: {...pr, base: {ref: base}}, sha, androidUrl: "https://example.com/a.apk",
+    targets: readOtaTargets(manifest, 123, sha), androidRunUrl: run.html_url, ios: {}, backend: "dev", example, hasExample: true})
   const ready = post({androidUrl: "https://example.com/example.apk", iphoneUrl: "https://example.com/example.html"})
   assert.deepEqual(installButtonsOf(ready).map((button) => [button.text.text, button.style]),
-    [[":robot_face: Android", "primary"], [":robot_face: Bluetooth example Android", undefined], [":iphone: Bluetooth example iPhone", undefined]])
+    [[":robot_face: Mentra", "primary"], [":robot_face: Bluetooth example", undefined], [":apple: Bluetooth example", undefined]])
   assert.doesNotMatch(ready.text, /incomplete/)
-  assert.deepEqual(installButtonsOf(post(undefined)).map((button) => button.text.text), [":robot_face: Android"])
+  // Each app has the same slots: one without an install shows as missing, with why.
+  const missing = (post) => JSON.stringify(post.blocks.find((block) => /Missing:/.test(block.elements?.[0].text ?? "")))
+  assert.match(missing(ready), /Missing: :apple: Mentra \(not built for this PR\)"/)
+  const notBuilt = post(undefined)
+  assert.deepEqual(installButtonsOf(notBuilt).map((button) => button.text.text), [":robot_face: Mentra"])
+  assert.match(missing(notBuilt), /Missing: :apple: Mentra \(not built for this PR\) · :robot_face: Bluetooth example \(not built for this PR\) · :apple: Bluetooth example/)
+  // The Docs button opens the docs root of the channel the PR merges into.
+  const docs = (base) => post(undefined, base).blocks.find((block) => block.type === "actions").elements.at(-1)
+  assert.deepEqual([docs("dev").text.text, docs("dev").url], [":books: Docs", "https://docs-dev.mentraglass.com"])
+  assert.equal(docs("staging").url, "https://docs-beta.mentraglass.com")
+  assert.equal(docs("main").url, "https://docs.mentraglass.com")
   const failed = post({error: "Android build failure; no download is available.", runUrl: run.html_url})
+  assert.match(missing(failed), /:robot_face: Bluetooth example \(failed, see Details\)/)
   assert.match(failed.text, /incomplete/)
   const problem = failed.blocks.find((block) => /Bluetooth example:/.test(block.text?.text ?? ""))
   assert.equal(problem.accessory.url, run.html_url)
-  assert.deepEqual(installButtonsOf(failed).map((button) => button.text.text), [":robot_face: Android"])
+  assert.deepEqual(installButtonsOf(failed).map((button) => button.text.text), [":robot_face: Mentra"])
 })
 
 test("the monorepo lists the Bluetooth example app's downloads right after the Mentra App's", async () => {
@@ -899,8 +911,8 @@ test("the monorepo lists the Bluetooth example app's downloads right after the M
   await notifyPrBuilds(inMonorepo(ready))
   assert.match(ready.posts[0].text, /ready to test/)
   const buttons = installButtonsOf(ready.posts[0])
-  assert.deepEqual(buttons.map((button) => button.text.text), [":robot_face: Android", ":iphone: iPhone", ":computer: Mac",
-    ":robot_face: Bluetooth example Android", ":iphone: Bluetooth example iPhone", ":computer: Bluetooth example Mac"])
+  assert.deepEqual(buttons.map((button) => button.text.text), [":robot_face: Mentra", ":apple: Mentra", ":computer: Mentra",
+    ":robot_face: Bluetooth example", ":apple: Bluetooth example", ":computer: Bluetooth example"])
   assert.match(buttons[3].url, new RegExp(`mentra-example-android-pr-123-${sha}-2-1\\.apk$`))
   assert.match(buttons[5].url, new RegExp(`mentra-example-ios-mac-pr-123-${sha}-3-1\\.zip$`))
   assert.match(ready.written[0].body, /\*\*Bluetooth example:\*\* \[Download Android APK\]\(.*mentra-example-android-pr-123-.*\) · \[Install on iPhone\]/)
@@ -912,7 +924,7 @@ test("the monorepo lists the Bluetooth example app's downloads right after the M
     await notifyPrBuilds(inMonorepo(failed))
     assert.match(failed.posts[0].text, /incomplete/)
     assert.match(JSON.stringify(failed.posts[0]), message)
-    assert.deepEqual(installButtonsOf(failed.posts[0]).slice(0, 3).map((button) => button.text.text), [":robot_face: Android", ":iphone: iPhone", ":computer: Mac"])
+    assert.deepEqual(installButtonsOf(failed.posts[0]).slice(0, 3).map((button) => button.text.text), [":robot_face: Mentra", ":apple: Mentra", ":computer: Mentra"])
   }
 
   // MentraOS has no example jobs.
