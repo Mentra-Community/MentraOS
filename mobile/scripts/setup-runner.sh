@@ -754,6 +754,9 @@ $([ "$PLATFORM" = mac ] && cat <<MAC_STEPS
 MAC_STEPS
 )
     - Confirm runner(s) appear at $GH_RUNNER_URL/settings/actions/runners
+    - Engineer access: Tailscale SSH (ENABLE_TAILSCALE=1) or add their pubkey
+      to ~/.ssh/authorized_keys. Use 'ssh -A' for git; no GitHub key on the box.
+      See mobile/scripts/README.md "Giving an engineer access to a runner".
     - Copy ~/.mentra/credentials/ from an existing runner (or your laptop):
         scp ~/.mentra/credentials/{appstore-connect.env,AuthKey_*.p8,google-play-key.json} \\
             user@$RUNNER_NAME_BASE:~/.mentra/credentials/
