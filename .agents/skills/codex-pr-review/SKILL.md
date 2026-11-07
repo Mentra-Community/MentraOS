@@ -3,11 +3,26 @@ name: codex-pr-review
 description: >-
   Run an independent local Codex (gpt-6.1-sol, medium) review of a GitHub pull
   request and relay its verdict. Use for every PR an agent opens or updates,
-  and whenever the user asks to review a PR "with Codex". The review is posted
+  except a simple change the agent may skip (see "When to skip"), and whenever
+  the user asks to review a PR "with Codex". The review is posted
   on the PR as approve / request-changes; it never edits, commits or merges.
 ---
 
 # Local Codex PR review
+
+## When to skip
+
+The agent may skip the review for a simple change: one a reader can check in full at a glance,
+where a mistake would show at once and be cheap to undo. For example docs or copy, a one-line
+config value, a pure revert, a style tweak, or recorded routine steps that a hardware run just
+replayed. Always review changes to logic, CI and release workflows, firmware, signing,
+permissions or data handling, and anything that touches several areas. When skipping, say so in
+the PR description: `No Codex review: <reason>`.
+
+The same goes for a follow-up commit on a reviewed PR: one that is simple by itself, such as a
+renamed string or a fixed typo, doesn't need another review. Say so in a PR comment.
+
+## Run it
 
 One command does everything. Run it in the background and wait for it; do not
 re-verify the Codex binary, the scripts, the token minter or the gh login first.
