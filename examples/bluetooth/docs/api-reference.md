@@ -105,11 +105,11 @@ sdk.connect(device)
 sdk.setDefaultDevice(device)
 val defaultDevice = sdk.getDefaultDevice()
 sdk.connectDefault()
-sdk.clearDefaultDevice()
 
 sdk.cancelConnectionAttempt()
 sdk.disconnect()
 sdk.forget()
+sdk.unpair() // suspend
 ```
 
 iOS:
@@ -127,11 +127,11 @@ try sdk.connect(to: device)
 sdk.setDefaultDevice(device)
 let defaultDevice = sdk.getDefaultDevice()
 try sdk.connectDefault()
-sdk.clearDefaultDevice()
 
 sdk.cancelConnectionAttempt()
 sdk.disconnect()
 sdk.forget()
+try await sdk.unpair()
 ```
 
 React Native:
@@ -150,11 +150,11 @@ await BluetoothSdk.connect(device);
 await BluetoothSdk.setDefaultDevice(device);
 const defaultDevice = await BluetoothSdk.getDefaultDevice();
 await BluetoothSdk.connectDefault();
-await BluetoothSdk.clearDefaultDevice();
 
 await BluetoothSdk.cancelConnectionAttempt();
 await BluetoothSdk.disconnect();
 await BluetoothSdk.forget();
+await BluetoothSdk.unpair();
 ```
 
 Use `scan()` for user-facing device pickers. The progressive result callback is for UI: render the current nearby-device list every time it changes while Bluetooth is still scanning. The returned final result is for control flow: after the timeout/completion, choose a device from the last list and connect. In multi-device environments, do not auto-connect to the first nearby glasses; present an explicit picker.
@@ -227,8 +227,8 @@ These are the supported React Native app developer entrypoints:
 | Area | Methods |
 | --- | --- |
 | Status and subscriptions | `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent` for React components; `addListener` is available as the lower-level non-React subscription API |
-| Default device | `getDefaultDevice`, `setDefaultDevice`, `clearDefaultDevice` |
-| Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget` |
+| Default device | `getDefaultDevice`, `setDefaultDevice` |
+| Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget`, `unpair` |
 | Display | `displayText`, `clearDisplay`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults`, `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |

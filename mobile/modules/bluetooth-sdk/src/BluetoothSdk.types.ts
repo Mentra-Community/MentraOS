@@ -1554,7 +1554,6 @@ export interface BluetoothSdkPublicModule {
 
   getDefaultDevice(): Promise<Device | null>
   setDefaultDevice(device: Device | null): Promise<void>
-  clearDefaultDevice(): Promise<void>
 
   startScan(model: DeviceModel): Promise<void>
   stopScan(): Promise<void>
@@ -1565,6 +1564,9 @@ export interface BluetoothSdkPublicModule {
   cancelConnectionAttempt(): Promise<void>
   disconnect(): Promise<void>
   forget(): Promise<void>
+  /** Unpair the glasses: disconnect, forget them as the default device and, on Mentra Live, remove the phone's Bluetooth
+   * bond, so the next pairing starts from pairing mode. */
+  unpair(): Promise<void>
 
   displayText(text: string, x?: number, y?: number, size?: number): Promise<void>
   clearDisplay(): Promise<void>

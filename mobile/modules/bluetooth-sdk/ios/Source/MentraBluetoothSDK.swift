@@ -450,7 +450,7 @@ public final class MentraBluetoothSDK {
         finishDefaultDeviceApply(generation: generation)
     }
 
-    public func clearDefaultDevice() {
+    private func clearDefaultDevice() {
         defaultDeviceApplyGeneration += 1
         let generation = defaultDeviceApplyGeneration
         suppressDefaultDeviceEvents = true
@@ -615,6 +615,13 @@ public final class MentraBluetoothSDK {
         analytics.noteDisconnectRequested(BluetoothSdkAnalyticsTracker.disconnectForget)
         clearBluetoothRestoreIntent()
         DeviceManager.shared.forget()
+    }
+
+    /// Unpair the glasses: disconnect, forget the default device and, on Mentra Live, remove the phone's Bluetooth bond.
+    public func unpair() async throws {
+        analytics.noteDisconnectRequested(BluetoothSdkAnalyticsTracker.disconnectForget)
+        clearBluetoothRestoreIntent()
+        try await DeviceManager.shared.unpair()
     }
 
     public func displayText(_ text: String, x: Int = 0, y: Int = 0, size: Int = 24) async throws {

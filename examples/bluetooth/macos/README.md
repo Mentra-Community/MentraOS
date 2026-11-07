@@ -4,8 +4,8 @@ An AppKit app using the same `MentraBluetoothSDK` Swift package as the iOS
 example. Requires macOS 13+, Xcode/Swift 5.9+, and Bluetooth hardware.
 
 This is a native Mac application, not the iOS TestFlight app running on Apple
-silicon. It demonstrates scan/connect/disconnect, photo upload with preview, and
-OTA availability checking. The complete update UI remains in the phone example.
+silicon. It demonstrates scan and pair, connect/disconnect, unpair, photo
+upload with preview, and OTA availability checking. The complete update UI remains in the phone example.
 
 ## Run
 
@@ -22,7 +22,7 @@ Use `bash run.sh --build-only` to build without launching.
 Quit this example before rebuilding; the script refuses to overwrite a running
 app instead of silently activating its previous binary.
 
-The script creates `build/Mentra SDK Mac.app` and ad-hoc signs it with the
+The script creates `build/Mentra Bluetooth Example macOS.app` and ad-hoc signs it with the
 sandbox entitlements. Launch the app bundle, not `.build/debug/MentraMacExample`,
 so macOS reads the Bluetooth and microphone usage descriptions.
 

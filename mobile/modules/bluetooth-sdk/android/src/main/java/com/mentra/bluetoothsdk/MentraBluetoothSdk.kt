@@ -350,7 +350,7 @@ class MentraBluetoothSdk private constructor(
         dispatchDefaultDeviceChanged()
     }
 
-    fun clearDefaultDevice() {
+    private fun clearDefaultDevice() {
         suppressDefaultDeviceEvents = true
         try {
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "default_wearable", "")
@@ -552,6 +552,12 @@ class MentraBluetoothSdk private constructor(
     fun forget() {
         analytics.noteDisconnectRequested(BluetoothSdkAnalyticsTracker.DISCONNECT_FORGET)
         deviceManager.forget()
+    }
+
+    /** Unpair the glasses: disconnect, forget the default device and, on Mentra Live, remove the phone's Bluetooth bond. */
+    suspend fun unpair() {
+        analytics.noteDisconnectRequested(BluetoothSdkAnalyticsTracker.DISCONNECT_FORGET)
+        deviceManager.unpair()
     }
 
     @JvmOverloads

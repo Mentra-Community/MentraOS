@@ -245,8 +245,8 @@ async function reconnectSavedDevice() {
   }
 }
 
-async function clearSavedDevice() {
-  await BluetoothSdk.clearDefaultDevice()
+async function unpairGlasses() {
+  await BluetoothSdk.unpair()
 }
 
 async function stopConnection() {
@@ -277,8 +277,8 @@ fun reconnectSavedDevice() {
     }
 }
 
-fun clearSavedDevice() {
-    sdk.clearDefaultDevice()
+suspend fun unpairGlasses() {
+    sdk.unpair()
 }
 
 fun stopConnection() {
@@ -346,8 +346,8 @@ func reconnectSavedDevice() throws {
     }
 }
 
-func clearSavedDevice() {
-    sdk.clearDefaultDevice()
+func unpairGlasses() async throws {
+    try await sdk.unpair()
 }
 
 func stopConnection() {
@@ -551,8 +551,8 @@ These are the supported React Native app developer entrypoints:
 | Area | Methods |
 | --- | --- |
 | Status and subscriptions | `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent` for React components; `addListener` is available as the lower-level non-React subscription API |
-| Default device | `getDefaultDevice`, `setDefaultDevice`, `clearDefaultDevice` |
-| Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget` |
+| Default device | `getDefaultDevice`, `setDefaultDevice` |
+| Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget`, `unpair` |
 | Display | `displayText`, `clearDisplay`, `setDashboardContent`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
 | Wi-Fi and hotspot | `requestWifiScan`, `getSavedWifiNetworks`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera and gallery | `requestPhoto`, `warmUpCamera`, `stopCameraWarmUp`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults` (deprecated), `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `setCameraFovOverride`, `releaseCameraFovOverride`, `startVideoRecording`, `stopVideoRecording`, `queryVideoRecordingStatus` |

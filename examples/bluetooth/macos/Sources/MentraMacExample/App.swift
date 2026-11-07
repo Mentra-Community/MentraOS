@@ -32,13 +32,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
     private var connectedButtons: [NSButton] = []
     private var scanButton: NSButton!
     private var connectButton: NSButton!
-    private var disconnectButton: NSButton!
+    private var pairButton: NSButton!
 
     func applicationDidFinishLaunching(_: Notification) {
         sdk.delegate = self
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 660),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Mentra SDK Mac"
+        window.title = "Mentra Bluetooth Example macOS"
         window.minSize = NSSize(width: 600, height: 500)
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -54,11 +54,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
             stack.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor),
         ])
         scanButton = button("Scan", action: #selector(scan))
-        connectButton = button("Connect", action: #selector(connect))
-        disconnectButton = button("Disconnect", action: #selector(disconnect))
+        connectButton = button("Connect", action: #selector(connectOrDisconnect))
+        pairButton = button("Pair", action: #selector(pairOrUnpair))
         picker.setContentHuggingPriority(.defaultLow, for: .horizontal)
         picker.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
-        let connection = NSStackView(views: [scanButton, picker, connectButton, disconnectButton])
+        let connection = NSStackView(views: [scanButton, picker, connectButton, pairButton])
         stack.addArrangedSubview(connection)
         stack.addArrangedSubview(status)
         webhook.placeholderString = "Photo webhook URL (HTTPS or local HTTP)"
@@ -107,11 +107,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
         NSButton(title: title, target: self, action: action)
     }
 
+    // Paired: glasses the SDK keeps as its default device, connected or not.
+    private var paired: Bool {
+        sdk.glasses.connection != .disconnected || sdk.defaultDevice != nil
+    }
+
+    // Pairing is scan and choose: Scan and the picker show until glasses are paired, then Connect/Disconnect takes their place.
     private func refreshButtons() {
+        let disconnected = sdk.glasses.connection == .disconnected
         connectedButtons.forEach { $0.isEnabled = sdk.glasses.ready && !busy }
-        scanButton.isEnabled = sdk.glasses.connection == .disconnected && !busy
-        connectButton.isEnabled = sdk.glasses.connection == .disconnected && !devices.isEmpty && !busy
-        disconnectButton.isEnabled = sdk.glasses.connection != .disconnected
+        scanButton.isHidden = paired
+        picker.isHidden = paired
+        scanButton.isEnabled = !busy
+        connectButton.isHidden = !paired
+        connectButton.title = disconnected ? "Connect" : "Disconnect"
+        connectButton.isEnabled = !disconnected || !busy
+        pairButton.title = paired ? "Unpair" : "Pair"
+        pairButton.isEnabled = paired ? !busy : devices.indices.contains(picker.indexOfSelectedItem) && !busy
     }
 
     @objc private func scan() {
@@ -134,18 +146,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
         } catch { action.stringValue = error.localizedDescription }
     }
 
-    @objc private func connect() {
+    @objc private func connectOrDisconnect() {
+        if sdk.glasses.connection != .disconnected {
+            cancelAction()
+            sdk.disconnect()
+            return
+        }
+        do { try sdk.connectDefault(); action.stringValue = "Connecting..." }
+        catch { action.stringValue = error.localizedDescription }
+    }
+
+    @objc private func pairOrUnpair() {
+        if paired {
+            cancelAction()
+            runAction("Unpairing...") {
+                try await self.sdk.unpair()
+                self.action.stringValue = "Unpaired"
+            }
+            return
+        }
         guard devices.indices.contains(picker.indexOfSelectedItem) else { return }
         let device = devices[picker.indexOfSelectedItem]
         scanSession?.stop()
         scanSession = nil
-        do { try sdk.connect(to: device); action.stringValue = "Connecting..." }
+        devices = []
+        picker.removeAllItems()
+        // Connecting to the chosen glasses saves them as the SDK's default device.
+        do { try sdk.connect(to: device); action.stringValue = "Pairing..." }
         catch { action.stringValue = error.localizedDescription }
-    }
-
-    @objc private func disconnect() {
-        cancelAction()
-        sdk.disconnect()
+        refreshButtons()
     }
 
     @objc private func capture() {
@@ -227,6 +256,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
         status.stringValue = glasses.connected
             ? "\(glasses.device?.bluetoothName ?? "Connected") | Battery: \(glasses.battery?.level.map(String.init) ?? "unknown")% | ASG: \(glasses.device?.appVersion ?? "unknown")"
             : glasses.connection.rawValue
+        refreshButtons()
+    }
+
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice _: Device?) {
         refreshButtons()
     }
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
+import Svg, { Line, Path, Rect } from 'react-native-svg';
 import { DeviceModels } from '@mentra/engine/bluetooth-sdk';
 import { Header } from '../components/Header';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
@@ -49,7 +49,8 @@ export function DeviceScreen({
   const connected = isGlassesConnected(sdk.glasses);
   const charging = sdk.glasses.connected && sdk.glasses.battery.charging;
   const canConnect = !connected && hasConnectionTarget(sdk);
-  const hasDefaultTarget = Boolean(sdk.defaultDevice);
+  // Paired: glasses the SDK keeps as its default device, connected or not.
+  const paired = connected || Boolean(sdk.defaultDevice);
   const displaySupported = connected && supportsDisplay(sdk.glasses);
   const canOpenOta = connected && shouldShowMentraLiveVersions(sdk);
   const connection = connectionLabel(sdk.glasses);
@@ -111,71 +112,69 @@ export function DeviceScreen({
           <Text style={styles.cardTitle}>{connected ? 'Quick actions' : 'Connect glasses'}</Text>
           <Text style={styles.cardEyebrow}>SDK</Text>
         </View>
-        <ScanModelPicker sdk={sdk} connected={connected} />
+        {paired ? null : <ScanModelPicker sdk={sdk} connected={connected} />}
         <TargetPicker sdk={sdk} connected={connected} />
         <View style={{ gap: 8 }}>
           <View style={styles.btnRow}>
-            <Pressable disabled={connected} style={({ pressed }) => [styles.btn, pressed && styles.btnPressed, connected && styles.disabled, { backgroundColor: '#0E2C1A' }]} onPress={sdk.startScan}>
-              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <Circle cx={11} cy={11} r={7} /><Path d="m21 21-3.5-3.5" />
-              </Svg>
-              <Text style={styles.btnTextLight}>Scan</Text>
-            </Pressable>
-            <Pressable disabled={!canConnect} style={({ pressed }) => [styles.btn, pressed && styles.btnPressed, !canConnect && styles.disabled, { backgroundColor: colors.greenPrimary }]} onPress={sdk.connect}>
-              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <Path d="M9 17H5a3 3 0 0 1 0-6h4" /><Path d="M15 7h4a3 3 0 0 1 0 6h-4" /><Line x1={8} y1={14} x2={16} y2={14} />
-              </Svg>
-              <Text style={styles.btnTextLight}>{connected ? 'Connected' : 'Connect'}</Text>
-            </Pressable>
-          </View>
-          <View style={styles.btnRow}>
-            <Pressable disabled={!displaySupported} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !displaySupported && styles.disabled]} onPress={sdk.displayHello}>
-              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <Rect x={2} y={4} width={20} height={14} rx={2} /><Path d="M8 22h8" /><Path d="M12 18v4" />
-              </Svg>
-              <Text style={styles.btnTextDark}>Display Hello</Text>
-            </Pressable>
-            <Pressable disabled={!displaySupported} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !displaySupported && styles.disabled]} onPress={sdk.clearDisplay}>
-              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <Rect x={2} y={4} width={20} height={14} rx={2} /><Line x1={2} y1={11} x2={22} y2={11} />
-              </Svg>
-              <Text style={styles.btnTextDark}>Clear Display</Text>
-            </Pressable>
-          </View>
-          <View style={styles.btnRow}>
-            <Pressable disabled={!canOpenOta} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !canOpenOta && styles.disabled]} onPress={onOpenOta}>
-              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <Path d="M21 12a9 9 0 0 1-15.5 6.2" /><Path d="M3 12a9 9 0 0 1 15.5-6.2" /><Path d="M18 2v4h-4" /><Path d="M6 22v-4h4" />
-              </Svg>
-              <Text style={styles.btnTextDark}>Software Update</Text>
-            </Pressable>
-            <Pressable disabled={connected} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, connected && styles.disabled]} onPress={onOpenPairing}>
-              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <Path d="m7 7 10 10-5 5V2l5 5L7 17" />
-              </Svg>
-              <Text style={styles.btnTextDark}>Pair Mentra Live</Text>
-            </Pressable>
-          </View>
-          <View style={styles.btnRow}>
-            <Pressable disabled={!hasDefaultTarget} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !hasDefaultTarget && styles.disabled]} onPress={sdk.clearDefaultDevice}>
-              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <Path d="M3 6h18" /><Path d="M8 6V4h8v2" /><Path d="M19 6l-1 14H6L5 6" />
-              </Svg>
-              <Text style={styles.btnTextDark}>Clear Default</Text>
-            </Pressable>
-            <Pressable disabled={!connected} onPress={sdk.disconnect} style={[styles.btnHalf, !connected && styles.disabled]}>
-              <LinearGradient colors={['#DE3A30', '#C43B30']} style={[styles.btn, { borderRadius: 18 }]}>
-                <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                  <Path d="M9 17H5a3 3 0 0 1 0-6h2" /><Path d="M17 7h2a3 3 0 0 1 3 3" /><Line x1={2} y1={2} x2={22} y2={22} />
+            {paired ? (
+              <Pressable testID="device-unpair" style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed]} onPress={sdk.unpair}>
+                <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                  <Path d="M3 6h18" /><Path d="M8 6V4h8v2" /><Path d="M19 6l-1 14H6L5 6" />
                 </Svg>
-                <Text style={styles.btnTextLight}>Disconnect</Text>
-              </LinearGradient>
-            </Pressable>
+                <Text style={styles.btnTextDark}>Unpair</Text>
+              </Pressable>
+            ) : (
+              // Mentra Live pairs through the pairing pages; other glasses are scanned for and chosen below.
+              <Pressable testID="device-pair" style={({ pressed }) => [styles.btn, pressed && styles.btnPressed, { backgroundColor: '#0E2C1A' }]} onPress={sdk.selectedScanModel === DeviceModels.MentraLive ? onOpenPairing : sdk.startScan}>
+                <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                  <Path d="m7 7 10 10-5 5V2l5 5L7 17" />
+                </Svg>
+                <Text style={styles.btnTextLight}>Pair</Text>
+              </Pressable>
+            )}
+            {connected ? (
+              <Pressable testID="device-disconnect" onPress={sdk.disconnect} style={styles.btnHalf}>
+                <LinearGradient colors={['#DE3A30', '#C43B30']} style={[styles.btn, { borderRadius: 18 }]}>
+                  <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                    <Path d="M9 17H5a3 3 0 0 1 0-6h2" /><Path d="M17 7h2a3 3 0 0 1 3 3" /><Line x1={2} y1={2} x2={22} y2={22} />
+                  </Svg>
+                  <Text style={styles.btnTextLight}>Disconnect</Text>
+                </LinearGradient>
+              </Pressable>
+            ) : (
+              <Pressable testID="device-connect" disabled={!canConnect} style={({ pressed }) => [styles.btn, pressed && styles.btnPressed, !canConnect && styles.disabled, { backgroundColor: colors.greenPrimary }]} onPress={sdk.connect}>
+                <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                  <Path d="M9 17H5a3 3 0 0 1 0-6h4" /><Path d="M15 7h4a3 3 0 0 1 0 6h-4" /><Line x1={8} y1={14} x2={16} y2={14} />
+                </Svg>
+                <Text style={styles.btnTextLight}>Connect</Text>
+              </Pressable>
+            )}
           </View>
-          {connected && !displaySupported ? (
-            <Text style={styles.quickNote}>
-              {modelLabel(sdk.glasses)} has no display, so display commands are disabled.
-            </Text>
+          {displaySupported ? (
+            <View style={styles.btnRow}>
+              <Pressable style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed]} onPress={sdk.displayHello}>
+                <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                  <Rect x={2} y={4} width={20} height={14} rx={2} /><Path d="M8 22h8" /><Path d="M12 18v4" />
+                </Svg>
+                <Text style={styles.btnTextDark}>Display Hello</Text>
+              </Pressable>
+              <Pressable style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed]} onPress={sdk.clearDisplay}>
+                <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                  <Rect x={2} y={4} width={20} height={14} rx={2} /><Line x1={2} y1={11} x2={22} y2={11} />
+                </Svg>
+                <Text style={styles.btnTextDark}>Clear Display</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {canOpenOta ? (
+            <View style={styles.btnRow}>
+              <Pressable style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed]} onPress={onOpenOta}>
+                <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                  <Path d="M21 12a9 9 0 0 1-15.5 6.2" /><Path d="M3 12a9 9 0 0 1 15.5-6.2" /><Path d="M18 2v4h-4" /><Path d="M6 22v-4h4" />
+                </Svg>
+                <Text style={styles.btnTextDark}>Software Update</Text>
+              </Pressable>
+            </View>
           ) : null}
         </View>
       </LinearGradient>
@@ -607,7 +606,6 @@ const styles = StyleSheet.create({
   targetName: { color: colors.inkAlt, fontSize: 14, fontWeight: '700' },
   targetDetail: { color: colors.muted, fontSize: 12, fontWeight: '500' },
   btnRow: { flexDirection: 'row', gap: 8 },
-  quickNote: { color: colors.muted, fontSize: 12, fontWeight: '500', lineHeight: 16 },
   btn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', minHeight: 48, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 14, gap: 8 },
   btnHalf: { flex: 1 },
   btnFull: { flex: 0, alignSelf: 'stretch' },

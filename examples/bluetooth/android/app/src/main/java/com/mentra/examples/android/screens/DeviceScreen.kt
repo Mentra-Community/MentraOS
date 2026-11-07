@@ -35,7 +35,6 @@ import com.mentra.examples.android.battery
 import com.mentra.examples.android.batteryLabel
 import com.mentra.examples.android.batteryLevel
 import com.mentra.examples.android.bluetoothSearchLabel
-import com.mentra.examples.android.canConnectTarget
 import com.mentra.examples.android.connectionLabel
 import com.mentra.examples.android.connectionTargetLabel
 import com.mentra.examples.android.connectedGlassesInfo
@@ -71,8 +70,8 @@ fun DeviceScreen(controller: MentraExampleController) {
     val state = controller.state
     val glasses = state.glassesStatus
     val connected = isGlassesConnected(glasses)
-    val canConnect = !connected && canConnectTarget(state)
-    val hasDefaultTarget = hasSavedConnectionTarget(state.bluetoothStatus)
+    // Paired: glasses the SDK keeps as its default device, connected or not.
+    val paired = connected || hasSavedConnectionTarget(state.bluetoothStatus)
     val displaySupported = connected && supportsDisplay(glasses)
     val glassesWifiConnected = isGlassesWifiConnected(glasses)
     val otaWifiRequired = connected && !glassesWifiConnected
@@ -152,55 +151,48 @@ fun DeviceScreen(controller: MentraExampleController) {
                 Eyebrow("SDK", color = AppColor.inkAlt.copy(alpha = 0.4f), mono = true)
             }
             Spacer(Modifier.height(16.dp))
-            ScanModelPicker(controller, connected)
-            Spacer(Modifier.height(12.dp))
-            TargetPicker(controller, connected, glasses)
+            if (!paired) {
+                ScanModelPicker(controller)
+                Spacer(Modifier.height(12.dp))
+            }
+            TargetPicker(controller, connected, paired, glasses)
             Spacer(Modifier.height(12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Scan, then Connect/Disconnect once paired; Pair/Unpair keeps the second slot.
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DarkBtn("Scan", Icons.Outlined.Search, AppColor.greenInk, Modifier.weight(1f), enabled = !connected, onClick = controller::startScan)
-                    DarkBtn(if (connected) "Connected" else "Connect", Icons.Outlined.Link, AppColor.greenPrimary, Modifier.weight(1f), enabled = canConnect, onClick = controller::connect)
+                    when {
+                        connected -> Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Brush.verticalGradient(listOf(Color(0xFFDE3A30), Color(0xFFC43B30))))
+                                .clickable { controller.disconnect() }
+                                .padding(vertical = 14.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Outlined.LinkOff, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                Text("Disconnect", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                        paired -> DarkBtn("Connect", Icons.Outlined.Link, AppColor.greenPrimary, Modifier.weight(1f), onClick = controller::connect)
+                        else -> DarkBtn("Scan", Icons.Outlined.Search, AppColor.greenInk, Modifier.weight(1f), onClick = controller::startScan)
+                    }
+                    if (paired) {
+                        LightBtn("Unpair", Icons.Outlined.DeleteOutline, Modifier.weight(1f), onClick = controller::unpair)
+                    } else {
+                        DarkBtn("Pair", Icons.Outlined.Link, AppColor.greenPrimary, Modifier.weight(1f), enabled = state.selectedDiscoveredDevice != null, onClick = controller::pair)
+                    }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LightBtn("Display Hello", Icons.Outlined.Tv, Modifier.weight(1f), enabled = displaySupported, onClick = controller::displayHello)
-                    LightBtn("Clear Display", Icons.Outlined.Tv, Modifier.weight(1f), enabled = displaySupported, onClick = controller::clearDisplay)
+                if (displaySupported) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LightBtn("Display Hello", Icons.Outlined.Tv, Modifier.weight(1f), onClick = controller::displayHello)
+                        LightBtn("Clear Display", Icons.Outlined.Tv, Modifier.weight(1f), onClick = controller::clearDisplay)
+                    }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     LightBtn(if (connected && !glassesWifiConnected) "Connect Wi-Fi" else "Check OTA", Icons.Outlined.Refresh, Modifier.weight(1f), enabled = canCheckOta, onClick = controller::checkForOtaUpdate)
                     LightBtn(if (state.otaStartPending) "Starting OTA..." else "Start OTA", Icons.Outlined.FileDownload, Modifier.weight(1f), enabled = canStartOta(state), onClick = controller::startOtaUpdate)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LightBtn("Clear Default", Icons.Outlined.DeleteOutline, Modifier.weight(1f), enabled = hasDefaultTarget, onClick = controller::clearDefaultDevice)
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color(0xFFDE3A30).copy(alpha = if (connected) 1f else 0.45f),
-                                        Color(0xFFC43B30).copy(alpha = if (connected) 1f else 0.45f),
-                                    )
-                                )
-                            )
-                            .clickable(enabled = connected) { controller.disconnect() }
-                            .padding(vertical = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Outlined.LinkOff, null, tint = Color.White, modifier = Modifier.size(14.dp))
-                            Text("Disconnect", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                }
-                if (connected && !displaySupported) {
-                    Text(
-                        "${modelLabel(glasses)} has no display, so display commands are disabled.",
-                        color = AppColor.muted,
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
                 }
             }
         }
@@ -436,21 +428,15 @@ private fun OtaCard(controller: MentraExampleController, modifier: Modifier = Mo
 }
 
 @Composable
-private fun ScanModelPicker(controller: MentraExampleController, connected: Boolean) {
+private fun ScanModelPicker(controller: MentraExampleController) {
     val selectedModel = controller.state.selectedScanModel
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Eyebrow("SCAN MODEL", color = AppColor.muted, mono = true)
-            if (connected) {
-                Text("Disconnect to change", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
+        Eyebrow("SCAN MODEL", color = AppColor.muted, mono = true)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             scanModelOptions.forEach { model ->
                 ScanModelChip(
                     model = model,
                     active = selectedModel == model,
-                    enabled = !connected,
                     modifier = Modifier.weight(1f),
                     onClick = { controller.selectScanModel(model) },
                 )
@@ -463,21 +449,19 @@ private fun ScanModelPicker(controller: MentraExampleController, connected: Bool
 private fun ScanModelChip(
     model: DeviceModel,
     active: Boolean,
-    enabled: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val alpha = if (enabled) 1f else 0.45f
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(999.dp))
-            .background(if (active) AppColor.greenPrimary.copy(alpha = 0.10f * alpha) else Color.White.copy(alpha = 0.72f * alpha))
+            .background(if (active) AppColor.greenPrimary.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.72f))
             .border(
                 1.dp,
-                if (active) AppColor.greenPrimary.copy(alpha = 0.32f * alpha) else AppColor.hairline,
+                if (active) AppColor.greenPrimary.copy(alpha = 0.32f) else AppColor.hairline,
                 RoundedCornerShape(999.dp),
             )
-            .clickable(enabled = enabled) { onClick() }
+            .clickable { onClick() }
             .heightIn(min = 44.dp)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center,
@@ -492,7 +476,7 @@ private fun ScanModelChip(
 }
 
 @Composable
-private fun TargetPicker(controller: MentraExampleController, connected: Boolean, glasses: GlassesRuntimeState?) {
+private fun TargetPicker(controller: MentraExampleController, connected: Boolean, paired: Boolean, glasses: GlassesRuntimeState?) {
     val state = controller.state
     Column(
         modifier = Modifier
@@ -503,8 +487,8 @@ private fun TargetPicker(controller: MentraExampleController, connected: Boolean
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Eyebrow(if (connected) "CONNECTED DEVICE" else "CONNECTION TARGET", color = AppColor.inkAlt.copy(alpha = 0.45f), mono = true)
-            if (!connected && state.discoveredDevices.isNotEmpty()) {
+            Eyebrow(if (connected) "CONNECTED DEVICE" else if (paired) "PAIRED GLASSES" else "CHOOSE GLASSES", color = AppColor.inkAlt.copy(alpha = 0.45f), mono = true)
+            if (!paired && state.discoveredDevices.isNotEmpty()) {
                 Text(
                     if (state.selectedDiscoveredDevice == null) "choose one" else "${state.discoveredDevices.size} found",
                     color = AppColor.greenInk,
@@ -522,20 +506,20 @@ private fun TargetPicker(controller: MentraExampleController, connected: Boolean
                 enabled = false,
                 onClick = {},
             )
-            state.discoveredDevices.isEmpty() && state.scanHint != null -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Glasses may be in use", color = AppColor.inkAlt, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Text(state.scanHint, color = AppColor.muted, fontSize = 13.sp)
-            }
-            state.discoveredDevices.isEmpty() && hasSavedConnectionTarget(state.bluetoothStatus) -> TargetDeviceRow(
+            paired -> TargetDeviceRow(
                 name = savedConnectionTargetName(state.bluetoothStatus),
                 detail = savedConnectionTargetDetail(state.bluetoothStatus),
                 selected = true,
                 enabled = false,
                 onClick = {},
             )
+            state.discoveredDevices.isEmpty() && state.scanHint != null -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Glasses may be in use", color = AppColor.inkAlt, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(state.scanHint, color = AppColor.muted, fontSize = 13.sp)
+            }
             state.discoveredDevices.isEmpty() -> TargetDeviceRow(
                 name = "Scan required",
-                detail = "No saved default target yet. Scan to choose nearby glasses.",
+                detail = "Nothing paired yet. Scan, choose glasses, then Pair.",
                 selected = false,
                 enabled = false,
                 onClick = {},

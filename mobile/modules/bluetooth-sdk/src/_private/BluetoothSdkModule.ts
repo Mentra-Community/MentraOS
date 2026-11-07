@@ -96,7 +96,6 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   connectDefault(options?: ConnectOptions): Promise<void>
   connectDefaultWithOptions(options: Required<ConnectOptions>): Promise<void>
   setDefaultDevice(device: Device | null): Promise<void>
-  clearDefaultDevice(): Promise<void>
   /** Android only: iOS cannot read its Bluetooth bonds. */
   getBondedGlasses?: () => Promise<{name: string; address: string} | null>
   getScanDiagnostic?: (model: DeviceModel) => Promise<ScanDiagnostic | null>

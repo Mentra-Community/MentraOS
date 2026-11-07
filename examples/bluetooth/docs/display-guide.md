@@ -4,6 +4,8 @@ The display API lets your app send glanceable, user-visible information to suppo
 
 Mentra Live does not have a display. Use display APIs only on display-equipped models such as G2.
 
+The SDK does not report a display capability, so decide from the connected glasses' device model. The example apps' Device screens show Display Hello and Clear Display only while glasses with a display are connected, and hide them otherwise.
+
 ## Basic Text
 
 Android:

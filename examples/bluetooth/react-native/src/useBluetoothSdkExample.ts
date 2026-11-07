@@ -423,7 +423,6 @@ export type BluetoothSdkExampleState = {
 
 export type BluetoothSdkExampleActions = {
   captureAndUpload: () => Promise<void>;
-  clearDefaultDevice: () => Promise<void>;
   clearDisplay: () => Promise<void>;
   connect: () => Promise<void>;
   connectDevice: (device: Device) => Promise<void>;
@@ -474,6 +473,7 @@ export type BluetoothSdkExampleActions = {
   setWebhookUrl: (url: string) => void;
   setVoiceActivityDetectionEnabled: (enabled: boolean) => Promise<void>;
   startScan: () => Promise<void>;
+  unpair: () => Promise<void>;
   testWebhook: () => Promise<void>;
   toggleHotspot: () => Promise<void>;
   setWifiAdbState: (enabled: boolean) => Promise<void>;
@@ -1155,9 +1155,13 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     });
   }
 
-  async function clearDefaultDevice() {
-    await runAction('Clear default', async () => {
-      await bluetooth.clearDefaultDevice();
+  // Unpair, as the Mentra App's Unpair does: the SDK forgets the glasses and, on Mentra Live, removes the phone's
+  // Bluetooth bond, so the next pairing starts from pairing mode.
+  async function unpair() {
+    await runAction('Unpair', async () => {
+      stopDirectStreamFrameWatchdog();
+      await bluetooth.unpair();
+      applyDisconnectedState('Unpaired');
     });
   }
 
@@ -3687,7 +3691,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     cameraSettingsApplying,
     cameraSettingsStatus,
     captureAndUpload,
-    clearDefaultDevice,
     clearDisplay,
     connect,
     connectDevice,
@@ -3799,6 +3802,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setVoiceActivityDetectionEnabled: setVoiceActivityDetectionEnabledAction,
     selectedDiscoveredDevice,
     startScan,
+    unpair,
     streamCloudServerEnabled,
     streamFps,
     streamProtocol,

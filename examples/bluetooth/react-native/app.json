@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Mentra SDK RN",
+    "name": "Mentra Bluetooth Example",
     "slug": "mentra-sdk-rn-example",
     "version": "1.0.0",
     "orientation": "portrait",

@@ -621,17 +621,23 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    func connect() {
-        scanSession?.stop()
-        scanHint = nil
-        runAction("Connect") {
-            if let device = selectedDiscoveredDevice ?? discoveredDevices.first {
-                try mentraBluetoothSdk.connect(to: device)
-            } else if hasSavedConnectionTarget(bluetoothValues) {
-                try mentraBluetoothSdk.connectDefault()
-            } else {
-                throw ExampleActionError(message: "Scan first to choose nearby glasses.")
+    // Pairing is scan and choose: connecting to the chosen glasses saves them as the SDK's default device.
+    func pair() {
+        runAction("Pair") {
+            guard let device = selectedDiscoveredDevice else {
+                throw ExampleActionError(message: "Choose one of the discovered glasses first.")
             }
+            scanSession?.stop()
+            scanHint = nil
+            discoveredDevices.removeAll()
+            selectedDiscoveredDevice = nil
+            try mentraBluetoothSdk.connect(to: device)
+        }
+    }
+
+    func connect() {
+        runAction("Connect") {
+            try mentraBluetoothSdk.connectDefault()
         }
     }
 
@@ -651,15 +657,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         lastAction = "Selected scan model: \(deviceModelLabel(model))"
     }
 
-    func connect(_ device: Device) {
-        scanSession?.stop()
-        scanHint = nil
-        selectedDiscoveredDevice = device
-        runAction("Connect \(device.name)") {
-            try mentraBluetoothSdk.connect(to: device)
-        }
-    }
-
     func disconnect() {
         let label = "Disconnect"
         guard activeAction != label else { return }
@@ -677,11 +674,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    func clearDefaultDevice() {
-        runAction("Clear default") {
-            mentraBluetoothSdk.clearDefaultDevice()
+    // Unpair also removes the phone's Bluetooth bond on Mentra Live, so the next Pair starts from pairing mode.
+    func unpair() {
+        runAsyncAction("Unpair") { [self] in
+            activeStreamId = nil
+            try await mentraBluetoothSdk.unpair()
+            applyDisconnectedState(status: "Unpaired")
             bluetoothValues = mentraBluetoothSdk.sdkState
-            selectedDiscoveredDevice = nil
         }
     }
 
@@ -3565,25 +3564,12 @@ func deviceLabel(_ status: GlassesRuntimeState?) -> String {
     return "Mentra Live"
 }
 
+// The SDK has no display capability yet, so this follows the Engine hardware profiles.
 func supportsDisplay(_ status: GlassesRuntimeState?) -> Bool {
-    let device = connectedGlassesInfo(status)
-    let model = [
-        device?.deviceModel?.deviceType,
-        device?.bluetoothName,
-    ]
-    .compactMap { $0 }
-    .joined(separator: " ")
-    .lowercased()
-
-    if model.contains("g1") || model.contains("g2") || model.contains("nex") || model.contains("mach")
-        || model.contains("z100") || model.contains("vuzix") || model.contains("display") || model.contains("frame")
-    {
-        return true
+    switch connectedGlassesInfo(status)?.deviceModel {
+    case .ar99, .g1, .g2, .mentraNex, .mach1, .z100, .frame, .nimo, .simulated: return true
+    case .mentraLive, .r1, nil: return false
     }
-    if model.contains("live") || model.contains("r1") || model.contains("ring") {
-        return false
-    }
-    return false
 }
 
 func discoveredDeviceKey(_ device: Device) -> String {
