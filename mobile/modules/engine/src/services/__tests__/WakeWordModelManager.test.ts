@@ -60,12 +60,12 @@ test.each([false, true])("installs only the four detector files plus keywords.tx
   expect(files.get(`${dir}/joiner.int8.onnx`)).toBe("joiner-epoch-13-avg-2-chunk-8-left-64.int8.onnx")
   expect(files.get(`${dir}/keywords.txt`)).toBe(
     [
-      "HH EY1 M EH1 N T R AH0 :3.2 #0.015 @HEY_MENTRA",
-      "HH EY1 M AE1 N T R AH0 :3.2 #0.015 @HEY_MENTRA",
-      "HH EY1 M IH1 N T R AH0 :3.2 #0.015 @HEY_MENTRA",
-      "HH EY1 M IY1 T R AH0 :3.2 #0.015 @HEY_MENTRA",
-      "HH EY1 M IH1 T R AH0 :3.2 #0.015 @HEY_MENTRA",
-      "HH EY1 M EH1 T R AH0 :3.2 #0.015 @HEY_MENTRA",
+      "HH EY1 M EH1 N T R AH0 :3.2 #0.02 @HEY_MENTRA",
+      "HH EY1 M AE1 N T R AH0 :3.2 #0.02 @HEY_MENTRA",
+      "HH EY1 M IH1 N T R AH0 :3.2 #0.02 @HEY_MENTRA",
+      "HH EY1 M IY1 T R AH0 :3.2 #0.02 @HEY_MENTRA",
+      "HH EY1 M IH1 T R AH0 :3.2 #0.02 @HEY_MENTRA",
+      "HH EY1 M EH1 T R AH0 :3.2 #0.02 @HEY_MENTRA",
       "",
     ].join("\n"),
   )
@@ -99,4 +99,17 @@ test("an existing install is reused and delete removes it", async () => {
   expect((await manager.getInfo()).downloaded).toBe(true)
   await manager.deleteModel()
   expect(await manager.isModelAvailable()).toBe(false)
+})
+
+test("existing keyword tuning is refreshed without downloading the model", async () => {
+  const dir = manager.getModelPath()
+  writeFiles(dir, ["encoder.int8.onnx", "decoder.onnx", "joiner.int8.onnx", "tokens.txt", "keywords.txt"])
+  files.set(`${dir}/keywords.txt`, "HH EY1 M EH1 N T R AH0 :3.2 #0.015 @HEY_MENTRA\n")
+  expect(await manager.isModelAvailable()).toBe(true)
+  const updated = files.get(`${dir}/keywords.txt`)!
+  expect(updated.trim().split("\n")).toHaveLength(6)
+  expect(updated).not.toContain("#0.015")
+  expect(updated.match(/:3\.2 #0\.02/g)).toHaveLength(6)
+  await manager.downloadModel()
+  expect(extract).not.toHaveBeenCalled()
 })
