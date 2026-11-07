@@ -105,7 +105,11 @@ const invitation = (workspace: MyWorkspace, extra: Partial<InvitationPreview> = 
 
 type Calls = string[]
 
-/** An in-memory Core: what `mine` and `invitations` answer follows what accept and leave did. */
+/**
+ * An in-memory Core: what `mine` and `invitations` answer follows what accept and leave did. A person may belong to
+ * several workspaces: `mine` is the one managing the phone, which a join takes over only from their own automatic
+ * workspace or from none.
+ */
 function fakeCore(start: {mine?: MyWorkspace | null; invitations?: InvitationPreview[]} = {}) {
   const calls: Calls = []
   const state = {mine: start.mine ?? null, invitations: start.invitations ?? [], membership: 1}
@@ -130,8 +134,8 @@ function fakeCore(start: {mine?: MyWorkspace | null; invitations?: InvitationPre
         membershipId: `m-${state.membership++}-${source.workspaceId}`,
       }
       known.set(workspace.workspaceId, workspace)
-      state.mine = workspace
-      return workspace
+      if (state.mine === null || state.mine.automatic === true) state.mine = workspace
+      return state.mine
     }),
     decline: jest.fn(async (invitationId: string) => {
       calls.push(`decline:${invitationId}`)
@@ -228,7 +232,6 @@ describe("the invitation sheet", () => {
       expect(screen.getByText(text)).toBeTruthy()
     }
     expect(buttons(screen)).toEqual(["Join", "Decline"])
-    expect(screen.queryByTestId("fleet.leaveFirstRule")).toBeNull()
 
     await press(screen, "Decline")
     await finish(run)
@@ -379,91 +382,109 @@ describe("the invitation sheet", () => {
   })
 })
 
-describe("the leave-first variant", () => {
-  it("names the current workspace, makes Leave the main action, and goes Leave -> confirm -> Join", async () => {
+describe("an invitation while in a workspace", () => {
+  const KEPT =
+    "You'll stay in Northwind Labs, which keeps managing this phone. Ridgeline Field Services won't see it while Northwind Labs does."
+
+  it("while a real workspace manages the phone: Join, no leave, and that workspace keeps the phone", async () => {
     const core = fakeCore({mine: NORTHWIND, invitations: [invitation(RIDGELINE)]})
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
     const run = start()
 
     await screen.findByText("Ridgeline Field Services invited you to join their workspace")
-    expect(screen.getByText("You're in Northwind Labs. Leave it to join Ridgeline Field Services.")).toBeTruthy()
-    expect(buttons(screen)).toEqual(["Leave Northwind Labs", "Decline"])
-    // The invitation can be swiped away, for later.
+    expect(screen.getByText(KEPT)).toBeTruthy()
+    // It won't manage the phone, so it says nothing of what it would see.
+    expect(screen.queryByTestId("fleet.seeLists")).toBeNull()
+    expect(
+      screen.queryByText("If you join, they manage your device and can install miniapps on your phone."),
+    ).toBeNull()
+    expect(buttons(screen)).toEqual(["Join", "Decline"])
     expect(mockDrag.enabled).toBe(true)
 
-    await press(screen, "Leave Northwind Labs")
-    expect(await screen.findByText("Leave Northwind Labs?")).toBeTruthy()
-    expect(screen.getByText("Its miniapps come off this phone.")).toBeTruthy()
-    expect(buttons(screen)).toEqual(["Leave", "Cancel"])
-    // The leave confirm can be cancelled, so it has the handle and can be swiped.
-    expect(screen.queryByTestId("alert.handle")).not.toBeNull()
-    expect(mockDrag.enabled).toBe(true)
+    await press(screen, "Join")
+    await finish(run)
+    expect(core.api.leave).not.toHaveBeenCalled()
+    expect(core.calls).toContain(`accept:${invitation(RIDGELINE).invitationId}`)
+    // The phone stays with Northwind: no notice comes, so a toast says the join worked.
+    expect(useMyWorkspaceStore.getState().workspace).toEqual(NORTHWIND)
+    expect(Toast.show).toHaveBeenCalledWith({type: "success", text1: "You joined Ridgeline Field Services."})
+  })
 
-    await press(screen, "Leave")
-    // Core is called, then the desired state is fetched at once, then Join is offered.
-    expect(await screen.findByText("Join")).toBeTruthy()
-    expect(core.calls.filter((call) => call === "leave" || call === "refreshDesiredState")).toEqual([
-      "leave",
-      "refreshDesiredState",
-    ])
-    // It leaves the workspace the confirm named, not whatever the store holds by then.
-    expect(core.api.leave).toHaveBeenCalledWith(NORTHWIND.workspaceId)
-    expect(screen.queryByTestId("fleet.leaveFirstRule")).toBeNull()
+  it("while the person's own automatic workspace manages the phone: the usual terms, and the workspace joined takes it", async () => {
+    const own: MyWorkspace = {...NORTHWIND, name: "Maya's Workspace", automatic: true}
+    const core = fakeCore({mine: own, invitations: [invitation(RIDGELINE)]})
+    setWorkspaceApi(core.api)
+    screen = render(<ModalProvider>{null}</ModalProvider>)
+    const run = start()
+
+    await screen.findByText("Ridgeline Field Services invited you to join their workspace")
+    expect(
+      screen.getByText("If you join, they manage your device and can install miniapps on your phone."),
+    ).toBeTruthy()
+    expect(screen.getByTestId("fleet.seeLists")).toBeTruthy()
     expect(buttons(screen)).toEqual(["Join", "Decline"])
 
-    await press(screen, "Decline")
+    await press(screen, "Join")
     await finish(run)
+    expect(core.api.leave).not.toHaveBeenCalled()
+    expect(useMyWorkspaceStore.getState().workspace?.workspaceId).toBe(RIDGELINE.workspaceId)
+    // The Fleet notice says it, once Fleet answers: no toast as well.
+    expect(core.calls).toContain("refreshDesiredState")
+    expect(Toast.show).not.toHaveBeenCalled()
   })
 
-  it("comes back to the invitation when the leave confirm is cancelled", async () => {
+  it("against an older Core that refuses the join, leaves first through the confirm, then joins", async () => {
     const core = fakeCore({mine: NORTHWIND, invitations: [invitation(RIDGELINE)]})
+    ;(core.api.accept as jest.Mock).mockRejectedValueOnce(failWith("already_in_workspace"))
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
     const run = start()
+
     await screen.findByText("Ridgeline Field Services invited you to join their workspace")
-    await press(screen, "Leave Northwind Labs")
-    await screen.findByText("Leave Northwind Labs?")
-    await press(screen, "Cancel")
+    await press(screen, "Join")
+    expect(await screen.findByText("Leave Northwind Labs?")).toBeTruthy()
+    expect(buttons(screen)).toEqual(["Leave", "Cancel"])
+    await press(screen, "Leave")
+    // It leaves the workspace the confirm named, then offers the invitation again.
+    expect(core.api.leave).toHaveBeenCalledWith(NORTHWIND.workspaceId)
     expect(await screen.findByText("Ridgeline Field Services invited you to join their workspace")).toBeTruthy()
-    expect(core.api.leave).not.toHaveBeenCalled()
-    await press(screen, "Decline")
+    await press(screen, "Join")
     await finish(run)
+    expect(core.api.accept).toHaveBeenCalledTimes(2)
+    expect(useMyWorkspaceStore.getState().workspace?.workspaceId).toBe(RIDGELINE.workspaceId)
   })
 
-  it("shows the last-Owner copy when Core refuses the leave with last_owner", async () => {
+  it("against an older Core, shows the last-Owner copy when the leave is refused, and comes back to the invitation", async () => {
     const core = fakeCore({mine: NORTHWIND, invitations: [invitation(RIDGELINE)]})
+    ;(core.api.accept as jest.Mock).mockRejectedValue(failWith("already_in_workspace"))
     ;(core.api.leave as jest.Mock).mockRejectedValue(failWith("last_owner"))
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
     const run = start()
     await screen.findByText("Ridgeline Field Services invited you to join their workspace")
-    await press(screen, "Leave Northwind Labs")
+    await press(screen, "Join")
     await screen.findByText("Leave Northwind Labs?")
     await press(screen, "Leave")
-
     expect(
       await screen.findByText(
         "You're this workspace's only Owner. Hand over ownership or delete the workspace in Mentra Portal first.",
       ),
     ).toBeTruthy()
-    expect(core.api.refreshDesiredState).not.toHaveBeenCalled()
     await press(screen, "OK")
-    // Back to the invitation, still asking to leave first.
-    expect(await screen.findByText("Leave Northwind Labs")).toBeTruthy()
+    expect(await screen.findByText("Ridgeline Field Services invited you to join their workspace")).toBeTruthy()
     await press(screen, "Decline")
     await finish(run)
   })
 
-  it("looks again instead of offering a plain Join when the workspace read was dropped for a session change", async () => {
+  it("looks again instead of offering the wrong terms when the workspace read was dropped for a session change", async () => {
     const core = fakeCore({mine: NORTHWIND, invitations: [invitation(RIDGELINE)]})
     ;(core.api.mine as jest.Mock).mockRejectedValueOnce(failWith("session_changed"))
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
     const run = start()
 
-    expect(await screen.findByText("Leave Northwind Labs")).toBeTruthy()
-    expect(screen.queryByText("Join")).toBeNull()
+    expect(await screen.findByText(KEPT)).toBeTruthy()
     expect(core.api.mine).toHaveBeenCalledTimes(2)
     await press(screen, "Decline")
     await finish(run)

@@ -1,6 +1,5 @@
 /**
- * The Fleet sheets: the workspace invitation (and its leave-first variant), the leave confirm and the Fleet
- * notice. They are the Mentra App's standard alert sheet (`showAlert`), never a native alert, and show one at
+ * The Fleet sheets: the workspace invitation, the leave confirm and the Fleet notice. They are the Mentra App's standard alert sheet (`showAlert`), never a native alert, and show one at
  * a time through its queue.
  *
  * Invitations are fetched at startup and each time the app returns to the foreground. The sheets wait for
@@ -9,6 +8,12 @@
  * Words are verbatim from the Fleet design board (round 2); `UPDATE-2026-10-20.md` overrides older drawings.
  * Swiping the invitation away, its backdrop or Android back leave it for later: it shows again at the next app start,
  * and only Decline declines it. A sheet with only OK cannot be swiped.
+ *
+ * A person may belong to several workspaces, so joining never asks them to leave the one they are in. The phone is
+ * managed by one workspace: the one `mine` answers. When that is a real workspace, it keeps managing the phone after
+ * the join, and the invitation says so; when it is the person's own automatic workspace (or there is none), the
+ * workspace joined manages the phone, and the Fleet notice follows. Only an older Core still refuses a join while the
+ * person is in a workspace (`already_in_workspace`): the leave confirm then comes first, as before.
  */
 import {getFleetManagementState, onFleetManagementStateChanged} from "@mentra/engine-host-internal"
 import {useEffect} from "react"
@@ -184,43 +189,32 @@ export async function presentNotice(workspaceName: string): Promise<void> {
   })
 }
 
-const JOIN = 1
 const DECLINE = 0
 
 /**
- * The invitation. The main action is Join, or "Leave <current>" when the person is already in a workspace.
- * A swipe, the backdrop or Android back close it with no answer, for later.
+ * The workspace that keeps managing the phone if the person joins another: the one they are in, unless it is their
+ * own automatic workspace, which gives way to the workspace joined. Null when the workspace joined will manage it.
+ */
+export function keepsManaging(current: MyWorkspace | null): MyWorkspace | null {
+  return current !== null && current.automatic !== true ? current : null
+}
+
+/**
+ * The invitation, with Join as the main action. When the workspace joined will manage the phone, it says what that
+ * means and what the workspace can and can't see; when another workspace keeps managing the phone, it says that
+ * instead. A swipe, the backdrop or Android back close it with no answer, for later.
  */
 function presentInvitation(invitation: InvitationPreview, current: MyWorkspace | null): Promise<number> {
+  const keeper = keepsManaging(current)
   return present({
     title: translate("fleet:invitationTitle", {workspace: invitation.workspaceName}),
-    message: translate("fleet:invitationTerms"),
-    buttons: [
-      {text: translate("fleet:invitationDecline"), style: "cancel"},
-      {
-        text: current
-          ? translate("fleet:invitationLeaveCurrent", {current: current.name})
-          : translate("fleet:invitationJoin"),
-      },
-    ],
+    message: keeper
+      ? translate("fleet:invitationTermsKept", {current: keeper.name, workspace: invitation.workspaceName})
+      : translate("fleet:invitationTerms"),
+    buttons: [{text: translate("fleet:invitationDecline"), style: "cancel"}, {text: translate("fleet:invitationJoin")}],
     options: {
       icon: <WorkspaceTile name={invitation.workspaceName} />,
-      content: (
-        <View className="gap-4">
-          <SeeLists />
-          {current && (
-            <Text
-              text={translate("fleet:invitationLeaveFirst", {
-                current: current.name,
-                workspace: invitation.workspaceName,
-              })}
-              weight="semibold"
-              className="text-center text-[15px] text-secondary-foreground"
-              testID="fleet.leaveFirstRule"
-            />
-          )}
-        </View>
-      ),
+      ...(keeper ? {} : {content: <SeeLists />}),
       allowDismiss: true,
       dismissWithoutAnswer: true,
     },
@@ -231,6 +225,11 @@ function presentInvitation(invitation: InvitationPreview, current: MyWorkspace |
 
 function toast(key: "fleet:invitationExpired" | "fleet:somethingWentWrong"): void {
   Toast.show({type: "error", text1: translate(key)})
+}
+
+/** A join that leaves the phone with the workspace it had: no Fleet notice comes, so this says the join worked. */
+function toastJoined(workspaceName: string): void {
+  Toast.show({type: "success", text1: translate("fleet:joinedKept", {workspace: workspaceName})})
 }
 
 /** Asks Fleet for the desired state now. A failure is not the sheets' to report: the next ack catches up. */
@@ -299,8 +298,8 @@ export async function leaveWithConfirm(current: MyWorkspace): Promise<LeaveOutco
 }
 
 /**
- * One invitation, start to finish: ask, then join, decline, or leave first. The sheet shows again after a
- * refusal that the person can retry (a failed call, a cancelled leave).
+ * One invitation, start to finish: ask, then join or decline. The sheet shows again after a refusal that the person
+ * can retry (a failed call; against an older Core, a cancelled leave).
  */
 async function handleInvitation(invitation: InvitationPreview): Promise<void> {
   const api = getWorkspaceApi()
@@ -354,16 +353,13 @@ async function handleInvitation(invitation: InvitationPreview): Promise<void> {
       return
     }
 
-    if (answer === JOIN && current) {
-      if ((await leaveWithConfirm(current)) === "last_owner") await presentLastOwner()
-      continue
-    }
-
     try {
-      const joined = await api.accept(invitation.invitationId)
-      useMyWorkspaceStore.getState().set(joined)
-      // The notice follows Fleet's answer: it shows when the phone first hears `managed`.
+      // What `mine` answers once joined: the workspace that manages the phone now.
+      const managing = await api.accept(invitation.invitationId)
+      useMyWorkspaceStore.getState().set(managing)
+      // The notice follows Fleet's answer: it shows when the phone first hears `managed` for the workspace joined.
       refreshDesiredStateNow()
+      if (managing.workspaceId !== invitation.workspaceId) toastJoined(invitation.workspaceName)
       return
     } catch (error) {
       const code = workspaceErrorCode(error)
@@ -372,10 +368,14 @@ async function handleInvitation(invitation: InvitationPreview): Promise<void> {
         return
       }
       if (code === WORKSPACE_ERROR.alreadyInWorkspace) {
+        // An older Core allows one workspace: leave the current one first, then the sheet offers Join again.
         const mine = await getWorkspaceApi()
           .mine()
           .catch(() => null)
-        if (mine) useMyWorkspaceStore.getState().set(mine)
+        if (mine) {
+          useMyWorkspaceStore.getState().set(mine)
+          if ((await leaveWithConfirm(mine)) === "last_owner") await presentLastOwner()
+        }
         continue
       }
       toast("fleet:somethingWentWrong")

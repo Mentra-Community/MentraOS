@@ -12,11 +12,11 @@ const BOARD = {
   "fleet:invitationTerms": ["If you join, they manage your device and can install miniapps on your phone."],
   "fleet:invitationJoin": ["Join"],
   "fleet:invitationDecline": ["Decline"],
-  "fleet:invitationLeaveFirst": [
-    "You're in Northwind Labs. Leave it to join Ridgeline Field Services.",
+  "fleet:invitationTermsKept": [
+    "You'll stay in Northwind Labs, which keeps managing this phone. Ridgeline Field Services won't see it while Northwind Labs does.",
     {current: "Northwind Labs", workspace: "Ridgeline Field Services"},
   ],
-  "fleet:invitationLeaveCurrent": ["Leave Northwind Labs", {current: "Northwind Labs"}],
+  "fleet:joinedKept": ["You joined Ridgeline Field Services.", {workspace: "Ridgeline Field Services"}],
   "fleet:canSeeTitle": ["Your workspace can see"],
   "fleet:canSeeGlassesAndPhones": ["Your glasses and phones"],
   "fleet:canSeeMiniapps": ["Miniapps you use"],
