@@ -142,12 +142,12 @@ internal object MentraLiveOwnerLossPolicy {
     ): Boolean = pairingMode && savedGlasses && !explicitPairing
 
     /**
-     * A discovery scan lists other secure glasses that are not in pairing mode as non-pairable
-     * and does not connect to them. The saved glasses are the exception: the pause watch scan
-     * has to read their trailer, so a cleared pairing flag ends the pause and reconnects.
-     * Mirrors iOS, which skips this return when the advertisement is the saved device.
+     * A discovery scan neither lists nor connects to other secure glasses that are not in pairing
+     * mode. The saved glasses are the exception: the pause watch scan has to read their trailer,
+     * so a cleared pairing flag ends the pause and reconnects. Mirrors iOS, which skips this
+     * return when the advertisement is the saved device.
      */
-    fun shouldExposeAsNonPairable(
+    fun shouldIgnoreNotPairable(
             savedGlasses: Boolean,
             reconnectScan: Boolean,
             secureTrailer: Boolean,

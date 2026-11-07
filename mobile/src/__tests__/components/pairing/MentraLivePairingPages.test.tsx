@@ -40,17 +40,16 @@ describe("the stock Mentra Live pairing pages", () => {
     expect(controller.continueToScan).toHaveBeenCalled()
   })
 
-  it("lists glasses as Mentra Live rows that say when they are not in pairing mode", () => {
+  it("lists glasses as Mentra Live rows under the pairing-mode hint", () => {
     const {controller, getByText, getByLabelText} = renderPage({
       page: "scan",
       status: "choosing",
       scanning: true,
-      someNotInPairingMode: true,
-      glasses: [{id: "a", label: "E511", inPairingMode: false, device}],
+      glasses: [{id: "a", label: "E511", device}],
     })
     expect(getByText("Choose your glasses")).toBeTruthy()
-    expect(getByText("Enter pairing mode")).toBeTruthy()
-    fireEvent.press(getByLabelText("Mentra Live, E511 · Not in pairing mode"))
+    expect(getByText("Press the power button 3 times quickly to enter pairing mode.")).toBeTruthy()
+    fireEvent.press(getByLabelText("Mentra Live, E511"))
     expect(controller.select).toHaveBeenCalled()
   })
 
@@ -59,7 +58,6 @@ describe("the stock Mentra Live pairing pages", () => {
       page: "scan",
       status: "in_use",
       scanning: false,
-      someNotInPairingMode: false,
       glasses: [],
     })
     expect(stopped.getByText("Glasses may be in use")).toBeTruthy()
@@ -71,7 +69,6 @@ describe("the stock Mentra Live pairing pages", () => {
       page: "scan",
       status: "not_found",
       scanning: false,
-      someNotInPairingMode: false,
       glasses: [],
     })
     expect(empty.getByText("Not showing up?")).toBeTruthy()

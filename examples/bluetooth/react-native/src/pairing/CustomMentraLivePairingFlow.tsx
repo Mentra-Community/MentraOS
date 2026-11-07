@@ -155,13 +155,12 @@ export function CustomMentraLivePairingFlow({
 function GlassesRow({ onPress, row }: { onPress: () => void; row: CustomPairingRow }) {
   return (
     <Pressable
-      accessibilityLabel={`${row.label}, ${row.detail}`}
+      accessibilityLabel={row.label}
       accessibilityRole="button"
       onPress={onPress}
       style={({ pressed }) => [styles.row, pressed && styles.buttonPressed]}
     >
       <Text style={styles.rowLabel}>{row.label}</Text>
-      <Text style={row.ready ? styles.rowReady : styles.rowNotReady}>{row.detail}</Text>
     </Pressable>
   );
 }
@@ -290,8 +289,6 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   rowLabel: { color: colors.ink, fontSize: 16, fontWeight: "600" },
-  rowReady: { color: colors.greenDeep, fontSize: 13 },
-  rowNotReady: { color: colors.amber, fontSize: 13 },
   actions: { gap: 10 },
   button: {
     alignItems: "center",

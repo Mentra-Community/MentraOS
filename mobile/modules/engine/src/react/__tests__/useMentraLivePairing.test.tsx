@@ -171,15 +171,24 @@ describe("useMentraLivePairing", () => {
 
   test("lists glasses by their code and never auto-connects one", async () => {
     await renderFlow()
-    await emitResults([live("MENTRA_LIVE_BLE_E511", {pairingMode: false, securePairingCapable: true})])
-    expect(controller.state).toMatchObject({
-      page: "scan",
-      status: "choosing",
-      someNotInPairingMode: true,
-      glasses: [{label: "E511", inPairingMode: false}],
-    })
+    await emitResults([live("MENTRA_LIVE_BLE_E511", {pairingMode: true, securePairingCapable: true})])
+    expect(controller.state).toMatchObject({page: "scan", status: "choosing", glasses: [{label: "E511"}]})
     await advance(20_000)
     expect(fakePairing.pair).not.toHaveBeenCalled()
+  })
+
+  test("drops glasses the native list drops, but keeps the list across a rescan", async () => {
+    await renderFlow()
+    await emitResults([live("MENTRA_LIVE_BLE_E511"), live("MENTRA_LIVE_BLE_B2C4")])
+    await advance(45_000)
+    // The rescan empties the native list, then glasses advertise again one by one.
+    await emitResults([])
+    await emitResults([live("MENTRA_LIVE_BLE_B2C4")])
+    expect(controller.state).toMatchObject({glasses: [{label: "E511"}, {label: "B2C4"}]})
+    // E511's window closed, so it never advertises again: it leaves once the grace ends, with no further results.
+    await advance(5_000)
+    expect(controller.state).toMatchObject({glasses: [{label: "B2C4"}]})
+    expect((controller.state as {glasses: unknown[]}).glasses).toHaveLength(1)
   })
 
   test("rescans every 45 seconds while glasses are listed", async () => {

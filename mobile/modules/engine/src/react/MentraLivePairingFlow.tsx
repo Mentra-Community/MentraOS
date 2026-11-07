@@ -118,19 +118,13 @@ const ENGLISH_COPY: Record<string, string> = {
     "Matching glasses are already connected to this phone. If another app is using them, disconnect them there, then scan again.",
   "pairing:liveScanHelpInfo": "Make sure your glasses are charged and powered on.",
   "pairing:liveUpdatedGlassesHint": "Already updated your glasses?",
-  "pairing:livePairingModeInfo":
-    "New glasses enter pairing mode on their own once they finish starting up. Otherwise, press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
+  "pairing:livePairingModeInfo": "Press the power button 3 times quickly to enter pairing mode.",
   "pairing:livePairingScanPowerOn": "Turn your glasses on: hold the power button for 5 seconds.",
-  "pairing:livePairingScanBody": "Press the power button 3 times quickly. Your glasses will say a 4-character code.",
+  "pairing:livePairingScanBody": "Press the power button 3 times quickly to enter pairing mode.",
   "pairing:livePairingScanSearching": "Looking for your glasses",
   "pairing:noGlassesFoundHint": "Make sure you pressed the power button 3 times quickly, then try again.",
-  "pairing:notInPairingModeLabel": "Not in pairing mode",
-  "pairing:notInPairingModeAlertTitle": "Enter pairing mode",
-  "pairing:notInPairingModeAlertMessage":
-    "Press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code. Then select the glasses again.",
   "pairing:liveChooseGlassesHintTitle": "Not on the list?",
-  "pairing:liveChooseGlassesHint":
-    "Turn your glasses on, then press the power button 3 times quickly to enter pairing mode.",
+  "pairing:liveChooseGlassesHint": "Press the power button 3 times quickly to enter pairing mode.",
   "pairing:scanAgain": "Scan Again",
   "pairing:tryAgain": "Try Again",
   "pairing:needMoreHelp": "I need more help",
@@ -312,20 +306,15 @@ function ScanPage({context, state}: {context: PageContext; state: Extract<Mentra
             translate("pairing:livePairingScanTitle")
   const list = (maxHeight: number, marginVertical: number) => (
     <ScrollView style={{maxHeight}} contentContainerStyle={[styles.list, {marginVertical}]}>
-      {state.glasses.map((item) => {
-        const subtitle = item.inPairingMode
-          ? item.label
-          : `${item.label} · ${translate("pairing:notInPairingModeLabel")}`
-        return (
-          <GlassesRow
-            colors={colors}
-            key={item.id}
-            onPress={() => controller.select(item)}
-            subtitle={subtitle}
-            title={MODEL_NAME}
-          />
-        )
-      })}
+      {state.glasses.map((item) => (
+        <GlassesRow
+          colors={colors}
+          key={item.id}
+          onPress={() => controller.select(item)}
+          subtitle={item.label}
+          title={MODEL_NAME}
+        />
+      ))}
     </ScrollView>
   )
 
@@ -380,15 +369,9 @@ function ScanPage({context, state}: {context: PageContext; state: Extract<Mentra
         {list(300, 16)}
         <View style={[styles.hint, {backgroundColor: colors.background}]}>
           <Text style={[styles.hintTitle, {color: colors.foreground}]}>
-            {translate(
-              state.someNotInPairingMode ? "pairing:notInPairingModeAlertTitle" : "pairing:liveChooseGlassesHintTitle",
-            )}
+            {translate("pairing:liveChooseGlassesHintTitle")}
           </Text>
-          <Text style={[styles.small, {color: colors.foreground}]}>
-            {translate(
-              state.someNotInPairingMode ? "pairing:notInPairingModeAlertMessage" : "pairing:liveChooseGlassesHint",
-            )}
-          </Text>
+          <Text style={[styles.small, {color: colors.foreground}]}>{translate("pairing:liveChooseGlassesHint")}</Text>
         </View>
       </>
     )

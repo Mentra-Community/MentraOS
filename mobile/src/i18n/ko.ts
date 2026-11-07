@@ -58,20 +58,15 @@ const ko = {
   pairing: {
     ...en.pairing,
     livePairingScanTitle: "안경을 페어링 모드로 전환하세요",
-    livePairingScanBody: "전원 버튼을 빠르게 3번 누르세요. 안경이 4자리 코드를 읽어 줍니다.",
+    livePairingScanBody: "전원 버튼을 빠르게 3번 눌러 페어링 모드로 전환하세요.",
     livePairingScanSearching: "안경을 찾는 중",
     pairingModeAlertTitle: "안경이 페어링 모드입니다",
     pairingModeAlertBody: "종료하려면 전원 버튼을 3번 누르세요.",
     nearbyNotInPairingModeHint:
       "근처에 Mentra Live 안경이 있지만 페어링 모드가 아닙니다. 전원 버튼을 빠르게 3번 누른 뒤 다시 시도하세요.",
-    notInPairingModeLabel: "페어링 모드가 아님",
-    notInPairingModeAlertTitle: "페어링 모드 시작",
-    notInPairingModeAlertMessage:
-      "전원 버튼을 빠르게 3번 누르세요. LED가 깜빡이고 안경이 4자리 코드를 말합니다. 그런 다음 안경을 다시 선택하세요.",
     pairingCodeLabel: "코드 {{code}}",
     legacyFirmwareLabel: "레거시 펌웨어",
-    livePairingModeInfo:
-      "전원 버튼을 빠르게 3번 누르세요. LED가 깜빡이고 안경이 4자리 코드(0–9, A–F)를 말합니다. 여러 대가 보이면 그 코드로 확인하세요.",
+    livePairingModeInfo: "전원 버튼을 빠르게 3번 눌러 페어링 모드로 전환하세요.",
     noGlassesFoundHint: "전원 버튼을 빠르게 3번 눌렀는지 확인한 뒤 다시 시도하세요.",
   },
   onboarding: {

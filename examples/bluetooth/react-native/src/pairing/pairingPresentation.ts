@@ -15,10 +15,8 @@ export type CustomPairingButton = {
 };
 
 export type CustomPairingRow = {
-  detail: string;
   glasses: MentraLivePairingGlasses;
   label: string;
-  ready: boolean;
 };
 
 export type CustomPairingPresentation = {
@@ -44,10 +42,8 @@ const failureMessages: Record<string, string> = {
 
 function scanRows(glasses: MentraLivePairingGlasses[]): CustomPairingRow[] {
   return glasses.map((item) => ({
-    detail: item.inPairingMode ? 'Ready to pair' : 'Press the power button 3 times',
     glasses: item,
     label: `Mentra Live ${item.label}`,
-    ready: item.inPairingMode,
   }));
 }
 
@@ -58,16 +54,14 @@ function scanPresentation(
     case 'searching':
       return {
         indeterminate: true,
-        message: 'Press the power button 3 times quickly. Your glasses will say a 4-character code.',
+        message: 'Press the power button 3 times quickly to enter pairing mode.',
         secondary: {action: 'back', label: 'Cancel'},
         title: 'Looking for Mentra Live',
         tone: 'active',
       };
     case 'choosing':
       return {
-        detail: state.someNotInPairingMode
-          ? 'Glasses that are not in pairing mode: press their power button 3 times quickly, then select them.'
-          : 'Match the code your glasses say.',
+        detail: 'Match the code your glasses say.',
         indeterminate: state.scanning,
         primary: state.scanning ? undefined : {action: 'scanAgain', label: 'Scan again'},
         rows: scanRows(state.glasses),

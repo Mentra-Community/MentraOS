@@ -229,8 +229,7 @@ const en = {
       "Your glasses are connected to the app, but the Bluetooth audio device is not connected.",
     powerOn: "Power on",
     poweredOn: "Continue",
-    livePairingModeInfo:
-      "New glasses enter pairing mode on their own once they finish starting up. Otherwise, press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
+    livePairingModeInfo: "Press the power button 3 times quickly to enter pairing mode.",
     livePairingFoundTitle: "Glasses found",
     livePairingFoundSubtitle: "Put them in pairing mode to continue.",
     liveScanHelpTitle: "Not showing up?",
@@ -238,10 +237,10 @@ const en = {
     liveUpdatedGlassesHint: "Already updated your glasses?",
     liveChooseGlassesTitle: "Choose your glasses",
     liveChooseGlassesHintTitle: "Not on the list?",
-    liveChooseGlassesHint: "Turn your glasses on, then press the power button 3 times quickly to enter pairing mode.",
+    liveChooseGlassesHint: "Press the power button 3 times quickly to enter pairing mode.",
     livePairingScanTitle: "Put your glasses in pairing mode",
     livePairingScanPowerOn: "Turn your glasses on: hold the power button for 5 seconds.",
-    livePairingScanBody: "Press the power button 3 times quickly. Your glasses will say a 4-character code.",
+    livePairingScanBody: "Press the power button 3 times quickly to enter pairing mode.",
     livePairingScanSearching: "Looking for your glasses",
     pairingModeAlertTitle: "Your glasses are in pairing mode",
     pairingModeAlertBody: "Press the power button 3 times to exit.",
@@ -253,10 +252,6 @@ const en = {
     noGlassesFoundHint: "Make sure you pressed the power button 3 times quickly, then try again.",
     nearbyNotInPairingModeHint:
       "Nearby Mentra Live glasses were found, but they are not in pairing mode. Press the power button 3 times quickly, then try again.",
-    notInPairingModeLabel: "Not in pairing mode",
-    notInPairingModeAlertTitle: "Enter pairing mode",
-    notInPairingModeAlertMessage:
-      "Press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code. Then select the glasses again.",
     tryAgain: "Try Again",
     pairingCodeLabel: "Code {{code}}",
     legacyFirmwareLabel: "Legacy software",

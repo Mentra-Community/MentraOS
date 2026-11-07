@@ -129,10 +129,7 @@ function ScanPage({state, controller}: MentraLivePairingPageProps<"scan">) {
     <View>
       {state.glasses.map((glasses: MentraLivePairingGlasses) => (
         <Pressable key={glasses.id} onPress={() => controller.select(glasses)}>
-          <Text>
-            Mentra Live {glasses.label}
-            {glasses.inPairingMode ? "" : " · press the power button 3 times"}
-          </Text>
+          <Text>Mentra Live {glasses.label}</Text>
         </Pressable>
       ))}
       {!state.scanning && (

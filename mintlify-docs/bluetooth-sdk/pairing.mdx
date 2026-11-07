@@ -14,8 +14,8 @@ Settings blocks a new one until the person forgets it.
 For React Native apps, Mentra Engine owns that whole sequence, the same one the
 Mentra App runs:
 
-- the scan, with glasses that are not in pairing mode marked, and a rescan so
-  the list never goes stale;
+- the scan, which lists only glasses that can pair now, and a rescan so the
+  list never goes stale;
 - adopting glasses this phone already bonded, without asking for pairing mode;
 - connecting, waiting for the glasses to boot and become ready;
 - **Pair Audio** when audio needs the person, and cancelling it, which unpairs
@@ -146,10 +146,7 @@ function ScanPage({state, controller}: MentraLivePairingPageProps<"scan">) {
     <View>
       {state.glasses.map((glasses: MentraLivePairingGlasses) => (
         <Pressable key={glasses.id} onPress={() => controller.select(glasses)}>
-          <Text>
-            Mentra Live {glasses.label}
-            {glasses.inPairingMode ? "" : " · press the power button 3 times"}
-          </Text>
+          <Text>Mentra Live {glasses.label}</Text>
         </Pressable>
       ))}
       {!state.scanning && (
@@ -245,10 +242,8 @@ glasses rows and buttons. The scan page, for example:
 ```ts
 function scanRows(glasses: MentraLivePairingGlasses[]): CustomPairingRow[] {
   return glasses.map((item) => ({
-    detail: item.inPairingMode ? 'Ready to pair' : 'Press the power button 3 times',
     glasses: item,
     label: `Mentra Live ${item.label}`,
-    ready: item.inPairingMode,
   }));
 }
 ```
@@ -277,7 +272,7 @@ stores, or Engine services.
 | Page | State | Actions |
 | --- | --- | --- |
 | `prep` | none | `continueToScan()` runs `prepareScan`, then opens the scan. `back()` leaves. |
-| `scan` | `status`: `"searching"`, `"choosing"`, `"not_found"` or `"in_use"`. `scanning`: false once the scan gave up. `glasses`: the list. `someNotInPairingMode`. | `select(glasses)` pairs them. `scanAgain()` starts over. `back()` returns to prep, or leaves when the flow started on the scan. |
+| `scan` | `status`: `"searching"`, `"choosing"`, `"not_found"` or `"in_use"`. `scanning`: false once the scan gave up. `glasses`: the list. | `select(glasses)` pairs them. `scanAgain()` starts over. `back()` returns to prep, or leaves when the flow started on the scan. |
 | `connecting` | `device`, `booting` (the glasses are still starting up) | `back()` abandons the attempt and returns to the scan. |
 | `pair_audio` | `deviceName`, `canCancel` (true during an attempt), `otherAudioConnected` | `openBluetoothSettings()`. `cancelPairing()` when `canCancel`: unpairs the glasses and resolves `false` if that failed. The flow continues on its own once audio connects. |
 | `forget_ios_pairing` | `deviceName` | `openBluetoothSettings()`. Returning to the app from Settings, or `back()`, returns to the scan, or leaves a standalone entry. |
@@ -286,12 +281,10 @@ stores, or Engine services.
 
 Each scan row is a `MentraLivePairingGlasses`: `id`, `label` (the Bluetooth
 name without its model prefix, for example `E511`, which matches the code the
-glasses speak), `inPairingMode` (false only when the glasses support secure
-pairing and say their window is closed), and the SDK `device`.
-
-Show `scan` rows that are not in pairing mode, so the person can press the
-power button three times and pick them. `pair_audio` and `success` have no
-`back()`: give them their own buttons.
+glasses speak), and the SDK `device`. The list holds only glasses that can pair
+now: in pairing mode, or older firmware that always pairs. Glasses leave it when
+their window closes. `pair_audio` and `success` have no `back()`: give them
+their own buttons.
 
 ## Native Android And iOS Apps
 

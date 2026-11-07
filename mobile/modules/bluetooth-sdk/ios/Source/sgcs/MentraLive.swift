@@ -786,26 +786,8 @@ extension MentraLive: CBCentralManagerDelegate {
             if !isReconnectTarget && advertisesPairingFlag(advertisementData)
                 && !isPairingDiscoverable(advertisementData)
             {
-                // Keep nearby secure units visible with pairing-mode guidance, while RN blocks
-                // the connection until a pairable advertisement arrives.
-                pairFlow(
-                    "discover",
-                    "name=\(name) id=\(peripheral.identifier.uuidString) saved=\(savedDeviceName ?? "-") pairingMode=false secure=true connect=false"
-                )
-                discoveredPeripherals[name] = peripheral
-                rememberPeripheral(peripheral, name: name)
-                if cacheAdvPairing(
-                    name,
-                    pairingMode: false,
-                    pairingCode: nil,
-                    securePairingCapable: true
-                ) {
-                    emitDiscoveredDeviceFromCache(
-                        name,
-                        identifier: peripheral.identifier.uuidString,
-                        rssi: rssi?.intValue
-                    )
-                }
+                // Only glasses that can pair now are listed; a closed window drops them.
+                unlistNotPairable(name)
                 return
             }
 
@@ -831,11 +813,13 @@ extension MentraLive: CBCentralManagerDelegate {
             discoveredPeripherals[name] = peripheral
             rememberPeripheral(peripheral, name: name)
 
-            if !partialAdvertisement, cacheAdvPairing(
+            if trailer.secureCapable && !trailer.pairingMode {
+                unlistNotPairable(name)
+            } else if !partialAdvertisement, cacheAdvPairing(
                 name,
                 // Field firmware has no pairing flag. Treat it as pairable so the
                 // new Mentra App can still find old glasses.
-                pairingMode: trailer.secureCapable ? trailer.pairingMode : true,
+                pairingMode: true,
                 pairingCode: trailer.pairingCode,
                 securePairingCapable: trailer.secureCapable
             ) {
@@ -2925,7 +2909,7 @@ class MentraLive: NSObject, SGCManager {
 
         // The choose-glasses scan has to hear a later advertisement when the glasses
         // enter pairing mode. iOS reports each peripheral once unless duplicates are
-        // allowed, so the row would stay "Not in pairing mode". Reconnect scans stay
+        // allowed, so the glasses would stay off the list. Reconnect scans stay
         // duplicate-free so a saved glasses advertisement cannot start another connect.
         let scanOptions: [String: Any] = [
             CBCentralManagerScanOptionAllowDuplicatesKey: manualDiscoveryActive,
@@ -6939,6 +6923,14 @@ class MentraLive: NSObject, SGCManager {
         }
         discoveredAdvPairing[name] = next
         return true
+    }
+
+    /// Drops glasses that are not in pairing mode from the search results, once per change, so the
+    /// next pairable advertisement lists them again.
+    private func unlistNotPairable(_ name: String) {
+        if cacheAdvPairing(name, pairingMode: false, pairingCode: nil, securePairingCapable: true) {
+            Bridge.removeDiscoveredDevice("Mentra Live", name)
+        }
     }
 
     private func emitDiscoveredDeviceFromCache(

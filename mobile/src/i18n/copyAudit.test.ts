@@ -86,9 +86,7 @@ describe("pairing copy audit", () => {
 
   it("keeps the exact English copy for the new screens", () => {
     expect(en.pairing.livePairingScanTitle).toBe("Put your glasses in pairing mode")
-    expect(en.pairing.livePairingScanBody).toBe(
-      "Press the power button 3 times quickly. Your glasses will say a 4-character code.",
-    )
+    expect(en.pairing.livePairingScanBody).toBe("Press the power button 3 times quickly to enter pairing mode.")
     expect(en.pairing.livePairingScanSearching).toBe("Looking for your glasses")
     expect(en.pairing.pairingModeAlertTitle).toBe("Your glasses are in pairing mode")
     expect(en.pairing.pairingModeAlertBody).toBe("Press the power button 3 times to exit.")
