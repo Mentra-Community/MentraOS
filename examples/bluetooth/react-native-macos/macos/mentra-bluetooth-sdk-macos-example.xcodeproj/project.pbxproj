@@ -359,7 +359,7 @@
 					"-lc++",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
-				PRODUCT_BUNDLE_IDENTIFIER = com.mentra.bluetoothsdk.example.reactnative.macos;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mentra.bluetoothsdkexample.rnmacos;
 				PRODUCT_NAME = "mentra-bluetooth-sdk-macos-example";
 				SDKROOT = macosx;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -386,7 +386,7 @@
 					"-lc++",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
-				PRODUCT_BUNDLE_IDENTIFIER = com.mentra.bluetoothsdk.example.reactnative.macos;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mentra.bluetoothsdkexample.rnmacos;
 				PRODUCT_NAME = "mentra-bluetooth-sdk-macos-example";
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;

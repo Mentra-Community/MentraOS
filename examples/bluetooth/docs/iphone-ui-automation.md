@@ -52,12 +52,8 @@ Use the identifier matching your installation:
 
 | App | Bundle identifier |
 | --- | --- |
-| React Native from TestFlight | `com.mentra.bluetoothsdkexample` |
-| React Native built from this repository | `com.mentra.bluetoothsdk.example.reactnative` |
+| React Native (TestFlight, or built from this repository) | `com.mentra.bluetoothsdkexample` |
 | Native SwiftUI iOS example | `com.mentra.bluetoothsdk.example.ios` |
-
-The coordinated TestFlight workflow overrides the React Native source bundle
-identifier when building its release; these are intentionally different apps.
 
 Use the returned `sessionId` with `GET /session/<id>/source` to retrieve XML
 accessibility data. `POST /session/<id>/wda/tap` accepts `{"x":125,"y":800}`

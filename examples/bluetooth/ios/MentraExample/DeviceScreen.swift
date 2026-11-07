@@ -114,8 +114,8 @@ struct DeviceScreen: View {
 
     private var quickActions: some View {
         let connected = model.glassesConnected
-        let canConnect = !connected && canConnectTarget(model: model)
-        let hasDefaultTarget = hasSavedConnectionTarget(model.bluetoothValues)
+        // Paired: glasses the SDK keeps as its default device, connected or not.
+        let paired = connected || hasSavedConnectionTarget(model.bluetoothValues)
         let displaySupported = connected && supportsDisplay(model.glassesValues)
         let otaWifiRequired = connected && !model.glassesWifiConnected
         let otaInProgress = isOtaInProgress(model: model)
@@ -133,71 +133,68 @@ struct DeviceScreen: View {
             }
             .padding(.bottom, 16)
 
-            scanModelPicker
-                .padding(.bottom, 12)
+            if !paired {
+                scanModelPicker
+                    .padding(.bottom, 12)
+            }
 
-            targetPicker
+            targetPicker(paired: paired)
                 .padding(.bottom, 12)
 
             VStack(spacing: 8) {
+                // Scan, then Connect/Disconnect once paired; Pair/Unpair keeps the second slot.
                 HStack(spacing: 8) {
-                    DarkActionButton(icon: "magnifyingglass", title: "Scan", bg: Color(hex: 0x0E2C1A), enabled: !connected, action: model.startScan)
-                    DarkActionButton(icon: "link", title: connected ? "Connected" : "Connect", bg: AppColor.greenPrimary, enabled: canConnect, action: model.connect)
+                    if connected {
+                        let disconnecting = model.activeAction == "Disconnect"
+                        Button {
+                            model.disconnect()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "wifi.slash").foregroundColor(.white).font(.system(size: 14, weight: .bold))
+                                Text(disconnecting ? "Disconnecting" : "Disconnect").foregroundColor(.white).font(.system(size: 13, weight: .semibold))
+                            }
+                            .frame(maxWidth: .infinity).padding(.vertical, 14)
+                            .background(LinearGradient(colors: [Color(hex: 0xDE3A30), Color(hex: 0xC43B30)], startPoint: .top, endPoint: .bottom))
+                            .clipShape(RoundedRectangle(cornerRadius: 18))
+                        }
+                        .disabled(disconnecting)
+                    } else if paired {
+                        DarkActionButton(icon: "link", title: "Connect", bg: AppColor.greenPrimary, enabled: true, action: model.connect)
+                    } else {
+                        DarkActionButton(icon: "magnifyingglass", title: "Scan", bg: Color(hex: 0x0E2C1A), enabled: true, action: model.startScan)
+                    }
+                    if paired {
+                        LightActionButton(icon: "trash", title: "Unpair", enabled: true, action: model.unpair)
+                    } else {
+                        DarkActionButton(icon: "link", title: "Pair", bg: AppColor.greenPrimary, enabled: model.selectedDiscoveredDevice != nil, action: model.pair)
+                    }
                 }
-                HStack(spacing: 8) {
-                    LightActionButton(icon: "display", title: "Display Hello", enabled: displaySupported, action: model.displayHello)
-                    LightActionButton(icon: "display.slash", title: "Clear Display", enabled: displaySupported, action: model.clearDisplay)
+                if displaySupported {
+                    HStack(spacing: 8) {
+                        LightActionButton(icon: "display", title: "Display Hello", enabled: true, action: model.displayHello)
+                        LightActionButton(icon: "display.slash", title: "Clear Display", enabled: true, action: model.clearDisplay)
+                    }
                 }
                 HStack(spacing: 8) {
                     LightActionButton(icon: "arrow.triangle.2.circlepath", title: otaWifiRequired ? "Connect Wi-Fi" : "Check OTA", enabled: canCheckOta, action: model.checkForOtaUpdate)
                     LightActionButton(icon: "arrow.down.to.line", title: model.otaStartPending ? "Starting OTA..." : "Start OTA", enabled: canStartOta(model: model), action: model.startOtaUpdate)
-                }
-                HStack(spacing: 8) {
-                    LightActionButton(icon: "trash", title: "Clear Default", enabled: hasDefaultTarget, action: model.clearDefaultDevice)
-                    let disconnecting = model.activeAction == "Disconnect"
-                    Button {
-                        model.disconnect()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "wifi.slash").foregroundColor(.white).font(.system(size: 14, weight: .bold))
-                            Text(disconnecting ? "Disconnecting" : "Disconnect").foregroundColor(.white).font(.system(size: 13, weight: .semibold))
-                        }
-                        .frame(maxWidth: .infinity).padding(.vertical, 14)
-                        .background(LinearGradient(colors: [Color(hex: 0xDE3A30), Color(hex: 0xC43B30)], startPoint: .top, endPoint: .bottom))
-                        .clipShape(RoundedRectangle(cornerRadius: 18))
-                    }
-                    .disabled(!connected || disconnecting)
-                    .opacity(connected ? 1 : 0.45)
-                }
-                if connected && !supportsDisplay(model.glassesValues) {
-                    DisplayCapabilityNotice(text: "\(modelLabel(model.glassesValues)) has no display, so display commands are disabled.")
                 }
             }
         }
     }
 
     private var scanModelPicker: some View {
-        let connected = model.glassesConnected
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("SCAN MODEL")
-                    .font(.system(size: 10, weight: .semibold).monospaced())
-                    .tracking(1.4)
-                    .foregroundColor(AppColor.inkAlt.opacity(0.45))
-                Spacer()
-                if connected {
-                    Text("Disconnect to change")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(AppColor.muted)
-                }
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            Text("SCAN MODEL")
+                .font(.system(size: 10, weight: .semibold).monospaced())
+                .tracking(1.4)
+                .foregroundColor(AppColor.inkAlt.opacity(0.45))
 
             HStack(spacing: 8) {
                 ForEach(scanModelOptions, id: \.self) { scanModel in
                     ScanModelChip(
                         model: scanModel,
-                        active: model.selectedScanModel == scanModel,
-                        enabled: !connected
+                        active: model.selectedScanModel == scanModel
                     ) {
                         model.selectScanModel(scanModel)
                     }
@@ -206,15 +203,15 @@ struct DeviceScreen: View {
         }
     }
 
-    private var targetPicker: some View {
+    private func targetPicker(paired: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(model.glassesConnected ? "Connected device" : "Connection target")
+                Text(model.glassesConnected ? "Connected device" : paired ? "Paired glasses" : "Choose glasses")
                     .font(.system(size: 10, weight: .semibold).monospaced())
                     .tracking(1.4)
                     .foregroundColor(AppColor.inkAlt.opacity(0.45))
                 Spacer()
-                if !model.glassesConnected, !model.discoveredDevices.isEmpty {
+                if !paired, !model.discoveredDevices.isEmpty {
                     Text("\(model.discoveredDevices.count) found")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(AppColor.greenDeep)
@@ -229,12 +226,7 @@ struct DeviceScreen: View {
                     enabled: false,
                     action: {}
                 )
-            } else if model.discoveredDevices.isEmpty, let hint = model.scanHint {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Glasses may be in use").font(.subheadline.weight(.semibold))
-                    Text(hint).font(.subheadline).foregroundStyle(AppColor.muted)
-                }
-            } else if model.discoveredDevices.isEmpty, hasSavedConnectionTarget(model.bluetoothValues) {
+            } else if paired {
                 TargetDeviceRow(
                     name: savedConnectionTargetName(model.bluetoothValues),
                     detail: savedConnectionTargetDetail(model.bluetoothValues),
@@ -242,10 +234,15 @@ struct DeviceScreen: View {
                     enabled: false,
                     action: {}
                 )
+            } else if model.discoveredDevices.isEmpty, let hint = model.scanHint {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Glasses may be in use").font(.subheadline.weight(.semibold))
+                    Text(hint).font(.subheadline).foregroundStyle(AppColor.muted)
+                }
             } else if model.discoveredDevices.isEmpty {
                 TargetDeviceRow(
                     name: "Scan required",
-                    detail: "No saved default target yet. Scan to choose nearby glasses.",
+                    detail: "Nothing paired yet. Scan, choose glasses, then Pair.",
                     selected: false,
                     enabled: false,
                     action: {}
@@ -543,15 +540,9 @@ private func connectionTargetLabel(model: BluetoothViewModel) -> String {
     return "Scan required"
 }
 
-@MainActor
-private func canConnectTarget(model: BluetoothViewModel) -> Bool {
-    model.selectedDiscoveredDevice != nil || !model.discoveredDevices.isEmpty || hasSavedConnectionTarget(model.bluetoothValues)
-}
-
 struct ScanModelChip: View {
     let model: DeviceModel
     let active: Bool
-    let enabled: Bool
     let action: () -> Void
 
     var body: some View {
@@ -571,8 +562,6 @@ struct ScanModelChip: View {
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.45)
     }
 }
 
@@ -614,28 +603,6 @@ struct TargetDeviceRow: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-    }
-}
-
-struct DisplayCapabilityNotice: View {
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "info.circle.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(AppColor.greenPrimary)
-                .padding(.top, 1)
-            Text(text)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(AppColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(AppColor.greenSoft.opacity(0.18))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 

@@ -30,7 +30,7 @@ Symptoms when building an example app to a physical iPhone with automatic signin
 
 Cause:
 
-The committed bundle identifiers (`com.mentra.bluetoothsdk.example.reactnative` and `com.mentra.bluetoothsdk.example.ios`) are registered to Mentra's Apple Developer team. Apple App IDs are globally unique, so no other team can register them. The example needs Wi-Fi entitlements that a wildcard profile cannot carry, so Xcode must register an explicit App ID under your team, and that step fails. This is not a local provisioning problem, and a fully enrolled paid membership does not change it. Simulator builds are unaffected because they are not signed.
+The committed bundle identifiers (`com.mentra.bluetoothsdkexample` and `com.mentra.bluetoothsdk.example.ios`) are registered to Mentra's Apple Developer team. Apple App IDs are globally unique, so no other team can register them. The example needs Wi-Fi entitlements that a wildcard profile cannot carry, so Xcode must register an explicit App ID under your team, and that step fails. This is not a local provisioning problem, and a fully enrolled paid membership does not change it. Simulator builds are unaffected because they are not signed.
 
 Fix:
 

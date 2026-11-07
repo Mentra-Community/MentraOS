@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-app="$PWD/build/Mentra SDK Mac.app"
+app="$PWD/build/Mentra Bluetooth Example macOS.app"
 if ps -axww -o command= | awk -v executable="$app/Contents/MacOS/MentraMacExample" '$0 == executable || index($0, executable " ") == 1 { found = 1 } END { exit !found }'; then
   printf 'Quit the running example at %s before rebuilding.\n' "$app" >&2
   exit 1

@@ -3,7 +3,7 @@
 <plist version="1.0"><dict>
   <key>CFBundleExecutable</key><string>MentraMacExample</string>
   <key>CFBundleIdentifier</key><string>com.mentra.bluetoothsdk.example.macos</string>
-  <key>CFBundleName</key><string>Mentra SDK Mac</string>
+  <key>CFBundleName</key><string>Mentra Bluetooth Example macOS</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>1</string>

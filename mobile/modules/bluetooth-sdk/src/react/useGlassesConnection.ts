@@ -34,7 +34,7 @@ export type UseGlassesConnectionOptions = {
 export type GlassesConnectionHookResult = BluetoothStatusHookResult & {
   action: GlassesConnectionAction
   busy: boolean
-  clearDefaultDevice: () => Promise<void>
+  unpair: () => Promise<void>
   connect: (device?: Device, options?: ConnectOptions) => Promise<void>
   connectDefault: (options?: ConnectOptions) => Promise<void>
   defaultDevice: Device | null
@@ -152,9 +152,9 @@ export function useGlassesConnection(
     })
   }
 
-  async function clearDefaultDevice() {
+  async function unpair() {
     await runConnectionAction("forgetting", async () => {
-      await BluetoothSdk.clearDefaultDevice()
+      await BluetoothSdk.unpair()
       await defaultDeviceStorageRef.current?.save(null)
       setDefaultDeviceState(null)
       scan.selectDevice(null)
@@ -201,7 +201,7 @@ export function useGlassesConnection(
     ...status,
     action: scan.scanning ? "scanning" : action,
     busy,
-    clearDefaultDevice,
+    unpair,
     connect,
     connectDefault,
     defaultDevice,

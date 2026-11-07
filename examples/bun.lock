@@ -226,6 +226,7 @@
         "expo-linear-gradient": "~55.0.14",
         "expo-location": "~55.1.10",
         "expo-notifications": "~55.0.23",
+        "expo-secure-store": "~55.0.14",
         "expo-splash-screen": "~55.0.21",
         "expo-task-manager": "~55.0.16",
         "expo-video": "~55.0.17",

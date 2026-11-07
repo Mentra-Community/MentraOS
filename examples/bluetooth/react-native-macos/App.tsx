@@ -14,6 +14,8 @@ export default function App() {
   const action = useRef<AbortController | null>(null);
   const [otaStatus, setOtaStatus] = useState<OtaStatusEvent>();
   const connected = session.glasses.connected;
+  // Paired: the glasses the SDK saved as its default, connected or not.
+  const paired = connected || Boolean(session.defaultDevice);
   const ready = session.glasses.ready;
 
   useEffect(() => {
@@ -89,11 +91,22 @@ export default function App() {
 
   return (
     <ScrollView style={styles.window} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Mentra SDK Mac</Text>
+      <Text style={styles.title}>Mentra Bluetooth Example RN macOS</Text>
       <Text selectable>{connected ? 'Connected' : 'Disconnected'}</Text>
       <View style={styles.row}>
-        <Button title="Scan" disabled={busy || connected} onPress={() => void run('Scanning...', scan)} />
-        <Button title="Disconnect" disabled={!connected || busy} onPress={() => void run('Disconnecting...', () => BluetoothSdk.disconnect())} />
+        {paired ? (
+          <>
+            <Button title="Unpair" disabled={busy} onPress={() => void run('Unpairing...', () => session.unpair())} />
+            {connected ? (
+              <Button title="Disconnect" disabled={busy} onPress={() => void run('Disconnecting...', () => BluetoothSdk.disconnect())} />
+            ) : (
+              <Button title="Connect" disabled={busy} onPress={() => void run('Connecting...', () => session.connectDefault())} />
+            )}
+          </>
+        ) : (
+          // Pair: scan, then connect to one of the glasses found.
+          <Button title="Pair" disabled={busy} onPress={() => void run('Scanning...', scan)} />
+        )}
         {busy && <ActivityIndicator />}
       </View>
       {devices.map(device => (

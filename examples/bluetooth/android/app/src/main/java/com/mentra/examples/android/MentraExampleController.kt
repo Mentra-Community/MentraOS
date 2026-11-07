@@ -522,22 +522,16 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
     }
 
-    fun connect() = runAction("Connect") {
+    // Pairing is scan and choose: connecting to the chosen glasses saves them as the SDK's default device.
+    fun pair() = runAction("Pair") {
+        val device = state.selectedDiscoveredDevice ?: throw IllegalStateException("Choose one of the discovered glasses first.")
         scanSession?.stop()
-        state = state.copy(scanHint = null)
-        val target = state.selectedDiscoveredDevice
-        when {
-            target != null -> mentraBluetoothSdk.connect(target)
-            state.discoveredDevices.isEmpty() && hasSavedConnectionTarget(state.bluetoothStatus) -> mentraBluetoothSdk.connectDefault()
-            state.discoveredDevices.isNotEmpty() -> throw IllegalStateException("Choose one of the discovered glasses first.")
-            else -> throw IllegalStateException("Scan first to choose nearby glasses.")
-        }
+        state = state.copy(discoveredDevices = emptyList(), selectedDiscoveredDevice = null, scanHint = null)
+        mentraBluetoothSdk.connect(device)
     }
 
-    fun connect(device: Device) = runAction("Connect ${device.name}") {
-        scanSession?.stop()
-        state = state.copy(selectedDiscoveredDevice = device, scanHint = null)
-        mentraBluetoothSdk.connect(device)
+    fun connect() = runAction("Connect") {
+        mentraBluetoothSdk.connectDefault()
     }
 
     fun selectDiscoveredDevice(device: Device) {
@@ -555,12 +549,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         applyDisconnectedState("Disconnected")
     }
 
-    fun clearDefaultDevice() = runAction("Clear default") {
-        mentraBluetoothSdk.clearDefaultDevice()
-        state = state.copy(
-            bluetoothStatus = state.bluetoothStatus?.copy(defaultDevice = null),
-            selectedDiscoveredDevice = null,
-        )
+    // Unpair also removes the phone's Bluetooth bond on Mentra Live, so the next Pair starts from pairing mode.
+    fun unpair() = runAction("Unpair") {
+        mentraBluetoothSdk.unpair()
+        applyDisconnectedState("Unpaired")
+        state = state.copy(bluetoothStatus = state.bluetoothStatus?.copy(defaultDevice = null))
     }
 
     fun setCameraTabForeground(foreground: Boolean) {
@@ -4293,29 +4286,13 @@ fun deviceLabel(status: GlassesRuntimeState?): String =
         ?: connectedGlassesInfo(status)?.deviceModel?.let { deviceModelLabel(it) }
         ?: "Mentra Live"
 
-fun supportsDisplay(status: GlassesRuntimeState?): Boolean {
-    val model = listOfNotNull(
-        connectedGlassesInfo(status)?.deviceModel?.deviceType,
-        connectedGlassesInfo(status)?.bluetoothName,
-    ).joinToString(" ").lowercase()
-
-    if (
-        "g1" in model ||
-        "g2" in model ||
-        "nex" in model ||
-        "mach" in model ||
-        "z100" in model ||
-        "vuzix" in model ||
-        "display" in model ||
-        "frame" in model
-    ) {
-        return true
+// The SDK has no display capability yet, so this follows the Engine hardware profiles.
+fun supportsDisplay(status: GlassesRuntimeState?): Boolean =
+    when (connectedGlassesInfo(status)?.deviceModel) {
+        DeviceModel.G1, DeviceModel.G2, DeviceModel.MENTRA_NEX, DeviceModel.MACH1, DeviceModel.Z100,
+        DeviceModel.FRAME, DeviceModel.NIMO, DeviceModel.AR99, DeviceModel.SIMULATED -> true
+        DeviceModel.MENTRA_LIVE, DeviceModel.R1, null -> false
     }
-    if ("live" in model || "r1" in model || "ring" in model) {
-        return false
-    }
-    return false
-}
 
 fun modelLabel(status: GlassesRuntimeState?): String =
     connectedGlassesInfo(status)?.deviceModel?.let { deviceModelLabel(it) } ?: "Mentra Live"
@@ -4543,10 +4520,6 @@ fun connectionTargetLabel(state: MentraExampleState, status: GlassesRuntimeState
         state.discoveredDevices.isNotEmpty() -> "Choose a discovered device"
         else -> "Scan required"
     }
-
-fun canConnectTarget(state: MentraExampleState): Boolean =
-    state.selectedDiscoveredDevice != null ||
-        (state.discoveredDevices.isEmpty() && hasSavedConnectionTarget(state.bluetoothStatus))
 
 fun hasSavedConnectionTarget(status: PhoneSdkRuntimeState?): Boolean =
     status?.defaultDevice != null

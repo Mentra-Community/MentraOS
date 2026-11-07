@@ -546,8 +546,6 @@ class BluetoothSdkModule : Module() {
             sdk?.setDefaultDevice(device.toMentraDevice())
         }
 
-        SdkAsyncFunction("clearDefaultDevice") { -> sdk?.clearDefaultDevice() }
-
         SdkAsyncFunction("connectWithOptions") { device: Map<String, Any>, options: Map<String, Any> ->
             sdk?.connect(
                     device.toMentraDevice()
@@ -562,7 +560,7 @@ class BluetoothSdkModule : Module() {
 
         SdkAsyncFunction("forget") { -> sdk?.forget() }
 
-        SdkCoroutineFunction("unpair") { -> deviceManager?.unpair() }
+        SdkCoroutineFunction("unpair") { -> sdk?.unpair() }
 
         AsyncFunction("connectDefaultController") { deviceManager?.connectDefaultController() }
 

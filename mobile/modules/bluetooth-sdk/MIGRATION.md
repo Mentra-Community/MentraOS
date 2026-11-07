@@ -1,21 +1,30 @@
-# Bluetooth SDK migration: Mentra Live pairing state
+# Bluetooth SDK migration
 
-This note covers the public pairing API change in `@mentra/bluetooth-sdk` `3.3.0`, for apps upgrading from `3.2`.
+Public API changes in `@mentra/bluetooth-sdk`, for apps upgrading from an earlier release.
 
-## Version
+## `3.4.0`: `unpair()` replaces `clearDefaultDevice()`
+
+- `clearDefaultDevice()` is removed, in TypeScript, Kotlin and Swift. It forgot the saved default device but left the phone bonded with the glasses, so the next pairing skipped pairing mode.
+- Use `unpair()`: it disconnects, forgets the default device and, on Mentra Live, removes the phone's Bluetooth bond, so pairing again starts from pairing mode. `forget()` is unchanged.
+
+## `3.3.0`: Mentra Live pairing state
+
+This covers the public pairing API change in `3.3.0`, for apps upgrading from `3.2`.
+
+### Version
 
 The SDK version is `package.json` `"version"`. The iOS podspec (`ios/MentraBluetoothSDK.podspec`) and the Android Gradle module (`android/build.gradle`) read that same value. Swift package metadata is injected from it at pack time.
 
 This repository keeps the Bluetooth SDK version aligned with the matching Mentra Live software release. It does not cut an independent major for a breaking SDK change. The break below shipped in `3.3.0`. Apps on `3.2.1` pick it up by moving to `3.3.0` or later.
 
-## Removed
+### Removed
 
 - `confirmReplaceOwner()` is removed.
 - The `confirm_replace_owner_result` event and its types are removed.
 - `owner_replaced` is deprecated and is never emitted. Remove listeners. Use `pairing_state_changed` or `GlassesStatus.pairingState`.
 - `pairing_info` no longer includes `awaiting_confirm` or `retained_owner_link`.
 
-## Added
+### Added
 
 `GlassesStatus.pairingState` (absent on models other than Mentra Live):
 
@@ -54,7 +63,7 @@ Other additions:
 - `pairing_info.auto_audio` is true when the glasses derive Classic audio from the LE pair (CTKD). The SDK already uses it for `audioSetup`.
 - `pair_failure.code` may be `"ios_forget_pairing"`: iOS holds a stale Bluetooth pairing for these glasses during an explicit attempt. The user must open Settings > Bluetooth, choose Forget This Device, then pair again. On Android and iOS native apps this arrives as the pairing-failure error's `failureCode`.
 
-## Behavior
+### Behavior
 
 On supported Mentra Live firmware, three presses of the power button open one 120-second pairing window. The glasses speak a 4-character code. Three presses again cancel the window. After a timeout or a cancel, the phone that was already paired reconnects automatically. If another phone pairs, that previous phone gets `pairing_rejected`. Pairing readiness needs no app-side `pairing_info` wait: the SDK reports the glasses ready only after secure firmware commits the bond, and treats glasses that send no `pairing_info` within 5 seconds as older firmware.
 

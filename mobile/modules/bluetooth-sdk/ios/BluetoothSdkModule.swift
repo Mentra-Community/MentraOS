@@ -188,12 +188,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        AsyncFunction("clearDefaultDevice") {
-            await MainActor.run {
-                self.bluetoothSdk().clearDefaultDevice()
-            }
-        }
-
         AsyncFunction("connectWithOptions") { (device: [String: Any], options: [String: Any]) in
             try await MainActor.run {
                 guard let target = Device(dictionary: device) else {
@@ -237,7 +231,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("unpair") {
-            try await DeviceManager.shared.unpair()
+            try await self.bluetoothSdk().unpair()
         }
 
         AsyncFunction("forgetController") {

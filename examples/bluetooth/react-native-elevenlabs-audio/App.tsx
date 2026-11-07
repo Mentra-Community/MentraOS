@@ -109,6 +109,8 @@ export default function App() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
+  // Paired: the glasses the SDK saved as its default, connected or not.
+  const [pairedDevice, setPairedDevice] = useState<Device | null>(null);
   const [scanState, setScanState] = useState('Idle');
   const [connectionState, setConnectionState] = useState('Disconnected');
   const [conversationState, setConversationState] = useState('Idle');
@@ -134,6 +136,10 @@ export default function App() {
 
   const canStartConversation =
     connectedDevice && conversationState !== 'Signing' && conversationState !== 'Streaming';
+
+  useEffect(() => {
+    void BluetoothSdk.getDefaultDevice().then(setPairedDevice, () => undefined);
+  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => setNowMs(Date.now()), 1000);
@@ -197,25 +203,44 @@ export default function App() {
   }
 
   async function connect() {
-    if (!selectedDevice) {
+    // A device chosen from the scan, or the paired one.
+    const device = selectedDevice ?? pairedDevice;
+    if (!device) {
       return;
     }
 
     setLastError(null);
     setConnectionState('Connecting');
-    appendLog(`connecting to ${selectedDevice.name}`);
+    appendLog(`connecting to ${device.name}`);
 
     try {
       await ensureAndroidPermissions(false);
-      await BluetoothSdk.connect(selectedDevice, {
+      await BluetoothSdk.connect(device, {
         cancelExistingConnectionAttempt: true,
         saveAsDefault: true,
       });
-      setConnectedDevice(selectedDevice);
+      setConnectedDevice(device);
+      setPairedDevice(device);
       setConnectionState('Connected');
-      appendLog(`connected to ${selectedDevice.name}`);
+      appendLog(`connected to ${device.name}`);
     } catch (error) {
       setConnectionState('Connect failed');
+      fail(error);
+    }
+  }
+
+  // Unpair, as the Mentra App does: the SDK forgets the glasses and, on Mentra Live, removes the phone's Bluetooth bond.
+  async function unpair() {
+    setLastError(null);
+    await stopConversation();
+    try {
+      await BluetoothSdk.unpair();
+      setConnectedDevice(null);
+      setPairedDevice(null);
+      setSelectedDevice(null);
+      setConnectionState('Unpaired');
+      appendLog('unpaired');
+    } catch (error) {
       fail(error);
     }
   }
@@ -579,9 +604,17 @@ export default function App() {
           <StatusRow label="Connection" value={connectionState} />
           <StatusRow label="Target" value={connectedDevice?.name ?? selectedDevice?.name ?? 'None'} />
           <View style={styles.actions}>
-            <ActionButton label="Scan" onPress={scan} />
-            <ActionButton label="Connect" onPress={connect} disabled={!selectedDevice} />
-            <ActionButton label="Disconnect" onPress={disconnect} disabled={!connectedDevice} variant="secondary" />
+            {pairedDevice ? (
+              <ActionButton label="Unpair" onPress={unpair} variant="secondary" />
+            ) : (
+              // Pair: scan, then choose one of the glasses found and connect.
+              <ActionButton label="Pair" onPress={scan} />
+            )}
+            {connectedDevice ? (
+              <ActionButton label="Disconnect" onPress={disconnect} variant="secondary" />
+            ) : (
+              <ActionButton label="Connect" onPress={connect} disabled={!selectedDevice && !pairedDevice} />
+            )}
           </View>
           <View style={styles.deviceList}>
             {deviceRows.length > 0 ? deviceRows : <Text style={styles.empty}>No scan results</Text>}

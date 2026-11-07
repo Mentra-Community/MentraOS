@@ -446,7 +446,7 @@ const discoveredDevice = await scanAndChooseDevice()
 await BluetoothSdk.connect(discoveredDevice)
 await saveDeviceToYourAppStorage(discoveredDevice)
 
-await BluetoothSdk.clearDefaultDevice()
+await BluetoothSdk.unpair()
 await saveDeviceToYourAppStorage(null)
 ```
 

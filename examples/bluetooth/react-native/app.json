@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Mentra SDK RN",
+    "name": "Mentra Bluetooth Example",
     "slug": "mentra-sdk-rn-example",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -12,7 +12,7 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.mentra.bluetoothsdk.example.reactnative",
+      "bundleIdentifier": "com.mentra.bluetoothsdkexample",
       "entitlements": {
         "com.apple.developer.networking.HotspotConfiguration": true,
         "com.apple.developer.networking.wifi-info": true
@@ -30,7 +30,7 @@
       }
     },
     "android": {
-      "package": "com.mentra.bluetoothsdk.example.reactnative",
+      "package": "com.mentra.bluetoothsdkexample",
       "softwareKeyboardLayoutMode": "pan",
       "blockedPermissions": [
         "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
