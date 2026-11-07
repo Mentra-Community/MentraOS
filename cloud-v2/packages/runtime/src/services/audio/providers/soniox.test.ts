@@ -272,6 +272,51 @@ describe("sonioxTranslationTarget", () => {
   });
 });
 
+describe("Soniox language codes for registry tags whose primary subtag differs", () => {
+  // The registry canonicalizes the captions picker's "tl" (Tagalog) to
+  // "fil-PH" and "no"/"nb" (Norwegian) to "nb-NO". Soniox lists these languages
+  // as "tl" and "no"; "fil" and "nb" are not Soniox codes.
+  test("a specific Filipino or Norwegian subscription hints the Soniox code", () => {
+    expect(sonioxLanguageHints("fil-PH", undefined)).toEqual(["tl"]);
+    expect(sonioxLanguageHints("nb-NO", undefined)).toEqual(["no"]);
+  });
+
+  test("auto-mode detection hints use the Soniox codes", () => {
+    expect(sonioxLanguageHints("auto", ["nb", "en"])).toEqual(["no", "en"]);
+    expect(sonioxLanguageHints("auto", ["no", "nb-NO"])).toEqual(["no"]);
+  });
+
+  test("a Filipino or Norwegian translation target uses the Soniox code", () => {
+    expect(sonioxTranslationTarget("fil-PH")).toBe("tl");
+    expect(sonioxTranslationTarget("nb-NO")).toBe("no");
+  });
+
+  test("a Tagalog captions subscription configures the session with language_hints [\"tl\"]", async () => {
+    const session = new FakeSession();
+    let sessionConfig: Record<string, unknown> | undefined;
+    const client = {
+      realtime: {
+        stt: (config: Record<string, unknown>) => {
+          sessionConfig = config;
+          return session;
+        },
+      },
+    };
+
+    // toTranscriptionLanguage("tl") === "fil-PH" is what reaches the worker.
+    const provider = await createSonioxProvider({
+      scope: "user_tl",
+      language: "fil-PH",
+      client: client as never,
+      onTranscript: () => {},
+    });
+
+    expect(sessionConfig).toMatchObject({ language_hints: ["tl"] });
+
+    await provider.close();
+  });
+});
+
 describe("SonioxProvider session configuration", () => {
   test("configures one-way translation with a bare target_language", async () => {
     const session = new FakeSession();
