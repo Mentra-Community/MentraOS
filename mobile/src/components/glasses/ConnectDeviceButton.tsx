@@ -36,7 +36,8 @@ export const ConnectDeviceButton = () => {
     rejected: pairingRejected,
     linkBusy: isSearching || pairingReadiness.nativeLinkBusy,
   })
-  const busy = isSearching || pairingReadiness.nativeLinkBusy || inPairingMode || holdReconnectAfterPairing
+  // In pairing mode nothing connects by itself: Connect glasses takes the glasses back from their window.
+  const busy = isSearching || (pairingReadiness.nativeLinkBusy && !inPairingMode) || holdReconnectAfterPairing
 
   if (glassesConnected) {
     return null
@@ -70,7 +71,8 @@ export const ConnectDeviceButton = () => {
         return
       }
 
-      await engine.glasses.connectDefault()
+      if (inPairingMode) await engine.glasses.connectInPairingMode()
+      else await engine.glasses.connectDefault()
     } catch (err) {
       console.error("connect to glasses error:", err)
       showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])

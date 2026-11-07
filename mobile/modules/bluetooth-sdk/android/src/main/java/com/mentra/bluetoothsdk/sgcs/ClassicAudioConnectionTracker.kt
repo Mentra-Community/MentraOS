@@ -12,6 +12,18 @@ internal fun readyClassicAudioSnapshot(states: Map<ClassicAudioProfile, Boolean>
 }
 
 /**
+ * Android is disconnecting the whole device, not one profile: every profile that was connected
+ * started disconnecting within [windowMs] of [nowMs]. Turning off Media or Call audio leaves the
+ * other one up.
+ */
+internal fun wholeClassicDeviceDisconnecting(
+    wereUp: Set<ClassicAudioProfile>,
+    disconnectingAt: Map<ClassicAudioProfile, Long>,
+    nowMs: Long,
+    windowMs: Long,
+): Boolean = wereUp.all { profile -> disconnectingAt[profile]?.let { nowMs - it <= windowMs } == true }
+
+/**
  * Tracks the Android Classic audio profiles for one dual-mode glasses device.
  *
  * Android reports A2DP and HFP independently. Keeping both states prevents an A2DP disconnect from
@@ -28,6 +40,9 @@ internal class ClassicAudioConnectionTracker(
     @get:Synchronized
     val connected: Boolean
         get() = connectedProfiles.isNotEmpty()
+
+    @Synchronized
+    fun connectedProfiles(): Set<ClassicAudioProfile> = connectedProfiles.toSet()
 
     /** BLE may already be gone when the user explicitly disconnects Classic audio. */
     @Synchronized

@@ -2344,6 +2344,17 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         sgc?.sendRgbLedControl(requestId, packageName, action, color, onDurationMs, offDurationMs, count)
     }
 
+    /**
+     * The person disconnected the glasses outside the app, in Android's Bluetooth settings. Like
+     * the app's Disconnect, nothing reconnects them until the person connects again.
+     */
+    fun disconnectByUser() {
+        Bridge.log("MAN: Glasses disconnected in Android's Bluetooth settings")
+        DeviceStore.apply("bluetooth", "glasses_user_disconnected", true)
+        Bridge.saveSetting("glasses_user_disconnected", true)
+        disconnect()
+    }
+
     /** Glasses the person disconnected in the app stay disconnected. */
     internal fun shouldReconnectAfterBluetoothOn(): Boolean =
         defaultWearable.isNotEmpty() && deviceName.isNotEmpty() &&

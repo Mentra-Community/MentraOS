@@ -1,9 +1,10 @@
 import {useEffect, useState} from "react"
 
 /**
- * Pairing mode already shows the reconnecting spinner. When the window ends,
- * the pairing state drops to normal a moment before the SDK publishes
- * CONNECTING, which flashes "Connect glasses". Hold the spinner across that gap.
+ * When a pairing window ends, the SDK reconnects, but the pairing state drops to
+ * normal a moment before it publishes CONNECTING, which flashes "Connect glasses".
+ * Hold the reconnecting spinner across that gap. During the window itself there's
+ * no hold: nothing connects by itself.
  */
 export const PAIRING_RECONNECT_HOLD_MS = 3000
 
@@ -30,5 +31,5 @@ export function usePairingReconnectHold(input: {
     return () => clearTimeout(timer)
   }, [inPairingMode, hold, connected, rejected, linkBusy])
 
-  return hold
+  return hold && !inPairingMode
 }
