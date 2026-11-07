@@ -1,19 +1,18 @@
 /**
- * The miniapps of this checkout, for builds of the Mentra App made on a developer's computer. CI packs its own and
- * never runs these.
+ * The miniapps of this checkout, for debug builds of the Mentra App made on a developer's computer (`bun start`,
+ * `bun android`, `bun ios`). CI never runs these. Every other build bundles no miniapps: it installs them from its
+ * deployment's miniapp host.
  *
- * - A debug build (`bun start`, `bun android`, `bun ios`) gets every miniapp live: startDevMiniapps() starts each
- *   one's dev server (`mentra-miniapp dev`, frontend only: it calls the backend its .env names, else its
- *   .env.example's dev backend), and the app installs each as a local build that reloads on every save
- *   (src/services/miniapps/devMiniapps.ts). No QR code is scanned. The ports reach the app as
- *   EXPO_PUBLIC_DEV_MINIAPPS; the host is the one the bundle came from.
- * - Any other local build bundles them: packMiniapps() packs each from the working tree into assets/miniapps/.
+ * startDevMiniapps() starts each miniapp's dev server (`mentra-miniapp dev`, frontend only: it calls the backend its
+ * .env names, else its .env.example's dev backend), and the app installs each as a local build that reloads on every
+ * save (src/services/miniapps/devMiniapps.ts). No QR code is scanned. The ports reach the app as
+ * EXPO_PUBLIC_DEV_MINIAPPS; the host is the one the bundle came from.
  *
- * A bundled miniapp is a folder with a `pack` script: miniapps/<name>, a member of the root Bun workspace, and each
- * folder listed in MENTRA_EXTRA_MINIAPPS (separated like PATH), installed as its own Bun workspace.
+ * A miniapp is a folder with a `pack` script: miniapps/<name>, a member of the root Bun workspace, and each folder
+ * listed in MENTRA_EXTRA_MINIAPPS (separated like PATH), installed as its own Bun workspace.
  */
 import {spawn, spawnSync} from "node:child_process"
-import {copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync} from "node:fs"
+import {existsSync, readFileSync, readdirSync} from "node:fs"
 import {createServer} from "node:net"
 import {basename, delimiter, dirname, join, resolve} from "node:path"
 import {fileURLToPath, pathToFileURL} from "node:url"
@@ -44,8 +43,8 @@ function folders(dir) {
     .map((entry) => join(dir, entry.name))
 }
 
-/** The bundled miniapps, and whether the root workspace holds each. */
-function bundledMiniapps() {
+/** The miniapps, and whether the root workspace holds each. */
+function checkoutMiniapps() {
   const apps = []
   const add = (dir, workspace) => {
     const scripts = packageJson(dir)?.scripts ?? {}
@@ -92,47 +91,6 @@ function miniappEnv(app, extra = {}) {
   }
   const token = mapboxToken()
   return {...values, ...process.env, ...(token ? {PUBLIC_MAPBOX_TOKEN: token} : {}), ...extra}
-}
-
-/** The ZIPs under `dir`'s build/ folders written after `since`. */
-function newZips(dir, since) {
-  const found = []
-  const visit = (path, inBuild) => {
-    for (const entry of readdirSync(path, {withFileTypes: true})) {
-      if (entry.name === "node_modules") continue
-      const child = join(path, entry.name)
-      if (entry.isDirectory()) visit(child, inBuild || entry.name === "build")
-      else if (inBuild && entry.name.endsWith(".zip") && statSync(child).mtimeMs >= since) found.push(child)
-    }
-  }
-  visit(dir, false)
-  return found
-}
-
-/** Pack every bundled miniapp from the working tree into assets/miniapps/, or throw naming those that failed. */
-export async function packMiniapps() {
-  if (process.env.CI) return
-  await loadDotenv()
-  const apps = bundledMiniapps()
-  const dest = join(mobile, "assets/miniapps")
-  mkdirSync(dest, {recursive: true})
-  for (const name of readdirSync(dest)) if (name.endsWith(".zip")) rmSync(join(dest, name))
-  if (apps.length === 0) return
-  prepare(apps)
-  const failed = []
-  for (const app of apps) {
-    const since = Date.now()
-    try {
-      run("bun", ["run", "pack"], app.dir, miniappEnv(app))
-      const zips = newZips(app.dir, since)
-      if (zips.length !== 1) throw new Error(`expected one new build/*.zip, found ${zips.length}`)
-      copyFileSync(zips[0], join(dest, basename(zips[0])))
-    } catch (error) {
-      console.error(`[miniapps] ${app.name}: ${error.message}`)
-      failed.push(app.name)
-    }
-  }
-  if (failed.length) throw new Error(`Not packed: ${failed.join(", ")} (the navigation miniapp needs EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN in .env)`)
 }
 
 function portFree(port) {
@@ -206,7 +164,7 @@ function prefixed(name, stream, out) {
 export async function startDevMiniapps() {
   if (process.env.CI || process.env.MENTRA_DEV_MINIAPPS === "0") return
   await loadDotenv()
-  const apps = bundledMiniapps().filter((app) => app.dev)
+  const apps = checkoutMiniapps().filter((app) => app.dev)
   if (apps.length === 0) return
   prepare(apps)
 

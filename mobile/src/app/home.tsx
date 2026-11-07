@@ -7,6 +7,7 @@ import MaskedView from "@react-native-masked-view/masked-view"
 import {CustomBackground} from "@/components/home/CustomBackground"
 import {AppsGrid} from "@/components/home/AppsGrid"
 import {PairGlassesCard} from "@/components/home/PairGlassesCard"
+import {MiniappInstallStatus} from "@/components/home/MiniappInstallStatus"
 import {Screen} from "@/components/ignite"
 import {Group} from "@/components/ui"
 import {BgTimer, DeviceTypes, engine, useRefresh} from "@mentra/engine"
@@ -126,6 +127,7 @@ export default function Homepage() {
           </Group>
           <View className="h-2" />
           <View className="flex-1" />
+          <MiniappInstallStatus />
           <AppsGrid onHomeAppsChange={handleHomeAppsChange} />
         </>
       )
@@ -140,6 +142,7 @@ export default function Homepage() {
           <ControllerStatus />
         </Group>
         <View className="h-2" />
+        <MiniappInstallStatus />
         <AppsGrid onHomeAppsChange={handleHomeAppsChange} />
       </>
     )

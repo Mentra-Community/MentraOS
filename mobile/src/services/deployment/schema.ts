@@ -84,13 +84,15 @@ export const deploymentManifestSchema = z
               .strict(),
           )
           .max(100),
+        // Installed from the deployment's miniapp host when missing, then kept up to date from there.
+        defaults: z.array(packageName).max(100).default([]),
         configuration: z
           .record(packageName, miniappConfiguration)
           .refine((value) => Object.keys(value).length <= 100)
           .default({}),
       })
       .strict()
-      .default({managed: [], configuration: {}}),
+      .default({managed: [], defaults: [], configuration: {}}),
     glasses: z.object({allowedModelsOverride: z.array(z.string().min(1).max(120)).max(100).nullable()}).strict(),
     features: z
       .object({
@@ -105,3 +107,8 @@ export const deploymentManifestSchema = z
     telemetry: z.boolean(),
   })
   .strict()
+
+/** `GET <coreUrl>/api/client/deployment`: what Mentra's Core tells its phones about their deployment. */
+export const defaultMiniappsResponseSchema = z.object({
+  miniapps: z.object({defaults: z.array(packageName).max(100)}),
+})

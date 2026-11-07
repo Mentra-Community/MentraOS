@@ -5,7 +5,7 @@
  * miniapp's current ZIP, plus `bundle: {url, sha256}` naming that ZIP. The
  * engine checks each installed miniapp's URL and hands a newer release to the
  * shared installer, which binds it to the package and version, verifies the
- * hash, and applies the signer and version rules. Mentra's own bundled
+ * hash, and applies the signer and version rules. Mentra's own system
  * miniapps update from `<firstPartyMiniappsUrl><packageName>/`.
  *
  * Each check:
@@ -83,7 +83,7 @@ export interface MiniappUrlUpdaterDependencies {
   activeVersion(packageName: string): Promise<string | undefined>
   releaseIdentity(packageName: string, version: string): MiniappReleaseIdentity | null
   isSystemPackage(packageName: string): boolean
-  /** `<firstPartyMiniappsUrl><packageName>/` for a bundled package, or undefined. */
+  /** `<firstPartyMiniappsUrl><packageName>/` for a system package, or undefined. */
   firstPartyUrl(packageName: string): string | undefined
   hasDevelopmentSelection(packageName: string): boolean
   compatibilityPolicy(): MiniappVersionPolicy | null
@@ -155,8 +155,8 @@ export function parseHostedManifest(body: string, packageName: string): HostedMi
 }
 
 /**
- * The URL an installed release updates from, or undefined when nothing updates it automatically. A bundled package,
- * or one an updater replaced, updates from the host this build or workspace names, so it follows the deployment;
+ * The URL an installed release updates from, or undefined when nothing updates it automatically. A system package
+ * installed from a Mentra host (or bundled before 3.5) updates from the host this build or workspace names, so it follows the deployment;
  * none, no updates.
  */
 export function miniappUpdateUrl(

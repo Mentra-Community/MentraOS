@@ -629,6 +629,8 @@ const en = {
     title: "MentraOS",
     developmentBuild: "Development build",
     miniappUpdating: "Updating…",
+    miniappsInstalling: "Installing your miniapps…",
+    miniappsWaitingForConnection: "Your miniapps will install when you're back online.",
     miniappUpdatingLabel: "{{app}} is updating",
     miniappUpdatingTitle: "Miniapp updating",
     miniappUpdatingMessage: "This miniapp is updating. Please try again shortly.",

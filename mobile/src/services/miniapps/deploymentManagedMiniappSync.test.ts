@@ -265,6 +265,7 @@ const workspace: WorkspaceDeployment = {
     deploymentId: "enterprise",
     features: {...consumer.manifest.features, nativeMeetings: true},
     miniapps: {
+      defaults: [],
       configuration: {},
       managed: [
         {packageName: pkg, version, bundleUrl: "https://enterprise.example/miniapps/call.zip", sha256: "a".repeat(64)},
@@ -972,7 +973,7 @@ describe("workspace updates while a managed miniapp may be open", () => {
   const nextVersion = "2.1.30"
   const withManaged = (managed: WorkspaceDeployment["manifest"]["miniapps"]["managed"]): WorkspaceDeployment => ({
     ...workspace,
-    manifest: {...workspace.manifest, miniapps: {configuration: {}, managed}},
+    manifest: {...workspace.manifest, miniapps: {defaults: [], configuration: {}, managed}},
   })
   const updated = withManaged([
     {

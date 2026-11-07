@@ -1,10 +1,15 @@
 import {BgTimer, engine} from "@mentra/engine"
 
+import {defaultMiniapps} from "./defaultMiniapps"
 import {subscribeAppForeground, subscribeCloudReconnect} from "./maintenanceTriggers"
 import {MiniappUpdateSchedulerCore} from "./MiniappUpdateSchedulerCore"
 
 const scheduler = new MiniappUpdateSchedulerCore({
-  checkAll: () => engine.miniapps.checkForUpdates(),
+  // A default that couldn't install yet (offline) tries again on every pass, before the updates.
+  checkAll: async () => {
+    await defaultMiniapps.sync()
+    return engine.miniapps.checkForUpdates()
+  },
   checkOpened: (packageName) => engine.miniapps.checkOpenedForUpdate(packageName),
   subscribeForeground: subscribeAppForeground,
   subscribeReconnect: subscribeCloudReconnect,
@@ -15,7 +20,7 @@ const scheduler = new MiniappUpdateSchedulerCore({
   warn: (message, error) => console.warn(message, error),
 })
 
-/** Background updates of installed miniapps from their own URLs. */
+/** Background installs of missing default miniapps, and updates of installed miniapps from their own URLs. */
 export const miniappUpdateScheduler = {
   start: () => scheduler.start(),
   stop: () => scheduler.stop(),

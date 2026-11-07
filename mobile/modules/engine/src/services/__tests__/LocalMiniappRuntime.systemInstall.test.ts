@@ -186,7 +186,7 @@ beforeEach(() => {
   configure({
     auth: {},
     config: {
-      bundledSystemMiniappPackages: [ai, notes],
+      systemMiniappPackages: [ai, notes],
       hostVersion: "3.4.0",
       supportedMiniappSdkRange: ">=0.3.0 <4.0.0",
     },

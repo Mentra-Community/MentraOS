@@ -4,6 +4,7 @@ import {Image, Platform, Pressable, useWindowDimensions, View} from "react-nativ
 import type {ImageSourcePropType, ImageStyle, ViewStyle} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {MiniappInstallStatus} from "@/components/home/MiniappInstallStatus"
 import {Screen, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
 import type {TxKeyPath} from "@/i18n"
@@ -139,6 +140,8 @@ export default function OnboardingWelcome() {
           />
         </>
       )}
+      <View className="h-6" />
+      <MiniappInstallStatus />
     </Screen>
   )
 }

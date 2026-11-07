@@ -4,9 +4,7 @@ import {execFileSync} from "child_process"
 import {writeFile, readFile, chmod} from "fs/promises"
 import {homedir} from "os"
 import {join} from "path"
-import {generateBundledMiniapps} from "./generate-bundled-miniapps.mjs"
 import {syncAutolinkingCache} from "./clear-autolinking-cache.mjs"
-import {packMiniapps as packLocalMiniapps} from "./local-miniapps.mjs"
 
 /**
  * When the Mapbox Downloads:Read secret token (sk.…) is present in the
@@ -61,14 +59,7 @@ export function resolveBuildUser({
   }
 }
 
-export async function setBuildEnv({syncAutolinking = true, packMiniapps = true} = {}) {
-  // A local build bundles the miniapps of the working tree (CI packs its own). A debug build gets them live instead
-  // (local-miniapps.mjs).
-  if (packMiniapps) await packLocalMiniapps()
-  // Keep src/generated/bundledMiniapps.ts in sync with assets/miniapps/*.zip
-  // before any prebuild/bundle so newly-dropped bundles get shipped.
-  await generateBundledMiniapps()
-
+export async function setBuildEnv({syncAutolinking = true} = {}) {
   // If running under `doppler run`, mirror the Mapbox sk. token into ~/.netrc
   // for iOS SPM. No-op otherwise (manual-setup developers untouched).
   await syncMapboxNetrc()

@@ -127,7 +127,7 @@ let launchFailureReason: typeof import("../MiniappLauncher").launchFailureReason
 
 const launcherConfig: IslandConfigValues = {
   isMiniappAvailable: (_packageName, mode) => available || (mode === "background" && backgroundAvailable),
-  bundledSystemMiniappPackages: ["com.mentra.notes"],
+  systemMiniappPackages: ["com.mentra.notes"],
   hostVersion: "3.3.0",
   supportedMiniappSdkRange: "^0.3.0",
 }

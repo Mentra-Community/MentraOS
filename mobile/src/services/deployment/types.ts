@@ -73,6 +73,11 @@ export interface DeploymentManifest {
   }
   miniapps: {
     managed: DeploymentManagedMiniapp[]
+    /**
+     * Packages every phone of this deployment gets: each installs from `<firstPartyMiniappsUrl><packageName>/` when
+     * missing, and updates from there. Mentra's own deployments get theirs from Core (`defaultMiniapps.ts`).
+     */
+    defaults: string[]
     configuration: DeploymentMiniappConfiguration
   }
   glasses: {

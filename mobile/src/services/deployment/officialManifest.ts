@@ -49,7 +49,8 @@ export function createOfficialManifest(): DeploymentManifest {
       supportUrl: null,
     },
     systemMiniapps: {approvedPackageNamesOverride: null},
-    miniapps: {managed: [], configuration: {}},
+    // Core lists Mentra's defaults (defaultMiniapps.ts).
+    miniapps: {managed: [], defaults: [], configuration: {}},
     glasses: {allowedModelsOverride: null},
     features: {
       runtimeRealtimeSession: true,

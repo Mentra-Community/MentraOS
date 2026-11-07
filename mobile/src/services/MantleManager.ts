@@ -1,7 +1,6 @@
 import {Platform} from "react-native"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "@mentra/crust"
-import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
 import Constants from "expo-constants"
 import {router} from "expo-router"
@@ -10,11 +9,17 @@ import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {miniappUpdateScheduler} from "@/services/miniapps/miniappUpdateScheduler"
+import {defaultMiniapps, installDefaultMiniapp} from "@/services/miniapps/defaultMiniapps"
 import {installDevMiniapp, installDevMiniapps} from "@/services/miniapps/devMiniapps"
 import {workspaceManifestScheduler} from "@/services/deployment/workspaceManifestScheduler"
 import {installCloudWorkspaceApi} from "@/services/fleet/cloudWorkspaceApi"
-import {BUNDLED_MINIAPPS, BUNDLED_SYSTEM_MINIAPP_PACKAGES} from "@/generated/bundledMiniapps"
-import {CHINA_HIDDEN_APPS, linkLingoPackageName, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
+import {
+  CHINA_HIDDEN_APPS,
+  linkLingoPackageName,
+  mentraCallPackageName,
+  notifyPackageName,
+  SYSTEM_MINIAPP_PACKAGES,
+} from "@/constants/miniapps"
 import {IosMiniappVisibility} from "@/services/miniapps/IosMiniappVisibility"
 import {mentraAppAgeRating} from "@/services/miniapps/mentraAppAgeRating"
 import {askDeclaredAge} from "@/components/miniapps/DeclaredAgeSheet"
@@ -30,7 +35,6 @@ import {isPhoneWifiEnabled, requestPhoneWifiEnable} from "@/services/phoneWifi"
 import {engine, BgTimer, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
-  getDevAppRecords,
   audioPlaybackService,
   displayProcessor,
   gallerySyncService,
@@ -52,34 +56,6 @@ import {showAlert} from "@/utils/AlertUtils"
 import {translate} from "@/i18n"
 import {Buffer} from "@craftzdog/react-native-buffer"
 import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployment"
-
-/**
- * Miniapp bundles shipped inside the app binary, installed on first launch by
- * MantleManager.installBundledMiniapps(). BUNDLED_MINIAPPS is code-generated
- * from every *.zip in assets/miniapps/ by scripts/generate-bundled-miniapps.mjs
- * (Metro can only bundle assets referenced by a literal string require(), so the
- * list must be static) — to ship an update, just drop a new zip in that
- * directory; the generator runs on `bun start`/prebuild.
- *
- * The filename encodes packageName + version (e.g.
- * `com.mentra.navigation-1.0.2.zip`), so we read those straight off the asset
- * name to decide whether the bundle is already installed and up to date — no
- * need to unzip just to check. See src/generated/bundledMiniapps.ts.
- */
-
-/**
- * Parse `<packageName>-<version>` out of a bundled miniapp asset name like
- * `com.mentra.navigation-1.0.2.zip`. The version is the trailing semantic
- * version, so hyphenated package names and prerelease versions stay intact.
- * Returns null if the name doesn't match the expected shape.
- */
-function parseBundledMiniappName(name: string): {packageName: string; version: string} | null {
-  // expo-asset names omit the extension; tests and older callers may include it.
-  const base = name.replace(/\.zip$/i, "")
-  const match = /^(.+)-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/.exec(base)
-  if (!match) return null
-  return {packageName: match[1], version: match[2]}
-}
 
 // The background phone-location task + its tier control moved into island
 // (PhoneLocationService). MantleManager now drives it through the island service
@@ -553,7 +529,7 @@ class MantleManager {
       config: {
         ...deploymentCloudConfigValues(deployment),
         isLocalMiniappAllowed: isSuperModeMiniappAllowed,
-        bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
+        systemMiniappPackages: SYSTEM_MINIAPP_PACKAGES,
         hostVersion: Constants.expoConfig?.version ?? process.env.EXPO_PUBLIC_MENTRAOS_VERSION,
         // Miniapps rated above the Mentra App's own App Store rating need the person's declared age.
         hostAgeRating: mentraAppAgeRating(),
@@ -705,6 +681,7 @@ class MantleManager {
     this.subs = []
     miniappUpdateScheduler.stop()
     workspaceManifestScheduler.stop()
+    defaultMiniapps.reset()
     this.activePhoneNotificationId = null
 
     // Spoken notifications: a queued summary would otherwise synthesize and play
@@ -777,16 +754,21 @@ class MantleManager {
     const deployment = deploymentStore.getActive()
     const isCurrent = () => generation === this.miniappGeneration && deploymentStore.getActive() === deployment
 
-    // Remove previous workspace releases before restoring consumer bundles,
-    // including an identical bundled release adopted by a workspace.
+    // Remove previous workspace releases before installing the defaults, and
+    // install the workspace's pinned ones.
     if (!background) await deploymentManagedMiniappSync.sync(deployment)
     if (!isCurrent()) return
 
-    // Install any bundled miniapps that ship with the app and aren't on disk
-    // yet (or are an older version). Runs after the registry is warm so the
-    // already-installed check below sees the real on-disk state.
-    await this.installBundledMiniapps()
-    if (!isCurrent()) return
+    // Install the deployment's default miniapps that aren't on disk yet, from
+    // its miniapp host. Runs after the registry is warm so the already-installed
+    // check sees the real on-disk state. Offline, they wait for the update
+    // scheduler's next pass; Home shows them installing or waiting.
+    if (!background) {
+      await defaultMiniapps
+        .sync(isCurrent)
+        .catch((error) => console.warn("MANTLE: default miniapp installation failed", error))
+      if (!isCurrent()) return
+    }
     // A debug build runs the miniapps served from this checkout instead, live.
     await installDevMiniapps(isCurrent)
     if (!isCurrent()) return
@@ -819,35 +801,6 @@ class MantleManager {
     void miniappUpdateScheduler.start()
   }
 
-  /**
-   * Install the miniapp zips bundled into the app binary under
-   * @assets/miniapps. Metro's `require` needs static string literals, so the
-   * BUNDLED_MINIAPPS require() list is code-generated from the directory
-   * (see src/generated/bundledMiniapps.ts) rather than globbed at runtime.
-   *
-   * The asset name carries packageName + version, so we read those off the
-   * filename and skip the bundle entirely when that exact version is already
-   * installed — no unzip needed to check. Otherwise we materialize the asset
-   * to disk (expo-asset gives us a file:// URI, but `File.downloadFileAsync`
-   * is HTTP-only) and hand the local zip to AppRegistry, which unzips and
-   * installs it.
-   */
-  private async installBundledMiniapps() {
-    const generation = this.miniappGeneration
-    for (const module of BUNDLED_MINIAPPS) {
-      if (generation !== this.miniappGeneration) return
-      try {
-        const asset = Asset.fromModule(module)
-        const parsed = parseBundledMiniappName(asset.name)
-        // iOS Call uses its visibility controller (consumer) or managed sync (workspace).
-        if (Platform.OS === "ios" && parsed?.packageName === mentraCallPackageName) continue
-        await this.installBundledMiniapp(asset)
-      } catch (error) {
-        console.error("MANTLE: error installing bundled miniapp:", error)
-      }
-    }
-  }
-
   private async prepareIosCall() {
     const deployment = deploymentStore.getActive()
     if (deployment.kind === "workspace") {
@@ -860,70 +813,16 @@ class MantleManager {
       }
       return
     }
-    await this.installBundledOrDevMiniapp(mentraCallPackageName)
+    // The defaults install Call from the deployment's host (restoreMiniapps), before this runs; a debug build runs
+    // the one served from this checkout.
+    await installDevMiniapp(mentraCallPackageName)
   }
 
-  /** Install the package's bundled ZIP, or, in a debug build that has none, its live build from this checkout. */
-  private async installBundledOrDevMiniapp(packageName: string): Promise<void> {
-    const asset = BUNDLED_MINIAPPS.map((module) => Asset.fromModule(module)).find(
-      (candidate) => parseBundledMiniappName(candidate.name)?.packageName === packageName,
-    )
-    if (asset) return this.installBundledMiniapp(asset)
+  /** Install the package from the deployment's miniapp host, or, in a debug build that serves it, from this checkout. */
+  private async installDefaultOrDevMiniapp(packageName: string): Promise<void> {
     if (await installDevMiniapp(packageName)) return
-    throw new Error(`Missing bundled miniapp: ${packageName}`)
-  }
-
-  /** Install one bundle, or skip it when current policy/version makes it unnecessary. */
-  private async installBundledMiniapp(asset: Asset) {
-    const generation = this.miniappGeneration
-    const parsed = parseBundledMiniappName(asset.name)
-    if (!parsed) throw new Error(`Bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
-    const {packageName, version} = parsed
-    const deployment = deploymentStore.getActive()
-    // A workspace pin owns this package even when the system-app allowlist is
-    // unrestricted. A newer consumer ZIP must not replace its active version.
-    if (
-      deployment.kind === "workspace" &&
-      deployment.manifest.miniapps.managed.some((app) => app.packageName === packageName)
-    )
-      return
-    // Never replace an open miniapp, such as a workspace release that waits to
-    // be removed until it closes. A later reconciliation installs the bundle.
-    if (miniappLauncher.isRunning(packageName)) return
-    const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
-    // Bundled consumer assets excluded by the workspace are expected skips.
-    if (approved !== null && !approved.includes(packageName)) return
-    if (shouldHideMiniapp(packageName) || appRegistry.getInstalledVersions(packageName).includes(version)) return
-    // A QR-selected development build (or its offline snapshot) stays the
-    // user's choice across restarts and Mentra App upgrades.
-    if (deployment.kind === "consumer" && getDevAppRecords().some((app) => app.packageName === packageName)) return
-    // Bundling never downgrades: a newer installed release (a QR or managed
-    // install) stays selected. The installer enforces the same rule again.
-    try {
-      appRegistry.assertCanInstallVersion(packageName, version)
-    } catch (error) {
-      console.log(`MANTLE: skipping bundled ${packageName}@${version}: ${(error as Error).message}`)
-      return
-    }
-    if (packageName === "com.mentra.example" && !engine.settings.get(SETTINGS.super_mode.key)) return
-
-    await asset.downloadAsync()
-    // Deployment policy can change while the bundle is being materialized.
-    if (
-      generation !== this.miniappGeneration ||
-      deploymentStore.getActive() !== deployment ||
-      shouldHideMiniapp(packageName)
-    )
-      return
-    if (!asset.localUri) throw new Error(`Bundled ${packageName} has no local URI`)
-    // The same installer as every other source: the ZIP must be the package
-    // and version its asset name declares, and it obeys the signer rule.
-    const result = await appRegistry.installFromLocalZip(asset.localUri, {
-      expectedPackageName: packageName,
-      expectedVersion: version,
-    })
-    if (result.is_error()) throw result.error
-    console.log(`MANTLE: installed bundled miniapp ${result.value.packageName}@${result.value.version}`)
+    // An installed release from that host stays: the installer opens it instead.
+    await installDefaultMiniapp(packageName)
   }
 
   private setupIosMiniappVisibility(): void {
@@ -985,7 +884,7 @@ class MantleManager {
       },
       setHidden: (hidden) => engine.miniapps.setHiddenStatus(packageName, hidden),
       clearRunningState: () => saveLocalAppRunningState(packageName, false),
-      install: () => this.installBundledOrDevMiniapp(packageName),
+      install: () => this.installDefaultOrDevMiniapp(packageName),
       stop: async () => {
         if (useAppStatusStore.getState().foregroundedPackage === packageName) engine.miniapps.clearForeground()
         await miniappLauncher.stop(packageName)

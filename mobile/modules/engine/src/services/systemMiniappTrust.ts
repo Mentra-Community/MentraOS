@@ -2,7 +2,7 @@ import type {IslandConfigValues} from "../runtime/bootstrap"
 
 import {isPackageNameAllowedForUrl} from "./miniappDomainRule"
 
-/** `<firstPartyMiniappsUrl><packageName>/`: where Mentra hosts this bundled package, if configured. */
+/** `<firstPartyMiniappsUrl><packageName>/`: where Mentra hosts this system package, if configured. */
 export function firstPartyMiniappUrl(config: IslandConfigValues, packageName: string): string | undefined {
   const base = config.firstPartyMiniappsUrl?.trim()
   if (!base) return undefined
@@ -22,12 +22,12 @@ export function firstPartyMiniappUrl(config: IslandConfigValues, packageName: st
  */
 const RETIRED_MENTRA_STORE = "com.mentra.store"
 
-/** A bundled package this deployment lets run with the build's privileges. */
+/** A system package of this build that this deployment lets run with the build's privileges. */
 function isApprovedSystemPackage(config: IslandConfigValues, packageName: string): boolean {
-  if (!config.bundledSystemMiniappPackages?.includes(packageName)) return false
+  if (!config.systemMiniappPackages?.includes(packageName)) return false
   const policy = config.localMiniappPolicy
   if (policy) {
-    // An organization pin owns the package; the bundle may not stand in for it.
+    // An organization pin owns the package; Mentra's release may not stand in for it.
     if (policy.managed.some((entry) => entry.packageName === packageName)) return false
     if (policy.systemPackageNames !== null && !policy.systemPackageNames.includes(packageName)) return false
   } else if (config.localMiniappAllowlist && !config.localMiniappAllowlist.includes(packageName)) {
@@ -37,9 +37,9 @@ function isApprovedSystemPackage(config: IslandConfigValues, packageName: string
 }
 
 /**
- * Host-trusted provenance for a build-owned (bundled) package: the bundled ZIP
- * itself, a release the engine installed for it from a Mentra host, or one the
- * retired Mentra Store installed over it. Shared by runtime privileges and
+ * Host-trusted provenance for a build-owned (system) package: a release the
+ * engine installed for it from a Mentra host, the ZIP a build before 3.5
+ * bundled, or one the retired Mentra Store installed over that. Shared by runtime privileges and
  * organization visibility. Never derived from a manifest, a signature or a dev
  * server, and never a local-network or development build, which may claim any
  * name.

@@ -61,8 +61,8 @@ android/credentials/*
 # Bundle artifact
 *.jsbundle
 
-# Bundled miniapps: CI packs them from source at the build commit, and
-# src/generated/bundledMiniapps.ts lists whichever are present.
+# Miniapp ZIPs and their generated list, left by checkouts from when the app
+# bundled miniapps (it installs them from its deployment's miniapp host now).
 /assets/miniapps/*.zip
 /src/generated/bundledMiniapps.ts
 

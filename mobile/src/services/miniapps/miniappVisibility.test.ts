@@ -40,6 +40,7 @@ describe("live iOS miniapp visibility policy", () => {
         features: {...consumer.manifest.features, nativeMeetings: true},
         systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
         miniapps: {
+          defaults: [],
           configuration: {},
           managed: [
             {

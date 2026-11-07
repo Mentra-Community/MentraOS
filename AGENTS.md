@@ -217,10 +217,8 @@ you are otherwise asked to change one of those miniapps:
    branch if it is already available locally.
 2. Make the changes in the external miniapp repository, bump its version, and
    push the changes directly to that repository's `main` branch.
-3. Package the updated miniapp as a ZIP archive.
-4. Add the new ZIP archive to `mobile/assets/miniapps/` in the MentraOS
-   monorepo so the external miniapp update is included in the MentraOS mobile
-   PR.
+3. Publish the new version to Mentra's miniapp hosts. The Mentra App bundles
+   no miniapps: it installs and updates them from its deployment's host.
 
 ## Bug Report Logs
 

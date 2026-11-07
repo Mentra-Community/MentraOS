@@ -7,7 +7,7 @@ import {isHostTrustedSystemMiniapp, isSystemMiniappPackage} from "../SystemMinia
 const store = "com.mentra.store"
 const notes = "com.mentra.notes"
 const buildConfig: IslandConfigValues = {
-  bundledSystemMiniappPackages: [notes, "com.mentra.captions"],
+  systemMiniappPackages: [notes, "com.mentra.captions"],
 }
 
 function withConfig(config: IslandConfigValues = {}) {

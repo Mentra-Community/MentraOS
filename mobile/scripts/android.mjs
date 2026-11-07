@@ -6,7 +6,7 @@ import {pinLocalBuildNumber} from "./local-build-number.mjs"
 // The autolinking guard runs once, after prebuild (below), where it is
 // authoritative; skipping the pre-prebuild pass saves ~1.3s.
 // A debug build gets the miniapps live instead of packed.
-await setBuildEnv({syncAutolinking: false, packMiniapps: false})
+await setBuildEnv({syncAutolinking: false})
 // Serve every miniapp of this checkout to the debug build, live.
 await startDevMiniapps()
 

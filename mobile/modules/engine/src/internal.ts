@@ -63,6 +63,7 @@ export {
 } from "./services/miniappWebStorage"
 export {installMiniappFromJsonUrl} from "./services/manualMiniappInstall"
 export {installMiniapp, InstallMiniappError, isLocalNetworkMiniappUrl} from "./services/installMiniapp"
+export {firstPartyMiniappUrl} from "./services/systemMiniappTrust"
 export {
   installMiniappRelease,
   MiniappInstallCancelledError,

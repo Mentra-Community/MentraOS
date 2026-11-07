@@ -7,12 +7,12 @@ import {artifactUrl} from "./release-artifact-storage.mjs"
 import {buildPost, DOCS, otaTargets, postToWebhook, slackText} from "./slack-build-post.mjs"
 
 // The Mentra monorepo holds this tree at public/mentraos, the ASG client at
-// mentra_live/asg_client and the miniapps the app bundles at miniapps/; its
-// producer workflows sit at the root's .github/workflows/.
+// mentra_live/asg_client and the miniapps at miniapps/; its producer workflows
+// sit at the root's .github/workflows/.
 export const MONOREPO = "Mentra-Community/Mentra"
 const MONOREPO_ROOT = "public/mentraos/"
 
-/** A changed file's path in MentraOS's layout; null when it has none (a bundled miniapp). */
+/** A changed file's path in MentraOS's layout; null when it has none (a miniapp). */
 export function mentraOsPath(filename, repository) {
   if (repository !== MONOREPO) return filename
   if (filename.startsWith(MONOREPO_ROOT)) return filename.slice(MONOREPO_ROOT.length)
@@ -23,15 +23,9 @@ export function mentraOsPath(filename, repository) {
 
 /**
  * Monorepo paths that start the PR app builds beyond MentraOS's own (the paths of its root mentra-app-*-build.yml and
- * mentra-asg-client-build.yml workflows): its glasses firmware and build scripts, and the SDK packages the bundled
- * miniapps are built with.
+ * mentra-asg-client-build.yml workflows): its glasses firmware and build scripts.
  */
 export const MONOREPO_PR_BUILD_PATHS = [
-  "public/mentraos/cloud-v2/tsconfig.base.json",
-  "public/mentraos/cloud-v2/packages/auth/*",
-  "public/mentraos/cloud-v2/packages/miniapp-tools/*",
-  "public/mentraos/cloud-v2/packages/protocol/*",
-  "public/mentraos/sdk/miniapp-cli/*",
   "mentra_live/bes/*",
   "testing/*",
   // The Bluetooth example app, built beside the Mentra App.
@@ -45,8 +39,6 @@ export const MONOREPO_PR_BUILD_PATHS = [
   ".github/workflows/mentra-app-ios-build.yml",
   ".github/workflows/mentra-asg-client-build.yml",
   ".github/workflows/reusable-pr-build-notification.yml",
-  ".github/ci/pack-miniapps.sh",
-  ".github/ci/bundled-miniapps.sh",
   ".github/ci/asg-build-identity.mjs",
 ]
 
@@ -57,8 +49,8 @@ export function iosBuildRequired(files, repository) {
   return files.some(({filename}) => {
     if (repository === MONOREPO && MONOREPO_PR_BUILD_PATHS.some((pattern) => matches(filename, pattern))) return true
     const path = mentraOsPath(filename, repository)
-    // The monorepo packs every miniapp into the app it builds.
-    if (path === null) return true
+    // The app bundles no miniapp: it installs them from its deployment's miniapp host.
+    if (path === null) return false
     return MOBILE_PR_PATHS.some((pattern) => matches(path, pattern))
   })
 }

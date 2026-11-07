@@ -58,13 +58,15 @@ export interface IslandConfigValues {
   hostVersion?: string
   /** Semver range of Mentra Miniapp SDK versions (`sdkVersion`) this host runs. Defaults to the engine's own. */
   supportedMiniappSdkRange?: string
-  /** Package identities backed by miniapp ZIPs shipped in this host build. */
-  bundledSystemMiniappPackages?: readonly string[]
+  /**
+   * The system miniapps this host build declares, like an Android system image's system apps: the packages it owns,
+   * whatever any manifest says. They install and update from `firstPartyMiniappsUrl`.
+   */
+  systemMiniappPackages?: readonly string[]
   /**
    * Where Mentra hosts its own miniapps for this deployment, for example
-   * `https://miniapps.mentraglass.com/`. Each bundled miniapp updates from
-   * `<firstPartyMiniappsUrl><packageName>/`. Null or omitted keeps bundled
-   * miniapps on the versions the build or deployment ships.
+   * `https://miniapps.mentraglass.com/`. Each system miniapp installs and updates from
+   * `<firstPartyMiniappsUrl><packageName>/`. Null or omitted: none installs, and an installed one keeps its version.
    */
   firstPartyMiniappsUrl?: string | null
   /**
@@ -210,7 +212,7 @@ export interface InstalledMiniappContext {
 /**
  * The deployment lets this package run at all: launches check it before its release. Under a workspace policy, a
  * package its system list or its manifest names, or one the account's current workspace assigned through Fleet that
- * this build doesn't bundle (a bundled package follows the system list).
+ * isn't one of this build's system packages (a system package follows the system list).
  */
 export function isLocalMiniappPackageAllowed(packageName: string, context: InstalledMiniappContext = {}): boolean {
   if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
@@ -220,7 +222,7 @@ export function isLocalMiniappPackageAllowed(packageName: string, context: Insta
       policy.systemPackageNames === null ||
       policy.systemPackageNames.includes(packageName) ||
       policy.managed.some((entry) => entry.packageName === packageName) ||
-      (context.assigned === true && !options?.config?.bundledSystemMiniappPackages?.includes(packageName))
+      (context.assigned === true && !options?.config?.systemMiniappPackages?.includes(packageName))
     )
   }
   const allowlist = options?.config?.localMiniappAllowlist
@@ -271,15 +273,15 @@ export function isInstalledMiniappAllowed(
 
   const systemApproved = policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
   if (systemApproved && releaseIdentity?.source === "bundled_asset") return true
-  // A compatible update of an approved bundled package, from Mentra's own host
-  // (or, for an older install, the retired Mentra Store), keeps the visibility
-  // of the bundled release it replaced.
+  // An approved system package from Mentra's own host (or, for an older
+  // install, the retired Mentra Store) has the visibility of the bundled
+  // release builds before 3.5 shipped.
   if (isTrustedSystemMiniappRelease(options?.config ?? {}, packageName, releaseIdentity)) return true
-  // An explicit install: from the scanner's release QR, or from a miniapp URL. A package this build bundles follows
+  // An explicit install: from the scanner's release QR, or from a miniapp URL. A system package of this build follows
   // the system policy above whatever URL it came from: a deployment that leaves it out doesn't get it from a URL.
   if (releaseIdentity?.source === "direct_download") return isMiniappDevelopmentAllowed()
   if (releaseIdentity?.source === "url") {
-    if (options?.config?.bundledSystemMiniappPackages?.includes(packageName)) return false
+    if (options?.config?.systemMiniappPackages?.includes(packageName)) return false
     // A workspace's Fleet assignment is its admins' deployment, not development: it runs where the developer tools
     // are off. It rewrites no deployment trust, so a package the deployment's manifest pins stays the manifest's.
     if (context.assigned && !policy.managed.some((entry) => entry.packageName === packageName)) return true

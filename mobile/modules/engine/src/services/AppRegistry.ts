@@ -34,7 +34,7 @@ import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import type {AppletType, ClientApp} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
-import {readBoundedByteStream} from "../utils/boundedByteStream"
+import {readBoundedBody} from "../utils/boundedByteStream"
 import {configuredDevHost} from "../utils/configuredDevHost"
 import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
 import {storage} from "../utils/storage/storage"
@@ -517,8 +517,8 @@ function assertInstallCompatibility(
 }
 
 /**
- * Download a miniapp zip from `url` and return its bytes. The response is
- * streamed through a size ceiling and a deadline, so an attacker-controlled
+ * Download a miniapp zip from `url` and return its bytes. The response is read
+ * through a size ceiling and a deadline, so an attacker-controlled
  * server cannot exhaust memory or hang an install. An expected SHA-256 is
  * checked before any other step reads the bytes.
  */
@@ -532,7 +532,7 @@ async function downloadMiniAppZip(
     options.onProgress?.("downloading")
     // React Native's global fetch polyfill does not expose Response.body.
     // Expo fetch provides the native ReadableStream required for bounded
-    // downloads without buffering an attacker-controlled response first.
+    // downloads of a response that declares no length (readBoundedBody).
     const requestUrl = new URL(url)
     const response = await expoFetch(url, {signal: abortController.signal})
     if (!response.ok) throw new Error(`bundle download failed with HTTP ${response.status}`)
@@ -543,8 +543,7 @@ async function downloadMiniAppZip(
     if (Number.isFinite(declaredSize) && declaredSize > MAX_REMOTE_BUNDLE_BYTES) {
       throw new Error(`bundle exceeds ${MAX_REMOTE_BUNDLE_BYTES} bytes`)
     }
-    if (!response.body) throw new Error("bundle download returned no response body")
-    const bytes = await readBoundedByteStream(response.body, MAX_REMOTE_BUNDLE_BYTES)
+    const bytes = await readBoundedBody(response, MAX_REMOTE_BUNDLE_BYTES)
     if (bytes.byteLength === 0) {
       throw new Error(`bundle must be between 1 and ${MAX_REMOTE_BUNDLE_BYTES} bytes`)
     }

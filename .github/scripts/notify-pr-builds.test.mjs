@@ -455,19 +455,19 @@ test("iOS path applicability matches its filtered workflow", () => {
     assert.equal(iosBuildRequired([{filename}]), true)
 })
 
-test("the monorepo maps its layout to MentraOS's paths, and every bundled miniapp requires iOS", () => {
+test("the monorepo maps its layout to MentraOS's paths, and no miniapp requires iOS: the app bundles none", () => {
   const monorepo = "Mentra-Community/Mentra"
   for (const filename of ["public/mentraos/mobile/src/app.tsx", "mentra_live/asg_client/app/build.gradle",
-    "miniapps/public/captions/src/index.ts", ".github/workflows/mentra-app-ios-build.yml",
+    ".github/workflows/mentra-app-ios-build.yml",
     "public/mentraos/.github/scripts/pr-ios-artifacts.mjs", "mentra_live/bes/src/main.c", ".github/workflows/bes.yml",
-    ".github/ci/pack-miniapps.sh", ".github/ci/bundled-miniapps.sh", ".github/ci/asg-build-identity.mjs",
-    "testing/routines/example.md", "public/mentraos/sdk/miniapp-cli/src/pack.ts", "public/mentraos/cloud-v2/packages/auth/src/index.ts",
-    "public/mentraos/cloud-v2/packages/miniapp-tools/src/index.ts", "public/mentraos/cloud-v2/packages/protocol/tsconfig.json",
-    "public/mentraos/cloud-v2/tsconfig.base.json", "public/mentraos/examples/bluetooth/react-native/src/App.tsx",
+    ".github/ci/asg-build-identity.mjs", "testing/routines/example.md",
+    "public/mentraos/cloud-v2/packages/protocol/src/index.ts", "public/mentraos/examples/bluetooth/react-native/src/App.tsx",
     "public/mentraos/examples/bun.lock"])
     assert.equal(iosBuildRequired([{filename}], monorepo), true, filename)
   for (const filename of ["public/mentraos/README.md", "internal_tools/app.ts",
-    "public/mentraos/cloud-v2/packages/core/src/service.ts"])
+    "public/mentraos/cloud-v2/packages/core/src/service.ts", "miniapps/public/captions/src/index.ts",
+    ".github/ci/pack-miniapps.sh", ".github/ci/bundled-miniapps.sh", "public/mentraos/sdk/miniapp-cli/src/pack.ts",
+    "public/mentraos/cloud-v2/packages/auth/src/index.ts", "public/mentraos/cloud-v2/packages/miniapp-tools/src/index.ts"])
     assert.equal(iosBuildRequired([{filename}], monorepo), false, filename)
   // MentraOS keeps its own layout.
   assert.equal(iosBuildRequired([{filename: "miniapps/public/captions/src/index.ts"}], "Mentra-Community/MentraOS"), false)

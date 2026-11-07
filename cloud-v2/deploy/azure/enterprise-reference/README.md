@@ -280,8 +280,8 @@ and version in the ZIP's `miniapp.json`. The coordinated deployment passes the
 managed list to Bicep and verifies the served bundle's SHA-256. The reference adopts
 a newer Call deliberately: put the new ZIP in
 `cloud-v2/deploy/azure/enterprise-reference/miniapps/` and update the version,
-`bundleUrl`, and SHA-256 together. `scripts/sync-miniapp.mjs` updates only the
-Mentra App copy and generated bundle list, never the reference.
+`bundleUrl`, and SHA-256 together. Publishing Call to Mentra's miniapp hosts
+never changes the reference.
 
 Use the matching Mentra App native build from this change, then re-select the
 workspace to refresh an already cached deployment manifest. Call uses the selected

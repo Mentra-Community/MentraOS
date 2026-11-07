@@ -4,7 +4,7 @@ import { startDevMiniapps } from './local-miniapps.mjs';
 
 // Set build environment variables
 // A debug build gets the miniapps live instead of packed.
-await setBuildEnv({ packMiniapps: false });
+await setBuildEnv();
 // Serve every miniapp of this checkout to the debug build, live.
 await startDevMiniapps();
 

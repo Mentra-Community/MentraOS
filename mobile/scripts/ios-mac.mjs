@@ -31,8 +31,8 @@ if (process.platform !== "darwin" || process.arch !== "arm64") {
 const configuration = args.includes("--debug") ? "Debug" : "Release"
 const projectRoot = process.cwd()
 const derivedData = path.resolve("build/ios-mac")
-// A debug build gets the miniapps live from the `bun start` it connects to, instead of packed.
-await setBuildEnv({packMiniapps: configuration === "Release"})
+// A debug build gets the miniapps live from the `bun start` it connects to.
+await setBuildEnv()
 // A copied .env may still name an old release. The repository root owns the
 // local version, including the value Metro embeds in the Settings screen.
 const localVersion = JSON.parse(await fs.readFile("../package.json", "utf8")).version

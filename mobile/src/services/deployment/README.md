@@ -8,9 +8,11 @@ Every active deployment has a schema-v1 `DeploymentManifest`:
   regional app configuration. `EXPO_PUBLIC_MINIAPPS_URL` becomes
   `artifacts.firstPartyMiniappsUrl`: where Mentra hosts its own miniapps for
   this build lane (`https://miniapps.mentraglass.com/` and its staging and dev
-  hosts). Each bundled miniapp updates from `<that URL><packageName>/`; without
-  it, the dev host. A workspace manifest that sets no host keeps its bundled
-  miniapps on the versions it pins. `EXPO_PUBLIC_DIRECTORY_URL` becomes
+  hosts). The build ships no miniapps: each default miniapp installs from
+  `<that URL><packageName>/` and every system miniapp updates from there; without
+  it, the dev host. Mentra's Core lists the defaults (`GET /api/client/deployment`,
+  `src/services/miniapps/defaultMiniapps.ts`). A workspace manifest lists its own
+  in `miniapps.defaults`; one that sets no host installs none of them. `EXPO_PUBLIC_DIRECTORY_URL` becomes
   `artifacts.directoryUrl`: the directory's API (the Mentra Miniapp Store
   backend, `https://api.apps.mentraglass.com/` and its staging and dev hosts),
   where package links look up their miniapp; without it, the dev directory. A

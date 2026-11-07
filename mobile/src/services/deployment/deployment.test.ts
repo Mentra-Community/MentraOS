@@ -46,7 +46,7 @@ function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManife
       supportUrl: `${WORKSPACE}/support`,
     },
     systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
-    miniapps: {managed: [], configuration: {}},
+    miniapps: {defaults: [], managed: [], configuration: {}},
     glasses: {allowedModelsOverride: ["mentra-live"]},
     features: {
       runtimeRealtimeSession: false,
@@ -171,6 +171,7 @@ describe("resolveDeploymentCandidate", () => {
   it("accepts same-origin manifest-managed userland miniapps", async () => {
     const value = manifest({
       miniapps: {
+        defaults: [],
         managed: [
           {
             packageName: "com.example.remoteassist",
@@ -191,6 +192,7 @@ describe("resolveDeploymentCandidate", () => {
     const value = manifest({
       systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
       miniapps: {
+        defaults: [],
         managed: [],
         configuration: {
           "com.mentra.settings": {backendUrl: `${WORKSPACE}/settings-api`},
@@ -209,6 +211,7 @@ describe("resolveDeploymentCandidate", () => {
           manifest({
             systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
             miniapps: {
+              defaults: [],
               managed: [],
               configuration: {
                 "com.example.unapproved": {backendUrl: `${WORKSPACE}/unapproved-api`},
@@ -229,6 +232,7 @@ describe("resolveDeploymentCandidate", () => {
           manifest({
             systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
             miniapps: {
+              defaults: [],
               managed: [],
               configuration: {
                 "com.mentra.settings": {backendUrl: "x".repeat(2_049)},
@@ -253,7 +257,11 @@ describe("resolveDeploymentCandidate", () => {
       response(
         JSON.stringify(
           manifest({
-            miniapps: {managed: [{...entry, bundleUrl: "https://attacker.example/miniapp.zip"}], configuration: {}},
+            miniapps: {
+              defaults: [],
+              managed: [{...entry, bundleUrl: "https://attacker.example/miniapp.zip"}],
+              configuration: {},
+            },
           }),
         ),
       ),
@@ -263,7 +271,7 @@ describe("resolveDeploymentCandidate", () => {
     })
 
     const duplicateFetch = jest.fn(async () =>
-      response(JSON.stringify(manifest({miniapps: {managed: [entry, {...entry}], configuration: {}}}))),
+      response(JSON.stringify(manifest({miniapps: {defaults: [], managed: [entry, {...entry}], configuration: {}}}))),
     )
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: duplicateFetch})).rejects.toMatchObject({
       code: "invalid-manifest",
@@ -274,7 +282,7 @@ describe("resolveDeploymentCandidate", () => {
         JSON.stringify(
           manifest({
             systemMiniapps: {approvedPackageNamesOverride: ["com.example.remoteassist"]},
-            miniapps: {managed: [entry], configuration: {}},
+            miniapps: {defaults: [], managed: [entry], configuration: {}},
           }),
         ),
       ),
@@ -291,6 +299,7 @@ describe("resolveDeploymentCandidate", () => {
           manifest({
             systemMiniapps: {approvedPackageNamesOverride: null},
             miniapps: {
+              defaults: [],
               managed: [
                 {
                   packageName: "com.mentra.settings",
@@ -311,6 +320,7 @@ describe("resolveDeploymentCandidate", () => {
   it.each(["v1.2.3", "1.2", "1.2.3-01"])("rejects non-canonical managed version %s", async (version) => {
     const value = manifest({
       miniapps: {
+        defaults: [],
         managed: [
           {
             packageName: "com.example.remoteassist",
@@ -593,7 +603,7 @@ describe("workspace manifest refresh", () => {
     sha256: "a".repeat(64),
   }
   const withEnterprise = (overrides: Partial<DeploymentManifest> = {}) =>
-    manifest({miniapps: {managed: [enterprise], configuration: {}}, ...overrides})
+    manifest({miniapps: {defaults: [], managed: [enterprise], configuration: {}}, ...overrides})
   const navigationOn = {...manifest().features, navigation: true}
 
   class CountingStorage extends MemoryDeploymentStorage {

@@ -12,7 +12,7 @@
 import {fetch as expoFetch} from "expo/fetch"
 import {MINIAPP_PACKAGE_NAME_PATTERN} from "@mentra/cloud-protocol/miniapp-url"
 
-import {readBoundedByteStream} from "../utils/boundedByteStream"
+import {readBoundedBody} from "../utils/boundedByteStream"
 import {sha256Hex} from "../utils/sha256"
 import {cloudClientService} from "./CloudClientService"
 import {isPackageNameAllowedForUrl} from "./miniappDomainRule"
@@ -30,6 +30,7 @@ export interface MiniappResponse {
   url: string
   headers: {get(name: string): string | null}
   body: ReadableStream<Uint8Array> | null
+  arrayBuffer?: () => Promise<ArrayBuffer>
 }
 
 export interface MiniappRequestInit {
@@ -347,11 +348,15 @@ function sendBundle(
   })
 }
 
+// Never touches `response.body` before reading: in Expo's fetch, that getter starts streaming, which empties what
+// arrayBuffer() would return (readBoundedBody).
 async function readBody(response: MiniappResponse, maxBytes: number, url: string): Promise<Uint8Array> {
-  if (!response.body) throw new MiniappFetchError("network", `${url} returned no body`)
   try {
-    return await readBoundedByteStream(response.body, maxBytes)
+    return await readBoundedBody(response, maxBytes)
   } catch (error) {
+    if (error instanceof Error && error.message === "response has no body") {
+      throw new MiniappFetchError("network", `${url} returned no body`, {cause: error})
+    }
     if (error instanceof Error && /exceeds/.test(error.message)) {
       throw new MiniappFetchError("too_large", `${url} exceeds ${maxBytes} bytes`, {cause: error})
     }

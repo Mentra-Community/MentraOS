@@ -99,7 +99,7 @@ describe("deployment feature policy", () => {
     configure({
       auth: {},
       config: {
-        bundledSystemMiniappPackages: ["com.mentra.captions"],
+        systemMiniappPackages: ["com.mentra.captions"],
         localMiniappPolicy: {
           systemPackageNames: approved,
           managed: [
@@ -133,7 +133,7 @@ describe("deployment feature policy", () => {
     configure({
       auth: {},
       config: {
-        bundledSystemMiniappPackages: ["com.mentra.captions"],
+        systemMiniappPackages: ["com.mentra.captions"],
         localMiniappPolicy: {
           systemPackageNames: ["com.mentra.settings"],
           managed: [
@@ -243,7 +243,7 @@ describe("bundled releases the retired Store updated", () => {
     configure({
       auth: {},
       config: {
-        bundledSystemMiniappPackages: ["com.mentra.notes"],
+        systemMiniappPackages: ["com.mentra.notes"],
         localMiniappPolicy: {
           systemPackageNames: approved,
           managed: managed

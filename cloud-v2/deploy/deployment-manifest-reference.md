@@ -140,6 +140,7 @@ All fields shown in the complete example are required, with these exceptions:
 | `branding` | No custom workspace logos. If supplied, both logo URLs are required. |
 | `miniapps` | Defaults to `{"managed": [], "configuration": {}}`. |
 | `miniapps.configuration` | Defaults to `{}`. If `miniapps` is supplied, `managed` is still required. |
+| `miniapps.defaults` | Defaults to `[]`. |
 
 An optional field is not automatically nullable. `branding: null`,
 `miniapps: null`, and `configuration: null` are invalid. Required nullable
@@ -239,6 +240,14 @@ All three fields are required and accept an HTTPS URL or `null`.
 | `artifacts.mentraLiveOtaManifestUrl` | URL of the Mentra Live firmware OTA manifest. `null` disables this configured OTA source; it does not select Mentra's public OTA service. This is a separate document from the deployment manifest. |
 | `artifacts.sttModelBaseUrl` | Intended base URL for speech-to-text model assets. Accepted and validated, but not currently connected to the model downloader. Use `null` for the reference profile. |
 | `artifacts.ttsModelBaseUrl` | Intended base URL for text-to-speech model assets. Accepted and validated, but not currently connected to the model downloader. Use `null` for the reference profile. |
+
+Two optional fields may follow them. `artifacts.firstPartyMiniappsUrl` (HTTPS
+URL or `null`) is where Mentra hosts its own miniapps, for example
+`https://miniapps.mentraglass.com/`: the Mentra App installs the
+[default miniapps](#default-miniapps) from it and keeps Mentra's miniapps
+updated from it. Omitted or `null`, nothing installs or updates from it.
+`artifacts.directoryUrl` is the miniapp directory's API that package links look
+up.
 
 Setting model URLs does not provide customer-hosted model routing today.
 `features.onDeviceSpeech` controls the on-device speech feature separately;
@@ -363,6 +372,31 @@ manifest removes its deployment-owned install after the phone loads the new
 manifest and reconciles it. This does not delete unrelated local or system
 installs. See the [managed miniapp operations guide](./azure/enterprise-reference/operations.md#customer-managed-userland-miniapps)
 for serving ZIPs from Runtime or customer ingress.
+
+## Default miniapps
+
+`miniapps.defaults` lists up to 100 package names that every phone of the
+deployment gets. On launch, and then on foreground, reconnect and every 15
+minutes, the Mentra App installs each one that is missing from
+`<artifacts.firstPartyMiniappsUrl><packageName>/` and keeps it updated from
+there; nothing is pinned. A package the list drops stays installed. A package
+in `miniapps.managed` or outside a non-null system allowlist is skipped, and
+without `artifacts.firstPartyMiniappsUrl` nothing installs.
+
+```json
+{
+  "managed": [],
+  "defaults": ["com.mentra.ai", "com.mentra.notes"],
+  "configuration": {}
+}
+```
+
+Being listed here grants no system status: the Mentra App build alone declares
+which packages are Mentra's system miniapps, and a local or development build of
+one never gets its privileges. Mentra App versions before 3.5 reject manifests
+with this field (unknown fields are invalid), so add it only once every phone of
+the workspace runs 3.5 or later. Mentra's own deployments serve their list from
+Core, `GET /api/client/deployment`, rather than from a manifest.
 
 ## Miniapp configuration
 

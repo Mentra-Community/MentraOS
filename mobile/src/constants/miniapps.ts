@@ -19,7 +19,7 @@ export const isChinaBuild = (): boolean => process.env.EXPO_PUBLIC_DEPLOYMENT_RE
 /**
  * Apps that are not shipped in the China build: Mentra Map (navigation),
  * Notify, and Feedback. Enforced at every registration surface —
- * bundled-miniapp install, the offline-app catalog, and leftover hide.
+ * default-miniapp install, the offline-app catalog, and leftover hide.
  */
 export const CHINA_HIDDEN_APPS = [navigationPackageName, notifyPackageName, feedbackPackageName]
 
@@ -34,6 +34,28 @@ export const shouldHideMiniapp = (
   if (packageName === notifyPackageName) return !showIosNotify
   return false
 }
+
+/**
+ * The system miniapps of this build, like an Android system image's system apps: Mentra's own miniapps, which install
+ * and update from the deployment's miniapp host (`artifacts.firstPartyMiniappsUrl`) and may run with the build's
+ * privileges (Mentra AI's tool calls into other miniapps). Only this list makes a package one: no manifest can add to
+ * it or stand in for it (a workspace can only leave a package out or pin its own release), and a local or development
+ * build of one of these names never gets those privileges. Which ones a phone gets is the deployment's default list.
+ */
+export const SYSTEM_MINIAPP_PACKAGES = [
+  mentraAiPackageName,
+  mentraCallPackageName,
+  "com.mentra.enterprise",
+  linkLingoPackageName,
+  "com.mentra.livestreamer",
+  "com.mentra.merge",
+  "com.mentra.notes",
+  "com.mentra.captions",
+  navigationPackageName,
+  "com.mentra.recorder",
+  "com.mentra.teleprompter",
+  "com.mentra.translation",
+] as const
 
 // these apps cannot be uninstalled:
 export const SYSTEM_APPS = [
