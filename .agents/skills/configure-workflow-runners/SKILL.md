@@ -27,6 +27,18 @@ each job's `runs-on` must select a Blacksmith runner.
   Preserve the iOS build's concurrency pattern so newer commits can cancel superseded builds
   without cancelling another branch's work. Check the runner's repository access
   and required Xcode/toolchain before relying on it in another repo.
+- In the monorepo's pr.yml, pick by job size and signing:
+  - a short Mac job (a few minutes: Swift tests, SwiftPM exports) asks for
+    plan's `mac_light` (`runs-on: ${{ fromJSON(needs.plan.outputs.mac_light) }}`),
+    or `[light, mac-mini]` when it needs a logged-in macOS user (a
+    simulator) or secrets. The light runners (labels `light`, plus `mac-mini`
+    on the Mac mini's big-bob-light) have no `self-hosted`, `macOS` or
+    `shared` label, so no build lands on them; never put a build there.
+  - an unsigned build asks for plan's `mac_build`: `unsigned` (big-bob-2,
+    big-bob-3, and lab Mac CI runners without signing secrets) for
+    same-repository code, the `shared` runners for imported MentraOS PRs and
+    forks.
+  - a signing job keeps `[self-hosted, macOS, ARM64, shared]`.
 
 Hardware/device-test jobs must stay on the configured self-hosted runner that
 owns their attached devices. Use Blacksmith for general Linux CI compute.
