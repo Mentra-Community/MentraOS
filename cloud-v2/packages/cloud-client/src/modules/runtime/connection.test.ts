@@ -115,6 +115,14 @@ function makeConnection(opts: {
   return { conn: new Connection(deps), createdCount: () => created };
 }
 
+/** Poll until the ws factory has been called `n` times (or give up after 500 ms). */
+async function waitForCreated(createdCount: () => number, n: number): Promise<void> {
+  const deadline = Date.now() + 500;
+  while (createdCount() < n && Date.now() < deadline) {
+    await wait(2);
+  }
+}
+
 /** Resolve after `ms` of real time (kept small so tests stay fast). */
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -504,4 +512,47 @@ describe("Connection reconnect robustness", () => {
     // No new socket: the host close wins and the loop stays down.
     expect(createdCount()).toBe(1);
   });
+
+  // An attempt that is still waiting for its token when a newer attempt
+  // replaces it must not disturb the winner, whether its token later resolves
+  // or rejects.
+  for (const outcome of ["resolves", "rejects"] as const) {
+    test(`a superseded attempt whose token later ${outcome} leaves the newer session open`, async () => {
+      const winner = new FakeSocket();
+      let tokenCalls = 0;
+      let settleFirst!: () => void;
+      const { conn, createdCount } = makeConnection({
+        sockets: [winner],
+        getToken: () => {
+          tokenCalls += 1;
+          if (tokenCalls === 1) {
+            return new Promise<string>((resolve, reject) => {
+              settleFirst = () =>
+                outcome === "resolves" ? resolve("late-token") : reject(new Error("token provider failed"));
+            });
+          }
+          return Promise.resolve("test-token");
+        },
+      });
+
+      // Attempt A waits on its token; attempt B replaces it and is acked.
+      const first = conn.open();
+      const second = conn.open();
+      await waitForCreated(createdCount, 1);
+      winner.driveSuccessfulHandshake(SAMPLE_ACK);
+      await second;
+      expect(conn.isOpen).toBe(true);
+
+      // A's token finally settles.
+      settleFirst();
+      await first.catch(() => undefined);
+      await wait(60);
+
+      expect(conn.isOpen).toBe(true);
+      expect(winner.closed).toBe(false);
+      expect(createdCount()).toBe(1);
+
+      conn.close();
+    });
+  }
 });
