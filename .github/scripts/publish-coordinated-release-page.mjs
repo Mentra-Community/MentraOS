@@ -94,7 +94,9 @@ export function releaseDownloadNotes({plan, manifest, repository, examples = fal
 // `assetNames` are the files in the stable release container; the production
 // example apps are listed when the production example workflow published them.
 export function productionReleaseDownloadNotes({plan, manifest, repository, assetNames = []}) {
-  if (plan.channel !== "production" || manifest.kind !== "mentra-production-release") {
+  // The release's finalize writes channel "production"; records of the earlier
+  // MentraOS promotion said kind "mentra-production-release" instead.
+  if (plan.channel !== "production" || (manifest.channel !== "production" && manifest.kind !== "mentra-production-release")) {
     throw new Error("Production download notes need a production plan and release record")
   }
   if (manifest.releaseIdentity !== plan.releaseIdentity || manifest.sourceCommit !== plan.sourceCommit) {

@@ -10,20 +10,17 @@ cluster:
 
 | Release source                              | Coordinated owner              | Porter app      | Generated manifest    | Public hosts                                                                          |
 | ------------------------------------------- | ------------------------------ | --------------- | --------------------- | ------------------------------------------------------------------------------------- |
-| `dev`                                       | `coordinated-release.yml`      | `cloud-dev`     | `porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`         |
-| `staging`                                   | `coordinated-release.yml`      | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
-| selected release source contained in `main` | `production-release-cloud.yml` | `cloud-prod`    | `porter.prod.yaml`    | `core.mentraglass.com`, `runtime.mentraglass.com`                                     |
+| `dev`                                       | monorepo `release.yml`         | `cloud-dev`     | `porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`         |
+| `staging`                                   | monorepo `release.yml`         | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
+| `main`                                      | monorepo `release.yml`         | `cloud-prod`    | `porter.prod.yaml`    | `core.mentraglass.com`, `runtime.mentraglass.com`                                     |
 
-Both release systems call `reusable-coordinated-cloud-v2.yml`, which is the single
-implementation owner for target resolution, Porter deployment, public health
-checks, and deployment evidence. Dev and staging can be started with the
-coordinator's `workflow_dispatch`; production remains a protected promotion of
-a completed beta whose source is contained in `main`.
-
-The production deployment must finish, and the actual currently published
-Mentra App must pass against it, before production mobile candidates are built.
-Beta mobile builds embed staging Cloud V2 and are not production-promotable
-artifacts.
+The Mentra monorepo's `.github/workflows/release.yml` deploys all three, through
+its `release-cloud.yml`: target resolution, Porter deployment, public health
+checks, and deployment evidence. A push to `dev` or `staging` releases that
+branch; a push to `main` (the merged `staging` to `main` PR) is the production
+release of the beta it equals, behind the `production-approval` environment.
+Production first checks prod's Porter environment group against
+`.github/production-release/cloud-config-contract.json`.
 
 Do not add a second branch-push deploy workflow for these Porter apps. A manual
 repair should rerun the exact coordinated job/source so its result remains

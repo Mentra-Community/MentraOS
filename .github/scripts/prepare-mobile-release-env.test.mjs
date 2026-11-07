@@ -84,6 +84,24 @@ test("renders production candidates from production plans", () => {
   assert.match(env, /^MENTRAOS_PINNED_BUILD_NUMBER=310000099$/m)
 })
 
+test("rehearses a production release on staging's backend, and nothing else", () => {
+  const production = {
+    ...plan,
+    releaseIdentity: "3.1.0",
+    releaseSetId: "mentra-3.1.0",
+    channel: "production",
+    products: {mentraos: "3.1.0"},
+  }
+  const {env} = prepareMobileReleaseEnvironment({...input, plan: production, rehearsal: true})
+  assert.match(env, /^EXPO_PUBLIC_BUILD_ENV=staging$/m)
+  assert.match(env, /^EXPO_PUBLIC_MENTRAOS_VERSION=3\.1\.0$/m)
+  assert.throws(
+    () => prepareMobileReleaseEnvironment({...input, plan: production}),
+    /production mobile releases must target the prod backend/,
+  )
+  assert.throws(() => prepareMobileReleaseEnvironment({...input, rehearsal: true}), /Only a production release/)
+})
+
 test("rejects a mismatched backend and invalid OTA URLs", () => {
   assert.throws(
     () => prepareMobileReleaseEnvironment({...input, otaManifestUrl: "http://example.com/ota.json"}),

@@ -120,7 +120,7 @@ test("beta, production and legacy dev plans retain their Play publication requir
   }
 })
 
-test("the mobile workflow gates only Play operations, preserving Android artifacts and production promotion", () => {
+test("the mobile workflow gates only Play operations, preserving Android artifacts", () => {
   const workflow = readFileSync(new URL("../workflows/reusable-coordinated-mobile.yml", import.meta.url), "utf8")
   for (const name of [
     "Prepare Google Play upload tooling",
@@ -140,15 +140,6 @@ test("the mobile workflow gates only Play operations, preserving Android artifac
     const block = workflow.split(`      - name: ${name}\n`)[1].split("\n      - ")[0]
     assert.doesNotMatch(block, /if: .*upload_google_play/)
   }
-  // Production candidates land on the production track as a draft (see the
-  // family build numbers spec, "Google Play track floors"); submission verifies
-  // that draft instead of promoting from a testing track.
-  const production = readFileSync(new URL("../workflows/production-release-mobile.yml", import.meta.url), "utf8")
-  assert.match(production, /play_track: production/)
-  assert.match(production, /play_release_status: draft/)
-  const submission = readFileSync(new URL("../workflows/production-release-store-submit.yml", import.meta.url), "utf8")
-  assert.match(submission, /--required-state submitted/)
-  assert.doesNotMatch(submission, /GOOGLE_PLAY_SOURCE_TRACK/)
 })
 
 // The pause is decided at the CLI boundary, where the coordinator's plan job

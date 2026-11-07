@@ -5,13 +5,8 @@ import path from "node:path"
 import {fileURLToPath} from "node:url"
 
 const BASE_URL = "https://central.sonatype.com"
-const WAITING_STATES = new Set(["PENDING", "VALIDATING", "PUBLISHING"])
-const RESUMABLE_STATES = new Set([...WAITING_STATES, "VALIDATED", "PUBLISHED"])
+const RESUMABLE_STATES = new Set(["PENDING", "VALIDATING", "PUBLISHING", "VALIDATED", "PUBLISHED"])
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
 
 async function responseJson(response, label) {
   const body = await response.text()
@@ -37,38 +32,16 @@ function requireDeploymentRecord(record) {
   return record
 }
 
-// AUTOMATIC deployments publish to Maven Central as soon as validation passes
-// (dev and beta). USER_MANAGED deployments stop at VALIDATED and stay private
-// until publishDeployment requests publication; the production channel uses
-// that so stable coordinates only go public in the separate release phase.
-export const PUBLISHING_TYPES = Object.freeze(["AUTOMATIC", "USER_MANAGED"])
-
-export function requirePublishingType(value = "AUTOMATIC") {
-  if (!PUBLISHING_TYPES.includes(value))
-    throw new Error(`Unsupported Sonatype publishing type ${JSON.stringify(value)}`)
-  return value
-}
-
-export function uploadAutomaticDeployment(options) {
-  return uploadDeployment({...options, publishingType: "AUTOMATIC"})
-}
-
-export async function uploadDeployment({
-  bundle,
-  token,
-  deploymentName,
-  expectedPurls,
-  publishingType = "AUTOMATIC",
-  fetchImpl = fetch,
-}) {
+// Every channel submits an AUTOMATIC deployment: Maven Central publishes it as
+// soon as Sonatype validates it.
+export async function uploadDeployment({bundle, token, deploymentName, expectedPurls, fetchImpl = fetch}) {
   if (!bundle || !token || !deploymentName || expectedPurls.length === 0) {
     throw new Error("Bundle, token, deployment name, and expected PURLs are required")
   }
-  requirePublishingType(publishingType)
   const bytes = readFileSync(bundle)
   const url = new URL("/api/v1/publisher/upload", BASE_URL)
   url.searchParams.set("name", deploymentName)
-  url.searchParams.set("publishingType", publishingType)
+  url.searchParams.set("publishingType", "AUTOMATIC")
   const form = new FormData()
   form.append("bundle", new Blob([bytes], {type: "application/octet-stream"}), path.basename(bundle))
   const response = await fetchImpl(url, {
@@ -87,7 +60,7 @@ export async function uploadDeployment({
     deploymentName,
     bundleSha256: createHash("sha256").update(bytes).digest("hex"),
     expectedPurls,
-    publishingType,
+    publishingType: "AUTOMATIC",
   }
 }
 
@@ -96,13 +69,6 @@ async function deploymentStatus({fetchImpl, headers, deploymentId}) {
   url.searchParams.set("id", deploymentId)
   const response = await fetchImpl(url, {method: "POST", headers})
   return responseJson(response, "Sonatype deployment status")
-}
-
-async function requestPublication({fetchImpl, headers, deploymentId}) {
-  const url = new URL(`/api/v1/publisher/deployment/${deploymentId}`, BASE_URL)
-  const response = await fetchImpl(url, {method: "POST", headers})
-  const body = await response.text()
-  if (!response.ok) throw new Error(`Sonatype publication request failed with HTTP ${response.status}: ${body}`)
 }
 
 function requireMatchingStatus(record, status) {
@@ -139,83 +105,6 @@ export async function inspectDeployment({record, token, fetchImpl = fetch}) {
   return {...record, disposition: "resume", deploymentState: status.deploymentState, purls}
 }
 
-// Wait until Sonatype has validated a USER_MANAGED deployment (or already
-// published it). The production publish phase requires this before it succeeds
-// so the later release phase never moves npm latest ahead of a Maven bundle
-// that would then fail to publish.
-export async function waitForValidatedDeployment({
-  record,
-  token,
-  fetchImpl = fetch,
-  sleepImpl = sleep,
-  statusAttempts = 180,
-  pollIntervalMs = 10_000,
-}) {
-  requireDeploymentRecord(record)
-  if (!token) throw new Error("Sonatype token is required")
-  const headers = {Authorization: `Bearer ${token}`}
-  for (let attempt = 1; attempt <= statusAttempts; attempt += 1) {
-    const status = requireMatchingStatus(
-      record,
-      await deploymentStatus({fetchImpl, headers, deploymentId: record.deploymentId}),
-    )
-    if (status.deploymentState === "FAILED") {
-      throw new Error(`Sonatype deployment ${record.deploymentName} failed: ${JSON.stringify(status.errors || [])}`)
-    }
-    if (status.deploymentState === "VALIDATED" || status.deploymentState === "PUBLISHED") {
-      return {...record, deploymentState: status.deploymentState, purls: status.purls || []}
-    }
-    if (!WAITING_STATES.has(status.deploymentState)) {
-      throw new Error(
-        `Sonatype deployment ${record.deploymentName} has unknown state ${JSON.stringify(status.deploymentState)}`,
-      )
-    }
-    if (attempt < statusAttempts) await sleepImpl(pollIntervalMs)
-  }
-  throw new Error(
-    `Sonatype deployment ${record.deploymentName} was not validated after ${statusAttempts} status checks`,
-  )
-}
-
-export async function publishDeployment({
-  record,
-  token,
-  fetchImpl = fetch,
-  sleepImpl = sleep,
-  statusAttempts = 360,
-  pollIntervalMs = 10_000,
-}) {
-  requireDeploymentRecord(record)
-  if (!token) throw new Error("Sonatype token is required")
-  const headers = {Authorization: `Bearer ${token}`}
-  let publicationRequested = false
-
-  for (let attempt = 1; attempt <= statusAttempts; attempt += 1) {
-    const status = requireMatchingStatus(
-      record,
-      await deploymentStatus({fetchImpl, headers, deploymentId: record.deploymentId}),
-    )
-    const purls = status.purls || []
-    if (status.deploymentState === "FAILED") {
-      throw new Error(`Sonatype deployment ${record.deploymentName} failed: ${JSON.stringify(status.errors || [])}`)
-    }
-    if (status.deploymentState === "PUBLISHED") {
-      return {...record, deploymentState: status.deploymentState, purls}
-    } else if (status.deploymentState === "VALIDATED") {
-      if (!publicationRequested) {
-        await requestPublication({fetchImpl, headers, deploymentId: record.deploymentId})
-        publicationRequested = true
-      }
-    } else if (!WAITING_STATES.has(status.deploymentState)) {
-      throw new Error(
-        `Sonatype deployment ${record.deploymentName} has unknown state ${JSON.stringify(status.deploymentState)}`,
-      )
-    }
-    if (attempt < statusAttempts) await sleepImpl(pollIntervalMs)
-  }
-  throw new Error(`Sonatype deployment ${record.deploymentName} did not publish after ${statusAttempts} status checks`)
-}
-
 function parseArgs(args) {
   const values = {}
   for (let index = 0; index < args.length; index += 2) {
@@ -237,20 +126,9 @@ async function main() {
       token: process.env.MAVEN_CENTRAL_TOKEN_BASE64,
       deploymentName: args.name,
       expectedPurls: args["expected-purls"].split(","),
-      publishingType: args["publishing-type"] || "AUTOMATIC",
     })
   } else if (command === "inspect") {
     result = await inspectDeployment({
-      record: JSON.parse(readFileSync(path.resolve(args.record), "utf8")),
-      token: process.env.MAVEN_CENTRAL_TOKEN_BASE64,
-    })
-  } else if (command === "wait-validated") {
-    result = await waitForValidatedDeployment({
-      record: JSON.parse(readFileSync(path.resolve(args.record), "utf8")),
-      token: process.env.MAVEN_CENTRAL_TOKEN_BASE64,
-    })
-  } else if (command === "publish") {
-    result = await publishDeployment({
       record: JSON.parse(readFileSync(path.resolve(args.record), "utf8")),
       token: process.env.MAVEN_CENTRAL_TOKEN_BASE64,
     })

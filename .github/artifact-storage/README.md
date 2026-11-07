@@ -76,9 +76,9 @@ time, so a sweep cannot delete a concurrent replacement based on stale metadata.
 These lifecycle rules are installed on `artifactscdn`; preserve the bucket's
 default multipart-abort rule when applying them to another bucket.
 
-Private production-promotion drafts retain their GitHub storage and access
-restrictions. Final `mentra-vX.Y.Z` distribution records use the public CDN;
-their publication step runs only after the existing rollout gates. Intermediate
+A production release's `mentra-vX.Y.Z` stays a draft GitHub release while the
+release runs; its files use the public CDN as soon as they are uploaded, and
+the release is published once the run completes. Intermediate
 GitHub Actions artifacts remain run-scoped workflow handoffs. Artifacts owned
 by external repositories continue to be read from their recorded source URLs.
 

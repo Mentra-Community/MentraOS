@@ -391,6 +391,53 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 
+  it("starts the update watchdogs on Retry only once the hotspot join is answered", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    expect(otaInstallCoordinator.prepare(checkResult())).toBe("hotspot")
+    mockHotspotPrepare.mockRejectedValueOnce(new Error("Local WiFi connection cancelled"))
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+
+    // An unfinished session makes Retry reconcile; its idle reply falls back to a fresh start.
+    useGlassesStore.getState().setOtaStatus(inProgressStatus())
+    let answerJoin!: (url: string) => void
+    mockHotspotPrepare.mockImplementationOnce(() => new Promise<string>((resolve) => (answerJoin = resolve)))
+    otaInstallCoordinator.retry()
+    useGlassesStore.getState().setOtaStatus(idleStatus())
+    // The idle reply, as the SDK maps it into both store shapes, gives the stall watchdog a signature.
+    useGlassesStore.getState().setOtaProgress(
+      legacyOtaProgressFromOtaStatusEvent(
+        normalizeOtaStatusEvent({
+          session_id: "",
+          total_steps: 0,
+          current_step: 0,
+          step_type: "apk",
+          phase: "download",
+          status: "idle",
+          step_percent: 0,
+          overall_percent: 0,
+        }),
+      ),
+    )
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
+    expect(mockHotspotPrepare).toHaveBeenCalledTimes(2)
+
+    // The person takes longer than the watchdog to answer the join prompt.
+    await jest.advanceTimersByTimeAsync(PROGRESS_TIMEOUT_MS * 2)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBeFalsy()
+
+    answerJoin("http://192.168.43.2:8791/version.json")
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledWith("http://192.168.43.2:8791/version.json")
+    await jest.advanceTimersByTimeAsync(DOWNLOAD_STUCK_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.stalledOrStuck)
+  })
+
   it("waits for an explicit glasses Wi-Fi status when hotspot OTA is unavailable", () => {
     useGlassesStore.getState().setGlassesInfo({hotspotOtaVersion: 0})
 

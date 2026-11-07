@@ -20,7 +20,6 @@ data class ScopedNetworkRequestSpec(
     val passphrase: String,
     val transportTypes: Set<Int>,
     val removedCapabilities: Set<Int>,
-    val timeoutMs: Int,
 ) {
     /** True when the request cannot be satisfied by, or promoted to, an internet-bearing network. */
     val avoidsInternetCapability: Boolean
@@ -30,24 +29,16 @@ data class ScopedNetworkRequestSpec(
         get() = passphrase.isNotEmpty()
 
     companion object {
-        /**
-         * Android caps `requestNetwork` timeouts well above this; 30 s matches the value the
-         * Bluetooth SDK already uses for the same hotspot and is long enough for a cold AP start.
-         */
-        const val DEFAULT_TIMEOUT_MS = 30_000
-
         /** The canonical SoftAP request. Every caller should go through this. */
         fun forSoftAp(
             ssid: String,
             passphrase: String,
-            timeoutMs: Int = DEFAULT_TIMEOUT_MS,
         ): ScopedNetworkRequestSpec =
             ScopedNetworkRequestSpec(
                 ssid = ssid,
                 passphrase = passphrase,
                 transportTypes = setOf(NetworkCapabilities.TRANSPORT_WIFI),
                 removedCapabilities = setOf(NetworkCapabilities.NET_CAPABILITY_INTERNET),
-                timeoutMs = timeoutMs,
             )
     }
 }

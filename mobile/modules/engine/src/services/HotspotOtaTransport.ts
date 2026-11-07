@@ -18,6 +18,7 @@ import {
   type OtaArtifactDownloadProgress,
   type PreparedOtaArtifact,
 } from "./OtaArtifactDownloader"
+import {keepHotspotUpWhileJoining} from "./GlassesHotspotJoin"
 import {acquireGlassesHotspot} from "./GlassesHotspotLease"
 import {disableHotspotWithRetry} from "./HotspotShutdown"
 import {
@@ -146,12 +147,18 @@ class HotspotOtaTransport {
       onProgress?.({phase: "joining_hotspot"})
       assertCurrent()
       this.localNetworkRequested = true
-      const localAddress = await localNetworkTransport.connect(this.networkOwner, hotspot.ssid, hotspot.password, {
-        assertCurrent,
-        gateway: hotspot.localIp,
-        // The glasses download from our listener; OTA never calls the Gallery server.
-        purpose: "incoming-server",
-      })
+      const localAddress = await keepHotspotUpWhileJoining(
+        localNetworkTransport.connect(this.networkOwner, hotspot.ssid, hotspot.password, {
+          assertCurrent,
+          gateway: hotspot.localIp,
+          // The glasses download from our listener; OTA never calls the Gallery server.
+          purpose: "incoming-server",
+        }),
+        {
+          enable: () => BluetoothSdk.setHotspotState(true),
+          cancel: () => void localNetworkTransport.disconnect(this.networkOwner).catch(() => undefined),
+        },
+      )
       this.localNetworkConnected = true
       assertCurrent()
       const artifactPaths = Object.fromEntries(this.prepared.map((artifact) => [artifact.sha256, artifact.filePath]))
@@ -257,6 +264,11 @@ class HotspotOtaTransport {
     if (this.teardownPromise) return this.teardownPromise
     this.teardownPromise = (async () => {
       if (!this.releaseHotspot) return
+      // The join has no time limit: cancel a pending one so preparation can settle. The
+      // reservation stays held until the cleanup below has finished.
+      if (this.preparing && this.localNetworkRequested && !this.localNetworkConnected) {
+        void localNetworkTransport.disconnect(this.networkOwner).catch(() => undefined)
+      }
       await this.preparing?.catch(() => {})
       const errors: unknown[] = []
       if (disableGlassesHotspot && this.ownerRevision === otaDeviceSessionRevision() && this.hotspotRequested) {

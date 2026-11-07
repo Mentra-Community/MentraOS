@@ -8,37 +8,28 @@ class ScopedNetworkErrorTest {
 
     @Test
     fun `no failure maps to no error`() {
-        assertThat(ScopedNetworkError.from(Failure.NONE, "ssid", 30_000)).isNull()
+        assertThat(ScopedNetworkError.from(Failure.NONE, "ssid")).isNull()
     }
 
     @Test
     fun `each failure maps to its typed error and stable code`() {
-        assertThat(ScopedNetworkError.from(Failure.TIMEOUT, "ap", 30_000))
-            .isInstanceOf(ScopedNetworkError.Timeout::class.java)
-            .extracting("code")
-            .isEqualTo(ScopedNetworkError.CODE_TIMEOUT)
-
-        assertThat(ScopedNetworkError.from(Failure.UNAVAILABLE, "ap", 30_000))
+        assertThat(ScopedNetworkError.from(Failure.UNAVAILABLE, "ap"))
             .isInstanceOf(ScopedNetworkError.Unavailable::class.java)
 
-        assertThat(ScopedNetworkError.from(Failure.LOST, "ap", 30_000))
+        assertThat(ScopedNetworkError.from(Failure.LOST, "ap"))
             .isInstanceOf(ScopedNetworkError.Lost::class.java)
 
-        assertThat(ScopedNetworkError.from(Failure.REQUEST_FAILED, "ap", 30_000))
+        assertThat(ScopedNetworkError.from(Failure.REQUEST_FAILED, "ap"))
             .isInstanceOf(ScopedNetworkError.RequestFailed::class.java)
     }
 
-    /**
-     * A denied permission must be its own error, not a timeout: otherwise it looks like a flaky
-     * hotspot and costs 30 seconds before failing.
-     */
+    /** A denied permission must be its own error: otherwise it looks like a flaky hotspot. */
     @Test
-    fun `permission denial is distinct from a timeout`() {
-        val denied = ScopedNetworkError.from(Failure.PERMISSION_DENIED, "ap", 30_000)
+    fun `permission denial is its own error`() {
+        val denied = ScopedNetworkError.from(Failure.PERMISSION_DENIED, "ap")
 
         assertThat(denied).isInstanceOf(ScopedNetworkError.PermissionDenied::class.java)
         assertThat(denied?.code).isEqualTo(ScopedNetworkError.CODE_PERMISSION_DENIED)
-        assertThat(denied?.code).isNotEqualTo(ScopedNetworkError.CODE_TIMEOUT)
     }
 
     @Test
@@ -46,7 +37,7 @@ class ScopedNetworkErrorTest {
         val codes =
             listOf(
                 ScopedNetworkError.CODE_PERMISSION_DENIED,
-                ScopedNetworkError.CODE_TIMEOUT,
+                ScopedNetworkError.CODE_CANCELLED,
                 ScopedNetworkError.CODE_UNAVAILABLE,
                 ScopedNetworkError.CODE_LOST,
                 ScopedNetworkError.CODE_REQUEST_FAILED,
@@ -62,9 +53,7 @@ class ScopedNetworkErrorTest {
 
     @Test
     fun `messages name the ssid so a log line is actionable`() {
-        assertThat(ScopedNetworkError.Timeout("MentraLive-1234", 30_000).message)
-            .contains("MentraLive-1234")
-            .contains("30000")
+        assertThat(ScopedNetworkError.Cancelled("MentraLive-1234").message).contains("MentraLive-1234")
         assertThat(ScopedNetworkError.Lost("MentraLive-1234").message).contains("MentraLive-1234")
     }
 

@@ -31,7 +31,9 @@ function requireHttps(value, label) {
   return url.toString()
 }
 
-export function prepareMobileReleaseEnvironment({plan, doppler, backendEnvironment, otaManifestUrl}) {
+// `rehearsal`: a production dry run outside the production environment, which
+// can't read production's config and builds with staging's. It never publishes.
+export function prepareMobileReleaseEnvironment({plan, doppler, backendEnvironment, otaManifestUrl, rehearsal = false}) {
   if (plan.releaseSetId !== `mentra-${plan.releaseIdentity}` || plan.products?.mentraos !== plan.releaseIdentity) {
     throw new Error("Release plan does not contain the coordinated MentraOS product")
   }
@@ -41,8 +43,15 @@ export function prepareMobileReleaseEnvironment({plan, doppler, backendEnvironme
   if (plan.native.marketingVersion !== plan.familyBaseVersion) {
     throw new Error("Native marketing version must equal the family base")
   }
+  if (rehearsal && plan.channel !== "production") throw new Error("Only a production release is rehearsed on staging's backend")
   const expectedBackend =
-    plan.channel === "dev" ? "dev" : plan.channel === "beta" ? "staging" : plan.channel === "production" ? "prod" : null
+    plan.channel === "dev"
+      ? "dev"
+      : plan.channel === "beta" || rehearsal
+        ? "staging"
+        : plan.channel === "production"
+          ? "prod"
+          : null
   if (!expectedBackend) throw new Error(`Mobile builds do not support channel ${JSON.stringify(plan.channel)}`)
   if (backendEnvironment !== expectedBackend) {
     throw new Error(
@@ -91,6 +100,7 @@ function main() {
     doppler: JSON.parse(readFileSync(0, "utf8")),
     backendEnvironment: args["backend-environment"],
     otaManifestUrl: args["ota-manifest-url"],
+    rehearsal: args.rehearsal === "true",
   })
   for (const value of masked) console.log(`::add-mask::${value}`)
   writeFileSync(path.resolve(args.output), env)

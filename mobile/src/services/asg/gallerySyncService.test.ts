@@ -470,6 +470,36 @@ describe("GallerySyncService", () => {
     }
   })
 
+  it("does not join again when the glasses report the hotspot ready while a join waits", async () => {
+    // The join keep-alive re-sends the enable, and the glasses answer each with "hotspot ready".
+    gallerySyncService.initialize()
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
+    let finish!: (address: string) => void
+    const connectSpy = jest
+      .spyOn(localNetworkTransport, "connect")
+      .mockImplementation(() => new Promise((resolve) => (finish = resolve)))
+    jest.spyOn(localNetworkTransport, "fetch").mockResolvedValue({status: 200} as Response)
+    jest.spyOn(localNetworkTransport, "disconnect").mockResolvedValue(undefined)
+    jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
+    const work = (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
+    for (let i = 0; i < 20 && !finish; i++) await Promise.resolve()
+    expect(useGallerySyncStore.getState().syncState).toBe("connecting_wifi")
+
+    GlobalEventEmitter.emit("hotspot_status_change", {
+      enabled: true,
+      ssid: HOTSPOT_INFO.ssid,
+      password: HOTSPOT_INFO.password,
+      local_ip: HOTSPOT_INFO.ip,
+    })
+    await jest.advanceTimersByTimeAsync(10_000)
+    expect(connectSpy).toHaveBeenCalledTimes(1)
+
+    finish("192.168.43.2")
+    await work
+    expect(connectSpy).toHaveBeenCalledTimes(1)
+  })
+
   it("releases the iOS association before retrying after a failed health probe", async () => {
     Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})

@@ -63,28 +63,6 @@ class ScopedNetworkLifecycleTest {
     }
 
     @Test
-    fun `timeout while still requesting fails as TIMEOUT`() {
-        val state = ScopedNetworkState()
-        val generation = state.startRequest()
-
-        assertThat(state.onTimeout(generation)).isTrue()
-        assertThat(state.phase).isEqualTo(Phase.LOST)
-        assertThat(state.failure).isEqualTo(Failure.TIMEOUT)
-    }
-
-    /** The join succeeded just before the watchdog fired; the network must stay usable. */
-    @Test
-    fun `a timeout arriving after onAvailable is ignored`() {
-        val state = ScopedNetworkState()
-        val generation = state.startRequest()
-        state.onAvailable(generation)
-
-        assertThat(state.onTimeout(generation)).isFalse()
-        assertThat(state.phase).isEqualTo(Phase.AVAILABLE)
-        assertThat(state.failure).isEqualTo(Failure.NONE)
-    }
-
-    @Test
     fun `onUnavailable fails as UNAVAILABLE`() {
         val state = ScopedNetworkState()
         val generation = state.startRequest()
@@ -125,7 +103,6 @@ class ScopedNetworkLifecycleTest {
         assertThat(state.onAvailable(first)).isFalse()
         assertThat(state.onLost(first)).isFalse()
         assertThat(state.onUnavailable(first)).isFalse()
-        assertThat(state.onTimeout(first)).isFalse()
         assertThat(state.phase).isEqualTo(Phase.REQUESTING)
 
         assertThat(state.onAvailable(second)).isTrue()

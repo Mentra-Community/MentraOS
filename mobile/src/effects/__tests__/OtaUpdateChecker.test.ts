@@ -80,17 +80,14 @@ describe("checkBesUpdate", () => {
   it("returns true when the versions differ, in either direction", () => {
     expect(checkBesUpdate(firmware, "17.26.1.14")).toBe(true)
     expect(checkBesUpdate(firmware, "17.26.2.0")).toBe(true)
-    expect(checkBesUpdate(firmware, "17.26.2.0", true)).toBe(true)
   })
 
   it("returns false when versions match", () => {
     expect(checkBesUpdate(firmware, "17.26.1.15")).toBe(false)
-    expect(checkBesUpdate(firmware, "17.26.1.15", true)).toBe(false)
   })
 
-  it("leaves an unknown version out of an APK downgrade", () => {
-    expect(checkBesUpdate(firmware, undefined, true)).toBe(false)
-    expect(checkBesUpdate(firmware, "", true)).toBe(false)
+  it("compares a build number with a dotted version as different", () => {
+    expect(checkBesUpdate({version: "26.10.20.2", url: "https://cdn/bes.bin"}, "305000033")).toBe(true)
   })
 })
 

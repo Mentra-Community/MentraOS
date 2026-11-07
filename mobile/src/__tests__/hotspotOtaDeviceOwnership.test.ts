@@ -93,12 +93,36 @@ it("joins cancelled network work before cleanup and never disables the new glass
   expect(localNetwork.connect).toHaveBeenCalled()
   emitBluetoothSdkEvent("default_device_changed", {device: pair("B")})
   const cleanup = hotspotOtaTransport.teardown(false)
-  expect(localNetwork.disconnect).not.toHaveBeenCalled()
+  // The pending join is cancelled at once; cleanup still waits for it to settle.
+  expect(localNetwork.disconnect).toHaveBeenCalledTimes(1)
   resolve("192.168.43.2")
   expect(await outcome).toEqual(expect.objectContaining({message: expect.stringContaining("glasses have changed")}))
   await cleanup
-  expect(localNetwork.disconnect).toHaveBeenCalledTimes(1)
+  expect(localNetwork.disconnect).toHaveBeenCalledTimes(2)
   expect(bluetoothSdkMock.setHotspotState).toHaveBeenCalledTimes(1)
+  expect(server.start).not.toHaveBeenCalled()
+})
+
+it("cancels a join still waiting on the person when the update is cancelled", async () => {
+  let reject!: (error: Error) => void
+  localNetwork.connect.mockReturnValueOnce(new Promise((_, r) => (reject = r)))
+  // The join has no time limit; only its cancellation ends it.
+  localNetwork.disconnect.mockImplementationOnce(async () => reject(new Error("Hotspot join cancelled")))
+  bluetoothSdkMock.setHotspotState
+    .mockResolvedValueOnce({
+      type: "hotspot_status",
+      state: "enabled",
+      ssid: "A",
+      password: "password",
+      localIp: "192.168.43.1",
+    })
+    .mockResolvedValueOnce({type: "hotspot_status", state: "disabled"})
+  const outcome = hotspotOtaTransport.prepare(check).catch((error: Error) => error)
+  for (let i = 0; i < 10; i++) await Promise.resolve()
+  expect(localNetwork.connect).toHaveBeenCalled()
+  await hotspotOtaTransport.teardown()
+  expect(await outcome).toEqual(expect.objectContaining({message: expect.stringContaining("cancelled")}))
+  expect(bluetoothSdkMock.setHotspotState).toHaveBeenLastCalledWith(false)
   expect(server.start).not.toHaveBeenCalled()
 })
 

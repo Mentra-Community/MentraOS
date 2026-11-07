@@ -47,3 +47,8 @@ export async function reclaimLateHotspot(setHotspotState: (enabled: false) => Pr
     release()
   }
 }
+
+/** Whether a hotspot user holds the reservation now. */
+export function hotspotOwned(): boolean {
+  return owner !== null
+}

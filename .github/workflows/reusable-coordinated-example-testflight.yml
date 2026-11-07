@@ -21,10 +21,6 @@ on:
       testflight_audience:
         required: true
         type: string
-      production_build_number:
-        required: false
-        default: 0
-        type: number
     outputs:
       result_artifact:
         value: ${{ jobs.testflight.outputs.result_artifact }}
@@ -145,16 +141,11 @@ jobs:
           release_identity=$(jq -er .releaseIdentity "$plan")
           [[ "$(jq -er .sourceCommit "$plan")" == "${{ inputs.source_commit }}" ]]
           [[ "$(git rev-parse HEAD)" == "${{ inputs.source_commit }}" ]]
-          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" elif .channel == "production" then "Mentra Bluetooth Example" else error("unsupported channel") end' "$plan")
+          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" else error("unsupported channel") end' "$plan")
           [[ "$TESTFLIGHT_GROUP" == "$expected_group" ]]
           expected_audience=$(jq -er 'if .channel == "dev" then "internal" else "external" end' "$plan")
           [[ "${{ inputs.testflight_audience }}" == "$expected_audience" ]]
-          channel=$(jq -er .channel "$plan")
           build_number=$(jq -er .native.buildNumber "$plan")
-          if [[ "$channel" == "production" ]]; then
-            build_number="${{ inputs.production_build_number }}"
-            [[ "$build_number" =~ ^[1-9][0-9]*$ ]]
-          fi
           {
             echo "release_set_id=$release_set_id"
             echo "release_identity=$release_identity"
@@ -258,7 +249,7 @@ jobs:
           BUILD_NUMBER: ${{ steps.coordinates.outputs.build_number }}
         run: |
           set -euo pipefail
-          # Every channel, production included, uploads to the one App Store
+          # Every channel uploads to the one App Store
           # example app, so its identifier is stamped here, as
           # coordinated-example-google-play.mjs stamps the Play package. The
           # example commits a local development identifier.
@@ -560,9 +551,7 @@ jobs:
           ref: ${{ inputs.source_commit }}
 
       # The publication record is written by the workflow revision's script,
-      # not the frozen source's: a production example is built from a promoted
-      # beta commit whose copy may predate the production destination. On dev
-      # and staging the two revisions are the same commit.
+      # which on a staging push is the release source itself.
       - name: Checkout example tooling from the workflow revision
         uses: actions/checkout@v4
         with:
@@ -591,16 +580,11 @@ jobs:
           release_set_id=$(jq -er .releaseSetId "$plan")
           release_identity=$(jq -er .releaseIdentity "$plan")
           [[ "$(jq -er .sourceCommit "$plan")" == "${{ inputs.source_commit }}" ]]
-          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" elif .channel == "production" then "Mentra Bluetooth Example" else error("unsupported channel") end' "$plan")
+          expected_group=$(jq -er 'if .channel == "dev" then "Mentra Dev" elif .channel == "beta" then "Mentra Staging Public" else error("unsupported channel") end' "$plan")
           [[ "$TESTFLIGHT_GROUP" == "$expected_group" ]]
           expected_audience=$(jq -er 'if .channel == "dev" then "internal" else "external" end' "$plan")
           [[ "${{ inputs.testflight_audience }}" == "$expected_audience" ]]
-          channel=$(jq -er .channel "$plan")
           build_number=$(jq -er .native.buildNumber "$plan")
-          if [[ "$channel" == "production" ]]; then
-            build_number="${{ inputs.production_build_number }}"
-            [[ "$build_number" =~ ^[1-9][0-9]*$ ]]
-          fi
           {
             echo "release_identity=$release_identity"
             echo "marketing_version=$(jq -er .native.marketingVersion "$plan")"

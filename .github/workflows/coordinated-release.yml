@@ -1,9 +1,9 @@
 name: Coordinated Mentra Release
 
 # Dev releases come from the Mentra monorepo since 2026-10-24 (its
-# release.yml, publishing to this repository's ledger). Production promotion
-# still runs here. The monorepo's release dispatches
-# `publish-release-npm` here for its npm family: npm trusted publishing (with
+# release.yml, publishing to this repository's ledger), and so do betas and
+# production. The monorepo's release dispatches `publish-release-npm` here for
+# its npm family, production's to latest included: npm trusted publishing (with
 # provenance) accepts this workflow file, from GitHub-hosted runners only.
 on:
   repository_dispatch:
@@ -77,9 +77,7 @@ jobs:
               ;;
             staging)
               echo "cloud_environment=staging" >> "$GITHUB_OUTPUT"
-              # Beta validates the branch-associated staging cloud. Production
-              # promotion needs a follow-up design because signed mobile bytes
-              # cannot have their embedded backend rewritten after this build.
+              # Beta validates the branch-associated staging cloud.
               echo "backend_environment=staging" >> "$GITHUB_OUTPUT"
               # The open-testing track behind the public beta link. It serves
               # a pre-formula code above the family window, so the Android
@@ -1095,11 +1093,12 @@ jobs:
         run: node .github/scripts/release-slack-post.mjs
 
 
-  # The npm family of a Mentra monorepo dev or beta release, dispatched by its
-  # release-npm.yml with the release plan already in the family container:
-  # the plan is read back and checked against the payload, the source commit
-  # must be on dev (a dev release) or staging (a beta), then the same reusable
-  # job as this workflow's own releases publishes from that commit. Its npm-publications.json goes to the family
+  # The npm family of a Mentra monorepo dev, beta or production release,
+  # dispatched by its release-npm.yml with the release plan already in the
+  # family container: the plan is read back and checked against the payload,
+  # the source commit must be on dev (a dev release), staging (a beta) or main
+  # (production X.Y.Z, to latest), then the same reusable job as this
+  # workflow's own releases publishes from that commit. Its npm-publications.json goes to the family
   # container as monorepo-npm-publications-<identity>-<request id>.json (one
   # per request, so a retry never collides), which the monorepo reads once this run (found by the intent job's name) succeeds.
   monorepo-npm-intent:
@@ -1133,11 +1132,16 @@ jobs:
           ota_url=$(field ota_manifest_url)
           ota_sha256=$(field ota_manifest_sha256)
           release_id=$(field release_id)
-          container='^https://artifactscdn\.mentraglass\.com/Mentra-Community/MentraOS/releases/mentra-builds-v[0-9]+\.[0-9]+\.[0-9]+/[A-Za-z0-9._-]+\.json$'
+          # Dev and beta share their base version's mentra-builds-v<X.Y.Z>;
+          # production has its own mentra-v<X.Y.Z>.
+          container='^https://artifactscdn\.mentraglass\.com/Mentra-Community/MentraOS/releases/mentra-(builds-)?v[0-9]+\.[0-9]+\.[0-9]+/[A-Za-z0-9._-]+\.json$'
           [[ "$request_id" =~ ^[0-9]+-[0-9]+$ ]] || { echo "::error::Bad request_id"; exit 1; }
-          [[ "$identity" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(dev|beta)\.[0-9]+$ ]] || { echo "::error::Not a dev or beta identity: $identity"; exit 1; }
-          branch=dev
-          [[ "${BASH_REMATCH[1]}" == dev ]] || branch=staging
+          [[ "$identity" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(dev|beta)\.[0-9]+)?$ ]] || { echo "::error::Not a release identity: $identity"; exit 1; }
+          case "${BASH_REMATCH[2]}" in
+            dev) branch=dev ;;
+            beta) branch=staging ;;
+            *) branch=main ;;
+          esac
           [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Bad source_commit"; exit 1; }
           [[ "$release_id" =~ ^[0-9]+$ ]] || { echo "::error::Bad release_id"; exit 1; }
           [[ "$plan_url" =~ $container && "$ota_url" =~ $container ]] || { echo "::error::Plan and OTA manifest must be in a family container"; exit 1; }
