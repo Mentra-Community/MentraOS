@@ -331,6 +331,10 @@ export function transformStarterKit({
       !/(^|\/)(node_modules|\.gradle|build|Pods|\.expo|\.build|\.swiftpm)(\/|$)/.test(path.relative(source, file)),
   })
 
+  // The kit's CI ships with the examples, so each branch builds with the CI of
+  // the release it carries.
+  if (!existsSync(path.join(output, KIT_CI_WORKFLOW))) throw new Error(`The export has no ${KIT_CI_WORKFLOW}`)
+
   transformAndroid(output, coordinates)
   transformIos(output, coordinates)
   transformMacos(output, coordinates)
@@ -364,6 +368,7 @@ export function transformStarterKit({
 export const KIT_APPS_DIRECTORY = "examples"
 const MENTRAOS_SOURCE_URL = "https://github.com/Mentra-Community/MentraOS/blob/dev"
 const SHARED_DIRECTORIES = new Set(["docs", ".github"])
+export const KIT_CI_WORKFLOW = ".github/workflows/example-app-builds.yml"
 
 function kitApps(root) {
   return readdirSync(root, {withFileTypes: true})

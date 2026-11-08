@@ -812,7 +812,7 @@ test("example builds outside releases compile one architecture and reuse caches"
 
 test("the Starter Kit export is scheduled, stops cheaply, and pushes only to the kit", () => {
   const exporter = workflow("bluetooth-starter-kit-export.yml")
-  assert.doesNotMatch(exporter, /workflow_call:|--timeout-minutes|missingPublications|permission-workflows/)
+  assert.doesNotMatch(exporter, /workflow_call:|--timeout-minutes|missingPublications/)
   assert.match(exporter, /schedule:\n    - cron: "7,37 \* \* \* \*"/)
   assert.match(exporter, /workflow_dispatch:\n    inputs:\n      dry_run:/)
   // The export always means each channel's latest completed release.
@@ -831,9 +831,10 @@ test("the Starter Kit export is scheduled, stops cheaply, and pushes only to the
   assert.match(exporter, /export-bluetooth-starter-kit\.mjs transform/)
   assert.match(exporter, /repositories: Mentra-Bluetooth-SDK-Starter-Kit\n/)
   assert.match(exporter, /permission-contents: write/)
+  // The export carries the kit's CI (examples/bluetooth/.github) and replaces the kit's.
+  assert.match(exporter, /permission-workflows: write/)
   assert.doesNotMatch(exporter, /permission-actions|--force|push -f/)
-  // The kit's own CI stays in the kit.
-  assert.match(exporter, /! -name \.git ! -name \.github/)
+  assert.match(exporter, /find kit -mindepth 1 -maxdepth 1 ! -name \.git -exec rm -rf \{\} \+/)
   // Branch and tag land together and failures are explicit.
   assert.match(exporter, /git -C kit push --quiet --atomic "\$remote" "HEAD:refs\/heads\/\$BRANCH" "\$tag" \|\| push_status=\$\?/)
   assert.match(exporter, /Could not push \$IDENTITY to \$BRANCH\.[^\n]*\n\s+exit 1/)

@@ -41,8 +41,15 @@ versions so it can be cloned and built without a MentraOS checkout. A scheduled
 MentraOS workflow keeps each kit branch on its channel's latest completed
 release: it pushes one `Release <version>` commit and an `sdk-<version>` tag,
 and records the inputs in `starter-kit-release.json`. Intermediate releases are
-skipped. The kit repository keeps its own CI, which builds the examples from the
-published packages on every push, including each export.
+skipped. The kit's CI, `.github/workflows/example-app-builds.yml` here, is
+exported with the examples; it builds every example from the published packages
+on each push to the kit, including each export:
+
+| Branch | Channel | Example App Builds |
+| --- | --- | --- |
+| `main` | production | [![main](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/workflows/example-app-builds.yml/badge.svg?branch=main)](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/workflows/example-app-builds.yml?query=branch%3Amain) |
+| `staging` | beta | [![staging](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/workflows/example-app-builds.yml/badge.svg?branch=staging)](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/workflows/example-app-builds.yml?query=branch%3Astaging) |
+| `dev` | dev | [![dev](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/workflows/example-app-builds.yml/badge.svg?branch=dev)](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/workflows/example-app-builds.yml?query=branch%3Adev) |
 
 ## Documentation
 
