@@ -124,8 +124,6 @@ const SUCCESS_DELAY_MS = 1_000
 const COULD_NOT_START = "errors:pairingCouldNotStart"
 /** `pair_failure.code` when iOS holds a stale Bluetooth pairing for the glasses: the person removes it in Settings. */
 const IOS_FORGET_PAIRING_CODE = "ios_forget_pairing"
-/** Bonded glasses already tried since the app started: if they refuse, the person pairs them from the list. */
-const triedBondedGlasses = new Set<string>()
 
 const glassesLabel = (name: string) =>
   name
@@ -174,7 +172,6 @@ export function useMentraLivePairing(options: UseMentraLivePairingOptions): Ment
   const [scanGeneration, setScanGeneration] = useState(0)
   const scanGenerationRef = useRef(0)
   const scanStartedRef = useRef(false)
-  const scanOnReturnRef = useRef(false)
   const backedOutRef = useRef(false)
   // A tap latches this so a double tap cannot start two pairings; returning to the list clears it.
   const connectingRef = useRef(false)
@@ -201,16 +198,8 @@ export function useMentraLivePairing(options: UseMentraLivePairingOptions): Ment
     setDiagnostic(null)
     setCarried([])
     try {
-      // A bond means the glasses were never unpaired, so they need no pairing mode and no choosing.
-      // Discovery waits for this: it drops their Classic link, which an owner's reconnect keeps.
-      const bonded = pairing.identity().kind !== "paired" ? await pairing.bondedGlasses() : null
-      if (generation !== scanGenerationRef.current) return
-      if (bonded && !triedBondedGlasses.has(bonded.name)) {
-        triedBondedGlasses.add(bonded.name)
-        scanOnReturnRef.current = true
-        selectDeviceRef.current(bonded)
-        return
-      }
+      // Glasses the phone is still bonded with, as after a reinstall, are listed and chosen like any others: they
+      // show once their button opens pairing mode, and nothing connects them before the person chooses them.
       await pairing.scan(MODEL)
     } catch (error) {
       if (generation === scanGenerationRef.current) console.error("Failed to start glasses scan:", error)
@@ -311,16 +300,10 @@ export function useMentraLivePairing(options: UseMentraLivePairingOptions): Ment
     setTargetReady(false)
     setPage("connecting")
   }, [])
-  const selectDeviceRef = useRef(selectDevice)
-  selectDeviceRef.current = selectDevice
-
   const returnToScan = useCallback(() => {
     setPage("scan")
     connectingRef.current = false
-    if (!scanOnReturnRef.current) return
-    scanOnReturnRef.current = false
-    void startScan()
-  }, [startScan])
+  }, [])
 
   /** Ends the attempt. Its listeners stop, and nothing it scheduled can still navigate. */
   const stopAttempt = useCallback((current: Attempt) => {

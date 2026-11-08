@@ -46,8 +46,8 @@ test("a finished release is a title, one row of buttons and the glasses versions
   assert.equal(post.blocks[0].text.text, "*✅ Dev 3.2.0-dev.265 released*")
   assert.equal(post.blocks[0].accessory.url, "https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v3.2.0-dev.265")
   assert.equal(post.blocks[1].elements[0].text, "aaaaaaa Ship the &lt;thing&gt; &amp; more · by Someone · Android 304000123 · iOS 304000120")
-  assert.deepEqual(buttons(post), [":robot_face: Mentra", ":apple: Mentra", ":computer: Mentra",
-    ":robot_face: Bluetooth example", ":apple: Bluetooth example", ":books: Docs"])
+  assert.deepEqual(buttons(post), ["Install :robot_face: Mentra", "Install :apple: Mentra", "Install :computer: Mentra",
+    "Install :robot_face: Bluetooth example", "Install :apple: Bluetooth example", ":books: Docs"])
   // The release builds no macOS example: its slot says so, for symmetry with the Mentra App's.
   assert.equal(missing(post), ":heavy_minus_sign: Missing: :computer: Bluetooth example (not built)")
   assert.match(post.blocks[4].elements[0].text, /ASG \*3\.2\.0\* \(build 302000265\) · BES \*26\.9\.21\.1\* · MTK \*MentraLive_20260915\.0\*/)
@@ -64,9 +64,9 @@ test("both apps get Android and iOS, the store's when there is no page, and the 
     const post = await releasePost({...stores, BRANCH}, {check: ok, fetchImpl: otaOnly})
     const actions = post.blocks.find((block) => block.type === "actions").elements
     assert.deepEqual(actions.map(({text, url}) => [text.text, url]), [
-      [":robot_face: Mentra", stores.PLAY_INSTALL_URL], [":apple: Mentra", stores.TESTFLIGHT_INSTALL_URL],
-      [":robot_face: Bluetooth example", stores.EXAMPLE_GOOGLE_PLAY_INSTALL_URL],
-      [":apple: Bluetooth example", stores.EXAMPLE_TESTFLIGHT_INSTALL_URL], [":books: Docs", docs]])
+      ["Install :robot_face: Mentra", stores.PLAY_INSTALL_URL], ["Install :apple: Mentra", stores.TESTFLIGHT_INSTALL_URL],
+      ["Install :robot_face: Bluetooth example", stores.EXAMPLE_GOOGLE_PLAY_INSTALL_URL],
+      ["Install :apple: Bluetooth example", stores.EXAMPLE_TESTFLIGHT_INSTALL_URL], [":books: Docs", docs]])
     // The Mentra App's buttons stand out from the example's.
     assert.deepEqual(actions.map((button) => button.style), ["primary", "primary", undefined, undefined, undefined])
     assert.equal(missing(post), undefined)
@@ -85,12 +85,12 @@ test("iOS opens TestFlight only once testers can install it", async () => {
 test("a slot without an install shows as missing, with why", async () => {
   const failed = await releasePost({...env, IOS_RESULT: "failure", EXAMPLES_RESULT: "failure", EXAMPLE_TESTFLIGHT_RESULT: "skipped"},
     {check: async (url) => url === env.MOBILE_APK_URL, fetchImpl: otaOnly})
-  assert.deepEqual(buttons(failed), [":robot_face: Mentra", ":books: Docs"])
+  assert.deepEqual(buttons(failed), ["Install :robot_face: Mentra", ":books: Docs"])
   assert.equal(missing(failed), ":heavy_minus_sign: Missing: :apple: Mentra (failed) · :robot_face: Bluetooth example (failed) · :apple: Bluetooth example (not built)")
   // Apple installs need their manifest, page and Mac app; a published URL that does not answer is not published.
   const unanswered = await releasePost({...env, EXAMPLES_RESULT: "success", EXAMPLE_APK_URL: `${cdn}/example.apk`},
     {check: async (url) => url !== env.MAC_URL && url !== `${cdn}/example.apk`, fetchImpl: otaOnly})
-  assert.deepEqual(buttons(unanswered), [":robot_face: Mentra", ":books: Docs"])
+  assert.deepEqual(buttons(unanswered), ["Install :robot_face: Mentra", ":books: Docs"])
   assert.match(missing(unanswered), /:apple: Mentra \(not published\) · :robot_face: Bluetooth example \(not published\)/)
 })
 

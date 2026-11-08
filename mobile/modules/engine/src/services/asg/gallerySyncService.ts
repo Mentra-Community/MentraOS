@@ -11,7 +11,13 @@ import {AppState, AppStateStatus, Platform} from "react-native"
 import BleManager from "react-native-ble-manager"
 import WifiManager from "react-native-wifi-reborn"
 
-import {useGallerySyncStore, HotspotInfo, selectIssyncing} from "../../stores/gallerySync"
+import {
+  useGallerySyncStore,
+  HotspotInfo,
+  selectIssyncing,
+  type GallerySyncState,
+  type SyncState,
+} from "../../stores/gallerySync"
 import {selectGlassesConnected, useGlassesStore} from "../../stores/glasses"
 import {isGlassesConnected} from "../GlassesReadiness"
 import {SETTINGS, useSettingsStore} from "../../stores/settings"
@@ -75,7 +81,22 @@ const TIMING = {
   // Cap the native location-services (GPS) check so a hung CrustModule call can't freeze
   // the sync pre-flight (mirrors the host's former PermissionsUtils guard).
   LOCATION_SERVICES_CHECK_TIMEOUT_MS: 5000,
+  // A download with no progress for this long is dead. Longer than one segment's five
+  // GALLERY_TRANSFER_IDLE_TIMEOUT_MS retries, so a slow transfer that is still retrying is
+  // not cut short.
+  TRANSFER_STALL_MS: 180_000,
+  TRANSFER_STALL_CHECK_INTERVAL_MS: 15_000,
+  // Automatic resumes after an interrupted transfer before the person has to tap Sync again.
+  MAX_AUTO_RESUMES: 3,
 } as const
+
+/** Shown when a transfer dies mid-sync; files already downloaded are kept. */
+export const SYNC_INTERRUPTED_MESSAGE = "Sync interrupted. Tap Sync to continue."
+
+/** Phases in which files are moving over the hotspot. */
+function isTransferPhase(state: SyncState): boolean {
+  return state === "preparing" || state === "syncing"
+}
 
 function assertSyncNotAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return
@@ -126,6 +147,19 @@ class GallerySyncService {
   // when this is false we skip the read entirely and lean on the glasses connectivity
   // probe instead of failing the sync. Assume readable until pre-flight says otherwise.
   private ssidReadable = true
+  // Recovery from a transfer that dies mid-download (the glasses hotspot turned off, or iOS
+  // suspended the app long enough for it to time out) instead of showing "Syncing" forever.
+  private lastTransferProgressAt = 0
+  private transferStallTimer: number | null = null
+  private syncStoreUnsubscribe: (() => void) | null = null
+  private autoResumes = 0
+  private resumeOnForeground = false
+  // Downloads are done and the sync is waiting for local processing (stabilization, export).
+  // No network transfer is running, so neither the stall deadline nor the glasses' idle
+  // hotspot shutdown means the sync died.
+  private drainingProcessing = false
+  // Bumped by teardown so a resume scheduled before it cannot start a sync after it.
+  private lifecycleGeneration = 0
 
   private constructor() {}
 
@@ -157,6 +191,9 @@ class GallerySyncService {
 
     // Listen for app state changes to auto-retry sync after user enables WiFi
     this.appStateSubscription = AppState.addEventListener("change", this.handleAppStateChange)
+
+    // Track transfer progress so a dead download is noticed and resumed.
+    this.syncStoreUnsubscribe = useGallerySyncStore.subscribe(this.handleSyncStoreChange)
 
     this.hotspotListenerRegistered = true
     this.isInitialized = true
@@ -216,6 +253,15 @@ class GallerySyncService {
       this.appStateSubscription.remove()
       this.appStateSubscription = null
     }
+    if (this.syncStoreUnsubscribe) {
+      this.syncStoreUnsubscribe()
+      this.syncStoreUnsubscribe = null
+    }
+    this.stopTransferStallWatch()
+    this.resumeOnForeground = false
+    this.autoResumes = 0
+    this.lifecycleGeneration++
+    this.drainingProcessing = false
     cameraRollExportCoordinator.cleanup()
 
     if (this.hotspotConnectionTimeout) {
@@ -298,6 +344,9 @@ class GallerySyncService {
 
     // Camera-roll backfill is phone-local and must resume independently of glasses/WiFi.
     void cameraRollExportCoordinator.resume("app foreground")
+
+    // A transfer may have died while iOS kept the app suspended.
+    this.checkTransferOnForeground()
 
     // Only auto-retry if we were waiting for WiFi
     if (!this.waitingForWifiRetry) {
@@ -390,6 +439,13 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
 
+    // The hotspot going down while files are transferring kills the download; without this the
+    // sync waits on it and shows "Syncing" until the app is restarted.
+    if (eventData?.enabled === false && this.isTransferring()) {
+      this.interruptTransfer("the glasses turned their hotspot off")
+      return
+    }
+
     // Only process if we're in a connecting state
     if (store.syncState !== "requesting_hotspot" && store.syncState !== "connecting_wifi") {
       console.log("[GallerySyncService] Ignoring hotspot event - not in connecting state")
@@ -477,6 +533,13 @@ class GallerySyncService {
    * Start the sync process
    */
   async startSync(): Promise<void> {
+    // A sync the person starts gets a fresh budget of automatic resumes.
+    this.autoResumes = 0
+    this.resumeOnForeground = false
+    return this.beginSync()
+  }
+
+  private async beginSync(): Promise<void> {
     while (this.cleanupPromise || this.cancellationPromise || this.hotspotClosePromise) {
       if (this.cleanupPromise) await this.cleanupPromise
       if (this.cancellationPromise) await this.cancellationPromise
@@ -631,7 +694,7 @@ class GallerySyncService {
     if (!bluetoothEnabled) {
       console.warn("[GallerySyncService] Sync aborted - Bluetooth is disabled")
       store.setSyncError("Bluetooth disabled - enable Bluetooth and try again")
-      emitGalleryNotice({code: "bluetooth_off"})
+      emitGalleryNotice({code: "bluetooth_off", data: {systemAnswer: "Bluetooth adapter enabled=false"}})
       return
     }
 
@@ -713,7 +776,10 @@ class GallerySyncService {
         if (!granted) {
           console.warn("[GallerySyncService]   ❌ Camera roll permission denied - auto-save sync cannot continue")
           store.setSyncError("Camera-roll permission required while automatic saving is enabled")
-          emitGalleryNotice({code: "camera_roll_permission_required"})
+          emitGalleryNotice({
+            code: "camera_roll_permission_required",
+            data: {systemAnswer: `media library requestPermission granted=${granted}`},
+          })
           return
         } else {
           console.log("[GallerySyncService]   ✅ Camera roll permission granted")
@@ -842,7 +908,7 @@ class GallerySyncService {
           console.error("[GallerySyncService]   ❌ Android requires Location Services for WiFi operations")
 
           // Emit a notice; the host shows the "enable Location Services" alert + dialog.
-          emitGalleryNotice({code: "location_services_off"})
+          emitGalleryNotice({code: "location_services_off", data: {systemAnswer: "Location Services enabled=false"}})
           store.setSyncError("Location Services disabled - enable in Settings and try again")
 
           // Return early - do NOT proceed with sync
@@ -1175,8 +1241,10 @@ class GallerySyncService {
           const joinedAddress = await keepHotspotUpWhileJoining(
             localNetworkTransport.connect(this.networkOwner, hotspotInfo.ssid, hotspotInfo.password, {
               gateway: hotspotInfo.ip,
-              onPermissionRequired: () => {
-                if (!signal?.aborted) emitGalleryNotice({code: "local_network_permission_required"})
+              onPermissionRequired: (systemAnswer) => {
+                if (!signal?.aborted) {
+                  emitGalleryNotice({code: "local_network_permission_required", data: {systemAnswer}})
+                }
               },
             }),
             {
@@ -1917,7 +1985,7 @@ class GallerySyncService {
 
       // Wait for processing queue to finish before marking complete
       console.log("[GallerySyncService]   ⏳ Waiting for processing queue to drain...")
-      await mediaProcessingQueue.waitUntilDrained()
+      await this.drainProcessingQueue()
       if (signal?.aborted) return
       console.log("[GallerySyncService]   ✅ Processing queue drained")
 
@@ -2161,7 +2229,7 @@ class GallerySyncService {
 
       // Wait for processing queue to finish before marking complete
       console.log("[GallerySyncService]   ⏳ Waiting for processing queue to drain...")
-      await mediaProcessingQueue.waitUntilDrained()
+      await this.drainProcessingQueue()
       if (signal?.aborted) return
       console.log("[GallerySyncService]   ✅ Processing queue drained")
 
@@ -2468,6 +2536,134 @@ class GallerySyncService {
       return "unknown"
     }
     return connected === this.hotspotOwner ? "same" : "different"
+  }
+
+  private async drainProcessingQueue(): Promise<void> {
+    this.drainingProcessing = true
+    try {
+      await mediaProcessingQueue.waitUntilDrained()
+    } finally {
+      this.drainingProcessing = false
+      this.lastTransferProgressAt = Date.now()
+    }
+  }
+
+  /** Files are moving over the hotspot, so a dead hotspot or a stall means the sync died. */
+  private isTransferring(): boolean {
+    return isTransferPhase(useGallerySyncStore.getState().syncState) && !this.drainingProcessing
+  }
+
+  /** Notes transfer progress and runs the stall watchdog only while files are transferring. */
+  private handleSyncStoreChange = (state: GallerySyncState, previous: GallerySyncState): void => {
+    if (state.syncState !== "syncing") {
+      this.stopTransferStallWatch()
+      if (state.syncState === "complete") this.autoResumes = 0
+      return
+    }
+    if (
+      previous.syncState !== "syncing" ||
+      state.currentFile !== previous.currentFile ||
+      state.currentFileProgress !== previous.currentFileProgress ||
+      state.completedFiles !== previous.completedFiles ||
+      state.processedFiles !== previous.processedFiles
+    ) {
+      this.lastTransferProgressAt = Date.now()
+    }
+    if (this.transferStallTimer === null) {
+      this.transferStallTimer = BgTimer.setInterval(
+        () => this.checkTransferStalled(),
+        TIMING.TRANSFER_STALL_CHECK_INTERVAL_MS,
+      )
+    }
+  }
+
+  private stopTransferStallWatch(): void {
+    if (this.transferStallTimer !== null) {
+      BgTimer.clearInterval(this.transferStallTimer)
+      this.transferStallTimer = null
+    }
+  }
+
+  private checkTransferStalled(): boolean {
+    if (useGallerySyncStore.getState().syncState !== "syncing" || this.drainingProcessing) return false
+    const idleMs = Date.now() - this.lastTransferProgressAt
+    if (idleMs < TIMING.TRANSFER_STALL_MS) return false
+    this.interruptTransfer(`no progress for ${Math.round(idleMs / 1000)}s`)
+    return true
+  }
+
+  /**
+   * iOS suspends the app in the background unless BLE traffic keeps waking it, and its timers
+   * do not run meanwhile, so check the transfer as soon as the person is back.
+   */
+  private checkTransferOnForeground(): void {
+    if (this.resumeOnForeground) {
+      this.resumeOnForeground = false
+      this.autoResume()
+      return
+    }
+    if (!this.isTransferring()) return
+    if (useGlassesStore.getState().hotspot?.state === "disabled") {
+      this.interruptTransfer("the glasses hotspot is off")
+      return
+    }
+    this.checkTransferStalled()
+  }
+
+  /**
+   * End a transfer that can no longer finish, release the hotspot, and resume from the files
+   * already downloaded: right away when the app is in the foreground, otherwise when it returns.
+   */
+  private interruptTransfer(reason: string): void {
+    const store = useGallerySyncStore.getState()
+    if (!this.isTransferring()) return
+    console.warn(`[GallerySyncService] Transfer interrupted: ${reason}`)
+    this.stopTransferStallWatch()
+    this.invalidateAttempt()
+    store.setSyncError(SYNC_INTERRUPTED_MESSAGE)
+
+    if (this.hotspotConnectionTimeout) {
+      BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
+      this.hotspotConnectionTimeout = null
+    }
+    if (this.hotspotRequestTimeout) {
+      BgTimer.clearTimeout(this.hotspotRequestTimeout!)
+      this.hotspotRequestTimeout = null
+    }
+
+    const generation = this.lifecycleGeneration
+    const cleanup = this.closeHotspot().then((failure) => {
+      if (failure) throw failure
+    })
+    void cleanup
+      .then(() => {
+        if (generation !== this.lifecycleGeneration) return
+        if (AppState.currentState === "active") {
+          this.autoResume()
+        } else {
+          this.resumeOnForeground = true
+        }
+      })
+      .catch((error) => {
+        console.error("[GallerySyncService] Failed to release the hotspot after an interrupted transfer:", error)
+        gallerySyncNotifications.showSyncError(SYNC_INTERRUPTED_MESSAGE)
+      })
+  }
+
+  private autoResume(): void {
+    const store = useGallerySyncStore.getState()
+    if (store.syncState !== "error" || store.lastError !== SYNC_INTERRUPTED_MESSAGE) return
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) return
+    if (this.autoResumes >= TIMING.MAX_AUTO_RESUMES) {
+      console.warn("[GallerySyncService] Transfer keeps dying; waiting for the person to tap Sync")
+      gallerySyncNotifications.showSyncError(SYNC_INTERRUPTED_MESSAGE)
+      return
+    }
+    this.autoResumes++
+    console.log(`[GallerySyncService] Resuming interrupted sync (${this.autoResumes}/${TIMING.MAX_AUTO_RESUMES})`)
+    void this.beginSync().catch((error) => {
+      console.error("[GallerySyncService] Automatic resume failed:", error)
+    })
   }
 
   /**

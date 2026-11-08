@@ -1,4 +1,5 @@
 import {Alert, Linking} from "react-native"
+import BleManager from "react-native-ble-manager"
 
 import {Icon, IconTypes} from "@/components/ignite"
 import {
@@ -60,14 +61,19 @@ export interface ConnectivityAlertOptions extends AlertOptions {
  * button (styled "cancel", or worded Cancel, No or Back), swiping it away or Android back counts as
  * pressing it, unless `cancelable` is false.
  */
-const showAlert = (title: string, message: string, buttons: AlertButton[] = [], options?: AlertOptions) => {
+const showAlert = (
+  title: string,
+  message: string,
+  buttons: AlertButton[] = [],
+  options?: AlertOptions,
+): Promise<void> => {
   if (!hasAlertHost()) {
     Alert.alert(title, message, buttons, options)
-    return
+    return Promise.resolve()
   }
   const shown: AlertButton[] = buttons.length ? buttons : [{text: translate("common:ok")}]
   const sheetButtons: SheetAlertButton[] = shown.map((button) => ({text: button.text, style: sheetStyle(button)}))
-  void presentAlert({
+  return presentAlert({
     title,
     message,
     buttons: sheetButtons,
@@ -84,10 +90,10 @@ const showAlert = (title: string, message: string, buttons: AlertButton[] = [], 
 
 /**
  * Closes the alert titled `title` without running any button handler, and drops queued ones with that
- * title. For alerts whose condition resolved on its own.
+ * title (and `message`, when given). For alerts whose condition resolved on its own.
  */
-const dismissAlert = (title: string) => {
-  dismissSheetAlert(title)
+const dismissAlert = (title: string, message?: string) => {
+  dismissSheetAlert(title, message)
 }
 
 /**
@@ -138,15 +144,39 @@ const turnOnButtons = (
 ]
 
 /**
- * Shows a Bluetooth-related alert with a "Turn On Bluetooth" button
+ * Shows a Bluetooth-related alert with a "Turn On Bluetooth" button. It closes by itself once Bluetooth is
+ * on, however it was turned on: left up, it would sit over the screen it was raised on.
  */
 const showBluetoothAlert = (title: string, message: string, options?: ConnectivityAlertOptions) => {
-  showAlert(title, message, turnOnButtons("bluetooth", "Turn On Bluetooth", options), {
+  let subscription: {remove: () => void} | undefined
+  let open = true
+  const stop = () => {
+    open = false
+    subscription?.remove()
+    subscription = undefined
+  }
+  const closeIfOn = (state: string) => {
+    if (!open || state !== "on") return
+    stop()
+    dismissAlert(title, message)
+  }
+  try {
+    subscription = BleManager.onDidUpdateState(({state}) => closeIfOn(state))
+  } catch (error) {
+    console.warn("Bluetooth alert: can't follow the Bluetooth state:", error)
+  }
+  void showAlert(title, message, turnOnButtons("bluetooth", "Turn On Bluetooth", options), {
     iconName: "bluetooth",
     iconColor: "#007AFF",
     iconSize: 32,
     ...options,
-  })
+  }).finally(stop)
+  // Bluetooth may have come on between the caller's check and the subscription. Starting the manager,
+  // which every caller's own check has done already, is what makes it report changes.
+  BleManager.start({showAlert: false})
+    .then(() => BleManager.checkState())
+    .then(closeIfOn)
+    .catch((error) => console.warn("Bluetooth alert: can't read the Bluetooth state:", error))
 }
 
 /**

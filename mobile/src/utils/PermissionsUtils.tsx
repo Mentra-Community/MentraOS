@@ -9,6 +9,7 @@ import {translate} from "@/i18n"
 import {Theme} from "@/theme"
 import showAlert, {showBluetoothAlert, showLocationAlert, showLocationServicesAlert} from "@/utils/AlertUtils"
 import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
+import {logPermissionAlert, permissionKind} from "@/utils/permissionLog"
 import {storage} from "@/utils/storage/storage"
 
 export type UiPermission =
@@ -294,6 +295,11 @@ export const requestBackgroundLocationPermission = async (): Promise<boolean> =>
     }
 
     // Need to show dialog first explaining why we need background location
+    logPermissionAlert(
+      "location",
+      `ACCESS_BACKGROUND_LOCATION check=${hasPermission}`,
+      "background_location_explanation",
+    )
     return new Promise((resolve) => {
       showAlert(
         "Background Location Permission",
@@ -362,7 +368,10 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
         if (permission === PERMISSIONS.IOS.CALENDARS) {
           const currentPermission = await ExpoCalendar.getCalendarPermissionsAsync()
           if (currentPermission.status === "denied" && !currentPermission.canAskAgain) {
-            await handlePreviouslyDeniedPermission(config)
+            await handlePreviouslyDeniedPermission(config, {
+              status: currentPermission.status,
+              canAskAgain: currentPermission.canAskAgain,
+            })
             return false
           }
           continue
@@ -380,7 +389,7 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
         if (permission === PERMISSIONS.IOS.LOCATION_ALWAYS && currentStatus === RESULTS.BLOCKED) {
           // if we've already requested this permission before, show the dialog to direct user to Settings
           if (await hasPermissionBeenRequested(permission)) {
-            await handlePreviouslyDeniedPermission(config)
+            await handlePreviouslyDeniedPermission(config, `${permission} check=${currentStatus}`)
             return false
           }
           await markPermissionRequested(permission)
@@ -395,7 +404,7 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
         if (currentStatus === RESULTS.BLOCKED) {
           console.log(`Permission ${permission} is BLOCKED by system`)
           // Show dialog to direct user to Settings
-          await handlePreviouslyDeniedPermission(config)
+          await handlePreviouslyDeniedPermission(config, `${permission} check=${currentStatus}`)
           return false // Just return false since we've handled the alert internally
         }
       } catch (error) {
@@ -424,7 +433,10 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
         }
         const blocked = storage.load<boolean>(ANDROID_MICROPHONE_BLOCKED_KEY)
         if (!blocked.is_error() && blocked.value === true) {
-          await handlePreviouslyDeniedPermission(config)
+          await handlePreviouslyDeniedPermission(
+            config,
+            "RECORD_AUDIO check=false; an earlier request returned never_ask_again",
+          )
           return false
         }
       }
@@ -472,7 +484,7 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
           return false
         }
         // Handle the previously denied permission by showing the alert
-        await handlePreviouslyDeniedPermission(config)
+        await handlePreviouslyDeniedPermission(config, results)
         // Just return false, since we've handled the alert internally
         return false
       }
@@ -483,13 +495,13 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
 
       if (allDenied && config.critical) {
         // Show critical permission denied message for essential features
-        await displayCriticalPermissionDeniedWarning(config.name)
+        await displayCriticalPermissionDeniedWarning(config.name, results)
         return false
       }
 
       if (!hasGranted && config.critical) {
         // Show warning for critical features
-        await displayPermissionDeniedWarning(config.name)
+        await displayPermissionDeniedWarning(config.name, results)
         return false
       }
 
@@ -515,7 +527,10 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
           } else {
             allGranted = false
             if (!eventKit.canAskAgain) {
-              await handlePreviouslyDeniedPermission(config)
+              await handlePreviouslyDeniedPermission(config, {
+                status: eventKit.status,
+                canAskAgain: eventKit.canAskAgain,
+              })
               return false
             }
           }
@@ -535,14 +550,14 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
 
           // This shouldn't happen as we checked before, but just in case
           if (config.critical) {
-            await handlePreviouslyDeniedPermission(config)
+            await handlePreviouslyDeniedPermission(config, `${permission} request=${result}`)
             return false // Just return false since we've handled the alert internally
           }
         } else {
           allGranted = false
 
           if (config.critical) {
-            await displayPermissionDeniedWarning(config.name)
+            await displayPermissionDeniedWarning(config.name, `${permission} request=${result}`)
             return false
           }
         }
@@ -566,7 +581,8 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
 }
 
 // Display appropriate warning messages
-export const displayPermissionDeniedWarning = (permissionName: string): Promise<boolean> => {
+export const displayPermissionDeniedWarning = (permissionName: string, systemAnswer?: unknown): Promise<boolean> => {
+  logPermissionAlert(permissionKind(permissionName), systemAnswer, "permission_limited")
   return new Promise((resolve) => {
     showAlert(
       `${permissionName} Permission Limited`,
@@ -589,7 +605,11 @@ export const displayPermissionDeniedWarning = (permissionName: string): Promise<
   })
 }
 
-export const displayCriticalPermissionDeniedWarning = (permissionName: string): Promise<boolean> => {
+export const displayCriticalPermissionDeniedWarning = (
+  permissionName: string,
+  systemAnswer?: unknown,
+): Promise<boolean> => {
+  logPermissionAlert(permissionKind(permissionName), systemAnswer, "permission_required_critical")
   return new Promise((resolve) => {
     showAlert(
       `${permissionName} Required`,
@@ -606,8 +626,9 @@ export const displayCriticalPermissionDeniedWarning = (permissionName: string): 
 }
 
 // Helper function to handle permissions that were previously denied at the system level
-export const handlePreviouslyDeniedPermission = (config: PermissionConfig): Promise<boolean> => {
+export const handlePreviouslyDeniedPermission = (config: PermissionConfig, systemAnswer?: unknown): Promise<boolean> => {
   console.log("handlePreviouslyDeniedPermission: config", config)
+  logPermissionAlert(permissionKind(config.name), systemAnswer, "permission_previously_denied")
   if (Platform.OS === "ios" && config.name === PERMISSION_CONFIG[PermissionFeatures.BACKGROUND_LOCATION].name) {
     // guide the user on how to enable the background location permission:
     return new Promise((resolve) => {
@@ -742,6 +763,11 @@ export const askPermissionsUI = async (app: AppletInterface, _theme?: Theme): Pr
     return 1
   }
 
+  logPermissionAlert(
+    "permissions",
+    neededPermissions.map((perm) => `${perm} checkFeaturePermissions=false`).join(", "),
+    "miniapp_permissions_required",
+  )
   // Create a promise that resolves based on user action
   return new Promise<number>((resolve) => {
     showAlert(
@@ -888,6 +914,10 @@ export const requestPermissionsUI = async (permissions: string[]): Promise<"comp
   return "completed"
 }
 
+/** The system answers behind the last connectivity check, for the alert's `[Permission]` line. */
+let lastBluetoothAnswer = "unknown"
+let lastLocationPermissionAnswer = "unknown"
+
 // Utility methods for checking permissions and device capabilities
 async function isBluetoothEnabled(): Promise<boolean> {
   try {
@@ -899,6 +929,7 @@ async function isBluetoothEnabled(): Promise<boolean> {
       const state = await BleManager.checkState()
       console.log(`Bluetooth state check ${attempt + 1}:`, state)
 
+      lastBluetoothAnswer = `BleManager.checkState=${state}`
       if (state !== "unknown") {
         console.log("Bluetooth state determined:", state)
         return state === "on"
@@ -913,6 +944,7 @@ async function isBluetoothEnabled(): Promise<boolean> {
     return true
   } catch (error) {
     console.error("Error checking Bluetooth state:", error)
+    lastBluetoothAnswer = `BleManager.checkState threw ${error instanceof Error ? error.message : String(error)}`
     return false
   }
 }
@@ -921,6 +953,7 @@ async function isLocationPermissionGranted(): Promise<boolean> {
   try {
     if (Platform.OS === "android") {
       const result = await check(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION)
+      lastLocationPermissionAnswer = `ACCESS_FINE_LOCATION check=${result}`
       return result === RESULTS.GRANTED
     } else if (Platform.OS === "ios") {
       // iOS doesn't require location permission for BLE scanning since iOS 13
@@ -929,6 +962,7 @@ async function isLocationPermissionGranted(): Promise<boolean> {
     return false
   } catch (error) {
     console.error("Error checking location permission:", error)
+    lastLocationPermissionAnswer = `ACCESS_FINE_LOCATION check threw ${error instanceof Error ? error.message : String(error)}`
     return false
   }
 }
@@ -993,6 +1027,7 @@ async function checkConnectivityRequirements(): Promise<{
   isReady: boolean
   message?: string
   requirement?: "bluetooth" | "location" | "locationServices" | "permissions"
+  systemAnswer?: string
 }> {
   console.log("Checking connectivity requirements")
 
@@ -1005,6 +1040,7 @@ async function checkConnectivityRequirements(): Promise<{
       isReady: false,
       message: "Bluetooth is required to connect to glasses. Please enable Bluetooth and try again.",
       requirement: "bluetooth",
+      systemAnswer: lastBluetoothAnswer,
     }
   }
 
@@ -1019,6 +1055,7 @@ async function checkConnectivityRequirements(): Promise<{
         isReady: false,
         message: translate("connectivity:locationPermissionRequiredMessage"),
         requirement: "location",
+        systemAnswer: lastLocationPermissionAnswer,
       }
     }
 
@@ -1032,6 +1069,7 @@ async function checkConnectivityRequirements(): Promise<{
         message:
           "Location services are disabled. Please enable location services in your device settings and try again.",
         requirement: "locationServices",
+        systemAnswer: `isLocationServicesEnabled=${locationServicesEnabled}`,
       }
     }
   }
@@ -1043,6 +1081,15 @@ async function checkConnectivityRequirements(): Promise<{
 export async function checkConnectivityRequirementsUI() {
   const requirementsCheck = await checkConnectivityRequirements()
   if (!requirementsCheck.isReady) {
+    logPermissionAlert(
+      requirementsCheck.requirement === "bluetooth"
+        ? "bluetooth"
+        : requirementsCheck.requirement?.startsWith("location")
+          ? "location"
+          : "permissions",
+      requirementsCheck.systemAnswer,
+      `connectivity_${requirementsCheck.requirement ?? "unknown"}`,
+    )
     switch (requirementsCheck.requirement) {
       case "bluetooth":
         showBluetoothAlert(

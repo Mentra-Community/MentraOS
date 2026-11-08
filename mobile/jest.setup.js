@@ -14,6 +14,7 @@ jest.mock("react-native-ble-manager", () => ({
   default: {
     start: jest.fn().mockResolvedValue(undefined),
     checkState: jest.fn().mockResolvedValue("on"),
+    onDidUpdateState: jest.fn(() => ({remove: jest.fn()})),
   },
 }))
 

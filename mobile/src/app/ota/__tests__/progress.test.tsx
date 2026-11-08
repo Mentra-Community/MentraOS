@@ -408,6 +408,30 @@ describe("progress.tsx display states", () => {
     }
   })
 
+  it("offers only Retry when a required update fails", async () => {
+    setGlassesConnected()
+    const {getByText, queryByText} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "downgrade_handoff_failed",
+      })
+    })
+
+    expect(getByText("Update Failed")).toBeDefined()
+    expect(getByText("Retry")).toBeDefined()
+    expect(queryByText("Done")).toBeNull()
+    expect(queryByText("Later")).toBeNull()
+  })
+
   it("restores overlay suppression when retrying after WiFi setup", () => {
     setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)

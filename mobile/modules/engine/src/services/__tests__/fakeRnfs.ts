@@ -73,6 +73,11 @@ export const fakeRnfs = {
       dirs.add(to + dir.slice(from.length))
     }
   },
+  readFile: async (path: string, _encoding: string) => {
+    const contents = files.get(path)
+    if (contents === undefined) throw new Error(`Missing file: ${path}`)
+    return contents
+  },
   writeFile: async (path: string, contents: string) => {
     files.set(path, contents)
   },

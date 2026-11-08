@@ -70,7 +70,11 @@ every Core variable.
   bootstrap was given. An open membership older than the window is still
   returned, with its real start. Each interval carries `roles`, the role
   intervals within it that overlap the window (a role held before the
-  membership's claim is never counted).
+  membership's claim is never counted), and `ownAutomatic`, true when the
+  workspace is that person's own automatic workspace. Fleet uses it to work out
+  which workspace managed each person when ([The managing
+  workspace](#the-managing-workspace)), and backfills it once on intervals it
+  copied before Core sent it.
 - `CLOUD_CORE_SERVICE_SECRETS`: its `fleet` list holds the secrets Fleet signs
   its calls to Core with ([Following Core's changes](#following-cores-changes)
   and [Assigned miniapps](#assigned-miniapps)), for example
@@ -690,6 +694,11 @@ GET /api/internal/workspaces/users/:mentraUserId/managing-workspace
 - **The answer.** `managing` is null for a person in no workspace and for a
   deleted account. Core answers from its memberships now, so a join the change
   feed has not delivered yet is already managed.
+- **Fleet's views** see a member only while their workspace managed them.
+  Fleet decides this from its own interval copy with the same rule, judging
+  each moment by the memberships open then, so the first real workspace someone
+  joined keeps their usage and devices, and another workspace they are in sees
+  none of it. When they leave it, the next workspace sees them from the leave.
 - **Fleet.** `GET /v1/client/desired-state` asks this for the phone's account
   (`managingWorkspace` on the contract client). Against a Core that predates the
   route (`404`), Fleet falls back to confirming the account's open memberships

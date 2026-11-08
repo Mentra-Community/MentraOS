@@ -5,6 +5,7 @@ import type {Permission} from "react-native"
 import {DeviceTypes} from "@mentra/engine"
 import {translate} from "@/i18n"
 import {showAlert} from "@/utils/AlertUtils"
+import {logPermissionAlert} from "@/utils/permissionLog"
 import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 
 type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
@@ -49,6 +50,7 @@ export async function preparePairingScan(deviceModel: string): Promise<boolean> 
             )
 
             if (anyNeverAskAgain) {
+              logPermissionAlert("bluetooth", results, "bluetooth_permission_previously_denied")
               showAlert(
                 translate("pairing:permissionRequired"),
                 translate("pairing:bluetoothPermissionPreviouslyDenied"),
@@ -64,6 +66,7 @@ export async function preparePairingScan(deviceModel: string): Promise<boolean> 
                 ],
               )
             } else {
+              logPermissionAlert("bluetooth", results, "bluetooth_permission_required")
               showAlert(
                 translate("pairing:bluetoothPermissionRequiredTitle"),
                 translate("pairing:bluetoothPermissionRequiredMessage"),

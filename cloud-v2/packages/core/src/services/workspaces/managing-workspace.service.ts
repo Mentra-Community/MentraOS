@@ -5,9 +5,11 @@
  * workspace's miniapps and only that workspace sees the device. Which one follows from the person's active
  * memberships alone, so there is nothing to store and nothing to migrate:
  *
- *  1. the earliest-joined membership (`startedAt`, then the membership id) in a workspace that is **not** the
+ *  1. the earliest-joined membership (when the person took it up: `claimedAt` for a membership imported from the
+ *     Store and claimed later, else `startedAt`; then the membership id) in a workspace that is **not** the
  *     person's own automatic workspace: the first real workspace they joined keeps managing them until they
- *     leave it, and a later join never takes it over;
+ *     leave it, and a later join never takes it over. That is where Fleet's interval history starts a membership
+ *     too, so Fleet's views and the phone agree on who manages it;
  *  2. otherwise their own automatic workspace (the one Core made for them, `automatic: true` and created by
  *     them), the earliest if somehow several;
  *  3. otherwise none.
@@ -38,6 +40,7 @@ interface MembershipFields {
   membershipId: string
   role: string
   startedAt?: Date | null
+  claimedAt?: Date | null
 }
 
 interface WorkspaceFields {
@@ -52,11 +55,13 @@ interface WorkspaceFields {
 // Not `workspace.service`'s `isId`: that module imports `pickManaging` from here, and the two would import each other.
 const isId = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0
 
-const startedAtMs = (row: {startedAt?: Date | null}) => (row.startedAt instanceof Date ? row.startedAt.getTime() : 0)
+/** When the person took the membership up: its claim for an imported one, else its start. */
+const joinedAtMs = (row: {startedAt?: Date | null; claimedAt?: Date | null}) =>
+  row.claimedAt instanceof Date ? row.claimedAt.getTime() : row.startedAt instanceof Date ? row.startedAt.getTime() : 0
 
 /** Earliest join first, then the smallest membership id, so the answer never depends on read order. */
 function joinOrder(a: MembershipFields, b: MembershipFields): number {
-  return startedAtMs(a) - startedAtMs(b) || (a.membershipId < b.membershipId ? -1 : a.membershipId > b.membershipId ? 1 : 0)
+  return joinedAtMs(a) - joinedAtMs(b) || (a.membershipId < b.membershipId ? -1 : a.membershipId > b.membershipId ? 1 : 0)
 }
 
 /** Whether `workspace` is `mentraUserId`'s own automatic workspace. */
@@ -85,7 +90,7 @@ export async function managingWorkspaceOf(mentraUserId: string): Promise<Managin
   // A missing id must not become a `null` filter.
   if (!isId(mentraUserId)) return null
   const memberships = await WorkspaceMembershipModel.find({mentraUserId, status: "active"})
-    .select({_id: 0, workspaceId: 1, membershipId: 1, role: 1, startedAt: 1})
+    .select({_id: 0, workspaceId: 1, membershipId: 1, role: 1, startedAt: 1, claimedAt: 1})
     .lean<MembershipFields[]>()
   if (memberships.length === 0) return null
   const workspaces = await WorkspaceModel.find({workspaceId: {$in: memberships.map(row => row.workspaceId)}, status: "active"})

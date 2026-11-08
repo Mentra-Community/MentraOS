@@ -231,6 +231,7 @@ export function MentraLiveOtaPreview({
         install: previewAction,
         retryInstall: previewAction,
         finish: previewAction,
+        dismiss: previewAction,
         discard: previewAction,
         openWifiSetup: previewAction,
       }}
@@ -617,6 +618,10 @@ function OtaFlowContent({
             />
             {state.canOpenWifiSetup ? (
               <FlowButton colors={colors} label="Change Wi-Fi" onPress={controller.openWifiSetup} secondary />
+            ) : null}
+            {/* A required update offers only Retry; an optional one can be left, as its offer's Later does. */}
+            {state.canDismiss ? (
+              <FlowButton colors={colors} label={translate("ota:updateLater")} onPress={controller.dismiss} secondary />
             ) : null}
           </>
         }

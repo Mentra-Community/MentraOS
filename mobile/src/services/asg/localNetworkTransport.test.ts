@@ -57,11 +57,13 @@ describe("iOS hotspot ownership", () => {
 
   it("reports a Local Network wait for its own join only, until the join settles", async () => {
     const remove = jest.fn()
-    let emit!: (id: string) => void
-    mockIosHotspot.onPermissionRequired.mockImplementationOnce((listener: (id: string) => void) => {
-      emit = listener
-      return {remove}
-    })
+    let emit!: (id: string, systemAnswer: string) => void
+    mockIosHotspot.onPermissionRequired.mockImplementationOnce(
+      (listener: (id: string, systemAnswer: string) => void) => {
+        emit = listener
+        return {remove}
+      },
+    )
     let finish!: (address: string) => void
     mockIosHotspot.join.mockImplementationOnce(
       () =>
@@ -72,10 +74,10 @@ describe("iOS hotspot ownership", () => {
     const onPermissionRequired = jest.fn()
     const joining = localNetworkTransport.connect(networkOwner, "glasses", "private", {onPermissionRequired})
     const id = mockIosHotspot.join.mock.calls[0][0] as string
-    emit("another join")
+    emit("another join", "denied")
     expect(onPermissionRequired).not.toHaveBeenCalled()
-    emit(id)
-    expect(onPermissionRequired).toHaveBeenCalledTimes(1)
+    emit(id, "unsatisfiedReason=localNetworkDenied for 5s")
+    expect(onPermissionRequired).toHaveBeenCalledWith("unsatisfiedReason=localNetworkDenied for 5s")
     expect(remove).not.toHaveBeenCalled()
     finish("192.168.43.2")
     await joining

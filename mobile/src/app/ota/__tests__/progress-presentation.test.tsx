@@ -50,6 +50,7 @@ beforeEach(() => {
     install: jest.fn(),
     retryInstall: jest.fn(),
     finish: jest.fn(),
+    dismiss: jest.fn(),
     discard: jest.fn(),
     openWifiSetup: jest.fn(),
   }))

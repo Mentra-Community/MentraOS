@@ -61,7 +61,7 @@ export function installSlots(apps) {
 
 export function installButtons(apps) {
   return installSlots(apps).filter(({url}) => url)
-    .map(({label, primary, url}) => button(label, url, primary ? "primary" : undefined))
+    .map(({label, primary, url}) => button(`Install ${label}`, url, primary ? "primary" : undefined))
 }
 
 /** The glasses versions an OTA manifest of this release or PR build (`releaseVersion`) targets. */

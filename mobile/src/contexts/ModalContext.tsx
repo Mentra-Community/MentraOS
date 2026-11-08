@@ -81,7 +81,7 @@ export const NO_ANSWER = -1
 
 interface AlertHost {
   present: (request: AlertRequest) => Promise<number>
-  dismiss: (title: string) => void
+  dismiss: (title: string, message?: string) => void
 }
 
 let host: AlertHost | null = null
@@ -103,10 +103,11 @@ export function waitForAlertHost(): Promise<void> {
 
 /**
  * Closes the alert titled `title` without running any of its buttons, and drops queued alerts with that
- * title. For alerts whose condition resolved on its own. Their callers get `NO_ANSWER`.
+ * title. With `message`, only the alerts with that message too. For alerts whose condition resolved on its
+ * own. Their callers get `NO_ANSWER`.
  */
-export function dismissAlert(title: string): void {
-  host?.dismiss(title)
+export function dismissAlert(title: string, message?: string): void {
+  host?.dismiss(title, message)
 }
 
 export interface SheetButton {
@@ -307,15 +308,17 @@ export function ModalProvider({children}: {children: ReactNode}) {
           queue.current = [...queue.current, {...request, id: nextId.current++, waiters: [answer]}]
           rerender()
         }),
-      dismiss: (title) => {
+      dismiss: (title, message) => {
+        const matches = (alert: QueuedAlert) =>
+          alert.title === title && (message === undefined || alert.message === message)
         const [first, ...rest] = queue.current
         const kept = rest.filter((alert) => {
-          if (alert.title !== title) return true
+          if (!matches(alert)) return true
           settle(alert, NO_ANSWER)
           return false
         })
         queue.current = first ? [first, ...kept] : kept
-        if (first?.title === title) close(NO_ANSWER)
+        if (first && matches(first)) close(NO_ANSWER)
         else rerender()
       },
     }

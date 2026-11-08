@@ -1472,8 +1472,10 @@ const en = {
     invitationTerms: "If you join, they manage your device and can install miniapps on your phone.",
     invitationJoin: "Join",
     invitationDecline: "Decline",
-    invitationLeaveFirst: "You're in {{current}}. Leave it to join {{workspace}}.",
-    invitationLeaveCurrent: "Leave {{current}}",
+    // Not drawn on the board: a person may belong to several workspaces, and only the first real one manages the phone.
+    invitationTermsKept:
+      "You'll stay in {{current}}, which keeps managing this phone. {{workspace}} won't see it while {{current}} does.",
+    joinedKept: "You joined {{workspace}}.",
     canSeeTitle: "Your workspace can see",
     canSeeGlassesAndPhones: "Your glasses and phones",
     canSeeMiniapps: "Miniapps you use",

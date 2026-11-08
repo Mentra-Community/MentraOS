@@ -185,14 +185,17 @@ licenses are assigned from the Licenses page.
 - <a id="the-managing-workspace"></a>**The managing workspace.** A person's
   phone is managed by at most one of their workspaces: Fleet installs that
   workspace's miniapps, and a miniapp token names it first. It is the
-  earliest-joined membership (`startedAt`, then the membership id) in a
+  earliest-joined membership (when the person took it up: `claimedAt` for an
+  imported membership, else `startedAt`; then the membership id) in a
   workspace that is not the person's own automatic workspace, else their own
   automatic workspace, else none. So the first real workspace someone joins
   keeps managing them until they leave it; a later join never takes it over;
   leaving passes it to the next by the same rule; and someone else's automatic
   workspace that a person joined is a real one to them. Nothing is stored: it
   follows from the memberships (`managing-workspace.service`). The Mentra App's
-  `GET /api/client/workspaces/mine` answers it, `GET /` marks it
+  `GET /api/client/workspaces/mine` answers it, with `automatic: true` when it
+  is the person's own automatic workspace (a workspace they join then manages
+  the phone instead), `GET /` marks it
   `managesDevice: true`, and Fleet reads it from
   `GET /api/internal/workspaces/users/:mentraUserId/managing-workspace`
   ([Fleet integration](fleet-integration.md#the-managing-workspace)). The

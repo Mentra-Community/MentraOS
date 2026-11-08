@@ -1,6 +1,5 @@
-import {DeviceTypes, engine, SETTINGS, useSetting} from "@mentra/engine"
-import {useEffect} from "react"
-import {Image, Platform, Pressable, useWindowDimensions, View} from "react-native"
+import {DeviceTypes, SETTINGS, useSetting} from "@mentra/engine"
+import {Image, Pressable, useWindowDimensions, View} from "react-native"
 import type {ImageSourcePropType, ImageStyle, ViewStyle} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -10,7 +9,6 @@ import GlassView from "@/components/ui/GlassView"
 import type {TxKeyPath} from "@/i18n"
 import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPolicy"
 import {useNavigationStore} from "@/stores/navigation"
-import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 
 const CardButton = ({
   imageHeight,
@@ -57,38 +55,12 @@ export default function OnboardingWelcome() {
   const [_onboarding, setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
   const simulatedGlassesAllowed = isGlassesModelAllowedByDeployment(DeviceTypes.SIMULATED)
 
-  // A phone still bonded with Mentra Live has glasses: after a reinstall or cleared app data, skip the question
-  // and let the scan screen connect them, with no pairing mode. Android only: iOS can't read its bonds.
-  useEffect(() => {
-    if (Platform.OS !== "android") return
-    let left = false
-    void engine.pairing.bondedGlasses().then((device) => {
-      if (!device || left) return
-      setOnboardingCompleted(true)
-      goHomeAndPush("/pairing/scan", {deviceModel: DeviceTypes.LIVE})
-    })
-    return () => {
-      left = true
-    }
-    // Once, when the question is first shown.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // User has smart glasses - go to glasses selection screen
-  const handleHasGlasses = async () => {
+  // User has smart glasses - go to glasses selection screen. Glasses the phone is still bonded with, as after a
+  // reinstall, pair the same way as new ones: the person chooses them, and nothing pairs by itself.
+  const handleHasGlasses = () => {
     // TODO: Track analytics event - user has glasses
     // analytics.track('onboarding_has_glasses_selected')
     setOnboardingCompleted(true)
-    // A reinstall or cleared data also revoked Nearby devices, which hid the bond above. Asked for now, it shows
-    // glasses the phone is bonded with, and the scan screen connects them without choosing a model.
-    if (
-      Platform.OS === "android" &&
-      (await requestFeaturePermissions(PermissionFeatures.BLUETOOTH)) &&
-      (await engine.pairing.bondedGlasses())
-    ) {
-      goHomeAndPush("/pairing/scan", {deviceModel: DeviceTypes.LIVE})
-      return
-    }
     goHomeAndPush("/pairing/select-glasses-model", {onboarding: true})
   }
 

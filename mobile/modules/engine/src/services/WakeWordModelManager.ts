@@ -28,12 +28,12 @@ const WAKE_WORD_MODEL = {
   } as Record<string, string>,
   /** Pronunciations of "Hey Mentra" with their boost and trigger threshold. */
   keywords: [
-    "HH EY1 M EH1 N T R AH0 :3.2 #0.015 @HEY_MENTRA",
-    "HH EY1 M AE1 N T R AH0 :3.2 #0.015 @HEY_MENTRA",
-    "HH EY1 M IH1 N T R AH0 :3.2 #0.015 @HEY_MENTRA",
-    "HH EY1 M IY1 T R AH0 :3.2 #0.015 @HEY_MENTRA",
-    "HH EY1 M IH1 T R AH0 :3.2 #0.015 @HEY_MENTRA",
-    "HH EY1 M EH1 T R AH0 :3.2 #0.015 @HEY_MENTRA",
+    "HH EY1 M EH1 N T R AH0 :3.2 #0.02 @HEY_MENTRA",
+    "HH EY1 M AE1 N T R AH0 :3.2 #0.02 @HEY_MENTRA",
+    "HH EY1 M IH1 N T R AH0 :3.2 #0.02 @HEY_MENTRA",
+    "HH EY1 M IY1 T R AH0 :3.2 #0.02 @HEY_MENTRA",
+    "HH EY1 M IH1 T R AH0 :3.2 #0.02 @HEY_MENTRA",
+    "HH EY1 M EH1 T R AH0 :3.2 #0.02 @HEY_MENTRA",
   ].join("\n"),
 }
 
@@ -77,6 +77,13 @@ class WakeWordModelManager {
       const dir = this.getModelPath()
       for (const file of WAKE_WORD_MODEL_FILES) {
         if (!(await RNFS.exists(`${dir}/${file}`))) return false
+      }
+      // Keyword tuning ships with the app, independently of the downloaded model.
+      // Refresh before native activation so existing installs receive new thresholds.
+      const keywordPath = `${dir}/keywords.txt`
+      const keywords = `${WAKE_WORD_MODEL.keywords}\n`
+      if ((await RNFS.readFile(keywordPath, "utf8")) !== keywords) {
+        await RNFS.writeFile(keywordPath, keywords, "utf8")
       }
       return true
     } catch (error) {

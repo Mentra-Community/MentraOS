@@ -416,6 +416,12 @@ export interface MyWorkspace {
   name: string
   role: WorkspaceRole
   membershipId: string
+  /**
+   * Whether it is the person's own automatic workspace, which manages the phone only while they have no other: a
+   * workspace they join then manages it instead. Otherwise it keeps managing the phone when they join another. An
+   * older Core leaves it out.
+   */
+  automatic?: boolean
 }
 
 /** `GET /api/client/workspaces/mine`. */
@@ -497,6 +503,12 @@ export interface MembershipInterval {
    * effect (never before `start`) until the next took effect, the last until `end`. Never empty.
    */
   roles: MembershipRoleInterval[]
+  /**
+   * Whether the workspace is this person's own automatic workspace (the one Core made for them). It manages their
+   * device only while no other membership does, so Fleet ranks it last when it decides which workspace manages them
+   * (`ManagingWorkspace`). An older Core leaves it out.
+   */
+  ownAutomatic?: boolean
 }
 
 /** One role held within a membership interval. */

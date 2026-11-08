@@ -116,6 +116,13 @@ describe("workspaces: paths, methods, bodies", () => {
     expect(requests.map(r => [r.method, r.url])).toEqual([["GET", `${BASE}/mine`]])
   })
 
+  test("mine keeps whether the workspace is the person's own automatic one, and an older Core's answer without it", async () => {
+    const {workspaces} = setup(() => json(200, {workspace: {...workspace, automatic: true}}))
+    await expect(workspaces.mine()).resolves.toEqual({workspace: {...workspace, automatic: true}})
+    const older = setup(() => json(200, {workspace}))
+    expect((await older.workspaces.mine()).workspace).not.toHaveProperty("automatic")
+  })
+
   test("mine reads `workspace: null` as no workspace", async () => {
     const {workspaces} = setup(() => json(200, {workspace: null}))
     await expect(workspaces.mine()).resolves.toEqual({workspace: null})
