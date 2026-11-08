@@ -61,5 +61,5 @@ jobs:
         with:
           node-version: "24"
       - uses: porter-dev/setup-porter@v0.1.0
-      - name: Check sync freshness and configuration ownership
+      - name: Check Doppler groups and configuration ownership
         run: node .github/scripts/porter-doppler-health.mjs
