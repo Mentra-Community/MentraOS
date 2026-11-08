@@ -305,6 +305,7 @@ jobs:
                 managedMiniapps:{value:(($reference[0].miniapps.managed + $demo[0])
                   | map(del(.bundleUrl) + {bundlePath:(.bundleUrl | sub("^https://[^/]+"; ""))}))},
                 cloudSpeechAndPhotos:{value:true},
+                onDeviceSpeech:{value:true},
                 redisImage:{value:$redisImage}
               }
             }' > "$parameters"

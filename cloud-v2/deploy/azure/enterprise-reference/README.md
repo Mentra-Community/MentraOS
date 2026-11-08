@@ -13,8 +13,11 @@ for the workspace hostname, and the served deployment manifest. The Runtime
 profile does not start Redis, UDP, cloud audio, camera, Cloudflare, speech,
 maps, Store, or reporting dependencies.
 
-The Acme demo stacks differ in one way, for the Enterprise Demo miniapp they
-add from [demo-miniapps.json](./demo-miniapps.json). With `cloudSpeechAndPhotos`
+The Acme demo stacks differ in two ways, for the Enterprise Demo miniapp they
+add from [demo-miniapps.json](./demo-miniapps.json). With `onDeviceSpeech` on,
+phones download the on-device speech models from GitHub and transcribe on the
+phone whenever a miniapp prefers it, as Enterprise Demo does, instead of through
+Soniox. With `cloudSpeechAndPhotos`
 on, Runtime also runs speech-to-text (Soniox), text-to-speech (ElevenLabs) and
 glasses photos, stored on the replica, with a Redis sidecar. Speech and questions
 then leave the stack for Soniox, ElevenLabs and the miniapp's hosted backend. The

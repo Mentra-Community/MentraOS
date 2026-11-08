@@ -224,7 +224,7 @@ else:sys.exit(9)
         parameters = self.parameters(config)
         self.assertEqual(parameters['keyVaultName']['value'], 'kvacmementra')
         for name in ('refreshTokenPepper', 'mentraJwtPrivateKey', 'miniappJwtPrivateKey', 'teamsGraphClientSecret',
-                     'manageAcrPullRoleAssignment', 'cloudSpeechAndPhotos'):
+                     'manageAcrPullRoleAssignment', 'cloudSpeechAndPhotos', 'onDeviceSpeech'):
             self.assertNotIn(name, parameters)
         template = (ROOT / 'main.bicep').read_text()
         self.assertNotIn('@secure()', template)

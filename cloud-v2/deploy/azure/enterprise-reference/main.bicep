@@ -76,6 +76,8 @@ param telemetryEnabled bool = false
 param cloudSpeechAndPhotos bool = false
 @description('Digest-pinned Redis image in this deployment\'s registry, for cloudSpeechAndPhotos.')
 param redisImage string = ''
+@description('Reference demo only, not offered by the installer: phones download the on-device speech models from their public hosts (GitHub) and transcribe on the phone, so miniapps that prefer on-device speech stay off cloud speech. Customer stacks keep it false: customer-hosted models are not implemented.')
+param onDeviceSpeech bool = false
 
 @description('Organization privacy-policy URL. Empty serves the image-bundled same-origin document.')
 param privacyPolicyUrl string = ''
@@ -311,7 +313,7 @@ var deploymentManifest = {
     managedStreams: cloudSpeechAndPhotos
     nativeMeetings: true
     cloudSpeech: cloudSpeechAndPhotos
-    onDeviceSpeech: false
+    onDeviceSpeech: onDeviceSpeech
     navigation: false
   }
   telemetry: telemetryEnabled
