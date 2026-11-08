@@ -82,6 +82,13 @@ test("iOS opens TestFlight only once testers can install it", async () => {
   }
 })
 
+test("the iPhone and Mac checks get each URL alone, as reachable(url, fetchImpl) expects", async () => {
+  // Like reachable: a second argument is taken as the fetch function, so a map index must never reach it.
+  const check = async (url, fetchImpl = fetch) => typeof fetchImpl === "function"
+  const post = await releasePost(env, {check, fetchImpl: otaOnly})
+  assert.deepEqual(buttons(post).slice(0, 3), [":robot_face: Install Mentra", ":apple: Install Mentra", ":computer: Install Mentra"])
+})
+
 test("a slot without an install shows as missing, with why", async () => {
   const failed = await releasePost({...env, IOS_RESULT: "failure", EXAMPLES_RESULT: "failure", EXAMPLE_TESTFLIGHT_RESULT: "skipped"},
     {check: async (url) => url === env.MOBILE_APK_URL, fetchImpl: otaOnly})
