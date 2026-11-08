@@ -196,7 +196,9 @@ export function useMentraLivePairing(options: UseMentraLivePairingOptions): Ment
     connectingRef.current = false
     setScanTimedOut(false)
     setDiagnostic(null)
-    setCarried([])
+    // Starting a scan empties the native list: glasses already listed, as after going back and returning, stay until
+    // they advertise again or the grace ends, so the pairing steps don't flash between two lists.
+    setCarried(visibleRef.current)
     try {
       // Glasses the phone is still bonded with, as after a reinstall, are listed and chosen like any others: they
       // show once their button opens pairing mode, and nothing connects them before the person chooses them.

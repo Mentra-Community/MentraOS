@@ -433,6 +433,8 @@ const mockIslandEntries = () => {
     // Settings contract on the public entry (real store-backed): SETTINGS registry,
     // per-key hook, and the pure device-model key helpers.
     SETTINGS: realSettings.SETTINGS,
+    PHONE_WIDE_SETTING_KEYS: realSettings.PHONE_WIDE_SETTING_KEYS,
+    SIGN_OUT_ERASED_SETTING_KEYS: realSettings.SIGN_OUT_ERASED_SETTING_KEYS,
     useSetting: realSettings.useSetting,
     MENTRA_LIVE_SETTING_KEYS: realBtSettingKeys.MENTRA_LIVE_SETTING_KEYS,
     getBluetoothSettingKeysForDevice: realBtSettingKeys.getBluetoothSettingKeysForDevice,
@@ -702,6 +704,7 @@ const mockIslandEntries = () => {
         keys: jest.fn(() => Object.keys(realSettings.SETTINGS)),
         resetAllLocal: jest.fn(() => realSettings.useSettingsStore.getState().resetAllSettingsLocally()),
         loadAll: jest.fn(() => realSettings.useSettingsStore.getState().loadAllSettings()),
+        reloadLocal: jest.fn(() => realSettings.useSettingsStore.getState().reloadAllSettings()),
         getAll: jest.fn(() => ({...realSettings.useSettingsStore.getState().settings})),
         setManyLocal: jest.fn((values) => realSettings.useSettingsStore.getState().setManyLocally(values)),
       },

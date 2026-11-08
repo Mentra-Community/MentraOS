@@ -69,7 +69,9 @@ const migrations: Migration[] = [
   },
 ]
 
-const migration_version_key = "migration_version"
+/** The storage key of the last migration this phone ran. Logout keeps it: see LogoutUtils. */
+export const MIGRATION_VERSION_KEY = "migration_version"
+const migration_version_key = MIGRATION_VERSION_KEY
 const current_version = migrations.length
 
 const runMigrations = (fromVersion: number): AsyncResult<void, Error> => {

@@ -54,14 +54,14 @@ export function installSlots(apps) {
     ...(apps.some(({installs}) => installs.some(({platform, url}) => platform === "macOS" && installable(url))) ? ["macOS"] : [])]
   return apps.flatMap(({name, installs}, index) => platforms.map((platform) => {
     const install = installs.find((entry) => entry.platform === platform)
-    return {label: `${PLATFORM_EMOJI[platform]} ${name}`, primary: !index,
+    return {label: `${PLATFORM_EMOJI[platform]} ${name}`, emoji: PLATFORM_EMOJI[platform], name, primary: !index,
       ...(installable(install?.url) ? {url: install.url} : {missing: install?.missing ?? "not built"})}
   }))
 }
 
 export function installButtons(apps) {
   return installSlots(apps).filter(({url}) => url)
-    .map(({label, primary, url}) => button(`Install ${label}`, url, primary ? "primary" : undefined))
+    .map(({emoji, name, primary, url}) => button(`${emoji} Install ${name}`, url, primary ? "primary" : undefined))
 }
 
 /** The glasses versions an OTA manifest of this release or PR build (`releaseVersion`) targets. */

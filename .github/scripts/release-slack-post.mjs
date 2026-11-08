@@ -41,8 +41,10 @@ export async function reachable(url, fetchImpl = fetch) {
   if (!url?.startsWith("https://")) return false
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      if ((await fetchImpl(url, {method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(20_000)})).ok) return true
-    } catch { /* retried */ }
+      const response = await fetchImpl(url, {method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(20_000)})
+      if (response.ok) return true
+      console.warn(`${url} answered ${response.status}`)
+    } catch (error) { console.warn(`${url}: ${error.message}`) }
   }
   return false
 }

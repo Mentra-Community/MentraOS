@@ -177,6 +177,15 @@ describe("useMentraLivePairing", () => {
     expect(fakePairing.pair).not.toHaveBeenCalled()
   })
 
+  test("returning to the scan keeps the glasses already listed while the new scan empties the native list", async () => {
+    results = [live("MENTRA_LIVE_BLE_E511")]
+    await renderFlow()
+    await emitResults([])
+    expect(controller.state).toMatchObject({page: "scan", status: "choosing", glasses: [{label: "E511"}]})
+    await advance(5_000)
+    expect(controller.state).toMatchObject({page: "scan", status: "searching", glasses: []})
+  })
+
   test("drops glasses the native list drops, but keeps the list across a rescan", async () => {
     await renderFlow()
     await emitResults([live("MENTRA_LIVE_BLE_E511"), live("MENTRA_LIVE_BLE_B2C4")])

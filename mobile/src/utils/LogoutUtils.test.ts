@@ -4,15 +4,17 @@ const mockAccountSignOut = jest.fn()
 const mockUnpair = jest.fn()
 const mockForget = jest.fn()
 const mockStop = jest.fn()
-const mockReset = jest.fn()
+const mockCloseAccountSettings = jest.fn()
 const mockMantleCleanup = jest.fn()
 const mockSettle = jest.fn()
 jest.mock("@mentra/engine", () => ({
   engine: {
     glasses: {forget: () => mockForget()},
     stop: () => mockStop(),
-    settings: {resetAllLocal: () => mockReset()},
   },
+}))
+jest.mock("@/services/accountSettings", () => ({
+  closeAccountSettings: (options: unknown) => mockCloseAccountSettings(options),
 }))
 jest.mock("@/services/cloudClient", () => ({cloudClient: {clearAuthSession: () => mockCoreSignOut()}}))
 jest.mock("@/utils/auth/authClient", () => ({__esModule: true, default: {signOut: () => mockAccountSignOut()}}))
@@ -68,7 +70,7 @@ describe("LogoutUtils credential-owner ordering", () => {
       expect(mockForget).not.toHaveBeenCalled()
       expect(mockMantleCleanup).toHaveBeenCalledTimes(1)
       expect(mockStop).toHaveBeenCalledTimes(1)
-      expect(mockReset).toHaveBeenCalledTimes(1)
+      expect(mockCloseAccountSettings).toHaveBeenCalledWith({deleteAccount: false})
     },
   )
 
@@ -80,7 +82,7 @@ describe("LogoutUtils credential-owner ordering", () => {
     await LogoutUtils.performCompleteLogout()
 
     expect(mockForget).toHaveBeenCalledTimes(1)
-    expect(mockReset).toHaveBeenCalledTimes(1)
+    expect(mockCloseAccountSettings).toHaveBeenCalledWith({deleteAccount: false})
   })
 
   it("deletes every account credential from the secure store, which clearing MMKV does not reach", async () => {
@@ -99,5 +101,12 @@ describe("LogoutUtils credential-owner ordering", () => {
     expect(mockAccountSignOut).not.toHaveBeenCalled()
     expect(mockCoreSignOut).toHaveBeenCalledTimes(1)
     expect(mockStop).toHaveBeenCalledTimes(1)
+  })
+
+  it("deletes the account's settings with the account", async () => {
+    mockCoreSignOut.mockResolvedValue(undefined)
+    mockAccountSignOut.mockResolvedValue(Res.ok(undefined))
+    await LogoutUtils.performCompleteLogout({deleteAccount: true})
+    expect(mockCloseAccountSettings).toHaveBeenCalledWith({deleteAccount: true})
   })
 })

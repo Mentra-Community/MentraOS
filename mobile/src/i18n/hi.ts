@@ -59,16 +59,16 @@ const hi = {
   pairing: {
     ...en.pairing,
     livePairingScanTitle: "अपने चश्मे को पेयरिंग मोड में रखें",
-    livePairingScanBody: "पेयरिंग मोड में जाने के लिए पावर बटन को जल्दी से 3 बार दबाएँ।",
+    livePairingScanBody: "पेयरिंग मोड में जाने के लिए पावर बटन को 3 बार दबाएँ।",
     livePairingScanSearching: "आपका चश्मा खोजा जा रहा है",
     pairingModeAlertTitle: "आपका चश्मा पेयरिंग मोड में है",
     pairingModeAlertBody: "बाहर निकलने के लिए पावर बटन को 3 बार दबाएँ।",
     nearbyNotInPairingModeHint:
-      "पास में Mentra Live चश्मे मिले, लेकिन वे पेयरिंग मोड में नहीं हैं। पावर बटन को तेज़ी से 3 बार दबाएँ, फिर फिर से कोशिश करें।",
+      "पास में Mentra Live चश्मे मिले, लेकिन वे पेयरिंग मोड में नहीं हैं। पावर बटन को 3 बार दबाएँ, फिर फिर से कोशिश करें।",
     pairingCodeLabel: "कोड {{code}}",
     legacyFirmwareLabel: "पुराना फ़र्मवेयर",
-    livePairingModeInfo: "पेयरिंग मोड में जाने के लिए पावर बटन को जल्दी से 3 बार दबाएँ।",
-    noGlassesFoundHint: "पक्का करें कि आपने पावर बटन को तेज़ी से 3 बार दबाया, फिर फिर से कोशिश करें।",
+    livePairingModeInfo: "पेयरिंग मोड में जाने के लिए पावर बटन को 3 बार दबाएँ।",
+    noGlassesFoundHint: "पक्का करें कि आपने पावर बटन को 3 बार दबाया, फिर फिर से कोशिश करें।",
   },
   onboarding: {
     ...en.onboarding,

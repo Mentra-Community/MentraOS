@@ -2,7 +2,7 @@
 
 Doppler owns application secrets and settings. Porter apps attach only their direct Doppler environment group. Do not use `porter env set`, app-level `env`, or GitHub secret bundles to mirror application configuration. Porter v2 ignores service-level `env`; it must not be used to configure applications either. Listening ports, resource limits, domains, and deployment commands remain in Porter YAML. Porter also retains the scoped integration credential and platform-generated environment variables.
 
-The complete managed-app inventory is in [doppler-porter-contract.json](../../../../.github/production-release/doppler-porter-contract.json). Kubernetes sync health, linked groups, and app overrides are checked hourly by the Doppler Porter health workflow using reviewed default-branch code. Pull requests run tests and the deployment source guard without credentials; manual live audit runs are allowed only on the default branch. Run the same read-only check locally:
+The complete managed-app inventory is in [doppler-porter-contract.json](../../../../.github/production-release/doppler-porter-contract.json). Each group's keys and Doppler scope, linked groups, and app overrides are checked hourly by the Doppler Porter health workflow using reviewed default-branch code. Pull requests run tests and the deployment source guard without credentials; manual live audit runs are allowed only on the default branch. Run the same read-only check locally:
 
 ```bash
 node .github/scripts/porter-doppler-health.mjs
@@ -74,4 +74,4 @@ Only detach manual groups and clear app overrides after proving their required e
 
 The audit found invalid service-token authentication on Call and Notes; the status does not establish who revoked or regenerated those tokens. Rotating a token in Doppler does not update Porter's saved credential automatically. Several other apps never had a native connection: their deploy scripts copied secrets into manual groups. App overrides and multiple competing groups then masked Doppler changes. Deployment manifests and scripts must therefore enforce the same ownership as the live configuration.
 
-The health workflow reports invalid/missing stores, stale refreshes, unexpected groups, and app overrides without printing secret values. Its GitHub failure status is the notification surface; no Slack notification is configured.
+The health workflow reports missing keys, wrong Doppler scopes, unexpected groups, and app overrides without printing secret values. Its token cannot read sync status, so check a stalled sync by hand as described above. Its GitHub failure status is the notification surface; no Slack notification is configured.

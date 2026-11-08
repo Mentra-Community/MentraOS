@@ -9,6 +9,7 @@ import {
   useDeployment,
 } from "@/services/deployment"
 import {clearDeploymentDebugOverrides} from "@/services/deployment/debugOverrides"
+import {openAccountSettings, settleSignedOutAccountSettings} from "@/services/accountSettings"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import {hasStoredAccountSession} from "@/utils/auth/accountCredentials"
 import mentraAuth from "@/utils/auth/authClient"
@@ -81,6 +82,8 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
     const applySession = (next: MentraAuthSession | null, allowTelemetry: boolean) => {
       if (cancelled) return
+      // Before anything renders for this account, so every screen reads its settings.
+      if (next?.user?.id) openAccountSettings(next.user.id)
       setSession(next)
       setUser(next?.user ?? null)
       Sentry.setUser(allowTelemetry && next?.user ? {id: next.user.id, email: next.user.email} : null)
@@ -100,13 +103,15 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       void hasStoredAccountSession()
         .catch((error) => {
           console.warn("AuthContext: could not read the stored account session", error)
-          return false
+          return null
         })
         .then((hasExistingConsumerSession) => {
           if (cancelled) return
           if (hasExistingConsumerSession && !store.isSelectingWorkspace()) {
             store.restoreConsumerSessionSelection()
           } else {
+            // Only a definite "no session": one that couldn't be read keeps the settings for the account.
+            if (hasExistingConsumerSession === false) settleSignedOutAccountSettings()
             applySession(null, false)
           }
         })
@@ -129,6 +134,8 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
           applySession(null, true)
           return
         }
+        // No stored tokens at all: this phone is signed out.
+        if (!res.value.token) settleSignedOutAccountSettings()
         applySession(res.value, true)
       })
 
