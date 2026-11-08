@@ -52,8 +52,8 @@ test("every build post has the one layout: title and Details, facts, one row of 
     assert.ok(buttons.slice(0, first < 0 ? undefined : first).every((button) => button.style === "primary" && !/Bluetooth/.test(button.text.text)), name)
     assert.equal(buttons.some((button) => /Bluetooth example/.test(button.text.text)), Boolean(example), name)
     // Each app has the same slots, Docs closes the row, and a slot without an install is named under it.
-    assert.ok(buttons.slice(0, -1).every((button) => button.text.text.startsWith("Install ")), name)
-    const slots = buttons.slice(0, -1).map((button) => button.text.text.split(" ")[1])
+    assert.ok(buttons.slice(0, -1).every((button) => /^:[a-z_]+: Install /.test(button.text.text)), name)
+    const slots = buttons.slice(0, -1).map((button) => button.text.text.split(" ")[0])
     assert.deepEqual([buttons.at(-1).text.text, buttons.at(-1).url], [":books: Docs", "https://docs-dev.mentraglass.com".replace(
       "docs-dev", name.startsWith("staging") ? "docs-beta" : "docs-dev")], name)
     const after = rest[rest.indexOf(actions[0]) + 1]
