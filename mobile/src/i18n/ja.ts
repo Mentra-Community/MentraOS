@@ -58,16 +58,16 @@ const ja = {
   pairing: {
     ...en.pairing,
     livePairingScanTitle: "グラスをペアリングモードにしてください",
-    livePairingScanBody: "電源ボタンを素早く3回押して、ペアリングモードにします。",
+    livePairingScanBody: "電源ボタンを3回押して、ペアリングモードにします。",
     livePairingScanSearching: "グラスを探しています",
     pairingModeAlertTitle: "グラスはペアリングモードです",
     pairingModeAlertBody: "終了するには電源ボタンを3回押してください。",
     nearbyNotInPairingModeHint:
-      "近くにMentra Liveが見つかりましたが、ペアリングモードではありません。電源ボタンを素早く3回押してから、もう一度お試しください。",
+      "近くにMentra Liveが見つかりましたが、ペアリングモードではありません。電源ボタンを3回押してから、もう一度お試しください。",
     pairingCodeLabel: "コード {{code}}",
     legacyFirmwareLabel: "レガシーファームウェア",
-    livePairingModeInfo: "電源ボタンを素早く3回押して、ペアリングモードにします。",
-    noGlassesFoundHint: "電源ボタンを素早く3回押してから、もう一度お試しください。",
+    livePairingModeInfo: "電源ボタンを3回押して、ペアリングモードにします。",
+    noGlassesFoundHint: "電源ボタンを3回押してから、もう一度お試しください。",
   },
   onboarding: {
     ...en.onboarding,

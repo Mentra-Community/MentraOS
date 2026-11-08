@@ -48,7 +48,7 @@ describe("the stock Mentra Live pairing pages", () => {
       glasses: [{id: "a", label: "E511", device}],
     })
     expect(getByText("Choose your glasses")).toBeTruthy()
-    expect(getByText("Press the power button 3 times quickly to enter pairing mode.")).toBeTruthy()
+    expect(getByText("Press the power button 3 times to enter pairing mode.")).toBeTruthy()
     fireEvent.press(getByLabelText("Mentra Live, E511"))
     expect(controller.select).toHaveBeenCalled()
   })

@@ -54,7 +54,7 @@ function scanPresentation(
     case 'searching':
       return {
         indeterminate: true,
-        message: 'Press the power button 3 times quickly to enter pairing mode.',
+        message: 'Press the power button 3 times to enter pairing mode.',
         secondary: {action: 'back', label: 'Cancel'},
         title: 'Looking for Mentra Live',
         tone: 'active',
@@ -79,7 +79,7 @@ function scanPresentation(
       };
     case 'not_found':
       return {
-        message: 'Make sure your glasses are charged and on, then press the power button 3 times quickly.',
+        message: 'Make sure your glasses are charged and on, then press the power button 3 times.',
         primary: {action: 'scanAgain', label: 'Scan again'},
         secondary: {action: 'back', label: 'Cancel'},
         title: 'No glasses found',
