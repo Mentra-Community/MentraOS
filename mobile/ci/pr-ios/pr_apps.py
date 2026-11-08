@@ -10,7 +10,7 @@ PR_APPS = {
     "mentra": {"bundleId": "com.mentra.mentra", "prefix": "mentra", "product": "Mentra.app", "name": "Mentra",
                "profile": "IOS_PR_PROFILE_BASE64", "icon": "mobile/assets/app-icons/ic_launcher.png",
                "installerId": "com.mentra.mac-installer", "scheme": "mentra-install", "defines": []},
-    "example": {"bundleId": "com.mentra.bluetoothsdkexample", "prefix": "mentra-example", "product": "MentraSDKRN.app",
+    "example": {"bundleId": "com.mentra.bluetoothsdkexample", "prefix": "mentra-example", "product": "MentraBluetoothExample.app",
                 "name": "Mentra Example", "profile": "IOS_EXAMPLE_PR_PROFILE_BASE64",
                 "icon": "examples/bluetooth/react-native/assets/app-icon.png",
                 "installerId": "com.mentra.mac-installer.example", "scheme": "mentra-example-install",

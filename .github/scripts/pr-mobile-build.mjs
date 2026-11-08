@@ -78,7 +78,7 @@ export const PR_APPS = Object.freeze({
     packageId: "com.mentra.bluetoothsdkexample",
     root: "examples/bluetooth/react-native",
     inputs: EXAMPLE_INPUT_PATHS,
-    xcodeProject: "MentraSDKRN",
+    xcodeProject: "MentraBluetoothExample",
     macInstaller: {
       name: "Install Mentra Example.app",
       bundleId: "com.mentra.mac-installer.example",

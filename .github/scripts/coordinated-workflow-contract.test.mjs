@@ -598,7 +598,7 @@ test("mobile destinations use real TestFlight groups without changing the releas
   // for every channel, never assumed from the example's committed one.
   assert.doesNotMatch(example, /MENTRA_CHANNEL !== "production"/)
   assert.match(example, /find ios -maxdepth 1 -name '\*\.xcworkspace'/)
-  assert.match(example, /select\(\. == "MentraSDKRN"\)/)
+  assert.match(example, /select\(\. == "MentraBluetoothExample"\)/)
   assert.match(example, /security list-keychains -d user -s "\$keychain"/)
   assert.match(example, /certificate_id=\$\(basename "\$certificate" \.cer\)/)
   assert.match(example, /awk -v fingerprint="\$certificate_fingerprint" '\$2 == fingerprint/)

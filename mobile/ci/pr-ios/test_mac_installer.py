@@ -260,7 +260,7 @@ class MacInstallerPackagingTests(unittest.TestCase):
     def test_example_app_gets_its_own_installer(self):
         example = pr_app({"MENTRA_PR_APP": "example"})
         self.assertEqual((example["folder"], example["installer"], example["product"]),
-                         ("Mentra Example PR", "Install Mentra Example.app", "MentraSDKRN.app"))
+                         ("Mentra Example PR", "Install Mentra Example.app", "MentraBluetoothExample.app"))
         self.assertEqual(installer.installer_defines({"GITHUB_REPOSITORY": "Mentra-Community/Mentra"}, example),
                          ["-D", "MENTRA_MONOREPO", "-D", "MENTRA_EXAMPLE"])
         package = self.root / example["folder"]

@@ -20,7 +20,7 @@ enum PRApp {
 #if MENTRA_EXAMPLE
     static let bundleID = "com.mentra.bluetoothsdkexample"
     static let name = "Mentra Example"
-    static let product = "MentraSDKRN.app"
+    static let product = "MentraBluetoothExample.app"
     static let prefix = "mentra-example"
     static let installerID = "com.mentra.mac-installer.example"
     static let scheme = "mentra-example-install"
