@@ -456,7 +456,8 @@ export class RecorderController {
 
   private subscribeTranscription(): void {
     try {
-      this.transcriptUnsub = this.session.transcription.on((d) => this.onTranscript(d))
+      // On the phone whenever its on-device model is running, so recordings don't pay for cloud speech.
+      this.transcriptUnsub = this.session.transcription.on((d) => this.onTranscript(d), {processing: "preferLocal"})
     } catch {
       // Transcription unavailable on this host — capture audio only.
       this.transcriptUnsub = null

@@ -433,7 +433,10 @@ export class TeleprompterController {
       return
     }
     try {
-      this.transcriptionCleanup = this.session.transcription.on((data) => this.handleTranscription(data))
+      // On the phone whenever its on-device model is running, so voice-follow doesn't pay for cloud speech.
+      this.transcriptionCleanup = this.session.transcription.on((data) => this.handleTranscription(data), {
+        processing: "preferLocal",
+      })
       this.voiceActive = true
     } catch (err) {
       console.log("Teleprompter: voice-follow subscribe failed, using timed scroll", err)
