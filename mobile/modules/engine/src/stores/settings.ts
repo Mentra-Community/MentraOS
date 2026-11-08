@@ -74,7 +74,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  super_mode: {key: "super_mode", defaultValue: () => process.env.EXPO_PUBLIC_SUPER_MODE === "true", writable: true, saveOnServer: true, persist: true},
+  super_mode: {
+    key: "super_mode",
+    defaultValue: () => process.env.EXPO_PUBLIC_SUPER_MODE === "true",
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   appearance_menu_enabled: {
     key: "appearance_menu_enabled",
     defaultValue: () => false,
@@ -914,6 +920,62 @@ export const PAIRING_IDENTITY_KEYS: string[] = Object.values(SETTINGS)
   .filter((setting) => setting.nativeAuthoritative)
   .map((setting) => setting.key)
 
+/**
+ * Persisted settings that belong to this phone, kept whoever signs in: developer and debug switches, cloud and
+ * update URLs, the app's look, phone notifications, location and time zone. Every other persisted setting belongs
+ * to the signed-in account and is kept in that account's set when it signs out, except the ones below.
+ */
+export const PHONE_WIDE_SETTING_KEYS: ReadonlySet<string> = new Set([
+  // developer and debug
+  "dev_mode",
+  "debug_mode",
+  "super_mode",
+  "miniapp_dev_mode",
+  "app_boot_extra_info",
+  "debug_console",
+  "debug_navigation_history",
+  "debug_core_status_bar",
+  "bypass_vad_for_debugging",
+  "bypass_audio_encoding_for_debugging",
+  "nex_lc3_audio_playback",
+  // cloud and updates
+  "china_deployment",
+  "cloud_core_url",
+  "cloud_runtime_url",
+  "cloud_url_deployment",
+  "saved_cloud_url_pairs",
+  "ota_version_url",
+  "saved_ota_version_urls",
+  "cached_required_version",
+  "dismissed_ota_version",
+  "reconnect_on_app_foreground",
+  // the app's look
+  "theme_preference",
+  "home_background",
+  "appearance_menu_enabled",
+  "enable_squircles",
+  "android_blur",
+  "android_inner_shadow",
+  "ios_glass_effect",
+  "ios_app_switcher_bottom_swipe",
+  // phone notifications
+  "enable_phone_notifications",
+  "notifications_blocklist",
+  "show_notify_ios",
+  "android_notification_listener_enabled",
+  "native_notifications_enabled",
+  "native_notifications_auto_display",
+  "native_notifications_duration",
+  "native_notifications_do_not_disturb",
+  // location and time
+  "location_tier",
+  "time_zone",
+  "time_zone_override",
+])
+
+/** Persisted settings erased at sign-out instead of kept for the account. */
+export const SIGN_OUT_ERASED_SETTING_KEYS: ReadonlySet<string> = new Set(["auth_email", "core_token"])
+
 /** Stable empty effective tuning. Native reads this as `{"reset":1}`. */
 const EMPTY_MIC_TUNING: Record<string, number> = Object.freeze({})
 
@@ -938,6 +1000,8 @@ export interface SettingsState {
    */
   getEffectiveMicTuning: () => Record<string, number>
   resetAllSettingsLocally: () => void
+  /** Replace every setting in memory with what storage holds now, defaults for the rest, without writing. */
+  reloadAllSettings: () => void
 }
 
 const getDefaultSettings = () =>
@@ -954,6 +1018,51 @@ let loadAllSettingsInFlight: AsyncResult<void, Error> | null = null
 
 function printableSettingValue(key: string, value: unknown): string {
   return key.includes("token") || key.includes("email") ? "<redacted>" : JSON.stringify(value)
+}
+
+/** Every persisted setting stored on this phone, by storage key (an indexed setting's subkeys included). */
+function readPersistedSettings(): Record<string, any> {
+  let loadedSettings: Record<string, any> = {}
+  for (const setting of Object.values(SETTINGS)) {
+    // if the settings should not persist, don't load it:
+    if (!setting.persist) {
+      continue
+    }
+
+    // load all subkeys for an indexed setting:
+    if (setting?.indexer) {
+      console.log(`SETTINGS: LOAD: ${setting.key} with indexer!`)
+
+      let res: Result<Record<string, unknown>, Error> = storage.loadSubKeys(setting.key)
+      if (res.is_error()) {
+        console.log(`SETTINGS: LOAD: ${setting.key}`, res.error)
+        continue
+      }
+
+      let subKeys: Record<string, unknown> = res.value
+      console.log(`SETTINGS: LOAD: ${setting.key} subkeys are set!`, subKeys)
+      loadedSettings = {...loadedSettings, ...subKeys}
+      continue
+    }
+
+    let res = storage.load<any>(setting.key)
+    if (res.is_error()) {
+      console.log(`SETTINGS: LOAD: ${setting.key} is not set!`, res.error)
+      // this setting isn't set from the default, so we don't load anything
+      continue
+    }
+    // normal key:value pair:
+    let value = res.value
+    // res.value IS the stored value; logging value.value printed
+    // "undefined" for every loaded setting and disguised present
+    // values as missing. Redact token- and email-bearing keys: console
+    // logs are uploaded in bug-report artifacts (same keys
+    // diagnosticContext's SENSITIVE_SETTINGS_KEYS strips, minus an
+    // import that would cycle stores <-> utils).
+    console.log(`SETTINGS: LOAD: ${setting.key} = ${printableSettingValue(setting.key, value)}`)
+    loadedSettings[setting.key] = value
+  }
+  return loadedSettings
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -1063,51 +1172,12 @@ export const useSettingsStore = create<SettingsState>()(
       }
       const inFlight = Res.try_async(async () => {
         const state = get()
-        let loadedSettings: Record<string, any> = {}
 
         if (state.isInitialized) {
           return undefined
         }
 
-        for (const setting of Object.values(SETTINGS)) {
-          // if the settings should not persist, don't load it:
-          if (!setting.persist) {
-            continue
-          }
-
-          // load all subkeys for an indexed setting:
-          if (setting?.indexer) {
-            console.log(`SETTINGS: LOAD: ${setting.key} with indexer!`)
-
-            let res: Result<Record<string, unknown>, Error> = storage.loadSubKeys(setting.key)
-            if (res.is_error()) {
-              console.log(`SETTINGS: LOAD: ${setting.key}`, res.error)
-              continue
-            }
-
-            let subKeys: Record<string, unknown> = res.value
-            console.log(`SETTINGS: LOAD: ${setting.key} subkeys are set!`, subKeys)
-            loadedSettings = {...loadedSettings, ...subKeys}
-            continue
-          }
-
-          let res = storage.load<any>(setting.key)
-          if (res.is_error()) {
-            console.log(`SETTINGS: LOAD: ${setting.key} is not set!`, res.error)
-            // this setting isn't set from the default, so we don't load anything
-            continue
-          }
-          // normal key:value pair:
-          let value = res.value
-          // res.value IS the stored value; logging value.value printed
-          // "undefined" for every loaded setting and disguised present
-          // values as missing. Redact token- and email-bearing keys: console
-          // logs are uploaded in bug-report artifacts (same keys
-          // diagnosticContext's SENSITIVE_SETTINGS_KEYS strips, minus an
-          // import that would cycle stores <-> utils).
-          console.log(`SETTINGS: LOAD: ${setting.key} = ${printableSettingValue(setting.key, value)}`)
-          loadedSettings[setting.key] = value
-        }
+        const loadedSettings = readPersistedSettings()
 
         // console.log("##############################################")
         // console.log(loadedSettings)
@@ -1358,6 +1428,12 @@ export const useSettingsStore = create<SettingsState>()(
     resetAllSettingsLocally: () => {
       set((_state) => ({
         settings: getDefaultSettings(),
+        isInitialized: true,
+      }))
+    },
+    reloadAllSettings: () => {
+      set((_state) => ({
+        settings: {...getDefaultSettings(), ...readPersistedSettings()},
         isInitialized: true,
       }))
     },

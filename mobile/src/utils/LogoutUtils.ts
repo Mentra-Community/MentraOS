@@ -2,6 +2,7 @@ import {SessionRevocationError} from "@mentra/cloud-client"
 import {engine} from "@mentra/engine"
 
 import mantle from "@/services/MantleManager"
+import {closeAccountSettings} from "@/services/accountSettings"
 import {settleFrame} from "@/utils/settleFrame"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {accountCredentials, hasStoredAccountSession} from "@/utils/auth/accountCredentials"
@@ -17,7 +18,9 @@ export class LogoutUtils {
    * Comprehensive logout that completely nukes all user state and connections
    * This should be used for both regular logout and account deletion scenarios
    */
-  public static async performCompleteLogout(options: {skipAuthSignOut?: boolean} = {}): Promise<void> {
+  public static async performCompleteLogout(
+    options: {skipAuthSignOut?: boolean; deleteAccount?: boolean} = {},
+  ): Promise<void> {
     console.log(`${this.TAG}: Starting complete logout process...`)
 
     try {
@@ -73,8 +76,8 @@ export class LogoutUtils {
       // Step 4: Stop island runtime services
       await this.stopToolkitRuntime()
 
-      // Step 5: Clear all app settings and user data
-      await this.clearAppSettings()
+      // Step 5: Close the account's settings and clear the user data
+      await this.clearAppSettings(options.deleteAccount ?? false)
 
       // Step 6: Clear any remaining auth-related storage
       await this.clearAuthStorage()
@@ -167,19 +170,18 @@ export class LogoutUtils {
   }
 
   /**
-   * Clear all app-specific settings from AsyncStorage
+   * Keep the account's settings for its next sign-in (or delete them with the account), and clear the rest of the
+   * app's storage except the phone-wide settings.
    */
-  private static async clearAppSettings(): Promise<void> {
+  private static async clearAppSettings(deleteAccount: boolean): Promise<void> {
     console.log(`${this.TAG}: Clearing app settings...`)
 
-    // burn it all:
     try {
-      engine.settings.resetAllLocal()
-      storage.clearAll()
+      closeAccountSettings({deleteAccount})
     } catch (error) {
       console.error(`${this.TAG}: Error clearing app settings:`, error)
     }
-    // The account credentials live in the secure store, which storage.clearAll() does not reach.
+    // The account credentials live in the secure store, outside the app storage cleared above.
     try {
       await accountCredentials.clear()
     } catch (error) {

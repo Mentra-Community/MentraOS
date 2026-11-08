@@ -45,6 +45,11 @@ export const settings = {
    */
   loadAll: () => useSettingsStore.getState().loadAllSettings(),
   /**
+   * Re-read every setting from device storage, defaults for what it doesn't hold, without writing: for a host that
+   * changed the stored settings itself, such as switching the signed-in account's set.
+   */
+  reloadLocal: (): void => useSettingsStore.getState().reloadAllSettings(),
+  /**
    * Every EXPLICITLY-SET setting (shallow copy; keys never written are absent —
    * use get() for default-resolved reads). The data-export surface.
    */

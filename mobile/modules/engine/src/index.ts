@@ -63,7 +63,7 @@ export type {
 // (the hook layer, same precedent as the apps hooks below), and the pure
 // device-model key helpers. The raw useSettingsStore stays internal;
 // imperative access goes through engine.settings.
-export {SETTINGS, useSetting} from "./stores/settings"
+export {PHONE_WIDE_SETTING_KEYS, SETTINGS, SIGN_OUT_ERASED_SETTING_KEYS, useSetting} from "./stores/settings"
 export {MENTRA_LIVE_SETTING_KEYS, getBluetoothSettingKeysForDevice} from "./stores/bluetoothSettingKeys"
 
 // Runtime-shared constants and contract DTOs.
