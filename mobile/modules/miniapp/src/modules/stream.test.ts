@@ -2,9 +2,9 @@
 
 import {describe, expect, test} from "bun:test"
 
-import {MiniappRequestType} from "../protocol"
+import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import type {MiniappSession} from "../session"
-import {StreamModule, type StreamResult} from "./stream"
+import {StreamModule, type StreamResult, type StreamStatus} from "./stream"
 
 function mockSession<T>(result: T) {
   const requestCalls: object[] = []
@@ -93,5 +93,27 @@ describe("StreamModule", () => {
 
     await stream.stop("phone-m-1")
     expect(requestCalls).toEqual([{type: MiniappRequestType.STREAM_STOP, streamId: "phone-m-1"}])
+  })
+
+  test("onStatus subscribes to stream_status and returns its unsubscribe", () => {
+    const subscriptions: string[] = []
+    let deliver!: (data: unknown) => void
+    const unsubscribe = () => {}
+    const session = {
+      _subscribe: (stream: string, handler: (data: unknown) => void) => {
+        subscriptions.push(stream)
+        deliver = handler
+        return unsubscribe
+      },
+    } as unknown as MiniappSession
+    const statuses: StreamStatus[] = []
+
+    expect(new StreamModule(session).onStatus((status) => statuses.push(status))).toBe(unsubscribe)
+    deliver({streamId: "phone-m-1", status: "reconnecting", source: "coordinator", transport: "softap_relay"})
+
+    expect(subscriptions).toEqual([MiniappStreamType.STREAM_STATUS])
+    expect(statuses).toEqual([
+      {streamId: "phone-m-1", status: "reconnecting", source: "coordinator", transport: "softap_relay"},
+    ])
   })
 })

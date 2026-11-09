@@ -679,24 +679,17 @@ export class PhoneStreamCoordinator {
   handleGlassesStatus(event: StreamStatusEvent): void {
     if (!this.current) return
     if (this.current.kind === "managed" && this.current.relay) {
-      this.current.relay.handleGlassesStatus(event)
+      const live = this.current.relay.handleGlassesStatus(event)
+      // The relay owns lifecycle in WHIP mode: a glasses stop or terminal error is one
+      // attempt ending, which the relay reports as `reconnecting` or `error`. Forward only
+      // the live attempt's narration, under the managed streamId miniapps know.
+      const attemptEnded = event.status === "stopped" || event.status === "reconnect_failed" || event.terminal === true
+      if (live && !attemptEnded) this.fanoutGlassesStatus(this.current.streamId, event)
       return
     }
     if (event.streamId && event.streamId !== this.current.streamId) return
 
-    const includeResolvedConfig = !this.resolvedConfigForwarded && !!event.resolvedConfig
-    if (includeResolvedConfig) this.resolvedConfigForwarded = true
-    const slimData = slimStreamStatusEvent(event, {includeResolvedConfig})
-    const signature = streamStatusSignature(slimData)
-    if (signature === this.lastFanoutSignature) return
-    this.lastFanoutSignature = signature
-
-    this.fanout({
-      streamId: this.current.streamId,
-      source: "glasses",
-      status: event.status,
-      data: slimData,
-    })
+    this.fanoutGlassesStatus(this.current.streamId, event)
 
     // Glasses-reported TERMINAL states unwind the coordinator. Terminal means
     // the publisher gave up or stopped — NOT a transient `kind:"error"`: the
@@ -1061,6 +1054,19 @@ export class PhoneStreamCoordinator {
       if (this.current !== entry || entry.stopping) return
       entry.hlsTimer = BgTimer.setInterval(tick, this.timings.hlsReadinessPollMs)
     }, this.timings.hlsReadinessInitialDelayMs)
+  }
+
+  /** Fan out a glasses publisher status, deduplicated, under the stream's public id. */
+  private fanoutGlassesStatus(streamId: string, event: StreamStatusEvent): void {
+    const includeResolvedConfig = !this.resolvedConfigForwarded && !!event.resolvedConfig
+    if (includeResolvedConfig) this.resolvedConfigForwarded = true
+    const slimData = slimStreamStatusEvent(event, {includeResolvedConfig})
+    // A relay attempt has its own publisher id; miniapps only know the managed one.
+    slimData.streamId = streamId
+    const signature = streamStatusSignature(slimData)
+    if (signature === this.lastFanoutSignature) return
+    this.lastFanoutSignature = signature
+    this.fanout({streamId, source: "glasses", status: event.status, data: slimData})
   }
 
   private fanout(update: StreamStatusUpdate): void {

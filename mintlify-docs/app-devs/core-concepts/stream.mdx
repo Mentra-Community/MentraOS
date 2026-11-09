@@ -35,10 +35,27 @@ const stream = await session.stream.startStream({
 | Option | Type | What it is |
 |---|---|---|
 | `destinations` | `Array<string \| { url; name? }>` | Restream targets the relay fans out to (YouTube, Twitch, …). Bare URLs or `{ url, name? }` objects, mixed freely. |
-| `ingest` | `"srt" \| "whip"` | Latency/durability trade. `"srt"` (default): ~10-20s latency, HLS/DASH playback, recording. `"whip"`: sub-second WebRTC playback, no HLS/DASH, no recording. |
+| `ingest` | `"srt" \| "whip" \| "rtmp"` | Latency/durability trade. `"srt"` (default): ~10-20s latency, HLS/DASH playback, recording. `"whip"`: sub-second WebRTC playback (`webrtcUrl`), no HLS/DASH, no recording; see [WHIP goes through the phone](#whip-goes-through-the-phone). `"rtmp"`: RTMPS over TCP 443 with HLS playback, for networks that block UDP. |
 | `video` | `StreamVideoConfig` | `width`, `height`, `bitrate`, `fps` (all optional). |
 | `audio` | `StreamAudioConfig` | `bitrate`, `sampleRate`, `echoCancellation`, `noiseSuppression` (all optional). |
 | `sound` | `boolean` | Play glasses-side start/stop sounds. Defaults to `true`. |
+
+### WHIP goes through the phone
+
+With `ingest: "whip"`, the glasses don't publish over their own Wi-Fi. They
+start a hotspot, the phone joins it, and the phone relays the stream to Mentra
+over its cellular connection. So:
+
+- The phone needs working cellular data (or Ethernet) while it streams.
+- Keep the phone near the glasses, and keep the Mentra App running.
+- If the phone leaves the glasses' hotspot, for example to join a known Wi-Fi
+  network, the relay drops. It reconnects by itself and reports `reconnecting`,
+  then `reconnected`; see [Stream status](#stream-status). While it does, the
+  glasses' Wi-Fi status can read as disconnected; that is the hotspot being
+  rebuilt, not the cause of the drop.
+
+For long sessions that don't need sub-second latency, `"srt"` or `"rtmp"` lets
+the glasses publish from their own Wi-Fi with no phone relay.
 
 ## Direct streaming
 
@@ -71,6 +88,36 @@ const stream = await session.stream.startStream({
 | `webrtcUrl` | `string` | WHEP playback URL. Managed streams in `"whip"` mode. |
 | `liveInputId` | `string` | Hosted live-input UID, for building player URLs. Managed streams only. |
 | `mode` | `"hls" \| "webrtc"` | Which playback the stream serves. Managed streams only. |
+
+## Stream status
+
+`onStatus` reports what happens to the stream after it starts. It returns an
+unsubscribe function.
+
+```typescript src/background/index.ts
+const unsubscribe = session.stream.onStatus((status) => {
+  if (status.status === "reconnecting") showBanner("Reconnecting…");
+  if (status.status === "reconnected") hideBanner();
+  if (status.source === "coordinator" && status.status === "error") {
+    // The stream has ended. Start a new one; it has new playback URLs.
+    void session.stream.startStream({ ingest: "whip" });
+  }
+});
+```
+
+Each `StreamStatus` has `streamId`, `status`, and a `source` saying who reported it:
+
+| `source` | Statuses | What it means |
+|---|---|---|
+| `"glasses"` | `streaming`, `reconnecting`, `reconnected`, `error`, `stopped`, … | The glasses publisher. Reconnects carry `attempt` and `maxAttempts`; `terminal: true` means it gave up. |
+| `"coordinator"` | `connected`, `reconnecting`, `reconnected` | The phone relay of a `"whip"` stream (`transport: "softap_relay"`). |
+| `"coordinator"` | `suspended`, `resumed` | Bluetooth to the glasses dropped and came back. The stream ends if it stays down for 15 seconds. |
+| `"coordinator"` | `hls_ready`, `webrtc_ready` | Playback is live. |
+| `"coordinator"` | `error` | The stream has ended and must be started again. `reason` says why. |
+| `"cloudflare"` | `connected`, `disconnected` | Whether the hosted ingest is receiving video, checked every 5 seconds. Managed streams only. |
+
+A stream that reconnects by itself keeps its `streamId` and playback URLs. After
+an `error` from `"coordinator"`, call `startStream()` again.
 
 ## Stop
 
