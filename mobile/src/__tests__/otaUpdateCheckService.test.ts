@@ -613,6 +613,55 @@ describe("OtaUpdateCheckService", () => {
       expect(global.fetch).not.toHaveBeenCalled()
     })
 
+    // How Expo rejects a native CodedException: the native code becomes error.code. Without it,
+    // as before the bridge passed the code on, the rejection arrives as ERR_UNEXPECTED.
+    const rejected = (code: string) =>
+      Object.assign(
+        new Error(
+          "Call to function 'BluetoothSdk.requestVersionInfo' has been rejected.\n→ Caused by: version info request timed out waiting for glasses response.",
+        ),
+        {code},
+      )
+    const timeout = () => rejected("request_timeout")
+
+    it("does not ask again for a failure that is not a missed deadline", async () => {
+      bluetoothSdkMock.requestVersionInfo.mockRejectedValueOnce(rejected("ERR_UNEXPECTED"))
+      global.fetch = jest.fn() as unknown as typeof fetch
+      const result = await checkCurrentGlassesForUpdate(options)
+      expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(1)
+      expect(result).toMatchObject({hasCheckCompleted: false, checkFailureReason: "version_info"})
+    })
+
+    it("asks the connected glasses again when their version reply misses the deadline", async () => {
+      bluetoothSdkMock.requestVersionInfo.mockRejectedValueOnce(timeout()).mockResolvedValueOnce(freshVersions)
+      global.fetch = jest.fn(
+        async () => ({ok: true, json: async () => releaseManifest}) as Response,
+      ) as unknown as typeof fetch
+      const result = await checkCurrentGlassesForUpdate(options)
+      expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(2)
+      expect(result).toMatchObject({buildNumber: "39", hasCheckCompleted: true})
+    })
+
+    it("reports the versions unreadable after a second missed deadline", async () => {
+      bluetoothSdkMock.requestVersionInfo.mockRejectedValueOnce(timeout()).mockRejectedValueOnce(timeout())
+      global.fetch = jest.fn() as unknown as typeof fetch
+      const result = await checkCurrentGlassesForUpdate(options)
+      expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(2)
+      expect(result).toMatchObject({hasCheckCompleted: false, checkFailureReason: "version_info"})
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it("does not ask again once the glasses disconnected", async () => {
+      bluetoothSdkMock.requestVersionInfo.mockImplementationOnce(async () => {
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+        throw timeout()
+      })
+      global.fetch = jest.fn() as unknown as typeof fetch
+      const result = await checkCurrentGlassesForUpdate(options)
+      expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(1)
+      expect(result.hasCheckCompleted).toBe(false)
+    })
+
     it.each([false, true])("waits for the release pin with a pending MTK reboot: %s", async (pendingMtkReboot) => {
       const legacyVersions = {
         ...freshVersions,

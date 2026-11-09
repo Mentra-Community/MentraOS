@@ -667,9 +667,14 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - Version Info Commands
 
+        // The OTA check asks again after request_timeout, so the code has to reach JS intact.
         AsyncFunction("requestVersionInfo") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.requestVersionInfo().dictionary
+            do {
+                return try await sdk.requestVersionInfo().dictionary
+            } catch let error as BluetoothSdkError {
+                throw codedBridgeError(error)
+            }
         }
 
         // MARK: - Power Control Commands
