@@ -49,6 +49,8 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   refreshNotificationListener(): Promise<boolean>
   openNotificationListenerSettings(): Promise<boolean>
   isBetaBuild(): Promise<boolean>
+  /** iOS: whether the screen is being recorded, mirrored or captured right now. Always false elsewhere. */
+  isScreenCaptured(): Promise<boolean>
   // location services commands
   showLocationServicesDialog(): Promise<boolean>
   isLocationServicesEnabled(): Promise<boolean>

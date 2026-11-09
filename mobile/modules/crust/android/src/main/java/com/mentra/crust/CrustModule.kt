@@ -381,6 +381,8 @@ class CrustModule : Module() {
 
     AsyncFunction("isBetaBuild") { false }
 
+    AsyncFunction("isScreenCaptured") { false }
+
     View(CrustView::class) {
       Prop("url") { view: CrustView, url: URL -> view.webView.loadUrl(url.toString()) }
       Events("onLoad")

@@ -360,6 +360,18 @@ public class CrustModule: Module {
             #endif
         }
 
+        // Whether the app's screen is being recorded, mirrored (AirPlay,
+        // iPhone Mirroring) or otherwise captured right now.
+        AsyncFunction("isScreenCaptured") { () async -> Bool in
+            await MainActor.run {
+                let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                if #available(iOS 17.0, *) {
+                    return scenes.contains { $0.traitCollection.sceneCaptureState == .active }
+                }
+                return scenes.contains { $0.screen.isCaptured }
+            }
+        }
+
         // Configure which screen edges defer iOS system gestures
         // (Control Center, Notification Center, Home indicator). Edge
         // strings: "top", "bottom", "left", "right", "all". An empty
