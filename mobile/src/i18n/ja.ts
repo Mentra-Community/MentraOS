@@ -200,6 +200,12 @@ const ja = {
     connectTo: "{{name}}に接続",
     continueTo: "{{name}}へ進む",
     workspaceLabel: "組織",
+    cloudSwitchTitle: "バックエンドを変更しますか？",
+    cloudSwitchMessage:
+      "別のCoreに切り替えるとサインアウトされます。設定は、このアカウントに再びサインインするときのために保持されます。",
+    cloudSwitchConfirm: "サインアウトして切り替える",
+    cloudResetTitle: "デフォルトのバックエンドに戻しますか？",
+    cloudResetMessage: "サインアウトされます。",
     signInLabel: "サインイン",
     microsoftOrganizationAccount: "Microsoft組織アカウント",
     mentraAccount: "Mentraアカウント",

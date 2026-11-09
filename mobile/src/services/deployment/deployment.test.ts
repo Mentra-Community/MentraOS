@@ -593,6 +593,31 @@ describe("MicrosoftEntraDeploymentAuthProvider", () => {
     )
     expect(acquireToken).not.toHaveBeenCalled()
   })
+
+  it("ends the local session when MSAL cannot clear its cache", async () => {
+    const native = {
+      getAccount: jest.fn(async () => null),
+      signIn: jest.fn(),
+      acquireToken: jest.fn(),
+      signOut: jest.fn(async () => {
+        throw new Error("keychain unavailable")
+      }),
+    } as unknown as ConstructorParameters<typeof MicrosoftEntraDeploymentAuthProvider>[1]
+    const deployment: WorkspaceDeployment = {
+      kind: "workspace",
+      source: "manual",
+      workspaceOrigin: WORKSPACE,
+      manifestUrl: `${WORKSPACE}/.well-known/mentra-deployment.json`,
+      manifest: manifest(),
+      activatedAt: new Date().toISOString(),
+    }
+    const provider = new MicrosoftEntraDeploymentAuthProvider(deployment, native)
+    const listener = jest.fn()
+    provider.onStateChange(listener)
+
+    await expect(provider.signOut()).rejects.toThrow("keychain unavailable")
+    expect(listener).toHaveBeenCalledWith(null)
+  })
 })
 
 describe("workspace manifest refresh", () => {

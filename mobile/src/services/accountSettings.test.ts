@@ -30,13 +30,13 @@ const OLDER_INSTALL: Record<string, unknown> = {
   "onboarding_completed": true,
   "onboarding_live_completed": true,
   "onboarding_os_completed": true,
-  "default_wearable": "Mentra Live",
-  "device_name": "MentraLive_ab12",
-  "device_address": "AA:BB:CC:DD:EE:FF",
   "brightness": 80,
   "preferred_mic:Mentra Live": "glasses",
   "menu_apps": ["com.mentra.notes"],
   // the phone's
+  "default_wearable": "Mentra Live",
+  "device_name": "MentraLive_ab12",
+  "device_address": "AA:BB:CC:DD:EE:FF",
   "theme_preference": "dark",
   "cloud_core_url": "https://core.example.test",
   "time_zone_override": "Europe/Paris",
@@ -53,13 +53,11 @@ const ACCOUNT_KEYS = [
   "onboarding_completed",
   "onboarding_live_completed",
   "onboarding_os_completed",
-  "default_wearable",
-  "device_name",
-  "device_address",
   "brightness",
   "menu_apps",
 ]
-const PHONE_KEYS = ["theme_preference", "cloud_core_url", "time_zone_override"]
+const PAIRING_KEYS = ["default_wearable", "device_name", "device_address"]
+const PHONE_KEYS = [...PAIRING_KEYS, "theme_preference", "cloud_core_url", "time_zone_override"]
 
 const setting = (key: string) => engine.settings.get(key)
 const stored = (key: string) => {
@@ -166,6 +164,20 @@ describe("signing out and in", () => {
     closeAccountSettings()
     openAccountSettings("user-1")
     for (const key of ACCOUNT_KEYS) expect(setting(key)).toEqual(OLDER_INSTALL[key])
+  })
+
+  it("keeps the paired glasses for whoever signs in next", async () => {
+    closeAccountSettings()
+    for (const key of PAIRING_KEYS) expect(setting(key)).toEqual(OLDER_INSTALL[key])
+    openAccountSettings("user-2")
+    for (const key of PAIRING_KEYS) expect(setting(key)).toEqual(OLDER_INSTALL[key])
+  })
+
+  it("never restores a pairing an older build saved in an account's set", async () => {
+    mockMmkvInstances.get("mentra-account-settings")!.set(`account:user-2\ndefault_wearable`, JSON.stringify("Even G1"))
+    closeAccountSettings()
+    openAccountSettings("user-2")
+    expect(setting("default_wearable")).toBe("Mentra Live")
   })
 
   it("deletes the account's set with the account", async () => {

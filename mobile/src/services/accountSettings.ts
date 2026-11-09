@@ -94,12 +94,15 @@ export function openAccountSettings(accountId: string): void {
   const prefix = entryPrefix(accountId)
   for (const key of accounts().getAllKeys()) {
     if (!key.startsWith(prefix)) continue
+    const storageKey = key.slice(prefix.length)
+    // A set saved before a setting became phone-wide (the paired glasses) must not overwrite the phone's value.
+    if (!isAccountSetting(storageKey)) continue
     const raw = accounts().getString(key)
     if (raw === undefined) continue
     try {
-      storage.save(key.slice(prefix.length), JSON.parse(raw))
+      storage.save(storageKey, JSON.parse(raw))
     } catch (error) {
-      console.error(`ACCOUNT_SETTINGS: could not restore ${key.slice(prefix.length)}`, error)
+      console.error(`ACCOUNT_SETTINGS: could not restore ${storageKey}`, error)
     }
   }
   accounts().set(OPEN_ACCOUNT_KEY, accountId)

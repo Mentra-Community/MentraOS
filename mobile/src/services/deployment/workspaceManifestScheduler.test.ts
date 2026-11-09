@@ -1,3 +1,5 @@
+import {WORKSPACE_MANIFEST_CHECK_INTERVAL_MS, workspaceManifestScheduler} from "./workspaceManifestScheduler"
+
 const mockTriggers: Array<() => void> = []
 let mockInterval: {handler: () => void; intervalMs: number} | null = null
 const mockRefresh = jest.fn(async (_session: unknown) => "unchanged")
@@ -21,8 +23,6 @@ jest.mock("@/services/miniapps/maintenanceTriggers", () => {
   return {subscribeAppForeground: subscribe, subscribeCloudReconnect: subscribe}
 })
 jest.mock("./refresh", () => ({refreshWorkspaceManifest: (session: unknown) => mockRefresh(session)}))
-
-import {WORKSPACE_MANIFEST_CHECK_INTERVAL_MS, workspaceManifestScheduler} from "./workspaceManifestScheduler"
 
 describe("workspaceManifestScheduler", () => {
   afterEach(() => workspaceManifestScheduler.stop())

@@ -8,6 +8,7 @@ const mockCloseAccountSettings = jest.fn()
 const mockMantleCleanup = jest.fn()
 const mockSettle = jest.fn()
 jest.mock("@mentra/engine", () => ({
+  PHONE_WIDE_SETTING_KEYS: new Set(["glasses_user_disconnected"]),
   engine: {
     glasses: {forget: () => mockForget()},
     stop: () => mockStop(),
@@ -26,6 +27,7 @@ jest.mock("@/utils/GlobalEventEmitter", () => ({__esModule: true, default: {emit
 import {LogoutUtils} from "./LogoutUtils"
 import {result as Res} from "typesafe-ts"
 import {ACCOUNT_CREDENTIAL_KEYS, accountCredentials} from "@/utils/auth/accountCredentials"
+import {storage} from "@/utils/storage"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -82,6 +84,25 @@ describe("LogoutUtils credential-owner ordering", () => {
     await LogoutUtils.performCompleteLogout()
 
     expect(mockForget).toHaveBeenCalledTimes(1)
+    expect(mockCloseAccountSettings).toHaveBeenCalledWith({deleteAccount: false})
+  })
+
+  it("keeps the glasses paired when asked, and still signs out and saves the account's settings", async () => {
+    mockCoreSignOut.mockResolvedValue(undefined)
+    mockAccountSignOut.mockResolvedValue(Res.ok(undefined))
+
+    storage.save("glasses_user_disconnected", true)
+    storage.save("user_profile_cache", {})
+
+    await LogoutUtils.performCompleteLogout({keepGlasses: true})
+
+    expect(storage.load("glasses_user_disconnected").is_ok()).toBe(true)
+    expect(storage.load("user_profile_cache").is_ok()).toBe(false)
+    expect(mockUnpair).not.toHaveBeenCalled()
+    expect(mockForget).not.toHaveBeenCalled()
+    expect(mockCoreSignOut).toHaveBeenCalledTimes(1)
+    expect(mockAccountSignOut).toHaveBeenCalledTimes(1)
+    expect(mockStop).toHaveBeenCalledTimes(1)
     expect(mockCloseAccountSettings).toHaveBeenCalledWith({deleteAccount: false})
   })
 

@@ -500,6 +500,35 @@ export function isOtaCheckForCurrentDevice(result: OtaCheckCurrentGlassesResult)
   return checkedRevision === undefined || checkedRevision === otaDeviceSessionRevision()
 }
 
+const VERSION_INFO_ATTEMPTS = 2
+
+function isRequestTimeout(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as {code?: unknown}).code === "request_timeout"
+}
+
+/**
+ * The glasses can answer just after the native deadline: right after a BES restart their
+ * outbound queue held a version reply for 12 s, and it reached the phone as the request
+ * expired. Ask once more while the same glasses stay connected, rather than report their
+ * versions unreadable while the reply is on its way.
+ */
+async function requestVersionInfoAgainAfterTimeout(revision: number) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await BluetoothSdk.requestVersionInfo()
+    } catch (error) {
+      if (
+        attempt >= VERSION_INFO_ATTEMPTS ||
+        !isRequestTimeout(error) ||
+        revision !== otaDeviceSessionRevision() ||
+        !glassesConnectedNow()
+      )
+        throw error
+      console.warn("OTA: the glasses did not answer the version request in time - asking again")
+    }
+  }
+}
+
 async function refreshGlassesVersionInfo(): Promise<void> {
   // The background checker and mounted flow may check together. The native SDK
   // allows one version request at a time, so share its fresh response.
@@ -512,7 +541,7 @@ async function refreshGlassesVersionInfo(): Promise<void> {
   }
   if (versionInfoRefresh?.revision === revision) return versionInfoRefresh.promise
   const refresh = {revision, promise: Promise.resolve()}
-  refresh.promise = BluetoothSdk.requestVersionInfo()
+  refresh.promise = requestVersionInfoAgainAfterTimeout(revision)
     .then((versionInfo) => {
       if (revision === otaDeviceSessionRevision()) useGlassesStore.getState().setGlassesInfo(versionInfo)
     })
@@ -726,8 +755,8 @@ export async function checkCurrentGlassesForUpdate(
       result.latestVersionInfo?.isRequired === true
         ? true
         : result.latestVersionInfo?.isRequired === false
-        ? false
-        : !isApkDowngrade,
+          ? false
+          : !isApkDowngrade,
     manifestUrl,
     buildNumber,
     mtkFirmwareVersion,

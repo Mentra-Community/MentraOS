@@ -971,6 +971,19 @@ export const PHONE_WIDE_SETTING_KEYS: ReadonlySet<string> = new Set([
   "location_tier",
   "time_zone",
   "time_zone_override",
+  // The pairing identity (see default_wearable): the glasses belong to the phone. Log Out unpairs them, so
+  // these keys only outlive a sign-out that keeps the glasses, such as a backend switch.
+  "pending_wearable",
+  "default_wearable",
+  "device_name",
+  "device_address",
+  "project_name",
+  "mentra_live_secure_firmware",
+  "glasses_user_disconnected",
+  "default_controller",
+  "pending_controller",
+  "controller_device_name",
+  "controller_address",
 ])
 
 /** Persisted settings erased at sign-out instead of kept for the account. */

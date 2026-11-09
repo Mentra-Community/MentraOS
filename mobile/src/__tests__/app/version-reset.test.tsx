@@ -10,6 +10,9 @@ import {fetchMinimumClientVersion} from "@/utils/cloudVersion"
 
 const mockDeployment = createConsumerDeployment()
 const mockReplaceAll = jest.fn()
+const mockHasStoredSession = jest.fn()
+const mockLogout = jest.fn()
+const mockConfirm = jest.fn()
 
 jest.mock("expo-router", () => ({useRootNavigationState: () => ({key: "root"})}))
 jest.mock("@/contexts/AuthContext", () => ({useAuth: () => ({user: null, session: null, loading: false})}))
@@ -23,6 +26,12 @@ jest.mock("@/services/deployment", () => ({
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: () => ({replaceAll: mockReplaceAll, setAnimation: jest.fn()})},
 }))
+jest.mock("@/utils/auth/accountCredentials", () => ({hasStoredAccountSession: () => mockHasStoredSession()}))
+jest.mock("@/utils/LogoutUtils", () => ({
+  LogoutUtils: {performCompleteLogout: (options?: unknown) => mockLogout(options)},
+}))
+jest.mock("@/utils/confirmCloudSwitch", () => ({confirmCloudSwitch: (kind: string) => mockConfirm(kind)}))
+jest.mock("@/stores/capsule", () => ({useCapsuleStore: {getState: () => ({active: null})}}))
 jest.mock("@/services/MantleManager", () => ({
   __esModule: true,
   default: {init: jest.fn(), isInitialized: () => false, applyDeploymentUpdate: jest.fn()},
@@ -49,6 +58,8 @@ jest.mock("@/components/ignite", () => {
 const originalVersion = process.env.EXPO_PUBLIC_MENTRAOS_VERSION
 beforeEach(async () => {
   jest.clearAllMocks()
+  mockHasStoredSession.mockResolvedValue(false)
+  mockLogout.mockResolvedValue(undefined)
   process.env.EXPO_PUBLIC_MENTRAOS_VERSION = "3.0.0"
   await deploymentStore.clearSelection()
   await deploymentStore.returnToMentra()
@@ -86,4 +97,34 @@ it("recaches a successful requirement after Reset even when it matches the old r
   await act(async () => fireEvent.press(screen.getByText("versionCheck:resetUrl")))
   expect(engine.settings.get(SETTINGS.cached_required_version.key)).toBe("runtime:99.0.0")
   expect(screen.getByText("versionCheck:updateRequiredButton")).toBeTruthy()
+})
+
+describe("signed in", () => {
+  beforeEach(() => mockHasStoredSession.mockResolvedValue(true))
+
+  it("stays on the old backend when the person cancels Reset", async () => {
+    await saveDeploymentCloudOverrides(mockDeployment, {core: "https://core.debug.example", runtime: ""})
+    mockConfirm.mockResolvedValue(false)
+    const screen = render(<InitScreen />)
+    await act(async () => {})
+    await act(async () => fireEvent.press(screen.getByText("versionCheck:resetUrl")))
+
+    expect(mockConfirm).toHaveBeenCalledWith("reset")
+    expect(mockLogout).not.toHaveBeenCalled()
+    expect(engine.settings.get(SETTINGS.cloud_core_url.key)).toBe("https://core.debug.example")
+  })
+
+  it("signs out, checks the default backend's version, then goes to sign-in", async () => {
+    await saveDeploymentCloudOverrides(mockDeployment, {core: "https://core.debug.example", runtime: ""})
+    mockConfirm.mockResolvedValue(true)
+    const screen = render(<InitScreen />)
+    await act(async () => {})
+    jest.mocked(fetchMinimumClientVersion).mockResolvedValue(Res.ok({required: "1.0.0", recommended: "1.0.0"}))
+    await act(async () => fireEvent.press(screen.getByText("versionCheck:resetUrl")))
+
+    expect(mockLogout).toHaveBeenCalledWith({keepGlasses: true})
+    expect(engine.settings.get(SETTINGS.cloud_core_url.key)).toBe("")
+    expect(fetchMinimumClientVersion).toHaveBeenLastCalledWith(mockDeployment.manifest.services.runtimeUrl, 3, 1000)
+    expect(mockReplaceAll).toHaveBeenLastCalledWith("/auth/start")
+  })
 })
