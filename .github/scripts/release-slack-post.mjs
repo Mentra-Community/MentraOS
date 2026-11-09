@@ -114,7 +114,7 @@ export async function releasePost(env, {check = reachable, fetchImpl = fetch} = 
       : [`*❌ ${label} release ${name} failed*`, "failed"]
 
   const apk = env.MOBILE_APK_URL || (env.MOBILE_ASSET_BASE_URL && env.APK_NAME ? `${env.MOBILE_ASSET_BASE_URL}/${env.APK_NAME}` : undefined)
-  const apple = env.IPHONE_MANIFEST_URL && (await Promise.all([env.IPHONE_MANIFEST_URL, env.IPHONE_SHARE_URL, env.MAC_URL].map(check))).every(Boolean)
+  const apple = env.IPHONE_MANIFEST_URL && (await Promise.all([env.IPHONE_MANIFEST_URL, env.IPHONE_SHARE_URL, env.MAC_URL].map((url) => check(url)))).every(Boolean)
   // Android and iOS for each app, the store's install when the build has no page of its own, then macOS.
   const [mentra, example, ota, problem] = await Promise.all([
     Promise.all([

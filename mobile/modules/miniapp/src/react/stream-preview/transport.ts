@@ -58,10 +58,7 @@ export class WebSocketTransport implements PreviewTransport {
   private opened = false
   private closed = false
 
-  constructor(
-    private readonly url: string,
-    private readonly token: string,
-  ) {}
+  constructor(private readonly url: string, private readonly token: string) {}
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -168,10 +165,7 @@ export class WebMessagePortTransport implements PreviewTransport {
     if (typeof event.data !== "string") this.report("port_unexpected_payload")
   }
 
-  constructor(
-    private readonly token: string,
-    private readonly portName: string = DEFAULT_PREVIEW_PORT_NAME,
-  ) {}
+  constructor(private readonly token: string, private readonly portName: string = DEFAULT_PREVIEW_PORT_NAME) {}
 
   connect(): Promise<void> {
     const port =
@@ -184,6 +178,8 @@ export class WebMessagePortTransport implements PreviewTransport {
     try {
       port.postMessage(helloMessage(this.token))
     } catch {
+      port.removeEventListener?.("message", this.listener)
+      this.port = null
       return Promise.reject(new PreviewTransportError("hello_send_failed"))
     }
     previewTrace("transport_open", {transport: "webmessage"})

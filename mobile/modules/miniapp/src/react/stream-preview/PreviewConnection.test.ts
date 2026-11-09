@@ -10,7 +10,7 @@ import {
 import {PreviewConnection, type PreviewConnectionState, type PreviewSink} from "./PreviewConnection"
 import type {PreviewTier} from "./tiers"
 import {setPreviewTraceSinkForTests} from "./trace"
-import type {PreviewTransport} from "./transport"
+import {createPreviewTransport, type PreviewTransport} from "./transport"
 
 const SMALL: PreviewTier = {width: 320, height: 180, maxFps: 15}
 const LARGE: PreviewTier = {width: 640, height: 360, maxFps: 15}
@@ -96,9 +96,12 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
-function setup(options: {channel?: FakeChannel; visible?: boolean} = {}) {
+function setup(options: {channel?: FakeChannel; visible?: boolean; connectFailures?: string[]} = {}) {
   const channel = options.channel ?? new FakeChannel()
   const transports: FakeTransport[] = []
+  const connectFailures = [...(options.connectFailures ?? [])]
+  /** The page's reload for a missing port: one until the transport opens. */
+  const reload = {requests: 0, reloads: 0, marked: false}
   const handlers = new Map<string, () => void>()
   let visible = options.visible ?? true
   let clock = 0
@@ -107,8 +110,21 @@ function setup(options: {channel?: FakeChannel; visible?: boolean} = {}) {
     channel,
     createTransport: () => {
       const transport = new FakeTransport()
+      transport.failConnect = connectFailures.shift() ?? null
       transports.push(transport)
       return transport
+    },
+    documentReload: {
+      request: () => {
+        reload.requests += 1
+        if (reload.marked) return false
+        reload.marked = true
+        reload.reloads += 1
+        return true
+      },
+      clear: () => {
+        reload.marked = false
+      },
     },
     now: () => clock,
     listen: (_target, type, handler) => {
@@ -137,6 +153,7 @@ function setup(options: {channel?: FakeChannel; visible?: boolean} = {}) {
     channel,
     connection,
     transports,
+    reload,
     states,
     errors,
     sinkFor,
@@ -164,6 +181,132 @@ beforeEach(() => {
   setPreviewTraceSinkForTests((line) => traceLines.push(line))
 })
 afterEach(() => setPreviewTraceSinkForTests())
+
+describe("PreviewConnection opening its transport", () => {
+  test("a missing port reloads the page once instead of leaving the preview dead", async () => {
+    const h = setup({connectFailures: ["port_missing"]})
+    const epoch = h.connection.nextMountEpoch()
+    h.connection.attach(h.sinkFor(epoch))
+    show(h.connection, epoch)
+    await settle()
+    expect(h.reload.reloads).toBe(1)
+    expect(h.errors).toContain("transport_failed")
+    // The page is going away: no retry is queued behind the reload.
+    h.flush()
+    await settle()
+    expect(h.channel.cmds()).toEqual(["handshake"])
+  })
+
+  test("a port still missing after that reload is retried like any failed connect, then opens", async () => {
+    const h = setup({connectFailures: ["port_missing", "port_missing"]})
+    h.reload.marked = true // this document is the reloaded one
+    const epoch = h.connection.nextMountEpoch()
+    h.connection.attach(h.sinkFor(epoch))
+    show(h.connection, epoch)
+    await settle()
+    expect(h.reload.reloads).toBe(0)
+    h.flush()
+    await settle()
+    expect(h.channel.cmds()).toEqual(["handshake", "handshake"])
+    expect(h.transports[1]!.connected).toBe(false)
+    h.flush()
+    await settle()
+    expect(h.channel.cmds()).toEqual(["handshake", "handshake", "handshake", "configure:1", "start:1"])
+    expect(h.transports[2]!.connected).toBe(true)
+    // Opened: a later document missing its port may reload again.
+    expect(h.reload.marked).toBe(false)
+  })
+
+  test("other connect failures retry within the reconnect budget, then after the cooldown", async () => {
+    const h = setup({
+      connectFailures: ["hello_send_failed", "hello_send_failed", "hello_send_failed", "hello_send_failed"],
+    })
+    const epoch = h.connection.nextMountEpoch()
+    h.connection.attach(h.sinkFor(epoch))
+    show(h.connection, epoch)
+    await settle()
+    for (let i = 0; i < 3; i += 1) {
+      h.flush()
+      await settle()
+    }
+    // The first try and three immediate retries; the budget is spent.
+    expect(h.channel.cmds()).toEqual(["handshake", "handshake", "handshake", "handshake"])
+    expect(h.reload.requests).toBe(0)
+    h.flush() // the queued retry finds the budget spent and arms the cooldown
+    await settle()
+    h.flush() // the cooldown ends
+    await settle()
+    expect(h.channel.cmds()).toEqual([
+      "handshake",
+      "handshake",
+      "handshake",
+      "handshake",
+      "handshake",
+      "configure:1",
+      "start:1",
+    ])
+  })
+
+  test("hellos that fail on a present port leave no extra listener behind once one succeeds", async () => {
+    const listeners = new Set<(event: {data: unknown}) => void>()
+    let failHellos = 2
+    const port = {
+      postMessage: (message: string) => {
+        if (message.includes("hello") && failHellos-- > 0) throw new Error("closed")
+      },
+      addEventListener: (_type: "message", handler: (event: {data: unknown}) => void) => listeners.add(handler),
+      removeEventListener: (_type: "message", handler: (event: {data: unknown}) => void) => listeners.delete(handler),
+    }
+    const host = globalThis as unknown as {window?: Record<string, unknown>}
+    const previous = host.window
+    host.window = {_preview: port}
+    try {
+      const channel = new FakeChannel()
+      const pending: Array<() => void> = []
+      const connection = new PreviewConnection({
+        channel,
+        createTransport: (transport, options) => createPreviewTransport(transport, {...options, portName: "_preview"}),
+        listen: () => () => {},
+        isDocumentVisible: () => true,
+        after: (_ms, fn) => {
+          pending.push(fn)
+          return () => {}
+        },
+        documentReload: {request: () => false, clear: () => {}},
+      })
+      const epoch = connection.nextMountEpoch()
+      connection.attach({mountEpoch: epoch, draw: () => 1, onState: () => {}, onStatus: () => {}, onError: () => {}})
+      show(connection, epoch)
+      await settle()
+      for (let i = 0; i < 2; i += 1) {
+        for (const fn of pending.splice(0)) fn()
+        await settle()
+      }
+      expect(channel.cmds()).toEqual(["handshake", "handshake", "handshake", "configure:1", "start:1"])
+      expect(listeners.size).toBe(1)
+      connection.dispose()
+      expect(listeners.size).toBe(0)
+    } finally {
+      host.window = previous
+    }
+  })
+
+  test("a failed connect while hidden waits for the page to show again", async () => {
+    const h = setup({connectFailures: ["hello_send_failed"]})
+    const epoch = h.connection.nextMountEpoch()
+    h.connection.attach(h.sinkFor(epoch))
+    show(h.connection, epoch)
+    await settle()
+    h.setVisible(false)
+    h.flush()
+    await settle()
+    expect(h.channel.cmds()).toEqual(["handshake"])
+    h.setVisible(true)
+    h.fire("visibilitychange")
+    await settle()
+    expect(h.channel.cmds()).toEqual(["handshake", "handshake", "configure:1", "start:1"])
+  })
+})
 
 describe("PreviewConnection", () => {
   test("mount handshakes once, configures the tier and starts; nothing leaks the token into logs", async () => {

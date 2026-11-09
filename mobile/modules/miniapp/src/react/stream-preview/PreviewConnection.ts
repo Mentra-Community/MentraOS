@@ -104,6 +104,41 @@ export interface PreviewConnectionDeps {
   isDocumentVisible?: () => boolean
   /** Delay helper. Returns a cancel function. Defaults to `setTimeout`. */
   after?: (ms: number, fn: () => void) => () => void
+  /** Reloads this document once, for a port the host added after it loaded. Defaults to the page's own. */
+  documentReload?: PreviewDocumentReload
+}
+
+/**
+ * Android's WebMessage port exists only in documents created after the host added it. A document
+ * that loaded before has none, and only a new document gets one.
+ */
+export interface PreviewDocumentReload {
+  /** Reload now, unless this page already reloaded for the port without opening since. False when it did not. */
+  request(): boolean
+  /** The transport opened: a later document missing its port may reload again. */
+  clear(): void
+}
+
+const PORT_RELOAD_KEY = "mentra.preview.portReload"
+
+const defaultDocumentReload: PreviewDocumentReload = {
+  request() {
+    try {
+      if (typeof window === "undefined" || window.sessionStorage.getItem(PORT_RELOAD_KEY)) return false
+      window.sessionStorage.setItem(PORT_RELOAD_KEY, "1")
+      window.location.reload()
+      return true
+    } catch {
+      return false
+    }
+  },
+  clear() {
+    try {
+      if (typeof window !== "undefined") window.sessionStorage.removeItem(PORT_RELOAD_KEY)
+    } catch {
+      // Storage unavailable: nothing was marked either.
+    }
+  },
 }
 
 function defaultListen(target: "document" | "window", type: string, handler: () => void): () => void {
@@ -113,8 +148,8 @@ function defaultListen(target: "document" | "window", type: string, handler: () 
         ? null
         : document
       : typeof window === "undefined"
-        ? null
-        : window
+      ? null
+      : window
   if (!node) return () => {}
   node.addEventListener(type, handler)
   return () => node.removeEventListener(type, handler)
@@ -162,6 +197,7 @@ export class PreviewConnection {
   private readonly now: () => number
   private readonly isVisible: () => boolean
   private readonly after: (ms: number, fn: () => void) => () => void
+  private readonly documentReload: PreviewDocumentReload
   private readonly unsubscribers: Array<() => void> = []
   private counters = {handshakes: 0, reconnects: 0, staleReplies: 0, staleLocalOps: 0, tierChanges: 0}
 
@@ -170,6 +206,7 @@ export class PreviewConnection {
     this.now = deps.now ?? (() => (typeof performance !== "undefined" ? performance.now() : Date.now()))
     this.isVisible = deps.isDocumentVisible ?? defaultIsVisible
     this.after = deps.after ?? defaultAfter
+    this.documentReload = deps.documentReload ?? defaultDocumentReload
     this.state = deps.channel ? "idle" : "unavailable"
     this.creditLoop = new CreditLoop({
       sendAck: (gen, seq) => this.transport?.sendText(ackMessage(gen, seq)),
@@ -412,7 +449,7 @@ export class PreviewConnection {
     this.counters.handshakes += 1
     this.setState("connecting")
     const gen = ++this.connectionGen
-    let transport: PreviewTransport
+    let transport: PreviewTransport | null = null
     try {
       transport = this.createTransport(config.transport, {
         url: config.url,
@@ -425,10 +462,23 @@ export class PreviewConnection {
     } catch (error) {
       const reason = (error as {reason?: string}).reason ?? "connect_failed"
       previewTraceWarn("transport_failed", {reason, docGen: this.docGen, transport: config.transport})
+      // A connect can fail after the transport attached to the port: a retry must not leave it listening.
+      transport?.close()
       if (gen === this.connectionGen) {
         this.config = null
         this.setState("error", {code: "transport_failed", reason})
         this.sink?.onError("transport_failed")
+        if (reason === "port_missing" && this.documentReload.request()) {
+          previewTraceWarn("port_reload", {docGen: this.docGen})
+          return false
+        }
+        // Retried like a transport lost later, within the same budget and cooldown. After this
+        // handshake has settled: a sync from inside it would only rejoin it.
+        this.after(0, () => {
+          if (gen === this.connectionGen && this.state === "error" && this.isVisible() && this.wantsFrames()) {
+            this.scheduleReconnect(reason)
+          }
+        })
       }
       return false
     }
@@ -438,6 +488,7 @@ export class PreviewConnection {
     }
     this.transport = transport
     this.applied = NOTHING_APPLIED
+    this.documentReload.clear()
     previewTrace("handshake_ok", {
       docGen: this.docGen,
       transport: config.transport,
