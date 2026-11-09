@@ -225,30 +225,17 @@ you are otherwise asked to change one of those miniapps:
 ## Bug Report Logs
 
 Use [the investigate-incident skill](.agents/skills/investigate-incident/SKILL.md)
-for report IDs and incident Slack links. Fetch reports and artifacts through
-the API script below, not admin-console browser or computer-use automation.
+for report IDs and incident Slack links. In the Mentra monorepo,
+`scripts/get-logs report <rep_id>` wraps the script below and gathers the
+glasses', phones' and lab runs' logs too.
 
-Bug reports and feedback filed from the Mentra App land in the Cloud V2 reports system. Report ids look like `rep_01...` and appear in the reports Slack notifications and in the admin console's Incident system page (admin.mentraglass.com).
-
-1. Get the report id (from Slack, the admin console, or the user)
-2. Fetch it: `./scripts/fetch-incident-logs.sh {reportId}` — downloads `report.json` plus every artifact into `./incident-logs/{reportId}/`
-3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an operator key with the incident read scope (`mak_...`, created in the admin portal under Operator keys). An older admin key (`msk_...`) whose `api-key@<keyId>.local` address is on `CLOUD_CORE_ADMIN_EMAILS` works as an operator key too
-4. Without an environment override, the script tries prod, dev, then staging and reports which backend succeeded. Use `--env prod|dev|staging` or `MENTRA_CORE_URL` to target one backend explicitly.
-
-What you get:
-
-- `report.json` - Full report document: `kind` (bug/feedback/automatic), `trigger`, `report` (actual/expected behavior, severity, contact email), `feedback`, `context` (phone/glasses/app state snapshot), artifact metadata, and asset rows
-- `NN-logs-{source}.json` - Log bundles uploaded by the devices (e.g. phone, glasses), each `{entries: [{timestamp, level, message, source?}]}`
-- `NN-screenshot-phone-*.{png,jpg}` - Screenshots attached by the user
-
-Other modes: `--json` prints the raw report JSON to stdout (no downloads); `--list [--kind ...] [--status ...] [--limit N]` lists recent reports.
-
-Example:
+Bug reports, feedback and automatic reports land in the Cloud V2 reports system, with ids like `rep_01...`.
 
 ```bash
-export MENTRA_ADMIN_TOKEN=mak_your-operator-key
-./scripts/fetch-incident-logs.sh rep_01JZWY3V8N0F2E9GQ4T6KXH5RD
+./scripts/fetch-incident-logs.sh rep_01JZWY3V8N0F2E9GQ4T6KXH5RD --env staging
 ```
+
+It saves `report.json` and every artifact (`NN-logs-<source>.json`, each `{entries: [{timestamp, level, message, source?}]}`, and screenshots) in `./incident-logs/<reportId>/`. Each environment has its own operator key with incident read, from its admin dashboard: `MENTRA_PROD_ADMIN_TOKEN` (admin.mentraglass.com), `MENTRA_STAGING_ADMIN_TOKEN` (admin.staging.mentraglass.com), `MENTRA_DEV_ADMIN_TOKEN` (admin.dev.mentraglass.com); `MENTRA_ADMIN_TOKEN` is the fallback. Without `--env` it tries every environment it has a key for. A failure prints the exact fix: a 404 means the report is on another environment. `--json` prints the report only; `--list` lists recent reports.
 
 ## Mentra Live BES firmware (sibling repo)
 

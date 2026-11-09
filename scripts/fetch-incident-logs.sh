@@ -18,18 +18,24 @@
 #   --status STATUS  (--list) collecting | ready | closed
 #   --limit N        (--list) max reports to return (1-200, default 50)
 #
-# Environment variables:
-#   MENTRA_ADMIN_TOKEN  (required) Bearer token for the admin API: an operator
-#                       key with the incident read scope (mak_...), or an older
-#                       admin key (msk_...) whose api-key@<keyId>.local address
-#                       is on CLOUD_CORE_ADMIN_EMAILS.
+# Keys: each environment has its own admin dashboard and its own operator key,
+# with the incident read scope (organization.incidents.read):
+#   MENTRA_PROD_ADMIN_TOKEN     prod     https://admin.mentraglass.com
+#   MENTRA_STAGING_ADMIN_TOKEN  staging  https://admin.staging.mentraglass.com
+#   MENTRA_DEV_ADMIN_TOKEN      dev      https://admin.dev.mentraglass.com
+#   MENTRA_ADMIN_TOKEN          fallback for any environment, and the only key
+#                               used with MENTRA_CORE_URL. An older admin key
+#                               (msk_...) on CLOUD_CORE_ADMIN_EMAILS works too.
+# A key made in one environment (mak_<env>_...) works only there; the script
+# never sends it to another one.
+#
 #   MENTRA_CORE_URL     (optional) Core API base URL; disables auto-discovery
 #                       and overrides --env.
 
 set -euo pipefail
 
 usage() {
-  sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 }
 
@@ -112,20 +118,59 @@ if [ -n "$REPORT_ID" ] && ! printf '%s' "$REPORT_ID" | grep -Eq '^[A-Za-z0-9_-]+
   exit 1
 fi
 
-if [ -z "${MENTRA_ADMIN_TOKEN:-}" ]; then
-  err "MENTRA_ADMIN_TOKEN environment variable not set"
-  note ""
-  note "The admin reports API needs an operator key with the incident read scope"
-  note "  (created in the admin portal under Operator keys):"
-  note ""
-  note "  export MENTRA_ADMIN_TOKEN=mak_..."
-  exit 1
-fi
+dashboard_for_env() {
+  case "$1" in
+    prod) echo "https://admin.mentraglass.com" ;;
+    staging) echo "https://admin.staging.mentraglass.com" ;;
+    dev) echo "https://admin.dev.mentraglass.com" ;;
+    *) echo "your Core's admin dashboard" ;;
+  esac
+}
+
+# key_var_for_env ENV -> name of the variable holding that environment's key,
+# or nothing. The environment-specific key wins over MENTRA_ADMIN_TOKEN, and a
+# key whose prefix names another environment is never used.
+key_var_for_env() {
+  local env="$1" upper var value key_env
+  upper=$(printf '%s' "$env" | tr '[:lower:]' '[:upper:]')
+  for var in "MENTRA_${upper}_ADMIN_TOKEN" MENTRA_ADMIN_TOKEN; do
+    [ "$env" = custom ] && [ "$var" != MENTRA_ADMIN_TOKEN ] && continue
+    value="${!var:-}"
+    [ -n "$value" ] || continue
+    key_env=$(key_env_of "$value")
+    if [ -n "$key_env" ] && [ "$env" != custom ] && [ "$key_env" != "$env" ]; then
+      note "  $var is a $key_env key, not a $env one: not using it for $env"
+      continue
+    fi
+    echo "$var"
+    return 0
+  done
+}
+
+# mak_<env>_... and msk_<env>_... keys name their environment.
+key_env_of() {
+  case "$1" in
+    mak_prod_*|msk_prod_*) echo prod ;;
+    mak_staging_*|msk_staging_*) echo staging ;;
+    mak_dev_*|msk_dev_*) echo dev ;;
+  esac
+}
+
+# key_fix ENV WHY: one line naming the exact fix for a missing or rejected key.
+key_fix() {
+  local env="$1" why="$2" upper
+  upper=$(printf '%s' "$env" | tr '[:lower:]' '[:upper:]')
+  if [ "$env" = custom ]; then
+    err "$why. Fix: export MENTRA_ADMIN_TOKEN with an operator key (incident read) from your Core's admin dashboard."
+    return
+  fi
+  err "$why. Fix: sign in at $(dashboard_for_env "$env"), create an operator key with incident read (organization.incidents.read), then add 'export MENTRA_${upper}_ADMIN_TOKEN=<key>' to ~/.zshrc and open a new shell."
+}
 
 # api_get PATH OUTFILE -> echoes HTTP status; body lands in OUTFILE.
 api_get() {
   curl -sS -m 60 \
-    -H "Authorization: Bearer $MENTRA_ADMIN_TOKEN" \
+    -H "Authorization: Bearer ${!KEY_VAR}" \
     -H "Accept: application/json" \
     -o "$2" -w '%{http_code}' \
     "$CORE_URL$1"
@@ -135,12 +180,13 @@ fail_for_status() {
   local status="$1" body="$2" what="$3"
   case "$status" in
     2??) return 0 ;;
-    401) err "unauthorized (401) fetching $what — MENTRA_ADMIN_TOKEN was rejected" ;;
-    403) err "forbidden (403) fetching $what — token is valid but not admin-allowlisted (CLOUD_CORE_ADMIN_EMAILS)" ;;
-    404) err "not found (404) fetching $what — wrong report id, or this environment does not serve the admin reports API yet" ;;
-    *) err "HTTP $status fetching $what" ;;
+    401) key_fix "$SELECTED_ENV" "$SELECTED_ENV rejected the key in $KEY_VAR (401) fetching $what: it is revoked, mistyped or from another environment" ;;
+    403) key_fix "$SELECTED_ENV" "$SELECTED_ENV accepted the key in $KEY_VAR but refused it (403) fetching $what: it lacks incident read, or its creator is no longer an Organization Admin" ;;
+    404) err "$what is not on $SELECTED_ENV (404). It is most likely on another environment (its notification names it): run again with --env prod|staging|dev, or without --env to try every environment you have a key for." ;;
+    000) err "could not reach $CORE_URL fetching $what. Fix: check your network or VPN, then run again." ;;
+    *) err "HTTP $status from $SELECTED_ENV fetching $what" ;;
   esac
-  if [ -s "$body" ]; then jq . "$body" >&2 2>/dev/null || cat "$body" >&2; fi
+  [ "$status" != 404 ] && [ -s "$body" ] && { jq -c . "$body" >&2 2>/dev/null || head -c 500 "$body" >&2; }
   exit 1
 }
 
@@ -152,27 +198,39 @@ fail_for_status() {
 # known when copied from a notification.
 discover_get() {
   local path="$1" body="$2" what="$3"
-  local i status attempts=""
+  local i status attempts="" missing="" tried=0
 
   for ((i = 0; i < ${#CANDIDATE_URLS[@]}; i++)); do
     CORE_URL="${CANDIDATE_URLS[$i]}"
     SELECTED_ENV="${CANDIDATE_NAMES[$i]}"
-    note "Trying $SELECTED_ENV reports backend: $CORE_URL"
+    KEY_VAR=$(key_var_for_env "$SELECTED_ENV")
+    if [ -z "$KEY_VAR" ]; then
+      missing="${missing}${missing:+ }$SELECTED_ENV"
+      continue
+    fi
+    tried=$((tried + 1))
+    note "Trying $SELECTED_ENV ($CORE_URL) with $KEY_VAR"
     STATUS=$(api_get "$path" "$body") || STATUS="000"
     status="$STATUS"
     if printf '%s' "$status" | grep -q '^2'; then
       note "Using reports backend: $SELECTED_ENV ($CORE_URL)"
       return 0
     fi
-
     attempts="${attempts}${attempts:+, }$SELECTED_ENV=HTTP $status"
     if [ "${#CANDIDATE_URLS[@]}" -eq 1 ]; then
       fail_for_status "$status" "$body" "$what"
     fi
   done
 
-  err "could not fetch $what from any reports backend ($attempts)"
-  if [ -s "$body" ]; then jq . "$body" >&2 2>/dev/null || cat "$body" >&2; fi
+  if [ "$tried" -eq 0 ]; then
+    for env in $missing; do key_fix "$env" "no key for $env"; done
+    exit 1
+  fi
+  err "could not fetch $what (${attempts})."
+  for env in $missing; do key_fix "$env" "it may be on $env, which has no key"; done
+  if [ -z "$missing" ]; then
+    err "A 404 everywhere means a wrong report id; a 401/403 means that environment's key needs replacing (run with --env <env> for its fix)."
+  fi
   exit 1
 }
 
