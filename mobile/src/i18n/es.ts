@@ -204,6 +204,12 @@ const es = {
     connectTo: "Conectar con {{name}}",
     continueTo: "Continuar con {{name}}",
     workspaceLabel: "Organización",
+    cloudSwitchTitle: "¿Cambiar de backend?",
+    cloudSwitchMessage:
+      "Cambiar a otro Core cierra tu sesión. Tu configuración se conserva para cuando vuelvas a iniciar sesión en esta cuenta.",
+    cloudSwitchConfirm: "Cerrar sesión y cambiar",
+    cloudResetTitle: "¿Volver al backend predeterminado?",
+    cloudResetMessage: "Esto cierra tu sesión.",
     signInLabel: "Inicio de sesión",
     microsoftOrganizationAccount: "Cuenta de organización de Microsoft",
     mentraAccount: "Cuenta de Mentra",

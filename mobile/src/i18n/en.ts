@@ -1254,6 +1254,12 @@ const en = {
     connectTo: "Connect to {{name}}",
     continueTo: "Continue to {{name}}",
     workspaceLabel: "Organization",
+    cloudSwitchTitle: "Change backend?",
+    cloudSwitchMessage:
+      "Switching to a different Core signs you out. Your settings are kept for when you sign back in to this account.",
+    cloudSwitchConfirm: "Sign out and switch",
+    cloudResetTitle: "Return to the default backend?",
+    cloudResetMessage: "This signs you out.",
     cloudOverridesDescription:
       "Override cloud URLs for {{name}}. Reset restores its defaults. Overrides are cleared when you log out or switch organizations.",
     cloudDefault: "Default: {{url}}",

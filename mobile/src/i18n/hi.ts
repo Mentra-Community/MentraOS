@@ -198,6 +198,12 @@ const hi = {
     connectTo: "{{name}} से जुड़ें",
     continueTo: "{{name}} पर जारी रखें",
     workspaceLabel: "संगठन",
+    cloudSwitchTitle: "बैकएंड बदलें?",
+    cloudSwitchMessage:
+      "किसी दूसरे Core पर जाने से आप साइन आउट हो जाते हैं। इस खाते में दोबारा साइन इन करने के लिए आपकी सेटिंग्स सहेजी रहती हैं।",
+    cloudSwitchConfirm: "साइन आउट करें और बदलें",
+    cloudResetTitle: "डिफ़ॉल्ट बैकएंड पर लौटें?",
+    cloudResetMessage: "इससे आप साइन आउट हो जाएंगे।",
     signInLabel: "साइन-इन",
     microsoftOrganizationAccount: "Microsoft संगठन खाता",
     mentraAccount: "Mentra खाता",

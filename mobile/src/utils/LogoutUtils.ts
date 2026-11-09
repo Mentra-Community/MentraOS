@@ -1,5 +1,5 @@
 import {SessionRevocationError} from "@mentra/cloud-client"
-import {engine} from "@mentra/engine"
+import {PHONE_WIDE_SETTING_KEYS, engine} from "@mentra/engine"
 
 import mantle from "@/services/MantleManager"
 import {closeAccountSettings} from "@/services/accountSettings"
@@ -19,7 +19,7 @@ export class LogoutUtils {
    * This should be used for both regular logout and account deletion scenarios
    */
   public static async performCompleteLogout(
-    options: {skipAuthSignOut?: boolean; deleteAccount?: boolean} = {},
+    options: {skipAuthSignOut?: boolean; deleteAccount?: boolean; keepGlasses?: boolean} = {},
   ): Promise<void> {
     console.log(`${this.TAG}: Starting complete logout process...`)
 
@@ -70,8 +70,9 @@ export class LogoutUtils {
       // described above.
       await settleFrame()
 
-      // Step 3: Unpair the saved glasses
-      await this.unpairGlasses()
+      // Step 3: Unpair the saved glasses, unless the sign-out keeps them (a backend switch): the pairing
+      // belongs to the phone, so the next account finds them still paired.
+      if (!options.keepGlasses) await this.unpairGlasses()
 
       // Step 4: Stop island runtime services
       await this.stopToolkitRuntime()
@@ -197,13 +198,15 @@ export class LogoutUtils {
 
     // Get all AsyncStorage keys and filter for user/auth related ones
     const allKeys = storage.getAllKeys()
+    // Phone-wide settings stay, such as glasses_user_disconnected when a backend switch keeps the glasses.
     const authKeys = allKeys.filter(
       (key: string) =>
-        key.startsWith("supabase.auth.") ||
-        key.includes("user") ||
-        key.includes("token") ||
-        key.includes("session") ||
-        key.includes("auth"),
+        !PHONE_WIDE_SETTING_KEYS.has(key) &&
+        (key.startsWith("supabase.auth.") ||
+          key.includes("user") ||
+          key.includes("token") ||
+          key.includes("session") ||
+          key.includes("auth")),
     )
 
     if (authKeys.length > 0) {

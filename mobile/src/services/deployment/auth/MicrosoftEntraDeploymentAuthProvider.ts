@@ -77,8 +77,12 @@ export class MicrosoftEntraDeploymentAuthProvider implements DeploymentAuthProvi
   }
 
   async signOut(): Promise<void> {
-    await this.native.signOut(this.configuration())
-    this.emit(null)
+    try {
+      await this.native.signOut(this.configuration())
+    } finally {
+      // The local session ends even when MSAL can't clear its cache.
+      this.emit(null)
+    }
   }
 
   onStateChange(listener: (session: DeploymentAuthSession | null) => void): () => void {

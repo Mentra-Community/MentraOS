@@ -6,6 +6,8 @@ import {
   createDeploymentAuthProvider,
   type DeploymentAuthProvider,
   type DeploymentAuthSession,
+  providerCleanupSettled,
+  queueProviderCleanup,
   useDeployment,
 } from "@/services/deployment"
 import {clearDeploymentDebugOverrides} from "@/services/deployment/debugOverrides"
@@ -23,21 +25,6 @@ interface AuthContextProps {
   logout: () => Promise<void>
   signInWorkspace: () => Promise<void>
   leaveWorkspace: (destination: "consumer" | "selector") => Promise<void>
-}
-
-// Native provider sign-out (MSAL) removes every cached account for the client
-// id, so a sign-out still running from a previous workspace visit must finish
-// before a new interactive sign-in stores its account.
-let pendingProviderCleanup: Promise<void> = Promise.resolve()
-
-function queueProviderCleanup(provider: DeploymentAuthProvider): Promise<void> {
-  const cleanup = pendingProviderCleanup.then(() =>
-    provider.signOut().catch((error) => {
-      console.warn("AuthContext: failed to clear workspace provider account", error)
-    }),
-  )
-  pendingProviderCleanup = cleanup
-  return cleanup
 }
 
 const AuthContext = createContext<AuthContextProps>({
@@ -168,7 +155,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     if (!workspaceAuth) throw new Error("No organization is active")
     setLoading(true)
     try {
-      await pendingProviderCleanup
+      await providerCleanupSettled()
       const next = toMentraSession(await workspaceAuth.signIn())
       setSession(next)
       setUser(next?.user ?? null)

@@ -5,12 +5,14 @@ import {Button, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@mentra/engine"
-import {cloudClient, resolvedEndpoints} from "@/services/cloudClient"
+import {resolvedEndpoints} from "@/services/cloudClient"
 import {translate} from "@/i18n"
 import {deploymentStore, useDeployment} from "@/services/deployment"
-import {deploymentDebugOverrides, saveDeploymentCloudOverrides} from "@/services/deployment/debugOverrides"
+import {deploymentDebugOverrides} from "@/services/deployment/debugOverrides"
+import {cloudSwitchSignsOut, switchCloudEndpoints} from "@/services/deployment/switchCloudEndpoints"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
 import showAlert from "@/utils/AlertUtils"
+import {confirmCloudSwitch} from "@/utils/confirmCloudSwitch"
 
 const CLOUD_DEV_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
 const CLOUD_DEV_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
@@ -151,10 +153,15 @@ export default function CloudUrl() {
       // laptop's LAN IP changes — resolution happens live on every connect.
       // A health probe may finish after the user switches organizations.
       if (activeDeployment !== deploymentStore.getActive()) return
-      await saveDeploymentCloudOverrides(activeDeployment, {core, runtime})
-      cloudClient.reconnect()
+      const signOut = await cloudSwitchSignsOut(activeDeployment, core)
+      if (signOut && !(await confirmCloudSwitch("change"))) return
+      if (activeDeployment !== deploymentStore.getActive()) return
+      const {signedOut} = await switchCloudEndpoints(activeDeployment, {core, runtime}, {signOut})
 
-      showAlert("Success", "Cloud V2 endpoints saved and verified. Reconnecting with the new URLs.", [{text: "OK"}])
+      // After a sign-out, the sign-in screen is the feedback.
+      if (!signedOut) {
+        showAlert("Success", "Cloud V2 endpoints saved and verified. Reconnecting with the new URLs.", [{text: "OK"}])
+      }
     } catch (error) {
       showAlert(translate("common:error"), error instanceof Error ? error.message : String(error), [{text: "OK"}])
     } finally {
@@ -165,11 +172,13 @@ export default function CloudUrl() {
   const handleReset = async () => {
     setIsSaving(true)
     try {
-      await saveDeploymentCloudOverrides(activeDeployment, {core: "", runtime: ""})
+      const signOut = await cloudSwitchSignsOut(activeDeployment, "")
+      if (signOut && !(await confirmCloudSwitch("reset"))) return
+      if (activeDeployment !== deploymentStore.getActive()) return
       setCoreInput("")
       setRuntimeInput("")
-      cloudClient.reconnect()
-      showAlert("Success", translate("workspace:cloudReset"), [{text: "OK"}])
+      const {signedOut} = await switchCloudEndpoints(activeDeployment, {core: "", runtime: ""}, {signOut})
+      if (!signedOut) showAlert("Success", translate("workspace:cloudReset"), [{text: "OK"}])
     } catch (error) {
       showAlert(translate("common:error"), error instanceof Error ? error.message : String(error), [{text: "OK"}])
     } finally {

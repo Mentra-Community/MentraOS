@@ -190,6 +190,12 @@ const ar = {
     connectTo: "الاتصال بـ {{name}}",
     continueTo: "المتابعة إلى {{name}}",
     workspaceLabel: "المؤسسة",
+    cloudSwitchTitle: "تغيير الخادم الخلفي؟",
+    cloudSwitchMessage:
+      "يؤدي التبديل إلى Core مختلف إلى تسجيل خروجك. تُحفظ إعداداتك لحين تسجيل دخولك مجددًا إلى هذا الحساب.",
+    cloudSwitchConfirm: "تسجيل الخروج والتبديل",
+    cloudResetTitle: "العودة إلى الخادم الخلفي الافتراضي؟",
+    cloudResetMessage: "سيؤدي هذا إلى تسجيل خروجك.",
     signInLabel: "تسجيل الدخول",
     microsoftOrganizationAccount: "حساب مؤسسة Microsoft",
     mentraAccount: "حساب Mentra",

@@ -17,6 +17,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n/translate"
 import {deploymentStore} from "@/services/deployment"
 import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPolicy"
+import {deploymentSignInRoute} from "@/services/deployment/signInRoute"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
 import {logPermissionAlert} from "@/utils/permissionLog"
@@ -56,7 +57,7 @@ export function MentraLivePairingFlowHost({
     (from: MentraLivePairingPage) => {
       const {goBack, clearHistoryAndGoHome, replaceAll} = useNavigationStore.getState()
       if (from === "forget_ios_pairing") {
-        if (then === "sign-in") return replaceAll("/auth/start")
+        if (then === "sign-in") return replaceAll(deploymentSignInRoute(deploymentStore.getActive()))
         return clearHistoryAndGoHome()
       }
       if (from === "failure" || (from === "pair_audio" && initialPage !== "pair_audio")) return clearHistoryAndGoHome()

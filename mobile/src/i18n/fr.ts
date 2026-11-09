@@ -204,6 +204,12 @@ const fr = {
     connectTo: "Se connecter à {{name}}",
     continueTo: "Continuer vers {{name}}",
     workspaceLabel: "Organisation",
+    cloudSwitchTitle: "Changer de backend ?",
+    cloudSwitchMessage:
+      "Passer à un autre Core vous déconnecte. Vos réglages sont conservés pour votre prochaine connexion à ce compte.",
+    cloudSwitchConfirm: "Se déconnecter et changer",
+    cloudResetTitle: "Revenir au backend par défaut ?",
+    cloudResetMessage: "Cela vous déconnecte.",
     signInLabel: "Connexion",
     microsoftOrganizationAccount: "Compte d'organisation Microsoft",
     mentraAccount: "Compte Mentra",
