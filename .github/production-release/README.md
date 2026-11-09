@@ -36,6 +36,9 @@ already tested: it never ships a source staging didn't release.
    - `finalize` writes `mentra-release-<X.Y.Z>.json` and tags `mentra-v<X.Y.Z>`
      on MentraOS `main`. The GitHub release `mentra-v<X.Y.Z>` is published as
      MentraOS's latest release, and Slack gets the result.
+   - The production docs go live last: MentraOS `production-docs` moves to
+     the released commit, and Mintlify deploys it to `docs.mentraglass.com`.
+     The merge alone changes nothing there.
 6. **Go live in the stores.** In Play Console, send the production draft for
    review and roll it out. In App Store Connect, release the approved version.
    These are the only manual steps after the merge.
@@ -71,6 +74,8 @@ production's values.
 - Environment `production` (branch `main`): `DOPPLER_TOKEN_CI_PRD` and
   `DOPPLER_TOKEN_MOBILE_PRD`, and access to the Copybara App's key.
 - Environment `production-approval` (branch `main`): the required reviewers.
+- Mintlify's production deployment (`docs.mentraglass.com`) follows MentraOS
+  `production-docs`, not `main`.
 - npm trusts `coordinated-release.yml` on MentraOS for every package, and the
   Bluetooth Starter Kit export (`bluetooth-starter-kit-export.yml`) moves the
   kit's `main` once npm `latest` and the production record are served.
