@@ -829,7 +829,6 @@
         "NGROK_DOMAIN",
         "OPENROUTER_API_KEY",
         "OPENROUTER_SEARCH_MODEL",
-        "PACKAGE_NAME",
         "PORT"
       ]
     },
@@ -860,7 +859,6 @@
         "NGROK_DOMAIN",
         "OPENROUTER_API_KEY",
         "OPENROUTER_SEARCH_MODEL",
-        "PACKAGE_NAME",
         "PORT"
       ]
     },
@@ -885,7 +883,6 @@
         "MONGODB_URI",
         "OPENROUTER_API_KEY",
         "OPENROUTER_SEARCH_MODEL",
-        "PACKAGE_NAME",
         "PORT"
       ]
     },
@@ -909,7 +906,6 @@
         "MONGODB_DATABASE",
         "MONGODB_URI",
         "NODE_ENV",
-        "PACKAGE_NAME",
         "PORT",
         "PUBLIC_BASE_URL",
         "RECALL_API_KEY",
@@ -940,7 +936,6 @@
         "MONGODB_DATABASE",
         "MONGODB_URI",
         "NODE_ENV",
-        "PACKAGE_NAME",
         "PORT",
         "PUBLIC_BASE_URL",
         "RECALL_API_KEY",
@@ -985,7 +980,6 @@
         "OPENROUTER_FAST_MODEL",
         "OPENROUTER_SMART_MODEL",
         "OPENROUTER_VISION_MODEL",
-        "PACKAGE_NAME",
         "PORT",
         "POSTHOG_API_KEY",
         "RESEND_API_KEY",
@@ -1025,7 +1019,6 @@
         "OPENROUTER_FAST_MODEL",
         "OPENROUTER_SMART_MODEL",
         "OPENROUTER_VISION_MODEL",
-        "PACKAGE_NAME",
         "PORT",
         "POSTHOG_API_KEY",
         "RESEND_API_KEY",
@@ -1078,12 +1071,10 @@
         "MENTRA_PUBLIC_MERGE_BACKEND_URL",
         "MERGE_ALLOW_MOCK_INSIGHTS",
         "MERGE_ENABLE_WEB_SEARCH",
-        "MERGE_PACKAGE_NAME",
         "NODE_ENV",
         "OPENROUTER_API_KEY",
         "OPENROUTER_MODEL",
         "OPENROUTER_SEARCH_MODEL",
-        "PACKAGE_NAME",
         "PORT",
         "SERPAPI_API_KEY",
         "VEHICLE_DATABASES_API_KEY"
@@ -1111,12 +1102,10 @@
         "MENTRA_PUBLIC_MERGE_BACKEND_URL",
         "MERGE_ALLOW_MOCK_INSIGHTS",
         "MERGE_ENABLE_WEB_SEARCH",
-        "MERGE_PACKAGE_NAME",
         "NODE_ENV",
         "OPENROUTER_API_KEY",
         "OPENROUTER_MODEL",
         "OPENROUTER_SEARCH_MODEL",
-        "PACKAGE_NAME",
         "PORT",
         "SERPAPI_API_KEY",
         "VEHICLE_DATABASES_API_KEY"
@@ -1147,7 +1136,6 @@
         "OPENROUTER_API_KEY",
         "OPENROUTER_MODEL",
         "OPENROUTER_PROVIDER",
-        "PACKAGE_NAME",
         "PORT"
       ]
     },
@@ -1312,7 +1300,6 @@
         "MENTRA_AUTH_ISSUERS",
         "MENTRA_AUTH_JWKS_URL",
         "NODE_ENV",
-        "PACKAGE_NAME",
         "PORT",
         "PUBLIC_BASE_URL"
       ]
@@ -1329,7 +1316,6 @@
         "MENTRA_AUTH_ISSUERS",
         "MENTRA_AUTH_JWKS_URL",
         "NODE_ENV",
-        "PACKAGE_NAME",
         "PORT",
         "PUBLIC_BASE_URL"
       ]
