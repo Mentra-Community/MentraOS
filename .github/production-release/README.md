@@ -17,11 +17,11 @@ already tested: it never ships a source staging didn't release.
    and merge it. Usually that's `staging` itself; if staging has moved on,
    branch from the beta's commit. The merged `main` must have exactly the
    beta's release inputs (`.github/ci/release-inputs.mjs`): anything else fails
-   the release, and nothing is published.
-4. **Approve the release.** The push to `main` starts `release.yml`. Its gate
-   names the beta it promotes in the run summary, then the run waits for a
-   reviewer of the `production-approval` environment. Nothing is built or
-   published before that approval.
+   the release, and nothing is published. The PR's "Verify and deploy" checks
+   this before the merge (its `promotion` job), and names the beta.
+4. **The merge is the approval.** The push to `main` starts `release.yml`,
+   whose gate names the beta it promotes in the run summary, and the release
+   runs without waiting for anyone. Review the PR as the release decision.
 5. **The release runs** (about the time of a beta):
    - Cloud V2 prod is deployed from the same source, after its environment
      group is checked against `cloud-config-contract.json`.
@@ -71,9 +71,9 @@ production's values.
 
 ## Setup it relies on
 
-- Environment `production` (branch `main`): `DOPPLER_TOKEN_CI_PRD` and
-  `DOPPLER_TOKEN_MOBILE_PRD`, and access to the Copybara App's key.
-- Environment `production-approval` (branch `main`): the required reviewers.
+- Environment `prod` (branch `main`): `DOPPLER_TOKEN_CI_PRD` and
+  `DOPPLER_TOKEN_MOBILE_PRD`, and access to the Copybara App's key. Its
+  miniapp, Call, Store and website deploys use the same environment.
 - Mintlify's production deployment (`docs.mentraglass.com`) follows MentraOS
   `production-docs`, not `main`.
 - npm trusts `coordinated-release.yml` on MentraOS for every package, and the
